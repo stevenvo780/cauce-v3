@@ -288,6 +288,16 @@ function registerConsoleAgentRoutes(
     registerAgentProfileRoutes(app, {
       authorize: autorizarPerfil,
       authorizeTarget: autorizarDestino,
+      resolveOperator: async (request) => resolveOperator(
+        request as FastifyRequest,
+        await principal(request as FastifyRequest, options.authProvider),
+        options.operatorResolution ?? { operatorHeader: DEFAULT_OPERATOR_HEADER, operators: new Set() },
+      ),
+      recordAudit: (entry) => recordTerminalAudit(options.pool, entry),
+      measureContext: (tenantId, alias) =>
+        medirContextoDeGobierno(profileProbe, tenantId, alias),
+      readRuntimeExpectation: (tenantId, alias) =>
+        expectativaDeRuntime(options.pool, tenantId, alias),
       readContext: (tenantId, alias) => perfiles.readContextWithPresence(tenantId, alias),
       replaceProfile: (profile, expectedRevision, actor) =>
         perfiles.replace(profile, expectedRevision, actor),

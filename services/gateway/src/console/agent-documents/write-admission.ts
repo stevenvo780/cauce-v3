@@ -37,7 +37,7 @@ export function isRejectedWrite(value: AdmittedWrite | RejectedWrite): value is 
   return 'error' in value;
 }
 
-function admitReason(value: unknown): string | RejectedWrite {
+export function admitGovernanceReason(value: unknown): string | RejectedWrite {
   const limits = `${String(DOCUMENT_REASON_MIN)} y ${String(DOCUMENT_REASON_MAX)}`;
   if (typeof value !== 'string'
     || value.trim().length < DOCUMENT_REASON_MIN || value.length > DOCUMENT_REASON_MAX) {
@@ -76,7 +76,7 @@ export function admitGovernanceWrite(body: unknown): AdmittedWrite | RejectedWri
   if (typeof content !== 'string') {
     return { error: 'invalid_input', message: '`content` tiene que ser texto' };
   }
-  const reason = admitReason(source.reason);
+  const reason = admitGovernanceReason(source.reason);
   if (typeof reason !== 'string') return reason;
   const precondition = admitPrecondition(source.expected_sha, source.create_if_absent);
   if ('error' in precondition) return precondition;

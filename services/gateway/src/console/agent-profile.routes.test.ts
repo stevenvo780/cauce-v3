@@ -13,6 +13,8 @@ import {
  */
 
 const RUTA = '/v3/console/tenants/Steven/agents/zeus/perfil';
+const OPERADOR = { operator_id: 'steven@elenxos', attributed: true };
+const MOTIVO = 'recorto las responsabilidades que ya no le tocan';
 
 import {
   ACTOR, contexto, MARK_PROFILE_APPLIED, PERFIL_BODY, PREPARE_RUNTIME, preparedRuntime,
@@ -22,6 +24,7 @@ async function servidor(ctx: ContextoDeAlias | (() => Promise<never>), exists = 
   const app = Fastify();
   registerAgentProfileRoutes(app, {
     authorize: async () => ACTOR,
+    recordAudit: async () => undefined,
     authorizeTarget: async (_actor, tenantId, alias) => ({ tenant_id: tenantId, alias, enabled: true }),
     readContext: async () => {
       if (typeof ctx === 'function') return ctx();
@@ -205,6 +208,7 @@ describe('identidad canónica, autorización y presencia de fila', () => {
     };
     registerAgentProfileRoutes(app, {
       authorize: async () => ACTOR,
+      recordAudit: async () => undefined,
       authorizeTarget: async (_actor, tenantId, alias) => {
         autorizado = [tenantId, alias];
         return { tenant_id: 'Miguel', alias: 'kant', enabled: true };
@@ -232,6 +236,7 @@ describe('identidad canónica, autorización y presencia de fila', () => {
     const ctx = contexto({ role_summary: 'rol apagado' }, 'codex');
     registerAgentProfileRoutes(app, {
       authorize: async () => ACTOR,
+      recordAudit: async () => undefined,
       authorizeTarget: async () => ({ tenant_id: 'Steven', alias: 'zeus', enabled: false }),
       readContext: async () => ({
         contexto: ctx, exists: true, revision: 2, applied_revision: 2,
@@ -252,6 +257,7 @@ describe('identidad canónica, autorización y presencia de fila', () => {
     const base = contexto({}, 'codex');
     registerAgentProfileRoutes(app, {
       authorize: async () => ACTOR,
+      recordAudit: async () => undefined,
       authorizeTarget: async () => ({ tenant_id: 'Steven', alias: 'zeus', enabled: true }),
       readContext: async () => ({
         contexto: { ...base, perfil: { ...base.perfil, tenant_id: 'Miguel', alias: 'zeus' } },
@@ -271,6 +277,7 @@ describe('identidad canónica, autorización y presencia de fila', () => {
     let consultada = false;
     registerAgentProfileRoutes(app, {
       authorize: async () => ACTOR,
+      recordAudit: async () => undefined,
       authorizeTarget: async () => undefined,
       readContext: async () => {
         consultada = true;
@@ -303,6 +310,7 @@ describe('la guarda del alias', () => {
     const app = Fastify();
     registerAgentProfileRoutes(app, {
       authorize: async () => ACTOR,
+      recordAudit: async () => undefined,
       authorizeTarget: async () => { throw new Error('no debería autorizar'); },
       readContext: async () => { consultada = true; throw new Error('no debería llegar acá'); }
     });
@@ -320,6 +328,8 @@ function depsDeEscritura(overrides: Partial<AgentProfileDeps> = {}): AgentProfil
   const ctx = contexto(PERFIL_BODY, 'codex');
   return {
     authorize: async () => ACTOR,
+    recordAudit: async () => undefined,
+    resolveOperator: () => OPERADOR,
     authorizeTarget: async (_actor, tenantId, alias) => ({ tenant_id: tenantId, alias, enabled: true }),
     readContext: async () => ({
       contexto: ctx, exists: true, revision: 1, applied_revision: 1,
@@ -404,7 +414,7 @@ describe('GET perfil: convergencia medida del runtime', () => {
     const app = await appDeEscritura({ recordRuntimeExpectation });
 
     const res = await app.inject({
-      method: 'PUT', url: RUTA, payload: { expected_revision: 1, profile: PERFIL_BODY },
+      method: 'PUT', url: RUTA, payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
 
     expect(res.statusCode).toBe(200);
@@ -497,7 +507,7 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
 
     const res = await app.inject({
       method: 'PUT', url: RUTA,
-      payload: { expected_revision: 1, profile: PERFIL_BODY },
+      payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
 
     expect(res.statusCode).toBe(200);
@@ -527,7 +537,7 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
 
     const res = await app.inject({
       method: 'PUT', url: RUTA,
-      payload: { expected_revision: 1, profile: PERFIL_BODY },
+      payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
 
     expect(res.statusCode).toBe(202);
@@ -552,7 +562,7 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
 
     const res = await app.inject({
       method: 'PUT', url: RUTA,
-      payload: { expected_revision: 1, profile: PERFIL_BODY },
+      payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
 
     expect(res.statusCode).toBe(409);
@@ -591,7 +601,7 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
 
     const res = await app.inject({
       method: 'PUT', url: RUTA,
-      payload: { expected_revision: 1, profile: PERFIL_BODY },
+      payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
 
     expect(res.statusCode).toBe(502);
@@ -611,7 +621,7 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     });
     const res = await app.inject({
       method: 'PUT', url: RUTA,
-      payload: { expected_revision: 1, profile: PERFIL_BODY },
+      payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ error: 'truncated', revision: 1, applied_revision: 1 });
@@ -631,7 +641,7 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     });
     const res = await app.inject({
       method: 'PUT', url: RUTA,
-      payload: { expected_revision: 1, profile: PERFIL_BODY },
+      payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ state: 'pending', revision: 2, applied_revision: 1 });
@@ -647,7 +657,7 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     });
     const res = await app.inject({
       method: 'PUT', url: RUTA,
-      payload: { expected_revision: 1, profile: PERFIL_BODY },
+      payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({
@@ -669,7 +679,7 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     });
     const res = await app.inject({
       method: 'PUT', url: RUTA,
-      payload: { expected_revision: 2, profile: PERFIL_BODY },
+      payload: { expected_revision: 2, profile: PERFIL_BODY, reason: MOTIVO },
     });
     expect(res.statusCode).toBe(200);
     expect(replaceProfile).toHaveBeenCalledWith(expect.objectContaining(PERFIL_BODY), 2, ACTOR);
@@ -685,7 +695,7 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     });
     const res = await app.inject({
       method: 'PUT', url: RUTA,
-      payload: { expected_revision: 1, profile: PERFIL_BODY },
+      payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ error: 'agent_disabled' });
@@ -705,7 +715,7 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
       prepareRuntime,
       replaceProfile,
     });
-    const cuerpo = { expected_revision: 1, profile: PERFIL_BODY };
+    const cuerpo = { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO };
     const visible = await conLectura.inject({ method: 'PUT', url: RUTA, payload: cuerpo });
     expect(visible.statusCode).toBe(403);
     expect(visible.json()).toMatchObject({ error: 'forbidden' });
@@ -740,7 +750,7 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     });
     const res = await app.inject({
       method: 'PUT', url: '/v3/console/tenants/Miguel/agents/kant/perfil',
-      payload: { expected_revision: 1, profile: PERFIL_BODY },
+      payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
     expect(res.statusCode).toBe(200);
     expect(autorizado).toHaveBeenCalledWith(ACTOR, 'Miguel', 'kant', 'control', false);

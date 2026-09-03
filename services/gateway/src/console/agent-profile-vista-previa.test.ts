@@ -8,6 +8,7 @@ import {
 import { ACTOR, contexto, PERFIL_BODY, REPLACE_PROFILE } from './agent-profile.fixtures.js';
 
 const RUTA = '/v3/console/tenants/Steven/agents/zeus/perfil';
+const MOTIVO = 'recorto el perfil para que entre en el tope del arnés';
 
 let abierto: FastifyInstance | undefined;
 
@@ -36,6 +37,8 @@ describe('la vista previa y la siembra no pueden discrepar', () => {
     const app = Fastify();
     registerAgentProfileRoutes(app, {
       authorize: async () => ACTOR,
+    recordAudit: async () => undefined,
+    resolveOperator: () => ({ operator_id: 'steven@elenxos', attributed: true }),
       authorizeTarget: async (_actor, tenantId, alias) => ({ tenant_id: tenantId, alias, enabled: true }),
       readContext: async () => ({ contexto: ctx, exists: true, revision: 1, applied_revision: 1 }),
       ...(preflight === undefined ? {} : { prepareRuntime: preflight }),
@@ -123,6 +126,8 @@ describe('la vista previa y la siembra no pueden discrepar', () => {
     const app = Fastify();
     registerAgentProfileRoutes(app, {
       authorize: async () => ACTOR,
+    recordAudit: async () => undefined,
+    resolveOperator: () => ({ operator_id: 'steven@elenxos', attributed: true }),
       authorizeTarget: async (_actor, tenantId, alias) => ({ tenant_id: tenantId, alias, enabled: true }),
       readContext: async () => ({
         contexto: contexto({ purpose: 'x' }, 'codex'), exists: true, revision: 1, applied_revision: 1,
@@ -144,7 +149,7 @@ describe('la vista previa y la siembra no pueden discrepar', () => {
     abierto = app;
 
     const res = await app.inject({
-      method: 'PUT', url: RUTA, payload: { expected_revision: 1, profile: PERFIL_BODY },
+      method: 'PUT', url: RUTA, payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
 
     expect(res.statusCode).toBe(422);

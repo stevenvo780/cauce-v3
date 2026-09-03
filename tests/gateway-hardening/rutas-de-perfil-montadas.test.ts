@@ -14,6 +14,7 @@ import { FixedAuthProvider, fakePool, fakeRepository, grants, noDeliveryWakes, r
 
 const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 const ORIGIN = 'http://localhost';
+const MOTIVO_DEL_PERFIL = 'reescribo el perfil desde la consola de operaciones';
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map(async (app) => app.close()));
@@ -166,6 +167,7 @@ async function gatewayCanonico(supersedeAfterBatch = false) {
     authProvider: new FixedAuthProvider(testPrincipal({
       tenant_id: 'Steven', alias: 'kant', roles: roles('operator'),
       permissions: grants('route', 'read', 'control'),
+      operator_id: 'steven@elenxos',
     })),
     deliveryWakeSubscriber: noDeliveryWakes,
     outboxPollMs: 60_000,
@@ -322,6 +324,7 @@ describe('las rutas del perfil y de los documentos están MONTADAS en el gateway
       payload: {
         expected_revision: 1,
         profile: { purpose: 'Después.', role_summary: 'Médico de la flota.' },
+        reason: MOTIVO_DEL_PERFIL,
       },
     });
 
@@ -349,7 +352,7 @@ describe('las rutas del perfil y de los documentos están MONTADAS en el gateway
       method: 'PUT',
       url: '/v3/console/tenants/Steven/agents/zeus/perfil',
       headers: { origin: ORIGIN },
-      payload: { expected_revision: 1, profile: { purpose: 'Revisión dos.' } },
+      payload: { expected_revision: 1, profile: { purpose: 'Revisión dos.' }, reason: MOTIVO_DEL_PERFIL },
     });
 
     expect(res.statusCode).toBe(409);

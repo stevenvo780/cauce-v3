@@ -1,10 +1,23 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
-  AGENT_PROFILE_LIMITS, AgentProfileError, AliasSchema, TenantSchema, agentProfileUnits,
-  clampToRoleBriefLimit, ficherosDelArnes, nombresDelArnes, normalizeAgentProfile,
+  AGENT_PROFILE_LIMITS, AliasSchema, TenantSchema, agentProfileUnits,
+  clampToRoleBriefLimit, ficherosDelArnes, nombresDelArnes,
   measureStrictestUnits,
   type AgentProfile, type ContextoDeAlias, type FicheroGenerado, type PresupuestoDeContexto
 } from '@cauce/protocol';
+import type { DocumentOperator } from './agent-documents.routes.js';
+import {
+  PERFIL_SIN_PERSONA, SIN_PERSONA, acksCompletos, admitProfileWrite, isRejectedProfileWrite,
+  perfilAuditMetadata, topeSuperadoDe, veredictoDeContaminacion,
+  type ProfileContextMeasure, type ProfileExpectationReader, type ProfileWriteContext,
+} from './agent-profile/write-gates.js';
+import {
+  contextContamination,
+  type ContextContaminationTelemetry, type ContextContaminationVerdict,
+} from './contaminacion-de-contexto.js';
+import type { TerminalAuditEntry } from '../terminal/audit.js';
+
+export type { TopeSuperado } from './agent-profile/write-gates.js';
 
 /**
  * Preview and management of the agent profile: generates and projects the exact content of
@@ -29,6 +42,12 @@ export interface AgentProfileDeps {
     permission: 'read' | 'control',
     legacySameTenant: boolean,
   ): Promise<{ tenant_id: string; alias: string; enabled?: boolean } | undefined>;
+  /** Not wired means nobody is named, and the profile PUT then fails closed. */
+  resolveOperator?: (request: unknown) => DocumentOperator | Promise<DocumentOperator>;
+  recordAudit(entry: TerminalAuditEntry): Promise<void>;
+  measureContext?: ProfileContextMeasure;
+  readRuntimeExpectation?: ProfileExpectationReader;
+  telemetry?: Pick<ContextContaminationTelemetry, 'recordVerdict'>;
   /** The authored profile plus derived facts and the actual presence of its row. */
   readContext(tenantId: string, alias: string): Promise<{
     contexto: ContextoDeAlias;
@@ -191,6 +210,8 @@ export interface RespuestaDelPerfil {
   /** What the whole profile measures against its ceiling. The browser draws the bar with this. */
   readonly medida: { readonly unidades: number; readonly tope: number };
   readonly base: BaseDeLaVistaPrevia;
+  /** Always present: an empty verdict is a measurement that found nothing, and it says so. */
+  readonly contaminacion: ContextContaminationVerdict;
   readonly ficheros: readonly FicheroDeLaVistaPrevia[];
   /**
    * Why there are no files, when there aren't any. An empty array without explanation reads as
@@ -210,32 +231,6 @@ export interface PerfilAplicado {
   readonly acknowledgements: readonly ProfileRuntimeAck[];
   /** Exact behavioral ACK that allowed advancing `applied_revision`. */
   readonly runtime_adoption: ProfileRuntimeAdoptionAck;
-}
-
-/**
- * Why the PUT refuses before the durable CAS: writing a person halfway is worse than not writing
- * them, and the operator needs to know WHICH file to trim and by how much, which a 500 with
- * "internal error" does not say. The GET keeps answering so it can be trimmed from that screen.
- */
-export interface TopeSuperado {
-  readonly error: 'tope_del_arnes';
-  readonly fichero: string;
-  readonly medido: number;
-  readonly tope: number;
-  readonly message: string;
-}
-
-function esTopeSuperado(error: unknown): error is Error & { fichero: string; medido: number; tope: number } {
-  return error instanceof Error && error.name === 'ErrorDeTopeDelArnes'
-    && 'fichero' in error && 'medido' in error && 'tope' in error;
-}
-
-function topeSuperadoDe(
-  error: unknown,
-): (Error & { fichero: string; medido: number; tope: number }) | undefined {
-  if (esTopeSuperado(error)) return error;
-  const causa = error instanceof Error ? error.cause : undefined;
-  return esTopeSuperado(causa) ? causa : undefined;
 }
 
 function verificacionSinProyeccion(motivo: string): ProfileRuntimeVerification {
@@ -274,6 +269,27 @@ function adoptionMatches(
 export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProfileDeps): void {
   interface CanonicalParams { tenantId: string; alias: string }
   interface LegacyParams { alias: string }
+  const telemetry = deps.telemetry ?? contextContamination;
+
+  const contaminacionDe = async (
+    tenantId: string, alias: string,
+  ): Promise<ContextContaminationVerdict> => veredictoDeContaminacion(
+    deps.measureContext, deps.readRuntimeExpectation, tenantId, alias,
+  );
+
+  async function fila(
+    escritura: ProfileWriteContext,
+    decision: 'allow' | 'deny',
+    extra: Readonly<Record<string, unknown>>,
+  ): Promise<void> {
+    await deps.recordAudit({
+      tenant_id: escritura.actor.tenant_id,
+      actor_alias: escritura.actor.alias,
+      action: decision === 'allow' ? 'agent_profile.write' : 'agent_document.denied',
+      decision,
+      metadata: perfilAuditMetadata(escritura, extra),
+    });
+  }
 
   async function responder(
     request: FastifyRequest<{ Params: CanonicalParams | LegacyParams }>,
@@ -307,6 +323,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         );
       }
 
+      const contaminacion = await contaminacionDe(tenantId, alias);
       const lectura = await deps.readContext(tenantId, alias);
       const contexto = lectura.contexto;
       if (contexto.perfil.tenant_id !== tenantId || contexto.perfil.alias !== alias) {
@@ -420,7 +437,8 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         medida: { unidades: agentProfileUnits(contexto.perfil), tope: AGENT_PROFILE_LIMITS.total },
         base: prepared === undefined && preflight?.existentes === undefined
           ? 'fichero-vacio' as const
-          : 'runtime-medido' as const
+          : 'runtime-medido' as const,
+        contaminacion,
       };
 
       if (nombres.length === 0) {
@@ -442,12 +460,6 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       return respuesta;
   }
 
-  const PROFILE_FIELDS = new Set([
-    'purpose', 'role_summary', 'human_brief', 'responsibilities', 'restrictions', 'tools',
-    'operating_rules',
-  ]);
-  const SHA256 = /^[0-9a-f]{64}$/;
-
   function codigoDeError(error: unknown): string | undefined {
     if (error === null || typeof error !== 'object' || !('code' in error)) return undefined;
     return typeof error.code === 'string' ? error.code : undefined;
@@ -465,27 +477,6 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     return 502;
   }
 
-  function acksCompletos(
-    prepared: PreparedProfileRuntime, acknowledgements: readonly ProfileRuntimeAck[],
-  ): boolean {
-    if (prepared.documents.length !== acknowledgements.length) return false;
-    const expected = new Map(prepared.verification.documents.map((document) => [document.name, document]));
-    if (expected.size !== prepared.documents.length) return false;
-    const generation = prepared.verification.generation;
-    if (generation === null) return false;
-    for (const ack of acknowledgements) {
-      const document = expected.get(ack.name);
-      if (document?.path !== ack.path || !expected.delete(ack.name)
-        || !ack.path.startsWith('/') || !SHA256.test(ack.sha)
-        || ack.sha !== document.expected_sha || ack.bytes !== document.expected_bytes
-        || !Number.isSafeInteger(ack.bytes) || ack.bytes < 0
-        || ack.generation !== generation
-        || (ack.container_id !== null && (typeof ack.container_id !== 'string' || ack.container_id.length === 0))
-        || !['written', 'already_current', 'preserved'].includes(ack.state)) return false;
-    }
-    return expected.size === 0;
-  }
-
   async function responderPut(
     request: FastifyRequest<{ Params: CanonicalParams; Body: unknown }>, reply: FastifyReply,
   ) {
@@ -497,69 +488,52 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     const tenantId = tenantResult.data;
     const alias = aliasResult.data;
     const actor = await deps.authorize(request, 'control');
+    const escritura: ProfileWriteContext = {
+      actor,
+      target: { tenant_id: tenantId, alias },
+      operador: deps.resolveOperator === undefined
+        ? SIN_PERSONA : await deps.resolveOperator(request),
+      reason: null,
+    };
+    const denegar = async (
+      status: number,
+      cuerpo: Readonly<Record<string, unknown>>,
+      extra: Readonly<Record<string, unknown>> = {},
+    ): Promise<FastifyReply> => {
+      await fila(escritura, 'deny', { reason: cuerpo.error, ...extra });
+      return reply.code(status).send(cuerpo);
+    };
+
     const target = await deps.authorizeTarget(actor, tenantId, alias, 'control', false);
     if (target?.tenant_id !== tenantId || target.alias !== alias) {
       const visible = await deps.authorizeTarget(actor, tenantId, alias, 'read', false);
       if (visible?.tenant_id === tenantId && visible.alias === alias) {
-        return reply.code(403).send({
+        return denegar(403, {
           error: 'forbidden',
           message: `el actor puede leer ${tenantId}/${alias} pero no tiene permiso de control sobre él`,
         });
       }
-      return reply.code(404).send({ error: 'not_found', message: 'agent not found or not visible' });
+      return denegar(404, { error: 'not_found', message: 'agent not found or not visible' });
     }
+    // Same act of authority as writing into the alias' HOME, so the same gate: no person, no write.
+    if (!escritura.operador.attributed) return denegar(403, PERFIL_SIN_PERSONA);
     if (target.enabled !== true) {
-      return reply.code(409).send({
+      return denegar(409, {
         error: 'agent_disabled',
         message: 'el alias está apagado; su perfil desired no se cambia sin un runtime habilitado',
       });
     }
     if (deps.replaceProfile === undefined || deps.prepareRuntime === undefined) {
-      return reply.code(503).send({
+      return denegar(503, {
         error: 'profile_write_unavailable',
         message: 'este gateway no tiene montada la saga durable de perfil y runtime',
       });
     }
 
-    const body = request.body;
-    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
-      return reply.code(400).send({ error: 'invalid_input', message: 'el cuerpo tiene que ser un objeto' });
-    }
-    const source = body as Record<string, unknown>;
-    if (Object.keys(source).some((key) => key !== 'expected_revision' && key !== 'profile')
-      || !Object.prototype.hasOwnProperty.call(source, 'expected_revision')) {
-      return reply.code(400).send({ error: 'invalid_input', message: 'el cuerpo tiene campos desconocidos o incompletos' });
-    }
-    const expectedRaw = source.expected_revision;
-    const expectedRevision = expectedRaw === null
-      ? null
-      : typeof expectedRaw === 'number' && Number.isSafeInteger(expectedRaw) && expectedRaw > 0
-        ? expectedRaw
-        : undefined;
-    if (expectedRevision === undefined) {
-      return reply.code(400).send({
-        error: 'invalid_input', message: 'expected_revision tiene que ser null o un entero positivo',
-      });
-    }
-    const rawProfile = source.profile;
-    if (rawProfile === null || typeof rawProfile !== 'object' || Array.isArray(rawProfile)
-      || Object.keys(rawProfile).some((key) => !PROFILE_FIELDS.has(key))) {
-      return reply.code(400).send({ error: 'invalid_input', message: 'profile no tiene la forma esperada' });
-    }
-
-    let profile: AgentProfile;
-    try {
-      profile = normalizeAgentProfile({
-        ...(rawProfile as Record<string, unknown>), tenant_id: tenantId, alias,
-      });
-    } catch (error) {
-      if (error instanceof AgentProfileError) {
-        return reply.code(422).send({
-          error: 'invalid_input', field: error.field, message: error.message,
-        });
-      }
-      throw error;
-    }
+    const admitido = admitProfileWrite(request.body, tenantId, alias);
+    if (isRejectedProfileWrite(admitido)) return denegar(admitido.status, admitido.body);
+    const { expected_revision: expectedRevision, profile } = admitido;
+    escritura.reason = admitido.reason;
 
     const current = await deps.readContext(tenantId, alias);
     if (current.contexto.perfil.tenant_id !== tenantId || current.contexto.perfil.alias !== alias) {
@@ -567,12 +541,27 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     }
     if ((expectedRevision === null && current.exists)
       || (expectedRevision !== null && current.revision !== expectedRevision)) {
-      return reply.code(409).send({
+      return denegar(409, {
         error: 'profile_revision_conflict',
         message: 'el perfil cambió desde que se abrió',
         revision: current.revision,
         applied_revision: current.applied_revision,
       });
+    }
+
+    /* QUARANTINE BEFORE THE PROJECTION: a file holding the managed block of ANOTHER alias is not
+     * this one's, and measuring first is what names the owner the bare preflight conflict hides. */
+    const contaminacion = await contaminacionDe(tenantId, alias);
+    if (contaminacion.contaminated) {
+      telemetry.recordVerdict(contaminacion);
+      return denegar(409, {
+        error: 'context_contaminated',
+        message: 'los ficheros de gobierno de este alias contienen algo que no es suyo; guardar '
+          + 'aquí sería escribir en la casa de otro. Queda en cuarentena hasta que alguien mire '
+          + 'ese contenedor.',
+        revision: current.revision,
+        contaminacion,
+      }, { findings: contaminacion.findings.map((finding) => finding.reason) });
     }
 
     let preflight: ProfileRuntimePreflight;
@@ -583,16 +572,15 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     } catch (error) {
       const tope = topeSuperadoDe(error);
       if (tope !== undefined) {
-        const cuerpo: TopeSuperado = {
+        return denegar(422, {
           error: 'tope_del_arnes',
           fichero: tope.fichero,
           medido: tope.medido,
           tope: tope.tope,
           message: mensajeDeError(error, tope.message),
-        };
-        return reply.code(422).send(cuerpo);
+        });
       }
-      return reply.code(statusDeRuntime(error)).send({
+      return denegar(statusDeRuntime(error), {
         error: codigoDeError(error) ?? 'runtime_preflight_failed',
         message: mensajeDeError(error, 'no se pudo preparar el runtime sin modificarlo'),
         revision: current.revision,
@@ -606,11 +594,17 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     } catch (error) {
       const code = codigoDeError(error);
       const status = code === 'not_found' ? 404 : code === 'disabled' || code === 'conflict' ? 409 : 500;
-      return reply.code(status).send({
+      return denegar(status, {
         error: code ?? 'profile_write_failed',
         message: mensajeDeError(error, 'no se pudo persistir el perfil desired'),
       });
     }
+    /* The row goes here and only here: past this point the desired revision EXISTS, so every later
+     * outcome reports how far the runtime got instead of denying a write that did happen. */
+    await fila(escritura, 'allow', {
+      revision: desired.revision,
+      bytes: Buffer.byteLength(JSON.stringify(profile), 'utf8'),
+    });
 
     let prepared: PreparedProfileRuntime;
     try {

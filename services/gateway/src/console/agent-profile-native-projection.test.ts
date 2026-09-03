@@ -28,6 +28,7 @@ import {
 
 const ACTOR = { tenant_id: 'Steven', alias: 'zeus' };
 const URL = '/v3/console/tenants/Steven/agents/zeus/perfil';
+const MOTIVO = 'republico el perfil nativo tras cambiar su composición';
 
 function sha(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
@@ -166,6 +167,8 @@ describe('native profile publishing saga', () => {
 
       const deps: AgentProfileDeps = {
         authorize: async () => ACTOR,
+        recordAudit: async () => undefined,
+        resolveOperator: () => ({ operator_id: 'steven@elenxos', attributed: true }),
         authorizeTarget: async () => ({ tenant_id: 'Steven', alias: 'zeus', enabled: true }),
         readContext: async () => ({
           contexto: current,
@@ -277,7 +280,7 @@ describe('native profile publishing saga', () => {
         const first = await app.inject({
           method: 'PUT',
           url: URL,
-          payload: { expected_revision: 1, profile: profile('beta') },
+          payload: { expected_revision: 1, profile: profile('beta'), reason: MOTIVO },
         });
         expect(first.statusCode).toBe(202);
         expect(first.json()).toMatchObject({ revision: 2, applied_revision: 1 });
@@ -286,7 +289,7 @@ describe('native profile publishing saga', () => {
         const firstApplied = await app.inject({
           method: 'PUT',
           url: URL,
-          payload: { expected_revision: 2, profile: profile('beta') },
+          payload: { expected_revision: 2, profile: profile('beta'), reason: MOTIVO },
         });
         expect(firstApplied.statusCode).toBe(200);
         expect(firstApplied.json<PerfilAplicado>()).toMatchObject({
@@ -299,7 +302,7 @@ describe('native profile publishing saga', () => {
         const second = await app.inject({
           method: 'PUT',
           url: URL,
-          payload: { expected_revision: 2, profile: profile('gamma') },
+          payload: { expected_revision: 2, profile: profile('gamma'), reason: MOTIVO },
         });
         expect(second.statusCode).toBe(202);
         expect(second.json()).toMatchObject({ revision: 3, applied_revision: 2 });
@@ -307,7 +310,7 @@ describe('native profile publishing saga', () => {
         const secondApplied = await app.inject({
           method: 'PUT',
           url: URL,
-          payload: { expected_revision: 3, profile: profile('gamma') },
+          payload: { expected_revision: 3, profile: profile('gamma'), reason: MOTIVO },
         });
         expect(secondApplied.statusCode).toBe(200);
         expect(secondApplied.json<PerfilAplicado>()).toMatchObject({

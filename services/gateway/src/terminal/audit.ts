@@ -21,6 +21,7 @@ type TerminalAuditAction =
   | 'terminal.session.close'
   | 'terminal.control_taken'
   | 'terminal.control_released'
+  | 'agent_profile.write'
   | 'agent_document.read'
   | 'agent_document.write'
   | 'agent_document.denied';
