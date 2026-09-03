@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { requireValue } from './helpers.js';
 import { readFile } from 'node:fs/promises';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { removeAgentContextRevisionsLayer } from './agent-context-revisions-layer.js';
+import { removeSecretHandoffLayer } from './secret-handoff-layer.js';
+import { removeTerminalControlHoldsLayer } from './terminal-control-holds-layer.js';
 import type { PublishMessage } from '@cauce/protocol';
 import {
   AgentProfileRepository, CauceRepository, applyMigrations,
@@ -44,7 +47,11 @@ async function ensureUp(): Promise<void> {
 }
 
 async function ensureDown(): Promise<void> {
-  if (await migrationApplied()) await runSql(downPath);
+  if (!(await migrationApplied())) return;
+  await removeAgentContextRevisionsLayer(pool);
+  await removeTerminalControlHoldsLayer(pool);
+  await removeSecretHandoffLayer(pool);
+  await runSql(downPath);
 }
 
 async function insertAgent(

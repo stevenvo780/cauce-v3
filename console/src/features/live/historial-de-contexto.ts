@@ -5,15 +5,9 @@ import {
 } from './perfil';
 
 /**
- * THE RULES OF THE CONTEXT JOURNAL, outside the component.
- *
- * They live here for the same reason the profile ones do: exporting functions from a component
- * file breaks Vite's fast refresh, and "what changed between these two revisions" has to be
- * testable without mounting a panel.
- *
- * The journal is READ-ONLY. Restoring is not a route of its own: it loads the seven authored
- * fields of a past revision into the canonical draft, and from there the only save available is
- * the profile PUT with its CAS, its governed batch and its hand-typed reason.
+ * The rules of the context journal, outside the component so they are testable without a panel.
+ * The journal is READ-ONLY: restoring loads the seven authored fields into the canonical draft,
+ * and the only save from there is the profile PUT with its CAS, batch and hand-typed reason.
  */
 
 export const PASO_DE_PAGINA = 20;
@@ -23,11 +17,7 @@ export const AVISO_DE_PROFUNDIDAD =
   + 'en ningún sitio: que aparezcan pocas revisiones NO significa que este contexto se haya '
   + 'tocado poco.';
 
-/**
- * The document journal keeps a fingerprint and a size, never the text. Saying it is not a
- * caveat: an operator who expects to read the old body here would take the absence for a bug and
- * go looking for a restore that cannot exist.
- */
+/** The document journal keeps a fingerprint and a size, never the text: say so, or the absence reads as a bug. */
 export const SIN_CUERPO =
   'De cada escritura se guardan la huella y el tamaño, nunca el texto. Acá no se puede leer lo '
   + 'que decía el fichero, ni restaurarlo desde el diario.';
@@ -243,18 +233,14 @@ function tamano(pedido: TramoDeRevisiones): number {
 }
 
 /**
- * The widest window the route accepts: `MAX_PAGE` in the gateway's
- * `agent-context-history.routes.ts`. Above it the answer is a 400 by contract, so widening past
- * this point is not «one more try», it is a guaranteed failure the operator would read as the end
- * of the journal.
+ * The widest window the route accepts (`MAX_PAGE` in `agent-context-history.routes.ts`): above it
+ * the answer is a 400 by contract, not «one more try».
  */
 export const TOPE_DE_PAGINA = 200;
 
 /**
- * What the reader can still do after this page.
- *
- * `ventana-agotada` is neither of the other two: there may well be older entries, and this gateway
- * has no way to reach them until it publishes a cursor. Saying «fin» there would be a lie.
+ * What the reader can still do after this page. `ventana-agotada` means older entries may exist
+ * and this gateway published no cursor to reach them: saying «fin» there would be a lie.
  */
 export type PasoDelDiario = 'mas' | 'ventana-agotada' | 'fin';
 
