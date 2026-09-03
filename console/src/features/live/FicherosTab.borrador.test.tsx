@@ -173,17 +173,18 @@ it('guardar cierra el borrador: al volver se ve lo aplicado y ningún aviso pend
       const cuerpo = await request.json() as { content: string };
       guardado = cuerpo.content;
       return HttpResponse.json({
-        ok: true, state: 'applied', evidence: 'probe_write_ack',
+        ok: true, state: 'written_pending_session', evidence: 'probe_write_ack',
         path: '/home/stev/.claude/CLAUDE.md', sha: 'c'.repeat(64),
         bytes: new TextEncoder().encode(cuerpo.content).byteLength,
-      });
+      }, { status: 202 });
     }),
   );
   const { user, cajon } = await abrirContextoDe('kant');
   await escribirBorrador(user, cajon);
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
-  expect(await within(cajon).findByText(/Aplicado en/)).toBeInTheDocument();
+  expect(await within(cajon).findByText(/Escrito en/)).toBeInTheDocument();
+  expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
   await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
   await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
 

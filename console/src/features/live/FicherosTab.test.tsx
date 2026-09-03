@@ -7,11 +7,9 @@ import { renderWithApi } from '../../test/render';
 import { LiveFleetPage } from './LiveFleetPage';
 
 /**
- * The file editor is tested FROM the live page and not in isolation, for the same reason as
- * the declared-role editor: half of the task is WHERE it lives. So a loose component test
- * would pass equally with the tab detached from the drawer — which is exactly the state all
- * this comes from: `agent-documents.ts` had been written for a day with its HTTP surface at
- * zero and no test exposed it.
+ * The file editor is tested FROM the live page, because half the task is WHERE it lives: a loose
+ * component test passes just as well with the tab detached from the drawer, which is the state all
+ * this comes from — `agent-documents.ts` lived a day with its HTTP surface at zero.
  */
 
 const RUTA_MAPA = 'http://localhost/v3/console/tenants/Steven/agents/kant/documents';
@@ -252,11 +250,75 @@ it('abre el fichero, lo edita y lo guarda mandando la huella de lo que abrió', 
 });
 
 /**
- * THE CASE THAT DECIDES IF THIS SCREEN IS HONEST. If the relay/pty-agent is not available, the
- * gateway answers 503. The easy thing would be to paint an empty box with a save button: the
- * operator would read it as "this agent has no manual" and on saving would write a blank file
- * over theirs.
+ * THE CASE THAT DECIDES IF THIS SCREEN IS HONEST. With no relay the gateway answers 503, and an
+ * empty box with a save button would read as "this agent has no manual" and save a blank over it.
  */
+/**
+ * THE 202 IS A SAVE. Painting it as a failure showed a successful save in red, left `servido` with
+ * the old fingerprint and made the obvious retry answer 409 against a SHA no longer on disk.
+ */
+it('un 202 written_pending_session guarda, lo dice sin fingir aplicación y deja reintentar', async () => {
+  mapaDeKant([CLAUDE_MD]);
+  const enviados: { content?: string; expected_sha?: string }[] = [];
+  let enDisco = { texto: '# manual viejo\n', sha: SHA_VIEJO };
+  server.use(
+    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
+      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
+      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      exists: true, content: enDisco.texto, sha: enDisco.sha,
+      bytes: new TextEncoder().encode(enDisco.texto).byteLength,
+      editable: true, projected: false, truncated: false,
+    })),
+    http.put(RUTA_CONTENIDO, async ({ request }) => {
+      const cuerpo = await request.json() as { content: string; expected_sha?: string };
+      enviados.push(cuerpo);
+      if (cuerpo.expected_sha !== enDisco.sha) {
+        return HttpResponse.json(
+          { error: 'conflict', message: 'el fichero cambió desde que se abrió; hay que releerlo' },
+          { status: 409 },
+        );
+      }
+      enDisco = { texto: cuerpo.content, sha: SHA_NUEVO };
+      return HttpResponse.json({
+        ok: true,
+        state: 'written_pending_session',
+        evidence: 'probe_write_ack',
+        path: '/home/stev/.claude/CLAUDE.md',
+        sha: SHA_NUEVO,
+        bytes: new TextEncoder().encode(cuerpo.content).byteLength,
+      }, { status: 202 });
+    }),
+  );
+
+  const { user, cajon } = await abrirContexto();
+  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
+  await user.clear(caja);
+  await user.type(caja, '# nuevo');
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
+
+  expect(await within(cajon).findByText(/Escrito en .*bytes/)).toBeInTheDocument();
+  expect(within(cajon).getByText(/recargar/)).toBeInTheDocument();
+  expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
+  expect(within(cajon).queryByText(/no confirmó la escritura/)).not.toBeInTheDocument();
+
+  expect(within(cajon).queryByText('borrador sin guardar')).not.toBeInTheDocument();
+  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+  const reabierta = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
+  await waitFor(() => { expect(reabierta).toHaveValue('# nuevo'); });
+  expect(within(cajon).getByRole('button', { name: /^Guardar$/i })).toBeDisabled();
+
+  await user.type(reabierta, ' otra vez');
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
+
+  await waitFor(() => { expect(enviados).toHaveLength(2); });
+  // El reintento no choca: viaja la huella que devolvió la escritura, no la que ya no existe.
+  expect(enviados[1]?.expected_sha).toBe(SHA_NUEVO);
+  expect(enviados[1]?.content).toBe('# nuevo otra vez');
+  expect(within(cajon).queryByText(/Alguien lo cambió mientras lo editabas/))
+    .not.toBeInTheDocument();
+});
+
 it('cuando no hay canal hasta el agente lo DICE, y no enseña una caja vacía', async () => {
   mapaDeKant([CLAUDE_MD]);
   server.use(http.get(RUTA_CONTENIDO, () => HttpResponse.json(
@@ -390,7 +452,7 @@ it('un 2xx sin ACK completo conserva el borrador sucio y no afirma aplicado', as
   await user.type(caja, 'nuevo');
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
-  expect(await within(cajon).findByText(/no confirmó la aplicación/i)).toBeInTheDocument();
+  expect(await within(cajon).findByText(/no confirmó la escritura/i)).toBeInTheDocument();
   expect(caja).toHaveValue('nuevo');
   expect(within(cajon).getByRole('button', { name: /^Guardar$/i })).toBeEnabled();
   expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
@@ -405,8 +467,7 @@ it('un gateway que no publica la ruta no se pinta como «este alias no tiene fic
   const { cajon } = await abrirFicheros();
 
   const vacio = await within(cajon).findByText(/no publica el mapa de ficheros/i);
-  // The text splits into several nodes inside the same paragraph, so it is checked on the
-  // whole paragraph: what matters is that BOTH sentences are there, not in which tag each one fell.
+  // Checked on the whole paragraph: what matters is that BOTH sentences are there.
   const parrafo = vacio.closest('p') as HTMLElement;
   expect(parrafo.textContent).toMatch(/no publica el mapa de ficheros/i);
   expect(parrafo.textContent).toMatch(/desde aquí no se ha mirado/i);

@@ -103,11 +103,9 @@ export function explicarFallo(status: number | undefined, mensajeServidor?: stri
 }
 
 /**
- * The header notice when the routes are NOT measured.
- *
- * It returns the server's `caveat` if it comes. It never invents one: if the gateway says the source is
- * `measured`, there is nothing to warn about and returning a generic notice "just in case" would be a guard
- * that cries wolf, which is how the notice that actually matters ends up being ignored.
+ * The header notice when the routes are NOT measured. It returns the server's `caveat` if it comes and
+ * never invents one: a generic notice "just in case" is the guard that cries wolf, which is how the
+ * notice that does matter ends up ignored.
  */
 export function avisoDeFuente(mapa: AgentDocumentsMap): string | undefined {
   if (!mapa.publicado) return mapa.motivo;
@@ -116,11 +114,9 @@ export function avisoDeFuente(mapa: AgentDocumentsMap): string | undefined {
 }
 
 /**
- * The notice to show BEFORE allowing save, not after.
- *
- * Two cases, and both are the kind people later regret: a `settings.json` may carry `hooks`, which are shell
- * commands the harness executes on its own —editing it from a web is executing code inside the container—;
- * and a projected document shows a part of the file, so deleting from the view deletes from the document.
+ * The notice to show BEFORE allowing save, not after. A `settings.json` may carry `hooks`, shell commands
+ * the harness runs on its own —editing it from a web is executing code inside the container—; and a
+ * projected document shows a part of the file, so deleting from the view deletes from the document.
  */
 export function avisoAntesDeGuardar(item: AgentDocumentItem): string | undefined {
   if (item.warning) return item.warning;
@@ -143,30 +139,41 @@ export function preserveSourceLineEndings(source: string, edited: string): strin
 }
 
 /**
- * A lone 2xx does not mean "applied". Only the new contract, which carries the probe's ACK of writing in
- * the container, authorizes that word. The defensive branch avoids lying during a staged deployment if an
- * old gateway returns the previous shape.
+ * A lone 2xx does not mean the process is reading the new text: the 202 accredits bytes on disk and
+ * nothing more, and only `applied` —the session's own adoption ACK— authorizes that word. The
+ * defensive branch avoids lying if an old gateway returns the previous shape mid-rollout.
  */
 export function mensajeDeGuardado(resultado: AgentDocumentGuardado): string {
-  if (esAckAplicado(resultado)) {
-    return `Aplicado en ${resultado.path}: la sonda confirmó el ACK de escritura (${String(resultado.bytes)} bytes).`;
+  if (!esAckAplicado(resultado)) {
+    return `El gateway respondió 2xx, pero la aplicación no quedó confirmada por un ACK completo.`;
   }
-  return `El gateway respondió 2xx, pero la aplicación no quedó confirmada por un ACK completo.`;
+  const bytes = String(resultado.bytes);
+  if (resultado.state === 'applied') {
+    return `Aplicado en ${resultado.path}: la sonda confirmó el ACK de escritura (${bytes} bytes).`;
+  }
+  return `Escrito en ${resultado.path} (${bytes} bytes): la sonda acreditó los bytes en disco. `
+    + 'La sesión lo aplica al recargar su contexto; escribir no es que lo haya releído.';
 }
 
-interface AckAplicado {
+type EstadoDeEscritura = 'written_pending_session' | 'applied';
+
+interface AckDeEscritura {
   readonly ok: true;
-  readonly state: 'applied';
+  readonly state: EstadoDeEscritura;
   readonly evidence: 'probe_write_ack';
   readonly path: string;
   readonly sha: string;
   readonly bytes: number;
 }
 
-/** Only this complete form authorizes clearing the visible draft. */
-export function esAckAplicado(resultado: AgentDocumentGuardado): resultado is AckAplicado {
+/**
+ * Only this complete form authorizes clearing the visible draft and refreshing what is served.
+ * `written_pending_session` is a SUCCESS: demanding `applied` painted a save that worked as a red
+ * failure, left `servido` stale and made the retry 409 against a fingerprint that no longer was.
+ */
+export function esAckAplicado(resultado: AgentDocumentGuardado): resultado is AckDeEscritura {
   return resultado.ok === true
-    && resultado.state === 'applied'
+    && (resultado.state === 'written_pending_session' || resultado.state === 'applied')
     && resultado.evidence === 'probe_write_ack'
     && typeof resultado.path === 'string' && resultado.path.startsWith('/')
     && typeof resultado.sha === 'string' && /^[0-9a-f]{64}$/.test(resultado.sha)

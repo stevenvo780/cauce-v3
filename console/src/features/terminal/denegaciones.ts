@@ -14,6 +14,10 @@ export type TerminalDenialCode =
   | 'attribution_required'
   | 'no_routing_authority'
   | 'no_grant'
+  | 'no_grant_for_operator'
+  | 'no_recognized_mode'
+  | 'writable_requires_attribution'
+  | 'writable_requires_named_operator'
   | 'agent_offline'
   | 'session_limit'
   | 'container_busy'
@@ -79,6 +83,32 @@ export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, Termina
       + 'operador para este alias y este modo. No es un fallo del relay: el relay está sano y la lista dice que no.',
     quienLoLevanta: `${DUENO_DEL_BUS}: tiene que añadir tu operador al fichero de permisos de terminal, `
       + 'para ese alias y ese modo (TUI en vivo o shell son permisos distintos).',
+  },
+  no_grant_for_operator: {
+    titulo: 'Tu operador no tiene concesión sobre ese alias',
+    porQue: 'El fichero de permisos de terminal sí conoce el alias, pero ninguna de sus filas nombra a tu operador '
+      + 'para el contenedor entero. Una fila comodín sólo abre los modos de sólo lectura; para escribir hace '
+      + 'falta que la fila te nombre.',
+    quienLoLevanta: `${DUENO_DEL_BUS}: tiene que añadir una fila con tu operador para todos los alias de ese contenedor.`,
+  },
+  no_recognized_mode: {
+    titulo: 'El agente PTY habla un dialecto que este gateway no conoce',
+    porQue: 'El agente está conectado, pero ninguno de los modos que publica figura entre los que este gateway '
+      + 'entiende. Suele ser un agente más nuevo que el gateway: no es tu permiso ni tu concesión.',
+    quienLoLevanta: `${DUENO_DEL_BUS}: hay que actualizar el gateway al mismo contrato que el agente PTY, o volver el agente atrás.`,
+  },
+  writable_requires_attribution: {
+    titulo: 'Escribir en una TUI exige una persona con nombre',
+    porQue: 'Pediste un modo con teclado (shell o TUI con escritura) desde una sesión sin identidad de persona. '
+      + 'Mirar se puede sin nombre; teclear dentro del contenedor del agente, no: cada pulsación queda atribuida.',
+    quienLoLevanta: 'Vos: entrá con una sesión con identidad de persona. Si ya entraste así, '
+      + `pedile a ${DUENO_DEL_BUS} que revise cómo llega tu identidad al gateway.`,
+  },
+  writable_requires_named_operator: {
+    titulo: 'Una concesión comodín no abre modos con teclado',
+    porQue: 'La fila que te alcanza en el fichero de permisos de terminal es la comodín, y el gateway sólo la '
+      + 'acepta para mirar. Para un modo con escritura la fila tiene que nombrar a tu operador.',
+    quienLoLevanta: `${DUENO_DEL_BUS}: tiene que añadir una fila con tu operador y ese modo para ese alias.`,
   },
   agent_offline: {
     titulo: 'El agente PTY del contenedor no está conectado',

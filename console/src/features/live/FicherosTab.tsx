@@ -371,19 +371,20 @@ function Editor({
     setGuardando(true);
     setFallo(undefined);
     try {
-      // The fingerprint of the READ THIS TEXT WAS BORN FROM travels with the save: if the file
-      // changed meanwhile the server answers 409 instead of letting the last to click win.
+      // The fingerprint of the read this text was born from travels: a file changed meanwhile
+      // answers 409 instead of letting the last to click win.
       const resultado = await api.putAgentDocumentContent(
         tenantId, alias, item.kind, texto, borrador ? borrador.shaBase : servido.sha,
       );
       if (!esAckAplicado(resultado) || resultado.path !== servido.path
         || resultado.bytes !== new TextEncoder().encode(texto).byteLength) {
         setFallo({
-          titulo: 'El servidor no confirmó la aplicación',
+          titulo: 'El servidor no confirmó la escritura',
           detalle: mensajeDeGuardado(resultado),
         });
         return;
       }
+      // `written_pending_session` IS a save: refresh the served fingerprint or the retry 409s.
       setServido({
         ...servido, content: texto, sha: resultado.sha, bytes: resultado.bytes,
         exists: true, truncated: false, editable: true,
@@ -504,12 +505,9 @@ function Editor({
 }
 
 /**
- * The gap, stated in plain language and right in this view.
- *
- * It lives here because the alternative is worse: without this paragraph, an `mcp` that shows up
- * with a lock reads as "the console does not reach there yet" when in fact it is a measured and
- * firm decision. And what is truly missing —the channel to the disk— is not visible anywhere,
- * so the editor would look broken instead of incomplete.
+ * The gap, stated in plain language and right in this view. Without this paragraph a locked `mcp`
+ * reads as "the console does not reach there yet" when it is a measured decision, and what is
+ * truly missing —the channel to the disk— is visible nowhere at all.
  */
 function HuecoDeclarado() {
   return (

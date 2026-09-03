@@ -1,7 +1,7 @@
 import type { AgentDocumentItem, AgentDocumentsMap } from '../../api/types';
 import {
-  avisoAntesDeGuardar, avisoDeFuente, explicarFallo, hayCambios, mensajeDeGuardado,
-  modoDeDocumento, preserveSourceLineEndings,
+  avisoAntesDeGuardar, avisoDeFuente, esAckAplicado, explicarFallo, hayCambios,
+  mensajeDeGuardado, modoDeDocumento, preserveSourceLineEndings,
 } from './ficheros';
 
 function doc(extra: Partial<AgentDocumentItem> = {}): AgentDocumentItem {
@@ -125,18 +125,31 @@ describe('hay cambios sin guardar', () => {
 });
 
 describe('estado después de escribir', () => {
-  it('dice aplicado sólo con evidencia explícita de la sonda', () => {
-    const mensaje = mensajeDeGuardado({
-      ok: true,
-      state: 'applied',
-      evidence: 'probe_write_ack',
-      path: '/home/dev/.claude/CLAUDE.md',
-      sha: 'a'.repeat(64),
-      bytes: 12,
-    });
+  const ACK = {
+    ok: true,
+    evidence: 'probe_write_ack',
+    path: '/home/dev/.claude/CLAUDE.md',
+    sha: 'a'.repeat(64),
+    bytes: 12,
+  } as const;
+
+  it('dice aplicado sólo con evidencia explícita de adopción de la sesión', () => {
+    const mensaje = mensajeDeGuardado({ ...ACK, state: 'applied' });
 
     expect(mensaje).toMatch(/Aplicado/);
     expect(mensaje).toMatch(/ACK de escritura/);
+    expect(esAckAplicado({ ...ACK, state: 'applied' })).toBe(true);
+  });
+
+  it('un 202 written_pending_session es un guardado, y lo dice sin afirmar aplicación', () => {
+    const resultado = { ...ACK, state: 'written_pending_session' };
+
+    expect(esAckAplicado(resultado)).toBe(true);
+    const mensaje = mensajeDeGuardado(resultado);
+    expect(mensaje).toMatch(/^Escrito en/);
+    expect(mensaje).toMatch(/recargar/);
+    expect(mensaje).not.toMatch(/Aplicado/);
+    expect(mensaje).not.toMatch(/no quedó confirmada/);
   });
 
   it('CONTROL NEGATIVO: una respuesta legacy sin evidencia no inventa aplicación', () => {
@@ -146,7 +159,16 @@ describe('estado después de escribir', () => {
 
     const mensaje = mensajeDeGuardado(legacy);
 
+    expect(esAckAplicado(legacy)).toBe(false);
     expect(mensaje).toMatch(/no quedó confirmada/);
     expect(mensaje).not.toMatch(/^Aplicado/);
+    expect(mensaje).not.toMatch(/^Escrito/);
+  });
+
+  it('CONTROL NEGATIVO: un estado de otro vocabulario no acredita nada', () => {
+    const ajeno = { ...ACK, state: 'done' } as Parameters<typeof mensajeDeGuardado>[0];
+
+    expect(esAckAplicado(ajeno)).toBe(false);
+    expect(mensajeDeGuardado(ajeno)).toMatch(/no quedó confirmada/);
   });
 });

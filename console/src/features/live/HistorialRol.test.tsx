@@ -311,8 +311,8 @@ it('no se inventa la ubicación cuando el registro no la declara', async () => {
   })));
 
   const pendientes = await abrirPendientesDeKant();
-  expect(within(pendientes).getByText(/contenedor UNKNOWN/i)).toBeInTheDocument();
-  expect(within(pendientes).getByText(/\$HOME UNKNOWN/i)).toBeInTheDocument();
+  expect(pendientes).toHaveTextContent(/Contenedor: desconocido/);
+  expect(pendientes).not.toHaveTextContent('/home/dev');
 });
 
 it('el role_summary recuperado sobrevive a desmontar Contexto y conserva los otros campos', async () => {
