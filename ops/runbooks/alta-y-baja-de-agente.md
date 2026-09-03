@@ -144,7 +144,9 @@ El aprovisionamiento emite y publica de forma atómica (sin imprimir secretos en
 2. **Bearer Token y Hash (`token_hashes.json` / `mtls_identities.json`)**:
    - Generación de token criptográfico aleatorio (`secrets.token_hex(32)`).
    - Archivo de token publicado en modo `0400`.
-   - Cálculo de digest SHA-256 e inserción atómica con `flock` y rename CAS en `/etc/cauce-v3/secrets/identities/token_hashes.json` y `mtls_identities.json`.
+   - Cálculo de digest SHA-256 e inserción atómica: cada script mantiene el `flock` del
+     registro desde la lectura hasta el rename, por lo que dos altas o revocaciones cooperativas
+     no pueden sobrescribirse.
 
 3. **Clave de Terminal PTY (`alias-key.hex`)**:
    - Derivación HKDF mediante `ops/pty-agent/publish-alias-key.sh` usando el master secret `CAUCE_PTY_MASTER_FILE`.
@@ -243,7 +245,8 @@ ops/cli/cauce <alias> retirar
 
 Este paso ejecuta de forma atómica:
 1. Detiene y deshabilita la unidad systemd del agente (`systemctl --user disable --now cauce-v3-container-<alias>.service` o de host).
-2. Revoca el hash del token en `token_hashes.json` y `mtls_identities.json` mediante rename atómico con `flock`.
+2. Revoca el hash del token en `token_hashes.json` y `mtls_identities.json` mediante rename atómico
+   manteniendo el `flock` del registro desde la lectura hasta la publicación.
 
 ---
 

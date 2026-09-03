@@ -14,6 +14,10 @@ Configurar, rotar y verificar identidades mTLS, OIDC y token-hashes para el gate
    ```
 2. Publicar o actualizar `mtls_identities.json` o `token_hashes.json` mediante rename atómico (para credenciales de agente, usar `cauce <alias> aprovisionar` siguiendo `ops/runbooks/alta-y-baja-de-agente.md`):
    - Archivos modo `0400` y propiedad `1000:1000`.
+   - Mantener un `flock -x` sobre `.mtls_identities.json.lock` o `.token_hashes.json.lock`, según
+     el fichero, desde la lectura usada para preparar el reemplazo hasta después del `rename`.
+     El rename evita lecturas parciales; el candado evita perder otra alta o revocación concurrente.
+     No publicar con un `mv` manual sin ese mismo candado.
    - Formato mTLS: `{"version":1,"identities":[{"certificate_sha256":"<64-hex>","expires_at":"...","principal":{...}}]}`.
    - Formato tokens: `{"version":1,"identities":[{"token_sha256":"<64-hex>","expires_at":"...","principal":{...}}]}`.
 3. Fijar `CAUCE_GATEWAY_IDENTITY_DIR=/etc/cauce-v3/secrets/identities` en `prod.env` y recrear gateway si se modifica la estructura del montaje:
@@ -41,6 +45,7 @@ Configurar, rotar y verificar identidades mTLS, OIDC y token-hashes para el gate
 1. Restaurar la versión anterior del archivo de identidades mediante rename atómico dentro del directorio montado:
    ```sh
    # [no ejecutable en verificación]
-   mv /var/backups/cauce-v3/mtls_identities.json.bak /etc/cauce-v3/secrets/identities/mtls_identities.json
+   flock -x /etc/cauce-v3/secrets/identities/.mtls_identities.json.lock \
+     mv -- /var/backups/cauce-v3/mtls_identities.json.bak /etc/cauce-v3/secrets/identities/mtls_identities.json
    ```
 2. Confirmar que el gateway relee el inodo y restablece la autenticación esperada.
