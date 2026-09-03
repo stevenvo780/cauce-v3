@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import pathlib
 import ssl
 import stat
@@ -185,6 +186,30 @@ class RegisterAgentIdentityTest(_AgentIdentityFixture, unittest.TestCase):
         self.assertEqual(self.mtls_identities.read_bytes(), before)
         document = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
         self.assertEqual(len(document["identities"]), 2)  # jarvis + argos, not tripled
+
+    def test_cas_rejects_a_replaced_identity_document_with_the_existing_message(self) -> None:
+        document = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
+        original = self.mtls_identities.stat()
+        replacement = self.identities_dir / ".mtls_identities.test-race"
+        _write_json(replacement, document, 0o400)
+        replacement.replace(self.mtls_identities)
+        before = self.mtls_identities.read_bytes()
+        identities_fd = os.open(self.identities_dir, os.O_RDONLY | os.O_DIRECTORY)
+        lock_fd = os.open(
+            self.identities_dir / f".{MODULE.MTLS_IDENTITIES_FILE}.lock",
+            os.O_RDWR | os.O_CREAT,
+            0o600,
+        )
+        try:
+            with self.assertRaisesRegex(
+                MODULE.RegisterIdentityError,
+                r"compare-and-swap fallo: mtls_identities\.json cambio durante el registro",
+            ):
+                MODULE.publish_identity_document(identities_fd, lock_fd, document, original)
+        finally:
+            os.close(lock_fd)
+            os.close(identities_fd)
+        self.assertEqual(self.mtls_identities.read_bytes(), before)
 
     def test_rejects_a_different_certificate_for_an_already_registered_alias(self) -> None:
         self._register()

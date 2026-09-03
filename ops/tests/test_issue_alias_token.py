@@ -3,15 +3,18 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import importlib.util
 import json
+import os
 import pathlib
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "issue-alias-token.py"
 SPEC = importlib.util.spec_from_file_location("issue_alias_token", SCRIPT)
@@ -180,6 +183,58 @@ class IssueAliasTokenTest(unittest.TestCase):
         self.assertFalse((self.tokens_dir / "argos.token").exists())
         self.assertEqual(self.token_hashes.read_bytes(), before)
         self.assertEqual(stat.S_IMODE(self.token_hashes.stat().st_mode), 0o400)
+
+    def test_cas_rejects_a_replaced_identity_document_with_the_existing_message(self) -> None:
+        document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
+        original = self.token_hashes.stat()
+        replacement = self.identities_dir / ".token_hashes.test-race"
+        _write_json(replacement, document, 0o400)
+        replacement.replace(self.token_hashes)
+        before = self.token_hashes.read_bytes()
+        identities_fd = os.open(self.identities_dir, os.O_RDONLY | os.O_DIRECTORY)
+        lock_fd = os.open(
+            self.identities_dir / f".{MODULE.TOKEN_HASHES_FILE}.lock",
+            os.O_RDWR | os.O_CREAT,
+            0o600,
+        )
+        try:
+            with self.assertRaisesRegex(
+                MODULE.IssueTokenError,
+                r"compare-and-swap fallo: token_hashes\.json cambio durante la emision",
+            ):
+                MODULE.publish_identity_document(identities_fd, lock_fd, document, original)
+        finally:
+            os.close(lock_fd)
+            os.close(identities_fd)
+        self.assertEqual(self.token_hashes.read_bytes(), before)
+
+    def test_cas_holds_the_cooperative_lock_through_replace(self) -> None:
+        document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
+        original = self.token_hashes.stat()
+        lock_path = self.identities_dir / f".{MODULE.TOKEN_HASHES_FILE}.lock"
+        identities_fd = os.open(self.identities_dir, os.O_RDONLY | os.O_DIRECTORY)
+        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        original_replace = os.replace
+        replace_checked = False
+
+        def guarded_replace(*args: object, **kwargs: object) -> None:
+            nonlocal replace_checked
+            contender_fd = os.open(lock_path, os.O_RDWR)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(contender_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(contender_fd)
+            replace_checked = True
+            original_replace(*args, **kwargs)
+
+        try:
+            with mock.patch("update_alias_lib.os.replace", side_effect=guarded_replace):
+                MODULE.publish_identity_document(identities_fd, lock_fd, document, original)
+        finally:
+            os.close(lock_fd)
+            os.close(identities_fd)
+        self.assertTrue(replace_checked)
 
     def test_dry_run_leaves_filesystem_untouched(self) -> None:
         message = MODULE.describe_dry_run("argos", self.tokens_dir, self.identities_dir, self.flota_json, 730)

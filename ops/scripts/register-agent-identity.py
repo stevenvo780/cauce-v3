@@ -33,7 +33,6 @@ import json
 import os
 import pathlib
 import re
-import secrets
 import ssl
 import stat
 import sys
@@ -44,12 +43,11 @@ if _scripts_dir not in sys.path:
 
 from update_alias_lib import (  # noqa: E402  (sys.path shim above must run first)
     assert_secure_directory,
-    file_identity,
     open_absolute_directory,
     open_regular_at,
+    publish_json_document_cas,
     read_all,
     validate_absolute,
-    write_all,
 )
 
 ALIAS_RE = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")  # packages/protocol/src/schemas/core.ts AliasSchema
@@ -197,52 +195,18 @@ def find_matching_records(
 
 
 def publish_identity_document(
-    identities_fd: int, document: dict[str, object], original: os.stat_result | None,
+    identities_fd: int, lock_fd: int, document: dict[str, object], original: os.stat_result | None,
 ) -> None:
-    body = (json.dumps(document, indent=2) + "\n").encode("utf-8")
-    temporary_name = f".{MTLS_IDENTITIES_FILE}.cas-{os.getpid()}-{secrets.token_hex(8)}"
-    temporary_fd: int | None = None
-    try:
-        temporary_fd = open_regular_at(
-            identities_fd, temporary_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode=IDENTITY_FILE_MODE,
-        )
-        if original is not None and os.geteuid() == 0:
-            os.fchown(temporary_fd, original.st_uid, original.st_gid)
-        os.fchmod(temporary_fd, IDENTITY_FILE_MODE)
-        write_all(temporary_fd, body)
-        os.fsync(temporary_fd)
-        os.close(temporary_fd)
-        temporary_fd = None
-
-        if original is not None:
-            current_fd = open_regular_at(identities_fd, MTLS_IDENTITIES_FILE, os.O_RDONLY)
-            try:
-                current = assert_readonly_regular(current_fd, MTLS_IDENTITIES_FILE, IDENTITY_FILE_MODE)
-                if file_identity(current) != file_identity(original):
-                    raise RegisterIdentityError(
-                        f"compare-and-swap fallo: {MTLS_IDENTITIES_FILE} cambio durante el registro"
-                    )
-            finally:
-                os.close(current_fd)
-        else:
-            try:
-                os.stat(MTLS_IDENTITIES_FILE, dir_fd=identities_fd, follow_symlinks=False)
-            except FileNotFoundError:
-                pass
-            else:
-                raise RegisterIdentityError(
-                    f"compare-and-swap fallo: {MTLS_IDENTITIES_FILE} aparecio durante el registro"
-                )
-
-        os.replace(temporary_name, MTLS_IDENTITIES_FILE, src_dir_fd=identities_fd, dst_dir_fd=identities_fd)
-        os.fsync(identities_fd)
-    finally:
-        if temporary_fd is not None:
-            os.close(temporary_fd)
-        try:
-            os.unlink(temporary_name, dir_fd=identities_fd)
-        except FileNotFoundError:
-            pass
+    publish_json_document_cas(
+        identities_fd,
+        lock_fd,
+        MTLS_IDENTITIES_FILE,
+        document,
+        original,
+        mode=IDENTITY_FILE_MODE,
+        error_type=RegisterIdentityError,
+        operation="el registro",
+    )
 
 
 def register(
@@ -293,7 +257,7 @@ def register(
                     "principal": build_principal(tenant, alias),
                 }
             )
-            publish_identity_document(identities_fd, document, original)
+            publish_identity_document(identities_fd, lock_fd, document, original)
         finally:
             os.close(lock_fd)
     finally:
@@ -371,7 +335,7 @@ def revoke(tenant: str, alias: str, identities_dir: pathlib.Path) -> dict[str, o
                 kept.append(record)
             if identities_removed:
                 document["identities"] = kept  # type: ignore[index]
-                publish_identity_document(identities_fd, document, original)
+                publish_identity_document(identities_fd, lock_fd, document, original)
         finally:
             os.close(lock_fd)
     finally:

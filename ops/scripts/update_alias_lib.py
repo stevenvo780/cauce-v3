@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
 import pathlib
 import re
+import secrets
 import stat
 import sys
 from dataclasses import dataclass
@@ -557,3 +559,78 @@ def write_all(fd: int, body: bytes) -> None:
         if written <= 0:
             raise ConfigUpdateError("no se pudo completar una escritura atomica")
         offset += written
+
+
+def publish_json_document_cas(
+    directory_fd: int,
+    lock_fd: int,
+    filename: str,
+    document: dict[str, object],
+    original: os.stat_result | None, *,
+    mode: int,
+    error_type: type[RuntimeError],
+    operation: str,
+) -> None:
+    """Guarantee CAS between writers using ``.<filename>.lock``.
+
+    The caller supplies its already-open matching lock descriptor. A rename by a writer that does
+    not use that lock is outside this cooperative guarantee.
+    """
+    body = (json.dumps(document, indent=2) + "\n").encode("utf-8")
+    temporary_name = f".{filename}.cas-{os.getpid()}-{secrets.token_hex(8)}"
+    temporary_fd: int | None = None
+    try:
+        temporary_fd = open_regular_at(
+            directory_fd,
+            temporary_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            mode=mode,
+        )
+        if original is not None and os.geteuid() == 0:
+            os.fchown(temporary_fd, original.st_uid, original.st_gid)
+        os.fchmod(temporary_fd, mode)
+        write_all(temporary_fd, body)
+        os.fsync(temporary_fd)
+        os.close(temporary_fd)
+        temporary_fd = None
+
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if original is not None:
+            current_fd = open_regular_at(directory_fd, filename, os.O_RDONLY)
+            try:
+                current = os.fstat(current_fd)
+                if (
+                    not stat.S_ISREG(current.st_mode)
+                    or current.st_nlink != 1
+                    or (os.geteuid() != 0 and current.st_uid != os.geteuid())
+                    or stat.S_IMODE(current.st_mode) != mode
+                ):
+                    raise error_type(
+                        f"{filename} debe ser un fichero regular de un enlace, "
+                        f"del usuario efectivo y modo {mode:04o}"
+                    )
+                if file_identity(current) != file_identity(original):
+                    raise error_type(
+                        f"compare-and-swap fallo: {filename} cambio durante {operation}"
+                    )
+            finally:
+                os.close(current_fd)
+        else:
+            try:
+                os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise error_type(
+                    f"compare-and-swap fallo: {filename} aparecio durante {operation}"
+                )
+
+        os.replace(temporary_name, filename, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        os.fsync(directory_fd)
+    finally:
+        if temporary_fd is not None:
+            os.close(temporary_fd)
+        try:
+            os.unlink(temporary_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
