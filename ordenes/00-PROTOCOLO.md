@@ -1,20 +1,20 @@
-# Protocolo de trabajo — 4 instancias, cero colisiones
+# Protocolo de trabajo en `dev` — 4 instancias, cero colisiones
 
 Lo lee TODA instancia antes de tocar nada. Qué falta y por qué: `docs/roadmap.md`. Procedimientos operativos: `docs/operacion.md` y `ops/runbooks/*.md` (incluye `ops/runbooks/ventana-primer-despliegue.md` para la próxima ventana de despliegue).
 
-## Una sola verdad: `main`, sin ramas
+## Una sola verdad de trabajo: `dev`; `main` es publicación
 
-- **Todo el trabajo va DIRECTO a `main`. Prohibido crear ramas.** Decisión del dueño (27-08): en este repo las ramas fueron el cementerio — el 40% del trabajo se pudrió fuera de main. Si un experimento da miedo en main, se consulta al dueño antes; no se abre una rama "por si acaso".
-- El 27-08 se archivaron y borraron 146 ramas, 134 remotas y 75 worktrees. Todo es recuperable de `/datos/workspaces/zeus/cauce-v3-archivo-completo-20260827.bundle` (`git fetch <bundle> <rama-vieja>:FETCH_HEAD` + cherry-pick) y del tar `/datos/workspaces/zeus/cauce-rescate-worktrees-20260827.tar.gz`. Recrear una rama vieja solo para un cherry-pick puntual, y se borra en el momento.
+- **Todo el trabajo va DIRECTO a `dev`. Prohibido crear ramas de tarea.** `main` representa lo publicado y sólo el dueño puede integrarlo o empujarlo con autorización explícita. Si un experimento da miedo en `dev`, se consulta al dueño antes; no se abre una rama "por si acaso".
+- Las ramas históricas están archivadas. Recrear una sólo para recuperar un commit puntual requiere al dueño y se elimina en el momento; no vuelve a convertirse en carril de trabajo.
 
-## Convivir en main sin pisarse (esto sustituye a las ramas)
+## Convivir en `dev` sin pisarse (esto sustituye a las ramas)
 
-Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3`. Las reglas que evitan el choque:
+Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3` en `dev`. Las reglas que evitan el choque:
 
 1. **Propiedad por sector** (tabla abajo) — es LA protección principal. Prohibido tocar un fichero fuera de tu sector; si tu tarea lo exige, se pide al integrador — no se toca "de paso".
 2. **`git add` solo por rutas propias.** PROHIBIDO `git add -A`, `git add .` y `git commit -a`: barren el trabajo a medias de otra instancia. Se añade fichero a fichero (o por directorio propio).
 3. **Commit pequeño e inmediato** tras el gate: nada de acumular horas de cambios sin commitear en el árbol compartido.
-4. **Gate ANTES de cada commit** que toque código: `main` nunca queda en rojo. Commits que solo tocan `.md` no requieren gate completo.
+4. **Gate ANTES de cada commit** que toque código: `dev` nunca queda en rojo. Commits que solo tocan `.md` no requieren gate completo.
 5. Si `git commit` falla por lock o el árbol cambió bajo tus pies: espera y reintenta; nunca hagas `reset`/`checkout` sobre ficheros que no son tuyos. **PROHIBIDO `git clean`, `git reset --hard` y `git stash` en el checkout compartido** — un clean ya destruyó dos veces ficheros recién creados de otra instancia, y un reset ajeno reescribió la historia local.
 6. **Commitea SIEMPRE con pathspec: `git commit <tus rutas> -m "..."`** — así el commit incluye SOLO tus rutas aunque haya cosas ajenas staged en el índice compartido. `git commit -m` a secas se lleva TODO el índice (ya barrió trabajo ajeno tres veces, una de ellas sin gate). `git diff --cached --stat` antes, para saber qué hay.
 7. **Nunca dejes nada staged sin commitear al terminar tu turno** — un stage huérfano es una mina para el siguiente commit de cualquiera.
@@ -35,7 +35,7 @@ Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3`. La
 
 ## Reglas de todo commit (sin excepción)
 
-1. Gate antes de commit: `pnpm typecheck && pnpm lint && pnpm test:unit` en verde — test:unit es GLOBAL (consola incluida). Los tests se corren como usuario normal, NUNCA como root (runtime-package-smoke valida ownership de ficheros y da falsos rojos bajo root). Esta es la ÚNICA excepción a que la flota corre como root: no cablear guardias anti-root ni chownear el árbol "para corregirlo" fuera de esta regla de los tests.
+1. Gate antes de commit: `pnpm typecheck && pnpm lint && pnpm test:unit` en verde — test:unit es GLOBAL (consola incluida). La flota, el gate y el CI nocturno corren como root. Sólo `pnpm qa:runtime-packaging` exige usuario normal porque valida ownership; no se cablean otras guardias anti-root ni se chownea el árbol para ocultar un rojo.
 2. `git mv` en commits separados de ediciones de contenido. Commits ≤20 ficheros salvo mv mecánico.
 3. Prohibido: comentarios narrativos, fechas o "incidentes" en el código; planes nuevos >100 líneas; declarar "hecho" sin pegar la salida del gate.
 4. Mensajes de commit: qué y por qué en ≤5 líneas, sin épica.
@@ -58,7 +58,7 @@ Todos los harness de la flota los soportan — **úsalos** para agilizar lo para
 
 ## Al terminar cada tarea
 
-1. `git push origin main` — el remoto (GitHub) se mantiene SIEMPRE al día con main; la credencial ya está configurada en el remote. Prohibido pushear cualquier otra ref.
+1. `git push origin dev` y dejar el checkout en `dev`. Prohibido cambiar o publicar `main` sin autorización explícita del dueño.
 2. Reportar en 5 líneas máximo: commits hechos (hashes), gate (pegado), qué quedó fuera y por qué. Sin ensayos.
 
 ## Credenciales de la flota: `ops/private/credentials/` — REGLA DURA

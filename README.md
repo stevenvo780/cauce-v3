@@ -47,6 +47,6 @@ export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si
 | [`docs/adr/`](docs/adr/) | decisiones de diseño aceptadas |
 | [`docs/threat-model.md`](docs/threat-model.md) | amenazas y controles |
 | [`ops/runbooks/`](ops/runbooks/) | procedimientos operativos detallados |
-| [`ordenes/00-PROTOCOLO.md`](ordenes/00-PROTOCOLO.md) | cómo conviven varias instancias en `main` sin pisarse |
+| [`ordenes/00-PROTOCOLO.md`](ordenes/00-PROTOCOLO.md) | cómo conviven varias instancias en `dev` sin pisarse |
 
 Reglas de trabajo completas para agentes de IA: `AGENTS.md` (puntero también desde `CLAUDE.md` y `GEMINI.md`).

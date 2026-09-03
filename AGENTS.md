@@ -2,7 +2,7 @@
 
 Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenClaw) de 4 tenants (Steven, Miguel, Jhon, Isa), con consola web de operador y puente Telegram. PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull* — el adapter de cada agente reclama sus entregas con fencing (`claim_token`+`epoch`). El `dispatcher` no reparte nada: es el segador de reintentos.
 
-**El árbol de este repo ES material de producción.** Prometheus, OTel y postgres montan ficheros directamente desde aquí; `main` está desplegado. No es un entorno de desarrollo aislado.
+**El árbol de este repo ES material de producción.** Prometheus, OTel y postgres montan ficheros directamente desde aquí. `main` es la línea publicada, el último commit desplegado se consulta en `deploy/HISTORIAL.md` y `dev` es el carril de integración. No es un entorno de desarrollo aislado.
 
 ## Dónde está cada cosa
 
@@ -13,7 +13,7 @@ Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Co
 | `docs/operacion.md` | cómo desplegar, dar de alta/baja un agente, diagnosticar, hacer backup |
 | `docs/roadmap.md` | qué falta, priorizado |
 | `docs/flota-y-participantes.md` | máquinas, humanos, los 14 agentes, los 5 escenarios esenciales |
-| `ordenes/00-PROTOCOLO.md` | cómo conviven varias instancias en `main` sin pisarse — LÉELO antes de tocar nada |
+| `ordenes/00-PROTOCOLO.md` | cómo conviven varias instancias en `dev` sin pisarse — LÉELO antes de tocar nada |
 
 Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threat-model.md` (amenazas y controles), `docs/grafo.md` (mapa de dependencias, generado con `pnpm grafo`), `docs/consola.md` (consola web del operador), `docs/telegram.md` (puente Telegram), `docs/adapter-sdk.md` (SDK del consumidor durable), `docs/calidad-y-gates.md` (sistema de calidad y gates).
 
@@ -25,7 +25,7 @@ Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threa
 
 - **Efecto demostrado.** Nada está "hecho" sin pegar la salida del gate; un despliegue no está hecho sin mostrar el efecto real contra el sistema vivo.
 - **Revisor ≠ autor.** Todo sector tiene un dueño de escritura y un revisor distinto (tabla abajo); ninguna instancia se autoaprueba.
-- **Todo en `main`, sin ramas.** Prohibido crear ramas. Convivencia por sector + `git add` solo de rutas propias + commit siempre con pathspec, nunca `-a` ni `add -A`.
+- **Trabajo en `dev`, publicación de `main` por el dueño.** Prohibido crear ramas de tarea. Convivencia por sector + `git add` solo de rutas propias + commit siempre con pathspec, nunca `-a` ni `add -A`. Cambiar o publicar `main` requiere autorización explícita del dueño.
 - **La flota corre como root.** Es el entorno real de esta VPS: no se cablean guardias anti-root ni se chownea para "corregirlo"; el gate y el CI nocturno también corren como root. Única excepción: `pnpm qa:runtime-packaging` valida ownership y exige usuario normal.
 - **GitHub Actions prohibido.** El gate completo corre en el propio host (`cauce-v3-ci-local.timer`), no en un servicio pagado.
 - **Idioma: `.md` en español, código en inglés.** Identificadores y comentarios exportados en inglés; toda la documentación de proyecto en español.
@@ -47,11 +47,11 @@ Gate de todo commit que toque código: `pnpm typecheck && pnpm lint && pnpm test
 
 ## Cómo se trabaja
 
-1. `git pull` antes de empezar; el árbol es compartido en tiempo real por varias instancias.
+1. En `dev`, `git pull --ff-only origin dev` antes de empezar; el árbol es compartido en tiempo real por varias instancias.
 2. Trabaja SOLO en tu sector. `git add` fichero a fichero o por directorio propio — nunca `git add -A` ni `git add .`.
 3. Gate en verde antes de cada commit que toque código (commits solo-`.md` no lo requieren).
 4. `git mv` en commits separados de cualquier edición de contenido. Commits ≤20 ficheros, uno por tarea, e inmediatos: nada de acumular horas sin commitear en el árbol compartido.
 5. Commitea SIEMPRE con pathspec — `git commit <tus rutas> -m "..."` — nunca `git commit -a` ni `-m` a secas: se lleva el índice completo, incluido trabajo ajeno staged.
 6. Nada está "hecho" sin la evidencia pegada: salida real del gate, o el efecto verificado contra el sistema vivo.
 7. Subagentes: úsalos para lo paralelizable, ficheros DISJUNTOS por subagente, tope 4, profundidad 1; solo el proceso principal commitea. Detalle: sección "Subagentes" de `ordenes/00-PROTOCOLO.md`.
-8. Al terminar: `git push origin main`, y reporta en ≤5 líneas (commits, gate, qué quedó fuera).
+8. Al terminar: `git push origin dev`, deja el checkout en `dev` y reporta en ≤5 líneas (commits, gate, qué quedó fuera). Sólo el dueño, con autorización explícita, integra y publica `main`.

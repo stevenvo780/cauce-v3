@@ -1,6 +1,6 @@
 # Cauce V3 — versión 3.1
 
-Qué entrega v3.1, qué hace falta para desplegarla y qué queda en manos del dueño. Las decisiones
+Qué entrega v3.1, cómo se desplegó y qué queda en manos del dueño. Las decisiones
 que la gobiernan están en `docs/v3.1-programa.md` (D1–D12); este documento es la cara de salida:
 lo que cambia para quien opera, despliega o revisa. El detalle de cada cambio vive en los commits
 de `dev` posteriores a la etiqueta `v3.1-snap-base` y en los ADR 007, 008 y 009. Lo que queda
@@ -85,10 +85,10 @@ versión posterior aplicada: las capas por migración son lo que permite bajar u
 La grabación de una TUI contiene lo que el agente tenía en pantalla: material sensible. No hay
 poda: cuánto se guarda y quién lo borra es decisión del dueño (abajo).
 
-## Cómo se despliega (dueño)
+## Cómo se desplegó (dueño)
 
-Sigue `docs/operacion.md §1` y el procedimiento real anotado por el operador; lo específico de
-v3.1, en este orden:
+La secuencia específica de v3.1 fue ésta; `docs/operacion.md §1` conserva el procedimiento vigente
+para despliegues posteriores:
 
 1. Fusionar `dev` en `main`; `package.json` raíz en `3.1.0`.
 2. Construir las imágenes de runtime y consola y aplicar `039`, `040` y `041` en ese orden (el
@@ -107,8 +107,9 @@ v3.1, en este orden:
    `CAUCE_TERMINAL_RECORDING_DIR` y la retención de grabaciones.
 7. Escribir la fila de `deploy/HISTORIAL.md`.
 
-Nada de esto se probó desde este árbol contra producción: el despliegue, `/etc/cauce-v3`, `/opt`,
-la base productiva y las unidades de kratos quedan fuera (D1, programa §«dueño»).
+`deploy/HISTORIAL.md` registra el despliegue de `7f25fd6f` con smoke verde y las correcciones
+posteriores. Ese registro demuestra la ventana ejecutada; no sustituye una nueva validación del
+estado vivo desde este checkout.
 
 ## Cómo se verifica
 
@@ -141,8 +142,8 @@ pnpm qa:layout                                    # maquetado 1080p
   baste?
 - **`ultimate-terminal`.** Apagar el worker legado contenedor a contenedor y renombrar el permiso
   con ventana de convivencia son decisiones fuera del árbol.
-- **`deploy/compose.yaml`.** `terminal-relay` está en `[edge]` y prometheus en `[backend]`: el
-  raspado del relay no puede ocurrir hasta que compartan red. `deploy/` es NO TOCAR.
+- **Raspado del relay.** `6cecfb33` añadió Prometheus a `[backend, edge]`; falta desplegar ese
+  commit y verificar que Prometheus raspa al relay. El código ya decidió la topología.
 - **Auditoría `secret.granted` sin tope** y `pruneSettledHandoffs` sólo en `POST /v3/secrets`:
   anotado en las reseñas del plano de secretos; no cambia el comportamiento pero conviene decidir
   la poda.
