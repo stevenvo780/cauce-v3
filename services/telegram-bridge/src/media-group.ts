@@ -99,21 +99,9 @@ export function splitOwnMembers<Reason>(
 }
 
 /**
- * The one membership rule of an album, applied on both sides of the batch boundary.
- *
- * An album goes up to 10 members and a batch holds MAX_MEDIA_GROUP_MEMBERS, so members 5-N arrive as an IMMEDIATE
- * continuation whose `captionMember` falls back to an UNCAPTIONED member: judged alone it is addressed to nobody and
- * dies as `updates_unaddressed`, the loss this coalescer exists to remove, moved past the batch boundary. ONLY that
- * immediate continuation is covered: one album is held and any unrelated update between the halves clears it.
- *
- * `media_group_id` is NOT an authorization: it arrives in the same unvalidated payload as everything else, so it is
- * never evidence about a neighbour. A member travels under the primary's frame only if it matches this key — chat,
- * user AND thread — and its own live addressing decision either admits it or refuses it for `not_addressed`, the
- * ONE refusal that means "this member wrote nothing of its own" and the only one an uncaptioned member cannot
- * avoid. Thread policy, `sender_chat`, `via_bot`, `from.is_bot` and a caption addressed to another fleet alias
- * therefore judge EVERY member on its own message: inside the batch through `splitOwnMembers`, across it through
- * `recall`, which answers that same forgivable refusal and nothing else. Whatever the rule rejects is audited with
- * its real reason and dropped, never published into a chat, topic or session that never received it.
+ * The one membership rule of an album, applied on both sides of the batch boundary: chat, user AND
+ * thread must match, and the member's own addressing decision must admit it or refuse it only for
+ * `not_addressed`. Full rationale: ./README.md
  */
 export interface AlbumKey {
   readonly id: string | undefined;
@@ -247,14 +235,9 @@ export function batchMembers(batch: readonly TelegramUpdate[]): readonly MediaGr
 }
 
 /**
- * The primary's message carrying EVERY member's caption, in update order, or `undefined` when the join would be
- * truncated and the per-member fallback has to carry the captions whole.
- *
- * The Bot API admits a caption per album item and only the primary's used to be published: the other members' bytes
- * travelled and the instructions written on them did not, with no audit record, no metric and no way for the person
- * to know — and only when the album fit in one message, so whether a sentence reached the agent depended on the
- * aggregate byte budget. Every member here already passed the `AlbumKey` rule, so what is folded is the same chat,
- * the same user and the same topic; nothing else is merged.
+ * The primary's message carrying EVERY member's caption, in update order, or `undefined` when the
+ * join would be truncated and the per-member fallback has to carry the captions whole. Full
+ * rationale: ./README.md
  */
 export function albumMessage(
   members: readonly MediaGroupMember[],

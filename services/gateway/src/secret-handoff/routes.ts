@@ -23,17 +23,10 @@ import {
 } from './store.js';
 
 /**
- * Sealed credential hand-off plane: one agent gives another a credential that the gateway
- * transports without ever being able to read it. The routes live OUTSIDE /v3/console/ like the
- * terminal relay ones: the callers are agents with their own client certificate, not browsers.
- *
- * Four invariants hold every route together:
- *  - identity is the authenticated principal; a body naming the SUBJECT of the call is refused
- *    rather than ignored, so a misuse fails loudly instead of being silently reinterpreted.
- *  - no request or response field can carry a clear value: the secret exists sealed or not at all.
- *  - a stranger gets 404, never 403: an authorization error would confirm the hand-off exists.
- *  - nothing destructive answers a GET, and every mutation commits with its own audit row or with
- *    neither. A consumed hand-off nobody can prove was consumed is the hole this plane avoids.
+ * Sealed credential hand-off plane: agent-to-agent, outside /v3/console/. Identity is always the
+ * authenticated principal, never a body field; no field ever carries a clear value; a stranger gets
+ * 404, never 403; every mutation commits with its own audit row or with neither. Full rationale:
+ * ./README.md
  */
 
 const HANDOFF_ID_KEY = 'id';
@@ -68,12 +61,8 @@ function invalid(message: string): SecretPlaneError {
 }
 
 /**
- * Allowlist, not denylist. Every other plane may answer 400 with whatever text was thrown; here a
- * stranger must learn no fact, so only the errors this plane raises on purpose — plus the
- * authentication and authorization ones, whose text is about the caller and never about the
- * deployment — reach the client. A driver failure, a dead pool or a TypeError all collapse to one
- * opaque 500: a connection error carries the database host and port, and an internal fault is not
- * a client's mistake to be told to stop retrying.
+ * Allowlist, not denylist: only errors this plane raises on purpose (plus auth ones) reach the
+ * client; anything else collapses to one opaque 500. Full rationale: ./README.md
  */
 function replySecretError(reply: FastifyReply, error: unknown): void {
   if (error instanceof SecretPlaneError) {
@@ -134,10 +123,8 @@ function sealedBytes(value: string): Buffer {
 }
 
 /**
- * The 24 hour ceiling is also a database CHECK; refusing here names the field instead of the row.
- * The FLOOR is this plane's own admission policy and lives here for that reason: a hand-off that
- * expires before the recipient can plausibly poll and claim it was never a hand-off, it was a way
- * to write a 64 KiB row that no count of live rows would ever see again.
+ * TTL floor: below it a hand-off could never plausibly be polled and claimed. Full rationale:
+ * ./README.md
  */
 const MIN_HANDOFF_TTL_MS = 30_000;
 
@@ -150,10 +137,7 @@ function handoffExpiry(value: string): Date {
   return expiresAt;
 }
 
-/**
- * The cursor is the ordering key of the last row served, nothing else: it names no hand-off the
- * caller was not already given and carries no state the gateway has to keep.
- */
+/** The cursor is the ordering key of the last row served, nothing else. Full rationale: ./README.md */
 function encodeCursor(row: PendingHandoffRow): string {
   return Buffer.from(`${row.cursor_at}${CURSOR_SEPARATOR}${row.id}`, 'utf8').toString('base64url');
 }
@@ -192,10 +176,7 @@ function handoffPayload(row: HandoffPayloadRow): Record<string, unknown> {
   };
 }
 
-/**
- * A colliding id must not answer with the driver's own words: `duplicate key value violates unique
- * constraint "secret_handoffs_pkey"` is an existence oracle plus free schema disclosure.
- */
+/** A colliding id must not answer with the driver's own words. Full rationale: ./README.md */
 function conflictOnDuplicate(error: unknown): never {
   if (driverErrorCode(error) === UNIQUE_VIOLATION) {
     throw new SecretPlaneError(409, 'conflict', 'that hand-off id is already taken');
@@ -230,11 +211,8 @@ export async function registerSecretHandoffPlane(
   }
 
   /**
-   * A refusal is written by the request that caused it, so the flood that the ceiling refuses must
-   * not become a flood of audit rows. The window belongs to the authenticated SENDER and to
-   * nothing the request names — a body that cycles the recipient must cost the same handful of
-   * rows as one that repeats it. `denials_in_window` says how many refusals the row stands for;
-   * the ladder that decides which ones are written lives in audit.ts.
+   * The window belongs to the authenticated SENDER, never a request-chosen field. Full rationale:
+   * ./README.md
    */
   async function auditDenial(
     database: DatabasePool | DatabaseClient,
@@ -251,20 +229,9 @@ export async function registerSecretHandoffPlane(
   }
 
   /**
-   * An agent publishes its OWN public half. The subject is the authenticated principal and the
-   * body may not name anybody: publishing a key for another alias would let the publisher become
-   * the addressee of every future hand-off aimed at that alias.
-   *
-   * `read` is the permission because this is the RECIPIENT half of the plane, the same authority
-   * that lists and claims hand-offs: an alias that may not receive one has no business advertising
-   * the key others would seal to. `route` is the sender half and does not belong here — it would
-   * let an agent that can only send make itself addressable.
-   *
-   * Only a publication that CHANGES what the alias advertises is audited: a new `key_id`, or new
-   * bytes. Moving `not_after` on the key already published is a touch, not an event, and auditing
-   * it wrote 17363 permanent rows in 10 s from one row, measured. The row carries the `key_id` and
-   * a fingerprint, never the bytes. Creating identities is bounded per alias for the same reason:
-   * `key_id` is the caller's to choose and each new one is a durable row plus a durable audit row.
+   * An agent publishes its OWN public half; the body may not name anybody else. `read` gates it,
+   * not `route`: this is the RECIPIENT half of the plane. Only a publication that CHANGES what the
+   * alias advertises is audited. Full rationale: ./README.md
    */
   app.post('/v3/sealing-keys', async (request, reply) => {
     try {
@@ -321,10 +288,8 @@ export async function registerSecretHandoffPlane(
   });
 
   /**
-   * The public half a sender must seal against. Without this route the plane cannot be used at
-   * all: `agent_sealing_keys.public_key` would be write-only and no sender could ever address a
-   * recipient. It is gated by the same routing authority as the grant — an alias only learns the
-   * key of somebody it is already allowed to hand a secret to.
+   * The public half a sender must seal against, gated by the same routing authority as the grant.
+   * Full rationale: ./README.md
    */
   app.get('/v3/sealing-keys/:tenant/:alias', async (request, reply) => {
     try {
@@ -355,15 +320,8 @@ export async function registerSecretHandoffPlane(
   });
 
   /**
-   * The sender seals in its own process and posts bytes this gateway cannot open.
-   *
-   * `id` is chosen by the SENDER because the sealing AAD binds it: the blob is cryptographically
-   * tied to the hand-off it belongs to, so the id has to exist before the sealing does. It is an
-   * opaque handle, not an identity claim — the identity half still comes from the principal, and a
-   * colliding id is rejected by the primary key instead of overwriting anything.
-   *
-   * The row, the retention sweep and the `secret.granted` audit commit together: a hand-off that
-   * exists without its audit row would be a claimable credential nobody knows was granted.
+   * The sender seals in its own process and posts bytes this gateway cannot open. `id` is chosen by
+   * the SENDER because the sealing AAD binds it. Full rationale: ./README.md
    */
   app.post('/v3/secrets', async (request, reply) => {
     try {
@@ -380,9 +338,7 @@ export async function registerSecretHandoffPlane(
         sealing_key_id: handoff.sealing_key_id,
         handoff_id_sha256: handoffDigest(id),
       };
-      // The envelope is decided FIRST, in this process and against no table: a body this plane
-      // would refuse anyway must not buy a routing query, and it must not buy the audit row that
-      // a refusal writes. Whether the recipient exists is asked only of a request worth asking of.
+      // Envelope decided FIRST, against no table: a refused body must not buy a routing query.
       const sealed = sealedBytes(handoff.sealed);
       const expiresAt = handoffExpiry(handoff.expires_at);
       const ephemeralPublic = requiredBytes(
@@ -403,8 +359,7 @@ export async function registerSecretHandoffPlane(
         );
       }
       const inserted = await withTransaction(pool, async (client) => {
-        // Swept BEFORE the ceiling counts: the recipient at the ceiling is precisely the one whose
-        // settled debris is holding the slots, and a refusal that returns early never sweeps it.
+        // Swept BEFORE the ceiling counts. Full rationale: ./README.md
         await pruneSettledHandoffs(client);
         const accepted = await insertHandoff(client, {
           id,
@@ -426,8 +381,7 @@ export async function registerSecretHandoffPlane(
         return true;
       });
       if (!inserted) {
-        // Audited OUTSIDE the transaction on purpose: the refusal has nothing to commit with, and
-        // a deny row rolled back with the grant it refused is a flood nobody can see afterwards.
+        // Audited OUTSIDE the transaction on purpose: the refusal has nothing to commit with.
         await auditDenial(pool, actor, 'recipient_handoff_ceiling', facts);
         throw new SecretPlaneError(
           429, 'too_many_handoffs',
@@ -447,9 +401,8 @@ export async function registerSecretHandoffPlane(
   });
 
   /**
-   * What is waiting for the caller. Names them; carries none of them, and never more than one
-   * page: the senders decide how many hand-offs exist, so the response size cannot be theirs to
-   * decide either. `next_cursor` is null when the page is the last one.
+   * What is waiting for the caller: names each one, carries none. `next_cursor` is null on the
+   * last page. Full rationale: ./README.md
    */
   app.get('/v3/secrets', async (request, reply) => {
     try {
@@ -468,15 +421,9 @@ export async function registerSecretHandoffPlane(
   });
 
   /**
-   * The recipient reads once, and only through a POST. The claim destroys what it returns, so it
-   * may never hang off a GET: a prefetch, a link preview, a monitoring probe, a retry or an
-   * `<img src>` on an attacker page would burn the secret with no recovery and no way to tell it
-   * apart from a legitimate read. As a POST both CSRF hooks of this gateway treat it as unsafe,
-   * and a console-channel principal is refused outright: this hand-off is between agents, and a
-   * browser session is exactly the credential a cross-site request can borrow.
-   *
-   * Anybody else gets 404 — a 403 would confirm the hand-off exists to somebody with no relation
-   * to it. Claim and audit row commit together.
+   * The recipient reads once, only through a POST: the claim destroys what it returns, so it must
+   * never hang off a GET. A console-channel principal is refused outright. Full rationale:
+   * ./README.md
    */
   app.post('/v3/secrets/:id/claim', async (request, reply) => {
     try {
@@ -517,13 +464,9 @@ export async function registerSecretHandoffPlane(
   });
 
   /**
-   * The sender withdraws what it gave, and only while there is something to withdraw: a hand-off
-   * already read is gone, and answering 204 there would write `secret.revoked` after `secret.read`
-   * and leave a trail claiming a delivered credential had been taken back.
-   *
-   * An operator with `control` may also withdraw, but only over an edge that touches its own
-   * tenant: `control` is not a licence over other people's tenants. Everybody else needs `route`,
-   * the same permission that let them create the hand-off.
+   * The sender withdraws what it gave, only while there is something to withdraw: an already-read
+   * hand-off cannot be revoked. An operator's `control` is confined to its own tenant. Full
+   * rationale: ./README.md
    */
   app.delete('/v3/secrets/:id', async (request, reply) => {
     try {

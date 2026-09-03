@@ -2,13 +2,8 @@ import { createHash } from 'node:crypto';
 import type { DatabaseClient, DatabasePool } from '@cauce/store';
 
 /**
- * Audit trail of the sealed hand-off plane. Writes straight through the pool for the reason
- * services/gateway/src/terminal/audit.ts documents. Its action union is its own: widening
- * `TerminalAuditAction` would let a terminal query match a credential row.
- *
- * NEVER record a secret or the sealed bytes. Of the ciphertext only its sha256 truncated to 16 hex
- * characters is durable: enough to tie a `secret.read` row to its `secret.granted` row, useless
- * for anything else.
+ * Audit trail of the sealed hand-off plane. NEVER record a secret or the sealed bytes; only the
+ * sha256 (16 hex) of the ciphertext is durable. Full rationale: ./README.md
  */
 
 export type SecretAuditAction =
@@ -61,27 +56,9 @@ export function secretAuditMetadata(facts: SecretAuditFacts): Record<string, unk
 }
 
 /**
- * Rate limit of the DENIAL rows, and of nothing else. A refusal is written by the very request the
- * flooder controls, so an unthrottled `secret.denied` turns a flood the ceiling already refused
- * into a SECOND unbounded write, into the table the console reads: 4071 rows in 40 s, measured.
- * `audit_events` has no retention sweep for these rows, so what is not bounded here is permanent.
- *
- * A window is opened by the SENDER — tenant, alias and channel of the authenticated principal —
- * and by nothing a request can choose. Keying it on the edge instead let a flooder cycle the
- * recipient NAME and open a fresh window per request: 24046 rows in 20 s against the 16 the same
- * flood writes at a fixed name, measured. A bound the caller can step around is not a bound.
- *
- * A doubling ladder rather than one row per window: a single row per window makes the size of the
- * flood invisible until the window rolls, and the number an auditor needs is the one visible WHILE
- * it happens. The 1st, 2nd, 4th, 8th … refusal of a window is written, each carrying its running
- * count, so four thousand refusals become thirteen rows that already say how big it is getting.
- *
- * One sender's refusals share that count whatever they were refused FOR, so the first refusal of
- * each distinct reason is written as well, up to a cap: a ceiling flood must not be able to bury
- * the one routing refusal underneath it. A sender therefore costs at most a ladder plus a handful
- * of first-of-a-kind rows per window, and the map holds 512 senders — the oldest window goes when
- * it is full, and an evicted sender just opens a new one. The ladder degrades into MORE rows,
- * never into fewer facts: losing a refusal is not a trade this plane makes to save a row.
+ * Rate limit of the DENIAL rows only, keyed on the SENDER (tenant+alias+channel) and never on a
+ * request-chosen field, via a doubling ladder capped at MAX_DENIAL_REASONS_PER_WINDOW first-of-kind
+ * reasons and MAX_TRACKED_SENDERS senders. Full rationale: ./README.md
  */
 const DENIAL_WINDOW_MS = 60_000;
 const MAX_TRACKED_SENDERS = 512;
@@ -139,11 +116,7 @@ export function shortDigest(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex').slice(0, 16);
 }
 
-/**
- * Every row about one hand-off carries this, denials included. Without it a `secret.denied` on the
- * claim path names no hand-off at all and an auditor cannot tell which one was refused; the digest
- * correlates the rows without writing an id that also addresses the claim route.
- */
+/** Every row about one hand-off carries this, denials included. Full rationale: ./README.md */
 export function handoffDigest(id: string): string {
   return shortDigest(Buffer.from(id, 'utf8'));
 }

@@ -24,11 +24,8 @@ async function isApplied(pool: DatabasePool): Promise<boolean> {
 }
 
 /**
- * Every `down/` from 031 onwards refuses to run while a later migration is recorded, so a suite
- * that reverts its own migration has to peel the sealed hand-off layer off first. This helper
- * covers 039 and only 039: each migration above 031 brings its own layer file, and a suite peels
- * them newest-first by calling one per layer. Adding a migration means adding its file here and
- * a call in every suite that reverts below it.
+ * Peels only migration 039. Adding a migration means adding its own layer file plus a call here
+ * in every suite that reverts below it.
  */
 export async function removeSecretHandoffLayer(pool: DatabasePool): Promise<void> {
   if (!await isApplied(pool)) return;
