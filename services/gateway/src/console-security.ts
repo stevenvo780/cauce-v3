@@ -22,6 +22,11 @@ function ownOrigin(request: FastifyRequest): string | undefined {
   return normalizedOrigin(`${request.protocol}://${host}`);
 }
 
+function certifiedCallerWithoutCookie(request: FastifyRequest): boolean {
+  const { socket } = request.raw;
+  return 'authorized' in socket && socket.authorized === true && request.headers.cookie === undefined;
+}
+
 export function createConsoleSecurityHook(options: ConsoleSecurityOptions = {}) {
   const configured = new Set((options.allowedOrigins ?? []).map(normalizedOrigin).filter((item): item is string => item !== undefined));
   if (configured.size !== (options.allowedOrigins ?? []).length) throw new Error('console origins must be exact URL origins');
@@ -46,7 +51,7 @@ export function createConsoleSecurityHook(options: ConsoleSecurityOptions = {}) 
       return;
     }
     const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(request.method);
-    if (unsafe && (origin === undefined || !allowed.has(origin))) {
+    if (unsafe && !certifiedCallerWithoutCookie(request) && (origin === undefined || !allowed.has(origin))) {
       await reply.code(403).send({ error: 'forbidden', message: 'same-origin Origin is required for console mutations' });
       return;
     }
