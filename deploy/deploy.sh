@@ -65,11 +65,14 @@ sed -i "s|^CAUCE_CONSOLE_IMAGE=.*|CAUCE_CONSOLE_IMAGE=$CONSOLE_DIGEST|" "$ENV_FI
 
 confirmar "¿Migrar hasta $LAST_MIGRATION (bundle de packages/store/migrations, una transaccion) y desplegar $REV?" || die "abortado por el dueño"
 
-# B1 re-checked at the last instant: any terminal ticket issued meanwhile would abort schema 034.
+# B1 re-checked at the last instant, only while schema 034 is still pending: once applied, open TUIs are normal.
 PG_CONTAINER="$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$ENV_FILE" | tail -1)-postgres-1"
 PG_USER="$(sed -n 's/^POSTGRES_USER=//p' "$ENV_FILE" | tail -1)"; PG_DB="$(sed -n 's/^POSTGRES_DB=//p' "$ENV_FILE" | tail -1)"
-fantasmas="$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAc "SELECT count(*) FROM terminal_sessions WHERE closed_at IS NULL AND revoked_at IS NULL")"
-[ "$fantasmas" = "0" ] || die "hay $fantasmas sesiones de terminal sin anclar: la 034 abortaria (dossier B1: repite el UPDATE y reintenta)"
+aplicada_034="$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAc "SELECT count(*) FROM schema_migrations WHERE version LIKE '034_%'" 2>/dev/null || echo 0)"
+if [ "$aplicada_034" = "0" ]; then
+  fantasmas="$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAc "SELECT count(*) FROM terminal_sessions WHERE closed_at IS NULL AND revoked_at IS NULL")"
+  [ "$fantasmas" = "0" ] || die "hay $fantasmas sesiones de terminal sin anclar: la 034 abortaria (dossier B1: repite el UPDATE y reintenta)"
+fi
 "${COMPOSE[@]}" run --rm -T migrator || die "migracion fallida (rollback automatico en BD, sigue en la version previa); pero $ENV_FILE YA apunta a los digests nuevos (runtime=$RUNTIME_DIGEST console=$CONSOLE_DIGEST) y no se levanto ningun contenedor con ellos. Restaura antes de reintentar: cp -a $ENV_FILE.pre-deploy-$STAMP $ENV_FILE"
 "${COMPOSE[@]}" up -d --wait --wait-timeout 300 --remove-orphans || die "up fallo; para volver: restaurar $ENV_FILE.pre-deploy-$STAMP y repetir up"
 "$REPO/deploy/smoke.sh" || die "SMOKE ROJO: evalua rollback (restaurar $ENV_FILE.pre-deploy-$STAMP + up -d --wait). La BD ya esta en $LAST_MIGRATION."
