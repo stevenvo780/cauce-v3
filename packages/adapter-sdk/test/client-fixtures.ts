@@ -7,11 +7,26 @@ import {HarnessAdapter, fakeDefinition} from '../src/harnesses/index.js';
 import {systemClock} from '../src/sdk/backoff.js';
 import {AdapterClient} from '../src/sdk/client.js';
 import {DurableStore} from '../src/sdk/durable-store.js';
-import type {AdapterLogger, BackoffConfig, ClientFrame, Clock, CommandRunRequest, CommandRunResult, CommandRunner, ConsumerConnection, ConsumerConnector, HarnessDefinition, ServerFrame} from '../src/sdk/types.js';
+import type {AdapterLogger, BackoffConfig, ClientFrame, Clock, CommandRunRequest, CommandRunResult, CommandRunner, ConsumerConnection, ConsumerConnector, HarnessDefinition, ServerFrame, TimerHandle, TimerOptions} from '../src/sdk/types.js';
 import { testStateRoot } from "./test-state.js";
 export type HelloAgentProfile = NonNullable<Extract<ServerFrame, { type: "hello_ack" }>["agent_profile"]>;
 
 export const root = testStateRoot();
+
+const rawTimeScale = Number(process.env.CAUCE_TEST_TIME_SCALE ?? 1);
+export const TEST_TIME_SCALE = Number.isFinite(rawTimeScale) && rawTimeScale > 0 ? rawTimeScale : 1;
+
+export function escala(ms: number): number {
+  return Math.round(ms * TEST_TIME_SCALE);
+}
+
+export const CLAIM_DEADLINE_MS = escala(30_000);
+export const HARNESS_TIMEOUT_MS = escala(60_000);
+export const LEASE_MS = escala(30_000);
+
+export function claimDeadline(): number {
+  return Date.now() + CLAIM_DEADLINE_MS;
+}
 
 export class NoopRunner implements CommandRunner {
   async run(_request: CommandRunRequest): Promise<CommandRunResult> {
@@ -115,7 +130,7 @@ export class FakeConnection implements ConsumerConnection {
     this.sent.push(frame);
     if (frame.type === "hello") this.push({
       type: "hello_ack", version: "3.0", epoch: this.welcomeEpoch,
-      lease_expires_at: new Date(Date.now() + 30_000).toISOString(),
+      lease_expires_at: new Date(Date.now() + LEASE_MS).toISOString(),
       ...(this.agentProfile === undefined ? {} : { agent_profile: this.agentProfile }),
     });
     if (frame.type === "ack" && frame.execution_started === true && this.autoConfirmExecutionIntent) {
@@ -202,7 +217,7 @@ export class ClosingConnection extends FakeConnection {
     if (this.withHeartbeatAck) {
       this.push({
         type: "heartbeat_ack",
-        lease_expires_at: new Date(Date.now() + 30_000).toISOString(),
+        lease_expires_at: new Date(Date.now() + LEASE_MS).toISOString(),
       });
     }
     this.end();
@@ -233,6 +248,105 @@ export class ReconnectDelayClock implements Clock {
     if (ms === this.heartbeatMs) return systemClock.sleep(ms, signal);
     this.delays.push(ms);
     return systemClock.sleep(1, signal);
+  }
+
+  setTimer(fn: () => void, ms: number, options?: TimerOptions): TimerHandle {
+    return systemClock.setTimer(fn, ms, options);
+  }
+
+  setRepeating(fn: () => void, ms: number, options?: TimerOptions): TimerHandle {
+    return systemClock.setRepeating(fn, ms, options);
+  }
+
+  clearTimer(handle: TimerHandle): void {
+    systemClock.clearTimer(handle);
+  }
+}
+
+export interface ScheduledTimer {
+  readonly ms: number;
+  readonly repeating: boolean;
+  readonly options: TimerOptions | undefined;
+}
+
+interface PendingTimer {
+  readonly fn: () => void;
+  readonly ms: number;
+  readonly repeating: boolean;
+}
+
+export class ManualTimerClock implements Clock {
+  readonly history: ScheduledTimer[] = [];
+  private readonly pending = new Map<number, PendingTimer>();
+  private nextId = 0;
+
+  now(): Date {
+    return new Date();
+  }
+
+  sleep(ms: number, signal: AbortSignal): Promise<void> {
+    return systemClock.sleep(ms, signal);
+  }
+
+  setTimer(fn: () => void, ms: number, options?: TimerOptions): TimerHandle {
+    return this.schedule(fn, ms, false, options);
+  }
+
+  setRepeating(fn: () => void, ms: number, options?: TimerOptions): TimerHandle {
+    return this.schedule(fn, ms, true, options);
+  }
+
+  clearTimer(handle: TimerHandle): void {
+    handle.cancel();
+  }
+
+  scheduledAt(ms: number): number {
+    return this.scheduledIds(ms).length;
+  }
+
+  scheduledIds(ms: number): readonly number[] {
+    return [...this.pending].filter(([, entry]) => entry.ms === ms).map(([id]) => id);
+  }
+
+  keepAlive(): readonly ScheduledTimer[] {
+    return this.history.filter((entry) => entry.options?.keepProcessAlive === true);
+  }
+
+  fire(ms: number): number { // a one-shot entry is gone once it fires; a repeating one stays armed
+    const due = [...this.pending].filter(([, entry]) => entry.ms === ms);
+    for (const [id, entry] of due) if (!entry.repeating) this.pending.delete(id);
+    for (const [, entry] of due) entry.fn();
+    return due.length;
+  }
+
+  private schedule(fn: () => void, ms: number, repeating: boolean, options: TimerOptions | undefined): TimerHandle {
+    const id = this.nextId++;
+    this.pending.set(id, { fn, ms, repeating });
+    this.history.push({ ms, repeating, options });
+    return { cancel: () => { this.pending.delete(id); } };
+  }
+}
+
+export class ImmediateTimerClock implements Clock { // fires a non-positive delay in the arming tick
+  now(): Date {
+    return new Date();
+  }
+
+  sleep(ms: number, signal: AbortSignal): Promise<void> {
+    return systemClock.sleep(ms, signal);
+  }
+
+  setTimer(fn: () => void, ms: number): TimerHandle {
+    if (ms <= 0) fn();
+    return { cancel: () => undefined };
+  }
+
+  setRepeating(_fn: () => void, _ms: number): TimerHandle {
+    return { cancel: () => undefined };
+  }
+
+  clearTimer(handle: TimerHandle): void {
+    handle.cancel();
   }
 }
 
@@ -313,13 +427,21 @@ export async function makeClient(
   };
 }
 
-export async function waitUntil(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+export async function waitUntil( // the label is what a starved run reports, not the predicate source
+  predicate: () => boolean,
+  timeoutOrLabel?: number | string,
+  label?: string,
+): Promise<void> {
+  const timeoutMs = typeof timeoutOrLabel === "number" ? timeoutOrLabel : escala(5_000);
+  const named = typeof timeoutOrLabel === "string" ? timeoutOrLabel : label;
   const startedAt = Date.now();
   const deadline = startedAt + timeoutMs;
   while (!predicate()) {
     if (Date.now() > deadline) {
       const elapsed = Date.now() - startedAt;
-      throw new Error(`condition timeout after ${String(elapsed)}ms: ${predicate.toString()}`);
+      throw new Error(
+        `condition timeout after ${String(elapsed)}ms: ${named ?? predicate.toString()}`,
+      );
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 2));
   }
@@ -329,8 +451,10 @@ export function renewableDelivery(
   name: string,
   suffix: string,
   ackDeadlineAt: number,
+  origin?: Extract<ServerFrame, { type: "delivery" }>["origin"],
 ): Extract<ServerFrame, { type: "delivery" }> {
   return {
+    ...(origin === undefined ? {} : { origin }),
     type: "delivery",
     version: "3.0",
     event_id: `30000000-0000-4000-8000-${suffix}`,
@@ -346,7 +470,7 @@ export function renewableDelivery(
     room_id: "grp.steven",
     actor_alias: "kant",
     recipient_alias: `agent_${name.replaceAll("-", "_")}`,
-    body: { prompt: "block while the renewable claim is valid", timeout_ms: 60_000 },
+    body: { prompt: "block while the renewable claim is valid", timeout_ms: HARNESS_TIMEOUT_MS },
   };
 }
 

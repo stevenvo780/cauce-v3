@@ -1,4 +1,4 @@
-import type { BackoffConfig, Clock } from "./types.js";
+import type { BackoffConfig, Clock, TimerHandle, TimerOptions } from "./types.js";
 
 export const DEFAULT_BACKOFF: BackoffConfig = {
   initialMs: 250,
@@ -43,6 +43,17 @@ function abortError(signal: AbortSignal): Error {
     : new Error("Aborted", { cause: signal.reason });
 }
 
+/**
+ * Every adapter timer is unref'd unless the caller asks otherwise: a referenced watchdog or
+ * renewal timer keeps the adapter process alive after shutdown, still holding its claim.
+ * `keepProcessAlive` is for the timer whose expiry IS the work, such as the queue-wait budget.
+ * Cancelling a handle more than once is a no-op.
+ */
+function scheduled(timer: NodeJS.Timeout, options: TimerOptions | undefined): TimerHandle {
+  if (options?.keepProcessAlive !== true) timer.unref();
+  return { cancel: () => { clearTimeout(timer); } };
+}
+
 export const systemClock: Clock = {
   now: () => new Date(),
   sleep: (ms, signal) =>
@@ -61,4 +72,7 @@ export const systemClock: Clock = {
         { once: true },
       );
     }),
+  setTimer: (fn, ms, options) => scheduled(setTimeout(fn, ms), options),
+  setRepeating: (fn, ms, options) => scheduled(setInterval(fn, ms), options),
+  clearTimer: (handle) => { handle.cancel(); },
 };

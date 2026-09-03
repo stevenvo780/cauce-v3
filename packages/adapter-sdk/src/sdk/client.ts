@@ -21,6 +21,7 @@ import type {
   DeliveryEvent,
   HeartbeatFrame,
   ServerFrame,
+  TimerHandle,
 } from './types.js';
 
 interface AdapterClientOptions {
@@ -470,7 +471,7 @@ export class AdapterClient {
     }
 
     let settled = false;
-    const timerRef: { current?: NodeJS.Timeout } = {};
+    const timerRef: { current?: TimerHandle } = {};
     let resolveConfirmation!: () => void;
     let rejectConfirmation!: (error: AdapterError) => void;
     const confirmation = new Promise<void>((resolveWait, rejectWait) => {
@@ -478,7 +479,7 @@ export class AdapterClient {
       rejectConfirmation = rejectWait;
     });
     const cleanup = (): void => {
-      if (timerRef.current !== undefined) clearTimeout(timerRef.current);
+      if (timerRef.current !== undefined) this.clock.clearTimer(timerRef.current);
       signal.removeEventListener('abort', onAbort);
       const current = this.executionIntentWaiters.get(event.event_id);
       if (current === waiter) this.executionIntentWaiters.delete(event.event_id);
@@ -509,14 +510,13 @@ export class AdapterClient {
     };
     this.executionIntentWaiters.set(event.event_id, waiter);
     signal.addEventListener('abort', onAbort, { once: true });
-    timerRef.current = setTimeout(() => {
+    timerRef.current = this.clock.setTimer(() => {
       reject(new AdapterError(
         'EXECUTION_INTENT_CONFIRMATION_FAILED',
         'Gateway did not confirm execution intent before the ownership deadline',
         true,
       ));
     }, timeoutMs);
-    timerRef.current.unref();
 
     try {
       await Promise.all([
@@ -565,17 +565,16 @@ export class AdapterClient {
           true,
         );
       }
-      let timer: NodeJS.Timeout | undefined;
+      let timer: TimerHandle | undefined;
       let onAbort: (() => void) | undefined;
       const timedOut = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
+        timer = this.clock.setTimer(() => {
           reject(new AdapterError(
             'EXECUTION_INTENT_CONFIRMATION_FAILED',
             'Execution intent send exceeded the ownership deadline',
             true,
           ));
         }, remainingMs);
-        timer.unref();
       });
       const aborted = new Promise<never>((_resolve, reject) => {
         onAbort = () => {
@@ -592,7 +591,7 @@ export class AdapterClient {
         void connection.close().catch(() => undefined);
         throw error;
       } finally {
-        if (timer !== undefined) clearTimeout(timer);
+        if (timer !== undefined) this.clock.clearTimer(timer);
         if (onAbort !== undefined) deadline.signal.removeEventListener('abort', onAbort);
       }
     });

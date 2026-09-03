@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {DurableStore} from '../src/sdk/durable-store.js';
 import type {AdapterLog, DeliveryEvent} from '../src/sdk/types.js';
-import {CountingRunner, FakeConnection, RejectingConnection, ScriptedConnector, SequenceConnector, makeClient, renewableDelivery, waitUntil} from './client-fixtures.js';
+import {CountingRunner, FakeConnection, RejectingConnection, ScriptedConnector, SequenceConnector, claimDeadline, escala, makeClient, renewableDelivery, waitUntil} from './client-fixtures.js';
 test("pending durable outbox is replayed after hello_ack", async () => {
   const connection = new FakeConnection(1);
   const connector = new ScriptedConnector(connection);
@@ -20,7 +20,7 @@ test("pending durable outbox is replayed after hello_ack", async () => {
   await context.store.enqueue(event);
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
-  await waitUntil(() => connection.sent.some((frame) => frame.type === "ack"));
+  await waitUntil(() => connection.sent.some((frame) => frame.type === "ack"), "the replayed outbox ACK on the wire");
   const ack = connection.sent.find((frame) => frame.type === "ack");
   assert.ok(ack, "no se envió ningún ACK");
   assert.equal(ack.event_id, event.event_id);
@@ -51,7 +51,7 @@ test("structured adapter errors are propagated on the ACK without changing retry
   await context.store.enqueue(event);
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
-  await waitUntil(() => connection.sent.some((frame) => frame.type === "ack"));
+  await waitUntil(() => connection.sent.some((frame) => frame.type === "ack"), "the ACK carrying the structured error");
   const ack = connection.sent.find((frame) => frame.type === "ack");
   assert.ok(ack, "no se envió ningún ACK");
   assert.equal(ack.error_code, event.error?.code);
@@ -84,7 +84,7 @@ test("ack_result removes only its exact event correlation, independent of order"
   await context.store.enqueue(second);
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
-  await waitUntil(() => connection.sent.filter((frame) => frame.type === "ack").length === 2);
+  await waitUntil(() => connection.sent.filter((frame) => frame.type === "ack").length === 2, "both outbox ACKs on the wire");
 
   connection.push({
     type: "ack_result",
@@ -95,7 +95,7 @@ test("ack_result removes only its exact event correlation, independent of order"
     status: "accepted",
     applied: true,
   });
-  await waitUntil(() => context.store.pendingEvents().length === 1);
+  await waitUntil(() => context.store.pendingEvents().length === 1, "the second ACK drained by its exact receipt");
   assert.equal(context.store.pendingEvents()[0]?.event_id, first.event_id);
 
   connection.push({
@@ -107,7 +107,7 @@ test("ack_result removes only its exact event correlation, independent of order"
     status: "retry",
     applied: false,
   });
-  await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  await new Promise((resolveWait) => setTimeout(resolveWait, escala(10)));
   assert.equal(context.store.pendingEvents()[0]?.event_id, first.event_id);
 
   connection.push({
@@ -119,7 +119,7 @@ test("ack_result removes only its exact event correlation, independent of order"
     status: "retry",
     applied: true,
   });
-  await waitUntil(() => context.store.pendingEvents().length === 0);
+  await waitUntil(() => context.store.pendingEvents().length === 0, "the first ACK drained by its exact receipt");
   stop.abort();
   await running;
 });
@@ -128,7 +128,7 @@ test("terminal ack_result persists exact delegation feedback atomically without 
   const connection = new FakeConnection(1);
   const context = await makeClient("ack-delegation-feedback", new ScriptedConnector(connection));
   await context.store.activateEpoch(1);
-  const input = renewableDelivery("ack-delegation-feedback", "000000000077", Date.now() + 30_000);
+  const input = renewableDelivery("ack-delegation-feedback", "000000000077", claimDeadline());
   const accepted = await context.store.acceptAndEnqueue(input, new Date().toISOString());
   assert.ok(accepted.event);
   const output = {
@@ -151,7 +151,7 @@ test("terminal ack_result persists exact delegation feedback atomically without 
   );
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
-  await waitUntil(() => connection.sent.filter((frame) => frame.type === "ack").length === 2);
+  await waitUntil(() => connection.sent.filter((frame) => frame.type === "ack").length === 2, "the accepted and done ACKs on the wire");
 
   const materializations = [{
     output_index: 0,
@@ -185,7 +185,7 @@ test("terminal ack_result persists exact delegation feedback atomically without 
   });
   await waitUntil(() => !context.store.pendingEvents().some(
     (event) => event.event_id === done.event.event_id,
-  ));
+  ), "the terminal ACK drained with its delegation feedback");
   assert.deepEqual(
     context.store.pendingEvents().map((event) => event.event_id),
     [accepted.event.event_id],
@@ -216,7 +216,7 @@ test("an inconclusive terminal result stays durable and ownership_lost releases 
   const input = renewableDelivery(
     "terminal-replay-ownership",
     "000000000079",
-    Date.now() + 30_000,
+    claimDeadline(),
   );
   const accepted = await context.store.acceptAndEnqueue(input, new Date().toISOString());
   assert.ok(accepted.event);
@@ -243,7 +243,7 @@ test("an inconclusive terminal result stays durable and ownership_lost releases 
   try {
     await waitUntil(() => connection.sent.some(
       (frame) => frame.type === "ack" && frame.event_id === done.event.event_id,
-    ));
+    ), "the replayed terminal ACK on the wire");
     connection.push({
       type: "ack_result",
       event_id: done.event.event_id,
@@ -253,7 +253,7 @@ test("an inconclusive terminal result stays durable and ownership_lost releases 
       status: "done",
       applied: false,
     });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    await new Promise((resolveWait) => setTimeout(resolveWait, escala(20)));
     assert.equal(
       context.store.pendingEvents().some((event) => event.event_id === done.event.event_id),
       true,
@@ -272,7 +272,7 @@ test("an inconclusive terminal result stays durable and ownership_lost releases 
     });
     await waitUntil(() => !context.store.pendingEvents().some(
       (event) => event.event_id === done.event.event_id,
-    ));
+    ), "the terminal ACK released by the ownership_lost receipt");
     assert.deepEqual(context.store.getDelivery(input.delivery_id)?.error, {
       code: "TERMINAL_ACK_OWNERSHIP_LOST",
       message: "The durable relay rejected this terminal result because claim ownership was lost",
@@ -284,16 +284,16 @@ test("an inconclusive terminal result stays durable and ownership_lost releases 
       event_id: "30000000-0000-4000-8000-000000000080",
       attempt: 2,
       claim_token: "40000000-0000-4000-8000-000000000080",
-      ack_deadline_at: new Date(Date.now() + 30_000).toISOString(),
+      ack_deadline_at: new Date(claimDeadline()).toISOString(),
     };
     connection.push(retry);
-    await waitUntil(() => runner.calls === 1);
+    await waitUntil(() => runner.calls === 1, "the second attempt invoking the harness");
     await waitUntil(() => connection.sent.some(
       (frame) => frame.type === "ack"
         && frame.delivery_id === retry.delivery_id
         && frame.attempt === 2
         && frame.status === "done",
-    ));
+    ), "the done ACK of the second attempt");
     assert.equal(context.store.getDelivery(input.delivery_id)?.attempt, 2);
     assert.equal(context.store.getDelivery(input.delivery_id)?.state, "done");
   } finally {
@@ -341,7 +341,7 @@ test("un marco que el transporte rechaza en local se pone en cuarentena y no tir
   try {
     await waitUntil(() => first.sent.some(
       (frame) => frame.type === "ack" && frame.event_id === healthy.event_id,
-    ));
+    ), "the healthy ACK sent past the quarantined one");
     assert.deepEqual(first.refused, [poison.event_id]);
     assert.equal(connector.calls, 1, "el marco inválido volvió a costar la conexión");
     assert.deepEqual(errors, ["OUTBOX_ENTRY_QUARANTINED"]);
@@ -361,7 +361,7 @@ test("un marco que el transporte rechaza en local se pone en cuarentena y no tir
     first.end();
     await waitUntil(() => second.sent.some(
       (frame) => frame.type === "ack" && frame.event_id === healthy.event_id,
-    ));
+    ), "the healthy ACK replayed on the reconnected socket");
     assert.deepEqual(second.refused, [], "la entrada en cuarentena se reenvió al reconectar");
   } finally {
     stop.abort();

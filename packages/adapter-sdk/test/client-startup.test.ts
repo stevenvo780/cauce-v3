@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { resolve } from "node:path";
 import test from "node:test";
 import {claudeDefinition, fakeDefinition} from '../src/harnesses/index.js';
@@ -14,6 +16,7 @@ import {
   ReconnectDelayClock,
   RejectingConnection,
   ScriptedConnector,
+  escala,
   makeClient,
   waitUntil,
 } from "./client-fixtures.js";
@@ -41,7 +44,7 @@ test("startup initialization runs under the stable-alias lease before connect", 
   const stop = new AbortController();
   const running = client.run(stop.signal);
   try {
-    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"));
+    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"), "the HELLO frame on the wire");
     assert.deepEqual(order, ["initialize", "connect"]);
   } finally {
     stop.abort();
@@ -55,7 +58,7 @@ test("connect retries then sends the real harness capabilities in hello", async 
   const { client } = await makeClient("reconnect", connector);
   const stop = new AbortController();
   const running = client.run(stop.signal);
-  await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"));
+  await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"), "the HELLO frame after the planned connect failure");
   const hello = connection.sent.find((frame) => frame.type === "hello");
   assert.equal(connector.calls, 2);
   assert.ok(hello, "no se envió ningún HELLO");
@@ -131,10 +134,10 @@ test("un perfil que no puede sembrarse avisa pero NO cuesta la conexión", async
   const stop = new AbortController();
   const running = client.run(stop.signal);
   try {
-    await waitUntil(() => errors.includes("PROFILE_SEED_FAILED"));
+    await waitUntil(() => errors.includes("PROFILE_SEED_FAILED"), "the PROFILE_SEED_FAILED diagnostic");
     // The whole point: the alias keeps consuming. Without it there is no heartbeat, because the
     // connection died before reaching the heartbeat loop.
-    await waitUntil(() => connection.sent.some((frame) => frame.type === "heartbeat"));
+    await waitUntil(() => connection.sent.some((frame) => frame.type === "heartbeat"), "a heartbeat proving the alias keeps consuming");
     assert.equal(
       connector.calls,
       1,
@@ -156,7 +159,7 @@ test("heartbeat uses the established consumer instead of an ephemeral socket", a
   const { client } = await makeClient("heartbeat", connector, { heartbeatMs: 5 });
   const stop = new AbortController();
   const running = client.run(stop.signal);
-  await waitUntil(() => connection.sent.some((frame) => frame.type === "heartbeat"));
+  await waitUntil(() => connection.sent.some((frame) => frame.type === "heartbeat"), "a heartbeat on the established consumer");
   assert.equal(connector.calls, 1);
   const heartbeat = connection.sent.find((frame) => frame.type === "heartbeat");
   assert.equal(heartbeat?.type, "heartbeat");
@@ -184,7 +187,7 @@ test("el saludo ya no reinicia el backoff: sólo un heartbeat_ack lo devuelve al
   const stop = new AbortController();
   const running = client.run(stop.signal);
   try {
-    await waitUntil(() => clock.delays.length >= 5);
+    await waitUntil(() => clock.delays.length >= 5, "five reconnect delays recorded by the clock");
     assert.deepEqual(clock.delays.slice(0, 5), [100, 200, 400, 100, 200]);
   } finally {
     stop.abort();
@@ -218,10 +221,66 @@ test("un outbox que no puede vaciarse hace crecer la espera de reconexión", asy
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
   try {
-    await waitUntil(() => clock.delays.length >= 3);
+    await waitUntil(() => clock.delays.length >= 3, "three reconnect delays recorded by the clock");
     assert.deepEqual(clock.delays.slice(0, 3), [100, 200, 400]);
   } finally {
     stop.abort();
     await running;
+  }
+});
+
+test("systemClock timers do not hold the adapter process open", async () => {
+  const backoffUrl = new URL("../src/sdk/backoff.js", import.meta.url).href;
+  const scheduler = (options: string): ReturnType<typeof spawn> => spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `const { systemClock } = await import(${JSON.stringify(backoffUrl)});`
+        + `systemClock.setTimer(() => undefined, 600_000${options});`
+        + `systemClock.setRepeating(() => undefined, 600_000${options});`,
+    ],
+    { stdio: "ignore" },
+  );
+  const exitsWithin = async (child: ReturnType<typeof spawn>, ms: number): Promise<boolean> => {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        once(child, "exit").then(() => true),
+        new Promise<boolean>((resolveWait) => {
+          timer = setTimeout(() => { resolveWait(false); }, ms);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
+
+  const reap = async (child: ReturnType<typeof spawn>): Promise<void> => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    child.kill("SIGKILL");
+    await once(child, "exit");
+  };
+
+  const unreffed = scheduler("");
+  try {
+    assert.equal(
+      await exitsWithin(unreffed, escala(10_000)),
+      true,
+      "a pending clock timer must not keep the process alive",
+    );
+  } finally {
+    await reap(unreffed);
+  }
+
+  const held = scheduler(", { keepProcessAlive: true }");
+  try {
+    assert.equal(
+      await exitsWithin(held, escala(1_000)),
+      false,
+      "keepProcessAlive must hold the event loop open",
+    );
+  } finally {
+    await reap(held);
   }
 });

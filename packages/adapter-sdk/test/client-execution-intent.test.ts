@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {DurableStore} from '../src/sdk/durable-store.js';
 import type {ClientFrame} from '../src/sdk/types.js';
-import {CountingRunner, FakeConnection, ScriptedConnector, SequenceConnector, makeClient, renewableDelivery, startedAcks, waitUntil} from './client-fixtures.js';
+import {CountingRunner, FakeConnection, ScriptedConnector, SequenceConnector, claimDeadline, escala, makeClient, renewableDelivery, startedAcks, waitUntil} from './client-fixtures.js';
 
 class HangingExecutionIntentConnection extends FakeConnection {
   closeCalls = 0;
@@ -23,19 +23,19 @@ test("the harness waits for the exact durable execution-intent receipt", async (
   const context = await makeClient(
     "execution-intent-gate",
     new ScriptedConnector(connection),
-    { runner, claimWatchdogMs: 2_000 },
+    { runner, claimWatchdogMs: escala(2_000) },
   );
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
   try {
-    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"));
+    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"), "the HELLO frame on the wire");
     const input = renewableDelivery(
       "execution-intent-gate",
       "000000000089",
-      Date.now() + 30_000,
+      claimDeadline(),
     );
     connection.push(input);
-    await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true));
+    await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true), "the execution-intent ACK on the wire");
     const intent = startedAcks(connection).find((frame) => frame.execution_started === true);
     assert.ok(intent);
     assert.equal(runner.calls, 0, "socket send alone must not release the harness");
@@ -54,7 +54,7 @@ test("the harness waits for the exact durable execution-intent receipt", async (
       applied: true,
       receipt: "applied",
     });
-    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 20));
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, escala(20)));
     assert.equal(runner.calls, 0, "a mismatched receipt cannot release the harness");
 
     connection.push({
@@ -67,10 +67,10 @@ test("the harness waits for the exact durable execution-intent receipt", async (
       applied: true,
       receipt: "applied",
     });
-    await waitUntil(() => runner.calls === 1);
+    await waitUntil(() => runner.calls === 1, "the harness invoked exactly once");
     await waitUntil(() => connection.sent.some((frame) => (
       frame.type === "ack" && frame.delivery_id === input.delivery_id && frame.status === "done"
-    )));
+    )), "the terminal done ACK for the released delivery");
     assert.equal(
       context.store.getDelivery(input.delivery_id)?.execution_intent_receipt_event_id,
       intent.event_id,
@@ -87,21 +87,21 @@ test("an unconfirmed execution intent times out before invoking the harness", as
   const context = await makeClient(
     "execution-intent-timeout",
     new ScriptedConnector(connection),
-    { runner, claimWatchdogMs: 500 },
+    { runner, claimWatchdogMs: escala(500) },
   );
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
   try {
-    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"));
+    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"), "the HELLO frame on the wire");
     const input = renewableDelivery(
       "execution-intent-timeout",
       "000000000090",
-      Date.now() + 30_000,
+      claimDeadline(),
     );
     connection.push(input);
     await waitUntil(() => connection.sent.some((frame) => (
       frame.type === "ack" && frame.delivery_id === input.delivery_id && frame.status === "failed"
-    )), 3_000);
+    )), escala(3_000), "the failed ACK for the unconfirmed execution intent");
     const failed = connection.sent.find((frame) => (
       frame.type === "ack" && frame.delivery_id === input.delivery_id && frame.status === "failed"
     ));
@@ -122,19 +122,23 @@ test("a receipt cannot release the harness while its transport send never settle
   const context = await makeClient(
     "execution-intent-hanging-send",
     new ScriptedConnector(connection),
-    { runner, claimWatchdogMs: 500 },
+    { runner, claimWatchdogMs: escala(500) },
   );
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
   try {
-    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"));
+    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"), "the HELLO frame on the wire");
     const input = renewableDelivery(
       "execution-intent-hanging-send",
       "000000000081",
-      Date.now() + 30_000,
+      claimDeadline(),
     );
     connection.push(input);
-    await waitUntil(() => context.store.getDelivery(input.delivery_id)?.state === "failed", 3_000);
+    await waitUntil(
+      () => context.store.getDelivery(input.delivery_id)?.state === "failed",
+      escala(3_000),
+      "the delivery failed closed while the intent send never settles",
+    );
     assert.equal(runner.calls, 0, "a remote receipt does not prove the local send completed");
     assert.ok(connection.closeCalls > 0, "the poisoned transport must be closed before reconnect");
     const record = context.store.getDelivery(input.delivery_id);
@@ -156,19 +160,19 @@ test("a duplicate execution-intent receipt releases the harness exactly once", a
   const context = await makeClient(
     "execution-intent-duplicate",
     new ScriptedConnector(connection),
-    { runner, claimWatchdogMs: 2_000 },
+    { runner, claimWatchdogMs: escala(2_000) },
   );
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
   try {
-    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"));
+    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"), "the HELLO frame on the wire");
     const input = renewableDelivery(
       "execution-intent-duplicate",
       "000000000085",
-      Date.now() + 30_000,
+      claimDeadline(),
     );
     connection.push(input);
-    await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true));
+    await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true), "the execution-intent ACK on the wire");
     const intent = startedAcks(connection).find((frame) => frame.execution_started === true);
     assert.ok(intent);
     connection.push({
@@ -183,10 +187,10 @@ test("a duplicate execution-intent receipt releases the harness exactly once", a
       applied: true,
       receipt: "duplicate",
     });
-    await waitUntil(() => runner.calls === 1);
+    await waitUntil(() => runner.calls === 1, "the harness invoked exactly once");
     await waitUntil(() => connection.sent.some((frame) => (
       frame.type === "ack" && frame.delivery_id === input.delivery_id && frame.status === "done"
-    )));
+    )), "the terminal done ACK for the released delivery");
     assert.equal(runner.calls, 1);
     assert.equal(
       context.store.getDelivery(input.delivery_id)?.execution_intent_receipt_event_id,
@@ -206,28 +210,28 @@ test("reconnect replays the same intent and a duplicate receipt releases it with
   const context = await makeClient(
     "execution-intent-reconnect",
     connector,
-    { runner, claimWatchdogMs: 4_000 },
+    { runner, claimWatchdogMs: escala(4_000) },
   );
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
   try {
-    await waitUntil(() => first.sent.some((frame) => frame.type === "hello"));
+    await waitUntil(() => first.sent.some((frame) => frame.type === "hello"), "the HELLO frame on the first connection");
     const input = renewableDelivery(
       "execution-intent-reconnect",
       "000000000086",
-      Date.now() + 30_000,
+      claimDeadline(),
     );
     first.push(input);
-    await waitUntil(() => startedAcks(first).some((frame) => frame.execution_started === true));
+    await waitUntil(() => startedAcks(first).some((frame) => frame.execution_started === true), "the execution-intent ACK on the first connection");
     const intent = startedAcks(first).find((frame) => frame.execution_started === true);
     assert.ok(intent);
     assert.equal(runner.calls, 0);
     first.end();
 
-    await waitUntil(() => second.sent.some((frame) => frame.type === "hello"));
+    await waitUntil(() => second.sent.some((frame) => frame.type === "hello"), "the HELLO frame on the reconnected socket");
     await waitUntil(() => second.sent.some((frame) => (
       frame.type === "ack" && frame.event_id === intent.event_id
-    )));
+    )), "the replayed execution intent on the reconnected socket");
     second.push({
       type: "ack_result",
       event_id: intent.event_id,
@@ -238,10 +242,10 @@ test("reconnect replays the same intent and a duplicate receipt releases it with
       applied: true,
       receipt: "duplicate",
     });
-    await waitUntil(() => runner.calls === 1);
+    await waitUntil(() => runner.calls === 1, "the harness invoked exactly once");
     await waitUntil(() => second.sent.some((frame) => (
       frame.type === "ack" && frame.delivery_id === input.delivery_id && frame.status === "done"
-    )));
+    )), "the terminal done ACK on the reconnected socket");
     assert.equal(runner.calls, 1);
   } finally {
     stop.abort();
@@ -256,7 +260,7 @@ test("an execution-intent receipt fsync failure never releases the harness", asy
   const context = await makeClient(
     "execution-intent-receipt-fsync",
     new ScriptedConnector(connection),
-    { runner, claimWatchdogMs: 500, onError: (code) => errors.push(code) },
+    { runner, claimWatchdogMs: escala(500), onError: (code) => errors.push(code) },
   );
   const acknowledgeResult = context.store.acknowledgeResult.bind(context.store);
   Object.defineProperty(context.store, "acknowledgeResult", {
@@ -271,14 +275,14 @@ test("an execution-intent receipt fsync failure never releases the harness", asy
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
   try {
-    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"));
+    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"), "the HELLO frame on the wire");
     const input = renewableDelivery(
       "execution-intent-receipt-fsync",
       "000000000087",
-      Date.now() + 30_000,
+      claimDeadline(),
     );
     connection.push(input);
-    await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true));
+    await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true), "the execution-intent ACK on the wire");
     const intent = startedAcks(connection).find((frame) => frame.execution_started === true);
     assert.ok(intent);
     connection.push({
@@ -291,7 +295,11 @@ test("an execution-intent receipt fsync failure never releases the harness", asy
       applied: true,
       receipt: "applied",
     });
-    await waitUntil(() => context.store.getDelivery(input.delivery_id)?.state === "failed", 3_000);
+    await waitUntil(
+      () => context.store.getDelivery(input.delivery_id)?.state === "failed",
+      escala(3_000),
+      "the delivery failed closed after the receipt fsync failure",
+    );
     assert.equal(runner.calls, 0);
     assert.equal(
       context.store.getDelivery(input.delivery_id)?.execution_intent_receipt_event_id,
@@ -316,19 +324,19 @@ test("ownership_lost and superseded intent receipts both fail closed before invo
       const context = await makeClient(
         `execution-intent-${variant.name}`,
         new ScriptedConnector(connection),
-        { runner, claimWatchdogMs: 1_000 },
+        { runner, claimWatchdogMs: escala(1_000) },
       );
       const stop = new AbortController();
       const running = context.client.run(stop.signal);
       try {
-        await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"));
+        await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"), "the HELLO frame on the wire");
         const input = renewableDelivery(
           `execution-intent-${variant.name}`,
           variant.suffix,
-          Date.now() + 30_000,
+          claimDeadline(),
         );
         connection.push(input);
-        await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true));
+        await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true), "the execution-intent ACK on the wire");
         const intent = startedAcks(connection).find((frame) => frame.execution_started === true);
         assert.ok(intent);
         connection.push({
@@ -341,7 +349,10 @@ test("ownership_lost and superseded intent receipts both fail closed before invo
           applied: false,
           receipt: variant.receipt,
         });
-        await waitUntil(() => context.store.getDelivery(input.delivery_id)?.state === "failed");
+        await waitUntil(
+          () => context.store.getDelivery(input.delivery_id)?.state === "failed",
+          `the delivery failed closed by the ${variant.receipt} receipt`,
+        );
         assert.equal(runner.calls, 0);
       } finally {
         stop.abort();
@@ -357,21 +368,24 @@ test("a global fenced frame rejects the execution gate before invocation", async
   const context = await makeClient(
     "execution-intent-global-fenced",
     new ScriptedConnector(connection),
-    { runner, claimWatchdogMs: 1_000 },
+    { runner, claimWatchdogMs: escala(1_000) },
   );
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
   try {
-    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"));
+    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"), "the HELLO frame on the wire");
     const input = renewableDelivery(
       "execution-intent-global-fenced",
       "000000000088",
-      Date.now() + 30_000,
+      claimDeadline(),
     );
     connection.push(input);
-    await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true));
+    await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true), "the execution-intent ACK on the wire");
     connection.push({ type: "error", code: "fenced", message: "connection epoch is no longer current" });
-    await waitUntil(() => context.store.getDelivery(input.delivery_id)?.state === "failed");
+    await waitUntil(
+      () => context.store.getDelivery(input.delivery_id)?.state === "failed",
+      "the delivery failed closed by the global fenced frame",
+    );
     assert.equal(runner.calls, 0);
   } finally {
     stop.abort();
