@@ -3,7 +3,9 @@
 Qué entrega v3.1, qué hace falta para desplegarla y qué queda en manos del dueño. Las decisiones
 que la gobiernan están en `docs/v3.1-programa.md` (D1–D12); este documento es la cara de salida:
 lo que cambia para quien opera, despliega o revisa. El detalle de cada cambio vive en los commits
-de `dev` posteriores a la etiqueta `v3.1-snap-base` y en los ADR 007, 008 y 009.
+de `dev` posteriores a la etiqueta `v3.1-snap-base` y en los ADR 007, 008 y 009. Lo que queda
+después del cierre —del dueño, recortado por el plan, notas de las reseñas y no probado— está en
+`docs/v3.1-pendientes.md`.
 
 ## Qué cambia, por capacidad
 
