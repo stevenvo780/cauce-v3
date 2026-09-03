@@ -2,6 +2,7 @@ import type { Ack, DeliveryState, ProfileRuntimeAdoptionEvidence, Tenant } from 
 import { isAmbiguousAckErrorCode } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
+import { hasDeliverableArtifact, withoutInlineArtifactBytes } from '../artifact-payload.js';
 import { StoreError } from '../errors.js';
 import { terminal } from '../messages.js';
 import { textualReply } from '../outbox.js';
@@ -14,6 +15,7 @@ import {
   type LateRelayDisposition,
 } from '../observability.js';
 import { ackFailureBackoffSeconds } from '../observability/policy.js';
+import { deadLetterBodySql } from '../observability/message-body-retention.js';
 import {
   ackRank,
   agentNotifyEntries,
@@ -81,6 +83,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       const notifications = agentNotifyEntries(safeAckResult);
       const runtimeAdoption = profileRuntimeAdoptionEvidence(safeAckResult);
       const persistedResult = sanitizedAckResult(safeAckResult);
+      const storedResult = withoutInlineArtifactBytes(persistedResult);
       const repeated = await client.query<{
         delivery_id: string;
         status: Ack['status'];
@@ -151,7 +154,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
           client, tenantId, alias, row, ack, persistedResult, outputs, notifications
         );
         if (salvaged) return salvaged;
-        if (!repeatedAck) await this.insertAck(client, row, ack, false, persistedResult);
+        if (!repeatedAck) await this.insertAck(client, row, ack, false, storedResult);
         return {
           delivery_id: deliveryId,
           status: row.status,
@@ -166,7 +169,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       if (lease.rowCount !== 1
         || row.consumer_instance_id !== ack.instance_id
         || Number(row.consumer_epoch) !== ack.epoch) {
-        await this.insertAck(client, row, ack, false, persistedResult);
+        await this.insertAck(client, row, ack, false, storedResult);
         return {
           delivery_id: deliveryId,
           status: row.status,
@@ -194,7 +197,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
            WHERE id=$1 AND status='accepted'`,
           [deliveryId, ackDeadlineMs, leaseCapMs]
         );
-        if (!repeatedAck) await this.insertAck(client, row, ack, true, persistedResult, true);
+        if (!repeatedAck) await this.insertAck(client, row, ack, true, storedResult, true);
         await client.query(
           `INSERT INTO audit_events(
              tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
@@ -241,7 +244,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
         );
         // If a previously rejected event is now applied, `insertAck` raises false to true.
         // For an already-applied duplicate it remains an exact no-op.
-        await this.insertAck(client, row, ack, true, persistedResult, true);
+        await this.insertAck(client, row, ack, true, storedResult, true);
         await client.query(
           `INSERT INTO audit_events(
              tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
@@ -266,7 +269,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       }
       // `exactClaim` already restricted the row to 'leased', 'accepted' or 'started'.
       if (rank <= row.last_ack_rank) {
-        await this.insertAck(client, row, ack, false, persistedResult);
+        await this.insertAck(client, row, ack, false, storedResult);
         return {
           delivery_id: deliveryId,
           status: row.status,
@@ -303,7 +306,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
           nextStatus = 'failed';
           terminalError = 'agent.fanin cannot delegate new messages';
           terminalErrorCode = 'FANIN_REDELEGATION_FORBIDDEN';
-        } else if (!textualReply(persistedResult)) {
+        } else if (!textualReply(persistedResult) && !hasDeliverableArtifact(persistedResult)) {
           nextStatus = 'failed';
           terminalError = 'agent.fanin requires a non-empty final reply';
           terminalErrorCode = 'MISSING_FINAL_REPLY';
@@ -338,7 +341,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
             consumer_epoch=CASE WHEN $2='retry' THEN NULL ELSE consumer_epoch END,
             terminal_at=${terminalAt},updated_at=now() WHERE id=$1`,
         [deliveryId, nextStatus, nextRank, terminalError ?? null,
-          persistedResult ? JSON.stringify(persistedResult) : null, backoffSeconds,
+          storedResult ? JSON.stringify(storedResult) : null, backoffSeconds,
           ackDeadlineMs, executionStarted, leaseCapMs]
       );
       if (nextStatus === 'done') {
@@ -373,7 +376,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       if (nextStatus === 'dead' || nextStatus === 'failed') {
         await client.query(
           `INSERT INTO dead_letters(delivery_id,tenant_id,reason,payload,attempts)
-           SELECT $1,$2,$3,m.body,$4 FROM messages m WHERE m.id=$5
+           SELECT $1,$2,$3,${deadLetterBodySql('m.body')},$4 FROM messages m WHERE m.id=$5
            ON CONFLICT(delivery_id) DO NOTHING`,
           [deliveryId, tenantId,
             terminalError ?? terminalErrorCode
@@ -383,7 +386,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
             row.attempt, row.message_id]
         );
       }
-      await this.insertAck(client, row, ack, true, persistedResult);
+      await this.insertAck(client, row, ack, true, storedResult);
       let notified = { allowed: 0, denied: 0, errors: 0 };
       let delegationRejections: DelegationRejection[] = [];
       let delegationMaterializations: DelegationMaterialization[] = [];
@@ -522,6 +525,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
     if (provenance === 'none') return undefined;
 
     const salvagedStatus: DeliveryState = ack.status === 'done' ? 'done' : 'dead';
+    const storedResult = withoutInlineArtifactBytes(persistedResult);
     const terminalError = postgresTextSafe(ack.error);
     const terminalErrorCode = postgresTextSafe(ack.error_code);
     const previousStatus = row.status;
@@ -538,7 +542,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
            claim_expires_at=NULL,ack_deadline_at=NULL,updated_at=now()
        WHERE id=$1`,
       [row.id, salvagedStatus, terminalError ?? null,
-        persistedResult ? JSON.stringify(persistedResult) : null, ack.attempt]
+        storedResult ? JSON.stringify(storedResult) : null, ack.attempt]
     );
 
     const relayDisposition = await this.undoDeathNotice(
@@ -546,7 +550,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       terminalError, terminalErrorCode
     );
 
-    await this.insertAck(client, row, ack, true, persistedResult);
+    await this.insertAck(client, row, ack, true, storedResult);
     await client.query(
       `INSERT INTO audit_events(
          tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata

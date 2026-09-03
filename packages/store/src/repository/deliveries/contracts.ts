@@ -3,8 +3,12 @@ import type {
   DeliveryEnvelope, DeliveryState, ProfileRuntimeAdoptionEvidence, Tenant,
 } from '@cauce/protocol';
 import {
-  EgressHandleSchema, MAX_NOTIFY_BODY_BYTES, NOTIFY_KINDS, ProfileRuntimeAdoptionEvidenceSchema,
+  EgressHandleSchema, MAX_NOTIFY_BODY_BYTES, MAX_RELAY_ARTIFACTS_TOTAL, NOTIFY_KINDS,
+  ProfileRuntimeAdoptionEvidenceSchema,
 } from '@cauce/protocol';
+import {
+  MAX_ARTIFACT_URI_CHARACTERS, MAX_TURN_ARTIFACT_CHARACTERS, NOT_SENT_URI
+} from '../agents/delegated-attachments.js';
 import { objectRecord, visibleText } from '../outbox.js';
 
 export interface LeaseResult {
@@ -126,10 +130,18 @@ export const notifyKinds = new Set<string>(NOTIFY_KINDS);
 export function isEgressHandle(value: string): boolean {
   return EgressHandleSchema.safeParse(value).success;
 }
+export interface AgentOutputArtifact {
+  name: string;
+  uri: string;
+  media_type?: string;
+  sha256?: string;
+}
 export interface AgentOutputEntry {
   index: number;
   target: unknown;
   body: unknown;
+  artifacts?: readonly AgentOutputArtifact[];
+  artifactsWithheld?: number;
   rejection?: 'invalid_output';
 }
 export interface RoutingTarget {
@@ -182,6 +194,25 @@ export function profileRuntimeAdoptionEvidence(
       left.name.localeCompare(right.name) || left.path.localeCompare(right.path)),
   };
 }
+function outputArtifacts(
+  value: unknown, budget: { remaining: number }
+): readonly AgentOutputArtifact[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const artifacts = value.slice(0, MAX_RELAY_ARTIFACTS_TOTAL).flatMap((item): AgentOutputArtifact[] => {
+    const entry = objectRecord(item);
+    if (!entry || typeof entry.name !== 'string' || typeof entry.uri !== 'string') return [];
+    const fits = entry.uri.length <= MAX_ARTIFACT_URI_CHARACTERS
+      && entry.uri.length <= budget.remaining;
+    budget.remaining -= fits ? entry.uri.length : 0;
+    return [{
+      name: entry.name,
+      uri: fits ? entry.uri : NOT_SENT_URI,
+      ...(typeof entry.media_type === 'string' ? { media_type: entry.media_type } : {}),
+      ...(typeof entry.sha256 === 'string' ? { sha256: entry.sha256 } : {})
+    }];
+  });
+  return artifacts.length === 0 ? undefined : artifacts;
+}
 export function agentOutputEntries(result: Record<string, unknown> | undefined): AgentOutputEntry[] {
   const output = objectRecord(result?.output);
   if (output?.messages === undefined) return [];
@@ -191,6 +222,7 @@ export function agentOutputEntries(result: Record<string, unknown> | undefined):
   if (output.messages.length > maxAgentOutputMessages) {
     return [{ index: 0, target: undefined, body: undefined, rejection: 'invalid_output' }];
   }
+  const artifactBudget = { remaining: MAX_TURN_ARTIFACT_CHARACTERS };
   const entries = output.messages.map((value, index) => {
     const entry = objectRecord(value);
     if (!entry || typeof entry.to !== 'string'
@@ -203,7 +235,11 @@ export function agentOutputEntries(result: Record<string, unknown> | undefined):
         rejection: 'invalid_output' as const
       };
     }
-    return { index, target: entry.to, body: entry.body };
+    const artifacts = outputArtifacts(entry.artifacts, artifactBudget);
+    return {
+      index, target: entry.to, body: entry.body,
+      ...(artifacts === undefined ? {} : { artifacts })
+    };
   });
   const aggregateBytes = entries.reduce(
     (total, entry) => total + (typeof entry.body === 'string'

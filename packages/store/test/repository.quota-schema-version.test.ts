@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { describe, expect, it, vi } from 'vitest';
 import type { QuotaSampleRequest } from '@cauce/protocol';
-import { CauceRepository, type DatabasePool } from './index.js';
+import { CauceRepository, type DatabasePool } from '../src/index.js';
 
 /**
  * `recordQuotaSample` must reject a schema_version that this gateway version does not understand

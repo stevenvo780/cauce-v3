@@ -7,6 +7,10 @@ import type {
   AgentFaninDisposition, AgentResponseDisposition, ChainPolicy, DeliveryRow, LateRelayDisposition
 } from './contracts.js';
 import {
+  deadLetterBodySql, MESSAGE_ATTACHMENT_PRUNE_SQL, resolvedMessageAttachmentRetention,
+  type MessageAttachmentRetentionPolicy, type MessageAttachmentRetentionResult
+} from './message-body-retention.js';
+import {
   DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, DEFAULT_DELIVERY_LEASE_CAP_MS,
   DEFAULT_NO_CONSUMER_PARK_MAX_AGE_MS, DEFAULT_RETENTION_ACK_MS,
   DEFAULT_RETENTION_ACK_RENEWAL_MS, DEFAULT_RETENTION_AUDIT_MS,
@@ -192,7 +196,7 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
           );
           await client.query(
             `INSERT INTO dead_letters(delivery_id,tenant_id,reason,payload,attempts)
-             VALUES($1,$2,$5,$3::jsonb,$4)
+             VALUES($1,$2,$5,${deadLetterBodySql('$3::jsonb')},$4)
              ON CONFLICT(delivery_id) DO NOTHING`,
             [row.id, row.recipient_tenant, JSON.stringify(row.body), row.attempt, reason]
           );
@@ -356,6 +360,14 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
         [auditMs, batch, disposable]
       )
     };
+  }
+
+  async pruneMessageAttachments(
+    policy: MessageAttachmentRetentionPolicy
+  ): Promise<MessageAttachmentRetentionResult> {
+    const { retentionMs, batch } = resolvedMessageAttachmentRetention(policy);
+    const swept = await this.pool.query(MESSAGE_ATTACHMENT_PRUNE_SQL, [retentionMs, batch]);
+    return { message_attachments: swept.rowCount ?? 0 };
   }
 
 }

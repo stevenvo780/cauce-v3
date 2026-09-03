@@ -6,6 +6,7 @@ import {
   truncateUtf8, type AgentFaninDisposition, type DeliveryRow
 } from '../../observability.js';
 import { objectRecord, visibleText } from '../../outbox.js';
+import { artifactRefs } from '../delegated-attachments.js';
 import {
   agentFaninInstruction, agentFaninMaxAggregateBytes, agentFaninMaxResponseBytes,
   agentFaninRequestId, agentResponseText
@@ -122,11 +123,13 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
       result: Record<string, unknown> | null;
       last_error: string | null;
       response_text: string | null;
+      response_artifacts: unknown;
     }>(
       `SELECT materialization.output_index,materialization.target_tenant,
               materialization.target_alias AS alias,
               child.id AS child_delivery_id,child.status AS outcome,
-              child.result,child.last_error,returned.response_text
+              child.result,child.last_error,returned.response_text,
+              returned.response_artifacts
        FROM agent_output_materializations materialization
        JOIN deliveries child ON child.id=materialization.produced_delivery_id
        LEFT JOIN LATERAL (
@@ -135,7 +138,8 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
                     THEN 'Agent response denied: '
                       || COALESCE(response_audit.metadata->>'reason','authorization_unavailable')
                   ELSE response.body->>'text'
-                END AS response_text
+                END AS response_text,
+                response.body->'artifacts_v1' AS response_artifacts
          FROM audit_events response_audit
          LEFT JOIN messages response ON response.id=response_audit.message_id
          WHERE response_audit.action='agent_output.response'
@@ -171,6 +175,7 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
           undefined
         );
       const bounded = truncateUtf8(sourceText, agentFaninMaxResponseBytes);
+      const artifacts = artifactRefs(branch.response_artifacts);
       return {
         output_index: branch.output_index,
         tenant_id: branch.target_tenant,
@@ -178,7 +183,8 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
         delivery_id: branch.child_delivery_id,
         outcome: branch.outcome,
         untrusted_text: bounded.value,
-        truncated: bounded.truncated
+        truncated: bounded.truncated,
+        ...(artifacts.length > 0 ? { artifacts } : {})
       };
     });
     const includedResponses = [...boundedResponses];

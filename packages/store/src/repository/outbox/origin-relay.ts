@@ -1,5 +1,6 @@
 import type { DeliveryState, Origin } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
+import { hasDeliverableArtifact } from '../artifact-payload.js';
 import { JobsRepository } from '../jobs.js';
 import {
   originRelayTenant, type DeliveryRow, type LateRelayDisposition
@@ -53,7 +54,8 @@ export abstract class OriginRelayRepository extends JobsRepository {
     const rootMessageId = row.body.type === 'agent.fanin'
       ? this.rootMessageId(row)
       : undefined;
-    const missingFinalReply = outcome === 'done' && !textualReply(ack.result);
+    const missingFinalReply = outcome === 'done' && !textualReply(ack.result)
+      && !hasDeliverableArtifact(ack.result);
     const relayOutcome = missingFinalReply ? 'failed' : outcome;
     const relayResult = relaySafeResult(ack.result);
     const visibleError = visibleText(ack.error);

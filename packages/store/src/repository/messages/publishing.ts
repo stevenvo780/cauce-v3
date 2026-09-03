@@ -362,9 +362,18 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
   }
 
   async getMessage(messageId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
-    const result = await this.pool.query<MessageDetailRow>(
+    const result = await this.pool.query<MessageDetailRow & { attachments: unknown }>(
       `SELECT m.id,m.version,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
-              m.body,m.origin,m.lane,m.priority,m.created_at,
+              m.body-'attachments_v1'::text AS body,
+              COALESCE(CASE WHEN jsonb_typeof(m.body->'attachments_v1')='array' THEN (
+                SELECT jsonb_agg(jsonb_build_object(
+                         'name',entry.attachment->'name','mime_type',entry.attachment->'mime_type',
+                         'file_size',entry.attachment->'file_size','sha256',entry.attachment->'sha256'
+                       ) ORDER BY entry.position)
+                FROM jsonb_array_elements(m.body->'attachments_v1')
+                     WITH ORDINALITY AS entry(attachment,position)
+              ) END,'[]'::jsonb) AS attachments,
+              m.origin,m.lane,m.priority,m.created_at,
               COALESCE(jsonb_agg(jsonb_build_object(
          'delivery_id',d.id,'tenant_id',d.recipient_tenant,'alias',d.recipient_alias,
          'status',d.status,'attempt',d.attempt,'terminal_at',d.terminal_at

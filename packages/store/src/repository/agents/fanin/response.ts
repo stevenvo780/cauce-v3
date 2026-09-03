@@ -8,6 +8,7 @@ import {
   truncateUtf8, type AgentResponseDisposition, type ChainPolicy, type DeliveryRow
 } from '../../observability.js';
 import { objectRecord } from '../../outbox.js';
+import { artifactRefs } from '../delegated-attachments.js';
 import {
   agentResponseRequestId, agentResponseText, aggregatedFailureText, failureSignature,
   lateResultText, maxAgentResponseTextBytes, type FailureNoticeReservation
@@ -200,6 +201,7 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
       row.recipient_alias,
       late
     );
+    const artifacts = artifactRefs(objectRecord(result?.output)?.artifacts);
     const message = await insertMessage(client, {
       requestId,
       traceId: row.trace_id,
@@ -211,7 +213,8 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
           text: aggregatedFailureText(baseText, row.recipient_alias, reservation),
           from_alias: row.recipient_alias,
           outcome,
-          correlation
+          correlation,
+          ...(artifacts.length > 0 ? { artifacts_v1: artifacts } : {})
       },
       origin: row.origin ?? null,
         // Same criterion as materializeAgentOutputs: the return of a delegation is traffic

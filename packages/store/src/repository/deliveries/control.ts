@@ -6,6 +6,7 @@ import { postgresTextSafe } from '../deliveries.js';
 import { StoreError } from '../errors.js';
 import { terminal } from '../messages.js';
 import type { DeliveryRow } from '../observability.js';
+import { deadLetterBodySql } from '../observability/message-body-retention.js';
 import { visibleText } from '../outbox.js';
 
 
@@ -101,7 +102,7 @@ export abstract class DeliveryControlRepository extends AgentNotificationsReposi
       // rescues it.
       await client.query(
         `INSERT INTO dead_letters(delivery_id,tenant_id,reason,payload,attempts)
-         VALUES($1,$2,$5,$3::jsonb,$4)
+         VALUES($1,$2,$5,${deadLetterBodySql('$3::jsonb')},$4)
          ON CONFLICT(delivery_id) DO NOTHING`,
         [row.id, row.recipient_tenant, JSON.stringify(row.body), row.attempt, cancelReason]
       );

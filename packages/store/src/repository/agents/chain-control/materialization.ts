@@ -6,6 +6,10 @@ import type { DatabaseClient } from '../../../db.js';
 import {
   boundedRejectionTarget, describeDelegationRejection, fanoutCapForTurn, HUMAN_GATE_TARGET
 } from '../../../delegation-guard.js';
+import {
+  attachmentsFromArtifacts, carriedBodyHash, declaredArtifactBudget, delegatedMessageBody,
+  redactedOutputText
+} from '../delegated-attachments.js';
 import { chainNode } from '../fanin.js';
 import { reservedInternalMessageTypes, sha256 } from '../../config.js';
 import {
@@ -173,21 +177,32 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         row.recipient_tenant,
         row.recipient_alias
       )).filter((target) => target.online);
-      const expandedBytes = typeof directive.body === 'string'
-        ? Buffer.byteLength(directive.body, 'utf8') * targets.length
+      const textBytes = typeof directive.body === 'string'
+        ? Buffer.byteLength(directive.body, 'utf8')
         : 0;
+      const declared = declaredArtifactBudget(directive.artifacts);
+      const withheld = (textBytes + declared.bytes) * targets.length > maxAgentOutputExpandedBytes
+        && textBytes * targets.length <= maxAgentOutputExpandedBytes
+        ? declared.deliverable
+        : 0;
+      const { artifacts: _withheldArtifacts, ...withoutArtifacts } = directive;
+      const broadcast: AgentOutputEntry = withheld === 0
+        ? directive
+        : { ...withoutArtifacts, artifactsWithheld: withheld };
+      const perTargetBytes = textBytes + (withheld > 0 ? 0 : declared.bytes);
+      const expandedBytes = perTargetBytes * targets.length;
       expandedOutputs = targets.length === 0
         || targets.length > MAX_DELEGATION_FEEDBACK_ITEMS
         || expandedBytes > maxAgentOutputExpandedBytes
         ? [{
-          ...directive,
+          ...broadcast,
           ...(targets.length > MAX_DELEGATION_FEEDBACK_ITEMS
             || expandedBytes > maxAgentOutputExpandedBytes
             ? { rejection: 'invalid_output' as const }
             : {})
         }]
         : targets.map((target, targetIndex) => ({
-          ...directive,
+          ...broadcast,
           index: maxAgentOutputMessages + (directive.index * 100) + targetIndex,
           target: target.alias,
           targetTenant: target.tenant_id,
@@ -221,7 +236,8 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
     for (const output of orderedOutputs) {
       const requestId = agentOutputRequestId(row.id, ack.attempt, output.index);
       const targetRefHash = sha256(output.targetRef ?? output.target);
-      const bodyHash = sha256(output.body);
+      const outputText = redactedOutputText(output.body);
+      const bodyHash = sha256(outputText);
       const correlation = {
         root_request_id: rootRequestId,
         root_message_id: rootMessageId,
@@ -253,7 +269,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
 
       const rejection = output.rejection;
       const targetAlias = typeof output.target === 'string' ? output.target : undefined;
-      const body = typeof output.body === 'string' ? output.body : undefined;
+      const body = typeof outputText === 'string' ? outputText : undefined;
       /**
        * Durable rejections return through delegation_rejections and remain in audit/correlation;
        * they never generate a delivery.
@@ -402,18 +418,19 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         }
       }
 
+      const carried = attachmentsFromArtifacts(output.artifacts, output.artifactsWithheld);
       const message = await insertMessage(client, {
         requestId,
         traceId: row.trace_id,
         tenantId: row.recipient_tenant,
         roomId: sourceRoomId,
         actorAlias: row.recipient_alias,
-        body: {
-            type: 'agent.message',
-            text: body,
-            from_alias: row.recipient_alias,
-            correlation
-        },
+        body: delegatedMessageBody({
+          type: 'agent.message',
+          text: body,
+          from_alias: row.recipient_alias,
+          correlation
+        }, carried),
         origin: row.origin ?? null,
           // Agent-to-agent delegation always uses the batch lane. Lane selects the queue, while
           // inherited, clamped priority orders work within it; they are independent controls.
@@ -457,7 +474,8 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
            ${policy.visitedPathAvailable ? ',$18::text[]' : ''})`,
         [
           row.id, ack.attempt, output.index, row.message_id, row.recipient_tenant, row.recipient_alias,
-          targetTenant, targetAlias, targetRefHash, bodyHash, messageId, producedDeliveryId,
+          targetTenant, targetAlias, targetRefHash, carriedBodyHash(bodyHash, carried),
+          messageId, producedDeliveryId,
           requestId, row.trace_id, hopCount, hopBudget, JSON.stringify(correlation),
           ...(policy.visitedPathAvailable ? [visitedPath] : [])
         ]
@@ -475,7 +493,10 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
             target_tenant: targetTenant,
             target_alias: targetAlias,
             hop_count: hopCount,
-            hop_budget: hopBudget
+            hop_budget: hopBudget,
+            ...(carried.rejectedNames > 0
+              ? { rejected_attachment_names: carried.rejectedNames }
+              : {})
           })
         ]
       );
