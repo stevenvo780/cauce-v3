@@ -5,7 +5,12 @@
  * an alias behind the back of the tab that is actually driving it.
  */
 import type { CauceApi } from '../../api/client';
-import { TerminalApiError, terminalRequest, type TerminalSessionOwner } from './api';
+import {
+  TerminalApiError,
+  terminalRequest,
+  type CsrfResuelto,
+  type TerminalSessionOwner,
+} from './api';
 
 type SesionConToken = Pick<CauceApi, 'csrfForMutation'>;
 
@@ -15,12 +20,19 @@ export const CAMPOS_DE_CONTROL = ['action', 'owner_generation', 'owner_token', '
 /** The owner-fenced body of `/extend`, identical to the one that releases a session. */
 export const CAMPOS_DE_PRORROGA = ['owner_generation', 'owner_token', 'request_id'] as const;
 
-/** Receipt of a taken hold. While it lives, the bus keeps the alias's deliveries pending. */
+/**
+ * Receipt of a taken hold. While it lives, the bus keeps the alias's deliveries pending. Every
+ * field but `session_id` is OPTIONAL on purpose: a 2xx means the gateway ALREADY muted the alias,
+ * so a malformed receipt cannot be turned into a throw — that lost the only record the browser had
+ * of a hold it has to give back. What could not be read lands in `dudoso`, which the panel says
+ * out loud instead of pretending the receipt was clean.
+ */
 export interface ControlDeTuiTomado {
   session_id: string;
-  hold_id: string;
-  held_by: string;
-  expires_at: string;
+  hold_id?: string;
+  held_by?: string;
+  expires_at?: string;
+  dudoso: string[];
 }
 
 export interface ControlDeTuiDevuelto {
@@ -69,23 +81,25 @@ export async function tomarControlDeTui(
     method: 'POST',
     body: JSON.stringify({ action: 'take', reason, ...cuerpoConDueno(owner) }),
   }, session);
-  const record = recibo(
-    body,
-    'El gateway no acreditó la toma de control de la TUI.',
-    'invalid_control_receipt',
-  );
+  const legible = body !== null && typeof body === 'object' && !Array.isArray(body);
+  const record = legible ? body as Record<string, unknown> : {};
   const holdId = texto(record.hold_id);
   const heldBy = texto(record.held_by);
   const expiresAt = texto(record.expires_at);
-  if (record.session_id !== sessionId || holdId === undefined || heldBy === undefined
-      || expiresAt === undefined || !Number.isFinite(Date.parse(expiresAt))) {
-    throw new TerminalApiError(
-      'El gateway devolvió un arriendo de control ambiguo; no se asume que el teclado sea tuyo.',
-      409,
-      'invalid_control_receipt',
-    );
-  }
-  return { session_id: sessionId, hold_id: holdId, held_by: heldBy, expires_at: expiresAt };
+  const fechaValida = expiresAt !== undefined && Number.isFinite(Date.parse(expiresAt));
+  const dudoso: string[] = [];
+  if (!legible) dudoso.push('cuerpo');
+  else if (record.session_id !== sessionId) dudoso.push('session_id');
+  if (holdId === undefined) dudoso.push('hold_id');
+  if (heldBy === undefined) dudoso.push('held_by');
+  if (!fechaValida) dudoso.push('expires_at');
+  return {
+    session_id: sessionId,
+    ...(holdId === undefined ? {} : { hold_id: holdId }),
+    ...(heldBy === undefined ? {} : { held_by: heldBy }),
+    ...(fechaValida ? { expires_at: expiresAt } : {}),
+    dudoso,
+  };
 }
 
 /**
@@ -96,13 +110,13 @@ export async function devolverControlDeTui(
   sessionId: string,
   owner: TerminalSessionOwner,
   session?: SesionConToken,
-  opciones: { keepalive?: boolean } = {},
+  opciones: { keepalive?: boolean; csrf?: CsrfResuelto } = {},
 ): Promise<ControlDeTuiDevuelto> {
   const body = await terminalRequest<unknown>(rutaDeSesion(sessionId, 'control'), {
     method: 'POST',
     body: JSON.stringify({ action: 'release', ...cuerpoConDueno(owner) }),
     ...(opciones.keepalive === true ? { keepalive: true } : {}),
-  }, session);
+  }, session, opciones.csrf);
   const record = recibo(
     body,
     'El gateway no acreditó la devolución del control de la TUI.',

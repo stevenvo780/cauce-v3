@@ -21,7 +21,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { act, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
+import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -101,15 +102,46 @@ function servirSesiones(registro: SesionPedida[]) {
   );
 }
 
+/**
+ * THE FENCE THAT MADE THIS FEATURE A LIE. The gateway accepts `/control` and `/extend` only over a
+ * session the relay already redeemed (`consumed_at IS NOT NULL`, `helpers.ts`); before that it
+ * answers `409 stale_terminal_owner`. These handlers refuse exactly like that, so a console that
+ * writes before the attach turns this suite red instead of turning into a take that never works.
+ */
+const enganchadas = new Set<string>();
+
+/** Plays the relay redeeming the single-use ticket of whatever session this socket attached to. */
+function engancharSocket(socket: StubWebSocket): StubWebSocket {
+  act(() => {
+    socket.acceptOpen();
+    socket.emitControl({
+      type: 'ready',
+      claim_token: '12345678-1234-4234-8234-123456789abc',
+      claim_epoch: '1',
+      claim_lease_ms: 45_000,
+    });
+  });
+  const attach = socket.framesOfType('attach')[0] as Record<string, unknown> | undefined;
+  if (attach) enganchadas.add(String(attach.session_id));
+  return socket;
+}
+
+const NEGATIVA_RANCIA = { error: 'conflict', reason: 'stale_terminal_owner' } as const;
+
+function faltaElEnganche(sid: string): boolean {
+  return !enganchadas.has(sid);
+}
+
 function servirControl(registro: ControlPedido[], fallo?: { status: number; reason: string }) {
   server.use(http.post('*/v3/console/terminal/sessions/:sid/control', async ({ request, params }) => {
     const body = await request.json() as Record<string, unknown>;
     const sid = String(params.sid);
     registro.push({ sid, body });
-    if (fallo && body.action === 'take') {
-      return HttpResponse.json({ error: 'conflict', reason: fallo.reason }, { status: fallo.status });
-    }
     if (body.action === 'take') {
+      if (faltaElEnganche(sid)) return HttpResponse.json(NEGATIVA_RANCIA, { status: 409 });
+      if (fallo) {
+        return HttpResponse.json({ error: 'conflict', reason: fallo.reason }, { status: fallo.status });
+      }
       return HttpResponse.json({
         session_id: sid,
         hold_id: 'hold-1',
@@ -121,14 +153,33 @@ function servirControl(registro: ControlPedido[], fallo?: { status: number; reas
   }));
 }
 
+function servirProrroga(registro: Record<string, unknown>[], fallo?: { status: number; reason: string }) {
+  server.use(http.post('*/v3/console/terminal/sessions/:sid/extend', async ({ request, params }) => {
+    const sid = String(params.sid);
+    const body = await request.json() as Record<string, unknown>;
+    registro.push(body);
+    if (faltaElEnganche(sid)) return HttpResponse.json(NEGATIVA_RANCIA, { status: 409 });
+    if (fallo) {
+      return HttpResponse.json({ error: 'conflict', reason: fallo.reason }, { status: fallo.status });
+    }
+    return HttpResponse.json({
+      session_id: sid,
+      request_id: String(body.request_id),
+      expires_at: new Date(Date.now() + 900_000).toISOString(),
+    });
+  }));
+}
+
 function escenario(overrides: Partial<TerminalTarget> = {}) {
   const sesiones: SesionPedida[] = [];
   const controles: ControlPedido[] = [];
+  const prorrogas: Record<string, unknown>[] = [];
   habilitarCapacidad();
   servirDestinos([destino(overrides)]);
   servirSesiones(sesiones);
   servirControl(controles);
-  return { sesiones, controles };
+  servirProrroga(prorrogas);
+  return { sesiones, controles, prorrogas };
 }
 
 /** Selects the alias and waits for the read-only TUI the panel opens on its own. */
@@ -147,31 +198,35 @@ function botonDeToma(): HTMLElement {
   return screen.getByRole('button', { name: /tomar el control/i });
 }
 
+/** Attaches the read-only TUI the panel opened on its own, which is what `/extend` is fenced on. */
+function engancharLaTui(): StubWebSocket {
+  return engancharSocket(StubWebSocket.last());
+}
+
 /** Takes the control with a hand-typed reason and returns the socket of the writable session. */
 async function tomarElControl(user: ReturnType<typeof userEvent.setup>, controles: ControlPedido[]) {
   const abiertos = StubWebSocket.instances.length;
   await user.type(campoDeMotivo(), MOTIVO);
   await user.click(botonDeToma());
-  await waitFor(() => { expect(controles).toHaveLength(1); }, { timeout: 5000 });
-  // The writable channel is a session of its own: its socket is the one the keystrokes travel on.
+  // The writable channel is a session of its own: its socket is the one the keystrokes travel on,
+  // and until the relay redeems ITS ticket the gateway refuses the take.
   await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(abiertos); }, { timeout: 5000 });
-  const socket = StubWebSocket.last();
-  act(() => {
-    socket.acceptOpen();
-    socket.emitControl({
-      type: 'ready',
-      claim_token: '12345678-1234-4234-8234-123456789abc',
-      claim_epoch: '1',
-      claim_lease_ms: 45_000,
-    });
-  });
+  const socket = engancharSocket(StubWebSocket.last());
+  await waitFor(() => { expect(controles).toHaveLength(1); }, { timeout: 5000 });
   return socket;
 }
 
 let restaurarSocket: () => void;
 
-beforeEach(() => { restaurarSocket = installStubWebSocket(); });
-afterEach(() => {
+beforeEach(() => {
+  enganchadas.clear();
+  restaurarSocket = installStubWebSocket();
+});
+afterEach(async () => {
+  // Unmount HERE, while the handlers are still installed: the release the panel fires on its way
+  // out landed after `resetHandlers` and printed an unhandled-request error over a green suite.
+  cleanup();
+  await act(async () => { await new Promise((listo) => setTimeout(listo, 0)); });
   closePtySession(SESION_HARNESS);
   closePtySession(SESION_ESCRIBIBLE);
   restaurarSocket();
@@ -244,6 +299,12 @@ describe('con el control tomado', () => {
 
     await screen.findByRole('button', { name: /devolver el control/i });
     expect(screen.getByText(/quedan en cola/i)).toBeInTheDocument();
+    // The keyboard guard is lifted by an effect, one commit AFTER the hold exists: a keystroke
+    // typed before that is DROPPED —not queued— and the assertion below would be flaky for a
+    // reason that has nothing to do with the control.
+    await waitFor(() => {
+      expect(document.querySelector('.pty-shell[data-read-only]')).toBeNull();
+    }, { timeout: 5000 });
 
     // The mirror of `live-tui.test.tsx`, where the SAME call produces zero input frames.
     act(() => { ptySessionType(SESION_ESCRIBIBLE, 'ls -la\r'); });
@@ -285,6 +346,36 @@ describe('con el control tomado', () => {
     expect(controles.at(-1)?.sid).toBe(SESION_ESCRIBIBLE);
   }, 20_000);
 
+  it('cerrar la pestaña suelta el teclado SIN esperar a la red por el token CSRF', async () => {
+    const user = userEvent.setup();
+    const { controles } = escenario();
+    await abrirZeus(user);
+    engancharLaTui();
+    await screen.findByRole('button', { name: /tomar el control/i });
+    await tomarElControl(user, controles);
+    await screen.findByRole('button', { name: /devolver el control/i });
+    await act(async () => { await new Promise((listo) => setTimeout(listo, 0)); });
+
+    const originalFetch = globalThis.fetch;
+    const salidas: string[] = [];
+    globalThis.fetch = (entrada: RequestInfo | URL, init?: RequestInit) => {
+      salidas.push(typeof entrada === 'string' ? entrada : entrada instanceof URL ? entrada.href : entrada.url);
+      return originalFetch(entrada, init);
+    };
+    try {
+      window.dispatchEvent(new Event('beforeunload'));
+      // SYNCHRONOUS on purpose: a release that first awaits `/v3/auth/session` never leaves a
+      // page that is going away, and the alias stays muted until the hold expires by itself.
+      expect(salidas.filter((url) => url.includes('/control'))).toHaveLength(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    await waitFor(() => {
+      expect(controles.filter((llamada) => llamada.body.action === 'release')).toHaveLength(1);
+    }, { timeout: 5000 });
+  }, 20_000);
+
   it('un cierre 4410 dice en castellano que el control se fue, y no inventa una devolución', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
@@ -304,13 +395,29 @@ describe('con el control tomado', () => {
 });
 
 describe('la prórroga es un acto humano, no un latido', () => {
+  it('no se ofrece hasta que el relay consume el ticket, que es cuando el gateway la aceptaría', async () => {
+    const user = userEvent.setup();
+    const { prorrogas } = escenario();
+    await abrirZeus(user);
+
+    // The grant already exists and the bar is painted: before, that alone made the button live.
+    const boton = await screen.findByRole('button', { name: /prorrogar/i });
+    expect(boton).toBeDisabled();
+    expect(boton.getAttribute('title')).toMatch(/el relay ya enganchó/i);
+
+    engancharLaTui();
+
+    await waitFor(() => { expect(screen.getByRole('button', { name: /prorrogar/i })).toBeEnabled(); });
+    await user.click(screen.getByRole('button', { name: /prorrogar/i }));
+    await waitFor(() => { expect(prorrogas).toHaveLength(1); });
+  }, 20_000);
+
   it('un 409 de prórroga agotada se dice, en vez de no hacer nada', async () => {
     const user = userEvent.setup();
     escenario();
-    server.use(http.post('*/v3/console/terminal/sessions/:sid/extend', () => HttpResponse.json(
-      { error: 'conflict', reason: 'extension_exhausted' }, { status: 409 },
-    )));
+    servirProrroga([], { status: 409, reason: 'extension_exhausted' });
     await abrirZeus(user);
+    engancharLaTui();
 
     await user.click(await screen.findByRole('button', { name: /prorrogar/i }));
 
@@ -319,20 +426,27 @@ describe('la prórroga es un acto humano, no un latido', () => {
     expect(document.body.textContent).not.toContain('extension_exhausted');
   }, 20_000);
 
+  it('un 409 stale_terminal_owner de prórroga se traduce y no se le cita el código al operador', async () => {
+    const user = userEvent.setup();
+    escenario();
+    servirProrroga([], { status: 409, reason: 'stale_terminal_owner' });
+    await abrirZeus(user);
+    engancharLaTui();
+
+    await user.click(await screen.findByRole('button', { name: /prorrogar/i }));
+
+    const aviso = await screen.findByRole('alert');
+    expect(aviso).toHaveAttribute('data-codigo', 'stale_terminal_owner');
+    expect(aviso).toHaveTextContent(new RegExp(TERMINAL_DENY_MESSAGES.stale_terminal_owner.titulo, 'i'));
+    expect(aviso).not.toHaveTextContent('stale_terminal_owner');
+    expect(aviso).toHaveTextContent(/HTTP 409/);
+  }, 20_000);
+
   it('la prórroga que el gateway concede empuja la ventana y no se pide sola', async () => {
     const user = userEvent.setup();
-    const prorrogas: Record<string, unknown>[] = [];
-    escenario();
-    server.use(http.post('*/v3/console/terminal/sessions/:sid/extend', async ({ request, params }) => {
-      const body = await request.json() as Record<string, unknown>;
-      prorrogas.push(body);
-      return HttpResponse.json({
-        session_id: String(params.sid),
-        request_id: String(body.request_id),
-        expires_at: new Date(Date.now() + 900_000).toISOString(),
-      });
-    }));
+    const { prorrogas } = escenario();
     await abrirZeus(user);
+    engancharLaTui();
 
     await user.click(await screen.findByRole('button', { name: /prorrogar/i }));
     await waitFor(() => { expect(prorrogas).toHaveLength(1); });
@@ -341,6 +455,156 @@ describe('la prórroga es un acto humano, no un latido', () => {
     // No timer asks for a second one: the extension is explicit and audited, never ambient.
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
     expect(prorrogas).toHaveLength(1);
+  }, 20_000);
+});
+
+/* ---------------------------------------------------------------------------------------------
+ * THE ORDER OF THE TAKE. `/control` is fenced on `consumed_at IS NOT NULL`: posting it the moment
+ * the grant exists —which is what the panel did— answered `409 stale_terminal_owner` every time
+ * and left the operator on a writable session with no keyboard and no way forward but closing it.
+ * ------------------------------------------------------------------------------------------- */
+describe('la toma espera al enganche del relay', () => {
+  it('no manda /control antes de que el ticket se consuma, y lo dice mientras espera', async () => {
+    const user = userEvent.setup();
+    const { controles } = escenario();
+    await abrirZeus(user);
+    engancharLaTui();
+    await screen.findByRole('button', { name: /tomar el control/i });
+
+    const abiertos = StubWebSocket.instances.length;
+    await user.type(campoDeMotivo(), MOTIVO);
+    await user.click(botonDeToma());
+
+    // The writable session exists and its socket is open, but the relay has not redeemed its
+    // ticket: not one byte of `/control` may travel yet.
+    await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(abiertos); }, { timeout: 5000 });
+    expect(await screen.findByRole('button', { name: /enganchando la sesión/i })).toBeDisabled();
+    expect(controles).toHaveLength(0);
+
+    engancharSocket(StubWebSocket.last());
+
+    await waitFor(() => { expect(controles).toHaveLength(1); }, { timeout: 5000 });
+    expect(controles[0]).toMatchObject({ sid: SESION_ESCRIBIBLE, body: { action: 'take' } });
+    await screen.findByRole('button', { name: /devolver el control/i });
+  }, 20_000);
+
+  it('si la sesión con teclado no llega a abrirse, el botón no se queda callado', async () => {
+    const user = userEvent.setup();
+    const { controles } = escenario();
+    await abrirZeus(user);
+    engancharLaTui();
+    await screen.findByRole('button', { name: /tomar el control/i });
+    server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json(
+      { error: 'conflict', reason: 'container_busy' }, { status: 409 },
+    )));
+
+    await user.type(campoDeMotivo(), MOTIVO);
+    await user.click(botonDeToma());
+
+    expect(await screen.findByText(/no llegó a abrir la sesión con teclado/i)).toBeInTheDocument();
+    expect(controles).toHaveLength(0);
+    expect(await screen.findByRole('button', { name: /reintentar la toma/i })).toBeEnabled();
+  }, 20_000);
+
+  it('si el enganche no llega lo dice, no toca /control y el reintento SÍ toma el teclado', async () => {
+    const user = userEvent.setup();
+    const { controles, sesiones } = escenario();
+    await abrirZeus(user);
+    engancharLaTui();
+    await screen.findByRole('button', { name: /tomar el control/i });
+
+    const abiertos = StubWebSocket.instances.length;
+    await user.type(campoDeMotivo(), MOTIVO);
+    await user.click(botonDeToma());
+    await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(abiertos); }, { timeout: 5000 });
+    // The relay drops the channel before redeeming the ticket: the attach is never going to come.
+    act(() => { StubWebSocket.last().emitClose(4404, 'agent_offline'); });
+
+    const aviso = await screen.findByText(/no llegó a engancharse/i);
+    expect(aviso).toBeInTheDocument();
+    expect(document.body.textContent).toMatch(/sesión escribible en solo lectura/i);
+    expect(controles).toHaveLength(0);
+    const pedidas = sesiones.length;
+
+    // A second click is NOT a silent no-op: it reopens the dead channel and finishes the take.
+    const reintento = await screen.findByRole('button', { name: /reintentar la toma/i });
+    await user.click(reintento);
+    await waitFor(() => { expect(sesiones.length).toBeGreaterThan(pedidas); }, { timeout: 5000 });
+    await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(abiertos + 1); }, { timeout: 5000 });
+    engancharSocket(StubWebSocket.last());
+
+    await waitFor(() => { expect(controles).toHaveLength(1); }, { timeout: 5000 });
+    expect(sesiones.at(-1)).toMatchObject({ mode: WRITABLE_TUI_MODE, reason: MOTIVO });
+    await screen.findByRole('button', { name: /devolver el control/i });
+  }, 20_000);
+
+  it('CONTROL NEGATIVO de montaje doble: con StrictMode la toma sigue viva y llega a /control', async () => {
+    const user = userEvent.setup();
+    const { controles } = escenario();
+    // StrictMode runs cleanup+setup on the SAME mount. A liveness flag that only ever went false
+    // froze the take on «Abriendo la sesión…» for ever, and no suite without StrictMode saw it.
+    const vista = renderWithApi(<StrictMode><TerminalPage /></StrictMode>);
+    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }, { timeout: 5000 }));
+    await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(0); }, { timeout: 5000 });
+    engancharLaTui();
+    await screen.findByRole('button', { name: /tomar el control/i });
+
+    await tomarElControl(user, controles);
+
+    await screen.findByRole('button', { name: /devolver el control/i });
+    vista.unmount();
+  }, 20_000);
+
+  it('un 409 stale_terminal_owner en la toma se traduce en vez de citarle el código al operador', async () => {
+    const user = userEvent.setup();
+    const { controles } = escenario();
+    servirControl(controles, { status: 409, reason: 'stale_terminal_owner' });
+    await abrirZeus(user);
+    engancharLaTui();
+    await screen.findByRole('button', { name: /tomar el control/i });
+
+    const abiertos = StubWebSocket.instances.length;
+    await user.type(campoDeMotivo(), MOTIVO);
+    await user.click(botonDeToma());
+    await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(abiertos); }, { timeout: 5000 });
+    engancharSocket(StubWebSocket.last());
+
+    const aviso = await screen.findByRole('alert');
+    expect(aviso).toHaveAttribute('data-codigo', 'stale_terminal_owner');
+    expect(aviso).toHaveTextContent(new RegExp(TERMINAL_DENY_MESSAGES.stale_terminal_owner.titulo, 'i'));
+    expect(aviso).not.toHaveTextContent('stale_terminal_owner');
+    expect(screen.queryByRole('button', { name: /devolver el control/i })).not.toBeInTheDocument();
+  }, 20_000);
+
+  it('un recibo incompleto NO pierde el arriendo: se dice y se devuelve igual al desmontar', async () => {
+    const user = userEvent.setup();
+    const { controles } = escenario();
+    // The gateway granted the hold —the alias is already muted— but the receipt came back without
+    // `expires_at` nor `held_by`. Throwing here left the browser with no record of a real hold.
+    server.use(http.post('*/v3/console/terminal/sessions/:sid/control', async ({ request, params }) => {
+      const body = await request.json() as Record<string, unknown>;
+      const sid = String(params.sid);
+      controles.push({ sid, body });
+      if (body.action !== 'take') return HttpResponse.json({ session_id: sid, hold_id: 'hold-1', released: true });
+      if (faltaElEnganche(sid)) return HttpResponse.json(NEGATIVA_RANCIA, { status: 409 });
+      return HttpResponse.json({ session_id: sid, hold_id: 'hold-1' });
+    }));
+    const vista = await abrirZeus(user);
+    engancharLaTui();
+    await screen.findByRole('button', { name: /tomar el control/i });
+    await tomarElControl(user, controles);
+
+    await screen.findByRole('button', { name: /devolver el control/i });
+    const recibo = screen.getByText(/recibo incompleto/i);
+    expect(recibo).toHaveTextContent(/held_by/);
+    // The notice has no rule of its own: it borrows the panel's amber notice. Pinned here so a
+    // later edit cannot leave it as unstyled body text without the suite noticing.
+    expect(recibo).toHaveClass('pty-control-perdido');
+
+    vista.unmount();
+    await waitFor(() => {
+      expect(controles.filter((llamada) => llamada.body.action === 'release')).toHaveLength(1);
+    }, { timeout: 5000 });
   }, 20_000);
 });
 

@@ -12,12 +12,19 @@
  *     held the bus does not deliver to that alias and its messages queue up;
  *  4. giving it back is always reachable, survives an error, and is also fired when the panel
  *     goes away. A hold that outlives the tab is what mutes an alias.
+ *
+ * And one ORDER, which is not cosmetic: the gateway only accepts a take on a session the relay
+ * already redeemed (`consumed_at IS NOT NULL`). Opening the writable session returns the moment
+ * the grant exists, which is BEFORE the browser attaches, so posting the take there answered
+ * `409 stale_terminal_owner` every single time. The take waits for the attach —the same
+ * `ticketConsumido` the session bar paints— and says out loud that it is waiting.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { KeyRound, PauseCircle, Undo2 } from 'lucide-react';
 import { useApi } from '../../api/context';
 import {
   TerminalApiError,
+  type CsrfResuelto,
   type TerminalSessionGrant,
   type TerminalSessionOwner,
 } from './api';
@@ -27,11 +34,52 @@ import {
   type ControlDeTuiTomado,
 } from './api-control';
 import { explicarDenegacionPty, type DenegacionExplicada } from './denegaciones';
+import { WRITABLE_TUI_MODE } from './fleet';
 import { NegativaPty } from './PtySessionDialog';
+import type { PtyChannelState } from './pty-types';
 import { PTY_REASON_MAX_LENGTH, ptyReasonProblem } from './session';
 
 /** Close code the relay uses on the browser leg when the operator's hold is no longer theirs. */
 export const CIERRE_CONTROL_DEVUELTO = 4410;
+
+/** How long the take waits for the relay to redeem the ticket before saying it did not attach. */
+const ESPERA_DE_ENGANCHE_MS = 12_000;
+const LATIDO_DE_ESPERA_MS = 50;
+
+type FaseDeToma = 'reposo' | 'abriendo' | 'enganchando' | 'tomando' | 'devolviendo';
+type ResultadoDeEspera = 'enganchada' | 'sin_canal' | 'sin_tiempo';
+
+const ETIQUETA_DE_FASE: Readonly<Record<FaseDeToma, string>> = {
+  reposo: 'Tomar el control',
+  abriendo: 'Abriendo la sesión con teclado…',
+  enganchando: 'Enganchando la sesión…',
+  tomando: 'Tomando…',
+  devolviendo: 'Tomar el control',
+};
+
+const NO_SE_ABRIO: DenegacionExplicada = {
+  titulo: 'La consola no llegó a abrir la sesión con teclado',
+  porQue: 'El pedido de sesión escribible no quedó adoptado por esta pestaña: o el gateway lo rechazó '
+    + '—su motivo se pinta aparte—, o ya había otra reserva en vuelo para este panel. No se tomó ningún '
+    + 'control: el bus le sigue entregando a este alias.',
+  quienLoLevanta: 'Vos: esperá a que termine la reserva en curso y volvé a pedir la toma.',
+  linea: 'La consola no llegó a abrir la sesión con teclado y no se tomó ningún control.',
+};
+
+function sinEnganche(motivo: ResultadoDeEspera): DenegacionExplicada {
+  const porQue = motivo === 'sin_canal'
+    ? 'La sesión con teclado quedó pedida, pero su canal se cortó antes de que el relay redimiera el '
+      + 'ticket, así que el gateway todavía no la da por enganchada y rechazaría la toma.'
+    : `La sesión con teclado quedó pedida, pero el relay no la enganchó en ${String(Math.round(ESPERA_DE_ENGANCHE_MS / 1000))} s. `
+      + 'El gateway sólo acepta la toma sobre una sesión que el relay ya consumió.';
+  return {
+    titulo: 'La sesión con teclado no llegó a engancharse: seguís sin el teclado',
+    porQue: `${porQue} Estás sobre una sesión escribible en solo lectura: nadie quedó silenciado y el bus le sigue entregando a este alias.`,
+    quienLoLevanta: 'Vos: reintentá la toma con el mismo motivo. Si vuelve a fallar, cerrá la terminal y '
+      + 'revisá que el agente PTY del contenedor siga conectado.',
+    linea: 'La sesión con teclado no llegó a engancharse; no se tomó el control y el alias sigue recibiendo.',
+  };
+}
 
 interface ControlPendiente {
   sessionId: string;
@@ -54,7 +102,13 @@ function explicar(error: unknown): DenegacionExplicada {
   });
 }
 
-export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidiendoSesion, onAbrirEscritura, onControlCambia }: {
+function vencimiento(arriendo: ControlDeTuiTomado): string {
+  return arriendo.expires_at === undefined
+    ? 'El gateway no dijo hasta cuándo vale el arriendo, así que devolvelo vos en cuanto termines'
+    : `El arriendo vence a las ${new Date(arriendo.expires_at).toLocaleTimeString()} y devolverlo destraba la cola`;
+}
+
+export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidiendoSesion, sesionEnganchada, estadoDelCanal, onAbrirEscritura, onControlCambia }: {
   alias: string;
   /** Live grant of this panel, whatever its mode. The hold belongs to a writable session. */
   grant?: TerminalSessionGrant;
@@ -62,6 +116,9 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
   puedeEscribir: boolean;
   codigoDeCierre?: number;
   pidiendoSesion: boolean;
+  /** The relay redeemed the ticket of the session on screen: the same signal the bar paints. */
+  sesionEnganchada: boolean;
+  estadoDelCanal?: PtyChannelState;
   /** Opens the writable session with the SAME hand-typed reason; `undefined` when it was refused. */
   onAbrirEscritura: (motivo: string) => Promise<TerminalSessionGrant | undefined>;
   onControlCambia: (sostenido: boolean) => void;
@@ -69,23 +126,40 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
   const api = useApi();
   const [motivo, setMotivo] = useState('');
   const [arriendo, setArriendo] = useState<ControlDeTuiTomado>();
-  const [pendiente, setPendiente] = useState(false);
+  const [fase, setFase] = useState<FaseDeToma>('reposo');
+  const [reintentable, setReintentable] = useState(false);
   const [error, setError] = useState<DenegacionExplicada>();
   const [perdido, setPerdido] = useState(false);
   const apiRef = useRef(api);
   apiRef.current = api;
   /** What an unmount or a `beforeunload` still has to give back. Cleared the moment it is gone. */
   const porDevolverRef = useRef<ControlPendiente>(undefined);
+  /**
+   * CSRF token read WHILE the hold is taken. `beforeunload` has no time to fetch one: a release
+   * that awaits `/v3/auth/session` there never leaves the page and the alias stays muted.
+   */
+  const csrfRef = useRef<CsrfResuelto>(undefined);
   const alineadoRef = useRef(false);
+  const vivoRef = useRef(true);
+  const grantRef = useRef(grant);
+  grantRef.current = grant;
+  const enganchadaRef = useRef(sesionEnganchada);
+  enganchadaRef.current = sesionEnganchada;
+  const estadoRef = useRef(estadoDelCanal);
+  estadoRef.current = estadoDelCanal;
 
   const problema = ptyReasonProblem(motivo);
+  const pendiente = fase !== 'reposo';
 
   const soltarEnSilencio = useCallback((keepalive: boolean) => {
     const pendienteDeSoltar = porDevolverRef.current;
     if (pendienteDeSoltar === undefined) return;
     porDevolverRef.current = undefined;
     void devolverControlDeTui(
-      pendienteDeSoltar.sessionId, pendienteDeSoltar.owner, apiRef.current, { keepalive },
+      pendienteDeSoltar.sessionId,
+      pendienteDeSoltar.owner,
+      apiRef.current,
+      { keepalive, ...(keepalive && csrfRef.current ? { csrf: csrfRef.current } : {}) },
     ).catch(() => undefined);
   }, []);
 
@@ -118,36 +192,89 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
     setArriendo(undefined);
   }, [arriendo, grant?.session_id]);
 
+  // `vivoRef` is re-armed on SETUP, not only cleared on cleanup: React runs cleanup + setup again
+  // on the same mount (StrictMode does it always), and a flag that only ever goes false left the
+  // take frozen on «Abriendo la sesión…» forever — it was the browser, not the suite, that saw it.
   useEffect(() => {
+    vivoRef.current = true;
     const alCerrarLaPestana = () => { soltarEnSilencio(true); };
     window.addEventListener('beforeunload', alCerrarLaPestana);
     return () => {
       window.removeEventListener('beforeunload', alCerrarLaPestana);
+      vivoRef.current = false;
       soltarEnSilencio(false);
     };
   }, [soltarEnSilencio]);
 
   if (!puedeEscribir) return null;
 
+  /** Read through a call so the narrowing of an earlier check does not survive an `await`. */
+  function sigueVivo(): boolean {
+    return vivoRef.current;
+  }
+
+  /** Waits for the SAME session the take is about to be posted against to be attached. */
+  async function esperarEnganche(sessionId: string): Promise<ResultadoDeEspera> {
+    const limite = Date.now() + ESPERA_DE_ENGANCHE_MS;
+    for (;;) {
+      const alineado = grantRef.current?.session_id === sessionId;
+      if (alineado && enganchadaRef.current) return 'enganchada';
+      if (alineado && (estadoRef.current === 'closed' || estadoRef.current === 'error')) return 'sin_canal';
+      if (Date.now() >= limite || !sigueVivo()) return 'sin_tiempo';
+      await new Promise((listo) => setTimeout(listo, LATIDO_DE_ESPERA_MS));
+    }
+  }
+
   async function tomar() {
     if (problema !== undefined || pendiente) return;
     const escrito = motivo.trim();
-    setPendiente(true);
     setError(undefined);
     setPerdido(false);
     try {
-      const escribible = await onAbrirEscritura(escrito);
-      if (escribible === undefined) return;
+      // A writable session already on screen is REUSED: asking for a second one returns a grant the
+      // workspace refuses to adopt, and that refusal is what made the second click do nothing.
+      const canalMuerto = estadoRef.current === 'closed' || estadoRef.current === 'error';
+      const abierta = grantRef.current;
+      const reusable = abierta?.target.mode === WRITABLE_TUI_MODE && !canalMuerto ? abierta : undefined;
+      let escribible = reusable;
+      if (escribible === undefined) {
+        setFase('abriendo');
+        escribible = await onAbrirEscritura(escrito);
+      }
+      if (!sigueVivo()) return;
+      if (escribible === undefined) {
+        setError(NO_SE_ABRIO);
+        setReintentable(true);
+        return;
+      }
+      setFase('enganchando');
+      const enganche = await esperarEnganche(escribible.session_id);
+      if (!sigueVivo()) return;
+      if (enganche !== 'enganchada') {
+        setError(sinEnganche(enganche));
+        setReintentable(true);
+        return;
+      }
+      setFase('tomando');
       const tomado = await tomarControlDeTui(
         escribible.session_id, dueno(escribible), escrito, apiRef.current,
       );
       porDevolverRef.current = { sessionId: escribible.session_id, owner: dueno(escribible) };
+      recordarCsrf();
+      setReintentable(false);
       setArriendo(tomado);
     } catch (fallo) {
       setError(explicar(fallo));
+      setReintentable(true);
     } finally {
-      setPendiente(false);
+      if (sigueVivo()) setFase('reposo');
     }
+  }
+
+  function recordarCsrf() {
+    void apiRef.current.csrfForMutation()
+      .then((token) => { csrfRef.current = { ...(token ? { token } : {}) }; })
+      .catch(() => undefined);
   }
 
   async function devolver() {
@@ -156,7 +283,7 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
       setArriendo(undefined);
       return;
     }
-    setPendiente(true);
+    setFase('devolviendo');
     setError(undefined);
     try {
       await devolverControlDeTui(enCurso.sessionId, enCurso.owner, apiRef.current);
@@ -165,12 +292,12 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
     } catch (fallo) {
       setError(explicar(fallo));
     } finally {
-      setPendiente(false);
+      if (sigueVivo()) setFase('reposo');
     }
   }
 
   return (
-    <section className="pty-control" aria-label="Control de la TUI" data-sostenido={arriendo ? true : undefined}>
+    <section className="pty-control" aria-label="Control de la TUI" data-sostenido={arriendo ? true : undefined} data-fase={fase === 'reposo' ? undefined : fase}>
       <p className="pty-control-consecuencia">
         <PauseCircle size={13} aria-hidden="true" />
         Mientras alguien tiene el control, el bus no le entrega mensajes a {alias}: quedan en cola y salen en orden en cuanto se devuelva.
@@ -179,8 +306,16 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
       {arriendo ? (
         <>
           <p className="pty-control-estado" role="status">
-            Tenés el teclado de esta TUI. El arriendo vence a las {new Date(arriendo.expires_at).toLocaleTimeString()} y devolverlo destraba la cola de {alias}.
+            Tenés el teclado de esta TUI. {vencimiento(arriendo)} de {alias}.
           </p>
+          {arriendo.dudoso.length > 0 ? (
+            // Wears the amber notice rule the panel already has (`pty-control-perdido`): this is the
+            // same kind of aside about the hold, so it needs no rule of its own. `pty-control-recibo`
+            // stays as the hook that names WHICH notice this is.
+            <p className="pty-control-perdido pty-control-recibo" role="status">
+              El gateway acreditó la toma con un recibo incompleto (sin {arriendo.dudoso.join(', ')}). El teclado es tuyo y la devolución queda registrada igual.
+            </p>
+          ) : null}
           <button
             className="button small primary pty-control-devolver"
             type="button"
@@ -216,7 +351,9 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
             title={problema}
             onClick={() => void tomar()}
           >
-            <KeyRound size={14} aria-hidden="true" /> {pendiente ? 'Tomando…' : 'Tomar el control'}
+            <KeyRound size={14} aria-hidden="true" /> {pendiente
+              ? ETIQUETA_DE_FASE[fase]
+              : reintentable ? 'Reintentar la toma' : 'Tomar el control'}
           </button>
         </>
       )}

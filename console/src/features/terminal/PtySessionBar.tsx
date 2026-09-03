@@ -47,7 +47,15 @@ export function PtySessionBar({ agent, grant, secondsLeft, readOnly, ticketConsu
       {ventanaHasta ? (
         <span className="pty-bar-ventana"><Hourglass size={13} aria-hidden="true" /> Ventana hasta <strong>{formatCountdown(ptySecondsLeft(ventanaHasta))}</strong></span>
       ) : null}
-      <button className="button small secondary pty-bar-prorrogar" type="button" onClick={onProrrogar} disabled={prorrogando} title="Empuja la ventana de esta sesión. Es un acto explícito y auditado: nada la renueva sola.">
+      <button
+        className="button small secondary pty-bar-prorrogar"
+        type="button"
+        onClick={onProrrogar}
+        disabled={prorrogando || !ticketConsumed}
+        title={ticketConsumed
+          ? 'Empuja la ventana de esta sesión. Es un acto explícito y auditado: nada la renueva sola.'
+          : 'Todavía no: el gateway sólo prorroga una sesión que el relay ya enganchó. Esperá a que el ticket se consuma.'}
+      >
         <Hourglass size={13} aria-hidden="true" /> {prorrogando ? 'Prorrogando…' : 'Prorrogar'}
       </button>
       <span className="pty-bar-feed"><MessageSquareText size={13} aria-hidden="true" /> {feedEnPausa ? 'POLLING EN PAUSA' : 'POLLING ACTIVO'}</span>

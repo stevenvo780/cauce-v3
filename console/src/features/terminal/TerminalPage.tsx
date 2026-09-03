@@ -168,7 +168,7 @@ function TerminalPageContent({ params }: TerminalPageProps) {
         <PageHeader
           eyebrow={fleetLabel}
           title="Terminal de agentes"
-          description="Transmisión en vivo de la TUI de cada agente —la sesión tmux que está corriendo ahora— en solo lectura. Un alias sólo emite si el servidor publica su modo harness; el resto queda con su motivo escrito, nunca en verde."
+          description="Transmisión en vivo de la TUI de cada agente —la sesión tmux que está corriendo ahora—. Se abre mirando, sin teclado; en los destinos donde el servidor publica un modo con escritura podés tomar el control con un motivo escrito a mano, y mientras lo tengas el bus le deja los mensajes en cola a ese alias. Un alias sólo emite si el servidor publica su modo harness; el resto queda con su motivo escrito, nunca en verde."
           actions={
             <>
               {observando ? (

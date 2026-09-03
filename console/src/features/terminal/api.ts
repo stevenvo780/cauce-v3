@@ -118,6 +118,10 @@ function terminalTimeout(method: string, path: string): TerminalApiError {
  */
 type SesionConToken = Pick<CauceApi, 'csrfForMutation'>;
 
+export interface CsrfResuelto {
+  token?: string;
+}
+
 /**
  * The token that opens the CSRF door, fetched from the session because it belongs to the SESSION,
  * not the module. Fetched only on writes: on a read the gateway does not require it, and fetching
@@ -137,14 +141,15 @@ async function csrfParaEscritura(session: SesionConToken): Promise<string | unde
 }
 
 /**
- * `session` is the session that holds the CSRF token in memory. The shared one by default; the
- * components pass their own (`useApi()`) so a console with two clients —tests, for one— does not
- * write with the other's token.
+ * `session` holds the CSRF token in memory: the shared one by default, or a component's own
+ * (`useApi()`) so two clients do not write with each other's token. `csrfYaResuelto` skips that
+ * lookup so the `fetch` leaves synchronously — `beforeunload` cannot await a token over the net.
  */
 async function terminalResponse(
   path: string,
   init: RequestInit = {},
   session: SesionConToken = cauceApi,
+  csrfYaResuelto?: CsrfResuelto,
 ): Promise<{ status: number; body: unknown }> {
   const method = init.method?.toUpperCase() ?? 'GET';
   const controller = new AbortController();
@@ -160,7 +165,9 @@ async function terminalResponse(
   });
 
   const operation = async (): Promise<{ status: number; body: unknown }> => {
-    const csrf = isUnsafeMethod(init.method) ? await csrfParaEscritura(session) : undefined;
+    const csrf = csrfYaResuelto
+      ? csrfYaResuelto.token
+      : isUnsafeMethod(init.method) ? await csrfParaEscritura(session) : undefined;
     const requestHeaders: Record<string, string> = {
       Accept: 'application/json',
       'X-Cauce-Console': '1',
@@ -213,8 +220,9 @@ export async function terminalRequest<T>(
   path: string,
   init: RequestInit = {},
   session: SesionConToken = cauceApi,
+  csrfYaResuelto?: CsrfResuelto,
 ): Promise<T> {
-  return (await terminalResponse(path, init, session)).body as T;
+  return (await terminalResponse(path, init, session, csrfYaResuelto)).body as T;
 }
 
 function exactTargetState(value: unknown): PtyTargetState | undefined {

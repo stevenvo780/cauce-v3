@@ -411,6 +411,8 @@ export function SessionStage({ session, sessionToken, agents, access, capability
               puedeEscribir={escrituraDisponible}
               codigoDeCierre={channelView?.closeCode}
               pidiendoSesion={requesting}
+              sesionEnganchada={channelView?.ticketConsumido === true}
+              estadoDelCanal={channelView?.state}
               onAbrirEscritura={(razon) => requestChannelRef.current(razon, WRITABLE_TUI_MODE)}
               onControlCambia={setControlSostenido}
             />
