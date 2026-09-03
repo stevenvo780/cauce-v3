@@ -330,7 +330,7 @@ export function presupuestoDeContextoMedido(
 const CLAVE_DEL_TOPE = "project_doc_max_bytes";
 
 const SIN_CONTROL = String.raw`\u0000-\u0008\u000a-\u001f\u007f`;
-const FUERA_DEL_JUEGO = /[\u0000-\u0008\u000a-\u001f\u007f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/u;
+const FUERA_DEL_JUEGO = new RegExp(String.raw`[\u0000-\u0008\u000a-\u001f\u007f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]`, "u");
 const CADENA_BASICA = String.raw`"(?:[^"\\${SIN_CONTROL}]`
   + String.raw`|\\(?:["\\bfnrt]|u(?![dD][89a-fA-F])[0-9A-Fa-f]{4}`
   + String.raw`|U(?:0000(?![dD][89a-fA-F])[0-9A-Fa-f]{4}|000[1-9A-Fa-f][0-9A-Fa-f]{4}|0010[0-9A-Fa-f]{4})))*"`;
