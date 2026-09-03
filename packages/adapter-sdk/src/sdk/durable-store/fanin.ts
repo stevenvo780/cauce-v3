@@ -9,6 +9,31 @@ import type {
   ProcessedFaninReply,
 } from "./contracts.js";
 
+function newestFaninReplyFirst(left: InboxRecord, right: InboxRecord): number {
+  return right.updated_at.localeCompare(left.updated_at)
+    || right.delivery_id.localeCompare(left.delivery_id);
+}
+
+function validatedFaninReply(record: InboxRecord): {
+  readonly request: Delivery;
+  readonly reply: Pick<ProcessedFaninReply, "tenantId" | "alias" | "reply" | "updatedAt">;
+} {
+  const request = record.request;
+  const output = record.output;
+  if (request === undefined || output === undefined || !hasVisibleText(output.reply)) {
+    throw new Error("Durable fan-in reply has no validated request or output");
+  }
+  return {
+    request,
+    reply: {
+      tenantId: request.tenant_id,
+      alias: request.actor_alias,
+      reply: output.reply.trim(),
+      updatedAt: record.updated_at,
+    },
+  };
+}
+
 export class DurableStoreFanin extends DurableStoreBase {
   getDelivery(deliveryId: string): InboxRecord | undefined {
     const record = this.inbox.deliveries[deliveryId] ?? this.terminalHistory.get(deliveryId);
@@ -138,15 +163,9 @@ export class DurableStoreFanin extends DurableStoreBase {
           && this.continuationSource(request)?.delivery_id === source.delivery_id
           && hasVisibleText(record.output?.reply);
       })
-      .sort((left, right) =>
-        right.updated_at.localeCompare(left.updated_at)
-        || right.delivery_id.localeCompare(left.delivery_id))
+      .sort(newestFaninReplyFirst)
       .map((record): ProcessedFaninReply => {
-        const request = record.request;
-        const output = record.output;
-        if (request === undefined || output === undefined || !hasVisibleText(output.reply)) {
-          throw new Error("Durable fan-in reply has no validated request or output");
-        }
+        const { request, reply } = validatedFaninReply(record);
         const correlation = objectRecord(request.body.correlation);
         const childDeliveryId = typeof correlation?.child_delivery_id === "string"
           ? correlation.child_delivery_id
@@ -155,10 +174,7 @@ export class DurableStoreFanin extends DurableStoreBase {
           ? undefined
           : branches.find((branch) => branch.childDeliveryId === childDeliveryId);
         return {
-          tenantId: request.tenant_id,
-          alias: request.actor_alias,
-          reply: output.reply.trim(),
-          updatedAt: record.updated_at,
+          ...reply,
           sourceDeliveryId: source.delivery_id,
           ...(childDeliveryId === undefined ? {} : { childDeliveryId }),
           ...(exact === undefined ? {} : {
@@ -238,23 +254,14 @@ export class DurableStoreFanin extends DurableStoreBase {
       })
       // Newest first: the coordinator's last completed turn is its actual synthesis, and
       // tenant/alias/delivery ordering says nothing about which reply that is.
-      .sort((left, right) =>
-        right.updated_at.localeCompare(left.updated_at)
-        || right.delivery_id.localeCompare(left.delivery_id))
+      .sort(newestFaninReplyFirst)
       .map((record): ProcessedFaninReply => {
-        const request = record.request;
-        const output = record.output;
-        if (request === undefined || output === undefined || !hasVisibleText(output.reply)) {
-          throw new Error("Durable fan-in reply has no validated request or output");
-        }
+        const { request, reply } = validatedFaninReply(record);
         const correlation = objectRecord(request.body.correlation);
         const childDeliveryId = correlation?.child_delivery_id;
         const sourceDeliveryId = correlation?.response_to_delivery_id;
         return {
-          tenantId: request.tenant_id,
-          alias: request.actor_alias,
-          reply: output.reply.trim(),
-          updatedAt: record.updated_at,
+          ...reply,
           ...(typeof childDeliveryId === "string" && childDeliveryId.length > 0
             ? { childDeliveryId }
             : {}),

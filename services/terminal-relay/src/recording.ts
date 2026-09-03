@@ -11,7 +11,7 @@ import { StringDecoder } from 'node:string_decoder';
  */
 
 export const DEFAULT_RECORDING_MAX_BYTES = 32 * 1024 * 1024;
-export const RECORDING_CAP_MARKER = 'cauce:recording_capped';
+const RECORDING_CAP_MARKER = 'cauce:recording_capped';
 
 export class RecordingUnavailableError extends Error {}
 

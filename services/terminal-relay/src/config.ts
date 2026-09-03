@@ -55,11 +55,11 @@ export interface TerminalRelayConfig {
   readonly recordShellSessions: boolean;
 }
 
-export const DEFAULT_BROWSER_PORT = 8446;
-export const DEFAULT_AGENT_PORT = 8445;
-export const DEFAULT_HEALTH_PORT = 8085;
-export const DEFAULT_AGENT_REGISTRY_FILE = '/run/cauce-terminal/pty_agent_identities.json';
-export const DEFAULT_GATEWAY_URL = 'https://gateway:8443';
+const DEFAULT_BROWSER_PORT = 8446;
+const DEFAULT_AGENT_PORT = 8445;
+const DEFAULT_HEALTH_PORT = 8085;
+const DEFAULT_AGENT_REGISTRY_FILE = '/run/cauce-terminal/pty_agent_identities.json';
+const DEFAULT_GATEWAY_URL = 'https://gateway:8443';
 
 function commonNames(environment: NodeJS.ProcessEnv, name: string, fallback: string): readonly string[] {
   const values = (environment[name] ?? fallback).split(',').map((item) => item.trim());

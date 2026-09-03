@@ -76,7 +76,7 @@ export interface Frame {
   readonly payload: Buffer;
 }
 
-export function isFrameTag(value: number): value is FrameTag {
+function isFrameTag(value: number): value is FrameTag {
   return KNOWN_TAGS.has(value);
 }
 

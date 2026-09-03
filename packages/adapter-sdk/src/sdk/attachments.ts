@@ -68,7 +68,7 @@ export async function sweepStaleTurnDirectories(root: string, now = Date.now()):
 
 const sweptRoots = new Set<string>();
 
-export async function createTurnDirectory(): Promise<{ directory: string; workspace: string }> {
+async function createTurnDirectory(): Promise<{ directory: string; workspace: string }> {
   const workspace = await attachmentRoot();
   if (workspace !== tmpdir() && !sweptRoots.has(workspace)) {
     sweptRoots.add(workspace);

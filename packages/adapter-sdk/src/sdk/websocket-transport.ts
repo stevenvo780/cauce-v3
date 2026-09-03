@@ -86,20 +86,20 @@ class WebSocketConsumerConnection implements ConsumerConnection {
      */
     socket.on('message', (data, isBinary) => {
       if (isBinary) {
-        this.reportInvalidInboundFrame(undefined, new Error('Binary gateway frames are not supported'));
+        this.reportInvalidFrame('inbound', undefined, new Error('Binary gateway frames are not supported'));
         return;
       }
       let decoded: unknown;
       try {
         decoded = JSON.parse(rawDataText(data));
       } catch (error) {
-        this.reportInvalidInboundFrame(undefined, error);
+        this.reportInvalidFrame('inbound', undefined, error);
         return;
       }
       try {
         this.queue.push(parseServerFrame(decoded));
       } catch (error) {
-        this.reportInvalidInboundFrame(decoded, error);
+        this.reportInvalidFrame('inbound', decoded, error);
       }
     });
     socket.on('close', () => { this.queue.end(); });
@@ -130,44 +130,16 @@ class WebSocketConsumerConnection implements ConsumerConnection {
     try {
       return JSON.stringify(encodeClientFrame(frame));
     } catch (error) {
-      this.reportInvalidFrame(frame, error);
+      this.reportInvalidFrame('outbound', frame, error);
       throw error;
     }
   }
 
-  private reportInvalidFrame(frame: ClientFrame, error: unknown): void {
-    const issues = frameValidationIssues(error);
-    const record = frame as unknown as Record<string, unknown>;
-    const deliveryId = stringField(record, 'delivery_id');
-    const attempt = numberField(record, 'attempt');
-    const alias = this.diagnostics.alias;
-    const fingerprint = claimTokenFingerprint(record);
-    const entry: AdapterLog = {
-      event: 'outbound_frame_invalid',
-      timestamp: new Date().toISOString(),
-      frame_type: stringField(record, 'type') ?? 'unknown',
-      error_code: issues.length > 0 ? 'OUTBOUND_FRAME_SCHEMA' : 'OUTBOUND_FRAME_ENCODE',
-      error_message: issues.length > 0
-        ? 'Outbound frame rejected by the Cauce V3 schema'
-        : encodeFailureMessage(error),
-      issues,
-      ...(alias === undefined ? {} : { alias }),
-      ...(deliveryId === undefined ? {} : { delivery_id: deliveryId }),
-      ...(attempt === undefined ? {} : { attempt }),
-      ...(fingerprint === undefined ? {} : { claim_token_fingerprint: fingerprint }),
-    };
-    try {
-      this.diagnostics.logger(entry);
-    } catch {
-      // Observability must never replace the failure it is describing.
-    }
-  }
-
-  /**
-   * A dropped server frame. Same care as on the way out: name the fields the schema rejected,
-   * never the frame body — a delivery's `body` is the message.
-   */
-  private reportInvalidInboundFrame(frame: unknown, error: unknown): void {
+  private reportInvalidFrame(
+    direction: 'inbound' | 'outbound',
+    frame: unknown,
+    error: unknown,
+  ): void {
     const issues = frameValidationIssues(error);
     const record = typeof frame === 'object' && frame !== null && !Array.isArray(frame)
       ? (frame as Record<string, unknown>)
@@ -176,15 +148,22 @@ class WebSocketConsumerConnection implements ConsumerConnection {
     const attempt = record === undefined ? undefined : numberField(record, 'attempt');
     const alias = this.diagnostics.alias;
     const fingerprint = record === undefined ? undefined : claimTokenFingerprint(record);
+    const inbound = direction === 'inbound';
     const entry: AdapterLog = {
-      event: 'inbound_frame_invalid',
+      event: inbound ? 'inbound_frame_invalid' : 'outbound_frame_invalid',
       timestamp: new Date().toISOString(),
       frame_type: (record === undefined ? undefined : stringField(record, 'type')) ?? 'unknown',
-      error_code: issues.length > 0 ? 'INBOUND_FRAME_SCHEMA' : 'INBOUND_FRAME_DECODE',
+      error_code: issues.length > 0
+        ? `${direction.toUpperCase()}_FRAME_SCHEMA`
+        : `${direction.toUpperCase()}_FRAME_${inbound ? 'DECODE' : 'ENCODE'}`,
       error_message: issues.length > 0
-        ? 'Gateway frame rejected by the Cauce V3 schema and dropped'
-        : inboundFailureMessage(error),
-      reason: 'frame_dropped',
+        ? inbound
+          ? 'Gateway frame rejected by the Cauce V3 schema and dropped'
+          : 'Outbound frame rejected by the Cauce V3 schema'
+        : inbound
+          ? inboundFailureMessage(error)
+          : encodeFailureMessage(error),
+      ...(inbound ? { reason: 'frame_dropped' } : {}),
       issues,
       ...(alias === undefined ? {} : { alias }),
       ...(deliveryId === undefined ? {} : { delivery_id: deliveryId }),

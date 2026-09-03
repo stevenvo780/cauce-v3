@@ -78,7 +78,24 @@ interface WriteBatchRequest {
   readonly entries: readonly GovernanceWriteBatchEntry[];
 }
 
+interface RejectedRequest {
+  readonly rejected: string;
+}
+
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+function parseObject(raw: string): { readonly value: Record<string, unknown> } | RejectedRequest {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { rejected: 'el cuerpo no es JSON' };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { rejected: 'el cuerpo tiene que ser un objeto' };
+  }
+  return { value: parsed as Record<string, unknown> };
+}
 
 /** Digest before comparing: constant time, and a different length neither crashes nor leaks. */
 function digest(value: string): Buffer {
@@ -119,17 +136,10 @@ async function readBody(request: IncomingMessage): Promise<string | undefined> {
 }
 
 /** The request, or the rejection reason. Fail-closed: a field that does not match is not corrected, it is rejected. */
-function parseReadRequest(raw: string): ReadRequest | { readonly rejected: string } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { rejected: 'el cuerpo no es JSON' };
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { rejected: 'el cuerpo tiene que ser un objeto' };
-  }
-  const source = parsed as Record<string, unknown>;
+function parseReadRequest(raw: string): ReadRequest | RejectedRequest {
+  const parsed = parseObject(raw);
+  if ('rejected' in parsed) return parsed;
+  const source = parsed.value;
   const tenantId = source.tenant_id;
   const alias = source.alias;
   const path = source.path;
@@ -167,16 +177,9 @@ export function parseDirectoryRequest(raw: string): DirectoryRequest | { readonl
 
 /** Closed write: there is no implicit shape that can mean create or replace depending on the disk. */
 export function parseWriteRequest(raw: string): WriteRequest | { readonly rejected: string } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { rejected: 'el cuerpo no es JSON' };
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { rejected: 'el cuerpo tiene que ser un objeto' };
-  }
-  const source = parsed as Record<string, unknown>;
+  const parsed = parseObject(raw);
+  if ('rejected' in parsed) return parsed;
+  const source = parsed.value;
   const allowed = new Set(['tenant_id', 'alias', 'path', 'content_base64', 'precondition']);
   if (Object.keys(source).some((key) => !allowed.has(key))) {
     return { rejected: 'el cuerpo trae campos que este protocolo no conoce' };
@@ -211,16 +214,9 @@ export function parseWriteRequest(raw: string): WriteRequest | { readonly reject
 
 /** Closed batch: each entry declares whether it writes or only verifies, never inferred from its shape. */
 export function parseWriteBatchRequest(raw: string): WriteBatchRequest | { readonly rejected: string } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { rejected: 'el cuerpo no es JSON' };
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { rejected: 'el cuerpo tiene que ser un objeto' };
-  }
-  const source = parsed as Record<string, unknown>;
+  const parsed = parseObject(raw);
+  if ('rejected' in parsed) return parsed;
+  const source = parsed.value;
   const allowed = new Set(['tenant_id', 'alias', 'files']);
   if (Object.keys(source).some((key) => !allowed.has(key))
     || !Array.isArray(source.files) || source.files.length < 1 || source.files.length > 7) {
@@ -304,6 +300,15 @@ function send(response: ServerResponse, status: number, body?: unknown): void {
   response.end(payload);
 }
 
+function rejectInvalidRequest(
+  operation: 'read' | 'list' | 'write' | 'write_batch',
+  response: ServerResponse,
+  reason: string,
+): void {
+  logEvent('terminal_relay_governance_rejected', { operation, reason: 'invalid_request' });
+  send(response, 400, { error: 'invalid_request', reason });
+}
+
 async function handle(
   options: GovernanceRelayOptions,
   request: IncomingMessage,
@@ -366,8 +371,7 @@ async function handle(
   if (operation === 'read') {
     const parsed = parseReadRequest(raw);
     if ('rejected' in parsed) {
-      logEvent('terminal_relay_governance_rejected', { operation, reason: 'invalid_request' });
-      send(response, 400, { error: 'invalid_request', reason: parsed.rejected });
+      rejectInvalidRequest(operation, response, parsed.rejected);
       return;
     }
     await serveRead(options, parsed, request, response);
@@ -377,8 +381,7 @@ async function handle(
   if (operation === 'list') {
     const parsed = parseDirectoryRequest(raw);
     if ('rejected' in parsed) {
-      logEvent('terminal_relay_governance_rejected', { operation, reason: 'invalid_request' });
-      send(response, 400, { error: 'invalid_request', reason: parsed.rejected });
+      rejectInvalidRequest(operation, response, parsed.rejected);
       return;
     }
     await serveDirectory(options, parsed, request, response);
@@ -388,8 +391,7 @@ async function handle(
   if (operation === 'write') {
     const parsed = parseWriteRequest(raw);
     if ('rejected' in parsed) {
-      logEvent('terminal_relay_governance_rejected', { operation, reason: 'invalid_request' });
-      send(response, 400, { error: 'invalid_request', reason: parsed.rejected });
+      rejectInvalidRequest(operation, response, parsed.rejected);
       return;
     }
     await serveWrite(options, parsed, response);
@@ -398,8 +400,7 @@ async function handle(
 
   const parsed = parseWriteBatchRequest(raw);
   if ('rejected' in parsed) {
-    logEvent('terminal_relay_governance_rejected', { operation, reason: 'invalid_request' });
-    send(response, 400, { error: 'invalid_request', reason: parsed.rejected });
+    rejectInvalidRequest(operation, response, parsed.rejected);
     return;
   }
   await serveWriteBatch(options, parsed, response);

@@ -29,9 +29,9 @@ export const CLOSE_CODES = {
 
 /** The relay's own mode sets. What pins them is the behaviour asserted in `sessions.test.ts`; `tests/terminal-pty/vectors.json` freezes the Python agent's frozensets, and the four implementations must agree.
  * READ_ONLY is exactly `{harness}` and gates STDIN; TUI is who may answer DA/DSR, and a writable TUI is in it or the emulator never finishes rendering. */
-export const READ_ONLY_MODES: readonly TerminalMode[] = ['harness'];
-export const TUI_MODES: readonly TerminalMode[] = ['harness', 'harness_rw'];
-export const WRITABLE_MODES: readonly TerminalMode[] = ['shell', 'harness_rw'];
+const READ_ONLY_MODES: readonly TerminalMode[] = ['harness'];
+const TUI_MODES: readonly TerminalMode[] = ['harness', 'harness_rw'];
+const WRITABLE_MODES: readonly TerminalMode[] = ['shell', 'harness_rw'];
 
 export function isReadOnlyMode(mode: TerminalMode): boolean {
   return READ_ONLY_MODES.includes(mode);
