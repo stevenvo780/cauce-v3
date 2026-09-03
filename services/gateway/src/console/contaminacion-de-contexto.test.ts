@@ -5,12 +5,12 @@ import {
   type MeasuredContext, type RecordedContextExpectation,
 } from './contaminacion-de-contexto.js';
 
-function conBloqueDe(alias: string): string {
+function conBloqueDe(alias: string, cuerpo = 'texto gobernado que no debe aparecer en ningún veredicto', exterior = '# CLAUDE.md'): string {
   return [
-    '# CLAUDE.md',
+    exterior,
     MARCA_PERFIL_INICIO,
     `<!-- alias: ${alias} -->`,
-    'texto gobernado que no debe aparecer en ningún veredicto',
+    cuerpo,
     MARCA_PERFIL_FIN,
     '',
   ].join('\n');
@@ -94,6 +94,28 @@ describe('evaluarContaminacion', () => {
 
   /** Drift against a dead generation is what a reload fixes; calling it contamination would
    * quarantine the remedy and leave the alias stuck forever. */
+  it('accepts a fingerprint that differs only inside the alias own profile block', () => {
+    const verdict = evaluarContaminacion(medido({
+      documents: [{
+        name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('b'),
+        text: conBloqueDe('Steven/argos', 'cuota codex 11%'),
+        intended: conBloqueDe('Steven/argos', 'cuota codex 52%'),
+      }],
+    }), esperado);
+    expect(verdict).toEqual({ contaminated: false, findings: [] });
+  });
+
+  it('still quarantines when the text outside the block is not what the reload would write', () => {
+    const verdict = evaluarContaminacion(medido({
+      documents: [{
+        name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('b'),
+        text: conBloqueDe('Steven/argos', 'cuota codex 11%', '# CLAUDE.md\nregla añadida a mano'),
+        intended: conBloqueDe('Steven/argos', 'cuota codex 52%'),
+      }],
+    }), esperado);
+    expect(verdict.findings.map((finding) => finding.reason)).toEqual(['expectation_sha_mismatch']);
+  });
+
   it('ignores an expectation recorded for a generation that is no longer alive', () => {
     const stale: RecordedContextExpectation = { ...esperado, generation: 'gen-anterior' };
     expect(evaluarContaminacion(medido({

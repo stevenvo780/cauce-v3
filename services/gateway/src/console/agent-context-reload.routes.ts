@@ -204,6 +204,7 @@ function contextoMedido(
         path: document.path,
         sha: document.observed_sha,
         text: texto === undefined || texto.length === 0 ? null : texto,
+        intended: prepared.preview.find((fichero) => fichero.nombre === document.name)?.texto ?? null,
       };
     }),
   };

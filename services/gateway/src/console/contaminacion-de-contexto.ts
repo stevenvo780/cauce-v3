@@ -1,4 +1,4 @@
-import { AliasSchema, TenantSchema, bloqueDePerfil } from '@cauce/protocol';
+import { AliasSchema, TenantSchema, bloqueDePerfil, sinBloqueDePerfil } from '@cauce/protocol';
 
 /**
  * Context contamination guard: decides, from measured facts and the recorded expectation, whether
@@ -19,6 +19,8 @@ export interface MeasuredContextDocument {
   readonly sha: string | null;
   /** Whole text, or `null` when it was not read whole. A prefix can never prove ownership. */
   readonly text: string | null;
+  /** What the reload is about to write there; a mismatch confined to its own block is not foreign. */
+  readonly intended?: string | null;
 }
 
 export interface MeasuredContext {
@@ -85,12 +87,18 @@ function bloqueAjeno(
  * Only against an expectation of the generation ALIVE right now: an older one mismatching is
  * ordinary drift, what a reload fixes, and quarantining that would strand the alias forever.
  */
+function soloCambioSuBloque(documento: MeasuredContextDocument): boolean {
+  if (typeof documento.text !== 'string' || typeof documento.intended !== 'string') return false;
+  return sinBloqueDePerfil(documento.text).trim() === sinBloqueDePerfil(documento.intended).trim();
+}
+
 function huellaDistinta(
   documento: MeasuredContextDocument,
   esperado: RecordedContextExpectation,
 ): ContextContaminationFinding | undefined {
   const contrato = esperado.documents.find((entry) => entry.name === documento.name);
   if (contrato?.path !== documento.path || contrato.sha === documento.sha) return undefined;
+  if (soloCambioSuBloque(documento)) return undefined;
   return {
     reason: 'expectation_sha_mismatch',
     document: documento.name,
