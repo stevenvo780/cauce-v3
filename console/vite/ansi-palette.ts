@@ -9,7 +9,7 @@ const ANCHOR = 'DEFAULT_ANSI_COLORS=Object.freeze';
 const WINDOW = 900;
 const BASE_LITERAL = /toColor\("(#[0-9a-f]{6})"\)/g;
 const CUBE_LEVELS = [0, 95, 135, 175, 215, 255];
-const CUBE_LEVELS_LITERAL = /\[0,95,135,175,215,255\]/;
+const CUBE_LEVELS_LITERAL = '[0,95,135,175,215,255]';
 
 /** Thrown when xterm's bundle stops yielding the palette this derivation copies. */
 export class AnsiPaletteError extends Error {
@@ -31,7 +31,7 @@ export function xtermAnsiPalette(bundleSource: string): string[] {
   if (base.length !== 16) {
     throw new AnsiPaletteError(`xterm's 16 base colours are no longer 16 consecutive literals: found ${String(base.length)}`);
   }
-  if (!CUBE_LEVELS_LITERAL.test(chunk)) throw new AnsiPaletteError("xterm's 216-cube levels changed");
+  if (!chunk.includes(CUBE_LEVELS_LITERAL)) throw new AnsiPaletteError("xterm's 216-cube levels changed");
   const palette = base.slice();
   for (let index = 0; index < 216; index += 1) {
     palette.push(hex(

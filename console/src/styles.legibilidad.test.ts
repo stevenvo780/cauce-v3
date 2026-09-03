@@ -105,7 +105,7 @@ export function anchoDeLaBarra(css: string, viewport: number): number {
 
 export function rellenoDelMain(css: string, viewport: number): number {
   const pistas = partirEnPistas(declaracionEfectiva(css, ES_MAIN, 'padding', viewport) ?? '');
-  const horizontal = pistas.length >= 2 ? pistas[1] : pistas[0];
+  const horizontal = pistas.length >= 2 ? pistas.at(1) : pistas.at(0);
   return 2 * minimoDeUnaPista(horizontal ?? '0');
 }
 

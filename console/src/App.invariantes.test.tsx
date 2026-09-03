@@ -117,7 +117,7 @@ describe('the alias table', () => {
 
 describe('the routes that accept a deep link', () => {
   it('🔴 every route with an arity declares a deep link of exactly that length', () => {
-    const sinEnlace = CON_ARIDAD.filter((route) => ENLACE_PROFUNDO[route.id]?.length !== route.arity);
+    const sinEnlace = CON_ARIDAD.filter((route) => ENLACE_PROFUNDO[route.id].length !== route.arity);
     expect(sinEnlace.map((route) => route.id)).toEqual([]);
   });
 

@@ -49,7 +49,7 @@ it('la flecha derecha avanza, selecciona y da la vuelta al llegar al final', asy
 
   await user.keyboard('{ArrowRight}{ArrowRight}');
   expect(pestana('Uno')).toHaveFocus();
-  expect(elegido.mock.calls.map(([id]) => id)).toEqual(['dos', 'tres', 'uno']);
+  expect(elegido.mock.calls.map(([id]) => String(id))).toEqual(['dos', 'tres', 'uno']);
 });
 
 it('la flecha izquierda retrocede y da la vuelta al principio', async () => {
@@ -145,5 +145,5 @@ it('un anfitrión con su propia tira hereda el mismo teclado desde el hook', asy
   expect(pestana('sesión 0')).toHaveAttribute('tabindex', '-1');
   await user.keyboard('{Home}');
   expect(pestana('sesión 0')).toHaveFocus();
-  expect(movido.mock.calls.map(([index]) => index)).toEqual([2, 0]);
+  expect(movido.mock.calls.map(([index]) => Number(index))).toEqual([2, 0]);
 });

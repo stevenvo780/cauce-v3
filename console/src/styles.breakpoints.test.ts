@@ -102,7 +102,7 @@ export function defectosDeEscala(hojas: Hoja[]): string[] {
         if (!pisosPermitidos.has(piso)) {
           defectos.push(
             `${hoja} declara un piso de ${String(piso)}px: el complemento de la escala es `
-            + `${[...pisosPermitidos].join(', ')}`,
+            + [...pisosPermitidos].join(', '),
           );
         }
       }

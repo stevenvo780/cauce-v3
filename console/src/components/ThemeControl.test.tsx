@@ -23,7 +23,8 @@ describe('el control de tema de tres estados', () => {
   });
 
   it.each([['Claro', 'light'], ['Oscuro', 'dark']])('«%s» estampa data-theme="%s"', async (rotulo, valor) => {
-    await userEvent.click(render(<ThemeControl />) && boton(rotulo));
+    render(<ThemeControl />);
+    await userEvent.click(boton(rotulo));
 
     expect(document.documentElement.getAttribute('data-theme')).toBe(valor);
     expect(boton(rotulo)).toHaveAttribute('aria-pressed', 'true');

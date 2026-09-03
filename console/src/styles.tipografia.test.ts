@@ -297,7 +297,7 @@ describe('el reparto de hojas está COMPLETO: ninguna se queda sin medir', () =>
     for (const { hoja, porque } of SIN_LETRA) {
       expect(porque.length, `${hoja} está exenta sin decir por qué`).toBeGreaterThan(10);
       for (const { valor } of tamanosDeLetra(leer(hoja))) {
-        expect(/^var\(--pty-cuerpo/.test(valor), `${hoja} declara ${valor}: ya no está exenta`).toBe(true);
+        expect(valor.startsWith('var(--pty-cuerpo'), `${hoja} declara ${valor}: ya no está exenta`).toBe(true);
       }
     }
   });
