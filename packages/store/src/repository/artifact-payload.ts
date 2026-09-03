@@ -48,10 +48,13 @@ function reference(
 }
 
 /* Nothing is normalized on the way in: `artifactRefs` reads the URI with the tree's one `data:`
-   parser and falls back to the default media type, so every shape the egress uploads -- wrapped
-   base64, a missing or unusable type, a parameter before `base64`, `BASE64` in caps -- keeps its
-   type, size and digest here, on the only durable record of a file the person did receive. A
-   descriptor stripped to `{uri}` alone is therefore unreachable for anything deliverable. */
+   parser and falls back to the default media type, so every shape the egress uploads -- base64
+   wrapped in lines, a missing or unusable type, a parameter before `base64`, `BASE64` in caps --
+   keeps its type, size and digest here, on the only durable record of a file the person did
+   receive. What that reader still refuses it measures on the STRIPPED payload, so line breaks
+   cost a descriptor nothing: a full 10 MB attachment wrapped at 76 columns kept `{uri}` alone
+   while Telegram was handing the file over. A descriptor that bare is left only by a URI whose
+   payload no reader could decode, or one padded with more whitespace than payload. */
 function artifactDescriptor(entry: unknown, uri: string): Record<string, unknown> {
   const record = objectRecord(entry) ?? {};
   const named = reference(record, uri);

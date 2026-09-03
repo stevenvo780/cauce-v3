@@ -23,13 +23,22 @@ const DATA_SCHEME = 'data:';
 const DATA_PATTERN = /^data:/iu;
 const BASE64_MARKER = ';base64,';
 
-/* The widest URI this edge can meet is an inline blob at the byte cap. A LOCATOR is another thing
-   and gets another ceiling -- what a link may measure -- because spending a payload budget on a URL
+/* Two ceilings for an inline blob, because the quota and the transport measure different strings.
+   The QUOTA is the STRIPPED payload -- what `parseDataUri` hands over, what the egress caps and
+   what `isDeliverableArtifactUri` decodes -- with the same allowance the bridge spends on it. The
+   RAW length only bounds the COPY that stripping takes: a line break is payload nobody counts, so
+   a file wrapped at 76 columns (what `base64` emits by default) measures more characters than its
+   bytes ever will, and one ceiling for both refused a 10 MB attachment the bridge had already
+   uploaded -- leaving the person's file with a descriptor that had lost its digest and its size.
+   Twice the payload covers a break after every character. A LOCATOR is another thing again and
+   gets another ceiling -- what a link may measure -- because spending a payload budget on a URL
    let a 4 M-character `https:` string ride a return hop and a fan-in that had just truncated the
    text beside it to 4 KiB; its aggregate is the count cap times the locator cap, never the byte
    budget. MAX_TURN_ARTIFACT_CHARACTERS bounds what ONE ack declares, in the stored base64 form. */
+const WRAPPED_LINE_ALLOWANCE = 2;
+export const MAX_ARTIFACT_PAYLOAD_CHARACTERS = base64CharacterBudget(MAX_ATTACHMENT_BYTES, 64);
 export const MAX_ARTIFACT_URI_CHARACTERS = DATA_SCHEME.length + MAX_ATTACHMENT_MEDIA_TYPE_LENGTH
-  + BASE64_MARKER.length + base64CharacterBudget(MAX_ATTACHMENT_BYTES);
+  + BASE64_MARKER.length + WRAPPED_LINE_ALLOWANCE * MAX_ARTIFACT_PAYLOAD_CHARACTERS;
 const MAX_LOCATOR_AGGREGATE_CHARACTERS =
   MAX_ATTACHMENTS_PER_MESSAGE * MAX_ARTIFACT_LOCATOR_CHARACTERS;
 export const MAX_TURN_ARTIFACT_CHARACTERS = base64CharacterBudget(MAX_ATTACHMENTS_TOTAL_BYTES);
@@ -89,8 +98,6 @@ const DROP_ORDER: readonly ArtifactDropCause[] = [
 interface InlinePayload {
   readonly mediaType: string;
   readonly base64: string;
-  /** The egress's own weigh-in of the payload, for a reference that has lost the bytes. */
-  readonly size: number | undefined;
 }
 
 /** What an unusable type slot becomes, matching the parser's own default for a missing one. */
@@ -107,6 +114,9 @@ function normalizedUri(uri: unknown): string | undefined {
    a literal `;base64,` instead demanded the flag LAST and no parameters at all, which dropped five
    shapes the bridge delivers -- wrapped base64, a missing type, a parameter before the flag, the
    flag in caps, the flag in the middle -- and told the delegated agent they could not be decoded.
+   The SIZE axis was the same trap read on the other string: the quota is charged to
+   `parsed.payload`, the stripped text the egress caps, so 76-column wrapping no longer turns a
+   legal 10 MB file into a name without bytes; the raw guard above only keeps the copy bounded.
    A type slot the protocol refuses (`foo`, one padded with spaces, one with parentheses) becomes
    the default rather than costing the file: unusable is the SLOT, never the bytes. This is the one
    place both readers below take a type from, so neither can disagree with the other. */
@@ -114,11 +124,12 @@ function inlinePayload(uri: unknown): InlinePayload | undefined {
   const value = normalizedUri(uri);
   if (value === undefined || value.length > MAX_ARTIFACT_URI_CHARACTERS) return undefined;
   const parsed = parseDataUri(value);
-  if (parsed?.base64 !== true) return undefined;
+  if (parsed?.base64 !== true || parsed.payload.length > MAX_ARTIFACT_PAYLOAD_CHARACTERS) {
+    return undefined;
+  }
   return {
     mediaType: isValidMediaType(parsed.mediaType) ? parsed.mediaType : DEFAULT_MEDIA_TYPE,
-    base64: parsed.payload,
-    size: encodedSize(value, parsed.payload)
+    base64: parsed.payload
   };
 }
 
@@ -129,12 +140,15 @@ function referenceUri(uri: unknown): string | undefined {
   return !DATA_PATTERN.test(value) && isDeliverableArtifactUri(value) ? value : undefined;
 }
 
+/* The byte quota is blamed for what the quota measures: `dataUriByteLength` weighs the stripped
+   payload in place, without the copy, so a file split into lines is never told it exceeded a
+   budget it fits in -- the note is the only thing the delegated agent gets to read. */
 function artifactDropCause(uri: unknown): ArtifactDropCause {
   const value = normalizedUri(uri);
   if (value === undefined) return 'scheme';
   if (value === NOT_SENT_URI) return 'bytes';
   if (DATA_PATTERN.test(value)) {
-    return value.length > MAX_ARTIFACT_URI_CHARACTERS ? 'bytes' : 'undecodable';
+    return dataUriByteLength(value) > MAX_ATTACHMENT_BYTES ? 'bytes' : 'undecodable';
   }
   return value.length > MAX_ARTIFACT_LOCATOR_CHARACTERS ? 'bytes' : 'scheme';
 }
@@ -164,14 +178,6 @@ function declaredSize(value: unknown): number | undefined {
     && value > 0 && value <= MAX_ATTACHMENT_BYTES
     ? value
     : undefined;
-}
-
-/* The weigh-in is the parser's, never a fourth padding rule: `dataUriByteLength` counts the same
-   stripped payload, in place. A length no canonical base64 can have declares NO size: on the only
-   durable record of a file, an arithmetic guess reads exactly like a measurement. */
-function encodedSize(uri: string, base64: string): number | undefined {
-  if (base64.length === 0 || base64.length % 4 !== 0) return undefined;
-  return dataUriByteLength(uri);
 }
 
 function digestOf(bytes: Buffer): string {
@@ -299,8 +305,10 @@ export function artifactRefs(artifacts: unknown): ArtifactRef[] {
     const uri = referenceUri(entry.uri);
     if (uri !== undefined && locators + uri.length > MAX_LOCATOR_AGGREGATE_CHARACTERS) continue;
     locators += uri?.length ?? 0;
-    const size = bytes?.length
-      ?? (inline === undefined ? declaredSize(entry.size) : inline.size);
+    /* Only a measurement is called a size: an inline payload nobody could decode declares none,
+       and its entry's own claim is not promoted, because on the durable record of a file an
+       arithmetic guess over `@@@@` or `QUJD====` reads exactly like a weigh-in. */
+    const size = bytes?.length ?? (inline === undefined ? declaredSize(entry.size) : undefined);
     refs.push({
       name,
       ...(uri === undefined ? {} : { uri }),

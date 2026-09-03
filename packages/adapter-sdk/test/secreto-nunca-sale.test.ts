@@ -299,7 +299,7 @@ test("la copia byte a byte se retiene aunque el original se borre o pierda el 06
   }
 });
 
-test("el valor escondido en la uri o en el media_type de un artifact sale redactado", async () => {
+test("el valor escondido en la uri sale redactado, y en el media_type no llega ni a entrar", async () => {
   await conKeyPath("secreto-en-campos", async (keyPath) => {
     const payload = await sealedHandoff(keyPath, randomUUID());
     const runner = new RunnerExfiltrador((_path, value) => ({
@@ -316,7 +316,7 @@ test("el valor escondido en la uri o en el media_type de un artifact sale redact
     const output = publishedOutput(contexto.events);
     assert.equal(contexto.events.at(-1)?.phase, "done");
     assert.equal(output.artifacts[0]?.uri, `https://evil.example/?t=${REDACTION_MARK}`);
-    assert.equal(output.artifacts[1]?.media_type, REDACTION_MARK);
+    assert.equal(output.artifacts.length, 1, "media_type es un tipo real o la entrada entera no viaja");
     assert.ok(!serialized(contexto.events).includes(VALUE));
   });
 });
@@ -495,10 +495,10 @@ test("el valor en el cuarto campo, sha256, tampoco llega al ACK durable", async 
   });
 });
 
-test("el guard reescribe sha256 aunque el parser ya lo acote: cinturon y tirantes", async () => {
+test("el guard reescribe sha256 y media_type aunque el parser ya los acote: cinturon y tirantes", async () => {
   const output: StructuredOutput = {
     reply: "listo", messages: [], notify: [], status: "done", retryable: false,
-    artifacts: [{ name: "n.txt", uri: "https://example.com/a.txt", sha256: VALUE }],
+    artifacts: [{ name: "n.txt", uri: "https://example.com/a.txt", media_type: VALUE, sha256: VALUE }],
   };
   const directory = await scratch("guard-sha");
   const turnSecrets = {
@@ -509,6 +509,10 @@ test("el guard reescribe sha256 aunque el parser ya lo acote: cinturon y tirante
 
   const guarded = await inlineWithoutSecrets(output, turnSecrets, () => undefined, delivery("guard-sha"));
 
-  assert.equal(guarded.artifacts[0]?.sha256, REDACTION_MARK, "el cuarto campo se reescribe como los otros tres");
+  assert.deepEqual(
+    { sha256: guarded.artifacts[0]?.sha256, media_type: guarded.artifacts[0]?.media_type },
+    { sha256: REDACTION_MARK, media_type: REDACTION_MARK },
+    "el tercer y el cuarto campo se reescriben como los otros dos",
+  );
   assert.ok(!JSON.stringify(guarded).includes(VALUE));
 });

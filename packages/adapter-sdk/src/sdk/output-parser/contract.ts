@@ -2,6 +2,9 @@ import {
   AGENT_TO_AGENT_MESSAGE_TYPES,
   base64CharacterBudget,
   EgressHandleSchema,
+  isSafeBasename,
+  isValidMediaType,
+  MAX_ARTIFACTS_CONSIDERED,
   MAX_NOTIFY_BODY_BYTES,
   NOTIFY_KINDS,
 } from "@cauce/protocol";
@@ -172,13 +175,13 @@ function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; 
 }
 
 
-/** The answer's own files pay the delegation edge's caps and spend the SAME turn budget as the delegated ones, bounded by what that budget WEIGHS on the wire; what does not fit keeps its identity and loses its content, and a `sha256` is 64 hex or nothing, so the fourth field is not a free-text channel out of the turn. */
+/** The answer's own files are judged over the prefix the egress renders and by the SAME field rules as the delegation edge -- a safe basename, a real media type, a `sha256` of 64 hex or nothing -- so what survives is bounded in every field and no entry is a free-text channel out of the turn; an entry that fails one of them is dropped whole, exactly as `parseOne` drops it, and one whose bytes do not fit the shared turn budget keeps its (already bounded) identity and loses its content. */
 function parseArtifacts(value: unknown, budget: RelayArtifactBudget): readonly OutputArtifact[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
     throw new MalformedOutputError("'artifacts' must be an array");
   }
-  return value.map((entry, index) => {
+  return value.slice(0, MAX_ARTIFACTS_CONSIDERED).flatMap((entry, index) => {
     if (!isObject(entry) || typeof entry.name !== "string" || typeof entry.uri !== "string") {
       throw new MalformedOutputError(`artifacts[${String(index)}] must contain string 'name' and 'uri'`);
     }
@@ -188,17 +191,21 @@ function parseArtifacts(value: unknown, budget: RelayArtifactBudget): readonly O
     if (entry.sha256 !== undefined && typeof entry.sha256 !== "string") {
       throw new MalformedOutputError(`artifacts[${String(index)}].sha256 must be a string`);
     }
+    if (!isSafeBasename(entry.name)) return [];
+    if (entry.media_type !== undefined && !isValidMediaType(entry.media_type)) return [];
     const bytes = dataUriPayloadBytes(entry.uri);
     const fits = entry.uri.length <= MAX_RELAY_ARTIFACT_URI_CHARACTERS
       && budget.bytes + bytes <= MAX_ARTIFACT_FRAME_BYTES;
     if (fits) budget.bytes += bytes;
-    const sha256 = entry.sha256 !== undefined && HEX_SHA256.test(entry.sha256) ? entry.sha256 : undefined;
-    return {
+    const sha256 = entry.sha256 !== undefined && HEX_SHA256.test(entry.sha256)
+      ? entry.sha256.toLowerCase()
+      : undefined;
+    return [{
       name: entry.name,
       uri: fits ? entry.uri : NOT_SENT,
       ...(entry.media_type === undefined ? {} : { media_type: entry.media_type }),
       ...(sha256 === undefined ? {} : { sha256 }),
-    };
+    }];
   });
 }
 

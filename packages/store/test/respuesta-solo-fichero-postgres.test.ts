@@ -85,6 +85,14 @@ const NOMBRES_QUE_NO_SE_GUARDAN = [
 
 const BROKEN_BASE64 = 'QUJDR';
 const BROKEN_URI = `data:application/pdf;base64,${BROKEN_BASE64}`;
+/* Un tamaño sólo se declara cuando alguien midió los bytes. Estas tres formas tienen la longitud
+   que un base64 canónico tendría y no las descodifica nadie —ni el egreso ni el salto de vuelta—,
+   así que un tamaño aritmético en la única copia durable se leería igual que una medición. */
+const BASE64_QUE_NADIE_DESCODIFICA = [
+  { caso: 'alfabeto que no es base64', payload: '@@@@' },
+  { caso: 'alfabeto base64url', payload: 'QUJ_' },
+  { caso: 'relleno de más', payload: 'QUJD====' }
+] as const;
 const ATTACHMENT_BYTES = Buffer.from('adjunto de entrada');
 const ATTACHMENT = {
   kind: 'document',
@@ -329,6 +337,23 @@ describe('una respuesta que solo trae fichero es una respuesta', () => {
       expect(after.declared_sha256 ?? after.sha256).toBe(before.sha256 ?? before.declared_sha256);
     }
   });
+
+  it.each(BASE64_QUE_NADIE_DESCODIFICA)(
+    'no declara tamaño de un base64 que nadie descodifica: $caso', async (fila) => {
+      const uri = `data:application/pdf;base64,${fila.payload}`;
+      expect(planArtifacts({ artifacts: [{ name: 'informe.pdf', uri }] }).uploads).toHaveLength(0);
+
+      const { deliveryId, payload } = await relayOf(
+        [{ name: 'informe.pdf', media_type: 'application/pdf', uri }],
+        'artifact-nonsize-consumer'
+      );
+
+      expect(payload).toMatchObject({ outcome: 'failed', error_code: 'MISSING_FINAL_REPLY' });
+      expect(artifactsOf(await storedResult(deliveryId))[0]).toEqual({
+        name: 'informe.pdf', media_type: 'application/pdf', uri: 'cauce:inline-omitted'
+      });
+    }
+  );
 
   it.each(PARIDAD_CON_EL_EGRESO)('cierra done lo que el egreso sube: $caso', async (fila) => {
     const artifacts = [{ name: 'informe.pdf', media_type: 'application/pdf', uri: fila.uri }];

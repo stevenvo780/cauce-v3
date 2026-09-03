@@ -34,7 +34,8 @@ export const NO_REPLY_WRITTEN_REPLY =
   + "termino en \"done\" con 'reply' vacio y sin delegaciones, que es exactamente el sintoma de un "
   + "harness que corto antes de responder.";
 
-export const HEX_SHA256 = /^[0-9a-f]{64}$/u;
+/** Case is not part of a digest: both spellings are the same 64 hex, and the parsers lower them once so every later comparison is over one form. */
+export const HEX_SHA256 = /^[0-9a-f]{64}$/iu;
 
 export interface RelayArtifactBudget {
   count: number;
@@ -80,11 +81,12 @@ function parseOne(entry: unknown): OutputArtifact | undefined {
   if (sha256 !== undefined && (typeof sha256 !== "string" || !HEX_SHA256.test(sha256))) {
     return undefined;
   }
+  const digest = sha256?.toLowerCase();
   return {
     name: candidate.name,
     uri,
     ...(mediaType === undefined ? {} : { media_type: mediaType }),
-    ...(sha256 === undefined ? {} : { sha256 }),
+    ...(digest === undefined ? {} : { sha256: digest }),
   };
 }
 

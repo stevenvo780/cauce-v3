@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   FILE_ONLY_REPLY,
@@ -21,9 +24,11 @@ import {
   validateStructuredOutput,
 } from "../src/sdk/output-parser/contract.js";
 import {
+  MAX_ARTIFACTS_CONSIDERED,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_RELAY_ARTIFACTS_TOTAL as PROTOCOL_RELAY_ARTIFACTS_TOTAL,
 } from "@cauce/protocol";
+import { inlineLocalArtifacts } from "../src/sdk/artifact-inliner.js";
 import type { OutputArtifact, StructuredOutput } from "../src/sdk/types.js";
 
 /**
@@ -79,7 +84,7 @@ test("una entrada malformada se descarta, jamás tira: un adjunto no puede costa
     { name: "informe.pdf", uri: "data:x", media_type: "image/png; base64" },
     { name: "informe.pdf", uri: "data:x", media_type: 7 },
     { name: "informe.pdf", uri: "data:x", sha256: "no-es-un-digest" },
-    { name: "informe.pdf", uri: "data:x", sha256: "A".repeat(64) },
+    { name: "informe.pdf", uri: "data:x", sha256: "g".repeat(64) },
   ];
   for (const mala of malas) {
     assert.deepEqual(parseRelayArtifacts([mala], 0, budget), [], JSON.stringify(mala));
@@ -443,4 +448,77 @@ test("un sha256 que no es 64 hex se cae como campo, y el fichero sigue viajando"
     artifacts: [{ name: "a.pdf", uri: PDF_DATA_URI, sha256: "a".repeat(64) }],
   });
   assert.equal(firmado.artifacts[0]?.sha256, "a".repeat(64));
+});
+
+function nivelSuperior(artifacts: readonly Record<string, unknown>[]): StructuredOutput {
+  return validateStructuredOutput({
+    reply: "toma", messages: [], notify: [], status: "done", retryable: false, artifacts,
+  });
+}
+
+test("un nombre que no es un basename seguro se cae con la entrada entera, como en el borde delegado", () => {
+  const hostiles = [
+    ["anulacion RTL", "fac\u202etxt.exe"],
+    ["salto de linea", "a\nb.txt"],
+    ["travesia", "../../etc/passwd"],
+    ["byte NUL", "a\u0000b.txt"],
+    ["300 caracteres", "x".repeat(300)],
+    ["20 MB", "N".repeat(20_000_000)],
+  ];
+  for (const [etiqueta, name] of hostiles) {
+    const entrada = { name, uri: PDF_DATA_URI };
+    assert.deepEqual(nivelSuperior([entrada]).artifacts, [],
+      `${String(etiqueta)}: el nombre viaja en el ACK durable y en la cabecera del egreso`);
+    assert.equal(parseRelayArtifacts([entrada], 0, newRelayArtifactBudget()).length, 0,
+      `${String(etiqueta)}: los dos bordes juzgan el nombre con la MISMA regla`);
+  }
+});
+
+test("un media_type que no es un tipo real se cae con la entrada, como en el borde delegado", () => {
+  const hostiles = [
+    ["caracter de control", "text/plain\n"],
+    ["1000 caracteres", `a/${"b".repeat(1000)}`],
+    ["no es un tipo", "no-es-un-tipo"],
+    ["20 MB", "M".repeat(20_000_000)],
+  ];
+  for (const [etiqueta, media_type] of hostiles) {
+    const entrada = { name: "a.pdf", uri: PDF_DATA_URI, media_type };
+    assert.deepEqual(nivelSuperior([entrada]).artifacts, [], String(etiqueta));
+    assert.equal(parseRelayArtifacts([entrada], 0, newRelayArtifactBudget()).length, 0, String(etiqueta));
+  }
+  assert.equal(nivelSuperior([{ name: "a.pdf", uri: PDF_DATA_URI, media_type: "application/pdf" }])
+    .artifacts[0]?.media_type, "application/pdf", "un tipo real sigue viajando entero");
+});
+
+test("la lista del nivel superior se corta donde el egreso deja de renderizar", () => {
+  const muchos = Array.from({ length: MAX_ARTIFACTS_CONSIDERED + 40 }, (_, indice) => ({
+    name: `f${String(indice)}.txt`, uri: "https://example.com/a.txt",
+  }));
+  const salida = nivelSuperior(muchos);
+  assert.equal(salida.artifacts.length, MAX_ARTIFACTS_CONSIDERED);
+  assert.equal(salida.artifacts.at(-1)?.name, `f${String(MAX_ARTIFACTS_CONSIDERED - 1)}.txt`,
+    "se juzga el prefijo que el egreso renderiza, no una muestra cualquiera");
+});
+
+test("un sha256 en MAYUSCULAS es el mismo digest y viaja en minusculas por los dos bordes", () => {
+  const entrada = { name: "a.pdf", uri: PDF_DATA_URI, sha256: "A".repeat(64) };
+  assert.equal(nivelSuperior([entrada]).artifacts[0]?.sha256, "a".repeat(64));
+  assert.equal(parseRelayArtifacts([entrada], 0, newRelayArtifactBudget())[0]?.sha256, "a".repeat(64));
+});
+
+test("una declaracion en MAYUSCULAS que no coincide con los bytes sigue frenando el fichero", async () => {
+  const directorio = await mkdtemp(join(tmpdir(), "cauce-sha-mayusculas-"));
+  try {
+    const ruta = join(directorio, "firmado.png");
+    await writeFile(ruta, Buffer.from("abc", "utf8"));
+    const mentira = "ABCDEF0123456789".repeat(4);
+    const salida = nivelSuperior([{ name: "firmado.png", uri: ruta, sha256: mentira }]);
+    assert.equal(salida.artifacts[0]?.sha256, mentira.toLowerCase(),
+      "el digest declarado sobrevive al parseo, normalizado una sola vez");
+    const inlineado = await inlineLocalArtifacts(salida);
+    assert.equal(inlineado.artifacts[0]?.uri, ruta,
+      "lo que no coincide con lo declarado no se manda convertido, tambien en MAYUSCULAS");
+  } finally {
+    await rm(directorio, { recursive: true, force: true });
+  }
 });
