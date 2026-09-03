@@ -4,16 +4,12 @@ import { positiveMs } from './policy.js';
 /** Retention of the attachment BYTES carried inside `messages.body`: 30 days. Whoever needed the file already got it in its delivery envelope; what anyone reads weeks later is the conversation, not the PDF. */
 const DEFAULT_RETENTION_MESSAGE_ATTACHMENTS_MS = 30 * 24 * 60 * 60_000;
 
-/**
- * Its OWN bound, deliberately two orders of magnitude below `DEFAULT_RETENTION_BATCH` (5 000) and never derived from it. The retention batch sizes DELETEs of narrow ack and audit rows; this one sizes rewrites of `messages` bodies that each carry up to `MAX_ATTACHMENTS_TOTAL_BYTES` (10 MB of files, ~13,3 MB of base64) in one transaction. At 5 000 a single tick would push tens of GB of WAL and bloat the hottest table in the base; at 50 the worst case is bounded to a few hundred MB, and the pace is set by the cadence knob instead of by the batch.
- */
+/** Its OWN bound, two orders below `DEFAULT_RETENTION_BATCH` and never derived from it: that batch sizes DELETEs of narrow rows, this one sizes rewrites of bodies carrying up to `MAX_ATTACHMENTS_TOTAL_BYTES` each (~13,3 MB of base64) in one transaction; at 5 000 one tick pushes tens of GB of WAL, at 50 a few hundred MB, and the cadence knob sets the pace. */
 export const DEFAULT_MESSAGE_ATTACHMENT_PRUNE_BATCH = 50;
 
 export interface MessageAttachmentRetentionPolicy {
   readonly messageAttachmentsMs?: number;
-  /**
-   * REQUIRED, with no local default on purpose: a mirrored constant would validate the window against 48 h while the deployment runs a longer `CHAIN_MAX_AGE_MS`, which is exactly the hole this guard exists to close. The caller that configures the sweep is the one that knows its own horizon.
-   */
+  /** REQUIRED, no local default: a mirrored constant would validate the window against 48 h while the deployment runs a longer `CHAIN_MAX_AGE_MS`, the exact hole this guard closes; the caller configuring the sweep knows its horizon. */
   readonly chainMaxAgeMs: number;
   readonly batch?: number;
 }
@@ -23,10 +19,8 @@ export interface MessageAttachmentRetentionResult {
 }
 
 /**
- * KEY-LEVEL strip of `attachments_v1`; never a row delete and never a NULL body, and neither one is even available: `messages.body` is `jsonb NOT NULL CHECK (jsonb_typeof(body)='object')`, and it stays load-bearing long past delivery — the chain sweep reads `body->'correlation'->>'root_message_id'` and `body->>'type'`, the fan-in reads `body->>'text'`, the lease ceiling reads `body->>'timeout_ms'`. Dropping one key leaves every one of those readers intact by construction, and the row itself is never removed.
- * `attachments_pruned` keeps how many files were there, so a reader is told "cuerpo purgado por retención" instead of being shown a body that looks corrupt; `body ? 'attachments_v1'` makes the sweep idempotent and keeps a second pass from overwriting that count with 0. The count sits inside a CASE so the shape guard runs BEFORE `jsonb_array_length`: with a bare AND the operand order is undefined, and one row whose `attachments_v1` is not an array would abort the entire batch.
- * There is NO index for the predicate yet: the only `messages(created_at)` index is partial on `origin IS NOT NULL` and there is no GIN on `body`, so the steady state — nothing left to prune, so the LIMIT never short-circuits — is one sequential scan of `messages` per run. That is why the caller drives this with its own slow cadence instead of the retention tick, and why the partial index on `created_at WHERE body ? 'attachments_v1'` is the pending follow-up.
- * It SHORTENS exposure, it does not end it: the nightly `pg_dump` is synced to an append-only NAS that never deletes remotely, so no sweep over the live base can reach the off-site copies.
+ * KEY-LEVEL strip of `attachments_v1`, never a row delete nor a NULL body: `messages.body` is `jsonb NOT NULL` and stays load-bearing past delivery (chain sweep, fan-in and lease ceiling read other keys of it), so dropping one key leaves every reader intact. `attachments_pruned` keeps the file count so a reader sees "cuerpo purgado por retención" and not a corrupt body; `body ? 'attachments_v1'` keeps the sweep idempotent. The count sits inside a CASE so the shape guard runs BEFORE `jsonb_array_length`: with a bare AND one non-array row would abort the whole batch.
+ * No index serves the predicate yet (the only `messages(created_at)` index is partial on `origin IS NOT NULL`), so the steady state is one sequential scan per run: the caller drives it on its own slow cadence, and the partial index on `created_at WHERE body ? 'attachments_v1'` is the pending follow-up. It SHORTENS exposure, it does not end it: the nightly `pg_dump` goes to an append-only NAS no sweep can reach.
  */
 export const MESSAGE_ATTACHMENT_PRUNE_SQL = `
   UPDATE messages
@@ -39,11 +33,8 @@ export const MESSAGE_ATTACHMENT_PRUNE_SQL = `
       WHERE created_at < now()-$1*interval '1 millisecond'
         AND body ? 'attachments_v1' LIMIT $2)`;
 
-/**
- * The one strip every `dead_letters` writer shares. There are three of them — terminal ACK, reaper and operator cancel — and a copy of the bytes escaping through any one of them makes the other two pointless: nothing prunes `dead_letters`, and its rows are readable from the console DLQ view forever.
- * `attachments_omitted` says "this COPY does not carry the files", which is not what `attachments_pruned` says ("the files no longer exist in the live base"). Both keys can appear in the same payload, and a reader that finds `attachments_omitted` can still fetch the message; one that finds `attachments_pruned` cannot. Two facts, two names, decided here so no writer invents a third.
- * The guard is `jsonb_typeof(...)='array'` and not key presence: `jsonb_array_length` over a non-array raises 22023, and inside `ackDelivery`'s transaction that aborts the terminal ACK itself, leaving the delivery retrying forever over a row that will never change.
- */
+/** The one strip every `dead_letters` writer shares (terminal ACK, reaper, operator cancel): bytes escaping through any of the three make the other two pointless, since nothing prunes `dead_letters` and the console DLQ view reads it forever. `attachments_omitted` means "this COPY does not carry the files" (the message can still be fetched); `attachments_pruned` means "the files no longer exist" (it cannot). Two facts, two names, decided here so no writer invents a third.
+ *  The guard is `jsonb_typeof(...)='array'`, not key presence: `jsonb_array_length` over a non-array raises 22023 and, inside `ackDelivery`'s transaction, aborts the terminal ACK itself, leaving the delivery retrying forever. */
 export function deadLetterBodySql(body: string): string {
   return `CASE WHEN jsonb_typeof(${body}->'attachments_v1')='array'
                THEN (${body}-'attachments_v1'::text)||jsonb_build_object(

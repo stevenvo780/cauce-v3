@@ -24,19 +24,15 @@ async function isApplied(pool: DatabasePool): Promise<boolean> {
 }
 
 /**
- * Sibling of `secret-handoff-layer.ts` for the head of the schema. Every `down/` from 031 onwards
- * refuses to run while a later migration is recorded, so a suite reverting its own migration peels
- * this layer first. Call it AFTER the suite has removed its `999_future.sql` marker: `'999_...'`
- * sorts above `'040_...'`, so a stray marker makes this fail naming 040 for an unrelated cause.
- * It does not need to precede `TRUNCATE TABLE terminal_sessions` — those truncates are CASCADE.
- */
+ * One layer helper per migration (sibling of `secret-handoff-layer.ts`): every `down/` from 031 on
+ * refuses to run while a later migration is recorded, so a suite reverting its own peels this first.
+ * Call it AFTER removing any `999_future.sql` marker (it sorts above `040_`, so a stray one makes this fail naming 040 for an unrelated cause); `TRUNCATE TABLE terminal_sessions` is CASCADE already. */
 export async function removeTerminalControlHoldsLayer(pool: DatabasePool): Promise<void> {
   if (!await isApplied(pool)) return;
   await pool.query('TRUNCATE TABLE terminal_control_holds');
-  // This rewrite DISARMS the very guard the down migration exists to enforce: `harness_rw` rows
-  // are exactly what must block a downgrade. It is admissible only while nothing writes that mode;
-  // the first suite that seeds a writable session has to peel the layer itself instead, or it will
-  // see its row silently turned into `harness` here.
+  // This rewrite DISARMS the guard the down migration enforces (`harness_rw` rows must block a
+  // downgrade); admissible only while nothing writes that mode. The first suite seeding a writable
+  // session must peel the layer itself or see its row silently turned into `harness` here.
   await pool.query(`UPDATE terminal_sessions SET mode='harness' WHERE mode='harness_rw'`);
   await pool.query(await readDown());
 }
