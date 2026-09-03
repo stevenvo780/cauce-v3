@@ -5,6 +5,7 @@ import { mockActivity } from '../../mocks/data';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { LiveFleetPage } from './LiveFleetPage';
+import { MENSAJES_DE_APLICACION } from './perfil';
 
 /**
  * The file editor is tested FROM the live page, because half the task is WHERE it lives: a loose
@@ -656,4 +657,58 @@ it('el visor avisa de que lo recortado es un prefijo, y no ofrece guardarlo', as
   expect(within(cajon).getByLabelText(/Contenido de Identidad/i)).toHaveAttribute('readonly');
   expect(within(cajon).getByText(/prefijo recortado/)).toBeInTheDocument();
   expect(within(cajon).queryByRole('button', { name: /^Guardar$/i })).not.toBeInTheDocument();
+});
+
+it('un 202 del manual pinta el mismo aviso de sesión sin adoptar que el perfil', async () => {
+  mapaDeKant([CLAUDE_MD]);
+  server.use(
+    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
+      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
+      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      exists: true, content: '# manual viejo\n', sha: SHA_VIEJO, bytes: 15,
+      editable: true, projected: false, truncated: false,
+    })),
+    http.put(RUTA_CONTENIDO, () => HttpResponse.json({
+      ok: true, state: 'written_pending_session', evidence: 'probe_write_ack',
+      path: '/home/stev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
+    }, { status: 202 })),
+  );
+
+  const { user, cajon } = await abrirContexto();
+  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
+  await user.clear(caja);
+  await user.type(caja, '# nuevo');
+  await motivar(user, cajon);
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
+
+  const aviso = await within(cajon).findByText(/Sesión sin adoptar todavía/i);
+  expect(aviso).toHaveTextContent(MENSAJES_DE_APLICACION.written_pending_session);
+});
+
+it('CONTROL NEGATIVO: un guardado aplicado no pinta el aviso de sesión sin adoptar', async () => {
+  mapaDeKant([CLAUDE_MD]);
+  server.use(
+    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
+      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
+      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      exists: true, content: '# manual viejo\n', sha: SHA_VIEJO, bytes: 15,
+      editable: true, projected: false, truncated: false,
+    })),
+    http.put(RUTA_CONTENIDO, () => HttpResponse.json({
+      ok: true, state: 'applied', evidence: 'probe_write_ack',
+      path: '/home/stev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
+    })),
+  );
+
+  const { user, cajon } = await abrirContexto();
+  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
+  await user.clear(caja);
+  await user.type(caja, '# nuevo');
+  await motivar(user, cajon);
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
+
+  expect(await within(cajon).findByText(/Aplicado en/)).toBeInTheDocument();
+  expect(within(cajon).queryByText(/Sesión sin adoptar todavía/i)).not.toBeInTheDocument();
 });

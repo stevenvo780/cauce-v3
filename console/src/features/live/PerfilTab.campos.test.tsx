@@ -75,12 +75,16 @@ it('los siete campos viajan enteros en el PUT canónico', async () => {
   await user.type(screen.getByLabelText(/^Restricciones/i), 'No tocar credenciales');
   await user.type(screen.getByLabelText(/^Herramientas/i), 'ssh a kratos{enter}docker de la flota');
   await user.type(screen.getByLabelText(/^Instrucciones fijas/i), 'Comprobá el efecto');
+  await user.type(
+    screen.getByLabelText(/Motivo de este cambio de perfil/i), 'declaro los siete campos',
+  );
 
   await user.click(screen.getByRole('button', { name: /guardar y aplicar perfil/i }));
 
   await waitFor(() => { expect(leerPut()).toBeDefined(); });
   expect(leerPut()).toEqual({
     expected_revision: 4,
+    reason: 'declaro los siete campos',
     profile: {
       purpose: 'El médico de la flota',
       role_summary: 'Orquestador e infraestructura',
@@ -108,6 +112,7 @@ it('sólo el salto de línea de más no cuenta como cambio: no habilita guardar'
   const { user } = montarPerfil();
   const caja = await screen.findByLabelText(/^Herramientas/i);
   await user.type(caja, 'docker');
+  await user.type(screen.getByLabelText(/Motivo de este cambio de perfil/i), 'declaro una tool');
   const boton = screen.getByRole('button', { name: /guardar y aplicar perfil/i });
   expect(boton).toBeEnabled();
 

@@ -8,7 +8,6 @@ export {
   providerAccounts,
   routingCeiling,
   agentAccountBindings,
-  roleBriefHistoryKant,
 } from './fixtures/topology-config';
 
 export {

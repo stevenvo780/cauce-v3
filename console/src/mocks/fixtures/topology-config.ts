@@ -85,21 +85,3 @@ export const agentAccountBindings: Record<string, unknown>[] = [
   { tenant_id: 'Miguel', agent_alias: 'iza', account_id: 'codex-steven', priority: 100, enabled: false, created_at: '2026-07-23T12:01:00.000Z', updated_at: '2026-07-23T12:01:00.000Z' },
 ];
 
-export const roleBriefHistoryKant: Record<string, unknown>[] = [
-  {
-    id: '1', tenant_id: 'Steven', alias: 'kant', operation: 'insert',
-    previous_brief: null,
-    new_brief: 'Sos kant.',
-    previous_template_slug: null, new_template_slug: null,
-    actor_tenant: null, actor_alias: null,
-    changed_at: '2026-08-23T03:00:00.000Z',
-  },
-  {
-    id: '2', tenant_id: 'Steven', alias: 'kant', operation: 'update',
-    previous_brief: 'Sos kant.',
-    new_brief: 'Sos kant, el hub de coordinacion de la flota.',
-    previous_template_slug: 'orquestador', new_template_slug: null,
-    actor_tenant: null, actor_alias: null,
-    changed_at: '2026-08-23T04:00:00.000Z',
-  },
-];

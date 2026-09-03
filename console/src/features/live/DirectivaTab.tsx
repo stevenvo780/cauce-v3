@@ -1,6 +1,6 @@
 import { Maximize2 } from 'lucide-react';
 import { useRef, useState } from 'react';
-import type { ConfigurationSnapshot } from '../../api/types';
+import type { AgentPerfilCampos, ConfigurationSnapshot } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { DirectivaModal } from './DirectivaModal';
 import { selectAgentRegistryEntry } from './agent-registry-entry';
@@ -18,7 +18,7 @@ interface DirectivaTabProps {
   configuracion: Resource<ConfigurationSnapshot>;
   onEditarEnPerfil: () => void;
   onEditarEnFicheros: () => void;
-  onRestaurarEnPerfil: (texto: string) => void;
+  onRestaurarEnPerfil: (campos: AgentPerfilCampos) => void;
   configWritePermission: PermissionState;
 }
 

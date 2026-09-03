@@ -8,6 +8,7 @@ import { renderWithApi } from '../../test/render';
 import { PerfilTab } from './PerfilTab';
 
 const RUTA = 'http://localhost/v3/console/tenants/Steven/agents/kant/perfil';
+const RECARGA = 'http://localhost/v3/console/tenants/Steven/agents/kant/context/reload';
 const SHA = 'a'.repeat(64);
 
 function respuesta(exists: boolean, overrides: Partial<AgentPerfil> = {}): Omit<AgentPerfil, 'publicado'> {
@@ -61,13 +62,21 @@ function Vista({ configWritePermission = 'allowed' }: {
 interface PutBody {
   expected_revision: number | null;
   profile: AgentPerfilValor;
+  reason: string;
 }
 
 function esPutBody(value: unknown): value is PutBody {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return (record.expected_revision === null || typeof record.expected_revision === 'number')
+    && typeof record.reason === 'string'
     && record.profile !== null && typeof record.profile === 'object' && !Array.isArray(record.profile);
+}
+
+const MOTIVO = 'ajusto los campos canónicos';
+
+async function motivar(user: ReturnType<typeof userEvent.setup>, texto = MOTIVO) {
+  await user.type(screen.getByLabelText(/Motivo de este cambio de perfil/i), texto);
 }
 
 function ackAplicado(revision: number) {
@@ -112,6 +121,7 @@ async function casoDeGuardado(existeAlAbrir: boolean) {
   renderWithApi(<Vista />);
   const caja = await screen.findByLabelText(/Identidad y propósito/i);
   await user.type(caja, 'coordinar la flota');
+  await motivar(user);
   await user.click(screen.getByRole('button', { name: /Guardar y aplicar perfil/i }));
   await waitFor(() => { expect(recibido).toBeDefined(); });
   return recibido;
@@ -121,6 +131,7 @@ it('un perfil persistido vacío usa su revisión propia y sólo anuncia ACK apli
   const recibido = await casoDeGuardado(true);
   expect(recibido).toEqual({
     expected_revision: 4,
+    reason: MOTIVO,
     profile: {
       purpose: 'coordinar la flota', role_summary: null, human_brief: null,
       responsibilities: [], restrictions: [], tools: [], operating_rules: [],
@@ -177,6 +188,7 @@ it('un desired pendiente se puede reintentar sin cambiar el texto', async () => 
   const user = userEvent.setup();
   renderWithApi(<Vista />);
   expect(await screen.findByText(/Desired revisión 4 pendiente/)).toBeInTheDocument();
+  await motivar(user, 'reintento el lote pendiente');
   await user.click(screen.getByRole('button', { name: /Reintentar aplicación/i }));
   await waitFor(() => { expect(recibido?.expected_revision).toBe(4); });
   expect(await screen.findByText(/Aplicado: desired y runtime acreditan la revisión 4/)).toBeInTheDocument();
@@ -191,6 +203,7 @@ it('un 2xx sin ACK completo conserva el borrador y no dice aplicado', async () =
   renderWithApi(<Vista />);
   const caja = await screen.findByLabelText(/Identidad y propósito/i);
   await user.type(caja, 'sigue sucio');
+  await motivar(user);
   await user.click(screen.getByRole('button', { name: /Guardar y aplicar perfil/i }));
   expect(await screen.findByText(/devolvió 2xx, pero no acreditó/)).toBeInTheDocument();
   expect(caja).toHaveValue('sigue sucio');
@@ -234,9 +247,12 @@ it('drift se pinta rojo y permite restaurar el lote sin cambiar texto', async ()
       })),
     },
   }))));
+  const user = userEvent.setup();
   renderWithApi(<Vista />);
 
   expect(await screen.findByRole('alert', { name: '' })).toHaveTextContent(/SHA medidos.*no coinciden/i);
+  expect(screen.getByRole('button', { name: /Reintentar aplicación/i })).toBeDisabled();
+  await motivar(user, 'restauro el lote canónico');
   expect(screen.getByRole('button', { name: /Reintentar aplicación/i })).toBeEnabled();
 });
 
@@ -279,6 +295,7 @@ it('ACK de disco sin adopción de TUI queda pendiente y no dice aplicado', async
   renderWithApi(<Vista />);
   const caja = await screen.findByLabelText(/Identidad y propósito/i);
   await user.type(caja, 'todavía pendiente');
+  await motivar(user);
   await user.click(screen.getByRole('button', { name: /Guardar y aplicar perfil/i }));
 
   expect(await screen.findByText(/sesión compartida.*no acreditó recibir/i)).toBeInTheDocument();
@@ -364,4 +381,152 @@ it('un arnés que Cauce no sabe componer se marca «no aplica» y se nombra en l
   expect(screen.getAllByLabelText('no aplica').length).toBe(7);
   expect(screen.getByText(/Ningún campo tiene un fichero de destino/i).textContent)
     .toContain('hermes');
+});
+
+it('sin un motivo escrito a mano no sale ningún PUT, aunque el borrador esté sucio', async () => {
+  let puts = 0;
+  server.use(
+    http.get(RUTA, () => HttpResponse.json(respuesta(true))),
+    http.put(RUTA, () => { puts += 1; return HttpResponse.json(ackAplicado(5)); }),
+  );
+  const user = userEvent.setup();
+  renderWithApi(<Vista />);
+
+  await user.type(await screen.findByLabelText(/Identidad y propósito/i), 'coordinar la flota');
+  expect(screen.getByLabelText(/Motivo de este cambio de perfil/i)).toHaveValue('');
+  expect(screen.getByRole('button', { name: /Guardar y aplicar perfil/i })).toBeDisabled();
+
+  await motivar(user, 'corto');
+  expect(screen.getByRole('button', { name: /Guardar y aplicar perfil/i })).toBeDisabled();
+
+  await motivar(user, ' pero ya no lo es');
+  expect(screen.getByRole('button', { name: /Guardar y aplicar perfil/i })).toBeEnabled();
+  expect(puts).toBe(0);
+});
+
+function VistaConRestauracion() {
+  const [borrador, setBorrador] = useState<Partial<AgentPerfilCampos>>();
+  const [restauracion, setRestauracion] = useState(0);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => { setBorrador({ role_summary: 'Rol 2' }); setRestauracion((n) => n + 1); }}
+      >
+        simular restauración
+      </button>
+      <PerfilTab
+        tenantId="Steven"
+        alias="kant"
+        borrador={borrador}
+        onBorrador={setBorrador}
+        restauracion={restauracion}
+        configWritePermission="allowed"
+      />
+    </>
+  );
+}
+
+it('restaurar una revisión vacía el motivo escrito antes: la auditoría no describe otra acción', async () => {
+  server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true))));
+  const user = userEvent.setup();
+  renderWithApi(<VistaConRestauracion />);
+  await screen.findByLabelText(/Identidad y propósito/i);
+
+  await motivar(user, 'agrego la herramienta de despliegue');
+  expect(screen.getByLabelText(/Motivo de este cambio de perfil/i))
+    .toHaveValue('agrego la herramienta de despliegue');
+
+  await user.click(screen.getByRole('button', { name: 'simular restauración' }));
+  expect(screen.getByLabelText(/Motivo de este cambio de perfil/i)).toHaveValue('');
+  expect(screen.getByRole('button', { name: /Guardar y aplicar perfil/i })).toBeDisabled();
+});
+
+it('la recarga de contexto sólo se ofrece cuando hay algo que recargar', async () => {
+  server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true))));
+  const { unmount } = renderWithApi(<Vista />);
+  await screen.findByLabelText(/Identidad y propósito/i);
+  expect(screen.queryByRole('button', { name: /Recargar contexto/i })).not.toBeInTheDocument();
+  unmount();
+
+  for (const estado of ['pending_session_refresh', 'drifted'] as const) {
+    server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true, { runtime_state: estado }))));
+    const vista = renderWithApi(<Vista />);
+    expect(await screen.findByRole('button', { name: /Recargar contexto/i })).toBeInTheDocument();
+    vista.unmount();
+  }
+});
+
+it('el veredicto limpio de una recarga no tapa la lectura que sí denuncia después', async () => {
+  let lecturas = 0;
+  server.use(
+    http.get(RUTA, () => {
+      lecturas += 1;
+      const base = respuesta(true, { runtime_state: 'drifted' });
+      return HttpResponse.json(lecturas === 1
+        ? { ...base, contaminacion: { contaminated: false, findings: [] } }
+        : {
+          ...base,
+          contaminacion: {
+            contaminated: true,
+            findings: [{
+              reason: 'foreign_managed_block', document: 'AGENTS.md',
+              path: '/home/kant/.codex/AGENTS.md', owner: 'Miguel/kratos',
+            }],
+          },
+        });
+    }),
+    http.post(RECARGA, () => HttpResponse.json({
+      ok: true, state: 'pending_session_refresh', evidence: 'runtime_verification',
+      message: 'el contexto está en disco y verificado',
+      tenant_id: 'Steven', alias: 'kant', revision: 4,
+      runtime_verification: {
+        state: 'current', generation: 'gen-4', container_id: 'ws-kant',
+        observed_at: '2026-08-26T00:00:00Z', documents: [],
+      },
+      documents: [],
+      contaminacion: { contaminated: false, findings: [] },
+    })),
+  );
+  const user = userEvent.setup();
+  renderWithApi(<Vista />);
+
+  await screen.findByRole('button', { name: /Recargar contexto/i });
+  expect(screen.queryByText(/contienen algo que no es suyo/i)).not.toBeInTheDocument();
+
+  await user.type(screen.getByLabelText(/Motivo de la recarga/i), 'rehago los ficheros a mano');
+  await user.click(screen.getByRole('button', { name: /Recargar contexto/i }));
+
+  expect(await screen.findByText(/contienen algo que no es suyo/i)).toBeInTheDocument();
+  expect(screen.getByText('Miguel/kratos')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /Recargar contexto/i })).toBeDisabled();
+  expect(screen.getByLabelText(/Motivo de este cambio de perfil/i)).toBeDisabled();
+});
+
+it('un contexto contaminado deja en cuarentena guardar y recargar, y nombra al dueño', async () => {
+  let puts = 0;
+  server.use(
+    http.get(RUTA, () => HttpResponse.json({
+      ...respuesta(true, { runtime_state: 'drifted' }),
+      contaminacion: {
+        contaminated: true,
+        findings: [{
+          reason: 'foreign_managed_block', document: 'AGENTS.md',
+          path: '/home/kant/.codex/AGENTS.md', owner: 'Miguel/kratos',
+        }],
+      },
+    })),
+    http.put(RUTA, () => { puts += 1; return HttpResponse.json(ackAplicado(5)); }),
+  );
+  renderWithApi(<Vista />);
+
+  const cuarentena = await screen.findByText(/contienen algo que no es suyo/i);
+  expect(cuarentena).toBeInTheDocument();
+  expect(screen.getByText(/bloque gestionado de otro alias/i)).toBeInTheDocument();
+  expect(screen.getByText('Miguel/kratos')).toBeInTheDocument();
+
+  expect(screen.getByLabelText(/Motivo de este cambio de perfil/i)).toBeDisabled();
+  expect(screen.getByRole('button', { name: /Reintentar aplicación/i })).toBeDisabled();
+  expect(screen.getByRole('button', { name: /Recargar contexto/i })).toBeDisabled();
+  expect(puts).toBe(0);
 });

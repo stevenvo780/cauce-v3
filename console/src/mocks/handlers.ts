@@ -2,7 +2,7 @@ import { delay, http, HttpResponse } from 'msw';
 import {
   adapters, agentAccountBindings, audit, configAclEdges, configMemberships, configRooms,
   configTenants, mockActivity, mockMessages, mockQueues, mockDlq, mockChain, mockQuotas,
-  mockStatus, originRelays, providerAccounts, registryAgents, roleBriefHistoryKant, routingCeiling,
+  mockStatus, originRelays, providerAccounts, registryAgents, routingCeiling,
   topology,
 } from './data';
 
@@ -325,12 +325,6 @@ export const handlers = [
       { status: 404 },
     );
   }),
-  http.get('*/v3/console/role-assignments/:tenantId/:alias/history', ({ params }) => HttpResponse.json({
-    observed_at: new Date().toISOString(),
-    tenant_id: params.tenantId,
-    alias: params.alias,
-    entries: params.alias === 'kant' ? roleBriefHistoryKant : [],
-  })),
   http.get('*/v3/console/terminal/capability', () => HttpResponse.json({ available: false, reason: 'Backend PTY no instalado en este entorno' })),
   http.get('*/v3/console/terminal/targets', () => HttpResponse.json({
     observed_at: new Date().toISOString(),

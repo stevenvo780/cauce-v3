@@ -147,45 +147,6 @@ export interface AgentDirective {
   memory?: AgentMemoryIndex | null;
 }
 
-// ------------------------------------------------------------------------------------------
-// Change history of the declared role
-// ------------------------------------------------------------------------------------------
-
-/** A log entry: a concrete change to an alias' declared role. */
-export interface RoleBriefHistoryEntry {
-  id?: string | null;
-  tenant_id?: string | null;
-  alias?: string | null;
-  /** `update`, `insert`, `delete`… whatever the trigger declares. The value set is not assumed. */
-  operation?: string | null;
-  /** The text that existed BEFORE. `null` = there was no role (creation), which is not the same as an empty string. */
-  previous_brief?: string | null;
-  /** The text that remained AFTER. `null` = the role was deleted. */
-  new_brief?: string | null;
-  previous_template_slug?: string | null;
-  new_template_slug?: string | null;
-  actor_tenant?: string | null;
-  actor_alias?: string | null;
-  changed_at?: string | null;
-}
-
-export interface RoleBriefHistory {
-  /**
-   * false = this gateway does not publish the log. It does NOT mean "this alias never changed role". Same criterion
-   * as `AgentDirective.publicado`, and for the same reason: a negative that nobody measured is not a fact about the
-   * system.
-   */
-  publicado: boolean;
-  /** Why it could not be read, when `publicado` is false. */
-  motivo?: string;
-  observed_at?: string | null;
-  /**
-   * The entries as sent by the server, WITHOUT ordering them here. The order is decided in `historial-rol.ts`, where
-   * it can be tested: see `entradasMasNuevasPrimero`.
-   */
-  entries?: RoleBriefHistoryEntry[] | null;
-}
-
 /**
  * THE PROFILE AND ITS PREVIEW (`GET /v3/console/tenants/:tenantId/agents/:alias/perfil`).
  *

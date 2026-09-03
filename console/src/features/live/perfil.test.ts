@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ficherosDelArnes, measureStrictestUnits, nombresDelArnes } from '@cauce/protocol';
 import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
@@ -6,6 +8,9 @@ import {
   destinosDelArnes, entradasDeLista, hayCambios, esPerfilAplicado, lineasCrudas, listaALineas,
   motivoSinDestino,
   perfilParaGuardar, unidadesDelPerfil, type CampoDelPerfil,
+  CONTAMINACION_ILEGIBLE, ESTADOS_DE_APLICACION, MENSAJES_DE_APLICACION,
+  MOTIVOS_DE_CONTAMINACION, contaminacionDe, entregasEnVuelo, esRecargaHecha, fraseDeContaminacion,
+  veredictoLegible, veredictoVigente,
 } from './perfil';
 
 /**
@@ -355,5 +360,209 @@ describe('el destino de cada campo sale del arnés REAL, no de openclaw cableado
     expect(destinos.purpose).toEqual({ tipo: 'fichero', nombre: 'SOUL.md' });
     expect(destinos.tools).toMatchObject({ tipo: 'ausente', ausente: 'sin-dato' });
     expect(motivoSinDestino(destinos)).toBeUndefined();
+  });
+});
+
+function rutaDelGateway(fichero: string): string {
+  let directorio = process.cwd();
+  for (let salto = 0; salto < 10; salto += 1) {
+    const candidato = join(directorio, 'services', 'gateway', 'src', 'console', fichero);
+    try {
+      readFileSync(candidato, 'utf8');
+      return candidato;
+    } catch {
+      directorio = dirname(directorio);
+    }
+  }
+  throw new Error(`No se encontró services/gateway/src/console/${fichero}`);
+}
+
+function mensajesDelGateway(fuente: string): Record<string, string> {
+  const politica = fuente.slice(fuente.indexOf('CONTEXT_APPLY_POLICY = {'));
+  const mensajes: Record<string, string> = {};
+  for (const [, estado, cuerpo] of politica.matchAll(/\n {2}(\w+): \{([\s\S]*?)\n {2}\},/g)) {
+    const texto = /message:([\s\S]*)$/.exec(cuerpo)?.[1] ?? '';
+    mensajes[estado] = [...texto.matchAll(/'([^']*)'/g)].map(([, x]) => x).join('');
+  }
+  return mensajes;
+}
+
+describe('el vocabulario de aplicación es el del gateway, leído del fichero', () => {
+  const fuente = readFileSync(rutaDelGateway('context-apply-policy.ts'), 'utf8');
+
+  it('PARIDAD: cada estado y cada frase coinciden con CONTEXT_APPLY_POLICY', () => {
+    expect(mensajesDelGateway(fuente)).toEqual(MENSAJES_DE_APLICACION);
+  });
+
+  it('CONTROL NEGATIVO: el lector del gateway no devuelve un mapa vacío ni frases vacías', () => {
+    const mensajes = mensajesDelGateway(fuente);
+    expect(Object.keys(mensajes)).toHaveLength(ESTADOS_DE_APLICACION.length);
+    for (const frase of Object.values(mensajes)) expect(frase.length).toBeGreaterThan(20);
+  });
+
+  it('PARIDAD: los motivos de contaminación son los que enumera la guardia', () => {
+    const guardia = readFileSync(rutaDelGateway('contaminacion-de-contexto.ts'), 'utf8');
+    const declarados = /CONTEXT_CONTAMINATION_REASONS = \[([\s\S]*?)\] as const;/.exec(guardia)?.[1];
+    expect(declarados).toBeDefined();
+    const motivos = [...(declarados ?? '').matchAll(/'([^']+)'/g)].map(([, x]) => x);
+    expect(motivos.length).toBeGreaterThan(0);
+    expect(Object.keys(MOTIVOS_DE_CONTAMINACION).sort()).toEqual([...motivos].sort());
+    for (const motivo of motivos) expect(fraseDeContaminacion(motivo)).not.toMatch(/no sabe nombrar/);
+  });
+
+  it('un motivo que esta consola no conoce se nombra como desconocido, no se calla', () => {
+    expect(fraseDeContaminacion('lo_que_venga_mañana')).toMatch(/no sabe nombrar/);
+  });
+});
+
+describe('el veredicto de contaminación se lee fallando cerrado', () => {
+  const HALLAZGO = {
+    reason: 'foreign_managed_block', document: 'CLAUDE.md',
+    path: '/home/stev/.claude/CLAUDE.md', owner: 'Miguel/kratos',
+  };
+
+  it('un veredicto limpio se lee como limpio y uno sucio nombra al dueño', () => {
+    expect(contaminacionDe({ contaminacion: { contaminated: false, findings: [] } }))
+      .toEqual({ contaminated: false, findings: [] });
+    expect(contaminacionDe({ contaminacion: { contaminated: true, findings: [HALLAZGO] } }))
+      .toEqual({ contaminated: true, findings: [HALLAZGO] });
+  });
+
+  it('sin campo `contaminacion` no se inventa un veredicto', () => {
+    expect(contaminacionDe({ ok: true })).toBeUndefined();
+    expect(contaminacionDe(undefined)).toBeUndefined();
+  });
+
+  it('CONTROL NEGATIVO: un veredicto ilegible o incoherente queda en cuarentena', () => {
+    for (const bruto of [
+      'sucio',
+      { contaminated: true },
+      { contaminated: true, findings: [{ document: 'CLAUDE.md' }] },
+      { contaminated: false, findings: [HALLAZGO] },
+      { contaminated: true, findings: [{ ...HALLAZGO, owner: 7 }] },
+    ]) {
+      expect(contaminacionDe({ contaminacion: bruto })).toEqual(CONTAMINACION_ILEGIBLE);
+    }
+    expect(CONTAMINACION_ILEGIBLE.contaminated).toBe(true);
+  });
+
+  it('un veredicto ilegible no es un veredicto: no acredita, aunque ensucie', () => {
+    expect(veredictoLegible({ contaminacion: { contaminated: true, findings: [HALLAZGO] } }))
+      .toEqual({ contaminated: true, findings: [HALLAZGO] });
+    expect(veredictoLegible({ contaminacion: { contaminated: false, findings: [HALLAZGO] } }))
+      .toBeUndefined();
+    expect(veredictoLegible({ contaminacion: { contaminated: true, findings: 'CLAUDE.md' } }))
+      .toBeUndefined();
+    expect(veredictoLegible({ ok: true })).toBeUndefined();
+  });
+});
+
+describe('cuando conviven dos mediciones del contexto manda la que denuncia', () => {
+  const SUCIO = {
+    contaminated: true,
+    findings: [{
+      reason: 'foreign_managed_block', document: 'CLAUDE.md',
+      path: '/home/stev/.claude/CLAUDE.md', owner: 'Miguel/kratos',
+    }],
+  } as const;
+  const LIMPIO = { contaminated: false, findings: [] } as const;
+
+  it('una lectura fresca que denuncia gana al veredicto limpio que dejó una respuesta', () => {
+    expect(veredictoVigente(LIMPIO, SUCIO)).toEqual(SUCIO);
+  });
+
+  it('la cuarentena no se levanta sola: un veredicto sucio sobrevive a una lectura limpia', () => {
+    expect(veredictoVigente(SUCIO, LIMPIO)).toEqual(SUCIO);
+    expect(veredictoVigente(CONTAMINACION_ILEGIBLE, LIMPIO)).toEqual(CONTAMINACION_ILEGIBLE);
+  });
+
+  it('CONTROL NEGATIVO: sin ninguna medición no se inventa un veredicto, ni limpio ni sucio', () => {
+    expect(veredictoVigente(undefined, undefined)).toBeUndefined();
+    expect(veredictoVigente(undefined, LIMPIO)).toEqual(LIMPIO);
+    expect(veredictoVigente(LIMPIO, undefined)).toEqual(LIMPIO);
+    expect(veredictoVigente(undefined, SUCIO)).toEqual(SUCIO);
+  });
+});
+
+describe('las entregas en vuelo que nombra un 409', () => {
+  it('se nombran vengan como cadenas o como filas con identificador', () => {
+    expect(entregasEnVuelo({ deliveries: ['  dlv-1  ', { delivery_id: 'dlv-2' }] }))
+      .toEqual(['dlv-1', 'dlv-2']);
+    expect(entregasEnVuelo({ deliveries: [{ message_id: 'msg-3' }, { id: 'dlv-4' }] }))
+      .toEqual(['msg-3', 'dlv-4']);
+  });
+
+  it('CONTROL NEGATIVO: un cuerpo sin lista no inventa entregas ni pinta objetos', () => {
+    expect(entregasEnVuelo({ error: 'delivery_in_flight' })).toEqual([]);
+    expect(entregasEnVuelo({ deliveries: 'dos' })).toEqual([]);
+    expect(entregasEnVuelo({ deliveries: [{ estado: 'en vuelo' }, '  ', null] })).toEqual([]);
+  });
+});
+
+describe('una recarga sólo se presenta hecha con el lote entero acreditado', () => {
+  const VERIFICACION = {
+    state: 'current', generation: 'gen-4', container_id: 'ws-kant',
+    observed_at: '2026-08-26T00:00:00Z', documents: [],
+  };
+  const RECARGA = {
+    ok: true, state: 'pending_session_refresh', evidence: 'runtime_verification',
+    message: MENSAJES_DE_APLICACION.pending_session_refresh,
+    tenant_id: 'Steven', alias: 'kant', revision: 4,
+    runtime_verification: VERIFICACION,
+    documents: [{
+      name: 'CLAUDE.md', path: '/home/stev/.claude/CLAUDE.md',
+      sha_before: 'a'.repeat(64), sha_after: 'b'.repeat(64), bytes: 512,
+    }],
+    contaminacion: { contaminated: false, findings: [] },
+  };
+  const ESPERADO = { tenantId: 'Steven', alias: 'kant' };
+
+  it('el resultado completo se acepta con su estado, su evidencia y sus huellas', () => {
+    expect(esRecargaHecha(RECARGA, ESPERADO)).toBe(true);
+    expect(esRecargaHecha({ ...RECARGA, documents: [] }, ESPERADO)).toBe(true);
+  });
+
+  it('CONTROL NEGATIVO: otro alias, otro estado o una huella rota no es una recarga', () => {
+    expect(esRecargaHecha(RECARGA, { tenantId: 'Miguel', alias: 'kant' })).toBe(false);
+    expect(esRecargaHecha({ ...RECARGA, state: 'reloaded' }, ESPERADO)).toBe(false);
+    expect(esRecargaHecha({ ...RECARGA, revision: 0 }, ESPERADO)).toBe(false);
+    expect(esRecargaHecha({ ...RECARGA, contaminacion: undefined }, ESPERADO)).toBe(false);
+    expect(esRecargaHecha({
+      ...RECARGA, contaminacion: { contaminated: false, findings: [{ document: 'CLAUDE.md' }] },
+    }, ESPERADO)).toBe(false);
+    expect(esRecargaHecha({
+      ...RECARGA, contaminacion: { contaminated: true, findings: 'CLAUDE.md' },
+    }, ESPERADO)).toBe(false);
+    expect(esRecargaHecha({ ...RECARGA, runtime_verification: null }, ESPERADO)).toBe(false);
+    expect(esRecargaHecha({
+      ...RECARGA,
+      documents: [{ ...RECARGA.documents[0], sha_after: 'no-es-una-huella' }],
+    }, ESPERADO)).toBe(false);
+  });
+});
+
+function camposDeInterfaz(fuente: string, nombre: string): string[] {
+  const cuerpo = new RegExp(`interface ${nombre}[^{]*\\{([\\s\\S]*?)\\n\\}`).exec(fuente)?.[1] ?? '';
+  return [...cuerpo.matchAll(/^ {2}(?:readonly )?([a-z_0-9]+)\??:/gmu)].map(([, campo]) => campo);
+}
+
+describe('las revisiones que sirve el diario se copian campo a campo', () => {
+  const rutas = readFileSync(rutaDelGateway('agent-context-history.routes.ts'), 'utf8');
+  const propio = readFileSync(join(process.cwd(), 'src/features/live/perfil.ts'), 'utf8');
+
+  it('PARIDAD: PerfilRevision y DocumentoRevision no inventan ni pierden un campo', () => {
+    expect(camposDeInterfaz(propio, 'PerfilRevision'))
+      .toEqual(camposDeInterfaz(rutas, 'ProfileRevisionView'));
+    expect(camposDeInterfaz(propio, 'DocumentoRevision'))
+      .toEqual(camposDeInterfaz(rutas, 'DocumentRevisionView'));
+  });
+
+  it('CONTROL NEGATIVO: el lector de campos no devuelve listas vacías ni iguales entre sí', () => {
+    const perfil = camposDeInterfaz(rutas, 'ProfileRevisionView');
+    const documento = camposDeInterfaz(rutas, 'DocumentRevisionView');
+    expect(perfil.length).toBeGreaterThan(10);
+    expect(documento.length).toBeGreaterThan(5);
+    expect(perfil).not.toEqual(documento);
+    expect(camposDeInterfaz(rutas, 'NoExiste')).toEqual([]);
   });
 });

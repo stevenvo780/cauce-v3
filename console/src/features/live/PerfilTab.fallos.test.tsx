@@ -30,6 +30,8 @@ function VistaDePerfil() {
   );
 }
 
+const MOTIVO = 'declaro la identidad del alias';
+
 function rechazaCon(status: number, cuerpo: Record<string, unknown>) {
   let intentos = 0;
   server.use(
@@ -47,6 +49,7 @@ function rechazaCon(status: number, cuerpo: Record<string, unknown>) {
 async function escribirYGuardar(user: ReturnType<typeof userEvent.setup>) {
   const caja = await screen.findByLabelText(/^Identidad y propósito/i);
   await user.type(caja, 'el médico de la flota');
+  await user.type(screen.getByLabelText(/Motivo de este cambio de perfil/i), MOTIVO);
   await user.click(screen.getByRole('button', { name: /guardar y aplicar perfil/i }));
   return caja;
 }
@@ -113,4 +116,61 @@ it('un fallo de lectura no se disfraza de perfil vacío', async () => {
 
   expect(await screen.findByText(/no se pudo leer el perfil/i)).toBeInTheDocument();
   expect(screen.getByText(/la base no respondió/i)).toBeInTheDocument();
+});
+
+it('un 400 que nombra `reason` dice el rango y qué hacer, sin volcar el JSON', async () => {
+  const { user } = rechazaCon(400, {
+    error: 'invalid_input', field: 'reason',
+    message: '`reason` tiene que ser un motivo escrito a mano de entre 8 y 280 caracteres',
+  });
+  const caja = await escribirYGuardar(user);
+
+  expect(await screen.findByText(/La auditoría no admitió este guardado/i)).toBeInTheDocument();
+  expect(screen.getByText(/entre 8 y 280 caracteres/)).toBeInTheDocument();
+  expect(caja).toHaveValue('el médico de la flota');
+  expect(screen.getByLabelText(/Motivo de este cambio de perfil/i)).toHaveValue(MOTIVO);
+});
+
+it('CONTROL NEGATIVO: un 400 de otro campo conserva el mensaje del servidor', async () => {
+  const { user } = rechazaCon(400, {
+    error: 'invalid_input', field: 'purpose', message: 'purpose supera el tope de 2000 unidades',
+  });
+  await escribirYGuardar(user);
+
+  expect(await screen.findByText(/purpose supera el tope de 2000 unidades/i)).toBeInTheDocument();
+  expect(screen.queryByText(/La auditoría no admitió este guardado/i)).not.toBeInTheDocument();
+});
+
+it('una sesión sin persona detrás lo dice en castellano y conserva texto y motivo', async () => {
+  const { user } = rechazaCon(403, {
+    error: 'forbidden', reason: 'writable_requires_attribution',
+    message: 'escribir la gobernanza de un alias exige una persona con nombre',
+  });
+  const caja = await escribirYGuardar(user);
+
+  expect(await screen.findByText(/no acredita a la persona que escribe/i)).toBeInTheDocument();
+  expect(screen.getByText(/identidad de operador/i)).toBeInTheDocument();
+  expect(caja).toHaveValue('el médico de la flota');
+  expect(screen.getByLabelText(/Motivo de este cambio de perfil/i)).toHaveValue(MOTIVO);
+});
+
+it('un 409 de cuarentena nombra el bloque ajeno y bloquea el siguiente intento', async () => {
+  const { user, leerIntentos } = rechazaCon(409, {
+    error: 'context_contaminated',
+    message: 'los ficheros de gobierno de este alias contienen algo que no es suyo',
+    contaminacion: {
+      contaminated: true,
+      findings: [{
+        reason: 'expectation_sha_mismatch', document: 'AGENTS.md',
+        path: '/home/kant/.codex/AGENTS.md',
+        expected_sha: 'a'.repeat(64), observed_sha: 'b'.repeat(64),
+      }],
+    },
+  });
+  const caja = await escribirYGuardar(user);
+
+  expect(await screen.findByText(/huella distinta de la esperada/i)).toBeInTheDocument();
+  expect(caja).toHaveValue('el médico de la flota');
+  expect(screen.getByRole('button', { name: /guardar y aplicar perfil/i })).toBeDisabled();
+  expect(leerIntentos()).toBe(1);
 });

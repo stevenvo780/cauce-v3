@@ -142,3 +142,56 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* ── El motivo escrito a mano, la recarga y la cuarentena ─────────────────── */
+
+.perfil-motivo { display: grid; gap: var(--space-1); min-width: 0; font-size: var(--tipo-rotulo); font-weight: 600; }
+.perfil-motivo input {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--tipo-rotulo);
+  font-weight: 400;
+}
+.perfil-razon { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); line-height: 1.45; overflow-wrap: anywhere; }
+
+.perfil-recarga {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+}
+.perfil-recarga > button { justify-self: start; }
+.perfil-recarga-resultado { display: grid; gap: var(--space-2); min-width: 0; }
+.perfil-recarga-ficheros {
+  margin: 0;
+  padding-left: var(--space-4);
+  font-size: var(--tipo-apunte);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.perfil-recarga-ficheros code { font-size: var(--tipo-apunte); }
+
+.perfil-cuarentena {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--on-red);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: var(--tipo-apunte);
+  line-height: 1.5;
+}
+.perfil-cuarentena p { margin: 0; }
+.perfil-cuarentena-titulo { display: flex; align-items: center; gap: var(--space-2); color: var(--on-red); font-weight: 600; }
+.perfil-cuarentena-lista { margin: 0; padding-left: var(--space-4); overflow-wrap: anywhere; }

@@ -4,12 +4,18 @@ import {
   PublishIntentReconciliationError,
 } from './client';
 import type { ConfirmPublishIntentInput, PreparePublishIntentInput, PublishMessageInput } from './types';
-import { agentClient } from './client/agent-client';
+import {
+  agentClient, ContextoContaminadoError, EntregaEnVueloError,
+} from './client/agent-client';
 import { messagingClient } from './client/messaging-client';
 import { systemClient, type RequestFn } from './client/system-client';
 import { server } from '../mocks/server';
 
 const nunca: RequestFn = () => new Promise<never>(() => undefined);
+const PERFIL = {
+  purpose: 'el médico de la flota', role_summary: null, human_brief: null,
+  responsibilities: [], restrictions: [], tools: [], operating_rules: [],
+};
 const metodosDeLosModulos = [systemClient(nunca), messagingClient(nunca), agentClient(nunca)]
   .flatMap((modulo) => Object.keys(modulo));
 
@@ -18,7 +24,7 @@ describe('CauceApi', () => {
     // `Object.assign` en el constructor pone los métodos en la instancia, no en el prototipo: si un
     // módulo deja de mezclarse el tipo sigue compilando y la vista revienta en tiempo de ejecución.
     const api = new CauceApi();
-    expect(metodosDeLosModulos).toHaveLength(30);
+    expect(metodosDeLosModulos).toHaveLength(32);
     for (const nombre of metodosDeLosModulos) {
       expect(typeof (api as unknown as Record<string, unknown>)[nombre]).toBe('function');
     }
@@ -257,27 +263,18 @@ describe('CauceApi', () => {
       http.get('http://localhost/v3/console/agents/:tenant/:alias/directive', () => HttpResponse.json(
         { error: 'not_found', message: 'agent not found or not visible' }, { status: 404 },
       )),
-      http.get('http://localhost/v3/console/role-assignments/:tenant/:alias/history', () => HttpResponse.json(
-        { error: 'not_found', message: 'agent not found or not visible' }, { status: 404 },
-      )),
     );
     const api = new CauceApi('http://localhost');
 
     await expect(api.getAgentDirective('Steven', 'missing')).rejects.toMatchObject({
       status: 404, code: 'not_found', message: 'agent not found or not visible',
     });
-    await expect(api.getRoleBriefHistory('Steven', 'missing')).rejects.toMatchObject({
-      status: 404, code: 'not_found', message: 'agent not found or not visible',
-    });
 
     server.use(
       http.get('http://localhost/v3/console/agents/:tenant/:alias/directive', () =>
         new HttpResponse(null, { status: 404 })),
-      http.get('http://localhost/v3/console/role-assignments/:tenant/:alias/history', () =>
-        new HttpResponse(null, { status: 404 })),
     );
     await expect(api.getAgentDirective('Steven', 'missing')).resolves.toMatchObject({ publicado: false });
-    await expect(api.getRoleBriefHistory('Steven', 'missing')).resolves.toMatchObject({ publicado: false });
   });
 
   it('passes only a bounded opaque DLQ cursor and rejects malformed pagination locally', async () => {
@@ -382,5 +379,143 @@ describe('CauceApi', () => {
     ).catch((error: unknown) => error);
 
     expect(fallo).toMatchObject({ status: 403, code: 'forbidden' });
+  });
+
+  it('el perfil viaja con su motivo escrito a mano, su CAS y nada más', async () => {
+    const cuerpos: Record<string, unknown>[] = [];
+    const metodos: string[] = [];
+    server.use(http.put(
+      'http://localhost/v3/console/tenants/Steven/agents/kant/perfil',
+      async ({ request }) => {
+        metodos.push(request.method);
+        cuerpos.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ ok: true });
+      },
+    ));
+    const api = new CauceApi('http://localhost');
+
+    await api.putAgentPerfil('Steven', 'kant', PERFIL, 4, '  ajusto el rol declarado  ');
+
+    expect(metodos).toEqual(['PUT']);
+    expect(cuerpos).toEqual([
+      { expected_revision: 4, profile: PERFIL, reason: '  ajusto el rol declarado  ' },
+    ]);
+  });
+
+  it('la recarga de contexto es un POST con sólo el motivo, y escapa alias y tenant', async () => {
+    let cuerpo: Record<string, unknown> | undefined;
+    let metodo: string | undefined;
+    server.use(http.post(
+      'http://localhost/v3/console/tenants/Steven%2Fmiguel/agents/kant%20b/context/reload',
+      async ({ request }) => {
+        metodo = request.method;
+        cuerpo = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ok: true, state: 'pending_session_refresh' });
+      },
+    ));
+    const api = new CauceApi('http://localhost');
+
+    await api.postContextReload('Steven/miguel', 'kant b', 'rehago el contexto a mano');
+
+    expect(metodo).toBe('POST');
+    expect(cuerpo).toEqual({ reason: 'rehago el contexto a mano' });
+  });
+
+  it('un 409 de cuarentena llega con su cuerpo entero, no con una frase suelta', async () => {
+    const veredicto = {
+      contaminated: true,
+      findings: [{
+        reason: 'foreign_managed_block', document: 'CLAUDE.md',
+        path: '/home/stev/.claude/CLAUDE.md', owner: 'Miguel/kratos',
+      }],
+    };
+    server.use(http.put(
+      'http://localhost/v3/console/tenants/Steven/agents/kant/perfil',
+      () => HttpResponse.json({
+        error: 'context_contaminated', message: 'esos ficheros tienen algo que no es suyo',
+        contaminacion: veredicto,
+      }, { status: 409 }),
+    ));
+    const api = new CauceApi('http://localhost');
+
+    const fallo = await api.putAgentPerfil('Steven', 'kant', PERFIL, 4, 'ajusto el rol declarado')
+      .catch((error: unknown) => error);
+
+    expect(fallo).toBeInstanceOf(ContextoContaminadoError);
+    expect((fallo as ContextoContaminadoError).cuerpo).toMatchObject({ contaminacion: veredicto });
+  });
+
+  it('un 409 de entrega en vuelo se distingue del de cuarentena y conserva su cuerpo', async () => {
+    server.use(http.post(
+      'http://localhost/v3/console/tenants/Steven/agents/kant/context/reload',
+      () => HttpResponse.json({
+        error: 'delivery_in_flight', message: 'hay una entrega en vuelo para este alias',
+        deliveries: ['dlv-71'],
+      }, { status: 409 }),
+    ));
+    const api = new CauceApi('http://localhost');
+
+    const fallo = await api.postContextReload('Steven', 'kant', 'rehago el contexto a mano')
+      .catch((error: unknown) => error);
+
+    expect(fallo).toBeInstanceOf(EntregaEnVueloError);
+    expect(fallo).toMatchObject({ status: 409, code: 'delivery_in_flight' });
+    expect((fallo as EntregaEnVueloError).cuerpo).toMatchObject({ deliveries: ['dlv-71'] });
+  });
+
+  it('un 400 que nombra `reason` se separa de un 400 de los campos del perfil', async () => {
+    let cuerpo: Record<string, unknown> = {
+      error: 'invalid_input', field: 'reason', message: 'el motivo va entre 8 y 280 caracteres',
+    };
+    server.use(http.put(
+      'http://localhost/v3/console/tenants/Steven/agents/kant/perfil',
+      () => HttpResponse.json(cuerpo, { status: 400 }),
+    ));
+    const api = new CauceApi('http://localhost');
+
+    const delMotivo = await api.putAgentPerfil('Steven', 'kant', PERFIL, 4, 'corto')
+      .catch((error: unknown) => error);
+    expect(delMotivo).toMatchObject({ status: 400, code: 'invalid_reason' });
+
+    cuerpo = {
+      error: 'invalid_input', field: 'purpose', message: 'purpose supera el tope de 2000 unidades',
+    };
+    const delCampo = await api.putAgentPerfil('Steven', 'kant', PERFIL, 4, 'ajusto el propósito')
+      .catch((error: unknown) => error);
+    expect(delCampo).toMatchObject({ status: 400, code: 'invalid_input' });
+  });
+
+  it('las dos historias piden por GET con su límite y su cursor, y escapan el tipo', async () => {
+    const urls: string[] = [];
+    server.use(
+      http.get('http://localhost/v3/console/tenants/Steven/agents/kant/perfil/revisions',
+        ({ request }) => {
+          urls.push(request.url);
+          return HttpResponse.json({
+            observed_at: '2026-08-26T00:00:00Z', tenant_id: 'Steven', alias: 'kant', entries: [],
+          });
+        }),
+      http.get('http://localhost/v3/console/tenants/Steven/agents/kant/documents/directive/revisions',
+        ({ request }) => {
+          urls.push(request.url);
+          return HttpResponse.json({
+            observed_at: '2026-08-26T00:00:00Z', tenant_id: 'Steven', alias: 'kant',
+            kind: 'directive', entries: [],
+          });
+        }),
+    );
+    const api = new CauceApi('http://localhost');
+
+    const perfil = await api.getProfileRevisions('Steven', 'kant', { limit: 25 });
+    const manual = await api.getDocumentRevisions('Steven', 'kant', 'directive', { cursor: 'c-9' });
+    await api.getProfileRevisions('Steven', 'kant');
+
+    expect(perfil.entries).toEqual([]);
+    expect(manual.kind).toBe('directive');
+    expect(urls).toEqual([
+      'http://localhost/v3/console/tenants/Steven/agents/kant/perfil/revisions?limit=25',
+      'http://localhost/v3/console/tenants/Steven/agents/kant/documents/directive/revisions?cursor=c-9',
+      'http://localhost/v3/console/tenants/Steven/agents/kant/perfil/revisions',
+    ]);
   });
 });

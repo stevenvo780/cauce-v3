@@ -171,6 +171,10 @@ it('un perfil en vuelo bloquea empezar, guardar o descartar una edición manual 
   const manual = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   const manualAntes = (manual as HTMLTextAreaElement).value;
   await user.type(within(cajon).getByLabelText(/^Rol declarado/i), 'perfil nuevo');
+  // Every profile save carries a hand-typed reason; without it the button does not even enable.
+  await user.type(
+    within(cajon).getByLabelText(/Motivo de este cambio de perfil/i), 'cambio el rol declarado',
+  );
   await user.click(within(cajon).getByRole('button', { name: /Guardar y aplicar perfil/i }));
   await waitFor(() => { expect(putEmpezo).toBe(true); });
 

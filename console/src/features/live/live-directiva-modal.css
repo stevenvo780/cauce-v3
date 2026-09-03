@@ -158,15 +158,16 @@
 .directiva-modal .button.small,
 .directiva-modal .role-brief > p,
 .directiva-modal .role-brief-warn,
-.directiva-modal .historial-rol-caja > summary,
+.directiva-modal .historial-contexto-abrir,
 .directiva-modal .historial-nota-actor,
+.directiva-modal .historial-diff-titulo,
+.directiva-modal .historial-diff-signo,
+.directiva-modal .historial-diff-texto,
 .directiva-modal .historial-entrada-head strong,
 .directiva-modal .historial-entrada-cuando,
 .directiva-modal .historial-entrada-cuando code,
 .directiva-modal .historial-entrada-detalle,
-.directiva-modal .historial-entrada-plantilla,
-.directiva-modal .historial-entrada-ayuda,
-.directiva-modal .historial-texto { font-size: var(--tipo-mono); }
+.directiva-modal .historial-entrada-ayuda { font-size: var(--tipo-mono); }
 
 html.directiva-modal-abierta { overflow: hidden; scrollbar-gutter: stable; }
 html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
@@ -190,15 +191,9 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
 :root[data-theme="light"] .directiva-modal { box-shadow: 0 26px 70px rgb(20 32 51 / 22%); }
 
 
-/* --- El diario del rol y la vuelta atrás (dentro de la capa 1) --------------- */
+/* --- El diario del contexto y la vuelta atrás (dentro de la capa 1) --------- */
 
-.historial-rol-caja > summary {
-  color: var(--muted);
-  cursor: pointer;
-  font-size: var(--tipo-rotulo);
-  font-weight: 700;
-}
-.historial-rol { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
+.historial-diario { display: grid; gap: var(--space-2); min-width: 0; }
 
 .historial-nota-actor { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); }
 
@@ -214,7 +209,6 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
 }
 
 .historial-entrada[data-clase="borrado"] { border-color: #74313c; background: var(--red-dim); }
-.historial-entrada[data-clase="sin-texto"] { opacity: .82; }
 
 .historial-entrada-head { display: grid; align-items: start; gap: var(--space-2); grid-template-columns: auto minmax(0, 1fr); }
 .historial-entrada-head strong { font-size: var(--tipo-rotulo); }
@@ -222,35 +216,19 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
 .historial-entrada-cuando { margin: var(--space-1) 0 0; color: var(--faint); font-size: var(--tipo-apunte); }
 .historial-entrada-cuando code { font-size: var(--tipo-apunte); }
 .historial-entrada-detalle { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); }
-.historial-entrada-plantilla { margin: 0; color: var(--amber, #d08700); font-size: var(--tipo-apunte); }
 
 .historial-paginacion { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.historial-paginacion .notice { flex: 1 1 100%; margin: 0; }
 
 .historial-entrada-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .historial-entrada-ayuda { color: var(--faint); font-size: var(--tipo-apunte); }
 
-.historial-rol summary { margin-top: var(--space-1); color: var(--muted); cursor: pointer; font-size: var(--tipo-rotulo); }
-.historial-texto {
-  max-height: 240px;
-  overflow: auto;
-  margin: var(--space-2) 0 0;
-  padding: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: #070b13;
-  color: #bad0e9;
-  font-size: var(--tipo-apunte);
-  white-space: pre-wrap;
-}
-
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .historial-texto { background: #ffffff; color: #33455c; }
   :root:not([data-theme="dark"]) .historial-entrada[data-clase="borrado"] { background: #fdeaec; }
 }
 
 /* Gemela del bloque de arriba para el tema claro FORZADO: la consulta de medios no llega
    cuando el sistema prefiere oscuro y el operador eligió «claro» en la barra superior. */
-:root[data-theme="light"] .historial-texto { background: #ffffff; color: #33455c; }
 :root[data-theme="light"] .historial-entrada[data-clase="borrado"] { background: #fdeaec; }
 
 
@@ -275,3 +253,41 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
 .directiva-pendiente-falta { margin: var(--space-2) 0 0; color: var(--mint); font-size: var(--tipo-apunte); line-height: 1.5; }
 .directiva-pendiente-donde { margin: var(--space-2) 0 0; color: var(--faint); font-size: var(--tipo-apunte); line-height: 1.5; }
 .directiva-pendiente-donde code { font-size: var(--tipo-apunte); }
+
+
+/* --- El diario del contexto y su diff (dentro de la capa 1) ---------------- */
+
+.historial-contexto { display: grid; gap: var(--space-2); min-width: 0; margin-top: var(--space-2); }
+.historial-contexto-panel { display: grid; gap: var(--space-2); min-width: 0; }
+
+.historial-contexto-abrir {
+  justify-self: start;
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: var(--tipo-rotulo);
+  font-weight: 700;
+  text-align: left;
+}
+
+.historial-diff { display: grid; gap: var(--space-2); min-width: 0; }
+.historial-diff-campo { display: grid; gap: var(--space-1); min-width: 0; }
+.historial-diff-titulo { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); font-weight: 700; }
+.historial-diff-lineas { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.historial-diff-linea { display: grid; align-items: baseline; gap: var(--space-2); grid-template-columns: 1ch minmax(0, 1fr); }
+.historial-diff-signo { color: var(--faint); font-size: var(--tipo-apunte); }
+.historial-diff-texto {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  font-size: var(--tipo-apunte);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.historial-diff-texto[data-clase="quitada"] { background: var(--red-dim); color: var(--on-red); }
+.historial-diff-texto[data-clase="agregada"] { background: var(--mint-dim); color: var(--on-mint); }
+.historial-diff-texto[data-clase="igual"] { color: var(--muted); }
+
+.historial-huella { font-size: var(--tipo-apunte); overflow-wrap: anywhere; }

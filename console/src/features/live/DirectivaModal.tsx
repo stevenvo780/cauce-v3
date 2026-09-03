@@ -1,10 +1,13 @@
-import { BookOpen, Brain, IdCard, X } from 'lucide-react';
-import { useEffect, useRef, type RefObject } from 'react';
+import { ArrowRight, BookOpen, Brain, IdCard, X } from 'lucide-react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useApi } from '../../api/context';
+import type { AgentPerfilCampos, ConfigurationSnapshot } from '../../api/types';
+import { EmptyState } from '../../components/ui';
 import { useResource } from '../../api/use-resource';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { RoleBriefTab, type RoleBriefTabProps } from './RoleBriefTab';
+import type { PermissionState } from '../../lib';
+import { HistorialDeContexto } from './HistorialDeContexto';
 import { selectAgentRegistryEntry } from './agent-registry-entry';
 import { ubicacionDeclarada } from './capas-pendientes';
 import { avisosDeCapas } from './directiva';
@@ -12,9 +15,25 @@ import { AvisosDeSolapamiento } from './directiva-modal/AvisosDeSolapamiento';
 import { CapaCabecera } from './directiva-modal/CapaCabecera';
 import { CapasPendientes } from './directiva-modal/CapasPendientes';
 import { CapaDeFicheros, CapaDeMemoria } from './directiva-modal/ContenidoDeCapas';
+import { ROLE_BRIEF_MAX, contarRoleBrief, tonoRoleBrief } from './role-brief';
 
-interface DirectivaModalProps extends RoleBriefTabProps {
+interface DirectivaModalProps {
+  tenantId: string;
+  alias: string;
+  /**
+   * The same versioned read used by the surface that opens this dialog. This layer does not
+   * re-query `/config`: doing so would allow warning with revision A and showing B at once.
+   */
+  configuration: {
+    data?: ConfigurationSnapshot;
+    error?: Error;
+    loading: boolean;
+  };
+  onEditarEnPerfil: () => void;
   onEditarEnFicheros: () => void;
+  /** Carries a whole past revision into the canonical draft: the seven fields or none. */
+  onRestaurarEnPerfil: (campos: AgentPerfilCampos) => void;
+  configWritePermission: PermissionState;
   devolverFocoA?: RefObject<HTMLElement | null>;
   onCerrar: () => void;
 }
@@ -24,6 +43,7 @@ export function DirectivaModal({
   configWritePermission, devolverFocoA, onCerrar,
 }: DirectivaModalProps) {
   const api = useApi();
+  const [historialAbierto, setHistorialAbierto] = useState(false);
   const directiva = useResource(
     `directiva-ficheros-${tenantId}-${alias}`,
     () => api.getAgentDirective(tenantId, alias),
@@ -66,10 +86,11 @@ export function DirectivaModal({
     onCerrar();
     onEditarEnFicheros();
   };
-  const restaurarYEnfocarCampos = (texto: string) => {
+  const restaurarYEnfocarCampos = (campos: AgentPerfilCampos) => {
     onCerrar();
-    onRestaurarEnPerfil(texto);
+    onRestaurarEnPerfil(campos);
   };
+  const soloLectura = configWritePermission !== 'allowed';
 
   const registro = selectAgentRegistryEntry(configuration.data, tenantId, alias);
   const avisos = avisosDeCapas(
@@ -123,14 +144,42 @@ export function DirectivaModal({
                   + 'quién se escala.'
                 }
               />
-              <RoleBriefTab
-                tenantId={tenantId}
-                alias={alias}
-                configuration={configuration}
-                onEditarEnPerfil={cerrarYEnfocarCampos}
-                onRestaurarEnPerfil={restaurarYEnfocarCampos}
-                configWritePermission={configWritePermission}
-              />
+              <div className="role-brief">
+                <p className="notice" role="note">
+                  Solo lectura acá: el rol vive en <code>agent_profiles.role_summary</code> y se
+                  edita en los campos canónicos, donde un cambio sólo figura aplicado cuando el
+                  runtime acredita todos sus ficheros.
+                </p>
+                <ProyeccionDelRol
+                  tenantId={tenantId}
+                  alias={alias}
+                  configuration={configuration}
+                />
+                <button type="button" className="button primary" onClick={cerrarYEnfocarCampos}>
+                  {soloLectura ? 'Abrir los campos canónicos' : 'Editar los campos canónicos'}
+                  {' '}<ArrowRight size={15} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="historial-contexto-abrir"
+                  aria-expanded={historialAbierto}
+                  aria-controls="historial-contexto-caja"
+                  onClick={() => { setHistorialAbierto(!historialAbierto); }}
+                >
+                  Historial y diff del contexto
+                </button>
+                {/* Mounted only when opened: the journal costs two reads that nobody asked for
+                    while the dialog is being used to compare the three layers. */}
+                {historialAbierto ? (
+                  <div id="historial-contexto-caja">
+                    <HistorialDeContexto
+                      tenantId={tenantId}
+                      alias={alias}
+                      onRestaurar={soloLectura ? undefined : restaurarYEnfocarCampos}
+                    />
+                  </div>
+                ) : null}
+              </div>
             </section>
 
             <section className="directiva-capa" aria-label="Capa 2: manual del sitio">
@@ -185,5 +234,76 @@ export function DirectivaModal({
       </div>
     </div>,
     document.body,
+  );
+}
+
+/**
+ * The legacy projection of the role, read-only and honest about what it did not manage to read.
+ *
+ * `agents.role_brief` is no longer an editable source: migration 028 derives it from
+ * `agent_profiles.role_summary`. It is still shown here because this dialog exists to put the
+ * three layers side by side, and a layer with no content is a layer nobody can compare. A failed
+ * read is NOT an empty role, and neither is an alias with no row in the registry.
+ */
+function ProyeccionDelRol({ tenantId, alias, configuration }: {
+  tenantId: string;
+  alias: string;
+  configuration: DirectivaModalProps['configuration'];
+}) {
+  const registro = selectAgentRegistryEntry(configuration.data, tenantId, alias);
+
+  if (configuration.loading && !configuration.data) {
+    return <p className="muted">Leyendo la proyección del rol desde el registro…</p>;
+  }
+  if (configuration.error && !configuration.data) {
+    return (
+      <EmptyState>
+        No se pudo leer la proyección del rol; no se interpreta como un rol vacío:{' '}
+        {configuration.error.message}
+      </EmptyState>
+    );
+  }
+  if (registro.state === 'registry-unavailable') {
+    return (
+      <EmptyState>
+        Este gateway no publica el registro de agentes, así que no hay una proyección del rol que
+        mostrar.
+      </EmptyState>
+    );
+  }
+  if (registro.state === 'agent-missing') {
+    return (
+      <EmptyState>
+        {alias} no está en el registro de agentes de {tenantId}. Un alias sin fila no tiene una
+        proyección declarada que mostrar.
+      </EmptyState>
+    );
+  }
+
+  const largo = contarRoleBrief(registro.roleBrief);
+  return (
+    <>
+      {configuration.error ? (
+        <p className="notice error" role="alert">
+          La última relectura falló ({configuration.error.message}); se muestra la última lectura
+          buena.
+        </p>
+      ) : null}
+      <label className="role-brief-field">
+        <span>Proyección legacy del rol</span>
+        <textarea
+          aria-label={`Proyección del rol de ${alias}`}
+          rows={10}
+          value={registro.roleBrief}
+          readOnly
+          spellCheck={false}
+        />
+      </label>
+      <div className="role-brief-meter">
+        <span className="role-brief-count" data-tone={tonoRoleBrief(largo)}>
+          {largo} / {ROLE_BRIEF_MAX}
+        </span>
+      </div>
+    </>
   );
 }

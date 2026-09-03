@@ -1,18 +1,24 @@
 import { Save } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { ApiError } from '../../api/client';
+import { ContextoContaminadoError } from '../../api/client/agent-client';
 import { useApi } from '../../api/context';
 import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
 import { useResource, type RecargaResultado } from '../../api/use-resource';
 import { EmptyState, Unknown, ViewTabs } from '../../components/ui';
 import type { PermissionState } from '../../lib';
-import { MedidorDeRol } from './MedidorDeRol';
 import {
-  CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, ETIQUETAS, camposQueNoEntran, camposVigentes, contarUnidades,
+  DOCUMENT_REASON_MAX, DOCUMENT_REASON_MIN, explicarFalloDeMotivo, problemaDeMotivo,
+} from './ficheros-motivo';
+import { MedidorDeRol } from './MedidorDeRol';
+import { AvisoDeContaminacion, RecargaDeContexto } from './RecargaDeContexto';
+import {
+  CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, CONTAMINACION_ILEGIBLE, ETIQUETAS, MENSAJES_DE_APLICACION,
+  camposQueNoEntran, camposVigentes, contaminacionDe, contarUnidades,
   destinosDelArnes, entradasDeLista, esPerfilAplicado, hayCambios, lineasCrudas, listaALineas,
   motivoSinDestino,
-  perfilParaGuardar, unidadesDelPerfil,
-  type CampoDelPerfil, type DestinoDelCampo,
+  perfilParaGuardar, unidadesDelPerfil, veredictoVigente,
+  type CampoDelPerfil, type ContaminacionDeContexto, type DestinoDelCampo,
 } from './perfil';
 
 /**
@@ -50,13 +56,14 @@ interface PerfilTabProps {
   writeInFlight?: boolean;
   blockedByManualDraft?: boolean;
   runtimeRefreshRevision?: number;
+  restauracion?: number;
   configWritePermission: PermissionState;
 }
 
 export function PerfilTab({
   tenantId, alias, borrador, onBorrador, onMutationSettled, onWriteInFlightChange,
   writeInFlight = false, blockedByManualDraft = false, runtimeRefreshRevision = 0,
-  configWritePermission,
+  restauracion = 0, configWritePermission,
 }: PerfilTabProps) {
   const api = useApi();
   const perfil = useResource(
@@ -65,6 +72,10 @@ export function PerfilTab({
   const [localBusy, setLocalBusy] = useState(false);
   const [aviso, setAviso] = useState<{ text: string; tone: TonoAviso }>();
   const [ficheroAbierto, setFicheroAbierto] = useState<string>();
+  const [motivo, setMotivo] = useState('');
+  const [veredicto, setVeredicto] = useState<ContaminacionDeContexto>();
+  const idMotivo = useId();
+  useEffect(() => { setMotivo(''); }, [restauracion]);
 
   const estadoPermiso = configWritePermission;
   // Absence, error or a stale response from the access endpoint never enable a mutation.
@@ -101,6 +112,11 @@ export function PerfilTab({
   const destinos = destinosDelArnes(perfil.data?.harness, ficheros);
   const sinDestino = motivoSinDestino(destinos);
   const busy = localBusy || writeInFlight;
+  const problemaMotivo = problemaDeMotivo(motivo);
+  const contaminacion = veredictoVigente(veredicto, contaminacionDe(perfil.data));
+  const enCuarentena = contaminacion?.contaminated === true;
+  const recargable = perfil.data?.runtime_state === 'pending_session_refresh'
+    || perfil.data?.runtime_state === 'drifted';
 
   // The persistence state speaks about the previous text. As soon as it is edited again, it no
   // longer describes the visible draft and is withdrawn. The red is kept: the rejection is still true.
@@ -176,16 +192,33 @@ export function PerfilTab({
       });
       return;
     }
+    if (enCuarentena) {
+      setAviso({
+        tone: 'error',
+        text: 'El contexto de este alias está en cuarentena: sus ficheros de gobierno contienen '
+          + 'algo que no es suyo. No se envió ninguna escritura.',
+      });
+      return;
+    }
+    if (problemaMotivo !== undefined) {
+      setAviso({
+        tone: 'error',
+        text: `${problemaMotivo} La fila de auditoría se escribe con ese texto, así que sin él no `
+          + 'se manda nada.',
+      });
+      return;
+    }
     setAviso(undefined);
     setLocalBusy(true);
     onWriteInFlightChange?.(true);
     try {
       const expectedRevision = perfil.data?.exists === true ? (perfil.data.revision ?? null) : null;
       const result = await api.putAgentPerfil(
-        tenantId, alias, perfilParaGuardar(campos), expectedRevision,
+        tenantId, alias, perfilParaGuardar(campos), expectedRevision, motivo.trim(),
       );
       if (result && typeof result === 'object' && 'state' in result
         && result.state === 'pending_session_refresh') {
+        setMotivo('');
         setAviso({
           tone: 'parcial',
           text: 'Desired y ficheros del runtime quedaron actualizados, pero la sesión compartida '
@@ -231,6 +264,7 @@ export function PerfilTab({
         return;
       }
       onBorrador(undefined);
+      setMotivo('');
       setAviso({
         tone: 'success',
         text: `Aplicado: desired y runtime acreditan la revisión ${String(result.revision)}; `
@@ -239,6 +273,22 @@ export function PerfilTab({
     } catch (error) {
       const crudo = error instanceof Error ? error.message : 'el servidor no dijo por qué';
       const status = error instanceof ApiError ? error.status : undefined;
+      const codigo = error instanceof ApiError ? error.code : undefined;
+      if (error instanceof ContextoContaminadoError) {
+        setVeredicto(contaminacionDe(error.cuerpo) ?? CONTAMINACION_ILEGIBLE);
+        setAviso({
+          tone: 'error',
+          text: `${crudo} No se escribió nada: el borrador y el motivo se conservan.`,
+        });
+        return;
+      }
+      const delMotivo = codigo === 'invalid_reason' || codigo === 'writable_requires_attribution'
+        ? explicarFalloDeMotivo(status, codigo, crudo)
+        : undefined;
+      if (delMotivo !== undefined) {
+        setAviso({ tone: 'error', text: `${delMotivo.titulo}. ${delMotivo.detalle}` });
+        return;
+      }
       const recarga: RecargaResultado<AgentPerfil> = await perfil.reload();
       const relectura = recarga.data;
       const quedaPendiente = relectura?.runtime_state === 'pending';
@@ -373,10 +423,24 @@ export function PerfilTab({
         {perfil.data?.publicado
           && agenteHabilitado && perfil.data.runtime_state === 'pending_session_refresh' ? (
           <p className="perfil-aviso perfil-aviso-parcial" role="status">
-            Los ficheros ya coinciden con desired, pero la TUI compartida todavía no acreditó
-            recibir el perfil en una entrega. Un ACK de escritura no se presenta como adopción.
+            <strong>Sesión sin adoptar todavía:</strong>{' '}
+            {MENSAJES_DE_APLICACION.pending_session_refresh} Un ACK de escritura no se presenta
+            como adopción.
           </p>
         ) : null}
+        {perfil.data?.publicado && agenteHabilitado && recargable ? (
+          <RecargaDeContexto
+            tenantId={tenantId}
+            alias={alias}
+            permitida={!soloLectura}
+            enCuarentena={enCuarentena}
+            onVeredicto={setVeredicto}
+            onRecargado={() => { void perfil.reload(); onMutationSettled?.(); }}
+          />
+        ) : null}
+        {contaminacion?.contaminated === true
+          ? <AvisoDeContaminacion contaminacion={contaminacion} />
+          : null}
         {perfil.data?.publicado && agenteHabilitado && runtimeNoVerificado ? (
           <p className="perfil-aviso perfil-aviso-error" role="alert">
             El runtime no publicó una generación acreditable. Edición y aplicación quedan
@@ -403,12 +467,35 @@ export function PerfilTab({
           </p>
         ) : null}
 
+        <label className="perfil-motivo" htmlFor={idMotivo}>
+          Motivo de este cambio de perfil (lo escribe una persona y queda en la auditoría)
+          <input
+            id={idMotivo}
+            type="text"
+            value={motivo}
+            maxLength={DOCUMENT_REASON_MAX}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Motivo del cambio, escrito a mano…"
+            aria-describedby={`${idMotivo}-pista`}
+            disabled={soloLectura || busy || enCuarentena || !agenteHabilitado}
+            onChange={(event) => { setMotivo(event.target.value); }}
+          />
+        </label>
+        <p className="perfil-razon" id={`${idMotivo}-pista`}>
+          {motivo.length === 0
+            ? `Hace falta un motivo escrito a mano: sin él no se guarda (mínimo `
+              + `${String(DOCUMENT_REASON_MIN)}, máximo ${String(DOCUMENT_REASON_MAX)}).`
+            : problemaMotivo
+              ?? `Motivo válido · ${String(motivo.trim().length)}/${String(DOCUMENT_REASON_MAX)}`}
+        </p>
+
         <button
           type="button"
           className="button primary"
           disabled={soloLectura || busy || !presenciaConocida || !revisionCoherente
             || !estadoConocido || !runtimeActual || runtimeNoVerificado
-            || !agenteHabilitado || !aplicable
+            || !agenteHabilitado || !aplicable || enCuarentena || problemaMotivo !== undefined
             || blockedByManualDraft || (!sucio && !pendiente) || fuera.length > 0}
           onClick={() => { void guardar(); }}
         >

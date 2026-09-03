@@ -44,6 +44,7 @@ function ContextoTabContent({
   const campos = useRef<HTMLElement>(null);
   const manual = useRef<HTMLElement>(null);
   const [manualAppliedNotice, setManualAppliedNotice] = useState<string>();
+  const [restauraciones, setRestauraciones] = useState(0);
 
   const enfocar = useCallback((destino: RefObject<HTMLElement | null>) => {
     // The directive dialog restores focus to its opener while unmounting. Waiting one frame lets
@@ -97,10 +98,11 @@ function ContextoTabContent({
           configuracion={configuracion}
           onEditarEnPerfil={() => { enfocar(campos); }}
           onEditarEnFicheros={() => { enfocar(manual); }}
-          onRestaurarEnPerfil={(texto) => {
-            // A restore only prepares role_summary. The other authored fields and every manual
-            // draft stay exactly as the operator left them until their own acknowledged write.
-            onBorradorPerfil({ ...borradorPerfil, role_summary: texto });
+          onRestaurarEnPerfil={(restaurado) => {
+            // A restore replays the SEVEN authored fields, the unit the profile is saved in, and
+            // writes nothing: the manual drafts stay as the operator left them.
+            onBorradorPerfil(restaurado);
+            setRestauraciones((n) => n + 1);
             enfocar(campos);
           }}
           configWritePermission={configWritePermission}
@@ -130,6 +132,7 @@ function ContextoTabContent({
           writeInFlight={profileWriteInFlight}
           blockedByManualDraft={borradoresFicheros?.directive !== undefined}
           runtimeRefreshRevision={runtimeRefreshRevision}
+          restauracion={restauraciones}
           configWritePermission={configWritePermission}
         />
       </section>

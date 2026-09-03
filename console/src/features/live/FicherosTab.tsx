@@ -11,6 +11,7 @@ import {
   modoDeDocumento, preserveSourceLineEndings,
 } from './ficheros';
 import { DOCUMENT_REASON_MAX, explicarFalloDeMotivo, problemaDeMotivo } from './ficheros-motivo';
+import { MENSAJES_DE_APLICACION } from './perfil';
 
 /** Editor and viewer for the configuration files that govern an agent. */
 
@@ -403,7 +404,10 @@ function Editor({
       });
       onBorrador(undefined);
       setMotivo('');
-      const mensaje = mensajeDeGuardado(resultado);
+      const mensaje = resultado.state === 'written_pending_session'
+        ? `${mensajeDeGuardado(resultado)} Sesión sin adoptar todavía: `
+          + MENSAJES_DE_APLICACION.written_pending_session
+        : mensajeDeGuardado(resultado);
       setGuardado(mensaje);
       onApplied?.(mensaje);
     } catch (error) {

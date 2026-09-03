@@ -35,12 +35,11 @@ export const CAMPOS_DEL_PERFIL: readonly CampoDelPerfil[] = [
 ];
 
 /**
- * How each field is named on screen, and what the operator is expected to put there.
- *
- * The help is not decoration: the column names are in English because the schema is, and `operating_rules`
- * does not tell anyone what to write. Without this, the operator fills `purpose` with what should go in
- * `role_summary`, and openclaw's `SOUL.md` ends up talking about tasks — which is exactly how you teach a
- * model that its identity is its tasks.
+ * How each field is named on screen, and what the operator is expected to put there. The help is not
+ * decoration: the column names are in English because the schema is, and `operating_rules` does not tell
+ * anyone what to write. Without this, the operator fills `purpose` with what should go in `role_summary`, and
+ * openclaw's `SOUL.md` ends up talking about tasks — which is exactly how you teach a model that its identity
+ * is its tasks.
  */
 export const ETIQUETAS: Record<CampoDelPerfil, { titulo: string; ayuda: string }> = {
   purpose: {
@@ -97,12 +96,11 @@ function ficheroDelCampo(harness: string, campo: CampoDelPerfil): string | undef
 }
 
 /**
- * Which file each field goes to IN THIS alias, with the harness the server declares.
- *
- * A destination is only asserted if the harness is one Cauce knows how to compose AND the gateway publishes
- * that file among its own: labeling `SOUL.md` over a response that does not carry it would be promising a write
- * nobody will attest. A harness that is not claude, codex, or openclaw does not receive ANY file
- * —`nombresDelArnes` returns empty—, and that is stated, not substituted with openclaw.
+ * Which file each field goes to IN THIS alias, with the harness the server declares. A destination is only
+ * asserted if the harness is one Cauce knows how to compose AND the gateway publishes that file among its own:
+ * labeling `SOUL.md` over a response that does not carry it would be promising a write nobody will attest. A
+ * harness that is not claude, codex, or openclaw does not receive ANY file —`nombresDelArnes` returns empty—,
+ * and that is stated, not substituted with openclaw.
  */
 export function destinosDelArnes(
   harness: string | null | undefined,
@@ -340,4 +338,236 @@ export function esPerfilAplicado(
     if (ack === undefined || document.path !== ack.path || document.sha !== ack.sha) return false;
   }
   return adoptados.size === 0;
+}
+
+export const ESTADOS_DE_APLICACION = [
+  'absent', 'disabled', 'pending', 'written_pending_session', 'pending_session_refresh',
+  'runtime_unverified', 'drifted', 'applied',
+] as const;
+
+export type EstadoDeAplicacion = (typeof ESTADOS_DE_APLICACION)[number];
+
+export const MENSAJES_DE_APLICACION: Readonly<Record<EstadoDeAplicacion, string>> = {
+  absent: 'no hay contexto guardado todavía para este alias.',
+  disabled: 'el alias está apagado: su contexto no se aplica a ningún runtime.',
+  pending: 'hay una revisión guardada que todavía no llegó a los ficheros del contenedor.',
+  written_pending_session: 'el fichero quedó escrito y la sonda acreditó los bytes, pero un ACK de '
+    + 'escritura no prueba que el proceso releyera el fichero: se aplicará cuando la sesión '
+    + 'recargue su contexto.',
+  pending_session_refresh: 'el contexto está en disco y verificado, pero la sesión compartida '
+    + 'todavía no acreditó haberlo adoptado.',
+  runtime_unverified: 'no se pudo verificar el runtime, así que no se afirma nada sobre lo que el '
+    + 'proceso lee.',
+  drifted: 'lo que hay en el contenedor no coincide con la revisión guardada.',
+  applied: 'la sesión acreditó con su propio ACK haber adoptado esta revisión.',
+};
+
+export const MOTIVOS_DE_CONTAMINACION: Readonly<Record<string, string>> = {
+  foreign_managed_block: 'bloque gestionado de otro alias',
+  expectation_sha_mismatch: 'huella distinta de la esperada',
+};
+
+export function fraseDeContaminacion(motivo: string): string {
+  return MOTIVOS_DE_CONTAMINACION[motivo]
+    ?? 'algo que esta consola todavía no sabe nombrar; miralo dentro del contenedor';
+}
+
+export interface HallazgoDeContaminacion {
+  readonly reason: string;
+  readonly document: string;
+  readonly path: string;
+  readonly owner?: string;
+  readonly expected_sha?: string;
+  readonly observed_sha?: string | null;
+}
+
+export interface ContaminacionDeContexto {
+  readonly contaminated: boolean;
+  readonly findings: readonly HallazgoDeContaminacion[];
+}
+
+export const CONTAMINACION_ILEGIBLE: ContaminacionDeContexto = { contaminated: true, findings: [] };
+
+function hallazgoLeido(value: unknown): HallazgoDeContaminacion | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const row = value as Record<string, unknown>;
+  if (typeof row.reason !== 'string' || row.reason.length === 0
+    || typeof row.document !== 'string' || typeof row.path !== 'string'
+    || (row.owner !== undefined && typeof row.owner !== 'string')) return undefined;
+  return {
+    reason: row.reason,
+    document: row.document,
+    path: row.path,
+    ...(typeof row.owner === 'string' ? { owner: row.owner } : {}),
+    ...(typeof row.expected_sha === 'string' ? { expected_sha: row.expected_sha } : {}),
+    ...(typeof row.observed_sha === 'string' || row.observed_sha === null
+      ? { observed_sha: row.observed_sha }
+      : {}),
+  };
+}
+
+export function contaminacionDe(respuesta: unknown): ContaminacionDeContexto | undefined {
+  if (respuesta === null || typeof respuesta !== 'object' || Array.isArray(respuesta)) {
+    return undefined;
+  }
+  const bruto = (respuesta as Record<string, unknown>).contaminacion;
+  if (bruto === undefined) return undefined;
+  if (bruto === null || typeof bruto !== 'object' || Array.isArray(bruto)) {
+    return CONTAMINACION_ILEGIBLE;
+  }
+  const row = bruto as Record<string, unknown>;
+  if (typeof row.contaminated !== 'boolean' || !Array.isArray(row.findings)) {
+    return CONTAMINACION_ILEGIBLE;
+  }
+  const findings: HallazgoDeContaminacion[] = [];
+  for (const item of row.findings) {
+    const leido = hallazgoLeido(item);
+    if (leido === undefined) return CONTAMINACION_ILEGIBLE;
+    findings.push(leido);
+  }
+  if (row.contaminated !== (findings.length > 0)) return CONTAMINACION_ILEGIBLE;
+  return { contaminated: row.contaminated, findings };
+}
+
+/** The verdict a response STATES, only when it can be read whole: an illegible one is not a verdict. */
+export function veredictoLegible(respuesta: unknown): ContaminacionDeContexto | undefined {
+  const leido = contaminacionDe(respuesta);
+  return leido === undefined || leido === CONTAMINACION_ILEGIBLE ? undefined : leido;
+}
+
+/** Of two measurements the one that DENOUNCES rules: a clean verdict never buries a dirty one. */
+export function veredictoVigente(
+  deLaRespuesta: ContaminacionDeContexto | undefined,
+  deLaLectura: ContaminacionDeContexto | undefined,
+): ContaminacionDeContexto | undefined {
+  if (deLaRespuesta?.contaminated === true) return deLaRespuesta;
+  if (deLaLectura?.contaminated === true) return deLaLectura;
+  return deLaRespuesta ?? deLaLectura;
+}
+
+export function entregasEnVuelo(cuerpo: unknown): string[] {
+  if (cuerpo === null || typeof cuerpo !== 'object' || Array.isArray(cuerpo)) return [];
+  const bruto = (cuerpo as Record<string, unknown>).deliveries;
+  if (!Array.isArray(bruto)) return [];
+  const nombradas: string[] = [];
+  for (const item of bruto) {
+    if (typeof item === 'string') {
+      if (item.trim().length > 0) nombradas.push(item.trim());
+      continue;
+    }
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) continue;
+    const fila = item as Record<string, unknown>;
+    const id = [fila.delivery_id, fila.message_id, fila.id]
+      .find((valor) => typeof valor === 'string' && valor.trim().length > 0);
+    if (typeof id === 'string') nombradas.push(id.trim());
+  }
+  return nombradas;
+}
+
+export interface DocumentoRecargado {
+  readonly name: string;
+  readonly path: string;
+  readonly sha_before: string | null;
+  readonly sha_after: string;
+  readonly bytes: number;
+}
+
+export interface RespuestaDeRecarga {
+  readonly ok: true;
+  readonly state: EstadoDeAplicacion;
+  readonly evidence: string;
+  readonly message: string;
+  readonly tenant_id: string;
+  readonly alias: string;
+  readonly revision: number;
+  readonly runtime_verification: NonNullable<AgentPerfil['runtime_verification']>;
+  readonly documents: readonly DocumentoRecargado[];
+  readonly contaminacion: ContaminacionDeContexto;
+}
+
+function esEstadoDeAplicacion(value: unknown): value is EstadoDeAplicacion {
+  return typeof value === 'string'
+    && (ESTADOS_DE_APLICACION as readonly string[]).includes(value);
+}
+
+function esDocumentoRecargado(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.name === 'string' && row.name.length > 0
+    && typeof row.path === 'string' && row.path.startsWith('/')
+    && (row.sha_before === null
+      || (typeof row.sha_before === 'string' && SHA256.test(row.sha_before)))
+    && typeof row.sha_after === 'string' && SHA256.test(row.sha_after)
+    && typeof row.bytes === 'number' && Number.isSafeInteger(row.bytes) && row.bytes >= 0;
+}
+
+function esVerificacionDeRuntime(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.state === 'string'
+    && (row.generation === null || typeof row.generation === 'string')
+    && Array.isArray(row.documents);
+}
+
+export function esRecargaHecha(
+  value: unknown,
+  esperado: { tenantId: string; alias: string },
+): value is RespuestaDeRecarga {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return row.ok === true && esEstadoDeAplicacion(row.state)
+    && typeof row.evidence === 'string' && row.evidence.length > 0
+    && typeof row.message === 'string' && row.message.length > 0
+    && row.tenant_id === esperado.tenantId && row.alias === esperado.alias
+    && typeof row.revision === 'number' && Number.isSafeInteger(row.revision) && row.revision > 0
+    && esVerificacionDeRuntime(row.runtime_verification)
+    && Array.isArray(row.documents) && row.documents.every(esDocumentoRecargado)
+    && veredictoLegible(row) !== undefined;
+}
+
+export interface PerfilRevision {
+  readonly id: string;
+  readonly tenant_id: string;
+  readonly alias: string;
+  readonly revision: number;
+  readonly operation: 'insert' | 'update' | 'delete';
+  readonly purpose: string | null;
+  readonly role_summary: string | null;
+  readonly human_brief: string | null;
+  readonly responsibilities: readonly string[];
+  readonly restrictions: readonly string[];
+  readonly tools: readonly string[];
+  readonly operating_rules: readonly string[];
+  readonly actor_tenant: string | null;
+  readonly actor_alias: string | null;
+  readonly changed_at: string;
+}
+
+export interface DocumentoRevision {
+  readonly id: string;
+  readonly tenant_id: string;
+  readonly alias: string;
+  readonly kind: string;
+  readonly path: string;
+  readonly sha256: string | null;
+  readonly bytes: number;
+  readonly actor_tenant: string | null;
+  readonly actor_alias: string | null;
+  readonly written_at: string;
+}
+
+export interface PaginaDeRevisiones<T> {
+  readonly observed_at: string;
+  readonly tenant_id: string;
+  readonly alias: string;
+  readonly entries: readonly T[];
+}
+
+export interface PaginaDeRevisionesDeDocumento extends PaginaDeRevisiones<DocumentoRevision> {
+  readonly kind: string;
+}
+
+export interface TramoDeRevisiones {
+  readonly limit?: number;
+  readonly cursor?: string;
 }

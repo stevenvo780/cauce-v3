@@ -29,9 +29,11 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/live');
 });
 
-async function abrir() {
-  const user = userEvent.setup();
+async function abrir(preparar: () => void = () => {
   configConBrief('Sos kant, el hub de la flota.\nAUTONOMIA: decidí y actuá vos.');
+}) {
+  const user = userEvent.setup();
+  preparar();
   server.use(http.get('*/v3/console/activity', () => HttpResponse.json(mockActivity())));
   renderWithApi(<LiveFleetPage />);
   await screen.findByLabelText('Veredicto de la flota');
@@ -144,6 +146,23 @@ it('la columna 1 muestra la proyección sólo lectura y dirige a los campos can�
   expect(within(capa1).getByText(/\/ 1200$/)).toBeInTheDocument();
   expect(within(capa1).queryByRole('button', { name: /guardar el rol/i })).not.toBeInTheDocument();
   expect(within(capa1).getByRole('button', { name: /editar los campos canónicos/i })).toBeInTheDocument();
+  expect(within(capa1).getByRole('button', { name: 'Historial y diff del contexto' }))
+    .toHaveAttribute('aria-expanded', 'false');
+  expect(within(capa1).queryByRole('tablist', { name: 'Diarios del contexto' })).not.toBeInTheDocument();
+}, 25_000);
+
+it('una lectura fallida de la configuración no se presenta como un rol vacío', async () => {
+  const { dialogo } = await abrir(() => {
+    server.use(http.get('*/v3/console/config', () => HttpResponse.json(
+      { error: 'unavailable', message: 'snapshot caído' }, { status: 503 },
+    )));
+  });
+  const capa1 = within(dialogo).getByLabelText('Capa 1: rol declarado');
+
+  expect(await within(capa1).findByText(/no se pudo leer la proyección/i))
+    .toHaveTextContent('snapshot caído');
+  expect(within(capa1).queryByLabelText(/proyección del rol de kant/i)).not.toBeInTheDocument();
+  expect(within(capa1).queryByRole('button', { name: /guardar/i })).not.toBeInTheDocument();
 }, 25_000);
 
 it('no afirma que falta un manual cuando el runtime no fue medido', async () => {

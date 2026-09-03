@@ -7,9 +7,11 @@ import type {
   AgentPerfil,
   AgentPerfilValor,
   FleetActivitySnapshot,
-  RoleBriefHistory,
   TerminalCapability,
 } from '../types';
+import type {
+  PaginaDeRevisiones, PaginaDeRevisionesDeDocumento, PerfilRevision, TramoDeRevisiones,
+} from '../../features/live/perfil';
 import { ApiError, errorBody } from './core';
 import type { RequestFn } from './system-client';
 
@@ -25,27 +27,6 @@ export async function getAgentDirective(
   const ruta = `/v3/console/agents/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}/directive`;
   try {
     const cuerpo = await request<Omit<AgentDirective, 'publicado'>>(ruta);
-    return { ...cuerpo, publicado: true };
-  } catch (error) {
-    if (error instanceof ApiError
-      && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
-      return {
-        publicado: false,
-        motivo: `Este gateway no publica GET ${ruta} (respondió ${String(error.status)}).`,
-      };
-    }
-    throw error;
-  }
-}
-
-export async function getRoleBriefHistory(
-  request: RequestFn,
-  tenantId: string,
-  alias: string,
-): Promise<RoleBriefHistory> {
-  const ruta = `/v3/console/role-assignments/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}/history`;
-  try {
-    const cuerpo = await request<Omit<RoleBriefHistory, 'publicado'>>(ruta);
     return { ...cuerpo, publicado: true };
   } catch (error) {
     if (error instanceof ApiError
@@ -191,19 +172,135 @@ export async function getAgentPerfil(
   }
 }
 
+/**
+ * Two 409s that carry more than a sentence: the verdict that names WHOSE block is in the way, and
+ * the deliveries a reload refuses to run over. A generic `ApiError` drops the body and the screen
+ * would then quarantine without being able to say what for, so the body travels with the error and
+ * the view that speaks that vocabulary is the one that reads it.
+ */
+export class ContextoContaminadoError extends ApiError {
+  constructor(message: string, readonly cuerpo: unknown) {
+    super(message, 409, 'context_contaminated');
+    this.name = 'ContextoContaminadoError';
+  }
+}
+
+export class EntregaEnVueloError extends ApiError {
+  constructor(message: string, readonly cuerpo: unknown) {
+    super(message, 409, 'delivery_in_flight');
+    this.name = 'EntregaEnVueloError';
+  }
+}
+
+/**
+ * A 400 of the audit admission is not a 400 of the profile fields: only the one that names
+ * `reason` gets the words of the reason, and the rest keep the server's own.
+ */
+function motivoNoAdmitido(status: number, body: unknown): ApiError | undefined {
+  if (status !== 400 || body === null || typeof body !== 'object') return undefined;
+  const detalle = body as Record<string, unknown>;
+  if (detalle.field !== 'reason') return undefined;
+  return new ApiError(
+    errorBody(body).message ?? 'la auditoría no admitió el motivo de esta escritura.',
+    400,
+    'invalid_reason',
+  );
+}
+
+function contextoContaminado(status: number, body: unknown): ApiError | undefined {
+  const detalle = errorBody(body);
+  if (status !== 409 || detalle.error !== 'context_contaminated') return undefined;
+  return new ContextoContaminadoError(
+    detalle.message
+      ?? 'los ficheros de gobierno de este alias contienen algo que no es suyo.',
+    body,
+  );
+}
+
+function entregaEnVuelo(status: number, body: unknown): ApiError | undefined {
+  const detalle = errorBody(body);
+  if (status !== 409 || detalle.error !== 'delivery_in_flight') return undefined;
+  return new EntregaEnVueloError(
+    detalle.message ?? 'hay una entrega en vuelo para este alias.',
+    body,
+  );
+}
+
+/** The whole refusal vocabulary of a governance write, in one place for both writing routes. */
+function falloDeGobernanza(status: number, body: unknown): ApiError | undefined {
+  return sesionSinPersona(status, body)
+    ?? motivoNoAdmitido(status, body)
+    ?? contextoContaminado(status, body)
+    ?? entregaEnVuelo(status, body);
+}
+
 export function putAgentPerfil(
   request: RequestFn,
   tenantId: string,
   alias: string,
   profile: AgentPerfilValor,
   expectedRevision: number | null,
+  reason: string,
 ): Promise<unknown> {
   return request(
     `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil`,
     {
       method: 'PUT',
-      body: JSON.stringify({ expected_revision: expectedRevision, profile }),
+      body: JSON.stringify({ expected_revision: expectedRevision, profile, reason }),
     },
+    { mapError: falloDeGobernanza },
+  );
+}
+
+/**
+ * Rewrites and re-measures the governance files of an alias from its stored revision. It does not
+ * restart the harness and does not author anything, so it carries no expected revision: what it
+ * carries is the person and the sentence they typed for it.
+ */
+export function postContextReload(
+  request: RequestFn,
+  tenantId: string,
+  alias: string,
+  reason: string,
+): Promise<unknown> {
+  return request(
+    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/context/reload`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    },
+    { mapError: falloDeGobernanza },
+  );
+}
+
+function tramo(page: TramoDeRevisiones | undefined): string {
+  const query = new URLSearchParams();
+  if (page?.limit !== undefined) query.set('limit', String(page.limit));
+  if (page?.cursor !== undefined) query.set('cursor', page.cursor);
+  const texto = query.toString();
+  return texto.length === 0 ? '' : `?${texto}`;
+}
+
+export function getProfileRevisions(
+  request: RequestFn,
+  tenantId: string,
+  alias: string,
+  page?: TramoDeRevisiones,
+): Promise<PaginaDeRevisiones<PerfilRevision>> {
+  return request(
+    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil/revisions${tramo(page)}`,
+  );
+}
+
+export function getDocumentRevisions(
+  request: RequestFn,
+  tenantId: string,
+  alias: string,
+  kind: AgentDocumentKind,
+  page?: TramoDeRevisiones,
+): Promise<PaginaDeRevisionesDeDocumento> {
+  return request(
+    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/revisions${tramo(page)}`,
   );
 }
 
@@ -221,7 +318,6 @@ export async function getTerminalCapability(request: RequestFn): Promise<Termina
 export interface AgentClient {
   getFleetActivity(): Promise<FleetActivitySnapshot>;
   getAgentDirective(tenantId: string, alias: string): Promise<AgentDirective>;
-  getRoleBriefHistory(tenantId: string, alias: string): Promise<RoleBriefHistory>;
   getAgentDocuments(tenantId: string, alias: string): Promise<AgentDocumentsMap>;
   getAgentDocumentContent(tenantId: string, alias: string, kind: AgentDocumentKind): Promise<AgentDocumentContent>;
   putAgentDocumentContent(
@@ -238,7 +334,15 @@ export interface AgentClient {
     alias: string,
     profile: AgentPerfilValor,
     expectedRevision: number | null,
+    reason: string,
   ): Promise<unknown>;
+  postContextReload(tenantId: string, alias: string, reason: string): Promise<unknown>;
+  getProfileRevisions(
+    tenantId: string, alias: string, page?: TramoDeRevisiones,
+  ): Promise<PaginaDeRevisiones<PerfilRevision>>;
+  getDocumentRevisions(
+    tenantId: string, alias: string, kind: AgentDocumentKind, page?: TramoDeRevisiones,
+  ): Promise<PaginaDeRevisionesDeDocumento>;
   getTerminalCapability(): Promise<TerminalCapability>;
 }
 
@@ -246,14 +350,19 @@ export function agentClient(request: RequestFn): AgentClient {
   return {
     getFleetActivity: () => getFleetActivity(request),
     getAgentDirective: (tenantId, alias) => getAgentDirective(request, tenantId, alias),
-    getRoleBriefHistory: (tenantId, alias) => getRoleBriefHistory(request, tenantId, alias),
     getAgentDocuments: (tenantId, alias) => getAgentDocuments(request, tenantId, alias),
     getAgentDocumentContent: (tenantId, alias, kind) => getAgentDocumentContent(request, tenantId, alias, kind),
     putAgentDocumentContent: (tenantId, alias, kind, content, expectedSha, reason) =>
       putAgentDocumentContent(request, tenantId, alias, kind, content, expectedSha, reason),
     getAgentPerfil: (tenantId, alias) => getAgentPerfil(request, tenantId, alias),
-    putAgentPerfil: (tenantId, alias, profile, expectedRevision) =>
-      putAgentPerfil(request, tenantId, alias, profile, expectedRevision),
+    putAgentPerfil: (tenantId, alias, profile, expectedRevision, reason) =>
+      putAgentPerfil(request, tenantId, alias, profile, expectedRevision, reason),
+    postContextReload: (tenantId, alias, reason) =>
+      postContextReload(request, tenantId, alias, reason),
+    getProfileRevisions: (tenantId, alias, page) =>
+      getProfileRevisions(request, tenantId, alias, page),
+    getDocumentRevisions: (tenantId, alias, kind, page) =>
+      getDocumentRevisions(request, tenantId, alias, kind, page),
     getTerminalCapability: () => getTerminalCapability(request),
   };
 }
