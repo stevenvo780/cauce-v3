@@ -6,6 +6,7 @@ import {
 } from '@cauce/protocol';
 import {
   medirContextoDeGobierno, registerAgentContextReloadRoutes, type AgentContextReloadDeps,
+  type DeliveriesInFlight,
 } from './agent-context-reload.routes.js';
 import {
   registerAgentContextHistoryRoutes, type DocumentRevisionView,
@@ -217,12 +218,24 @@ function servidor(deps: Partial<AgentContextReloadDeps> = {}, doble = runtime())
       documents: [{ name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('a') }],
     }),
     recordRuntimeExpectation: async () => undefined,
-    deliveryInFlight: async () => false,
+    deliveryInFlight: async () => ({ count: 0, deliveries: [] }),
     recordDocumentRevision: async () => undefined,
     recordAudit: async (entry) => { auditoria.push(entry); },
     ...deps,
   });
   return app;
+}
+
+function enVuelo(count: number): DeliveriesInFlight {
+  return {
+    count,
+    deliveries: Array.from({ length: Math.min(count, 25) }, (_valor, indice) => ({
+      delivery_id: `entrega-${String(indice + 1)}`,
+      status: 'started',
+      claimed_at: `2026-09-01T10:00:${String(indice + 1).padStart(2, '0')}.000Z`,
+      deadline_at: `2026-09-01T10:30:${String(indice + 1).padStart(2, '0')}.000Z`,
+    })),
+  };
 }
 
 const RUTA_OPERADOR = '/v3/console/tenants/Steven/agents/argos/context/reload';
@@ -293,7 +306,7 @@ describe('POST .../context/reload as an operator', () => {
 
   it('fails closed while a delivery is in flight and says so in the body', async () => {
     const doble = runtime();
-    vivo = servidor({ deliveryInFlight: async () => true }, doble);
+    vivo = servidor({ deliveryInFlight: async () => enVuelo(1) }, doble);
     const response = await vivo.inject({
       method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
     });
@@ -302,6 +315,65 @@ describe('POST .../context/reload as an operator', () => {
     expect(body.error).toBe('delivery_in_flight');
     expect(body.message).toMatch(/entrega/u);
     expect(doble.aplicaciones).toEqual([]);
+  });
+
+  it('names the deliveries that hold the reload back, and only their four fields', async () => {
+    const doble = runtime();
+    vivo = servidor({ deliveryInFlight: async () => enVuelo(2) }, doble);
+    const response = await vivo.inject({
+      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
+    });
+    expect(response.statusCode).toBe(409);
+    const body = response.json<{ deliveries: Record<string, unknown>[] }>();
+    expect(body.deliveries).toEqual([
+      {
+        delivery_id: 'entrega-1', status: 'started',
+        claimed_at: '2026-09-01T10:00:01.000Z', deadline_at: '2026-09-01T10:30:01.000Z',
+      },
+      {
+        delivery_id: 'entrega-2', status: 'started',
+        claimed_at: '2026-09-01T10:00:02.000Z', deadline_at: '2026-09-01T10:30:02.000Z',
+      },
+    ]);
+    for (const entrega of body.deliveries) {
+      expect(Object.keys(entrega).sort())
+        .toEqual(['claimed_at', 'deadline_at', 'delivery_id', 'status']);
+    }
+    expect(doble.aplicaciones).toEqual([]);
+  });
+
+  /*
+   * A body that grows with the queue is a body an operator cannot read and a refusal a caller can
+   * make expensive. The list is capped and the audit row keeps the REAL number, so nobody reads
+   * «20» and believes the alias had twenty turns open.
+   */
+  it('lists at most twenty deliveries while the audit row keeps the real count', async () => {
+    const doble = runtime();
+    vivo = servidor({ deliveryInFlight: async () => enVuelo(37) }, doble);
+    const response = await vivo.inject({
+      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
+    });
+    expect(response.statusCode).toBe(409);
+    const body = response.json<{ deliveries: { delivery_id: string }[] }>();
+    expect(body.deliveries).toHaveLength(20);
+    expect(body.deliveries[0]?.delivery_id).toBe('entrega-1');
+    expect(body.deliveries[19]?.delivery_id).toBe('entrega-20');
+    const fila = auditoria[0];
+    expect(fila?.decision).toBe('deny');
+    const metadata = fila?.metadata as Record<string, unknown>;
+    expect(metadata.deliveries_in_flight).toBe(37);
+    // The row records the count and nothing else about those deliveries.
+    expect(Object.keys(metadata)).not.toContain('deliveries');
+  });
+
+  it('never refuses when nothing is in flight, however empty the list comes back', async () => {
+    const doble = runtime();
+    vivo = servidor({ deliveryInFlight: async () => ({ count: 0, deliveries: [] }) }, doble);
+    const response = await vivo.inject({
+      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(doble.aplicaciones).toEqual(['apply']);
   });
 
   it('refuses a disabled alias: a reload does not resurrect a runtime that must stay off', async () => {
@@ -457,10 +529,12 @@ describe('the journal of a reload is readable back', () => {
     registerAgentContextHistoryRoutes(app, {
       authorize: async () => OPERADOR_ACTOR,
       authorizeTarget: async (_actor, tenantId, alias) => ({ tenant_id: tenantId, alias }),
-      listProfileRevisions: async () => [],
-      listDocumentRevisions: async (tenantId, alias, kind) =>
-        filas.filter((fila) => fila.tenant_id === tenantId && fila.alias === alias
+      listProfileRevisions: async () => ({ entries: [], next_cursor: null }),
+      listDocumentRevisions: async (tenantId, alias, kind) => ({
+        entries: filas.filter((fila) => fila.tenant_id === tenantId && fila.alias === alias
           && fila.kind === kind),
+        next_cursor: null,
+      }),
     });
     return app;
   }

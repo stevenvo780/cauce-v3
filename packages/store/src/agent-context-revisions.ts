@@ -9,6 +9,15 @@ import { StoreError } from './repository/errors.js';
 
 const MAX_JOURNAL_PAGE = 200;
 
+/**
+ * Both journals of 041 key on `bigserial`, so a cursor is a positive `bigint` written in base ten
+ * and nothing else. The fence lives here as well as in the route: the SQL casts the value to
+ * `bigint`, and an unbounded digit string would reach the base as a cast error instead of as a
+ * refusal the caller can read.
+ */
+const JOURNAL_CURSOR = /^[1-9][0-9]{0,18}$/u;
+const MAX_JOURNAL_ID = 9223372036854775807n;
+
 const profileColumns =
   'id,tenant_id,alias,revision,operation,purpose,role_summary,human_brief,'
   + 'responsibilities,restrictions,tools,operating_rules,actor_tenant,actor_alias,changed_at';
@@ -106,6 +115,36 @@ function boundedPage(limit: number): number {
   return limit;
 }
 
+function boundedCursor(cursor: string | undefined): string | null {
+  if (cursor === undefined) return null;
+  if (!JOURNAL_CURSOR.test(cursor) || BigInt(cursor) > MAX_JOURNAL_ID) {
+    throw new StoreError('invalid_input', 'context journal cursor is not a journal id');
+  }
+  return cursor;
+}
+
+/**
+ * One stretch of a journal, and the id to resume from. `next_cursor` is a string only when a row
+ * OLDER than this page really exists: the query asks for one row beyond the page and that extra
+ * row, never a full page, is what proves there is more. Saying otherwise would make the reader
+ * walk forever off the end of the diary.
+ */
+export interface JournalPage<Entry> {
+  readonly entries: readonly Entry[];
+  readonly next_cursor: string | null;
+}
+
+function toPage<Row, Entry extends { readonly id: string }>(
+  rows: readonly Row[], limit: number, map: (row: Row) => Entry,
+): JournalPage<Entry> {
+  const entries = rows.slice(0, limit).map(map);
+  const last = entries[entries.length - 1];
+  return {
+    entries,
+    next_cursor: rows.length > limit && last !== undefined ? last.id : null,
+  };
+}
+
 /**
  * The base fences what a journal row may CONTAIN — `sha256` has to be a canonical digest and
  * `bytes` a non-negative count, so no column can hold a body. The SHAPE of the path is fenced
@@ -187,16 +226,23 @@ function toDocumentEntry(row: DocumentRevisionRow): DocumentRevisionEntry {
 export class AgentContextRevisionsStore {
   constructor(private readonly pool: DatabasePool) {}
 
-  /** Newest first: the console renders the journal top-down and restores from the top. */
+  /**
+   * Newest first: the console renders the journal top-down and restores from the top. The cursor
+   * only ever NARROWS: it rides on top of the tenant and alias predicate, so a cursor minted for
+   * another alias moves the window without ever reaching that alias' rows.
+   */
   async listProfileRevisions(
-    tenantId: string, alias: string, limit: number,
-  ): Promise<readonly ProfileRevisionEntry[]> {
+    tenantId: string, alias: string, limit: number, cursor?: string,
+  ): Promise<JournalPage<ProfileRevisionEntry>> {
+    const page = boundedPage(limit);
+    const desde = boundedCursor(cursor);
     const result = await this.pool.query<ProfileRevisionRow>(
       `SELECT ${profileColumns} FROM agent_profile_revisions
-        WHERE tenant_id=$1 AND alias=$2 ORDER BY id DESC LIMIT $3`,
-      [tenantId, alias, boundedPage(limit)],
+        WHERE tenant_id=$1 AND alias=$2 AND ($4::bigint IS NULL OR id < $4::bigint)
+        ORDER BY id DESC LIMIT $3`,
+      [tenantId, alias, page + 1, desde],
     );
-    return result.rows.map(toProfileEntry);
+    return toPage(result.rows, page, toProfileEntry);
   }
 
   /**
@@ -216,14 +262,17 @@ export class AgentContextRevisionsStore {
   }
 
   async listDocumentRevisions(
-    tenantId: string, alias: string, kind: string, limit: number,
-  ): Promise<readonly DocumentRevisionEntry[]> {
+    tenantId: string, alias: string, kind: string, limit: number, cursor?: string,
+  ): Promise<JournalPage<DocumentRevisionEntry>> {
+    const page = boundedPage(limit);
+    const desde = boundedCursor(cursor);
     const result = await this.pool.query<DocumentRevisionRow>(
       `SELECT ${documentColumns} FROM agent_document_revisions
-        WHERE tenant_id=$1 AND alias=$2 AND kind=$3 ORDER BY id DESC LIMIT $4`,
-      [tenantId, alias, kind, boundedPage(limit)],
+        WHERE tenant_id=$1 AND alias=$2 AND kind=$3 AND ($5::bigint IS NULL OR id < $5::bigint)
+        ORDER BY id DESC LIMIT $4`,
+      [tenantId, alias, kind, page + 1, desde],
     );
-    return result.rows.map(toDocumentEntry);
+    return toPage(result.rows, page, toDocumentEntry);
   }
 
   /**

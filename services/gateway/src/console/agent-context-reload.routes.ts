@@ -54,6 +54,31 @@ export interface ContextReloadResponse {
   readonly contaminacion: ContextContaminationVerdict;
 }
 
+/**
+ * What the refusal is allowed to say about a delivery in flight: an identifier, its state and the
+ * two instants an operator needs to decide whether to wait. Nothing else — no subject, no body, no
+ * attachment, no prompt — ever crosses into a refusal that anyone with `control` can trigger.
+ */
+export interface InFlightDeliveryView {
+  readonly delivery_id: string;
+  readonly status: string;
+  readonly claimed_at: string | null;
+  readonly deadline_at: string | null;
+}
+
+/**
+ * The count is the REAL one and the list is capped, so a fleet with a hundred deliveries in flight
+ * still answers a bounded body while the audit row keeps the true number. Both come out of the
+ * same read, which is what makes it impossible for the list and the refusal to disagree.
+ */
+export interface DeliveriesInFlight {
+  readonly count: number;
+  readonly deliveries: readonly InFlightDeliveryView[];
+}
+
+/** At most this many deliveries travel in the refusal, whatever the store hands over. */
+export const DELIVERY_IN_FLIGHT_LISTED = 20;
+
 export interface AgentContextReloadDeps {
   /** Authenticates the principal and requires the role permission for the operation. */
   authorize(
@@ -91,7 +116,7 @@ export interface AgentContextReloadDeps {
     tenantId: string, alias: string, revision: number, verification: ProfileRuntimeVerification,
   ): Promise<void>;
   /** A reload rewrites the files a delivery in flight may be reading right now. */
-  deliveryInFlight(tenantId: string, alias: string): Promise<boolean>;
+  deliveryInFlight(tenantId: string, alias: string): Promise<DeliveriesInFlight>;
   recordDocumentRevision(input: {
     readonly tenantId: string;
     readonly alias: string;
@@ -382,13 +407,20 @@ export function registerAgentContextReloadRoutes(
         message: 'el alias está apagado; una recarga no reanima un runtime que debe estar quieto',
       });
     }
-    if (await deps.deliveryInFlight(target.tenant_id, target.alias)) {
+    const enVuelo = await deps.deliveryInFlight(target.tenant_id, target.alias);
+    if (enVuelo.count > 0) {
       return denegar(409, {
         error: 'delivery_in_flight',
         message: 'hay una entrega en vuelo para este alias: reescribir sus ficheros de gobierno '
           + 'ahora cambiaría el contexto por debajo de un turno que ya empezó. Reintentá cuando '
           + 'termine.',
-      });
+        deliveries: enVuelo.deliveries.slice(0, DELIVERY_IN_FLIGHT_LISTED).map((entrega) => ({
+          delivery_id: entrega.delivery_id,
+          status: entrega.status,
+          claimed_at: entrega.claimed_at,
+          deadline_at: entrega.deadline_at,
+        })),
+      }, { deliveries_in_flight: enVuelo.count });
     }
 
     const lectura = await deps.readContext(target.tenant_id, target.alias);

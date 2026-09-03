@@ -43,6 +43,15 @@ export interface DocumentRevisionView {
   readonly written_at: string;
 }
 
+/**
+ * One stretch of a journal. `next_cursor` is a string only when a row OLDER than this page exists;
+ * `null` is the end of the diary, and the console stops walking on it.
+ */
+export interface RevisionPage<Entry> {
+  readonly entries: readonly Entry[];
+  readonly next_cursor: string | null;
+}
+
 export interface AgentContextHistoryDeps {
   /** Authenticates the principal and requires the role permission for the operation. */
   authorize(
@@ -57,11 +66,11 @@ export interface AgentContextHistoryDeps {
     legacySameTenant: boolean,
   ): Promise<{ tenant_id: string; alias: string; enabled?: boolean } | undefined>;
   listProfileRevisions(
-    tenantId: string, alias: string, limit: number,
-  ): Promise<readonly ProfileRevisionView[]>;
+    tenantId: string, alias: string, limit: number, cursor?: string,
+  ): Promise<RevisionPage<ProfileRevisionView>>;
   listDocumentRevisions(
-    tenantId: string, alias: string, kind: string, limit: number,
-  ): Promise<readonly DocumentRevisionView[]>;
+    tenantId: string, alias: string, kind: string, limit: number, cursor?: string,
+  ): Promise<RevisionPage<DocumentRevisionView>>;
 }
 
 const DEFAULT_PAGE = 100;
@@ -75,6 +84,19 @@ const KIND_VOCABULARY: Readonly<Record<DocumentKind, true>> = {
   directive: true, tools: true, prompts: true, mcp: true, identity: true, human: true,
   memory: true, heartbeat: true, configuration: true,
 };
+
+/**
+ * The cursor is OPAQUE to the client and strict on the server: both journals of 041 key on
+ * `bigserial`, so the only thing this accepts is a positive `bigint` in base ten. It is a position
+ * inside the window the tenant, alias and kind predicate already fenced — it can only narrow that
+ * window, never widen it, so a cursor minted elsewhere reaches nothing it was not allowed to see.
+ */
+const JOURNAL_CURSOR = /^[1-9][0-9]{0,18}$/u;
+const MAX_JOURNAL_ID = 9223372036854775807n;
+
+function admissibleCursor(raw: unknown): raw is string {
+  return typeof raw === 'string' && JOURNAL_CURSOR.test(raw) && BigInt(raw) <= MAX_JOURNAL_ID;
+}
 
 function pageSize(raw: unknown): number | undefined {
   if (raw === undefined) return DEFAULT_PAGE;
@@ -93,7 +115,9 @@ export function registerAgentContextHistoryRoutes(
   async function destino(
     request: FastifyRequest<{ Params: HistoryParams; Querystring: Record<string, unknown> }>,
     reply: FastifyReply,
-  ): Promise<{ tenant_id: string; alias: string; limit: number } | undefined> {
+  ): Promise<{
+    tenant_id: string; alias: string; limit: number; cursor: string | undefined;
+  } | undefined> {
     const tenant = TenantSchema.safeParse(request.params.tenantId);
     const alias = AliasSchema.safeParse(request.params.alias);
     if (!tenant.success || !alias.success) {
@@ -107,6 +131,18 @@ export function registerAgentContextHistoryRoutes(
       });
       return undefined;
     }
+    const raw = request.query.cursor;
+    let cursor: string | undefined;
+    if (raw !== undefined) {
+      if (!admissibleCursor(raw)) {
+        await reply.code(400).send({
+          error: 'invalid_input',
+          message: 'cursor tiene que ser el identificador de una fila del diario',
+        });
+        return undefined;
+      }
+      cursor = raw;
+    }
     const actor = await deps.authorize(request, 'read');
     const target = await deps.authorizeTarget(actor, tenant.data, alias.data, 'read', false);
     if (target?.tenant_id !== tenant.data || target.alias !== alias.data) {
@@ -118,7 +154,7 @@ export function registerAgentContextHistoryRoutes(
      * describes, and hiding the past of a switched-off alias would hide exactly the version
      * somebody needs to read back when deciding whether to switch it on again.
      */
-    return { tenant_id: target.tenant_id, alias: target.alias, limit };
+    return { tenant_id: target.tenant_id, alias: target.alias, limit, cursor };
   }
 
   app.get<{ Params: HistoryParams; Querystring: Record<string, unknown> }>(
@@ -126,14 +162,15 @@ export function registerAgentContextHistoryRoutes(
     async (request, reply) => {
       const resuelto = await destino(request, reply);
       if (resuelto === undefined) return undefined;
-      const entries = await deps.listProfileRevisions(
-        resuelto.tenant_id, resuelto.alias, resuelto.limit,
+      const page = await deps.listProfileRevisions(
+        resuelto.tenant_id, resuelto.alias, resuelto.limit, resuelto.cursor,
       );
       return {
         observed_at: new Date().toISOString(),
         tenant_id: resuelto.tenant_id,
         alias: resuelto.alias,
-        entries,
+        entries: page.entries,
+        next_cursor: page.next_cursor,
       };
     },
   );
@@ -149,15 +186,16 @@ export function registerAgentContextHistoryRoutes(
       }
       const resuelto = await destino(request, reply);
       if (resuelto === undefined) return undefined;
-      const entries = await deps.listDocumentRevisions(
-        resuelto.tenant_id, resuelto.alias, kind, resuelto.limit,
+      const page = await deps.listDocumentRevisions(
+        resuelto.tenant_id, resuelto.alias, kind, resuelto.limit, resuelto.cursor,
       );
       return {
         observed_at: new Date().toISOString(),
         tenant_id: resuelto.tenant_id,
         alias: resuelto.alias,
         kind,
-        entries,
+        entries: page.entries,
+        next_cursor: page.next_cursor,
       };
     },
   );

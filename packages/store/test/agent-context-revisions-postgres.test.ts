@@ -66,7 +66,8 @@ describe('agent context revisions store', () => {
     await profiles.replace(profileOf('argos', 'primera', ['bash']), null, actor);
     await profiles.replace(profileOf('argos', 'segunda', ['bash', 'grep']), 1, actor);
 
-    const entries = await journal.listProfileRevisions('Steven', 'argos', 10);
+    const { entries, next_cursor } = await journal.listProfileRevisions('Steven', 'argos', 10);
+    expect(next_cursor).toBeNull();
     expect(entries.map((entry) => [entry.revision, entry.operation, entry.role_summary])).toEqual([
       [2, 'update', 'segunda'],
       [1, 'insert', 'primera'],
@@ -87,7 +88,7 @@ describe('agent context revisions store', () => {
   it('never mixes the journal of two aliases of the same tenant', async () => {
     await profiles.replace(profileOf('argos', 'de argos', []), null, actor);
     await profiles.replace(profileOf('zeus', 'de zeus', []), null, actor);
-    const entries = await journal.listProfileRevisions('Steven', 'zeus', 10);
+    const { entries } = await journal.listProfileRevisions('Steven', 'zeus', 10);
     expect(entries.map((entry) => entry.role_summary)).toEqual(['de zeus']);
   });
 
@@ -108,7 +109,7 @@ describe('agent context revisions store', () => {
     expect(await journal.readProfileRevision('Steven', 'argos', 1)).toMatchObject({
       role_summary: 'la nueva',
     });
-    expect((await journal.listProfileRevisions('Steven', 'argos', 10)).length).toBe(3);
+    expect((await journal.listProfileRevisions('Steven', 'argos', 10)).entries.length).toBe(3);
   });
 
   /*
@@ -131,9 +132,9 @@ describe('agent context revisions store', () => {
       actorTenant: null, actorAlias: null,
     });
     const directives = await journal.listDocumentRevisions('Steven', 'argos', 'directive', 10);
-    expect(directives.map((entry) => entry.path)).toEqual(['/home/dev/CLAUDE.md']);
+    expect(directives.entries.map((entry) => entry.path)).toEqual(['/home/dev/CLAUDE.md']);
     // There is no column able to hold a body, so nothing the store returns can carry one.
-    expect(Object.keys(directives[0] ?? {})).not.toContain('content');
+    expect(Object.keys(directives.entries[0] ?? {})).not.toContain('content');
   });
 
   it('records an absent file as a null fingerprint with zero bytes', async () => {
@@ -163,7 +164,104 @@ describe('agent context revisions store', () => {
       path, sha256: null, bytes: 0, actorTenant: null, actorAlias: null,
     })).rejects.toBeInstanceOf(StoreError);
     const filas = await journal.listDocumentRevisions('Steven', 'argos', 'directive', 10);
-    expect(filas).toEqual([]);
+    expect(filas.entries).toEqual([]);
+  });
+
+  async function seedProfileVersions(alias: string, count: number): Promise<void> {
+    for (let version = 1; version <= count; version += 1) {
+      await profiles.replace(
+        profileOf(alias, `v${String(version)}`, []), version === 1 ? null : version - 1, actor,
+      );
+    }
+  }
+
+  /*
+   * The walk is the assertion: three pages of three over a journal of seven have to reproduce the
+   * single wide read exactly. A duplicate, a gap or an id that stops descending would all leave
+   * the operator reading a diary that is not the one the base holds.
+   */
+  it('walks the whole profile journal by cursor without a duplicate or a gap', async () => {
+    await seedProfileVersions('argos', 7);
+    const completa = await journal.listProfileRevisions('Steven', 'argos', 200);
+    expect(completa.entries).toHaveLength(7);
+    expect(completa.next_cursor).toBeNull();
+
+    const recorridas: string[] = [];
+    let cursor: string | null = null;
+    let vueltas = 0;
+    do {
+      const pagina: Awaited<ReturnType<typeof journal.listProfileRevisions>> =
+        await journal.listProfileRevisions('Steven', 'argos', 3, cursor ?? undefined);
+      expect(pagina.entries.length).toBeLessThanOrEqual(3);
+      for (const entry of pagina.entries) recorridas.push(entry.id);
+      cursor = pagina.next_cursor;
+      if (cursor !== null) expect(cursor).toBe(pagina.entries[pagina.entries.length - 1]?.id);
+      vueltas += 1;
+    } while (cursor !== null && vueltas < 10);
+
+    expect(vueltas).toBe(3);
+    expect(recorridas).toEqual(completa.entries.map((entry) => entry.id));
+    expect(new Set(recorridas).size).toBe(recorridas.length);
+    const ids = recorridas.map((id) => BigInt(id));
+    expect(ids.every((id, index) => index === 0 || id < (ids[index - 1] ?? 0n))).toBe(true);
+  });
+
+  it('ends the walk without a cursor when the last page lands exactly on the boundary', async () => {
+    await seedProfileVersions('argos', 4);
+    const primera = await journal.listProfileRevisions('Steven', 'argos', 2);
+    expect(primera.entries).toHaveLength(2);
+    const segunda = await journal.listProfileRevisions(
+      'Steven', 'argos', 2, primera.next_cursor ?? undefined,
+    );
+    expect(segunda.entries).toHaveLength(2);
+    expect(segunda.next_cursor).toBeNull();
+    const exacta = await journal.listProfileRevisions('Steven', 'argos', 4);
+    expect(exacta.entries).toHaveLength(4);
+    expect(exacta.next_cursor).toBeNull();
+  });
+
+  /** The predicate wins: a cursor is a position, never a permission to read another alias. */
+  it('never leaks rows of another alias through a cursor minted on that alias', async () => {
+    await seedProfileVersions('zeus', 4);
+    await seedProfileVersions('argos', 2);
+    const deZeus = await journal.listProfileRevisions('Steven', 'zeus', 2);
+    const conCursorAjeno = await journal.listProfileRevisions(
+      'Steven', 'argos', 10, deZeus.next_cursor ?? undefined,
+    );
+    expect(conCursorAjeno.entries.map((entry) => entry.alias)).not.toContain('zeus');
+    // The zeus ids are lower than every argos id, so the cursor NARROWS to nothing at all.
+    expect(conCursorAjeno.entries).toEqual([]);
+    expect(conCursorAjeno.next_cursor).toBeNull();
+  });
+
+  it('never leaks rows of another kind through a cursor minted on that kind', async () => {
+    for (const kind of ['directive', 'tools', 'directive', 'tools'] as const) {
+      await journal.recordDocumentRevision({
+        tenantId: 'Steven', alias: 'argos', kind,
+        path: `/home/dev/${kind}.md`, sha256: 'c'.repeat(64), bytes: 10,
+        actorTenant: null, actorAlias: null,
+      });
+    }
+    const tools = await journal.listDocumentRevisions('Steven', 'argos', 'tools', 1);
+    expect(tools.next_cursor).not.toBeNull();
+    const directivas = await journal.listDocumentRevisions(
+      'Steven', 'argos', 'directive', 10, tools.next_cursor ?? undefined,
+    );
+    expect(directivas.entries.every((entry) => entry.kind === 'directive')).toBe(true);
+  });
+
+  it.each([
+    ['no numérico', 'abc'],
+    ['con cero a la izquierda', '007'],
+    ['negativo', '-1'],
+    ['vacío', ''],
+    ['fuera del rango de bigint', '9223372036854775808'],
+    ['de longitud desbordada', '1'.repeat(40)],
+  ])('refuses a %s cursor with a typed error instead of casting it in the base', async (_caso, cursor) => {
+    await expect(journal.listProfileRevisions('Steven', 'argos', 10, cursor))
+      .rejects.toBeInstanceOf(StoreError);
+    await expect(journal.listDocumentRevisions('Steven', 'argos', 'directive', 10, cursor))
+      .rejects.toBeInstanceOf(StoreError);
   });
 
   it('refuses a page size outside its bounds instead of scanning the whole journal', async () => {

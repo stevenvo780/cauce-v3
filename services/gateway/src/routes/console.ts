@@ -7,7 +7,8 @@ import { AgentContextRevisionsStore, AgentProfileRepository, StoreError } from '
 import { requireOperatorPermission, requirePermission } from '../auth.js';
 import { registerAgentContextHistoryRoutes } from '../console/agent-context-history.routes.js';
 import {
-  medirContextoDeGobierno, registerAgentContextReloadRoutes,
+  DELIVERY_IN_FLIGHT_LISTED, medirContextoDeGobierno, registerAgentContextReloadRoutes,
+  type DeliveriesInFlight,
 } from '../console/agent-context-reload.routes.js';
 import { registerAgentDocumentRoutes } from '../console/agent-documents.routes.js';
 import { prepareAgentProfileRuntime } from '../console/agent-profile-runtime.js';
@@ -54,14 +55,31 @@ async function expectativaDeRuntime(
 
 async function entregaEnVuelo(
   pool: ConsoleRoutes['options']['pool'], tenantId: string, alias: string,
-): Promise<boolean> {
-  const result = await pool.query(
-    `SELECT 1 FROM deliveries
+): Promise<DeliveriesInFlight> {
+  const result = await pool.query<{
+    delivery_id: string;
+    status: string;
+    claimed_at: Date | null;
+    deadline_at: Date | null;
+    total: string;
+  }>(
+    `SELECT id::text AS delivery_id, status, claimed_at, ack_deadline_at AS deadline_at,
+            (count(*) OVER ())::text AS total
+       FROM deliveries
       WHERE recipient_tenant=$1 AND recipient_alias=$2
-        AND status IN ('leased','accepted','started') LIMIT 1`,
-    [tenantId, alias],
+        AND status IN ('leased','accepted','started')
+      ORDER BY claimed_at ASC NULLS LAST, id ASC LIMIT $3`,
+    [tenantId, alias, DELIVERY_IN_FLIGHT_LISTED],
   );
-  return result.rowCount === 1;
+  return {
+    count: Number(result.rows[0]?.total ?? 0),
+    deliveries: result.rows.map((row) => ({
+      delivery_id: row.delivery_id,
+      status: row.status,
+      claimed_at: row.claimed_at?.toISOString() ?? null,
+      deadline_at: row.deadline_at?.toISOString() ?? null,
+    })),
+  };
 }
 
 /**
@@ -343,10 +361,10 @@ function registerConsoleAgentRoutes(
       authorize: autorizarPerfil,
       authorizeTarget: (actor, tenantId, alias, permission) =>
         autorizarDestino(actor, tenantId, alias, permission),
-      listProfileRevisions: (tenantId, alias, limit) =>
-        diario.listProfileRevisions(tenantId, alias, limit),
-      listDocumentRevisions: (tenantId, alias, kind, limit) =>
-        diario.listDocumentRevisions(tenantId, alias, kind, limit),
+      listProfileRevisions: (tenantId, alias, limit, cursor) =>
+        diario.listProfileRevisions(tenantId, alias, limit, cursor),
+      listDocumentRevisions: (tenantId, alias, kind, limit, cursor) =>
+        diario.listDocumentRevisions(tenantId, alias, kind, limit, cursor),
     });
     registerAgentContextReloadRoutes(app, {
       authorize: autorizarPerfil,

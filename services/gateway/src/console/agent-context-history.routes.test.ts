@@ -47,8 +47,8 @@ function servidor(deps: Partial<AgentContextHistoryDeps> = {}) {
   registerAgentContextHistoryRoutes(app, {
     authorize: async () => ACTOR,
     authorizeTarget: async (_actor, tenantId, alias) => ({ tenant_id: tenantId, alias, enabled: true }),
-    listProfileRevisions: async () => [PERFIL],
-    listDocumentRevisions: async () => [DOCUMENTO],
+    listProfileRevisions: async () => ({ entries: [PERFIL], next_cursor: null }),
+    listDocumentRevisions: async () => ({ entries: [DOCUMENTO], next_cursor: null }),
     ...deps,
   });
   return app;
@@ -85,11 +85,11 @@ describe('GET .../perfil/revisions', () => {
   });
 
   it('asks the journal for the requested page size and refuses one out of range', async () => {
-    const listProfileRevisions = vi.fn(async () => [PERFIL]);
+    const listProfileRevisions = vi.fn(async () => ({ entries: [PERFIL], next_cursor: null }));
     vivo = servidor({ listProfileRevisions });
     const ok = await vivo.inject({ method: 'GET', url: `${rutaPerfil()}?limit=25` });
     expect(ok.statusCode).toBe(200);
-    expect(listProfileRevisions).toHaveBeenCalledWith('Steven', 'argos', 25);
+    expect(listProfileRevisions).toHaveBeenCalledWith('Steven', 'argos', 25, undefined);
     const excessive = await vivo.inject({ method: 'GET', url: `${rutaPerfil()}?limit=5000` });
     expect(excessive.statusCode).toBe(400);
     expect(excessive.json<{ error: string }>().error).toBe('invalid_input');
@@ -97,7 +97,7 @@ describe('GET .../perfil/revisions', () => {
   });
 
   it('reads the journal with the CANONICAL identity the authorization resolved', async () => {
-    const listProfileRevisions = vi.fn(async () => [PERFIL]);
+    const listProfileRevisions = vi.fn(async () => ({ entries: [PERFIL], next_cursor: null }));
     vivo = servidor({
       listProfileRevisions,
       authorizeTarget: async () => ({ tenant_id: 'Steven', alias: 'argos', enabled: true }),
@@ -108,7 +108,7 @@ describe('GET .../perfil/revisions', () => {
   });
 
   it('does not confirm the alias exists when the ACL hides it', async () => {
-    const listProfileRevisions = vi.fn(async () => [PERFIL]);
+    const listProfileRevisions = vi.fn(async () => ({ entries: [PERFIL], next_cursor: null }));
     vivo = servidor({ listProfileRevisions, authorizeTarget: async () => undefined });
     const response = await vivo.inject({ method: 'GET', url: rutaPerfil() });
     expect(response.statusCode).toBe(404);
@@ -163,7 +163,7 @@ describe('GET .../documents/:kind/revisions', () => {
   });
 
   it('refuses a kind that is not in the document vocabulary', async () => {
-    const listDocumentRevisions = vi.fn(async () => [DOCUMENTO]);
+    const listDocumentRevisions = vi.fn(async () => ({ entries: [DOCUMENTO], next_cursor: null }));
     vivo = servidor({ listDocumentRevisions });
     const response = await vivo.inject({ method: 'GET', url: rutaDocumento('credenciales') });
     expect(response.statusCode).toBe(400);
@@ -171,10 +171,125 @@ describe('GET .../documents/:kind/revisions', () => {
   });
 
   it('passes the kind through to the journal', async () => {
-    const listDocumentRevisions = vi.fn(async () => []);
+    const listDocumentRevisions = vi.fn(async () => ({ entries: [], next_cursor: null }));
     vivo = servidor({ listDocumentRevisions });
     const response = await vivo.inject({ method: 'GET', url: rutaDocumento('memory') });
     expect(response.statusCode).toBe(200);
-    expect(listDocumentRevisions).toHaveBeenCalledWith('Steven', 'argos', 'memory', 100);
+    expect(listDocumentRevisions).toHaveBeenCalledWith('Steven', 'argos', 'memory', 100, undefined);
+  });
+});
+
+/**
+ * The console caps its own window at 200 and, without a cursor, stops there saying «ventana
+ * agotada». What is asserted here is that the walk CONTINUES: three pages of two over a journal of
+ * six, driven only by what the previous answer published.
+ */
+describe('cursor pagination of the journal', () => {
+  const DIARIO = [60, 50, 40, 30, 20, 10].map((id) => ({
+    ...PERFIL, id: String(id), revision: id,
+  }));
+
+  function tramo(alias: string, limit: number, cursor?: string) {
+    const visibles = DIARIO
+      .filter((entry) => entry.alias === alias)
+      .filter((entry) => cursor === undefined || BigInt(entry.id) < BigInt(cursor));
+    const entries = visibles.slice(0, limit);
+    const last = entries[entries.length - 1];
+    return {
+      entries,
+      next_cursor: visibles.length > limit && last !== undefined ? last.id : null,
+    };
+  }
+
+  it('walks three pages of two and only stops when the answer says there is no more', async () => {
+    const listProfileRevisions = vi.fn(
+      async (_t: string, alias: string, limit: number, cursor?: string) =>
+        tramo(alias, limit, cursor),
+    );
+    vivo = servidor({ listProfileRevisions });
+    const recorridas: string[] = [];
+    let cursor: string | null = null;
+    let paginas = 0;
+    do {
+      const query = new URLSearchParams({ limit: '2' });
+      if (cursor !== null) query.set('cursor', cursor);
+      const response = await vivo.inject({
+        method: 'GET', url: `${rutaPerfil()}?${query.toString()}`,
+      });
+      expect(response.statusCode).toBe(200);
+      const body = response.json<{ entries: { id: string }[]; next_cursor: string | null }>();
+      for (const entry of body.entries) recorridas.push(entry.id);
+      cursor = body.next_cursor;
+      paginas += 1;
+    } while (cursor !== null && paginas < 6);
+
+    expect(paginas).toBe(3);
+    expect(recorridas).toEqual(['60', '50', '40', '30', '20', '10']);
+    expect(new Set(recorridas).size).toBe(6);
+    expect(listProfileRevisions.mock.calls.map((call) => call[3]))
+      .toEqual([undefined, '50', '30']);
+  });
+
+  it('publishes next_cursor as the id of the last row it returned, and null at the end', async () => {
+    vivo = servidor({
+      listProfileRevisions: async (_t, alias, limit, cursor) => tramo(alias, limit, cursor),
+    });
+    const primera = await vivo.inject({ method: 'GET', url: `${rutaPerfil()}?limit=2` });
+    expect(primera.json<{ next_cursor: string | null }>().next_cursor).toBe('50');
+    const ultima = await vivo.inject({ method: 'GET', url: `${rutaPerfil()}?limit=200` });
+    expect(ultima.json<{ next_cursor: string | null }>().next_cursor).toBeNull();
+  });
+
+  it('publishes next_cursor on the document journal too', async () => {
+    vivo = servidor({
+      listDocumentRevisions: async () => ({ entries: [DOCUMENTO], next_cursor: '7' }),
+    });
+    const response = await vivo.inject({ method: 'GET', url: `${rutaDocumento()}?cursor=99` });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ next_cursor: string | null }>().next_cursor).toBe('7');
+  });
+
+  it.each([
+    ['no numérico', 'abc'],
+    ['con cero a la izquierda', '007'],
+    ['negativo', '-1'],
+    ['vacío', ''],
+    ['fuera del rango de bigint', '9223372036854775808'],
+    ['de longitud desbordada', '1'.repeat(40)],
+    ['con una inyección', "1 OR 1=1"],
+  ])('refuses a %s cursor with a 400 that names the field', async (_caso, cursor) => {
+    const listProfileRevisions = vi.fn(async () => ({ entries: [PERFIL], next_cursor: null }));
+    const listDocumentRevisions = vi.fn(async () => ({ entries: [DOCUMENTO], next_cursor: null }));
+    vivo = servidor({ listProfileRevisions, listDocumentRevisions });
+    for (const url of [rutaPerfil(), rutaDocumento()]) {
+      const response = await vivo.inject({
+        method: 'GET', url: `${url}?cursor=${encodeURIComponent(cursor)}`,
+      });
+      expect(response.statusCode).toBe(400);
+      const body = response.json<{ error: string; message: string }>();
+      expect(body.error).toBe('invalid_input');
+      expect(body.message).toMatch(/cursor/u);
+    }
+    expect(listProfileRevisions).not.toHaveBeenCalled();
+    expect(listDocumentRevisions).not.toHaveBeenCalled();
+  });
+
+  /** A cursor is a position inside the window, never a way to reach another alias' rows. */
+  it('hands the journal the CANONICAL identity even when a cursor rides along', async () => {
+    const listProfileRevisions = vi.fn(
+      async (_t: string, alias: string, limit: number, cursor?: string) =>
+        tramo(alias, limit, cursor),
+    );
+    vivo = servidor({
+      listProfileRevisions,
+      authorizeTarget: async () => ({ tenant_id: 'Steven', alias: 'argos', enabled: true }),
+    });
+    const response = await vivo.inject({
+      method: 'GET', url: `${rutaPerfil('Steven', 'argos')}?limit=2&cursor=40`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(listProfileRevisions).toHaveBeenCalledWith('Steven', 'argos', 2, '40');
+    expect(response.json<{ entries: { id: string }[] }>().entries.map((entry) => entry.id))
+      .toEqual(['30', '20']);
   });
 });
