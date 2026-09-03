@@ -223,6 +223,9 @@ describe('console API surface matches the gateway routing table', () => {
     // Guards the parser itself: a silently empty extraction would make this suite vacuous.
     expect(calls.length).toBeGreaterThanOrEqual(15);
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/topology' });
+    expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/agents/1/1/directive' });
+    expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/documents' });
+    expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/perfil' });
     expect(calls.map((call) => call.path)).not.toContain('/v3/console/topology/access');
 
     expect(await unroutedPaths(calls)).toEqual([]);

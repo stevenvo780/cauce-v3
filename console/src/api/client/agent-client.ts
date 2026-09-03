@@ -15,17 +15,13 @@ import type {
 import { ApiError, errorBody } from './core';
 import type { RequestFn } from './system-client';
 
-function agentRoute(tenantId: string, alias: string, suffix: string): string {
-  return `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/${suffix}`;
-}
-
 async function getPublishedResource<T extends object>(
-  request: RequestFn,
+  load: () => Promise<T>,
   route: string,
   unavailable: T,
 ): Promise<T & { publicado: boolean; motivo?: string }> {
   try {
-    return { ...await request<T>(route), publicado: true };
+    return { ...await load(), publicado: true };
   } catch (error) {
     if (error instanceof ApiError
       && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
@@ -49,7 +45,11 @@ export async function getAgentDirective(
   alias: string,
 ): Promise<AgentDirective> {
   const ruta = `/v3/console/agents/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}/directive`;
-  return getPublishedResource<Omit<AgentDirective, 'publicado' | 'motivo'>>(request, ruta, {});
+  return getPublishedResource<Omit<AgentDirective, 'publicado' | 'motivo'>>(
+    () => request<Omit<AgentDirective, 'publicado' | 'motivo'>>(ruta),
+    ruta,
+    {},
+  );
 }
 
 export async function getAgentDocuments(
@@ -57,8 +57,12 @@ export async function getAgentDocuments(
   tenantId: string,
   alias: string,
 ): Promise<AgentDocumentsMap> {
-  const ruta = agentRoute(tenantId, alias, 'documents');
-  return getPublishedResource<Omit<AgentDocumentsMap, 'publicado' | 'motivo'>>(request, ruta, {});
+  const ruta = `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents`;
+  return getPublishedResource<Omit<AgentDocumentsMap, 'publicado' | 'motivo'>>(
+    () => request<Omit<AgentDocumentsMap, 'publicado' | 'motivo'>>(ruta),
+    ruta,
+    {},
+  );
 }
 
 export async function getAgentDocumentContent(
@@ -68,7 +72,7 @@ export async function getAgentDocumentContent(
   kind: AgentDocumentKind,
 ): Promise<AgentDocumentContent> {
   const value = await request<unknown>(
-    agentRoute(tenantId, alias, `documents/${encodeURIComponent(kind)}/content`),
+    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/content`,
   );
   const malformed = (): never => {
     throw new ApiError(
@@ -135,7 +139,7 @@ export function putAgentDocumentContent(
   reason: string,
 ): Promise<AgentDocumentGuardado> {
   return request<AgentDocumentGuardado>(
-    agentRoute(tenantId, alias, `documents/${encodeURIComponent(kind)}/content`),
+    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/content`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -152,13 +156,17 @@ export async function getAgentPerfil(
   tenantId: string,
   alias: string,
 ): Promise<AgentPerfil> {
-  const ruta = agentRoute(tenantId, alias, 'perfil');
-  return getPublishedResource<Omit<AgentPerfil, 'publicado' | 'motivo'>>(request, ruta, {
-    perfil: {
-      purpose: null, role_summary: null, human_brief: null,
-      responsibilities: [], restrictions: [], tools: [], operating_rules: [],
+  const ruta = `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil`;
+  return getPublishedResource<Omit<AgentPerfil, 'publicado' | 'motivo'>>(
+    () => request<Omit<AgentPerfil, 'publicado' | 'motivo'>>(ruta),
+    ruta,
+    {
+      perfil: {
+        purpose: null, role_summary: null, human_brief: null,
+        responsibilities: [], restrictions: [], tools: [], operating_rules: [],
+      },
     },
-  });
+  );
 }
 
 /**
@@ -232,7 +240,7 @@ export function putAgentPerfil(
   reason: string,
 ): Promise<unknown> {
   return request(
-    agentRoute(tenantId, alias, 'perfil'),
+    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil`,
     {
       method: 'PUT',
       body: JSON.stringify({ expected_revision: expectedRevision, profile, reason }),
@@ -253,7 +261,7 @@ export function postContextReload(
   reason: string,
 ): Promise<unknown> {
   return request(
-    agentRoute(tenantId, alias, 'context/reload'),
+    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/context/reload`,
     {
       method: 'POST',
       body: JSON.stringify({ reason }),
@@ -277,7 +285,7 @@ export function getProfileRevisions(
   page?: TramoDeRevisiones,
 ): Promise<PaginaDeRevisiones<PerfilRevision>> {
   return request(
-    `${agentRoute(tenantId, alias, 'perfil/revisions')}${tramo(page)}`,
+    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil/revisions${tramo(page)}`,
   );
 }
 
@@ -289,7 +297,7 @@ export function getDocumentRevisions(
   page?: TramoDeRevisiones,
 ): Promise<PaginaDeRevisionesDeDocumento> {
   return request(
-    `${agentRoute(tenantId, alias, `documents/${encodeURIComponent(kind)}/revisions`)}${tramo(page)}`,
+    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/revisions${tramo(page)}`,
   );
 }
 
