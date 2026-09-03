@@ -120,14 +120,6 @@
 .drawer-delivery dd { margin: 0; }
 .drawer-delivery-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
 
-.drawer-chain { display: grid; gap: var(--space-3); }
-.chain-trace, .chain-counters { margin: 0; font-size: var(--tipo-rotulo); }
-.chain-hops li[data-open='true'] { border-color: var(--blue); }
-.chain-hops li[data-rejected='true'] { border-color: var(--red); }
-
-.chip-button { border: 1px solid var(--border); cursor: pointer; }
-.chip-button.is-active { border-color: var(--blue); color: var(--text); }
-
 .row-open {
   padding: 0;
   border: none;
@@ -169,8 +161,6 @@ tr[data-clickable='true'] { cursor: pointer; }
 .role-brief-count[data-tone='pasado'] { color: var(--danger, #d64545); }
 .role-brief-warn { font-size: var(--tipo-rotulo); color: var(--amber, #d08700); }
 .role-brief-count[data-tone='pasado'] + .role-brief-warn { color: var(--danger, #d64545); }
-
-.role-brief-actions { display: flex; align-items: center; gap: var(--space-2); }
 
 /* --- El resumen de «Directiva» dentro del cajón ---------------------------- */
 
@@ -230,4 +220,3 @@ tr[data-clickable='true'] { cursor: pointer; }
    cuando el sistema prefiere oscuro y el operador eligió «claro» en la barra superior. */
 :root[data-theme="light"] .agent-drawer { background: #ffffff; }
 :root[data-theme="light"] .drawer-delivery { background: #f8fafd; }
-

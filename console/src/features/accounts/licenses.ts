@@ -2,7 +2,7 @@
  * Reads of the license inventory (`GET /v3/console/config`) cross-referenced with the quota
  * collector sample: freshness, per-account consumption, and orphan detection over the normalized registry.
  */
-import { formatDurationSeconds, UNKNOWN } from '../../lib';
+import { formatDurationSeconds } from '../../lib';
 import type {
   QuotaCollector, QuotaSeverity, QuotaSnapshot,
   QuotaThresholds,
@@ -312,20 +312,4 @@ export function orphans(
     unboundGroups,
     agentsWithoutBindings,
   };
-}
-
-// UI formatters
-
-/**
- * Formats "seconds until reset" as "in 2 h 51 min", "in 12 min", etc.
- * If null, returns UNKNOWN. If <= 0, prepends "ago".
- */
-export function formatResetIn(seconds: unknown): string {
-  if (typeof seconds !== 'number' || !Number.isFinite(seconds)) {
-    return UNKNOWN;
-  }
-  if (seconds <= 0) {
-    return `hace ${formatDurationSeconds(Math.abs(seconds))}`;
-  }
-  return `en ${formatDurationSeconds(seconds)}`;
 }

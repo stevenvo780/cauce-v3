@@ -108,21 +108,6 @@
   color: var(--muted);
 }
 
-/* Techo de ruteo */
-.ceiling-info {
-  font-size: var(--tipo-rotulo);
-  padding: var(--space-2);
-  border-left: 3px solid var(--blue);
-  background: var(--blue-dim);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-}
-
-.ceiling-note {
-  font-size: var(--tipo-apunte);
-  color: var(--muted);
-  margin-top: var(--space-1);
-}
-
 /* Aviso */
 .account-notice {
   display: flex;

@@ -1,12 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
-  formatResetIn,
   freshness,
   orphans,
   type Collector,
 } from './licenses';
 import type { QuotaSnapshot, QuotaThresholds } from '../../api/types';
-import { UNKNOWN } from '../../lib';
 import type { AccountBinding, AgentRegistration, ProviderAccount } from './registry';
 
 describe('freshness', () => {
@@ -255,24 +253,5 @@ describe('orphans, con el alias repetido entre clientes', () => {
     ];
 
     expect(orphans([], quotas, bindings, agents).agentsWithoutBindings).toEqual([]);
-  });
-});
-
-describe('formatResetIn', () => {
-  it('formatea segundos positivos como "en ..."', () => {
-    expect(formatResetIn(3600)).toContain('en');
-    expect(formatResetIn(3600)).toContain('1h');
-  });
-
-  it('formatea segundos negativos como "hace ..."', () => {
-    expect(formatResetIn(-600)).toContain('hace');
-  });
-
-  it('devuelve UNKNOWN para null', () => {
-    expect(formatResetIn(null)).toBe(UNKNOWN);
-  });
-
-  it('devuelve UNKNOWN para Infinity', () => {
-    expect(formatResetIn(Infinity)).toBe(UNKNOWN);
   });
 });
