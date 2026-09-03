@@ -721,6 +721,52 @@ test("el pegado perdido sin ninguna actividad sigue soltando la sesión como amb
 });
 
 // ---------------------------------------------------------------------------
+// (d2) The localized turn ENDS without an envelope (harness error, interrupt): silence plus a
+// free prompt releases the delivery instead of holding the alias's slot for the whole budget.
+// ---------------------------------------------------------------------------
+
+test("un turno correlacionado que termina sin sobre se suelta cuando el panel vuelve al prompt", async () => {
+  const { state, home, workspace } = await freshState("sin-sobre");
+  const directory = transcriptDirectory(home, workspace);
+  const sessionId = randomUUID();
+  const file = join(directory, `${sessionId}.jsonl`);
+  const duenio = randomUUID();
+  await appendFile(file, `${userEntry(duenio, null, "algo viejo", sessionId)}\n`);
+
+  const tmux = new FakeTmux();
+  tmux.paneContent = "\u276f ";
+  const fallback = new RecordingFallback();
+
+  tmux.onSubmit = (text) => {
+    // The paste DOES open its own turn, and then the harness dies without writing an answer (a 529
+    // painted by the TUI): the transcript goes silent and the pane returns to a free prompt.
+    void appendFile(file, `${userEntry(randomUUID(), duenio, text, sessionId)}\n`);
+  };
+
+  const runner = claudeRunner({
+    alias: "kratos",
+    home,
+    workspace,
+    tmux,
+    fallback,
+    correlationTimeoutMs: 20,
+    quietTimeoutMs: 60,
+    // A budget the test would never reach: the release has to come from the idle pane.
+    turnTimeoutMs: 600_000,
+    sleep: delay,
+  });
+  const adapter = await adapterFor(runner, state, "kratos");
+
+  const empezo = Date.now();
+  await assert.rejects(
+    execute(adapter, 600_000),
+    (error: Error) => /execution deadline/iu.test(error.message),
+  );
+  assert.ok(Date.now() - empezo < 30_000, `tardó ${String(Date.now() - empezo)} ms`);
+  assert.equal(fallback.calls, 0);
+});
+
+// ---------------------------------------------------------------------------
 // (e) Guard: a merged turn that never emits our envelope is released AT the turn budget.
 // ---------------------------------------------------------------------------
 
