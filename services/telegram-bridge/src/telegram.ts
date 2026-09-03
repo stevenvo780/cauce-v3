@@ -78,6 +78,11 @@ function parseUpdate(value: unknown): TelegramUpdate {
   const row = record(value);
   const update: TelegramUpdate = { update_id: safeInteger(row.update_id, 'update_id') };
   if (row.message !== undefined) update.message = record(row.message) as unknown as TelegramMessage;
+  if (row.edited_message !== undefined) update.edited_message = record(row.edited_message) as unknown as TelegramMessage;
+  if (row.channel_post !== undefined) update.channel_post = record(row.channel_post) as unknown as TelegramMessage;
+  if (row.edited_channel_post !== undefined) {
+    update.edited_channel_post = record(row.edited_channel_post) as unknown as TelegramMessage;
+  }
   return update;
 }
 

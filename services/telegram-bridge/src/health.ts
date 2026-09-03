@@ -18,6 +18,7 @@ const METRICS: readonly BridgeMetric[] = [
   'updates_unaddressed', 'updates_echo_suppressed', 'updates_mention_unserved',
   'updates_suppressed_bot', 'updates_via_bot',
   'updates_chat_denied', 'updates_chat_disabled', 'updates_conflict',
+  'updates_kind_suppressed',
   'group_config_degraded',
   'egress_sent', 'egress_retry', 'egress_dead', 'egress_ambiguous', 'egress_fenced',
   'egress_loop_error',

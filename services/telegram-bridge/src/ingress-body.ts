@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { AttachmentContentSchema, AttachmentsV1Schema, logEvent } from '@cauce/protocol';
+import {
+  AttachmentContentSchema, AttachmentsV1Schema, logEvent, redactionEnabledFromEnv, redactSecretsDeep
+} from '@cauce/protocol';
 import type { SuppressionReason } from './addressing.js';
 import { prepareTelegramAttachments, prepareTelegramVoice } from './attachments.js';
-import { redactSecretsDeep } from './redaction.js';
 import type { transcribeAudio, TranscriptionConfig } from './transcription.js';
 import type {
   BridgeMetric,
@@ -177,12 +178,18 @@ export async function normalizedBody(
   transcription?: TranscriptionConfig,
   transcriber?: Transcriber,
   onRedaction?: () => void,
-  meta?: AttachmentScreenMeta
+  meta?: AttachmentScreenMeta,
+  attachments?: PreparedAttachments
 ): Promise<Record<string, unknown>> {
-  const prepared = screenAttachments(await prepareTelegramAttachments(message, api), message, updateId, meta);
+  const downloaded = attachments ?? await prepareTelegramAttachments(message, api);
   const voice = transcriber === undefined
     ? await prepareTelegramVoice(message, api, transcription)
     : await prepareTelegramVoice(message, api, transcription, transcriber);
+  const { file: voiceFile, ...voiceRecord } = voice;
+  const prepared = screenAttachments(
+    voiceFile === undefined ? downloaded : { ...downloaded, media: [...downloaded.media, voiceFile] },
+    message, updateId, meta
+  );
   const legacyAttachments = media(message).filter((entry) => entry.kind !== 'photo' && entry.kind !== 'document');
   const text = safeText(message.text, 4_096);
   const caption = safeText(message.caption, 1_024);
@@ -194,17 +201,17 @@ export async function normalizedBody(
    * misheard proper nouns. Without the label, a GPU error reads as if the human had typed it
    * that way, and the agent quotes it back with a confidence the text does not have.
    */
-  const spoken = voice.transcript === undefined
+  const spoken = voiceRecord.transcript === undefined
     ? undefined
-    : `[nota de voz transcrita] ${voice.transcript}`;
+    : `[nota de voz transcrita] ${voiceRecord.transcript}`;
   const request = typed === undefined
     ? spoken
     : spoken === undefined ? typed : `${typed}\n\n${spoken}`;
   const problems = [
     ...(prepared.errors.length === 0
       ? [] : [`No pude procesar el adjunto: ${prepared.errors.join('; ')}. Explicá este error al usuario y pedile que lo mande de nuevo.`]),
-    ...(voice.error === undefined
-      ? [] : [`${voice.error} Decíselo al usuario y pedile que lo escriba o lo mande de nuevo.`])
+    ...(voiceRecord.error === undefined
+      ? [] : [`${voiceRecord.error} Decíselo al usuario y pedile que lo escriba o lo mande de nuevo.`])
   ];
   const attachmentError = problems.length === 0 ? undefined : problems.join('\n\n');
   const effectiveRequest = attachmentError === undefined
@@ -250,7 +257,7 @@ export async function normalizedBody(
     ...(prepared.errors.length === 0 ? {} : { attachment_errors: prepared.errors }),
     // Faithful record of what happened with the audio, for the operator in the console: the
     // prompt above is what the agent read, this is where it came from.
-    ...(voice.kind === undefined ? {} : { voice_v1: voice })
+    ...(voiceRecord.kind === undefined ? {} : { voice_v1: voiceRecord })
   };
   /**
    * Redacts secrets in the message body before persisting it in `messages.body`.
@@ -258,7 +265,9 @@ export async function normalizedBody(
    * The whole body is redacted recursively to protect connection strings, tokens and
    * passwords. The `redacted_v1` flag is added for console auditing.
    */
-  const redacted = redactSecretsDeep(body);
+  const redacted = redactSecretsDeep(body, {
+    enabled: redactionEnabledFromEnv(process.env, 'CAUCE_TELEGRAM_REDACT_INGRESS', false)
+  });
   if (redacted.count === 0) return body;
   onRedaction?.();
   return { ...redacted.value, redacted_v1: { count: redacted.count, kinds: redacted.kinds } };

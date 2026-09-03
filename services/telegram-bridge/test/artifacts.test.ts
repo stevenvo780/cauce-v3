@@ -1,4 +1,6 @@
-import type { Tenant } from '@cauce/protocol';
+import {
+  MAX_ARTIFACT_LOCATOR_CHARACTERS, MAX_ARTIFACTS_CONSIDERED, type Tenant
+} from '@cauce/protocol';
 import { describe, expect, it } from 'vitest';
 import { planArtifacts } from '../src/artifacts.js';
 import { TelegramEgressWorker, telegramTextChunks } from '../src/egress.js';
@@ -52,6 +54,26 @@ describe('plan de adjuntos', () => {
     expect(plan.listed).toBe(1);
   });
 
+  it('lista el enlace largo que el protocolo admite y descarta el que lo pasa', () => {
+    const base = 'https://consola.ejemplo.test/informe?q=';
+    const cabe = `${base}${'a'.repeat(MAX_ARTIFACT_LOCATOR_CHARACTERS - base.length)}`;
+    const pasa = `${cabe}a`;
+    const plan = planArtifacts(payload([{ name: 'cabe', uri: cabe }, { name: 'pasa', uri: pasa }]));
+
+    expect(plan.footer).toContain(`cabe: ${cabe}`);
+    expect(plan.footer).toContain('pasa: quedó en el espacio de trabajo del agente y no viajó al chat');
+  });
+
+  it('juzga el mismo prefijo de artifacts que el almacén, ni uno más', () => {
+    const relleno = Array.from({ length: MAX_ARTIFACTS_CONSIDERED }, (_, index) => ({
+      name: `f${String(index)}.txt`, uri: `/home/dev/f${String(index)}.txt`
+    }));
+    const plan = planArtifacts(payload([...relleno, { name: 'captura.png', uri: PNG_DATA_URI }]));
+
+    expect(plan.uploads).toHaveLength(0);
+    expect(plan.listed).toBe(MAX_ARTIFACTS_CONSIDERED);
+  });
+
   it('explica el file:// que vive en el contenedor del agente, y NO lo lee del disco local', () => {
     const plan = planArtifacts(payload([
       { name: 'Guion-Museo-de-Identidades.docx', uri: 'file:///workspace/clases/video/Guion.docx' },
@@ -85,11 +107,52 @@ describe('plan de adjuntos', () => {
     expect(plan.footer).toContain('mal formado');
   });
 
+  it('lee la cabecera del data: URI con la misma regla que el resto del árbol', () => {
+    const texto = Buffer.from('hola', 'utf8');
+    const b64 = texto.toString('base64');
+    for (const uri of [
+      `data:text/plain;charset=utf-8;base64,${b64}`,
+      `DATA:;base64,${b64}`,
+      `data:;base64,${b64.slice(0, 2)}\n ${b64.slice(2)}`
+    ]) {
+      const plan = planArtifacts(payload([{ name: 'nota.txt', uri }]));
+      expect(plan.uploads).toHaveLength(1);
+      expect(plan.uploads[0]?.bytes.equals(texto)).toBe(true);
+      expect(plan.uploads[0]?.kind).toBe('document');
+    }
+    expect(planArtifacts(payload([{ name: 'x.txt', uri: `data:;base64,${b64}` }])).uploads[0]?.mime_type)
+      .toBe('application/octet-stream');
+  });
+
+  it('explica cada data: URI que no puede decodificar, sin subir nada', () => {
+    for (const [uri, motivo] of [
+      ['data:text/plain;base64', 'no tiene datos'],
+      ['data:text/plain;base64,', 'vino vacío'],
+      ['data:text/plain,hola%20mundo', 'no viene en base64']
+    ] as const) {
+      const plan = planArtifacts(payload([{ name: 'nota.txt', uri }]));
+      expect(plan.uploads).toHaveLength(0);
+      expect(plan.footer).toContain(motivo);
+    }
+  });
+
   it('corta en cuatro subidas por respuesta', () => {
     const muchos = Array.from({ length: 7 }, (_, index) => ({ name: `f${String(index)}.png`, uri: PNG_DATA_URI }));
     const plan = planArtifacts(payload(muchos));
     expect(plan.uploads).toHaveLength(4);
     expect(plan.footer).toContain('ya iban 4 archivos');
+  });
+
+  it('dice la verdad del artifact que no cupo en el presupuesto del turno, y no lo confunde con una ruta local', () => {
+    const plan = planArtifacts(payload([
+      { name: 'informe.pdf', uri: 'cauce:not-sent' },
+      { name: 'local.pdf', uri: '/home/dev/local.pdf' }
+    ]));
+    expect(plan.uploads).toHaveLength(0);
+    expect(plan.listed).toBe(2);
+    expect(plan.footer).toContain('informe.pdf: superó el presupuesto de adjuntos de este turno');
+    expect(plan.footer).not.toContain('informe.pdf: quedó en el espacio de trabajo');
+    expect(plan.footer).toContain('local.pdf: quedó en el espacio de trabajo del agente y no viajó al chat');
   });
 
   it('el pie se pega al texto del agente y no lo reemplaza', () => {

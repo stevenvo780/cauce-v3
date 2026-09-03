@@ -14,8 +14,8 @@ const TELEGRAM_GETFILE_CEILING = 20_000_000;
 export const MAX_TELEGRAM_ATTACHMENT_BYTES = Math.min(MAX_ATTACHMENT_BYTES, TELEGRAM_GETFILE_CEILING);
 
 /**
- * Audio has its own cap: it never travels on the bus. It is downloaded, transcribed and
- * discarded, and only the characters of the text are kept.
+ * Download cap for audio, above the inline one: only the transcript is guaranteed to survive, but
+ * the audio DOES travel as a document when it also fits under MAX_TELEGRAM_ATTACHMENT_BYTES.
  */
 export const MAX_TELEGRAM_AUDIO_BYTES = 25_000_000;
 
@@ -140,9 +140,9 @@ export async function prepareTelegramAttachments(
  *
  * Deliberately a separate path from the one above. Inline attachments go through a strict
  * whitelist of mime + extension + magic because their bytes end up in the message body and from
- * there to the model. Audio does not: from a voice note only the text returned by the GPU
- * survives. What has to be verified here is not "this is safe to forward" but "this is really
- * audio", so the type is inferred from the bytes and the user-declared name is discarded whole.
+ * there to the model. A voice note is judged by another question: not "is this safe to forward" but
+ * "is this really audio", so the type is inferred from the bytes and the user-declared name is
+ * discarded whole — `voiceDocument` rebuilds it from the sniffed type before those bytes travel.
  * ------------------------------------------------------------------------- */
 
 type AudioKind = 'voice' | 'audio' | 'video_note' | 'video';
@@ -171,6 +171,21 @@ export interface PreparedTelegramVoice {
   readonly error?: string;
   readonly kind?: AudioKind;
   readonly duration?: number;
+  /** The audio itself, when it fits inline. The transcript never replaces the file. */
+  readonly file?: PreparedTelegramAttachment;
+}
+
+function voiceDocument(payload: Buffer, type: AudioType): PreparedTelegramAttachment | undefined {
+  const name = `voz${type.extension}`;
+  if (payload.length > MAX_TELEGRAM_ATTACHMENT_BYTES || !isSafeBasename(name)) return undefined;
+  return {
+    kind: 'document',
+    name,
+    mime_type: type.mime,
+    file_size: payload.length,
+    sha256: createHash('sha256').update(payload).digest('hex'),
+    content_base64: payload.toString('base64')
+  };
 }
 
 function audioCandidate(message: TelegramMessage): { kind: AudioKind; file: TelegramFile } | undefined {
@@ -231,10 +246,12 @@ export async function prepareTelegramVoice(
     if (type === undefined) {
       return { ...base, error: audioError(item.kind, 'el archivo no parece audio en un formato conocido') };
     }
+    const file = voiceDocument(payload, type);
+    const conFichero = file === undefined ? base : { ...base, file };
     const resultado = await transcriber(payload, `voz${type.extension}`, type.mime, config);
     return resultado.transcript === undefined
-      ? { ...base, error: audioError(item.kind, resultado.error ?? 'la transcripción falló') }
-      : { ...base, transcript: resultado.transcript };
+      ? { ...conFichero, error: audioError(item.kind, resultado.error ?? 'la transcripción falló') }
+      : { ...conFichero, transcript: resultado.transcript };
   } catch (error) {
     if (error instanceof TelegramApiError && !error.retryable) {
       return { ...base, error: audioError(item.kind, 'Telegram rechazó la descarga') };

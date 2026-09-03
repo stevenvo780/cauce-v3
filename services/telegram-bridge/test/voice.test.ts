@@ -1,5 +1,8 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { prepareTelegramVoice, MAX_TELEGRAM_AUDIO_BYTES } from '../src/attachments.js';
+import {
+  MAX_TELEGRAM_ATTACHMENT_BYTES, MAX_TELEGRAM_AUDIO_BYTES, prepareTelegramVoice
+} from '../src/attachments.js';
 import { transcribeAudio, transcriptionConfig } from '../src/transcription.js';
 import { normalizedBody } from '../src/poller.js';
 import { TelegramApiError } from '../src/telegram.js';
@@ -84,7 +87,9 @@ describe('transcripción de notas de voz', () => {
       })
     );
 
-    expect(resultado).toEqual({ kind: 'voice', duration: 7, transcript: 'Hola, esto es una prueba.' });
+    expect(Object.keys(resultado).sort()).toEqual(['duration', 'file', 'kind', 'transcript']);
+    expect(resultado).toMatchObject({ kind: 'voice', duration: 7, transcript: 'Hola, esto es una prueba.' });
+    expect(resultado.file).toMatchObject({ kind: 'document', name: 'voz.ogg', mime_type: 'audio/ogg' });
     expect(peticiones).toHaveLength(1);
     const peticion = peticiones[0];
     expect(peticion?.url).toBe('http://claw-audio:8000/v1/audio/transcriptions');
@@ -248,6 +253,32 @@ describe('cuerpo del mensaje', () => {
       message({ voice: VOICE }), 42, voiceApi(), undefined, undefined
     );
     expect(cuerpo.prompt).toMatch(/^No pude escuchar la nota de voz: .*Decíselo al usuario/su);
+  });
+
+  it('el audio también viaja como fichero: transcripción Y documento adjunto', async () => {
+    const payload = ogg(96);
+    const cuerpo = await normalizedBody(
+      message({ voice: VOICE }), 42, voiceApi(payload), undefined, CONFIG, transcriptor
+    );
+    expect(cuerpo.prompt).toBe('[nota de voz transcrita] Comprá pan y avisale a jarvis.');
+    expect(cuerpo.attachments_v1).toEqual([{
+      kind: 'document',
+      name: 'voz.ogg',
+      mime_type: 'audio/ogg',
+      file_size: payload.length,
+      sha256: createHash('sha256').update(payload).digest('hex'),
+      content_base64: payload.toString('base64')
+    }]);
+    expect(cuerpo.voice_v1).toEqual({ kind: 'voice', duration: 7, transcript: 'Comprá pan y avisale a jarvis.' });
+  });
+
+  it('no adjunta el audio que supera el tope de adjunto en línea', async () => {
+    const enorme = ogg(MAX_TELEGRAM_ATTACHMENT_BYTES + 1);
+    const resultado = await prepareTelegramVoice(
+      message({ voice: VOICE }), voiceApi(enorme), CONFIG, transcriptor
+    );
+    expect(resultado.transcript).toBe('Comprá pan y avisale a jarvis.');
+    expect(resultado.file).toBeUndefined();
   });
 
   it('no toca el cuerpo de un mensaje de texto', async () => {

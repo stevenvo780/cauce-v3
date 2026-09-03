@@ -2,10 +2,24 @@ import { describe, expect, it } from 'vitest';
 import { TelegramActivityIndicator } from '../src/activity.js';
 import { TelegramEgressWorker } from '../src/egress.js';
 import { TelegramApiError, TelegramHttpClient } from '../src/telegram.js';
+import type { TelegramSendResult, TelegramUpload } from '../src/types.js';
 import {
   config, FailingActivityTelegram, FakeTelegram, GROUP_CHAT_ID, groupRelay,
   legacyGroupConfig, MemoryEgressRepository, proactiveRelay, RejectingSendTelegram, relay, noopActivity, noopObserver
 } from './bridge-fixtures.js';
+
+class UploadingTelegram extends FakeTelegram {
+  readonly uploads: { kind: string; name: string }[] = [];
+
+  async sendDocument(_chatId: string, upload: TelegramUpload): Promise<TelegramSendResult> {
+    this.uploads.push({ kind: upload.kind, name: upload.name });
+    return { message_id: String(this.sends.length + this.uploads.length) };
+  }
+
+  async sendPhoto(chatId: string, upload: TelegramUpload): Promise<TelegramSendResult> {
+    return this.sendDocument(chatId, upload);
+  }
+}
 
 describe('Telegram fenced egress', () => {
   it('claims one fresh outbox lease and renews it before each remote effect', async () => {
@@ -218,6 +232,30 @@ describe('Telegram fenced egress', () => {
       status: 'dead', error: 'message rejected'
     });
     expect([...repository.effects.values()][0]?.diagnostic).toBe('message rejected');
+  });
+
+  it('relays a file-only done turn: the store no longer tags it MISSING_FINAL_REPLY and the file reaches the chat', async () => {
+    const api = new UploadingTelegram();
+    const repository = new MemoryEgressRepository(relay({
+      payload: {
+        outcome: 'done',
+        result: {
+          output: {
+            reply: '', messages: [], status: 'done', retryable: false,
+            artifacts: [{ name: 'informe.txt', uri: 'data:text/plain;base64,SG9sYQ==' }]
+          }
+        }
+      }
+    }));
+
+    await new TelegramEgressWorker({
+      activity: noopActivity(), observer: noopObserver(),
+      repository, aliases: [config()], apis: new Map([['kant', api]])
+    }).runOnce();
+
+    expect(api.sends).toHaveLength(0);
+    expect(api.uploads).toEqual([{ kind: 'document', name: 'informe.txt' }]);
+    expect(repository.acknowledgements.at(-1)).toMatchObject({ status: 'sent', effect_count: 1 });
   });
 
   it('sends the reply from a realistic AdapterClient ACK payload', async () => {

@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { prepareTelegramAttachments } from '../src/attachments.js';
+import { batchMembers, prepareMediaGroupAttachments } from '../src/media-group.js';
+import { TelegramPoller } from '../src/poller.js';
 import { TelegramApiError, TelegramHttpClient } from '../src/telegram.js';
-import type { TelegramApi, TelegramMessage, TelegramRemoteFile } from '../src/types.js';
+import type {
+  PollLease, TelegramApi, TelegramEntity, TelegramMessage, TelegramRemoteFile, TelegramUpdate
+} from '../src/types.js';
+import {
+  config, DeduplicatingIngress, FakeTelegram, GROUP_CHAT_ID, MemoryCursorRepository, noopActivity,
+  noopObserver
+} from './bridge-fixtures.js';
 
 class AttachmentTelegram implements TelegramApi {
   readonly files = new Map<string, TelegramRemoteFile>();
@@ -239,5 +247,258 @@ describe('Telegram attachment preparation', () => {
       animation: { file_id: 'gif', file_name: 'meme.mp4', mime_type: 'video/mp4', file_size: payload.length }
     }), api);
     expect(animation.media[0]).toMatchObject({ kind: 'document', name: 'meme.mp4' });
+  });
+});
+
+class CountingCursors extends MemoryCursorRepository {
+  readonly advances: number[] = [];
+
+  override async advanceCursor(lease: PollLease, nextUpdateId: number): Promise<void> {
+    this.advances.push(nextUpdateId);
+    await super.advanceCursor(lease, nextUpdateId);
+  }
+}
+
+function jpeg(size: number): Buffer {
+  const payload = Buffer.alloc(size);
+  payload.set([0xff, 0xd8, 0xff, 0xe0], 0);
+  return payload;
+}
+
+function album(
+  api: FakeTelegram,
+  updateId: number,
+  groupId: string,
+  options: {
+    size?: number; caption?: string; chatId?: number; entities?: TelegramEntity[];
+    fromId?: number; withoutChat?: boolean;
+  } = {}
+): TelegramUpdate {
+  const { size = 32, caption, chatId = 201, entities, fromId = 101, withoutChat = false } = options;
+  const fileId = `alb-${String(updateId)}`;
+  const path = `photos/${fileId}.jpg`;
+  api.files.set(fileId, { file_id: fileId, file_path: path, file_size: size });
+  api.filePayloads.set(path, jpeg(size));
+  const message: TelegramMessage = {
+    message_id: updateId + 100,
+    from: { id: fromId },
+    chat: { id: chatId, type: chatId < 0 ? 'supergroup' : 'private' },
+    media_group_id: groupId,
+    ...(caption === undefined ? {} : { caption }),
+    ...(entities === undefined ? {} : { caption_entities: entities }),
+    photo: [{ file_id: fileId, file_size: size }]
+  };
+  if (withoutChat) delete (message as { chat?: unknown }).chat;
+  return { update_id: updateId, message };
+}
+
+function poller(
+  api: FakeTelegram,
+  repository: MemoryCursorRepository,
+  ingress: DeduplicatingIngress
+): TelegramPoller {
+  return new TelegramPoller({
+    activity: noopActivity(), observer: noopObserver(),
+    config: config(), botId: '900001', api, repository, ingress
+  });
+}
+
+describe('álbumes de Telegram', () => {
+  it('coalesce tres fotos en UN mensaje de bus con tres adjuntos y un solo avance de cursor', async () => {
+    const api = new FakeTelegram();
+    api.updates.push(
+      album(api, 10, 'ALB', { caption: 'mirá estas tres' }),
+      album(api, 11, 'ALB'),
+      album(api, 12, 'ALB')
+    );
+    const repository = new CountingCursors();
+    const ingress = new DeduplicatingIngress();
+    const bridge = poller(api, repository, ingress);
+
+    await bridge.runOnce();
+    await bridge.runOnce();
+
+    expect(ingress.calls).toHaveLength(1);
+    const body = ingress.calls[0]?.body;
+    expect(body?.attachments_v1).toHaveLength(3);
+    expect(body?.caption).toBe('mirá estas tres');
+    expect(ingress.calls[0]?.update_id).toBe(10);
+    expect(repository.advances).toEqual([13]);
+  });
+
+  it('un reinicio con el álbum a medio juntar no lo pierde ni lo duplica', async () => {
+    const api = new FakeTelegram();
+    api.updates.push(album(api, 20, 'REI', { caption: 'tres fotos' }), album(api, 21, 'REI'), album(api, 22, 'REI'));
+    const repository = new CountingCursors();
+    const ingress = new DeduplicatingIngress();
+
+    await poller(api, repository, ingress).runOnce();
+    expect(ingress.calls).toHaveLength(0);
+    expect(repository.advances).toEqual([]);
+    expect(repository.next).toBe(0);
+
+    repository.expire();
+    const reiniciado = poller(api, repository, ingress);
+    await reiniciado.runOnce();
+    await reiniciado.runOnce();
+
+    expect(ingress.calls).toHaveLength(1);
+    expect(ingress.calls[0]?.body.attachments_v1).toHaveLength(3);
+    expect(repository.advances).toEqual([23]);
+  });
+
+  it('en modo mención el álbum entero viaja: los miembros sin epígrafe ya no mueren sin destinatario', async () => {
+    const api = new FakeTelegram();
+    api.updates.push(
+      album(api, 40, 'MEN', {
+        chatId: GROUP_CHAT_ID,
+        caption: '@kant_bot mirá',
+        entities: [{ type: 'mention', offset: 0, length: 9 }]
+      }),
+      album(api, 41, 'MEN', { chatId: GROUP_CHAT_ID }),
+      album(api, 42, 'MEN', { chatId: GROUP_CHAT_ID })
+    );
+    const repository = new CountingCursors();
+    const ingress = new DeduplicatingIngress();
+    const metrics: string[] = [];
+    const bridge = new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
+      config: config({
+        allowed_chat_ids: [String(GROUP_CHAT_ID)],
+        bot_username: 'kant_bot',
+        chats: [{
+          chat_id: String(GROUP_CHAT_ID), mode: 'mention', session_scope: 'user',
+          reply_to_origin: true, threads: []
+        }]
+      }),
+      botId: '900001', api, repository, ingress,
+      onMetric: (metric) => metrics.push(metric)
+    });
+
+    await bridge.runOnce();
+    await bridge.runOnce();
+
+    expect(metrics).toEqual(['updates_allowed']);
+    expect(ingress.calls).toHaveLength(1);
+    expect(ingress.calls[0]?.body.attachments_v1).toHaveLength(3);
+    expect(repository.advances).toEqual([43]);
+  });
+
+  it('publica los miembros por separado cuando el álbum entero no entra en el tope agregado', async () => {
+    const api = new FakeTelegram();
+    api.updates.push(
+      album(api, 30, 'GRANDE', { size: 6_000_000, caption: 'dos pesadas' }),
+      album(api, 31, 'GRANDE', { size: 6_000_000 })
+    );
+    const repository = new CountingCursors();
+    const ingress = new DeduplicatingIngress();
+    const bridge = poller(api, repository, ingress);
+
+    await bridge.runOnce();
+    await bridge.runOnce();
+
+    expect(ingress.calls).toHaveLength(2);
+    expect(ingress.calls[0]?.body.attachments_v1).toHaveLength(1);
+    expect(ingress.calls[1]?.body.attachments_v1).toHaveLength(1);
+    expect(repository.advances).toEqual([32]);
+  });
+
+  it('descarta el miembro que declara otro chat y otro remitente en vez de darle la identidad del epígrafe', async () => {
+    const api = new FakeTelegram();
+    api.updates.push(
+      album(api, 60, 'MIX', { caption: 'legítimo' }),
+      album(api, 61, 'MIX', { chatId: -999_999, fromId: 66_666 })
+    );
+    const repository = new CountingCursors();
+    const ingress = new DeduplicatingIngress();
+    const metrics: string[] = [];
+    const suppressed: { chat_id: string; update_id: number; reason: string }[] = [];
+    const bridge = new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
+      config: config(), botId: '900001', api, repository, ingress,
+      onMetric: (metric) => metrics.push(metric),
+      onSuppressed: (record) => suppressed.push(record)
+    });
+
+    await bridge.runOnce();
+    await bridge.runOnce();
+
+    expect(ingress.calls).toHaveLength(1);
+    expect(ingress.calls[0]?.origin.conversation_id).toBe('201');
+    expect(ingress.calls[0]?.body.attachments_v1).toHaveLength(1);
+    expect(metrics).toContain('updates_denied');
+    expect(suppressed).toMatchObject([{ chat_id: '-999999', update_id: 61, reason: 'chat_not_allowed' }]);
+    expect(repository.advances).toEqual([62]);
+  });
+
+  it('un miembro sin chat no revienta el ciclo ni congela el cursor', async () => {
+    const api = new FakeTelegram();
+    api.updates.push(
+      album(api, 70, 'ROTO', { caption: 'una buena' }),
+      album(api, 71, 'ROTO', { withoutChat: true })
+    );
+    const repository = new CountingCursors();
+    const ingress = new DeduplicatingIngress();
+    const bridge = poller(api, repository, ingress);
+
+    await bridge.runOnce();
+    await bridge.runOnce();
+
+    expect(ingress.calls).toHaveLength(1);
+    expect(ingress.calls[0]?.body.attachments_v1).toHaveLength(1);
+    expect(repository.next).toBe(72);
+  });
+
+  it('un álbum de seis fotos publica también los miembros de la tanda de continuación', async () => {
+    const api = new FakeTelegram();
+    api.updates.push(
+      album(api, 50, 'SEIS', {
+        chatId: GROUP_CHAT_ID,
+        caption: '@kant_bot mirá',
+        entities: [{ type: 'mention', offset: 0, length: 9 }]
+      }),
+      ...[51, 52, 53, 54, 55].map((updateId) => album(api, updateId, 'SEIS', { chatId: GROUP_CHAT_ID }))
+    );
+    const repository = new CountingCursors();
+    const ingress = new DeduplicatingIngress();
+    const metrics: string[] = [];
+    const bridge = new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
+      config: config({
+        allowed_chat_ids: [String(GROUP_CHAT_ID)],
+        bot_username: 'kant_bot',
+        chats: [{
+          chat_id: String(GROUP_CHAT_ID), mode: 'mention', session_scope: 'user',
+          reply_to_origin: true, threads: []
+        }]
+      }),
+      botId: '900001', api, repository, ingress,
+      onMetric: (metric) => metrics.push(metric)
+    });
+
+    await bridge.runOnce();
+    await bridge.runOnce();
+    await bridge.runOnce();
+
+    expect(metrics).toEqual(['updates_allowed', 'updates_allowed']);
+    expect(ingress.calls.map((call) => (call.body.attachments_v1 as unknown[]).length)).toEqual([4, 2]);
+    expect(repository.next).toBe(56);
+  });
+});
+
+describe('presupuesto agregado de un álbum', () => {
+  it('no recorta en silencio: el excedente hace que el álbum no entre y se publique miembro a miembro', async () => {
+    const api = new FakeTelegram();
+    const members = [80, 81, 82, 83, 84].map((updateId) => album(api, updateId, 'CINCO'));
+    const prepared = await prepareMediaGroupAttachments(
+      batchMembers(members),
+      api,
+      80
+    );
+
+    expect(prepared.members).toHaveLength(5);
+    expect(prepared.combined.media).toHaveLength(5);
+    expect(prepared.fits).toBe(false);
+    expect(prepared.members.map((member) => member.update.update_id)).toEqual([80, 81, 82, 83, 84]);
   });
 });

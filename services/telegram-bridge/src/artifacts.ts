@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
 import {
   base64CharacterBudget, decodeCanonicalBase64, extensionForMediaType, imageSignature,
-  isSafeBasename, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE,
+  isSafeBasename, MAX_ARTIFACT_LOCATOR_CHARACTERS, MAX_ARTIFACTS_CONSIDERED, MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS_PER_MESSAGE, parseDataUri,
 } from '@cauce/protocol';
 import { objectRecord } from './validation.js';
 
@@ -22,7 +23,8 @@ export const MAX_EGRESS_ATTACHMENT_BYTES = Math.min(MAX_ATTACHMENT_BYTES, TELEGR
  * phone.
  */
 export const MAX_UPLOADS_PER_RELAY = MAX_ATTACHMENTS_PER_MESSAGE;
-const MAX_ARTIFACTS_CONSIDERED = 16;
+/** What the SDK inliner writes when the turn's aggregate artifact budget is already spent. */
+const NOT_SENT_URI = 'cauce:not-sent';
 const MAX_LISTED_LINES = 8;
 /** Cap on the base64 string before decoding, to avoid materializing an absurd buffer. */
 const MAX_DATA_URI_CHARACTERS = base64CharacterBudget(MAX_EGRESS_ATTACHMENT_BYTES, 64);
@@ -58,6 +60,7 @@ interface RawArtifact {
 function artifactList(payload: Record<string, unknown>): readonly RawArtifact[] {
   const result = objectRecord(payload.result);
   const output = objectRecord(result?.output);
+  // Wider than the store's list (artifact-payload.ts): rendering a file it did not count beats losing it.
   const candidate = output?.artifacts ?? result?.artifacts ?? payload.artifacts;
   if (!Array.isArray(candidate)) return [];
   const artifacts: RawArtifact[] = [];
@@ -116,24 +119,20 @@ interface DecodedData {
 }
 
 /**
- * `data:[<mime>][;charset=…][;base64],<data>`.
- *
- * Only the base64 variant is accepted: a percent-encoded `data:` is fine for tiny texts, and
- * accepting it would add one more decoder for a case nobody uses.
+ * `data:[<mime>][;charset=…][;base64],<data>`, read by the ONE parser of the tree: only the base64 variant is
+ * accepted, and decoding a percent-encoded one here would hand over bytes the secret guard weighed as text. What the
+ * header means — `;base64` in ANY field, optional media type, whitespace stripped — is `parseDataUri`'s answer, so
+ * egress and guard cannot disagree about a URI. The cap and the canonical check stay here: they are the transport's.
  */
 function decodeDataUri(uri: string): DecodedData {
-  const comma = uri.indexOf(',');
-  if (comma === -1) return { error: 'el data: URI no tiene datos' };
-  const header = uri.slice(5, comma).toLowerCase();
-  if (!header.split(';').includes('base64')) return { error: 'el data: URI no viene en base64' };
-  const rawMime = header.split(';')[0];
-  const mime = rawMime && rawMime.length > 0 ? rawMime : 'application/octet-stream';
-  const raw = uri.slice(comma + 1).replace(/\s+/gu, '');
-  if (raw.length === 0) return { error: 'el data: URI vino vacío' };
-  if (raw.length > MAX_DATA_URI_CHARACTERS) return { error: 'supera los 10 MB' };
-  const bytes = decodeCanonicalBase64(raw, MAX_EGRESS_ATTACHMENT_BYTES);
+  const parsed = parseDataUri(uri);
+  if (parsed === undefined) return { error: 'el data: URI no tiene datos' };
+  if (!parsed.base64) return { error: 'el data: URI no viene en base64' };
+  if (parsed.payload.length === 0) return { error: 'el data: URI vino vacío' };
+  if (parsed.payload.length > MAX_DATA_URI_CHARACTERS) return { error: 'supera los 10 MB' };
+  const bytes = decodeCanonicalBase64(parsed.payload, MAX_EGRESS_ATTACHMENT_BYTES);
   if (bytes === undefined) return { error: 'el base64 del adjunto está mal formado' };
-  return { bytes, mime };
+  return { bytes, mime: parsed.mediaType };
 }
 
 /* --------------------------------------------------------------------------- *
@@ -155,7 +154,7 @@ function plainInline(value: string, limit: number): string {
 }
 
 function safeLink(uri: string): string | undefined {
-  if (uri.length > 512 || /[\s<>"']/u.test(uri)) return undefined;
+  if (uri.length > MAX_ARTIFACT_LOCATOR_CHARACTERS || /[\s<>"']/u.test(uri)) return undefined;
   return /^https?:\/\/[^/]+/iu.test(uri) ? uri : undefined;
 }
 
@@ -204,6 +203,10 @@ export function planArtifacts(payload: Record<string, unknown>): ArtifactPlan {
         bytes: decoded.bytes,
         sha256: createHash('sha256').update(decoded.bytes).digest('hex')
       });
+      continue;
+    }
+    if (uri === NOT_SENT_URI) {
+      lines.push(`• ${label(artifact, 'archivo')}: superó el presupuesto de adjuntos de este turno`);
       continue;
     }
     const link = safeLink(uri);
