@@ -193,10 +193,6 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           }
         }
 
-        // The localized turn ENDED without an envelope (harness error, interrupt, cleared session):
-        // transcript silent and pane back at a free prompt. Nothing is in flight, so holding the
-        // alias's slot until the whole budget only starves the queue. No quarantine: the pane is
-        // healthy and the NEXT delivery must find it usable.
         const localized = injected;
         if (localized !== undefined && Date.now() - lastActivityAt >= quietMs) {
           const idle = await beforeAbort(
