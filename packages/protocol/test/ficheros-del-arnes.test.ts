@@ -9,8 +9,7 @@ import {
 import {
   DOCUMENTOS_DE_GOBIERNO, ErrorDeTopeDelArnes, FICHEROS_OPENCLAW, PREFIJO_REVISION_PERFIL,
   PRESUPUESTOS_DE_CONTEXTO, TOPES_OPENCLAW, ficherosDelArnes, harnessDocumentDirectory,
-  harnessDocumentPaths, marcaDeRevisionDelPerfil, nombresDelArnes,
-  presupuestoDeContextoMedido, revisionDelPerfil, topeDeCodexEnConfigToml,
+  harnessDocumentPaths, marcaDeRevisionDelPerfil, nombresDelArnes, revisionDelPerfil,
   verifyManagedContextEdit, type FicheroGenerado,
 } from "../src/ficheros-del-arnes.js";
 
@@ -758,101 +757,6 @@ test("un TOOLS.md enorme que la siembra no toca no veta los ficheros que sí esc
   const soul = generados.find((f: FicheroGenerado) => f.nombre === "SOUL.md");
   assert.ok(soul, "el generador no emitió SOUL.md");
   assert.ok(soul.escribir, "SOUL.md debía escribirse aunque TOOLS.md sea enorme");
-});
-
-function perfilAcentuadoAlTope(): AgentProfile {
-  const acento = "\u00e1";
-  return perfil({
-    purpose: acento.repeat(AGENT_PROFILE_LIMITS.purpose),
-    role_summary: acento.repeat(AGENT_PROFILE_LIMITS.role_summary),
-    human_brief: acento.repeat(AGENT_PROFILE_LIMITS.human_brief),
-    responsibilities: Array.from({ length: 8 }, () => acento.repeat(AGENT_PROFILE_LIMITS.item)),
-    restrictions: Array.from({ length: 4 }, () => acento.repeat(AGENT_PROFILE_LIMITS.item)),
-    tools: [],
-    operating_rules: Array.from({ length: 4 }, () => acento.repeat(AGENT_PROFILE_LIMITS.item)),
-  });
-}
-
-test("el AGENTS.md acentuado de 48 kB entra con el hecho medido y SOLO cae sin hecho alguno", () => {
-  const contexto = { perfil: perfilAcentuadoAlTope(), hechos: hechos() };
-  const medido = presupuestoDeContextoMedido("codex", { codexProjectDocMaxBytes: 65_536 });
-  const conMedida = ficherosDelArnes("codex", contexto, new Map(), { topes: medido });
-  const bytes = Buffer.byteLength(textoDe(conMedida, "AGENTS.md"), "utf8");
-  assert.ok(bytes > 48_000 && bytes < 65_536, `AGENTS.md midió ${String(bytes)} bytes`);
-  assert.equal(measureStrictestUnits(textoDe(conMedida, "AGENTS.md")) * 2 > bytes, true);
-
-  const porDefecto = presupuestoDeContextoMedido("codex", {});
-  assert.throws(
-    () => ficherosDelArnes("codex", contexto, new Map(), { topes: porDefecto }),
-    (error: unknown) => error instanceof ErrorDeTopeDelArnes && error.medido === bytes,
-  );
-});
-
-test("el mensaje del tope nombra la unidad DECLARADA y de dónde salió el número", () => {
-  assert.throws(
-    () => ficherosDelArnes(
-      "codex", { perfil: perfilAcentuadoAlTope(), hechos: hechos() }, new Map(),
-      { topes: presupuestoDeContextoMedido("codex", {}) },
-    ),
-    (error: unknown) => {
-      assert.ok(error instanceof ErrorDeTopeDelArnes);
-      assert.equal(error.unidad, "utf8_bytes");
-      assert.equal(error.fuente, "default");
-      assert.match(error.message, /bytes UTF-8/u);
-      assert.match(error.message, /por defecto del arn\u00e9s/u);
-      return true;
-    },
-  );
-  assert.throws(
-    () => ficherosDelArnes("codex", { perfil: perfilAcentuadoAlTope(), hechos: hechos() }, new Map(), {
-      topes: presupuestoDeContextoMedido("codex", { codexProjectDocMaxBytes: 40_000 }),
-    }),
-    (error: unknown) => {
-      assert.ok(error instanceof ErrorDeTopeDelArnes);
-      assert.equal(error.fuente, "measured");
-      assert.match(error.message, /medido del alias/u);
-      return true;
-    },
-  );
-  assert.throws(
-    () => ficherosDelArnes("openclaw", {
-      perfil: perfil({ purpose: "x".repeat(TOPES_OPENCLAW.porFichero + 1) }), hechos: hechos(),
-    }),
-    (error: unknown) => {
-      assert.ok(error instanceof ErrorDeTopeDelArnes);
-      assert.equal(error.unidad, "utf16_strictest");
-      assert.match(error.message, /unidades UTF-16/u);
-      return true;
-    },
-  );
-});
-
-test("presupuestoDeContextoMedido: el hecho por alias manda y un hecho inservible cae al defecto", () => {
-  assert.deepEqual(presupuestoDeContextoMedido("codex", { codexProjectDocMaxBytes: 65_536 }), {
-    unit: "utf8_bytes", porFichero: 65_536, fuente: "measured",
-  });
-  assert.deepEqual(presupuestoDeContextoMedido("codex", {}), PRESUPUESTOS_DE_CONTEXTO.codex);
-  for (const roto of [0, -1, 1.5, Number.NaN, 17 * 1_024 * 1_024]) {
-    assert.deepEqual(
-      presupuestoDeContextoMedido("codex", { codexProjectDocMaxBytes: roto }),
-      PRESUPUESTOS_DE_CONTEXTO.codex,
-      String(roto),
-    );
-  }
-  assert.deepEqual(presupuestoDeContextoMedido("openclaw", { codexProjectDocMaxBytes: 65_536 }),
-    PRESUPUESTOS_DE_CONTEXTO.openclaw);
-  assert.equal(presupuestoDeContextoMedido("opencode", {}), undefined);
-});
-
-test("topeDeCodexEnConfigToml lee la clave de la tabla raíz y desconfía de todo lo demás", () => {
-  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 65536\n"), 65_536);
-  assert.equal(topeDeCodexEnConfigToml("model = \"gpt\"\nproject_doc_max_bytes=65_536 # medido\r\n"), 65_536);
-  assert.equal(topeDeCodexEnConfigToml("[profiles.zeus]\nproject_doc_max_bytes = 999999\n"), undefined);
-  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = \"65536\"\n"), undefined);
-  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 0\n"), undefined);
-  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 16777217\n"), undefined);
-  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 1\nproject_doc_max_bytes = 2\n"), undefined);
-  assert.equal(topeDeCodexEnConfigToml("otra_clave = 1\n"), undefined);
 });
 
 test("una variable de arnés VACÍA cae al defecto bajo $HOME; una definida y relativa se rechaza", () => {

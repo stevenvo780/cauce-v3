@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import type { AgentProfile, ContextoDeAlias, HechosDelAlias } from "../src/agent-profile.js";
+import {
+  AGENT_PROFILE_LIMITS, measureStrictestUnits,
+  type AgentProfile, type ContextoDeAlias, type HechosDelAlias,
+} from "../src/agent-profile.js";
 import { bloqueDePerfil, conBloqueDePerfil, sinBloqueDePerfil } from "../src/marcas-de-bloque.js";
 import {
-  ErrorDeTopeDelArnes, TOPES_OPENCLAW, ficherosDelArnes, type FicheroGenerado,
+  ErrorDeTopeDelArnes, PRESUPUESTOS_DE_CONTEXTO, TOPES_OPENCLAW, ficherosDelArnes,
+  presupuestoDeContextoMedido, topeDeCodexEnConfigToml, type FicheroGenerado,
+  type PresupuestoDeContexto,
 } from "../src/ficheros-del-arnes.js";
 
 // Consistency verification tests for harness file generation and update.
@@ -227,4 +232,107 @@ test("sinBloqueDePerfil es idempotente y no acumula líneas en blanco", () => {
 test("sinBloqueDePerfil no toca un fichero que no tiene bloque", () => {
   const manual = "# Manual\n\nsólo humano\n";
   assert.equal(sinBloqueDePerfil(manual), manual);
+});
+
+function topesDe(harness: string, medido?: number): PresupuestoDeContexto {
+  const presupuesto = presupuestoDeContextoMedido(
+    harness, medido === undefined ? {} : { codexProjectDocMaxBytes: medido },
+  );
+  assert.ok(presupuesto, `${harness} no declaró presupuesto`);
+  return presupuesto;
+}
+
+function perfilAcentuadoAlTope(): AgentProfile {
+  const acento = "\u00e1";
+  return perfil({
+    purpose: acento.repeat(AGENT_PROFILE_LIMITS.purpose),
+    role_summary: acento.repeat(AGENT_PROFILE_LIMITS.role_summary),
+    human_brief: acento.repeat(AGENT_PROFILE_LIMITS.human_brief),
+    responsibilities: Array.from({ length: 8 }, () => acento.repeat(AGENT_PROFILE_LIMITS.item)),
+    restrictions: Array.from({ length: 4 }, () => acento.repeat(AGENT_PROFILE_LIMITS.item)),
+    tools: [],
+    operating_rules: Array.from({ length: 4 }, () => acento.repeat(AGENT_PROFILE_LIMITS.item)),
+  });
+}
+
+test("el AGENTS.md acentuado de 48 kB entra con el hecho medido y SOLO cae sin hecho alguno", () => {
+  const ctx = contexto(perfilAcentuadoAlTope());
+  const medido = topesDe("codex", 65_536);
+  const conMedida = ficherosDelArnes("codex", ctx, new Map(), { topes: medido });
+  const bytes = Buffer.byteLength(de(conMedida, "AGENTS.md").texto, "utf8");
+  assert.ok(bytes > 48_000 && bytes < 65_536, `AGENTS.md midió ${String(bytes)} bytes`);
+  assert.equal(measureStrictestUnits(de(conMedida, "AGENTS.md").texto) * 2 > bytes, true);
+
+  const porDefecto = topesDe("codex");
+  assert.throws(
+    () => ficherosDelArnes("codex", ctx, new Map(), { topes: porDefecto }),
+    (error: unknown) => error instanceof ErrorDeTopeDelArnes && error.medido === bytes,
+  );
+});
+
+test("el mensaje del tope nombra la unidad DECLARADA y de dónde salió el número", () => {
+  assert.throws(
+    () => ficherosDelArnes(
+      "codex", contexto(perfilAcentuadoAlTope()), new Map(),
+      { topes: topesDe("codex") },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ErrorDeTopeDelArnes);
+      assert.equal(error.unidad, "utf8_bytes");
+      assert.equal(error.fuente, "default");
+      assert.match(error.message, /bytes UTF-8/u);
+      assert.match(error.message, /por defecto del arn\u00e9s/u);
+      return true;
+    },
+  );
+  assert.throws(
+    () => ficherosDelArnes("codex", contexto(perfilAcentuadoAlTope()), new Map(), {
+      topes: topesDe("codex", 40_000),
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ErrorDeTopeDelArnes);
+      assert.equal(error.fuente, "measured");
+      assert.match(error.message, /medido del alias/u);
+      return true;
+    },
+  );
+  assert.throws(
+    () => ficherosDelArnes(
+      "openclaw", contexto(perfil({ purpose: "x".repeat(TOPES_OPENCLAW.porFichero + 1) })),
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ErrorDeTopeDelArnes);
+      assert.equal(error.unidad, "utf16_strictest");
+      assert.match(error.message, /unidades UTF-16/u);
+      return true;
+    },
+  );
+});
+
+test("presupuestoDeContextoMedido: el hecho por alias manda y un hecho inservible cae al defecto", () => {
+  assert.deepEqual(presupuestoDeContextoMedido("codex", { codexProjectDocMaxBytes: 65_536 }), {
+    unit: "utf8_bytes", porFichero: 65_536, fuente: "measured",
+  });
+  assert.deepEqual(presupuestoDeContextoMedido("codex", {}), PRESUPUESTOS_DE_CONTEXTO.codex);
+  for (const roto of [0, -1, 1.5, Number.NaN, 17 * 1_024 * 1_024]) {
+    assert.deepEqual(
+      presupuestoDeContextoMedido("codex", { codexProjectDocMaxBytes: roto }),
+      PRESUPUESTOS_DE_CONTEXTO.codex,
+      String(roto),
+    );
+  }
+  assert.deepEqual(presupuestoDeContextoMedido("openclaw", { codexProjectDocMaxBytes: 65_536 }),
+    PRESUPUESTOS_DE_CONTEXTO.openclaw);
+  assert.equal(presupuestoDeContextoMedido("opencode", {}), undefined);
+});
+
+test("topeDeCodexEnConfigToml lee la clave de la tabla raíz y desconfía de todo lo demás", () => {
+  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 65536\n"), 65_536);
+  assert.equal(topeDeCodexEnConfigToml("model = \"gpt\"\nproject_doc_max_bytes=65_536 # medido\r\n"), 65_536);
+  assert.equal(topeDeCodexEnConfigToml("[profiles.zeus]\nproject_doc_max_bytes = 999999\n"), undefined);
+  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = \"65536\"\n"), undefined);
+  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 0\n"), undefined);
+  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 16777217\n"), undefined);
+  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 1\nproject_doc_max_bytes = 2\n"), undefined);
+  assert.equal(topeDeCodexEnConfigToml("otra_clave = 1\n"), undefined);
 });

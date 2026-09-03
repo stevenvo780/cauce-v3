@@ -260,6 +260,31 @@ Dos detalles que sostienen esto:
 - `backoff.reset()` corre **antes** de sembrar. El backoff mide la salud del *transporte*, y un `hello_ack` ya la demuestra. Reseteándolo después, un fallo de siembra dejaba el retardo clavado en su techo mientras durase.
 - `resumenDeLaSiembra` incluye el **motivo** de cada fichero que no se pudo escribir, no sólo el recuento. El recuento a secas (`no-se-pudo-escribir=1`) se registró más de mil veces durante el apagón sin decir nunca cuál de las dos ramas de fallo se había disparado.
 
+### El presupuesto del fichero anfitrión
+
+`ficherosDelArnes` no acota sólo lo que Cauce escribe —eso ya lo acota `AGENT_PROFILE_LIMITS.total`
+(24.000 unidades)— sino el **fichero entero**, bloque gestionado más manual del anfitrión. La tabla
+única de presupuestos vive en `packages/protocol/src/ficheros-del-arnes.ts`
+(`PRESUPUESTOS_DE_CONTEXTO`) y cada entrada **declara su unidad**: openclaw cuenta unidades UTF-16
+y codex cuenta **bytes UTF-8**. Confundirlas se equivoca hasta 4× en un manual acentuado, así que
+el mensaje de error nombra siempre la unidad que usó.
+
+Para codex el número por defecto es 32 KiB, y **el hecho medido por alias siempre lo sobrescribe**:
+es el `project_doc_max_bytes` del `config.toml` de ese contenedor. Las tres rutas de producción lo
+leen y se lo pasan a `ficherosDelArnes` como `topes`:
+
+| ruta | de dónde sale el hecho |
+|---|---|
+| siembra del adaptador (`context/siembra-del-perfil.ts`) | lee el `config.toml` del directorio del arnés con el mismo `DiscoDelArnes` que escribe |
+| PUT del runtime (`console/agent-profile-runtime.ts`) | `RuntimeFacts.projectDocMaxBytes` de la presencia medida |
+| vista previa de la consola (`console/agent-profile.routes.ts`) | el presupuesto y los bytes de disco que devuelve el propio preflight |
+
+La vista previa compone contra los **bytes medidos** del contenedor, no contra un fichero vacío
+imaginado, y aplica el mismo presupuesto que la siembra: si el preflight ya rechazó por tope, la
+ruta contesta 422 con esos dos números en vez de pintar una vista previa verde que el disco
+rechazaría. Cuando no hay hecho medido rige el defecto, y el error lo dice con esas palabras
+(«tope por defecto del arnés» frente a «tope medido del alias»).
+
 ## Tests
 
 La suite usa `node:test`. Ejecutar:

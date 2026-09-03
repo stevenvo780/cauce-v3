@@ -312,7 +312,6 @@ function medirEnUnidad(texto: string, unidad: UnidadDeTope): number {
 }
 
 export interface HechosDePresupuestoDeContexto {
-  /** `project_doc_max_bytes` measured in the alias `config.toml`. */
   readonly codexProjectDocMaxBytes?: number | undefined;
 }
 
@@ -330,7 +329,6 @@ export function presupuestoDeContextoMedido(
 
 const TOPE_DE_CODEX_EN_TOML = /^project_doc_max_bytes\s*=\s*\+?([0-9](?:_?[0-9])*)\s*(?:#.*)?$/u;
 
-/** Reads the key from the ROOT table of a Codex `config.toml`; anything else fails closed. */
 export function topeDeCodexEnConfigToml(texto: string): number | undefined {
   let valor: number | undefined;
   for (const cruda of texto.split("\n")) {

@@ -37,13 +37,13 @@ export function startClaimRenewal(
 ): () => Promise<void> {
   let stopped = false;
   let tail = Promise.resolve();
-  // Declared before the closures that clear it: a clock is free to fire a non-positive delay
-  // inside the very call that arms it, and reading `timer` from its TDZ would throw instead.
-  let timer: TimerHandle | undefined;
+  // Armed before the closures that clear it: a clock may fire a non-positive delay inside the very
+  // call that arms it, and reading a handle declared further down would throw from its TDZ.
+  let timer: TimerHandle = { cancel: () => undefined };
   const abortForUnconfirmedClaim = (): void => {
     if (stopped) return;
     stopped = true;
-    if (timer !== undefined) deps.clock.clearTimer(timer);
+    deps.clock.clearTimer(timer);
     deps.fenced.add(record.delivery_id);
     controller.abort(new AdapterError(
       "CLAIM_RENEWAL_UNCONFIRMED",
@@ -67,7 +67,7 @@ export function startClaimRenewal(
           await deps.emitClaimRenewal(record, phase);
         } catch {
           stopped = true;
-          if (timer !== undefined) deps.clock.clearTimer(timer);
+          deps.clock.clearTimer(timer);
           controller.abort(new AdapterError(
             "CLAIM_RENEWAL_PERSISTENCE_FAILED",
             "Delivery lease renewal could not be persisted locally",
@@ -83,7 +83,7 @@ export function startClaimRenewal(
   });
   return async () => {
     stopped = true;
-    if (timer !== undefined) deps.clock.clearTimer(timer);
+    deps.clock.clearTimer(timer);
     deps.clock.clearTimer(watchdog);
     const monitor = deps.claimMonitors.get(record.delivery_id);
     if (monitor?.attempt === record.attempt && monitor.claimToken === record.claim_token) {

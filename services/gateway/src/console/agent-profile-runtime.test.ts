@@ -584,6 +584,6 @@ describe('prepareAgentProfileRuntime', () => {
     const preflight = await prepareAgentProfileRuntime(p, 'Steven', 'kant', contexto('kant', 'codex'));
 
     expect(preflight.topes).toEqual({ unit: 'utf8_bytes', porFichero: 65_536, fuente: 'measured' });
-    expect(preflight.existentes.get('AGENTS.md')).toBe('# manual humano\n');
+    expect(preflight.existentes?.get('AGENTS.md')).toBe('# manual humano\n');
   });
 });

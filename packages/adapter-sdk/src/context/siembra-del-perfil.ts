@@ -440,7 +440,6 @@ export function directorioDelArnes(
 
 const MAXIMO_DEL_CONFIG_DE_CODEX = 1_048_576;
 
-/** Reads the alias `config.toml` so the measured budget, and never a default, rules the write. */
 function presupuestoDeLaSiembra(
   harness: string, directorio: string, disco: DiscoDelArnes,
 ): PresupuestoDeContexto | undefined {
