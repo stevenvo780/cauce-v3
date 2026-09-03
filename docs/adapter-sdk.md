@@ -26,6 +26,10 @@ Entregar = pegar texto en la sesión tmux viva del harness (`paste-runner.ts`, `
 | `sdk/openclaw-api-runner.ts` | Ejecución API-based para OpenClaw |
 | `sdk/fanin-synthesizer.ts` | Materializa respuestas de cadenas de delegación A→B→C |
 | `sdk/artifact-inliner.ts` | Inlinea artifacts en el contenido del delivery |
+| `sdk/output-parser/relay-artifacts.ts` | Parsea y acota los `artifacts` de cada mensaje delegado |
+| `sdk/engine/turn-cleanup.ts` | Materializa y libera lo que el turno escribe en disco |
+| `sdk/secrets.ts` | Abre los traspasos sellados dirigidos a este alias |
+| `sdk/engine/secret-guard.ts` | Punto de suelta: retiene ficheros de secreto y borra el valor literal antes del ACK |
 | `sdk/output-parser.ts` | Parsea la salida del modelo en respuestas estructuradas |
 | `shared-session/paste-runner.ts` | Pega texto en tmux con marcadores de bloque |
 | `shared-session/tmux.ts` | Gestión de sesión tmux |
@@ -61,6 +65,175 @@ primera compactación no es seguro volver a una versión del SDK que desconozca
 `terminal-history/`, porque esa versión vería solo el inbox inline; cualquier rollback debe
 conservar un binario compatible con este formato.
 
+## Ficheros en el borde de delegación
+
+`messages[].artifacts` transporta ficheros de un agente a otro con la misma forma que
+`output.artifacts` (`name`, `uri`, y opcionalmente `media_type` y `sha256`).
+
+Topes propios, **todos** derivados de `@cauce/protocol`: una cifra escrita a mano sería un segundo
+tope que se queda atrás y termina admitiendo lo que el puente rechaza.
+
+| Tope | Valor | Por qué |
+|---|---|---|
+| Artifacts por mensaje delegado | 4 (`MAX_ATTACHMENTS_PER_MESSAGE`) | el mismo cupo que admite el sobre de adjuntos |
+| Artifacts por turno | 8 (`MAX_RELAY_ARTIFACTS_TOTAL`, dos sobres) | un abanico de delegaciones no puede multiplicar el cupo del puente |
+| Bytes agregados por turno | 10 MB (`MAX_ATTACHMENTS_TOTAL_BYTES`) | el mismo techo agregado del sobre |
+
+Ese es el presupuesto del **parseo**, y lo gastan sólo los `messages[].artifacts`:
+`output.artifacts` no lo toca. Vive además **fuera** de la contabilidad de texto: los topes de
+64 KiB por `body` y 256 KiB agregados no se mueven porque un mensaje cuelgue 10 MB. Un artifact mal
+formado —nombre inseguro, `uri` vacía o desmesurada, `media_type` inválido, `sha256` que no es
+hexadecimal de 64— **se descarta y se anota por índice de mensaje**; nunca tira, porque ningún campo
+accesorio puede costar el turno entero.
+
+`artifact-inliner.ts` recorre `output.artifacts` **y** los `artifacts` de cada mensaje delegado con
+**un único presupuesto de 10 MB compartido entre ambos** y un tope de 16 aperturas por turno, así
+que la revisión de seguridad del inliner no está duplicada: `O_NOFOLLOW` y `O_NONBLOCK`, sólo rutas
+absolutas, ningún segmento `..` (ni crudo ni percent-encodeado), nada bajo `/proc`, `/sys` ni
+`/dev`, `fstat` sobre el descriptor ya abierto, tamaño comprobado dos veces, `sha256` declarado que
+debe coincidir con lo leído, y tipo declarado por el agente o deducido de la extensión. Lo que no se
+puede leer viaja tal cual; lo que no entra en el presupuesto se degrada a `cauce:not-sent` en vez
+de anunciar un adjunto que el puente va a tirar sin decirlo.
+
+Del lado durable, el salto de ida lleva los bytes como `attachments_v1`; el de vuelta y el fan-in
+llevan **sólo referencias**, o una rama que contestó con 10 MB se multiplicaría cadena arriba. Una
+referencia declara `sha256` únicamente cuando el store hasheó los bytes él mismo; si sólo tiene la
+palabra del agente viaja como `declared_sha256`, para que nadie lea como verificado un digest que
+no comprobó nadie.
+
+**Una referencia tiene tope de referencia**, no de adjunto: `MAX_ARTIFACT_LOCATOR_CHARACTERS`
+(2 048 caracteres, `@cauce/protocol`), y el salto de vuelta y el fan-in gastan además el mismo
+acumulador agregado que el sobre —cupo por mensaje por tope de localizador—. Medir una `uri` contra
+el presupuesto de bytes de un adjunto dejaba volver a entrar por la puerta de las referencias un
+localizador de megabytes justo después de haber recortado el texto. Los `artifacts` de salida del
+turno se acotan igual: el array al cupo de dos sobres, cada `uri` a su tope y el turno entero a un
+presupuesto de caracteres; lo que se pasa se **degrada a `cauce:not-sent`** en vez de contarse
+contra el agregado de salida, porque contarlo ahí convertiría un solo fichero legítimo en un turno
+inválido entero.
+
+En un `@all` los ficheros se repiten una vez por destino vivo. Si el texto solo cabe en el tope de
+expansión pero el texto más los ficheros no, se **retienen los ficheros** —con su recuento y una
+nota— y el texto llega a todos; rechazar la difusión entera por los adjuntos sería perder también
+la pregunta. Cada descarte se cuenta por causa (cupo, bytes, difusión, ilegible, origen, nombre) y
+la nota las nombra; un nombre rechazado deja además `rejected_attachment_names` en la auditoría,
+que es un recuento y nunca el nombre. Ese presupuesto cuenta lo que se **guarda** —los caracteres
+del base64—, nunca los bytes decodificados: contar los bytes decodificados admitía cuatro tercios
+de lo que la difusión declaraba.
+
+### Una respuesta que es sólo un fichero
+
+Un turno cuyo único producto es un fichero cierra en `done` con una respuesta corta y honesta, no
+en `failed` con una disculpa inventada:
+
+- `reply: ""` (o sólo caracteres invisibles) con un artifact entregable ya no levanta
+  `INVISIBLE_REPLY`: se sustituye por una línea fija que dice que el texto va en el fichero.
+- `reply: null` sin delegaciones y con un artifact entregable cierra en `done` con esa misma línea,
+  en vez de degradarse a `failed`.
+
+**Entregable son sólo `data:` y `https:`**, y quien lo decide es el predicado de `@cauce/protocol`,
+no una prueba de prefijo: `data:x` o `https:not-a-url` llevan un esquema entregable y ningún fichero
+dentro, y con eso un turno mudo se estaba comprando un `done`. Un `file:` es una ruta de la máquina
+del agente que lo escribió y no significa nada del otro lado; un `http:` el puente lo lista como
+enlace a propósito, para no convertirse en un SSRF contra producción. Ninguno salva un turno mudo.
+
+La decisión se toma dos veces, porque el contrato elige `done` **antes** de que el inliner gaste el
+presupuesto agregado. Si al final no sobrevive nada entregable, el anuncio se retira: el turno pasa
+a `failed` no reintentable con una respuesta que dice que el fichero no viajó y por qué. La
+excepción es un turno que además delegó: ahí sólo se corrige la respuesta, porque un `failed` con
+`messages` vivos es justo lo que el contrato prohíbe.
+
+## Lo que el turno escribe en disco
+
+Los adjuntos recibidos y las credenciales traspasadas viven en **dos** directorios `0700`
+separados —ver «Credenciales selladas»— y los dos **sobreviven a la invocación del arnés**: se
+liberan recién después de armar la respuesta, inlinear los artifacts y publicar el ACK. Borrarlos
+antes es lo que impedía que un agente devolviera el mismo fichero que acababa de recibir, porque sus
+`artifacts` se inlinean desde esas mismas rutas. Un `rm` que falla es un problema de disco, no de la
+persona: se registra como `attachment_cleanup_failed` y se traga, porque convertirlo en fallo de
+entrega repetiría un turno que el agente ya contestó.
+
+`CAUCE_AGENT_WORKSPACE` decide dónde vive el directorio de **adjuntos** y es además el `cwd` del
+arnés. Se exige ruta absoluta y directorio existente; si falta, no es absoluta o no es un
+directorio, el directorio de la entrega cae al temporal del sistema y el arnés corre sin `cwd`
+declarado. El de secretos no depende de esa variable nunca: siempre cuelga del temporal.
+
+## Credenciales selladas
+
+El bloque `secrets` del contexto de entrega enumera los traspasos dirigidos a este alias: **id,
+etiqueta y ruta**. El valor existe como **un fichero `0600` mientras dura el turno**, y el buffer
+que lo sostuvo se pone a cero en todas las salidas. Queda **una** copia que no se puede borrar: la
+que el punto de suelta necesita para sustituir el valor literal. Una cadena de JS es inmutable, así
+que vive hasta que la recoja el GC; no entra en el descriptor del turno ni en el prompt, y decirlo
+es preferible a prometer un cero que no ocurre.
+
+**Directorio propio.** Los secretos no comparten directorio con los adjuntos: `0700` bajo el
+temporal del sistema, nunca bajo `CAUCE_AGENT_WORKSPACE`, que es el `cwd` del agente —ahí un
+`git add`, un indexador o un `grep` suyos encontrarían el claro que dejó un SIGKILL. Un prefijo
+entero sólo se puede denegar cuando ningún adjunto legítimo puede vivir debajo.
+
+### Qué impide mecánicamente que el valor salga
+
+El arnés recibe la **ruta** en su prompt, y el inliner desreferencia cualquier ruta absoluta que un
+agente devuelva. Una frase del prompt no es un control, así que el punto de suelta
+(`engine/secret-guard.ts`) envuelve al inliner y es mecánico:
+
+- **Antes de leer nada**, todo artifact cuya ruta resuelva dentro del directorio de secretos —o a la
+  ruta de un secreto— se retiene: no se abre siquiera, y conserva su identidad en el ACK con
+  `uri: cauce:secret-withheld`, para que se vea qué se retuvo.
+- Se retiene también el artifact **cuyos bytes tengan el sha256 de un secreto**, tanto si el inliner
+  los leyó de una ruta como si el modelo escribió el `data:` él mismo: se decodifica el `data:`
+  (base64 o percent-encoding) y se hashea. Eso cubre la copia byte a byte en cualquier otra ruta y
+  el `data:` armado a mano, que antes no lo veía nadie.
+- El **valor literal**, si aparece tal cual en la respuesta, en un cuerpo delegado, en un `notify` o
+  en cualquiera de los **tres campos de texto libre** de un artifact (`name`, `uri` y `media_type`),
+  se sustituye por la marca de redacción compartida de `@cauce/protocol`.
+- **Nada de esto vuelve a leer el fichero del secreto.** La huella y el valor se capturan al
+  materializarlo, con el claro en la mano, y viven en material de saneo que no entra ni en el
+  descriptor del turno ni en el prompt. Releerlo al armar el ACK le habría dado al agente un desarme
+  de un solo comando sobre un fichero que es suyo: un `rm`, un `chmod 0644` o una copia dejaban
+  vacías las huellas y los valores, y las dos comprobaciones se volvían inertes sin decirlo.
+- Nada de esto puede costar el turno: se anota `secret_artifact_withheld` con el recuento y el sobre
+  sale igual. Si retener el único fichero deja un turno que dice «te dejo el fichero» sin nada
+  adjunto, la respuesta se corrige después de la retención, no antes.
+
+### Qué sigue siendo sólo una promesa del prompt
+
+El bloque de contexto **pide** al modelo que no repita el valor. Eso es una instrucción, no un
+control, y conviene decirlo entero: la sustitución literal atrapa el valor exacto y la huella atrapa
+los bytes exactos, y ninguna de las dos atrapa el mismo secreto reescrito, partido en trozos,
+recodificado o descrito de otro modo. Si el modelo lo transforma antes de escribirlo, llega a
+`messages.body`, y de ahí a `dead_letters`, a la consola y
+al volcado off-site append-only, que es un camino de ida. La redacción de publicación del gateway
+(`CAUCE_REDACT_PUBLISH`) mitiga en parte: reconoce familias conocidas —claves privadas, credenciales
+en URI, `Authorization`, JWT, claves de API de los proveedores habituales— y una contraseña de base
+de datos o un token a medida no encajan en ninguna.
+
+La afirmación que sí se sostiene es la estrecha: **Cauce nunca escribe el valor fuera de ese fichero
+`0600`.**
+
+### Cómo llega
+
+El cuerpo de la entrega trae `secrets_v1`, una lista de referencias (`id`, `from_tenant`,
+`from_alias`, `label`, `expires_at`) con tope de 8 por entrega. El adaptador **reclama** el sobre
+sellado al gateway con `POST /v3/secrets/:id/claim` —nunca un `GET`, porque la lectura destruye lo
+que devuelve—, lo abre con la mitad privada que guarda en `CAUCE_SEALING_KEY_PATH` (fichero `0600`,
+generado en el propio contenedor la primera vez) y escribe el claro.
+
+El *binding* criptográfico se reconstruye desde la **referencia que trajo la entrega** y desde la
+identidad propia del adaptador, nunca desde el sobre recibido: quien pudiera contestar el transporte
+elegiría si no el AAD que abre su propio blob. En concreto, el `key_id` del AAD es el que el
+adaptador deriva de su propia clave pública, y el `sealing_key_id` que declara el sobre **se compara
+contra él**; el `id`, el emisor y el destinatario del sobre se comparan contra la referencia y
+contra la identidad local. Cualquier discrepancia cierra la puerta.
+
+Un traspaso que no se puede abrir —sin transporte cableado, sin clave, caducado, sellado contra otra
+llave, o con un sobre que no concuerda con su referencia— **se salta**, se anota como
+`secret_handoff_skipped` con un código de razón por comprobación, y no cuesta el turno. Hoy ningún
+binario de `src/bin/` cablea el transporte, así que la mitad receptora está en el SDK pero no en un
+adaptador en marcha.
+
+Decisión de diseño, alternativas descartadas y esquema durable: [ADR-007](adr/007-traspaso-sellado-de-secretos.md).
+
 ## La cadena: supervisor → runtime → harness
 
 - **Supervisor** (`ops/scripts/container-adapter-supervisor.sh`): invocado por la unidad systemd del alias; resuelve config/bundle/PKI, valida el bind del contenedor, ejecuta con lock.
@@ -69,7 +242,7 @@ conservar un binario compatible con este formato.
 
 ## Inyección de contexto
 
-- **Contexto nativo de perfil** (`context/native-profile-context.ts`): inyecta `CLAUDE.md`/`AGENTS.md`/etc. como archivos de contexto nativos del harness (actualmente OFF — 4 blockers en [roadmap.md](roadmap.md) §1).
+- **Contexto nativo de perfil** (`context/native-profile-context.ts`): inyecta `CLAUDE.md`/`AGENTS.md`/etc. como archivos de contexto nativos del harness (actualmente OFF — de los seis puntos de [roadmap.md](roadmap.md) §1 quedan dos sin verificar).
 - **Contexto fijo** (`harnesses/contexto-fijo.ts`): contexto estático por tipo de harness.
 
 ### Siembra no fatal

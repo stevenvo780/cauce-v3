@@ -20,28 +20,42 @@ lo que no se comprobó se dice, no se supone.
   `routes/core/http.ts:46` pasan `requireEnabledAgent: true` al `acquireLease`, y
   `packages/store/src/repository/deliveries/claims.ts:58-60` lo aplica dentro de la transacción del
   lease (`StoreError('forbidden', 'delivery consumer is disabled')`).
-- **Contextos nativos por harness** — el flag sigue OFF; de los seis puntos anotados, tres cerrados,
-  uno en pie y dos sin verificar:
-  1. **Sigue en pie.** Topes de truncado de OpenClaw cableados a una constante:
-     `packages/protocol/src/ficheros-del-arnes.ts:278`,
-     `export const TOPES_OPENCLAW = { porFichero: 60_000, total: 150_000 }`. (El roadmap citaba la
-     línea 141 y después la 139; el fichero se movió otra vez, el defecto no. Recomprobar con
-     `grep -n 'TOPES_OPENCLAW' packages/protocol/src/ficheros-del-arnes.ts` antes de citar la línea.)
+- **Contextos nativos por harness** — el flag sigue OFF; de los seis puntos anotados, cuatro
+  cerrados y dos sin verificar:
+  1. **CERRADO en esta ronda.** El tope dejó de ser una constante de OpenClaw incrustada en el
+     generador. `packages/protocol/src/ficheros-del-arnes.ts` declara ahora
+     `PRESUPUESTOS_DE_CONTEXTO`, una tabla única de hechos por arnés con la **unidad** de cada uno:
+     - **openclaw** conserva EXACTAMENTE sus cifras de hoy (`TOPES_OPENCLAW`, 60.000 por fichero y
+       150.000 en total, medidos en unidades UTF-16). `TOPES_OPENCLAW` sigue exportado porque el
+       adaptador lo aplica DENTRO del contenedor, donde no hay base de datos que consultar.
+     - **codex** lleva un defecto de 32 KiB **en bytes UTF-8** que el hecho MEDIDO por alias
+       (`project_doc_max_bytes`, leído del `config.toml` de cada contenedor) sobrescribe siempre;
+       nunca al revés, y ese número no se siembra en ninguna tabla SQL: duplicaría un hecho medido
+       por alias y divergiría en cuanto alguien editase un `config.toml`.
+     - **claude** queda con la entrada presente y sin cifra —sólo rige el techo nativo de 4 MiB de
+       `MAX_CLAUDE_DOCUMENT_BYTES`— hasta que el dueño dé un número medido: es pregunta abierta, no
+       invención.
+
+     Las dos unidades no se mezclan JAMÁS: `TOPES_OPENCLAW` cuenta caracteres y
+     `project_doc_max_bytes` cuenta bytes UTF-8, y confundirlas se equivoca hasta 4× en un manual no
+     ASCII. Lo que Cauce escribe ya estaba acotado en todos los arneses por
+     `AGENT_PROFILE_LIMITS.total = 24_000`; lo que no tenía tope era el fichero **anfitrión**, que
+     es lo que esta tabla cierra.
   2. **No verificado.** El precipicio de expectativa vencida. El fichero cambió por `6ea006e`,
      `c483075` y `c09c67c`, y hoy tiene un camino `revalidate()` y escritura compare-and-swap
      (`escribirEnDiscoRealSiCoincide`, `native-profile-context.ts:109`) que no existían cuando se
      anotó. **No ejecuté el escenario de dos entregas seguidas** que produce el precipicio, así que
      no lo doy por cerrado ni por abierto.
   3. **CERRADO** por `a3a157a`. La allowlist del supervisor sí conoce la clave:
-     `ops/scripts/container-adapter-supervisor.sh:177` la valida (`^[01]$`) y `:885` la propaga al
+     `ops/scripts/container-adapter-supervisor.sh:175` la valida (`^[01]$`) y `:891` la propaga al
      entorno del alias.
   4. **CERRADO.** El supervisor deriva ahora **las dos** generaciones, no una:
-     `ops/scripts/container-adapter-supervisor.sh:490-492` calcula `container_generation` con el
-     sha256 **entero** (64 hex) de `id\0started\0restart\0init_starttime`, y `:493-495` calcula
+     `ops/scripts/container-adapter-supervisor.sh:492-493` calcula `container_generation` con el
+     sha256 **entero** (64 hex) de `id\0started\0restart\0init_starttime`, y `:495-497` calcula
      `container_presence_generation` = sha256 de `id|started|restart` truncado a 32 hex, que es
      exactamente la fórmula del launcher (`ops/pty-agent/cauce-pty-launcher.sh:152-157`). El
      consumidor acepta cualquiera de las dos:
-     `packages/adapter-sdk/src/context/native-profile-context.ts:373-375` compara el contrato contra
+     `packages/adapter-sdk/src/context/native-profile-context.ts:470-472` compara el contrato contra
      `runtimeGeneration` **o** `presenceGeneration`. Cada una responde a una pregunta distinta y por
      eso son dos: la larga incluye el arranque del PID 1 y detecta que el **proceso de dentro** se
      reinició aunque el contenedor no (invalida contextos nativos ya sembrados); la corta identifica
@@ -92,6 +106,37 @@ lo que no se comprobó se dice, no se supone.
 > corridas simultáneas ya no se pisan el directorio ni el servidor tmux. Lo que falta es la
 > confirmación empírica: **no volví a correr la suite bajo carga en esta ronda — no lo probé.**
 
+## Capas pendientes del contexto
+
+Lo que la consola NO deja editar del contexto de un agente, y por qué. Esta prosa vivía dentro del
+bundle de la SPA: la pantalla la enseñaba, pero nadie podía versionarla ni discutirla fuera del
+navegador. Vive aquí, y la consola enlaza a esta sección por su nombre.
+
+### Herramientas · qué puede usar y qué no
+
+**Lo pedido.** Ver y cambiar qué herramientas, MCP y skills tiene permitidos cada agente.
+
+**Por qué todavía no.** Cauce no guarda esto en un punto único: está repartido entre el
+`settings.json` del contenedor, la allowlist de `managed-settings` y la configuración de cada arnés.
+Ninguno se almacena en el store central ni se expone con autoridad en el gateway, así que una
+pantalla que dijera «estas son tus herramientas» estaría adivinando.
+
+**Qué falta.** Definir la fuente canónica de herramientas, y separar de forma segura la exposición
+de herramientas respecto de credenciales o secretos en configuraciones compartidas: hoy los dos
+viven en los mismos ficheros, y servir uno sin el otro no es un filtro de campos, es un rediseño.
+
+### Prompts · falta acordar qué son
+
+**Lo pedido.** Editar «los prompts» del agente desde la web.
+
+**Por qué todavía no.** El concepto abarca dos implementaciones que no se parecen: los preámbulos
+que el adaptador genera en cada entrega (derivados, no editables) y las plantillas de rol
+reutilizables (un catálogo que sí se persistiría en el store). Abrir un editor sin decidir cuál de
+las dos toca produce una pantalla que edita algo que el agente no lee.
+
+**Qué falta.** Decidir si la edición aplica a plantillas de rol reutilizables o a directivas
+dinámicas, y dejarlo escrito antes de construir la pantalla.
+
 ## 2. Producto — los 7 puntos de la visión
 
 Estado de cada punto de `docs/flota-y-participantes.md` §La visión:
@@ -128,6 +173,16 @@ Estado de cada punto de `docs/flota-y-participantes.md` §La visión:
   — `ops/scripts/generate-container-units.py:258-263` retira `cauce-v3-container-*.service` y su
   `.env.example`, `ops/scripts/generate-units.py:120-124` retira `cauce-v3-alias-*.service`. Sigue
   mereciendo vigilancia en cambios futuros, pero hoy no es deuda abierta.
+- **Quedó fuera.** La poda de `attachments_v1` en `messages.body` corre sin índice para su predicado
+  (el único sobre `messages(created_at)` es parcial sobre `origin IS NOT NULL`), así que en estado
+  estacionario cada ejecución es un recorrido secuencial; el índice parcial
+  `created_at WHERE body ? 'attachments_v1'` no se añadió y sigue pendiente como migración propia.
+  **Por qué no se añadió en esta ronda:** toda migración nueva obliga además a enseñarle su versión a
+  `packages/store/test/secret-handoff-layer.ts` —los `down/` de 031 en adelante se niegan a correr
+  mientras haya una migración posterior registrada, así que las suites que revierten la suya tienen
+  que despegar antes las capas de encima—, y eso queda fuera del sector de escritura de esta ronda.
+  Es tolerable mientras tanto porque el barrido tiene cadencia y cota propias: **50 filas cada
+  hora**. Lo recogen W5/W3b junto con `041`/`042`, que son las dos siguientes libres.
 - **Sigue en pie.** `ops/scripts/register-agent-identity.py` no tiene modo de baja: la única mención
   a revocar es el texto de error de `:276` («revocarla antes de registrar esta»). La revocación de
   identidad mTLS sigue siendo manual y `cauce retirar` no la encadena.

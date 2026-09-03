@@ -148,11 +148,17 @@ docker exec cauce-v3-prod-gateway-1 node -e 'const g=JSON.parse(require("fs").re
 Los cuatro campos son exactamente los que exige `parseGrants`
 (`services/gateway/src/terminal/authority.ts:110-115`): `operator`, `tenant_id` y `alias` no
 vacíos, y `modes` como **array de cadenas**. Escribir `tenant` o `mode` en singular levanta
-`grant fields are invalid`, y `rw` ni siquiera es un modo: los únicos son `shell` y `harness`
-(`services/gateway/src/terminal/types.ts:7`). Con el login por contraseña el `operator_id` es el
-**correo** de `console_users` (`ops/runbooks/console-login.md:235`), así que poner `steven`
-repite el fallo de atribución ya documentado ahí: la sesión es válida y todos los destinos
-contestan `authorized:false`. El único comodín es `"*"`, y sólo en `operator`.
+`grant fields are invalid`, y `rw` ni siquiera es un modo: los únicos son `shell`, `harness` y
+`harness_rw` (`services/gateway/src/terminal/types.ts:7`). Con el login por contraseña el
+`operator_id` es el **correo** de `console_users` (`ops/runbooks/console-login.md:235`), así que
+poner `steven` repite el fallo de atribución ya documentado ahí: la sesión es válida y todos los
+destinos contestan `authorized:false`.
+
+**El comodín `"*"` sólo abre lo que se mira, nunca lo que se teclea.** Sigue siendo el único
+comodín y sólo en `operator`, pero ahora únicamente con `harness`, el modo de sólo lectura. Una
+fila `"*"` que lleve `shell` o `harness_rw` levanta `wildcard operator cannot hold a writable
+mode` y, como cualquier otro error de este fichero, deja el archivo ENTERO en `grants: []`: para
+escribir dentro del contenedor la fila tiene que **nombrar** al operador.
 
 **Un error tipográfico cierra la puerta a todos.** Cualquier excepción dentro de `parseGrants`
 deja el archivo ENTERO en `grants: []` y se registra una sola vez por minuto

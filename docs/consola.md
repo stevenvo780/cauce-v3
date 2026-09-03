@@ -139,6 +139,42 @@ La aplicación canónica por lote existe para Claude, Codex y OpenClaw. Hermes s
 manual que su runtime mida; no se presenta como compatible con ese lote. OpenCode no pertenece al
 juego de arneses soportado y la consola no ofrece una edición ficticia para él.
 
+### Qué enseña el cajón sobre el contexto
+
+- **Ubicación medida frente a declarada.** El pie de la directiva ya no presenta
+  `agents.container_name` ni `agents.home_directory` como la ubicación del alias: son columnas
+  declaradas y `docs/directiva-ficheros-del-agente.md` §3 documenta las dos como mentirosas
+  (para `iza` dicen `ws-humanizar` y `/home/dev` cuando corre en `claw-iza` con `HOME=/home/claw`).
+  El `$HOME` y el arnés salen de la medición del contenedor, y sólo cuando el mapa de ficheros
+  llega con `facts_source: measured`; con `registry` o `database` las rutas están deducidas de esas
+  mismas columnas y no cuentan como medición. Cuando lo declarado y lo medido difieren se muestran
+  los dos, «declarado X · medido Y», porque esa discrepancia es justo el diagnóstico que hace falta
+  para no editar el fichero equivocado. Si no hay hecho medido dice «desconocido» con esa palabra y
+  no rellena con un valor plausible: `/home/dev` encaja en casi todos los alias y por eso engaña
+  precisamente en el que rompe la regla. Ninguna ruta publica el nombre medido del contenedor (la
+  directiva trae un identificador hexadecimal de Docker, que no sirve para contrastarlo con un
+  `ws-humanizar`), así que se muestra rotulado como declarado y con la medición desconocida. El mapa
+  de ficheros sólo se pide al desplegar el pliegue: abrir el modal no dispara esa lectura ni deja
+  filas de auditoría de denegación.
+- **Recargar contexto.** Cuando el perfil queda en `pending_session_refresh` o `drifted`, el aviso
+  deja de ser sólo texto: ofrece «Recargar contexto», que reescribe y vuelve a medir los ficheros y
+  presenta el resultado tipado (estado, evidencia y, por documento, sha antes y después). No
+  reinicia la TUI, y si hay entregas en vuelo la confirmación las nombra.
+- **Aviso de contaminación.** Si el veredicto llega contaminado —dos alias compartiendo fichero—
+  el cajón lo pinta destacado con el motivo y el alias dueño del bloque ajeno, y deja el guardado y
+  la recarga deshabilitados mientras dura la cuarentena, en vez de dejar que el operador lo
+  descubra por un 409.
+- **Historial y diff.** Un panel único sobre `agent_profile_revisions` y
+  `agent_document_revisions` lista revisiones con actor y fecha, compara dos revisiones del perfil
+  (los siete campos) y del manual (sha y bytes; el cuerpo del manual no se guarda) y restaura por
+  la vía canónica: borrador en Contexto y PUT con CAS y ACK, nunca una escritura paralela.
+- **`written_pending_session`.** El PUT del manual responde escrito en disco, no leído por el
+  proceso. El editor del manual pinta ese estado con el mismo vocabulario que el perfil usa para
+  `pending_session_refresh`, sin inventar uno paralelo.
+- **La hoja de ruta no viaja en el bundle.** El pliegue «Lo que todavía no se puede desde aquí»
+  nombra los dos huecos —herramientas y prompts— y remite a `docs/roadmap.md`, sección «Capas
+  pendientes del contexto», en lugar de llevar su prosa dentro de la SPA.
+
 ## Cliente API
 
 `src/api/client.ts` — cliente HTTP tipado con control de timeout y soporte de cancelación. El contexto se provee mediante `src/api/context.tsx` y el hook `src/api/use-resource.ts`.

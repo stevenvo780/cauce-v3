@@ -86,6 +86,30 @@ habilita escritura a partir de `agents.harness_id`.
    el `.credentials.json` es un bind-mount de fichero metido **dentro** de un `.claude` que por lo
    demás es propio. Escribir con «temporal + rename» sobre un bind-mount de fichero **rompe el
    montaje**; hay que truncar y escribir en sitio.
+
+   **Los dos escritores del contexto no tienen la misma semántica.**
+
+   - **El adaptador** (`packages/adapter-sdk/src/context/siembra-del-perfil.ts`,
+     `reemplazarContenido`) escribe **en sitio**: `ftruncate(0)` + `write` + `fsync` sobre el
+     descriptor ya validado. Conserva el inodo, así que respeta un bind-mount de fichero, pero
+     trunca **antes** de escribir: un corte a mitad deja el documento medio escrito. No mira el
+     destino: siempre hace lo mismo.
+   - **El pty-agent** (`ops/pty-agent/cauce_pty_agent/governance_write.py`) stagea un temporal y
+     lo publica con `os.replace` (atómico, pero **sustituye el inodo**); el `create` va por
+     `os.link`, que falla con `EEXIST` y por eso nunca pisa una creación que ganó la carrera.
+     En la escritura **de un solo fichero** ya elige por destino: si detecta un punto de montaje
+     conmuta a `_commit_in_place` (escribe y luego trunca, y restaura los bytes previos si algo
+     falla). El **lote** del perfil, en cambio, **rechaza** un destino bind-mounted con
+     `GovernanceBindMountError`, porque su rollback es un hardlink al inodo original y sobre un
+     montaje no hay inodo que enlazar.
+
+   Hoy la brecha es **latente, no medida**: los dos únicos bind-mounts de fichero que este
+   documento nombra (`~/.claude.json` y `.credentials.json`) están en
+   `GOVERNANCE_NEVER_SERVE_BASENAMES` y fuera del conjunto escribible, así que ninguna escritura
+   gobernada llega a ellos. Deja de ser latente en cuanto el conjunto escribible crezca.
+   **W5-O1** lleva la elección de semántica por destino al escritor que todavía no la tiene —el
+   adaptador—, para que sea el destino, y no qué escritor tocó, quien decida entre atomicidad e
+   inodo preservado.
 6. **`ws-isa` y `ws-isa-workspace` (los dos en kratos) montan el MISMO
    `/datos/agents/isa-config/.claude`.** Ahí editar «el CLAUDE.md de un alias» cambia el del otro.
    `ws-humanizar` aloja **dos** alias (atlas y kratos) con un solo `$HOME`: hoy no chocan sólo
@@ -133,9 +157,13 @@ Por qué cubre la topología real:
   con el socket de docker no llega a kant ni al docker de kratos.
 - El control de acceso y la atribución del destino se resuelven antes de llegar al canal de
   gobernanza; lectura y escritura exigen permisos distintos y fallan cerradas.
-- La autorización **ya son 7 puertas** (rol, permiso en BD, atribución a un humano con nombre,
-  autoridad de ruteo sobre toda la cohorte del contenedor, concesión en fichero, pty vivo,
-  concurrencia) y la auditoría ya escribe permisos y denegaciones.
+- La autorización de **este** canal son **seis** puertas, y no son las del PTY:
+  `requireOperatorPermission(actor, 'control')` para escribir (`'read'` para leer),
+  `authorizeAgentTarget` con tenant y alias exactos, el `enabled` del registro, hechos **medidos**
+  dentro del contenedor, la política de rutas (`verifyReadableDocument` / `verifyWritablePath`) y
+  el CAS con relectura previa. **No** usa concesión en fichero, **no** exige un pty vivo y **no**
+  tiene control de concurrencia: ésas son puertas del plano PTY y afirmar que las comparte era
+  falso. La auditoría sí escribe permisos y denegaciones.
 - Es estrictamente menos que una shell: sólo admite operaciones tipadas sobre un juego cerrado de
   rutas derivadas de hechos medidos.
 
@@ -151,8 +179,49 @@ Reglas que la vía cumple, y por qué:
    `realpath` no es igual a la ruta pedida, se rechaza: eso es un symlink.
 4. **CAS y relectura verificable**: reemplazo con SHA esperado o creación con precondición de
    ausencia; el ACK acredita SHA y bytes y el perfil por lote relee todos los destinos.
-5. **Tope de 256 KB** y sólo texto UTF-8 válido.
-6. **Todo auditado** con el mismo `recordTerminalAudit`, incluida la denegación.
+5. **Un solo tope en la escritura**: el genérico de 256 KiB (`MAX_DOCUMENT_BYTES`), y sólo texto
+   UTF-8 válido. El `project_doc_max_bytes` medido de codex **no** se aplica aquí, y decir que sí
+   sería falso para el fichero que este canal escribe: topa el AGREGADO de los manuales de ámbito
+   **workspace** (`effectiveManualPaths` → `scope: 'workspace'`, que es como lo aplica el lector en
+   `agent-directive.routes.ts`), mientras que el `kind` `directive` de codex resuelve a
+   `$CODEX_HOME/AGENTS.md`, de ámbito **usuario**, que el proceso aplica entero. Toparlo aquí
+   rechazaba con un 413 una escritura legítima. El lector sí muestra el tope medido donde rige.
+6. **Todo auditado** con el mismo `recordTerminalAudit` que el plano PTY, sobre la misma tabla
+   `audit_events`: `agent_document.read` en la lectura de contenido real, `agent_document.write` en
+   el PUT que escribe y `agent_document.denied` en cada denegación por estado de **los dos
+   canales** — el `channel` de la fila dice cuál —: destino que no se ve (la sonda de enumeración
+   de alias), hechos sin medir, ruta prohibida, documento inexistente, respuesta de sonda que no
+   acredita, sin canal, conflicto de CAS, bloque gestionado, tope excedido y alias apagado. La
+   lectura deniega tanto como la escritura, y son sus denegaciones las que produce un barrido a
+   por credenciales: sin fila, ese barrido no dejaría rastro ninguno.
+   El inventario que sí se resuelve no se audita: la vista Ficheros lo relee cada vez que se abre
+   el cajón. La fila lleva `operator_id` del principal autenticado, `target_tenant`, `target_alias`,
+   `channel`, `kind`, `path`, `sha_before`, `sha_after`, `bytes`, `harness_id`, `home_directory` y
+   `facts_source`, y **jamás el cuerpo ni un byte de él**. `harness_id` y `home_directory` son los
+   **medidos** cuando hubo medición —son los que resolvieron la ruta—, y sólo caen a las columnas
+   del registro cuando no la hubo, que es lo que declara `facts_source`.
+
+   Tres límites de esa fila, dichos aquí para que nadie los descubra buscándola:
+
+   - **Una petición que ni siquiera autentica no deja fila**: sin principal no hay `tenant_id` al
+     que atribuirla, y una fila con un tenant inventado sería peor que ninguna. Eso lo registra la
+     capa de autenticación, no este canal.
+   - **La fila se ve donde vive el actor, no donde vive el fichero.** `/v3/console/audit` filtra
+     por `audit.tenant_id` y `audit.actor_alias` (`packages/store/src/repository/observability.ts`),
+     y la fila se inserta con la identidad del **actor**: el tenant cuyo manual efectivo se
+     reescribió desde fuera no la ve. Es el modelo heredado del plano PTY, no algo que introduzca
+     este canal, pero la puerta cross-tenant deja rastro **para quien lo dejó**.
+   - **La fila se escribe después de la mutación del disco.** Si el `INSERT` falla, el cliente
+     recibe 500 con el fichero ya reescrito: cerrado en la respuesta, abierto en el rastro.
+7. **El PUT no dice `applied`.** Responde 202 con
+   `state: 'written_pending_session'` y `evidence: 'probe_write_ack'`: un ACK de escritura acredita
+   bytes en disco, no que el proceso releyera el fichero. El vocabulario de los dos canales de
+   contexto (perfil y manual) vive en `services/gateway/src/console/context-apply-policy.ts`, donde
+   sólo `applied` afirma que la sesión recargó, y sólo con el ACK de adopción de la sesión.
+   La consola trata ese 202 como lo que es —**un guardado**—: limpia el borrador, refresca la
+   huella servida (si no, el reintento evidente chocaría contra un SHA que ya no existe) y avisa
+   con esas palabras, «escrito; la sesión lo aplica al recargar», en vez de pintar en rojo una
+   escritura que sí ocurrió.
 
 ## 7. Piezas del código actual
 
@@ -161,6 +230,9 @@ Reglas que la vía cumple, y por qué:
   tenant+alias; no sirve configuraciones sensibles ni escribe sin hechos medidos.
 - `services/gateway/src/console/agent-profile.routes.ts` y `agent-profile-runtime.ts` — perfil
   canónico durable, proyección nativa, lote cercado y acreditación de adopción.
+- `services/gateway/src/console/context-apply-policy.ts` — vocabulario único de aplicación de
+  contexto para los dos canales; `services/gateway/src/terminal/audit.ts` — el único insertador de
+  `audit_events` de este plano, compartido con el PTY.
 - `console/src/features/live/` — una vista **Contexto** para las mutaciones y **Ficheros** como visor.
 
 Las rutas de documentos y perfil están registradas en `services/gateway/src/routes/console.ts`.
