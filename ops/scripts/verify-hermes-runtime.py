@@ -157,7 +157,6 @@ def verify(arguments: argparse.Namespace) -> None:
     if sha256(uv) != arguments.uv_sha256 or sha256(source / "uv.lock") != arguments.uv_lock_sha256:
         fail("Hermes uv or uv.lock digest differs")
 
-    # `--no-optional-locks`: refreshing the index rewrites `.git/index` inside the release, and the writability audit below would then reject the runtime it just mutated.
     head = subprocess.run(
         ["git", "--no-optional-locks", "-C", os.fspath(source), "rev-parse", "HEAD"],
         capture_output=True,
