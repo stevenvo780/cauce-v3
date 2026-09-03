@@ -2,7 +2,10 @@ import type { DatabasePool } from '@cauce/store';
 import { describe, expect, it } from 'vitest';
 import { runDispatcher } from '../src/index.js';
 import { DispatcherMetrics } from '../src/metrics.js';
-import { PhaseGuard, phaseBackoffMs, type DispatcherPhase } from '../src/phases.js';
+import {
+  PhaseGuard, phaseBackoffMs, sweepRetention, type DispatcherPhase,
+  type MessageAttachmentSweepPolicy, type RetentionSweepPolicy,
+} from '../src/phases.js';
 
 type PoisonablePhase = 'stale_deliveries' | 'expired_jobs' | 'claim_jobs';
 
@@ -141,5 +144,140 @@ describe('backoff exponencial por fase', () => {
     });
     expect(observed).toEqual(['expired_jobs', 'expired_jobs']);
     expect(guard.consecutiveFailures('expired_jobs')).toBe(0);
+  });
+});
+
+const ADJUNTOS: MessageAttachmentSweepPolicy = {
+  messageAttachmentsMs: 30 * 24 * 60 * 60_000,
+  chainMaxAgeMs: 48 * 60 * 60_000,
+  batch: 50,
+};
+
+interface RecordedStatement {
+  sql: string;
+  params: readonly unknown[];
+}
+
+function recordingPool(): { pool: DatabasePool; statements: RecordedStatement[] } {
+  const statements: RecordedStatement[] = [];
+  const query = async (
+    sql: unknown, params: readonly unknown[] = [],
+  ): Promise<{ rows: never[]; rowCount: number }> => {
+    if (typeof sql === 'string') statements.push({ sql, params });
+    return { rows: [], rowCount: 0 };
+  };
+  const client = { query, on: () => client, off: () => client, release: () => undefined };
+  return { pool: { query, connect: async () => client } as unknown as DatabasePool, statements };
+}
+
+const podas = (statements: readonly RecordedStatement[]): RecordedStatement[] =>
+  statements.filter((statement) => /UPDATE messages\s+SET body=/u.test(statement.sql));
+
+async function tickRetention(
+  pool: DatabasePool, options: Partial<Parameters<typeof runDispatcher>[1]>, ticks: number,
+): Promise<void> {
+  const dispatcher = runDispatcher(pool, {
+    pollMs: 60_000,
+    chainSweepMs: 0,
+    retentionIntervalMs: 1,
+    retention: { batch: 5_000 },
+    onError: (error) => { throw error instanceof Error ? error : new Error('tick failed'); },
+    ...options,
+  });
+  try {
+    for (let tick = 0; tick < ticks; tick += 1) {
+      await dispatcher.tick();
+      await new Promise((resolve) => { setTimeout(resolve, 5); });
+    }
+  } finally {
+    dispatcher.stop();
+  }
+}
+
+describe('fase de retención: la poda de adjuntos corre de verdad', () => {
+  it('la ejecuta con su ventana y su tope, no con el lote de observabilidad', async () => {
+    const { pool, statements } = recordingPool();
+
+    await tickRetention(
+      pool, { messageAttachments: ADJUNTOS, messageAttachmentsIntervalMs: 3_600_000 }, 1,
+    );
+
+    expect(podas(statements)).toHaveLength(1);
+    expect(podas(statements)[0]?.params).toEqual([ADJUNTOS.messageAttachmentsMs, 50]);
+    expect(statements.some((statement) => statement.sql.includes('DELETE FROM delivery_acks')))
+      .toBe(true);
+  });
+
+  it('mantiene su propia cadencia mientras el barrido de acks sigue por tick', async () => {
+    const { pool, statements } = recordingPool();
+
+    await tickRetention(
+      pool, { messageAttachments: ADJUNTOS, messageAttachmentsIntervalMs: 3_600_000 }, 3,
+    );
+
+    expect(podas(statements)).toHaveLength(1);
+    expect(statements.filter(
+      (statement) => statement.sql.includes('DELETE FROM delivery_acks'),
+    ).length).toBeGreaterThanOrEqual(6);
+  });
+
+  it('no escribe en messages cuando la poda no está configurada o su cadencia es 0', async () => {
+    const sinPolítica = recordingPool();
+    const sinCadencia = recordingPool();
+
+    await tickRetention(sinPolítica.pool, {}, 2);
+    await tickRetention(
+      sinCadencia.pool, { messageAttachments: ADJUNTOS, messageAttachmentsIntervalMs: 0 }, 2,
+    );
+
+    expect(podas(sinPolítica.statements)).toEqual([]);
+    expect(podas(sinCadencia.statements)).toEqual([]);
+  });
+});
+
+describe('sweepRetention', () => {
+  const contable = (): {
+    store: Parameters<typeof sweepRetention>[0];
+    vistas: RetentionSweepPolicy[];
+    adjuntos: MessageAttachmentSweepPolicy[];
+  } => {
+    const vistas: RetentionSweepPolicy[] = [];
+    const adjuntos: MessageAttachmentSweepPolicy[] = [];
+    return {
+      vistas,
+      adjuntos,
+      store: {
+        pruneObservability: async (policy) => {
+          vistas.push(policy);
+          return { ack_renewals: 1, acks: 2, audit_renewals: 3, audit_events: 4 };
+        },
+        pruneMessageAttachments: async (policy) => {
+          adjuntos.push(policy);
+          return { message_attachments: 5 };
+        },
+      },
+    };
+  };
+
+  it('suma las cinco cuentas y no le pasa la política de adjuntos al otro barrido', async () => {
+    const { store, vistas, adjuntos } = contable();
+
+    const swept = await sweepRetention(store, { batch: 5_000, messageAttachments: ADJUNTOS });
+
+    expect(swept).toEqual({
+      ack_renewals: 1, acks: 2, audit_renewals: 3, audit_events: 4, message_attachments: 5,
+      total: 15,
+    });
+    expect(vistas).toEqual([{ batch: 5_000 }]);
+    expect(adjuntos).toEqual([ADJUNTOS]);
+  });
+
+  it('sin política de adjuntos no toca los cuerpos y el total sigue cuadrando', async () => {
+    const { store, adjuntos } = contable();
+
+    const swept = await sweepRetention(store, { batch: 5_000 });
+
+    expect(swept).toMatchObject({ message_attachments: 0, total: 10 });
+    expect(adjuntos).toEqual([]);
   });
 });

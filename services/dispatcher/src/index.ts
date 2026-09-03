@@ -6,7 +6,9 @@ import {
 } from '@cauce/store';
 import { asClaimedJob, createDefaultJobHandlerRegistry, type JobHandlers } from './handlers.js';
 import type { DispatcherMetrics } from './metrics.js';
-import { type DispatcherPhase, PhaseGuard } from './phases.js';
+import {
+  type DispatcherPhase, type MessageAttachmentSweepPolicy, PhaseGuard, sweepRetention,
+} from './phases.js';
 
 interface DispatcherOptions {
   pollMs?: number;
@@ -21,6 +23,9 @@ interface DispatcherOptions {
   /** Observability sweep interval. 0 disables the sweep. */
   retentionIntervalMs?: number;
   retention?: ObservabilityRetentionPolicy;
+  /** CRED-02 attachment strip. Absent, or with a cadence of 0, it does not run. */
+  messageAttachments?: MessageAttachmentSweepPolicy;
+  messageAttachmentsIntervalMs?: number;
   /** Silent-chain watchdog clock (P0-4). 0 disables it. */
   chainSweepMs?: number;
   chainSweep?: ChainSilenceSweepOptions;
@@ -46,7 +51,10 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
   const retentionIntervalMs = options.retentionIntervalMs ?? 0;
   // Initialize to -Infinity so the first sweep fires on the initial tick.
   let nextPruneAtMs = Number.NEGATIVE_INFINITY;
+  let nextAttachmentPruneAtMs = Number.NEGATIVE_INFINITY;
   let lastChainSweep = Number.NEGATIVE_INFINITY;
+  const messageAttachments = options.messageAttachments;
+  const messageAttachmentsIntervalMs = options.messageAttachmentsIntervalMs ?? 0;
 
   const runClaimedJobs = async (jobs: readonly Readonly<Record<string, unknown>>[]): Promise<void> => {
     for (const job of jobs) {
@@ -106,11 +114,21 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
       if (claimed.status === 'ok') await runClaimedJobs(claimed.value);
       if (retentionIntervalMs > 0 && Date.now() >= nextPruneAtMs) {
         nextPruneAtMs = Date.now() + retentionIntervalMs;
+        // Own cadence: the strip rewrites multi-MB bodies, so it must not ride the ack/audit clock.
+        const attachments = messageAttachments !== undefined
+          && messageAttachmentsIntervalMs > 0
+          && Date.now() >= nextAttachmentPruneAtMs
+          ? messageAttachments
+          : undefined;
+        if (attachments !== undefined) {
+          nextAttachmentPruneAtMs = Date.now() + messageAttachmentsIntervalMs;
+        }
         await guard.run('retention', async () => {
-          const pruned = await repository.pruneObservability(options.retention ?? {});
-          if (pruned.ack_renewals + pruned.acks + pruned.audit_renewals + pruned.audit_events > 0) {
-            logEvent('observability_pruned', { ...pruned }, { level: 'info' });
-          }
+          const swept = await sweepRetention(repository, {
+            ...(options.retention ?? {}),
+            ...(attachments === undefined ? {} : { messageAttachments: attachments }),
+          });
+          if (swept.total > 0) logEvent('observability_pruned', { ...swept }, { level: 'info' });
         });
       }
       const degraded = [stale, expired, claimed].some((outcome) => outcome.status !== 'ok');

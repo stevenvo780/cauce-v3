@@ -25,6 +25,12 @@ const dispatcher = runDispatcher(pool, {
     auditMs: config.retentionAuditMs,
     batch: config.retentionBatch,
   },
+  messageAttachments: {
+    messageAttachmentsMs: config.retentionMessageAttachmentsMs,
+    chainMaxAgeMs: config.chainMaxAgeMs,
+    batch: config.retentionMessageAttachmentsBatch,
+  },
+  messageAttachmentsIntervalMs: config.retentionMessageAttachmentsIntervalMs,
   jobLeaseMs: config.jobLeaseMs,
   chainSweepMs: config.chainSweepMs,
   chainSweep: {

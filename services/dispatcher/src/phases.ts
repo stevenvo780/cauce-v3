@@ -1,3 +1,5 @@
+import type { ObservabilityRetentionPolicy, ObservabilityRetentionResult } from '@cauce/store';
+
 export type DispatcherPhase =
   | 'stale_deliveries'
   | 'expired_jobs'
@@ -10,6 +12,56 @@ export const DISPATCHER_PHASES: readonly DispatcherPhase[] = [
 ];
 
 export const PHASE_BACKOFF_CAP_MS = 300_000;
+
+export interface MessageAttachmentSweepPolicy {
+  readonly messageAttachmentsMs: number;
+  readonly chainMaxAgeMs: number;
+  readonly batch: number;
+}
+
+export interface RetentionSweepPolicy extends ObservabilityRetentionPolicy {
+  /**
+   * Absent means the attachment strip does not run on THIS tick, and that is the normal case: it
+   * rewrites multi-MB bodies of the hottest table, so it keeps its own cadence and its own batch
+   * instead of riding the ack/audit sweep's clock.
+   */
+  readonly messageAttachments?: MessageAttachmentSweepPolicy;
+}
+
+export interface RetentionSweepStore {
+  pruneObservability(policy: ObservabilityRetentionPolicy): Promise<ObservabilityRetentionResult>;
+  pruneMessageAttachments(
+    policy: MessageAttachmentSweepPolicy,
+  ): Promise<{ message_attachments: number }>;
+}
+
+export interface RetentionSweepResult extends ObservabilityRetentionResult {
+  readonly message_attachments: number;
+  readonly total: number;
+}
+
+/**
+ * Everything the `retention` phase sweeps, in one call and one summary. The attachment strip is a
+ * sibling of `pruneObservability` and not one of its rules because it deletes no row: it removes one
+ * key from a body that stays load-bearing, so it carries its own window, its own bound and its own
+ * guard.
+ */
+export async function sweepRetention(
+  store: RetentionSweepStore,
+  policy: RetentionSweepPolicy,
+): Promise<RetentionSweepResult> {
+  const { messageAttachments, ...observability } = policy;
+  const pruned = await store.pruneObservability(observability);
+  const stripped = messageAttachments === undefined
+    ? { message_attachments: 0 }
+    : await store.pruneMessageAttachments(messageAttachments);
+  return {
+    ...pruned,
+    message_attachments: stripped.message_attachments,
+    total: pruned.ack_renewals + pruned.acks + pruned.audit_renewals + pruned.audit_events
+      + stripped.message_attachments,
+  };
+}
 
 export type PhaseOutcome<T> =
   | { readonly status: 'ok'; readonly value: T }

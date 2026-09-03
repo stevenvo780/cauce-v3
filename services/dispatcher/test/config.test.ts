@@ -6,7 +6,9 @@ import {
 import {
   configuredDispatcher, DEFAULT_ACK_DEADLINE_MS, DEFAULT_CHAIN_IDLE_MS,
   DEFAULT_CHAIN_MAX_AGE_MS, DEFAULT_CHAIN_SETTLED_GRACE_MS, DEFAULT_CHAIN_SWEEP_LIMIT,
-  DEFAULT_CHAIN_SWEEP_MS, DEFAULT_RETENTION_INTERVAL_MS
+  DEFAULT_CHAIN_SWEEP_MS, DEFAULT_RETENTION_INTERVAL_MS,
+  DEFAULT_RETENTION_MESSAGE_ATTACHMENTS_BATCH, DEFAULT_RETENTION_MESSAGE_ATTACHMENTS_INTERVAL_MS,
+  DEFAULT_RETENTION_MESSAGE_ATTACHMENTS_MS
 } from '../src/config.js';
 
 describe('dispatcher delivery deadline configuration', () => {
@@ -142,5 +144,62 @@ describe('silent-chain watchdog (P0-4)', () => {
     { CHAIN_SWEEP_LIMIT: '0' },
   ])('rejects non-positive deadlines %#', (environment) => {
     expect(() => configuredDispatcher(environment)).toThrow(/positive integer/u);
+  });
+});
+
+describe('poda de adjuntos del cuerpo (CRED-02)', () => {
+  it('trae ventana, cadencia y lote propios, y admite sobreescribir los tres', () => {
+    expect(configuredDispatcher({})).toMatchObject({
+      retentionMessageAttachmentsMs: DEFAULT_RETENTION_MESSAGE_ATTACHMENTS_MS,
+      retentionMessageAttachmentsIntervalMs: DEFAULT_RETENTION_MESSAGE_ATTACHMENTS_INTERVAL_MS,
+      retentionMessageAttachmentsBatch: DEFAULT_RETENTION_MESSAGE_ATTACHMENTS_BATCH,
+    });
+    expect(DEFAULT_RETENTION_MESSAGE_ATTACHMENTS_BATCH).toBe(50);
+    expect(configuredDispatcher({
+      DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_MS: '5184000000',
+      DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_INTERVAL_MS: '900000',
+      DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_BATCH: '25',
+      CAUCE_RETENTION_BATCH: '5000',
+    })).toMatchObject({
+      retentionMessageAttachmentsMs: 5_184_000_000,
+      retentionMessageAttachmentsIntervalMs: 900_000,
+      retentionMessageAttachmentsBatch: 25,
+      retentionBatch: 5_000,
+    });
+  });
+
+  it('falla al arrancar si la ventana no supera el horizonte del barrido de cadenas', () => {
+    expect(() => configuredDispatcher({
+      DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_MS: String(48 * 60 * 60_000),
+    })).toThrow(/must be greater than CHAIN_MAX_AGE_MS/u);
+    expect(() => configuredDispatcher({
+      CHAIN_MAX_AGE_MS: String(40 * 24 * 60 * 60_000),
+    })).toThrow(/must be greater than CHAIN_MAX_AGE_MS/u);
+  });
+
+  it('no arranca el guard cuando la poda está apagada: subir CHAIN_MAX_AGE_MS no tumba nada', () => {
+    expect(configuredDispatcher({
+      CHAIN_MAX_AGE_MS: String(40 * 24 * 60 * 60_000),
+      CAUCE_RETENTION_INTERVAL_MS: '0',
+    })).toMatchObject({ retentionIntervalMs: 0, chainMaxAgeMs: 40 * 24 * 60 * 60_000 });
+    expect(configuredDispatcher({
+      CHAIN_MAX_AGE_MS: String(40 * 24 * 60 * 60_000),
+      DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_INTERVAL_MS: '0',
+    })).toMatchObject({ retentionMessageAttachmentsIntervalMs: 0 });
+  });
+
+  it.each([
+    { DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_MS: '0' },
+    { DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_BATCH: '0' },
+    { DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_BATCH: 'invalid' },
+  ])('rechaza valores no positivos %#', (environment) => {
+    expect(() => configuredDispatcher(environment)).toThrow(/positive integer/u);
+  });
+
+  it.each([
+    { DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_INTERVAL_MS: '-1' },
+    { DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_INTERVAL_MS: '1.5' },
+  ])('rechaza una cadencia inválida %#', (environment) => {
+    expect(() => configuredDispatcher(environment)).toThrow(/non-negative integer/u);
   });
 });
