@@ -255,6 +255,8 @@ Medido en producción el 01-09-2026 sobre el alias `zeus`: **1.074 reconexiones 
 
 El intercambio elegido: correr con un perfil desactualizado es un problema de *contenido*; quedarse sordo **y callado** es peor. Por eso el fallo ahora es ruidoso en tres sitios —línea de log, `onError('PROFILE_SEED_FAILED')` para las superficies del operador, y un evento `connection_degraded`— y el alias sigue consumiendo con el perfil anterior.
 
+Una proyección **revisionada** (con marcador `CAUCE:REVISION-PERFIL`) cuyo texto difiere del que el adaptador generaría no es un fallo: la escribió el publicador durable y sólo él puede cambiarla, así que la siembra la deja intacta con estado `delegado-al-publicador` y la conexión no se degrada. Degradarla no arreglaba nada (el adaptador nunca la va a reescribir) y marcaba a cada alias claude tras cada recarga, porque el bloque lleva cuotas vivas que cambian entre la recarga y el siguiente hello.
+
 Dos detalles que sostienen esto:
 
 - `backoff.reset()` corre **antes** de sembrar. El backoff mide la salud del *transporte*, y un `hello_ack` ya la demuestra. Reseteándolo después, un fallo de siembra dejaba el retardo clavado en su techo mientras durase.

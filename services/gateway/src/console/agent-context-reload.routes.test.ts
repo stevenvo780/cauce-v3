@@ -57,7 +57,7 @@ interface RuntimeDouble {
 }
 
 function runtime(options: {
-  texto?: string; observedSha?: string | null; generation?: string | null;
+  texto?: string; observedSha?: string | null; generation?: string | null; intended?: string;
   aplicar?: () => Promise<readonly ProfileRuntimeAck[]>;
 } = {}): RuntimeDouble {
   const aplicaciones: string[] = [];
@@ -78,7 +78,10 @@ function runtime(options: {
       revision,
       documents: ['CLAUDE.md'],
       harness: 'claude',
-      preview: [],
+      preview: options.intended === undefined ? [] : [{
+        nombre: 'CLAUDE.md', politica: 'bloque-gestionado', texto: options.intended,
+        unidades: options.intended.length,
+      }],
       verification: {
         state: 'drifted',
         generation,
@@ -485,6 +488,25 @@ describe('the contamination guard quarantines the reload', () => {
     expect(response.statusCode).toBe(409);
     expect(response.json<{ error: string }>().error).toBe('context_contaminated');
     expect(doble.aplicaciones).toEqual([]);
+  });
+
+  it('re-materializes when only the alias own profile block drifted from the live expectation', async () => {
+    const doble = runtime({
+      observedSha: sha('c'),
+      texto: textoDe('Steven/argos').replace('perfil proyectado', 'perfil sembrado con cuotas de hoy'),
+      intended: textoDe('Steven/argos'),
+    });
+    vivo = servidor({
+      readRuntimeExpectation: async () => ({
+        generation: 'gen-viva',
+        documents: [{ name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('a') }],
+      }),
+    }, doble);
+    const response = await vivo.inject({
+      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(doble.aplicaciones).toEqual(['apply']);
   });
 
   /** Drift against a dead generation IS what a reload repairs; quarantining it strands the alias. */

@@ -58,6 +58,7 @@ interface RequestLike {
   method: string;
   headers: Record<string, string | string[] | undefined>;
   protocol: string;
+  raw: { socket: { authorized: boolean } };
 }
 
 function buildRequest(overrides: {
@@ -67,6 +68,8 @@ function buildRequest(overrides: {
   protocol?: string | undefined;
   origin?: string | undefined;
   secFetchSite?: string | undefined;
+  cookie?: string | undefined;
+  clientCertVerified?: boolean | undefined;
 }): FastifyRequest {
   const request: RequestLike = {
     url: overrides.url ?? '/v3/console/terminal/sessions',
@@ -75,8 +78,10 @@ function buildRequest(overrides: {
       host: overrides.host ?? 'console.example.test',
       ...(overrides.origin === undefined ? {} : { origin: overrides.origin }),
       ...(overrides.secFetchSite === undefined ? {} : { 'sec-fetch-site': overrides.secFetchSite }),
+      ...(overrides.cookie === undefined ? {} : { cookie: overrides.cookie }),
     },
     protocol: overrides.protocol ?? 'https',
+    raw: { socket: { authorized: overrides.clientCertVerified ?? false } },
   };
   return request as unknown as FastifyRequest;
 }
@@ -342,5 +347,46 @@ describe('createConsoleSecurityHook: allowedOrigins vacío (default = mismo Host
       error: 'forbidden',
       message: 'cross-origin console request rejected',
     });
+  });
+});
+
+describe('createConsoleSecurityHook: llamador máquina con certificado cliente', () => {
+  const SELF_RELOAD = '/v3/console/agents/zeus/context/reload';
+  const SAME_ORIGIN_REQUIRED = {
+    error: 'forbidden',
+    message: 'same-origin Origin is required for console mutations',
+  };
+
+  it('deja pasar un POST sin Origin cuando el certificado cliente está verificado y no hay cookie', async () => {
+    const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+    const { reply, captured } = buildReply();
+    await hook(
+      buildRequest({ url: SELF_RELOAD, method: 'POST', clientCertVerified: true }),
+      asReply(reply),
+    );
+    expect(captured.statusCode).toBe(200);
+    expect(captured.sent).toBeUndefined();
+  });
+
+  it('sigue exigiendo Origin si la petición con certificado trae cookie: es un navegador tras el proxy', async () => {
+    const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+    const { reply, captured } = buildReply();
+    await hook(
+      buildRequest({ url: SELF_RELOAD, method: 'POST', clientCertVerified: true, cookie: 'cauce_session=abc' }),
+      asReply(reply),
+    );
+    expect(captured.statusCode).toBe(403);
+    expect(captured.sent).toEqual(SAME_ORIGIN_REQUIRED);
+  });
+
+  it('sigue exigiendo Origin si el certificado cliente no está verificado', async () => {
+    const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+    const { reply, captured } = buildReply();
+    await hook(
+      buildRequest({ url: SELF_RELOAD, method: 'POST', clientCertVerified: false }),
+      asReply(reply),
+    );
+    expect(captured.statusCode).toBe(403);
+    expect(captured.sent).toEqual(SAME_ORIGIN_REQUIRED);
   });
 });

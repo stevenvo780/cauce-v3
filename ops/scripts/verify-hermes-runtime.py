@@ -158,14 +158,14 @@ def verify(arguments: argparse.Namespace) -> None:
         fail("Hermes uv or uv.lock digest differs")
 
     head = subprocess.run(
-        ["git", "-C", os.fspath(source), "rev-parse", "HEAD"],
+        ["git", "--no-optional-locks", "-C", os.fspath(source), "rev-parse", "HEAD"],
         capture_output=True,
         text=True,
         check=False,
         timeout=15,
     )
     dirty = subprocess.run(
-        ["git", "-C", os.fspath(source), "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching"],
+        ["git", "--no-optional-locks", "-C", os.fspath(source), "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching"],
         capture_output=True,
         text=True,
         check=False,

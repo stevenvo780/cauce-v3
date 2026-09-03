@@ -26,6 +26,7 @@ type ResultadoDeFichero =
   | { readonly nombre: string; readonly estado: "ya-estaba" }
   /** Existing block belongs to another alias; not overwritten. */
   | { readonly nombre: string; readonly estado: "ocupado-por-otro-alias" }
+  | { readonly nombre: string; readonly estado: "delegado-al-publicador" }
   | { readonly nombre: string; readonly estado: "no-se-pudo-escribir"; readonly motivo: string };
 
 export type ResultadoDeLaSiembra =
@@ -540,14 +541,23 @@ export function sembrarPerfilDelArnes(
     };
   }
 
-  if (revisionNativa !== undefined
-    && generados.some((fichero) => fichero.escribir || !existentes.has(fichero.nombre))) {
+  if (revisionNativa !== undefined && generados.some((fichero) => !existentes.has(fichero.nombre))) {
+    const faltan = generados.filter((fichero) => !existentes.has(fichero.nombre)).map((f) => f.nombre);
     return {
       estado: "hecho",
       ficheros: generados.map((fichero) => ({
         nombre: fichero.nombre,
         estado: "no-se-pudo-escribir" as const,
-        motivo: "la proyección revisionada difiere; sólo el publicador durable puede cambiarla",
+        motivo: `lote revisionado incompleto (falta ${faltan.join(", ")}); sólo el publicador durable puede completarlo`,
+      })),
+    };
+  }
+  if (revisionNativa !== undefined && generados.some((fichero) => fichero.escribir)) {
+    return {
+      estado: "hecho",
+      ficheros: generados.map((fichero) => ({
+        nombre: fichero.nombre,
+        estado: "delegado-al-publicador" as const,
       })),
     };
   }
@@ -632,7 +642,10 @@ export function resumenDeLaSiembra(resultado: ResultadoDeLaSiembra): string {
   }
   const partes = [...cuenta].map(([estado, n]) => `${estado}=${String(n)}`).join(" ");
   const motivos = [...new Set(resultado.ficheros.flatMap((fichero) => (
-    fichero.estado === "no-se-pudo-escribir" ? [`${fichero.nombre}: ${fichero.motivo}`] : []
+    fichero.estado === "no-se-pudo-escribir" ? [`${fichero.nombre}: ${fichero.motivo}`]
+      : fichero.estado === "delegado-al-publicador"
+        ? [`${fichero.nombre}: la proyección revisionada difiere; sólo el publicador durable puede cambiarla`]
+        : []
   )))];
   return motivos.length === 0
     ? `siembra del perfil: ${partes}`

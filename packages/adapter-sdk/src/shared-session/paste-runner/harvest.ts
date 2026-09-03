@@ -193,6 +193,39 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           }
         }
 
+        const localized = injected;
+        if (localized !== undefined && Date.now() - lastActivityAt >= quietMs) {
+          const idle = await beforeAbort(
+            () => this.paneIsIdle(activeIdentity, request.signal),
+            request.signal,
+          );
+          if (idle.aborted) continue;
+          if (idle.value) {
+            const rescued = await beforeAbort(
+              () => this.lastEnvelope(baseline, localized, correlationId),
+              request.signal,
+            );
+            if (rescued.aborted) continue;
+            const rescuedEnvelope = rescued.value;
+            if (rescuedEnvelope !== undefined) {
+              const harvested = await beforeAbort(
+                () => this.harvested(rescuedEnvelope, localized.sessionId, generating),
+                request.signal,
+              );
+              if (harvested.aborted) continue;
+              return { result: harvested.value, terminalBoundary: true };
+            }
+            await this.disarmPendingQuarantine(pending);
+            return {
+              result: result({
+                timedOut: true,
+                stderr: "el turno correlacionado terminó sin sobre y el panel volvió al prompt libre;"
+                  + " el estado de ejecución es ambiguo y el panel queda utilizable",
+              }),
+              terminalBoundary: false,
+            };
+          }
+        }
         if (injected === undefined && !started && port.startedTurn !== undefined
           && Date.now() >= injectDeadline) {
           return {
