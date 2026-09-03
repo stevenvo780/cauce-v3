@@ -539,7 +539,7 @@ services:
         condition: service_healthy
       outbox-metrics:
         condition: service_healthy
-    networks: [backend]
+    networks: [backend, edge]
 
 secrets:
   database_url:
