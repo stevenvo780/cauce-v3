@@ -25,6 +25,8 @@ export interface TerminalTarget {
   /** Other agents living in the same container: a shell here reaches all of them. */
   shares_container_with: TerminalFleetIdentity[];
   modes: string[];
+  /** Subset of `modes` whose STDIN reaches the pty. An older gateway omits it; never inferred. */
+  writable_modes?: string[];
   pty_state: PtyTargetState;
   last_seen: string | null;
   authorized: boolean;
@@ -270,8 +272,9 @@ export function readTerminalTarget(value: unknown): TerminalTarget | undefined {
   if (!record.tenant_id.trim() || !record.alias.trim()) return undefined;
   const cohort = exactIdentityList(record.shares_container_with, record.tenant_id);
   const modes = exactStringList(record.modes);
+  const escribibles = record.writable_modes === undefined ? [] : exactStringList(record.writable_modes);
   const ptyState = exactTargetState(record.pty_state);
-  if (cohort === undefined || modes === undefined || ptyState === undefined
+  if (cohort === undefined || modes === undefined || escribibles === undefined || ptyState === undefined
       || typeof record.authorized !== 'boolean'
       || typeof record.reason !== 'string' || !record.reason.trim()
       || cohort.some((member) => member.tenant_id === record.tenant_id && member.alias === record.alias)) {
@@ -285,6 +288,7 @@ export function readTerminalTarget(value: unknown): TerminalTarget | undefined {
     harness: safeText(record.harness),
     shares_container_with: cohort,
     modes,
+    writable_modes: escribibles.filter((mode) => modes.includes(mode)),
     pty_state: ptyState,
     last_seen: safeText(record.last_seen),
     // Fail closed: only an explicit boolean true authorises a destination.

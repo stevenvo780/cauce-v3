@@ -4,7 +4,9 @@ import {
   PTY_HANDSHAKE_TIMEOUT_MS,
   PTY_RECONNECT_DELAYS_MS,
   PTY_VIEWER_HEARTBEAT_MS,
+  avisoDeEntradaRechazada,
   claimReady,
+  geometriaRemota,
   ptyCloseMessage,
   websocketUrl,
   type PtyEntry,
@@ -108,6 +110,18 @@ function handleControlFrame(
     const level = typeof payload.level === 'string' ? payload.level : 'info';
     const message = typeof payload.message === 'string' ? payload.message : 'Aviso sin texto del relay.';
     publish({ notices: [...entry.view.notices, { level, message }] });
+    return;
+  }
+  if (payload.type === 'input_refused') {
+    publish({ notices: [...entry.view.notices, { level: 'warn', message: avisoDeEntradaRechazada(payload.reason) }] });
+    return;
+  }
+  if (payload.type === 'geometry') {
+    const remota = geometriaRemota(payload);
+    if (remota === undefined) return;
+    entry.columnasRemotas = remota.cols;
+    publish({ columnasRemotas: remota.cols });
+    onReady();
     return;
   }
   if (payload.type === 'closed') {

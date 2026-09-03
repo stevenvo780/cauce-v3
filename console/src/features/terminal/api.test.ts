@@ -120,6 +120,11 @@ it.each([
     harness: 'claude-code', shares_container_with: [], modes: ['shell', null], pty_state: 'online',
     last_seen: null, authorized: true, reason: 'Autorizado.',
   }]],
+  ['a malformed writable-modes list', [{
+    tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw',
+    harness: 'claude-code', shares_container_with: [], modes: ['shell'], writable_modes: ['shell', 7],
+    pty_state: 'online', last_seen: null, authorized: true, reason: 'Autorizado.',
+  }]],
 ])('turns the whole target inventory UNKNOWN when it contains %s instead of hiding one row', async (_case, items) => {
   server.use(http.get('*/v3/console/terminal/targets', () => HttpResponse.json({ items })));
 
@@ -127,6 +132,20 @@ it.each([
 
   expect(snapshot.items).toBeNull();
   expect(snapshot.reason).toMatch(/parcial, duplicado o mal formado/i);
+});
+
+it('never infers a writable mode: an older gateway that omits `writable_modes` publishes none', async () => {
+  server.use(http.get('*/v3/console/terminal/targets', () => HttpResponse.json({
+    items: [
+      { tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw', harness: 'claude-code', shares_container_with: [], modes: ['shell', 'harness_rw'], pty_state: 'online', last_seen: null, authorized: true, reason: 'Autorizado.' },
+      { tenant_id: 'Steven', alias: 'zeus', container: 'ws-zeus', runtime_user: 'dev', harness: 'claude-code', shares_container_with: [], modes: ['harness', 'harness_rw'], writable_modes: ['harness_rw', 'shell'], pty_state: 'online', last_seen: null, authorized: true, reason: 'Autorizado.' },
+    ],
+  })));
+
+  const snapshot = await listTerminalTargets();
+
+  expect(snapshot.items?.[0].writable_modes).toEqual([]);
+  expect(snapshot.items?.[1].writable_modes).toEqual(['harness_rw']);
 });
 
 it.each(['GET', 'POST', 'DELETE'] as const)(

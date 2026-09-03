@@ -62,8 +62,8 @@ describe('los códigos de denegación del gateway', () => {
     ...unionDelGateway(fuente, 'TerminalConflict'),
   ];
 
-  it('el gateway declara los quince que esta consola cree conocer (si no, alguien agregó una puerta)', () => {
-    expect(declarados.length).toBeGreaterThanOrEqual(15);
+  it('el gateway declara los dieciséis que esta consola cree conocer (si no, alguien agregó una puerta)', () => {
+    expect(declarados.length).toBeGreaterThanOrEqual(16);
     for (const codigo of declarados) {
       expect(
         TERMINAL_DENIAL_CODES,

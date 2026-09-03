@@ -20,6 +20,7 @@ export interface PtySessionView {
   seguirAlFinal: boolean;
   /** Columns that actually fit on this screen. */
   columnas?: number;
+  columnasRemotas?: number;
   /** Spent single-use ticket. Never returns to false: a reconnection resumes the same PTY. */
   ticketConsumido?: boolean;
 }
@@ -41,11 +42,24 @@ export const PTY_CLOSE_MESSAGES: Readonly<Record<number, string>> = {
   4404: 'El agente PTY no está conectado.',
   4408: 'Sesión cerrada por inactividad.',
   4409: 'Ya hay una sesión abierta en ese contenedor.',
+  4410: 'El control de la TUI dejó de ser tuyo: el arriendo se soltó y el bus volvió a entregarle a este alias.',
   4413: 'Sesión cortada por exceso de salida.',
   4414: 'Sesión cerrada por exceso de entrada.',
   4415: 'El navegador no alcanzó a consumir la salida del terminal.',
   4423: 'Venció el tiempo máximo de sesión.',
 };
+
+export const MOTIVOS_DE_ENTRADA_RECHAZADA: Readonly<Record<string, string>> = {
+  governance_write_in_flight: 'No se envió: el agente está reescribiendo sus ficheros de gobierno y retiene el teclado hasta terminar.',
+  pane_input_barrier: 'No se envió: hay una pegada en vuelo en el panel del alias; reintentá cuando termine.',
+  tmux_prefix: 'No se envió: la ráfaga llevaba el prefijo de tmux del alias y el agente no lo deja pasar.',
+};
+
+export function avisoDeEntradaRechazada(reason: unknown): string {
+  const motivo = typeof reason === 'string' ? reason : '';
+  return MOTIVOS_DE_ENTRADA_RECHAZADA[motivo]
+    ?? `No se envió: el agente PTY retiene el teclado${motivo ? ` (${motivo})` : ''}. La sesión sigue abierta.`;
+}
 
 export function ptyCloseMessage(code?: number, reason?: string | null): string {
   const mapped = code === undefined ? undefined : PTY_CLOSE_MESSAGES[code];
@@ -82,6 +96,13 @@ export const PTY_VIEWER_HEARTBEAT_MS = 30_000;
 export const PTY_HANDSHAKE_TIMEOUT_MS = 10_000;
 export const PTY_RECONNECT_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;
 export const UTF8_ENCODER = new TextEncoder();
+
+export function geometriaRemota(payload: Readonly<Record<string, unknown>>): { cols: number; rows: number } | undefined {
+  const { cols, rows } = payload;
+  if (typeof cols !== 'number' || !Number.isSafeInteger(cols) || cols < 1 || cols > MAX_COLUMNAS_REMOTAS) return undefined;
+  if (typeof rows !== 'number' || !Number.isSafeInteger(rows) || rows < 1 || rows > MAX_FILAS_REMOTAS) return undefined;
+  return { cols, rows };
+}
 
 function decimalPositivo(value: string): boolean {
   if (value.length === 0 || value.length > 3 || value.startsWith('0')) return false;
@@ -172,6 +193,8 @@ export interface PtyEntry {
   heartbeatTimer?: number;
   resizeObserver?: ResizeObserver;
   geometriaDicha?: { cols: number; rows: number };
+  columnasRemotas?: number;
+  bloqueoEntrada?: () => void;
   pegadoAbajo: boolean;
   disposers: (() => void)[];
   onClosed?: (view: PtySessionView) => void;

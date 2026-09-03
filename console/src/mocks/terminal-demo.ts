@@ -20,7 +20,7 @@
  */
 import { http, HttpResponse } from 'msw';
 /* The constant, not a copy of the literal: that copy is exactly what was wrong (see below). */
-import { LIVE_TUI_MODE } from '../features/terminal/fleet';
+import { LIVE_TUI_MODE, WRITABLE_TUI_MODE } from '../features/terminal/fleet';
 import { mockTerminalGrant } from './terminal-ticket';
 
 const RUTA_WS = '/v3/console/terminal/stream';
@@ -57,7 +57,8 @@ export const terminalDemoHandlers = [
        * viewing of the TUI the agent already has painted— was never tested, neither by hand nor
        * with the harness. It was discovered by measuring: the probe asked for TUI and mounted nothing.
        */
-      modes: ['shell', LIVE_TUI_MODE],
+      modes: ['shell', LIVE_TUI_MODE, WRITABLE_TUI_MODE],
+      writable_modes: ['shell', WRITABLE_TUI_MODE],
       pty_state: 'online',
       last_seen: new Date().toISOString(),
       authorized: true,

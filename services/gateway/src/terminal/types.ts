@@ -111,7 +111,8 @@ export type TerminalConflict =
   | 'container_busy'
   | 'request_conflict'
   | 'control_held'
-  | 'extension_exhausted';
+  | 'extension_exhausted'
+  | 'stale_terminal_owner';
 
 export interface TerminalSessionRow {
   id: string;

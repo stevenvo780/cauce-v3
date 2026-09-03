@@ -1,8 +1,6 @@
 /**
- * PTY session manager. It lives OUTSIDE React on purpose.
- *
- * A terminal is not view state: unmounting the component must not close the socket
- * nor drop the scrollback.
+ * PTY session manager, OUTSIDE React on purpose: a terminal is not view state, so unmounting the
+ * component must neither close the socket nor drop the scrollback.
  */
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
@@ -81,13 +79,14 @@ function mantenerElFinal(entry: PtyEntry): void {
 
 function ajustarGeometria(entry: PtyEntry): void {
   let cuerpo = CUERPO_BASE;
+  const objetivo = Math.max(COLUMNAS_MINIMAS, entry.columnasRemotas ?? 0);
   try {
     for (let intento = 0; intento < 3; intento += 1) {
       entry.terminal.options.fontSize = cuerpo;
       const propuesta = entry.fitAddon.proposeDimensions();
       if (!propuesta || !Number.isFinite(propuesta.cols) || propuesta.cols <= 0) break;
-      if (propuesta.cols >= COLUMNAS_MINIMAS || cuerpo <= CUERPO_MINIMO) break;
-      const siguiente = Math.max(CUERPO_MINIMO, Math.floor((cuerpo * propuesta.cols) / COLUMNAS_MINIMAS));
+      if (propuesta.cols >= objetivo || cuerpo <= CUERPO_MINIMO) break;
+      const siguiente = Math.max(CUERPO_MINIMO, Math.floor((cuerpo * propuesta.cols) / objetivo));
       if (siguiente >= cuerpo) break;
       cuerpo = siguiente;
     }
@@ -102,18 +101,46 @@ function ajustarGeometria(entry: PtyEntry): void {
 function sendResize(entry: PtyEntry): void {
   ajustarGeometria(entry);
   mantenerElFinal(entry);
-  if (entry.socket?.readyState !== WebSocket.OPEN) return;
+  // Observation resizes nobody: the agent attaches with `-f ignore-size` and the frame is noise.
+  if (entry.readOnly || entry.socket?.readyState !== WebSocket.OPEN) return;
   const { cols, rows } = entry.terminal;
   if (entry.geometriaDicha?.cols === cols && entry.geometriaDicha.rows === rows) return;
   entry.geometriaDicha = { cols, rows };
   entry.socket.send(JSON.stringify({ type: 'resize', cols, rows }));
 }
 
-/** Creates the session once. Calling it again for a live session is a no-op (tickets are single-use). */
+const EVENTOS_DE_ENTRADA = ['beforeinput', 'input', 'paste', 'drop', 'compositionstart', 'compositionupdate', 'compositionend'] as const;
+
+/** `harness_rw` starts without the keyboard and gains it on the take: the guard is re-armable. */
+function aplicarSoloLectura(entry: PtyEntry, soloLectura: boolean): void {
+  entry.readOnly = soloLectura;
+  entry.terminal.options.cursorBlink = !soloLectura;
+  entry.terminal.attachCustomKeyEventHandler(() => !soloLectura);
+  if (soloLectura === (entry.bloqueoEntrada !== undefined)) return;
+  if (!soloLectura) {
+    entry.bloqueoEntrada?.();
+    entry.bloqueoEntrada = undefined;
+    return;
+  }
+  const bloquear = (event: Event): void => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  for (const tipo of EVENTOS_DE_ENTRADA) entry.container.addEventListener(tipo, bloquear, true);
+  entry.bloqueoEntrada = () => {
+    for (const tipo of EVENTOS_DE_ENTRADA) entry.container.removeEventListener(tipo, bloquear, true);
+  };
+}
+
+/** Creates the session once. Calling it again for a live session only re-reads its read-only bit. */
 export function ensurePtySession(options: PtySessionOptions): void {
   const existing = entries.get(options.sessionId);
   if (existing) {
     existing.onClosed = options.onClosed;
+    if (existing.readOnly !== (options.readOnly === true)) {
+      aplicarSoloLectura(existing, options.readOnly === true);
+      sendResize(existing);
+    }
     return;
   }
 
@@ -155,18 +182,8 @@ export function ensurePtySession(options: PtySessionOptions): void {
     options,
   };
 
-  if (entry.readOnly) {
-    terminal.attachCustomKeyEventHandler(() => false);
-    const bloquearEntradaHumana = (event: Event): void => {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    };
-    const eventos = ['beforeinput', 'input', 'paste', 'drop', 'compositionstart', 'compositionupdate', 'compositionend'] as const;
-    for (const tipo of eventos) {
-      container.addEventListener(tipo, bloquearEntradaHumana, true);
-      entry.disposers.push(() => { container.removeEventListener(tipo, bloquearEntradaHumana, true); });
-    }
-  }
+  aplicarSoloLectura(entry, options.readOnly === true);
+  entry.disposers.push(() => { entry.bloqueoEntrada?.(); });
   entries.set(options.sessionId, entry);
   pintarPiel(entry);
 

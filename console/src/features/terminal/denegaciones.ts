@@ -19,6 +19,7 @@ export type TerminalDenialCode =
   | 'writable_tui_disabled'
   | 'control_held'
   | 'extension_exhausted'
+  | 'stale_terminal_owner'
   | 'writable_requires_attribution'
   | 'writable_requires_named_operator'
   | 'agent_offline'
@@ -118,6 +119,14 @@ export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, Termina
       + 'ventana sobre ese techo. No es tu permiso: es el tope de duración del gateway.',
     quienLoLevanta: 'Vos: cerrá la sesión y abrí una nueva. Si el techo es corto para el trabajo, '
       + `pedile a ${DUENO_DEL_BUS} que suba el tope total.`,
+  },
+  stale_terminal_owner: {
+    titulo: 'Esta pestaña ya no es la dueña de la sesión, o la sesión todavía no está enganchada',
+    porQue: 'El gateway sólo acepta escribir sobre una sesión viva, consumida por el relay y con la misma '
+      + 'capacidad de dueño que emitió a esta pestaña. O el relay aún no redimió el ticket, o otra '
+      + 'pestaña rotó la propiedad, o la sesión ya se cerró.',
+    quienLoLevanta: 'Vos: esperá a que la terminal muestre la sesión enganchada y reintentá; si otra pestaña '
+      + 'la tomó, cerrá esta y seguí desde aquella.',
   },
   writable_requires_attribution: {
     titulo: 'Escribir en una TUI exige una persona con nombre',

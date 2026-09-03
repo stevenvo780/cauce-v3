@@ -30,13 +30,19 @@ import {
   type TerminalSessionGrant,
   type TerminalTargetsSnapshot,
 } from './api';
+import {
+  prorrogarSesion,
+} from './api-control';
 import { LEASE_LABEL, LEASE_TONE } from '../../vocabulario';
 import {
   LIVE_TUI_LABELS,
   LIVE_TUI_MODE,
+  ofreceTuiEscribible,
   SHELL_MODE,
   TERMINAL_ACCESS_LABELS,
+  terminalEsSoloLectura,
   terminalTargetForAgent,
+  WRITABLE_TUI_MODE,
   type FleetAgent,
 } from './fleet';
 import {
@@ -53,6 +59,7 @@ import {
   transcriptForSession,
   type OperatorSession,
 } from './session';
+import { ControlDeTui } from './ControlDeTui';
 import { TerminalTranscript } from './TerminalTranscript';
 import { NegativaPty, PtySessionDialog } from './PtySessionDialog';
 import { PtySessionBar } from './PtySessionBar';
@@ -92,6 +99,9 @@ export function SessionStage({ session, sessionToken, agents, access, capability
   const [closingChannel, setClosingChannel] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [showInspector, setShowInspector] = useState(false);
+  const [controlSostenido, setControlSostenido] = useState(false);
+  const [prorrogando, setProrrogando] = useState(false);
+  const [ventanaHasta, setVentanaHasta] = useState<string>();
   /** Panel that already tried to open its TUI on its own. It is per panel and is not retried. */
   const autoOpenedRef = useRef<string>(undefined);
   /** Synchronous POST fence: auto-open and a click both enter before `setRequesting` renders. */
@@ -153,6 +163,9 @@ export function SessionStage({ session, sessionToken, agents, access, capability
 
   const targetMode = grant ? grant.target.mode : liveSession.channelMode;
   const channelIsLiveTui = targetMode === LIVE_TUI_MODE;
+  const escrituraDisponible = (liveTui.status === 'available' || liveTui.status === 'no_tui')
+    && ofreceTuiEscribible(channelTarget);
+  const soloLectura = terminalEsSoloLectura(targetMode, controlSostenido);
 
   const requestChannelRef = useRef(requestChannel);
   requestChannelRef.current = requestChannel;
@@ -168,9 +181,12 @@ export function SessionStage({ session, sessionToken, agents, access, capability
     void requestChannelRef.current(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
   }, [closedChannels, grants, liveSession.agent.alias, liveSession.id, liveSession.liveTuiAttempted, liveTui.enabled]);
 
-  async function requestChannel(reason: string, mode: string) {
-    if (mode === LIVE_TUI_MODE ? !liveTui.enabled : !channel.enabled) return;
-    if (requestAttemptRef.current !== undefined) return;
+  async function requestChannel(reason: string, mode: string): Promise<TerminalSessionGrant | undefined> {
+    const permitido = mode === LIVE_TUI_MODE
+      ? liveTui.enabled
+      : mode === WRITABLE_TUI_MODE ? escrituraDisponible : channel.enabled;
+    if (!permitido) return undefined;
+    if (requestAttemptRef.current !== undefined) return undefined;
     const attempt = { sequence: ++requestSequenceRef.current };
     requestAttemptRef.current = attempt;
     const ownsAttempt = () => mountedRef.current && requestAttemptRef.current === attempt;
@@ -181,7 +197,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
       if (current !== undefined && (current.target.mode !== mode || closedChannels[liveSession.id])) {
         await onReleaseChannel(liveSession.id);
       }
-      if (!ownsAttempt()) return;
+      if (!ownsAttempt()) return undefined;
       const outcome = await onRequestGrant(liveSession.id, sessionToken, {
         tenant_id: liveSession.agent.tenantId,
         alias: liveSession.agent.alias,
@@ -190,10 +206,12 @@ export function SessionStage({ session, sessionToken, agents, access, capability
         cols: DEFAULT_COLS,
         rows: DEFAULT_ROWS,
       });
-      if (!ownsAttempt() || !outcome.adopted) return;
+      if (!ownsAttempt() || !outcome.adopted) return undefined;
       setShowPtyDialog(false);
+      setVentanaHasta(undefined);
+      return outcome.grant;
     } catch (error) {
-      if (!ownsAttempt()) return;
+      if (!ownsAttempt()) return undefined;
       const explicada = explicarDenegacionPty({
         texto: error instanceof Error ? error.message : undefined,
         estado: error instanceof TerminalApiError ? error.status : undefined,
@@ -206,9 +224,28 @@ export function SessionStage({ session, sessionToken, agents, access, capability
         onReconciliarPlazas('invalid_grant_receipt');
       }
       if (mode === LIVE_TUI_MODE) onUpdate({ ...liveSession, liveTuiAttempted: true });
+      return undefined;
     } finally {
       if (requestAttemptRef.current === attempt) requestAttemptRef.current = undefined;
       if (mountedRef.current) setRequesting(false);
+    }
+  }
+
+  async function prorrogar() {
+    if (!grant || prorrogando) return;
+    setProrrogando(true);
+    setRequestError(undefined);
+    try {
+      const prorroga = await prorrogarSesion(grant.session_id, grant, api);
+      setVentanaHasta(prorroga.expires_at);
+    } catch (error) {
+      setRequestError(explicarDenegacionPty({
+        texto: error instanceof Error ? error.message : undefined,
+        estado: error instanceof TerminalApiError ? error.status : undefined,
+        codigo: error instanceof TerminalApiError ? error.code : undefined,
+      }));
+    } finally {
+      if (mountedRef.current) setProrrogando(false);
     }
   }
 
@@ -327,16 +364,20 @@ export function SessionStage({ session, sessionToken, agents, access, capability
         )}
 
         {liveSession.mode === 'pty' ? (
-           channel.enabled && grant && channel.websocketPath ? (
+          <>
+            {channel.enabled && grant && channel.websocketPath ? (
              <div className="terminal-pty-pane">
                <PtySessionBar
                  agent={liveSession.agent}
                  grant={grant}
                  secondsLeft={ptySecondsLeft(grant.expires_at, now)}
-                 readOnly={channelIsLiveTui}
+                 readOnly={soloLectura}
                  ticketConsumed={channelView?.ticketConsumido === true}
                  feedEnPausa={ptyChannelLive}
                  closing={closingChannel}
+                 ventanaHasta={ventanaHasta}
+                 prorrogando={prorrogando}
+                 onProrrogar={() => void prorrogar()}
                  onClose={() => void releaseChannel()}
                />
                <Suspense fallback={<LoadingState label="Cargando Xterm…" />}>
@@ -344,7 +385,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
                    websocketPath={grant.websocket_path || channel.websocketPath}
                    sessionId={grant.session_id}
                    ticket={grant.ticket}
-                   readOnly={channelIsLiveTui}
+                   readOnly={soloLectura}
                    onClosed={() => { onChannelClosed(liveSession.id); }}
                    onRequestNewSession={() => { void pedirCanalNuevo(); }}
                  />
@@ -360,7 +401,20 @@ export function SessionStage({ session, sessionToken, agents, access, capability
                 ? 'El canal se cerró o todavía no se pidió. Abrí la TUI en vivo o una shell nueva desde los botones de arriba, o volvé al feed.'
                 : channelReason}</p>
             </div>
-          )
+            )}
+            {/* OUTSIDE the grant branch: taking the control swaps the read-only session for a
+                writable one, and a control that unmounted in that gap would lose the hold it
+                just took — and with it the only thing that can give the alias its queue back. */}
+            <ControlDeTui
+              alias={liveSession.agent.alias}
+              grant={grant}
+              puedeEscribir={escrituraDisponible}
+              codigoDeCierre={channelView?.closeCode}
+              pidiendoSesion={requesting}
+              onAbrirEscritura={(razon) => requestChannelRef.current(razon, WRITABLE_TUI_MODE)}
+              onControlCambia={setControlSostenido}
+            />
+          </>
         ) : (
           <>
             {messages.loading && !messages.data ? <LoadingState label="Abriendo feed durable de mensajes…" /> : (

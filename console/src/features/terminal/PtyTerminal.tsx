@@ -84,20 +84,18 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly
         ) : null}
       </div>
       {/*
-        THE NARROW MIRROR MUST NOT GO SILENT. The PTY agent hooks into the alias's tmux with
-        `attach-session -r -f ignore-size`: the remote window keeps ITS width no matter what
-        (and good thing — resizing the tmux of an agent that is working would be touching its
-        desktop). If fewer columns fit here than there, what overflows to the right is not seen.
-        Measured at 360x800 before this: `"tenan`, `"socr`, `mes` — lines cut against the edge,
-        no scrollbar and not a word saying so. That is a view that lies.
+        THE NARROW MIRROR MUST NOT GO SILENT. The agent now MEASURES its window and sends it in a
+        GEOMETRY frame, so the console shrinks the body until that exact width fits instead of
+        aiming at a hardcoded 80. This sign is what is left when not even the smallest body fits:
+        what overflows to the right is not seen, and a view that hides it lies.
       */}
-      {view.columnas !== undefined && view.columnas < COLUMNAS_MINIMAS ? (
+      {view.columnas !== undefined && view.columnas < (view.columnasRemotas ?? COLUMNAS_MINIMAS) ? (
         <p
           className="pty-estrecho"
           role="status"
-          title={`El agente PTY se engancha a la tmux del alias en solo lectura y sin participar del tamaño de la ventana (attach-session -r -f ignore-size), así que la ventana remota conserva su ancho y no se adapta a esta pantalla. Caben ${String(view.columnas)} columnas. Girá el teléfono o abrila en una pantalla más ancha.`}
+          title={`La ventana del agente mide ${String(view.columnasRemotas ?? COLUMNAS_MINIMAS)} columnas y acá entran ${String(view.columnas)} incluso con el cuerpo más chico. Girá el teléfono o abrila en una pantalla más ancha.`}
         >
-          Caben {String(view.columnas)} columnas: la TUI del agente es más ancha y se corta por la derecha.
+          Caben {String(view.columnas)} columnas y la TUI del agente mide {String(view.columnasRemotas ?? COLUMNAS_MINIMAS)}: se corta por la derecha.
         </p>
       ) : null}
       <div className="pty-viewport">

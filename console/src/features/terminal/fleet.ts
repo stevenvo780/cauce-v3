@@ -236,6 +236,29 @@ export const LIVE_TUI_MODE = 'harness';
 /** New shell mode. Writes: still requires a hand-written reason. */
 export const SHELL_MODE = 'shell';
 
+/** Writable TUI: the SAME tmux the agent is drawing, with the keyboard attached to it. */
+export const WRITABLE_TUI_MODE = 'harness_rw';
+
+/** Writable modes as PUBLISHED by the gateway. An older gateway publishes none, which is a no. */
+export function modosEscribiblesPublicados(target: TerminalTarget | undefined): string[] {
+  return target?.writable_modes ?? [];
+}
+
+/** Does this destination offer the writable TUI? Never inferred from the mode list. */
+export function ofreceTuiEscribible(target: TerminalTarget | undefined): boolean {
+  return modosEscribiblesPublicados(target).includes(WRITABLE_TUI_MODE);
+}
+
+/**
+ * Read-only is a function of the MODE and of the CONTROL, not of the mode alone: `harness` never
+ * writes, `harness_rw` writes only while this browser holds the control, and `shell` is its own.
+ */
+export function terminalEsSoloLectura(mode: string | undefined, controlSostenido: boolean): boolean {
+  if (mode === LIVE_TUI_MODE) return true;
+  if (mode === WRITABLE_TUI_MODE) return !controlSostenido;
+  return false;
+}
+
 export type LiveTuiStatus = 'available' | 'no_tui' | 'blocked' | 'unknown';
 
 interface LiveTuiResolution {

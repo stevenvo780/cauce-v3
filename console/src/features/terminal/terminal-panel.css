@@ -311,6 +311,20 @@
 .pty-bar-countdown[data-expiring="true"] strong { color: var(--amber); }
 .pty-bar-close { margin-left: auto; }
 
+/* Taking and giving back the keyboard of a writable TUI. The consequence for the bus is stated
+   ABOVE the reason field on purpose: it is what the operator has to weigh before typing. */
+.pty-control { display: grid; gap: var(--space-2); margin-bottom: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm, 8px); background: var(--terminal-raised); font-size: var(--tipo-apunte); }
+.pty-control[data-sostenido] { border-color: var(--amber); }
+.pty-control-consecuencia { display: flex; align-items: start; gap: var(--space-2); margin: 0; padding: var(--space-2); border-radius: var(--radius-sm, 8px); background: var(--amber-dim); color: var(--amber); font-size: var(--tipo-apunte); line-height: 1.55; }
+.pty-control-consecuencia svg { flex: none; margin-top: 2px; }
+.pty-control-estado { margin: 0; color: var(--text); font-size: var(--tipo-rotulo); line-height: 1.5; }
+.pty-control-motivo { display: grid; gap: var(--space-1); color: var(--muted); font-size: var(--tipo-apunte); }
+.pty-control-motivo textarea { width: 100%; padding: var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm, 8px); background: var(--surface); color: var(--text); font-family: inherit; font-size: var(--tipo-rotulo); line-height: 1.5; resize: vertical; }
+.pty-control-pista { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); }
+.pty-control-perdido { margin: 0; color: var(--amber); font-size: var(--tipo-apunte); line-height: 1.5; }
+.pty-control-tomar, .pty-control-devolver { justify-self: start; }
+.pty-control .pty-negativa { margin: 0; }
+
 /* Channel surface. */
 .pty-mount { min-height: 120px; }
 .pty-render-error { margin: 0; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); background: var(--amber-dim); color: var(--amber); font-size: var(--tipo-apunte); }

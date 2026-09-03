@@ -150,7 +150,7 @@ export function sessionDeliveries(items: TranscriptItem[]): DeliveryView[] {
 }
 
 /** A PTY grant is worthless without a written justification: it is what lands in the audit row. */
-const PTY_REASON_MIN_LENGTH = 8;
+export const PTY_REASON_MIN_LENGTH = 8;
 export const PTY_REASON_MAX_LENGTH = 280;
 
 /**

@@ -28,7 +28,7 @@ const TUI_FRAME = '[2J[H> zeus esta corriendo pnpm test --run\r\n  esc to inte
 function target(overrides: Partial<TerminalTarget> & Pick<TerminalTarget, 'tenant_id' | 'alias'>): TerminalTarget {
   return {
     container: 'ws-zeus', runtime_user: 'dev', harness: 'claude-code', shares_container_with: [],
-    modes: ['shell'], pty_state: 'online', last_seen: null, authorized: true,
+    modes: ['shell'], writable_modes: [], pty_state: 'online', last_seen: null, authorized: true,
     reason: 'Autorizado por el servidor.',
     ...overrides,
   };
