@@ -7,7 +7,7 @@ import { PageHelp } from './PageHelp';
 import { useRovingTabs } from './use-roving-tabs';
 
 // Re-export so the rest of the console keeps importing its visual vocabulary from a single place.
-export { FloatingTooltip, Tooltip, TOOLTIP_DELAY_MS } from './Tooltip';
+export { FloatingTooltip, Tooltip } from './Tooltip';
 export { Desplazable } from './Desplazable';export type { FloatingTooltipProps, TooltipPlacement, TooltipProps } from './Tooltip';
 
 export function PageHeader({ eyebrow, title, description, notes, actions }: {

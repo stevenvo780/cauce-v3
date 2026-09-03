@@ -11,7 +11,7 @@ import {
   pasoDelDiario, siguientePedido,
   type CambioDeDocumento, type PasoDelDiario,
 } from './historial-de-contexto';
-import type { DocumentoRevision, PerfilRevision, TramoDeRevisiones } from './perfil';
+import type { PerfilRevision, TramoDeRevisiones } from './perfil';
 
 /**
  * The read side of the context journal: what each version of the profile said, which governance
@@ -29,6 +29,26 @@ interface HistorialDeContextoProps {
   alias: string;
   /** Absent without `config.write`: the journal is still read; only the restore disappears. */
   onRestaurar?: (campos: AgentPerfilCampos) => void;
+}
+
+interface RevisionEntry {
+  readonly id: string;
+}
+
+function usePaginatedJournal<T extends RevisionEntry, P extends { readonly entries: readonly T[] }>(
+  key: string,
+  loader: (request: TramoDeRevisiones) => Promise<P>,
+  timestamp: (entry: T) => string,
+) {
+  const [request, setRequest] = useState<TramoDeRevisiones>({ limit: PASO_DE_PAGINA });
+  const [read, setRead] = useState<readonly T[]>([]);
+  const page = useResource(`${key}-${clavePedido(request)}`, () => loader(request));
+  const entries = fusionar(read, page.data?.entries ?? [], timestamp);
+  const loadMore = () => {
+    setRead(entries);
+    setRequest(siguientePedido(request, page.data));
+  };
+  return { entries, loadMore, page, request };
 }
 
 export function HistorialDeContexto({ tenantId, alias, onRestaurar }: HistorialDeContextoProps) {
@@ -93,15 +113,15 @@ export function HistorialDeContexto({ tenantId, alias, onRestaurar }: HistorialD
 
 function DiarioDePerfil({ tenantId, alias, onRestaurar }: HistorialDeContextoProps) {
   const api = useApi();
-  const [pedido, setPedido] = useState<TramoDeRevisiones>({ limit: PASO_DE_PAGINA });
-  const [leidas, setLeidas] = useState<readonly PerfilRevision[]>([]);
   const [abierta, setAbierta] = useState<string>();
-  const pagina = useResource(
-    `historial-perfil-${tenantId}-${alias}-${clavePedido(pedido)}`,
-    () => api.getProfileRevisions(tenantId, alias, pedido),
+  const {
+    entries: entradas, loadMore, page: pagina, request: pedido,
+  } = usePaginatedJournal(
+    `historial-perfil-${tenantId}-${alias}`,
+    (request) => api.getProfileRevisions(tenantId, alias, request),
+    fechaDePerfil,
   );
 
-  const entradas = fusionar(leidas, pagina.data?.entries ?? [], fechaDePerfil);
   if (entradas.length === 0) {
     if (pagina.error) return <FalloDeLectura diario="del perfil" alias={alias} error={pagina.error} />;
     if (pagina.loading) return <p className="muted">Leyendo el diario del perfil…</p>;
@@ -191,10 +211,7 @@ function DiarioDePerfil({ tenantId, alias, onRestaurar }: HistorialDeContextoPro
         paso={pagina.data === undefined ? undefined : pasoDelDiario(pagina.data, pedido)}
         cargando={pagina.loading}
         error={pagina.error}
-        onMas={() => {
-          setLeidas(entradas);
-          setPedido(siguientePedido(pedido, pagina.data));
-        }}
+        onMas={loadMore}
         onReintentar={() => { void pagina.reload(); }}
       />
     </div>
@@ -245,14 +262,14 @@ function DiarioDeFichero({ tenantId, alias, kind }: {
   kind: AgentDocumentKind;
 }) {
   const api = useApi();
-  const [pedido, setPedido] = useState<TramoDeRevisiones>({ limit: PASO_DE_PAGINA });
-  const [leidas, setLeidas] = useState<readonly DocumentoRevision[]>([]);
-  const pagina = useResource(
-    `historial-fichero-${tenantId}-${alias}-${kind}-${clavePedido(pedido)}`,
-    () => api.getDocumentRevisions(tenantId, alias, kind, pedido),
+  const {
+    entries: entradas, loadMore, page: pagina, request: pedido,
+  } = usePaginatedJournal(
+    `historial-fichero-${tenantId}-${alias}-${kind}`,
+    (request) => api.getDocumentRevisions(tenantId, alias, kind, request),
+    fechaDeDocumento,
   );
 
-  const entradas = fusionar(leidas, pagina.data?.entries ?? [], fechaDeDocumento);
   if (entradas.length === 0) {
     if (pagina.error) return <FalloDeLectura diario="del fichero" alias={alias} error={pagina.error} />;
     if (pagina.loading) return <p className="muted">Leyendo el diario del fichero…</p>;
@@ -308,10 +325,7 @@ function DiarioDeFichero({ tenantId, alias, kind }: {
         paso={pagina.data === undefined ? undefined : pasoDelDiario(pagina.data, pedido)}
         cargando={pagina.loading}
         error={pagina.error}
-        onMas={() => {
-          setLeidas(entradas);
-          setPedido(siguientePedido(pedido, pagina.data));
-        }}
+        onMas={loadMore}
         onReintentar={() => { void pagina.reload(); }}
       />
     </div>

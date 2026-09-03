@@ -404,7 +404,6 @@ export function fleetVerdict(views: readonly LiveAgentView[], input: VerdictInpu
 export {
   agentKey,
   aliasDe,
-  plural,
   humanSeconds,
   delegationEdges,
   type DelegationEdge,
@@ -422,7 +421,6 @@ export {
   type HumanOrigin,
   type OrigenEncargo,
   origenDeItem,
-  origenesDeAgente,
   humanOrigins,
   AVATAR_UNIFORME,
   AVATAR_MIN,

@@ -15,6 +15,30 @@ import type {
 import { ApiError, errorBody } from './core';
 import type { RequestFn } from './system-client';
 
+function agentRoute(tenantId: string, alias: string, suffix: string): string {
+  return `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/${suffix}`;
+}
+
+async function getPublishedResource<T extends object>(
+  request: RequestFn,
+  route: string,
+  unavailable: T,
+): Promise<T & { publicado: boolean; motivo?: string }> {
+  try {
+    return { ...await request<T>(route), publicado: true };
+  } catch (error) {
+    if (error instanceof ApiError
+      && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
+      return {
+        ...unavailable,
+        publicado: false,
+        motivo: `Este gateway no publica GET ${route} (respondió ${String(error.status)}).`,
+      };
+    }
+    throw error;
+  }
+}
+
 export function getFleetActivity(request: RequestFn): Promise<FleetActivitySnapshot> {
   return request('/v3/console/activity');
 }
@@ -25,19 +49,7 @@ export async function getAgentDirective(
   alias: string,
 ): Promise<AgentDirective> {
   const ruta = `/v3/console/agents/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}/directive`;
-  try {
-    const cuerpo = await request<Omit<AgentDirective, 'publicado'>>(ruta);
-    return { ...cuerpo, publicado: true };
-  } catch (error) {
-    if (error instanceof ApiError
-      && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
-      return {
-        publicado: false,
-        motivo: `Este gateway no publica GET ${ruta} (respondió ${String(error.status)}).`,
-      };
-    }
-    throw error;
-  }
+  return getPublishedResource<Omit<AgentDirective, 'publicado' | 'motivo'>>(request, ruta, {});
 }
 
 export async function getAgentDocuments(
@@ -45,20 +57,8 @@ export async function getAgentDocuments(
   tenantId: string,
   alias: string,
 ): Promise<AgentDocumentsMap> {
-  const ruta = `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents`;
-  try {
-    const cuerpo = await request<Omit<AgentDocumentsMap, 'publicado'>>(ruta);
-    return { ...cuerpo, publicado: true };
-  } catch (error) {
-    if (error instanceof ApiError
-      && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
-      return {
-        publicado: false,
-        motivo: `Este gateway no publica GET ${ruta} (respondió ${String(error.status)}).`,
-      };
-    }
-    throw error;
-  }
+  const ruta = agentRoute(tenantId, alias, 'documents');
+  return getPublishedResource<Omit<AgentDocumentsMap, 'publicado' | 'motivo'>>(request, ruta, {});
 }
 
 export async function getAgentDocumentContent(
@@ -68,7 +68,7 @@ export async function getAgentDocumentContent(
   kind: AgentDocumentKind,
 ): Promise<AgentDocumentContent> {
   const value = await request<unknown>(
-    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/content`,
+    agentRoute(tenantId, alias, `documents/${encodeURIComponent(kind)}/content`),
   );
   const malformed = (): never => {
     throw new ApiError(
@@ -135,7 +135,7 @@ export function putAgentDocumentContent(
   reason: string,
 ): Promise<AgentDocumentGuardado> {
   return request<AgentDocumentGuardado>(
-    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/content`,
+    agentRoute(tenantId, alias, `documents/${encodeURIComponent(kind)}/content`),
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -152,24 +152,13 @@ export async function getAgentPerfil(
   tenantId: string,
   alias: string,
 ): Promise<AgentPerfil> {
-  const ruta = `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil`;
-  try {
-    const cuerpo = await request<Omit<AgentPerfil, 'publicado'>>(ruta);
-    return { ...cuerpo, publicado: true };
-  } catch (error) {
-    if (error instanceof ApiError
-      && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
-      return {
-        publicado: false,
-        motivo: `Este gateway no publica GET ${ruta} (respondió ${String(error.status)}).`,
-        perfil: {
-          purpose: null, role_summary: null, human_brief: null,
-          responsibilities: [], restrictions: [], tools: [], operating_rules: [],
-        },
-      };
-    }
-    throw error;
-  }
+  const ruta = agentRoute(tenantId, alias, 'perfil');
+  return getPublishedResource<Omit<AgentPerfil, 'publicado' | 'motivo'>>(request, ruta, {
+    perfil: {
+      purpose: null, role_summary: null, human_brief: null,
+      responsibilities: [], restrictions: [], tools: [], operating_rules: [],
+    },
+  });
 }
 
 /**
@@ -243,7 +232,7 @@ export function putAgentPerfil(
   reason: string,
 ): Promise<unknown> {
   return request(
-    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil`,
+    agentRoute(tenantId, alias, 'perfil'),
     {
       method: 'PUT',
       body: JSON.stringify({ expected_revision: expectedRevision, profile, reason }),
@@ -264,7 +253,7 @@ export function postContextReload(
   reason: string,
 ): Promise<unknown> {
   return request(
-    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/context/reload`,
+    agentRoute(tenantId, alias, 'context/reload'),
     {
       method: 'POST',
       body: JSON.stringify({ reason }),
@@ -288,7 +277,7 @@ export function getProfileRevisions(
   page?: TramoDeRevisiones,
 ): Promise<PaginaDeRevisiones<PerfilRevision>> {
   return request(
-    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil/revisions${tramo(page)}`,
+    `${agentRoute(tenantId, alias, 'perfil/revisions')}${tramo(page)}`,
   );
 }
 
@@ -300,7 +289,7 @@ export function getDocumentRevisions(
   page?: TramoDeRevisiones,
 ): Promise<PaginaDeRevisionesDeDocumento> {
   return request(
-    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/revisions${tramo(page)}`,
+    `${agentRoute(tenantId, alias, `documents/${encodeURIComponent(kind)}/revisions`)}${tramo(page)}`,
   );
 }
 

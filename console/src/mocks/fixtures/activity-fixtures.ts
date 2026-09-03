@@ -8,7 +8,7 @@ import { topology } from './topology-config';
 const iso = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString();
 const secondsAgo = (seconds: number) => iso(-seconds * 1_000);
 
-export function enVuelo(id: string, desde: string, segundos: number, extra: Partial<FleetActivityItem> = {}): FleetActivityItem {
+function enVuelo(id: string, desde: string, segundos: number, extra: Partial<FleetActivityItem> = {}): FleetActivityItem {
   const corte = desde.indexOf('/');
   return {
     delivery_id: id,

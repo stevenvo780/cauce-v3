@@ -240,7 +240,7 @@ export const SHELL_MODE = 'shell';
 export const WRITABLE_TUI_MODE = 'harness_rw';
 
 /** Writable modes as PUBLISHED by the gateway. An older gateway publishes none, which is a no. */
-export function modosEscribiblesPublicados(target: TerminalTarget | undefined): string[] {
+function modosEscribiblesPublicados(target: TerminalTarget | undefined): string[] {
   return target?.writable_modes ?? [];
 }
 

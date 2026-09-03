@@ -201,6 +201,5 @@ export {
   PublishIntentExpiredError,
   PublishIntentRateLimitedError,
   TIEMPO_MAXIMO_MS,
-  safeBase,
   type RequestOptions,
 } from './client/core';

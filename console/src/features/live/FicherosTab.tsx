@@ -1,6 +1,6 @@
 import { AlertTriangle, FileText, Lock, Save } from 'lucide-react';
 import { useCallback, useEffect, useId, useState } from 'react';
-import { ApiError } from '../../api/client';
+import { ApiError, type CauceApi } from '../../api/client';
 import { useApi } from '../../api/context';
 import type { AgentDocumentContent, AgentDocumentItem, AgentDocumentKind } from '../../api/types';
 import { useResource } from '../../api/use-resource';
@@ -223,31 +223,46 @@ function FilaDeFichero(
   );
 }
 
+interface DocumentLoadFailure {
+  readonly titulo: string;
+  readonly detalle: string;
+}
+
+function useDocumentContent(
+  api: CauceApi,
+  tenantId: string,
+  alias: string,
+  kind: AgentDocumentKind,
+) {
+  const [loading, setLoading] = useState(true);
+  const [content, setContent] = useState<AgentDocumentContent | undefined>(undefined);
+  const [failure, setFailure] = useState<DocumentLoadFailure | undefined>(undefined);
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setFailure(undefined);
+    try {
+      setContent(await api.getAgentDocumentContent(tenantId, alias, kind));
+    } catch (error) {
+      const status = error instanceof ApiError ? error.status : undefined;
+      const explained = explicarFallo(status, error instanceof Error ? error.message : undefined);
+      setFailure({ titulo: explained.titulo, detalle: explained.detalle });
+      setContent(undefined);
+    } finally {
+      setLoading(false);
+    }
+  }, [api, tenantId, alias, kind]);
+  useEffect(() => { void reload(); }, [reload]);
+  return { content, failure, loading, reload, setContent, setFailure };
+}
+
 /** An explicit GET with no mutation surface. Never renders Save and never calls PUT. */
 function Visor({ item, tenantId, alias }: {
   item: AgentDocumentItem; tenantId: string; alias: string;
 }) {
   const api = useApi();
-  const [cargando, setCargando] = useState(true);
-  const [servido, setServido] = useState<AgentDocumentContent | undefined>(undefined);
-  const [fallo, setFallo] = useState<{ titulo: string; detalle: string } | undefined>(undefined);
-
-  const cargar = useCallback(async () => {
-    setCargando(true);
-    setFallo(undefined);
-    try {
-      setServido(await api.getAgentDocumentContent(tenantId, alias, item.kind));
-    } catch (error) {
-      const status = error instanceof ApiError ? error.status : undefined;
-      const explicado = explicarFallo(status, error instanceof Error ? error.message : undefined);
-      setFallo({ titulo: explicado.titulo, detalle: explicado.detalle });
-      setServido(undefined);
-    } finally {
-      setCargando(false);
-    }
-  }, [api, tenantId, alias, item.kind]);
-
-  useEffect(() => { void cargar(); }, [cargar]);
+  const {
+    content: servido, failure: fallo, loading: cargando, reload: cargar,
+  } = useDocumentContent(api, tenantId, alias, item.kind);
 
   if (cargando) return <p className="muted">Leyendo el fichero dentro del contenedor…</p>;
   if (fallo) {
@@ -312,32 +327,22 @@ function Editor({
   onApplied?: (message: string) => void;
 }) {
   const api = useApi();
-  const [cargando, setCargando] = useState(true);
-  const [servido, setServido] = useState<AgentDocumentContent | undefined>(undefined);
-  const [fallo, setFallo] = useState<{ titulo: string; detalle: string } | undefined>(undefined);
+  const {
+    content: servido, failure: fallo, loading: cargando, reload: cargar, setContent: setServido,
+    setFailure: setFallo,
+  } = useDocumentContent(api, tenantId, alias, item.kind);
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState<string | undefined>(undefined);
   const [motivo, setMotivo] = useState('');
   const idMotivo = useId();
   const problemaMotivo = problemaDeMotivo(motivo);
 
-  const cargar = useCallback(async () => {
-    setCargando(true);
-    setFallo(undefined);
-    setGuardado(undefined);
-    try {
-      setServido(await api.getAgentDocumentContent(tenantId, alias, item.kind));
-    } catch (error) {
-      const status = error instanceof ApiError ? error.status : undefined;
-      const explicado = explicarFallo(status, error instanceof Error ? error.message : undefined);
-      setFallo({ titulo: explicado.titulo, detalle: explicado.detalle });
-      setServido(undefined);
-    } finally {
-      setCargando(false);
-    }
-  }, [api, tenantId, alias, item.kind]);
+  useEffect(() => { setGuardado(undefined); }, [api, tenantId, alias, item.kind]);
 
-  useEffect(() => { void cargar(); }, [cargar]);
+  const releer = useCallback(async () => {
+    setGuardado(undefined);
+    await cargar();
+  }, [cargar]);
 
   const texto = borrador?.texto ?? servido?.content ?? '';
 
@@ -432,7 +437,7 @@ function Editor({
     }
   }, [
     api, tenantId, alias, item.kind, texto, borrador, servido, canWrite, mutationBlocked,
-    motivo, problemaMotivo, onBorrador, onApplied,
+    motivo, problemaMotivo, onBorrador, onApplied, setFallo, setServido,
   ]);
 
   if (cargando) return <p className="muted">Leyendo el fichero dentro del contenedor…</p>;
@@ -524,7 +529,7 @@ function Editor({
           onClick={() => {
             if (mutationBlocked) return;
             onBorrador(undefined);
-            void cargar();
+            void releer();
           }}
         >
           Descartar y releer

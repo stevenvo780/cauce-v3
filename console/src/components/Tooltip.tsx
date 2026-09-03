@@ -24,7 +24,7 @@ import { createId } from '../lib';
  */
 
 /** Delay before opening with the mouse. Without it, sweeping the screen triggers ten bubbles in a row. */
-export const TOOLTIP_DELAY_MS = 120;
+const TOOLTIP_DELAY_MS = 120;
 
 export type TooltipPlacement = 'top' | 'bottom';
 

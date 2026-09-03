@@ -132,11 +132,13 @@ export function DeliveryTable({
     });
   }, [rows, snapshotVersion, uncertain]);
 
-  async function replay(deliveryId: string) {
-    setReplaying((current) => addId(current, deliveryId));
+  async function act(accion: Pendiente['accion'], deliveryId: string) {
+    const setInFlight = accion === 'replay' ? setReplaying : setCancelling;
+    const run = accion === 'replay' ? replayDeliverySafely : cancelDeliverySafely;
+    setInFlight((current) => addId(current, deliveryId));
     setNotices((current) => withoutNotice(current, deliveryId));
     try {
-      const outcome = await replayDeliverySafely({
+      const outcome = await run({
         api,
         deliveryId,
         reread: onChanged,
@@ -150,29 +152,7 @@ export function DeliveryTable({
       }
       setNotices((current) => withNotice(current, deliveryId, outcome.notice));
     } finally {
-      setReplaying((current) => removeId(current, deliveryId));
-    }
-  }
-
-  async function cancel(deliveryId: string) {
-    setCancelling((current) => addId(current, deliveryId));
-    setNotices((current) => withoutNotice(current, deliveryId));
-    try {
-      const outcome = await cancelDeliverySafely({
-        api,
-        deliveryId,
-        reread: onChanged,
-        onUncertain: (notice, reconciliation) => {
-          setUncertain((current) => withUncertainty(current, reconciliation));
-          setNotices((current) => withNotice(current, deliveryId, notice));
-        },
-      });
-      if (outcome.kind === 'uncertain' && outcome.effectProven) {
-        setUncertain((current) => withoutUncertainty(current, deliveryId));
-      }
-      setNotices((current) => withNotice(current, deliveryId, outcome.notice));
-    } finally {
-      setCancelling((current) => removeId(current, deliveryId));
+      setInFlight((current) => removeId(current, deliveryId));
     }
   }
 
@@ -182,7 +162,7 @@ export function DeliveryTable({
     setPendiente(undefined);
     if (uncertain.has(deliveryId) || replaying.has(deliveryId) || cancelling.has(deliveryId)
         || (accion === 'replay' ? !canReplay : !canCancel)) return;
-    void (accion === 'replay' ? replay(deliveryId) : cancel(deliveryId));
+    void act(accion, deliveryId);
   }
 
   return (

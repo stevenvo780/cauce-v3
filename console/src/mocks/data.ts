@@ -11,7 +11,6 @@ export {
 } from './fixtures/topology-config';
 
 export {
-  enVuelo,
   mockActivity,
   mockActivityEnReposo,
   mockChain,

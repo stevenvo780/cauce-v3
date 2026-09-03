@@ -40,7 +40,7 @@ import type { PtyChannelState } from './pty-types';
 import { PTY_REASON_MAX_LENGTH, ptyReasonProblem } from './session';
 
 /** Close code the relay uses on the browser leg when the operator's hold is no longer theirs. */
-export const CIERRE_CONTROL_DEVUELTO = 4410;
+const CIERRE_CONTROL_DEVUELTO = 4410;
 
 /** How long the take waits for the relay to redeem the ticket before saying it did not attach. */
 const ESPERA_DE_ENGANCHE_MS = 12_000;

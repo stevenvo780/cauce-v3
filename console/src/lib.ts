@@ -50,7 +50,7 @@ export function timestampExacto(value: unknown): string {
 }
 
 /** A valid `Date` or `undefined`. An empty or unreadable string is NOT a date. */
-export function fecha(value: unknown): Date | undefined {
+function fecha(value: unknown): Date | undefined {
   if (typeof value !== 'string' || value.trim() === '') return undefined;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? undefined : date;

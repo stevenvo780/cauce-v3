@@ -136,7 +136,7 @@ export interface RequestOptions {
 /** Maximum wait time for HTTP requests before aborting on timeout. */
 export const TIEMPO_MAXIMO_MS = 30_000;
 
-export function segundos(ms: number): string {
+function segundos(ms: number): string {
   return `${String(Math.round(ms / 1000))} s`;
 }
 

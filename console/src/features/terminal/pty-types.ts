@@ -49,7 +49,7 @@ export const PTY_CLOSE_MESSAGES: Readonly<Record<number, string>> = {
   4423: 'Venció el tiempo máximo de sesión.',
 };
 
-export const MOTIVOS_DE_ENTRADA_RECHAZADA: Readonly<Record<string, string>> = {
+const MOTIVOS_DE_ENTRADA_RECHAZADA: Readonly<Record<string, string>> = {
   governance_write_in_flight: 'No se envió: el agente está reescribiendo sus ficheros de gobierno y retiene el teclado hasta terminar.',
   pane_input_barrier: 'No se envió: hay una pegada en vuelo en el panel del alias; reintentá cuando termine.',
   tmux_prefix: 'No se envió: la ráfaga llevaba el prefijo de tmux del alias y el agente no lo deja pasar.',
