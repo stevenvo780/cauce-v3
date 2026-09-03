@@ -456,3 +456,85 @@ test("sin origin, el carril de agentes es uno por tenant y no uno por remitente"
   // And the person's own conversation stays theirs, in its own lane.
   assert.notEqual(human, socrates);
 });
+
+test("el agente devuelve el fichero que recibió y viaja inlineado en el done", async () => {
+  const payload = Buffer.from("%PDF-1.7\nel mismo informe de vuelta", "utf8");
+  const sha256 = createHash("sha256").update(payload).digest("hex");
+  class EchoRunner extends ControlledRunner {
+    override async run(request: CommandRunRequest): Promise<CommandRunResult> {
+      const path = /"local_path":"([^"]+)"/u.exec(request.stdin)?.[1];
+      assert.ok(path, "el arnés debe recibir la ruta local del adjunto");
+      this.stdout = JSON.stringify({
+        reply: "te devuelvo el fichero que me pasaste",
+        messages: [],
+        status: "done",
+        retryable: false,
+        artifacts: [{ name: "informe.pdf", uri: path }],
+      });
+      return super.run(request);
+    }
+  }
+  const runner = new EchoRunner();
+  const context = await setup("engine-devuelve-el-adjunto", runner);
+  await context.engine.handleDelivery({
+    ...delivery("media-eco"),
+    body: {
+      type: "telegram.message",
+      attachments_v1: [{
+        kind: "document",
+        name: "informe.pdf",
+        mime_type: "application/pdf",
+        file_size: payload.length,
+        sha256,
+        content_base64: payload.toString("base64"),
+      }],
+    },
+  });
+
+  const artifact = context.events.at(-1)?.output?.artifacts[0];
+  assert.equal(context.events.at(-1)?.phase, "done");
+  assert.ok(artifact);
+  assert.equal(artifact.sha256, sha256);
+  const inlined = /^data:application\/pdf;base64,(.+)$/u.exec(artifact.uri)?.[1];
+  assert.ok(inlined, `el artifact debía viajar como data: uri, llegó ${artifact.uri}`);
+  assert.ok(Buffer.from(inlined, "base64").equals(payload));
+
+  const materialized = /"local_path":"([^"]+)"/u.exec(runner.requests[0]?.stdin ?? "")?.[1];
+  assert.ok(materialized);
+  await assert.rejects(access(materialized), { code: "ENOENT" });
+});
+
+test("el remitente del adjunto sale del principal autenticado, no del from_alias del cuerpo", async () => {
+  const context = await setup("engine-media-de-un-agente");
+  await context.engine.handleDelivery({
+    ...delivery("media-de-agente"),
+    actor_alias: "kant",
+    body: {
+      type: "agent.message",
+      from_alias: "zeus",
+      media: [{ kind: "photo", file_id: "AgACAgEAAxk", file_size: 137933 }],
+    },
+  });
+
+  const enviado = context.runner.requests[0]?.stdin ?? "";
+  assert.match(enviado, /El agente kant te envió un adjunto de tipo photo/u);
+  assert.doesNotMatch(enviado, /El agente zeus/u);
+  assert.doesNotMatch(enviado, /El usuario envió/u);
+});
+
+test("un from_alias en un cuerpo de usuario no convierte al remitente en un agente", async () => {
+  const context = await setup("engine-media-from-alias-falso");
+  await context.engine.handleDelivery({
+    ...delivery("media-from-alias-falso"),
+    actor_alias: "kant",
+    body: {
+      type: "telegram.message",
+      from_alias: "zeus",
+      media: [{ kind: "photo", file_id: "AgACAgEAAxk", file_size: 137933 }],
+    },
+  });
+
+  const enviado = context.runner.requests[0]?.stdin ?? "";
+  assert.match(enviado, /El usuario envió un adjunto de tipo photo/u);
+  assert.doesNotMatch(enviado, /El agente zeus/u);
+});

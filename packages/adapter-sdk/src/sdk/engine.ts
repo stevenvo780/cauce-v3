@@ -21,8 +21,6 @@ import type {
 import { systemClock } from "./backoff.js";
 import { synthesizeFaninOutput } from "./fanin-synthesizer.js";
 import { validateDeliveryOutput } from "./output-parser.js";
-import { materializeAttachments, type MaterializedAttachments } from "./attachments.js";
-import { inlineLocalArtifacts } from "./artifact-inliner.js";
 import type {
   AdapterEngineOptions, EventPublisher, ExecutionIntentPublisher,
 } from "./engine/contracts.js";
@@ -33,13 +31,17 @@ import {
 import type { ExecutionBudget, HarnessSessionRequestScope } from "./engine/delivery-context.js";
 import {
   executionBudgetFor,
-  promptForDelivery,
   routingTargetsFromDelivery,
   selfRoleFromDelivery,
   sessionFromDelivery,
   timeoutFromBody,
 } from "./engine/delivery-context.js";
+import type { ClaimMonitor, ClaimRenewalDeps } from "./engine/claim-renewal.js";
+import { startClaimRenewal } from "./engine/claim-renewal.js";
 import { interruptedStartedError } from "./engine/recovery.js";
+import { inlineWithoutSecrets } from "./engine/secret-guard.js";
+import type { SealedSecretGateway, TurnInput, TurnInputDeps } from "./engine/turn-cleanup.js";
+import { materializeTurnInput, releaseTurn } from "./engine/turn-cleanup.js";
 import { runSystemGateProbe } from "./engine/system-gate-probe.js";
 import { DEFAULT_MESSAGE_TIMEOUT_MS } from "./message-timeout.js";
 
@@ -60,6 +62,7 @@ export class AdapterEngine {
   private readonly claimRenewalMs: number | undefined;
   private readonly claimWatchdogMs: number | undefined;
   private readonly queueWaitTimeoutMs: number | undefined;
+  private readonly sealedSecrets: TurnInputDeps["fetchSealedSecret"];
   private readonly clock: Clock;
   private readonly tasks = new Map<string, {
     readonly attempt: number;
@@ -67,12 +70,9 @@ export class AdapterEngine {
     readonly promise: Promise<void>;
   }>();
   private readonly controllers = new Map<string, AbortController>();
-  private readonly claimMonitors = new Map<string, {
-    readonly attempt: number;
-    readonly claimToken: string;
-    readonly confirm: () => void;
-  }>();
+  private readonly claimMonitors = new Map<string, ClaimMonitor>();
   private readonly fenced = new Set<string>();
+  private readonly renewalDeps: ClaimRenewalDeps;
 
   constructor(options: AdapterEngineOptions) {
     this.store = options.store;
@@ -106,7 +106,14 @@ export class AdapterEngine {
       && (!Number.isSafeInteger(this.queueWaitTimeoutMs) || this.queueWaitTimeoutMs <= 0)) {
       throw new RangeError("queueWaitTimeoutMs must be a positive integer");
     }
+    this.sealedSecrets = (options as AdapterEngineOptions & Partial<SealedSecretGateway>).fetchSealedSecret;
     this.clock = options.clock ?? systemClock;
+    this.renewalDeps = {
+      clock: this.clock,
+      fenced: this.fenced,
+      claimMonitors: this.claimMonitors,
+      emitClaimRenewal: (record, phase) => this.emitClaimRenewal(record, phase),
+    };
   }
 
   get epoch(): number {
@@ -383,7 +390,8 @@ export class AdapterEngine {
       },
     );
     await this.publishLifecycleEvent(started.event);
-    const stopClaimRenewal = this.startClaimRenewal(
+    const stopClaimRenewal = startClaimRenewal(
+      this.renewalDeps,
       started.record,
       this.claimRenewalMs ?? executionBudget.claimRenewalMs,
       this.claimWatchdogMs ?? executionBudget.claimWatchdogMs,
@@ -393,7 +401,7 @@ export class AdapterEngine {
     let output: StructuredOutput | undefined;
     let consumedProfile: RuntimeProfileMeasurement | undefined;
     let executionFailure: unknown;
-    let attachments: MaterializedAttachments | undefined;
+    let turnInput: TurnInput | undefined;
     try {
       const trustedOrigin = delivery.authenticated_context?.origin ?? delivery.origin;
       const processedReplies = messageType === "agent.fanin"
@@ -410,11 +418,10 @@ export class AdapterEngine {
           routingTargets: requestContext.routing_targets,
         });
       } else {
-        const prompt = await (async () => {
-          attachments = await materializeAttachments(delivery.body);
-          const base = promptForDelivery(delivery, this.store);
-          return attachments === undefined ? base : `${base}\n\n${attachments.prompt}`;
-        })();
+        turnInput = await materializeTurnInput(delivery, this.store,
+          { logger: this.logger, tenantId: this.ownTenantId, fetchSealedSecret: this.sealedSecrets });
+        const attachments = turnInput.attachments;
+        const prompt = turnInput.prompt;
         if (reservation !== undefined) await reservation.wait(controller.signal);
         output = await this.harness.execute({
           prompt,
@@ -465,66 +472,61 @@ export class AdapterEngine {
       executionFailure = error;
     } finally {
       await stopClaimRenewal();
-      try {
-        await attachments?.cleanup();
-      } catch {
-        executionFailure ??= new AdapterError(
-          "ATTACHMENT_CLEANUP_FAILED",
-          "Temporary attachment cleanup failed",
-          false,
-        );
+    }
+
+    try {
+      if (executionFailure !== undefined) {
+        const executionError = asAdapterError(executionFailure);
+        const preserveAmbiguousExecution = !executionError.retryable
+          && isAmbiguousAckErrorCode(executionError.code);
+        const normalized = this.fenced.has(delivery.delivery_id) && !preserveAmbiguousExecution
+          ? new AdapterError("FENCED", "Execution lost its fencing epoch", true)
+          : executionError;
+        await this.finishError(started.record, normalized);
+        return;
       }
-    }
+      if (output === undefined) {
+        await this.finishError(
+          started.record,
+          new AdapterError("HARNESS_EMPTY_RESULT", "Harness completed without a result", false),
+        );
+        return;
+      }
 
-    if (executionFailure !== undefined) {
-      const executionError = asAdapterError(executionFailure);
-      const preserveAmbiguousExecution = !executionError.retryable
-        && isAmbiguousAckErrorCode(executionError.code);
-      const normalized = this.fenced.has(delivery.delivery_id) && !preserveAmbiguousExecution
-        ? new AdapterError("FENCED", "Execution lost its fencing epoch", true)
-        : executionError;
-      await this.finishError(started.record, normalized);
-      return;
-    }
-    if (output === undefined) {
-      await this.finishError(
-        started.record,
-        new AdapterError("HARNESS_EMPTY_RESULT", "Harness completed without a result", false),
+      // Local attachments are inlined to `data:` HERE, at the only point where the turn becomes
+      // an ACK: the envelope is already validated, this is what will actually travel, and it
+      // passes once per delivery. The parser is NOT the place —it's pure, synchronous, and runs
+      // over candidates that are often discarded—; the full reason is in `artifact-inliner.ts`.
+      //
+      // Placed before the 'failed'/'done' fork on purpose: a failed turn also persists and
+      // publishes its `output`, and the screenshot explaining WHY it failed is exactly what must
+      // be visible. `inlineLocalArtifacts` never throws and returns the envelope intact on failure.
+      output = await inlineWithoutSecrets(output, turnInput?.secrets, this.logger, delivery);
+
+      if (output.status === "failed") {
+        const error = new AdapterError("HARNESS_REPORTED_FAILURE", output.reply ?? "Harness reported failure", output.retryable);
+        await this.finishError(started.record, error, output);
+        return;
+      }
+
+      const profileAdoption = profileAdoptionFor(delivery, consumedProfile);
+      const done = await this.store.transitionAndEnqueue(
+        delivery.delivery_id,
+        "done",
+        this.clock.now().toISOString(),
+        {
+          output,
+          ...(profileAdoption === undefined ? {} : { profileAdoption }),
+          retainRequest: output.messages.length > 0
+            || (messageType === "agent.response" && this.store.continuationSource(delivery) !== undefined),
+          attempt: delivery.attempt,
+          claimToken: delivery.claim_token,
+        },
       );
-      return;
+      await this.publishLifecycleEvent(done.event);
+    } finally {
+      await releaseTurn(turnInput, this.logger, delivery);
     }
-
-    // Local attachments are inlined to `data:` HERE, at the only point where the turn becomes
-    // an ACK: the envelope is already validated, this is what will actually travel, and it
-    // passes once per delivery. The parser is NOT the place —it's pure, synchronous, and runs
-    // over candidates that are often discarded—; the full reason is in `artifact-inliner.ts`.
-    //
-    // Placed before the 'failed'/'done' fork on purpose: a failed turn also persists and
-    // publishes its `output`, and the screenshot explaining WHY it failed is exactly what must
-    // be visible. `inlineLocalArtifacts` never throws and returns the envelope intact on failure.
-    output = await inlineLocalArtifacts(output);
-
-    if (output.status === "failed") {
-      const error = new AdapterError("HARNESS_REPORTED_FAILURE", output.reply ?? "Harness reported failure", output.retryable);
-      await this.finishError(started.record, error, output);
-      return;
-    }
-
-    const profileAdoption = profileAdoptionFor(delivery, consumedProfile);
-    const done = await this.store.transitionAndEnqueue(
-      delivery.delivery_id,
-      "done",
-      this.clock.now().toISOString(),
-      {
-        output,
-        ...(profileAdoption === undefined ? {} : { profileAdoption }),
-        retainRequest: output.messages.length > 0
-          || (messageType === "agent.response" && this.store.continuationSource(delivery) !== undefined),
-        attempt: delivery.attempt,
-        claimToken: delivery.claim_token,
-      },
-    );
-    await this.publishLifecycleEvent(done.event);
   }
 
   /**
@@ -538,7 +540,8 @@ export class AdapterEngine {
     budget: ExecutionBudget,
     controller: AbortController,
   ): Promise<boolean> {
-    const stopQueueRenewal = this.startClaimRenewal(
+    const stopQueueRenewal = startClaimRenewal(
+      this.renewalDeps,
       record,
       this.claimRenewalMs ?? budget.claimRenewalMs,
       this.claimWatchdogMs ?? budget.claimWatchdogMs,
@@ -547,13 +550,13 @@ export class AdapterEngine {
     );
     const queueBudgetMs = this.queueWaitTimeoutMs
       ?? Math.min(budget.harnessTimeoutMs, DEFAULT_QUEUE_WAIT_TIMEOUT_MS);
-    const queueTimer = setTimeout(() => {
+    const queueTimer = this.clock.setTimer(() => {
       controller.abort(new AdapterError(
         "SESSION_QUEUE_TIMEOUT",
         `Delivery waited ${String(queueBudgetMs)} ms for its session turn without starting execution`,
         true,
       ));
-    }, queueBudgetMs);
+    }, queueBudgetMs, { keepProcessAlive: true });
 
     let failure: unknown;
     try {
@@ -561,7 +564,7 @@ export class AdapterEngine {
     } catch (error) {
       failure = error;
     } finally {
-      clearTimeout(queueTimer);
+      this.clock.clearTimer(queueTimer);
       await stopQueueRenewal();
     }
     if (failure === undefined) return true;
@@ -586,80 +589,6 @@ export class AdapterEngine {
     });
     await this.finishError(record, normalized);
     return false;
-  }
-
-  /**
-   * A delivery claim is a short renewable lease, not the agent's wall-clock execution deadline.
-   * Renewal events are durable locally before transport; an offline socket can therefore flush
-   * them after reconnect.
-   *
-   * `phase` distinguishes the queue heartbeat ('accepted') from the execution one ('started').
-   * The transport maps it as-is to the ACK's `status`; both are values `AckStatusSchema` and the
-   * `delivery_acks.status` CHECK already accept, so this requires no schema change.
-   */
-  private startClaimRenewal(
-    record: InboxRecord,
-    intervalMs: number,
-    watchdogMs: number,
-    controller: AbortController,
-    phase: "accepted" | "started" = "started",
-  ): () => Promise<void> {
-    let stopped = false;
-    let tail = Promise.resolve();
-    const abortForUnconfirmedClaim = (): void => {
-      if (stopped) return;
-      stopped = true;
-      clearInterval(timer);
-      this.fenced.add(record.delivery_id);
-      controller.abort(new AdapterError(
-        "CLAIM_RENEWAL_UNCONFIRMED",
-        "Delivery lease renewal was not confirmed before the ownership deadline",
-        true,
-      ));
-    };
-    let watchdog = setTimeout(abortForUnconfirmedClaim, watchdogMs);
-    watchdog.unref();
-    const confirm = (): void => {
-      if (stopped) return;
-      clearTimeout(watchdog);
-      watchdog = setTimeout(abortForUnconfirmedClaim, watchdogMs);
-      watchdog.unref();
-    };
-    const timer = setInterval(() => {
-      if (stopped) return;
-      tail = tail
-        .catch(() => undefined)
-        .then(async () => {
-          if (stopped) return;
-          try {
-            await this.emitClaimRenewal(record, phase);
-          } catch {
-            stopped = true;
-            clearInterval(timer);
-            controller.abort(new AdapterError(
-              "CLAIM_RENEWAL_PERSISTENCE_FAILED",
-              "Delivery lease renewal could not be persisted locally",
-              false,
-            ));
-          }
-        });
-    }, intervalMs);
-    timer.unref();
-    this.claimMonitors.set(record.delivery_id, {
-      attempt: record.attempt,
-      claimToken: record.claim_token,
-      confirm,
-    });
-    return async () => {
-      stopped = true;
-      clearInterval(timer);
-      clearTimeout(watchdog);
-      const monitor = this.claimMonitors.get(record.delivery_id);
-      if (monitor?.attempt === record.attempt && monitor.claimToken === record.claim_token) {
-        this.claimMonitors.delete(record.delivery_id);
-      }
-      await tail.catch(() => undefined);
-    };
   }
 
   /**

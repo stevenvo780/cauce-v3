@@ -34,6 +34,24 @@ export async function readOwnerOnlyFile(path: string, purpose: string): Promise<
   }
 }
 
+export async function writeOwnerOnlyFile(path: string, bytes: Buffer, purpose: string): Promise<void> {
+  if (path.length === 0) throw new SecureFileError(`${purpose} file path is empty`);
+  let handle;
+  try {
+    const noFollow = "O_NOFOLLOW" in fsConstants ? fsConstants.O_NOFOLLOW : 0;
+    const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow;
+    handle = await open(path, flags, 0o600);
+    await handle.chmod(0o600);
+    await handle.writeFile(bytes);
+    await handle.sync();
+  } catch (error) {
+    if (error instanceof SecureFileError) throw error;
+    throw new SecureFileError(`${purpose} could not be written`, { cause: error });
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
 export async function readBearerTokenFile(path: string): Promise<string> {
   const token = (await readOwnerOnlyFile(path, "Bearer token")).toString("utf8").trim();
   if (token.length === 0 || /\s/u.test(token)) {

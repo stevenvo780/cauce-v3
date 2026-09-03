@@ -1,10 +1,24 @@
 import {
   AGENT_TO_AGENT_MESSAGE_TYPES,
+  base64CharacterBudget,
   EgressHandleSchema,
   MAX_NOTIFY_BODY_BYTES,
   NOTIFY_KINDS,
 } from "@cauce/protocol";
 import { AdapterError, MalformedOutputError } from "../errors.js";
+import {
+  dataUriPayloadBytes,
+  FILE_ONLY_REPLY,
+  hasDeliverableArtifact,
+  HEX_SHA256,
+  MAX_RELAY_ARTIFACT_TOTAL_BYTES,
+  MAX_RELAY_ARTIFACT_URI_CHARACTERS,
+  newRelayArtifactBudget,
+  NOT_SENT,
+  NO_REPLY_WRITTEN_REPLY,
+  parseRelayArtifacts,
+  type RelayArtifactBudget,
+} from "./relay-artifacts.js";
 import type {
   NotifyDirective,
   NotifyKind,
@@ -34,6 +48,7 @@ export const MAX_RELAY_BODY_BYTES = 64 * 1024;
 export const MAX_RELAY_AGGREGATE_BYTES = 256 * 1024;
 export const MAX_EXPANDED_RELAY_AGGREGATE_BYTES = 512 * 1024;
 export const MAX_RELAY_MESSAGES = 100;
+const MAX_ARTIFACT_FRAME_BYTES = base64CharacterBudget(MAX_RELAY_ARTIFACT_TOTAL_BYTES);
 /** Proactive egress reaches a human, so its limits are an order of magnitude tighter. */
 export const MAX_NOTIFY_DIRECTIVES = 4;
 const MAX_NOTIFY_AGGREGATE_BYTES = 8 * 1024;
@@ -79,7 +94,7 @@ function requiredKeys(value: JsonObject): void {
   }
 }
 
-function parseMessages(value: unknown): readonly RelayMessage[] {
+function parseMessages(value: unknown, artifactBudget: RelayArtifactBudget): readonly RelayMessage[] {
   if (!Array.isArray(value)) {
     throw new MalformedOutputError("'messages' must be an array");
   }
@@ -107,7 +122,8 @@ function parseMessages(value: unknown): readonly RelayMessage[] {
     if (aggregateBodyBytes > MAX_RELAY_AGGREGATE_BYTES) {
       throw new MalformedOutputError("'messages' bodies exceeded the aggregate UTF-8 byte limit");
     }
-    return { to: entry.to, body: entry.body };
+    const artifacts = parseRelayArtifacts(entry.artifacts, index, artifactBudget);
+    return { to: entry.to, body: entry.body, ...(artifacts.length > 0 ? { artifacts } : {}) };
   });
 }
 
@@ -156,8 +172,8 @@ function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; 
 }
 
 
-function parseArtifacts(value: unknown): readonly OutputArtifact[] {
-  // If absent or null, normalize to an empty list.
+/** The answer's own files pay the delegation edge's caps and spend the SAME turn budget as the delegated ones, bounded by what that budget WEIGHS on the wire; what does not fit keeps its identity and loses its content, and a `sha256` is 64 hex or nothing, so the fourth field is not a free-text channel out of the turn. */
+function parseArtifacts(value: unknown, budget: RelayArtifactBudget): readonly OutputArtifact[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
     throw new MalformedOutputError("'artifacts' must be an array");
@@ -172,11 +188,16 @@ function parseArtifacts(value: unknown): readonly OutputArtifact[] {
     if (entry.sha256 !== undefined && typeof entry.sha256 !== "string") {
       throw new MalformedOutputError(`artifacts[${String(index)}].sha256 must be a string`);
     }
+    const bytes = dataUriPayloadBytes(entry.uri);
+    const fits = entry.uri.length <= MAX_RELAY_ARTIFACT_URI_CHARACTERS
+      && budget.bytes + bytes <= MAX_ARTIFACT_FRAME_BYTES;
+    if (fits) budget.bytes += bytes;
+    const sha256 = entry.sha256 !== undefined && HEX_SHA256.test(entry.sha256) ? entry.sha256 : undefined;
     return {
       name: entry.name,
-      uri: entry.uri,
+      uri: fits ? entry.uri : NOT_SENT,
       ...(entry.media_type === undefined ? {} : { media_type: entry.media_type }),
-      ...(entry.sha256 === undefined ? {} : { sha256: entry.sha256 }),
+      ...(sha256 === undefined ? {} : { sha256 }),
     };
   });
 }
@@ -239,11 +260,12 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
     );
   }
   const aviso = notas.length === 0 ? "" : `\n\n[Cauce] ${notas.join(". ")}.`;
+  const artifactBudget = newRelayArtifactBudget();
   return {
     reply: aviso === ""
       ? value.reply
       : `${value.reply === null || value.reply.trim() === "" ? "(sin respuesta)" : value.reply}${aviso}`,
-    messages: value.messages === undefined ? [] : parseMessages(value.messages),
+    messages: value.messages === undefined ? [] : parseMessages(value.messages, artifactBudget),
     notify: notificaciones.directives,
     status,
     // `retryable` has no meaning after a successful terminal result. Native
@@ -251,7 +273,7 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
     // `{status:"done", retryable:true}`; canonicalize that one pair without
     // re-executing or weakening validation of the field's type.
     retryable: status === "done" ? false : retryable,
-    artifacts: parseArtifacts(value.artifacts),
+    artifacts: parseArtifacts(value.artifacts, artifactBudget),
   };
 }
 
@@ -325,11 +347,14 @@ export function validateDeliveryOutput(
   validateDelegationTargets(output.messages, context, internalMessage);
 
   if (output.reply !== null && !hasNonBlankText(output.reply)) {
-    throw new AdapterError(
-      "INVISIBLE_REPLY",
-      "Harness reply must be null or contain visible text",
-      false,
-    );
+    if (!hasDeliverableArtifact(output.artifacts)) {
+      throw new AdapterError(
+        "INVISIBLE_REPLY",
+        "Harness reply must be null or contain visible text",
+        false,
+      );
+    }
+    output = { ...output, reply: FILE_ONLY_REPLY };
   }
 
   if (output.status !== "done") return output;
@@ -349,11 +374,14 @@ export function validateDeliveryOutput(
 
   // If the turn ended in 'done' without reply or delegations, it is converted to failed with an explanation.
   if (output.reply === null && output.messages.length === 0) {
+    if (hasDeliverableArtifact(output.artifacts)) {
+      return { ...output, reply: FILE_ONLY_REPLY };
+    }
     return {
       ...output,
       status: "failed",
       retryable: false,
-      reply: "Cerre el turno sin escribir respuesta, asi que no tengo nada que contarte todavia. No es que no haya nada que decir: es que no llegue a redactarlo. Volve a preguntarme.\n\n[Cauce] El turno termino en \"done\" con 'reply' vacio y sin delegaciones, que es exactamente el sintoma de un harness que corto antes de responder.",
+      reply: NO_REPLY_WRITTEN_REPLY,
     };
   }
 

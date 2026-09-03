@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import {
   clampToRoleBriefLimit,
   isAgentToAgentBody,
+  isAlias,
   MAX_MESSAGE_TIMEOUT_MS,
   messageTimeoutMs,
 } from "@cauce/protocol";
 import type { SessionLane } from "../../contracts/harness.js";
+import type { MaterializedSecret } from "../secrets.js";
 import type { SessionOrigin } from "../durable-store.js";
 import { DurableStore, sanitizeSessionOrigin } from "../durable-store.js";
 import { AdapterError } from "../errors.js";
@@ -30,7 +32,25 @@ export interface HarnessSessionRequestScope {
   sessionOrigin?: SessionOrigin;
 }
 
-function describeMedia(body: Record<string, unknown>): string | undefined {
+export function secretsPromptBlock(secrets: readonly MaterializedSecret[]): string | undefined {
+  if (secrets.length === 0) return undefined;
+  return [
+    "Cauce te entregó credenciales selladas para este turno. Cada fichero contiene el valor en "
+    + "claro, es válido sólo para este turno, y su contenido NUNCA debe aparecer en tu respuesta, "
+    + "en un mensaje delegado, en un notify, en un commit ni en un log: nombrá el secreto por su "
+    + "id o su etiqueta, jamás por su valor.",
+    ...secrets.map((secret, index) => `Secreto ${String(index + 1)}: ${JSON.stringify({
+      id: secret.id, label: secret.label, path: secret.path,
+    })}`),
+  ].join("\n");
+}
+
+function senderPhrase(body: Record<string, unknown>, actorAlias: string): string {
+  if (!isAgentToAgentBody(body)) return "El usuario envió";
+  return isAlias(actorAlias) ? `El agente ${actorAlias} te envió` : "El agente que te escribió te envió";
+}
+
+function describeMedia(body: Record<string, unknown>, actorAlias: string): string | undefined {
   const verified = body.attachments_v1;
   const media = Array.isArray(verified) && verified.length > 0 ? verified : body.media;
   if (!Array.isArray(media) || media.length === 0) return undefined;
@@ -49,17 +69,18 @@ function describeMedia(body: Record<string, unknown>): string | undefined {
     ))
     .join(" y ");
 
+  const sender = senderPhrase(body, actorAlias);
   const downloadable = Array.isArray(verified) && verified.length > 0;
   if (downloadable) {
-    return `El usuario envió ${detalle}, sin texto acompañante. Inspeccioná el adjunto local indicado abajo antes de responder.`;
+    return `${sender} ${detalle}, sin texto acompañante. Inspeccioná el adjunto local indicado abajo antes de responder.`;
   }
-  return `El usuario envió ${detalle}, sin texto acompañante. No podés ver ni abrir el contenido del `
+  return `${sender} ${detalle}, sin texto acompañante. No podés ver ni abrir el contenido del `
     + `adjunto: sólo sabés que llegó y de qué tipo es. Respondé reconociendo lo que envió y pedile `
     + `que describa en palabras lo que necesita, o explicale que todavía no podés procesar ese tipo `
     + `de archivo. No inventes lo que el adjunto pueda contener.`;
 }
 
-function promptFromBody(body: Record<string, unknown>): string {
+function promptFromBody(body: Record<string, unknown>, actorAlias: string): string {
   const value = typeof body.prompt === "string"
     ? body.prompt
     : typeof body.text === "string"
@@ -67,7 +88,7 @@ function promptFromBody(body: Record<string, unknown>): string {
       : body.caption;
   if (typeof value === "string" && value.trim().length > 0) return value;
 
-  const media = describeMedia(body);
+  const media = describeMedia(body, actorAlias);
   if (media !== undefined) return media;
 
   throw new AdapterError("INVALID_DELIVERY", "Delivery body requires a non-empty prompt or text", false);
@@ -80,7 +101,7 @@ function originalDelegatedPrompt(delivery: Delivery, store: DurableStore): strin
     if (seen.has(source.delivery_id) || source.request === undefined) return undefined;
     seen.add(source.delivery_id);
     if (source.request.body.type !== "agent.response") {
-      return promptFromBody(source.request.body);
+      return promptFromBody(source.request.body, source.request.actor_alias);
     }
     source = store.continuationSource(source.request);
   }
@@ -133,7 +154,7 @@ function boundedReply(value: string, maxBytes = MAX_BRANCH_PROGRESS_REPLY_BYTES)
 }
 
 export function promptForDelivery(delivery: Delivery, store: DurableStore): string {
-  const delegatedResult = promptFromBody(delivery.body);
+  const delegatedResult = promptFromBody(delivery.body, delivery.actor_alias);
   if (delivery.body.type !== "agent.response") return delegatedResult;
   const originalRequest = originalDelegatedPrompt(delivery, store);
   if (originalRequest === undefined) return delegatedResult;

@@ -57,6 +57,7 @@ export type RelayOrigin = Origin;
 export interface RelayMessage {
   readonly to: string;
   readonly body: string;
+  readonly artifacts?: readonly OutputArtifact[];
 }
 
 export interface OutputArtifact {
@@ -402,7 +403,18 @@ export interface HarnessCommandOverride {
   readonly baseArgs?: readonly string[];
 }
 
+export interface TimerHandle {
+  cancel(): void;
+}
+
+export interface TimerOptions {
+  readonly keepProcessAlive?: boolean;
+}
+
 export interface Clock {
   now(): Date;
   sleep(ms: number, signal: AbortSignal): Promise<void>;
+  setTimer(fn: () => void, ms: number, options?: TimerOptions): TimerHandle;
+  setRepeating(fn: () => void, ms: number, options?: TimerOptions): TimerHandle;
+  clearTimer(handle: TimerHandle): void;
 }

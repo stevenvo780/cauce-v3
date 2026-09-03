@@ -755,3 +755,35 @@ test("a failed output may notify even though it may not delegate", () => {
   assert.match(conDelegacion.reply, /^falló\n\n\[Cauce\] Se descartaron 1 delegacion/u);
   assert.equal(conDelegacion.notify.length, 1);
 });
+
+const PDF_DATA_URI = "data:application/pdf;base64,JVBERi0xLjQK";
+
+function soloFichero(uri: string, reply: string | null): Record<string, unknown> {
+  return { reply, messages: [], notify: [], status: "done", retryable: false, artifacts: [{ name: "a.pdf", uri }] };
+}
+
+test("un reply invisible SIN fichero entregable sigue costando el turno", () => {
+  assert.throws(
+    () => validateDeliveryOutput(validateStructuredOutput({
+      ...soloFichero(PDF_DATA_URI, ""),
+      artifacts: [],
+    })),
+    isContractError("INVISIBLE_REPLY"),
+  );
+  for (const uri of ["file:///x", "http://127.0.0.1/x", "/home/dev/x.pdf", "cauce:not-sent"]) {
+    assert.throws(
+      () => validateDeliveryOutput(validateStructuredOutput(soloFichero(uri, ""))),
+      isContractError("INVISIBLE_REPLY"),
+      `"${uri}" no es un fichero que el destinatario pueda abrir`,
+    );
+  }
+});
+
+test("un turno mudo cuyo unico artifact es un file:// sigue degradandose a failed", () => {
+  assertSilencioDegradado(validateDeliveryOutput(
+    validateStructuredOutput(soloFichero("file:///x", null)),
+  ));
+  assertSilencioDegradado(validateDeliveryOutput(
+    validateStructuredOutput({ ...soloFichero(PDF_DATA_URI, null), artifacts: [] }),
+  ));
+});

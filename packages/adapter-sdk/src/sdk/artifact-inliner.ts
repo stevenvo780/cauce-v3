@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { open } from "node:fs/promises";
-import { basename, extname, isAbsolute } from "node:path";
+import { open, realpath } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   base64CharacterBudget,
@@ -11,7 +11,8 @@ import {
   MAX_ATTACHMENTS_TOTAL_BYTES,
   mediaTypeForExtension,
 } from "@cauce/protocol";
-import type { OutputArtifact, StructuredOutput } from "./types.js";
+import { dataUriPayloadBytes, NOT_SENT, reviseFileOnlyOutcome } from "./output-parser/relay-artifacts.js";
+import type { OutputArtifact, RelayMessage, StructuredOutput } from "./types.js";
 
 /**
  * Converts local attachments declared in `output.artifacts` to `data:` base64 URIs before
@@ -41,6 +42,8 @@ const MAX_BASE64_CHARACTERS = base64CharacterBudget(MAX_INLINED_ARTIFACT_BYTES, 
 const FORBIDDEN_ROOTS: readonly string[] = ["/proc/", "/sys/", "/dev/"];
 
 const HEX_SHA256 = /^[0-9a-f]{64}$/u;
+
+const IS_DATA_URI = /^data:/iu;
 
 /** Any scheme: `data:`, `https:`, `git:`, `s3:`… Only `file:` is dereferenced. */
 const HAS_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/u;
@@ -73,17 +76,15 @@ export function localArtifactPath(uri: string): string | undefined {
   const trimmed = uri.trim();
   if (trimmed.length === 0) return undefined;
   if (/^file:/iu.test(trimmed)) {
-    // `..` is searched in the RAW URI in addition to the final path. `new URL()` normalizes
-    // segments and makes the traversal disappear —`file:///w/%2e%2e/%2e%2e/etc/passwd` becomes
-    // `/etc/passwd`—, so checking only the result would accept a path that tried to escape. A
-    // URI that attempts traversal is not read, period.
+    // `..` is searched in the RAW URI in addition to the final path: `new URL()` normalizes
+    // segments and makes the traversal disappear (`file:///w/%2e%2e/etc/passwd` becomes
+    // `/etc/passwd`), so a URI that attempts traversal is not read, period.
     if (traverses(trimmed)) return undefined;
     try {
       const url = new URL(trimmed);
       const host = url.hostname.toLowerCase();
       if (host !== "" && host !== "localhost") return undefined;
-// `fileURLToPath` decodes percent-encoding; that's why the `..` check on the final path is
-    // still done afterward (a `%2e%2e` is a `..` in another suit).
+      // `fileURLToPath` decodes percent-encoding, so the `..` check runs again on the result.
       return acceptablePath(fileURLToPath(url));
     } catch {
       return undefined;
@@ -167,56 +168,153 @@ async function inlineArtifact(
 }
 
 /**
- * Replaces local artifacts that can be read safely with `data:`, and leaves everything else
- * untouched: `data:` URIs that already came done, `http(s)://` (which the bridge lists as a link
- * on purpose, so it doesn't become an SSRF against production), what exceeds the caps, and what
- * can't be read.
- *
- * Never throws. Returns the same object when there was nothing to change.
+ * Shared across `output.artifacts` AND every `messages[].artifacts`: a delegation and the reply to
+ * the origin spend ONE aggregate budget, never one each.
  */
-export async function inlineLocalArtifacts(output: StructuredOutput): Promise<StructuredOutput> {
-  try {
-    if (output.artifacts.length === 0) return output;
+interface InlineBudget {
+  remainingBytes: number;
+  lookups: number;
+  changed: boolean;
+  readonly denied: (path: string) => Promise<boolean>;
+}
 
-    const artifacts: OutputArtifact[] = [];
-    let remaining = MAX_INLINED_ARTIFACTS_PER_RESPONSE;
-    let remainingBytes = MAX_INLINED_TOTAL_BYTES;
-    let lookups = 0;
-    let changed = false;
+/** Keeps the identity of the attachment and drops only its content. */
+function notSent(artifact: OutputArtifact): OutputArtifact {
+  return {
+    name: artifact.name,
+    ...(artifact.media_type === undefined ? {} : { media_type: artifact.media_type }),
+    ...(artifact.sha256 === undefined ? {} : { sha256: artifact.sha256 }),
+    uri: NOT_SENT,
+  };
+}
 
-    for (const artifact of output.artifacts) {
-      // A `data:` that already came done is not touched, but DOES count against it: the bridge
-      // counts uploads, not conversions, so converting a fifth attachment it will discard is wasted.
-      if (/^data:/iu.test(artifact.uri.trim())) {
-        remaining -= 1;
-        artifacts.push(artifact);
+/**
+ * Replaces local artifacts that can be read safely with `data:`, and leaves everything else
+ * untouched: `http(s)://` (which the bridge lists as a link on purpose, so it doesn't become an
+ * SSRF against production) and what can't be read.
+ *
+ * What does NOT fit the aggregate budget is downgraded to `cauce:not-sent`: shipping it would be
+ * announcing an attachment the bridge is going to drop without saying so.
+ */
+async function inlineList(
+  list: readonly OutputArtifact[],
+  budget: InlineBudget,
+): Promise<readonly OutputArtifact[]> {
+  const artifacts: OutputArtifact[] = [];
+  let remaining = MAX_INLINED_ARTIFACTS_PER_RESPONSE;
+
+  for (const artifact of list) {
+    // A `data:` that already came done is not touched, but DOES count against it: the bridge
+    // counts uploads, not conversions, so converting a fifth attachment it will discard is wasted.
+    if (IS_DATA_URI.test(artifact.uri.trim())) {
+      const bytes = dataUriPayloadBytes(artifact.uri);
+      if (bytes > budget.remainingBytes) {
+        budget.changed = true;
+        artifacts.push(notSent(artifact));
         continue;
       }
-      const path = remaining > 0 && lookups < MAX_LOOKUPS ? localArtifactPath(artifact.uri) : undefined;
-      if (path === undefined) {
-        artifacts.push(artifact);
-        continue;
-      }
-      lookups += 1;
-      const inlined = await inlineArtifact(artifact, path);
-      // Couldn't (doesn't exist, is a symlink, is a FIFO, sha doesn't match, too big): stays as is
-      // and the human reads the bridge's line. The turn still ships.
-      if (inlined === undefined) {
-        artifacts.push(artifact);
-        continue;
-      }
-      // The aggregate cap is measured in file bytes, same as `MAX_ATTACHMENTS_TOTAL_BYTES`.
-      if (inlined.bytes > remainingBytes) {
-        artifacts.push(artifact);
-        continue;
-      }
-      remainingBytes -= inlined.bytes;
+      budget.remainingBytes -= bytes;
       remaining -= 1;
-      changed = true;
-      artifacts.push(inlined.artifact);
+      artifacts.push(artifact);
+      continue;
+    }
+    const path = remaining > 0 && budget.lookups < MAX_LOOKUPS
+      ? localArtifactPath(artifact.uri)
+      : undefined;
+    if (path === undefined || await budget.denied(path)) {
+      artifacts.push(artifact);
+      continue;
+    }
+    budget.lookups += 1;
+    const inlined = await inlineArtifact(artifact, path);
+    // Couldn't (missing, symlink, FIFO, sha mismatch, too big): stays as is and the turn ships.
+    if (inlined === undefined) {
+      artifacts.push(artifact);
+      continue;
+    }
+    // The aggregate cap is measured in file bytes, same as `MAX_ATTACHMENTS_TOTAL_BYTES`.
+    if (inlined.bytes > budget.remainingBytes) {
+      budget.changed = true;
+      artifacts.push(notSent(artifact));
+      continue;
+    }
+    budget.remainingBytes -= inlined.bytes;
+    remaining -= 1;
+    budget.changed = true;
+    artifacts.push(inlined.artifact);
+  }
+
+  return artifacts;
+}
+
+export interface InlineArtifactOptions {
+  readonly deniedPathPrefixes?: readonly string[];
+  readonly denyPath?: (path: string) => boolean;
+}
+
+function asDirectory(prefix: string): string {
+  return prefix.endsWith("/") ? prefix : `${prefix}/`;
+}
+
+async function resolvedOr(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
+  }
+}
+
+function under(prefixes: readonly string[], path: string): boolean {
+  return prefixes.some((prefix) => `${path}/`.startsWith(prefix));
+}
+
+function denialFor(options: InlineArtifactOptions): (path: string) => Promise<boolean> {
+  const declared = (options.deniedPathPrefixes ?? []).map(asDirectory);
+  const extra = options.denyPath;
+  let resolvedPrefixes: readonly string[] | undefined;
+  return async (path) => {
+    if (extra?.(path) === true) return true;
+    if (declared.length === 0) return false;
+    if (under(declared, path)) return true;
+    resolvedPrefixes ??= await Promise.all(
+      declared.map(async (prefix) => asDirectory(await resolvedOr(prefix.slice(0, -1)))),
+    );
+    // The PARENT is resolved and the leaf is kept verbatim: a symlinked intermediate directory
+    // cannot smuggle a file out of a denied tree, and the leaf is `O_NOFOLLOW`'s job, not this one's.
+    const resolved = join(await resolvedOr(dirname(path)), basename(path));
+    return under(resolvedPrefixes, resolved);
+  };
+}
+
+/** Never throws. A denied PATH is never opened: `deniedPathPrefixes` is tested as written AND with
+ *  the parent resolved (prefixes too), so no symlinked directory or prefix escapes; `denyPath` is
+ *  the caller's own predicate over the raw path. A NAME is not an inode, so a hardlink or bind
+ *  mount of a denied file placed outside IS read -- the secret guard's digest is what withholds it. */
+export async function inlineLocalArtifacts(
+  output: StructuredOutput,
+  options: InlineArtifactOptions = {},
+): Promise<StructuredOutput> {
+  try {
+    const delegated = output.messages.some((message) => (message.artifacts?.length ?? 0) > 0);
+    if (output.artifacts.length === 0 && !delegated) return reviseFileOnlyOutcome(output);
+
+    const budget: InlineBudget = {
+      remainingBytes: MAX_INLINED_TOTAL_BYTES,
+      lookups: 0,
+      changed: false,
+      denied: denialFor(options),
+    };
+    const artifacts = await inlineList(output.artifacts, budget);
+    const messages: RelayMessage[] = [];
+    for (const message of output.messages) {
+      if (message.artifacts === undefined || message.artifacts.length === 0) {
+        messages.push(message);
+        continue;
+      }
+      messages.push({ ...message, artifacts: await inlineList(message.artifacts, budget) });
     }
 
-    return changed ? { ...output, artifacts } : output;
+    return reviseFileOnlyOutcome(budget.changed ? { ...output, artifacts, messages } : output);
   } catch {
     // Defense in depth: the invariant is that an attachment NEVER costs a turn.
     return output;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -12,6 +12,11 @@ import {
   inlineLocalArtifacts,
   localArtifactPath,
 } from "../src/sdk/artifact-inliner.js";
+import { FILE_ONLY_REPLY } from "../src/sdk/output-parser/relay-artifacts.js";
+import {
+  validateDeliveryOutput,
+  validateStructuredOutput,
+} from "../src/sdk/output-parser/contract.js";
 import { fakeDefinition } from "../src/harnesses/index.js";
 import { HarnessAdapter } from "../src/harnesses/shared.js";
 import { DurableStore } from "../src/sdk/durable-store.js";
@@ -171,7 +176,7 @@ test("el fichero de 10.000.000 bytes exactos SÍ entra: el tope no se corre por 
   assert.equal(decodeDataUri(firstUri(output)).length, MAX_INLINED_ARTIFACT_BYTES);
 });
 
-test("el techo agregado por respuesta corta en el segundo adjunto, y el segundo queda intacto", async () => {
+test("el techo agregado por respuesta corta en el segundo adjunto, que se degrada a cauce:not-sent", async () => {
   const seis = Buffer.alloc(6_000_000, 0x43);
   const primero = await fileWith("mitad-1.bin", seis);
   const segundo = await fileWith("mitad-2.bin", seis);
@@ -184,7 +189,87 @@ test("el techo agregado por respuesta corta en el segundo adjunto, y el segundo 
 
   assert.match(firstUri(output), /^data:application\/octet-stream;base64,/u);
   // 6 MB + 6 MB pass the per-attachment cap but not the aggregate cap (10 MB, same as ingestion).
-  assert.deepEqual(output.artifacts[1], entrada.artifacts[1]);
+  assert.deepEqual(output.artifacts[1], { name: "mitad-2.bin", uri: "cauce:not-sent" });
+});
+
+test("cuatro data: de 10 MB ya hechos: entra el que cabe y los otros salen como cauce:not-sent", async () => {
+  const diezMb = `data:application/pdf;base64,${"A".repeat(13_333_334)}==`;
+  const entrada = envelope(Array.from({ length: 4 }, (_, index) => ({
+    name: `tomo-${String(index)}.pdf`,
+    uri: diezMb,
+    media_type: "application/pdf",
+    sha256: "b".repeat(64),
+  })));
+
+  const output = await inlineLocalArtifacts(entrada);
+
+  assert.equal(output.artifacts[0]?.uri, diezMb);
+  for (const index of [1, 2, 3]) {
+    assert.deepEqual(output.artifacts[index], {
+      name: `tomo-${String(index)}.pdf`,
+      media_type: "application/pdf",
+      sha256: "b".repeat(64),
+      uri: "cauce:not-sent",
+    }, `el adjunto ${String(index)} no cabía y no puede viajar como si cupiera`);
+  }
+});
+
+test("una ruta local dentro de messages[].artifacts se inlinea igual que la del origen", async () => {
+  const path = await fileWith("delegado.png", PNG_BYTES);
+  const entrada: StructuredOutput = {
+    ...envelope([]),
+    messages: [{ to: "socrates", body: "seguí vos", artifacts: [{ name: "delegado.png", uri: path }] }],
+  };
+
+  const output = await inlineLocalArtifacts(entrada);
+
+  const enviado = output.messages[0]?.artifacts?.[0];
+  assert.ok(enviado, "la delegación salió sin artifacts");
+  assert.match(enviado.uri, /^data:image\/png;base64,/u);
+  assert.deepEqual(decodeDataUri(enviado.uri), PNG_BYTES);
+  assert.equal(enviado.sha256, createHash("sha256").update(PNG_BYTES).digest("hex"));
+  assert.equal(output.messages[0]?.body, "seguí vos");
+});
+
+test("el presupuesto agregado es UNO para el origen y la delegación juntos", async () => {
+  const seis = Buffer.alloc(6_000_000, 0x44);
+  const origen = await fileWith("origen-6.bin", seis);
+  const delegado = await fileWith("delegado-6.bin", seis);
+  const entrada: StructuredOutput = {
+    ...envelope([{ name: "origen-6.bin", uri: origen }]),
+    messages: [{ to: "socrates", body: "el resto", artifacts: [{ name: "delegado-6.bin", uri: delegado }] }],
+  };
+
+  const output = await inlineLocalArtifacts(entrada);
+
+  assert.match(firstUri(output), /^data:application\/octet-stream;base64,/u);
+  assert.deepEqual(output.messages[0]?.artifacts, [{ name: "delegado-6.bin", uri: "cauce:not-sent" }]);
+});
+
+test("un enlace simbólico dentro de messages[].artifacts tampoco se lee", async () => {
+  const enlace = join(await workspace(), "delegado-inocente.txt");
+  await rm(enlace, { force: true });
+  await symlink("/etc/passwd", enlace);
+  const entrada: StructuredOutput = {
+    ...envelope([]),
+    messages: [{
+      to: "socrates",
+      body: "mirá esto",
+      artifacts: [
+        { name: "delegado-inocente.txt", uri: enlace },
+        { name: "entorno", uri: "/proc/self/environ" },
+        { name: "escape", uri: `${await workspace()}/../../etc/passwd` },
+        { name: "relativa", uri: "informe.md" },
+      ],
+    }],
+  };
+
+  const output = await inlineLocalArtifacts(entrada);
+
+  assert.equal(output, entrada, "nada era convertible: el sobre sale idéntico");
+  for (const artifact of output.messages[0]?.artifacts ?? []) {
+    assert.equal(artifact.uri.startsWith("data:"), false, `se leyó ${artifact.name}`);
+  }
 });
 
 test("veinte artifacts: se convierten los primeros N y el resto queda como estaba, sin excepción", async () => {
@@ -478,4 +563,169 @@ test("un adjunto ilegible no le cuesta el turno a nadie: el ACK sale igual, con 
   assert.equal(done.output?.reply, "no pude generar el pantallazo, pero acá va el informe");
   assert.equal(done.output.artifacts[0]?.uri.startsWith("file://"), true);
   assert.equal(store.getDelivery("miguel-2")?.state, "done");
+});
+
+test("un data: de 20 MB no cierra el turno anunciando un fichero que nunca viaja", async () => {
+  const veinteMB = `data:application/pdf;base64,${"A".repeat(26_666_664)}`;
+  const parsed = validateStructuredOutput({
+    reply: null,
+    messages: [],
+    notify: [],
+    status: "done",
+    retryable: false,
+    artifacts: [{ name: "a.pdf", uri: veinteMB }],
+  });
+  const validado = validateDeliveryOutput(parsed);
+  const salida = await inlineLocalArtifacts(validado);
+
+  assert.equal(firstUri(salida), "cauce:not-sent", "el adjunto no entra en el presupuesto del turno");
+  assert.doesNotMatch(salida.reply ?? "", /Te dejo el\/los fichero/u,
+    "un turno sin fichero no puede cerrar diciendo que deja un fichero");
+  assert.equal(salida.status, "failed");
+  assert.equal(salida.retryable, false);
+});
+
+test("si el único fichero entregable se cae por presupuesto, el turno deja de ser un 'done' mudo", async () => {
+  const relleno = { name: "relleno.txt", uri: `data:text/plain,${"x".repeat(9_999_999)}` };
+  const entregable = { name: "a.pdf", uri: `data:application/pdf;base64,${"QUJD".repeat(1_000)}` };
+  const validado = validateDeliveryOutput(validateStructuredOutput({
+    reply: null,
+    messages: [],
+    notify: [],
+    status: "done",
+    retryable: false,
+    artifacts: [relleno, entregable],
+  }));
+  assert.equal(validado.status, "done", "con un data: válido el contrato acepta el turno solo-fichero");
+  assert.match(validado.reply ?? "", /^Te dejo el\/los fichero\(s\)/u);
+
+  const salida = await inlineLocalArtifacts(validado);
+  assert.equal(salida.artifacts[1]?.uri, "cauce:not-sent");
+  assert.equal(salida.status, "failed");
+  assert.equal(salida.retryable, false);
+  assert.doesNotMatch(salida.reply ?? "", /Te dejo el\/los fichero/u);
+  assert.match(salida.reply ?? "", /fichero/u, "el humano tiene que saber que había un fichero");
+});
+
+test("con una delegación en vuelo el turno sigue en 'done', pero el texto deja de prometer el fichero", async () => {
+  const salida = await inlineLocalArtifacts({
+    reply: FILE_ONLY_REPLY,
+    messages: [{ to: "socrates", body: "segui vos" }],
+    notify: [],
+    status: "done",
+    retryable: false,
+    artifacts: [
+      { name: "relleno.txt", uri: `data:text/plain,${"x".repeat(9_999_999)}` },
+      { name: "a.pdf", uri: `data:application/pdf;base64,${"QUJD".repeat(1_000)}` },
+    ],
+  });
+
+  assert.equal(salida.status, "done", "una delegación viva no se cae por un adjunto que no entró");
+  assert.equal(salida.messages.length, 1);
+  assert.doesNotMatch(salida.reply ?? "", /Te dejo el\/los fichero/u);
+});
+
+test("un prefijo denegado impide LEER el fichero, y sin la opción el mismo fichero sí se inlinea", async () => {
+  const directorio = await workspace();
+  const path = await fileWith("secreto-1-abc123", Buffer.from("TOKEN=sk-live-do-not-share"));
+
+  const denegado = await inlineLocalArtifacts(envelope([{ name: "secreto", uri: path }]), {
+    deniedPathPrefixes: [directorio],
+  });
+  assert.equal(firstUri(denegado), path, "una ruta bajo un prefijo denegado no se convierte a data:");
+
+  const porPredicado = await inlineLocalArtifacts(envelope([{ name: "secreto", uri: path }]), {
+    denyPath: (candidate) => candidate.endsWith("secreto-1-abc123"),
+  });
+  assert.equal(firstUri(porPredicado), path);
+
+  const sinOpcion = await inlineLocalArtifacts(envelope([{ name: "secreto", uri: path }]));
+  assert.match(firstUri(sinOpcion), /^data:/u, "el default no deniega nada: es la opción la que niega");
+});
+
+test("un directorio intermedio enlazado no saca el fichero del prefijo denegado", async () => {
+  const raiz = await realpath(await workspace());
+  const secretos = join(raiz, "secretos-denegados");
+  await mkdir(secretos, { recursive: true });
+  const real = join(secretos, "secreto-2-abc123");
+  await writeFile(real, Buffer.from("TOKEN=sk-live-do-not-share"));
+  const enlace = join(raiz, "enlace-a-secretos");
+  await rm(enlace, { force: true });
+  await symlink(secretos, enlace, "dir");
+  const porEnlace = join(enlace, "secreto-2-abc123");
+
+  const denegado = await inlineLocalArtifacts(envelope([{ name: "secreto", uri: porEnlace }]), {
+    deniedPathPrefixes: [secretos],
+  });
+  assert.equal(firstUri(denegado), porEnlace,
+    "el prefijo denegado se evalúa sobre la ruta con el padre resuelto");
+
+  const prefijoEnlazado = await inlineLocalArtifacts(envelope([{ name: "secreto", uri: real }]), {
+    deniedPathPrefixes: [enlace],
+  });
+  assert.equal(firstUri(prefijoEnlazado), real,
+    "y también cuando el prefijo que nombra el llamante es el que pasa por el enlace");
+
+  const otroArbol = await inlineLocalArtifacts(envelope([{ name: "secreto", uri: real }]), {
+    deniedPathPrefixes: [join(raiz, "otro-arbol")],
+  });
+  assert.match(firstUri(otroArbol), /^data:/u, "resolver no puede denegar lo que nadie denegó");
+});
+
+test("un data: sin base64 de caracteres multibyte no entra en el presupuesto compartido", async () => {
+  const uri = `data:text/plain,${"\u4e2d".repeat(3_400_000)}`;
+  const salida = await inlineLocalArtifacts(envelope([{ name: "grande.txt", uri }]));
+  assert.equal(firstUri(salida), "cauce:not-sent", "el peso del adjunto se mide en bytes UTF-8");
+});
+
+test("un fichero no viaja bajo un texto que dice que no se llegó a redactar nada", async () => {
+  const path = await fileWith("informe-bidireccional.png", PNG_BYTES);
+  const validado = validateDeliveryOutput(validateStructuredOutput({
+    reply: null,
+    messages: [],
+    notify: [],
+    status: "done",
+    retryable: false,
+    artifacts: [{ name: "informe.png", uri: path }],
+  }));
+  assert.equal(validado.status, "failed", "antes de inlinear el contrato no ve fichero entregable");
+
+  const salida = await inlineLocalArtifacts(validado);
+  assert.match(firstUri(salida), /^data:/u, "el inliner sí lo convierte en un fichero real");
+  assert.equal(salida.status, "done", "y entonces el turno deja de negar el trabajo que hizo");
+  assert.equal(salida.retryable, false);
+  assert.equal(salida.reply, FILE_ONLY_REPLY);
+});
+
+test("un data: que solo DICE ser base64 no entra en el presupuesto compartido", async () => {
+  const uri = `data:text/plain;base64,${"中".repeat(4_000_000)}`;
+  const salida = await inlineLocalArtifacts(envelope([{ name: "grande.txt", uri }]));
+  assert.equal(firstUri(salida), "cauce:not-sent", "el peso de un base64 fingido son sus bytes UTF-8");
+});
+
+test("prometer un fichero con la lista de artifacts vacia tampoco cierra el turno en 'done'", async () => {
+  const salida = await inlineLocalArtifacts({
+    reply: FILE_ONLY_REPLY,
+    messages: [],
+    notify: [],
+    status: "done",
+    retryable: false,
+    artifacts: [],
+  });
+  assert.equal(salida.status, "failed", "sin nada adjunto el texto que promete un fichero es mentira");
+  assert.equal(salida.retryable, false);
+  assert.doesNotMatch(salida.reply ?? "", /Te dejo el\/los fichero/u);
+  assert.match(salida.reply ?? "", /fichero/u, "el humano tiene que saber que había un fichero");
+});
+
+test("un data: ya hecho pesa lo que el frame carga, no lo que el decodificador mide", async () => {
+  const conEspacios = `data:text/plain;base64,A${" ".repeat(13_000_000)}AAA`;
+  const cabecerota = `data:text/plain;${"x".repeat(13_000_000)};base64,AAAA`;
+  const delante = `${" ".repeat(20_000_000)}data:text/plain;base64,QUJD`;
+
+  for (const uri of [conEspacios, cabecerota, delante]) {
+    const salida = await inlineLocalArtifacts(envelope([{ name: "a.txt", uri }]));
+    assert.equal(firstUri(salida), "cauce:not-sent",
+      "13 MB de relleno gastan 13 MB del presupuesto agregado, no 3 bytes");
+  }
 });
