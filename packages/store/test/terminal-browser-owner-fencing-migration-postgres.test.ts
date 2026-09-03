@@ -14,6 +14,9 @@ import {
 import {
   removeTerminalControlHoldsLayer, restoreTerminalControlHoldsLayer,
 } from './terminal-control-holds-layer.js';
+import {
+  removeAgentContextRevisionsLayer, restoreAgentContextRevisionsLayer,
+} from './agent-context-revisions-layer.js';
 
 const upPath = new URL('../migrations/033_terminal_browser_owner_fencing.sql', import.meta.url);
 const downPath = new URL('../migrations/down/033_terminal_browser_owner_fencing.sql', import.meta.url);
@@ -76,6 +79,7 @@ beforeEach(async () => {
   // own their disposable rows explicitly so test order cannot turn a drain guard red or green.
   await pool.query(`TRUNCATE TABLE terminal_sessions CASCADE`);
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
+  await removeAgentContextRevisionsLayer(pool);
   await removeTerminalControlHoldsLayer(pool);
   await removeSecretHandoffLayer(pool);
   await removeLatestTextItemsSearchPathFix();
@@ -161,6 +165,7 @@ async function restoreLatestSchema(): Promise<void> {
   );
   await restoreSecretHandoffLayer(pool);
   await restoreTerminalControlHoldsLayer(pool);
+  await restoreAgentContextRevisionsLayer(pool);
 }
 
 async function consolePublishIndexesExist(): Promise<boolean> {

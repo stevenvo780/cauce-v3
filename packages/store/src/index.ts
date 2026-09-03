@@ -9,3 +9,4 @@ export * from './agent-profile.js';
 export * from './audit-summary.js';
 export * from './delivery-timing.js';
 export * from './terminal-control-holds.js';
+export * from './agent-context-revisions.js';

@@ -15,6 +15,9 @@ import {
 import {
   removeTerminalControlHoldsLayer, restoreTerminalControlHoldsLayer,
 } from './terminal-control-holds-layer.js';
+import {
+  removeAgentContextRevisionsLayer, restoreAgentContextRevisionsLayer,
+} from './agent-context-revisions-layer.js';
 
 const version = '034_terminal_relay_instance_fencing.sql';
 const upPath = new URL(`../migrations/${version}`, import.meta.url);
@@ -119,6 +122,7 @@ async function restoreLatestSchema(): Promise<void> {
   await markTextItemsSearchPathFixApplied();
   await restoreSecretHandoffLayer(pool);
   await restoreTerminalControlHoldsLayer(pool);
+  await restoreAgentContextRevisionsLayer(pool);
 }
 
 async function markConsolePublishIndexesApplied(): Promise<void> {
@@ -177,6 +181,7 @@ async function removeLatestTextItemsSearchPathFix(): Promise<void> {
 beforeEach(async () => {
   await resetTestDatabase(pool);
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
+  await removeAgentContextRevisionsLayer(pool);
   await removeTerminalControlHoldsLayer(pool);
   await pool.query('DELETE FROM terminal_sessions');
   await removeSecretHandoffLayer(pool);

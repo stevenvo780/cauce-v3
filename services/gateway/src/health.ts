@@ -15,6 +15,9 @@ import { probeProfileRuntimePath } from './health/schema-profile-runtime.js';
 import {
   probeConsolePublishIntentPath,
 } from './health/schema-console-publish-intent.js';
+import {
+  CONTEXT_CONTAMINATION_REASONS, contextContamination,
+} from './console/contaminacion-de-contexto.js';
 
 export {
   probeConsolePublishIntentPath,
@@ -140,6 +143,20 @@ export function renderConsolePublishMetrics(
     const key = `${event.operation}:${event.result}`;
     lines.push(
       `cauce_gateway_console_publish_operations_total{operation="${event.operation}",result="${event.result}"} ${String(metricValue(counters[key] ?? -1, `console publish ${key}`))}`,
+    );
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+export function renderContextContaminationMetrics(): string {
+  const snapshot = contextContamination.snapshot();
+  const lines = [
+    '# HELP cauce_gateway_context_contamination_total Governance files quarantined by the context guard.',
+    '# TYPE cauce_gateway_context_contamination_total counter',
+  ];
+  for (const reason of CONTEXT_CONTAMINATION_REASONS) {
+    lines.push(
+      `cauce_gateway_context_contamination_total{reason="${reason}"} ${String(metricValue(snapshot[reason], `context contamination ${reason}`))}`,
     );
   }
   return `${lines.join('\n')}\n`;
@@ -272,7 +289,7 @@ export function registerHealthRoutes(app: FastifyInstance, options: HealthOption
       .type('text/plain; version=0.0.4; charset=utf-8')
       .send(`${wakeTelemetry === undefined ? '' : renderWakePumpMetrics(wakeTelemetry)}${
         consoleTelemetry === undefined ? '' : renderConsolePublishMetrics(consoleTelemetry)
-      }`));
+      }${renderContextContaminationMetrics()}`));
   }
 }
 

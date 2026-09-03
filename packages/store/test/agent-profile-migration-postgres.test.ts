@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { applyMigrations, type DatabasePool } from '../src/index.js';
 import { startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { removeSecretHandoffLayer } from './secret-handoff-layer.js';
+import { removeAgentContextRevisionsLayer } from './agent-context-revisions-layer.js';
 import { removeTerminalControlHoldsLayer } from './terminal-control-holds-layer.js';
 
 /**
@@ -65,6 +66,7 @@ async function migrationApplied(version: string): Promise<boolean> {
 }
 
 async function downProfileDependentsIfApplied(): Promise<void> {
+  await removeAgentContextRevisionsLayer(pool);
   await removeTerminalControlHoldsLayer(pool);
   await removeSecretHandoffLayer(pool);
   // 035 owns tables with FKs to agent_profiles, so exercise the real dependency order.

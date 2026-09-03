@@ -23,6 +23,7 @@ const laterVersions = [
   '038_cauce_text_items_ok_search_path.sql',
   '039_secret_handoff.sql',
   '040_terminal_control_holds.sql',
+  '041_agent_context_revisions.sql',
 ] as const;
 
 let database: TestDatabase;

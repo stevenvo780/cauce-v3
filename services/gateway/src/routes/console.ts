@@ -1,9 +1,12 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import {
-  AliasSchema, CreateJobSchema, DeliveryIdSchema, TenantSchema, type Tenant,
+  AliasSchema, CreateJobSchema, DeliveryIdSchema, ProfileRuntimeContractSchema, TenantSchema,
+  type Tenant,
 } from '@cauce/protocol';
-import { AgentProfileRepository, StoreError } from '@cauce/store';
+import { AgentContextRevisionsStore, AgentProfileRepository, StoreError } from '@cauce/store';
 import { requireOperatorPermission, requirePermission } from '../auth.js';
+import { registerAgentContextHistoryRoutes } from '../console/agent-context-history.routes.js';
+import { registerAgentContextReloadRoutes } from '../console/agent-context-reload.routes.js';
 import { registerAgentDocumentRoutes } from '../console/agent-documents.routes.js';
 import { prepareAgentProfileRuntime } from '../console/agent-profile-runtime.js';
 import { registerAgentProfileRoutes } from '../console/agent-profile.routes.js';
@@ -26,6 +29,38 @@ import { registerConsoleOperationsRoutes } from './console/operations.js';
 import { publishRouteOptions } from './core/publish.js';
 
 export { createConsoleRoutes } from './console/access.js';
+
+async function expectativaDeRuntime(
+  pool: ConsoleRoutes['options']['pool'], tenantId: string, alias: string,
+): Promise<{
+  generation: string;
+  documents: readonly { name: string; path: string; sha: string }[];
+} | undefined> {
+  const result = await pool.query<{ generation: string; documents: unknown }>(
+    `SELECT generation,documents FROM agent_profile_runtime_expectations
+      WHERE tenant_id=$1 AND alias=$2`,
+    [tenantId, alias],
+  );
+  const row = result.rows[0];
+  if (row === undefined || !Array.isArray(row.documents)) return undefined;
+  const parsed = ProfileRuntimeContractSchema.safeParse({
+    revision: 1, generation: row.generation, documents: row.documents,
+  });
+  if (!parsed.success) return undefined;
+  return { generation: parsed.data.generation, documents: parsed.data.documents };
+}
+
+async function entregaEnVuelo(
+  pool: ConsoleRoutes['options']['pool'], tenantId: string, alias: string,
+): Promise<boolean> {
+  const result = await pool.query(
+    `SELECT 1 FROM deliveries
+      WHERE recipient_tenant=$1 AND recipient_alias=$2
+        AND status IN ('leased','accepted','started') LIMIT 1`,
+    [tenantId, alias],
+  );
+  return result.rowCount === 1;
+}
 
 /**
  * Mounts the whole `/v3/console` surface. The topic modules register disjoint paths, so their
@@ -288,6 +323,39 @@ function registerConsoleAgentRoutes(
         options.operatorResolution ?? { operatorHeader: DEFAULT_OPERATOR_HEADER, operators: new Set() },
       ),
       // A denial leaving no audit row is worse than an unavailable route: the write is awaited.
+      recordAudit: (entry) => recordTerminalAudit(options.pool, entry),
+    });
+
+    const diario = new AgentContextRevisionsStore(options.pool);
+    registerAgentContextHistoryRoutes(app, {
+      authorize: autorizarPerfil,
+      authorizeTarget: (actor, tenantId, alias, permission) =>
+        autorizarDestino(actor, tenantId, alias, permission),
+      listProfileRevisions: (tenantId, alias, limit) =>
+        diario.listProfileRevisions(tenantId, alias, limit),
+      listDocumentRevisions: (tenantId, alias, kind, limit) =>
+        diario.listDocumentRevisions(tenantId, alias, kind, limit),
+    });
+    registerAgentContextReloadRoutes(app, {
+      authorize: autorizarPerfil,
+      authorizeTarget: (actor, tenantId, alias, permission) =>
+        autorizarDestino(actor, tenantId, alias, permission),
+      resolveOperator: async (request) => resolveOperator(
+        request as FastifyRequest,
+        await principal(request as FastifyRequest, options.authProvider),
+        options.operatorResolution ?? { operatorHeader: DEFAULT_OPERATOR_HEADER, operators: new Set() },
+      ),
+      readContext: (tenantId, alias) => perfiles.readContextWithPresence(tenantId, alias),
+      prepareRuntime: (tenantId, alias, contexto) =>
+        prepareAgentProfileRuntime(profileProbe, tenantId, alias, contexto),
+      readRuntimeExpectation: (tenantId, alias) =>
+        expectativaDeRuntime(options.pool, tenantId, alias),
+      recordRuntimeExpectation: (tenantId, alias, revision, verification) =>
+        recordRuntimeExpectation(
+          tenantId, alias, runtimeContractFromVerification(revision, verification),
+        ),
+      deliveryInFlight: (tenantId, alias) => entregaEnVuelo(options.pool, tenantId, alias),
+      recordDocumentRevision: (input) => diario.recordDocumentRevision(input),
       recordAudit: (entry) => recordTerminalAudit(options.pool, entry),
     });
 

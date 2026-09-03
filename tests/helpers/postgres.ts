@@ -128,6 +128,7 @@ export const SUITES_SIN_PLANTILLA: ReadonlySet<string> = new Set([
   'terminal-session-claim-fencing-migration-postgres.test.ts',
   'terminal-browser-owner-fencing-migration-postgres.test.ts',
   'terminal-relay-instance-fencing-migration-postgres.test.ts',
+  'agent-context-revisions-migration-postgres.test.ts',
 ]);
 
 const conteoPorFichero = new Map<string, { ejecutados: number; razon: string; saltados: number }>();

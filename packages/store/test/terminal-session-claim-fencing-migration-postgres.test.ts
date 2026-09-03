@@ -14,6 +14,9 @@ import {
 import {
   removeTerminalControlHoldsLayer, restoreTerminalControlHoldsLayer,
 } from './terminal-control-holds-layer.js';
+import {
+  removeAgentContextRevisionsLayer, restoreAgentContextRevisionsLayer,
+} from './agent-context-revisions-layer.js';
 
 const upPath = new URL('../migrations/032_terminal_session_claim_fencing.sql', import.meta.url);
 const downPath = new URL('../migrations/down/032_terminal_session_claim_fencing.sql', import.meta.url);
@@ -82,6 +85,7 @@ beforeEach(async () => {
   await resetTestDatabase(pool);
   await pool.query(`TRUNCATE TABLE terminal_sessions CASCADE`);
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
+  await removeAgentContextRevisionsLayer(pool);
   await removeTerminalControlHoldsLayer(pool);
   await removeSecretHandoffLayer(pool);
   await removeLatestTextItemsSearchPathFix();
@@ -162,6 +166,7 @@ async function restoreLatestSchema(): Promise<void> {
   await markApplied(version038);
   await restoreSecretHandoffLayer(pool);
   await restoreTerminalControlHoldsLayer(pool);
+  await restoreAgentContextRevisionsLayer(pool);
 }
 
 async function consolePublishIndexesExist(): Promise<boolean> {
@@ -404,6 +409,7 @@ describe('destructive migrations serialize with applyMigrations', () => {
         // Exercise the appearance CAS, not a no-op forward apply. Remove 038 before 037 so only
         // a pre-lock snapshot can distinguish "explicit down after a no-op" (allowed)
         // from "037 appeared while down was queued" (must be rejected).
+        await removeAgentContextRevisionsLayer(pool);
         await removeTerminalControlHoldsLayer(pool);
         await removeSecretHandoffLayer(pool);
         await removeLatestTextItemsSearchPathFix();
