@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSelfSignedCert } from '../../../tests/terminal-pty/certs.mjs';
 import { HttpsTerminalGatewayClient } from './gateway-client.js';
 import { createRelayHealthServer, RelayHealthState } from './health.js';
+import { TerminalRelayMetrics } from './metrics.js';
 import { relayInstanceIdFromCertificate, type RelayProcessIdentity } from './relay-identity.js';
 
 const cleanup: (() => Promise<void>)[] = [];
@@ -32,7 +33,13 @@ describe('terminal relay readiness', () => {
       presenceMaxStaleMs: 30_000,
       now: () => now,
     });
-    const server = createRelayHealthServer(state, { port: 0, host: '127.0.0.1' });
+    const metrics = new TerminalRelayMetrics({
+      readiness: () => state.ready,
+      presenceAcceptedAt: () => state.presenceAcceptedAt,
+    });
+    const server = createRelayHealthServer(state, {
+      port: 0, host: '127.0.0.1', metrics: () => metrics.render(),
+    });
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
       server.once('listening', resolve);
@@ -52,6 +59,7 @@ describe('terminal relay readiness', () => {
 
     state.presenceAccepted();
     expect((await request()).status).toBe(200);
+    expect(await (await request('/metrics')).text()).toContain('cauce_terminal_ready 1');
     state.presenceFailed();
     expect(await (await request()).json()).toEqual({
       status: 'not_ready', reason: 'presence_publish_failed',
@@ -65,9 +73,15 @@ describe('terminal relay readiness', () => {
     state.beginShutdown();
     expect(await (await request()).json()).toEqual({ status: 'not_ready', reason: 'stopping' });
     expect((await request('/health/live')).status).toBe(200);
-    const metrics = await request('/metrics');
-    expect(metrics.status).toBe(404);
-    expect(await metrics.json()).toEqual({ status: 'not_found' });
+    const scrape = await request('/metrics');
+    expect(scrape.status).toBe(200);
+    expect(scrape.headers.get('content-type')).toBe('text/plain; version=0.0.4; charset=utf-8');
+    const exposition = await scrape.text();
+    expect(exposition).toContain('cauce_terminal_ready 0');
+    expect(exposition).toContain('cauce_terminal_sessions_open{mode="harness_rw"} 0');
+    expect(exposition).toContain('# TYPE cauce_terminal_bytes_out_total counter');
+    expect(exposition).not.toMatch(/alias|tenant|operator|session_id/u);
+    expect((await request('/no-such-route')).status).toBe(404);
     const rejected = await fetch(`http://127.0.0.1:${String(address.port)}/health/live`, {
       method: 'POST',
     });
@@ -75,13 +89,40 @@ describe('terminal relay readiness', () => {
     expect(await rejected.json()).toEqual({ status: 'method_not_allowed' });
   });
 
-  it('binds the production health endpoint to loopback, never to the published data interfaces', async () => {
+  it('deja el listener de salud alcanzable desde el contenedor de Prometheus y sin puerto publicado', async () => {
     const main = await readFile(new URL('./main.ts', import.meta.url), 'utf8');
     expect(main).toMatch(
-      /createRelayHealthServer\(healthState, \{\s*port: config\.healthPort,\s*host: '127\.0\.0\.1',/u,
+      /createRelayHealthServer\(healthState, \{\s*port: config\.healthPort,\s*metrics:/u,
     );
+    expect(main).not.toMatch(/host: '127\.0\.0\.1'/u);
     expect(main).not.toMatch(/healthServer\.listen\(/u);
-    expect(main).not.toMatch(/createRelayHealthServer\([^)]*'0\.0\.0\.0'/su);
+    const compose = await readFile(new URL('../../../deploy/compose.yaml', import.meta.url), 'utf8');
+    expect(compose).not.toMatch(/:8085:8085/u);
+
+    const prometheus = await readFile(
+      new URL('../../../ops/observability/prometheus.yaml', import.meta.url), 'utf8',
+    );
+    const relayJob = prometheus.slice(prometheus.indexOf('- job_name: cauce-relay'));
+    const relayBlock = relayJob.slice(0, relayJob.indexOf('\n  - job_name:'));
+    expect(relayBlock).toMatch(/dns_sd_configs:[\s\S]*?names: \[terminal-relay\][\s\S]*?port: 8085/u);
+    expect(relayBlock).not.toContain('static_configs');
+    const alerts = await readFile(
+      new URL('../../../ops/observability/alerts.yaml', import.meta.url), 'utf8',
+    );
+    const fromTerminal = alerts.slice(alerts.indexOf('- name: cauce-v3-terminal'));
+    const terminalGroup = fromTerminal.slice(0, fromTerminal.indexOf('\n  - name:'));
+    expect(terminalGroup).toContain('alert: CauceTerminalTargetDown');
+    expect(terminalGroup.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n'))
+      .not.toContain('absent(');
+
+    const state = new RelayHealthState({ listenersReady: () => true, presenceMaxStaleMs: 30_000 });
+    const server = createRelayHealthServer(state, { port: 0 });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.once('listening', resolve);
+    });
+    cleanup.push(async () => new Promise<void>((resolve) => { server.close(() => { resolve(); }); }));
+    expect((server.address() as AddressInfo).address).not.toBe('127.0.0.1');
   });
 });
 

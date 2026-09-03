@@ -3,8 +3,8 @@ import { startHealthServer, type HealthAnswer } from '@cauce/protocol';
 
 /**
  * Readiness for the relay data plane. A listening TCP socket alone is not useful: the process is
- * only routable after both TLS listeners are up and the gateway has accepted a current presence
- * publication. All state is aggregate and identity-free, and the relay exposes no `/metrics`.
+ * routable only after both TLS listeners are up and the gateway accepted a current presence
+ * publication. `/metrics` rides this same listener, identity-free; it binds every interface of the compose network like the dispatcher's, because Prometheus is a separate container and a loopback bind is a target it can never reach, and Compose publishes no host port for it.
  */
 
 type RelayNotReadyReason =
@@ -57,6 +57,14 @@ export class RelayHealthState {
     this.stopping = true;
   }
 
+  get presenceAcceptedAt(): number | undefined {
+    return this.lastPresenceAcceptedAt;
+  }
+
+  get ready(): boolean {
+    return this.readiness().ready;
+  }
+
   readiness(): RelayReadiness {
     if (this.stopping) return { ready: false, reason: 'stopping' };
     if (!this.listenersReady()) return { ready: false, reason: 'listener_down' };
@@ -75,7 +83,8 @@ export class RelayHealthState {
 
 interface RelayHealthServerOptions {
   readonly port: number;
-  readonly host: string;
+  readonly host?: string;
+  readonly metrics?: () => string;
 }
 
 export function createRelayHealthServer(
@@ -84,7 +93,8 @@ export function createRelayHealthServer(
 ): Server {
   return startHealthServer({
     port: options.port,
-    host: options.host,
+    ...(options.host === undefined ? {} : { host: options.host }),
+    ...(options.metrics === undefined ? {} : { metrics: options.metrics }),
     live: (): HealthAnswer => ({ ok: true, body: { status: 'live' } }),
     ready: (): HealthAnswer => {
       const readiness = state.readiness();

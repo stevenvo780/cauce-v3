@@ -6,6 +6,7 @@ import {
   MAX_CLAIM_LEASE_MS,
   claimEpoch,
   isClaimToken,
+  type TerminalMode,
   type TerminalSessionGrant,
 } from './gateway-client.js';
 
@@ -21,17 +22,37 @@ export const CLOSE_CODES = {
   session_conflict: 4409,
   output_flood: 4413,
   input_flood: 4414,
+  control_released: 4410,
   slow_consumer: 4415,
   ttl_expired: 4423
 } as const;
+
+/** The relay's own mode sets. What pins them is the behaviour asserted in `sessions.test.ts`; `tests/terminal-pty/vectors.json` freezes the Python agent's frozensets, and the four implementations must agree.
+ * READ_ONLY is exactly `{harness}` and gates STDIN; TUI is who may answer DA/DSR, and a writable TUI is in it or the emulator never finishes rendering. */
+export const READ_ONLY_MODES: readonly TerminalMode[] = ['harness'];
+export const TUI_MODES: readonly TerminalMode[] = ['harness', 'harness_rw'];
+export const WRITABLE_MODES: readonly TerminalMode[] = ['shell', 'harness_rw'];
+
+export function isReadOnlyMode(mode: TerminalMode): boolean {
+  return READ_ONLY_MODES.includes(mode);
+}
+
+export function isTuiMode(mode: TerminalMode): boolean {
+  return TUI_MODES.includes(mode);
+}
+
+export function isWritableTuiMode(mode: TerminalMode): boolean {
+  return TUI_MODES.includes(mode) && WRITABLE_MODES.includes(mode);
+}
 
 export const MIN_COLS = 20;
 export const MAX_COLS = 500;
 export const MIN_ROWS = 5;
 export const MAX_ROWS = 200;
 
-/** Keystrokes are coalesced so a burst of typing costs one frame, not one frame per key. */
+/** Keystrokes are coalesced so a burst of typing costs one frame, not one frame per key; an agent notice that beats OPEN_OK is held instead of racing `ready`, and the queue is capped so a chatty agent cannot grow it without bound. */
 export const STDIN_COALESCE_MS = 8;
+export const MAX_PENDING_NOTICES = 32;
 export const DEFAULT_OPEN_TIMEOUT_MS = 10_000;
 export const DEFAULT_OUTPUT_WINDOW_MS = 1_000;
 /** Sustained flood: warn after three windows over the limit, close two windows later. */
@@ -43,11 +64,10 @@ export const BACKPRESSURE_POLL_MS = 25;
 export const DEFAULT_RECONNECT_GRACE_MS = 30_000;
 export const CLOSE_RETRY_MIN_MS = 250;
 export const CLOSE_RETRY_MAX_MS = 30_000;
-/** Frames held while the agent opens the PTY; a client flooding that window is not typing. */
+/** Held while the agent opens the PTY, JSON overhead included; a flood there is not typing. */
 export const MAX_EARLY_MESSAGES = 64;
 export const MAX_INPUT_MESSAGE_BYTES = 16 * 1024;
 export const MAX_PENDING_STDIN_BYTES = 64 * 1024;
-/** Includes JSON overhead and control frames while OPEN is in flight. */
 export const MAX_EARLY_CLIENT_BYTES = 128 * 1024;
 export const WS_OPEN = 1;
 
@@ -64,6 +84,23 @@ export interface SessionLimits {
   readonly openTimeoutMs?: number;
   /** Test seam only; production accounts output in the one-second windows of the contract. */
   readonly outputWindowMs?: number;
+  /** Unset means no session recording at all, which also means no writable TUI. `recordShellSessions` is the separate, default-off switch that extends recording to plain interactive shells. */
+  readonly recordingDir?: string;
+  readonly recordingMaxBytes?: number;
+  readonly recordShellSessions?: boolean;
+}
+
+export type RecordingRequirement = 'required' | 'optional' | 'none';
+
+/** Recording follows the writable TUI: for `harness_rw` it is a precondition of the mode, for a plain `shell` it is opt-in, and a read-only mode is never recorded because it has no keyboard to record. */
+export function recordingRequirement(
+  mode: TerminalMode,
+  limits: SessionLimits,
+): RecordingRequirement {
+  if (isWritableTuiMode(mode)) return 'required';
+  if (limits.recordShellSessions !== true || limits.recordingDir === undefined
+    || !WRITABLE_MODES.includes(mode)) return 'none';
+  return 'optional';
 }
 
 export interface QueuedClientMessage {
@@ -231,12 +268,9 @@ export interface ScrollbackEntry {
   expiresAt: number;
 }
 
-/**
- * A lease must outlive one complete failed revalidation cycle, its fail-closed grace and the
- * gateway timeout, with a final margin in which the local PTY is guaranteed to die before a
- * different relay can take the row over. The nominal TTL is used for this configuration check;
- * the remaining lease is separately checked for each response.
- */
+/** A lease must outlive one failed revalidation cycle, its fail-closed grace, the gateway timeout
+ * and a final margin in which the local PTY dies before another relay can take the row over. The
+ * nominal TTL checks configuration; the remaining lease is re-checked on every response. */
 export function claimLeaseContractSatisfied(
   grant: TerminalSessionGrant,
   limits: SessionLimits,

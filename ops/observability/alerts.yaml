@@ -78,6 +78,40 @@ groups:
         annotations:
           summary: "Console publish owners are repeatedly arriving after their durable reservations expired"
 
+  - name: cauce-v3-terminal
+    rules:
+      # No `absent(...)` in this group. terminal-relay is `profiles: [terminal]` and its job is
+      # discovered by DNS, so on a stack without the PTY channel there is no series to be absent
+      # from and an unconditional absent() would page zeus and kant forever. The discovered target
+      # is the condition: CauceTerminalTargetDown covers a relay that exists and cannot be scraped.
+      - alert: CauceTerminalTargetDown
+        expr: up{job="cauce-relay"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A discovered terminal relay is not scrapeable"
+      - alert: CauceTerminalRelayUnready
+        expr: cauce_terminal_ready == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Terminal relay is not routable: a listener is down or presence is not fresh"
+      - alert: CauceTerminalPresenceStale
+        expr: time() - cauce_terminal_presence_last_success_timestamp_seconds > 120
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Terminal relay has no gateway-accepted presence publication in the last two minutes"
+      - alert: CauceTerminalOpensDenied
+        expr: increase(cauce_terminal_session_opens_total{result="denied"}[10m]) >= 5
+        labels:
+          severity: warning
+        annotations:
+          summary: "Terminal session opens are being refused repeatedly"
+
   - name: cauce-v3-queues
     rules:
       - alert: CauceDeliveryDlqGrowing

@@ -20,6 +20,7 @@ import {
   agentKey,
   type AgentGovernanceBatchEntry,
   type AgentHello,
+  type AgentNoticeKind,
   type AgentReadHandlers,
   type AgentSessionHandlers,
   type AgentWriteHandlers,
@@ -373,6 +374,14 @@ export class AgentConnection {
         signal: stringField(body, 'signal') ?? null,
         reason: stringField(body, 'reason') ?? 'agent_closed'
       }); });
+      return;
+    }
+    if (frame.tag === FRAME_TAGS.INPUT_REFUSED || frame.tag === FRAME_TAGS.GEOMETRY) {
+      const body = decodeJsonFrame(frame.payload);
+      const sessionId = stringField(body, 'session_id');
+      if (sessionId === undefined) throw new FramingError('agent notice without a session id');
+      const kind: AgentNoticeKind = frame.tag === FRAME_TAGS.GEOMETRY ? 'geometry' : 'input_refused';
+      this.dispatch(sessionId, (handlers) => { handlers.onAgentNotice(kind, body); });
       return;
     }
     if (frame.tag === FRAME_TAGS.READ_OK) {

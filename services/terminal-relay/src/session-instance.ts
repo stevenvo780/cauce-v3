@@ -1,6 +1,8 @@
 import { errorLabel, logEvent } from '@cauce/protocol';
 import type { RawData, WebSocket } from 'ws';
-import type { AgentConnection } from './agent-leg.js';
+import type { AgentConnection, AgentNoticeKind } from './agent-leg.js';
+import type { RelayMetricsSink } from './metrics.js';
+import { SessionRecording } from './recording.js';
 import {
   CLAIM_DEADLINE_SAFETY_MARGIN_MS,
   type SessionCloseReport,
@@ -20,14 +22,19 @@ import {
   MAX_EARLY_CLIENT_BYTES,
   MAX_EARLY_MESSAGES,
   MAX_INPUT_MESSAGE_BYTES,
+  MAX_PENDING_NOTICES,
   MAX_PENDING_STDIN_BYTES,
   STDIN_COALESCE_MS,
   WS_OPEN,
   claimLeaseTtlSatisfied,
   closeSocket,
   containerKey,
+  isReadOnlyMode,
+  isTuiMode,
+  isWritableTuiMode,
   parseClientMessage,
   rawDataByteLength,
+  recordingRequirement,
   type OpenSessionInput,
   type QueuedClientMessage,
   type ReattachSessionInput,
@@ -39,10 +46,14 @@ export interface SessionManagerDelegate {
   scrollbackFor(sessionId: string, expiresAt: number): ScrollbackEntry;
   release(sessionId: string, container: string): void;
   enqueueCloseReport(sessionId: string, report: SessionCloseReport): void;
+  readonly metrics: RelayMetricsSink;
 }
 
 export class TerminalSession {
   private readonly manager: SessionManagerDelegate;
+  private readonly metrics: RelayMetricsSink;
+  private recording: SessionRecording | undefined;
+  private counted = false;
   private readonly gateway: TerminalGatewayClient;
   private readonly limits: SessionLimits;
   private readonly now: () => number;
@@ -74,6 +85,7 @@ export class TerminalSession {
   private isSessionClosed(): boolean { return this.isClosed; }
   private stdin: Buffer[] = [];
   private stdinBytes = 0;
+  private pendingNotices: { kind: AgentNoticeKind; body: Record<string, unknown> }[] = [];
   private outputPaused = false;
   private stdinTimer: NodeJS.Timeout | undefined;
   private idleTimer: NodeJS.Timeout | undefined;
@@ -97,6 +109,7 @@ export class TerminalSession {
     input: OpenSessionInput
   ) {
     this.manager = manager;
+    this.metrics = manager.metrics;
     this.gateway = gateway;
     this.limits = limits;
     this.now = now;
@@ -132,12 +145,17 @@ export class TerminalSession {
       this.terminate(CLOSE_CODES.revoked, 'claim_lease_expired');
       return;
     }
-    // The browser may have closed between the consume and this listener. State is the only
-    // signal (the event already fired): no orphan PTY opens, and `terminate` reports idempotent.
+    // The browser may have closed between the consume and this listener. State is the only signal (the event already fired): no orphan PTY opens, and `terminate` reports idempotent.
     if (socket.readyState !== WS_OPEN) {
       this.terminate(CLOSE_CODES.normal, 'browser_closed');
       return;
     }
+    if (!(this.expiresAtMs - this.now() > 0)) {
+      this.metrics.openAttempt('expired');
+      this.terminate(CLOSE_CODES.ttl_expired, 'ttl_expired');
+      return;
+    }
+    if (!this.startRecording()) return;
     // Listening from the first synchronous moment: whatever is typed while the agent is opening
     // the PTY is held, not lost, and is replayed in order once the session is ready.
     let ready = false;
@@ -167,6 +185,9 @@ export class TerminalSession {
     socket.off('message', onEarlyMessage);
     this.bindReadyBrowser(socket);
     this.sendReady(false, this.bytesOut);
+    this.metrics.openAttempt('opened');
+    this.metrics.sessionOpened(this.grant.mode);
+    this.counted = true;
     this.startTimers();
     ready = true;
     for (const message of early) {
@@ -234,9 +255,8 @@ export class TerminalSession {
         this.terminate(CLOSE_CODES.normal, 'browser_closed_before_ready');
         return;
       }
-      // 1000 is an explicit orderly close, regardless of the client's human-readable reason.
-      // Only an abnormal transport loss gets a reconnect grace; trusting one magic reason left
-      // old clients' normal closes holding a physical-container slot for the whole grace window.
+      // 1000 is an explicit orderly close, regardless of the client's human-readable reason. Only an abnormal
+      // transport loss gets a reconnect grace; trusting one magic reason left old clients' normal closes holding a physical-container slot for the whole grace window.
       if (code === CLOSE_CODES.normal) {
         this.terminate(CLOSE_CODES.normal, 'browser_closed');
         return;
@@ -283,6 +303,9 @@ export class TerminalSession {
       claim_lease_ms: Math.max(1, Math.floor(this.claimLeaseExpiresAt - this.monotonicNow())),
       relay_instance_id: this.grant.relay_instance_id,
     });
+    const held = this.pendingNotices;
+    this.pendingNotices = [];
+    for (const notice of held) this.forwardNotice(notice.kind, notice.body);
   }
 
   terminate(code: number, reason: string, exitCode: number | null = null): void {
@@ -292,6 +315,7 @@ export class TerminalSession {
     this.clearTimers();
     this.stdin = [];
     this.stdinBytes = 0;
+    this.pendingNotices = [];
     // A teardown mid-handshake must release `start()`, or the attach would hang forever.
     this.settleOpen?.(false);
     this.settleOpen = undefined;
@@ -304,6 +328,11 @@ export class TerminalSession {
       closeSocket(socket, code, reason);
     }
     this.socket = undefined;
+    const recorded = this.recording?.close();
+    this.recording = undefined;
+    if (recorded?.capped === true) this.metrics.recording('capped');
+    if (this.counted) this.metrics.sessionClosed(this.grant.mode, code);
+    else this.metrics.closeCode(code);
     const report: SessionCloseReport = {
       reason,
       exit_code: this.exitCode,
@@ -311,6 +340,13 @@ export class TerminalSession {
       bytes_out: this.bytesOut,
       claim_token: this.claimToken,
       claim_epoch: this.claimEpochValue,
+      ...(recorded === undefined
+        ? {}
+        : {
+          input_batches: recorded.input_batches,
+          recording_sha256: recorded.sha256,
+          recording_capped: recorded.capped,
+        }),
     };
     this.manager.enqueueCloseReport(this.sessionId, report);
     logEvent('terminal_relay_session_closed', {
@@ -322,6 +358,37 @@ export class TerminalSession {
       bytes_in: this.bytesIn,
       bytes_out: this.bytesOut
     });
+  }
+
+  /** A writable TUI without a recording is not a mode: the open is refused, never downgraded. */
+  private startRecording(): boolean {
+    const requirement = recordingRequirement(this.grant.mode, this.limits);
+    if (requirement === 'none') return true;
+    try {
+      this.recording = SessionRecording.open(this.sessionId, {
+        directory: this.limits.recordingDir,
+        maxBytes: this.limits.recordingMaxBytes,
+        cols: this.cols,
+        rows: this.rows,
+      });
+    } catch (error) {
+      logEvent('terminal_relay_recording_unavailable', {
+        session_id: this.sessionId, mode: this.grant.mode, error: errorLabel(error)
+      });
+      this.metrics.recording('refused');
+      if (requirement === 'optional') return true;
+      this.terminate(CLOSE_CODES.internal_error, 'recording_unavailable');
+      return false;
+    }
+    this.metrics.recording('started');
+    return true;
+  }
+
+  private recordingBroke(): boolean {
+    if (this.recording?.broken !== true) return false;
+    this.metrics.recording('failed');
+    this.terminate(CLOSE_CODES.internal_error, 'recording_failed');
+    return true;
   }
 
   /** Sends OPEN and resolves once the agent answers, or tears the session down trying. */
@@ -339,11 +406,13 @@ export class TerminalSession {
       this.settleOpen = settle;
       this.agent.attachSession(this.sessionId, {
         onOpenOk: () => { settle(true); },
+        onAgentNotice: (kind, body) => { this.onAgentNotice(kind, body); },
         onOpenErr: (reason) => {
           // The agent is the second gate on the ticket: it may refuse what the relay accepted.
           const code = reason === 'ticket_invalid'
             ? CLOSE_CODES.ticket_invalid
             : reason === 'revoked' ? CLOSE_CODES.revoked : CLOSE_CODES.internal_error;
+          this.metrics.openAttempt('denied');
           this.terminate(code, reason);
           settle(false);
         },
@@ -360,6 +429,7 @@ export class TerminalSession {
         }
       });
       this.openTimer = setTimeout(() => {
+        this.metrics.openAttempt('denied');
         this.terminate(CLOSE_CODES.internal_error, 'open_timeout');
         settle(false);
       }, this.limits.openTimeoutMs ?? DEFAULT_OPEN_TIMEOUT_MS);
@@ -368,6 +438,7 @@ export class TerminalSession {
         this.agent.sendOpen(this.sessionId, this.ticket, this.grant.mode, this.cols, this.rows);
       } catch (error) {
         logEvent('terminal_relay_open_failed', { session_id: this.sessionId, error: errorLabel(error) });
+        this.metrics.openAttempt('denied');
         this.terminate(CLOSE_CODES.internal_error, 'open_failed');
         settle(false);
       }
@@ -383,9 +454,9 @@ export class TerminalSession {
         return;
       }
       if (message.type === 'ping') {
-        // In a shell, idleness still means "no human activity". A viewer has no keyboard: the ping
-        // proves the browser is still present without opening STDIN.
-        if (this.grant.mode === 'harness') this.resetIdle();
+        // Only a read-only viewer has no keyboard: its ping proves presence without STDIN. A
+        // writable session proves presence by typing or by the operator's explicit extension.
+        if (isReadOnlyMode(this.grant.mode)) this.resetIdle();
         return;
       }
       if (message.type === 'resize') {
@@ -395,20 +466,21 @@ export class TerminalSession {
         return;
       }
       if (message.type === 'terminal_response') {
-        // The parser already validated DA/DSR. Still, mode is a second boundary: an interactive shell
-        // uses normal STDIN; this channel exists exclusively for the harness viewer.
-        if (this.grant.mode !== 'harness') {
+        // The parser already validated DA/DSR. Mode is the second boundary: an interactive shell
+        // uses normal STDIN, and only a TUI mode owes the remote emulator this answer.
+        if (!isTuiMode(this.grant.mode)) {
           this.terminate(CLOSE_CODES.protocol_error, 'terminal_response_forbidden');
           return;
         }
         const response = Buffer.from(message.data, 'ascii');
         this.bytesIn += response.byteLength;
+        this.metrics.bytesIn(response.byteLength);
         if (!this.agent.sendTerminalResponse(this.sessionId, response)) {
           this.terminate(CLOSE_CODES.slow_consumer, 'agent_input_backpressure');
         }
         return;
       }
-      if (this.grant.mode === 'harness') {
+      if (isReadOnlyMode(this.grant.mode)) {
         this.terminate(CLOSE_CODES.protocol_error, 'input_forbidden');
         return;
       }
@@ -419,6 +491,7 @@ export class TerminalSession {
         return;
       }
       this.bytesIn += bytes.byteLength;
+      this.metrics.bytesIn(bytes.byteLength);
       this.stdin.push(bytes);
       this.stdinBytes += bytes.byteLength;
       this.resetIdle();
@@ -432,12 +505,35 @@ export class TerminalSession {
     }
   }
 
+  private onAgentNotice(kind: AgentNoticeKind, body: Record<string, unknown>): void {
+    if (this.closed) return;
+    // The console dispatches on `ready` first, so a notice that beats OPEN_OK waits behind it.
+    if (!this.resumeReady) {
+      if (this.pendingNotices.length < MAX_PENDING_NOTICES) this.pendingNotices.push({ kind, body });
+      return;
+    }
+    this.forwardNotice(kind, body);
+  }
+
+  /** The relay is a pipe for these: it forwards the agent's object verbatim and only stamps the discriminator LAST, so a hostile agent cannot rename the frame the console dispatches on.
+   * The bytes are metered and backpressured exactly like stdout — a GEOMETRY storm IS an output flood — but they stay out of `bytesOut`, which addresses the binary stream a resume replays. */
+  private forwardNotice(kind: AgentNoticeKind, body: Record<string, unknown>): void {
+    const frame = JSON.stringify({ ...body, type: kind });
+    const bytes = Buffer.byteLength(frame, 'utf8');
+    this.windowBytes += bytes;
+    this.metrics.bytesOut(bytes);
+    this.sendFrame(frame);
+    this.applyBackpressure();
+  }
+
   private flushStdin(): void {
     this.stdinTimer = undefined;
     if (this.closed || this.stdin.length === 0) return;
     const pending = Buffer.concat(this.stdin);
     this.stdin = [];
     this.stdinBytes = 0;
+    this.recording?.recordInput(pending);
+    if (this.recordingBroke()) return;
     try {
       if (!this.agent.sendStdin(this.sessionId, pending)) {
         this.terminate(CLOSE_CODES.input_flood, 'agent_input_backpressure');
@@ -452,10 +548,12 @@ export class TerminalSession {
     if (this.closed || data.byteLength === 0) return;
     this.bytesOut += data.byteLength;
     this.windowBytes += data.byteLength;
+    this.metrics.bytesOut(data.byteLength);
     this.rememberScrollback(data);
-    // A harness is a viewer: real output also counts as activity, even if the emulator has nothing
-    // to reply. A shell keeps the strict semantics of human input.
-    if (this.grant.mode === 'harness') this.resetIdle();
+    this.recording?.recordOutput(data);
+    if (this.recordingBroke()) return;
+    // A read-only viewer cannot type, so its output is the only proof it is being watched. A writable session is NOT rearmed by output: that is what stops an abandoned tab living on.
+    if (isReadOnlyMode(this.grant.mode)) this.resetIdle();
     const socket = this.socket;
     if (socket?.readyState !== WS_OPEN) return;
     // PTY output is always binary; control frames are always text. The client splits on that.
@@ -517,8 +615,7 @@ export class TerminalSession {
   private applyBackpressure(): void {
     const socket = this.socket;
     if (socket === undefined || socket.bufferedAmount <= BACKPRESSURE_HIGH_BYTES || this.drainTimer !== undefined) return;
-    // An old agent does not know these tags. Only the slow consumer is closed: pausing its
-    // multiplexed TLS would freeze PONG, reads and every other session.
+    // An old agent does not know these tags. Only the slow consumer is closed: pausing its multiplexed TLS would freeze PONG, reads and every other session.
     if (!this.agent.supportsSessionOutputFlowControl
       || !this.agent.pauseSessionOutput(this.sessionId)) {
       this.terminate(CLOSE_CODES.slow_consumer, 'slow_browser');
@@ -562,11 +659,8 @@ export class TerminalSession {
     this.idleTimer.unref();
   }
 
-  /**
-   * Re-asks the gateway whether this session may continue. An unreachable gateway is not an
-   * allow: once the grace window is spent the terminal dies, because the alternative is a
-   * shell that outlives the revocation of its own permission.
-   */
+  /** Re-asks the gateway whether this session may continue. An unreachable gateway is not an allow: once the grace
+   * window is spent the terminal dies, because the alternative is a shell that outlives the revocation of its own permission. */
   private async revalidate(): Promise<void> {
     if (this.closed || this.authzInFlight) return;
     this.authzInFlight = true;
@@ -589,6 +683,13 @@ export class TerminalSession {
           return;
         }
         this.lastAuthzOkAt = this.now();
+        return;
+      }
+      if (outcome.status === 'control_released') {
+        this.terminate(
+          isWritableTuiMode(this.grant.mode) ? CLOSE_CODES.control_released : CLOSE_CODES.revoked,
+          'control_released',
+        );
         return;
       }
       if (outcome.status === 'revoked') {
@@ -628,10 +729,14 @@ export class TerminalSession {
   }
 
   private sendControl(message: Record<string, unknown>): void {
+    this.sendFrame(JSON.stringify(message));
+  }
+
+  private sendFrame(frame: string): void {
     const socket = this.socket;
     if (socket?.readyState !== WS_OPEN) return;
     try {
-      socket.send(JSON.stringify(message));
+      socket.send(frame);
     } catch (error) {
       logEvent('terminal_relay_control_send_failed', { session_id: this.sessionId, error: errorLabel(error) });
     }
@@ -658,10 +763,8 @@ export class TerminalSession {
     this.claimDeadlineTimer = undefined;
   }
 
-  /**
-   * Converts a DB-derived remaining lease to a process-monotonic hard deadline. The request start,
-   * not response receipt, is the base: a slow response can only shorten the usable lease.
-   */
+  /** Converts a DB-derived remaining lease to a process-monotonic hard deadline. The request
+   * start, not response receipt, is the base: a slow response only shortens the usable lease. */
   private updateClaimLease(remainingMs: number, ttlMs: number, requestStartedAt: number): boolean {
     const now = this.monotonicNow();
     if (!Number.isFinite(requestStartedAt) || requestStartedAt > now

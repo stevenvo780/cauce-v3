@@ -370,6 +370,7 @@ class ScriptedGateway implements TerminalGatewayClient {
 
 /** Stand-in for the Python PTY agent: it speaks the same framing and echoes STDIN back. */
 export class FakePtyAgent {
+  refuseInput: 'governance_write_in_flight' | 'pane_input_barrier' | undefined;
   readonly stdin: Buffer[] = [];
   readonly terminalResponses: Buffer[] = [];
   readonly opens: Record<string, unknown>[] = [];
@@ -412,6 +413,10 @@ export class FakePtyAgent {
     this.socket.write(encodeDataFrame(FRAME_TAGS.STDOUT, SESSION_ID, Buffer.from(data, 'utf8')));
   }
 
+  sendGeometry(cols: number, rows: number): void {
+    this.socket.write(encodeJsonFrame(FRAME_TAGS.GEOMETRY, { session_id: SESSION_ID, cols, rows }));
+  }
+
   exit(exitCode: number): void {
     this.socket.write(encodeJsonFrame(FRAME_TAGS.CLOSED, {
       session_id: SESSION_ID, exit_code: exitCode, signal: null, reason: 'exited'
@@ -440,6 +445,12 @@ export class FakePtyAgent {
     if (tag === FRAME_TAGS.STDIN) {
       const data = decodeDataFrame(payload);
       this.stdin.push(data.data);
+      if (this.refuseInput !== undefined) {
+        this.socket.write(encodeJsonFrame(FRAME_TAGS.INPUT_REFUSED, {
+          session_id: data.sessionId, reason: this.refuseInput
+        }));
+        return;
+      }
       // A real PTY echoes what was typed; that is how the operator sees their own keystrokes.
       this.socket.write(encodeDataFrame(FRAME_TAGS.STDOUT, data.sessionId, data.data));
       return;
@@ -454,6 +465,7 @@ export class FakePtyAgent {
 }
 
 interface Harness {
+  readonly recordingDir: string;
   readonly browserPort: number;
   readonly agentPort: number;
   readonly leg: AgentLeg;
@@ -480,6 +492,7 @@ export async function startHarness(overrides: Partial<SessionLimits> = {}): Prom
     expires_at: new Date(Date.now() + 3_600_000).toISOString()
   }]);
   const gateway = new ScriptedGateway();
+  const recordingDir = join(directory, 'casts');
   const sessions = new SessionManager({
     gateway,
     limits: {
@@ -490,6 +503,7 @@ export async function startHarness(overrides: Partial<SessionLimits> = {}): Prom
       authzIntervalMs: 60_000,
       authzGraceMs: 60_000,
       openTimeoutMs: 2_000,
+      recordingDir,
       ...overrides
     }
   });
@@ -517,6 +531,7 @@ export async function startHarness(overrides: Partial<SessionLimits> = {}): Prom
     new Promise<void>((resolve) => browserServer.listen(0, '127.0.0.1', () => { resolve(); }))
   ]);
   const harness: Harness = {
+    recordingDir,
     browserPort: (browserServer.address() as AddressInfo).port,
     agentPort: (agentServer.address() as AddressInfo).port,
     leg,

@@ -32,6 +32,16 @@ scrape_configs:
         type: A
         port: 8086
         refresh_interval: 15s
+  - job_name: cauce-relay
+    metrics_path: /metrics
+    # Profile-aware discovery, like cauce-telegram: sin registro DNS no hay target rojo fantasma.
+    # terminal-relay is `profiles: [terminal]`, so on a stack without the PTY channel the name does
+    # not resolve, no target exists, and the cauce-v3-terminal rules stay silent instead of paging.
+    dns_sd_configs:
+      - names: [terminal-relay]
+        type: A
+        port: 8085
+        refresh_interval: 15s
   - job_name: cauce-outbox
     metrics_path: /metrics
     static_configs:

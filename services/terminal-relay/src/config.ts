@@ -1,14 +1,13 @@
-/**
- * Terminal relay configuration. Everything is a path or a bound: the relay holds no secret
- * of its own beyond the gateway bearer token it reads from disk at call time.
- */
+/** Terminal relay configuration. Everything is a path or a bound: the relay holds no secret of
+ * its own beyond the gateway bearer token it reads from disk at call time. */
 
-import { integerEnv, portEnv, requiredEnv } from '@cauce/protocol';
+import { booleanEnv, integerEnv, portEnv, requiredEnv } from '@cauce/protocol';
 import {
   CLAIM_DEADLINE_SAFETY_MARGIN_MS,
   DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
   MAX_CLAIM_LEASE_MS,
 } from './gateway-client.js';
+import { DEFAULT_RECORDING_MAX_BYTES } from './recording.js';
 import { isRelayInstanceId } from './relay-identity.js';
 
 export interface TerminalRelayConfig {
@@ -49,6 +48,11 @@ export interface TerminalRelayConfig {
   readonly reconnectGraceMs: number;
   /** Atomic 0600 spool; v2 also carries the raw close fence and therefore must stay capability-private. */
   readonly closeSpoolFile: string;
+  /** 0700 directory of the per-session asciicast recordings. Unset disables every writable TUI. */
+  readonly recordingDir?: string;
+  readonly recordingMaxBytes: number;
+  /** Off by default: recording follows the writable TUI, and a plain shell is persisted only when the owner asks for it. */
+  readonly recordShellSessions: boolean;
 }
 
 export const DEFAULT_BROWSER_PORT = 8446;
@@ -79,6 +83,13 @@ function gatewayUrl(environment: NodeJS.ProcessEnv): string {
     throw new Error('CAUCE_TERMINAL_GATEWAY_URL must be a credential-free HTTPS origin');
   }
   return url.origin;
+}
+
+function recordingDirectory(environment: NodeJS.ProcessEnv): string | undefined {
+  const value = environment.CAUCE_TERMINAL_RECORDING_DIR?.trim();
+  if (value === undefined || value.length === 0) return undefined;
+  if (!value.startsWith('/')) throw new Error('CAUCE_TERMINAL_RECORDING_DIR must be an absolute path');
+  return value;
 }
 
 function relayInstanceId(environment: NodeJS.ProcessEnv): string {
@@ -115,6 +126,7 @@ export function loadRelayConfig(environment: NodeJS.ProcessEnv = process.env): T
   const presenceMaxStaleMs = integerEnv(
     environment, 'CAUCE_TERMINAL_PRESENCE_MAX_STALE_SECONDS', { fallback: 30 },
   ) * 1_000;
+  const recordingDir = recordingDirectory(environment);
   return {
     browserPort,
     agentPort,
@@ -147,6 +159,11 @@ export function loadRelayConfig(environment: NodeJS.ProcessEnv = process.env): T
     reconnectGraceMs: integerEnv(
       environment, 'CAUCE_TERMINAL_RECONNECT_GRACE_SECONDS', { fallback: 30 },
     ) * 1_000,
-    closeSpoolFile: environment.CAUCE_TERMINAL_CLOSE_SPOOL_FILE ?? '/tmp/cauce-terminal-close-reports.json'
+    closeSpoolFile: environment.CAUCE_TERMINAL_CLOSE_SPOOL_FILE ?? '/tmp/cauce-terminal-close-reports.json',
+    ...(recordingDir === undefined ? {} : { recordingDir }),
+    recordingMaxBytes: integerEnv(
+      environment, 'CAUCE_TERMINAL_RECORDING_MAX_BYTES', { fallback: DEFAULT_RECORDING_MAX_BYTES },
+    ),
+    recordShellSessions: booleanEnv(environment, 'CAUCE_TERMINAL_RECORD_SHELL_SESSIONS'),
   };
 }

@@ -7,6 +7,7 @@ import {
   type TerminalGatewayClient,
   type TerminalSessionGrant,
 } from './gateway-client.js';
+import { NO_RELAY_METRICS, type RelayMetricsSink } from './metrics.js';
 import {
   SessionManagerDelegate,
   TerminalSession,
@@ -28,6 +29,8 @@ import {
   persistCloseSpool,
 } from './session-spool.js';
 
+export * from './metrics.js';
+export * from './recording.js';
 export * from './session-limits.js';
 export * from './session-instance.js';
 
@@ -39,6 +42,7 @@ interface SessionManagerOptions {
   readonly monotonicNow?: () => number;
   /** Atomic disk spool for close reports. Omit only in unit tests. */
   readonly closeSpoolFile?: string;
+  readonly metrics?: RelayMetricsSink;
 }
 
 export class SessionManager implements SessionManagerDelegate {
@@ -52,8 +56,10 @@ export class SessionManager implements SessionManagerDelegate {
   private readonly pendingReports = new Map<string, Promise<void>>();
   private readonly spooledReports = new Map<string, SessionCloseReport>();
   private readonly closeSpoolFile: string | undefined;
+  readonly metrics: RelayMetricsSink;
 
   constructor(options: SessionManagerOptions) {
+    this.metrics = options.metrics ?? NO_RELAY_METRICS;
     this.gateway = options.gateway;
     this.limits = options.limits;
     this.now = options.now ?? Date.now;
@@ -88,6 +94,7 @@ export class SessionManager implements SessionManagerDelegate {
     // duplicate never owned a local PTY, so reporting `/close` here would tear down the winner.
     if (this.sessions.has(input.sessionId)) {
       closeSocket(input.socket, CLOSE_CODES.session_conflict, 'session_conflict');
+      this.metrics.openAttempt('denied');
       logEvent('terminal_relay_session_rejected', {
         session_id: input.sessionId,
         reason: 'session_already_active',
@@ -96,6 +103,7 @@ export class SessionManager implements SessionManagerDelegate {
     }
     if (!claimLeaseContractSatisfied(input.grant, this.limits)) {
       closeSocket(input.socket, CLOSE_CODES.revoked, 'claim_lease_invalid');
+      this.metrics.openAttempt('fenced');
       if (isClaimToken(input.grant.claim_token) && claimEpoch(input.grant.claim_epoch) !== undefined) {
         this.reportConsumedClose(input.sessionId, 'claim_lease_invalid', input.grant);
       }
@@ -107,6 +115,7 @@ export class SessionManager implements SessionManagerDelegate {
     }
     if (this.sessions.size >= this.limits.maxSessions) {
       closeSocket(input.socket, CLOSE_CODES.session_conflict, 'session_limit');
+      this.metrics.openAttempt('denied');
       this.reportConsumedClose(input.sessionId, 'session_limit', input.grant);
       logEvent('terminal_relay_session_rejected', { session_id: input.sessionId, reason: 'session_limit' });
       return;
@@ -114,6 +123,7 @@ export class SessionManager implements SessionManagerDelegate {
     const container = containerKey(input.grant.container);
     if (this.containers.has(container)) {
       closeSocket(input.socket, CLOSE_CODES.session_conflict, 'session_conflict');
+      this.metrics.openAttempt('denied');
       this.reportConsumedClose(input.sessionId, 'session_conflict', input.grant);
       logEvent('terminal_relay_session_rejected', { session_id: input.sessionId, reason: 'session_conflict' });
       return;

@@ -20,6 +20,8 @@ export const FRAME_TAGS = {
   /** Per-session output credit: does not pause the agent's multiplexed socket. */
   PAUSE_OUTPUT: 0x24,
   RESUME_OUTPUT: 0x25,
+  INPUT_REFUSED: 0x26,
+  GEOMETRY: 0x27,
   CLOSE: 0x30,
   CLOSED: 0x31,
   PING: 0x40,

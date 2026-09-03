@@ -17,7 +17,7 @@ export * from './governance-write.js';
  * signing key, so a compromised relay cannot mint a session.
  */
 
-export type TerminalMode = 'shell' | 'harness';
+export type TerminalMode = 'shell' | 'harness' | 'harness_rw';
 
 export interface TerminalSessionGrant {
   readonly tenant_id: string;
@@ -61,7 +61,7 @@ export type AuthzOutcome =
       readonly claim_lease_ms: number;
       readonly claim_lease_ttl_ms: number;
     }
-  | { readonly status: 'revoked' | 'unreachable' };
+  | { readonly status: 'revoked' | 'unreachable' | 'control_released' };
 
 export interface SessionCloseReport {
   readonly reason: string;
@@ -71,6 +71,10 @@ export interface SessionCloseReport {
   /** Absent only while draining a version-1 legacy spool for an epoch-0 row. */
   readonly claim_token?: string;
   readonly claim_epoch?: string;
+  /** Present only for a recorded session; counts and a digest, never a byte of what was typed. `recording_capped` says the digest attests to a truncated file, so an audit row cannot read as complete when it is not. */
+  readonly input_batches?: number;
+  readonly recording_sha256?: string;
+  readonly recording_capped?: boolean;
 }
 
 export interface AgentPresence {
@@ -128,11 +132,9 @@ interface HttpsTerminalGatewayClientOptions {
   readonly timeoutMs?: number;
   /** Optional PEM bundle for gateways issued by a private CA; otherwise the system store. */
   readonly ca?: Buffer;
-  /**
-   * Client identity for the TLS handshake. A gateway in mTLS mode asks for a certificate from
-   * everyone who connects, including the /v3/terminal/relay/* routes that already authenticate with
-   * the shared token: without a certificate the handshake dies before the token can be read.
-   */
+  /** Client identity for the TLS handshake. A gateway in mTLS mode asks for a certificate from
+   * everyone who connects, including the /v3/terminal/relay/* routes that already authenticate
+   * with the shared token: without one the handshake dies before the token can be read. */
   readonly clientCert: Buffer;
   readonly clientKey: Buffer;
   readonly identity: RelayProcessIdentity;

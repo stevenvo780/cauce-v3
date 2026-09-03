@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   CLOSE_CODES
@@ -24,6 +26,56 @@ afterEach(async () => {
 });
 
 describe('terminal relay circuit', () => {
+  it('corre un TUI escribible extremo a extremo: teclado, geometría, rechazo y grabación', async () => {
+    const harness = await startHarness();
+    harness.gateway.consume = { status: 'granted', grant: grant({ mode: 'harness_rw' }) };
+    const agent = await FakePtyAgent.connect(harness.agentPort, {
+      cert: TEST_AGENT_CERTIFICATE, key: TEST_AGENT_PRIVATE_KEY,
+    }, {
+      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw',
+      generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
+      runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', agent_version: '0.1.0',
+      modes: ['shell', 'harness', 'harness_rw'],
+    });
+    await waitFor(() => agent.helloAck !== undefined);
+    expect(agent.helloAck).toEqual({ ok: true });
+    expect(harness.leg.presence()[0]?.modes).toEqual(['shell', 'harness', 'harness_rw']);
+
+    const client = await connectConsole(harness.browserPort);
+    attach(client);
+    await waitFor(() => client.text.some((frame) => frame.type === 'ready'));
+    expect(agent.opens[0]).toMatchObject({ mode: 'harness_rw' });
+
+    agent.sendGeometry(203, 51);
+    await waitFor(() => client.text.some((frame) => frame.type === 'geometry'));
+    expect(client.text.find((frame) => frame.type === 'geometry')).toEqual({
+      type: 'geometry', session_id: SESSION_ID, cols: 203, rows: 51,
+    });
+
+    client.socket.send(JSON.stringify({ type: 'terminal_response', data: '\u001b[?1;2c' }));
+    await waitFor(() => agent.terminalResponses.length > 0);
+    client.socket.send(JSON.stringify({ type: 'input', data: 'id -un\r' }));
+    await waitFor(() => client.binary.length > 0);
+    expect(client.binary[0]?.toString()).toBe('id -un\r');
+
+    agent.refuseInput = 'pane_input_barrier';
+    client.socket.send(JSON.stringify({ type: 'input', data: 'rm -rf /\r' }));
+    await waitFor(() => client.text.some((frame) => frame.type === 'input_refused'));
+    expect(client.text.find((frame) => frame.type === 'input_refused')).toEqual({
+      type: 'input_refused', session_id: SESSION_ID, reason: 'pane_input_barrier',
+    });
+    expect(client.closes).toHaveLength(0);
+
+    agent.exit(0);
+    await waitFor(() => harness.gateway.closeReports.length > 0);
+    const report = harness.gateway.closeReports[0];
+    expect(report?.input_batches).toBe(2);
+    expect(report?.recording_sha256).toMatch(/^[0-9a-f]{64}$/u);
+    const cast = await readFile(join(harness.recordingDir, `${SESSION_ID}.cast`), 'utf8');
+    expect(cast).toContain('"i","id -un\\r"');
+    expect(cast).toContain('"i","rm -rf /\\r"');
+  });
+
   it('runs a shell end to end: ready as text, PTY output as binary, typing reaching the agent', async () => {
     const harness = await startHarness();
     const agent = await FakePtyAgent.connect(harness.agentPort, {

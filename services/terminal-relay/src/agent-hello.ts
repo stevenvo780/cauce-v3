@@ -107,10 +107,14 @@ export type AgentGovernanceBatchEntry =
       readonly expectedSha: string | undefined;
     };
 
+export type AgentNoticeKind = 'input_refused' | 'geometry';
+
 export interface AgentSessionHandlers {
   onOpenOk(pid: number): void;
   onOpenErr(reason: string): void;
   onStdout(data: Buffer): void;
+  /** Informational agent-to-browser JSON the relay only forwards; it never interprets it. */
+  onAgentNotice(kind: AgentNoticeKind, body: Record<string, unknown>): void;
   onClosed(exit: { readonly exit_code: number | null; readonly signal: string | null; readonly reason: string }): void;
   /** The connection died underneath the session; no CLOSE frame will ever arrive. */
   onAgentGone(reason: string): void;
@@ -132,17 +136,15 @@ function modesField(source: Record<string, unknown>): readonly TerminalMode[] | 
   if (!Array.isArray(value) || value.length === 0) return undefined;
   const modes: TerminalMode[] = [];
   for (const entry of value as readonly unknown[]) {
-    if (entry !== 'shell' && entry !== 'harness') return undefined;
+    if (entry !== 'shell' && entry !== 'harness' && entry !== 'harness_rw') return undefined;
     modes.push(entry);
   }
   return modes;
 }
 
-  /**
-   * Unlike `modesField`, this does NOT invalidate the hello: an older agent does not send
-   * `features` and must still be admitted. Absent or malformed is read as "no capabilities",
-   * which is the safe side — such an agent is never sent a READ.
-   */
+  /** Unlike `modesField`, this does NOT invalidate the hello: an older agent sends no `features`
+   * and must still be admitted. Absent or malformed reads as "no capabilities", the safe side
+   * — such an agent is never sent a READ. */
 function featuresField(source: Record<string, unknown>): readonly string[] {
   const value: unknown = source.features;
   if (!Array.isArray(value)) return [];

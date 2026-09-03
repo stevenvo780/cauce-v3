@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   decodeDataFrame, decodeJsonFrame, encodeDataFrame, encodeFrame, encodeJsonFrame,
@@ -13,7 +14,19 @@ const GOLDEN_STDOUT_HEX =
 const GOLDEN_TERMINAL_RESPONSE_HEX =
   '230000002831313131313131312d323232322d333333332d343434342d3535353535353535353535351b5b306e';
 
+const VECTORS = JSON.parse(readFileSync(new URL('../../../tests/terminal-pty/vectors.json', import.meta.url), 'utf8')) as {
+  framing: { tags: Record<string, number> };
+};
+
 describe('agent framing', () => {
+  it('pins every tag to the cross-language vectors, both ways', () => {
+    const pinned = VECTORS.framing.tags;
+    for (const [name, tag] of Object.entries(FRAME_TAGS)) {
+      expect(pinned[name], `${name} is not in vectors.json: an agent emitting it would drop the connection`).toBe(tag);
+    }
+    expect(Object.keys(pinned).sort()).toEqual(Object.keys(FRAME_TAGS).sort());
+  });
+
   it('encodes the golden STDOUT vector byte for byte', () => {
     const frame = encodeDataFrame(FRAME_TAGS.STDOUT, '11111111-2222-3333-4444-555555555555', Buffer.from('hi', 'utf8'));
     expect(frame.toString('hex')).toBe(GOLDEN_STDOUT_HEX);

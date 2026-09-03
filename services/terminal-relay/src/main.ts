@@ -6,6 +6,7 @@ import { loadRelayConfig } from './config.js';
 import { HttpsTerminalGatewayClient } from './gateway-client.js';
 import { setupGovernanceRelay } from './governance-relay.js';
 import { createRelayHealthServer, RelayHealthState } from './health.js';
+import { TerminalRelayMetrics } from './metrics.js';
 import { relayProcessIdentity } from './relay-identity.js';
 import { CLOSE_CODES, SessionManager } from './sessions.js';
 
@@ -49,16 +50,22 @@ const gateway = new HttpsTerminalGatewayClient({
   clientKey: gatewayClientKey,
   identity: relayIdentity,
 });
-const sessions = new SessionManager({ gateway, limits: config, closeSpoolFile: config.closeSpoolFile });
+const healthState = new RelayHealthState({
+  listenersReady: () => agentServer.listening && browserServer.listening,
+  presenceMaxStaleMs: config.presenceMaxStaleMs,
+});
+const metrics = new TerminalRelayMetrics({
+  readiness: () => healthState.ready,
+  presenceAcceptedAt: () => healthState.presenceAcceptedAt,
+});
+const sessions = new SessionManager({
+  gateway, limits: config, closeSpoolFile: config.closeSpoolFile, metrics,
+});
 
 // Presence is republished as soon as the connected set changes, debounced so a fleet-wide
 // reconnect is one publish: the console must not show "no PTY agent" for an agent that is up.
 let presenceDebounce: NodeJS.Timeout | undefined;
 const presenceState = { publishing: false, pending: false };
-const healthState = new RelayHealthState({
-  listenersReady: () => agentServer.listening && browserServer.listening,
-  presenceMaxStaleMs: config.presenceMaxStaleMs,
-});
 const hasPendingPresence = (): boolean => presenceState.pending;
 const publishPresence = async (): Promise<void> => {
   if (presenceState.publishing) {
@@ -106,7 +113,7 @@ const browser = new BrowserLeg({
 });
 const healthServer = createRelayHealthServer(healthState, {
   port: config.healthPort,
-  host: '127.0.0.1',
+  metrics: () => metrics.render(),
 });
 // Governance reads share the browser-side listener: it is regular HTTP, not a WebSocket, so it
 // coexists with `BrowserLeg` (which only listens on `upgrade`) without colliding. The token is

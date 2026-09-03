@@ -30,6 +30,7 @@ agents, outbound**:
 | --- | --- | --- |
 | `CAUCE_TERMINAL_RELAY_BROWSER_PORT` | `8446` | WebSocket listener for the console nginx. |
 | `CAUCE_TERMINAL_RELAY_AGENT_PORT` | `8445` | Raw TLS listener for PTY agents. |
+| `CAUCE_TERMINAL_RELAY_HEALTH_PORT` | `8085` | HTTP listener serving `/health/live`, `/health/ready` and `/metrics`. Bound on every interface of the compose network, exactly like the dispatcher's: Prometheus is a separate container and a loopback bind is a target it can never reach. Compose publishes no host port for it, so it is reachable only from inside the network. |
 | `CAUCE_TERMINAL_RELAY_TLS_CERT_FILE` | — | Server certificate for both listeners. |
 | `CAUCE_TERMINAL_RELAY_TLS_KEY_FILE` | — | Server private key. |
 | `CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE` | — | CA of the console nginx client certificate. |
@@ -46,6 +47,55 @@ agents, outbound**:
 | `CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS` | `90` | How long an unreachable gateway is tolerated. |
 | `CAUCE_TERMINAL_RECONNECT_GRACE_SECONDS` | `30` | Maximum browser-loss window in which the same live PTY may be reattached. |
 | `CAUCE_TERMINAL_CLOSE_SPOOL_FILE` | `/tmp/cauce-terminal-close-reports.json` | Atomic local retry spool for close reports; contains only session ids, reasons and counters. |
+| `CAUCE_TERMINAL_RECORDING_DIR` | — | Absolute path of the `0700` directory holding one `0600` asciicast v2 file per session. **Unset means no writable TUI**: `harness_rw` is refused. |
+| `CAUCE_TERMINAL_RECORDING_MAX_BYTES` | `33554432` | Per-session recording cap. On reaching it the recording stops with a marker event; the session keeps running and the close report says `recording_capped`. |
+| `CAUCE_TERMINAL_RECORD_SHELL_SESSIONS` | `0` | Extends recording to plain interactive `shell` sessions. **Off by default**: recording is tied to the writable TUI, and an operator's ordinary shell keystrokes (a pasted token, a `psql` password) are not persisted unless the owner asks for it. `1` turns it on; it needs `CAUCE_TERMINAL_RECORDING_DIR` too, and a `shell` whose recording cannot be opened is still allowed to run (unlike `harness_rw`, which is refused). |
+
+Setting `CAUCE_TERMINAL_RECORDING_DIR` is a **coupled** rollout: a recorded session's close
+report carries `input_batches`, `recording_sha256` and `recording_capped`, and the gateway
+validates that body against an exact key set. Turn the directory on only against a gateway that
+accepts the three fields, or every recorded close will be refused and retried forever. Without
+the directory the report is byte for byte what it was, so the relay can be deployed first on its
+own.
+
+`recording_capped` is what keeps a capped recording from reading as a complete one. Once the
+per-session byte cap is reached the file stops growing and `input_batches` freezes with it, while
+`bytes_in` keeps counting — at the default output rate the 32 MiB cap is about two minutes of
+sustained output. The flag travels next to the digest so the aggregate `terminal.session.input`
+audit row states plainly that the sha256 attests to a truncated file. Retention is **not** solved
+here: nothing prunes the directory, and how long a recording is kept, on which volume and who
+deletes it is an owner decision, not a default.
+
+## Metrics
+
+`/metrics` is served by the same listener as the health probes, in Prometheus text
+format, and is scraped by the `cauce-relay` job of `ops/observability/prometheus.yaml`, which
+discovers the relay by DNS: `terminal-relay` is `profiles: [terminal]`, so on a stack without the
+PTY channel the name does not resolve, no target exists, and the `cauce-v3-terminal` rules — none
+of which uses `absent()` — stay silent instead of paging two agents forever. Every
+series is aggregate: there is no tenant, alias, operator, container or session label anywhere,
+because the shape of who is being watched must not leak into a scrape target that has no
+authorization of its own. The close-code label is bounded to the codes the relay itself emits;
+anything else folds into `code="other"` so a peer cannot mint series.
+
+| Series | Type | Meaning |
+| --- | --- | --- |
+| `cauce_terminal_sessions_open{mode}` | gauge | Attached sessions by mode. |
+| `cauce_terminal_control_sessions_open` | gauge | Attached writable TUI sessions. |
+| `cauce_terminal_session_opens_total{result}` | counter | `opened`, `denied`, `fenced`, `expired`. |
+| `cauce_terminal_bytes_in_total` / `cauce_terminal_bytes_out_total` | counter | Bytes each way; `out` includes the forwarded agent notices. |
+| `cauce_terminal_close_codes_total{code}` | counter | Closes by WebSocket close code. |
+| `cauce_terminal_recordings_total{result}` | counter | `started`, `refused`, `capped`, `failed`. |
+| `cauce_terminal_presence_last_success_timestamp_seconds` | gauge | `-1` before the first accepted publication. |
+| `cauce_terminal_ready` | gauge | Same verdict as `/health/ready`. |
+
+The `result` label name comes from `renderCounters` in `@cauce/protocol`, which every service
+in the bus shares; the alert rules in `ops/observability/alerts.yaml` use it as written here.
+
+One deployment detail still stands between the job and the data: in `deploy/compose.yaml` the
+relay is attached to `edge` and Prometheus to `backend`, so the DNS name does not resolve for the
+scraper and the job discovers nothing. Adding `backend` to the relay's `networks` is what turns
+the job on; until then the wiring is correct and silent, which is the intended failure mode.
 
 ## Agent identity
 
@@ -91,10 +141,46 @@ A read-only `harness` cannot produce human input, so either real PTY output or t
 typed `ping` heartbeat proves that the viewer is still present. The heartbeat is control only:
 it never becomes STDIN.
 
+### The three modes
+
+`READ_ONLY_MODES` is exactly `{harness}` and gates STDIN; `TUI_MODES` is `{harness,
+harness_rw}`, the set allowed to answer DA/DSR; `WRITABLE_MODES` is `{shell, harness_rw}`. What
+pins the relay's copy is behaviour, not a data file: they live in `src/session-limits.ts` and are
+held by the assertions in `src/sessions.test.ts` and `src/sessions-writable.test.ts` — widen one
+and those suites go red. `tests/terminal-pty/vectors.json` freezes the **Python agent's**
+frozensets, and the four implementations must agree with each other.
+
+`harness_rw` is a writable TUI: it types on the alias's real tmux pane. Three rules hold it:
+
+- **Recording is a precondition, not a feature.** Without a writable
+  `CAUCE_TERMINAL_RECORDING_DIR` the open is refused with `recording_unavailable` (`1011`)
+  before the PTY exists, and a write failure mid-session closes it with `recording_failed`. A
+  writable mode nobody can replay afterwards is not a mode. The recording holds the bytes; the
+  close report and every audit row carry only counts, the sha256 and the `recording_capped` flag.
+  A read-only mode is never recorded — it has no keyboard to record — and a plain `shell` only
+  behind `CAUCE_TERMINAL_RECORD_SHELL_SESSIONS`.
+- **Idle is NOT rearmed by output, and not by the browser `ping` either.** Only typing extends
+  it, plus the operator's explicit `POST .../extend`. A read-only viewer has no keyboard, which
+  is why output and ping rearm *its* idle; a writable session does have one, and a forgotten tab
+  in front of a chatty process would otherwise live forever.
+- **The control hold is re-checked by the same 30 s `/authz` cycle as everything else.** When
+  the gateway reports the hold is gone, the session closes with `4410 control_released`.
+
+The agent may also send two informational frames the relay forwards untouched to the browser:
+`INPUT_REFUSED` (`0x26`, a paste or governance write holds the pane) and `GEOMETRY` (`0x27`, the
+remote TUI's real size). Neither closes the session, and the relay does not interpret either —
+it only stamps the frame's discriminator last so a hostile agent cannot rename it. It does,
+however, **account** them: the serialized frame counts against the same output window and goes
+through the same backpressure check as PTY output, so a compromised agent looping `GEOMETRY`
+trips 4413 or 4415 exactly like a `cat` of a binary. They are deliberately kept out of the resume
+offset, which addresses the binary stream the browser counts. A notice that arrives before the
+browser has been sent `ready` is held in a bounded queue and delivered right behind it, never
+ahead of it.
+
 Close codes: `4400` protocol error, `4401` ticket invalid, `4403` revoked, `4404` agent
-offline, `4408` idle, `4409` session conflict, `4413` output flood, `4414` input flood, `4415`
-slow browser or blocked technical-response path, `4423` TTL expired, `1011` internal error,
-`1001` relay shutdown.
+offline, `4408` idle, `4409` session conflict, `4410` control released, `4413` output flood,
+`4414` input flood, `4415` slow browser or blocked technical-response path, `4423` TTL expired,
+`1011` internal error, `1001` relay shutdown.
 
 ## Reconnect contract and threat model
 
@@ -118,6 +204,14 @@ live authorization, original session TTL, one live `TerminalSession`, and one at
 An explicit browser close, grace expiry, agent loss or authorization failure kills the PTY and
 durably queues the close report. Rotation would require a persisted nonce hash and atomic consume;
 it must not be claimed until that state exists.
+
+A `harness_rw` session widens what a compromised console can do from *watching* an alias to
+*typing at* it, so it is fenced by more than the reconnect contract: the gateway grants the mode
+only to an attributed operator with an explicit grant (no `"*"` row satisfies it), the relay
+refuses to open it without a recording, and the recording is the only durable copy of what was
+typed. The recording directory therefore inherits the threat profile of the PTY stream itself:
+`0700` directory, `0600` files, opened `O_EXCL` so two writers can never interleave into one
+file, and never exposed over any listener the relay serves.
 
 ## Hygiene
 
