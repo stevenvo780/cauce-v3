@@ -8,6 +8,12 @@ import {
   startTestDatabase,
   type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
+import {
+  removeSecretHandoffLayer, restoreSecretHandoffLayer,
+} from './secret-handoff-layer.js';
+import {
+  removeTerminalControlHoldsLayer, restoreTerminalControlHoldsLayer,
+} from './terminal-control-holds-layer.js';
 
 const upPath = new URL('../migrations/033_terminal_browser_owner_fencing.sql', import.meta.url);
 const downPath = new URL('../migrations/down/033_terminal_browser_owner_fencing.sql', import.meta.url);
@@ -68,8 +74,10 @@ beforeEach(async () => {
   await resetTestDatabase(pool);
   // terminal_sessions intentionally is not part of the shared reset helper yet; migration tests
   // own their disposable rows explicitly so test order cannot turn a drain guard red or green.
-  await pool.query(`TRUNCATE TABLE terminal_sessions`);
+  await pool.query(`TRUNCATE TABLE terminal_sessions CASCADE`);
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
+  await removeTerminalControlHoldsLayer(pool);
+  await removeSecretHandoffLayer(pool);
   await removeLatestTextItemsSearchPathFix();
   await removeLatestConsolePublishIndexes();
   await removeLatestProfileLayer();
@@ -78,7 +86,7 @@ beforeEach(async () => {
 afterEach(async () => {
   if (!databaseStarted) return;
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
-  await pool.query(`TRUNCATE TABLE terminal_sessions`);
+  await pool.query(`TRUNCATE TABLE terminal_sessions CASCADE`);
   await restoreLatestSchema();
 });
 
@@ -151,6 +159,8 @@ async function restoreLatestSchema(): Promise<void> {
        source_origin=EXCLUDED.source_origin`,
     [version038, createHash('sha256').update(up038).digest('hex')],
   );
+  await restoreSecretHandoffLayer(pool);
+  await restoreTerminalControlHoldsLayer(pool);
 }
 
 async function consolePublishIndexesExist(): Promise<boolean> {
@@ -381,7 +391,7 @@ describe('migration 033 terminal browser owner fencing', () => {
       if (writerOpen) await writer.query('ROLLBACK').catch(() => undefined);
       writer.release();
       downgrade.release();
-      await pool.query(`TRUNCATE TABLE terminal_sessions`);
+      await pool.query(`TRUNCATE TABLE terminal_sessions CASCADE`);
       await restoreLatestSchema();
     }
   });

@@ -8,6 +8,12 @@ import {
   startTestDatabase,
   type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
+import {
+  removeSecretHandoffLayer, restoreSecretHandoffLayer,
+} from './secret-handoff-layer.js';
+import {
+  removeTerminalControlHoldsLayer, restoreTerminalControlHoldsLayer,
+} from './terminal-control-holds-layer.js';
 
 const upPath = new URL('../migrations/032_terminal_session_claim_fencing.sql', import.meta.url);
 const downPath = new URL('../migrations/down/032_terminal_session_claim_fencing.sql', import.meta.url);
@@ -74,8 +80,10 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetTestDatabase(pool);
-  await pool.query(`TRUNCATE TABLE terminal_sessions`);
+  await pool.query(`TRUNCATE TABLE terminal_sessions CASCADE`);
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
+  await removeTerminalControlHoldsLayer(pool);
+  await removeSecretHandoffLayer(pool);
   await removeLatestTextItemsSearchPathFix();
   await removeLatestConsolePublishIndexes();
   await removeLatestProfileLayer();
@@ -84,7 +92,7 @@ beforeEach(async () => {
 afterEach(async () => {
   if (!databaseStarted) return;
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
-  await pool.query(`TRUNCATE TABLE terminal_sessions`);
+  await pool.query(`TRUNCATE TABLE terminal_sessions CASCADE`);
   await restoreLatestSchema();
 });
 
@@ -152,6 +160,8 @@ async function restoreLatestSchema(): Promise<void> {
   await markApplied(version037);
   await pool.query(up038);
   await markApplied(version038);
+  await restoreSecretHandoffLayer(pool);
+  await restoreTerminalControlHoldsLayer(pool);
 }
 
 async function consolePublishIndexesExist(): Promise<boolean> {
@@ -376,7 +386,7 @@ describe('migration 032 terminal session claim fencing', () => {
       if (writerOpen) await writer.query('ROLLBACK').catch(() => undefined);
       writer.release();
       downgrade.release();
-      await pool.query(`TRUNCATE TABLE terminal_sessions`);
+      await pool.query(`TRUNCATE TABLE terminal_sessions CASCADE`);
       await restoreLatestSchema();
     }
   });
@@ -394,6 +404,8 @@ describe('destructive migrations serialize with applyMigrations', () => {
         // Exercise the appearance CAS, not a no-op forward apply. Remove 038 before 037 so only
         // a pre-lock snapshot can distinguish "explicit down after a no-op" (allowed)
         // from "037 appeared while down was queued" (must be rejected).
+        await removeTerminalControlHoldsLayer(pool);
+        await removeSecretHandoffLayer(pool);
         await removeLatestTextItemsSearchPathFix();
         await pool.query(down037);
       }

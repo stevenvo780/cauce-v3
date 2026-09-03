@@ -337,9 +337,9 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       );
 
       /**
-       * Claims one delivery by trusted-at-ingress priority with SKIP LOCKED.
-       * The direct attempt uses `deliveries_claim_idx` and avoids repeated `EXISTS` probes.
-       * Returns `undefined` when no row of that class remains available.
+       * Claims one delivery by trusted-at-ingress priority with SKIP LOCKED; the direct attempt
+       * uses `deliveries_claim_idx` to avoid repeated `EXISTS` probes, and returns `undefined`
+       * when no row of that class is available. A control hold gates NEW leases, never in-flight ones.
        */
       const claimOne = async (humanOriginated: boolean): Promise<DeliveryRow | undefined> => {
         const claimed = await client.query<DeliveryRow>(
@@ -347,6 +347,11 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
              SELECT d.id FROM deliveries d JOIN messages m ON m.id=d.message_id
              WHERE d.recipient_tenant=$1 AND d.recipient_alias=$2
                AND d.status IN ('pending','retry') AND d.available_at<=now()
+               AND NOT EXISTS (
+                 SELECT 1 FROM terminal_control_holds h
+                  WHERE h.tenant_id=d.recipient_tenant AND h.alias=d.recipient_alias
+                    AND h.released_at IS NULL AND h.expires_at>now()
+               )
                AND (m.priority >= $5)=$7::boolean
              ORDER BY (m.lane='interactive') DESC,m.priority DESC,d.available_at,d.created_at
              FOR UPDATE OF d SKIP LOCKED LIMIT 1

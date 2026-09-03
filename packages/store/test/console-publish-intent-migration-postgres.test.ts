@@ -6,6 +6,8 @@ import { applyMigrations, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
+import { removeSecretHandoffLayer } from './secret-handoff-layer.js';
+import { removeTerminalControlHoldsLayer } from './terminal-control-holds-layer.js';
 
 const version = '037_console_publish_intent_indexes.sql';
 const upPath = new URL(`../migrations/${version}`, import.meta.url);
@@ -138,6 +140,8 @@ preparePostgresSuite(import.meta.url, async () => {
 beforeEach(async () => {
   await resetTestDatabase(pool);
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
+  await removeTerminalControlHoldsLayer(pool);
+  await removeSecretHandoffLayer(pool);
   await removeLatestTextItemsSearchPath();
   await ensureUp();
 });

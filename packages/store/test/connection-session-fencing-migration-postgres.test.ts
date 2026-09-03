@@ -21,6 +21,8 @@ const laterVersions = [
   '035_agent_profile_runtime_adoption.sql',
   '037_console_publish_intent_indexes.sql',
   '038_cauce_text_items_ok_search_path.sql',
+  '039_secret_handoff.sql',
+  '040_terminal_control_holds.sql',
 ] as const;
 
 let database: TestDatabase;
@@ -52,7 +54,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetTestDatabase(pool);
   // Migration 031 can only be rolled back before any later schema. Exercise that real state.
-  await pool.query('TRUNCATE TABLE terminal_sessions');
+  await pool.query('TRUNCATE TABLE terminal_sessions CASCADE');
   for (let index = laterVersions.length - 1; index >= 0; index -= 1) {
     const version = requireValue(laterVersions[index], 'laterVersions');
     const recorded = await pool.query(

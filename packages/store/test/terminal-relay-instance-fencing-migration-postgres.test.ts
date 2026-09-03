@@ -9,6 +9,12 @@ import {
   startTestDatabase,
   type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
+import {
+  removeSecretHandoffLayer, restoreSecretHandoffLayer,
+} from './secret-handoff-layer.js';
+import {
+  removeTerminalControlHoldsLayer, restoreTerminalControlHoldsLayer,
+} from './terminal-control-holds-layer.js';
 
 const version = '034_terminal_relay_instance_fencing.sql';
 const upPath = new URL(`../migrations/${version}`, import.meta.url);
@@ -111,6 +117,8 @@ async function restoreLatestSchema(): Promise<void> {
   await markConsolePublishIndexesApplied();
   await pool.query(up038);
   await markTextItemsSearchPathFixApplied();
+  await restoreSecretHandoffLayer(pool);
+  await restoreTerminalControlHoldsLayer(pool);
 }
 
 async function markConsolePublishIndexesApplied(): Promise<void> {
@@ -168,8 +176,10 @@ async function removeLatestTextItemsSearchPathFix(): Promise<void> {
 
 beforeEach(async () => {
   await resetTestDatabase(pool);
-  await pool.query('DELETE FROM terminal_sessions');
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
+  await removeTerminalControlHoldsLayer(pool);
+  await pool.query('DELETE FROM terminal_sessions');
+  await removeSecretHandoffLayer(pool);
   await removeLatestTextItemsSearchPathFix();
   await removeLatestConsolePublishIndexes();
   await removeLatestProfileLayer();
@@ -180,7 +190,7 @@ beforeEach(async () => {
 afterEach(async () => {
   if (!databaseStarted) return;
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
-  await pool.query(`TRUNCATE TABLE terminal_sessions`);
+  await pool.query(`TRUNCATE TABLE terminal_sessions CASCADE`);
   await restoreLatestSchema();
 });
 
