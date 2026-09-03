@@ -130,6 +130,7 @@ test("restart prunes a terminal retained delegation request older than 24 hours"
     retainRequest: true,
   });
   assert.ok(store.getDelivery(retainedDelivery.delivery_id)?.request);
+  store.close();
 
   const reopened = await DurableStore.open(directory);
   const pruned = reopened.getDelivery(retainedDelivery.delivery_id);

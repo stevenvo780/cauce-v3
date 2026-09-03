@@ -262,7 +262,7 @@ function readSpool(file: string): Map<string, SpooledReport> {
   return reports;
 }
 
-async function spooledReport(file: string, sessionId: string, timeoutMs = 10_000): Promise<SpooledReport> {
+async function spooledReport(file: string, sessionId: string, timeoutMs = 30_000): Promise<SpooledReport> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const found = readSpool(file).get(sessionId);

@@ -264,6 +264,12 @@ export class DurableStoreBase {
     this.delegationContextPruneTimer.unref();
   }
 
+  close(): void {
+    if (this.delegationContextPruneTimer === undefined) return;
+    clearTimeout(this.delegationContextPruneTimer);
+    this.delegationContextPruneTimer = undefined;
+  }
+
   async pruneExpiredDelegationContexts(nowMs = Date.now()): Promise<number> {
     if (!Number.isFinite(nowMs)) throw new RangeError("Delegation context prune time must be finite");
     return this.serialized(async () => {
