@@ -11,12 +11,12 @@ import { readQuarantineMarker } from "./persistence.js";
 import { beforeDeadline } from "./runtime.js";
 
 /**
- * What the pane says about a generation, as opposed to what the transcript file says. Every
- * answer comes from one capture read with the arbiter's detectors and fails closed without one.
+ * What the PANE says about the generation, not the transcript file; every answer fails closed. Full rationale: ./liveness.md
  */
 export abstract class PasteSessionLivenessRunner<E> extends PasteSessionRunnerBase<E> {
-  /** A pane still generating keeps a merged turn alive however quiet the transcript file is;
-   *  an unreadable capture returns false so a dead pane still reaches the release path. */
+  /**
+   * A generating pane keeps a merged turn alive however quiet the transcript file is; unreadable is false.
+   */
   protected async paneStillGenerating(
     identity: PaneIdentity,
     signal: AbortSignal,
@@ -33,10 +33,10 @@ export abstract class PasteSessionLivenessRunner<E> extends PasteSessionRunnerBa
   }
 
   /**
-   * Lifts the quarantine of a generation that is still alive and proves it is idle (same pane,
-   * no "generating" band, free and empty input box). It never re-executes the delivery that
-   * armed it, which already ended ambiguous; it only releases the pane for the next one. An
-   * unreadable capture, a foreign marker or pending, or a failed tmux clear preserve it.
+   * Lifts the quarantine of a generation that is STILL alive once it proves idle: the same
+   * generation, no "generating" band, a free empty prompt. It never resends the delivery that
+   * armed the quarantine (it already ended ambiguous); it only releases the pane for the next one.
+   * Any unreadable capture, foreign marker, unarmed pending or uncredited tmux clear keeps it.
    */
   protected async healCurrentQuarantine(
     identity: PaneIdentity,
@@ -82,9 +82,9 @@ export abstract class PasteSessionLivenessRunner<E> extends PasteSessionRunnerBa
   }
 
   /**
-   * Removes the on-disk marks of this generation, or none at all. A pending this process did
-   * not arm needs the envelope proof of `reconcileTerminalPending` and is checked before the
-   * canonical marker so half of the barrier is never cleared.
+   * Removes the on-disk marks of this generation, or none at all: a pending this process did not
+   * arm is only discharged by `reconcileTerminalPending`, and it is checked before the canonical
+   * marker so the barrier is never half-cleared.
    */
   private async releaseDurableQuarantine(
     identity: PaneIdentity,
@@ -118,7 +118,7 @@ export abstract class PasteSessionLivenessRunner<E> extends PasteSessionRunnerBa
       );
       if (!cleared.completed || cleared.value !== true) return false;
     }
-    // Canonical + sidecars + half-written .tmp: anything still crediting this generation keeps it.
+    // Canonical + sidecars + half-written `.tmp`: anything crediting this generation keeps it.
     const remaining = await beforeDeadline(
       this.quarantinePersistence().inspect(quarantineFile, identity),
       this.quarantineDeadline(),

@@ -454,12 +454,13 @@ for line in sys.stdin:
   fi
 
   # 2) conversacion aparte, sin parar al agente
+  wsa=$(sed -n 's/^SHARED_SESSION_WORKSPACE=//p' "$CONFIG/$a.env" 2>/dev/null | head -1)
   if [[ $ad == active ]]; then
     printf "  modo: %s%sAPARTE%s — TUI real, pero conversacion nueva: NO comparte con Telegram.\n" "$c_warn" "$c_b" "$c_reset"
     printf "  %sel agente sigue respondiendo Telegram y el bus. salir: Ctrl-D%s\n\n" "$c_dim" "$c_reset"
     case "$harness" in
-      claude) exec docker exec -it --user "$cuser" -w /workspace "$ctr" claude ;;
-      codex)  exec docker exec -it --user "$cuser" -w /workspace "$ctr" codex ;;
+      claude) exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" claude ;;
+      codex)  exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" codex ;;
       openclaw)
               printf "  %sopenclaw SI tiene TUI propia, pero no te la abro aca: en modo local%s\n" "$c_dim" "$c_reset"
               printf "  %scomparte el ESTADO con el bus y aun asi el panel es CIEGO (el turno del%s\n" "$c_dim" "$c_reset"
@@ -467,7 +468,7 @@ for line in sys.stdin:
               printf "  %sTe abro un shell; para la TUI compartida hace falta gateway.%s\n\n" "$c_dim" "$c_reset"
               exec docker exec -it --user "$cuser" -w "${chome:-/}" "$ctr" bash -l ;;
       *)      printf "  %ssin TUI propia: te abro un shell%s\n\n" "$c_dim" "$c_reset"
-              exec docker exec -it --user "$cuser" -w /workspace "$ctr" bash -l ;;
+              exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" bash -l ;;
     esac
   fi
 
@@ -475,7 +476,7 @@ for line in sys.stdin:
   printf "  modo: %s%sEXCLUSIVA%s — su adaptador esta parado.\n" "$c_err" "$c_b" "$c_reset"
   printf "  %slo que le escriban por Telegram se ENCOLA y entra cuando salgas.%s\n\n" "$c_dim" "$c_reset"
   if [[ -x $BIN/cauce-attach ]]; then exec python3 "$BIN/cauce-attach" "$a"; fi
-  exec docker exec -it --user "$cuser" -w /workspace "$ctr" bash -l
+  exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" bash -l
 }
 
 # ---------- resto ----------
