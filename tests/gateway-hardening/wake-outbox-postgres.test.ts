@@ -82,11 +82,16 @@ async function connect(port: number, tenant: Tenant, alias: string, instanceId: 
   socket: WebSocket;
   received: Record<string, unknown>[];
   hello: Record<string, unknown>;
+  closed: Promise<void>;
 }> {
   const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
     headers: { 'x-cauce-tenant': tenant, 'x-cauce-alias': alias },
   });
   sockets.push(socket);
+  // Observable barrier for absence assertions: any frame the gateway queued for this socket
+  // reaches the client before its close, so waiting for the close is strictly later than waiting
+  // an arbitrary number of milliseconds.
+  const closed = new Promise<void>((resolve) => { socket.once('close', () => { resolve(); }); });
   const received: Record<string, unknown>[] = [];
   const queued: Record<string, unknown>[] = [];
   const waiting: ((frame: Record<string, unknown>) => void)[] = [];
@@ -112,7 +117,7 @@ async function connect(port: number, tenant: Tenant, alias: string, instanceId: 
   const hello = await next();
   expect(hello).toMatchObject({ type: 'hello_ack' });
   expect(hello).not.toHaveProperty('connection_token');
-  return { socket, received, hello };
+  return { socket, received, hello, closed };
 }
 
 function command(): PublishMessage {
@@ -211,7 +216,7 @@ describe('gateway wake fencing against real PostgreSQL', () => {
       await waitFor(async () => (await observer.query<{ alive: boolean }>(
         `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1) AS alive`, [backendPid],
       )).rows[0]?.alive === false);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await connection.closed;
       expect(connection.received.some((frame) => frame.type === 'wake')).toBe(false);
       expect((await observer.query<{ status: string; attempts: number }>(
         `SELECT status,attempts FROM adapter_outbox

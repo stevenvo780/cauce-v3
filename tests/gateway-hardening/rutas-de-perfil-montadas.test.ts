@@ -34,6 +34,19 @@ async function gatewayDeOperador() {
   return app;
 }
 
+function poolQueApunta(
+  filas: { action: unknown; decision: unknown; metadata: unknown }[],
+): DatabasePool {
+  const query = async (sql: string, params: readonly unknown[] = []) => {
+    if (sql.replace(/\s+/gu, ' ').trim().startsWith('INSERT INTO audit_events')) {
+      filas.push({ action: params[2], decision: params[3], metadata: params[5] });
+      return { rows: [], rowCount: 1 };
+    }
+    return { rows: [{ '?column?': 1 }], rowCount: 1 };
+  };
+  return { query } as unknown as DatabasePool;
+}
+
 function sha(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -266,6 +279,30 @@ describe('las rutas del perfil y de los documentos están MONTADAS en el gateway
     const message = cuerpo !== null && typeof cuerpo === 'object' && 'message' in cuerpo
       && typeof cuerpo.message === 'string' ? cuerpo.message : '';
     expect(message).toContain('no se ha mirado');
+  });
+
+  it('CONTROL NEGATIVO: el 409 anterior sigue verde si nadie cableó recordAudit; la fila no', async () => {
+    const filas: { action: unknown; decision: unknown; metadata: unknown }[] = [];
+    const app = await buildGateway({
+      pool: poolQueApunta(filas),
+      repository: fakeRepository(),
+      authProvider: new FixedAuthProvider(testPrincipal({
+        roles: roles('operator'),
+        permissions: grants('route', 'read', 'control'),
+      })),
+      deliveryWakeSubscriber: noDeliveryWakes,
+      outboxPollMs: 60_000,
+    });
+    apps.push(app);
+
+    const res = await app.inject({ method: 'GET', url: '/v3/console/agents/zeus/documents/directive/content' });
+
+    expect(res.statusCode).toBe(409);
+    expect(filas).toHaveLength(1);
+    expect(filas[0]).toMatchObject({ action: 'agent_document.denied', decision: 'deny' });
+    expect(JSON.parse(String(filas[0]?.metadata))).toMatchObject({
+      channel: 'read', kind: 'directive', reason: 'no_medido', target_alias: 'zeus',
+    });
   });
 
   it('un `kind` inventado se rechaza por 400 y no por 404', async () => {

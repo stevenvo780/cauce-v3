@@ -156,9 +156,6 @@ describe('gateway WebSocket ACK correlation', () => {
     const closed = new Promise<void>((resolve) => socket.once('close', () => { resolve(); }));
     socket.close(1000, 'transient disconnect');
     await closed;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    expect(repository.releaseLease).not.toHaveBeenCalled();
 
     const legacySocket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
@@ -177,10 +174,12 @@ describe('gateway WebSocket ACK correlation', () => {
     const legacyClosed = new Promise<void>((resolve) => legacySocket.once('close', () => { resolve(); }));
     legacySocket.close(1000, 'legacy disconnect');
     await legacyClosed;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(repository.releaseLease).toHaveBeenCalledWith(
-      'Pablo', 'midas', 'legacy-consumer', 1, expect.stringMatching(/^[0-9a-f-]{36}$/u),
-    );
+    await vi.waitFor(() => {
+      expect(repository.releaseLease).toHaveBeenCalledWith(
+        'Pablo', 'midas', 'legacy-consumer', 1, expect.stringMatching(/^[0-9a-f-]{36}$/u),
+      );
+    });
+    expect(repository.releaseLease).toHaveBeenCalledTimes(1);
   });
 
   it('waits for an in-flight legacy ACK before releasing its lease on close', async () => {
@@ -212,15 +211,21 @@ describe('gateway WebSocket ACK correlation', () => {
     const ackGate = new Promise<void>((resolve) => {
       finishAck = resolve;
     });
+    const order: string[] = [];
     vi.mocked(repository.ackDelivery).mockImplementation(async (deliveryId) => {
       markAckEntered();
       await ackGate;
+      order.push('ack-resolved');
       return {
         delivery_id: deliveryId,
         status: 'done',
         applied: true,
         receipt: 'applied'
       };
+    });
+    vi.mocked(repository.releaseLease).mockImplementation(async () => {
+      order.push('lease-released');
+      return true;
     });
     const app = await buildGateway({
       pool: fakePool(),
@@ -273,19 +278,14 @@ describe('gateway WebSocket ACK correlation', () => {
     const closed = new Promise<void>((resolve) => socket.once('close', () => { resolve(); }));
     socket.close(1000, 'legacy disconnect');
     await closed;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    try {
-      expect(repository.releaseLease).not.toHaveBeenCalled();
-    } finally {
-      finishAck();
-    }
+    finishAck();
     await vi.waitFor(() => {
       expect(repository.releaseLease).toHaveBeenCalledTimes(1);
       expect(repository.releaseLease).toHaveBeenCalledWith(
         'Pablo', 'midas', 'legacy-consumer', 1, expect.stringMatching(/^[0-9a-f-]{36}$/u),
       );
     });
+    expect(order).toEqual(['ack-resolved', 'lease-released']);
   });
 
   it('replays an exact renewal after reconnect while fencing an unknown legacy claim', async () => {

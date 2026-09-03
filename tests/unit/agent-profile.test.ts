@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AGENT_PROFILE_LIMITS, AgentProfileError, countCodePoints, countUtf16Units,
-  measureStrictestUnits, normalizeAgentProfile
+  AGENT_PROFILE_LIMITS, AgentProfileError, componerBloqueDePerfil, countCodePoints,
+  countUtf16Units, emptyAgentProfile, measureStrictestUnits, normalizeAgentProfile,
+  type HechosDelAlias
 } from '@cauce/protocol';
 
 /**
@@ -205,5 +206,47 @@ describe('normalizeAgentProfile', () => {
     expect(() => normalizeAgentProfile({
       tenant_id: 'Steven', alias: 'zeus', responsibilities: nocabe
     })).toThrow(/total/);
+  });
+});
+
+const HECHOS: HechosDelAlias = {
+  permisos: { ruta: true, lectura: true, control: false, notificacion: true },
+  cuotas: [{ proveedor: 'claude', cuenta: 'cuenta-a', limite: '40% en la ventana de 5 h' }],
+  arnes: {
+    harness: 'claude', home: '/home/dev', contenedor: 'ws-zeus', capacidades: ['pty']
+  },
+  destinos: ['kant', 'argos']
+};
+
+describe('una sola composición, dos destinos', () => {
+  const perfil = {
+    ...emptyAgentProfile('Steven', 'zeus'),
+    purpose: 'Orquestar la flota.',
+    tools: ['cauce']
+  };
+
+  it('el fichero del arnés concentra las siete caras: permisos, cuotas y arnés incluidos', () => {
+    const bloque = componerBloqueDePerfil(perfil, HECHOS, { includeDerivedFacts: true });
+    expect(bloque).toContain('## Permisos y acceso vía Cauce');
+    expect(bloque).toContain('## Cuotas y límites');
+    expect(bloque).toContain('## Configuración del arnés');
+    expect(bloque).toContain('Capacidades del arnés: pty');
+  });
+
+  it('el contexto fijo del sobre omite lo que el fichero ya dice, y conserva lo autorado', () => {
+    const bloque = componerBloqueDePerfil(perfil, HECHOS, { includeDerivedFacts: false });
+    expect(bloque).toContain('## Identidad y propósito');
+    expect(bloque).toContain('Orquestar la flota.');
+    expect(bloque).toContain('- cauce');
+    expect(bloque).not.toContain('## Permisos y acceso vía Cauce');
+    expect(bloque).not.toContain('## Cuotas y límites');
+    expect(bloque).not.toContain('## Configuración del arnés');
+    expect(bloque).not.toContain('Capacidades del arnés');
+  });
+
+  it('sin nada autorado no hay bloque, se pidan o no los hechos derivados', () => {
+    const vacio = emptyAgentProfile('Steven', 'argos');
+    expect(componerBloqueDePerfil(vacio, HECHOS, { includeDerivedFacts: true })).toBe('');
+    expect(componerBloqueDePerfil(vacio, HECHOS, { includeDerivedFacts: false })).toBe('');
   });
 });

@@ -10,10 +10,7 @@ import {
   closeGatewaysAndSockets, fakePool, fakeRepository, frameReader, noDeliveryWakes
 } from './helpers.js';
 
-/**
- * Tests for admission control, in-flight delivery caps, and interactive-budget reservation
- * for operator/user messages.
- */
+/** Admission control, in-flight delivery caps and interactive-budget reservation for operators. */
 
 const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 const HTTP_CONNECTION_TOKEN = '90000000-0000-4000-8000-000000000009';
@@ -340,7 +337,6 @@ describe('gateway delivery admission control', () => {
 
     const first = await session.next();
     expect(first).toMatchObject({ type: 'delivery', delivery_id: deliveryId(1) });
-    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(store.pending()).toHaveLength(1);
 
     session.socket.send(JSON.stringify({
@@ -441,7 +437,6 @@ describe('gateway delivery admission control', () => {
 
     const first = await session.next();
     expect(first).toMatchObject({ type: 'delivery', delivery_id: deliveryId(1) });
-    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(store.pending()).toHaveLength(1);
 
     session.socket.send(JSON.stringify({
@@ -491,14 +486,19 @@ describe('gateway delivery admission control', () => {
 
     const first = await connect(port, 'flapping-consumer');
     expect(await first.next()).toMatchObject({ type: 'delivery', delivery_id: deliveryId(1) });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The close handshake ends only once the server answered: the reconnect cannot race it.
+    const firstClosed = new Promise<void>((resolve) => { first.socket.once('close', () => { resolve(); }); });
     first.socket.close();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await firstClosed;
 
     // Reconnects with the SAME `instance_id`, having ACK'd nothing: the first delivery's
     // claim stays alive on the database side.
     const second = await connect(port, 'flapping-consumer');
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Frames are serialized: this reply can only be written after the hello's initial drain.
+    second.socket.send(JSON.stringify({
+      type: 'heartbeat', instance_id: 'flapping-consumer', epoch: 1,
+    }));
+    expect(await second.next()).toMatchObject({ type: 'heartbeat_ack' });
 
     expect(second.seen().filter((frame) => frame.type === 'delivery')).toHaveLength(0);
     // The gateway queries again, but PostgreSQL durably subtracts the previous claim and
@@ -827,14 +827,14 @@ describe('gateway delivery admission control', () => {
     await closed;
     releaseRecovery();
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(repository.releaseLease).not.toHaveBeenCalled();
-    expect(repository.claimDeliveries).not.toHaveBeenCalled();
     const replacement = await connect(port, 'closed-during-recovery');
     replacement.socket.send(JSON.stringify({
       type: 'heartbeat', instance_id: 'closed-during-recovery', epoch: 1,
     }));
     expect(await replacement.next()).toMatchObject({ type: 'heartbeat_ack' });
+    // The heartbeat is the barrier: the abandoned hello finished, and the only claim is this one's.
+    expect(repository.claimDeliveries).toHaveBeenCalledTimes(1);
+    expect(repository.releaseLease).not.toHaveBeenCalled();
   });
 
   it('caps a client-chosen HTTP claim limit at the configured budget', async () => {

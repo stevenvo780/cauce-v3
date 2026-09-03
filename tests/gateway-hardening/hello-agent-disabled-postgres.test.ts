@@ -1,6 +1,7 @@
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
+import { PROTOCOL_VERSION } from '@cauce/protocol';
 import type { DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/index.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
@@ -101,7 +102,7 @@ describe('hello rejects a disabled agent (agents.enabled=false)', () => {
     const { port } = await gateway();
     const { frame } = await hello(port, 'enabled-argos-runtime');
 
-    expect(frame).toMatchObject({ type: 'hello_ack', version: '3.0', epoch: 1 });
+    expect(frame).toMatchObject({ type: 'hello_ack', version: PROTOCOL_VERSION, epoch: 1 });
 
     const leases = await pool.query<{ instance_id: string }>(
       `SELECT instance_id FROM connection_leases WHERE tenant_id='Steven' AND alias='argos'`,

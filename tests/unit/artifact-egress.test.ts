@@ -89,6 +89,26 @@ describe('adjuntos salientes: del disco del agente al chat', () => {
     expect(plan.footer).toBe('');
   });
 
+  it('el turno cuyo ÚNICO producto es el fichero ya no es MISSING_FINAL_REPLY: el plan trae la subida', async () => {
+    const path = await pngOnDisk('solo-fichero.png');
+    const salida = await inlineLocalArtifacts({
+      ...envelope(pathToFileURL(path).href, 'solo-fichero.png'), reply: ''
+    });
+    const plan = planArtifacts(ack(salida));
+
+    expect(plan.uploads).toHaveLength(1);
+    expect(plan.uploads[0]?.bytes.equals(PNG_BYTES)).toBe(true);
+    expect(plan.footer).toBe('');
+  });
+
+  it('lo que no cupo en el presupuesto del turno se explica como tal, no como ruta del agente', () => {
+    const plan = planArtifacts(ack(envelope('cauce:not-sent', 'pesado.bin')));
+
+    expect(plan.uploads).toHaveLength(0);
+    expect(plan.footer).toContain('superó el presupuesto de adjuntos de este turno');
+    expect(plan.footer).not.toContain('quedó en el espacio de trabajo');
+  });
+
   it('la ruta absoluta suelta, sin file://, recorre el mismo camino', async () => {
     // The literal outbox case: `/home/claw/clawd/_tmp_hoja_ruta/hoja_ruta_domiciliario.png`.
     const path = await pngOnDisk('suelta.png');

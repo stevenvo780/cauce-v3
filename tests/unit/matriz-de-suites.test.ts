@@ -18,6 +18,7 @@ interface Conteo {
 }
 
 interface Resultado {
+  readonly name?: string;
   readonly code: number;
   readonly timedOut?: boolean;
   readonly conteo?: Conteo;

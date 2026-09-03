@@ -409,7 +409,9 @@ describe('gateway selective durable wake routing', () => {
       }),
       expect.any(AbortSignal),
     );
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    const pollsAfterRetry = vi.mocked(repository.claimWakeOutbox).mock.calls.length;
+    await waitFor(() =>
+      vi.mocked(repository.claimWakeOutbox).mock.calls.length >= pollsAfterRetry + 3);
     expect(attempts).toBe(1);
 
     const resumed = await connect(port, 'Steven', 'midas', 'steven-race');

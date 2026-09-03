@@ -17,8 +17,15 @@ afterEach(() => {
 
 type AuthRequest = Parameters<JwksJwtAuthProvider['authenticateHttp']>[0];
 
+const live = new Date(Date.now() + 3_600_000).toISOString();
+const lapsed = new Date(Date.now() - 3_600_000).toISOString();
+
 function request(headers: Record<string, string>, socket: object = {}): AuthRequest {
   return { headers, raw: { socket } } as AuthRequest;
+}
+
+function cookieRequest(secret: string): AuthRequest {
+  return request({ cookie: `__Host-cauce_session=${encodeURIComponent(secret)}` });
 }
 
 function token(privateKey: ReturnType<typeof generateKeyPairSync>['privateKey'], claims: Record<string, unknown>): string {
@@ -90,7 +97,7 @@ describe('production authentication providers', () => {
     };
     try {
       await writeFile(path, JSON.stringify({
-        version: 1, identities: [{ token_sha256: digest, principal }]
+        version: 1, identities: [{ token_sha256: digest, expires_at: live, principal }]
       }), { mode: 0o600 });
       const provider = new HashedTokenFileAuthProvider({ path });
       await expect(provider.authenticateHttp(request({
@@ -109,11 +116,114 @@ describe('production authentication providers', () => {
 
       await writeFile(path, JSON.stringify({
         version: 1,
-        identities: [{ token_sha256: createHash('sha256').update('rotated-test-token-value-that-is-long-enough').digest('hex'), principal }]
+        identities: [{
+          token_sha256: createHash('sha256').update('rotated-test-token-value-that-is-long-enough').digest('hex'),
+          expires_at: live,
+          principal
+        }]
       }), { mode: 0o600 });
       await expect(provider.authenticateHttp(request({
         cookie: `__Host-cauce_session=${encodeURIComponent(pilotToken)}`
       }))).rejects.toThrow('not recognized');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('overlaps two distinct live records for one principal and fails closed on expiry', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'cauce-auth-overlap-'));
+    const path = join(directory, 'identities.json');
+    const outgoing = 'test-only-outgoing-token-with-sufficient-entropy';
+    const incoming = 'test-only-incoming-token-with-sufficient-entropy';
+    const principal = {
+      tenant_id: 'Steven', alias: 'kant', session_id: 'pilot-session', channel: 'console',
+      roles: ['operator'], permissions: ['route', 'read', 'control']
+    };
+    const record = (secret: string, expires_at: string): Record<string, unknown> => ({
+      token_sha256: createHash('sha256').update(secret).digest('hex'), expires_at, principal
+    });
+    const provider = new HashedTokenFileAuthProvider({ path });
+    try {
+      await writeFile(path, JSON.stringify({
+        version: 1, identities: [record(outgoing, live), record(incoming, live)]
+      }), { mode: 0o600 });
+      await expect(provider.authenticateHttp(cookieRequest(outgoing)))
+        .resolves.toMatchObject({ tenant_id: 'Steven', alias: 'kant' });
+      await expect(provider.authenticateHttp(cookieRequest(incoming)))
+        .resolves.toMatchObject({ tenant_id: 'Steven', alias: 'kant' });
+
+      await writeFile(path, JSON.stringify({
+        version: 1, identities: [record(outgoing, lapsed), record(incoming, live)]
+      }), { mode: 0o600 });
+      await expect(provider.authenticateHttp(cookieRequest(outgoing))).rejects.toThrow('expired');
+      await expect(provider.authenticateHttp(cookieRequest(incoming)))
+        .resolves.toMatchObject({ alias: 'kant' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails only the immortal record and leaves the rest of the file live', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'cauce-auth-partial-'));
+    const path = join(directory, 'identities.json');
+    const immortal = 'test-only-immortal-token-with-sufficient-entropy';
+    const rotated = 'test-only-rotated-token-with-sufficient-entropy';
+    const principal = {
+      tenant_id: 'Steven', alias: 'kant', session_id: 'pilot-session', channel: 'console',
+      roles: ['operator'], permissions: ['route', 'read', 'control']
+    };
+    const digest = (secret: string): string => createHash('sha256').update(secret).digest('hex');
+    try {
+      await writeFile(path, JSON.stringify({
+        version: 1,
+        identities: [
+          { token_sha256: digest(immortal), principal },
+          { token_sha256: digest(rotated), expires_at: live, principal },
+        ]
+      }), { mode: 0o600 });
+      const provider = new HashedTokenFileAuthProvider({ path });
+      // A single legacy record used to revoke mTLS and pilot auth for the whole fleet at once.
+      await expect(provider.authenticateHttp(cookieRequest(rotated)))
+        .resolves.toMatchObject({ tenant_id: 'Steven', alias: 'kant' });
+      await expect(provider.authenticateHttp(cookieRequest(immortal)))
+        .rejects.toThrow('identity expiry is missing');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an identity record that carries no expiry at all', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'cauce-auth-immortal-'));
+    const path = join(directory, 'identities.json');
+    const immortalToken = 'test-only-immortal-token-with-sufficient-entropy';
+    try {
+      await writeFile(path, JSON.stringify({
+        version: 1,
+        identities: [{
+          token_sha256: createHash('sha256').update(immortalToken).digest('hex'),
+          principal: {
+            tenant_id: 'Steven', alias: 'kant', session_id: 'pilot-session', channel: 'console',
+            roles: ['operator'], permissions: ['route', 'read', 'control']
+          }
+        }]
+      }), { mode: 0o600 });
+      const provider = new HashedTokenFileAuthProvider({ path });
+      await expect(provider.authenticateHttp(cookieRequest(immortalToken)))
+        .rejects.toThrow('identity expiry is missing');
+
+      await writeFile(path, JSON.stringify({
+        version: 1,
+        identities: [{
+          token_sha256: createHash('sha256').update(immortalToken).digest('hex'),
+          expires_at: 'no es una fecha',
+          principal: {
+            tenant_id: 'Steven', alias: 'kant', session_id: 'pilot-session', channel: 'console',
+            roles: ['operator'], permissions: ['route', 'read', 'control']
+          }
+        }]
+      }), { mode: 0o600 });
+      await expect(provider.authenticateHttp(cookieRequest(immortalToken)))
+        .rejects.toThrow('identity expiry is invalid');
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

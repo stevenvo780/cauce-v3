@@ -3,7 +3,7 @@ import { mkdtemp, open, readFile, rename, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { dirname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HashedMtlsIdentityFileProvider, HashedTokenFileAuthProvider } from '../../services/gateway/src/index.js';
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -26,8 +26,14 @@ async function registryDirectory(): Promise<string> {
   return directory;
 }
 
+const live = new Date(Date.now() + 3_600_000).toISOString();
+const lapsed = new Date(Date.now() - 3_600_000).toISOString();
+
 function document(records: Record<string, unknown>[]): string {
-  return JSON.stringify({ version: 1, identities: records.map((record) => ({ ...record, principal })) });
+  return JSON.stringify({
+    version: 1,
+    identities: records.map((record) => ({ expires_at: live, ...record, principal })),
+  });
 }
 
 /**
@@ -70,6 +76,48 @@ describe('identity registry rotation reaches the gateway', () => {
       expect((await pinned.readFile('utf8')).includes(provisioned)).toBe(true);
     } finally {
       await pinned.close();
+    }
+  });
+
+  it('keeps both records of a make-before-break overlap live and expires each on its own date', async () => {
+    const directory = await registryDirectory();
+    const path = join(directory, 'mtls_identities.json');
+    await writeFile(path, document([
+      { certificate_sha256: provisioned }, { certificate_sha256: rotatedIn },
+    ]), { mode: 0o400 });
+    const provider = new HashedMtlsIdentityFileProvider(path);
+    await expect(provider.resolve(certificate(provisioned))).resolves.toMatchObject({ alias: 'kant' });
+    await expect(provider.resolve(certificate(rotatedIn))).resolves.toMatchObject({ alias: 'kant' });
+
+    await rotateByRename(path, document([
+      { certificate_sha256: provisioned, expires_at: lapsed }, { certificate_sha256: rotatedIn },
+    ]));
+    await expect(provider.resolve(certificate(provisioned))).rejects.toThrow('expired');
+    await expect(provider.resolve(certificate(rotatedIn))).resolves.toMatchObject({ alias: 'kant' });
+  });
+
+  it('refuses only the mTLS record with no expiry and reports the file once', async () => {
+    const directory = await registryDirectory();
+    const path = join(directory, 'mtls_identities.json');
+    await writeFile(path, JSON.stringify({
+      version: 1,
+      identities: [
+        { certificate_sha256: provisioned, principal },
+        { certificate_sha256: rotatedIn, expires_at: live, principal },
+      ],
+    }), { mode: 0o400 });
+    const provider = new HashedMtlsIdentityFileProvider(path);
+    const reported = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await expect(provider.resolve(certificate(provisioned)))
+        .rejects.toThrow('identity expiry is missing');
+      await expect(provider.resolve(certificate(rotatedIn))).resolves.toMatchObject({ alias: 'kant' });
+      const lines = reported.mock.calls
+        .filter(([line]) => String(line).includes('identity_records_without_valid_expiry'));
+      expect(lines).toHaveLength(1);
+      expect(String(lines[0]?.[0])).not.toContain(provisioned);
+    } finally {
+      reported.mockRestore();
     }
   });
 

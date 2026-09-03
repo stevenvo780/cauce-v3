@@ -38,9 +38,12 @@ describe('la composición del perfil', () => {
     expect(reexportadaPorElAdaptador).toBe(componerBloqueDePerfil);
   });
 
-  it('`compilarContexto` del adaptador pasa por esa misma función', () => {
+  it('`compilarContexto` del adaptador pasa por esa misma función, sin hechos derivados', () => {
     const contexto = { perfil: perfil({ purpose: 'Orquestar la flota.' }), hechos: HECHOS };
     expect(compilarContexto(contexto)).toBe(
+      componerBloqueDePerfil(contexto.perfil, contexto.hechos, { includeDerivedFacts: false })
+    );
+    expect(compilarContexto(contexto)).not.toBe(
       componerBloqueDePerfil(contexto.perfil, contexto.hechos)
     );
   });
