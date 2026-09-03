@@ -6,8 +6,9 @@ import type {
   TerminalAuditEntry,
 } from './agent-documents.routes.js';
 import { registerAgentDocumentRoutes } from './agent-documents.routes.js';
-import { MARCA_FIN, MARCA_INICIO } from '@cauce/protocol';
+import { MARCA_FIN, MARCA_INICIO, MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO } from '@cauce/protocol';
 import { CONTEXT_APPLY_POLICY } from './context-apply-policy.js';
+import { ContextContaminationTelemetry } from './contaminacion-de-contexto.js';
 import {
   DEFAULT_CODEX_PROJECT_DOC_MAX_BYTES, effectiveManualPaths, type GovernanceRelayClient,
   MAX_DOCUMENT_BYTES,
@@ -583,5 +584,75 @@ describe('el destino que no se ve deja fila antes de contestar 404', () => {
       target_tenant: 'Miguel', target_alias: 'kant', kind: 'directive',
       reason: 'not_found', channel: 'write', harness_id: null, home_directory: null,
     });
+  });
+});
+
+/*
+ * Los dos `$HOME` compartidos de la flota (ADR-008) hacen que «el CLAUDE.md de este alias» sea a
+ * veces el de otro. La guardia se corre AQUÍ, en la escritura, y no sólo en la recarga.
+ */
+describe('la cuarentena de contaminación también cierra la escritura', () => {
+  const AJENO = [
+    '# CLAUDE.md', MARCA_PERFIL_INICIO, '<!-- alias: Steven/argos -->', 'prosa del contenedor ajeno',
+    MARCA_PERFIL_FIN, '',
+  ].join('\n');
+
+  it('un alias en cuarentena no puede guardar: 409 con el dueño nombrado y fila', async () => {
+    const writeGovernanceDocument = vi.fn(async () => ({ sha: sha(NUEVO), bytes: 7 }));
+    const telemetry = new ContextContaminationTelemetry();
+    vivo = servidor({
+      telemetry,
+      probe: sonda({
+        readGovernanceDocument: async () => ({
+          text: AJENO, bytes: Buffer.byteLength(AJENO, 'utf8'), truncated: false,
+          modified_at: '2026-08-25T00:00:00Z', sha: sha(AJENO),
+        }),
+        writeGovernanceDocument,
+      }),
+    });
+    const res = await vivo.inject({
+      method: 'PUT', url: ruta(),
+      payload: { content: NUEVO, expected_sha: sha(AJENO), reason: MOTIVO },
+    });
+
+    expect(res.statusCode).toBe(409);
+    const cuerpo = res.json<{
+      error: string; contaminacion: { findings: { reason: string; owner: string }[] };
+    }>();
+    expect(cuerpo.error).toBe('context_contaminated');
+    expect(cuerpo.contaminacion.findings[0]).toMatchObject({
+      reason: 'foreign_managed_block', owner: 'Steven/argos',
+    });
+    expect(writeGovernanceDocument).not.toHaveBeenCalled();
+    expect(telemetry.snapshot().foreign_managed_block).toBe(1);
+    expect(unaFila()).toMatchObject({ action: 'agent_document.denied', decision: 'deny' });
+    expect(unaFila().metadata).toMatchObject({
+      channel: 'write', reason: 'context_contaminated',
+      contamination: [{ reason: 'foreign_managed_block', owner: 'Steven/argos' }],
+    });
+    // Ni el cuerpo ni la fila llevan un byte de lo que el bloque ajeno dice.
+    expect(JSON.stringify(cuerpo)).not.toContain('prosa del contenedor ajeno');
+    expect(JSON.stringify(unaFila().metadata)).not.toContain('prosa del contenedor ajeno');
+  });
+
+  it('no estorba a la escritura de un fichero cuyo bloque es del propio alias', async () => {
+    const propio = AJENO.replace('Steven/argos', 'Miguel/kant');
+    vivo = servidor({
+      probe: sonda({
+        readGovernanceDocument: async () => ({
+          text: propio, bytes: Buffer.byteLength(propio, 'utf8'), truncated: false,
+          modified_at: '2026-08-25T00:00:00Z', sha: sha(propio),
+        }),
+        writeGovernanceDocument: async () => ({
+          sha: sha(propio), bytes: Buffer.byteLength(propio, 'utf8'),
+        }),
+      }),
+    });
+    const res = await vivo.inject({
+      method: 'PUT', url: ruta(),
+      payload: { content: propio, expected_sha: sha(propio), reason: MOTIVO },
+    });
+
+    expect(res.statusCode).toBe(202);
   });
 });

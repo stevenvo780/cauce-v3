@@ -1,4 +1,4 @@
-import { bloqueDePerfil } from '@cauce/protocol';
+import { AliasSchema, TenantSchema, bloqueDePerfil } from '@cauce/protocol';
 
 /**
  * Context contamination guard: decides, from measured facts and the recorded expectation, whether
@@ -52,8 +52,17 @@ export interface ContextContaminationVerdict {
 
 const RENGLON_DE_DUENO = /^\s*<!--\s*alias:\s*([^\s>]+)\s*-->/u;
 
-function duenoDelBloque(bloque: string): string | undefined {
-  return RENGLON_DE_DUENO.exec(bloque)?.[1];
+interface DuenoDelBloque {
+  readonly dueno?: string;
+}
+
+function duenoDelBloque(bloque: string): DuenoDelBloque | undefined {
+  const crudo = RENGLON_DE_DUENO.exec(bloque)?.[1];
+  if (crudo === undefined) return undefined;
+  const partes = crudo.split('/');
+  const legible = partes.length === 2
+    && TenantSchema.safeParse(partes[0]).success && AliasSchema.safeParse(partes[1]).success;
+  return legible ? { dueno: crudo } : {};
 }
 
 function bloqueAjeno(
@@ -63,19 +72,18 @@ function bloqueAjeno(
   const bloque = bloqueDePerfil(documento.text);
   if (bloque === undefined) return undefined;
   const suyo = duenoDelBloque(bloque);
-  if (suyo === undefined || suyo === dueno) return undefined;
+  if (suyo === undefined || suyo.dueno === dueno) return undefined;
   return {
     reason: 'foreign_managed_block',
     document: documento.name,
     path: documento.path,
-    owner: suyo,
+    ...(suyo.dueno === undefined ? {} : { owner: suyo.dueno }),
   };
 }
 
 /**
- * The fingerprint check only runs against an expectation recorded for the generation that is ALIVE
- * right now. An expectation from a previous container life mismatching is ordinary drift — exactly
- * what a reload exists to fix — and calling it contamination would quarantine the remedy.
+ * Only against an expectation of the generation ALIVE right now: an older one mismatching is
+ * ordinary drift, what a reload fixes, and quarantining that would strand the alias forever.
  */
 function huellaDistinta(
   documento: MeasuredContextDocument,
@@ -113,8 +121,8 @@ export function evaluarContaminacion(
 }
 
 /**
- * Process-local counter with a fixed label vocabulary: no tenant, alias, path or digest reaches
- * Prometheus, only how many times each reason quarantined a write or a reload.
+ * Process-local counter with a fixed label vocabulary: only how many times each reason quarantined
+ * a write or a reload, and never the tenant, alias, path or digest behind it.
  */
 export class ContextContaminationTelemetry {
   private readonly counters = new Map<ContextContaminationReason, number>(

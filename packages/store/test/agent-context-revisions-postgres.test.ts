@@ -111,6 +111,11 @@ describe('agent context revisions store', () => {
     expect((await journal.listProfileRevisions('Steven', 'argos', 10)).length).toBe(3);
   });
 
+  /*
+   * `directive` y `tools` no son etiquetas de este test: son las que escribe la recarga del
+   * gateway (`RELOAD_DOCUMENT_KINDS`) y las únicas que su ruta de historial acepta. Sembrar otra
+   * cosa aquí dejaría verde un diario que nadie puede leer.
+   */
   it('records a document write by fingerprint and lists it by kind', async () => {
     const written = await journal.recordDocumentRevision({
       tenantId: 'Steven', alias: 'argos', kind: 'directive',
@@ -139,6 +144,26 @@ describe('agent context revisions store', () => {
     });
     expect(written.sha256).toBeNull();
     expect(written.bytes).toBe(0);
+  });
+
+  /*
+   * La BASE acota lo que una fila puede CONTENER (digest canónico y bytes no negativos); la FORMA
+   * de la ruta la acota el ESCRITOR. `041` sólo exige la barra inicial y una longitud, así que el
+   * recorrido y el segmento vacío pasarían enteros, y lo que la base sí rechaza llegaría como un
+   * error de constraint y no como un `StoreError` que el llamante pueda leer.
+   */
+  it.each([
+    ['relativa', 'home/dev/CLAUDE.md'],
+    ['con recorrido', '/home/dev/../../etc/CLAUDE.md'],
+    ['con segmento vacío', '/home//dev/CLAUDE.md'],
+    ['de longitud desbordada', `/${'a'.repeat(4096)}`],
+  ])('refuses a %s path with a typed error instead of trusting the base', async (_caso, path) => {
+    await expect(journal.recordDocumentRevision({
+      tenantId: 'Steven', alias: 'argos', kind: 'directive',
+      path, sha256: null, bytes: 0, actorTenant: null, actorAlias: null,
+    })).rejects.toBeInstanceOf(StoreError);
+    const filas = await journal.listDocumentRevisions('Steven', 'argos', 'directive', 10);
+    expect(filas).toEqual([]);
   });
 
   it('refuses a page size outside its bounds instead of scanning the whole journal', async () => {

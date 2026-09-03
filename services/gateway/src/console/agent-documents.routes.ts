@@ -10,6 +10,9 @@ import {
 import {
   admitGovernanceWrite, isRejectedWrite, SHA256_PATTERN, type GovernanceWritePrecondition,
 } from './agent-documents/write-admission.js';
+import {
+  contextContamination, evaluarContaminacion, type ContextContaminationTelemetry,
+} from './contaminacion-de-contexto.js';
 import { CONTEXT_APPLY_POLICY, type ContextApplyState } from './context-apply-policy.js';
 import type { TerminalAuditEntry } from '../terminal/audit.js';
 import { UNATTRIBUTED_OPERATOR } from '../terminal/types.js';
@@ -95,17 +98,10 @@ export interface AgentFactsProbe {
   >;
 
   /**
-   * Read a governance file of the alias (CLAUDE.md, AGENTS.md, memory, etc.).
-   * The path MUST belong to the closed set from resolveAgentDocuments().
-   *
-   * Critical security:
-   * - NEVER read outside {resolveAgentDocuments(facts)}.paths
-   * - NEVER follow symlinks (verify realpath)
-   * - NEVER read NEVER_SERVE_BASENAMES nor files ending in NEVER_SERVE_SUFFIXES
-   * - Limit to MAX_DOCUMENT_BYTES (256 KB) — truncate if larger
-   * - Read timeout (~5 seconds)
-   *
-   * Returns GovernanceDocumentContent or an error if it could not be read.
+   * Reads a governance file of the alias. The path MUST come from the closed set of
+   * `resolveAgentDocuments`, never from the browser: no symlink is followed, no
+   * `NEVER_SERVE_BASENAMES` or `NEVER_SERVE_SUFFIXES` name is opened, the read is capped at
+   * `MAX_DOCUMENT_BYTES` (truncating past it) and it times out instead of hanging.
    */
   readGovernanceDocument(
     path: string,
@@ -184,6 +180,8 @@ export interface AgentDocumentsDeps {
   } | undefined>;
   probe: AgentFactsProbe;
   recordAudit: (entry: TerminalAuditEntry) => Promise<void>;
+  /** Overridable so a test counts on its own instance instead of the process-wide one. */
+  telemetry?: Pick<ContextContaminationTelemetry, 'recordVerdict'>;
 }
 
 type AgentDocumentActor = Awaited<ReturnType<AgentDocumentsDeps['authorize']>>;
@@ -311,6 +309,7 @@ function buildDocumentsResponse(
 }
 
 export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDocumentsDeps): void {
+  const telemetry = deps.telemetry ?? contextContamination;
   const KINDS: readonly DocumentKind[] = [
     'directive', 'tools', 'prompts', 'mcp', 'identity', 'human',
     'memory', 'heartbeat', 'configuration',
@@ -681,6 +680,36 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
           });
         }
         contenidoActual = actual.text;
+      }
+
+      /*
+       * QUARANTINE BEFORE THE EDIT. A governance file that holds the managed block of ANOTHER
+       * alias is not this alias' file, whatever the browser is trying to save into it: on the two
+       * shared `$HOME` of the fleet, saving there is writing in somebody else's house. The verdict
+       * names the owner in a structured field and never a byte of what the block says.
+       */
+      const contaminacion = evaluarContaminacion({
+        owner: { tenant_id: target.tenant_id, alias: target.alias },
+        generation: medido.facts.generation ?? null,
+        documents: [{
+          name: doc.path.slice(doc.path.lastIndexOf('/') + 1),
+          path: doc.path,
+          sha: esError(actual) ? null : actual.sha,
+          text: contenidoActual ?? null,
+        }],
+      }, undefined);
+      if (contaminacion.contaminated) {
+        telemetry.recordVerdict(contaminacion);
+        hechos.contamination = contaminacion.findings.map((finding) => ({
+          reason: finding.reason, owner: finding.owner ?? null,
+        }));
+        return denegar(409, {
+          error: 'context_contaminated',
+          message: 'este fichero de gobierno contiene un bloque gestionado de otro alias; guardar '
+            + 'aquí sería escribir en la casa de otro. Queda en cuarentena hasta que alguien mire '
+            + 'ese contenedor.',
+          contaminacion,
+        });
       }
 
       if (kind === 'directive') {

@@ -1,8 +1,11 @@
 # ADR-008: guardia de contaminación del contexto y recarga explícita
 
-**Estado:** aceptado. La función de veredicto, el contador y las dos rutas de recarga están en el
-árbol del gateway; la migración `041` guarda el diario que hace legible el histórico. Ningún arnés
-se reinicia por esto, ni antes ni después.
+**Estado:** aceptado. La función de veredicto, el contador, las dos rutas de recarga y la escritura
+gobernada de documentos (`PUT .../documents/:kind/content`) están en el árbol del gateway; la
+migración `041` guarda el diario que hace legible el histórico. El PUT del perfil
+(`agent-profile.routes.ts`) **todavía no pasa por la guardia**: sigue amparado sólo por la negativa
+del generador, y cablearlo ahí es una ola posterior de W5. Ningún arnés se reinicia por esto, ni
+antes ni después.
 
 ## Contexto
 
@@ -63,7 +66,23 @@ prefijo es afirmar de más.
 **Sin tabla nueva.** Un veredicto contaminado hace que el gateway **rechace la escritura y la
 recarga** con un `409` tipado (`context_contaminated`) que lleva el motivo y el alias dueño, emita
 una fila de auditoría de denegación, y sume un contador expuesto en `/metrics` como
-`cauce_gateway_context_contamination_total{reason}`. El contador es un singleton de proceso leído
+`cauce_gateway_context_contamination_total{reason}`.
+
+**Dónde está cableada hoy, exactamente.** En la recarga (`agent-context-reload.routes.ts`) y en la
+escritura manual de un documento de gobierno (`agent-documents.routes.ts`, el `PUT` de contenido),
+que es la vía por la que la consola guarda un `CLAUDE.md` a mano. **No** en el `PUT` del perfil
+(`agent-profile.routes.ts`): ese camino sigue defendido sólo por la negativa del generador, que
+para el bloque ajeno devuelve un `409 conflict` sin nombre de dueño, sin veredicto y sin contador.
+Decirlo así en vez de dar la cuarentena por completa es la diferencia entre documentar un control y
+suponerlo.
+
+**La negativa del preflight se vuelve a juzgar.** `prepareAgentProfileRuntime` ya se niega ante un
+bloque ajeno, y lo hace ANTES de devolver nada: lanza un `conflict` seco que no lleva los bytes con
+los que se sabe de quién es el bloque. Si el veredicto se calculara sólo después de `materialize`,
+el caso principal de esta ADR sería inalcanzable y su contador no podría subir nunca. Por eso la
+recarga atrapa ese `conflict`, vuelve a medir los ficheros y deja que la guardia diga de quién es;
+sólo esa negativa paga la segunda lectura, y una carrera que borre el bloque entre medias vuelve al
+`conflict` genérico en vez de inventar un veredicto. El contador es un singleton de proceso leído
 directamente por `health.ts`: pasarlo por las opciones del gateway dejaría el incremento y el
 scrape en dos objetos que sólo coinciden mientras alguien se acuerde de darles la misma instancia.
 Sólo viaja el motivo — ni tenant, ni alias, ni ruta, ni digest llegan a Prometheus.
@@ -122,10 +141,34 @@ OR DELETE` sobre `agent_profiles`, para que la **creación** del perfil también
 tiene foreign key a `agents`: un `ON DELETE CASCADE` se llevaría por delante exactamente la prueba
 que el diario existe para conservar.
 
+**Quién impone qué.** Que ninguna columna pueda contener un cuerpo lo sostiene la BASE: `sha256` o
+es NULL o es un digest canónico de 64 hex, y `bytes` es un entero no negativo. De `path` la base
+sólo exige la barra inicial y una longitud de 2 a 4096, así que la FORMA de la ruta —absoluta, sin
+`..` ni segmentos vacíos, acotada— la impone el ESCRITOR, `recordDocumentRevision` del store, que
+es el único que inserta en esa tabla.
+
+**Una fila por TIPO de documento, y sólo de lo reescrito.** El `kind` de cada fila es el mismo
+vocabulario que sirve la ruta de historial (`directive`, `tools`, `identity`…), no la categoría del
+lote: una fila anotada bajo una categoría que el lector no acepta es una fila que nadie puede leer,
+y el diario entero sería de sólo escritura. Un fichero que el lote se limitó a **verificar**
+(`MEMORY.md` y `HEARTBEAT.md` de openclaw, que son del agente) no deja fila: anotarlo diría que la
+recarga lo reescribió, que es justo lo que este camino promete no hacer.
+
+**El actor del diario del perfil es NULL, y eso hoy significa «no consta» siempre.** El trigger lee
+`cauce.actor_tenant` / `cauce.actor_alias`, y en el árbol **nadie** emite ese `SET LOCAL`: quien
+escribe `agent_profiles` es `AgentProfileStore.replace`, que no lo hace. Se deja así a propósito en
+esta ola —tocar esa transacción es tocar el camino caliente del PUT del perfil, que está fuera de
+este tramo— y se documenta en vez de insinuar que el diario dice quién. Quien quiera saber quién
+guardó una versión tiene la fila `agent_profile.desired` de `audit_events`, que sí nombra al actor;
+cablear el `SET LOCAL` para que el diario se baste solo va con la ola que guarde el PUT del perfil.
+
 ## Consecuencias
 
-- Los dos casos conocidos de la flota dejan de ser latentes: un alias que escriba sobre el
-  `.claude` compartido de otro recibe `409` con el nombre del dueño, no un éxito silencioso.
+- Los dos casos conocidos de la flota dejan de ser latentes por las dos vías que hoy están
+  cableadas: un alias que se recargue sobre el `.claude` compartido de otro, o una persona que
+  guarde ahí un documento de gobierno a mano, reciben `409 context_contaminated` con el nombre del
+  dueño en un campo estructurado, fila de auditoría y contador. Por el PUT del perfil siguen
+  recibiendo el `conflict` seco de siempre hasta la ola que lo cablee.
 - La deriva tiene remedio sin ensuciar el histórico: la recarga re-materializa la revisión vigente
   en vez de crear una nueva que no cambió ningún campo.
 - El adaptador puede curarse solo. Eso es una ruta de escritura que se dispara **sin persona**, y

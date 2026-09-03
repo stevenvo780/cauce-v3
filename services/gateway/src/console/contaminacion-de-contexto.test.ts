@@ -64,6 +64,19 @@ describe('evaluarContaminacion', () => {
     expect(JSON.stringify(verdict)).not.toContain('texto gobernado');
   });
 
+  it('never copies an owner line that is not a tenant-qualified alias into the verdict', () => {
+    const relleno = `Steven/argos~SECRETO~${'x'.repeat(2000)}`;
+    const verdict = evaluarContaminacion(medido({
+      documents: [{ name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('a'), text: conBloqueDe(relleno) }],
+    }), esperado);
+    expect(verdict.contaminated).toBe(true);
+    expect(verdict.findings).toEqual([{
+      reason: 'foreign_managed_block', document: 'CLAUDE.md', path: '/home/dev/CLAUDE.md',
+    }]);
+    expect(JSON.stringify(verdict)).not.toContain('SECRETO');
+    expect(JSON.stringify(verdict).length).toBeLessThan(300);
+  });
+
   it('quarantines a fingerprint that disagrees with the expectation of the live generation', () => {
     const verdict = evaluarContaminacion(medido({
       documents: [{

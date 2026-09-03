@@ -1,6 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { AliasSchema, TenantSchema, type ContextoDeAlias } from '@cauce/protocol';
-import type { DocumentOperator, TerminalAuditEntry } from './agent-documents.routes.js';
+import { AliasSchema, TenantSchema, nombresDelArnes, type ContextoDeAlias } from '@cauce/protocol';
+import { profileDocumentPaths, type DocumentKind } from './agent-documents.js';
+import type {
+  AgentFactsProbe, DocumentOperator, TerminalAuditEntry,
+} from './agent-documents.routes.js';
 import { DOCUMENT_REASON_MAX, DOCUMENT_REASON_MIN } from './agent-documents/write-admission.js';
 import type {
   PreparedProfileRuntime, ProfileRuntimeAck, ProfileRuntimePreflight, ProfileRuntimeVerification,
@@ -8,7 +11,8 @@ import type {
 import { CONTEXT_APPLY_POLICY, type ContextApplyState } from './context-apply-policy.js';
 import {
   contextContamination, evaluarContaminacion, type ContextContaminationTelemetry,
-  type ContextContaminationVerdict, type MeasuredContext, type RecordedContextExpectation,
+  type ContextContaminationVerdict, type MeasuredContext, type MeasuredContextDocument,
+  type RecordedContextExpectation,
 } from './contaminacion-de-contexto.js';
 
 /**
@@ -73,6 +77,12 @@ export interface AgentContextReloadDeps {
   prepareRuntime(
     tenantId: string, alias: string, contexto: ContextoDeAlias,
   ): Promise<ProfileRuntimePreflight>;
+  /**
+   * Live governance bytes, measured and never projected. The canonical preflight REFUSES a foreign
+   * managed block by throwing, so the bytes that say whose block it is never reach the guard
+   * through it; this is what turns that refusal into a named verdict.
+   */
+  measureContext(tenantId: string, alias: string): Promise<MeasuredContext | undefined>;
   /** The expectation recorded for this alias, whichever generation it belongs to. */
   readRuntimeExpectation(
     tenantId: string, alias: string,
@@ -97,8 +107,17 @@ export interface AgentContextReloadDeps {
   telemetry?: Pick<ContextContaminationTelemetry, 'recordVerdict'>;
 }
 
-/** The journal kind of a profile document: the whole set travels as one governed batch. */
-const RELOAD_DOCUMENT_KIND = 'profile';
+/**
+ * Journal kind of each profile file, in the SAME vocabulary the history route serves. The batch
+ * travels by name and the catalog resolves kinds from measured paths; every name the harness table
+ * can produce has exactly one kind here, and a name with none is left out of the journal rather
+ * than recorded under a category no reader accepts.
+ */
+export const RELOAD_DOCUMENT_KINDS: ReadonlyMap<string, DocumentKind> = new Map<string, DocumentKind>([
+  ['CLAUDE.md', 'directive'], ['AGENTS.md', 'directive'], ['SOUL.md', 'prompts'],
+  ['IDENTITY.md', 'identity'], ['USER.md', 'human'], ['TOOLS.md', 'tools'],
+  ['MEMORY.md', 'memory'], ['HEARTBEAT.md', 'heartbeat'],
+]);
 
 type ReloadPrincipal = 'operator' | 'alias_self';
 
@@ -165,6 +184,39 @@ function contextoMedido(
   };
 }
 
+/**
+ * Reads the profile files of an alias without projecting anything, so the guard can judge bytes
+ * the preflight refused to hand over. Anything it cannot read whole and attribute comes back
+ * `undefined` or with `text: null`: this function never guesses ownership.
+ */
+export async function medirContextoDeGobierno(
+  probe: AgentFactsProbe, tenantId: string, alias: string,
+): Promise<MeasuredContext | undefined> {
+  const medido = await probe.factsFor(tenantId, alias);
+  if (medido?.source !== 'measured') return undefined;
+  const rutaPorNombre = new Map(
+    profileDocumentPaths(medido.facts).map((path) => [path.slice(path.lastIndexOf('/') + 1), path]),
+  );
+  const documents: MeasuredContextDocument[] = [];
+  for (const name of nombresDelArnes(medido.facts.harness)) {
+    const path = rutaPorNombre.get(name);
+    if (path === undefined) return undefined;
+    const leido = await probe.readGovernanceDocument(path, medido.facts, tenantId, alias);
+    if ('error' in leido) {
+      if (leido.error !== 'not_found') return undefined;
+      documents.push({ name, path, sha: null, text: null });
+      continue;
+    }
+    documents.push({ name, path, sha: leido.sha, text: leido.truncated ? null : leido.text });
+  }
+  const generation = medido.facts.generation;
+  return {
+    owner: { tenant_id: tenantId, alias },
+    generation: typeof generation === 'string' && generation.length > 0 ? generation : null,
+    documents,
+  };
+}
+
 export function registerAgentContextReloadRoutes(
   app: FastifyInstance, deps: AgentContextReloadDeps,
 ): void {
@@ -184,6 +236,17 @@ export function registerAgentContextReloadRoutes(
       operation: 'context_reload',
       ...extra,
     };
+  }
+
+  /** Verdict over the live bytes, for the refusal that carried no bytes with it. */
+  async function juzgarNegativa(
+    target: ReloadTarget,
+  ): Promise<ContextContaminationVerdict | undefined> {
+    const medido = await deps.measureContext(target.tenant_id, target.alias);
+    if (medido === undefined) return undefined;
+    return evaluarContaminacion(
+      medido, await deps.readRuntimeExpectation(target.tenant_id, target.alias),
+    );
   }
 
   async function fila(
@@ -299,6 +362,20 @@ export function registerAgentContextReloadRoutes(
       return reply.code(status).send(cuerpo);
     };
 
+    /** The one place a contaminated verdict becomes an answer: same code, row and counter. */
+    const cuarentena = async (
+      veredicto: ContextContaminationVerdict, revision: number,
+    ): Promise<FastifyReply> => {
+      telemetry.recordVerdict(veredicto);
+      return denegar(409, {
+        error: 'context_contaminated',
+        message: 'los ficheros de gobierno de este alias contienen algo que no es suyo; la '
+          + 'recarga queda en cuarentena hasta que alguien mire ese contenedor',
+        revision,
+        contaminacion: veredicto,
+      }, { findings: veredicto.findings.map((finding) => finding.reason) });
+    };
+
     if (target.enabled !== true) {
       return denegar(409, {
         error: 'agent_disabled',
@@ -333,6 +410,16 @@ export function registerAgentContextReloadRoutes(
       existentes = preflight.existentes;
       prepared = preflight.materialize(revision);
     } catch (error) {
+      /*
+       * The canonical preflight refuses a foreign managed block with a bare `conflict` that names
+       * no owner and leaves no reason worth alarming on. Re-measure and let the guard say WHOSE
+       * block it is; only that refusal pays for the second read, and a race that clears the block
+       * in between falls back to the generic conflict instead of inventing a verdict.
+       */
+      const veredicto = codigoDeError(error) === 'conflict'
+        ? await juzgarNegativa(target)
+        : undefined;
+      if (veredicto?.contaminated === true) return cuarentena(veredicto, revision);
       return denegar(statusDeRuntime(error), {
         error: codigoDeError(error) ?? 'runtime_preflight_failed',
         message: mensajeDeError(error, 'no se pudo preparar el runtime sin modificarlo'),
@@ -352,16 +439,7 @@ export function registerAgentContextReloadRoutes(
     const contaminacion = evaluarContaminacion(
       medido, await deps.readRuntimeExpectation(target.tenant_id, target.alias),
     );
-    if (contaminacion.contaminated) {
-      telemetry.recordVerdict(contaminacion);
-      return denegar(409, {
-        error: 'context_contaminated',
-        message: 'los ficheros de gobierno de este alias contienen algo que no es suyo; la '
-          + 'recarga queda en cuarentena hasta que alguien mire ese contenedor',
-        revision,
-        contaminacion,
-      }, { findings: contaminacion.findings.map((finding) => finding.reason) });
-    }
+    if (contaminacion.contaminated) return cuarentena(contaminacion, revision);
 
     let acknowledgements: readonly ProfileRuntimeAck[];
     try {
@@ -407,6 +485,7 @@ export function registerAgentContextReloadRoutes(
     }
 
     const documents: ContextReloadDocument[] = [];
+    const anotables: { readonly kind: DocumentKind; readonly ack: ProfileRuntimeAck }[] = [];
     for (const document of prepared.verification.documents) {
       const ack = ackByName.get(document.name);
       if (ack === undefined) continue;
@@ -417,17 +496,14 @@ export function registerAgentContextReloadRoutes(
         sha_after: ack.sha,
         bytes: ack.bytes,
       });
-      // Fingerprint and size only: the journal has no column able to hold a body.
-      await deps.recordDocumentRevision({
-        tenantId: target.tenant_id,
-        alias: target.alias,
-        kind: RELOAD_DOCUMENT_KIND,
-        path: document.path,
-        sha256: ack.sha,
-        bytes: ack.bytes,
-        actorTenant: caller.actor.tenant_id,
-        actorAlias: caller.actor.alias,
-      });
+      const kind = RELOAD_DOCUMENT_KINDS.get(document.name);
+      /*
+       * A `preserved` file belongs to the agent and the batch only VERIFIED it. Journaling it
+       * would make the diary read as if the reload had rewritten MEMORY.md, which is the one
+       * thing this path promises never to do.
+       */
+      if (kind === undefined || ack.state === 'preserved') continue;
+      anotables.push({ kind, ack });
     }
 
     /*
@@ -446,6 +522,36 @@ export function registerAgentContextReloadRoutes(
         sha_before: document.sha_before, sha_after: document.sha_after, bytes: document.bytes,
       })),
     });
+
+    /*
+     * The journal goes AFTER the audit row on purpose. Both describe a reload that already put
+     * bytes on somebody's disk, and if only one of them can exist, it has to be the one that
+     * accuses a person. Fingerprint and size only: no column here can hold a body.
+     */
+    try {
+      for (const anotable of anotables) {
+        await deps.recordDocumentRevision({
+          tenantId: target.tenant_id,
+          alias: target.alias,
+          kind: anotable.kind,
+          path: anotable.ack.path,
+          sha256: anotable.ack.sha,
+          bytes: anotable.ack.bytes,
+          actorTenant: caller.actor.tenant_id,
+          actorAlias: caller.actor.alias,
+        });
+      }
+    } catch {
+      return reply.code(503).send({
+        error: 'context_journal_not_recorded',
+        message: 'los ficheros quedaron escritos y la fila de auditoría los acusa, pero el diario '
+          + 'de documentos no anotó la reescritura: el histórico de esta recarga queda incompleto',
+        revision,
+        state,
+        documents,
+      });
+    }
+
     const response: ContextReloadResponse = {
       ok: true,
       state,

@@ -1,12 +1,22 @@
+import { createHash } from 'node:crypto';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO } from '@cauce/protocol';
 import {
-  registerAgentContextReloadRoutes, type AgentContextReloadDeps,
+  MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO, type ContextoDeAlias,
+} from '@cauce/protocol';
+import {
+  medirContextoDeGobierno, registerAgentContextReloadRoutes, type AgentContextReloadDeps,
 } from './agent-context-reload.routes.js';
+import {
+  registerAgentContextHistoryRoutes, type DocumentRevisionView,
+} from './agent-context-history.routes.js';
+import { nombresDelArnes } from '@cauce/protocol';
+import { RELOAD_DOCUMENT_KINDS } from './agent-context-reload.routes.js';
 import { ContextContaminationTelemetry } from './contaminacion-de-contexto.js';
 import { CONTEXT_APPLY_POLICY } from './context-apply-policy.js';
-import type { TerminalAuditEntry } from './agent-documents.routes.js';
+import { prepareAgentProfileRuntime } from './agent-profile-runtime.js';
+import type { AgentFactsProbe, TerminalAuditEntry } from './agent-documents.routes.js';
+import type { RuntimeFacts } from './agent-documents.js';
 import type {
   PreparedProfileRuntime, ProfileRuntimeAck, ProfileRuntimePreflight,
 } from './agent-profile.routes.js';
@@ -84,6 +94,97 @@ function runtime(options: {
   return { aplicaciones, preflight };
 }
 
+/** A batch of several files, to see WHICH of them the journal claims were rewritten. */
+function runtimeDeVarios(
+  specs: readonly { name: string; state: ProfileRuntimeAck['state'] }[],
+): RuntimeDouble {
+  const aplicaciones: string[] = [];
+  const documents = specs.map((spec) => ({
+    name: spec.name,
+    path: `/home/dev/openclaw/${spec.name}`,
+    expected_sha: sha('b'),
+    observed_sha: sha('a'),
+    expected_bytes: 120,
+    observed_bytes: 90,
+    current: false,
+  }));
+  const preflight: ProfileRuntimePreflight = {
+    harness: 'openclaw',
+    existentes: new Map(specs.map((spec) => [spec.name, ''])),
+    materialize: (revision): PreparedProfileRuntime => ({
+      revision,
+      documents: specs.map((spec) => spec.name),
+      harness: 'openclaw',
+      preview: [],
+      verification: {
+        state: 'drifted',
+        generation: 'gen-viva',
+        container_id: 'contenedor-1',
+        observed_at: '2026-09-01T10:00:00.000Z',
+        documents,
+      },
+      apply: async () => {
+        aplicaciones.push('apply');
+        return specs.map((spec) => ({
+          ...ACK, name: spec.name, path: `/home/dev/openclaw/${spec.name}`, state: spec.state,
+        }));
+      },
+    }),
+  };
+  return { aplicaciones, preflight };
+}
+
+const RUTA_CLAUDE = '/home/dev/.claude/CLAUDE.md';
+
+function huella(texto: string): string {
+  return createHash('sha256').update(texto, 'utf8').digest('hex');
+}
+
+/**
+ * CONTROL-A: the probe the CANONICAL preflight reads, so the refusal under test is the real
+ * `assertOwnedBlocks` one and not a double that never runs it.
+ */
+function sonda(texto: string): AgentFactsProbe & { escrituras: number } {
+  const facts: RuntimeFacts = {
+    harness: 'claude', home: '/home/dev', generation: 'gen-viva', containerId: 'contenedor-1',
+  };
+  const sondeo = {
+    escrituras: 0,
+    factsFor: async () => ({ facts, source: 'measured' as const }),
+    readGovernanceDocument: async (path: string) => (path === RUTA_CLAUDE
+      ? {
+          text: texto,
+          bytes: Buffer.byteLength(texto, 'utf8'),
+          truncated: false,
+          modified_at: '2026-09-01T10:00:00.000Z',
+          sha: huella(texto),
+        }
+      : { error: 'not_found' as const, reason: 'no existe' }),
+    listMemoryDirectory: async () => ({ error: 'unavailable' as const, reason: 'no aplica' }),
+    writeGovernanceBatch: async () => {
+      sondeo.escrituras += 1;
+      return { error: 'conflict' as const, reason: 'una recarga en cuarentena no escribe' };
+    },
+  };
+  return sondeo;
+}
+
+function contextoReal(tenantId: string, alias: string): ContextoDeAlias {
+  return {
+    perfil: {
+      tenant_id: tenantId, alias, purpose: 'orquestar', role_summary: 'PMO', human_brief: null,
+      responsibilities: ['perseguir lo pendiente'], restrictions: [], tools: [],
+      operating_rules: [],
+    },
+    hechos: {
+      permisos: { ruta: true, lectura: true, control: true, notificacion: false },
+      cuotas: [],
+      arnes: { harness: 'claude', home: '/home/dev', capacidades: [] },
+      destinos: [],
+    },
+  };
+}
+
 const auditoria: TerminalAuditEntry[] = [];
 
 function servidor(deps: Partial<AgentContextReloadDeps> = {}, doble = runtime()) {
@@ -105,6 +206,12 @@ function servidor(deps: Partial<AgentContextReloadDeps> = {}, doble = runtime())
       applied_revision: 3,
     }),
     prepareRuntime: async () => doble.preflight,
+    measureContext: async (tenantId, alias) => ({
+      owner: { tenant_id: tenantId, alias },
+      generation: 'gen-viva',
+      documents: [...(doble.preflight.existentes ?? new Map<string, string>())]
+        .map(([name, text]) => ({ name, path: `/home/dev/${name}`, sha: sha('a'), text })),
+    }),
     readRuntimeExpectation: async () => ({
       generation: 'gen-viva',
       documents: [{ name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('a') }],
@@ -236,24 +343,65 @@ describe('POST .../context/reload as an operator', () => {
 });
 
 describe('the contamination guard quarantines the reload', () => {
+  /**
+   * The canonical preflight is wired here exactly as `routes/console.ts` wires it. With a double
+   * that never runs `assertOwnedBlocks` this case answers a bare `conflict` that names nobody, so
+   * the double is what used to pass, not the guard.
+   */
   it('rejects a managed block owned by another alias, names the owner and writes nothing', async () => {
-    const doble = runtime({ texto: textoDe('Miguel/kratos') });
+    const probe = sonda(textoDe('Miguel/kratos'));
     const telemetry = new ContextContaminationTelemetry();
-    vivo = servidor({ telemetry }, doble);
+    vivo = servidor({
+      telemetry,
+      readContext: async (tenantId, alias) => ({
+        contexto: contextoReal(tenantId, alias),
+        exists: true,
+        revision: 4,
+        applied_revision: 3,
+      }),
+      prepareRuntime: (tenantId, alias, contexto) =>
+        prepareAgentProfileRuntime(probe, tenantId, alias, contexto),
+      measureContext: (tenantId, alias) => medirContextoDeGobierno(probe, tenantId, alias),
+      readRuntimeExpectation: async () => undefined,
+    });
     const response = await vivo.inject({
       method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
     });
     expect(response.statusCode).toBe(409);
-    const body = response.json<{ error: string; contaminacion: { findings: { owner: string }[] } }>();
+    const body = response.json<{
+      error: string; contaminacion: { findings: { reason: string; owner: string }[] };
+    }>();
     expect(body.error).toBe('context_contaminated');
+    expect(body.contaminacion.findings[0]?.reason).toBe('foreign_managed_block');
     expect(body.contaminacion.findings[0]?.owner).toBe('Miguel/kratos');
     expect(JSON.stringify(body)).not.toContain('perfil proyectado');
-    expect(doble.aplicaciones).toEqual([]);
+    expect(probe.escrituras).toBe(0);
     expect(telemetry.snapshot().foreign_managed_block).toBe(1);
     const fila = auditoria[0];
     expect(fila?.action).toBe('agent_document.denied');
     expect(fila?.metadata.reason).toBe('context_contaminated');
+    expect(fila?.metadata.findings).toEqual(['foreign_managed_block']);
     expect(JSON.stringify(fila?.metadata)).not.toContain('perfil proyectado');
+  });
+
+  /** A refusal that is NOT contamination keeps its own code instead of being dressed as one. */
+  it('leaves a preflight conflict that no longer shows a foreign block as a plain conflict', async () => {
+    const probe = sonda(textoDe('Steven/argos'));
+    vivo = servidor({
+      readContext: async (tenantId, alias) => ({
+        contexto: contextoReal(tenantId, alias), exists: true, revision: 4, applied_revision: 3,
+      }),
+      prepareRuntime: async () => {
+        throw Object.assign(new Error('la generación cambió'), { code: 'conflict' });
+      },
+      measureContext: (tenantId, alias) => medirContextoDeGobierno(probe, tenantId, alias),
+      readRuntimeExpectation: async () => undefined,
+    });
+    const response = await vivo.inject({
+      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json<{ error: string }>().error).toBe('conflict');
   });
 
   it('quarantines a fingerprint that disagrees with the expectation of the live generation', async () => {
@@ -281,6 +429,81 @@ describe('the contamination guard quarantines the reload', () => {
     });
     expect(response.statusCode).toBe(200);
     expect(doble.aplicaciones).toEqual(['apply']);
+  });
+});
+
+describe('the journal of a reload is readable back', () => {
+  /** The history route is mounted on the same app: what the reload writes, somebody must read. */
+  function conHistorial(
+    filas: DocumentRevisionView[], doble: RuntimeDouble,
+  ): ReturnType<typeof servidor> {
+    const app = servidor({
+      recordDocumentRevision: async (input) => {
+        filas.push({
+          id: String(filas.length + 1),
+          tenant_id: input.tenantId,
+          alias: input.alias,
+          kind: input.kind,
+          path: input.path,
+          sha256: input.sha256,
+          bytes: input.bytes,
+          actor_tenant: input.actorTenant,
+          actor_alias: input.actorAlias,
+          written_at: '2026-09-01T10:00:00.000Z',
+        });
+        return undefined;
+      },
+    }, doble);
+    registerAgentContextHistoryRoutes(app, {
+      authorize: async () => OPERADOR_ACTOR,
+      authorizeTarget: async (_actor, tenantId, alias) => ({ tenant_id: tenantId, alias }),
+      listProfileRevisions: async () => [],
+      listDocumentRevisions: async (tenantId, alias, kind) =>
+        filas.filter((fila) => fila.tenant_id === tenantId && fila.alias === alias
+          && fila.kind === kind),
+    });
+    return app;
+  }
+
+  it('records one row per document kind and serves it from the history route', async () => {
+    const filas: DocumentRevisionView[] = [];
+    const doble = runtimeDeVarios([
+      { name: 'AGENTS.md', state: 'written' },
+      { name: 'TOOLS.md', state: 'written' },
+      { name: 'MEMORY.md', state: 'preserved' },
+    ]);
+    vivo = conHistorial(filas, doble);
+    const recarga = await vivo.inject({
+      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
+    });
+    expect(recarga.statusCode).toBe(200);
+    // MEMORY.md was only VERIFIED: journaling it would claim a rewrite that never happened.
+    expect(filas.map((fila) => [fila.kind, fila.path])).toEqual([
+      ['directive', '/home/dev/openclaw/AGENTS.md'],
+      ['tools', '/home/dev/openclaw/TOOLS.md'],
+    ]);
+
+    const historial = await vivo.inject({
+      method: 'GET', url: '/v3/console/tenants/Steven/agents/argos/documents/directive/revisions',
+    });
+    expect(historial.statusCode).toBe(200);
+    expect(historial.json<{ entries: { path: string }[] }>().entries.map((e) => e.path))
+      .toEqual(['/home/dev/openclaw/AGENTS.md']);
+  });
+
+  it('keeps the write audit row and answers a typed 5xx when the journal refuses the row', async () => {
+    const doble = runtime();
+    vivo = servidor({
+      recordDocumentRevision: async () => { throw new Error('el diario no anotó la fila'); },
+    }, doble);
+    const response = await vivo.inject({
+      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
+    });
+    expect(response.statusCode).toBe(503);
+    expect(response.json<{ error: string }>().error).toBe('context_journal_not_recorded');
+    // The bytes landed and the row that accuses a person is there, even without the journal.
+    expect(auditoria.map((entry) => [entry.action, entry.decision]))
+      .toEqual([['agent_document.write', 'allow']]);
   });
 });
 
@@ -363,5 +586,15 @@ describe('a reload never claims more than it proved', () => {
     });
     expect(response.statusCode).toBe(200);
     expect(recordRuntimeExpectation.mock.calls[0]?.[2]).toBe(4);
+  });
+});
+
+describe('RELOAD_DOCUMENT_KINDS', () => {
+  it('journals every governance file of every harness the protocol projects', () => {
+    for (const harness of ['claude', 'codex', 'openclaw']) {
+      for (const name of nombresDelArnes(harness)) {
+        expect(RELOAD_DOCUMENT_KINDS.has(name), `${harness}: ${name}`).toBe(true);
+      }
+    }
   });
 });

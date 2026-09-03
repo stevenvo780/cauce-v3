@@ -6,7 +6,9 @@ import {
 import { AgentContextRevisionsStore, AgentProfileRepository, StoreError } from '@cauce/store';
 import { requireOperatorPermission, requirePermission } from '../auth.js';
 import { registerAgentContextHistoryRoutes } from '../console/agent-context-history.routes.js';
-import { registerAgentContextReloadRoutes } from '../console/agent-context-reload.routes.js';
+import {
+  medirContextoDeGobierno, registerAgentContextReloadRoutes,
+} from '../console/agent-context-reload.routes.js';
 import { registerAgentDocumentRoutes } from '../console/agent-documents.routes.js';
 import { prepareAgentProfileRuntime } from '../console/agent-profile-runtime.js';
 import { registerAgentProfileRoutes } from '../console/agent-profile.routes.js';
@@ -348,6 +350,8 @@ function registerConsoleAgentRoutes(
       readContext: (tenantId, alias) => perfiles.readContextWithPresence(tenantId, alias),
       prepareRuntime: (tenantId, alias, contexto) =>
         prepareAgentProfileRuntime(profileProbe, tenantId, alias, contexto),
+      measureContext: (tenantId, alias) =>
+        medirContextoDeGobierno(profileProbe, tenantId, alias),
       readRuntimeExpectation: (tenantId, alias) =>
         expectativaDeRuntime(options.pool, tenantId, alias),
       recordRuntimeExpectation: (tenantId, alias, revision, verification) =>

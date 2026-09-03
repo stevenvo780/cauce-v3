@@ -106,6 +106,27 @@ function boundedPage(limit: number): number {
   return limit;
 }
 
+/**
+ * The base fences what a journal row may CONTAIN — `sha256` has to be a canonical digest and
+ * `bytes` a non-negative count, so no column can hold a body. The SHAPE of the path is fenced
+ * here: `041` only demands a leading `/` and a length, which still admits a relative traversal
+ * dressed as an absolute path. There is a single trusted writer, and that is the reason to state
+ * the rule where the writer is, instead of assuming it.
+ */
+const MAX_JOURNAL_PATH = 4096;
+
+function boundedPath(path: string): string {
+  const segments = path.split('/');
+  if (!path.startsWith('/') || path.length < 2 || path.length > MAX_JOURNAL_PATH
+    || path.includes('\0')
+    || segments.slice(1).some((segment) => segment === '' || segment === '.' || segment === '..')) {
+    throw new StoreError(
+      'invalid_input', 'context journal path is not a canonical absolute path',
+    );
+  }
+  return path;
+}
+
 function boundedRevision(revision: number): number {
   if (!Number.isSafeInteger(revision) || revision < 1) {
     throw new StoreError('invalid_input', 'context journal revision is out of range');
@@ -215,7 +236,7 @@ export class AgentContextRevisionsStore {
          tenant_id,alias,kind,path,sha256,bytes,actor_tenant,actor_alias
        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${documentColumns}`,
       [
-        input.tenantId, input.alias, input.kind, input.path, input.sha256,
+        input.tenantId, input.alias, input.kind, boundedPath(input.path), input.sha256,
         countOf(input.bytes, 'byte count'), input.actorTenant, input.actorAlias,
       ],
     );
