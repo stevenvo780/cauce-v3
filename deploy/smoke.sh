@@ -47,7 +47,6 @@ else
     [ "${hechas:-0}" -ge 1 ] && break
     [ "$intento" -lt 6 ] && sleep 20
   done
-  # A quiet window is not a broken bus: work claimed or heartbeated since boot proves it moves.
   vivas="$("${PG[@]}" "SELECT count(*) FROM deliveries WHERE terminal_at IS NULL AND status IN ('leased','accepted','started') AND updated_at > '$arranque'::timestamptz" 2>/dev/null)"
   if [ "${hechas:-0}" -ge 1 ]; then echo "OK  bus: $hechas entregas done desde el arranque ($arranque)";
   elif [ "${vivas:-0}" -ge 1 ]; then echo "OK  bus: sin entregas done en la ventana, pero $vivas en vuelo con actividad desde el arranque ($arranque)";
