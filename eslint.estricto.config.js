@@ -1,5 +1,3 @@
-// STRICT level (owner's dictate 28-08): the highest bar. Not in the gate yet —
-// Gemini grinds zone by zone and every clean zone is promoted to the normal gate.
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 

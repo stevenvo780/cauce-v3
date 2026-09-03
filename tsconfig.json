@@ -17,18 +17,7 @@
     "resolveJsonModule": true,
     "types": ["node", "vitest/globals"],
     "baseUrl": ".",
-    /*
-     * Los paquetes del monorepo se resuelven a ESTE árbol, igual que en vitest.config.ts y por el
-     * mismo fallo: `node_modules/` de cada worktree es un enlace al del checkout principal, y
-     * `@cauce/protocol` dentro de él es un enlace RELATIVO que se resuelve desde la ruta real —o
-     * sea, desde el checkout principal—. Sin esto, `tsc` comprueba los tipos de este árbol contra
-     * las FIRMAS de otra rama.
-     *
-     * Medido el 2026-08-25: con el alias ya puesto en vitest las 12 pruebas del perfil pasaban en
-     * verde mientras `tsc --noEmit` daba 19 errores diciendo que `agent_profile` no existía en
-     * `ConfigMutation`. Las dos herramientas miraban ficheros distintos, y ninguna de las dos lo
-     * decía: la suite verde invitaba a creer que el typecheck estaba equivocado.
-     */
+    /* Keep workspace aliases pinned to this checkout; shared node_modules symlinks may resolve another worktree. */
     "paths": {
       "@cauce/protocol": ["packages/protocol/src/index.ts"],
       "@cauce/store": ["packages/store/src/index.ts"],
