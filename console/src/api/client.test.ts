@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import {
-  CauceApi, PublishIntentExpiredError, PublishIntentRateLimitedError,
+  ApiError, CauceApi, PublishIntentExpiredError, PublishIntentRateLimitedError,
   PublishIntentReconciliationError,
 } from './client';
 import type { ConfirmPublishIntentInput, PreparePublishIntentInput, PublishMessageInput } from './types';
@@ -320,5 +320,67 @@ describe('CauceApi', () => {
       },
       { dry_run: false, expected_revision: 7 }
     ]);
+  });
+  it('manda el motivo escrito a mano en cada escritura de gobernanza, con y sin SHA', async () => {
+    const cuerpos: Record<string, unknown>[] = [];
+    server.use(http.put(
+      'http://localhost/v3/console/tenants/Steven/agents/kant/documents/directive/content',
+      async ({ request }) => {
+        cuerpos.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({
+          ok: true, state: 'written_pending_session', evidence: 'probe_write_ack',
+          path: '/home/stev/.claude/CLAUDE.md', sha: 'a'.repeat(64), bytes: 7,
+        }, { status: 202 });
+      },
+    ));
+    const api = new CauceApi('http://localhost');
+
+    await api.putAgentDocumentContent(
+      'Steven', 'kant', 'directive', '# nuevo', 'b'.repeat(64), 'corrijo la ruta del manual',
+    );
+    await api.putAgentDocumentContent(
+      'Steven', 'kant', 'directive', '# nuevo', null, 'creo el manual que faltaba',
+    );
+
+    expect(cuerpos).toEqual([
+      { content: '# nuevo', reason: 'corrijo la ruta del manual', expected_sha: 'b'.repeat(64) },
+      { content: '# nuevo', reason: 'creo el manual que faltaba', create_if_absent: true },
+    ]);
+  });
+
+  it('separa el 403 de sesión sin persona del 403 de la política de rutas', async () => {
+    server.use(http.put(
+      'http://localhost/v3/console/tenants/Steven/agents/kant/documents/directive/content',
+      () => HttpResponse.json({
+        error: 'forbidden',
+        reason: 'writable_requires_attribution',
+        message: 'escribir la gobernanza de un alias exige una persona con nombre',
+      }, { status: 403 }),
+    ));
+    const api = new CauceApi('http://localhost');
+
+    const fallo = await api.putAgentDocumentContent(
+      'Steven', 'kant', 'directive', '# nuevo', 'b'.repeat(64), 'corrijo la ruta del manual',
+    ).catch((error: unknown) => error);
+
+    expect(fallo).toBeInstanceOf(ApiError);
+    expect(fallo).toMatchObject({ status: 403, code: 'writable_requires_attribution' });
+    expect((fallo as ApiError).message).toMatch(/una persona con nombre/);
+  });
+
+  it('CONTROL NEGATIVO: un 403 sin `reason` sigue siendo el `forbidden` de la ruta', async () => {
+    server.use(http.put(
+      'http://localhost/v3/console/tenants/Steven/agents/kant/documents/directive/content',
+      () => HttpResponse.json({
+        error: 'forbidden', message: 'esa ruta mezcla configuración con credenciales',
+      }, { status: 403 }),
+    ));
+    const api = new CauceApi('http://localhost');
+
+    const fallo = await api.putAgentDocumentContent(
+      'Steven', 'kant', 'directive', '# nuevo', 'b'.repeat(64), 'corrijo la ruta del manual',
+    ).catch((error: unknown) => error);
+
+    expect(fallo).toMatchObject({ status: 403, code: 'forbidden' });
   });
 });

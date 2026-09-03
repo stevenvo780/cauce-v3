@@ -1,5 +1,5 @@
 import { AlertTriangle, FileText, Lock, Save } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { ApiError } from '../../api/client';
 import { useApi } from '../../api/context';
 import type { AgentDocumentContent, AgentDocumentItem, AgentDocumentKind } from '../../api/types';
@@ -10,6 +10,7 @@ import {
   avisoAntesDeGuardar, avisoDeFuente, esAckAplicado, explicarFallo, hayCambios, mensajeDeGuardado,
   modoDeDocumento, preserveSourceLineEndings,
 } from './ficheros';
+import { DOCUMENT_REASON_MAX, explicarFalloDeMotivo, problemaDeMotivo } from './ficheros-motivo';
 
 /** Editor and viewer for the configuration files that govern an agent. */
 
@@ -315,6 +316,9 @@ function Editor({
   const [fallo, setFallo] = useState<{ titulo: string; detalle: string } | undefined>(undefined);
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState<string | undefined>(undefined);
+  const [motivo, setMotivo] = useState('');
+  const idMotivo = useId();
+  const problemaMotivo = problemaDeMotivo(motivo);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -368,13 +372,21 @@ function Editor({
       });
       return;
     }
+    if (problemaMotivo !== undefined) {
+      setFallo({
+        titulo: 'Falta el motivo de este guardado',
+        detalle: `${problemaMotivo} La fila de auditoría se escribe con lo que escribas acá; `
+          + 'no se manda nada sin ese texto.',
+      });
+      return;
+    }
     setGuardando(true);
     setFallo(undefined);
     try {
       // The fingerprint of the read this text was born from travels: a file changed meanwhile
       // answers 409 instead of letting the last to click win.
       const resultado = await api.putAgentDocumentContent(
-        tenantId, alias, item.kind, texto, borrador ? borrador.shaBase : servido.sha,
+        tenantId, alias, item.kind, texto, borrador ? borrador.shaBase : servido.sha, motivo.trim(),
       );
       if (!esAckAplicado(resultado) || resultado.path !== servido.path
         || resultado.bytes !== new TextEncoder().encode(texto).byteLength) {
@@ -390,11 +402,14 @@ function Editor({
         exists: true, truncated: false, editable: true,
       });
       onBorrador(undefined);
+      setMotivo('');
       const mensaje = mensajeDeGuardado(resultado);
       setGuardado(mensaje);
       onApplied?.(mensaje);
     } catch (error) {
       const status = error instanceof ApiError ? error.status : undefined;
+      const codigo = error instanceof ApiError ? error.code : undefined;
+      const mensaje = error instanceof Error ? error.message : undefined;
       const explicado = error instanceof ApiError && status === 409
         && error.code === 'managed_context_conflict'
         ? {
@@ -406,14 +421,14 @@ function Editor({
           titulo: 'Alguien lo cambió mientras lo editabas',
           detalle: error instanceof Error ? error.message : 'Vuelve a abrirlo antes de guardar.',
         }
-        : explicarFallo(status, error instanceof Error ? error.message : undefined);
+        : explicarFalloDeMotivo(status, codigo, mensaje) ?? explicarFallo(status, mensaje);
       setFallo(explicado);
     } finally {
       setGuardando(false);
     }
   }, [
     api, tenantId, alias, item.kind, texto, borrador, servido, canWrite, mutationBlocked,
-    onBorrador, onApplied,
+    motivo, problemaMotivo, onBorrador, onApplied,
   ]);
 
   if (cargando) return <p className="muted">Leyendo el fichero dentro del contenedor…</p>;
@@ -472,6 +487,26 @@ function Editor({
         }}
       />
 
+      <label htmlFor={idMotivo}>
+        Motivo del guardado (lo escribe una persona y queda en la auditoría)
+        <input
+          id={idMotivo}
+          type="text"
+          value={motivo}
+          maxLength={DOCUMENT_REASON_MAX}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="Escribí por qué cambiás este fichero…"
+          aria-describedby={`${idMotivo}-pista`}
+          disabled={guardando || !canWrite || !servido.editable || servido.truncated}
+          onChange={(event) => { setMotivo(event.target.value); setGuardado(undefined); }}
+        />
+      </label>
+      <p className="ficheros-razon" id={`${idMotivo}-pista`}>
+        {problemaMotivo
+          ?? `Motivo válido · ${String(motivo.trim().length)}/${String(DOCUMENT_REASON_MAX)}`}
+      </p>
+
       <div className="ficheros-pie">
         <span className="muted">
           {servido.bytes} bytes · {servido.projected ? 'proyección de campos' : 'fichero completo'}
@@ -495,7 +530,7 @@ function Editor({
           className="button small"
           onClick={() => void guardar()}
           disabled={!canWrite || !sucio || guardando || !servido.editable
-            || servido.truncated}
+            || servido.truncated || problemaMotivo !== undefined}
         >
           <Save size={14} aria-hidden="true" /> {guardando ? 'Guardando…' : 'Guardar'}
         </button>

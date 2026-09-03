@@ -181,6 +181,7 @@ it('guardar cierra el borrador: al volver se ve lo aplicado y ningún aviso pend
   );
   const { user, cajon } = await abrirContextoDe('kant');
   await escribirBorrador(user, cajon);
+  await user.type(within(cajon).getByLabelText(/Motivo del guardado/i), 'reescribo el manual');
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   expect(await within(cajon).findByText(/Escrito en/)).toBeInTheDocument();
@@ -237,6 +238,7 @@ it('el borrador guarda con la huella del texto del que nació, no con la de la �
   shaServido = 'd'.repeat(64);
   await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+  await user.type(within(cajon).getByLabelText(/Motivo del guardado/i), 'reescribo el manual');
   await user.click(await within(cajon).findByRole('button', { name: /^Guardar$/i }));
 
   await waitFor(() => { expect(enviado).toBeDefined(); });

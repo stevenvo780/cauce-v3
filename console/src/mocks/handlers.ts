@@ -269,11 +269,20 @@ export const handlers = [
   http.put(
     '*/v3/console/tenants/:tenantId/agents/:alias/documents/:kind/content',
     async ({ request }) => {
-    const cuerpo = await request.json() as { content?: string };
+    const cuerpo = await request.json() as { content?: string; reason?: unknown };
+    const motivo = typeof cuerpo.reason === 'string' ? cuerpo.reason : '';
+    if (motivo.trim().length < 8 || motivo.length > 280) {
+      return HttpResponse.json({
+        error: 'invalid_input',
+        message: '`reason` tiene que ser un motivo escrito a mano de entre 8 y 280 caracteres; '
+          + 'la auditoría no inventa uno por nadie',
+      }, { status: 400 });
+    }
+    const escrito = new TextEncoder().encode(cuerpo.content ?? '');
     return HttpResponse.json({
       ok: true, state: 'applied', evidence: 'probe_write_ack',
       path: '/home/stev/.claude/CLAUDE.md',
-      sha: 'sha-nueva', bytes: (cuerpo.content ?? '').length,
+      sha: 'c'.repeat(64), bytes: escrito.byteLength,
     });
     },
   ),

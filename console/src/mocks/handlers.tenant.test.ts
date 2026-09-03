@@ -20,7 +20,7 @@ describe('mock de perfil y documentos tenant-qualified', () => {
   it('contenido y escritura usan la ruta canónica y la escritura trae evidencia', async () => {
     const contenido = await api.getAgentDocumentContent('Miguel', 'kant', 'directive');
     const escrito = await api.putAgentDocumentContent(
-      'Miguel', 'kant', 'directive', '# nuevo', contenido.sha,
+      'Miguel', 'kant', 'directive', '# nuevo', contenido.sha, 'corrijo la ruta del manual',
     );
 
     expect(contenido).toMatchObject({ tenant_id: 'Miguel', alias: 'kant' });

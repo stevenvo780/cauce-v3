@@ -93,6 +93,14 @@ async function abrirContexto() {
   return { user, cajon };
 }
 
+async function motivar(
+  user: ReturnType<typeof userEvent.setup>,
+  cajon: HTMLElement,
+  texto = 'ajusto el manual de este alias',
+) {
+  await user.type(within(cajon).getByLabelText(/Motivo del guardado/i), texto);
+}
+
 it('la pestaña existe en el cajón y enseña el mapa de ficheros del alias', async () => {
   mapaDeKant([CLAUDE_MD, MCP_CERRADO]);
   const { cajon } = await abrirFicheros();
@@ -239,6 +247,7 @@ it('abre el fichero, lo edita y lo guarda mandando la huella de lo que abrió', 
 
   await user.clear(caja);
   await user.type(caja, '# nuevo');
+  await motivar(user, cajon);
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   await waitFor(() => { expect(recibido).toBeDefined(); });
@@ -295,6 +304,7 @@ it('un 202 written_pending_session guarda, lo dice sin fingir aplicación y deja
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.clear(caja);
   await user.type(caja, '# nuevo');
+  await motivar(user, cajon);
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   expect(await within(cajon).findByText(/Escrito en .*bytes/)).toBeInTheDocument();
@@ -309,6 +319,7 @@ it('un 202 written_pending_session guarda, lo dice sin fingir aplicación y deja
   expect(within(cajon).getByRole('button', { name: /^Guardar$/i })).toBeDisabled();
 
   await user.type(reabierta, ' otra vez');
+  await motivar(user, cajon);
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   await waitFor(() => { expect(enviados).toHaveLength(2); });
@@ -356,6 +367,7 @@ it('si el fichero cambió mientras se editaba, lo dice y no finge que guardó', 
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.clear(caja);
   await user.type(caja, 'lo mio');
+  await motivar(user, cajon);
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   expect(await within(cajon).findByText(/cambió mientras lo editabas/i)).toBeInTheDocument();
@@ -382,6 +394,7 @@ it('un conflicto con el bloque canónico conserva el borrador y dirige a sus cam
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.clear(caja);
   await user.type(caja, 'mi manual');
+  await motivar(user, cajon);
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   expect(await within(cajon).findByText(/bloque canónico se edita en Contexto/i)).toBeInTheDocument();
@@ -411,10 +424,13 @@ it('un fichero ausente se crea con create_if_absent, nunca como reemplazo sin SH
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.type(caja, '# nuevo');
+  await motivar(user, cajon);
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   await waitFor(() => { expect(recibido).toBeDefined(); });
-  expect(recibido).toEqual({ content: '# nuevo', create_if_absent: true });
+  expect(recibido).toEqual({
+    content: '# nuevo', reason: 'ajusto el manual de este alias', create_if_absent: true,
+  });
 });
 
 it('un contenido truncado se enseña pero nunca queda editable ni guardable', async () => {
@@ -450,6 +466,7 @@ it('un 2xx sin ACK completo conserva el borrador sucio y no afirma aplicado', as
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.clear(caja);
   await user.type(caja, 'nuevo');
+  await motivar(user, cajon);
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   expect(await within(cajon).findByText(/no confirmó la escritura/i)).toBeInTheDocument();
@@ -550,6 +567,7 @@ it('un 413 al guardar dice el tope y NO se lleva por delante lo escrito', async 
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.clear(caja);
   await user.type(caja, 'lo que no cabe');
+  await motivar(user, cajon);
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   expect(await within(cajon).findByText(/El fichero pasa del tope/)).toBeInTheDocument();
@@ -577,6 +595,7 @@ it('un 403 de la política de rutas se explica como decisión, no como avería',
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.clear(caja);
   await user.type(caja, 'mio');
+  await motivar(user, cajon);
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   expect(await within(cajon).findByText(/no se sirve por esta vía/)).toBeInTheDocument();

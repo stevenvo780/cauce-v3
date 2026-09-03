@@ -10,7 +10,7 @@ import type {
   RoleBriefHistory,
   TerminalCapability,
 } from '../types';
-import { ApiError } from './core';
+import { ApiError, errorBody } from './core';
 import type { RequestFn } from './system-client';
 
 export function getFleetActivity(request: RequestFn): Promise<FleetActivitySnapshot> {
@@ -125,6 +125,25 @@ export async function getAgentDocumentContent(
   return value as AgentDocumentContent;
 }
 
+/**
+ * Both 403s of this route answer `error: 'forbidden'`; only `reason` tells an unattributed session
+ * apart from a path that mixes credentials, and the two need opposite words on screen.
+ */
+function sesionSinPersona(status: number, body: unknown): ApiError | undefined {
+  const detalle = errorBody(body);
+  if (status !== 403 || detalle.reason !== 'writable_requires_attribution') return undefined;
+  return new ApiError(
+    detalle.message
+      ?? 'Escribir la gobernanza de un alias exige una persona con nombre; esta sesión no la tiene.',
+    403,
+    'writable_requires_attribution',
+  );
+}
+
+/**
+ * `reason` is prose a person typed for THIS save. The gateway refuses a body without it and never
+ * invents one, so it is a parameter and never a default built here.
+ */
 export function putAgentDocumentContent(
   request: RequestFn,
   tenantId: string,
@@ -132,6 +151,7 @@ export function putAgentDocumentContent(
   kind: AgentDocumentKind,
   content: string,
   expectedSha: string | null,
+  reason: string,
 ): Promise<AgentDocumentGuardado> {
   return request<AgentDocumentGuardado>(
     `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/content`,
@@ -139,9 +159,10 @@ export function putAgentDocumentContent(
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(expectedSha === null
-        ? { content, create_if_absent: true }
-        : { content, expected_sha: expectedSha }),
+        ? { content, reason, create_if_absent: true }
+        : { content, reason, expected_sha: expectedSha }),
     },
+    { mapError: sesionSinPersona },
   );
 }
 
@@ -209,6 +230,7 @@ export interface AgentClient {
     kind: AgentDocumentKind,
     content: string,
     expectedSha: string | null,
+    reason: string,
   ): Promise<AgentDocumentGuardado>;
   getAgentPerfil(tenantId: string, alias: string): Promise<AgentPerfil>;
   putAgentPerfil(
@@ -227,8 +249,8 @@ export function agentClient(request: RequestFn): AgentClient {
     getRoleBriefHistory: (tenantId, alias) => getRoleBriefHistory(request, tenantId, alias),
     getAgentDocuments: (tenantId, alias) => getAgentDocuments(request, tenantId, alias),
     getAgentDocumentContent: (tenantId, alias, kind) => getAgentDocumentContent(request, tenantId, alias, kind),
-    putAgentDocumentContent: (tenantId, alias, kind, content, expectedSha) =>
-      putAgentDocumentContent(request, tenantId, alias, kind, content, expectedSha),
+    putAgentDocumentContent: (tenantId, alias, kind, content, expectedSha, reason) =>
+      putAgentDocumentContent(request, tenantId, alias, kind, content, expectedSha, reason),
     getAgentPerfil: (tenantId, alias) => getAgentPerfil(request, tenantId, alias),
     putAgentPerfil: (tenantId, alias, profile, expectedRevision) =>
       putAgentPerfil(request, tenantId, alias, profile, expectedRevision),

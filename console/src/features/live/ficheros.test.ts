@@ -1,8 +1,14 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { AgentDocumentItem, AgentDocumentsMap } from '../../api/types';
 import {
-  avisoAntesDeGuardar, avisoDeFuente, esAckAplicado, explicarFallo, hayCambios,
-  mensajeDeGuardado, modoDeDocumento, preserveSourceLineEndings,
+  avisoAntesDeGuardar, avisoDeFuente, esAckAplicado, explicarFallo, hayCambios, mensajeDeGuardado,
+  modoDeDocumento, preserveSourceLineEndings,
 } from './ficheros';
+import {
+  DOCUMENT_REASON_MAX, DOCUMENT_REASON_MIN, explicarFalloDeMotivo, problemaDeMotivo,
+} from './ficheros-motivo';
 
 function doc(extra: Partial<AgentDocumentItem> = {}): AgentDocumentItem {
   return {
@@ -170,5 +176,97 @@ describe('estado después de escribir', () => {
 
     expect(esAckAplicado(ajeno)).toBe(false);
     expect(mensajeDeGuardado(ajeno)).toMatch(/no quedó confirmada/);
+  });
+});
+
+function rutaDeAdmision(): string {
+  let directorio = dirname(fileURLToPath(import.meta.url));
+  for (let salto = 0; salto < 10; salto += 1) {
+    const candidato = join(
+      directorio, 'services', 'gateway', 'src', 'console', 'agent-documents', 'write-admission.ts',
+    );
+    try {
+      readFileSync(candidato, 'utf8');
+      return candidato;
+    } catch {
+      directorio = dirname(directorio);
+    }
+  }
+  throw new Error('No se encontró services/gateway/src/console/agent-documents/write-admission.ts');
+}
+
+function constanteDelGateway(fuente: string, nombre: string): number {
+  const encontrado = new RegExp(`export const ${nombre} = (\\d+);`).exec(fuente);
+  if (!encontrado) throw new Error(`No se encontró ${nombre} en la admisión del gateway`);
+  return Number(encontrado[1]);
+}
+
+describe('el motivo escrito a mano que exige la auditoría', () => {
+  const fuente = readFileSync(rutaDeAdmision(), 'utf8');
+
+  it('PARIDAD: los topes son los que declara la admisión del gateway, leída del fichero', () => {
+    expect(DOCUMENT_REASON_MIN).toBe(constanteDelGateway(fuente, 'DOCUMENT_REASON_MIN'));
+    expect(DOCUMENT_REASON_MAX).toBe(constanteDelGateway(fuente, 'DOCUMENT_REASON_MAX'));
+  });
+
+  it('PARIDAD: el gateway sigue admitiendo `reason` en el cuerpo y midiendo el mínimo sin espacios', () => {
+    expect(fuente).toMatch(/ALLOWED_FIELDS = new Set\(\[[^\]]*'reason'/);
+    expect(fuente).toMatch(/value\.trim\(\)\.length < DOCUMENT_REASON_MIN/);
+    expect(fuente).toMatch(/value\.length > DOCUMENT_REASON_MAX/);
+  });
+
+  it('PARIDAD: el gateway sigue negando 403 con `writable_requires_attribution` y 400 la admisión', () => {
+    const rutas = readFileSync(join(dirname(dirname(rutaDeAdmision())), 'agent-documents.routes.ts'), 'utf8');
+
+    expect(rutas).toMatch(
+      /denegar\(403, \{\s*error: 'forbidden',\s*reason: 'writable_requires_attribution',/,
+    );
+    expect(rutas).toMatch(/isRejectedWrite\(admitido\)\) \{\s*return reply\.code\(400\)/);
+  });
+
+  it('un motivo por debajo del mínimo no vale, y dice cuánto lleva', () => {
+    const problema = problemaDeMotivo('corto');
+    expect(problema).toMatch(new RegExp(String(DOCUMENT_REASON_MIN)));
+    expect(problema).toMatch(/lleva 5/);
+  });
+
+  it('los espacios no cuentan: un motivo en blanco es un motivo ausente', () => {
+    expect(problemaDeMotivo('          ')).toBeDefined();
+    expect(problemaDeMotivo('   corrijo la ruta del manual   ')).toBeUndefined();
+  });
+
+  it('justo en el mínimo vale y justo por encima del máximo no', () => {
+    expect(problemaDeMotivo('a'.repeat(DOCUMENT_REASON_MIN))).toBeUndefined();
+    expect(problemaDeMotivo('a'.repeat(DOCUMENT_REASON_MAX))).toBeUndefined();
+    expect(problemaDeMotivo('a'.repeat(DOCUMENT_REASON_MAX + 1)))
+      .toMatch(new RegExp(String(DOCUMENT_REASON_MAX)));
+  });
+});
+
+describe('las dos negativas que sólo existen al guardar', () => {
+  it('una sesión sin persona no se pinta como avería de ruta: dice qué hacer', () => {
+    const explicado = explicarFalloDeMotivo(
+      403, 'writable_requires_attribution', 'escribir la gobernanza exige una persona con nombre',
+    );
+
+    expect(explicado?.titulo).toMatch(/persona/i);
+    expect(explicado?.detalle).toMatch(/exige una persona con nombre/);
+    expect(explicado?.detalle).toMatch(/borrador se conserva/i);
+    expect(explicado?.pendiente).toBe(true);
+  });
+
+  it('un 400 de la admisión dice el rango exacto que hay que escribir', () => {
+    const explicado = explicarFalloDeMotivo(400, 'invalid_input', 'el cuerpo trae campos desconocidos');
+
+    expect(explicado?.detalle).toMatch(new RegExp(String(DOCUMENT_REASON_MIN)));
+    expect(explicado?.detalle).toMatch(new RegExp(String(DOCUMENT_REASON_MAX)));
+    expect(explicado?.detalle).toMatch(/el cuerpo trae campos desconocidos/);
+  });
+
+  it('CONTROL NEGATIVO: un 403 de la política de rutas NO se disfraza de falta de persona', () => {
+    expect(explicarFalloDeMotivo(403, 'forbidden', 'mezcla configuración con credenciales'))
+      .toBeUndefined();
+    expect(explicarFalloDeMotivo(409, 'conflict')).toBeUndefined();
+    expect(explicarFalloDeMotivo(undefined, undefined)).toBeUndefined();
   });
 });

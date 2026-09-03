@@ -10,18 +10,15 @@ import type {
  * `--max-warnings 0`. And because the rule that decides whether a document is offered editable must be
  * testable on its own.
  *
- * All of this exists for a single purpose: the screen must never say "not available" outright. There are
- * FOUR distinct reasons why a file might not be touched, and confusing them is what turns this view into
- * decoration:
+ * The screen must never say "not available" outright. FOUR distinct reasons keep a file untouchable:
  *
  *   1. The gateway does not publish the route       -> it was not checked. Fixed by deploying.
  *   2. The route is not MEASURED in the container   -> the route is not trustworthy. Fixed by measuring.
  *   3. There is no channel to the agent's disk      -> a piece that does not yet exist is missing.
  *   4. The file mixes credentials                   -> it will NEVER be writable this way, and rightly so.
  *
- * All four look the same on screen and mean opposite things. The 4th is a decision; the 1st is a pending
- * deployment. Painting them the same way would make the operator wait for something "to be fixed" that is
- * already correct, or give up on something that only needs to be deployed.
+ * They look the same on screen and mean opposite things: the 4th is a decision, the 1st a pending
+ * deployment. Painted alike, the operator waits for something already correct to "be fixed".
  */
 
 type ModoDocumento = 'entero' | 'proyectado' | 'solo-lectura';
@@ -40,7 +37,7 @@ export function modoDeDocumento(item: AgentDocumentItem): ModoDocumento {
   return 'solo-lectura';
 }
 
-interface Explicacion {
+export interface Explicacion {
   titulo: string;
   detalle: string;
   /** `true` if this is fixed by a deployment or a measurement; `false` if it is a decision. */

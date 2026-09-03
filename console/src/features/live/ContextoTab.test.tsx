@@ -133,6 +133,9 @@ it('un borrador manual bloquea aplicar campos hasta guardarlo, sin perder ningun
   expect(within(cajon).getByRole('button', { name: /Guardar y aplicar perfil/i })).toBeDisabled();
   expect((manual as HTMLTextAreaElement).value).toContain('texto manual pendiente');
 
+  await user.type(
+    within(cajon).getByLabelText(/Motivo del guardado/i), 'anoto el cambio del manual',
+  );
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
   await waitFor(() => {
     expect(within(cajon).queryByText(/Hay un borrador manual pendiente/i)).not.toBeInTheDocument();
