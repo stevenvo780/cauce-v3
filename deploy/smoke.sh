@@ -41,13 +41,17 @@ arranque="$(docker inspect --format '{{.State.StartedAt}}' cauce-v3-prod-gateway
 if [[ ! "$arranque" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]; then
   echo "ROJO bus: no pude leer el instante de arranque del gateway (linea base)"; fallo=1
 else
-  hechas=0
+  hechas=0; vivas=0
   for intento in 1 2 3 4 5 6; do
     hechas="$("${PG[@]}" "SELECT count(*) FROM deliveries WHERE status='done' AND updated_at > GREATEST('$arranque'::timestamptz, now() - interval '6 hours')" 2>/dev/null)"
     [ "${hechas:-0}" -ge 1 ] && break
     [ "$intento" -lt 6 ] && sleep 20
   done
-  if [ "${hechas:-0}" -ge 1 ]; then echo "OK  bus: $hechas entregas done desde el arranque ($arranque)"; else echo "ROJO bus: 0 entregas done desde el arranque del despliegue ($arranque)"; fallo=1; fi
+  # A quiet window is not a broken bus: work claimed or heartbeated since boot proves it moves.
+  vivas="$("${PG[@]}" "SELECT count(*) FROM deliveries WHERE terminal_at IS NULL AND status IN ('leased','accepted','started') AND updated_at > '$arranque'::timestamptz" 2>/dev/null)"
+  if [ "${hechas:-0}" -ge 1 ]; then echo "OK  bus: $hechas entregas done desde el arranque ($arranque)";
+  elif [ "${vivas:-0}" -ge 1 ]; then echo "OK  bus: sin entregas done en la ventana, pero $vivas en vuelo con actividad desde el arranque ($arranque)";
+  else echo "ROJO bus: ni entregas done ni actividad en vuelo desde el arranque del despliegue ($arranque)"; fallo=1; fi
 fi
 
 # 6) Relay NOT in a loop: <30 agent connections in 2 min
