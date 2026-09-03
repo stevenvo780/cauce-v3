@@ -17,6 +17,7 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 | `cauce-attach` | `kratos:~/.local/bin/`, vía `install-cauce-cli.sh` | Entra a LA sesión real del agente (claude --resume / codex resume) con guardas |
 | `cauce-attach-guard` | `kratos:~/.local/bin/` + timer 2min | Repone adaptadores parados por un attach mal cerrado |
 | `cauce-codex-sync` | `kratos:~/.local/bin/` + path-unit | Propaga auth.json compartido de codex a los agentes sin bind-mount |
+| `cauce-contexto-colisiones.py` | `kratos:~/.local/bin/` | ¿Dos alias comparten los ficheros que los gobiernan? Compara por inodo las rutas de gobierno de toda la flota |
 | `cauce-cred-guard-kratos.py` | `kratos:~/.local/bin/` + timer 15min | Mide credenciales de los alias que viven EN kratos y empuja huellas al VPS |
 | `credential_health.py` | `VPS` y `kratos`: `~/.local/bin/` | Autoridad pura compartida para clasificar vencimientos y huellas repetidas |
 | `cauce-credenciales` | `kratos:~/.local/bin/` | Audita y renueva credenciales OAuth de toda la flota (detecta bind-mounts compartidos) |
@@ -115,6 +116,56 @@ Probar el efecto (crea una entrega real y hace correr a hegel):
 `deliveries` (columnas `recipient_tenant`/`recipient_alias`, NO `tenant_id`/`alias`):
 `docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -c "select id,status from deliveries where recipient_alias='hegel' order by created_at desc limit 3"`.
 
+## El guardia de colisiones de contexto mide inodos, nunca contenido
+
+`cauce-contexto-colisiones.py` responde una sola pregunta: **¿hay dos alias escribiendo los mismos
+ficheros de gobierno?** Cuando los hay no aparece ningún error —desde un contenedor todo se ve
+correcto—, y editar «el `CLAUDE.md` de un alias» reescribe el del otro. Es exactamente lo que pasa
+en `ws-humanizar`, que aloja a `atlas` y a `kratos` con un solo `$HOME`: hoy no chocan sólo porque
+usan arneses distintos (§4.6 de `docs/directiva-ficheros-del-agente.md`).
+
+**De dónde saca las rutas.** La flota sale del inventario `ops/flota.json` y las raíces y nombres de
+documento por arnés del contrato generado `ops/schemas/contexto-de-gobierno.json` —el mismo que
+proyecta la consola—, más la plantilla del espacio openclaw de `ops/scripts/fleet_derive.py`. No hay
+tabla escrita a mano: una copia a mano se desincroniza y el guardia acabaría bendiciendo una
+disposición que nadie sirve. Si el espejo de `ops/` no está a mano, lo dice y no corre
+(`$CAUCE_OPS_ROOT`, el checkout donde vive el fichero, o `~/.local/share/cauce-v3/ops`).
+
+**Qué mide y qué publica.** Resuelve cada ruta (`realpath`) y la agrupa por `st_dev`/`st_ino`
+dentro de un mismo demonio docker (`dockerHost` del inventario): los dispositivos de overlay son por
+núcleo, así que coincidir entre `kratos` y el VPS no es compartir y no se agrupa. No
+abre ningún fichero: del contenedor sólo salen rutas, dispositivo, inodo y alias, así que un
+documento de gobierno con un secreto dentro no puede escaparse por el informe.
+
+| Regla | Severidad | Qué significa |
+|---|---|---|
+| `mismo_inodo` | alerta | Dos alias sobre el mismo fichero: no tienen dos contextos, tienen uno |
+| `misma_raiz` | alerta si sus arneses nombran algún documento igual, aviso si no | Una sola raíz de gobierno para varios alias |
+| `mismo_hogar` | aviso | Un solo `$HOME` con arneses distintos: chocarían en cuanto uno cambie de arnés |
+| `ruta_ilegible`, `hogar_ausente`, `raiz_ausente`, `alias_no_proyectable` | alerta | Falla cerrado y nombra al alias: sin medir no puede afirmar que no comparte contexto |
+
+Sale con **1 si hay alguna alerta** y 0 si sólo hay avisos. Deja el informe completo en
+`~/.local/state/cauce-v3/contexto-colisiones.json` (`--estado`), el contador
+`cauce_context_path_collisions{severidad=...}` en formato de exposición en
+`~/.local/state/cauce-v3/contexto-colisiones.prom` (`--prometheus`) y una línea por hallazgo en la
+salida estándar (`--json` para el informe entero).
+
+**Dónde mide.** Igual que sus hermanos, corre en `kratos` y entra a la casa de cada alias: los
+`host:` en la propia máquina, los contenedores del demonio de `kratos` por `docker exec`, y el
+resto por `ssh` al demonio del VPS (`--agora`). Necesita, entonces, los mismos dos permisos que el
+médico. `--raiz <dir>` sustituye la sonda entera por un árbol local `<dir>/<contenedor>/...` y es lo
+que usan las pruebas: el gate corre en un árbol compartido y no puede montar nada.
+
+**Dos cosas que NO ve, a propósito.** Un hecho de runtime que mueva una raíz (`CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`, `CAUCE_OPENCLAW_WORKSPACE`) no está en el inventario: el guardia juzga la disposición
+declarada, que es la que proyecta la consola, y una raíz movida a mano queda fuera de su vista. Y
+compara alias contra alias, así que dos **contenedores** que montan el mismo `.claude` para el mismo
+alias —`ws-isa` y `ws-isa-workspace`— no le aparecen: `ws-isa-workspace` no está en `ops/flota.json`.
+
+Y el contador no lo raspa nadie todavía: `ops/observability/prometheus.yaml` sólo raspa los
+`/metrics` de los servicios, no hay colector de ficheros de texto. La señal de guardia sigue siendo
+el código de salida y el informe.
+
 ## Restaurar después de una pérdida de disco
 
 **El agregador del VPS corre HOY como unit de SISTEMA, no de usuario** (verificado con
@@ -141,6 +192,7 @@ install -d -m755 ~/.local/bin ~/.config/systemd/user
 install -m644 ops/guardias/credential_health.py ~/.local/bin/
 install -m755 ops/guardias/cauce-cred-guard-kratos.py \
   ops/guardias/cauce-alertas-al-bus.py \
+  ops/guardias/cauce-contexto-colisiones.py \
   ops/guardias/cauce-v3-medico-monitor ~/.local/bin/
 install -m755 ops/guardias/polidin-guard.sh ~/.local/bin/
 ./ops/scripts/install-cauce-cli.sh   # cauce + panel/huerfanas/reponer + estado/sesiones/attach

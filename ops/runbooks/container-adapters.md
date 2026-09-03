@@ -120,11 +120,16 @@ la fila rancia para siempre. `cauce-v3-profile-expectation@<alias>.service` (one
 registrar en cada arranque del adaptador; el `ExecStartPost` de `cauce-v3-container-<alias>.service`
 lo lanza con `--no-block`, de modo que ni retrasa ni puede tumbar al adaptador.
 
-El mecanismo entero es el GET a `/v3/console/agents/<alias>/perfil` con el certificado mTLS del
-propio alias: cuando el gateway mide el runtime como `current`, re-registra la expectativa desde
-esa medición. No puede mentir a favor del alias — una presencia de una encarnación anterior da
-hechos vacíos y `unverified`, nunca un `current` con generación rancia—, así que el bucle sólo
-termina bien cuando el adaptador y su pty-agent coinciden en la misma encarnación viva.
+El mecanismo entero es el POST a `/v3/console/agents/<alias>/context/reload` con el certificado
+mTLS del propio alias y cuerpo vacío: la forma alias-self de la recarga de contexto reescribe los
+ficheros de gobierno desde el perfil desired, vuelve a medir el runtime y, si lo mide como
+`current`, registra la expectativa desde esa medición (el GET del perfil es de sólo lectura y ya no
+escribe nada). No puede mentir a favor del alias — una presencia de una encarnación anterior da
+hechos vacíos y `runtime_unverified`, nunca un `current` con generación rancia, y el script
+reintenta—, así que el bucle sólo termina bien cuando el adaptador y su pty-agent coinciden en la
+misma encarnación viva. `profile_absent` termina en 0 (no hay expectativa que refrescar); los
+rechazos que ningún reintento levanta (400/401/403/404, `agent_disabled`, `context_contaminated`)
+matan el oneshot al primer intento.
 
 Comprobarlo:
 
