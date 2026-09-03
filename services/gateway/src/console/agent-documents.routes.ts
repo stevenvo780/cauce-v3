@@ -100,7 +100,7 @@ export interface AgentFactsProbe {
   /**
    * Reads a governance file of the alias. The path MUST come from the closed set of
    * `resolveAgentDocuments`, never from the browser: no symlink is followed, no
-   * `NEVER_SERVE_BASENAMES` or `NEVER_SERVE_SUFFIXES` name is opened, the read is capped at
+   * sensitive basename or path segment is opened, the read is capped at
    * `MAX_DOCUMENT_BYTES` (truncating past it) and it times out instead of hanging.
    */
   readGovernanceDocument(

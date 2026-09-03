@@ -6,6 +6,9 @@ import type { TerminalConfig } from '../config.js';
 import { exactObjectKeys } from '../helpers.js';
 import { ticketSha256 } from '../tickets.js';
 import { isWritableMode, type TerminalSessionRow } from '../types.js';
+import {
+  relayClaimState, renewRelayClaim, type RenewedRelayClaim,
+} from './claim-transition.js';
 import type { RelayProxyContext } from './context.js';
 
 /**
@@ -57,11 +60,7 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
         control_ever_held: boolean;
         control_held: boolean;
       }
-      interface RenewedSession extends TerminalSessionRow {
-        database_now: Date;
-        session_expires_at: Date;
-      }
-      let renewed: RenewedSession | undefined;
+      let renewed: RenewedRelayClaim | undefined;
       let refusal = 'unknown_session';
       await withTransaction(pool, async (client) => {
         const locked = await client.query<LockedAuthzSession>(
@@ -82,14 +81,11 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
           else if (row.closed_at !== null) refusal = 'closed';
           else if (!row.session_unexpired) refusal = 'session_expired';
           else {
-            const exactClaim = row.relay_claim_sha256 !== null
-              && row.relay_claim_sha256.equals(claimSha256)
-              && row.relay_claim_epoch === claimEpoch
-              && row.relay_instance_id === identity.relay_instance_id
-              && row.relay_boot_id === identity.relay_boot_id
-              && row.relay_claim_expires_at !== null
-              && row.relay_claim_expires_at.getTime() > row.database_now.getTime();
-            if (!exactClaim) {
+            const claim = relayClaimState(
+              row, claimSha256, identity,
+              { mode: 'presented_epoch', epoch: claimEpoch },
+            );
+            if (!claim.exact || !claim.live) {
               refusal = 'claim_fenced';
             } else if (isWritableMode(row.mode) && row.control_ever_held && !row.control_held) {
               // The operator gave the alias back: this writable session is over, and the relay
@@ -99,31 +95,15 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
               const policy = await currentSessionPolicy(row, false, client);
               refusal = policy.reason;
               if (policy.allowed) {
-                const result = await client.query<RenewedSession>(
-                  `UPDATE terminal_sessions
-                      SET relay_claim_expires_at=LEAST(
-                        LEAST(GREATEST(consumed_at + make_interval(secs => $4), COALESCE(window_extended_to, 'epoch'::timestamptz)), consumed_at + make_interval(secs => $8)),
-                        now()+make_interval(secs => $3)
-                      )
-                    WHERE id=$1 AND relay_claim_sha256=$2 AND relay_claim_epoch=$5::bigint
-                      AND relay_claim_expires_at>now()
-                      AND relay_instance_id=$6 AND relay_boot_id=$7
-                      AND consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
-                      AND LEAST(GREATEST(consumed_at + make_interval(secs => $4), COALESCE(window_extended_to, 'epoch'::timestamptz)), consumed_at + make_interval(secs => $8))>now()
-                    RETURNING *,now() AS database_now,
-                              LEAST(GREATEST(consumed_at + make_interval(secs => $4), COALESCE(window_extended_to, 'epoch'::timestamptz)), consumed_at + make_interval(secs => $8)) AS session_expires_at`,
-                  [
-                    request.params.sid,
-                    claimSha256,
-                    config.claimLeaseSeconds,
-                    config.sessionTtlSeconds,
-                    claimEpoch,
-                    identity.relay_instance_id,
-                    identity.relay_boot_id,
-                    sessionMaxTotalSeconds,
-                  ],
-                );
-                renewed = result.rows[0];
+                renewed = await renewRelayClaim(client, {
+                  sid: request.params.sid,
+                  claimSha256,
+                  claimEpoch,
+                  identity,
+                  claimLeaseSeconds: config.claimLeaseSeconds,
+                  sessionTtlSeconds: config.sessionTtlSeconds,
+                  sessionMaxTotalSeconds,
+                });
                 if (renewed === undefined) refusal = 'claim_fenced';
               }
             }

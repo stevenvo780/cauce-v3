@@ -1,6 +1,5 @@
 import {
   GOVERNANCE_NEVER_SERVE_BASENAMES,
-  GOVERNANCE_NEVER_SERVE_SUFFIXES,
   TOPE_CODEX_POR_DEFECTO_BYTES,
   harnessDocumentPaths,
   hasGovernanceSensitivePathSegment,
@@ -73,7 +72,6 @@ export interface AgentDocument {
  * bind-mount placed inside an otherwise own `.claude`: looking only at the directory would not save it.
  */
 export const NEVER_SERVE_BASENAMES = GOVERNANCE_NEVER_SERVE_BASENAMES;
-export const NEVER_SERVE_SUFFIXES = GOVERNANCE_NEVER_SERVE_SUFFIXES;
 
 export function hasNeverServePathSegment(path: string): boolean {
   return hasGovernanceSensitivePathSegment(path);

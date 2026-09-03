@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DatabasePool } from '@cauce/store';
 import {
-  MemoryConsoleUserStore,
   normalizeEmail,
   PostgresConsoleUserStore,
   type ConsoleUser,
 } from '../../services/gateway/src/console-users.js';
+import { MemoryConsoleUserStore } from '../../services/gateway/src/test-support/console-users.js';
 
 /**
  * Estrecha un opcional sin `!` ni `as`.

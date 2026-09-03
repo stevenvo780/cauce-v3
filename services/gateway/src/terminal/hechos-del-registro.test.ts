@@ -304,6 +304,20 @@ describe('la presencia acepta el `home` sin exigirlo', () => {
 });
 
 describe('fencing y resolución multi-relay', () => {
+  it('expone sólo generaciones respaldadas por un snapshot autenticado y fresco', () => {
+    const registry = new AgentRegistry();
+    const now = Date.now();
+    expect(registry.available(now)).toBe(false);
+    expect(registry.generationFor('Steven', 'zeus', now)).toBeUndefined();
+
+    registry.observe(RELAY, [presencia({ generation: 'live-generation' })], now);
+    expect(registry.available(now)).toBe(true);
+    expect(registry.generationFor('Steven', 'zeus', now)).toBe('live-generation');
+    expect(registry.available(now + AGENT_STALE_AFTER_MS + 1)).toBe(false);
+    expect(registry.generationFor('Steven', 'zeus', now + AGENT_STALE_AFTER_MS + 1))
+      .toBeUndefined();
+  });
+
   it('trata cada presencia como snapshot completo y marca ausencias offline inmediatamente', () => {
     const registry = new AgentRegistry();
     registry.observe(RELAY, [presencia()]);
@@ -321,6 +335,7 @@ describe('fencing y resolución multi-relay', () => {
       relay_instance_ids: [RELAY.relay_instance_id, RELAY_B.relay_instance_id],
     });
     expect(registry.get('Steven', 'zeus')).toBeUndefined();
+    expect(registry.generationFor('Steven', 'zeus')).toBeUndefined();
     expect(registry.state('Steven', 'zeus')).toBe('agent_offline');
   });
 

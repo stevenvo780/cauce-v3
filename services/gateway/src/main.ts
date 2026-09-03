@@ -13,6 +13,7 @@ import { OidcBffAuthProvider, PostgresOidcSessionStore } from './oidc-bff.js';
 import { PostgresConsoleUserStore } from './console-users.js';
 import { PasswordAuthProvider } from './password-auth.js';
 import { loadTerminalConfig, terminalCapabilityAnnouncement } from './terminal/config.js';
+import { AgentRegistry } from './terminal/registry.js';
 import { registerSecretHandoffPlane } from './secret-handoff/routes.js';
 import { registerTerminalControlPlane } from './terminal/plugin.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
@@ -206,6 +207,7 @@ const https = await configuredHttps(authProvider);
 // --- PTY control plane (module M1-gateway-control-plane) -------------------------------
 // Undefined unless CAUCE_TERMINAL_ENABLED=1; in that case the gateway boots exactly as today.
 const terminal = await loadTerminalConfig();
+const terminalRegistry = terminal === undefined ? undefined : new AgentRegistry();
 const wakePumpTelemetry = new WakePumpTelemetry();
 const consolePublishTelemetry = new ConsolePublishTelemetry();
 const app = await buildGateway({
@@ -230,8 +232,10 @@ const app = await buildGateway({
 });
 // The routes live in a plugin registered after buildGateway so they inherit the console
 // security hook, the Origin allowlist and the websocket support app.ts already installed.
-if (terminal !== undefined) {
-  await app.register(registerTerminalControlPlane, { pool, authProvider, config: terminal });
+if (terminal !== undefined && terminalRegistry !== undefined) {
+  await app.register(registerTerminalControlPlane, {
+    pool, authProvider, config: terminal, registry: terminalRegistry,
+  });
 }
 // --- end PTY control plane -------------------------------------------------------------
 await app.register(registerSecretHandoffPlane, { pool, authProvider });
@@ -243,6 +247,7 @@ const health = isolatedHealth ? await buildLoopbackHealthProbe({
   requirePostgresTls: process.env.NODE_ENV === 'production',
   wakePumpTelemetry,
   consolePublishTelemetry,
+  ...(terminalRegistry === undefined ? {} : { profileRuntimePresence: terminalRegistry }),
 }) : undefined;
 const port = Number(process.env.PORT ?? 8080);
 const healthPort = Number(process.env.CAUCE_HEALTH_PORT ?? 8081);

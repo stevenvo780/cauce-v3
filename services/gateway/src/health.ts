@@ -11,13 +11,17 @@ import {
   probeTerminalBrowserOwnerPath, probeTerminalClaimPath,
   probeTerminalRelayInstancePath,
 } from './health/schema-terminal.js';
-import { probeProfileRuntimePath } from './health/schema-profile-runtime.js';
+import {
+  probeProfileRuntimePath, readStaleProfileExpectations,
+  type DegradedProfileExpectations, type LiveProfilePresence,
+} from './health/schema-profile-runtime.js';
 import {
   probeConsolePublishIntentPath,
 } from './health/schema-console-publish-intent.js';
 import {
   CONTEXT_CONTAMINATION_REASONS, contextContamination,
 } from './console/contaminacion-de-contexto.js';
+import { publishRedactionMetrics } from './routes/publish-redaction.js';
 
 export {
   probeConsolePublishIntentPath,
@@ -56,6 +60,8 @@ export interface HealthOptions {
   terminalRelayInstanceProbe?: () => Promise<void>;
   /** Test override; production probes schema-035 runtime profile expectations and adoption. */
   profileRuntimeProbe?: () => Promise<void>;
+  profileRuntimePresence?: LiveProfilePresence;
+  profileRuntimeExpectationsProbe?: () => Promise<DegradedProfileExpectations>;
   /** Test override; production probes schema-037's durable console publish journal indexes. */
   consolePublishIntentProbe?: () => Promise<void>;
   /** How long a core wake cycle may go without a clean completion before readiness fails. */
@@ -67,7 +73,7 @@ const wakeStates = ['idle', 'running', 'stopping'] as const;
 
 function metricValue(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`gateway wake telemetry returned an invalid ${label} counter`);
+    throw new Error(`gateway telemetry returned an invalid ${label} counter`);
   }
   return value;
 }
@@ -160,6 +166,77 @@ export function renderContextContaminationMetrics(): string {
     );
   }
   return `${lines.join('\n')}\n`;
+}
+
+const publishRedactionOutcomes = [
+  ['hit', 'hits'],
+  ['truncated_name', 'truncated_names'],
+  ['unscanned', 'unscanned'],
+  ['schema_broken', 'schema_broken'],
+] as const;
+
+export function renderPublishRedactionMetrics(): string {
+  const counters = publishRedactionMetrics();
+  const lines = [
+    '# HELP cauce_gateway_publish_redaction_total Publish-time redaction outcomes.',
+    '# TYPE cauce_gateway_publish_redaction_total counter',
+  ];
+  for (const [outcome, key] of publishRedactionOutcomes) {
+    lines.push(
+      `cauce_gateway_publish_redaction_total{outcome="${outcome}"} ${String(metricValue(counters[key], `publish redaction ${outcome}`))}`,
+    );
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+export function renderProfileRuntimeExpectationMetrics(
+  snapshot: DegradedProfileExpectations | undefined,
+  sourceAvailable: boolean,
+): string {
+  const scanSuccessful = snapshot !== undefined;
+  const stale = snapshot?.stale.length ?? 0;
+  const malformed = snapshot?.malformed.length ?? 0;
+  const unobserved = snapshot?.unobserved ?? 0;
+  const truncated = snapshot?.truncated === true;
+  const degraded = !scanSuccessful || !sourceAvailable
+    || stale > 0 || malformed > 0 || unobserved > 0 || truncated;
+  return [
+    '# HELP cauce_gateway_profile_runtime_expectations_degraded Runtime expectation scan found drift or lacks current evidence.',
+    '# TYPE cauce_gateway_profile_runtime_expectations_degraded gauge',
+    `cauce_gateway_profile_runtime_expectations_degraded ${String(degraded ? 1 : 0)}`,
+    '# HELP cauce_gateway_profile_runtime_expectations_scan_success The bounded PostgreSQL scan completed.',
+    '# TYPE cauce_gateway_profile_runtime_expectations_scan_success gauge',
+    `cauce_gateway_profile_runtime_expectations_scan_success ${String(scanSuccessful ? 1 : 0)}`,
+    '# HELP cauce_gateway_profile_runtime_expectations_source_available A fresh authenticated relay snapshot is available.',
+    '# TYPE cauce_gateway_profile_runtime_expectations_source_available gauge',
+    `cauce_gateway_profile_runtime_expectations_source_available ${String(sourceAvailable ? 1 : 0)}`,
+    '# HELP cauce_gateway_profile_runtime_expectations_stale Expectations that differ from a live generation.',
+    '# TYPE cauce_gateway_profile_runtime_expectations_stale gauge',
+    `cauce_gateway_profile_runtime_expectations_stale ${String(metricValue(stale, 'stale profile expectations'))}`,
+    '# HELP cauce_gateway_profile_runtime_expectations_malformed Unreadable expectation rows in the bounded scan.',
+    '# TYPE cauce_gateway_profile_runtime_expectations_malformed gauge',
+    `cauce_gateway_profile_runtime_expectations_malformed ${String(metricValue(malformed, 'malformed profile expectations'))}`,
+    '# HELP cauce_gateway_profile_runtime_expectations_unobserved Expectations without one live unambiguous generation.',
+    '# TYPE cauce_gateway_profile_runtime_expectations_unobserved gauge',
+    `cauce_gateway_profile_runtime_expectations_unobserved ${String(metricValue(unobserved, 'unobserved profile expectations'))}`,
+    '# HELP cauce_gateway_profile_runtime_expectations_truncated The expectation scan exceeded its fixed row bound.',
+    '# TYPE cauce_gateway_profile_runtime_expectations_truncated gauge',
+    `cauce_gateway_profile_runtime_expectations_truncated ${String(truncated ? 1 : 0)}`,
+  ].join('\n') + '\n';
+}
+
+async function profileRuntimeExpectationMetrics(options: HealthOptions): Promise<string> {
+  const presence = options.profileRuntimePresence;
+  if (presence === undefined) return '';
+  try {
+    const snapshot = await (options.profileRuntimeExpectationsProbe?.()
+      ?? readStaleProfileExpectations(options.pool, presence));
+    return renderProfileRuntimeExpectationMetrics(snapshot, presence.available());
+  } catch {
+    let sourceAvailable = false;
+    try { sourceAvailable = presence.available(); } catch { sourceAvailable = false; }
+    return renderProfileRuntimeExpectationMetrics(undefined, sourceAvailable);
+  }
 }
 
 async function readiness(options: HealthOptions, reply: FastifyReply): Promise<unknown> {
@@ -283,13 +360,17 @@ export function registerHealthRoutes(app: FastifyInstance, options: HealthOption
   app.get('/health/ready', async (_request, reply) => readiness(options, reply));
   const wakeTelemetry = options.wakePumpTelemetry;
   const consoleTelemetry = options.consolePublishTelemetry;
-  if (wakeTelemetry !== undefined || consoleTelemetry !== undefined) {
-    app.get('/metrics', async (_request, reply) => reply
-      .header('cache-control', 'no-store')
-      .type('text/plain; version=0.0.4; charset=utf-8')
-      .send(`${wakeTelemetry === undefined ? '' : renderWakePumpMetrics(wakeTelemetry)}${
-        consoleTelemetry === undefined ? '' : renderConsolePublishMetrics(consoleTelemetry)
-      }${renderContextContaminationMetrics()}`));
+  if (wakeTelemetry !== undefined || consoleTelemetry !== undefined
+      || options.profileRuntimePresence !== undefined) {
+    app.get('/metrics', async (_request, reply) => {
+      const profileRuntime = await profileRuntimeExpectationMetrics(options);
+      return reply
+        .header('cache-control', 'no-store')
+        .type('text/plain; version=0.0.4; charset=utf-8')
+        .send(`${wakeTelemetry === undefined ? '' : renderWakePumpMetrics(wakeTelemetry)}${
+          consoleTelemetry === undefined ? '' : renderConsolePublishMetrics(consoleTelemetry)
+        }${renderContextContaminationMetrics()}${renderPublishRedactionMetrics()}${profileRuntime}`);
+    });
   }
 }
 

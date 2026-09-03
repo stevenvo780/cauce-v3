@@ -123,6 +123,18 @@ export class AgentRegistry {
     return this.seededAt !== undefined;
   }
 
+  available(now: number = Date.now()): boolean {
+    for (const relay of this.relays.values()) {
+      if (now - relay.observedAt <= AGENT_STALE_AFTER_MS) return true;
+    }
+    return false;
+  }
+
+  generationFor(tenantId: string, alias: string, now: number = Date.now()): string | undefined {
+    const resolved = this.resolve(tenantId, alias, now);
+    return resolved.status === 'online' ? resolved.observation.presence.generation : undefined;
+  }
+
   /** Exact current process identity, required by every session mutation after presence. */
   accepts(identity: RelayProcessIdentity, now: number = Date.now()): boolean {
     const relay = this.relays.get(identity.relay_instance_id);

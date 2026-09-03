@@ -195,6 +195,135 @@ export function createCoreRoutePhases(
   );
   const { pumpOutbox } = outboxRuntime;
 
+  async function handleAckFrame(current: Session, frame: Record<string, unknown>): Promise<void> {
+    const deliveryId = DeliveryIdSchema.parse(frame.delivery_id);
+    const ackValue = Object.fromEntries(
+      Object.entries(frame).filter(([key]) => key !== 'type' && key !== 'delivery_id')
+    );
+    const incoming = parseAck(ackValue);
+    if (incoming.instance_id !== current.instanceId) {
+      throw new StoreError('fenced', 'ACK identity does not match socket lease');
+    }
+    const staleTerminalReplay = incoming.epoch < current.epoch
+      && (incoming.status === 'done' || incoming.status === 'failed');
+    if (incoming.epoch < current.epoch && !staleTerminalReplay) {
+      send(current.socket, {
+        type: 'ack_result',
+        event_id: incoming.event_id,
+        delivery_id: deliveryId,
+        attempt: incoming.attempt,
+        claim_token: incoming.claim_token,
+        status: incoming.status,
+        applied: false
+      });
+      return;
+    }
+    if (incoming.epoch > current.epoch) {
+      throw new StoreError('fenced', 'ACK identity does not match socket lease');
+    }
+    // Order matters. `claims` holds the LIVE claim; `recentClaims`, the previous one.
+    // When the reaper retried a delivery and the same adapter took it again, the live one
+    // is from the new attempt — and the terminal ACK from the old attempt, which arrives
+    // late with the response inside, does not match it. `assertAckClaim` used to turn that
+    // into a 'fenced' with socket close 4401: the result never even reached the database,
+    // which is the one that knows whether it is useful (see `lateTerminalSalvage`). If the
+    // ACK correlates EXACTLY with a claim this same socket remembers delivering, that one
+    // is used and the store is left to decide. When it does not correlate with any,
+    // nothing changes.
+    const liveClaim = current.claims.get(deliveryId);
+    const recentClaim = current.recentClaims.get(deliveryId);
+    const matchesRecent = recentClaim?.attempt === incoming.attempt
+      && recentClaim.claim_token === incoming.claim_token;
+    const sessionClaim = matchesRecent ? recentClaim : (liveClaim ?? recentClaim);
+    // A rehydrated claim counts towards capacity but does NOT fence: we rebuilt it from
+    // the database without knowing whether the adapter knows it under that same attempt,
+    // so requiring it to match would turn an old ACK into a socket close 4401 where there
+    // used to be a recoverable `ownership_lost`.
+    if (!staleTerminalReplay && sessionClaim !== undefined && sessionClaim.rehydrated !== true) {
+      assertAckClaim(incoming, sessionClaim);
+    } else if (!staleTerminalReplay && sessionClaim === undefined
+        && !current.renewableDeliveryClaims) {
+      throw new StoreError('fenced', 'ACK has no claim in the live socket session');
+    }
+    // A renewable client can resume the same fenced DB lease after a
+    // socket or gateway restart. In that case the in-memory claim map is
+    // intentionally empty; repository.ackDelivery remains authoritative
+    // for delivery id, attempt, token, instance, epoch and deadline.
+    let result: AckResult;
+    try {
+      result = await repository.ackDelivery(
+        deliveryId, current.tenantId, current.alias, incoming, ackDeadlineMs,
+        deliveryLeaseCap
+      );
+    } catch (error) {
+      // The event reached the durable authority, which is the only one that decides whether
+      // it still owns the delivery. A fence there is conclusive evidence of ownership_lost
+      // for this frame, not a reason to close a socket whose lease is alive.
+      if (!(error instanceof StoreError) || error.code !== 'fenced') throw error;
+      result = {
+        delivery_id: deliveryId,
+        status: incoming.status,
+        applied: false,
+        receipt: 'ownership_lost',
+      };
+    }
+    // `legacyResult` only contains fields any adapter understands.
+    // Each new field is reintroduced only after its capability.
+    const {
+      receipt,
+      delegation_rejections: delegationRejections,
+      delegation_materializations: delegationMaterializations,
+      chain_gate: chainGate,
+      ...legacyResult
+    } = result;
+    const feedback = current.delegationFeedback;
+    send(current.socket, {
+      type: 'ack_result',
+      ...legacyResult,
+      event_id: incoming.event_id,
+      attempt: incoming.attempt,
+      claim_token: incoming.claim_token,
+      ...(current.renewableDeliveryClaims ? { receipt } : {}),
+      ...(feedback && delegationRejections !== undefined
+        ? { delegation_rejections: delegationRejections }
+        : {}),
+      ...(feedback && delegationMaterializations !== undefined
+        ? { delegation_materializations: delegationMaterializations }
+        : {}),
+      ...(feedback && chainGate !== undefined ? { chain_gate: chainGate } : {})
+    });
+    // An applied `started` renews the local deadline as in the database.
+    // `Math.max` prevents a late ACK from shortening the claim.
+    if (result.applied && incoming.status === 'started') {
+      const renewed = current.claims.get(deliveryId);
+      if (renewed !== undefined) {
+        renewed.admissionExpiresAtMs = Math.max(
+          renewed.admissionExpiresAtMs, Date.now() + ackDeadlineMs
+        );
+      }
+    }
+    // Terminal states and `retry` release capacity because they no longer hold a durable
+    // claim. `leased`, `accepted` and `started` do not release it; doing so would admit work
+    // still in progress. Expiration retires any claim that stopped belonging to us.
+    let releasedSlot = false;
+    if (['done', 'failed', 'dead', 'retry'].includes(result.status)) {
+      const completedClaim = current.claims.get(deliveryId);
+      const closesCurrentClaim = completedClaim?.attempt === incoming.attempt
+        && completedClaim.claim_token === incoming.claim_token;
+      releasedSlot = closesCurrentClaim && current.claims.delete(deliveryId);
+      // Not deleted: moved to `recentClaims`. A late ACK for this same delivery must keep
+      // correlating, or an old client would eat a 'fenced' with socket close where today
+      // it receives an `ownership_lost` and stays alive.
+      if (releasedSlot && completedClaim !== undefined) {
+        rememberRecentClaim(current, deliveryId, completedClaim);
+      }
+    }
+    // Every released capacity re-drains immediately: an already-queued delivery does not
+    // generate another wake. `retry` also forces draining even if it does not close the
+    // correlated local claim.
+    if (releasedSlot || result.status === 'retry') await drain(current);
+  }
+
   async function registerRuntimeRoutes(
     agentProfiles: AgentProfileRepository,
   ): Promise<void> {
@@ -445,131 +574,7 @@ export function createCoreRoutePhases(
               return;
             }
             if (frame.type !== 'ack') throw new Error('unsupported frame type');
-            const deliveryId = DeliveryIdSchema.parse(frame.delivery_id);
-            const ackValue = Object.fromEntries(
-              Object.entries(frame).filter(([key]) => key !== 'type' && key !== 'delivery_id')
-            );
-            const incoming = parseAck(ackValue);
-            if (incoming.instance_id !== current.instanceId) {
-              throw new StoreError('fenced', 'ACK identity does not match socket lease');
-            }
-            const staleTerminalReplay = incoming.epoch < current.epoch
-              && (incoming.status === 'done' || incoming.status === 'failed');
-            if (incoming.epoch < current.epoch && !staleTerminalReplay) {
-              send(socket, {
-                type: 'ack_result',
-                event_id: incoming.event_id,
-                delivery_id: deliveryId,
-                attempt: incoming.attempt,
-                claim_token: incoming.claim_token,
-                status: incoming.status,
-                applied: false
-              });
-              return;
-            }
-            if (incoming.epoch > current.epoch) {
-              throw new StoreError('fenced', 'ACK identity does not match socket lease');
-            }
-            // Order matters. `claims` holds the LIVE claim; `recentClaims`, the previous one.
-            // When the reaper retried a delivery and the same adapter took it again, the live one
-            // is from the new attempt — and the terminal ACK from the old attempt, which arrives
-            // late with the response inside, does not match it. `assertAckClaim` used to turn that
-            // into a 'fenced' with socket close 4401: the result never even reached the database,
-            // which is the one that knows whether it is useful (see `lateTerminalSalvage`). If the
-            // ACK correlates EXACTLY with a claim this same socket remembers delivering, that one
-            // is used and the store is left to decide. When it does not correlate with any,
-            // nothing changes.
-            const liveClaim = current.claims.get(deliveryId);
-            const recentClaim = current.recentClaims.get(deliveryId);
-            const matchesRecent = recentClaim?.attempt === incoming.attempt
-              && recentClaim.claim_token === incoming.claim_token;
-            const sessionClaim = matchesRecent ? recentClaim : (liveClaim ?? recentClaim);
-            // A rehydrated claim counts towards capacity but does NOT fence: we rebuilt it from
-            // the database without knowing whether the adapter knows it under that same attempt,
-            // so requiring it to match would turn an old ACK into a socket close 4401 where there
-            // used to be a recoverable `ownership_lost`.
-            if (!staleTerminalReplay && sessionClaim !== undefined && sessionClaim.rehydrated !== true) {
-              assertAckClaim(incoming, sessionClaim);
-            } else if (!staleTerminalReplay && sessionClaim === undefined && !current.renewableDeliveryClaims) {
-              throw new StoreError('fenced', 'ACK has no claim in the live socket session');
-            }
-            // A renewable client can resume the same fenced DB lease after a
-            // socket or gateway restart. In that case the in-memory claim map is
-            // intentionally empty; repository.ackDelivery remains authoritative
-            // for delivery id, attempt, token, instance, epoch and deadline.
-            let result: AckResult;
-            try {
-              result = await repository.ackDelivery(
-                deliveryId, current.tenantId, current.alias, incoming, ackDeadlineMs,
-                deliveryLeaseCap
-              );
-            } catch (error) {
-              // The event reached the durable authority, which is the only one that decides whether
-              // it still owns the delivery. A fence there is conclusive evidence of ownership_lost
-              // for this frame, not a reason to close a socket whose lease is alive.
-              if (!(error instanceof StoreError) || error.code !== 'fenced') throw error;
-              result = {
-                delivery_id: deliveryId,
-                status: incoming.status,
-                applied: false,
-                receipt: 'ownership_lost',
-              };
-            }
-            // `legacyResult` only contains fields any adapter understands.
-            // Each new field is reintroduced only after its capability.
-            const {
-              receipt,
-              delegation_rejections: delegationRejections,
-              delegation_materializations: delegationMaterializations,
-              chain_gate: chainGate,
-              ...legacyResult
-            } = result;
-            const feedback = current.delegationFeedback;
-            send(socket, {
-              type: 'ack_result',
-              ...legacyResult,
-              event_id: incoming.event_id,
-              attempt: incoming.attempt,
-              claim_token: incoming.claim_token,
-              ...(current.renewableDeliveryClaims ? { receipt } : {}),
-              ...(feedback && delegationRejections !== undefined
-                ? { delegation_rejections: delegationRejections }
-                : {}),
-              ...(feedback && delegationMaterializations !== undefined
-                ? { delegation_materializations: delegationMaterializations }
-                : {}),
-              ...(feedback && chainGate !== undefined ? { chain_gate: chainGate } : {})
-            });
-            // An applied `started` renews the local deadline as in the database.
-            // `Math.max` prevents a late ACK from shortening the claim.
-            if (result.applied && incoming.status === 'started') {
-              const renewed = current.claims.get(deliveryId);
-              if (renewed !== undefined) {
-                renewed.admissionExpiresAtMs = Math.max(
-                  renewed.admissionExpiresAtMs, Date.now() + ackDeadlineMs
-                );
-              }
-            }
-            // Terminal states and `retry` release capacity because they no longer hold a durable
-            // claim. `leased`, `accepted` and `started` do not release it; doing so would admit work
-            // still in progress. Expiration retires any claim that stopped belonging to us.
-            let releasedSlot = false;
-            if (['done', 'failed', 'dead', 'retry'].includes(result.status)) {
-              const completedClaim = current.claims.get(deliveryId);
-              const closesCurrentClaim = completedClaim?.attempt === incoming.attempt
-                && completedClaim.claim_token === incoming.claim_token;
-              releasedSlot = closesCurrentClaim && current.claims.delete(deliveryId);
-              // Not deleted: moved to `recentClaims`. A late ACK for this same delivery must keep
-              // correlating, or an old client would eat a 'fenced' with socket close where today
-              // it receives an `ownership_lost` and stays alive.
-              if (releasedSlot && completedClaim !== undefined) {
-                rememberRecentClaim(current, deliveryId, completedClaim);
-              }
-            }
-            // Every released capacity re-drains immediately: an already-queued delivery does not
-            // generate another wake. `retry` also forces draining even if it does not close the
-            // correlated local claim.
-            if (releasedSlot || result.status === 'retry') await drain(current);
+            await handleAckFrame(current, frame);
           } catch (error) {
             const code = error instanceof StoreError ? error.code : 'invalid_frame';
             send(socket, { type: 'error', code, message: error instanceof Error ? error.message : 'unknown frame error' });

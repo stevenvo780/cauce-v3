@@ -11,6 +11,9 @@ import {
   verifyTicketSignature, TicketError, type TicketPayload,
 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
+import {
+  relayClaimState, renewRelayClaim, takeOverExpiredRelayClaim,
+} from './claim-transition.js';
 import type { RelayProxyContext } from './context.js';
 
 export function registerRelayConsumeRoute(context: RelayProxyContext): void {
@@ -149,68 +152,36 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
                 refusal = { status: 409, reason: 'lifecycle_conflict' };
               }
             } else {
-              const exactClaim = row.relay_claim_sha256 !== null
-                && row.relay_claim_sha256.equals(claimSha256)
-                && row.relay_instance_id === identity.relay_instance_id
-                && row.relay_boot_id === identity.relay_boot_id;
-              const claimExpiresAt = row.relay_claim_expires_at;
-              const liveClaim = claimExpiresAt !== null
-                && claimExpiresAt.getTime() > row.database_now.getTime();
-              if (exactClaim && liveClaim && relayClaimEpoch(row.relay_claim_epoch) !== undefined) {
-                const renewed = await client.query<ClaimedSession>(
-                  `UPDATE terminal_sessions
-                      SET relay_claim_expires_at=LEAST(
-                        ${sessionWindowExpression(4, 8)},
-                        now()+make_interval(secs => $3)
-                      )
-                    WHERE id=$1 AND relay_claim_sha256=$2
-                      AND relay_claim_epoch=$5::bigint
-                      AND relay_claim_expires_at>now()
-                      AND relay_instance_id=$6 AND relay_boot_id=$7
-                      AND consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
-                      AND ${sessionWindowExpression(4, 8)}>now()
-                    RETURNING *,now() AS database_now`,
-                  [
-                    sid, claimSha256, config.claimLeaseSeconds, config.sessionTtlSeconds,
-                    row.relay_claim_epoch, identity.relay_instance_id, identity.relay_boot_id,
-                    config.sessionMaxTotalSeconds ?? null,
-                  ],
-                );
-                session = renewed.rows[0];
-                databaseNow = renewed.rows[0]?.database_now;
+              const currentEpoch = relayClaimEpoch(row.relay_claim_epoch);
+              const claim = relayClaimState(
+                row, claimSha256, identity, { mode: 'stored_epoch' },
+              );
+              if (claim.exact && claim.live && currentEpoch !== undefined) {
+                const renewed = await renewRelayClaim(client, {
+                  sid,
+                  claimSha256,
+                  claimEpoch: currentEpoch,
+                  identity,
+                  claimLeaseSeconds: config.claimLeaseSeconds,
+                  sessionTtlSeconds: config.sessionTtlSeconds,
+                  sessionMaxTotalSeconds: config.sessionMaxTotalSeconds,
+                });
+                session = renewed;
+                databaseNow = renewed?.database_now;
                 recovered = session !== undefined;
-              } else if (!liveClaim) {
-                const takeover = await client.query<ClaimedSession>(
-                  `UPDATE terminal_sessions
-                      SET relay_claim_sha256=$2,
-                          relay_claim_epoch=relay_claim_epoch+1,
-                          relay_claimed_at=now(),
-                          relay_instance_id=$5,
-                          relay_boot_id=$6,
-                          relay_claim_expires_at=LEAST(
-                            ${sessionWindowExpression(4, 7)},
-                            now()+make_interval(secs => $3)
-                          )
-                    WHERE id=$1 AND consumed_at IS NOT NULL
-                      AND revoked_at IS NULL AND closed_at IS NULL
-                      AND ${sessionWindowExpression(4, 7)}>now()
-                      AND (relay_claim_expires_at IS NULL OR relay_claim_expires_at<=now())
-                      AND relay_claim_epoch<9223372036854775807
-                    RETURNING *,now() AS database_now`,
-                  [
-                    sid, claimSha256, config.claimLeaseSeconds, config.sessionTtlSeconds,
-                    identity.relay_instance_id, identity.relay_boot_id,
-                    config.sessionMaxTotalSeconds ?? null,
-                  ],
-                );
-                session = takeover.rows[0];
-                databaseNow = takeover.rows[0]?.database_now;
+              } else if (!claim.live) {
+                const takeover = await takeOverExpiredRelayClaim(client, {
+                  sid,
+                  claimSha256,
+                  identity,
+                  claimLeaseSeconds: config.claimLeaseSeconds,
+                  sessionTtlSeconds: config.sessionTtlSeconds,
+                  sessionMaxTotalSeconds: config.sessionMaxTotalSeconds,
+                });
+                session = takeover;
+                databaseNow = takeover?.database_now;
                 takenOver = session !== undefined;
               } else {
-                const retryAfterMs = Math.max(
-                  1,
-                  Math.ceil(claimExpiresAt.getTime() - row.database_now.getTime()),
-                );
                 await recordTransactionalTerminalAudit(client, {
                   tenant_id: actor.tenant_id,
                   actor_alias: actor.alias,
@@ -224,7 +195,11 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
                     claim_epoch: row.relay_claim_epoch,
                   }),
                 });
-                refusal = { status: 409, reason: 'claim_conflict', retry_after_ms: retryAfterMs };
+                refusal = {
+                  status: 409,
+                  reason: 'claim_conflict',
+                  ...(claim.retryAfterMs === undefined ? {} : { retry_after_ms: claim.retryAfterMs }),
+                };
               }
               if (session === undefined && refusal === undefined) {
                 await recordTransactionalTerminalAudit(client, {

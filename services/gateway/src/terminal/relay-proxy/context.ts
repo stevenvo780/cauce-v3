@@ -15,9 +15,10 @@ import { AgentRegistry, type RelayProcessIdentity } from '../registry.js';
 import { ticketSha256 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
 import { isAuthorizedTlsSocket } from '../../runtime-guards.js';
+import {
+  databaseClaimEpoch, relayClaimEpoch,
+} from './claim-transition.js';
 
-const POSITIVE_BIGINT_PATTERN = /^[1-9][0-9]{0,18}$/;
-const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
 const PRESENCE_KEYS = ['agents', 'relay_boot_id', 'relay_instance_id'] as const;
 const CONSUME_KEYS = ['claim_token', 'relay_boot_id', 'relay_instance_id', 'ticket'] as const;
 const AUTHZ_KEYS = ['claim_epoch', 'claim_token', 'relay_boot_id', 'relay_instance_id'] as const;
@@ -58,21 +59,7 @@ function relayClaimToken(value: unknown): string | undefined {
   return isCanonicalUuidV4(value) ? value : undefined;
 }
 
-/** Fence epochs stay decimal strings on the wire and in node-postgres; Number is never involved. */
-export function relayClaimEpoch(value: unknown): string | undefined {
-  if (typeof value !== 'string' || !POSITIVE_BIGINT_PATTERN.test(value)) return undefined;
-  try {
-    return BigInt(value) <= POSTGRES_BIGINT_MAX ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function databaseClaimEpoch(value: string): string {
-  const epoch = relayClaimEpoch(value);
-  if (epoch === undefined) throw new Error('database terminal claim epoch is invalid');
-  return epoch;
-}
+export { relayClaimEpoch } from './claim-transition.js';
 
 function boundedMilliseconds(later: Date, earlier: Date, maximum: number): number {
   const value = Math.ceil(later.getTime() - earlier.getTime());

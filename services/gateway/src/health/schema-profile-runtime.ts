@@ -2,6 +2,7 @@ import { withTransaction, type DatabasePool } from '@cauce/store';
 import { probeSchemaContract } from './probe.js';
 
 export interface LiveProfilePresence {
+  available(): boolean;
   generationFor(tenantId: string, alias: string): string | undefined;
 }
 
@@ -22,6 +23,7 @@ export interface MalformedProfileExpectation {
 export interface DegradedProfileExpectations {
   readonly stale: readonly StaleProfileExpectation[];
   readonly malformed: readonly MalformedProfileExpectation[];
+  readonly unobserved: number;
   readonly truncated: boolean;
 }
 
@@ -68,6 +70,7 @@ export async function readStaleProfileExpectations(
     );
     const stale: StaleProfileExpectation[] = [];
     const malformed: MalformedProfileExpectation[] = [];
+    let unobserved = 0;
     for (const row of result.rows.slice(0, MAX_SCANNED_EXPECTATIONS)) {
       try {
         const tenantId = identity(row.tenant_id, 'tenant');
@@ -75,7 +78,11 @@ export async function readStaleProfileExpectations(
         const recorded = identity(row.generation, 'generation');
         const revision = revisionOf(row.revision);
         const live = presence.generationFor(tenantId, alias);
-        if (live === undefined || live === recorded) continue;
+        if (live === undefined) {
+          unobserved += 1;
+          continue;
+        }
+        if (live === recorded) continue;
         stale.push({
           tenant_id: tenantId,
           alias,
@@ -91,7 +98,10 @@ export async function readStaleProfileExpectations(
         });
       }
     }
-    return { stale, malformed, truncated: result.rows.length > MAX_SCANNED_EXPECTATIONS };
+    return {
+      stale, malformed, unobserved,
+      truncated: result.rows.length > MAX_SCANNED_EXPECTATIONS,
+    };
   });
 }
 

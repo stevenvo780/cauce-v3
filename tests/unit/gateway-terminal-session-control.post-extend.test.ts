@@ -19,6 +19,7 @@ type OwnedRow = TerminalSessionRow & { session_expires_at: Date };
 interface RecordedQuery { text: string; values: unknown[] }
 
 const AUTHORIZATION_SOURCE = 'services/gateway/src/terminal/relay-proxy/authorization.ts';
+const CLAIM_TRANSITION_SOURCE = 'services/gateway/src/terminal/relay-proxy/claim-transition.ts';
 
 function ownedRow(overrides: Partial<TerminalSessionRow> = {}): OwnedRow {
   return {
@@ -138,9 +139,10 @@ describe('POST /v3/console/terminal/sessions/:sid/extend', () => {
   });
 
   it('la expresión de ventana es la MISMA que revalida el relay en /authz', () => {
-    const source = readFileSync(AUTHORIZATION_SOURCE, 'utf8');
-    expect(source).toContain(sessionWindowExpression(2, 3));
-    expect(source).toContain(sessionWindowExpression(4, 8));
+    const authorizationSource = readFileSync(AUTHORIZATION_SOURCE, 'utf8');
+    const claimTransitionSource = readFileSync(CLAIM_TRANSITION_SOURCE, 'utf8');
+    expect(authorizationSource).toContain(sessionWindowExpression(2, 3));
+    expect(claimTransitionSource).toContain('sessionWindowExpression(4, 8)');
   });
 
   it('la ventana la construye el store y lleva SIEMPRE el techo consumed_at + maxTotal', () => {

@@ -611,6 +611,17 @@ describe('terminal control plane', () => {
     });
   }
 
+  function relaySessionRequest(
+    sessionId: string,
+    action: 'consume' | 'resume' | 'authz' | 'close',
+    payload: Record<string, unknown>,
+  ) {
+    return app.inject({
+      method: 'POST', url: `/v3/terminal/relay/sessions/${sessionId}/${action}`,
+      headers: { authorization: `Bearer ${RELAY_TOKEN}` }, payload,
+    });
+  }
+
   async function issueAndConsume(): Promise<{
     sessionId: string;
     ticket: string;
@@ -621,10 +632,8 @@ describe('terminal control plane', () => {
   }> {
     await report([presence()]);
     const issued = (await openSession({})).json<{ session_id: string; ticket: string }>();
-    const consumed = await app.inject({
-      method: 'POST', url: `/v3/terminal/relay/sessions/${issued.session_id}/consume`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: { ticket: issued.ticket, claim_token: CLAIM_A },
+    const consumed = await relaySessionRequest(issued.session_id, 'consume', {
+      ticket: issued.ticket, claim_token: CLAIM_A,
     });
     expect(consumed.statusCode).toBe(200);
     const grant = consumed.json<{
@@ -649,14 +658,10 @@ describe('terminal control plane', () => {
     claimToken = CLAIM_A,
     claimEpoch: string | undefined = '1',
   ) {
-    return app.inject({
-      method: 'POST', url: `/v3/terminal/relay/sessions/${sessionId}/resume`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: {
-        resume_token: resumeToken,
-        claim_token: claimToken,
-        claim_epoch: claimEpoch,
-      },
+    return relaySessionRequest(sessionId, 'resume', {
+      resume_token: resumeToken,
+      claim_token: claimToken,
+      claim_epoch: claimEpoch,
     });
   }
 
@@ -1018,11 +1023,8 @@ describe('terminal control plane', () => {
     database.clock.now = () => databaseNow;
     const consumed = await issueAndConsume();
     database.clock.now = () => databaseNow + config.sessionTtlSeconds * 1_000 + 1;
-    const response = await app.inject({
-      method: 'POST',
-      url: `/v3/terminal/relay/sessions/${consumed.sessionId}/authz`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: { claim_token: consumed.claimToken, claim_epoch: consumed.claimEpoch },
+    const response = await relaySessionRequest(consumed.sessionId, 'authz', {
+      claim_token: consumed.claimToken, claim_epoch: consumed.claimEpoch,
     });
     expect(response.statusCode).toBe(403);
     expect(response.json()).toEqual({ ok: false, reason: 'session_expired' });
@@ -1196,12 +1198,9 @@ describe('terminal control plane', () => {
   it('recovers an exact consume receipt after a lost 200 without mutating twice', async () => {
     await report([presence()]);
     const issued = (await openSession({})).json<{ session_id: string; ticket: string }>();
-    const consume = async (): Promise<ReturnType<FastifyInstance['inject']> extends Promise<infer R> ? R : never> =>
-      app.inject({
-        method: 'POST', url: `/v3/terminal/relay/sessions/${issued.session_id}/consume`,
-        headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-        payload: { ticket: issued.ticket, claim_token: CLAIM_A }
-      });
+    const consume = async () => relaySessionRequest(issued.session_id, 'consume', {
+      ticket: issued.ticket, claim_token: CLAIM_A,
+    });
     const first = await consume();
     expect(first.statusCode).toBe(200);
     expect(first.json()).toMatchObject({
@@ -1227,24 +1226,49 @@ describe('terminal control plane', () => {
     ]);
   });
 
+  it('never renews a live claim without the presented epoch and exact digest', async () => {
+    const consumed = await issueAndConsume();
+    const row = database.sessions.get(consumed.sessionId);
+    const claimExpiresAt = row?.relay_claim_expires_at;
+    if (claimExpiresAt === undefined || claimExpiresAt === null) throw new Error('claim unavailable');
+    const leaseBefore = claimExpiresAt.toISOString();
+    const missingEpoch = await relaySessionRequest(consumed.sessionId, 'resume', {
+      resume_token: consumed.resumeToken, claim_token: consumed.claimToken,
+    });
+    expect(missingEpoch.statusCode).toBe(409);
+    expect(missingEpoch.json()).toMatchObject({ ok: false, reason: 'claim_conflict' });
+
+    const wrongDigest = await resumeSession(
+      consumed.sessionId, consumed.resumeToken, CLAIM_B, consumed.claimEpoch,
+    );
+    expect(wrongDigest.statusCode).toBe(409);
+    expect(wrongDigest.json()).toMatchObject({ ok: false, reason: 'claim_conflict' });
+
+    const wrongAuthzEpoch = await relaySessionRequest(consumed.sessionId, 'authz', {
+      claim_token: consumed.claimToken, claim_epoch: '2',
+    });
+    expect(wrongAuthzEpoch.statusCode).toBe(403);
+    expect(wrongAuthzEpoch.json()).toEqual({ ok: false, reason: 'claim_fenced' });
+    expect(database.sessions.get(consumed.sessionId)).toMatchObject({
+      relay_claim_epoch: consumed.claimEpoch,
+      relay_claim_expires_at: new Date(leaseBefore),
+    });
+  });
+
   it('reuses one checked-out client for consume, resume and authz policy reads', async () => {
     await report([presence()]);
     const issued = (await openSession({})).json<{ session_id: string; ticket: string }>();
     database.failNestedPoolQueries();
-    const consumed = await app.inject({
-      method: 'POST', url: `/v3/terminal/relay/sessions/${issued.session_id}/consume`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: { ticket: issued.ticket, claim_token: CLAIM_A },
+    const consumed = await relaySessionRequest(issued.session_id, 'consume', {
+      ticket: issued.ticket, claim_token: CLAIM_A,
     });
     expect(consumed.statusCode).toBe(200);
     const grant = consumed.json<{ resume_token: string; claim_epoch: string }>();
 
     const resumed = await resumeSession(issued.session_id, grant.resume_token, CLAIM_A, grant.claim_epoch);
     expect(resumed.statusCode).toBe(200);
-    const authz = await app.inject({
-      method: 'POST', url: `/v3/terminal/relay/sessions/${issued.session_id}/authz`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: { claim_token: CLAIM_A, claim_epoch: grant.claim_epoch },
+    const authz = await relaySessionRequest(issued.session_id, 'authz', {
+      claim_token: CLAIM_A, claim_epoch: grant.claim_epoch,
     });
     expect(authz.statusCode).toBe(200);
   });
@@ -1287,34 +1311,24 @@ describe('terminal control plane', () => {
 
     relayPeerInstanceId = RELAY_A;
     relayBootId = RELAY_BOOT_A;
-    const fenced = await app.inject({
-      method: 'POST', url: `/v3/terminal/relay/sessions/${consumed.sessionId}/authz`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: { claim_token: consumed.claimToken, claim_epoch: consumed.claimEpoch },
+    const fenced = await relaySessionRequest(consumed.sessionId, 'authz', {
+      claim_token: consumed.claimToken, claim_epoch: consumed.claimEpoch,
     });
     expect(fenced.statusCode).toBe(403);
     expect(fenced.json()).toEqual({ ok: false, reason: 'claim_fenced' });
 
-    const staleClose = await app.inject({
-      method: 'POST', url: `/v3/terminal/relay/sessions/${consumed.sessionId}/close`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: {
-        reason: 'stale a', exit_code: null, bytes_in: 1, bytes_out: 1,
-        claim_token: consumed.claimToken, claim_epoch: consumed.claimEpoch,
-      },
+    const staleClose = await relaySessionRequest(consumed.sessionId, 'close', {
+      reason: 'stale a', exit_code: null, bytes_in: 1, bytes_out: 1,
+      claim_token: consumed.claimToken, claim_epoch: consumed.claimEpoch,
     });
     expect(staleClose.statusCode).toBe(200);
     expect(database.sessions.get(consumed.sessionId)?.closed_at).toBeNull();
 
     relayPeerInstanceId = RELAY_B;
     relayBootId = RELAY_BOOT_B;
-    const exactClose = await app.inject({
-      method: 'POST', url: `/v3/terminal/relay/sessions/${consumed.sessionId}/close`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: {
-        reason: 'winner b', exit_code: 0, bytes_in: 2, bytes_out: 3,
-        claim_token: CLAIM_B, claim_epoch: '2',
-      },
+    const exactClose = await relaySessionRequest(consumed.sessionId, 'close', {
+      reason: 'winner b', exit_code: 0, bytes_in: 2, bytes_out: 3,
+      claim_token: CLAIM_B, claim_epoch: '2',
     });
     expect(exactClose.statusCode).toBe(200);
     expect(database.sessions.get(consumed.sessionId)?.closed_at).not.toBeNull();
@@ -1326,10 +1340,8 @@ describe('terminal control plane', () => {
     const payload = verifyTicketSignature(issued.ticket, deriveAliasKey(MASTER, 'Steven', 'jarvis'));
     const { issueTicket } = await import('./terminal/tickets.js');
     const forged = issueTicket(payload, deriveAliasKey(MASTER, 'Steven', 'argos'));
-    const response = await app.inject({
-      method: 'POST', url: `/v3/terminal/relay/sessions/${issued.session_id}/consume`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: { ticket: forged, claim_token: CLAIM_A }
+    const response = await relaySessionRequest(issued.session_id, 'consume', {
+      ticket: forged, claim_token: CLAIM_A,
     });
     expect(response.statusCode).toBe(401);
     expect(response.json()).toEqual({ ok: false, reason: 'ticket_invalid' });
@@ -1343,10 +1355,8 @@ describe('terminal control plane', () => {
       'abcdefab-cdef-4def-8def-abcdefabcdef'.toUpperCase(),
       '00000000-0000-0000-0000-000000000000',
     ]) {
-      const response = await app.inject({
-        method: 'POST', url: `/v3/terminal/relay/sessions/${issued.session_id}/consume`,
-        headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-        payload: { ticket: issued.ticket, claim_token: claimToken },
+      const response = await relaySessionRequest(issued.session_id, 'consume', {
+        ticket: issued.ticket, claim_token: claimToken,
       });
       expect(response.statusCode).toBe(401);
       expect(response.json()).toEqual({ ok: false, reason: 'ticket_invalid' });
@@ -1359,19 +1369,15 @@ describe('terminal control plane', () => {
     const issued = (await openSession({})).json<{ session_id: string; ticket: string }>();
     database.failNextAudit('terminal.session.consume');
 
-    const failed = await app.inject({
-      method: 'POST', url: `/v3/terminal/relay/sessions/${issued.session_id}/consume`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: { ticket: issued.ticket, claim_token: CLAIM_A },
+    const failed = await relaySessionRequest(issued.session_id, 'consume', {
+      ticket: issued.ticket, claim_token: CLAIM_A,
     });
     expect(failed.statusCode).toBe(400);
     expect(database.sessions.get(issued.session_id)?.consumed_at).toBeNull();
     expect(database.audit.some((row) => row.action === 'terminal.session.consume')).toBe(false);
 
-    const retried = await app.inject({
-      method: 'POST', url: `/v3/terminal/relay/sessions/${issued.session_id}/consume`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: { ticket: issued.ticket, claim_token: CLAIM_A },
+    const retried = await relaySessionRequest(issued.session_id, 'consume', {
+      ticket: issued.ticket, claim_token: CLAIM_A,
     });
     expect(retried.statusCode).toBe(200);
     expect(retried.json()).toMatchObject({ ok: true, receipt_recovered: false });
@@ -1382,10 +1388,8 @@ describe('terminal control plane', () => {
     const issued = (await openSession({})).json<{ session_id: string; ticket: string }>();
     await grant([]);
 
-    const refused = await app.inject({
-      method: 'POST', url: `/v3/terminal/relay/sessions/${issued.session_id}/consume`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: { ticket: issued.ticket, claim_token: CLAIM_A },
+    const refused = await relaySessionRequest(issued.session_id, 'consume', {
+      ticket: issued.ticket, claim_token: CLAIM_A,
     });
     expect(refused.statusCode).toBe(403);
     expect(refused.json()).toEqual({ ok: false, reason: 'no_grant' });
@@ -1412,10 +1416,8 @@ describe('terminal control plane', () => {
     const issued = issuedResponse.json<{ session_id: string; ticket: string }>();
     database.edges.splice(0);
 
-    const refused = await app.inject({
-      method: 'POST', url: `/v3/terminal/relay/sessions/${issued.session_id}/consume`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: { ticket: issued.ticket, claim_token: CLAIM_A },
+    const refused = await relaySessionRequest(issued.session_id, 'consume', {
+      ticket: issued.ticket, claim_token: CLAIM_A,
     });
     expect(refused.statusCode).toBe(403);
     expect(refused.json()).toEqual({ ok: false, reason: 'control_authority_revoked' });
@@ -1430,10 +1432,8 @@ describe('terminal control plane', () => {
     if (row === undefined) return;
     row.closed_at = new Date();
 
-    const refused = await app.inject({
-      method: 'POST', url: `/v3/terminal/relay/sessions/${issued.session_id}/consume`,
-      headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: { ticket: issued.ticket, claim_token: CLAIM_A },
+    const refused = await relaySessionRequest(issued.session_id, 'consume', {
+      ticket: issued.ticket, claim_token: CLAIM_A,
     });
     expect(refused.statusCode).toBe(401);
     expect(row.consumed_at).toBeNull();
