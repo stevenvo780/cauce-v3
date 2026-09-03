@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
-import type { FactsSource, GovernanceReadError } from './agent-documents.routes.js';
+import Fastify from 'fastify';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type {
+  AgentFactsProbe, FactsSource, GovernanceReadError, TerminalAuditEntry,
+} from './agent-documents.routes.js';
+import { registerAgentDocumentRoutes } from './agent-documents.routes.js';
 import {
   type GovernanceRelayClient, MAX_DOCUMENT_BYTES, type MeasuredFactsSource, type RelayFileRead,
   type RelayDirectoryRead, type RuntimeFacts, TerminalRelayFactsProbe, verifyReadablePath
@@ -92,8 +96,7 @@ describe('verifyReadablePath abre para el manual del sitio', () => {
 
 describe('verifyReadablePath se cierra para todo lo demás', () => {
   it('no sirve credenciales aunque estén en el juego cerrado', () => {
-    // `.claude.json` DOES come out of `resolveAgentDocuments` (it is the MCP row), so this is the
-    // check that actually stops it.
+    // `.claude.json` DOES come out of `resolveAgentDocuments`: this is what actually stops it.
     const verdict = verifyReadablePath(CLAUDE, '/home/dev/.claude.json');
     expect(verdict.allowed).toBe(false);
     expect(verdict.reason).toContain('no se sirve nunca');
@@ -223,8 +226,7 @@ describe('TerminalRelayFactsProbe.readGovernanceDocument', () => {
   });
 
   it('recorta por BYTES, no por unidades UTF-16', async () => {
-    // 200,000 "á" are 200,000 characters — below the cap if miscounted — but 400,000 bytes.
-    // Comparing `content.length` to `MAX_DOCUMENT_BYTES` would let twice as much through.
+    // 200,000 "á" are 200,000 characters but 400,000 bytes: `content.length` lets twice through.
     const gordo = 'á'.repeat(200_000);
     expect(gordo.length).toBeLessThan(MAX_DOCUMENT_BYTES);
     expect(Buffer.byteLength(gordo, 'utf8')).toBeGreaterThan(MAX_DOCUMENT_BYTES);
@@ -389,5 +391,213 @@ describe('TerminalRelayFactsProbe.factsFor', () => {
 
     expect(await probe.factsFor('Steven', 'zeus')).toEqual(medidos);
     expect(await probe.factsFor('Steven', 'kant')).toBeUndefined();
+  });
+});
+
+const ACTOR_LECTOR = { tenant_id: 'Steven', alias: 'zeus' };
+const CONTENIDO = '# Manual del sitio\n';
+const filasDeLectura: TerminalAuditEntry[] = [];
+
+const ANONIMO = { operator_id: 'unattributed:console-basic-auth', attributed: false };
+
+function servidorDeLectura(probe: AgentFactsProbe) {
+  const app = Fastify();
+  registerAgentDocumentRoutes(app, {
+    authorize: async () => ACTOR_LECTOR,
+    resolveOperator: () => ANONIMO,
+    authorizeTarget: async (_actor, tenant_id, alias) => ({
+      tenant_id, alias, harness_id: 'claude', home_directory: '/home/dev', enabled: true,
+    }),
+    recordAudit: async (entry) => { filasDeLectura.push(entry); },
+    probe,
+  });
+  return app;
+}
+
+function sondaDeLectura(overrides: Partial<AgentFactsProbe> = {}): AgentFactsProbe {
+  return {
+    factsFor: async () => ({ facts: CLAUDE, source: 'measured' }),
+    readGovernanceDocument: async () => ({
+      text: CONTENIDO, bytes: Buffer.byteLength(CONTENIDO, 'utf8'), truncated: false,
+      modified_at: '2026-08-25T00:00:00Z', sha: sha(CONTENIDO),
+    }),
+    listMemoryDirectory: async () => ({ error: 'unavailable', reason: 'no aplica' }),
+    ...overrides,
+  };
+}
+
+const BASE_LECTURA = '/v3/console/tenants/Miguel/agents/kant/documents';
+
+let servidorVivo: ReturnType<typeof servidorDeLectura> | undefined;
+afterEach(async () => {
+  await servidorVivo?.close();
+  servidorVivo = undefined;
+  filasDeLectura.length = 0;
+});
+
+describe('sólo la lectura de contenido real deja fila en audit_events', () => {
+  it('el GET de contenido audita agent_document.read sin el texto servido', async () => {
+    servidorVivo = servidorDeLectura(sondaDeLectura());
+    const res = await servidorVivo.inject({
+      method: 'GET', url: `${BASE_LECTURA}/directive/content`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ content: CONTENIDO, exists: true });
+    expect(filasDeLectura).toHaveLength(1);
+    const fila = filasDeLectura[0];
+    expect(fila).toMatchObject({
+      tenant_id: 'Steven', actor_alias: 'zeus',
+      action: 'agent_document.read', decision: 'allow',
+    });
+    expect(fila?.metadata).toEqual({
+      operator_id: 'Steven:zeus', target_tenant: 'Miguel', target_alias: 'kant',
+      harness_id: 'claude', home_directory: '/home/dev', facts_source: 'measured',
+      kind: 'directive', path: RUTA_CLAUDE, sha_before: sha(CONTENIDO), sha_after: null,
+      bytes: Buffer.byteLength(CONTENIDO, 'utf8'),
+    });
+    expect(JSON.stringify(fila?.metadata)).not.toContain('Manual del sitio');
+  });
+
+  it('el inventario no se audita: la vista Ficheros lo relee al abrir el cajón', async () => {
+    servidorVivo = servidorDeLectura(sondaDeLectura());
+    const res = await servidorVivo.inject({ method: 'GET', url: BASE_LECTURA });
+
+    expect(res.statusCode).toBe(200);
+    expect(filasDeLectura).toEqual([]);
+  });
+
+  it('un fichero ausente devuelve 200 sin inventar una lectura ni una denegación', async () => {
+    servidorVivo = servidorDeLectura(sondaDeLectura({
+      readGovernanceDocument: async () => ({ error: 'not_found' as const, reason: 'no existe' }),
+    }));
+    const res = await servidorVivo.inject({
+      method: 'GET', url: `${BASE_LECTURA}/directive/content`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ exists: false, sha: null });
+    expect(filasDeLectura).toEqual([]);
+  });
+});
+
+// The read denials are the ones a credential sweep produces: refusing to serve `.claude.json` or
+// `config.toml` while recording nothing would leave that sweep with zero trace.
+describe('cada denegación del canal de lectura deja fila agent_document.denied', () => {
+  it.each([
+    ['ruta prohibida', 'tools', 403, 'not_readable', {}],
+    ['sin canal hasta el disco', 'directive', 503, 'unavailable', {
+      readGovernanceDocument: async () => ({ error: 'unavailable' as const, reason: 'sin relay' }),
+    }],
+    ['la sonda no acredita el contenido', 'directive', 502, 'invalid_probe_response', {
+      readGovernanceDocument: async () => ({
+        text: 'otra cosa', bytes: 9, truncated: false,
+        modified_at: '2026-08-25T00:00:00Z', sha: sha(CONTENIDO),
+      }),
+    }],
+  ] as const)('%s', async (_caso, kind, status, error, overrides) => {
+    servidorVivo = servidorDeLectura(sondaDeLectura(overrides));
+    const res = await servidorVivo.inject({
+      method: 'GET', url: `${BASE_LECTURA}/${kind}/content`,
+    });
+
+    expect(res.statusCode).toBe(status);
+    expect(res.json()).toMatchObject({ error });
+    expect(filasDeLectura).toHaveLength(1);
+    expect(filasDeLectura[0]).toMatchObject({
+      tenant_id: 'Steven', actor_alias: 'zeus',
+      action: 'agent_document.denied', decision: 'deny',
+    });
+    expect(filasDeLectura[0]?.metadata).toMatchObject({
+      operator_id: 'Steven:zeus', target_tenant: 'Miguel', target_alias: 'kant',
+      channel: 'read', kind, reason: error, facts_source: 'measured',
+      harness_id: 'claude', home_directory: '/home/dev',
+    });
+    expect(JSON.stringify(filasDeLectura[0]?.metadata)).not.toContain('Manual del sitio');
+  });
+
+  it('sin hechos medidos deniega 409 y la fila no finge arnés medido', async () => {
+    servidorVivo = servidorDeLectura(sondaDeLectura({ factsFor: async () => undefined }));
+    const res = await servidorVivo.inject({
+      method: 'GET', url: `${BASE_LECTURA}/directive/content`,
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(filasDeLectura[0]?.metadata).toMatchObject({
+      channel: 'read', reason: 'no_medido', facts_source: null, path: null,
+      harness_id: 'claude', home_directory: '/home/dev',
+    });
+  });
+
+  it('el destino que no se ve deja fila antes del 404, también al pedir el inventario', async () => {
+    const app = Fastify();
+    registerAgentDocumentRoutes(app, {
+      authorize: async () => ACTOR_LECTOR,
+      authorizeTarget: async () => undefined,
+      recordAudit: async (entry) => { filasDeLectura.push(entry); },
+      probe: sondaDeLectura(),
+    });
+    servidorVivo = app;
+    const res = await servidorVivo.inject({ method: 'GET', url: BASE_LECTURA });
+
+    expect(res.statusCode).toBe(404);
+    expect(filasDeLectura).toHaveLength(1);
+    expect(filasDeLectura[0]?.metadata).toMatchObject({
+      target_tenant: 'Miguel', target_alias: 'kant', channel: 'read',
+      reason: 'not_found', kind: null, harness_id: null, home_directory: null,
+    });
+  });
+
+  it('CONTROL NEGATIVO: un principal que no autentica no inventa una fila sin tenant', async () => {
+    const app = Fastify();
+    registerAgentDocumentRoutes(app, {
+      authorize: async () => { throw new Error('sin principal'); },
+      authorizeTarget: async (_actor, tenant_id, alias) => ({ tenant_id, alias, enabled: true }),
+      recordAudit: async (entry) => { filasDeLectura.push(entry); },
+      probe: sondaDeLectura(),
+    });
+    servidorVivo = app;
+    const res = await servidorVivo.inject({
+      method: 'GET', url: `${BASE_LECTURA}/directive/content`,
+    });
+
+    expect(res.statusCode).toBe(500);
+    expect(filasDeLectura).toEqual([]);
+  });
+});
+
+describe('la sesión sin atribuir lee la gobernanza pero no la escribe', () => {
+  it('CONTROL NEGATIVO: el inventario y el contenido siguen abiertos sin persona con nombre', async () => {
+    servidorVivo = servidorDeLectura(sondaDeLectura());
+
+    const mapa = await servidorVivo.inject({ method: 'GET', url: BASE_LECTURA });
+    const contenido = await servidorVivo.inject({
+      method: 'GET', url: `${BASE_LECTURA}/directive/content`,
+    });
+
+    expect(mapa.statusCode).toBe(200);
+    expect(contenido.statusCode).toBe(200);
+    expect(contenido.json()).toMatchObject({ content: CONTENIDO, exists: true });
+  });
+
+  it('el PUT de la misma sesión anónima se cierra con 403 writable_requires_attribution', async () => {
+    const writeGovernanceDocument = vi.fn(async () => ({
+      sha: sha(CONTENIDO), bytes: Buffer.byteLength(CONTENIDO, 'utf8'),
+    }));
+    servidorVivo = servidorDeLectura(sondaDeLectura({ writeGovernanceDocument }));
+
+    const res = await servidorVivo.inject({
+      method: 'PUT', url: `${BASE_LECTURA}/directive/content`,
+      payload: {
+        content: '# reescrito\n', expected_sha: sha(CONTENIDO),
+        reason: 'quiero reescribir el manual sin decir quién soy',
+      },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({
+      error: 'forbidden', reason: 'writable_requires_attribution',
+    });
+    expect(writeGovernanceDocument).not.toHaveBeenCalled();
   });
 });

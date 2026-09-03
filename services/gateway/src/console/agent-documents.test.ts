@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { harnessDocumentPaths } from '@cauce/protocol';
 import {
   DEFAULT_CODEX_PROJECT_DOC_MAX_BYTES, MAX_DOCUMENT_BYTES, NEVER_SERVE_BASENAMES,
   type RuntimeFacts, codexProjectDocMaxBytes, documentForKind, effectiveManualPaths,
   harnessFromCapabilities, harnessFromCommand, measuredCodexProjectDocumentConfig,
-  resolveAgentDocuments, verifyReadableDocument, verifyWritablePath
+  profileDocumentPaths, resolveAgentDocuments, verifyReadableDocument, verifyWritablePath
 } from './agent-documents.js';
 
 /**
@@ -78,6 +79,17 @@ describe('resolveAgentDocuments — la ruta sale de lo medido, no de la base', (
   it('dos alias en el mismo contenedor con arneses distintos no comparten fichero', () => {
     // ws-humanizar hosts atlas (codex) and kratos (claude) with the SAME $HOME.
     expect(directivePath(MEDIDO.atlas)).not.toBe(directivePath(MEDIDO.kratos));
+  });
+
+  it('el inventario de perfil sale de la tabla del protocolo, no de literales del gateway', () => {
+    for (const facts of [
+      MEDIDO.zeus, MEDIDO.atlas, MEDIDO.jarvis, { harness: 'hermes', home: '/home/dev' },
+    ] as RuntimeFacts[]) {
+      expect(profileDocumentPaths(facts)).toEqual(harnessDocumentPaths(facts.harness, facts));
+      expect(profileDocumentPaths(facts).length).toBeGreaterThan(0);
+    }
+    expect(profileDocumentPaths({ harness: 'claude', home: 'relativo' })).toEqual([]);
+    expect(profileDocumentPaths({ harness: 'openclaw', home: '/home/claw' })).toEqual([]);
   });
 
   it('un arnés desconocido no resuelve nada, en vez de adivinar', () => {

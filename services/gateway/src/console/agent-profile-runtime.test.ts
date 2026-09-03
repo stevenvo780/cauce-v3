@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { ficherosDelArnes, type ContextoDeAlias } from '@cauce/protocol';
+import {
+  conBloqueDePerfil, ficherosDelArnes, marcaDeRevisionDelPerfil, type ContextoDeAlias,
+} from '@cauce/protocol';
 import type {
   AgentFactsProbe, GovernanceBatchWrite, GovernanceBatchWriteAck, GovernanceDocumentContent,
   GovernanceReadError,
@@ -38,6 +40,11 @@ function contexto(alias: string, harness: string): ContextoDeAlias {
       destinos: [],
     },
   };
+}
+
+function perfilRevisionado(alias: string, revision: number): string {
+  return `${marcaDeRevisionDelPerfil(revision)}\n`
+    + conBloqueDePerfil('', `<!-- alias: Steven/${alias} -->\ncuerpo`);
 }
 
 function probe(
@@ -300,6 +307,112 @@ describe('prepareAgentProfileRuntime', () => {
     expect(batch).not.toHaveBeenCalled();
   });
 
+  it('un perfil de openclaw pasado de tope se rechaza en preflight, antes del CAS durable', async () => {
+    const workspace = '/home/claw/.openclaw/workspace-kant';
+    const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
+    const enorme = contexto('kant', 'openclaw');
+    await expect(prepareAgentProfileRuntime(
+      probe({ harness: 'openclaw', home: '/home/claw', openclawWorkspace: workspace }, new Map(), batch),
+      'Steven', 'kant',
+      { ...enorme, perfil: { ...enorme.perfil, purpose: 'x'.repeat(60_001) } },
+    )).rejects.toMatchObject({
+      name: 'ProfileRuntimeError', code: 'too_large',
+      message: 'SOUL.md mide 60174 unidades UTF-16 y el tope por fichero es 60000 (tope por defecto del arnés)',
+    });
+    expect(batch).not.toHaveBeenCalled();
+  });
+
+  it('una marca de revisión fuera del fichero canónico se rechaza en preflight', async () => {
+    const workspace = '/home/claw/.openclaw/workspace-kant';
+    const soul = `${workspace}/SOUL.md`;
+    const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
+    await expect(prepareAgentProfileRuntime(
+      probe(
+        { harness: 'openclaw', home: '/home/claw', openclawWorkspace: workspace },
+        new Map([[soul, read(perfilRevisionado('kant', 3))]]),
+        batch,
+      ),
+      'Steven', 'kant', contexto('kant', 'openclaw'),
+    )).rejects.toMatchObject({
+      name: 'ProfileRuntimeError', code: 'conflict',
+      message: 'SOUL.md has a profile revision marker outside the canonical file',
+    });
+    expect(batch).not.toHaveBeenCalled();
+  });
+
+  it('una marca reservada autorada se rechaza en claude antes del CAS durable', async () => {
+    const path = '/home/dev/.claude/CLAUDE.md';
+    const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
+    const ctx = contexto('kant', 'claude');
+    await expect(prepareAgentProfileRuntime(
+      probe({ harness: 'claude', home: '/home/dev' }, new Map([[path, read('# manual\n')]]), batch),
+      'Steven', 'kant',
+      { ...ctx, perfil: { ...ctx.perfil, purpose: 'coordinar <!-- CAUCE:PERFIL v1 --> raro' } },
+    )).rejects.toMatchObject({
+      name: 'ProfileRuntimeError', code: 'conflict',
+      message: 'CLAUDE.md has a reserved Cauce marker inside the authored profile block',
+    });
+    expect(batch).not.toHaveBeenCalled();
+  });
+
+  it('el renglón de dueño con espaciado laxo sigue siendo del mismo alias', async () => {
+    const path = '/home/dev/.claude/CLAUDE.md';
+    const laxo = `${marcaDeRevisionDelPerfil(3)}\n`
+      + conBloqueDePerfil('', '<!--  alias: Steven/kant  -->\ncuerpo');
+    const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
+    const prepared = await prepareRevision(
+      probe({ harness: 'claude', home: '/home/dev' }, new Map([[path, read(laxo)]]), batch),
+      'Steven', 'kant', contexto('kant', 'claude'),
+    );
+
+    expect(prepared.preview[0]?.texto).toContain('<!-- alias: Steven/kant -->');
+    await expect(prepareAgentProfileRuntime(
+      probe(
+        { harness: 'claude', home: '/home/dev' },
+        new Map([[path, read(`${marcaDeRevisionDelPerfil(3)}\n`
+          + conBloqueDePerfil('', '<!-- alias: Steven/atlas -->\ncuerpo'))]]),
+        batch,
+      ),
+      'Steven', 'kant', contexto('kant', 'claude'),
+    )).rejects.toMatchObject({
+      name: 'ProfileRuntimeError', code: 'conflict',
+      message: 'CLAUDE.md contiene un bloque gestionado de otro alias',
+    });
+  });
+
+  it('openclaw tampoco expulsa a un alias de su propio bloque por el espaciado', async () => {
+    const workspace = '/home/claw/.openclaw/workspace-kant';
+    const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
+    const prepared = await prepareRevision(
+      probe(
+        { harness: 'openclaw', home: '/home/claw', openclawWorkspace: workspace },
+        new Map([[`${workspace}/SOUL.md`,
+          read(conBloqueDePerfil('', '<!--  alias: Steven/kant  -->\ncuerpo'))]]),
+        batch,
+      ),
+      'Steven', 'kant', contexto('kant', 'openclaw'),
+    );
+
+    expect(prepared.documents).toContain('SOUL.md');
+  });
+
+  it('codex no admite una marca de revisión: su arnés no la sabe escribir', async () => {
+    const path = '/home/dev/.codex/AGENTS.md';
+    const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
+    await expect(prepareAgentProfileRuntime(
+      probe(
+        { harness: 'codex', home: '/home/dev' },
+        new Map([[path, read(perfilRevisionado('kant', 3))]]),
+        batch,
+      ),
+      'Steven', 'kant', contexto('kant', 'codex'),
+    )).rejects.toMatchObject({
+      name: 'ProfileRuntimeError', code: 'conflict',
+      message: 'a revisioned native profile requires an explicit durable revision',
+    });
+    expect(batch).not.toHaveBeenCalled();
+  });
+
   it('una foto de runtime sólo permite aplicar una de sus materializaciones', async () => {
     const path = '/home/dev/.codex/AGENTS.md';
     const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
@@ -342,8 +455,12 @@ describe('prepareAgentProfileRuntime', () => {
   it('editar texto manual fuera del bloque conserva el perfil current', async () => {
     const path = '/home/dev/.claude/CLAUDE.md';
     const ctx = contexto('zeus', 'claude');
+    const medido: ContextoDeAlias = {
+      ...ctx,
+      hechos: { ...ctx.hechos, arnes: { ...ctx.hechos.arnes, home: '/home/dev' } },
+    };
     const projected = ficherosDelArnes(
-      'claude', ctx, new Map([['CLAUDE.md', '# manual anterior\n']]), { revision: 7 },
+      'claude', medido, new Map([['CLAUDE.md', '# manual anterior\n']]), { revision: 7 },
     )[0]?.texto;
     if (projected === undefined) throw new Error('CLAUDE.md no se proyectó');
     const manuallyEdited = projected.replace('# manual anterior', '# manual actualizado');
@@ -405,5 +522,68 @@ describe('prepareAgentProfileRuntime', () => {
     const prepared = await prepareRevision(p, 'Steven', 'kant', contexto('kant', 'codex'));
 
     await expect(prepared.apply()).rejects.toMatchObject({ code: 'conflict' });
+  });
+  function contextoAcentuadoAlTope(alias: string): ContextoDeAlias {
+    const acento = '\u00e1';
+    const base = contexto(alias, 'codex');
+    return {
+      ...base,
+      perfil: {
+        ...base.perfil,
+        purpose: acento.repeat(2_000),
+        role_summary: acento.repeat(4_000),
+        human_brief: acento.repeat(2_000),
+        responsibilities: Array.from({ length: 8 }, () => acento.repeat(1_000)),
+        restrictions: Array.from({ length: 4 }, () => acento.repeat(1_000)),
+        tools: [],
+        operating_rules: Array.from({ length: 4 }, () => acento.repeat(1_000)),
+      },
+    };
+  }
+
+  it('el project_doc_max_bytes MEDIDO manda: el AGENTS.md acentuado de 48 kB pasa', async () => {
+    const p = probe(
+      {
+        harness: 'codex', home: '/home/dev',
+        projectDocMaxBytes: 65_536, projectDocFallbackFilenames: [],
+      },
+      new Map(),
+      async (writes) => ackFor(writes),
+    );
+    const prepared = await prepareRevision(p, 'Steven', 'kant', contextoAcentuadoAlTope('kant'));
+
+    const agents = prepared.preview.find((file) => file.nombre === 'AGENTS.md');
+    expect(agents).toBeDefined();
+    expect(Buffer.byteLength(agents?.texto ?? '', 'utf8')).toBeGreaterThan(48_000);
+  });
+
+  it('sin hecho medido rige el DEFECTO y el 413 dice unidad y origen', async () => {
+    const p = probe({ harness: 'codex', home: '/home/dev' }, new Map(), async (writes) => ackFor(writes));
+
+    await expect(prepareRevision(p, 'Steven', 'kant', contextoAcentuadoAlTope('kant')))
+      .rejects.toMatchObject({
+        code: 'too_large',
+        message: expect.stringContaining('bytes UTF-8') as unknown as string,
+      });
+    await expect(prepareRevision(p, 'Steven', 'kant', contextoAcentuadoAlTope('kant')))
+      .rejects.toMatchObject({
+        message: expect.stringContaining('por defecto del arn\u00e9s') as unknown as string,
+      });
+  });
+
+  it('la fotografía expone el presupuesto y los bytes de disco que midió', async () => {
+    const path = '/home/dev/.codex/AGENTS.md';
+    const p = probe(
+      {
+        harness: 'codex', home: '/home/dev',
+        projectDocMaxBytes: 65_536, projectDocFallbackFilenames: [],
+      },
+      new Map([[path, read('# manual humano\n')]]),
+      async (writes) => ackFor(writes),
+    );
+    const preflight = await prepareAgentProfileRuntime(p, 'Steven', 'kant', contexto('kant', 'codex'));
+
+    expect(preflight.topes).toEqual({ unit: 'utf8_bytes', porFichero: 65_536, fuente: 'measured' });
+    expect(preflight.existentes.get('AGENTS.md')).toBe('# manual humano\n');
   });
 });

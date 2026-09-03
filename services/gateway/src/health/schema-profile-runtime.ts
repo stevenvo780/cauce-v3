@@ -1,5 +1,99 @@
-import { type DatabasePool } from '@cauce/store';
+import { withTransaction, type DatabasePool } from '@cauce/store';
 import { probeSchemaContract } from './probe.js';
+
+export interface LiveProfilePresence {
+  generationFor(tenantId: string, alias: string): string | undefined;
+}
+
+export interface StaleProfileExpectation {
+  readonly tenant_id: string;
+  readonly alias: string;
+  readonly revision: number;
+  readonly recorded_generation: string;
+  readonly live_generation: string;
+}
+
+export interface MalformedProfileExpectation {
+  readonly tenant_id: string | null;
+  readonly alias: string | null;
+  readonly reason: string;
+}
+
+export interface DegradedProfileExpectations {
+  readonly stale: readonly StaleProfileExpectation[];
+  readonly malformed: readonly MalformedProfileExpectation[];
+  readonly truncated: boolean;
+}
+
+const MAX_SCANNED_EXPECTATIONS = 500;
+
+interface ProfileExpectationRow {
+  readonly tenant_id: unknown;
+  readonly alias: unknown;
+  readonly revision: unknown;
+  readonly generation: unknown;
+}
+
+function identity(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 128) {
+    throw new Error(`gateway profile runtime expectation has an invalid ${field}`);
+  }
+  return value;
+}
+
+function revisionOf(value: unknown): number {
+  const revision = typeof value === 'string' || typeof value === 'number' ? Number(value) : Number.NaN;
+  if (!Number.isSafeInteger(revision) || revision <= 0) {
+    throw new Error('gateway profile runtime expectation has an invalid revision');
+  }
+  return revision;
+}
+
+function label(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128 ? value : null;
+}
+
+export async function readStaleProfileExpectations(
+  pool: DatabasePool, presence: LiveProfilePresence,
+): Promise<DegradedProfileExpectations> {
+  return withTransaction(pool, async (client) => {
+    await client.query('SET TRANSACTION READ ONLY');
+    await client.query("SET LOCAL lock_timeout='1000ms'");
+    await client.query("SET LOCAL statement_timeout='2000ms'");
+    const result = await client.query<ProfileExpectationRow>(
+      `SELECT tenant_id,alias,revision,generation
+         FROM agent_profile_runtime_expectations
+        ORDER BY tenant_id,alias
+        LIMIT ${String(MAX_SCANNED_EXPECTATIONS + 1)}`,
+    );
+    const stale: StaleProfileExpectation[] = [];
+    const malformed: MalformedProfileExpectation[] = [];
+    for (const row of result.rows.slice(0, MAX_SCANNED_EXPECTATIONS)) {
+      try {
+        const tenantId = identity(row.tenant_id, 'tenant');
+        const alias = identity(row.alias, 'alias');
+        const recorded = identity(row.generation, 'generation');
+        const revision = revisionOf(row.revision);
+        const live = presence.generationFor(tenantId, alias);
+        if (live === undefined || live === recorded) continue;
+        stale.push({
+          tenant_id: tenantId,
+          alias,
+          revision,
+          recorded_generation: recorded,
+          live_generation: live,
+        });
+      } catch (error) {
+        malformed.push({
+          tenant_id: label(row.tenant_id),
+          alias: label(row.alias),
+          reason: error instanceof Error ? error.message : 'unreadable profile runtime expectation',
+        });
+      }
+    }
+    return { stale, malformed, truncated: result.rows.length > MAX_SCANNED_EXPECTATIONS };
+  });
+}
 
 const profileDocumentsFunctionBody = `
 DECLARE

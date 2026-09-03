@@ -7,14 +7,18 @@ import {
   MAX_DOCUMENT_BYTES, type AgentDocument, type DocumentKind, type HarnessKind, type RuntimeFacts,
   documentForKind, resolveAgentDocuments, verifyReadableDocument, verifyWritablePath
 } from './agent-documents.js';
+import {
+  admitGovernanceWrite, isRejectedWrite, SHA256_PATTERN, type GovernanceWritePrecondition,
+} from './agent-documents/write-admission.js';
+import { CONTEXT_APPLY_POLICY, type ContextApplyState } from './context-apply-policy.js';
+import type { TerminalAuditEntry } from '../terminal/audit.js';
+import { UNATTRIBUTED_OPERATOR } from '../terminal/types.js';
+
+export type { TerminalAuditEntry, GovernanceWritePrecondition };
 
 /**
- * `GET /v3/console/tenants/:tenantId/agents/:alias/documents` — inventory of governance files
- * associated with the alias inside the specified tenant.
- *
- * Each entry includes `facts_source` ('measured', 'registry', 'database') indicating the source
- * of the environment information. Documents are only marked editable when their source is
- * 'measured'.
+ * Governance files of an alias: the inventory says where each one lives and whether its
+ * `facts_source` is a measurement; nothing is readable or writable while it is not.
  */
 
 export type FactsSource = 'measured' | 'registry' | 'database';
@@ -31,10 +35,6 @@ export interface GovernanceDocumentContent {
   /** SHA-256 fingerprint of the actual bytes, not of the visible prefix if it comes truncated. */
   readonly sha: string;
 }
-
-export type GovernanceWritePrecondition =
-  | { readonly state: 'present'; readonly sha256: string }
-  | { readonly state: 'absent' };
 
 export type GovernanceBatchWrite =
   | {
@@ -116,10 +116,8 @@ export interface AgentFactsProbe {
   ): Promise<GovernanceDocumentContent | GovernanceReadError>;
 
   /**
-   * List the alias's memory directory (WITHOUT reading content, metadata only). The root must be valid for
-   * this harness (e.g.: ~/.claude/projects).
-   *
-   * Security: NEVER list outside the allowed memory root.
+   * List the alias's memory directory (metadata only, never content). The root must be valid for this
+   * harness (e.g.: ~/.claude/projects), and NEVER lists outside the allowed memory root.
    */
   listMemoryDirectory(
     memoryRoot: string,
@@ -133,12 +131,11 @@ export interface AgentFactsProbe {
    * Write a governance document of the alias. OPTIONAL: a probe that can only read does not bring this, and
    * PUT answers 503 instead of pretending it saved.
    *
-   * `expectedSha` is the fingerprint of what was opened: if the file changed while being edited, a conflict
-   * is returned and it is NOT written. What is lost in a "last writer wins" is prose that exists nowhere else.
+   * `expectedSha` is the fingerprint of what was opened: a file changed while being edited comes back
+   * as a conflict and is NOT written; a "last writer wins" loses prose that exists nowhere else.
    *
-   * The same safeguards as read, and one more: `verifyWritablePath` on both the requested and the resolved
-   * path. A `CLAUDE.md` that is a link to `~/.claude/.credentials.json` passes any check made on the name
-   * alone.
+   * The same safeguards as read plus `verifyWritablePath` on the requested AND the resolved path: a
+   * `CLAUDE.md` linked to `~/.claude/.credentials.json` passes any check made on the name alone.
    */
   writeGovernanceDocument?(
     path: string,
@@ -158,11 +155,19 @@ export interface AgentFactsProbe {
   ): Promise<readonly GovernanceBatchWriteAck[] | GovernanceReadError | { error: 'conflict'; reason: string }>;
 }
 
-interface AgentDocumentsDeps {
+/** Human behind the request, in the shape the PTY plane resolves it (`terminal/authority.ts`). */
+export interface DocumentOperator {
+  readonly operator_id: string;
+  readonly attributed: boolean;
+}
+
+export interface AgentDocumentsDeps {
   /** Authenticates the principal and requires the role permission for the operation. */
   authorize(
     request: unknown, permission: 'read' | 'control'
   ): Promise<{ tenant_id: string; alias: string }>;
+  /** Not wired means nobody is named, and that fails closed on every mutating route. */
+  resolveOperator?: (request: unknown) => DocumentOperator | Promise<DocumentOperator>;
   /** Exact lookup and authorization; never resolves by alias alone. */
   authorizeTarget(
     actor: { tenant_id: string; alias: string },
@@ -178,6 +183,54 @@ interface AgentDocumentsDeps {
     enabled?: boolean;
   } | undefined>;
   probe: AgentFactsProbe;
+  recordAudit: (entry: TerminalAuditEntry) => Promise<void>;
+}
+
+type AgentDocumentActor = Awaited<ReturnType<AgentDocumentsDeps['authorize']>>;
+type AgentDocumentTarget = NonNullable<Awaited<ReturnType<AgentDocumentsDeps['authorizeTarget']>>>;
+
+const ESTADO_TRAS_ESCRIBIR = 'written_pending_session' satisfies ContextApplyState;
+
+type AuditChannel = 'read' | 'write';
+
+/** A row can be written before the registry entry is resolved, hence the optional columns. */
+interface AuditTarget {
+  readonly tenant_id: string;
+  readonly alias: string;
+  readonly harness_id?: string | null;
+  readonly home_directory?: string | null;
+}
+
+const HECHOS_SIN_MEDIR = {
+  facts_source: null, path: null, sha_before: null, sha_after: null, bytes: null,
+} as const;
+
+const SIN_PERSONA: DocumentOperator = {
+  operator_id: UNATTRIBUTED_OPERATOR, attributed: false,
+};
+
+function motivoDetallado(cuerpo: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  return {
+    ...(typeof cuerpo.conflict === 'string' ? { conflict: cuerpo.conflict } : {}),
+    ...(typeof cuerpo.reason === 'string' ? { reason: cuerpo.reason } : {}),
+  };
+}
+
+function documentAuditMetadata(
+  actor: AgentDocumentActor,
+  target: AuditTarget,
+  facts: RuntimeFacts | undefined,
+  extra: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  return {
+    operator_id: `${actor.tenant_id}:${actor.alias}`,
+    target_tenant: target.tenant_id,
+    target_alias: target.alias,
+    // The MEASURED facts resolved the path; the registry columns only fill in when none exist.
+    harness_id: facts === undefined ? target.harness_id ?? null : facts.harness,
+    home_directory: facts === undefined ? target.home_directory ?? null : facts.home,
+    ...extra,
+  };
 }
 
 interface DocumentRow extends AgentDocument {
@@ -258,7 +311,6 @@ function buildDocumentsResponse(
 }
 
 export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDocumentsDeps): void {
-  // Read and write routes for governed content (:kind/content).
   const KINDS: readonly DocumentKind[] = [
     'directive', 'tools', 'prompts', 'mcp', 'identity', 'human',
     'memory', 'heartbeat', 'configuration',
@@ -298,15 +350,30 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
 
   interface BaseParams { tenantId?: string; alias: string }
   type ContentParams = BaseParams & { kind: string };
-  type Target = NonNullable<Awaited<ReturnType<AgentDocumentsDeps['authorizeTarget']>>>;
-  const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+  type Target = AgentDocumentTarget;
+
+  async function filaDenegada(
+    actor: AgentDocumentActor,
+    target: AuditTarget,
+    channel: AuditChannel,
+    facts: RuntimeFacts | undefined,
+    extra: Readonly<Record<string, unknown>>,
+  ): Promise<void> {
+    await deps.recordAudit({
+      tenant_id: actor.tenant_id,
+      actor_alias: actor.alias,
+      action: 'agent_document.denied',
+      decision: 'deny',
+      metadata: documentAuditMetadata(actor, target, facts, { channel, ...extra }),
+    });
+  }
 
   async function destino(
     request: FastifyRequest<{ Params: BaseParams | ContentParams }>,
     reply: FastifyReply,
     permission: 'read' | 'control',
     legacySameTenant: boolean,
-  ): Promise<Target | undefined> {
+  ): Promise<{ actor: AgentDocumentActor; target: Target } | undefined> {
     const aliasResult = AliasSchema.safeParse(request.params.alias);
     if (!aliasResult.success) {
       await reply.code(400).send({ error: 'invalid_input', message: 'alias is invalid' });
@@ -323,18 +390,27 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
       actor, tenantResult.data, aliasResult.data, permission, legacySameTenant,
     );
     if (target?.tenant_id !== tenantResult.data || target.alias !== aliasResult.data) {
+      // The alias-enumeration probe leaves a row too: an invisible target is a denial by state.
+      const kind = 'kind' in request.params && kindValido(request.params.kind)
+        ? request.params.kind : null;
+      await filaDenegada(
+        actor, { tenant_id: tenantResult.data, alias: aliasResult.data },
+        permission === 'control' ? 'write' : 'read', undefined,
+        { ...HECHOS_SIN_MEDIR, kind, reason: 'not_found' },
+      );
       await reply.code(404).send({ error: 'not_found', message: 'agent not found or not visible' });
       return undefined;
     }
     if (legacySameTenant) reply.header('Deprecation', 'true');
-    return target;
+    return { actor, target };
   }
 
   async function mapa(
     request: FastifyRequest<{ Params: BaseParams }>, reply: FastifyReply, legacySameTenant: boolean,
   ) {
-    const target = await destino(request, reply, 'read', legacySameTenant);
-    if (!target) return undefined;
+    const resuelto = await destino(request, reply, 'read', legacySameTenant);
+    if (!resuelto) return undefined;
+    const { target } = resuelto;
     const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
     if (medido) {
       return buildDocumentsResponse(target.tenant_id, target.alias, medido.facts, medido.source);
@@ -355,33 +431,47 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         return reply.code(400).send({ error: 'invalid_input', message: 'ese tipo de documento no existe' });
       }
 
-      const target = await destino(request, reply, 'read', legacySameTenant);
-      if (!target) return undefined;
+      const resuelto = await destino(request, reply, 'read', legacySameTenant);
+      if (!resuelto) return undefined;
+      const { actor, target } = resuelto;
+
+      // The read channel denies too: refusing `.claude.json` without a row leaves a sweep untraced.
+      const hechos: Record<string, unknown> = { ...HECHOS_SIN_MEDIR, kind };
+      let medidos: RuntimeFacts | undefined = undefined;
+      const denegar = async (
+        status: number, cuerpo: Readonly<Record<string, unknown>>,
+      ): Promise<FastifyReply> => {
+        await filaDenegada(actor, target, 'read', medidos, { ...hechos, reason: cuerpo.error });
+        return reply.code(status).send(cuerpo);
+      };
 
       const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
+      hechos.facts_source = medido?.source ?? null;
       if (medido?.source !== 'measured') {
         /*
          * 409 and not 404. `factsFor` returning a row does not prove measurement: `registry` and
          * `database` are still unaccredited configuration. Only `measured` allows resolving and
          * opening a path; otherwise we could serve ANOTHER harness's file.
          */
-        return reply.code(409).send({
+        return denegar(409, {
           error: 'no_medido',
           message: 'los hechos de este alias no están medidos dentro de su contenedor, así que no '
             + 'se sabe qué fichero es éste. No es que el fichero no exista: es que no se ha mirado.',
         });
       }
+      medidos = medido.facts;
 
       const doc = documentForKind(medido.facts, kind);
       if (!doc) {
-        return reply.code(404).send({ error: 'not_found', message: 'ese alias no tiene ese documento' });
+        return denegar(404, { error: 'not_found', message: 'ese alias no tiene ese documento' });
       }
+      hechos.path = doc.path;
 
       // The inventory and the endpoint share this gate. A sensitive configuration row or a
       // directory does not become readable just because someone hand-builds the URL.
       const readable = verifyReadableDocument(medido.facts, doc);
       if (!readable.allowed) {
-        return reply.code(403).send({
+        return denegar(403, {
           error: 'not_readable',
           message: readable.reason ?? doc.reason ?? 'el contenido de este elemento no se sirve por esta vía',
         });
@@ -391,9 +481,9 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         doc.path, medido.facts, target.tenant_id, target.alias,
       );
       if (esError(leido)) {
-        // Absence is an editable state with explicit precondition, not a transport error. This
-        // way creation is never confused with a replacement whose file disappeared mid-save: GET
-        // observes `sha: null`; PUT requires `create_if_absent: true`.
+        // Absence is an editable state with an explicit precondition, not a transport error: GET
+        // observes `sha: null` and PUT demands `create_if_absent: true`, so a creation is never
+        // confused with a replacement whose file disappeared mid-save.
         if (leido.error === 'not_found') {
           return {
             tenant_id: target.tenant_id,
@@ -411,15 +501,30 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
             truncated: false,
           };
         }
-        return reply.code(codigoDe(leido.error)).send({ error: leido.error, message: leido.reason });
+        return denegar(codigoDe(leido.error), { error: leido.error, message: leido.reason });
       }
 
       if (!contenidoGobernadoValido(leido)) {
-        return reply.code(502).send({
+        return denegar(502, {
           error: 'invalid_probe_response',
           message: 'la sonda respondió, pero no acreditó un contenido completo y coherente',
         });
       }
+
+      await deps.recordAudit({
+        tenant_id: actor.tenant_id,
+        actor_alias: actor.alias,
+        action: 'agent_document.read',
+        decision: 'allow',
+        metadata: documentAuditMetadata(actor, target, medido.facts, {
+          facts_source: medido.source,
+          kind,
+          path: doc.path,
+          sha_before: leido.sha,
+          sha_after: null,
+          bytes: leido.bytes,
+        }),
+      });
 
       return {
         tenant_id: target.tenant_id,
@@ -451,70 +556,82 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         return reply.code(400).send({ error: 'invalid_input', message: 'ese tipo de documento no existe' });
       }
 
-      const target = await destino(request, reply, 'control', legacySameTenant);
-      if (!target) return undefined;
+      const resuelto = await destino(request, reply, 'control', legacySameTenant);
+      if (!resuelto) return undefined;
+      const { actor, target } = resuelto;
+
+      const hechos: Record<string, unknown> = { ...HECHOS_SIN_MEDIR, kind };
+      let medidos: RuntimeFacts | undefined = undefined;
+      const denegar = async (
+        status: number, cuerpo: Readonly<Record<string, unknown>>,
+      ): Promise<FastifyReply> => {
+        await filaDenegada(actor, target, 'write', medidos, {
+          ...hechos, reason: cuerpo.error, ...motivoDetallado(cuerpo),
+        });
+        return reply.code(status).send(cuerpo);
+      };
+
+      // Same act of authority as opening a shell there, so the same gate: no person, no write.
+      const operador = deps.resolveOperator === undefined
+        ? SIN_PERSONA : await deps.resolveOperator(request);
+      hechos.operator = operador.operator_id;
+      hechos.attributed = operador.attributed;
+      if (!operador.attributed) {
+        return denegar(403, {
+          error: 'forbidden',
+          reason: 'writable_requires_attribution',
+          message: 'escribir la gobernanza de un alias exige una persona con nombre; esta sesión '
+            + 'no la tiene y su fila de auditoría no acusaría a nadie',
+        });
+      }
+
       if (target.enabled !== true) {
-        return reply.code(409).send({
+        return denegar(409, {
           error: 'agent_disabled',
           message: 'el alias está apagado; no se escribe contexto en un runtime que no debe estar activo',
         });
       }
 
-      const cuerpo = request.body;
-      if (cuerpo === null || typeof cuerpo !== 'object' || Array.isArray(cuerpo)) {
-        return reply.code(400).send({ error: 'invalid_input', message: 'el cuerpo tiene que ser un objeto' });
+      const admitido = admitGovernanceWrite(request.body);
+      if (isRejectedWrite(admitido)) {
+        return reply.code(400).send(admitido);
       }
-      const source = cuerpo as Record<string, unknown>;
-      const allowedFields = new Set(['content', 'expected_sha', 'create_if_absent']);
-      if (Object.keys(source).some((field) => !allowedFields.has(field))) {
-        return reply.code(400).send({ error: 'invalid_input', message: 'el cuerpo trae campos desconocidos' });
-      }
-      const contenido = source.content;
-      if (typeof contenido !== 'string') {
-        return reply.code(400).send({ error: 'invalid_input', message: '`content` tiene que ser texto' });
-      }
+      const { content: contenido, precondition } = admitido;
+      hechos.operator_reason = admitido.reason;
+      hechos.bytes = Buffer.byteLength(contenido, 'utf8');
       if (Buffer.byteLength(contenido, 'utf8') > MAX_DOCUMENT_BYTES) {
-        return reply.code(413).send({ error: 'too_large', message: 'el contenido se pasa del tope de 256 KiB' });
-      }
-
-      const expectedSha = source.expected_sha;
-      const createIfAbsent = source.create_if_absent;
-      let precondition: GovernanceWritePrecondition;
-      if (createIfAbsent === true && expectedSha === undefined) {
-        precondition = { state: 'absent' };
-      } else if ((createIfAbsent === undefined || createIfAbsent === false)
-        && typeof expectedSha === 'string' && SHA256_PATTERN.test(expectedSha)) {
-        precondition = { state: 'present', sha256: expectedSha };
-      } else {
-        return reply.code(400).send({
-          error: 'invalid_input',
-          message: 'para reemplazar hace falta `expected_sha`; para crear, `create_if_absent: true` sin SHA',
-        });
+        return denegar(413, { error: 'too_large', message: 'el contenido se pasa del tope de 256 KiB' });
       }
 
       const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
+      hechos.facts_source = medido?.source ?? null;
       if (medido?.source !== 'measured') {
-        return reply.code(409).send({
+        return denegar(409, {
           error: 'no_medido',
           message: 'los hechos de este alias no están medidos dentro de su contenedor. Escribir sin '
             + 'saber qué fichero es sería escribir en el fichero de otro arnés.',
         });
       }
+      medidos = medido.facts;
 
-      // The write gate, BEFORE checking whether there is a channel: a forbidden path is rejected
-      // regardless of whether the channel exists, and even if it does not we want the reason to
-      // be the real one.
+      // The write gate, BEFORE checking for a channel: a forbidden path is rejected either way,
+      // and the reason the caller gets is the real one.
       const doc = documentForKind(medido.facts, kind);
       if (!doc) {
-        return reply.code(404).send({ error: 'not_found', message: 'ese alias no tiene ese documento' });
+        return denegar(404, { error: 'not_found', message: 'ese alias no tiene ese documento' });
       }
+      hechos.path = doc.path;
       const veredicto = verifyWritablePath(medido.facts, kind, doc.path);
       if (!veredicto.allowed) {
-        return reply.code(403).send({ error: 'forbidden', message: veredicto.reason ?? 'no se puede escribir ahí' });
+        return denegar(403, { error: 'forbidden', message: veredicto.reason ?? 'no se puede escribir ahí' });
       }
 
+      // NO harness budget gate here: `project_doc_max_bytes` caps the AGGREGATE of the
+      // WORKSPACE-scope manuals (as `agent-directive.routes.ts` applies it), and the only
+      // document this channel writes for codex is the user-scope `$CODEX_HOME/AGENTS.md`, which
+      // the process applies whole. Capping it 413s a legitimate write with a false message.
       if (deps.probe.writeGovernanceDocument === undefined) {
-        return reply.code(503).send({
+        return denegar(503, {
           error: 'unavailable',
           message: 'este gateway sabe leer los ficheros del alias pero no escribirlos: su sonda no '
             + 'tiene canal de escritura hasta el contenedor.',
@@ -522,13 +639,10 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
       }
 
       /*
-       * FRESH PREFLIGHT. The browser's SHA alone does not tell whether the content it saw was a truncated
-       * prefix. Re-reading before writing serves two distinct guarantees: create demands that the file is
-       * still absent, and replace demands a FULL read whose fingerprint is exactly the one edited.
-       *
-       * The pty-agent CASes again when opening the descriptor; this read does not replace it. It is the gate
-       * that prevents a client that received 256 KiB of a larger file from using its real SHA to replace the
-       * whole file with that prefix.
+       * FRESH PREFLIGHT. The browser's SHA alone does not tell whether what it saw was a truncated prefix:
+       * create demands the file still absent, and replace demands a FULL read whose fingerprint is the one
+       * edited. The pty-agent CASes again on the descriptor; this does not replace that, it is the gate that
+       * stops a client holding 256 KiB of a larger file from replacing the whole file with that prefix.
        */
       const actual = await deps.probe.readGovernanceDocument(
         doc.path, medido.facts, target.tenant_id, target.alias,
@@ -536,31 +650,33 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
       let contenidoActual: string | undefined;
       if (precondition.state === 'absent') {
         if (!esError(actual)) {
-          return reply.code(409).send({
+          hechos.sha_before = actual.sha;
+          return denegar(409, {
             error: 'conflict', message: 'el fichero ya existe; hay que abrirlo antes de reemplazarlo',
           });
         }
         if (actual.error !== 'not_found') {
-          return reply.code(codigoDe(actual.error)).send({ error: actual.error, message: actual.reason });
+          return denegar(codigoDe(actual.error), { error: actual.error, message: actual.reason });
         }
         contenidoActual = undefined;
       } else {
         if (esError(actual)) {
           if (actual.error === 'not_found') {
-            return reply.code(409).send({
+            return denegar(409, {
               error: 'conflict', message: 'el fichero desapareció desde que se abrió; no se recreó implícitamente',
             });
           }
-          return reply.code(codigoDe(actual.error)).send({ error: actual.error, message: actual.reason });
+          return denegar(codigoDe(actual.error), { error: actual.error, message: actual.reason });
         }
+        hechos.sha_before = actual.sha;
         if (actual.truncated) {
-          return reply.code(409).send({
+          return denegar(409, {
             error: 'truncated_source',
             message: 'la lectura está recortada; un prefijo nunca se puede usar para reemplazar el fichero completo',
           });
         }
         if (actual.sha !== precondition.sha256) {
-          return reply.code(409).send({
+          return denegar(409, {
             error: 'conflict', message: 'el fichero cambió desde que se abrió; hay que releerlo',
           });
         }
@@ -570,7 +686,7 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
       if (kind === 'directive') {
         const managedContext = verifyManagedContextEdit(contenidoActual, contenido);
         if (!managedContext.allowed) {
-          return reply.code(409).send({
+          return denegar(409, {
             error: 'managed_context_conflict',
             conflict: managedContext.conflict,
             message: MANAGED_CONTEXT_CONFLICT_MESSAGES[managedContext.conflict],
@@ -583,26 +699,39 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
       );
       if ('error' in escrito) {
         if (escrito.error === 'conflict') {
-          return reply.code(409).send({ error: 'conflict', message: escrito.reason });
+          return denegar(409, { error: 'conflict', message: escrito.reason });
         }
-        return reply.code(codigoDe(escrito.error)).send({ error: escrito.error, message: escrito.reason });
+        return denegar(codigoDe(escrito.error), { error: escrito.error, message: escrito.reason });
       }
       const raw = Buffer.from(contenido, 'utf8');
       const expectedAckSha = createHash('sha256').update(raw).digest('hex');
       if (escrito.sha !== expectedAckSha || escrito.bytes !== raw.byteLength) {
-        return reply.code(502).send({
+        return denegar(502, {
           error: 'invalid_ack',
           message: 'la sonda respondió, pero su ACK no acredita los bytes solicitados',
         });
       }
-      return {
+
+      hechos.sha_after = escrito.sha;
+      hechos.bytes = escrito.bytes;
+      // AFTER the disk mutation: an insert that throws answers 500 over a file already rewritten.
+      await deps.recordAudit({
+        tenant_id: actor.tenant_id,
+        actor_alias: actor.alias,
+        action: 'agent_document.write',
+        decision: 'allow',
+        metadata: documentAuditMetadata(actor, target, medido.facts, hechos),
+      });
+
+      return reply.code(202).send({
         ok: true,
-        state: 'applied',
-        evidence: 'probe_write_ack',
+        state: ESTADO_TRAS_ESCRIBIR,
+        evidence: CONTEXT_APPLY_POLICY[ESTADO_TRAS_ESCRIBIR].evidence,
+        message: CONTEXT_APPLY_POLICY[ESTADO_TRAS_ESCRIBIR].message,
         path: doc.path,
         sha: escrito.sha,
         bytes: escrito.bytes,
-      };
+      });
   }
 
   app.get<{ Params: BaseParams }>(

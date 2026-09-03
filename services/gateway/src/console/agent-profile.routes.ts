@@ -3,7 +3,7 @@ import {
   AGENT_PROFILE_LIMITS, AgentProfileError, AliasSchema, TenantSchema, agentProfileUnits,
   clampToRoleBriefLimit, ficherosDelArnes, nombresDelArnes, normalizeAgentProfile,
   measureStrictestUnits,
-  type AgentProfile, type ContextoDeAlias, type FicheroGenerado
+  type AgentProfile, type ContextoDeAlias, type FicheroGenerado, type PresupuestoDeContexto
 } from '@cauce/protocol';
 
 /**
@@ -52,8 +52,8 @@ export interface AgentProfileDeps {
     tenantId: string, alias: string, contexto: ContextoDeAlias,
   ): Promise<ProfileRuntimePreflight>;
   /**
-   * Persists the exact expectation that will travel in capability-aware deliveries. It
-   * remains on-disk evidence; only a later ACK from the adapter can convert it into adoption.
+   * Persists the exact expectation that travels in capability-aware deliveries. Only the write
+   * paths call it: reading never re-registers the row, and only a later ACK converts it into adoption.
    */
   recordRuntimeExpectation?(
     tenantId: string,
@@ -144,6 +144,10 @@ export interface PreparedProfileRuntime {
 
 export interface ProfileRuntimePreflight {
   readonly harness: string;
+  /** Budget the runtime applied: the per-alias measured fact, or the harness default. */
+  readonly topes?: PresupuestoDeContexto;
+  /** Live bytes the runtime read, so the preview never composes against an imagined file. */
+  readonly existentes?: ReadonlyMap<string, string>;
   materialize(revision: number): PreparedProfileRuntime;
 }
 
@@ -228,6 +232,14 @@ function esTopeSuperado(error: unknown): error is Error & { fichero: string; med
     && 'fichero' in error && 'medido' in error && 'tope' in error;
 }
 
+function topeSuperadoDe(
+  error: unknown,
+): (Error & { fichero: string; medido: number; tope: number }) | undefined {
+  if (esTopeSuperado(error)) return error;
+  const causa = error instanceof Error ? error.cause : undefined;
+  return esTopeSuperado(causa) ? causa : undefined;
+}
+
 function hasAdapterDeliveryEvidence(value: unknown): boolean {
   return value !== null && typeof value === 'object'
     && Reflect.get(value, 'evidence') === 'adapter_delivery';
@@ -296,16 +308,19 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         throw new Error('agent profile repository returned a non-canonical identity');
       }
       let prepared: PreparedProfileRuntime | undefined;
+      let preflight: ProfileRuntimePreflight | undefined;
+      let topeDelRuntime: ReturnType<typeof topeSuperadoDe>;
       let runtimeReason: string | undefined;
       if (target.enabled === true && lectura.exists && deps.prepareRuntime !== undefined) {
         try {
           if (lectura.revision === null) {
             throw new Error('an existing profile must have a durable revision');
           }
-          const preflight = await deps.prepareRuntime(tenantId, alias, contexto);
+          preflight = await deps.prepareRuntime(tenantId, alias, contexto);
           prepared = preflight.materialize(lectura.revision);
         } catch (error) {
           runtimeReason = mensajeDeError(error, 'no se pudo verificar el runtime vivo');
+          topeDelRuntime = topeSuperadoDe(error);
         }
       }
       const harness = prepared?.harness ?? contexto.hechos.arnes.harness;
@@ -313,18 +328,6 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       const revisionCoincide = lectura.revision !== null
         && lectura.applied_revision === lectura.revision;
       let adoption: ProfileRuntimeAdoptionAck | undefined;
-      if (prepared?.verification.state === 'current'
-        && lectura.revision !== null) {
-        if (deps.recordRuntimeExpectation !== undefined) {
-          try {
-            await deps.recordRuntimeExpectation(
-              tenantId, alias, lectura.revision, prepared.verification,
-            );
-          } catch (error) {
-            runtimeReason = mensajeDeError(error, 'no se pudo registrar la expectativa del runtime');
-          }
-        }
-      }
       if (prepared?.verification.state === 'current'
         && lectura.revision !== null && deps.readRuntimeAdoption !== undefined) {
         try {
@@ -376,7 +379,9 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         hechos: contexto.hechos,
         limites: AGENT_PROFILE_LIMITS,
         medida: { unidades: agentProfileUnits(contexto.perfil), tope: AGENT_PROFILE_LIMITS.total },
-        base: prepared === undefined ? 'fichero-vacio' as const : 'runtime-medido' as const
+        base: prepared === undefined && preflight?.existentes === undefined
+          ? 'fichero-vacio' as const
+          : 'runtime-medido' as const
       };
 
       if (nombres.length === 0) {
@@ -389,15 +394,15 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       }
 
       try {
-        /*
-         * `existentes` is intentionally EMPTY: the gateway does not read the container's
-         * disk. See the header — the response declares it in `base` so the screen cannot
-         * show this as "the whole file".
-         */
+        /* Without a live measurement `existentes` is empty and `base` says so on the screen. */
+        if (topeDelRuntime !== undefined) throw topeDelRuntime;
         const generados = prepared?.preview
           ?? ficherosDelArnes(
-            harness, contexto, new Map(),
-            lectura.revision === null ? {} : { revision: lectura.revision },
+            harness, contexto, preflight?.existentes ?? new Map(),
+            {
+              ...(lectura.revision === null ? {} : { revision: lectura.revision }),
+              ...(preflight?.topes === undefined ? {} : { topes: preflight.topes }),
+            },
           ).map((fichero) => ({
             nombre: fichero.nombre,
             politica: fichero.politica,
@@ -410,13 +415,14 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         };
         return respuesta;
       } catch (error) {
-        if (esTopeSuperado(error)) {
+        const tope = topeSuperadoDe(error);
+        if (tope !== undefined) {
           const cuerpo: TopeSuperado = {
             error: 'tope_del_arnes',
-            fichero: error.fichero,
-            medido: error.medido,
-            tope: error.tope,
-            message: error.message
+            fichero: tope.fichero,
+            medido: tope.medido,
+            tope: tope.tope,
+            message: tope.message
           };
           return reply.code(422).send(cuerpo);
         }

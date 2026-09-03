@@ -1,7 +1,8 @@
 import {
-  FICHEROS_OPENCLAW,
   GOVERNANCE_NEVER_SERVE_BASENAMES,
   GOVERNANCE_NEVER_SERVE_SUFFIXES,
+  TOPE_CODEX_POR_DEFECTO_BYTES,
+  harnessDocumentPaths,
   hasGovernanceSensitivePathSegment,
   parseCodexProjectDocumentConfig,
 } from '@cauce/protocol';
@@ -109,18 +110,10 @@ export function memoryRootForHarness(facts: RuntimeFacts): string | null {
   }
 }
 
-/** Closed set of PROFILE files, separate from the sensitive configuration inventory. */
+/** Closed set of PROFILE files, read from the single path table of `@cauce/protocol`. */
 export function profileDocumentPaths(facts: RuntimeFacts): readonly string[] {
   if (!facts.home.startsWith('/')) return [];
-  if (facts.harness === 'claude') return [join(claudeDir(facts), 'CLAUDE.md')];
-  if (facts.harness === 'codex') return [join(codexDir(facts), 'AGENTS.md')];
-  if (facts.harness === 'hermes') return [join(facts.home, 'AGENTS.md')];
-  if (facts.harness === 'openclaw') {
-    const workspace = facts.openclawWorkspace?.trim();
-    if (!workspace?.startsWith('/')) return [];
-    return FICHEROS_OPENCLAW.map((name) => join(workspace, name));
-  }
-  return [];
+  return harnessDocumentPaths(facts.harness, facts);
 }
 
 export interface EffectiveManualPath {
@@ -134,7 +127,7 @@ export interface EffectiveManualPath {
 }
 
 /** Value Codex applies when config.toml does not override it. */
-export const DEFAULT_CODEX_PROJECT_DOC_MAX_BYTES = 32 * 1024;
+export const DEFAULT_CODEX_PROJECT_DOC_MAX_BYTES = TOPE_CODEX_POR_DEFECTO_BYTES;
 
 export interface CodexProjectDocumentConfig {
   readonly maxBytes: number;

@@ -1,14 +1,13 @@
 import { createHash } from 'node:crypto';
 import {
-  ErrorDeTopeDelArnes, bloqueDePerfil, ficherosDelArnes, nombresDelArnes,
-  measureStrictestUnits,
-  type ContextoDeAlias,
+  ErrorDeTopeDelArnes, bloqueDePerfil, ficherosDelArnes, measureStrictestUnits, nombresDelArnes,
+  presupuestoDeContextoMedido, type ContextoDeAlias, type PresupuestoDeContexto,
 } from '@cauce/protocol';
 import type {
   AgentFactsProbe, GovernanceBatchWrite, GovernanceBatchWriteAck, GovernanceReadError,
   GovernanceWritePrecondition,
 } from './agent-documents.routes.js';
-import { profileDocumentPaths } from './agent-documents.js';
+import { measuredCodexProjectDocumentConfig, profileDocumentPaths } from './agent-documents.js';
 import type {
   FicheroDeLaVistaPrevia, PreparedProfileRuntime, ProfileRuntimeAck, ProfileRuntimePreflight,
   ProfileRuntimeDocumentEvidence,
@@ -40,6 +39,63 @@ function basename(path: string): string {
 
 function isAgentOwnedDocument(harness: string, name: string): boolean {
   return harness === 'openclaw' && (name === 'MEMORY.md' || name === 'HEARTBEAT.md');
+}
+
+function projectionError(error: unknown): ProfileRuntimeError {
+  if (error instanceof ErrorDeTopeDelArnes) {
+    const traducido = new ProfileRuntimeError('too_large', error.message);
+    traducido.cause = error;
+    return traducido;
+  }
+  return new ProfileRuntimeError(
+    'conflict', error instanceof Error ? error.message : 'la topología nativa no es válida',
+  );
+}
+
+function project(
+  harness: string, contexto: ContextoDeAlias, existing: ReadonlyMap<string, string>, revision: number,
+  topes: PresupuestoDeContexto | undefined,
+): ReturnType<typeof ficherosDelArnes> {
+  try {
+    return ficherosDelArnes(harness, contexto, existing, {
+      revision, ...(topes === undefined ? {} : { topes }),
+    });
+  } catch (error) {
+    throw projectionError(error);
+  }
+}
+
+const RENGLON_DE_DUENO = /^\s*<!--\s*alias:\s*([^\s>]+)\s*-->/u;
+
+function ownerOf(block: string): string | undefined {
+  return RENGLON_DE_DUENO.exec(block)?.[1];
+}
+
+/** Mirrors the generator: only a block it declined to rewrite can belong to another alias. */
+function assertOwnedBlocks(
+  generated: ReturnType<typeof ficherosDelArnes>,
+  existing: ReadonlyMap<string, string>,
+  perfil: ContextoDeAlias['perfil'],
+): void {
+  const owner = `${perfil.tenant_id}/${perfil.alias}`;
+  for (const file of generated) {
+    if (file.politica !== 'bloque-gestionado' || file.escribir) continue;
+    const before = existing.get(file.nombre);
+    const previousBlock = before === undefined ? undefined : bloqueDePerfil(before);
+    if (previousBlock === undefined || ownerOf(previousBlock) === owner) continue;
+    throw new ProfileRuntimeError(
+      'conflict', `${file.nombre} contiene un bloque gestionado de otro alias`,
+    );
+  }
+}
+
+function assertProjectable(
+  harness: string, contexto: ContextoDeAlias, existing: ReadonlyMap<string, string>,
+  topes: PresupuestoDeContexto | undefined,
+): void {
+  assertOwnedBlocks(
+    project(harness, contexto, existing, Number.MAX_SAFE_INTEGER, topes), existing, contexto.perfil,
+  );
 }
 
 function sameRuntimeIdentity(
@@ -115,10 +171,9 @@ export async function prepareAgentProfileRuntime(
       );
     }
     /*
-     * MEMORY/HEARTBEAT belong to the agent and may grow beyond the transport cap. To preserve
-     * them we do not need to bring their bytes: attesting presence, SHA and size is enough. The
-     * name enters `existing` with an empty marker so the pure generator knows it exists and
-     * emits `only-if-missing`; that truncated prefix is never composed nor written back.
+     * MEMORY/HEARTBEAT belong to the agent and may grow beyond the transport cap: attesting
+     * presence, SHA and size is enough to preserve them. The name enters `existing` with an empty
+     * marker so the generator emits `only-if-missing`; that prefix is never composed nor written.
      */
     existing.set(name, read.truncated ? '' : read.text);
     observed.set(name, { sha: read.sha, bytes: read.bytes });
@@ -136,36 +191,17 @@ export async function prepareAgentProfileRuntime(
       },
     },
   };
+  const topes = presupuestoDeContextoMedido(harness, {
+    codexProjectDocMaxBytes: measuredCodexProjectDocumentConfig(measured.facts)?.maxBytes,
+  });
   const generation = typeof measured.facts.generation === 'string'
     && measured.facts.generation.length > 0
     ? measured.facts.generation
     : null;
   let consumed = false;
   const materialize = (revision: number): PreparedProfileRuntime => {
-    let generated: ReturnType<typeof ficherosDelArnes>;
-    try {
-      generated = ficherosDelArnes(harness, runtimeContext, existing, { revision });
-    } catch (error) {
-      if (error instanceof ErrorDeTopeDelArnes) {
-        throw new ProfileRuntimeError('too_large', error.message);
-      }
-      throw new ProfileRuntimeError(
-        'conflict', error instanceof Error ? error.message : 'la topología nativa no es válida',
-      );
-    }
-
-    const owner = `<!-- alias: ${tenantId}/${alias} -->`;
-    for (const file of generated) {
-      const before = existing.get(file.nombre);
-      const previousBlock = before === undefined ? undefined : bloqueDePerfil(before);
-      const previousOwner = previousBlock?.trimStart().split(/\r?\n/u, 1)[0];
-      if (file.politica === 'bloque-gestionado' && !file.escribir && before !== undefined
-        && previousBlock !== undefined && previousOwner !== owner) {
-        throw new ProfileRuntimeError(
-          'conflict', `${file.nombre} contiene un bloque gestionado de otro alias`,
-        );
-      }
-    }
+    const generated = project(harness, runtimeContext, existing, revision, topes);
+    assertOwnedBlocks(generated, existing, runtimeContext.perfil);
 
     const writes: GovernanceBatchWrite[] = [];
     const stateByName = new Map<string, ProfileRuntimeAck['state']>();
@@ -308,6 +344,8 @@ export async function prepareAgentProfileRuntime(
     };
   };
 
-  materialize(Number.MAX_SAFE_INTEGER);
-  return { harness, materialize };
+  assertProjectable(harness, runtimeContext, existing, topes);
+  return {
+    harness, ...(topes === undefined ? {} : { topes }), existentes: existing, materialize,
+  };
 }

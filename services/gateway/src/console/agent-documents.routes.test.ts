@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -7,8 +10,11 @@ import {
 } from '@cauce/protocol';
 import type { RuntimeFacts } from './agent-documents.js';
 import {
-  type AgentFactsProbe, type DocumentsResponse, type FactsSource, registerAgentDocumentRoutes
+  type AgentFactsProbe, type DocumentsResponse, type FactsSource, registerAgentDocumentRoutes,
+  type TerminalAuditEntry
 } from './agent-documents.routes.js';
+import { DOCUMENT_REASON_MAX, DOCUMENT_REASON_MIN } from './agent-documents/write-admission.js';
+import { CONTEXT_APPLY_POLICY } from './context-apply-policy.js';
 import { hechosDelRegistro } from '../terminal/hechos-del-registro.js';
 import { AgentRegistry, parseAgentPresence } from '../terminal/registry.js';
 
@@ -19,6 +25,8 @@ import { AgentRegistry, parseAgentPresence } from '../terminal/registry.js';
  */
 
 const ACTOR = { tenant_id: 'Steven', alias: 'zeus' };
+const OPERADOR = { operator_id: 'steven@elenxos', attributed: true };
+const MOTIVO = 'reviso el manual del sitio antes de la ola de trabajo';
 
 function sha(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
@@ -53,10 +61,14 @@ function probe(entradas: Record<string, { facts: RuntimeFacts; source: FactsSour
   };
 }
 
+const auditoria: TerminalAuditEntry[] = [];
+
 function servidor(deps: Partial<Parameters<typeof registerAgentDocumentRoutes>[1]> = {}) {
   const app = Fastify();
   registerAgentDocumentRoutes(app, {
     authorize: async () => ACTOR,
+    resolveOperator: () => OPERADOR,
+    recordAudit: async (entry) => { auditoria.push(entry); },
     authorizeTarget: async (_actor, tenantId, alias) => ({
       tenant_id: tenantId, alias, harness_id: null, home_directory: null, enabled: true,
     }),
@@ -75,7 +87,7 @@ function rutaContenido(tenantId: string, alias: string, kind = 'directive'): str
 }
 
 let vivo: ReturnType<typeof servidor> | undefined;
-afterEach(async () => { await vivo?.close(); vivo = undefined; });
+afterEach(async () => { await vivo?.close(); vivo = undefined; auditoria.length = 0; });
 
 describe('GET tenant-qualified del mapa de documentos', () => {
   it('con hechos MEDIDOS devuelve rutas editables', async () => {
@@ -288,7 +300,7 @@ describe('contenido y escritura tenant-qualified', () => {
 
       const res = await vivo.inject({
         method: 'PUT', url: rutaContenido('Miguel', 'kant'),
-        payload: { content: 'nuevo', create_if_absent: true },
+        payload: { content: 'nuevo', create_if_absent: true, reason: MOTIVO },
       });
 
       expect(res.statusCode).toBe(409);
@@ -361,7 +373,7 @@ describe('contenido y escritura tenant-qualified', () => {
 
     const put = await vivo.inject({
       method: 'PUT', url: rutaContenido('Miguel', 'kant', 'identity'),
-      payload: { content: 'nuevo', expected_sha: sha('# identidad\n') },
+      payload: { content: 'nuevo', expected_sha: sha('# identidad\n'), reason: MOTIVO },
     });
     expect(put.statusCode).toBe(403);
     expect(writeGovernanceDocument).not.toHaveBeenCalled();
@@ -433,7 +445,7 @@ describe('contenido y escritura tenant-qualified', () => {
 
     const res = await vivo.inject({
       method: 'PUT', url: rutaContenido('Miguel', 'kant'),
-      payload: { content: '# nuevo\n', expected_sha: 'a'.repeat(64) },
+      payload: { content: '# nuevo\n', expected_sha: 'a'.repeat(64), reason: MOTIVO },
     });
 
     expect(res.statusCode).toBe(503);
@@ -463,15 +475,16 @@ describe('contenido y escritura tenant-qualified', () => {
     const res = await vivo.inject({
       method: 'PUT',
       url: rutaContenido('Miguel', 'kant'),
-      payload: { content: nuevo, expected_sha: sha(anterior) },
+      payload: { content: nuevo, expected_sha: sha(anterior), reason: MOTIVO },
     });
 
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(202);
     expect(permiso).toBe('control');
     expect(res.json()).toEqual({
       ok: true,
-      state: 'applied',
+      state: 'written_pending_session',
       evidence: 'probe_write_ack',
+      message: CONTEXT_APPLY_POLICY.written_pending_session.message,
       path: '/home/dev/.claude/CLAUDE.md',
       sha: sha(nuevo),
       bytes: 7,
@@ -505,12 +518,12 @@ describe('contenido y escritura tenant-qualified', () => {
 
     const res = await vivo.inject({
       method: 'PUT', url: rutaContenido('Miguel', 'kant'),
-      payload: { content: nuevo, expected_sha: sha(MANAGED_DIRECTIVE) },
+      payload: { content: nuevo, expected_sha: sha(MANAGED_DIRECTIVE), reason: MOTIVO },
     });
 
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(202);
     expect(res.json()).toMatchObject({
-      ok: true, evidence: 'probe_write_ack', sha: sha(nuevo),
+      ok: true, state: 'written_pending_session', evidence: 'probe_write_ack', sha: sha(nuevo),
     });
     expect(writeGovernanceDocument).toHaveBeenCalledWith(
       '/home/dev/.claude/CLAUDE.md', nuevo,
@@ -564,7 +577,7 @@ describe('contenido y escritura tenant-qualified', () => {
 
     const res = await vivo.inject({
       method: 'PUT', url: rutaContenido('Miguel', 'kant'),
-      payload: { content: nuevo, expected_sha: sha(MANAGED_DIRECTIVE) },
+      payload: { content: nuevo, expected_sha: sha(MANAGED_DIRECTIVE), reason: MOTIVO },
     });
 
     expect(res.statusCode).toBe(409);
@@ -589,7 +602,7 @@ describe('contenido y escritura tenant-qualified', () => {
 
     const res = await vivo.inject({
       method: 'PUT', url: rutaContenido('Miguel', 'kant'),
-      payload: { content: nuevo, create_if_absent: true },
+      payload: { content: nuevo, create_if_absent: true, reason: MOTIVO },
     });
 
     expect(res.statusCode).toBe(409);
@@ -615,7 +628,7 @@ describe('contenido y escritura tenant-qualified', () => {
 
     const res = await vivo.inject({
       method: 'PUT', url: rutaContenido('Miguel', 'kant'),
-      payload: { content: '# nuevo\n', expected_sha: sha('# versión abierta\n') },
+      payload: { content: '# nuevo\n', expected_sha: sha('# versión abierta\n'), reason: MOTIVO },
     });
 
     expect(res.statusCode).toBe(409);
@@ -635,10 +648,10 @@ describe('contenido y escritura tenant-qualified', () => {
 
     const res = await vivo.inject({
       method: 'PUT', url: rutaContenido('Miguel', 'kant'),
-      payload: { content: '# primero', create_if_absent: true },
+      payload: { content: '# primero', create_if_absent: true, reason: MOTIVO },
     });
 
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(202);
     expect(writeGovernanceDocument).toHaveBeenCalledWith(
       '/home/dev/.claude/CLAUDE.md', '# primero', { state: 'absent' }, FACTS, 'Miguel', 'kant',
     );
@@ -659,7 +672,7 @@ describe('contenido y escritura tenant-qualified', () => {
 
     const res = await vivo.inject({
       method: 'PUT', url: rutaContenido('Miguel', 'kant'),
-      payload: { content: 'nuevo', expected_sha: 'c'.repeat(64) },
+      payload: { content: 'nuevo', expected_sha: 'c'.repeat(64), reason: MOTIVO },
     });
 
     expect(res.statusCode).toBe(409);
@@ -682,7 +695,7 @@ describe('contenido y escritura tenant-qualified', () => {
 
     const res = await vivo.inject({
       method: 'PUT', url: rutaContenido('Miguel', 'kant'),
-      payload: { content: 'nuevo', expected_sha: sha(anterior) },
+      payload: { content: 'nuevo', expected_sha: sha(anterior), reason: MOTIVO },
     });
 
     expect(res.statusCode).toBe(502);
@@ -699,10 +712,25 @@ describe('contenido y escritura tenant-qualified', () => {
     });
     const res = await vivo.inject({
       method: 'PUT', url: rutaContenido('Miguel', 'kant'),
-      payload: { content: 'nuevo', create_if_absent: true },
+      payload: { content: 'nuevo', create_if_absent: true, reason: MOTIVO },
     });
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ error: 'agent_disabled' });
     expect(factsFor).not.toHaveBeenCalled();
+  });
+});
+
+describe('el motivo del canal de ficheros usa los límites del plano PTY', () => {
+  it('los lee de plugin.ts, donde son privados, y falla el día que uno de los dos afloje', () => {
+    const fuente = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'terminal', 'plugin.ts'), 'utf8',
+    );
+    const min = /^const REASON_MIN = (\d+);$/m.exec(fuente)?.[1];
+    const max = /^const REASON_MAX = (\d+);$/m.exec(fuente)?.[1];
+
+    expect(min).toBeDefined();
+    expect(max).toBeDefined();
+    expect(DOCUMENT_REASON_MIN).toBe(Number(min));
+    expect(DOCUMENT_REASON_MAX).toBe(Number(max));
   });
 });
