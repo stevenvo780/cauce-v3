@@ -219,7 +219,7 @@ export function parseSessionGrant(body: string): TerminalSessionGrant | undefine
   if (!tenantId || !alias || !operatorId || !container || !runtimeUser || !expiresAt
       || !ticketExpiresAt || !resumeToken) return undefined;
   if (resumeToken.length < 80 || resumeToken.length > 1_024) return undefined;
-  if (mode !== 'shell' && mode !== 'harness') return undefined;
+  if (mode !== 'shell' && mode !== 'harness' && mode !== 'harness_rw') return undefined;
   if (cols === undefined || rows === undefined) return undefined;
   if (Number.isNaN(Date.parse(expiresAt)) || Number.isNaN(Date.parse(ticketExpiresAt))) return undefined;
   if (!isClaimToken(rawClaimToken) || rawClaimEpoch === undefined || rawClaimLeaseMs === undefined

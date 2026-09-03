@@ -100,6 +100,7 @@ export type TerminalDenial =
   | 'no_grant'
   | 'no_grant_for_operator'
   | 'no_recognized_mode'
+  | 'writable_tui_disabled'
   | 'writable_requires_attribution'
   | 'writable_requires_named_operator'
   | 'control_permission_required';
@@ -108,7 +109,9 @@ export type TerminalConflict =
   | 'agent_offline'
   | 'session_limit'
   | 'container_busy'
-  | 'request_conflict';
+  | 'request_conflict'
+  | 'control_held'
+  | 'extension_exhausted';
 
 export interface TerminalSessionRow {
   id: string;

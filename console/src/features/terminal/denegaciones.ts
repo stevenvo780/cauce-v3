@@ -16,6 +16,9 @@ export type TerminalDenialCode =
   | 'no_grant'
   | 'no_grant_for_operator'
   | 'no_recognized_mode'
+  | 'writable_tui_disabled'
+  | 'control_held'
+  | 'extension_exhausted'
   | 'writable_requires_attribution'
   | 'writable_requires_named_operator'
   | 'agent_offline'
@@ -96,6 +99,25 @@ export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, Termina
     porQue: 'El agente está conectado, pero ninguno de los modos que publica figura entre los que este gateway '
       + 'entiende. Suele ser un agente más nuevo que el gateway: no es tu permiso ni tu concesión.',
     quienLoLevanta: `${DUENO_DEL_BUS}: hay que actualizar el gateway al mismo contrato que el agente PTY, o volver el agente atrás.`,
+  },
+  writable_tui_disabled: {
+    titulo: 'La escritura sobre la TUI está apagada en este gateway',
+    porQue: 'El interruptor de la TUI con teclado está en cero en la configuración del gateway, así que ningún '
+      + 'operador puede abrir ni tomar una sesión con escritura, tenga o no concesión. Mirar sigue permitido.',
+    quienLoLevanta: `${DUENO_DEL_BUS}: tiene que encender el interruptor de escritura del gateway y reiniciarlo.`,
+  },
+  control_held: {
+    titulo: 'Otro operador tiene el control de esa TUI',
+    porQue: 'El control se toma de a uno: mientras alguien lo tenga, el bus deja las entregas de ese alias en '
+      + 'espera y nadie más teclea. El aviso dice quién lo tiene y hasta cuándo, nada más.',
+    quienLoLevanta: 'Quien lo tiene, devolviéndolo. Si cerró la pestaña sin devolverlo, vence solo al terminar la sesión.',
+  },
+  extension_exhausted: {
+    titulo: 'La sesión ya no admite más prórroga',
+    porQue: 'Cada sesión tiene un techo total contado desde que se abrió, y la prórroga pedida no gana '
+      + 'ventana sobre ese techo. No es tu permiso: es el tope de duración del gateway.',
+    quienLoLevanta: 'Vos: cerrá la sesión y abrí una nueva. Si el techo es corto para el trabajo, '
+      + `pedile a ${DUENO_DEL_BUS} que suba el tope total.`,
   },
   writable_requires_attribution: {
     titulo: 'Escribir en una TUI exige una persona con nombre',

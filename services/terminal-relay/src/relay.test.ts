@@ -142,6 +142,7 @@ describe('relay configuration and identity registry', () => {
     expect(parseSessionGrant(JSON.stringify(valid))).toMatchObject({ alias: 'jarvis', container: 'claw' });
     expect(parseSessionGrant(JSON.stringify({ ...valid, runtime_user: undefined }))).toBeUndefined();
     expect(parseSessionGrant(JSON.stringify({ ...valid, mode: 'root' }))).toBeUndefined();
+    expect(parseSessionGrant(JSON.stringify({ ...valid, mode: 'harness_rw' }))).toMatchObject({ mode: 'harness_rw' });
     expect(parseSessionGrant(JSON.stringify({ ...valid, claim_token: CLAIM_TOKEN.toUpperCase() }))).toBeUndefined();
     expect(parseSessionGrant(JSON.stringify({
       ...valid, claim_token: '12345678-1234-1234-8234-123456789abc',
