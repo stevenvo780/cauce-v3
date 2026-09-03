@@ -156,6 +156,11 @@ juego de arneses soportado y la consola no ofrece una edición ficticia para él
   `ws-humanizar`), así que se muestra rotulado como declarado y con la medición desconocida. El mapa
   de ficheros sólo se pide al desplegar el pliegue: abrir el modal no dispara esa lectura ni deja
   filas de auditoría de denegación.
+- **Motivo tecleado.** Guardar el perfil, guardar un fichero de gobierno y recargar el contexto
+  exigen un motivo escrito a mano de 8 a 280 caracteres, con los mismos topes que el gateway
+  (`writable_requires_attribution` y `invalid_reason` se explican en castellano); el botón queda
+  deshabilitado hasta que el motivo es válido, y el escrito antes de restaurar una revisión se
+  vacía para que la fila de auditoría no describa otra acción.
 - **Recargar contexto.** Cuando el perfil queda en `pending_session_refresh` o `drifted`, el aviso
   deja de ser sólo texto: ofrece «Recargar contexto», que reescribe y vuelve a medir los ficheros y
   presenta el resultado tipado (estado, evidencia y, por documento, sha antes y después). No
