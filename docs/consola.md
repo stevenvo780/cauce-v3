@@ -196,6 +196,31 @@ mano. La columna de flota se pliega a una tira de iconos con un
 botón nombrado que declara `aria-pressed` y `aria-controls` —no `aria-expanded`: plegada la lista
 sigue renderizada y enfocable, y decir que está colapsada sería mentirle al lector de pantalla.
 
+### Tomar y devolver el teclado de una TUI
+
+Sobre una TUI de sólo lectura (`harness`) la consola sólo mira. Para **teclear** hace falta el modo
+`harness_rw`, y `src/features/terminal/ControlDeTui.tsx` es todo el flujo:
+
+- **El botón existe sólo si el gateway dice que se puede.** La condición es `writable_modes` de
+  `/targets`, nunca que `harness_rw` aparezca en la lista de modos: la consola no deduce qué es
+  escribible a partir de un nombre.
+- **El motivo lo escribe la persona**, entre 8 y 280 caracteres, sin plantilla y sin texto
+  generado. La frase que la consola sí redacta sola —la que justifica una observación de sólo
+  lectura— no llega nunca a esta escritura. Ese motivo es lo único que queda en la fila de
+  auditoría de la toma.
+- **La consecuencia está en pantalla antes de escribir nada:** mientras alguien tiene el control,
+  el bus **no le entrega mensajes a ese alias**; quedan en cola y salen en orden al devolverlo.
+- **La toma se envía cuando la sesión escribible ya está atada por el relay**, no al pedirla: un
+  arriendo sobre una sesión que todavía no se consumió no tendría a quién callar.
+- **Devolver siempre está a mano** y sobrevive a un error. También se dispara solo al desmontar el
+  panel y en `beforeunload`: un arriendo que sobrevive a la pestaña es lo que deja a un agente
+  callado. Si el relay cierra con `4410` el control ya no es tuyo, y la consola lo dice en
+  castellano en vez de fingir una devolución que no ocurrió.
+
+El porqué de cada una de esas reglas está en
+[ADR-009](adr/009-control-de-tui-desde-la-consola.md), y el runbook operativo —compuertas,
+interruptores, arriendo y grabación— en el §4 de [terminal-pty.md](terminal-pty.md).
+
 ## Gate de regresión visual
 
 `qa/layout-gate.mjs` (ejecutar con `pnpm qa:layout`): lanza la consola con mocks y recorre con

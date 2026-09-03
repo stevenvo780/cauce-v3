@@ -370,7 +370,258 @@ Kill switch 3 sólo si hay que cortar la emisión de tickets de raíz (por ejemp
 una clave maestra comprometida). Se anuncia como cualquier reinicio del gateway
 y se verifica igual que el paso 3 de §2.
 
-## 4. Deuda con fecha: las dos puertas
+Hay un **cuarto**, que no está en la tabla porque no apaga el canal sino sólo la escritura sobre la
+TUI: `CAUCE_TERMINAL_RW_ENABLED=0`. Va en §4.2, junto con lo que estos cuatro interruptores **no**
+cierran.
+
+## 4. El modo escribible (`harness_rw`) y el control de la TUI
+
+Éste es el único modo en que un operador **teclea** en la TUI real del alias. `harness` sigue
+siendo el visor de sólo lectura y `shell` un shell propio; los tres valores viven en
+`services/gateway/src/terminal/types.ts`, y `WRITABLE_MODES` (`{shell, harness_rw}`) es lo que el
+gateway y la consola usan para decidir, nunca el nombre del modo. El «por qué» de cada decisión
+está en [ADR-009](adr/009-control-de-tui-desde-la-consola.md).
+
+### 4.1 Las seis compuertas de la toma
+
+`POST /v3/console/terminal/sessions` con `mode: "harness_rw"` pasa por seis compuertas, en este
+orden (`services/gateway/src/terminal/session-control.ts`). Cada denegación escribe su fila
+`terminal.session.request` con `decision: "deny"` y el motivo:
+
+| # | Compuerta | Denegación |
+|---|---|---|
+| 1 | Interruptor del modo escribible (`CAUCE_TERMINAL_RW_ENABLED`), **antes** de leer la tabla de flota | `writable_tui_disabled` (403) |
+| 2 | Permiso canónico `control` del principal, y visibilidad del alias destino **y de todos los que comparten su contenedor** | `control_permission_required` (403) · `target_unavailable` (404) |
+| 3 | Atribución: operador **nombrado** (no `unattributed:console-basic-auth`) y atribuido, sobre el destino y sobre toda la cohorte | `writable_requires_named_operator` · `writable_requires_attribution` · `attribution_required` (403) |
+| 4 | Autoridad de ruteo sobre **cada** alias del contenedor, réplica del camino de publicación | `no_routing_authority` (403) |
+| 5 | `grants.json` releído del disco, con el modo `harness_rw`, sobre **toda** la cohorte | `no_grant_for_operator` (403) |
+| 6 | Un agente PTY vivo en ese contenedor que anuncie `harness_rw` en su hello | `no_recognized_mode` · `agent_offline` (409) |
+
+La regla de cohorte de las compuertas 2, 3, 4 y 5 es la misma de siempre (`containerCohort` en
+`services/gateway/src/terminal/authority.ts`): un teclado dentro de un contenedor compartido ve los
+directorios de todos sus alias, así que la autoridad sobre uno no puede abrir a los otros por la
+puerta de atrás. En `ctrl-infra`, tomar la TUI de `kant` exige permiso y grant sobre `argos`
+también.
+
+**El comodín `"*"` no sirve para escribir.** `parseGrants`
+(`services/gateway/src/terminal/authority.ts`) levanta `wildcard operator cannot hold a writable
+mode` en cuanto una fila `"*"` lleva `shell` o `harness_rw`, y —como cualquier error de ese
+fichero— deja el documento ENTERO en `grants: []`. Y `GrantStore.allows` sólo acepta `"*"` cuando
+el modo **no** es escribible. Para teclear, la fila tiene que nombrar al operador:
+
+```sh
+umask 027
+tmp=$(mktemp /etc/cauce-v3/terminal/.grants.json.XXXXXX)
+cat > "$tmp" <<'JSON'
+{
+  "version": 1,
+  "grants": [
+    {"operator": "<correo de console_users>", "tenant_id": "Steven", "alias": "jarvis",
+     "modes": ["shell", "harness", "harness_rw"],
+     "note": "W3b: teclado sobre la TUI de jarvis"}
+  ]
+}
+JSON
+chown 1000:1000 "$tmp"; chmod 0440 "$tmp"
+mv -f "$tmp" /etc/cauce-v3/terminal/grants.json
+```
+
+**Un operador no atribuido tampoco escribe.** Con la credencial compartida de basic auth el
+`operator_id` es `unattributed:console-basic-auth`
+(`services/gateway/src/terminal/types.ts`) y la compuerta 3 lo rechaza. Un `shell` sí se abre así
+—es el comportamiento de hoy y cerrarlo dejaría al dueño fuera de sus propias consolas—, pero un
+teclado sobre la TUI de un agente, no: una traza de auditoría que no puede nombrar a la persona no
+es una traza.
+
+### 4.2 El cuarto kill switch, y lo que los cuatro NO cierran
+
+`CAUCE_TERMINAL_RW_ENABLED=0` (por defecto; `services/gateway/src/terminal/config.ts`) apaga **la
+escritura, no el canal**: `harness` y `shell` siguen abriéndose, y tanto `POST /sessions` con
+`harness_rw` como la toma de control contestan `403 writable_tui_disabled`. Frente a los tres de
+§3 es más quirúrgico y más lento: exige reiniciar el gateway, igual que el kill switch 3, así que
+para cortar en caliente el orden sigue siendo grants → relay → gateway.
+
+Junto a él hay dos ajustes nuevos en el mismo fichero:
+
+| Variable | Por defecto | Techo | Qué acota |
+|---|---|---|---|
+| `CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS` | `3600` | `14400` | Vida total de una sesión desde `consumed_at`, prórrogas incluidas. No puede quedar por debajo de `CAUCE_TERMINAL_SESSION_TTL_SECONDS` o el gateway no arranca. |
+| `CAUCE_TERMINAL_CONTROL_HOLD_SECONDS` | `900` | el valor de la variable anterior | Ventana que pide un arriendo de control. La base la recorta igual (§4.4). |
+
+**Ninguna de las tres está declarada en `deploy/compose.yaml`.** Un despliegue de producción tal
+cual arranca con el modo escribible apagado y sin directorio de grabación —la posición segura—,
+pero encenderlo exige tocar `deploy/`, que es del dueño.
+
+Y una corrección a §3, que promete de más: **vaciar `grants.json` no cierra todas las puertas al
+contenedor.** Cierra la del canal PTY de la consola y nada más.
+
+- El worker legado de **ultimate-terminal** sigue vivo en 9 de los 11 contenedores con su propio
+  modelo de autorización (§5).
+- La **escritura de ficheros de gobierno** desde la consola (`CLAUDE.md`, `AGENTS.md`, workspaces
+  de OpenClaw) no pasa por `grants.json`: va por las rutas
+  `/v3/console/agents/...` del gateway (`services/gateway/src/console/agent-documents.routes.ts`,
+  `agent-context-reload.routes.ts`), gobernadas por el RBAC de la consola. Un `grants.json` vacío
+  las deja intactas.
+
+### 4.3 Tomar y devolver el control
+
+Dos verbos sobre la misma ruta, `POST /v3/console/terminal/sessions/:sid/control`
+(`services/gateway/src/terminal/session-control/control.ts`). El cuerpo es exacto —una clave de
+más lo rechaza— y lleva siempre la valla de dueño del navegador
+(`request_id`, `owner_generation`, `owner_token`):
+
+| Campo | Toma | Devolución |
+|---|---|---|
+| `action` | `"take"` | `"release"` |
+| `reason` | **obligatorio**, 8..280 caracteres, escrito a mano | opcional; sin él la auditoría lleva `operator_released` |
+| `request_id` · `owner_generation` · `owner_token` | obligatorios | obligatorios |
+
+La toma vuelve a correr las compuertas 1, 2, 3 y 5 —el `grants.json` se relee del disco sobre toda
+la cohorte, otra vez—, exige que la sesión sea `harness_rw` (`no_recognized_mode`, 409) y devuelve
+`409 control_held` con `held_by` y `expires_at` si otro operador ya lo tiene. La devolución sólo la
+acepta quien lo tomó (`403 control_held` si no), y un arriendo que ya no existe es un **éxito**:
+la consola la reintenta desde `beforeunload` y fallar ahí no ayudaría a nadie.
+
+`POST /v3/console/terminal/sessions/:sid/extend`
+(`services/gateway/src/terminal/session-control/extend.ts`) empuja la ventana de la **sesión**, no
+la del arriendo, y nunca más allá de `consumed_at + CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS`
+(`extension_exhausted`, 409). No toca `consumed_at`: la prórroga vive en `window_extended_to`, una
+columna propia de la migración `040`, porque `consumed_at` alimenta la contabilidad de plazas de la
+consola. La prórroga empuja la ventana de la sesión, **no** el temporizador de inactividad: en una
+sesión escribible ese temporizador sólo lo rearma teclear — ni la salida del PTY, ni el `ping` del
+navegador, ni esta llamada lo tocan (`resetIdle` no está en el camino de `/extend` ni de la
+revalidación). Quien mire una compilación sin teclear cae por inactividad (`4408`) aunque acabe de
+prorrogar. Una pestaña olvidada delante de un proceso hablador mantendría viva una shell abandonada
+para siempre.
+
+Y para el operador que sale de la consola: `POST /sessions` acepta `initiator: "operator" | "auto"`
+(`services/gateway/src/terminal/plugin.ts`), y `auto` **nunca** abre un modo escribible — un visor
+automático no toma teclados.
+
+### 4.4 El arriendo: un alias callado, y por cuánto
+
+La toma inserta una fila en `terminal_control_holds` (migración
+`packages/store/migrations/040_terminal_control_holds.sql`, API en
+`packages/store/src/terminal-control-holds.ts`). Un índice único parcial
+`(tenant_id, alias) WHERE released_at IS NULL` garantiza **un arriendo vivo por alias**.
+
+Mientras vive, `claimOne` (`packages/store/src/repository/deliveries/claims.ts`) deja de
+seleccionar las entregas de ese alias con un `NOT EXISTS` sobre la tabla. Es todo lo que hace: no
+toca `status`, ni `available_at`, ni `attempt`. Las filas **se acumulan `pending`** y salen en el
+mismo orden al devolver el control. Una entrega ya arrendada antes de la toma termina su turno: el
+arriendo cierra la puerta a leases nuevos, nunca a los que están en vuelo.
+
+El vencimiento se calcula **en SQL**, dentro de la misma transacción que inserta, leyendo la sesión
+bajo `FOR UPDATE`: `LEAST(ventana de la sesión, now() + CAUCE_TERMINAL_CONTROL_HOLD_SECONDS)`. Un
+arriendo no puede sobrevivir a la sesión que lo abrió. Encima de eso, un `CHECK` de la migración
+impone el techo duro de **12 h** desde `taken_at`, y la prórroga del arriendo se recorta contra ese
+mismo `CHECK`, no contra la palabra del proceso que extiende.
+
+Se suelta por cuatro caminos, y sólo el último es la red de seguridad:
+
+1. el operador devuelve el control desde la consola;
+2. el desmontaje del panel o el `beforeunload` de la pestaña lo devuelven por él;
+3. el cierre o la revocación de la sesión lo sueltan **dentro de la misma transacción** que liquida
+   la sesión (`releaseHeldControl`); si esa suelta falla, se lleva el cierre con ella —el relay
+   respool y reintenta— en vez de dejar al alias callado sin nada en el log;
+4. vencido, la **siguiente toma** de ese alias lo suelta como `expired` antes de insertar la suya.
+
+El relay se entera por el ciclo de `/authz` de 30 s: el gateway contesta `403` con
+`reason: "control_released"` y sólo entonces
+(`services/gateway/src/terminal/relay-proxy/authorization.ts`), y el relay cierra la pierna del
+navegador con **`4410 control_released`**
+(`services/terminal-relay/src/session-limits.ts`); un visor de sólo lectura, que nunca sostuvo
+nada, recibe el `4403` de siempre.
+
+**Comprobación operativa.** Contra la base, un alias con el control tomado tiene entregas
+`pending` acumulándose y **ninguna** `failed` por esta causa:
+
+```sh
+docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce <<'SQL'
+SELECT h.tenant_id, h.alias, h.operator_id, h.taken_at, h.expires_at,
+       count(*) FILTER (WHERE d.status IN ('pending','retry')) AS encoladas,
+       count(*) FILTER (WHERE d.status = 'leased')             AS en_vuelo,
+       count(*) FILTER (WHERE d.status = 'failed')             AS fallidas
+  FROM terminal_control_holds h
+  LEFT JOIN deliveries d
+    ON d.recipient_tenant = h.tenant_id AND d.recipient_alias = h.alias
+ WHERE h.released_at IS NULL AND h.expires_at > now()
+ GROUP BY h.id, h.tenant_id, h.alias, h.operator_id, h.taken_at, h.expires_at;
+SQL
+```
+
+`encoladas` sube mientras dura el arriendo y baja sola al devolverlo; `en_vuelo` es como mucho el
+turno que ya estaba empezado; `fallidas` **no se mueve**. Si `fallidas` sube durante un arriendo,
+el problema no es el control: es el mismo fallo que tendría el alias sin él. Y si `encoladas` no
+baja después de devolver el control, mirar primero si quedó un arriendo vivo (la misma consulta sin
+el filtro de `expires_at`) antes de tocar el dispatcher.
+
+### 4.5 La grabación
+
+Una sesión escribible sin grabación **no es un modo degradado: no se abre**. Sin un
+`CAUCE_TERMINAL_RECORDING_DIR` escribible el relay rechaza la apertura con `recording_unavailable`
+(`1011`) antes de que exista el PTY, y un fallo de escritura a mitad de sesión la cierra con
+`recording_failed` (`services/terminal-relay/src/session-instance.ts`,
+`services/terminal-relay/src/recording.ts`).
+
+| Qué | Dónde |
+|---|---|
+| Formato | asciicast v2, un evento `o` por ráfaga de salida y uno `i` por ráfaga de entrada |
+| Fichero | `<CAUCE_TERMINAL_RECORDING_DIR>/<session_id>.cast` |
+| Permisos | directorio `0700`, fichero `0600`, abierto con `O_EXCL` para que dos escritores no se intercalen jamás en el mismo fichero |
+| Tope | `CAUCE_TERMINAL_RECORDING_MAX_BYTES`, 32 MiB por defecto; al llegar se para con un evento marcador y la sesión **sigue** |
+| Quién NO se graba | los modos de sólo lectura (no tienen teclado); un `shell` sólo detrás de `CAUCE_TERMINAL_RECORD_SHELL_SESSIONS`, apagado por defecto |
+
+Lo que la grabación tiene y lo que **no** sale de ella: los bytes viven en el `.cast` y en ningún
+otro sitio. El informe de cierre y las filas de auditoría llevan sólo `bytes_in`, `input_batches`,
+la `sha256` del fichero y el flag `recording_capped`. Nunca un byte de lo tecleado, ni un fragmento,
+ni la salida del PTY. Ésa es la desviación consciente de D3 —no hay una fila de auditoría por
+ráfaga de teclas—: el relay coalesce cada 8 ms y no tiene `DATABASE_URL`, así que el registro por
+ráfaga vive en el fichero y la fila agregada `terminal.session.input` se escribe al cierre.
+
+`recording_capped` es lo que impide leer una grabación truncada como si fuera completa: pasado el
+tope el fichero deja de crecer, `input_batches` se congela con él y `bytes_in` sigue contando. La
+`sha256` acredita el fichero truncado, no la sesión.
+
+**La retención no está resuelta.** Nada poda ese directorio. Cuánto se guarda, en qué volumen y
+quién borra es una decisión del dueño y no está tomada; hasta que lo esté, el directorio acumula
+material con el mismo perfil de amenaza que el propio flujo del PTY.
+
+Las series del relay que miran este modo están en `/metrics`
+(`services/terminal-relay/CONFIGURATION.md`): `cauce_terminal_control_sessions_open` (gauge de
+sesiones escribibles atadas) y `cauce_terminal_recordings_total{result}` con
+`started|refused|capped|failed`. Prometheus descubre el relay por DNS en el job `cauce-relay`
+(`ops/observability/prometheus.yaml`) y las alertas del grupo `cauce-v3-terminal`
+(`ops/observability/alerts.yaml`) no usan `absent()` a propósito: sin el perfil `terminal` el
+nombre no resuelve, no hay target y nadie pagina. Falta un detalle de despliegue para que el job
+vea datos: el relay está sólo en la red `edge` y Prometheus en `backend`, así que hoy el nombre no
+resuelve para el scraper.
+
+### 4.6 Cuando el agente rechaza el teclado
+
+Con el teclado abierto, el agente PTY consulta cada ráfaga de STDIN contra tres sondas locales, las
+tres a prueba de fallos —lo que no se puede leer cuenta como retenido— y descarta los bytes en vez
+de encolarlos: una ráfaga guardada se vaciaría dentro del turno de otro. Emite **una** trama
+`INPUT_REFUSED` (`0x26`) `{session_id, reason}` por ráfaga y **no cierra la sesión**
+(`ops/pty-agent/README.md`):
+
+| `reason` | Qué está pasando | Qué hace el operador |
+|---|---|---|
+| `pane_input_barrier` | el adaptador está pegando en el panel: `@cauce_input_barrier` está puesta, o la ventana está partida (una ventana con más de un panel cuenta como retenida) | esperar; la pegada dura lo que dura, y una ventana partida se une |
+| `governance_write_in_flight` | el propio agente tiene una transacción `WRITE`/`WRITE_BATCH` viva sobre los ficheros de gobierno que la TUI lee para contestar | esperar a que termine el turno |
+| `tmux_prefix` | la ráfaga trae el byte de prefijo del servidor tmux del alias (`C-b` por defecto) | no es un rechazo transitorio: el prompt de comandos de tmux está cerrado a propósito, porque desde ahí `run-shell` ejecuta como el usuario runtime y `set-option -pu` borraría la barrera de panel |
+
+El agente también publica `GEOMETRY` (`0x27`) `{session_id, cols, rows}` con el tamaño real de la
+ventana remota tras el `OPEN_OK` y en cada `RESIZE`, para que la consola ajuste la fuente en vez de
+imprimir un cartel de «caben N columnas». Si no puede medirla no envía nada: una geometría inventada
+repintaría el panel a un tamaño que no existe.
+
+Las dos tramas son informativas, el relay las reenvía sin interpretarlas y **las contabiliza**: van
+contra la misma ventana de salida y la misma comprobación de backpressure que la salida del PTY, así
+que un agente comprometido que repita `GEOMETRY` en bucle dispara `4413` o `4415` igual que un `cat`
+de un binario.
+
+## 5. Deuda con fecha: las dos puertas
 
 Mientras la consola sirva terminales, los workers de **ultimate-terminal**
 siguen corriendo en 9 de los 11 contenedores de la flota. Eso significa **dos
@@ -384,7 +635,7 @@ el worker de ultimate-terminal del contenedor en el mismo despliegue en que su
 alias pasa a "PTY online" en la consola. La fase no se da por cerrada mientras
 quede un contenedor con las dos puertas abiertas.
 
-## 5. Dev: probar el circuito completo antes de tocar producción
+## 6. Dev: probar el circuito completo antes de tocar producción
 
 `deploy/compose.dev.yaml` publica las dos piernas del relay (8445 y 8446) en
 `CAUCE_DEV_BIND_IP` y levanta el gateway con `CAUCE_TERMINAL_ENABLED=1`. Las dos piernas van con
@@ -414,7 +665,7 @@ literal, el de la identidad del relay
 (`deploy/console/nginx-console-tls.conf:28`), con mTLS completo contra la CA interna. Dev no
 acredita producción: la auth es de desarrollo y los grants son de juguete.
 
-### 5.1 Pendiente abierto: hoy el circuito de dev no cierra
+### 6.1 Pendiente abierto: hoy el circuito de dev no cierra
 
 Esto es trabajo del workstream de consola/deploy; acá sólo queda anotado el orden real en que
 falla, que no es el orden en que se descubre. Los cuatro puntos, en cascada:
@@ -451,7 +702,7 @@ fijado por `tests/unit/terminal-relay-operability.test.ts:57-59`, y el match exa
 propiedad de cerco: la identidad de otro relay tiene que seguir siendo un 404 en el borde. Lo que
 se arregla es dev, alineándolo con el literal de producción; no al revés.
 
-## 6. Integración con el resto del árbol
+## 7. Integración con el resto del árbol
 
 Las cuatro piezas que hacían falta para que `terminal-relay` empaquetara y desplegara junto al
 resto del runtime ya están cerradas:
@@ -469,7 +720,7 @@ resto del runtime ya están cerradas:
 - El relay declara `healthcheck` en `deploy/compose.yaml` sobre su puerto de salud
   (`CAUCE_TERMINAL_RELAY_HEALTH_PORT`), igual que el resto de los servicios del runtime.
 
-### 6.1 Constantes que deberían salir de `vectors.json`, no re-declararse
+### 7.1 Constantes que deberían salir de `vectors.json`, no re-declararse
 
 `tests/terminal-pty/vectors.json` no es solo un fichero de pruebas: es el contrato del canal, y
 lleva los bloques `geometry`, `limits`, `ttls`, `ws_close_codes` y `framing.tags`. Hoy ninguna pieza

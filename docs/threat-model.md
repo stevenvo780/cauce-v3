@@ -21,7 +21,8 @@ reciben agregados sin tenant/payload.
 | Job no-op o poison kind | Registry explícito por kind; completar requiere handler resuelto y ejecutado. Kind desconocido pasa atómicamente a `dead`+DLQ. En producción solo existe `system.database.probe`; QA se registra únicamente con `NODE_ENV=test`. |
 | Starvation | Jobs tienen lanes `interactive|batch`, prioridad y burst interactivo acotado. |
 | Browser como autoridad | Cookie same-origin, body allowlisted, sin storage de tokens. Mutaciones requieren snapshot RBAC exacto; permiso ausente/endpoint faltante queda UNKNOWN y bloqueado. Estados fuera de enum quedan UNKNOWN. |
-| Terminal como broker implícito | Ultimate Terminal es plugin cliente lazy, same-origin, sin query credentials, y exige plugin id, capability `terminal.pty.client` y permiso `ultimate-terminal.connect`. |
+| Terminal como broker implícito | El plugin cliente es lazy, same-origin, sin credenciales en la query, y exige plugin id, capability `terminal.pty.client` y permiso `ultimate-terminal.connect`. **Ese permiso NO es el control: sólo deja pedir.** Abrir una sesión pasa además por seis compuertas del gateway —interruptor del modo, permiso canónico `control` y visibilidad del destino, atribución del operador, autoridad de ruteo, fila en `grants.json` y agente PTY vivo—, todas ellas sobre **la cohorte entera del contenedor**, porque una shell ve los directorios de todos los alias que lo comparten (`services/gateway/src/terminal/session-control.ts`, `authority.ts`). |
+| Escritura sobre la TUI de un agente | El modo escribible es un modo propio (`harness_rw`, `services/gateway/src/terminal/types.ts`) detrás de un interruptor apagado por defecto (`CAUCE_TERMINAL_RW_ENABLED`), y encima de las seis compuertas añade: **ningún comodín** —`parseGrants` rechaza el fichero entero si una fila `"*"` lleva un modo escribible—, **operador nombrado y atribuido** —la credencial compartida de basic auth no escribe—, **motivo escrito a mano** de 8..280 caracteres que nunca se autogenera, **grabación como condición del modo** —sin directorio escribible la sesión no se abre—, **arriendo con caducidad** en `terminal_control_holds` acotado por `LEAST(ventana de la sesión, ventana del arriendo)` y por un `CHECK` de 12 h, soltado dentro de la misma transacción que cierra la sesión, y **métrica agregada** (`cauce_terminal_control_sessions_open`, `cauce_terminal_recordings_total`) sin etiqueta de tenant, alias ni operador. Las entregas del alias arrendado se **encolan** `pending`: `claimOne` deja de seleccionarlas sin tocar `status` ni `available_at`. Ver [ADR-009](adr/009-control-de-tui-desde-la-consola.md). |
 | DB sin cifrar en producción | Readiness exige modo TLS y confirma `pg_stat_ssl.ssl=true`; probes Compose y backup/restore aplican la misma política. `verify-full` es la recomendación operativa. |
 | Runtime con toolchain | Imagen final usa usuario `node`, JS compilado y dependencias production; comandos son `node .../dist/main.js`, sin tsx/devDependencies. |
 | Observabilidad engañosa | Dispatcher y `outbox-metrics` consultan PostgreSQL en cada scrape y emiten gauges para queue/retry/DLQ/leases y wake/outbox/relay; si falla, la serie `*_query_success=0` evita inventar ceros. Gateway expone progreso y resultados agregados de su wake pump en un listener interno sin labels de identidad; se alerta tanto target caído como loop vivo pero estancado y ACK cercado. |
@@ -40,6 +41,19 @@ reciben agregados sin tenant/payload.
 - OIDC/JWKS, mTLS, token-file y `/v3/console/access` existen, pero cada entorno
   debe aportar certificados/identity maps/provider correctos y evidenciar
   negativos/rotación. Configuración incompleta falla cerrado.
+- **W3b no cierra las dos puertas que quedan sobre la misma shell.** (a) El worker legado de
+  **ultimate-terminal** sigue vivo en 9 de los 11 contenedores de la flota, fuera de este árbol y
+  con su propio modelo de autorización: vaciar `grants.json` cierra la puerta de la consola y deja
+  la suya abierta. Su retiro es contenedor por contenedor (§5 de `docs/terminal-pty.md`). (b) La
+  identidad del relay está **soldada en la imagen de la consola** (GAP-14): vive en `deploy/`, que
+  es del dueño, y ninguna de las tres variables del modo escribible
+  (`CAUCE_TERMINAL_RW_ENABLED`, `CAUCE_TERMINAL_CONTROL_HOLD_SECONDS`,
+  `CAUCE_TERMINAL_RECORDING_DIR`) está declarada hoy en `deploy/compose.yaml`.
+- **La retención de las grabaciones de terminal no está decidida.** El `.cast` de una sesión
+  escribible es la única copia durable de lo que se tecleó —`0700` el directorio, `0600` el
+  fichero, abierto con `O_EXCL`— y **nada poda ese directorio**. Cuánto se guarda, en qué volumen y
+  quién borra es una decisión abierta del dueño; hasta que se tome, el material sensible se acumula
+  con el mismo perfil de amenaza que el propio flujo del PTY.
 - El worker `origin_relay` existe, pero el provider firmado y su receiver
   idempotente son dependencias externas. `sent` solo se acredita con `sent_at`;
   Telegram y relay genérico no pueden competir por el mismo adapter.

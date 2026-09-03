@@ -20,9 +20,9 @@ import { ticketSha256 } from '../tickets.js';
  * session against `/authz` every 30 s, and that route re-evaluates `currentSessionPolicy` —
  * grants.json included — on every cycle, so withdrawing a grant still closes the socket.
  *
- * This call is also the presence proof for idle: neither PTY output nor a browser ping rearms
- * the idle timer of a writable session, because a forgotten tab with a chatty process would
- * otherwise keep an abandoned shell alive forever.
+ * Extending never rearms the idle timer: in a writable session only typing does (neither PTY
+ * output, nor a browser ping, nor this call), because a forgotten tab with a chatty process
+ * would otherwise keep an abandoned shell alive forever.
  */
 export function registerTerminalExtendRoute(
   app: FastifyInstance,
