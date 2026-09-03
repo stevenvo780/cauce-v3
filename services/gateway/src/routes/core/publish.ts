@@ -1,7 +1,9 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type {
+  FastifyError, FastifyInstance, FastifyReply, FastifyRequest, RouteShorthandOptions,
+} from 'fastify';
 import {
-  ConsolePublishIntentExpiredSchema, NotifyRequestSchema, QuotaSampleRequestSchema,
-  SYSTEM_GATE_PROBE_MESSAGE_TYPE, SystemGateProbeBodySchema,
+  ConsolePublishIntentExpiredSchema, MAX_PUBLISH_BODY_BYTES, NotifyRequestSchema,
+  QuotaSampleRequestSchema, SYSTEM_GATE_PROBE_MESSAGE_TYPE, SystemGateProbeBodySchema,
 } from '@cauce/protocol';
 import { PublishIntentExpiredError, StoreError } from '@cauce/store';
 import {
@@ -10,6 +12,7 @@ import {
 import type { ConsolePublishTelemetry } from '../../console-publish-telemetry.js';
 import type { GatewayRepository } from '../../app.js';
 import { PasswordAuthProvider } from '../../password-auth.js';
+import { logPublishRedaction, redactPublishBody } from '../publish-redaction.js';
 import {
   consolePublishOperatorScope, principal, publicPublish, replyError, trustedPublishSemantics,
   validatedPublishReceipt, type TrustedPublishCommand,
@@ -23,6 +26,24 @@ function requestAuthMechanism(authProvider: AuthProvider, request: FastifyReques
   return authProvider.name;
 }
 
+function publishBodyLimitErrorHandler(
+  error: FastifyError, _request: FastifyRequest, reply: FastifyReply,
+): void {
+  if (error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
+    void reply.code(413).send({
+      error: 'too_large',
+      message: 'el cuerpo del publish se pasa del tope de adjuntos del protocolo',
+    });
+    return;
+  }
+  void reply.send(error);
+}
+
+export const publishRouteOptions: RouteShorthandOptions = {
+  bodyLimit: MAX_PUBLISH_BODY_BYTES,
+  errorHandler: publishBodyLimitErrorHandler,
+};
+
 export function registerCorePublishRoutes(
   app: FastifyInstance,
   options: CoreRouteOptions,
@@ -34,7 +55,10 @@ export function registerCorePublishRoutes(
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'route');
-      const command = publicPublish(request.body);
+      const submitted = publicPublish(request.body);
+      const redaction = redactPublishBody(submitted.body);
+      logPublishRedaction(request.log, actor, redaction);
+      const command = { ...submitted, body: redaction.body };
       const systemGateProbe = command.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE;
       if (systemGateProbe) {
         const probeBody = SystemGateProbeBodySchema.parse(command.body);
@@ -91,7 +115,7 @@ export function registerCorePublishRoutes(
       replyError(reply, error);
     }
   };
-  app.post('/v3/messages', publishHandler);
+  app.post('/v3/messages', publishRouteOptions, publishHandler);
 
   // Proactive egress. POST /v3/messages deliberately cannot express a channel
   // destination and must stay that way; this is the only surface that can, and

@@ -13,6 +13,7 @@ import { OidcBffAuthProvider, PostgresOidcSessionStore } from './oidc-bff.js';
 import { PostgresConsoleUserStore } from './console-users.js';
 import { PasswordAuthProvider } from './password-auth.js';
 import { loadTerminalConfig, terminalCapabilityAnnouncement } from './terminal/config.js';
+import { registerSecretHandoffPlane } from './secret-handoff/routes.js';
 import { registerTerminalControlPlane } from './terminal/plugin.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
 import { ConsolePublishTelemetry } from './console-publish-telemetry.js';
@@ -230,6 +231,7 @@ if (terminal !== undefined) {
   await app.register(registerTerminalControlPlane, { pool, authProvider, config: terminal });
 }
 // --- end PTY control plane -------------------------------------------------------------
+await app.register(registerSecretHandoffPlane, { pool, authProvider });
 const health = isolatedHealth ? await buildLoopbackHealthProbe({
   pool,
   dataApp: app,

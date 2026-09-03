@@ -35,6 +35,14 @@ export function errorStatus(error: unknown): number {
   return error instanceof StoreError ? STORE_ERROR_STATUS[error.code] ?? 500 : 500;
 }
 
+export function driverErrorCode(error: unknown): string | undefined {
+  if (error === null || typeof error !== 'object') return undefined;
+  const candidate = error as { code?: unknown; severity?: unknown; routine?: unknown };
+  const shaped = typeof candidate.code === 'string' && typeof candidate.severity === 'string'
+    && typeof candidate.routine === 'string';
+  return shaped ? (candidate.code as string) : undefined;
+}
+
 export function replyError(reply: FastifyReply, error: unknown): void {
   if (error instanceof AuthError) {
     void reply.code(401).send({ error: error.code, message: error.message });

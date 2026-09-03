@@ -15,6 +15,8 @@ import {
 import { requirePermission, type AuthProvider } from '../auth.js';
 import type { GatewayRepository } from '../app.js';
 import type { ConsolePublishTelemetry } from '../console-publish-telemetry.js';
+import { publishRouteOptions } from './core/publish.js';
+import { logPublishRedaction, redactPublishBody } from './publish-redaction.js';
 import {
   consolePublishOperatorScope,
   principal,
@@ -41,13 +43,22 @@ export function registerConsolePublishIntentRoutes(
   repository: ConsolePublishRepository,
   consolePublishTelemetry: ConsolePublishTelemetry,
 ): void {
-  app.post('/v3/console/publish-intents', async (request, reply) => {
+  /*
+   * The prepare leg carries the whole body, attachments included, so it needs the same derived
+   * body limit as the publish leg; Fastify's 1 MiB default would reject there what the protocol
+   * declares legal here. And it redacts with the SAME helper: the store gates the publish on a
+   * semantic hash over the body, so redacting on only one leg makes every message with a secret
+   * shape a permanent 409 instead of a delivered, redacted one.
+   */
+  app.post('/v3/console/publish-intents', publishRouteOptions, async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'route');
       const publicCommand = publicPublishIntent(request.body);
+      const redaction = redactPublishBody(publicCommand.body);
+      logPublishRedaction(request.log, actor, redaction);
       const command: TrustedPublishIntentCommand = {
-        ...trustedPublishSemantics(actor, publicCommand, request),
+        ...trustedPublishSemantics(actor, { ...publicCommand, body: redaction.body }, request),
         intent_nonce: publicCommand.intent_nonce,
         requested_priority: publicCommand.priority,
       };

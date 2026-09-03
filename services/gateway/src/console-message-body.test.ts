@@ -3,11 +3,16 @@ import { StoreError } from '@cauce/store';
 import type { buildGateway } from './app.js';
 import { buildTestGateway, fakePool, fakeRepository } from './test-support/gateway-doubles.js';
 
-/**
- * Tests for retrieving the full message body in `GET /v3/console/messages/:messageId`.
- */
+/** Tests for retrieving the full message body in `GET /v3/console/messages/:messageId`. */
 
 const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
+
+const ADJUNTO = {
+  name: 'informe.pdf',
+  mime_type: 'application/pdf',
+  file_size: 96,
+  sha256: 'f'.repeat(64),
+};
 
 const MENSAJE = {
   id: 'cccccccc-3333-4333-8333-333333333333',
@@ -15,8 +20,9 @@ const MENSAJE = {
   room_id: 'grp.steven',
   actor_alias: 'kant',
   lane: 'interactive',
-  // The FULL body, much longer than the 240 the list publishes.
+  // The FULL body, much longer than the 240 the list publishes; the store already took the bytes out.
   body: { text: `${'a'.repeat(600)} el dominio real es stevenvallejo.com` },
+  attachments: [ADJUNTO],
   created_at: '2026-08-23T02:02:52.000Z',
   deliveries: [
     { delivery_id: 'dddddddd-1111-4111-8111-111111111111', tenant_id: 'Steven', alias: 'argos', status: 'done' },
@@ -59,10 +65,25 @@ describe('GET /v3/console/messages/:messageId', () => {
   });
 
   /**
-   * NEGATIVE CONTROL of visibility. `visibleMessage` is the same filter the list already applies:
-   * if the route forgot it, it would publish the full body of other people's messages to anyone
-   * with read permission — which is exactly the hole the edge allowlist came to plug, reopened
-   * one level further in.
+   * A2A-04. The store projects `body - attachments_v1` plus this summary: the browser gets the metadata
+   * of every file and none of its base64. The facade forwards it untouched, to the recipient as well.
+   */
+  it('lleva el resumen de adjuntos y nunca el base64', async () => {
+    const { app } = await gateway();
+
+    for (const alias of ['kant', 'argos']) {
+      const respuesta = await leer(app, MENSAJE.id, alias);
+      expect(respuesta.statusCode).toBe(200);
+      const cuerpo: { attachments?: unknown; body?: Record<string, unknown> } = respuesta.json();
+      expect(cuerpo.attachments).toEqual([ADJUNTO]);
+      expect(cuerpo.body?.attachments_v1).toBeUndefined();
+      expect(respuesta.body).not.toContain('content_base64');
+    }
+  });
+
+  /**
+   * NEGATIVE CONTROL of visibility. `visibleMessage` is the same filter the list applies: without it the route
+   * would publish other people's bodies to anyone with read permission — the edge allowlist hole one level further in.
    */
   it('a quien no participa del mensaje le responde 404, no el cuerpo', async () => {
     const { app } = await gateway();
@@ -73,8 +94,8 @@ describe('GET /v3/console/messages/:messageId', () => {
   });
 
   /**
-   * The other half of `visibleMessage`: the recipient gets THEIR delivery, not the whole fan-out.
-   * Without this, argos would see who else got the message by reading their own conversation detail.
+   * The other half of `visibleMessage`: the recipient gets THEIR delivery, not the whole fan-out, or
+   * argos would learn who else got the message by reading their own conversation detail.
    */
   it('al destinatario le recorta las entregas ajenas del mismo publish', async () => {
     const { app } = await gateway();

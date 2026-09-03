@@ -5,7 +5,9 @@ import {
 import { readFile } from 'node:fs/promises';
 import type { FastifyRequest } from 'fastify';
 import type { Hello, Origin, Permission, Tenant } from '@cauce/protocol';
-import { AliasSchema, OriginSchema, PERMISSIONS, TenantSchema, isLiteralTrue } from '@cauce/protocol';
+import {
+  AliasSchema, OriginSchema, PERMISSIONS, TenantSchema, isLiteralTrue, logEvent,
+} from '@cauce/protocol';
 import {
   isHostCookieName,
   scalarHeaderValue,
@@ -156,9 +158,8 @@ export class DevOnlyAuthProvider implements AuthProvider {
       channel: 'dev',
       roles: this.configuredRoles ?? (localOperator ? ['operator'] : ['agent']),
       permissions: this.configuredPermissions ?? (localOperator ? ['route', 'read', 'control'] : ['route', 'read']),
-      // Development headers are never enabled in production.  Still model the one built-in
-      // interactive identity faithfully so policy tests do not have to confuse the operator role
-      // (authority) with a person actually sitting at the console (attribution).
+      // Development headers never run in production; the one built-in interactive identity is
+      // still modelled faithfully so policy tests keep operator authority and attribution apart.
       ...(localOperator ? { operator_id: sessionId } : {}),
       origin: {
         adapter: 'dev-auth',
@@ -431,9 +432,23 @@ function hashBuffer(value: unknown, name: string): Buffer {
   return Buffer.from(value, 'hex');
 }
 
-function parseExpiry(value: unknown): number | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'string') throw new AuthError('identity expiry is invalid');
+function hasParsableExpiry(value: unknown): boolean {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+const reportedInvalidExpiries = new Set<string>();
+
+/* Failing the whole file would let one legacy record revoke mTLS and pilot auth for the fleet. */
+function reportInvalidExpiries(path: string, invalid: number): void {
+  if (invalid === 0) return;
+  const key = `${path}\u0000${String(invalid)}`;
+  if (reportedInvalidExpiries.has(key)) return;
+  reportedInvalidExpiries.add(key);
+  logEvent('identity_records_without_valid_expiry', { path, invalid }, { level: 'warn' });
+}
+
+function parseExpiry(value: unknown): number {
+  if (typeof value !== 'string') throw new AuthError('identity expiry is missing');
   const expiry = Date.parse(value);
   if (!Number.isFinite(expiry)) throw new AuthError('identity expiry is invalid');
   return expiry;
@@ -449,10 +464,15 @@ async function readIdentityFile(path: string): Promise<HashedIdentityRecord[]> {
   if (decoded.version !== 1 || !Array.isArray(decoded.identities) || decoded.identities.length === 0) {
     throw new AuthError('hashed identity file is invalid');
   }
-  return decoded.identities.map((value) => {
+  let invalid = 0;
+  const records = decoded.identities.map((value) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new AuthError('hashed identity record is invalid');
-    return value as HashedIdentityRecord;
+    const record = value as HashedIdentityRecord;
+    if (!hasParsableExpiry(record.expires_at)) invalid += 1;
+    return record;
   });
+  reportInvalidExpiries(path, invalid);
+  return records;
 }
 
 export interface HashedTokenFileAuthProviderOptions {
@@ -496,8 +516,7 @@ export class HashedTokenFileAuthProvider implements AuthProvider {
       if (identity.token_sha256 === undefined) continue;
       const expected = hashBuffer(identity.token_sha256, 'token_sha256');
       if (!timingSafeEqual(presented, expected)) continue;
-      const expiry = parseExpiry(identity.expires_at);
-      if (expiry !== undefined && expiry <= Date.now()) throw new AuthError('pilot token is expired');
+      if (parseExpiry(identity.expires_at) <= Date.now()) throw new AuthError('pilot token is expired');
       if (!identity.principal || typeof identity.principal !== 'object') throw new AuthError('pilot principal is invalid');
       if (principal) throw new AuthError('pilot token hash is ambiguous');
       principal = validatePrincipal(identity.principal as Principal);
@@ -527,8 +546,7 @@ export class HashedMtlsIdentityFileProvider implements MtlsIdentityProvider {
       if (identity.certificate_sha256 === undefined) continue;
       const expected = hashBuffer(identity.certificate_sha256, 'certificate_sha256');
       if (!timingSafeEqual(presented, expected)) continue;
-      const expiry = parseExpiry(identity.expires_at);
-      if (expiry !== undefined && expiry <= Date.now()) throw new AuthError('mTLS identity is expired');
+      if (parseExpiry(identity.expires_at) <= Date.now()) throw new AuthError('mTLS identity is expired');
       if (!identity.principal || typeof identity.principal !== 'object') throw new AuthError('mTLS principal is invalid');
       if (principal) throw new AuthError('mTLS certificate mapping is ambiguous');
       principal = validatePrincipal(identity.principal as Principal);

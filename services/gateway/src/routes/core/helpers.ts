@@ -1,5 +1,5 @@
 import { WebSocket, type RawData } from 'ws';
-import { ClaimedAckSchema, isRfcUuid, type Tenant } from '@cauce/protocol';
+import { ClaimedAckSchema, isRfcUuid, type Tenant, type WsOutbound } from '@cauce/protocol';
 import { StoreError, type ConnectionSessionFence } from '@cauce/store';
 import type { DeliveryClaimRecord, GatewayAck } from '../../app.js';
 import type { Session, SessionClaim } from './contracts.js';
@@ -53,7 +53,9 @@ export function isSocketOpen(socket: WebSocket): boolean {
   return socket.readyState === WebSocket.OPEN;
 }
 
-export function send(socket: WebSocket, message: unknown): boolean {
+// With `unknown` no outgoing frame was tied to the wire union: a stale literal, or a field the
+// adapter's `.strict()` parser rejects, only failed where a test looked. `WsOutbound` tells `tsc`.
+export function send(socket: WebSocket, message: WsOutbound): boolean {
   if (!isSocketOpen(socket)) return false;
   try {
     socket.send(JSON.stringify(message));
@@ -112,9 +114,7 @@ export function rememberRecentClaim(session: Session, deliveryId: string, claim:
 }
 
 /**
- * Removes from RAM the claims whose deadline has already passed.
- *
- * Along the way, removes from `claims` the claims whose deadline has already passed. This is
+ * Removes from `claims` the claims whose deadline has already passed. This is
  * not an optimization: an expired claim can never be renewed (`ackDelivery` requires
  * `ack_deadline_at > now()`, same condition), so if it stayed in the map it would occupy a slot
  * forever and the agent would run out of work until reconnecting. It is moved to `recentClaims`

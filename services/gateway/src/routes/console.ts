@@ -8,6 +8,7 @@ import { registerAgentDocumentRoutes } from '../console/agent-documents.routes.j
 import { prepareAgentProfileRuntime } from '../console/agent-profile-runtime.js';
 import { registerAgentProfileRoutes } from '../console/agent-profile.routes.js';
 import { SondaCompartida, sondaDiferida } from '../console/sonda-compartida.js';
+import { recordTerminalAudit } from '../terminal/audit.js';
 import {
   safeAuditPage, safeDlqPage, sameTenantRows, visibleMessage, visibleOriginRelays, visibleQueue,
 } from '../facades.js';
@@ -20,6 +21,7 @@ import {
 } from './console/helpers.js';
 import { registerConsoleAccessRoutes } from './console/access.js';
 import { registerConsoleOperationsRoutes } from './console/operations.js';
+import { publishRouteOptions } from './core/publish.js';
 
 export { createConsoleRoutes } from './console/access.js';
 
@@ -43,7 +45,7 @@ function registerConsoleAgentRoutes(
   publishHandler: PublishHandler,
 ): AgentProfileRepository {
   const { allowedJobKinds, options, repository } = context;
-  app.post('/v3/console/messages', publishHandler);
+  app.post('/v3/console/messages', publishRouteOptions, publishHandler);
 
   app.get<{ Params: { messageId: string } }>('/v3/console/messages/:messageId', async (request, reply) => {
     try {
@@ -278,6 +280,8 @@ function registerConsoleAgentRoutes(
        * with those exact words, which is what the screen already knows how to render.
        */
       probe: profileProbe,
+      // A denial leaving no audit row is worse than an unavailable route: the write is awaited.
+      recordAudit: (entry) => recordTerminalAudit(options.pool, entry),
     });
 
     app.get<{ Params: { tenantId: string; alias: string } }>(

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'; /* eslint @typescript-eslint/no-
 import { WebSocket, type RawData } from 'ws';
 import {
   DeliveryIdSchema, HeartbeatSchema, HelloSchema, PROTOCOL_VERSION, isSignalAborted,
-  type Hello, type Tenant,
+  type ContextoDeAlias, type Hello, type Tenant,
 } from '@cauce/protocol';
 import { StoreError, type AckResult, type AgentProfileRepository, type LeaseResult } from '@cauce/store';
 import { requirePermission, validatePrincipal } from '../auth.js';
@@ -362,11 +362,10 @@ export function createCoreRoutePhases(
                * is lost is the trimming. The opposite —denying the connection because a file could
                * not be composed— would leave an alias deaf because of a presentation problem.
                */
-              let agentProfile: { perfil: unknown; hechos: unknown } | undefined;
+              let agentProfile: ContextoDeAlias | undefined;
               if (hello.capabilities.includes('agent_profile_v1')) {
                 try {
-                  const contexto = await agentProfiles.readContext(hello.tenant_id, hello.alias);
-                  agentProfile = { perfil: contexto.perfil, hechos: contexto.hechos };
+                  agentProfile = await agentProfiles.readContext(hello.tenant_id, hello.alias);
                 } catch {
                   agentProfile = undefined;
                 }
