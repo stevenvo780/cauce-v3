@@ -101,6 +101,9 @@ services:
       CAUCE_TERMINAL_MAX_SESSIONS_PER_OPERATOR: "2"
       CAUCE_TERMINAL_OPERATOR_HEADER: x-cauce-operator
       CAUCE_TERMINAL_OPERATORS: ${CAUCE_TERMINAL_OPERATORS:-}
+      CAUCE_TERMINAL_RW_ENABLED: ${CAUCE_TERMINAL_RW_ENABLED:-0}
+      CAUCE_TERMINAL_CONTROL_HOLD_SECONDS: ${CAUCE_TERMINAL_CONTROL_HOLD_SECONDS:-900}
+      CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS: ${CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS:-3600}
       NODE_EXTRA_CA_CERTS: /run/secrets/gateway_tls_ca
       PORT: "8443"
     secrets:
@@ -253,6 +256,11 @@ services:
       # Close reports are persisted before delivery to the gateway. A named volume keeps the
       # idempotent report across image replacement and host-side container recreation.
       CAUCE_TERMINAL_CLOSE_SPOOL_FILE: /var/lib/cauce-terminal/close-reports.json
+      # Recording lives inside the close-spool volume: the rootfs is read-only and the relay
+      # creates the directory 0700 and each capture 0600 under the runtime uid.
+      CAUCE_TERMINAL_RECORDING_DIR: ${CAUCE_TERMINAL_RECORDING_DIR:-}
+      CAUCE_TERMINAL_RECORDING_MAX_BYTES: ${CAUCE_TERMINAL_RECORDING_MAX_BYTES:-33554432}
+      CAUCE_TERMINAL_RECORD_SHELL_SESSIONS: ${CAUCE_TERMINAL_RECORD_SHELL_SESSIONS:-0}
       NODE_EXTRA_CA_CERTS: /run/secrets/gateway_tls_ca
     secrets:
       - source: terminal_relay_tls_cert
