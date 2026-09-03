@@ -9,7 +9,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
 import {
-  bloqueDePerfil, ficherosDelArnes, type AgentProfile, type ContextoDeAlias, type HechosDelAlias,
+  bloqueDePerfil, ficherosDelArnes, harnessDocumentPaths, nombresDelArnes,
+  type AgentProfile, type ContextoDeAlias, type HechosDelAlias,
 } from "@cauce/protocol";
 import {
   directorioDelArnes, discoReal, resumenDeLaSiembra, sembrarPerfilDelArnes,
@@ -75,6 +76,29 @@ test("CLAUDE_CONFIG_DIR gana sobre $HOME: es cómo dos alias del mismo contenedo
    */
   assert.equal(directorioDelArnes("claude", ENTORNO), "/home/dev/.claude-zeus");
   assert.equal(directorioDelArnes("claude", { HOME: "/home/dev" }), "/home/dev/.claude");
+});
+
+test("el directorio y las rutas del gateway salen de la MISMA tabla del protocolo", () => {
+  for (const [harness, entorno] of [
+    ["claude", ENTORNO],
+    ["claude", { HOME: "/home/dev" }],
+    ["codex", { HOME: "/h", CODEX_HOME: "/otro" }],
+    ["openclaw", { HOME: "/h", CAUCE_OPENCLAW_WORKSPACE: "/ws" }],
+  ] as const) {
+    const directorio = directorioDelArnes(harness, entorno);
+    assert.ok(directorio !== undefined, `${harness} no resolvió directorio`);
+    assert.deepEqual(
+      nombresDelArnes(harness).map((nombre) => join(directorio, nombre)),
+      harnessDocumentPaths(harness, {
+        home: entorno.HOME,
+        claudeConfigDir: "CLAUDE_CONFIG_DIR" in entorno ? entorno.CLAUDE_CONFIG_DIR : undefined,
+        codexHome: "CODEX_HOME" in entorno ? entorno.CODEX_HOME : undefined,
+        openclawWorkspace: "CAUCE_OPENCLAW_WORKSPACE" in entorno
+          ? entorno.CAUCE_OPENCLAW_WORKSPACE
+          : undefined,
+      }),
+    );
+  }
 });
 
 test("codex mira CODEX_HOME, y openclaw NO adivina su espacio de trabajo", () => {
@@ -518,4 +542,78 @@ test("el resumen distingue apagado de no-se-pudo", () => {
     habilitado: false, disco: d.puerto, entorno: ENTORNO,
   });
   assert.ok(resumenDeLaSiembra(apagado).includes("apagada"));
+});
+
+function contextoAcentuadoAlTope(): ContextoDeAlias {
+  const acento = "\u00e1";
+  return contexto({
+    purpose: acento.repeat(2_000),
+    role_summary: acento.repeat(4_000),
+    human_brief: acento.repeat(2_000),
+    responsibilities: Array.from({ length: 8 }, () => acento.repeat(1_000)),
+    restrictions: Array.from({ length: 4 }, () => acento.repeat(1_000)),
+    operating_rules: Array.from({ length: 4 }, () => acento.repeat(1_000)),
+  });
+}
+
+const ENTORNO_CODEX = { HOME: "/home/dev" };
+const CONFIG_DE_CODEX = "/home/dev/.codex/config.toml";
+
+test("codex: el project_doc_max_bytes medido del config.toml manda sobre el defecto", () => {
+  const d = disco({ [CONFIG_DE_CODEX]: "model = \"gpt\"\nproject_doc_max_bytes = 65536\n" });
+  const resultado = sembrarPerfilDelArnes("codex", contextoAcentuadoAlTope(), {
+    habilitado: true, disco: d.puerto, entorno: ENTORNO_CODEX,
+  });
+  assert.equal(resultado.estado, "hecho");
+  assert.deepEqual(d.escrituras, ["/home/dev/.codex/AGENTS.md"]);
+  const escrito = d.ficheros.get("/home/dev/.codex/AGENTS.md") ?? "";
+  assert.ok(Buffer.byteLength(escrito, "utf8") > 48_000);
+});
+
+test("codex sin hecho medido: rige el DEFECTO, no se escribe nada y el resumen dice unidad y origen", () => {
+  const d = disco();
+  const resultado = sembrarPerfilDelArnes("codex", contextoAcentuadoAlTope(), {
+    habilitado: true, disco: d.puerto, entorno: ENTORNO_CODEX,
+  });
+  assert.equal(resultado.estado, "no-entra");
+  assert.equal(resultado.fichero, "AGENTS.md");
+  assert.equal(resultado.tope, 32 * 1_024);
+  assert.equal(resultado.unidad, "utf8_bytes");
+  assert.equal(resultado.fuente, "default");
+  assert.equal(d.escrituras.length, 0);
+  const resumen = resumenDeLaSiembra(resultado);
+  assert.match(resumen, /bytes UTF-8/u);
+  assert.match(resumen, /por defecto del arn\u00e9s/u);
+});
+
+test("un config.toml ilegible NO inventa un tope: cae al defecto y falla cerrado", () => {
+  const d = disco({ [CONFIG_DE_CODEX]: "[profiles.zeus]\nproject_doc_max_bytes = 999999\n" });
+  const resultado = sembrarPerfilDelArnes("codex", contextoAcentuadoAlTope(), {
+    habilitado: true, disco: d.puerto, entorno: ENTORNO_CODEX,
+  });
+  assert.equal(resultado.estado, "no-entra");
+  assert.equal(resultado.tope, 32 * 1_024);
+  assert.equal(resultado.fuente, "default");
+  assert.equal(d.escrituras.length, 0);
+});
+
+test("una variable de arnés VACÍA cae al defecto bajo $HOME; definida y relativa se rechaza", () => {
+  assert.equal(directorioDelArnes("claude", { HOME: "/home/dev", CLAUDE_CONFIG_DIR: "" }),
+    "/home/dev/.claude");
+  assert.equal(directorioDelArnes("codex", { HOME: "/home/dev", CODEX_HOME: "" }), "/home/dev/.codex");
+  assert.equal(directorioDelArnes("claude", { HOME: "/home/dev", CLAUDE_CONFIG_DIR: "relativo" }),
+    undefined);
+  assert.equal(directorioDelArnes("codex", { HOME: "/home/dev", CODEX_HOME: "../fuga" }), undefined);
+
+  const d = disco();
+  const resultado = sembrarPerfilDelArnes("claude", contexto({ purpose: "x" }), {
+    habilitado: true, disco: d.puerto, entorno: { HOME: "/home/dev", CLAUDE_CONFIG_DIR: "" },
+  });
+  assert.equal(resultado.estado, "hecho");
+  assert.deepEqual(d.escrituras, ["/home/dev/.claude/CLAUDE.md"]);
+
+  const relativo = sembrarPerfilDelArnes("claude", contexto({ purpose: "x" }), {
+    habilitado: true, disco: disco().puerto, entorno: { HOME: "/home/dev", CLAUDE_CONFIG_DIR: "no-absoluto" },
+  });
+  assert.equal(relativo.estado, "sin-directorio");
 });

@@ -3,11 +3,13 @@ import {
   closeSync, constants, fstatSync, ftruncateSync, fsyncSync, linkSync, lstatSync, mkdirSync,
   openSync, readSync, unlinkSync, writeSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, parse, relative, resolve, sep } from "node:path";
 import {
-  ErrorDeTopeDelArnes, PREFIJO_REVISION_PERFIL, bloqueDePerfil, ficherosDelArnes, nombresDelArnes,
-  revisionDelPerfil, type ContextoDeAlias,
-  type FicheroGenerado,
+  ETIQUETAS_DE_FUENTE, ETIQUETAS_DE_UNIDAD, ErrorDeTopeDelArnes, PREFIJO_REVISION_PERFIL,
+  bloqueDePerfil, ficherosDelArnes, harnessDocumentDirectory, nombresDelArnes,
+  presupuestoDeContextoMedido, revisionDelPerfil, topeDeCodexEnConfigToml,
+  type ContextoDeAlias, type FicheroGenerado, type FuenteDeTope, type PresupuestoDeContexto,
+  type UnidadDeTope,
 } from "@cauce/protocol";
 
 /**
@@ -33,7 +35,10 @@ export type ResultadoDeLaSiembra =
   /** Harness has files, but its measured home/workspace is missing or not an absolute path. */
   | { readonly estado: "sin-directorio"; readonly harness: string }
   /** A file —or the sum— exceeds the harness cap. NONE is written. */
-  | { readonly estado: "no-entra"; readonly fichero: string; readonly medido: number; readonly tope: number }
+  | {
+    readonly estado: "no-entra"; readonly fichero: string; readonly medido: number;
+    readonly tope: number; readonly unidad?: UnidadDeTope; readonly fuente?: FuenteDeTope;
+  }
   | { readonly estado: "hecho"; readonly ficheros: readonly ResultadoDeFichero[] };
 
 /** Disk, injectable so seeding can be tested without touching the file system. */
@@ -418,29 +423,36 @@ export function escribirEnDiscoRealSiCoincide(
 export function directorioDelArnes(
   harness: string, entorno: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
-  const absoluta = (valor: string | undefined): string | undefined => {
-    if (valor === undefined || valor.trim().length === 0 || !isAbsolute(valor)) return undefined;
-    return resolve(valor);
-  };
-  const home = absoluta(entorno.HOME);
-  if (harness === "claude") {
-    if (entorno.CLAUDE_CONFIG_DIR !== undefined) return absoluta(entorno.CLAUDE_CONFIG_DIR);
-    return home === undefined ? undefined : join(home, ".claude");
+  /*
+   * The table lives in `@cauce/protocol` so gateway, adapter and pty-agent resolve the SAME paths.
+   * Only harnesses this seeding writes are resolved: openclaw declares no default under `$HOME`
+   * —its workspace is not its home, and seeding seven Markdowns in the wrong place is worse than
+   * not seeding— so without `CAUCE_OPENCLAW_WORKSPACE` nothing is touched.
+   */
+  if (nombresDelArnes(harness).length === 0) return undefined;
+  return harnessDocumentDirectory(harness, {
+    home: entorno.HOME,
+    claudeConfigDir: entorno.CLAUDE_CONFIG_DIR,
+    codexHome: entorno.CODEX_HOME,
+    openclawWorkspace: entorno.CAUCE_OPENCLAW_WORKSPACE,
+  });
+}
+
+const MAXIMO_DEL_CONFIG_DE_CODEX = 1_048_576;
+
+/** Reads the alias `config.toml` so the measured budget, and never a default, rules the write. */
+function presupuestoDeLaSiembra(
+  harness: string, directorio: string, disco: DiscoDelArnes,
+): PresupuestoDeContexto | undefined {
+  if (harness !== "codex") return presupuestoDeContextoMedido(harness);
+  let medido: number | undefined;
+  try {
+    const texto = disco.leer(join(directorio, "config.toml"), MAXIMO_DEL_CONFIG_DE_CODEX);
+    medido = texto === undefined ? undefined : topeDeCodexEnConfigToml(texto);
+  } catch {
+    medido = undefined;
   }
-  if (harness === "codex") {
-    if (entorno.CODEX_HOME !== undefined) return absoluta(entorno.CODEX_HOME);
-    return home === undefined ? undefined : join(home, ".codex");
-  }
-  if (harness === "openclaw") {
-    /*
-     * `CAUCE_OPENCLAW_WORKSPACE` first because an openclaw agent's workspace is NOT its `$HOME`:
-     * it's the directory where the harness loads its family of seven. Without the variable we
-     * don't guess —`$HOME` would almost always be the wrong place, and seeding seven Markdowns in
-     * the wrong place is worse than not seeding—, so `undefined` is returned and nothing is touched.
-     */
-    return absoluta(entorno.CAUCE_OPENCLAW_WORKSPACE);
-  }
-  return undefined;
+  return presupuestoDeContextoMedido(harness, { codexProjectDocMaxBytes: medido });
 }
 
 interface OpcionesDeSiembra {
@@ -467,6 +479,7 @@ export function sembrarPerfilDelArnes(
   if (directorio === undefined) return { estado: "sin-directorio", harness };
 
   const disco = opciones.disco ?? discoReal;
+  const topes = presupuestoDeLaSiembra(harness, directorio, disco);
 
   // What is on disk NOW. Only ENOENT means "not there". If one cannot be read, NONE is generated
   // or written: completing six of seven OpenClaw leaves a contradictory persona, and treating
@@ -508,15 +521,24 @@ export function sembrarPerfilDelArnes(
       harness,
       contexto,
       existentes,
-      revisionNativa === undefined ? {} : { revision: revisionNativa },
+      {
+        ...(revisionNativa === undefined ? {} : { revision: revisionNativa }),
+        ...(topes === undefined ? {} : { topes }),
+      },
     );
   } catch (error) {
     if (error instanceof ErrorDeTopeDelArnes) {
 // NONE is written. A half-persona —four files today, three not— contradicts itself, and the
         // model has no way to know which one to believe.
-      return { estado: "no-entra", fichero: error.fichero, medido: error.medido, tope: error.tope };
+      return {
+        estado: "no-entra", fichero: error.fichero, medido: error.medido, tope: error.tope,
+        unidad: error.unidad, fuente: error.fuente,
+      };
     }
-    return { estado: "no-entra", fichero: "desconocido", medido: 0, tope: 0 };
+    return {
+      estado: "no-entra", fichero: "desconocido", medido: 0, tope: 0,
+      unidad: topes?.unit ?? "utf16_strictest", fuente: topes?.fuente ?? "default",
+    };
   }
 
   if (revisionNativa !== undefined
@@ -600,8 +622,10 @@ export function resumenDeLaSiembra(resultado: ResultadoDeLaSiembra): string {
     return `siembra del perfil: el arnés «${resultado.harness}» no tiene un directorio absoluto medido`;
   }
   if (resultado.estado === "no-entra") {
-    return `siembra del perfil: NO se escribió nada, ${resultado.fichero} mide ${String(resultado.medido)} `
-      + `y el tope es ${String(resultado.tope)}`;
+    return `siembra del perfil: NO se escribió nada, ${resultado.fichero} mide `
+      + `${String(resultado.medido)} ${ETIQUETAS_DE_UNIDAD[resultado.unidad ?? "utf16_strictest"]} `
+      + `y el tope es ${String(resultado.tope)} `
+      + `(${ETIQUETAS_DE_FUENTE[resultado.fuente ?? "default"]})`;
   }
   const cuenta = new Map<string, number>();
   for (const fichero of resultado.ficheros) {

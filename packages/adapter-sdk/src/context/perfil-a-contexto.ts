@@ -62,19 +62,15 @@ export const CLAVES_PROHIBIDAS_OPENCLAW = [
 ] as const;
 
 /*
- * `componerBloqueDePerfil` and its helpers MOVED to `@cauce/protocol/agent-profile.ts`.
- *
- * Reason: the gateway needs the same composition to show a PREVIEW of what will be written, and
- * cannot import this package —`@cauce/adapter-sdk` is the agent runtime: it drags the engine, the
- * websocket transport, the process launcher and the credential resolver, none of which has any
- * place inside a server—. `@cauce/protocol` is the only one both layers see, which is exactly the
- * argument for which the fact types already lived there.
+ * `componerBloqueDePerfil` and its helpers MOVED to `@cauce/protocol/agent-profile.ts`, because the
+ * gateway needs the same composition to show a PREVIEW of what will be written and cannot import
+ * this package: `@cauce/adapter-sdk` drags the engine, the websocket transport, the process
+ * launcher and the credential resolver, none of which has any place inside a server.
  *
  * Preview and seeding coming from THE SAME function is what prevents the preview from lying: two
  * implementations of the same text diverge at the first fix, and the operator would approve a
- * block different from what ends up on disk with nothing reporting an error.
- *
- * Re-exported so nothing already importing from here has to change location.
+ * block different from what ends up on disk with nothing reporting an error. Re-exported so
+ * nothing already importing from here has to change location.
  */
 export {
   componerBloqueDePerfil,
@@ -158,7 +154,11 @@ export function rolBreveDelPerfil(perfil: AgentProfile): string | null {
   return normalized.length === 0 ? null : clampToRoleBriefLimit(normalized);
 }
 
-/** Compiles the profile block from the alias context returned by the store. */
+/**
+ * Compiles the profile block from the alias context, WITHOUT the derived facts: permissions,
+ * quotas and harness configuration already travel in the harness file, and repeating them in the
+ * envelope spends budget saying the same thing twice.
+ */
 export function compilarContexto(contexto: ContextoDeAlias): string {
-  return componerBloqueDePerfil(contexto.perfil, contexto.hechos);
+  return componerBloqueDePerfil(contexto.perfil, contexto.hechos, { includeDerivedFacts: false });
 }

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -22,13 +21,14 @@ import {
   conBloqueGestionado,
   marcaDeRevisionDelPerfil,
   measureStrictestUnits,
-  type ProfileRuntimeContract,
 } from "@cauce/protocol";
-import { nativeProfileContextEnabled } from "../src/context/native-profile-context.js";
+import {
+  nativeProfileContextEnabled, profileReloadRequest,
+} from "../src/context/native-profile-context.js";
 import { siembraHabilitada } from "../src/sdk/client.js";
 import { DurableStore } from "../src/sdk/durable-store.js";
 import { profileAdoptionFor } from "../src/sdk/engine.js";
-import { HARNESS_DEFINITIONS, HarnessAdapter } from "../src/harnesses/index.js";
+import { HarnessAdapter } from "../src/harnesses/index.js";
 import {
   PRIMARY_DUTY_HEADER,
   type HarnessRequestContext,
@@ -36,99 +36,13 @@ import {
 } from "../src/harnesses/shared.js";
 import { textoNativoDelSobre } from "../src/harnesses/shared/prompt.js";
 import type {
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  HarnessDefinition,
-  HarnessId,
+  CommandRunRequest, CommandRunResult, CommandRunner,
 } from "../src/sdk/types.js";
 import { delivery } from "./engine-fixtures.js";
-
-const OUTPUT = {
-  reply: "ok",
-  messages: [],
-  notify: [],
-  status: "done" as const,
-  retryable: false,
-  artifacts: [],
-};
-
-function hash(text: string): string {
-  return createHash("sha256").update(text, "utf8").digest("hex");
-}
-
-function profileFile(alias: string, revision: number | undefined, body: string): string {
-  const managed = conBloqueDePerfil("", `<!-- alias: Steven/${alias} -->\n${body}`);
-  return revision === undefined ? managed : `${marcaDeRevisionDelPerfil(revision)}\n${managed}`;
-}
-
-function context(alias: string): HarnessRequestContext {
-  return {
-    self_alias: alias,
-    sender_alias: "kant",
-    tenant_id: "Steven",
-    room_id: "grp.steven",
-    channel: "telegram",
-    agent_message: true,
-    message_type: "agent.message",
-    routing_targets: [{ tenant_id: "Steven", alias: "kant", online: true }],
-    self_role: `ROLE-SENTINEL-${alias}`,
-  };
-}
-
-function contract(revision: number, paths: readonly string[]): ProfileRuntimeContract {
-  return {
-    revision,
-    generation: `runtime-${String(revision)}`,
-    documents: paths.map((path) => ({
-      name: basename(path),
-      path,
-      sha: hash(readFileSync(path, "utf8")),
-    })),
-  };
-}
-
-function definition(id: HarnessId): HarnessDefinition {
-  return {
-    ...HARNESS_DEFINITIONS[id],
-    sessionStrategy: { kind: "none" },
-    parse: () => ({ output: OUTPUT }),
-  };
-}
-
-function spyRunner(): {
-  readonly runner: CommandRunner;
-  readonly requests: CommandRunRequest[];
-} {
-  const requests: CommandRunRequest[] = [];
-  return {
-    requests,
-    runner: {
-      async run(request: CommandRunRequest): Promise<CommandRunResult> {
-        requests.push(request);
-        return {
-          stdout: "ignored",
-          stderr: "",
-          exitCode: 0,
-          signal: null,
-          timedOut: false,
-          cancelled: false,
-        };
-      },
-    },
-  };
-}
-
-function restoreEnvironment(name: string, previous: string | undefined): void {
-  if (previous === undefined) {
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- env key passed in by caller
-    delete process.env[name];
-  } else process.env[name] = previous;
-}
-
-function nativeEnvironment(value = "1"): NodeJS.ProcessEnv {
-  return { ...process.env, CAUCE_NATIVE_PROFILE_CONTEXT: value };
-}
+import {
+  captureStderr, contract, context, definition, hash, nativeEnvironment, profileFile,
+  restoreEnvironment, spyRunner,
+} from "./native-profile-fixtures.js";
 
 test("native profile flag accepts only absent, 0, or 1", () => {
   assert.equal(nativeProfileContextEnabled(undefined), false);
@@ -168,13 +82,6 @@ test("native profile flag rejects an unsupported harness before disk access", as
     rmSync(state, { recursive: true, force: true });
   }
 });
-
-function captureStderr(): { readonly lines: string[]; restore: () => void } {
-  const lines: string[] = [];
-  const original = process.stderr.write.bind(process.stderr);
-  process.stderr.write = (chunk: string): boolean => { lines.push(chunk); return true; };
-  return { lines, restore: () => { process.stderr.write = original; } };
-}
 
 test("native profile flag on a shared-session alias warns loudly instead of aborting the process", async (t) => {
   const state = mkdtempSync(join(tmpdir(), "cauce-native-shared-session-"));
@@ -653,6 +560,7 @@ test("a contract sealed with the presence generation of THIS incarnation is acce
     signal: AbortSignal.timeout(2_000),
   }), (error: unknown) => {
     assert.equal((error as { code?: unknown }).code, "NATIVE_PROFILE_CONTEXT_GENERATION_MISMATCH");
+    assert.equal(profileReloadRequest(nativeEnvironment(), "zeus"), undefined);
     assert.equal((error as { retryable?: unknown }).retryable, false);
     return true;
   });
@@ -784,6 +692,7 @@ test("stale, absent, foreign, and malformed projections fail before the runner",
       signal: AbortSignal.timeout(2_000),
     }), (error: unknown) => {
       const expectedCode = scenario.expectedCode ?? "NATIVE_PROFILE_CONTEXT_PREFLIGHT_FAILED";
+      assert.equal(profileReloadRequest(nativeEnvironment(), "zeus"), undefined, scenario.name);
       assert.equal((error as { code?: unknown }).code, expectedCode, scenario.name);
       assert.equal((error as { retryable?: unknown }).retryable, scenario.expectedRetryable ?? true, scenario.name);
       return true;

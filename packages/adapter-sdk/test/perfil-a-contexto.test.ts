@@ -8,8 +8,8 @@ import {
 } from "../src/harnesses/contexto-fijo.js";
 import {
   CLAVES_PROHIBIDAS_OPENCLAW, MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO, bloqueDePerfil,
-  componerBloqueDePerfil, conBloqueDePerfil, proyeccionOpenclaw, rolBreveDelPerfil,
-  serializarEstable, type HechosDelAlias,
+  compilarContexto, componerBloqueDePerfil, conBloqueDePerfil, proyeccionOpenclaw,
+  rolBreveDelPerfil, serializarEstable, type HechosDelAlias,
 } from "../src/context/perfil-a-contexto.js";
 
 /**
@@ -49,6 +49,23 @@ function hechos(overrides: Partial<HechosDelAlias> = {}): HechosDelAlias {
     ...overrides,
   };
 }
+
+test("el contexto fijo del sobre NO repite los hechos que el fichero del arnés ya lleva", () => {
+  const contexto = { perfil: perfil(), hechos: hechos() };
+  const sobre = compilarContexto(contexto);
+  assert.ok(sobre.includes("## Identidad y propósito"));
+  assert.ok(sobre.includes("- cauce"));
+  assert.ok(!sobre.includes("## Permisos y acceso vía Cauce"));
+  assert.ok(!sobre.includes("## Cuotas y límites"));
+  assert.ok(!sobre.includes("## Configuración del arnés"));
+  assert.ok(!sobre.includes("Capacidades del arnés"));
+
+  const fichero = componerBloqueDePerfil(contexto.perfil, contexto.hechos, {
+    includeDerivedFacts: true,
+  });
+  assert.ok(fichero.includes("## Permisos y acceso vía Cauce"));
+  assert.notEqual(sobre, fichero);
+});
 
 test("mismo perfil y mismos hechos producen EXACTAMENTE los mismos bytes", () => {
   const uno = componerBloqueDePerfil(perfil(), hechos());

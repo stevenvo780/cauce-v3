@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { request } from "node:https";
 import { join } from "node:path";
 import {
   FICHEROS_OPENCLAW,
@@ -40,9 +42,74 @@ const NATIVE_PROFILE_CONTEXT_FILE_MISSING = "NATIVE_PROFILE_CONTEXT_FILE_MISSING
 const NATIVE_PROFILE_CONTEXT_CONTRACT_MISSING = "NATIVE_PROFILE_CONTEXT_CONTRACT_MISSING";
 const NATIVE_PROFILE_CONTEXT_GENERATION_MISMATCH = "NATIVE_PROFILE_CONTEXT_GENERATION_MISMATCH";
 
+const PROFILE_RELOAD_TIMEOUT_MS = 5_000;
+const GATEWAY_ORIGIN = /^https:\/\/[A-Za-z0-9._:-]+$/u;
+
 interface NativeProfilePath {
   readonly path: string;
   readonly authored: boolean;
+}
+
+interface ExpectationReload {
+  readonly retryable: boolean;
+  readonly reason?: string;
+}
+
+export interface ProfileReloadRequest {
+  readonly url: string;
+  readonly certFile: string;
+  readonly keyFile: string;
+  readonly caFile: string;
+}
+
+function gatewayOrigin(environment: NodeJS.ProcessEnv): string | undefined {
+  const override = environment.CAUCE_PROFILE_EXPECTATION_URL;
+  if (override !== undefined && override.length > 0) {
+    return GATEWAY_ORIGIN.test(override) ? override : undefined;
+  }
+  const relay = environment.CAUCE_RELAY_URL;
+  if (relay?.startsWith("wss://") !== true) return undefined;
+  const origin = `https://${relay.slice("wss://".length).replace(/\/v3\/ws$/u, "")}`;
+  return GATEWAY_ORIGIN.test(origin) ? origin : undefined;
+}
+
+export function profileReloadRequest(
+  environment: NodeJS.ProcessEnv, alias: string,
+): ProfileReloadRequest | undefined {
+  const origin = gatewayOrigin(environment);
+  const certFile = environment.CAUCE_TLS_CERT_FILE;
+  const keyFile = environment.CAUCE_TLS_KEY_FILE;
+  const caFile = environment.CAUCE_TLS_CA_FILE;
+  if (origin === undefined || certFile === undefined
+    || keyFile === undefined || caFile === undefined) return undefined;
+  const material = [certFile, keyFile, caFile];
+  if (!material.every((file) => file.startsWith("/") && existsSync(file))) return undefined;
+  return {
+    url: `${origin}/v3/console/agents/${encodeURIComponent(alias)}/context/reload`,
+    certFile,
+    keyFile,
+    caFile,
+  };
+}
+
+function postProfileReload(target: ProfileReloadRequest): void {
+  const url = new URL(target.url);
+  const call = request({
+    protocol: url.protocol,
+    hostname: url.hostname,
+    ...(url.port === "" ? {} : { port: url.port }),
+    path: url.pathname,
+    method: "POST",
+    cert: readFileSync(target.certFile),
+    key: readFileSync(target.keyFile),
+    ca: readFileSync(target.caFile),
+    headers: { "content-length": "0" },
+    timeout: PROFILE_RELOAD_TIMEOUT_MS,
+  });
+  call.on("error", () => { call.destroy(); });
+  call.on("timeout", () => { call.destroy(); });
+  call.on("response", (response) => { response.resume(); });
+  call.end();
 }
 
 /** Parses the alias-local optimization flag without accepting truthy lookalikes. */
@@ -67,6 +134,9 @@ export class NativeProfileContext {
   private readonly openClawWorkspace: string | undefined;
   private readonly runtimeGeneration: string;
   private readonly presenceGeneration: string | undefined;
+  private readonly environment: NodeJS.ProcessEnv;
+  private reloadRequestedFor: string | undefined;
+  private reloadOutcome: ExpectationReload = { retryable: false };
 
   constructor(
     private readonly harness: HarnessId,
@@ -79,6 +149,7 @@ export class NativeProfileContext {
     if (sharedSession) {
       throw new Error("Native profile context requires a fresh harness process, not a shared session");
     }
+    this.environment = environment;
     this.home = environment.HOME;
     this.claudeConfigDirectory = environment.CLAUDE_CONFIG_DIR;
     this.openClawWorkspace = environment.CAUCE_OPENCLAW_WORKSPACE;
@@ -200,6 +271,45 @@ export class NativeProfileContext {
     );
   }
 
+  private expectationFailure(code: string, detail: string, alias: string): AdapterError {
+    const reload = this.requestExpectationReload(alias);
+    const reason = reload.reason === undefined ? detail : `${detail}; ${reload.reason}`;
+    return new AdapterError(
+      code,
+      `Native profile context preflight failed: ${reason}`,
+      reload.retryable,
+    );
+  }
+
+  private requestExpectationReload(alias: string): ExpectationReload {
+    const target = profileReloadRequest(this.environment, alias);
+    if (target === undefined) return { retryable: false };
+    if (this.reloadRequestedFor === this.runtimeGeneration) return this.reloadOutcome;
+    this.reloadRequestedFor = this.runtimeGeneration;
+    let dispatched = true;
+    try {
+      postProfileReload(target);
+    } catch {
+      dispatched = false;
+    }
+    process.stderr.write(`${JSON.stringify({
+      event: "native_profile_expectation_reload_requested",
+      alias,
+      harness: this.harness,
+      generation: this.runtimeGeneration,
+      url: target.url,
+      dispatched,
+    })}\n`);
+    this.reloadOutcome = dispatched
+      ? { retryable: true }
+      : {
+        retryable: false,
+        reason: "the expectation reload could not be dispatched with the mTLS material at "
+          + `${target.certFile}, ${target.keyFile} and ${target.caFile}`,
+      };
+    return this.reloadOutcome;
+  }
+
   private instructionPath(): string {
     if (this.harness === "openclaw") {
       const workspace = this.requireAbsolute(this.openClawWorkspace, "CAUCE_OPENCLAW_WORKSPACE");
@@ -301,9 +411,10 @@ export class NativeProfileContext {
     const owner = `<!-- alias: ${context.tenant_id}/${context.self_alias} -->`;
     const expectedRevision = context.native_profile_contract?.revision;
     if (expectedRevision === undefined) {
-      throw this.deterministicFailure(
+      throw this.expectationFailure(
         NATIVE_PROFILE_CONTEXT_CONTRACT_MISSING,
         "delivery has no native profile revision contract",
+        context.self_alias,
       );
     }
     const documents: { path: string; sha256: string }[] = [];
@@ -365,17 +476,19 @@ export class NativeProfileContext {
   ): void {
     const contract = context.native_profile_contract;
     if (contract === undefined) {
-      throw this.deterministicFailure(
+      throw this.expectationFailure(
         NATIVE_PROFILE_CONTEXT_CONTRACT_MISSING,
         "delivery has no native profile revision contract",
+        context.self_alias,
       );
     }
     if (contract.generation !== this.runtimeGeneration
       && (this.presenceGeneration === undefined
         || contract.generation !== this.presenceGeneration)) {
-      throw this.deterministicFailure(
+      throw this.expectationFailure(
         NATIVE_PROFILE_CONTEXT_GENERATION_MISMATCH,
         "native profile contract belongs to another runtime generation",
+        context.self_alias,
       );
     }
     const paths = this.paths();
