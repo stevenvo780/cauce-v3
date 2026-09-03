@@ -101,7 +101,6 @@ function startAdapter({ tenant, room, alias, entrypoint, root, wsBaseUrl }) {
       CAUCE_HEARTBEAT_MS: '100',
       CAUCE_DEFAULT_TIMEOUT_MS: '15000',
       CAUCE_SEMBRAR_PERFIL: '0',
-      CAUCE_SEMBRAR_CONTEXTO: '0',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -225,6 +224,26 @@ function finalReply(relay) {
   return relay?.payload?.result?.output?.reply;
 }
 
+// The fan-in synthesizer always appends this summary, so the contract for the final reply is the
+// marker line plus that footer: both halves are asserted, neither is ignored.
+const fanInFooterPattern =
+  /^\[\d+ locally synthesized branch (?:reply|replies); \d+ branch (?:response|responses) in this chain; \d+ without local synthesis\]$/u;
+
+function fanInFooter(relay, expectedMarker) {
+  const reply = finalReply(relay);
+  const prefix = `${expectedMarker}\n\n`;
+  if (typeof reply !== 'string' || !reply.startsWith(prefix)) return undefined;
+  const footer = reply.slice(prefix.length);
+  return fanInFooterPattern.test(footer) ? footer : undefined;
+}
+
+function expectedFanInFooter(branches) {
+  const synthesized = branches === 1 ? 'reply' : 'replies';
+  const answered = branches === 1 ? 'response' : 'responses';
+  return `[${String(branches)} locally synthesized branch ${synthesized}; `
+    + `${String(branches)} branch ${answered} in this chain; 0 without local synthesis]`;
+}
+
 export async function runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs = 30_000 }) {
   const nonce = crypto.randomBytes(16).toString('hex');
   const isolationNonce = crypto.randomBytes(16).toString('hex');
@@ -284,7 +303,9 @@ export async function runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs = 30_0
       const page = await api(baseUrl, 'GET', '/v3/console/origin-relays');
       const matching = page.items.filter((item) => JSON.stringify(item.payload).includes(nonce));
       assert.ok(matching.length <= 1, 'round-trip produced more than one nonce-correlated origin relay');
-      return matching.length === 1 && finalReply(matching[0]) === expectedReply ? matching[0] : undefined;
+      return matching.length === 1 && fanInFooter(matching[0], expectedReply) !== undefined
+        ? matching[0]
+        : undefined;
     }, adapters, timeoutMs);
     assert.equal(relay.adapter, 'dev-auth');
     assert.equal(relay.origin.channel, 'dev');
@@ -300,7 +321,10 @@ export async function runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs = 30_0
       root_message_id: published.message_id,
     });
     assert.equal(relay.payload.outcome, 'done');
-    assert.equal(finalReply(relay), expectedReply);
+    assert.equal(
+      finalReply(relay),
+      `${expectedReply}\n\n${expectedFanInFooter(roundTripAliases.reviewers.length)}`,
+    );
     const chain = await api(baseUrl, 'GET', `/v3/console/chains/${encodeURIComponent(published.trace_id)}`);
     assert.equal(chain.trace_id, published.trace_id);
     assert.equal(chain.edges.length, 2);

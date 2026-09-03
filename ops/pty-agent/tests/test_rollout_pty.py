@@ -421,12 +421,18 @@ class ReleaseInputsCoverTheWholeAgentPackage(unittest.TestCase):
     """Un modulo que no viaja en el release arranca con ModuleNotFoundError y exit 1, que no esta
     en RestartPreventExitStatus: la unidad reintenta para siempre y el alias no vuelve nunca.
     Ni el preflight del launcher (solo mira `__main__.py`) ni `validate_release` (solo mira lo
-    listado) pueden verlo, asi que la lista se compara aqui contra el paquete en disco."""
+    listado) pueden verlo, asi que la lista se compara aqui contra el paquete en disco.
+
+    La comparacion cubre TODO fichero del paquete, no solo los `.py`: el contrato de gobierno
+    viaja como dato junto al modulo que lo carga al importarse, y si no viajara el agente moriria
+    igual, con GovernanceContractError en vez de ModuleNotFoundError."""
 
     def _listed_and_on_disk(self) -> tuple[set[str], set[str]]:
         prefix = importlib.import_module("rollout_pty_lib").AGENT_PACKAGE_PREFIX
         listed = {path for path in rollout.RELEASE_FILES if path.startswith(prefix)}
-        on_disk = {f"{prefix}{path.name}" for path in (OPS_ROOT / prefix).glob("*.py")}
+        on_disk = {
+            f"{prefix}{path.name}" for path in (OPS_ROOT / prefix).glob("*") if path.is_file()
+        }
         return listed, on_disk
 
     def test_every_module_of_the_package_is_a_release_input(self) -> None:

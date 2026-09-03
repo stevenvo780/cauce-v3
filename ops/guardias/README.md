@@ -41,7 +41,7 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 | `contenedor/polidin-fwd.sh` | `ws-zeus:/home/dev/` | El túnel en sí; corre **dentro** del contenedor |
 | `cauce-envoltorio-local.sh` | `<contenedor>:~/.local/bin/cauce` | Envoltorio que hace el `ssh kratos` por vos |
 | `cauce-huerfanas.sh` | `<contenedor>:~/.local/bin/` | Wrapper compatible del comando canónico `ops/cli/cauce-huerfanas` |
-| `telegram-bridge.override.yaml` | `agora-storage:/etc/cauce-v3/compose-overrides/` | Monta el parche que apaga la redacción de la ingesta |
+| `telegram-bridge.override.yaml` | `agora-storage:/etc/cauce-v3/compose-overrides/` | Deja explícito en la capa de compose el interruptor que apaga la redacción de la ingesta |
 | `hegel-ventas-checkin.py` | `agora-storage:/usr/local/sbin/` | Publica el check-in diario de ventas de `hegel` (`POST /v3/messages` con cert mTLS de hegel) |
 | `systemd/hegel-ventas-checkin.{service,timer}` | `agora-storage:/etc/systemd/system/` | Disparan el inyector todos los días a las 13:00 UTC (08:00 America/Bogota) |
 
@@ -169,9 +169,11 @@ exec 3<>/dev/tcp/172.26.0.7/12222; read -t 8 linea <&3; echo "$linea"   # -> SSH
 
 ## Lo que este directorio NO cubre
 
-- El parche compilado que monta `telegram-bridge.override.yaml`
-  (`agora-storage:/etc/cauce-v3/patches/telegram-bridge-redaction.js`) es un **artefacto**: sale de
-  `services/telegram-bridge/src/redaction.ts`, que sí está versionado. Se regenera compilando; no se
-  guarda el binario.
+- El parche compilado que **montaba** `telegram-bridge.override.yaml`
+  (`agora-storage:/etc/cauce-v3/patches/telegram-bridge-redaction.js`). Ya no lo monta nadie: el
+  override pasó a expresar la decisión con `CAUCE_TELEGRAM_REDACT_INGRESS`, y el fuente que se
+  compilaba (`services/telegram-bridge/src/redaction.ts`) desapareció al mudarse la redacción a
+  `@cauce/protocol`. Si ese `.js` sigue en el disco de `agora-storage`, es basura: no lo lee nadie y
+  se puede borrar.
 - Las credenciales. A propósito: se rehacen con un login por agente, nunca copiando el archivo de
   otro —copiarlo es exactamente lo que dejó a `janus` y a `claw-iza` sin `refreshToken`.

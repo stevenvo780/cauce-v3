@@ -7,13 +7,13 @@
 # implica pasarle credenciales a quien lo monta. Steven asumió el costo (el texto queda escrito en
 # `messages.body`): tiene limpieza periódica de historiales.
 #
-# Por qué un montaje y no un `docker cp`: el rootfs del puente es read-only, a propósito.
-#
-# Qué monta: el mismo `dist/redaction.js` de la imagen más una guarda que lee
-# `CAUCE_TELEGRAM_REDACT_INGRESS` (default apagado). Encenderla de nuevo es poner esa variable en
-# `/etc/cauce-v3/prod.env`, sin tocar código. El fuente ya tiene el mismo cambio, así que cuando se
-# reconstruya `CAUCE_RUNTIME_IMAGE` este montaje pasa a ser redundante y se puede borrar.
+# El montaje sobre `dist/redaction.js` YA NO EXISTE: ese fichero desapareció de la imagen cuando la
+# redacción se mudó a `@cauce/protocol`, así que el bind mount habría fallado o habría inyectado un
+# módulo huérfano. La decisión se expresa ahora con el interruptor soportado, que el puente lee con
+# `redactionEnabledFromEnv(process.env, 'CAUCE_TELEGRAM_REDACT_INGRESS', false)`: el código ya viene
+# apagado por defecto y esta variable lo deja explícito en la capa de compose. Encenderla es ponerla
+# en "1" acá o en `/etc/cauce-v3/prod.env`, sin tocar código ni montar nada.
 services:
   telegram-bridge:
-    volumes:
-      - /etc/cauce-v3/patches/telegram-bridge-redaction.js:/app/services/telegram-bridge/dist/redaction.js:ro
+    environment:
+      CAUCE_TELEGRAM_REDACT_INGRESS: "0"

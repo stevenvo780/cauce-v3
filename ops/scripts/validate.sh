@@ -80,6 +80,12 @@ if [ -f "$ROOT/flota.json" ]; then
   )
 fi
 
+node "$ROOT/scripts/generar-contexto-de-gobierno.mjs" --check
+cmp -s "$ROOT/schemas/contexto-de-gobierno.json" "$ROOT/pty-agent/cauce_pty_agent/contexto-de-gobierno.json" || {
+  printf 'the pty-agent copy of contexto-de-gobierno.json is stale (only the package directory travels into the container); copy ops/schemas/contexto-de-gobierno.json over it\n' >&2
+  exit 1
+}
+
 for file in "${shell_sources[@]}"; do bash -n "$file"; done
 for file in "$ROOT"/scripts/*.mjs "$ROOT"/harness/*.mjs "$ROOT"/tests/*.mjs "$PROJECT"/deploy/*.mjs "$PROJECT"/deploy/runtime/*.mjs; do node --check "$file"; done
 PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" "${python_sources[@]}" <<'PY'

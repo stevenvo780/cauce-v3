@@ -1,0 +1,81 @@
+{
+  "generado_por": "ops/scripts/generar-contexto-de-gobierno.mjs",
+  "fuente": "packages/protocol/src/ficheros-del-arnes.ts + governance-documents.ts",
+  "arneses": {
+    "claude": {
+      "raiz": {
+        "hecho": "claude_config_dir",
+        "por_defecto_bajo_home": ".claude"
+      },
+      "documentos": [
+        "CLAUDE.md"
+      ],
+      "presupuesto": {
+        "unidad": "utf16_strictest"
+      }
+    },
+    "codex": {
+      "raiz": {
+        "hecho": "codex_home",
+        "por_defecto_bajo_home": ".codex"
+      },
+      "documentos": [
+        "AGENTS.md"
+      ],
+      "presupuesto": {
+        "unidad": "utf8_bytes",
+        "por_fichero": 32768
+      }
+    },
+    "hermes": {
+      "raiz": {
+        "hecho": "home"
+      },
+      "documentos": [
+        "AGENTS.md"
+      ],
+      "presupuesto": {
+        "unidad": "utf16_strictest"
+      }
+    },
+    "openclaw": {
+      "raiz": {
+        "hecho": "openclaw_workspace"
+      },
+      "documentos": [
+        "SOUL.md",
+        "IDENTITY.md",
+        "USER.md",
+        "MEMORY.md",
+        "HEARTBEAT.md",
+        "AGENTS.md",
+        "TOOLS.md"
+      ],
+      "presupuesto": {
+        "unidad": "utf16_strictest",
+        "por_fichero": 60000,
+        "total": 150000
+      }
+    }
+  },
+  "nunca_servir": {
+    "basenames": [
+      ".credentials.json",
+      "auth.json",
+      ".claude.json",
+      "openclaw.json",
+      ".env",
+      ".netrc",
+      "id_ed25519",
+      "id_rsa",
+      "known_hosts",
+      "authorized_keys"
+    ],
+    "sufijos": [
+      ".pem",
+      ".key",
+      ".p12",
+      ".pfx"
+    ]
+  }
+}

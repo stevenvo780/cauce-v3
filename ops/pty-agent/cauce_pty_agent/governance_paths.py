@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import pathlib
 import re
 import stat
 from typing import Any
@@ -17,14 +19,60 @@ FEATURES = (
     "session_output_flow_control", "read_governance_done_v1",
 )
 
-# Never served or listed, wherever they live. Mirror of NEVER_SERVE_BASENAMES in the gateway
-# (`services/gateway/src/console/agent-documents.ts`): the two lists defend separately on purpose,
-# because a failure in only one must not be enough to leak a credential.
-NEVER_SERVE_BASENAMES = frozenset({
-    ".credentials.json", "auth.json", ".claude.json", "openclaw.json", ".env", ".netrc",
-    "id_ed25519", "id_rsa", "known_hosts", "authorized_keys",
-})
-NEVER_SERVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
+GOVERNANCE_CONTRACT_FILENAME = "contexto-de-gobierno.json"
+# The generated contract with the gateway. Its single source is
+# `packages/protocol/src/governance-documents.ts`; `ops/scripts/generar-contexto-de-gobierno.mjs`
+# emits it and `ops/scripts/validate.sh` regenerates it to compare byte for byte. The two runtimes
+# still defend separately -- a failure in only one must not be enough to leak a credential -- but
+# they no longer restate the list in two languages.
+#
+# Two locations for the SAME bytes, in publication order: the copy published next to this module
+# (the agent runs inside the container, where only the package directory is copied) and the ops
+# checkout used by the repository. There is no environment override and no built-in default: a
+# contract that could be redirected, or that could degrade into an empty never-serve list, is the
+# leak this file exists to prevent, so a missing or malformed artifact raises at import.
+_CONTRACT_CANDIDATES = (
+    pathlib.Path(__file__).resolve().parent / GOVERNANCE_CONTRACT_FILENAME,
+    pathlib.Path(__file__).resolve().parents[2] / "schemas" / GOVERNANCE_CONTRACT_FILENAME,
+)
+
+
+class GovernanceContractError(RuntimeError):
+    """The generated governance contract is missing, unreadable or malformed."""
+
+
+def _load_governance_contract() -> dict[str, Any]:
+    attempted: list[str] = []
+    for candidate in _CONTRACT_CANDIDATES:
+        attempted.append(str(candidate))
+        try:
+            raw = candidate.read_bytes()
+        except OSError:
+            continue
+        try:
+            document = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as error:
+            raise GovernanceContractError(f"{candidate} is not valid JSON: {error}") from error
+        if not isinstance(document, dict):
+            raise GovernanceContractError(f"{candidate} is not a JSON object")
+        return document
+    raise GovernanceContractError(
+        "the governance contract is unreadable at every candidate: " + ", ".join(attempted))
+
+
+def _never_serve_names(document: dict[str, Any], key: str) -> tuple[str, ...]:
+    section = document.get("nunca_servir")
+    values = section.get(key) if isinstance(section, dict) else None
+    if (not isinstance(values, list) or not values
+            or not all(isinstance(item, str) and item for item in values)):
+        raise GovernanceContractError(f"nunca_servir.{key} is missing or malformed")
+    return tuple(values)
+
+
+GOVERNANCE_CONTRACT = _load_governance_contract()
+# Never served or listed, wherever they live.
+NEVER_SERVE_BASENAMES = frozenset(_never_serve_names(GOVERNANCE_CONTRACT, "basenames"))
+NEVER_SERVE_SUFFIXES = _never_serve_names(GOVERNANCE_CONTRACT, "sufijos")
 
 READ_KINDS = ("file", "dir")
 MAX_READ_PATH = 4096

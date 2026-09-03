@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 AGENT_DIR = pathlib.Path(__file__).resolve().parents[1]
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
 import cauce_pty_agent as agent  # noqa: E402  (sys.path.insert deliberado arriba)
+from cauce_pty_agent import governance_paths  # noqa: E402
+
+CONTRACT_PATH = AGENT_DIR.parent / "schemas" / "contexto-de-gobierno.json"
+PUBLISHED_CONTRACT_PATH = (
+    AGENT_DIR / "cauce_pty_agent" / governance_paths.GOVERNANCE_CONTRACT_FILENAME
+)
 
 
 class GovernanceAllowlistsLiteralTest(unittest.TestCase):
@@ -20,23 +28,40 @@ class GovernanceAllowlistsLiteralTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_never_serve_constants_pinned_by_literal(self) -> None:
-        expected_basenames = frozenset({
-            ".credentials.json",
-            "auth.json",
-            ".claude.json",
-            "openclaw.json",
-            ".env",
-            ".netrc",
-            "id_ed25519",
-            "id_rsa",
-            "known_hosts",
-            "authorized_keys",
-        })
-        self.assertEqual(agent.NEVER_SERVE_BASENAMES, expected_basenames)
+    def test_never_serve_constants_come_from_the_generated_contract(self) -> None:
+        """Python against the generated artifact, not against another Python literal.
 
-        expected_suffixes = (".pem", ".key", ".p12", ".pfx")
-        self.assertEqual(agent.NEVER_SERVE_SUFFIXES, expected_suffixes)
+        `ops/scripts/generar-contexto-de-gobierno.mjs` emits the contract from
+        `packages/protocol/src/governance-documents.ts`, so this compares the agent against the
+        TypeScript source. A name that only one of the two legs knows is a credential leak.
+        """
+        contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))["nunca_servir"]
+        self.assertEqual(agent.NEVER_SERVE_BASENAMES, frozenset(contract["basenames"]))
+        self.assertEqual(agent.NEVER_SERVE_SUFFIXES, tuple(contract["sufijos"]))
+        self.assertTrue(contract["basenames"] and contract["sufijos"])
+
+    def test_the_published_contract_is_byte_identical_to_the_generated_one(self) -> None:
+        """The copy that travels inside the package is a distribution artifact, not a source."""
+        self.assertEqual(PUBLISHED_CONTRACT_PATH.read_bytes(), CONTRACT_PATH.read_bytes())
+
+    def test_a_missing_contract_fails_closed_instead_of_serving_everything(self) -> None:
+        absent = (pathlib.Path(self.home) / "no-existe.json",)
+        with mock.patch.object(governance_paths, "_CONTRACT_CANDIDATES", absent):
+            with self.assertRaises(governance_paths.GovernanceContractError):
+                governance_paths._load_governance_contract()
+
+    def test_a_malformed_or_empty_contract_fails_closed(self) -> None:
+        broken = pathlib.Path(self.home) / "roto.json"
+        for body in ("", "[]", '{"nunca_servir": {}}', '{"nunca_servir": {"basenames": [],'
+                     ' "sufijos": [".pem"]}}', '{"nunca_servir": {"basenames": [1],'
+                     ' "sufijos": [".pem"]}}'):
+            with self.subTest(body=body):
+                broken.write_text(body, encoding="utf-8")
+                with mock.patch.object(governance_paths, "_CONTRACT_CANDIDATES", (broken,)):
+                    with self.assertRaises(governance_paths.GovernanceContractError):
+                        governance_paths._never_serve_names(
+                            governance_paths._load_governance_contract(), "basenames",
+                        )
 
     def test_profile_governance_paths_pinned_by_literal_per_harness(self) -> None:
         claude_config = f"{self.home}/.claude"

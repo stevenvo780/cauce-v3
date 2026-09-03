@@ -33,6 +33,7 @@ RELEASE_FILES: Final = (
     "pty-agent/cauce_pty_agent/__init__.py",
     "pty-agent/cauce_pty_agent/__main__.py",
     "pty-agent/cauce_pty_agent/agent.py",
+    "pty-agent/cauce_pty_agent/contexto-de-gobierno.json",
     "pty-agent/cauce_pty_agent/framing.py",
     "pty-agent/cauce_pty_agent/governance_paths.py",
     "pty-agent/cauce_pty_agent/governance_read.py",
