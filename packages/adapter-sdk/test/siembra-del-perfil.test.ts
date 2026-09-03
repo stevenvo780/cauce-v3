@@ -241,7 +241,7 @@ test("la siembra sólo verifica una proyección revisionada que ya coincide", ()
   });
 });
 
-test("la siembra no modifica ni acredita una proyección revisionada con drift", () => {
+test("la siembra no modifica una proyección revisionada con drift y la delega al publicador durable", () => {
   const oldContext = contexto({ purpose: "perfil viejo" });
   const projected = ficherosDelArnes("claude", oldContext, new Map(), { revision: 4 })[0];
   assert.ok(projected);
@@ -255,7 +255,8 @@ test("la siembra no modifica ni acredita una proyección revisionada con drift",
   assert.deepEqual(d.escrituras, []);
   assert.equal(d.ficheros.get(path), projected.texto);
   assert.equal(resultado.estado, "hecho");
-  assert.equal(resultado.ficheros[0]?.estado, "no-se-pudo-escribir");
+  assert.equal(resultado.ficheros[0]?.estado, "delegado-al-publicador");
+  assert.match(resumenDeLaSiembra(resultado), /delegado-al-publicador=1 — CLAUDE\.md: la proyección revisionada difiere/u);
 });
 
 test("la siembra no finge que un lote OpenClaw revisionado incompleto está vigente", () => {

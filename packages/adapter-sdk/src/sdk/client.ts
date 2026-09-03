@@ -631,6 +631,7 @@ export function siembraAplicada(resultado: ResultadoDeLaSiembra): boolean {
   if (resultado.estado !== 'hecho') return false;
   return resultado.ficheros.every((fichero) => (
     fichero.estado === 'escrito' || fichero.estado === 'ya-estaba'
+      || fichero.estado === 'delegado-al-publicador'
   ));
 }
 
