@@ -12,6 +12,10 @@ import {
   type ProfileContextMeasure, type ProfileExpectationReader, type ProfileWriteContext,
 } from './agent-profile/write-gates.js';
 import {
+  runtimeErrorCode, runtimeErrorMessage, runtimeErrorStatus,
+} from './agent-profile/runtime-errors.js';
+import { appliedRuntimeVerification } from './agent-profile/runtime-verification.js';
+import {
   contextContamination,
   type ContextContaminationTelemetry, type ContextContaminationVerdict,
 } from './contaminacion-de-contexto.js';
@@ -341,7 +345,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
           preflight = await deps.prepareRuntime(tenantId, alias, contexto);
           prepared = preflight.materialize(lectura.revision);
         } catch (error) {
-          runtimeReason = mensajeDeError(error, 'no se pudo verificar el runtime vivo');
+          runtimeReason = runtimeErrorMessage(error, 'no se pudo verificar el runtime vivo');
           topeDelRuntime = topeSuperadoDe(error);
         }
       }
@@ -357,7 +361,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
             tenantId, alias, lectura.revision, prepared.verification,
           );
         } catch (error) {
-          runtimeReason = mensajeDeError(error, 'no se pudo verificar la adopción por la sesión');
+          runtimeReason = runtimeErrorMessage(error, 'no se pudo verificar la adopción por la sesión');
         }
       }
       const validAdoption = adoptionMatches(adoption, lectura.revision, prepared?.verification)
@@ -406,7 +410,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
           const superado = topeSuperadoDe(error);
           if (superado === undefined) throw error;
           tope = superado;
-          runtimeReason = mensajeDeError(error, superado.message);
+          runtimeReason = runtimeErrorMessage(error, superado.message);
         }
       }
       /* Over budget the operator still gets the profile: the editor is the only screen that can
@@ -458,23 +462,6 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
           : { aviso: `${motivoDelTope}. Recorta el perfil y vuelve a guardarlo.` }),
       };
       return respuesta;
-  }
-
-  function codigoDeError(error: unknown): string | undefined {
-    if (error === null || typeof error !== 'object' || !('code' in error)) return undefined;
-    return typeof error.code === 'string' ? error.code : undefined;
-  }
-
-  function mensajeDeError(error: unknown, fallback: string): string {
-    return error instanceof Error ? error.message : fallback;
-  }
-
-  function statusDeRuntime(error: unknown): number {
-    const code = codigoDeError(error);
-    if (code === 'conflict' || code === 'truncated' || code === 'invalid_path') return 409;
-    if (code === 'unavailable' || code === 'timeout') return 503;
-    if (code === 'too_large') return 413;
-    return 502;
   }
 
   async function responderPut(
@@ -577,12 +564,12 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
           fichero: tope.fichero,
           medido: tope.medido,
           tope: tope.tope,
-          message: mensajeDeError(error, tope.message),
+          message: runtimeErrorMessage(error, tope.message),
         });
       }
-      return denegar(statusDeRuntime(error), {
-        error: codigoDeError(error) ?? 'runtime_preflight_failed',
-        message: mensajeDeError(error, 'no se pudo preparar el runtime sin modificarlo'),
+      return denegar(runtimeErrorStatus(error), {
+        error: runtimeErrorCode(error) ?? 'runtime_preflight_failed',
+        message: runtimeErrorMessage(error, 'no se pudo preparar el runtime sin modificarlo'),
         revision: current.revision,
         applied_revision: current.applied_revision,
       });
@@ -592,11 +579,11 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     try {
       desired = await deps.replaceProfile(profile, expectedRevision, actor);
     } catch (error) {
-      const code = codigoDeError(error);
+      const code = runtimeErrorCode(error);
       const status = code === 'not_found' ? 404 : code === 'disabled' || code === 'conflict' ? 409 : 500;
       return denegar(status, {
         error: code ?? 'profile_write_failed',
-        message: mensajeDeError(error, 'no se pudo persistir el perfil desired'),
+        message: runtimeErrorMessage(error, 'no se pudo persistir el perfil desired'),
       });
     }
     /* The row goes here and only here: past this point the desired revision EXISTS, so every later
@@ -610,10 +597,10 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     try {
       prepared = preflight.materialize(desired.revision);
     } catch (error) {
-      return reply.code(statusDeRuntime(error)).send({
-        error: codigoDeError(error) ?? 'runtime_revision_materialization_failed',
+      return reply.code(runtimeErrorStatus(error)).send({
+        error: runtimeErrorCode(error) ?? 'runtime_revision_materialization_failed',
         state: 'pending',
-        message: mensajeDeError(
+        message: runtimeErrorMessage(
           error, 'el perfil desired quedó guardado, pero no se pudo materializar su revisión',
         ),
         revision: desired.revision,
@@ -634,10 +621,10 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     try {
       acknowledgements = await prepared.apply();
     } catch (error) {
-      return reply.code(statusDeRuntime(error)).send({
-        error: codigoDeError(error) ?? 'runtime_apply_failed',
+      return reply.code(runtimeErrorStatus(error)).send({
+        error: runtimeErrorCode(error) ?? 'runtime_apply_failed',
         state: 'pending',
-        message: mensajeDeError(error, 'el runtime no acreditó el lote'),
+        message: runtimeErrorMessage(error, 'el runtime no acreditó el lote'),
         revision: desired.revision,
         applied_revision: desired.applied_revision,
       });
@@ -650,28 +637,20 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       });
     }
 
-    const ackByName = new Map(acknowledgements.map((ack) => [ack.name, ack]));
-    const verificationAfterApply: ProfileRuntimeVerification = {
-      ...prepared.verification,
-      state: 'current',
-      observed_at: new Date().toISOString(),
-      documents: prepared.verification.documents.map((document) => ({
-        ...document,
-        observed_sha: ackByName.get(document.name)?.sha ?? null,
-        observed_bytes: ackByName.get(document.name)?.bytes ?? null,
-        current: ackByName.get(document.name)?.sha === document.expected_sha
-          && ackByName.get(document.name)?.bytes === document.expected_bytes,
-      })),
-    };
+    const verificationAfterApply = appliedRuntimeVerification(
+      prepared.verification,
+      acknowledgements,
+      { requireExactBytes: true },
+    );
     if (deps.recordRuntimeExpectation !== undefined) {
       try {
         await deps.recordRuntimeExpectation(
           tenantId, alias, desired.revision, verificationAfterApply,
         );
       } catch (error) {
-        return reply.code(codigoDeError(error) === 'conflict' ? 409 : 503).send({
-          error: codigoDeError(error) ?? 'runtime_expectation_not_recorded', state: 'pending',
-          message: mensajeDeError(error, 'el runtime se escribió pero no se pudo registrar su expectativa'),
+        return reply.code(runtimeErrorCode(error) === 'conflict' ? 409 : 503).send({
+          error: runtimeErrorCode(error) ?? 'runtime_expectation_not_recorded', state: 'pending',
+          message: runtimeErrorMessage(error, 'el runtime se escribió pero no se pudo registrar su expectativa'),
           revision: desired.revision,
           applied_revision: desired.applied_revision,
           acknowledgements,
@@ -687,7 +666,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
           tenantId, alias, desired.revision, verificationAfterApply,
         );
       } catch (error) {
-        adoptionReason = mensajeDeError(error, 'no se pudo leer el ACK de adopción del adaptador');
+        adoptionReason = runtimeErrorMessage(error, 'no se pudo leer el ACK de adopción del adaptador');
       }
     }
     if (!adoptionMatches(adoption, desired.revision, verificationAfterApply)
@@ -712,9 +691,9 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     try {
       applied = await deps.markProfileApplied(tenantId, alias, desired.revision, actor);
     } catch (error) {
-      return reply.code(codigoDeError(error) === 'conflict' ? 409 : 503).send({
-        error: codigoDeError(error) ?? 'applied_revision_not_recorded', state: 'pending',
-        message: mensajeDeError(error, 'el runtime respondió pero no se pudo registrar su revisión'),
+      return reply.code(runtimeErrorCode(error) === 'conflict' ? 409 : 503).send({
+        error: runtimeErrorCode(error) ?? 'applied_revision_not_recorded', state: 'pending',
+        message: runtimeErrorMessage(error, 'el runtime respondió pero no se pudo registrar su revisión'),
         revision: desired.revision, applied_revision: desired.applied_revision,
       });
     }

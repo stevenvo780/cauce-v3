@@ -8,6 +8,10 @@ import { DOCUMENT_REASON_MAX, DOCUMENT_REASON_MIN } from './agent-documents/writ
 import type {
   PreparedProfileRuntime, ProfileRuntimeAck, ProfileRuntimePreflight, ProfileRuntimeVerification,
 } from './agent-profile.routes.js';
+import {
+  runtimeErrorCode, runtimeErrorMessage, runtimeErrorStatus,
+} from './agent-profile/runtime-errors.js';
+import { appliedRuntimeVerification } from './agent-profile/runtime-verification.js';
 import { CONTEXT_APPLY_POLICY, type ContextApplyState } from './context-apply-policy.js';
 import {
   contextContamination, evaluarContaminacion, type ContextContaminationTelemetry,
@@ -158,23 +162,6 @@ interface ReloadTarget {
   readonly tenant_id: string;
   readonly alias: string;
   readonly enabled?: boolean;
-}
-
-function codigoDeError(error: unknown): string | undefined {
-  if (error === null || typeof error !== 'object' || !('code' in error)) return undefined;
-  return typeof error.code === 'string' ? error.code : undefined;
-}
-
-function mensajeDeError(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
-}
-
-function statusDeRuntime(error: unknown): number {
-  const code = codigoDeError(error);
-  if (code === 'conflict' || code === 'truncated' || code === 'invalid_path') return 409;
-  if (code === 'unavailable' || code === 'timeout') return 503;
-  if (code === 'too_large') return 413;
-  return 502;
 }
 
 function motivoAdmitido(value: unknown): string | undefined {
@@ -449,13 +436,13 @@ export function registerAgentContextReloadRoutes(
        * block it is; only that refusal pays for the second read, and a race that clears the block
        * in between falls back to the generic conflict instead of inventing a verdict.
        */
-      const veredicto = codigoDeError(error) === 'conflict'
+      const veredicto = runtimeErrorCode(error) === 'conflict'
         ? await juzgarNegativa(target)
         : undefined;
       if (veredicto?.contaminated === true) return cuarentena(veredicto, revision);
-      return denegar(statusDeRuntime(error), {
-        error: codigoDeError(error) ?? 'runtime_preflight_failed',
-        message: mensajeDeError(error, 'no se pudo preparar el runtime sin modificarlo'),
+      return denegar(runtimeErrorStatus(error), {
+        error: runtimeErrorCode(error) ?? 'runtime_preflight_failed',
+        message: runtimeErrorMessage(error, 'no se pudo preparar el runtime sin modificarlo'),
         revision,
       });
     }
@@ -478,25 +465,19 @@ export function registerAgentContextReloadRoutes(
     try {
       acknowledgements = await prepared.apply();
     } catch (error) {
-      return denegar(statusDeRuntime(error), {
-        error: codigoDeError(error) ?? 'runtime_apply_failed',
-        message: mensajeDeError(error, 'el runtime no acreditó el lote de la recarga'),
+      return denegar(runtimeErrorStatus(error), {
+        error: runtimeErrorCode(error) ?? 'runtime_apply_failed',
+        message: runtimeErrorMessage(error, 'el runtime no acreditó el lote de la recarga'),
         revision,
       });
     }
 
+    const verification = appliedRuntimeVerification(
+      prepared.verification,
+      acknowledgements,
+      { requireExactBytes: false },
+    );
     const ackByName = new Map(acknowledgements.map((ack) => [ack.name, ack]));
-    const verification: ProfileRuntimeVerification = {
-      ...prepared.verification,
-      state: 'current',
-      observed_at: new Date().toISOString(),
-      documents: prepared.verification.documents.map((document) => ({
-        ...document,
-        observed_sha: ackByName.get(document.name)?.sha ?? null,
-        observed_bytes: ackByName.get(document.name)?.bytes ?? null,
-        current: ackByName.get(document.name)?.sha === document.expected_sha,
-      })),
-    };
     if (verification.documents.some((document) => !document.current)) {
       return denegar(502, {
         error: 'runtime_ack_incomplete',
@@ -508,9 +489,9 @@ export function registerAgentContextReloadRoutes(
     try {
       await deps.recordRuntimeExpectation(target.tenant_id, target.alias, revision, verification);
     } catch (error) {
-      return denegar(codigoDeError(error) === 'conflict' ? 409 : 503, {
-        error: codigoDeError(error) ?? 'runtime_expectation_not_recorded',
-        message: mensajeDeError(
+      return denegar(runtimeErrorCode(error) === 'conflict' ? 409 : 503, {
+        error: runtimeErrorCode(error) ?? 'runtime_expectation_not_recorded',
+        message: runtimeErrorMessage(
           error, 'los ficheros quedaron escritos pero no se pudo registrar su expectativa',
         ),
         revision,

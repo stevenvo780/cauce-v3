@@ -1,8 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { withTransaction } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
-import { requireOperatorPermission } from '../../auth.js';
-import { terminalAuditMetadata } from '../audit.js';
+import { terminalAuditMetadata, terminalSessionAuditContext } from '../audit.js';
 import { resolveOperator } from '../authority.js';
 import {
   cohortLabels, operatorScopePredicate, ownedLiveSessionQuery, sessionWindowExpression, subjectFor,
@@ -10,6 +9,7 @@ import {
 } from '../helpers.js';
 import type { TerminalSessionControlOptions } from '../session-control.js';
 import { ticketSha256 } from '../tickets.js';
+import { authorizeTerminalControlActor } from './control-authorization.js';
 
 /**
  * TUI-06: the operator pushes the window of a live session forward, never past
@@ -35,14 +35,8 @@ export function registerTerminalExtendRoute(
 
   app.post<{ Params: { sid: string } }>('/v3/console/terminal/sessions/:sid/extend', async (request, reply) => {
     try {
-      const actor = await principal(request);
-      requireOperatorPermission(actor, 'control');
-      try {
-        await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
-      } catch {
-        await reply.code(403).send({ error: 'forbidden', reason: 'control_permission_required' });
-        return;
-      }
+      const actor = await authorizeTerminalControlActor(request, reply, { principal, repository });
+      if (actor === undefined) return;
       const operator = resolveOperator(request, actor, config);
       if (!UUID_ANY_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
       const body = parseSessionExtend(request.body);
@@ -91,15 +85,10 @@ export function registerTerminalExtendRoute(
           action: 'terminal.session.extended',
           decision: 'info',
           ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-          metadata: terminalAuditMetadata({
-            operator_id: row.operator_id,
-            attributed: row.attributed,
-            target_tenant: row.tenant_id,
-            target_alias: row.alias,
-            container: row.container,
-            cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias, client)),
-            mode: row.mode,
-          }, {
+          metadata: terminalAuditMetadata(terminalSessionAuditContext(
+            row,
+            cohortLabels(await currentCohort(row.tenant_id, row.alias, client)),
+          ), {
             session_id: row.id,
             request_id: row.request_id,
             expires_at: row.session_expires_at.toISOString(),

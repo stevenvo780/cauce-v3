@@ -72,6 +72,27 @@ function strictDescendant(root: string, candidate: string): boolean {
   return candidate.startsWith(`${root}/`);
 }
 
+type ParsedRelayObject =
+  | { readonly ok: true; readonly source: Record<string, unknown> }
+  | { readonly ok: false; readonly error: GovernanceReadError };
+
+function parseRelayObject(
+  body: string,
+  invalidJsonReason: string,
+  invalidObjectReason: string,
+): ParsedRelayObject {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return { ok: false, error: { error: 'unknown', reason: invalidJsonReason } };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, error: { error: 'unknown', reason: invalidObjectReason } };
+  }
+  return { ok: true, source: parsed as Record<string, unknown> };
+}
+
 /** A code we do not recognize is `unknown`, it is never propagated as-is. */
 function normalizeCode(value: string): GovernanceReadError['error'] {
   return READ_CODES.includes(value as GovernanceReadError['error'])
@@ -85,16 +106,13 @@ function normalizeCode(value: string): GovernanceReadError['error'] {
  * content or the size of a file that nobody read.
  */
 export function parseReadOutcome(body: string): RelayFileRead | GovernanceReadError {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    return { error: 'unknown', reason: 'el terminal-relay contestó algo que no es JSON' };
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { error: 'unknown', reason: 'el terminal-relay contestó algo que no es un objeto' };
-  }
-  const source = parsed as Record<string, unknown>;
+  const parsed = parseRelayObject(
+    body,
+    'el terminal-relay contestó algo que no es JSON',
+    'el terminal-relay contestó algo que no es un objeto',
+  );
+  if (!parsed.ok) return parsed.error;
+  const { source } = parsed;
   const failure = stringField(source, 'error');
   if (failure !== undefined) {
     return {
@@ -126,16 +144,13 @@ export function parseReadOutcome(body: string): RelayFileRead | GovernanceReadEr
 
 /** Re-validates the index even though the relay already did: two processes, two boundaries. */
 export function parseDirectoryOutcome(body: string): RelayDirectoryRead | GovernanceReadError {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    return { error: 'unknown', reason: 'el terminal-relay contestó un índice que no es JSON' };
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { error: 'unknown', reason: 'el terminal-relay contestó un índice que no es un objeto' };
-  }
-  const source = parsed as Record<string, unknown>;
+  const parsed = parseRelayObject(
+    body,
+    'el terminal-relay contestó un índice que no es JSON',
+    'el terminal-relay contestó un índice que no es un objeto',
+  );
+  if (!parsed.ok) return parsed.error;
+  const { source } = parsed;
   if ('error' in source) {
     if (!exactKeys(source, ['error', 'reason']) || typeof source.error !== 'string'
         || typeof source.reason !== 'string' || source.reason.length === 0
@@ -201,16 +216,13 @@ export function parseDirectoryOutcome(body: string): RelayDirectoryRead | Govern
  * an empty 200 or a legacy shape from looking like an ACK.
  */
 export function parseWriteOutcome(body: string): RelayFileWrite | GovernanceWriteError {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    return { error: 'unknown', reason: 'el terminal-relay contestó algo que no es JSON' };
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { error: 'unknown', reason: 'el terminal-relay contestó algo que no es un objeto' };
-  }
-  const source = parsed as Record<string, unknown>;
+  const parsed = parseRelayObject(
+    body,
+    'el terminal-relay contestó algo que no es JSON',
+    'el terminal-relay contestó algo que no es un objeto',
+  );
+  if (!parsed.ok) return parsed.error;
+  const { source } = parsed;
   const failure = stringField(source, 'error');
   if (failure !== undefined) {
     if (failure === 'conflict') {
@@ -240,16 +252,13 @@ export function parseWriteOutcome(body: string): RelayFileWrite | GovernanceWrit
 
 /** The batch only exists if ALL its individual ACKs have complete shape and unique paths. */
 export function parseWriteBatchOutcome(body: string): RelayFileWriteBatch | GovernanceWriteError {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    return { error: 'unknown', reason: 'el terminal-relay contestó un lote que no es JSON' };
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { error: 'unknown', reason: 'el terminal-relay contestó un lote que no es un objeto' };
-  }
-  const source = parsed as Record<string, unknown>;
+  const parsed = parseRelayObject(
+    body,
+    'el terminal-relay contestó un lote que no es JSON',
+    'el terminal-relay contestó un lote que no es un objeto',
+  );
+  if (!parsed.ok) return parsed.error;
+  const { source } = parsed;
   const failure = stringField(source, 'error');
   if (failure !== undefined) {
     if (failure === 'conflict') {

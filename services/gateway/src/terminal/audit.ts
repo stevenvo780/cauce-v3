@@ -1,4 +1,5 @@
 import type { DatabasePool } from '@cauce/store';
+import type { TerminalSessionRow } from './types.js';
 
 /**
  * Audit trail of the PTY plane and of the governed documents that ride the same relay. Writes
@@ -61,6 +62,26 @@ export interface TerminalAuditContext {
   /** Tenant-qualified identities; bare aliases are ambiguous across tenants. */
   readonly cohort: readonly string[];
   readonly mode: string;
+}
+
+type TerminalAuditSession = Pick<
+  TerminalSessionRow,
+  'operator_id' | 'attributed' | 'tenant_id' | 'alias' | 'container' | 'mode'
+>;
+
+export function terminalSessionAuditContext(
+  session: TerminalAuditSession,
+  cohort: readonly string[],
+): TerminalAuditContext {
+  return {
+    operator_id: session.operator_id,
+    attributed: session.attributed,
+    target_tenant: session.tenant_id,
+    target_alias: session.alias,
+    container: session.container,
+    cohort,
+    mode: session.mode,
+  };
 }
 
 /** Shared metadata skeleton so allow and deny rows carry the same columns in /audit. */

@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { withTransaction } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
-import { terminalAuditMetadata } from '../audit.js';
+import { terminalAuditMetadata, terminalSessionAuditContext } from '../audit.js';
 import type { TerminalConfig } from '../config.js';
 import { exactObjectKeys } from '../helpers.js';
 import { ticketSha256 } from '../tickets.js';
@@ -115,15 +115,7 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
               action: refusal === 'revoked' ? 'terminal.session.revoked' : 'terminal.session.authz_denied',
               decision: refusal === 'revoked' ? 'info' : 'deny',
               ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-              metadata: terminalAuditMetadata({
-                operator_id: row.operator_id,
-                attributed: row.attributed,
-                target_tenant: row.tenant_id,
-                target_alias: row.alias,
-                container: row.container,
-                cohort: [],
-                mode: row.mode,
-              }, {
+              metadata: terminalAuditMetadata(terminalSessionAuditContext(row, []), {
                 session_id: row.id,
                 refusal,
                 claim_epoch: row.relay_claim_epoch,

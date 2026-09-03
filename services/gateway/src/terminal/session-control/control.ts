@@ -4,10 +4,10 @@ import {
   type DatabaseClient,
 } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
-import { requireOperatorPermission, type Principal } from '../../auth.js';
+import type { Principal } from '../../auth.js';
 import {
-  recordTerminalAudit, terminalAuditMetadata,
-  type TerminalAuditContext, type TerminalAuditEntry,
+  recordTerminalAudit, terminalAuditMetadata, terminalSessionAuditContext,
+  type TerminalAuditEntry,
 } from '../audit.js';
 import {
   resolveOperator, writableModeRequiresAttribution, type ResolvedOperator,
@@ -17,6 +17,7 @@ import {
 } from '../helpers.js';
 import type { TerminalSessionControlOptions } from '../session-control.js';
 import { UNATTRIBUTED_OPERATOR, type TerminalSessionRow } from '../types.js';
+import { authorizeTerminalControlActor } from './control-authorization.js';
 
 /**
  * Taking control is the writable action and its reason is hand typed, never generated. Giving it
@@ -44,18 +45,6 @@ export function registerTerminalControlRoute(
     pool, config, grants, repository, principal, currentCohort, parseControlRequest, replyError,
   } = options;
 
-  async function auditContext(row: TerminalSessionRow): Promise<TerminalAuditContext> {
-    return {
-      operator_id: row.operator_id,
-      attributed: row.attributed,
-      target_tenant: row.tenant_id,
-      target_alias: row.alias,
-      container: row.container,
-      cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias)),
-      mode: row.mode,
-    };
-  }
-
   async function auditControl(
     actor: Principal,
     row: TerminalSessionRow,
@@ -69,7 +58,13 @@ export function registerTerminalControlRoute(
       action,
       decision,
       ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-      metadata: terminalAuditMetadata(await auditContext(row), { session_id: row.id, ...extra }),
+      metadata: terminalAuditMetadata(
+        terminalSessionAuditContext(
+          row,
+          cohortLabels(await currentCohort(row.tenant_id, row.alias)),
+        ),
+        { session_id: row.id, ...extra },
+      ),
     });
   }
 
@@ -123,14 +118,8 @@ export function registerTerminalControlRoute(
 
   app.post<{ Params: { sid: string } }>('/v3/console/terminal/sessions/:sid/control', async (request, reply) => {
     try {
-      const actor = await principal(request);
-      requireOperatorPermission(actor, 'control');
-      try {
-        await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
-      } catch {
-        await reply.code(403).send({ error: 'forbidden', reason: 'control_permission_required' });
-        return;
-      }
+      const actor = await authorizeTerminalControlActor(request, reply, { principal, repository });
+      if (actor === undefined) return;
       if (config.writableTuiEnabled !== true) {
         await reply.code(403).send({ error: 'forbidden', reason: 'writable_tui_disabled' });
         return;
@@ -232,15 +221,10 @@ export async function releaseHeldControl(teardown: TerminalControlTeardown): Pro
         action: 'terminal.control_released',
         decision: 'info',
         ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-        metadata: terminalAuditMetadata({
-          operator_id: row.operator_id,
-          attributed: row.attributed,
-          target_tenant: row.tenant_id,
-          target_alias: row.alias,
-          container: row.container,
-          cohort: [],
-          mode: row.mode,
-        }, { session_id: row.id, hold_id: hold.id, reason }),
+        metadata: terminalAuditMetadata(
+          terminalSessionAuditContext(row, []),
+          { session_id: row.id, hold_id: hold.id, reason },
+        ),
       });
     }
   } catch (error) {

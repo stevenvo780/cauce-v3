@@ -1,6 +1,6 @@
 import { withTransaction } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
-import { terminalAuditMetadata } from '../audit.js';
+import { terminalAuditMetadata, terminalSessionAuditContext } from '../audit.js';
 import { boundedInteger, exactObjectKeys } from '../helpers.js';
 import { releaseHeldControl } from '../session-control/control.js';
 import { ticketSha256 } from '../tickets.js';
@@ -89,15 +89,7 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
               action: 'terminal.session.close',
               decision: 'deny',
               ...(existing.trace_id === null ? {} : { trace_id: existing.trace_id }),
-              metadata: terminalAuditMetadata({
-                operator_id: existing.operator_id,
-                attributed: existing.attributed,
-                target_tenant: existing.tenant_id,
-                target_alias: existing.alias,
-                container: existing.container,
-                cohort: [],
-                mode: existing.mode,
-              }, {
+              metadata: terminalAuditMetadata(terminalSessionAuditContext(existing, []), {
                 session_id: existing.id,
                 reason: malformedClaim ? 'malformed_claim' : 'stale_claim',
                 claim_epoch: existing.relay_claim_epoch,
@@ -136,15 +128,7 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
                 action: 'terminal.session.close',
                 decision: 'info',
                 ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-                metadata: terminalAuditMetadata({
-                  operator_id: row.operator_id,
-                  attributed: row.attributed,
-                  target_tenant: row.tenant_id,
-                  target_alias: row.alias,
-                  container: row.container,
-                  cohort: [],
-                  mode: row.mode,
-                }, {
+                metadata: terminalAuditMetadata(terminalSessionAuditContext(row, []), {
                   session_id: row.id,
                   image_id: row.image_id,
                   generation: row.generation,
@@ -163,15 +147,7 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
                   action: 'terminal.session.input',
                   decision: 'info',
                   ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-                  metadata: terminalAuditMetadata({
-                    operator_id: row.operator_id,
-                    attributed: row.attributed,
-                    target_tenant: row.tenant_id,
-                    target_alias: row.alias,
-                    container: row.container,
-                    cohort: [],
-                    mode: row.mode,
-                  }, {
+                  metadata: terminalAuditMetadata(terminalSessionAuditContext(row, []), {
                     session_id: row.id,
                     bytes_in: counterValue(row.bytes_in),
                     input_batches: recording.input_batches,

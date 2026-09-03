@@ -1,8 +1,6 @@
 import { withTransaction } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
-import {
-  terminalAuditMetadata, type TerminalAuditContext,
-} from '../audit.js';
+import { terminalAuditMetadata, terminalSessionAuditContext } from '../audit.js';
 import {
   cohortLabels, exactObjectKeys, sessionExpiry, sessionWindowExpression,
 } from '../helpers.js';
@@ -97,15 +95,10 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
           } else {
             const policy = await currentSessionPolicy(row, false, client);
             const actor = sessionActor(row);
-            const context: TerminalAuditContext = {
-              operator_id: row.operator_id,
-              attributed: row.attributed,
-              target_tenant: row.tenant_id,
-              target_alias: row.alias,
-              container: row.container,
-              cohort: policy.cohort === undefined ? [] : cohortLabels(policy.cohort),
-              mode: row.mode,
-            };
+            const auditContext = terminalSessionAuditContext(
+              row,
+              policy.cohort === undefined ? [] : cohortLabels(policy.cohort),
+            );
             if (!policy.allowed || actor === undefined) {
               const reason = policy.allowed ? 'unknown_session' : policy.reason;
               await recordTransactionalTerminalAudit(client, {
@@ -114,7 +107,7 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
                 action: 'terminal.session.resume',
                 decision: 'deny',
                 ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-                metadata: terminalAuditMetadata(context, { session_id: sid, reason }),
+                metadata: terminalAuditMetadata(auditContext, { session_id: sid, reason }),
               });
               refusal = { status: 403, reason };
             } else {
@@ -141,7 +134,7 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
                   action: 'terminal.session.resume',
                   decision: 'deny',
                   ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-                  metadata: terminalAuditMetadata(context, {
+                  metadata: terminalAuditMetadata(auditContext, {
                     session_id: sid,
                     reason: 'claim_conflict',
                     claim_epoch: row.relay_claim_epoch,
@@ -173,7 +166,7 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
                   action: 'terminal.session.resume',
                   decision: 'info',
                   ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-                  metadata: terminalAuditMetadata(context, {
+                  metadata: terminalAuditMetadata(auditContext, {
                     session_id: sid,
                     claim_epoch: session.relay_claim_epoch,
                     claim_taken_over: takenOver,

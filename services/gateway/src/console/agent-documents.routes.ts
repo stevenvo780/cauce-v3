@@ -404,6 +404,21 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
     return { actor, target };
   }
 
+  async function resolveDocumentRequest(
+    request: FastifyRequest<{ Params: ContentParams }>,
+    reply: FastifyReply,
+    permission: 'read' | 'control',
+    legacySameTenant: boolean,
+  ): Promise<{ kind: DocumentKind; actor: AgentDocumentActor; target: Target } | undefined> {
+    const { kind } = request.params;
+    if (!kindValido(kind)) {
+      await reply.code(400).send({ error: 'invalid_input', message: 'ese tipo de documento no existe' });
+      return undefined;
+    }
+    const resuelto = await destino(request, reply, permission, legacySameTenant);
+    return resuelto === undefined ? undefined : { kind, ...resuelto };
+  }
+
   async function mapa(
     request: FastifyRequest<{ Params: BaseParams }>, reply: FastifyReply, legacySameTenant: boolean,
   ) {
@@ -425,14 +440,9 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
   async function contenido(
     request: FastifyRequest<{ Params: ContentParams }>, reply: FastifyReply, legacySameTenant: boolean,
   ) {
-      const { kind } = request.params;
-      if (!kindValido(kind)) {
-        return reply.code(400).send({ error: 'invalid_input', message: 'ese tipo de documento no existe' });
-      }
-
-      const resuelto = await destino(request, reply, 'read', legacySameTenant);
+      const resuelto = await resolveDocumentRequest(request, reply, 'read', legacySameTenant);
       if (!resuelto) return undefined;
-      const { actor, target } = resuelto;
+      const { kind, actor, target } = resuelto;
 
       // The read channel denies too: refusing `.claude.json` without a row leaves a sweep untraced.
       const hechos: Record<string, unknown> = { ...HECHOS_SIN_MEDIR, kind };
@@ -550,14 +560,9 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
     reply: FastifyReply,
     legacySameTenant: boolean,
   ) {
-      const { kind } = request.params;
-      if (!kindValido(kind)) {
-        return reply.code(400).send({ error: 'invalid_input', message: 'ese tipo de documento no existe' });
-      }
-
-      const resuelto = await destino(request, reply, 'control', legacySameTenant);
+      const resuelto = await resolveDocumentRequest(request, reply, 'control', legacySameTenant);
       if (!resuelto) return undefined;
-      const { actor, target } = resuelto;
+      const { kind, actor, target } = resuelto;
 
       const hechos: Record<string, unknown> = { ...HECHOS_SIN_MEDIR, kind };
       let medidos: RuntimeFacts | undefined = undefined;

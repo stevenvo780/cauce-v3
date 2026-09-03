@@ -1,8 +1,6 @@
 import { withTransaction } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
-import {
-  terminalAuditMetadata, type TerminalAuditContext,
-} from '../audit.js';
+import { terminalAuditMetadata, terminalSessionAuditContext } from '../audit.js';
 import {
   cohortLabels, exactObjectKeys, sessionExpiry, sessionWindowExpression,
 } from '../helpers.js';
@@ -92,29 +90,31 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
             // routing authority, attribution, and a cache-free grants-file read.
             const policy = await currentSessionPolicy(row, true, client);
             const actor = sessionActor(row);
-            const context: TerminalAuditContext = {
-              operator_id: row.operator_id,
-              attributed: row.attributed,
-              target_tenant: row.tenant_id,
-              target_alias: row.alias,
-              container: row.container,
-              cohort: policy.cohort === undefined ? [] : cohortLabels(policy.cohort),
-              mode: row.mode,
-            };
-            if (!policy.allowed || actor === undefined) {
-              const reason = policy.allowed ? 'unknown_session' : policy.reason;
+            const auditContext = terminalSessionAuditContext(
+              row,
+              policy.cohort === undefined ? [] : cohortLabels(policy.cohort),
+            );
+            const recordDenial = async (
+              reason: string,
+              extra: Readonly<Record<string, unknown>> = {},
+            ): Promise<void> => {
               await recordTransactionalTerminalAudit(client, {
                 tenant_id: actor?.tenant_id ?? row.tenant_id,
                 actor_alias: actor?.alias ?? row.alias,
                 action: 'terminal.session.consume',
                 decision: 'deny',
                 ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-                metadata: terminalAuditMetadata(context, {
+                metadata: terminalAuditMetadata(auditContext, {
                   session_id: sid,
                   reason,
                   ticket_sha256: ticketDigest(ticket),
+                  ...extra,
                 }),
               });
+            };
+            if (!policy.allowed || actor === undefined) {
+              const reason = policy.allowed ? 'unknown_session' : policy.reason;
+              await recordDenial(reason);
               refusal = { status: 403, reason };
             } else if (row.ticket_redeemable) {
               const claimed = await client.query<ClaimedSession>(
@@ -137,18 +137,7 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
               session = claimed.rows[0];
               databaseNow = claimed.rows[0]?.database_now;
               if (session === undefined) {
-                await recordTransactionalTerminalAudit(client, {
-                  tenant_id: actor.tenant_id,
-                  actor_alias: actor.alias,
-                  action: 'terminal.session.consume',
-                  decision: 'deny',
-                  ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-                  metadata: terminalAuditMetadata(context, {
-                    session_id: sid,
-                    reason: 'lifecycle_conflict',
-                    ticket_sha256: ticketDigest(ticket),
-                  }),
-                });
+                await recordDenial('lifecycle_conflict');
                 refusal = { status: 409, reason: 'lifecycle_conflict' };
               }
             } else {
@@ -182,19 +171,7 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
                 databaseNow = takeover?.database_now;
                 takenOver = session !== undefined;
               } else {
-                await recordTransactionalTerminalAudit(client, {
-                  tenant_id: actor.tenant_id,
-                  actor_alias: actor.alias,
-                  action: 'terminal.session.consume',
-                  decision: 'deny',
-                  ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-                  metadata: terminalAuditMetadata(context, {
-                    session_id: sid,
-                    reason: 'claim_conflict',
-                    ticket_sha256: ticketDigest(ticket),
-                    claim_epoch: row.relay_claim_epoch,
-                  }),
-                });
+                await recordDenial('claim_conflict', { claim_epoch: row.relay_claim_epoch });
                 refusal = {
                   status: 409,
                   reason: 'claim_conflict',
@@ -202,18 +179,7 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
                 };
               }
               if (session === undefined && refusal === undefined) {
-                await recordTransactionalTerminalAudit(client, {
-                  tenant_id: actor.tenant_id,
-                  actor_alias: actor.alias,
-                  action: 'terminal.session.consume',
-                  decision: 'deny',
-                  ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-                  metadata: terminalAuditMetadata(context, {
-                    session_id: sid,
-                    reason: 'lifecycle_conflict',
-                    ticket_sha256: ticketDigest(ticket),
-                  }),
-                });
+                await recordDenial('lifecycle_conflict');
                 refusal = { status: 409, reason: 'lifecycle_conflict' };
               }
             }
@@ -224,7 +190,7 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
                 action: 'terminal.session.consume',
                 decision: 'info',
                 ...(session.trace_id === null ? {} : { trace_id: session.trace_id }),
-                metadata: terminalAuditMetadata(context, {
+                metadata: terminalAuditMetadata(auditContext, {
                   session_id: sid,
                   image_id: session.image_id,
                   generation: session.generation,

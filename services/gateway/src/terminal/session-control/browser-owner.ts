@@ -1,13 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { withTransaction } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
-import { requireOperatorPermission } from '../../auth.js';
-import { terminalAuditMetadata } from '../audit.js';
+import { terminalAuditMetadata, terminalSessionAuditContext } from '../audit.js';
 import { resolveOperator } from '../authority.js';
 import { cohortLabels, operatorScopePredicate, subjectFor } from '../helpers.js';
 import type { TerminalSessionControlOptions } from '../session-control.js';
 import { ticketSha256 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
+import { authorizeTerminalControlActor } from './control-authorization.js';
 import { releaseHeldControl } from './control.js';
 
 /** Rolls back a guarded transition without turning a no-op into a transport error. */
@@ -30,14 +30,8 @@ export function registerTerminalBrowserOwnerRoutes(
 
   app.post<{ Params: { sid: string } }>('/v3/console/terminal/sessions/:sid/owner', async (request, reply) => {
     try {
-      const actor = await principal(request);
-      requireOperatorPermission(actor, 'control');
-      try {
-        await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
-      } catch {
-        await reply.code(403).send({ error: 'forbidden', reason: 'control_permission_required' });
-        return;
-      }
+      const actor = await authorizeTerminalControlActor(request, reply, { principal, repository });
+      if (actor === undefined) return;
       const operator = resolveOperator(request, actor, config);
       const consoleSubject = subjectFor(actor);
       if (!UUID_ANY_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
@@ -72,19 +66,14 @@ export function registerTerminalBrowserOwnerRoutes(
             action: 'terminal.session.owner_rotated',
             decision: 'info',
             ...(rotatedRow.trace_id === null ? {} : { trace_id: rotatedRow.trace_id }),
-            metadata: terminalAuditMetadata({
-              operator_id: rotatedRow.operator_id,
-              attributed: rotatedRow.attributed,
-              target_tenant: rotatedRow.tenant_id,
-              target_alias: rotatedRow.alias,
-              container: rotatedRow.container,
-              cohort: cohortLabels(await currentCohort(
+            metadata: terminalAuditMetadata(terminalSessionAuditContext(
+              rotatedRow,
+              cohortLabels(await currentCohort(
                 rotatedRow.tenant_id,
                 rotatedRow.alias,
                 ownerClient,
               )),
-              mode: rotatedRow.mode,
-            }, {
+            ), {
               session_id: rotatedRow.id,
               request_id: rotatedRow.request_id,
               owner_generation: rotatedRow.browser_owner_generation,
@@ -110,14 +99,8 @@ export function registerTerminalBrowserOwnerRoutes(
 
   app.delete<{ Params: { sid: string } }>('/v3/console/terminal/sessions/:sid', async (request, reply) => {
     try {
-      const actor = await principal(request);
-      requireOperatorPermission(actor, 'control');
-      try {
-        await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
-      } catch {
-        await reply.code(403).send({ error: 'forbidden', reason: 'control_permission_required' });
-        return;
-      }
+      const actor = await authorizeTerminalControlActor(request, reply, { principal, repository });
+      if (actor === undefined) return;
       const operator = resolveOperator(request, actor, config);
       const consoleSubject = subjectFor(actor);
       if (!UUID_ANY_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
@@ -174,15 +157,10 @@ export function registerTerminalBrowserOwnerRoutes(
               action: 'terminal.session.revoked',
               decision: 'info',
               ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-              metadata: terminalAuditMetadata({
-                operator_id: row.operator_id,
-                attributed: row.attributed,
-                target_tenant: row.tenant_id,
-                target_alias: row.alias,
-                container: row.container,
-                cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias, releaseClient)),
-                mode: row.mode
-              }, {
+              metadata: terminalAuditMetadata(terminalSessionAuditContext(
+                row,
+                cohortLabels(await currentCohort(row.tenant_id, row.alias, releaseClient)),
+              ), {
                 session_id: row.id,
                 request_id: row.request_id,
                 owner_generation: row.browser_owner_generation,
