@@ -16,3 +16,6 @@ export * from './content-safety.js';
 export * from './governance-documents.js';
 export * from './health-server.js';
 export * from './log.js';
+export * from './redaction.js';
+export * from './sealing.js';
+export * from './artifact-uri.js';

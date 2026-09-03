@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { measureStrictestUnits, type AgentProfile, type HechosDelAlias } from "../src/agent-profile.js";
+import {
+  AGENT_PROFILE_LIMITS, measureStrictestUnits, type AgentProfile, type HechosDelAlias,
+} from "../src/agent-profile.js";
 import {
   MARCA_FIN, MARCA_INICIO, MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO,
 } from "../src/marcas-de-bloque.js";
 import {
-  ErrorDeTopeDelArnes, FICHEROS_OPENCLAW, PREFIJO_REVISION_PERFIL, TOPES_OPENCLAW,
-  ficherosDelArnes, marcaDeRevisionDelPerfil, nombresDelArnes, revisionDelPerfil,
+  DOCUMENTOS_DE_GOBIERNO, ErrorDeTopeDelArnes, FICHEROS_OPENCLAW, PREFIJO_REVISION_PERFIL,
+  PRESUPUESTOS_DE_CONTEXTO, TOPES_OPENCLAW, ficherosDelArnes, harnessDocumentDirectory,
+  harnessDocumentPaths, marcaDeRevisionDelPerfil, nombresDelArnes,
+  presupuestoDeContextoMedido, revisionDelPerfil, topeDeCodexEnConfigToml,
   verifyManagedContextEdit, type FicheroGenerado,
 } from "../src/ficheros-del-arnes.js";
 
@@ -505,13 +509,87 @@ test("el tope se mide en la unidad de openclaw (UTF-16), no en bytes ni en punto
   );
 });
 
-test("claude y codex no tienen tope declarado: un perfil enorme NO se rechaza por el de openclaw", () => {
-  // NEGATIVE CONTROL on the guard's scope: the caps belong to openclaw, measured against its config.
-  // Applying them to claude would be inventing a limit its harness does not declare.
+test("claude no declara tope: un perfil enorme NO se rechaza por el tope de otro arnés", () => {
   const enorme = "x".repeat(TOPES_OPENCLAW.porFichero + 1);
+  assert.equal(PRESUPUESTOS_DE_CONTEXTO.claude.porFichero, undefined);
+  assert.equal(PRESUPUESTOS_DE_CONTEXTO.claude.total, undefined);
   assert.doesNotThrow(
     () => ficherosDelArnes("claude", { perfil: perfil({ purpose: enorme }), hechos: hechos() }),
   );
+});
+
+test("openclaw conserva EXACTAMENTE los topes de hoy, y los declara en su unidad UTF-16", () => {
+  assert.deepEqual(PRESUPUESTOS_DE_CONTEXTO.openclaw, {
+    unit: "utf16_strictest", porFichero: 60_000, total: 150_000,
+  });
+  assert.deepEqual({ ...TOPES_OPENCLAW }, { porFichero: 60_000, total: 150_000 });
+});
+
+test("codex se mide en BYTES UTF-8, y el hecho medido por alias manda sobre el defecto", () => {
+  const acentos = "á".repeat(20_000);
+  assert.equal(measureStrictestUnits(acentos), 20_000);
+  assert.equal(Buffer.byteLength(acentos, "utf8"), 40_000);
+  assert.equal(PRESUPUESTOS_DE_CONTEXTO.codex.unit, "utf8_bytes");
+  assert.equal(PRESUPUESTOS_DE_CONTEXTO.codex.porFichero, 32 * 1_024);
+
+  const contexto = { perfil: perfil({ purpose: acentos }), hechos: hechos() };
+  assert.throws(() => ficherosDelArnes("codex", contexto), ErrorDeTopeDelArnes);
+  assert.doesNotThrow(() => ficherosDelArnes("codex", contexto, new Map(), {
+    topes: { unit: "utf8_bytes", porFichero: 64 * 1_024 },
+  }));
+});
+
+test("lo que Cauce escribe ya lo acota AGENT_PROFILE_LIMITS.total; sin tope estaba el fichero ANFITRIÓN", () => {
+  assert.equal(AGENT_PROFILE_LIMITS.total, 24_000);
+  const claude = textoDe(ficherosDelArnes("claude", { perfil: perfil(), hechos: hechos() }), "CLAUDE.md");
+  assert.ok(measureStrictestUnits(claude) < AGENT_PROFILE_LIMITS.total);
+
+  const anfitrion = "h".repeat(40_000);
+  assert.throws(
+    () => ficherosDelArnes(
+      "codex", { perfil: perfil(), hechos: hechos() }, new Map([["AGENTS.md", anfitrion]]),
+    ),
+    ErrorDeTopeDelArnes,
+  );
+});
+
+test("el fichero del arnés concentra las SIETE caras del alias, no sólo las autoradas", () => {
+  const claude = textoDe(ficherosDelArnes("claude", { perfil: perfil(), hechos: hechos() }), "CLAUDE.md");
+  assert.match(claude, /## Permisos y acceso vía Cauce/u);
+  assert.match(claude, /## Cuotas y límites/u);
+  assert.match(claude, /## Configuración del arnés/u);
+  assert.match(claude, /CUOTA-TOOLS-steven/u);
+  assert.match(claude, /CAPACIDAD-TOOLS-artifacts/u);
+  assert.match(claude, /Cambiar configuración \(control\): no/u);
+});
+
+test("las rutas de gobierno salen de UNA tabla; un hecho declarado no canónico falla cerrado", () => {
+  assert.deepEqual(harnessDocumentPaths("claude", { home: "/home/dev" }), ["/home/dev/.claude/CLAUDE.md"]);
+  assert.deepEqual(
+    harnessDocumentPaths("claude", { home: "/home/dev", claudeConfigDir: "/home/dev/.claude-zeus" }),
+    ["/home/dev/.claude-zeus/CLAUDE.md"],
+  );
+  assert.deepEqual(harnessDocumentPaths("codex", { home: "/h" }), ["/h/.codex/AGENTS.md"]);
+  assert.deepEqual(harnessDocumentPaths("codex", { home: "/h", codexHome: "/otro" }), ["/otro/AGENTS.md"]);
+  assert.deepEqual(harnessDocumentPaths("hermes", { home: "/home/dev" }), ["/home/dev/AGENTS.md"]);
+  assert.deepEqual(
+    harnessDocumentPaths("openclaw", { home: "/h", openclawWorkspace: "/ws" }),
+    FICHEROS_OPENCLAW.map((nombre) => `/ws/${nombre}`),
+  );
+
+  assert.deepEqual(harnessDocumentPaths("openclaw", { home: "/h" }), []);
+  assert.deepEqual(harnessDocumentPaths("hermes", {}), []);
+  assert.deepEqual(harnessDocumentPaths("claude", { home: "/home/dev", claudeConfigDir: "relativo" }), []);
+  assert.deepEqual(harnessDocumentPaths("openclaw", { openclawWorkspace: "/ws/../escape" }), []);
+  assert.deepEqual(harnessDocumentPaths("opencode", { home: "/h" }), []);
+});
+
+test("la tabla de rutas y la de nombres emitidos no se contradicen", () => {
+  for (const [arnes, entrada] of Object.entries(DOCUMENTOS_DE_GOBIERNO)) {
+    const emitidos = nombresDelArnes(arnes);
+    if (emitidos.length === 0) continue;
+    assert.deepEqual([...entrada.documentos], [...emitidos], arnes);
+  }
 });
 
 // ── THE EMPTY PROFILE ────────────────────────────────────────────────────────────────────────
@@ -680,4 +758,114 @@ test("un TOOLS.md enorme que la siembra no toca no veta los ficheros que sí esc
   const soul = generados.find((f: FicheroGenerado) => f.nombre === "SOUL.md");
   assert.ok(soul, "el generador no emitió SOUL.md");
   assert.ok(soul.escribir, "SOUL.md debía escribirse aunque TOOLS.md sea enorme");
+});
+
+function perfilAcentuadoAlTope(): AgentProfile {
+  const acento = "\u00e1";
+  return perfil({
+    purpose: acento.repeat(AGENT_PROFILE_LIMITS.purpose),
+    role_summary: acento.repeat(AGENT_PROFILE_LIMITS.role_summary),
+    human_brief: acento.repeat(AGENT_PROFILE_LIMITS.human_brief),
+    responsibilities: Array.from({ length: 8 }, () => acento.repeat(AGENT_PROFILE_LIMITS.item)),
+    restrictions: Array.from({ length: 4 }, () => acento.repeat(AGENT_PROFILE_LIMITS.item)),
+    tools: [],
+    operating_rules: Array.from({ length: 4 }, () => acento.repeat(AGENT_PROFILE_LIMITS.item)),
+  });
+}
+
+test("el AGENTS.md acentuado de 48 kB entra con el hecho medido y SOLO cae sin hecho alguno", () => {
+  const contexto = { perfil: perfilAcentuadoAlTope(), hechos: hechos() };
+  const medido = presupuestoDeContextoMedido("codex", { codexProjectDocMaxBytes: 65_536 });
+  const conMedida = ficherosDelArnes("codex", contexto, new Map(), { topes: medido });
+  const bytes = Buffer.byteLength(textoDe(conMedida, "AGENTS.md"), "utf8");
+  assert.ok(bytes > 48_000 && bytes < 65_536, `AGENTS.md midió ${String(bytes)} bytes`);
+  assert.equal(measureStrictestUnits(textoDe(conMedida, "AGENTS.md")) * 2 > bytes, true);
+
+  const porDefecto = presupuestoDeContextoMedido("codex", {});
+  assert.throws(
+    () => ficherosDelArnes("codex", contexto, new Map(), { topes: porDefecto }),
+    (error: unknown) => error instanceof ErrorDeTopeDelArnes && error.medido === bytes,
+  );
+});
+
+test("el mensaje del tope nombra la unidad DECLARADA y de dónde salió el número", () => {
+  assert.throws(
+    () => ficherosDelArnes(
+      "codex", { perfil: perfilAcentuadoAlTope(), hechos: hechos() }, new Map(),
+      { topes: presupuestoDeContextoMedido("codex", {}) },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ErrorDeTopeDelArnes);
+      assert.equal(error.unidad, "utf8_bytes");
+      assert.equal(error.fuente, "default");
+      assert.match(error.message, /bytes UTF-8/u);
+      assert.match(error.message, /por defecto del arn\u00e9s/u);
+      return true;
+    },
+  );
+  assert.throws(
+    () => ficherosDelArnes("codex", { perfil: perfilAcentuadoAlTope(), hechos: hechos() }, new Map(), {
+      topes: presupuestoDeContextoMedido("codex", { codexProjectDocMaxBytes: 40_000 }),
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ErrorDeTopeDelArnes);
+      assert.equal(error.fuente, "measured");
+      assert.match(error.message, /medido del alias/u);
+      return true;
+    },
+  );
+  assert.throws(
+    () => ficherosDelArnes("openclaw", {
+      perfil: perfil({ purpose: "x".repeat(TOPES_OPENCLAW.porFichero + 1) }), hechos: hechos(),
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ErrorDeTopeDelArnes);
+      assert.equal(error.unidad, "utf16_strictest");
+      assert.match(error.message, /unidades UTF-16/u);
+      return true;
+    },
+  );
+});
+
+test("presupuestoDeContextoMedido: el hecho por alias manda y un hecho inservible cae al defecto", () => {
+  assert.deepEqual(presupuestoDeContextoMedido("codex", { codexProjectDocMaxBytes: 65_536 }), {
+    unit: "utf8_bytes", porFichero: 65_536, fuente: "measured",
+  });
+  assert.deepEqual(presupuestoDeContextoMedido("codex", {}), PRESUPUESTOS_DE_CONTEXTO.codex);
+  for (const roto of [0, -1, 1.5, Number.NaN, 17 * 1_024 * 1_024]) {
+    assert.deepEqual(
+      presupuestoDeContextoMedido("codex", { codexProjectDocMaxBytes: roto }),
+      PRESUPUESTOS_DE_CONTEXTO.codex,
+      String(roto),
+    );
+  }
+  assert.deepEqual(presupuestoDeContextoMedido("openclaw", { codexProjectDocMaxBytes: 65_536 }),
+    PRESUPUESTOS_DE_CONTEXTO.openclaw);
+  assert.equal(presupuestoDeContextoMedido("opencode", {}), undefined);
+});
+
+test("topeDeCodexEnConfigToml lee la clave de la tabla raíz y desconfía de todo lo demás", () => {
+  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 65536\n"), 65_536);
+  assert.equal(topeDeCodexEnConfigToml("model = \"gpt\"\nproject_doc_max_bytes=65_536 # medido\r\n"), 65_536);
+  assert.equal(topeDeCodexEnConfigToml("[profiles.zeus]\nproject_doc_max_bytes = 999999\n"), undefined);
+  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = \"65536\"\n"), undefined);
+  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 0\n"), undefined);
+  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 16777217\n"), undefined);
+  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 1\nproject_doc_max_bytes = 2\n"), undefined);
+  assert.equal(topeDeCodexEnConfigToml("otra_clave = 1\n"), undefined);
+});
+
+test("una variable de arnés VACÍA cae al defecto bajo $HOME; una definida y relativa se rechaza", () => {
+  assert.equal(harnessDocumentDirectory("claude", { home: "/home/dev", claudeConfigDir: "" }),
+    "/home/dev/.claude");
+  assert.equal(harnessDocumentDirectory("claude", { home: "/home/dev", claudeConfigDir: "   " }),
+    "/home/dev/.claude");
+  assert.equal(harnessDocumentDirectory("codex", { home: "/home/dev", codexHome: "" }),
+    "/home/dev/.codex");
+  assert.equal(harnessDocumentDirectory("claude", { home: "/home/dev", claudeConfigDir: "relativo" }),
+    undefined);
+  assert.equal(harnessDocumentDirectory("codex", { home: "/home/dev", codexHome: "../fuga" }),
+    undefined);
+  assert.equal(harnessDocumentDirectory("openclaw", { home: "/home/dev", openclawWorkspace: "" }),
+    undefined);
 });

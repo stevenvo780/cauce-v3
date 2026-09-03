@@ -305,10 +305,10 @@ const AgentProfileWireSchema = z.object({
   purpose: z.string().nullable(),
   role_summary: z.string().nullable(),
   human_brief: z.string().nullable(),
-  responsibilities: z.array(z.string()),
-  restrictions: z.array(z.string()),
-  tools: z.array(z.string()),
-  operating_rules: z.array(z.string())
+  responsibilities: z.array(z.string()).readonly(),
+  restrictions: z.array(z.string()).readonly(),
+  tools: z.array(z.string()).readonly(),
+  operating_rules: z.array(z.string()).readonly()
 }).strict();
 
 const HechosDelAliasWireSchema = z.object({
@@ -317,13 +317,13 @@ const HechosDelAliasWireSchema = z.object({
   }).strict(),
   cuotas: z.array(z.object({
     proveedor: z.string(), cuenta: z.string(), limite: z.string().optional()
-  }).strict()),
+  }).strict()).readonly(),
   arnes: z.object({
     harness: z.string(), home: z.string(),
     contenedor: z.string().optional(),
-    capacidades: z.array(z.string())
+    capacidades: z.array(z.string()).readonly()
   }).strict(),
-  destinos: z.array(z.string())
+  destinos: z.array(z.string()).readonly()
 }).strict();
 
 export const WsInboundSchema = z.discriminatedUnion('type', [HelloSchema, HeartbeatSchema, WsAckSchema]);

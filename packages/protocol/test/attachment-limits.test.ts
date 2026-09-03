@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  base64CharacterBudget, decodeCanonicalBase64, MAX_ATTACHMENT_BYTES,
-  MAX_ATTACHMENT_MEDIA_TYPE_LENGTH, MAX_ATTACHMENT_NAME_LENGTH, MAX_ATTACHMENTS_PER_MESSAGE,
-  MAX_ATTACHMENTS_TOTAL_BYTES,
+  base64CharacterBudget, decodeCanonicalBase64, MAX_ARTIFACT_LOCATOR_CHARACTERS,
+  MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_MEDIA_TYPE_LENGTH, MAX_ATTACHMENT_NAME_LENGTH,
+  MAX_ATTACHMENTS_PER_MESSAGE, MAX_ATTACHMENTS_TOTAL_BYTES,
 } from '../src/index.js';
 
 describe('attachment limits', () => {
@@ -12,6 +12,11 @@ describe('attachment limits', () => {
     expect(MAX_ATTACHMENTS_TOTAL_BYTES).toBe(10_000_000);
     expect(MAX_ATTACHMENT_MEDIA_TYPE_LENGTH).toBe(127);
     expect(MAX_ATTACHMENT_NAME_LENGTH).toBe(255);
+  });
+
+  it('bounds a locator by url length, never by the attachment byte budget', () => {
+    expect(MAX_ARTIFACT_LOCATOR_CHARACTERS).toBe(2048);
+    expect(MAX_ARTIFACT_LOCATOR_CHARACTERS).toBeLessThan(MAX_ATTACHMENT_BYTES);
   });
 
   it('carries the slack the caller asks for', () => {

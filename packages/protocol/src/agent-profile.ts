@@ -194,10 +194,9 @@ export interface PermisosDelAlias {
   readonly lectura: boolean;
   readonly control: boolean;
   /**
-   * Notifying a human requires TWO gates and both are necessary: the role must allow it
-   * (`role_policies.allow_notify`) AND at least one approved destination must exist
-   * (`egress_destinations.enabled`). With no destinations the answer is NO, even if the role says
-   * yes: `notify` is default-deny by list, not by role.
+   * Notifying a human requires TWO gates: the role must allow it (`role_policies.allow_notify`)
+   * AND at least one approved destination must exist (`egress_destinations.enabled`). With no
+   * destinations the answer is NO even if the role says yes: default-deny by list, not by role.
    */
   readonly notificacion: boolean;
 }
@@ -280,11 +279,21 @@ export function lineasDeArnes(hechos: HechosDelAlias): string {
   return lineas.join("\n");
 }
 
+export interface OpcionesDeComposicionDelPerfil {
+  /** Permissions, quotas and harness configuration: only the standalone harness file carries them. */
+  readonly includeDerivedFacts?: boolean;
+}
+
 /**
  * Composes the consolidated profile block for the harness in Markdown format.
  * Returns an empty string when no authored fields are present.
  */
-export function componerBloqueDePerfil(perfil: AgentProfile, hechos: HechosDelAlias): string {
+export function componerBloqueDePerfil(
+  perfil: AgentProfile,
+  hechos: HechosDelAlias,
+  opciones: OpcionesDeComposicionDelPerfil = {},
+): string {
+  const derivados = opciones.includeDerivedFacts ?? true;
   const rol = [
     perfil.role_summary ?? undefined,
     perfil.responsibilities.length > 0
@@ -297,7 +306,7 @@ export function componerBloqueDePerfil(perfil: AgentProfile, hechos: HechosDelAl
 
   const herramientas = [
     perfil.tools.length > 0 ? vinetas(perfil.tools) : undefined,
-    hechos.arnes.capacidades.length > 0
+    derivados && hechos.arnes.capacidades.length > 0
       ? `Capacidades del arnés: ${[...hechos.arnes.capacidades].join(", ")}`
       : undefined,
   ].filter((parte): parte is string => parte !== undefined).join("\n\n");
@@ -306,10 +315,10 @@ export function componerBloqueDePerfil(perfil: AgentProfile, hechos: HechosDelAl
     seccion("Identidad y propósito", perfil.purpose ?? undefined),
     seccion("Rol, responsabilidades y restricciones", rol),
     seccion("Tu humano y cómo tratarlo", perfil.human_brief ?? undefined),
-    seccion("Permisos y acceso vía Cauce", lineasDePermisos(hechos.permisos)),
-    seccion("Cuotas y límites", lineasDeCuotas(hechos.cuotas)),
+    derivados ? seccion("Permisos y acceso vía Cauce", lineasDePermisos(hechos.permisos)) : undefined,
+    derivados ? seccion("Cuotas y límites", lineasDeCuotas(hechos.cuotas)) : undefined,
     seccion("Herramientas y capacidades", herramientas),
-    seccion("Configuración del arnés", lineasDeArnes(hechos)),
+    derivados ? seccion("Configuración del arnés", lineasDeArnes(hechos)) : undefined,
     seccion("Instrucciones fijas de funcionamiento",
       perfil.operating_rules.length > 0 ? vinetas(perfil.operating_rules) : undefined),
   ].filter((parte): parte is string => parte !== undefined);

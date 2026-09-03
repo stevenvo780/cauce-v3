@@ -1,6 +1,8 @@
 import {
-  measureStrictestUnits, seccion, vinetas, type AgentProfile, type ContextoDeAlias,
+  componerBloqueDePerfil, measureStrictestUnits, seccion, vinetas,
+  type AgentProfile, type ContextoDeAlias,
 } from "./agent-profile.js";
+import { MAX_CODEX_PROJECT_DOC_BYTES } from "./governance-documents.js";
 import {
   MARCA_FIN,
   MARCA_INICIO,
@@ -267,15 +269,84 @@ export function verifyManagedContextEdit(
 }
 
 /**
- * Generator of harness files from a profile and alias facts.
- * Distributes the profile sections into the corresponding files per harness
- * (`claude`, `codex`, `openclaw`).
- *
- * `MEMORY.md` and `HEARTBEAT.md` in `openclaw` are agent-managed and are not overwritten if they exist.
+ * Generator of harness files from a profile and alias facts. `MEMORY.md` and `HEARTBEAT.md` in
+ * `openclaw` are agent-managed and are not overwritten if they exist.
  */
 
 /** Per-file and total size caps for openclaw, measured in UTF-16 units. */
 export const TOPES_OPENCLAW = { porFichero: 60_000, total: 150_000 } as const;
+
+export type UnidadDeTope = "utf16_strictest" | "utf8_bytes";
+
+export type FuenteDeTope = "default" | "measured";
+
+export interface PresupuestoDeContexto {
+  readonly unit: UnidadDeTope;
+  readonly porFichero?: number;
+  readonly total?: number;
+  /** Absent means the harness default table; `measured` means the per-alias fact won. */
+  readonly fuente?: FuenteDeTope;
+}
+
+/** What Codex applies to a project document unless the alias `config.toml` overrides it. */
+export const TOPE_CODEX_POR_DEFECTO_BYTES = 32 * 1_024;
+
+export type ArnesDeGobierno = "claude" | "codex" | "hermes" | "openclaw";
+
+/** The one budget table. A harness without `porFichero`/`total` declares no cap of its own. */
+export const PRESUPUESTOS_DE_CONTEXTO: Readonly<Record<ArnesDeGobierno, PresupuestoDeContexto>> = {
+  claude: { unit: "utf16_strictest" },
+  codex: { unit: "utf8_bytes", porFichero: TOPE_CODEX_POR_DEFECTO_BYTES },
+  hermes: { unit: "utf16_strictest" },
+  openclaw: { unit: "utf16_strictest", ...TOPES_OPENCLAW },
+};
+
+export function presupuestoDeContexto(harness: string): PresupuestoDeContexto | undefined {
+  return Object.hasOwn(PRESUPUESTOS_DE_CONTEXTO, harness)
+    ? PRESUPUESTOS_DE_CONTEXTO[harness as ArnesDeGobierno]
+    : undefined;
+}
+
+function medirEnUnidad(texto: string, unidad: UnidadDeTope): number {
+  return unidad === "utf8_bytes" ? Buffer.byteLength(texto, "utf8") : measureStrictestUnits(texto);
+}
+
+export interface HechosDePresupuestoDeContexto {
+  /** `project_doc_max_bytes` measured in the alias `config.toml`. */
+  readonly codexProjectDocMaxBytes?: number | undefined;
+}
+
+export function presupuestoDeContextoMedido(
+  harness: string,
+  hechos: HechosDePresupuestoDeContexto = {},
+): PresupuestoDeContexto | undefined {
+  const porDefecto = presupuestoDeContexto(harness);
+  if (porDefecto === undefined || harness !== "codex") return porDefecto;
+  const medido = hechos.codexProjectDocMaxBytes;
+  if (medido === undefined || !Number.isSafeInteger(medido)
+    || medido < 1 || medido > MAX_CODEX_PROJECT_DOC_BYTES) return porDefecto;
+  return { unit: porDefecto.unit, porFichero: medido, fuente: "measured" };
+}
+
+const TOPE_DE_CODEX_EN_TOML = /^project_doc_max_bytes\s*=\s*\+?([0-9](?:_?[0-9])*)\s*(?:#.*)?$/u;
+
+/** Reads the key from the ROOT table of a Codex `config.toml`; anything else fails closed. */
+export function topeDeCodexEnConfigToml(texto: string): number | undefined {
+  let valor: number | undefined;
+  for (const cruda of texto.split("\n")) {
+    const linea = cruda.replace(/\r$/u, "").trim();
+    if (linea.startsWith("[")) break;
+    const encontrado = TOPE_DE_CODEX_EN_TOML.exec(linea);
+    if (encontrado === null) continue;
+    if (valor !== undefined) return undefined;
+    const numero = Number(encontrado[1]?.replaceAll("_", ""));
+    if (!Number.isSafeInteger(numero) || numero < 1 || numero > MAX_CODEX_PROJECT_DOC_BYTES) {
+      return undefined;
+    }
+    valor = numero;
+  }
+  return valor;
+}
 
 /** The seven openclaw files, in the order they are emitted. */
 export const FICHEROS_OPENCLAW = [
@@ -299,17 +370,100 @@ export function esFicheroDelAgente(nombre: string): boolean {
   return (FICHEROS_DEL_AGENTE as readonly string[]).includes(nombre);
 }
 
+export interface RaizDeDocumentosDelArnes {
+  readonly hecho: "claudeConfigDir" | "codexHome" | "home" | "openclawWorkspace";
+  /** Directory under a canonical HOME used when that fact is absent. Absent = fail closed. */
+  readonly porDefectoBajoHome?: string;
+}
+
+export interface DocumentosDeGobiernoDelArnes {
+  readonly raiz: RaizDeDocumentosDelArnes;
+  readonly documentos: readonly string[];
+}
+
+/** The one path table for governance documents; gateway, adapter and pty-agent all read it. */
+export const DOCUMENTOS_DE_GOBIERNO:
+Readonly<Record<ArnesDeGobierno, DocumentosDeGobiernoDelArnes>> = {
+  claude: {
+    raiz: { hecho: "claudeConfigDir", porDefectoBajoHome: ".claude" }, documentos: ["CLAUDE.md"],
+  },
+  codex: {
+    raiz: { hecho: "codexHome", porDefectoBajoHome: ".codex" }, documentos: ["AGENTS.md"],
+  },
+  hermes: { raiz: { hecho: "home" }, documentos: ["AGENTS.md"] },
+  openclaw: { raiz: { hecho: "openclawWorkspace" }, documentos: FICHEROS_OPENCLAW },
+};
+
+export interface HechosDeRutasDelArnes {
+  readonly home?: string | undefined;
+  readonly claudeConfigDir?: string | undefined;
+  readonly codexHome?: string | undefined;
+  readonly openclawWorkspace?: string | undefined;
+}
+
+const MAX_RUTA_DE_GOBIERNO = 4_096;
+
+function directorioCanonico(valor: string | undefined): string | undefined {
+  if (valor === undefined) return undefined;
+  const recortado = valor.trim();
+  if (recortado.length === 0 || recortado.length > MAX_RUTA_DE_GOBIERNO) return undefined;
+  if (!recortado.startsWith("/") || recortado.includes("\0")) return undefined;
+  const sinCola = recortado.replace(/\/+$/u, "");
+  if (sinCola.length === 0) return undefined;
+  const segmentos = sinCola.split("/").slice(1);
+  return segmentos.some((parte) => parte.length === 0 || parte === "." || parte === "..")
+    ? undefined
+    : sinCola;
+}
+
+export function harnessDocumentDirectory(
+  harness: string,
+  hechos: HechosDeRutasDelArnes,
+): string | undefined {
+  if (!Object.hasOwn(DOCUMENTOS_DE_GOBIERNO, harness)) return undefined;
+  const { raiz } = DOCUMENTOS_DE_GOBIERNO[harness as ArnesDeGobierno];
+  const declarado = hechos[raiz.hecho];
+  if (declarado !== undefined && declarado.trim().length > 0) return directorioCanonico(declarado);
+  if (raiz.porDefectoBajoHome === undefined) return undefined;
+  const home = directorioCanonico(hechos.home);
+  return home === undefined ? undefined : `${home}/${raiz.porDefectoBajoHome}`;
+}
+
+export function harnessDocumentPaths(
+  harness: string,
+  hechos: HechosDeRutasDelArnes,
+): readonly string[] {
+  const directorio = harnessDocumentDirectory(harness, hechos);
+  if (directorio === undefined) return [];
+  return DOCUMENTOS_DE_GOBIERNO[harness as ArnesDeGobierno].documentos
+    .map((nombre) => `${directorio}/${nombre}`);
+}
+
+export const ETIQUETAS_DE_UNIDAD: Readonly<Record<UnidadDeTope, string>> = {
+  utf16_strictest: "unidades UTF-16",
+  utf8_bytes: "bytes UTF-8",
+};
+
+export const ETIQUETAS_DE_FUENTE: Readonly<Record<FuenteDeTope, string>> = {
+  default: "tope por defecto del arnés",
+  measured: "tope medido del alias",
+};
+
 /** Error thrown when a generated file or the total exceeds the cap configured for the harness. */
 export class ErrorDeTopeDelArnes extends Error {
   constructor(
     readonly fichero: string,
     readonly medido: number,
     readonly tope: number,
+    readonly unidad: UnidadDeTope = "utf16_strictest",
+    readonly fuente: FuenteDeTope = "default",
   ) {
+    const cuenta = `${String(medido)} ${ETIQUETAS_DE_UNIDAD[unidad]}`;
+    const origen = ETIQUETAS_DE_FUENTE[fuente];
     super(
       fichero === "total"
-        ? `los ficheros del arnés suman ${String(medido)} unidades y el tope total es ${String(tope)}`
-        : `${fichero} mide ${String(medido)} unidades y el tope por fichero es ${String(tope)}`,
+        ? `los ficheros del arnés suman ${cuenta} y el tope total es ${String(tope)} (${origen})`
+        : `${fichero} mide ${cuenta} y el tope por fichero es ${String(tope)} (${origen})`,
     );
     this.name = "ErrorDeTopeDelArnes";
   }
@@ -328,6 +482,8 @@ export interface FicheroGenerado {
 
 export interface OpcionesDeProyeccionDelPerfil {
   readonly revision?: number;
+  /** The measured per-alias budget. It always wins over the harness default. */
+  readonly topes?: PresupuestoDeContexto;
 }
 
 export function nombresDelArnes(harness: string): readonly string[] {
@@ -367,29 +523,6 @@ function bloqueDeFichero(nombre: string, perfil: AgentProfile): string {
   }
   // MEMORY.md and HEARTBEAT.md do not receive generated content; they are managed by the agent.
   return "";
-}
-
-/** Single block for Claude/Codex with the authored content. */
-function bloqueUnico(perfil: AgentProfile): string {
-  const rol = unir([
-    perfil.role_summary ?? undefined,
-    perfil.responsibilities.length > 0
-      ? `Responsabilidades:\n${vinetas(perfil.responsibilities)}`
-      : undefined,
-    perfil.restrictions.length > 0
-      ? `Restricciones:\n${vinetas(perfil.restrictions)}`
-      : undefined,
-  ]);
-  return unir([
-    seccion("Identidad y propósito", perfil.purpose ?? undefined),
-    seccion("Rol, responsabilidades y restricciones", rol),
-    seccion("Tu humano y cómo tratarlo", perfil.human_brief ?? undefined),
-    seccion("Herramientas", perfil.tools.length > 0 ? vinetas(perfil.tools) : undefined),
-    seccion(
-      "Instrucciones fijas de funcionamiento",
-      perfil.operating_rules.length > 0 ? vinetas(perfil.operating_rules) : undefined,
-    ),
-  ]);
 }
 
 function unir(partes: readonly (string | undefined)[]): string {
@@ -440,10 +573,9 @@ export function ficherosDelArnes(
       });
       continue;
     }
-    // The single claude/codex file consolidates the full profile.
     const cuerpo = harness === "openclaw"
       ? bloqueDeFichero(nombre, contexto.perfil)
-      : bloqueUnico(contexto.perfil);
+      : componerBloqueDePerfil(contexto.perfil, contexto.hechos, { includeDerivedFacts: true });
     const canonico = esFicheroCanonico(harness, nombre);
     const bloque = cuerpo.trim().length === 0
       ? canonico && revisionNativa !== undefined ? renglonDeDueno(contexto.perfil) : ""
@@ -495,7 +627,7 @@ export function ficherosDelArnes(
     });
   }
 
-  comprobarTopes(harness, generados);
+  comprobarTopes(generados, opciones.topes ?? presupuestoDeContexto(harness));
   return generados;
 }
 
@@ -532,22 +664,26 @@ function esFicheroCanonico(harness: string, nombre: string): boolean {
   return nombre === (harness === "claude" ? "CLAUDE.md" : "AGENTS.md");
 }
 
-/** Validates per-file and accumulated size caps in openclaw. */
-function comprobarTopes(harness: string, ficheros: readonly FicheroGenerado[]): void {
-  if (harness !== "openclaw") return;
+/** Validates per-file and accumulated caps in the unit the harness table DECLARES. */
+function comprobarTopes(
+  ficheros: readonly FicheroGenerado[],
+  presupuesto: PresupuestoDeContexto | undefined,
+): void {
+  if (presupuesto === undefined) return;
+  const { porFichero, total: topeTotal, unit } = presupuesto;
+  if (porFichero === undefined && topeTotal === undefined) return;
+  const fuente = presupuesto.fuente ?? "default";
   let total = 0;
   for (const fichero of ficheros) {
-    // Agent-managed files (solo-si-falta) do not count against the managed caps.
-    if (fichero.politica === "solo-si-falta") continue;
-    // Files the seeding will not write do not count against managed caps.
-    if (!fichero.escribir) continue;
-    const medido = measureStrictestUnits(fichero.texto);
-    if (medido > TOPES_OPENCLAW.porFichero) {
-      throw new ErrorDeTopeDelArnes(fichero.nombre, medido, TOPES_OPENCLAW.porFichero);
+    // Agent-managed files, and files the seeding will not write, do not count.
+    if (fichero.politica === "solo-si-falta" || !fichero.escribir) continue;
+    const medido = medirEnUnidad(fichero.texto, unit);
+    if (porFichero !== undefined && medido > porFichero) {
+      throw new ErrorDeTopeDelArnes(fichero.nombre, medido, porFichero, unit, fuente);
     }
     total += medido;
   }
-  if (total > TOPES_OPENCLAW.total) {
-    throw new ErrorDeTopeDelArnes("total", total, TOPES_OPENCLAW.total);
+  if (topeTotal !== undefined && total > topeTotal) {
+    throw new ErrorDeTopeDelArnes("total", total, topeTotal, unit, fuente);
   }
 }
