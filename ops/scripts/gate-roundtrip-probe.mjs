@@ -6,6 +6,8 @@ import { request } from 'node:https';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { boundedInteger } from './bounded-environment-integer.mjs';
+
 const [alias, outputFile] = process.argv.slice(2);
 const here = path.dirname(fileURLToPath(import.meta.url));
 if (process.argv.length !== 4 || !alias || !outputFile) {
@@ -15,15 +17,6 @@ if (process.argv.length !== 4 || !alias || !outputFile) {
 if (!/^[a-z][a-z0-9-]*$/.test(alias)) {
   console.error('invalid alias format');
   process.exit(2);
-}
-
-function boundedInteger(name, fallback, minimum, maximum) {
-  const raw = process.env[name];
-  const value = raw === undefined ? fallback : Number(raw);
-  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
-    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
-  }
-  return value;
 }
 
 async function regularFile(file, label, privateFile = false) {

@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SCRIPT="$ROOT/scripts/fault-compose.sh"
+CONTRACT_RUNNER="$ROOT/harness/contract-runner.mjs"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
@@ -59,6 +60,13 @@ run_case() {
 }
 
 targets=(gateway postgres telegram-bridge relay-worker)
+if grep -Fq "runComposeFault('postgres');" "$CONTRACT_RUNNER" \
+  && ! grep -Fq "runComposeFault('db');" "$CONTRACT_RUNNER"; then
+  printf 'ok - contract runner uses the supported postgres fault target\n'
+else
+  printf 'not ok - contract runner must use postgres, never db, as the compose fault target\n' >&2
+  failures=$((failures + 1))
+fi
 for target in "${targets[@]}"; do
   run_case "test/$target is ephemeral" 0 "service=$target stack=test" test "$target" ephemeral-only ''
   run_case "dev/$target needs env" 1 'CAUCE_ENV_FILE is required for dev/prod fault injection' dev "$target" ephemeral-only ''

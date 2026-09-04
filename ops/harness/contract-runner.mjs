@@ -356,7 +356,7 @@ async function main() {
         return;
       }
       if (context.faultMode !== 'compose') throw new SkipError('set CAUCE_FAULT_MODE=compose for a disposable stack');
-      runComposeFault('db');
+      runComposeFault('postgres');
       await waitUntil(async () => (await api(context, 'GET', '/health/ready')).status === 200, 30000);
     }],
 

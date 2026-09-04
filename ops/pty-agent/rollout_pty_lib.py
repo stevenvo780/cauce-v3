@@ -30,6 +30,7 @@ RELEASE_FILES: Final = (
     "scripts/container-alias-query.py",
     "scripts/container_alias_lib.py",
     "pty-agent/cauce-pty-launcher.sh",
+    "pty-agent/reap_orphan_agent.py",
     "pty-agent/cauce_pty_agent/__init__.py",
     "pty-agent/cauce_pty_agent/__main__.py",
     "pty-agent/cauce_pty_agent/agent.py",

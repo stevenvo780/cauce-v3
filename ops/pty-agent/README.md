@@ -16,12 +16,14 @@ El paquete `cauce_pty_agent/` (Python stdlib, sin dependencias) corre **dentro d
 | `governance_write.py` | WRITE y WRITE_BATCH con CAS y rollback |
 | `agent.py` | `PtyAgent`: conexión al relay, bucle principal y despacho |
 
-Alrededor del paquete, en `ops/pty-agent/`, quedan las piezas del **host** (no viajan al contenedor
-salvo el propio paquete): `cauce-pty-launcher.sh` (lanzamiento y siega), `rollout-pty.py` +
-`rollout_pty_lib.py` (despliegue y drop-ins), `derive-alias-key.py` y `publish-alias-key.sh`
-(material de ticket por alias), `install-pty-agent.sh`, `systemd/` (plantillas de unidad) y `tests/`
-(unittest, sin socket real). El paquete es lo único que se copia al contenedor; todo lo demás corre
-en kratos.
+Alrededor del paquete, en `ops/pty-agent/`, quedan las piezas del **manager** (no se instalan dentro
+del contenedor salvo el propio paquete): `cauce-pty-launcher.sh` (lanzamiento),
+`reap_orphan_agent.py` (siega transmitida por stdin),
+`rollout-pty.py` + `rollout_pty_lib.py` (despliegue y drop-ins), `derive-alias-key.py` y
+`publish-alias-key.sh` (material de ticket por alias), `install-pty-agent.sh`, `systemd/`
+(plantillas de unidad) y `tests/`
+(unittest, sin socket real). Launcher y rollout corren en el manager `server` o `kratos`; el reaper
+se ejecuta dentro del contenedor desde stdin y no queda instalado allí.
 
 **Hace:** abre PTYs bajo demanda (`shell`, o `harness` = TUI real vía `tmux attach` de solo lectura o TUI de OpenClaw) y sirve lectura/escritura de ficheros de gobierno (tags 0x50–0x5E: READ/LIST/WRITE/WRITE_BATCH con CAS y rollback; paths validados con realpath + lista NEVER_SERVE).
 
@@ -83,9 +85,24 @@ además sirve STDOUT y PING de todas las sesiones.
 
 **Lanzamiento:** `cauce-pty-launcher.sh` borra y recrea `/var/tmp/cauce-pty-agent-<alias>/` (raíz compartida por todos los releases: un módulo retirado, o cualquier `.py` que el usuario runtime hubiera dejado ahí, no puede sobrevivir en el `PYTHONPATH`), hace `docker cp` del paquete y lo deja root y no escribible; luego `docker exec ... -e PYTHONPATH=<raíz> python3 -m cauce_pty_agent`, supervisado por unidades user `cauce-v3-pty@<alias>` (drop-ins escritos por `rollout-pty.py`). Cada módulo nuevo del paquete tiene que entrar además en `RELEASE_FILES` de `rollout_pty_lib.py`: publicar el paquete a medias arranca con `ModuleNotFoundError` y salida 1, que la unidad reintenta para siempre.
 
-**Los dos peligros conocidos (plan-reestructura/32):**
-1. Un rollout mata el `docker exec` del host pero NO el proceso Python dentro del contenedor → quedan huérfanos que comparten certificado con el nuevo y se expulsan mutuamente (`superseded`) en bucle infinito. El launcher debe matar agentes previos del alias dentro del contenedor antes de arrancar.
-2. El agente anuncia tags que un relay más viejo no conoce (p.ej. `TAG_READ_DONE` 0x5E) y el relay mata la conexión: **relay y pty-agent se despliegan siempre juntos**, y el contrato de `tests/terminal-pty/vectors.json` debe cubrir todo tag nuevo. Esa regla ya no es una promesa del README: `tests/test_vectors_contract.py` camina TODOS los casos del fichero contra este mismo paquete y falla si aparece un `kind` que nadie recorre, si los tags declarados no son los del agente, o si los bloques `geometry`, `limits` y `ttls` dejan de coincidir con sus constantes. Un tag nuevo sin vector es rojo de test, no un descubrimiento en producción.
+**Siega previa al exec:** el launcher publica y valida primero el paquete y el bundle, vuelve a
+comprobar la generación del contenedor y entonces ejecuta `reap_orphan_agent.py` con el UID/GID
+runtime. Reconoce exactamente el argv actual (`python3 -m cauce_pty_agent`) y el argv legado
+(`python3 /var/tmp/cauce-pty-agent-<alias>.py`), ambos con la ruta exacta del bundle. Conserva la
+identidad `PID + starttime + argv`; los argumentos vacíos también forman parte de esa identidad.
+
+Cada candidato se fija con `pidfd`, se revalida y recibe `SIGTERM`. Tras 2 s, solo la misma
+identidad recibe `SIGKILL`; tras otros 2 s, un censo final debe quedar vacío. Un PID desaparecido o
+reutilizado no recibe señales. El instalador prueba previamente `pidfd_open` y
+`pidfd_send_signal` dentro del contenedor sin matar procesos.
+
+Una ambigüedad semántica o la imposibilidad de demostrar la salida termina con código 78 y no
+ejecuta el reemplazo. Un fallo de transporte Docker o su timeout termina con 75 para que systemd
+reintente; tampoco ejecuta el reemplazo.
+
+**Compatibilidad de protocolo:** el agente no se publica contra un relay que desconozca sus modos
+o tags. El contrato de `tests/terminal-pty/vectors.json` debe cubrir cada tag; la suite
+`tests/test_vectors_contract.py` compara los casos, tags, geometría, límites y TTL con el paquete.
 
 **Probar:** `python3 -m unittest discover -s ops/pty-agent` (unit, sin socket real); un fichero
 suelto, p. ej. `python3 ops/pty-agent/tests/test_vectors_contract.py`.

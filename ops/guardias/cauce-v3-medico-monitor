@@ -10,7 +10,7 @@ The four silent failures it watches:
   2) STUCK TURN:  a turn bridge (openclaw-stdin-bridge.mjs / hermes-stdin-bridge.py) alive
                    more than 30 min. The adapter renews the lease every 60 s, so the
                    delivery NEVER expires nor fails; the agent is muted with no signal.
-  3) STUCK DELIVERY: deliveries in claimed/accepted/started older than ~20 min.
+  3) STUCK DELIVERY: deliveries in leased/accepted/started older than ~20 min.
   4) BROKEN CREDENTIAL: refreshToken absent/empty, or the SAME fingerprint in multiple
                    containers (OAuth refresh is single-use; the first to refresh leaves the
                    rest with a spent one). Only the fingerprint is published, never the secret.
@@ -643,7 +643,7 @@ def entregas_trabadas():
         "round(extract(epoch from (now()-greatest(created_at, claimed_at, "
         "  execution_started_at, updated_at)))/60), "
         "coalesce(round(extract(epoch from (claim_expires_at-now()))/60)::text,'') "
-        "from deliveries where status in ('claimed','accepted','started') "
+        "from deliveries where status in ('leased','accepted','started') "
         "order by created_at;", columnas=8)
     salida = []
     for f in filas:
@@ -752,17 +752,18 @@ def respuestas_perdidas(horas=24):
 
 def captura_en_vuelo(alias):
     """What will be LOST if this alias is restarted. Captured BEFORE touching anything: if
-    rescue fails, this record is the only thing that lets it be recovered by hand."""
+    rescue fails, this metadata is the only thing that lets it be recovered by hand. Message
+    bodies never enter the doctor's logs or reports."""
     filas = sql(
         "select d.id, d.message_id, m.actor_alias, m.tenant_id, m.room_id, m.lane, "
-        "m.priority, m.request_id, replace(coalesce(m.body->>'text',''), chr(10), ' ') "
+        "m.priority, m.request_id "
         "from deliveries d join messages m on m.id = d.message_id "
         "where d.recipient_alias = '{}' "
-        "and d.status in ('claimed','accepted','started');".format(alias.replace("'", "''")),
-        columnas=9)
+        "and d.status in ('leased','accepted','started');".format(alias.replace("'", "''")),
+        columnas=8)
     return [{"delivery": f[0], "message": f[1], "actor": f[2], "tenant": f[3],
-             "room": f[4], "lane": f[5], "priority": f[6], "request_id": f[7],
-             "texto": f[8][:400]} for f in filas if len(f) >= 9]
+             "room": f[4], "lane": f[5], "priority": f[6], "request_id": f[7]}
+            for f in filas if len(f) >= 8]
 
 
 # --------------------------------------------------------------------------- reparaciones
@@ -850,17 +851,16 @@ def reiniciar_puente_telegram():
     return rc == 0, (err.strip()[:150] if rc != 0 else "docker restart devolvio 0")
 
 
-def ciclo_rescate(alias, adaptador, apuntes):
-    """Restart an adapter WITHOUT losing in-flight work.
+def restart_veto_for_inflight(deliveries):
+    return {"resultado": "omitido", "perdido": deliveries,
+            "razon": f"{len(deliveries)} entrega(s) EN VUELO: reiniciar ahora las mata con attempt=1 y "
+                     "nadie las reintenta (la re-inyeccion automatica no existe todavia)"}
 
-    Without the re-injection step, restarting is DESTRUCTION: the in-flight delivery dies
-    with `SHUTDOWN` at attempt=1 and never retries. The order is therefore mandatory:
-      1 capture what would be lost (write it to the log BEFORE touching anything)
-      2 restart
-      3 verify it came back (active, not failed)
-      4 read the FULL output: "started WITHOUT shared session" is FAILURE, not success
-      5 re-inject via the API with an idempotency_key derived from the original delivery
-      6 verify BY EFFECT that the delivery reached done
+
+def ciclo_rescate(alias, adaptador, apuntes):
+    """Restart only when both snapshots show no in-flight work.
+
+    This conservative veto is not an atomic drain, so callers keep automatic restart disabled.
     """
     if not adaptador:
         return {"resultado": "omitido", "razon": "no se ve el adaptador vivo"}
@@ -875,9 +875,7 @@ def ciclo_rescate(alias, adaptador, apuntes):
     # re-injection isn't implemented, this is destroying work, not rescuing it.
     en_vuelo = captura_en_vuelo(alias)
     if en_vuelo:
-        return {"resultado": "omitido", "perdido": en_vuelo,
-                "razon": f"{len(en_vuelo)} entrega(s) EN VUELO: reiniciar ahora las mata con attempt=1 y "
-                         "nadie las reintenta (la re-inyeccion automatica no existe todavia)"}
+        return restart_veto_for_inflight(en_vuelo)
     if adaptador.get("bundle") != RELEASE_CON_FIX78 or adaptador.get("digest") != DIGEST_CON_FIX78:
         return {"resultado": "omitido",
                 "razon": f"release sin el fix de exit 78 ({adaptador.get('bundle') or '?'}): reiniciarlo puede dejarlo "
@@ -888,6 +886,8 @@ def ciclo_rescate(alias, adaptador, apuntes):
                 "razon": f"{n} cliente(s) de tmux atados: reiniciar le tumba la TUI a su dueno"}
 
     perdido = captura_en_vuelo(alias)          # paso 1
+    if perdido:
+        return restart_veto_for_inflight(perdido)
     apuntes.append({"tipo": "captura_previa", "alias": alias, "entregas": perdido})
 
     unidad = f"cauce-v3-container-{alias}.service"
@@ -1518,8 +1518,8 @@ def main():
     ap.add_argument("--solo-detectar", action="store_true",
                     help="no repara nada; solo mide y reporta")
     ap.add_argument("--reiniciar-adaptadores", action="store_true",
-                    help="habilita el ciclo de rescate (capturar->reiniciar->verificar->"
-                         "re-inyectar). Apagado por defecto")
+                    help="habilita reinicio opt-in con doble veto no atomico y verificacion; "
+                         "sin reinyeccion. Apagado por defecto")
     ap.add_argument("--sin-aviso", action="store_true", help="no manda Telegram")
     ap.add_argument("--sin-entrega", action="store_true",
                     help="corrida de INSPECCION: mide, imprime y anota en la bitacora, pero "

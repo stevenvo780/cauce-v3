@@ -14,6 +14,8 @@ import {
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { boundedInteger } from './bounded-environment-integer.mjs';
+
 const requireFromStore = createRequire(new URL('../../packages/store/package.json', import.meta.url));
 const { Client } = requireFromStore('pg');
 
@@ -42,15 +44,6 @@ const dbUrl = process.env.CAUCE_DATABASE_URL;
 if (!dbUrl) {
   console.error('CAUCE_DATABASE_URL is required');
   process.exit(2);
-}
-
-function boundedInteger(name, fallback, minimum, maximum) {
-  const raw = process.env[name];
-  const value = raw === undefined ? fallback : Number(raw);
-  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
-    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
-  }
-  return value;
 }
 
 function exactKeys(value, expected, label) {

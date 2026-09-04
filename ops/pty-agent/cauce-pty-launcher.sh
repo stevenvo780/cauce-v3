@@ -18,6 +18,7 @@ else
 fi
 LOCK_ROOT=${CAUCE_PTY_LOCK_ROOT:-$default_lock_root}
 AGENT_SOURCE="$SCRIPT_ROOT/cauce_pty_agent"
+REAPER_SOURCE="$SCRIPT_ROOT/reap_orphan_agent.py"
 AGENT_VERSION=${CAUCE_PTY_AGENT_VERSION:-1}
 DOCKER_CALL_TIMEOUT=${CAUCE_PTY_DOCKER_TIMEOUT:-30}
 
@@ -72,6 +73,7 @@ command -v flock >/dev/null 2>&1 || die 'flock is unavailable' 127
 command -v timeout >/dev/null 2>&1 || die 'timeout is unavailable' 127
 [[ $DOCKER_CALL_TIMEOUT =~ ^[0-9]{1,4}$ && $DOCKER_CALL_TIMEOUT -ge 1 ]] || die 'docker call timeout is invalid'
 [[ -f $AGENT_SOURCE/__main__.py && -d $AGENT_SOURCE && ! -L $AGENT_SOURCE ]] || die_transient 'PTY agent source is unavailable'
+[[ -f $REAPER_SOURCE && ! -L $REAPER_SOURCE ]] || die_transient 'PTY reaper source is unavailable'
 
 # 1. Alias -> container tuple. Read-only use of the fleet mapping owned by ops/scripts.
 mapping_line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS_ROOT/scripts/container-alias-query.py" "$alias_name") || exit $?
@@ -780,19 +782,17 @@ PYTHON
 
 # Host flock dies with the `docker exec` client, but the Python agent INSIDE the container
 # survives. Two agents of the same alias share a certificate and the relay kicks each other
-# out forever. Before starting, kill any prior agent of the alias inside the container (match
-# by its bundle path, the only per-alias literal left in the argv of `python3 -m cauce_pty_agent`).
+# out forever. Pin each prior agent by PID, starttime, and exact argv before signalling it.
 reap_orphan_agents() {
-  local victims
-  victims=$(docker_control exec "$container_id" sh -c \
-    "ps -eo pid,args | awk -v s=\".cauce-pty-bundle-$alias_name.json\" 'index(\$0, s) && \$2 != \"awk\" {print \$1}'" 2>/dev/null) || true
-  [[ -n ${victims:-} ]] || return 0
-  printf 'cauce-pty-launcher: reaping orphan agents alias=%s pids=%s\n' "$alias_name" "$(tr '\n' ' ' <<<"$victims")" >&2
-  while IFS= read -r pid; do
-    [[ $pid =~ ^[0-9]+$ ]] || continue
-    docker_control exec "$container_id" sh -c \
-      "ps -o args= -p $pid 2>/dev/null | grep -qF '.cauce-pty-bundle-$alias_name.json' && kill $pid" 2>/dev/null || true
-  done <<<"$victims"
+  local status
+  if docker_control exec -i --user "$runtime_uid:$runtime_gid" \
+    "$container_id" /usr/bin/python3 - "$bundle_path" "$alias_name" < "$REAPER_SOURCE"; then return 0
+  else status=$?
+  fi
+  if (( status == 78 )); then
+    die "cannot prove prior PTY agent removal for alias $alias_name (status $status)" 78
+  fi
+  die_transient "PTY reaper transport failed for alias $alias_name (status $status)"
 }
 
 start_agent() {

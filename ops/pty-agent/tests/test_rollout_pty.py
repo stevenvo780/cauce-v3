@@ -30,13 +30,14 @@ class FakeRunner(rollout.Runner):
         self.modes = "shell"
         self.journal_ready_after = 1
         self.journal_calls = 0
+        self.install_returncode = 0
         self.commands: list[tuple[str, ...]] = []
 
     def run(self, argv: Any, *, env: Any = None) -> rollout.CommandResult:
         values = tuple(str(value) for value in argv)
         self.commands.append(values)
         if values[0].endswith("install-pty-agent.sh"):
-            return rollout.CommandResult(0)
+            return rollout.CommandResult(self.install_returncode)
         if values[0] == "journalctl":
             self.journal_calls += 1
             if self.journal_calls < self.journal_ready_after:
@@ -125,6 +126,10 @@ class RolloutPtyTest(unittest.TestCase):
         self.assertEqual(
             self.bundle.digests["pty-agent/cauce-pty-launcher.sh"],
             rollout.sha256((AGENT_ROOT / "cauce-pty-launcher.sh").read_bytes()),
+        )
+        self.assertEqual(
+            self.bundle.digests["pty-agent/reap_orphan_agent.py"],
+            rollout.sha256((AGENT_ROOT / "reap_orphan_agent.py").read_bytes()),
         )
         self.assertEqual(
             self.bundle.digests["pty-agent/cauce_pty_agent/agent.py"],
@@ -272,6 +277,23 @@ class RolloutPtyTest(unittest.TestCase):
         self.assertEqual(again["status"], "unchanged")
         restarts = [command for command in runner.commands if command[2] == "restart"]
         self.assertEqual(len(restarts), 1, "un retry idempotente no debe reiniciar una unit sana")
+
+    def test_failed_published_preflight_cannot_activate_a_selector(self) -> None:
+        temporary, worker, runner = self.worker("server")
+        self.addCleanup(temporary.cleanup)
+        worker.publish(self.bundle)
+        runner.install_returncode = 78
+        with self.assertRaisesRegex(rollout.RolloutError, "preflight PTY publicado"):
+            worker.apply(
+                self.bundle.release_sha,
+                "janus",
+                "server",
+                self.fleet.entry_digest("janus"),
+                frozenset(("shell",)),
+            )
+        self.assertFalse(worker._selector_path("janus").exists())
+        operations = {command[2] for command in runner.commands if command[0] == "systemctl"}
+        self.assertTrue(operations.isdisjoint({"daemon-reload", "enable", "restart"}))
 
     def test_failed_capability_gate_automatically_restores_selector_and_unit_state(self) -> None:
         temporary, worker, runner = self.worker("server")

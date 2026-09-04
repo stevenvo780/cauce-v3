@@ -14,6 +14,7 @@ CONFIG_ROOT=${CAUCE_PTY_CONFIG_ROOT:-$xdg_config_home/cauce-v3/pty}
 PKI_ROOT=${CAUCE_PTY_PKI_ROOT:-$xdg_config_home/cauce-v3/pty-pki}
 UNIT_ROOT=${CAUCE_PTY_UNIT_ROOT:-$xdg_config_home/systemd/user}
 UNIT_SOURCE="$SCRIPT_ROOT/systemd/cauce-v3-pty@.service"
+REAPER_SOURCE="$SCRIPT_ROOT/reap_orphan_agent.py"
 PREFLIGHT_ONLY=0
 ENABLE_UNIT=0
 
@@ -103,6 +104,14 @@ note "runtime identity inside $container_name: $container_user uid=$runtime_uid 
 docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" test -x /usr/bin/python3 \
   || die "/usr/bin/python3 is missing inside $container_name; the PTY agent cannot run there" 1
 note "ok /usr/bin/python3 exists inside $container_name"
+[[ -f $REAPER_SOURCE && ! -L $REAPER_SOURCE ]] || die 'PTY reaper source is unavailable' 78
+if docker_control exec -i --user "$runtime_uid:$runtime_gid" \
+  "$container_id" /usr/bin/python3 - --check-capabilities < "$REAPER_SOURCE"; then
+  note "ok pidfd signalling inside $container_name"
+else
+  status=$?
+  die "pidfd signalling is unavailable inside $container_name (status $status)" "$status"
+fi
 
 # Outbound TCP reachability of the relay FROM INSIDE the container, with the stdlib only.
 if docker_control exec --user "$runtime_uid:$runtime_gid" -e CAUCE_PTY_RELAY_HOST="$relay_host" -e CAUCE_PTY_RELAY_PORT="$relay_port" \
