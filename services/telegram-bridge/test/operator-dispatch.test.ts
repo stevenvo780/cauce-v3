@@ -80,9 +80,11 @@ function actions(overrides: Partial<OperatorActions> = {}): OperatorActions & { 
   return { ...base, ...overrides, calls };
 }
 
-async function run(command: OperatorCommand, port = actions()): Promise<{ text: string; calls: string[] }> {
-  const text = await dispatchOperatorCommand(command, CTX, port);
-  return { text, calls: port.calls };
+async function run(
+  command: OperatorCommand, port = actions()
+): Promise<{ text: string; failed: boolean; calls: string[] }> {
+  const { text, failed } = await dispatchOperatorCommand(command, CTX, port);
+  return { text, failed, calls: port.calls };
 }
 
 describe('dispatchOperatorCommand', () => {
@@ -164,5 +166,126 @@ describe('dispatchOperatorCommand', () => {
     expect(calls).toEqual([]);
     expect(text).toContain('/ayuda');
     expect(text).toContain('start');
+  });
+
+  it('maps an unmapped StoreError code to Spanish without its message or stack', async () => {
+    const port = actions({
+      async replayDelivery() {
+        throw new StoreError(
+          'rate_limited',
+          'FATAL: password authentication failed for user "cauce" at 10.0.0.5:5432'
+        );
+      }
+    });
+    const { text } = await run({ name: 'replay', deliveryId: '11111111-1111-4111-8111-111111111111' }, port);
+    expect(text).toContain('La acción durable falló');
+    expect(text).not.toContain('password');
+    expect(text).not.toContain('10.0.0.5');
+    expect(text).not.toContain('StoreError');
+    expect(text).not.toContain('at ');
+  });
+
+  it('does not echo a plain store Error either', async () => {
+    const port = actions({
+      async cancelDelivery() { throw new Error('connect ECONNREFUSED 10.0.0.5:5432'); }
+    });
+    const { text } = await run(
+      { name: 'cancelar', deliveryId: '11111111-1111-4111-8111-111111111111' }, port
+    );
+    expect(text).toContain('La acción durable falló');
+    expect(text).not.toContain('ECONNREFUSED');
+    expect(text).not.toContain('10.0.0.5');
+  });
+
+  it('never inspects a letterId absent from the actor own DLQ page', async () => {
+    const { text, calls } = await run(
+      { name: 'forzar_salida', letterId: '99999999-9999-4999-8999-999999999999', duplicateOk: true }
+    );
+    expect(calls).toEqual(['listStuckEgress']);
+    expect(text).toContain('No veo ese incidente');
+  });
+
+  it('refuses an incident without evidence sha before reaching the inspect RPC', async () => {
+    const port = actions({
+      async listStuckEgress() {
+        return [{
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          kind: 'origin_relay', adapter: 'telegram', disposition: 'ambiguous',
+          open: true, actionable: true, evidenceSha256: null, attempts: 1
+        }];
+      }
+    });
+    const { text, calls } = await run(
+      { name: 'forzar_salida', letterId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', duplicateOk: true },
+      port
+    );
+    expect(calls.some((entry) => entry.startsWith('inspect:'))).toBe(false);
+    expect(text).toContain('no trajo evidencia SHA-256');
+  });
+
+  it('duplicado-ok on a multi-chunk incident replays nothing and sends to the console', async () => {
+    const port = actions({
+      async inspectTelegramReplay() {
+        return {
+          evidenceSha256: 'ab'.repeat(32),
+          items: [
+            { chunkIndex: 0, effectSha256: 'cd'.repeat(32), state: 'ambiguous', replayCount: 0, duplicateRisk: true },
+            { chunkIndex: 1, effectSha256: 'ef'.repeat(32), state: 'ambiguous', replayCount: 0, duplicateRisk: true }
+          ]
+        };
+      }
+    });
+    const { text, calls } = await run(
+      { name: 'forzar_salida', letterId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', duplicateOk: true },
+      port
+    );
+    expect(calls.some((entry) => entry.startsWith('replayTelegram:'))).toBe(false);
+    expect(text).toContain('más de un chunk');
+  });
+
+  it('duplicado-ok on an incident with no chunks replays nothing', async () => {
+    const port = actions({
+      async inspectTelegramReplay() {
+        return { evidenceSha256: 'ab'.repeat(32), items: [] };
+      }
+    });
+    const { text, calls } = await run(
+      { name: 'forzar_salida', letterId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', duplicateOk: true },
+      port
+    );
+    expect(calls.some((entry) => entry.startsWith('replayTelegram:'))).toBe(false);
+    expect(text).toContain('no trajo chunks inspeccionables');
+  });
+
+  it('clips a long answer to the telegram cap instead of letting sendText reject it', async () => {
+    const port = actions({
+      async listFleet() {
+        return Array.from({ length: 500 }, (_value, index) => ({
+          tenant_id: 'Steven', alias: `alias-${String(index)}`, work_state: 'idle',
+          flags: ['claimed_not_started'], in_flight: 1, queued: 2, retrying: 0,
+          overdue_in_flight: 0, claimed_not_started: 1, seconds_since_last_ack: 1,
+          presence_online: true
+        }));
+      }
+    });
+    const { text } = await run({ name: 'estado' }, port);
+    expect(Array.from(text).length).toBe(4_096);
+    expect(text.endsWith('…')).toBe(true);
+  });
+});
+
+describe('dispatchOperatorCommand reports whether the durable action worked', () => {
+  it('a store refusal answered in Spanish is still a failed command', async () => {
+    const { text, failed } = await run(
+      { name: 'replay', deliveryId: '11111111-1111-4111-8111-111111111111' },
+      actions({ async replayDelivery() { throw new StoreError('conflict', 'not replayable'); } })
+    );
+    expect(failed).toBe(true);
+    expect(text).not.toContain('not replayable');
+  });
+
+  it('a help text and a successful replay are not failures', async () => {
+    expect((await run({ name: 'ayuda' })).failed).toBe(false);
+    expect((await run({ name: 'replay', deliveryId: '11111111-1111-4111-8111-111111111111' })).failed).toBe(false);
   });
 });

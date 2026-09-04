@@ -112,11 +112,16 @@ function explain(error: unknown): string {
   return 'La acción durable falló. No repetí el POST; releé /colas o /forzar_salida.';
 }
 
-async function guarded<T>(run: () => Promise<T>, ok: (value: T) => string): Promise<string> {
+export interface OperatorDispatchResult {
+  readonly text: string;
+  readonly failed: boolean;
+}
+
+async function guarded<T>(run: () => Promise<T>, ok: (value: T) => string): Promise<OperatorDispatchResult> {
   try {
-    return ok(await run());
+    return { text: ok(await run()), failed: false };
   } catch (error) {
-    return explain(error);
+    return { text: explain(error), failed: true };
   }
 }
 
@@ -165,8 +170,8 @@ export async function dispatchOperatorCommand(
   command: OperatorCommand,
   context: OperatorDispatchContext,
   actions: OperatorActions
-): Promise<string> {
-  const text = await (async (): Promise<string> => {
+): Promise<OperatorDispatchResult> {
+  const salida = await (async (): Promise<string | OperatorDispatchResult> => {
     if (command.name === 'ayuda') return OPERATOR_HELP;
     if (command.name === 'unknown') return formatUnknownCommand(command.raw);
     if (command.name === 'estado' || command.name === 'trabados') {
@@ -214,5 +219,6 @@ export async function dispatchOperatorCommand(
       (result) => result
     );
   })();
-  return clipTelegramText(text);
+  const { text, failed } = typeof salida === 'string' ? { text: salida, failed: false } : salida;
+  return { text: clipTelegramText(text), failed };
 }

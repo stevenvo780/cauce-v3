@@ -17,7 +17,7 @@ export interface OperatorCommandRequest {
 
 export type OperatorHandleResult =
   | { readonly kind: 'ignored' }
-  | { readonly kind: 'handled'; readonly reply: string; readonly command: string };
+  | { readonly kind: 'handled'; readonly reply: string; readonly command: string; readonly failed: boolean };
 
 const IGNORED: OperatorHandleResult = { kind: 'ignored' };
 
@@ -43,12 +43,12 @@ export async function handleOperatorCommand(input: OperatorCommandRequest): Prom
     botUsername: input.botUsername ?? input.config.bot_username
   });
   if (parsed.kind === 'none') return IGNORED;
-  const reply = await dispatchOperatorCommand(parsed.command, {
+  const { text: reply, failed } = await dispatchOperatorCommand(parsed.command, {
     actorTenant: input.config.tenant_id,
     actorAlias: input.config.alias,
     roomId: input.config.room_id,
     botId: input.botId,
     updateId: input.updateId
   }, input.actions);
-  return { kind: 'handled', reply, command: parsed.command.name };
+  return { kind: 'handled', reply, command: parsed.command.name, failed };
 }

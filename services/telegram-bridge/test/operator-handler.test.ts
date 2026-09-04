@@ -3,10 +3,15 @@ import { handleOperatorCommand } from '../src/operator-commands/handler.js';
 import type { OperatorActions } from '../src/operator-commands/dispatch.js';
 import { config } from './bridge-fixtures.js';
 
+const touched: string[] = [];
+
 const actions: OperatorActions = {
-  async listFleet() { return []; },
+  async listFleet() { touched.push('listFleet'); return []; },
   async listQueue() { return { items: [] }; },
-  async replayDelivery() { return { delivery_id: '22222222-2222-4222-8222-222222222222' }; },
+  async replayDelivery() {
+    touched.push('replayDelivery');
+    return { delivery_id: '22222222-2222-4222-8222-222222222222' };
+  },
   async cancelDelivery(deliveryId) { return { delivery_id: deliveryId, state: 'dead' }; },
   async nudge() { return { duplicate: false }; },
   async listStuckEgress() { return []; },
@@ -37,8 +42,24 @@ function request(overrides: Record<string, unknown> = {}) {
 describe('handleOperatorCommand', () => {
   it('ignores groups, opted-out aliases and non-operator users', async () => {
     expect((await handleOperatorCommand(request({ privateChat: false }))).kind).toBe('ignored');
-    expect((await handleOperatorCommand(request({ config }))).kind).toBe('ignored');
+    expect((await handleOperatorCommand(request({ config: config() }))).kind).toBe('ignored');
     expect((await handleOperatorCommand(request({ userId: '202' }))).kind).toBe('ignored');
+  });
+
+  it('ignores an allowlisted operator while the alias has not opted in', async () => {
+    const absent = config({ operator_user_ids: ['101'], allowed_user_ids: ['101', '202'] });
+    const disabled = config({
+      operator_commands: false, operator_user_ids: ['101'], allowed_user_ids: ['101', '202']
+    });
+    touched.length = 0;
+
+    expect((await handleOperatorCommand(request({ config: absent }))).kind).toBe('ignored');
+    expect((await handleOperatorCommand(request({
+      config: disabled,
+      text: '/replay 11111111-1111-4111-8111-111111111111',
+      entities: [{ type: 'bot_command', offset: 0, length: 7 }]
+    }))).kind).toBe('ignored');
+    expect(touched).toEqual([]);
   });
 
   it('ignores ordinary private text so the agent still receives it', async () => {

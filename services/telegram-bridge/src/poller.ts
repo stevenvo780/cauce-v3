@@ -356,6 +356,7 @@ export class TelegramPoller {
   ): Promise<boolean> {
     if (this.operatorActions === undefined) return false;
     let handled: { reply: string; command: string } | undefined;
+    let failed = false;
     try {
       const result = await handleOperatorCommand({
         config: this.config,
@@ -370,7 +371,17 @@ export class TelegramPoller {
       });
       if (result.kind === 'ignored') return false;
       handled = { reply: result.reply, command: result.command };
+      if (result.failed) {
+        failed = true;
+        this.onMetric('operator_command_error');
+        logEvent('telegram_operator_command_failed', {
+          alias: this.config.alias,
+          tenant_id: this.config.tenant_id,
+          command: result.command
+        });
+      }
     } catch (error) {
+      failed = true;
       this.onMetric('operator_command_error');
       logEvent('telegram_operator_command_failed', {
         alias: this.config.alias,
@@ -387,9 +398,9 @@ export class TelegramPoller {
       await this.api.sendText(chatId, handled.reply, {
         reply_to_message_id: String(message.message_id)
       });
-      this.onMetric('operator_command_ok');
+      if (!failed) this.onMetric('operator_command_ok');
     } catch {
-      this.onMetric('operator_command_error');
+      if (!failed) this.onMetric('operator_command_error');
       logEvent('telegram_operator_command_reply_failed', {
         alias: this.config.alias,
         tenant_id: this.config.tenant_id,
