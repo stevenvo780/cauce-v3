@@ -46,12 +46,29 @@ de ninguna opinión:
 
 1. **`foreign_managed_block`** — un bloque gestionado cuyo renglón de dueño nombra a otro alias.
 2. **`expectation_sha_mismatch`** — un fichero de gobierno cuya huella medida no coincide con la de
-   la expectativa registrada **para la generación que está viva ahora mismo**.
+   la expectativa registrada **para la generación que está viva ahora mismo**, salvo la única
+   deriva que no es contaminación: que lo ÚNICO distinto sea el bloque de perfil del propio alias.
 
 Ese amarre a la generación viva es la parte que hay que leer despacio. Una expectativa registrada
 contra una generación anterior que no coincide **no es contaminación**: es deriva ordinaria, y es
 exactamente lo que una recarga arregla. Tratarla como contaminación pondría en cuarentena el
 remedio y dejaría al alias atascado para siempre.
+
+**La excepción del bloque propio, y por qué es tan estrecha.** El adaptador vuelve a componer el
+bloque de perfil en cada `hello` con las cuotas vivas, así que la huella del fichero deja de
+coincidir con la expectativa sin que nadie haya violado nada; sin excepción, los alias de arnés
+codex acababan en `409` en cada arranque y sin salida. La excepción sólo se concede cuando **fuera
+del bloque no hay más que el marcador de revisión de Cauce** y ese exterior coincide byte a byte
+con el de la proyección que la recarga va a escribir. La condición del marcador no es cosmética:
+la proyección **copia el exterior verbatim del disco**, de modo que comparar los dos exteriores no
+puede ver nunca la prosa que alguien haya añadido ahí, y aceptar el fichero volvería a registrar la
+expectativa sobre él —lo que apagaría la señal de deriva también para el GET del perfil, el PUT del
+perfil y el PUT del documento, que sí juzgan estricto—. Consecuencia asumida: un fichero de
+gobierno con prosa fuera del bloque **no** recibe la excepción y su deriva se contesta con
+cuarentena hasta que alguien mire ese contenedor. Poder concedérsela exige que la expectativa
+guarde, junto a la huella del fichero entero, la huella del texto de fuera del bloque en el momento
+de escribirlo; eso es contrato durable (`ProfileRuntimeContract` y la tabla de expectativas) y
+todavía no está hecho.
 
 El veredicto **nombra al alias dueño del bloque intruso y nunca un byte de lo que el bloque dice**.
 Viaja a un cuerpo HTTP y a una fila de auditoría, y en ninguno de los dos puede aparecer prosa del
@@ -70,7 +87,10 @@ una fila de auditoría de denegación, y sume un contador expuesto en `/metrics`
 de un alias: la recarga (`agent-context-reload.routes.ts`), la escritura manual de un documento de
 gobierno (`agent-documents.routes.ts`, el `PUT` de contenido) y el `PUT` del perfil
 (`agent-profile.routes.ts`). Las tres exigen además una persona atribuida y un motivo escrito a
-mano con los mismos topes, y las tres dejan fila de auditoría tanto si aceptan como si niegan.
+mano con los mismos topes, y las tres dejan fila de auditoría tanto si aceptan como si niegan. La
+excepción del bloque propio sólo puede aplicarse en la recarga, porque es la única que mide después
+de proyectar y por tanto la única que le pasa a la guardia lo que va a escribir; las otras dos
+miden antes de proyectar y juzgan siempre estricto.
 
 **En el PUT del perfil la guardia corre ANTES de proyectar**, no después. Es la diferencia con la
 recarga: allí la negativa del preflight se vuelve a juzgar porque el veredicto se calcula tarde;

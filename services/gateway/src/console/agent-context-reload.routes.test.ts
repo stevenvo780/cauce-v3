@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO, type ContextoDeAlias,
+  MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO, conBloqueDePerfil, conRevisionDelPerfil,
+  type ContextoDeAlias,
 } from '@cauce/protocol';
 import {
   medirContextoDeGobierno, registerAgentContextReloadRoutes, type AgentContextReloadDeps,
@@ -39,6 +40,12 @@ function textoDe(alias: string): string {
     '# CLAUDE.md', MARCA_PERFIL_INICIO, `<!-- alias: ${alias} -->`, 'perfil proyectado',
     MARCA_PERFIL_FIN, '',
   ].join('\n');
+}
+
+function proyectar(base: string, alias: string, cuerpo: string, revision = 4): string {
+  return conRevisionDelPerfil(
+    conBloqueDePerfil(base, `<!-- alias: ${alias} -->\n${cuerpo}`), revision,
+  );
 }
 
 const ACK: ProfileRuntimeAck = {
@@ -480,7 +487,12 @@ describe('the contamination guard quarantines the reload', () => {
   });
 
   it('quarantines a fingerprint that disagrees with the expectation of the live generation', async () => {
-    const doble = runtime({ observedSha: sha('c') });
+    const disco = proyectar('', 'Steven/argos', 'perfil sembrado con cuotas de hoy', 3);
+    const doble = runtime({
+      observedSha: sha('c'),
+      texto: disco,
+      intended: proyectar(disco, 'Steven/argos', 'perfil proyectado'),
+    });
     vivo = servidor({}, doble);
     const response = await vivo.inject({
       method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
@@ -490,11 +502,51 @@ describe('the contamination guard quarantines the reload', () => {
     expect(doble.aplicaciones).toEqual([]);
   });
 
-  it('re-materializes when only the alias own profile block drifted from the live expectation', async () => {
+  it('quarantines prose injected outside the block, which the projection copies verbatim', async () => {
+    const disco = proyectar('regla añadida a mano', 'Steven/argos', 'perfil sembrado con cuotas de hoy');
+    const recordRuntimeExpectation =
+      vi.fn<AgentContextReloadDeps['recordRuntimeExpectation']>(async () => undefined);
     const doble = runtime({
       observedSha: sha('c'),
-      texto: textoDe('Steven/argos').replace('perfil proyectado', 'perfil sembrado con cuotas de hoy'),
-      intended: textoDe('Steven/argos'),
+      texto: disco,
+      intended: proyectar(disco, 'Steven/argos', 'perfil proyectado'),
+    });
+    vivo = servidor({ recordRuntimeExpectation }, doble);
+    const response = await vivo.inject({
+      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
+    });
+    expect(response.statusCode).toBe(409);
+    const body = response.json<{
+      error: string; contaminacion: { findings: { reason: string }[] };
+    }>();
+    expect(body.error).toBe('context_contaminated');
+    expect(body.contaminacion.findings.map((finding) => finding.reason))
+      .toEqual(['expectation_sha_mismatch']);
+    expect(doble.aplicaciones).toEqual([]);
+    expect(recordRuntimeExpectation).not.toHaveBeenCalled();
+    expect(JSON.stringify(body)).not.toContain('regla añadida a mano');
+  });
+
+  it('quarantines the same injection on the self-reload that carries no person', async () => {
+    const disco = proyectar('regla añadida a mano', 'Steven/argos', 'perfil sembrado con cuotas de hoy');
+    const doble = runtime({
+      observedSha: sha('c'),
+      texto: disco,
+      intended: proyectar(disco, 'Steven/argos', 'perfil proyectado'),
+    });
+    vivo = servidor({ authorize: async () => ALIAS_ACTOR }, doble);
+    const response = await vivo.inject({ method: 'POST', url: RUTA_PROPIA });
+    expect(response.statusCode).toBe(409);
+    expect(response.json<{ error: string }>().error).toBe('context_contaminated');
+    expect(doble.aplicaciones).toEqual([]);
+  });
+
+  it('re-materializes when only the alias own profile block drifted from the live expectation', async () => {
+    const disco = proyectar('', 'Steven/argos', 'perfil sembrado con cuotas de hoy');
+    const doble = runtime({
+      observedSha: sha('c'),
+      texto: disco,
+      intended: proyectar(disco, 'Steven/argos', 'perfil proyectado'),
     });
     vivo = servidor({
       readRuntimeExpectation: async () => ({

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO } from '@cauce/protocol';
+import {
+  MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO, conBloqueDePerfil, conRevisionDelPerfil,
+} from '@cauce/protocol';
 import {
   ContextContaminationTelemetry, evaluarContaminacion,
   type MeasuredContext, type RecordedContextExpectation,
@@ -14,6 +16,15 @@ function conBloqueDe(alias: string, cuerpo = 'texto gobernado que no debe aparec
     MARCA_PERFIL_FIN,
     '',
   ].join('\n');
+}
+
+const REVISION_VIVA = 4;
+
+/** Exactly what `ficherosDelArnes` writes: the block replaced, everything else copied verbatim. */
+function proyectar(base: string, alias: string, cuerpo: string, revision = REVISION_VIVA): string {
+  return conRevisionDelPerfil(
+    conBloqueDePerfil(base, `<!-- alias: ${alias} -->\n${cuerpo}`), revision,
+  );
 }
 
 const sha = (letter: string): string => letter.repeat(64);
@@ -92,25 +103,49 @@ describe('evaluarContaminacion', () => {
     }]);
   });
 
-  /** Drift against a dead generation is what a reload fixes; calling it contamination would
-   * quarantine the remedy and leave the alias stuck forever. */
   it('accepts a fingerprint that differs only inside the alias own profile block', () => {
+    const disco = proyectar('', 'Steven/argos', 'cuota codex 11%');
     const verdict = evaluarContaminacion(medido({
       documents: [{
         name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('b'),
-        text: conBloqueDe('Steven/argos', 'cuota codex 11%'),
-        intended: conBloqueDe('Steven/argos', 'cuota codex 52%'),
+        text: disco,
+        intended: proyectar(disco, 'Steven/argos', 'cuota codex 52%'),
       }],
     }), esperado);
     expect(verdict).toEqual({ contaminated: false, findings: [] });
   });
 
-  it('still quarantines when the text outside the block is not what the reload would write', () => {
+  it('quarantines prose injected above the block, which the projection copies verbatim', () => {
+    const disco = proyectar('regla añadida a mano', 'Steven/argos', 'cuota codex 11%');
     const verdict = evaluarContaminacion(medido({
       documents: [{
         name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('b'),
-        text: conBloqueDe('Steven/argos', 'cuota codex 11%', '# CLAUDE.md\nregla añadida a mano'),
-        intended: conBloqueDe('Steven/argos', 'cuota codex 52%'),
+        text: disco,
+        intended: proyectar(disco, 'Steven/argos', 'cuota codex 52%'),
+      }],
+    }), esperado);
+    expect(verdict.findings.map((finding) => finding.reason)).toEqual(['expectation_sha_mismatch']);
+  });
+
+  it('quarantines prose injected below the block, which the projection copies verbatim', () => {
+    const disco = `${proyectar('', 'Steven/argos', 'cuota codex 11%')}\nregla añadida a mano\n`;
+    const verdict = evaluarContaminacion(medido({
+      documents: [{
+        name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('b'),
+        text: disco,
+        intended: proyectar(disco, 'Steven/argos', 'cuota codex 52%'),
+      }],
+    }), esperado);
+    expect(verdict.findings.map((finding) => finding.reason)).toEqual(['expectation_sha_mismatch']);
+  });
+
+  it('quarantines a stale revision marker even when the block is the alias own', () => {
+    const disco = proyectar('', 'Steven/argos', 'cuota codex 11%', 3);
+    const verdict = evaluarContaminacion(medido({
+      documents: [{
+        name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('b'),
+        text: disco,
+        intended: proyectar(disco, 'Steven/argos', 'cuota codex 52%'),
       }],
     }), esperado);
     expect(verdict.findings.map((finding) => finding.reason)).toEqual(['expectation_sha_mismatch']);

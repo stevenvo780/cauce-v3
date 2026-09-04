@@ -1,10 +1,11 @@
-import { AliasSchema, TenantSchema, bloqueDePerfil, sinBloqueDePerfil } from '@cauce/protocol';
+import {
+  AliasSchema, PREFIJO_REVISION_PERFIL, TenantSchema, VERSION_REVISION_PERFIL,
+  bloqueDePerfil, sinBloqueDePerfil,
+} from '@cauce/protocol';
 
-/**
- * Context contamination guard: decides, from measured facts and the recorded expectation, whether
- * the governance files of an alias hold something that is not its own. The verdict names the
- * OWNING alias of an intruding block and never a byte of what the block says.
- */
+/** Context contamination guard: decides, from measured facts and the recorded expectation, whether
+ * the governance files of an alias hold something that is not its own. The verdict names the OWNING
+ * alias of an intruding block and never a byte of what the block says. */
 
 export const CONTEXT_CONTAMINATION_REASONS = [
   'foreign_managed_block', 'expectation_sha_mismatch',
@@ -19,7 +20,7 @@ export interface MeasuredContextDocument {
   readonly sha: string | null;
   /** Whole text, or `null` when it was not read whole. A prefix can never prove ownership. */
   readonly text: string | null;
-  /** What the reload is about to write there; a mismatch confined to its own block is not foreign. */
+  /** What the reload is about to write there; only the block it holds is evidence of anything. */
   readonly intended?: string | null;
 }
 
@@ -54,6 +55,10 @@ export interface ContextContaminationVerdict {
 
 const RENGLON_DE_DUENO = /^\s*<!--\s*alias:\s*([^\s>]+)\s*-->/u;
 
+const RENGLON_DE_REVISION = new RegExp(
+  `^${PREFIJO_REVISION_PERFIL} v${VERSION_REVISION_PERFIL} revision=[1-9][0-9]* -->$`, 'u',
+);
+
 interface DuenoDelBloque {
   readonly dueno?: string;
 }
@@ -83,13 +88,19 @@ function bloqueAjeno(
   };
 }
 
-/**
- * Only against an expectation of the generation ALIVE right now: an older one mismatching is
- * ordinary drift, what a reload fixes, and quarantining that would strand the alias forever.
- */
+/** The one drift that is not contamination: the adapter re-renders its OWN block at every hello, so
+ * the digest stops matching an expectation nobody violated. It holds only while nothing but Cauce's
+ * own revision marker sits outside that block — the projection copies whatever is outside verbatim
+ * from disk, so it can never witness prose added there, and accepting such a file would re-record
+ * the expectation over it and make the injection invisible from then on. */
 function soloCambioSuBloque(documento: MeasuredContextDocument): boolean {
   if (typeof documento.text !== 'string' || typeof documento.intended !== 'string') return false;
-  return sinBloqueDePerfil(documento.text).trim() === sinBloqueDePerfil(documento.intended).trim();
+  if (bloqueDePerfil(documento.text) === undefined) return false;
+  const exterior = sinBloqueDePerfil(documento.text);
+  if (exterior !== sinBloqueDePerfil(documento.intended)) return false;
+  return exterior.split('\n').every(
+    (renglon) => renglon.length === 0 || RENGLON_DE_REVISION.test(renglon),
+  );
 }
 
 function huellaDistinta(
@@ -108,6 +119,10 @@ function huellaDistinta(
   };
 }
 
+/**
+ * Only against an expectation of the generation ALIVE right now: an older one mismatching is
+ * ordinary drift, what a reload fixes, and quarantining that would strand the alias forever.
+ */
 export function evaluarContaminacion(
   medido: MeasuredContext,
   esperado: RecordedContextExpectation | undefined,
@@ -128,10 +143,8 @@ export function evaluarContaminacion(
   return { contaminated: findings.length > 0, findings };
 }
 
-/**
- * Process-local counter with a fixed label vocabulary: only how many times each reason quarantined
- * a write or a reload, and never the tenant, alias, path or digest behind it.
- */
+/** Process-local counter with a fixed label vocabulary: only how many times each reason
+ * quarantined a write or a reload, never the tenant, alias, path or digest behind it. */
 export class ContextContaminationTelemetry {
   private readonly counters = new Map<ContextContaminationReason, number>(
     CONTEXT_CONTAMINATION_REASONS.map((reason) => [reason, 0]),
@@ -152,9 +165,7 @@ export class ContextContaminationTelemetry {
   }
 }
 
-/**
- * One counter per process, shared by the routes that quarantine and by `/metrics`. Wiring it
- * through the gateway options instead would put the scrape and the increment in two objects that
- * only agree while somebody remembers to pass the same one.
- */
+/** One counter per process, shared by the routes that quarantine and by `/metrics`. Wiring it
+ * through the gateway options would put the scrape and the increment in two objects that only
+ * agree while somebody remembers to pass the same one. */
 export const contextContamination = new ContextContaminationTelemetry();
