@@ -171,9 +171,25 @@ consecuencia hay que decirla entera: **un `.pem` mandado como fichero se guarda 
 `messages.body`**, y lo mismo vale para los bytes de una nota de voz, que llegan ahí como adjunto
 `document`. Ese punto ciego es deliberado, no un olvido.
 
+## Comandos de operador (opt-in)
+
+Por defecto **no hay menú ni comandos**. Un `/algo` en el chat es texto que se publica al agente.
+
+Si un alias declara `operator_commands: true` y `operator_user_ids` (subconjunto no vacío de `allowed_user_ids`):
+
+- el puente llama `setMyCommands` con alcance `all_private_chats` (el menú aparece al pulsar `/` en el DM de ese bot);
+- en un **chat privado** de esos usuarios, un `bot_command` a offset 0 se intercepta **antes** de `publish`: no despierta al agente, el cursor avanza, la respuesta va por `sendText` al mismo chat;
+- en un grupo no se intercepta.
+
+Comandos: `/ayuda`, `/estado [alias]`, `/trabados`, `/colas [alias]`, `/replay <uuid>`, `/cancelar <uuid> [motivo]`, `/nudge <alias>`, `/forzar_salida`, `/forzar_salida <id>`, `/forzar_salida <id> duplicado-ok`.
+
+`/forzar_salida … duplicado-ok` envuelve `cauce_inspect_telegram_replay_030` + `cauce_manual_replay_telegram_030`. Puede duplicar el mensaje en Telegram; sin `duplicado-ok` solo inspecciona. El alias tiene que tener `allow_control` (p. ej. `kant`) o replay/cancelar/forzar_salida contestan que no hay permiso.
+
+No hay `/on` ni `/off`: el puente no toca systemd.
+
 ## Señales visuales
 
-Best-effort: 👀 al aceptar, 🤔 + typing mientras procesa, 👍/👎 al terminar. Un fallo en estas llamadas **nunca** afecta operaciones durables.
+Best-effort: 👀 al aceptar, 🤔 + typing mientras procesa, 👍/👎 al terminar. Un fallo en estas llamadas **nunca** afecta operaciones durables. Un comando de operador no dispara esas reacciones.
 
 ## Configuración
 

@@ -6,7 +6,7 @@ El canal de entrada/salida más usado del sistema (en producción: ~12.000 mensa
 
 **Salida:** egress con efectos idempotentes (`telegram_egress_effects` registra cada chunk `sent|ambiguous`), allowlist de contactos y protección anti doble respuesta.
 
-**Config:** directorio externo read-only con token y markers (ver `deploy/`); el bridge es un profile propio del compose.
+**Config:** directorio externo read-only con token y markers (ver `deploy/`); el bridge es un profile propio del compose. `operator_commands` es opt-in por alias (DM + `operator_user_ids`); ver `CONFIGURATION.md`.
 
 **Correr en dev:** `pnpm dev:telegram-bridge`. **Probar:** `test/` del paquete.
 

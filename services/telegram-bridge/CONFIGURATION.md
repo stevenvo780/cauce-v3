@@ -48,6 +48,17 @@ ingress porque no puede representar un único estado terminal de Telegram.
 `ops/scripts/generate-telegram-config.py` produce estos paths y esta política;
 `ops/scripts/telegram-cutover-preflight.py` los verifica sin leer el token.
 
+### Comandos de operador (`operator_commands`)
+
+Ausente o `false`: el slash sigue siendo un mensaje al agente. El generador no emite estas claves.
+
+`true` exige `operator_user_ids`, array no vacío y subconjunto de `allowed_user_ids`. El puente entonces:
+
+1. registra el menú con `setMyCommands` (`scope: all_private_chats`) al arrancar ese alias;
+2. en un DM de esos usuarios, intercepta el `bot_command` inicial, no llama a `publish`, avanza el cursor y contesta por `sendText`.
+
+Un fallo de `setMyCommands` no tumba el arranque (queda `group_config_degraded` / `operator_command_menu`). Replay, cancelar y `/forzar_salida` usan las mismas funciones durables que la consola (`replayDelivery`, `cancelDelivery`, `cauce_inspect_telegram_replay_030`, `cauce_manual_replay_telegram_030`) con el alias del bot como actor: hace falta `allow_control`. No hay `/on` ni `/off`.
+
 ### Ruteo por menciones en grupos (`chats[]` / `bot_username`)
 
 Estas dos claves son **opcionales y van juntas**. Ninguna existe en la config viva de
@@ -281,4 +292,6 @@ la exclusión causal de ACK y la historia de replay se verifican en
 proveer actor, ACK de riesgo, `requestId`, `deadLetterId`, `incidentEvidenceSha256` y
 `expectedReplayCount`; `false` se rechaza antes de
 reencolar. El contrato operativo completo, incluido listado seguro y cierre sin replay, vive en la migración
-`030_dlq_causal_reconciliation.sql` y se opera desde la pestaña Observabilidad de la consola.
+`030_dlq_causal_reconciliation.sql`. La consola lista origin relays en Observabilidad (solo lectura) y
+cierra incidentes sin reejecutar desde Colas; el reenvío a Telegram es `manualReplayEffect` o el
+comando `/forzar_salida <id> duplicado-ok` del puente.
