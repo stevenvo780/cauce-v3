@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { scalarHeaderValue } from './http-auth-primitives.js';
+import { routedPath, scalarHeaderValue } from './http-auth-primitives.js';
 
 export interface ConsoleSecurityOptions {
   /** Exact trusted browser origins. Empty means the request's own scheme+Host. */
@@ -23,6 +23,7 @@ function ownOrigin(request: FastifyRequest): string | undefined {
 }
 
 const ALIAS_SELF_RELOAD = /^\/v3\/console\/agents\/[^/]+\/context\/reload$/u;
+const BROWSER_AUTH_ROUTES = ['/v3/auth/login', '/v3/auth/session', '/v3/auth/logout'];
 
 function machineSelfReload(request: FastifyRequest, path: string): boolean {
   if (request.method !== 'POST' || !ALIAS_SELF_RELOAD.test(path)) return false;
@@ -38,9 +39,9 @@ export function createConsoleSecurityHook(options: ConsoleSecurityOptions = {}) 
   if (configured.size !== (options.allowedOrigins ?? []).length) throw new Error('console origins must be exact URL origins');
 
   return async function consoleSecurity(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-    const path = request.url.split('?', 1)[0];
-    const consoleRoute = path?.startsWith('/v3/console/') === true;
-    const browserAuthRoute = ['/v3/auth/login', '/v3/auth/session', '/v3/auth/logout'].includes(path ?? '');
+    const path = routedPath(request.url);
+    const consoleRoute = path.startsWith('/v3/console/');
+    const browserAuthRoute = BROWSER_AUTH_ROUTES.includes(path);
     // The OIDC callback is intentionally excluded: its one-time state, PKCE verifier and Lax
     // transient cookie authenticate the cross-site top-level redirect from the identity provider.
     if (!consoleRoute && !browserAuthRoute) return;
@@ -57,7 +58,7 @@ export function createConsoleSecurityHook(options: ConsoleSecurityOptions = {}) 
       return;
     }
     const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(request.method);
-    if (unsafe && !machineSelfReload(request, path ?? '') && (origin === undefined || !allowed.has(origin))) {
+    if (unsafe && !machineSelfReload(request, path) && (origin === undefined || !allowed.has(origin))) {
       await reply.code(403).send({ error: 'forbidden', message: 'same-origin Origin is required for console mutations' });
       return;
     }

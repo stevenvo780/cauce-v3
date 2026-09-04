@@ -9,10 +9,7 @@ import {
   validatePrincipal,
   type AuthProvider, type JwtClaims, type Principal
 } from './auth.js';
-import {
-  clearHostSessionCookie, constantTimeText, hasCookie, hostSessionCookie, isHostCookieName,
-  scalarHeaderValue, uniqueCookieValue
-} from './http-auth-primitives.js';
+import { clearHostSessionCookie, constantTimeText, hasCookie, hostSessionCookie, isHostCookieName, routedPath, scalarHeaderValue, uniqueCookieValue } from './http-auth-primitives.js';
 
 const SESSION_KIND = 'session';
 const LOGIN_KIND = 'login';
@@ -560,7 +557,7 @@ function isUnsafe(method: string): boolean {
 
 export function registerOidcBff(app: FastifyInstance, provider: OidcBffAuthProvider): void {
   app.addHook('onRequest', async (request, reply) => {
-    const dataMutation = request.url.startsWith('/v3/') && isUnsafe(request.method);
+    const dataMutation = routedPath(request.url).startsWith('/v3/') && isUnsafe(request.method);
     const sessionCookie = hasCookie(scalarHeaderValue(request.headers.cookie), provider.sessionCookieName);
     if (!dataMutation || !sessionCookie) return;
     try {

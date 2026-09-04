@@ -6,17 +6,17 @@ import {
 
 /**
  * Tests for `services/gateway/src/console-security.ts`.
- *
  * The hook is an `onRequest` pre-handler that lets every request pass through, except:
  *   * routes under `/v3/console/` and the browser auth trio (`/v3/auth/login|session|logout`)
  *     must carry an allowed `Origin` and avoid `Sec-Fetch-Site: cross-site`;
  *   * unsafe methods on those routes additionally require a same-origin `Origin`;
  *   * `OPTIONS` on those routes is answered with 204 so the browser preflight is honoured.
- *
- * The hook is exercised here against hand-rolled `FastifyRequest`/`FastifyReply` mocks: every
- * branch is a pure function of `request.url|method|headers` and `reply.header|code|send`, so
- * booting a real Fastify app is unnecessary and would couple the test to Fastify's install
- * location (the package is only linked under `services/gateway/node_modules`).
+ * Route classification runs on the decoded, origin-form path because that is what the router
+ * matches: a raw prefix comparison misses `/v3/%63onsole/...` and absolute-form request URIs.
+ * The socket carries a verified client certificate by default: the gateway listener demands one
+ * on every connection, so a default of `false` would measure a path production never takes.
+ * Hand-rolled request/reply mocks suffice: every branch is a pure function of
+ * `request.url|method|headers` and `reply.header|code|send`, so booting Fastify is unnecessary.
  */
 
 const ALLOWED = 'https://console.example.test';
@@ -70,6 +70,7 @@ function buildRequest(overrides: {
   secFetchSite?: string | undefined;
   cookie?: string | undefined;
   clientCertVerified?: boolean | undefined;
+  extraHeaders?: Record<string, string> | undefined;
 }): FastifyRequest {
   const request: RequestLike = {
     url: overrides.url ?? '/v3/console/terminal/sessions',
@@ -79,9 +80,10 @@ function buildRequest(overrides: {
       ...(overrides.origin === undefined ? {} : { origin: overrides.origin }),
       ...(overrides.secFetchSite === undefined ? {} : { 'sec-fetch-site': overrides.secFetchSite }),
       ...(overrides.cookie === undefined ? {} : { cookie: overrides.cookie }),
+      ...overrides.extraHeaders,
     },
     protocol: overrides.protocol ?? 'https',
-    raw: { socket: { authorized: overrides.clientCertVerified ?? false } },
+    raw: { socket: { authorized: overrides.clientCertVerified ?? true } },
   };
   return request as unknown as FastifyRequest;
 }
@@ -394,6 +396,20 @@ describe('createConsoleSecurityHook: llamador máquina con certificado cliente',
     expect(captured.sent).toEqual(SAME_ORIGIN_REQUIRED);
   });
 
+  it.each(['sec-fetch-mode', 'sec-fetch-dest', 'sec-fetch-user', 'sec-fetch-storage-access'])(
+    'la cabecera %s también delata al navegador aunque no venga Sec-Fetch-Site',
+    async (header) => {
+      const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+      const { reply, captured } = buildReply();
+      await hook(
+        buildRequest({ url: SELF_RELOAD, method: 'POST', extraHeaders: { [header]: 'cors' } }),
+        asReply(reply),
+      );
+      expect(captured.statusCode).toBe(403);
+      expect(captured.sent).toEqual(SAME_ORIGIN_REQUIRED);
+    },
+  );
+
   it('sigue exigiendo Origin si la petición con certificado trae cookie: una sesión de consola nunca es la máquina', async () => {
     const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
     const { reply, captured } = buildReply();
@@ -414,5 +430,111 @@ describe('createConsoleSecurityHook: llamador máquina con certificado cliente',
     );
     expect(captured.statusCode).toBe(403);
     expect(captured.sent).toEqual(SAME_ORIGIN_REQUIRED);
+  });
+});
+
+describe('createConsoleSecurityHook: formas de ruta que el router acepta y una comparación de texto no', () => {
+  const CONTROL = '/v3/console/terminal/sessions/s/control';
+  const SAME_ORIGIN_REQUIRED = {
+    error: 'forbidden',
+    message: 'same-origin Origin is required for console mutations',
+  };
+  const CROSS_ORIGIN_REJECTED = {
+    error: 'forbidden',
+    message: 'cross-origin console request rejected',
+  };
+
+  it.each([
+    `https://console.example.test${CONTROL}`,
+    `https://evil.example.test${CONTROL}`,
+    '/v3/%63onsole/terminal/sessions/s/control',
+    '/v3/console/terminal/sessions/s/%63ontrol',
+    '/v3/console%2fterminal/sessions/s/control',
+  ])('exige Origin en la mutación de consola pedida como %s: se clasifica como el router o falla cerrado', async (url) => {
+    const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+    const { reply, captured } = buildReply();
+    await hook(buildRequest({ url, method: 'POST' }), asReply(reply));
+    expect(captured.statusCode).toBe(403);
+    expect(captured.sent).toEqual(SAME_ORIGIN_REQUIRED);
+  });
+
+  it.each(['/v3/%61uth/login', 'https://console.example.test/v3/auth/login'])(
+    'exige Origin en %s: sin esa puerta el login queda abierto a la fijación de sesión',
+    async (url) => {
+      const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+      const { reply, captured } = buildReply();
+      await hook(buildRequest({ url, method: 'POST' }), asReply(reply));
+      expect(captured.statusCode).toBe(403);
+      expect(captured.sent).toEqual(SAME_ORIGIN_REQUIRED);
+    },
+  );
+
+  it('rechaza por cross-origin un GET a la forma absoluta con un Origin ajeno', async () => {
+    const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+    const { reply, captured } = buildReply();
+    await hook(
+      buildRequest({ url: `https://console.example.test${CONTROL}`, origin: OTHER_ORIGIN }),
+      asReply(reply),
+    );
+    expect(captured.statusCode).toBe(403);
+    expect(captured.sent).toEqual(CROSS_ORIGIN_REJECTED);
+  });
+
+  it('rechaza por cross-site la forma codificada cuando Sec-Fetch-Site lo declara', async () => {
+    const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+    const { reply, captured } = buildReply();
+    await hook(
+      buildRequest({ url: '/v3/%63onsole/terminal/sessions', secFetchSite: 'cross-site' }),
+      asReply(reply),
+    );
+    expect(captured.statusCode).toBe(403);
+    expect(captured.sent).toEqual({
+      error: 'forbidden',
+      message: 'cross-site console request rejected',
+    });
+  });
+
+  it('no deja que un %2f en el alias alcance la exención de la recarga propia', async () => {
+    const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+    const { reply, captured } = buildReply();
+    await hook(
+      buildRequest({ url: '/v3/console/agents/a%2fb/context/reload', method: 'POST' }),
+      asReply(reply),
+    );
+    expect(captured.statusCode).toBe(403);
+    expect(captured.sent).toEqual(SAME_ORIGIN_REQUIRED);
+  });
+
+  it('mantiene la exención cuando el alias viaja porcentualmente codificado', async () => {
+    const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+    const { reply, captured } = buildReply();
+    await hook(
+      buildRequest({ url: '/v3/console/agents/%7Aeus/context/reload', method: 'POST' }),
+      asReply(reply),
+    );
+    expect(captured.statusCode).toBe(200);
+    expect(captured.sent).toBeUndefined();
+  });
+
+  it('un porcentaje mal formado no cambia de ruta al decodificar segmento a segmento (Node lo rechaza antes con 400)', async () => {
+    const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+    const { reply, captured } = buildReply();
+    await hook(
+      buildRequest({ url: '/v3/agents/100%/messages', method: 'POST', origin: OTHER_ORIGIN }),
+      asReply(reply),
+    );
+    expect(captured.statusCode).toBe(200);
+    expect(captured.headers).toEqual({});
+  });
+
+  it('deja pasar la doble codificación como ruta ajena, igual que hace el router', async () => {
+    const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+    const { reply, captured } = buildReply();
+    await hook(
+      buildRequest({ url: '/v3/%2563onsole/terminal/sessions', method: 'POST' }),
+      asReply(reply),
+    );
+    expect(captured.statusCode).toBe(200);
+    expect(captured.headers).toEqual({});
   });
 });

@@ -6,7 +6,7 @@ import { AuthError, validatePrincipal, type AuthProvider, type Principal } from 
 import type { ConsoleUser } from './console-users.js';
 import { MemoryConsoleUserStore } from './test-support/console-users.js';
 import { hashPassword } from './password.js';
-import { LoginThrottle, PasswordAuthProvider } from './password-auth.js';
+import { LoginThrottle, PasswordAuthProvider, isConsoleSurface } from './password-auth.js';
 import { fakePool, fakeRepository, noDeliveryWakes } from './test-support/gateway-doubles.js';
 
 /**
@@ -605,5 +605,20 @@ describe('login por contraseña de la consola', () => {
     } finally {
       await test.app.close();
     }
+  });
+});
+
+describe('isConsoleSurface clasifica la ruta como la resuelve el router, nunca por el texto crudo', () => {
+  it.each([
+    ['/v3/console/audit', true],
+    ['/v3/console/audit?desde=1', true],
+    ['/v3/%63onsole/audit', true],
+    ['/%76%33/%63%6f%6e%73%6f%6c%65/topology', true],
+    ['https://console.example.test/v3/console/audit', true],
+    ['/v3/status', true],
+    ['/v3/agents/zeus/messages', false],
+    ['/v3/consolefalsa/x', false],
+  ])('%s → %s', (url, esperado) => {
+    expect(isConsoleSurface(url)).toBe(esperado);
   });
 });

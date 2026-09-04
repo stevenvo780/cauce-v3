@@ -62,3 +62,19 @@ export function hostSessionCookie(
 export function clearHostSessionCookie(name: string, sameSite: CookieSameSite): string {
   return hostSessionCookie(name, '', 0, sameSite);
 }
+
+const ABSOLUTE_FORM = /^[a-z][a-z0-9+.-]*:\/\/[^/]*/iu;
+
+function decodedSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+export function routedPath(url: string): string {
+  const raw = url.split('?', 1)[0]?.split('#', 1)[0] ?? '';
+  const relative = ABSOLUTE_FORM.test(raw) ? raw.replace(ABSOLUTE_FORM, '') || '/' : raw;
+  return relative.split('/').map(decodedSegment).join('/');
+}

@@ -5,10 +5,7 @@ import {
   type AuthProvider, type Principal, type PrincipalPermission, type PrincipalRole
 } from './auth.js';
 import type { ConsoleUser, ConsoleUserRole, ConsoleUserStore } from './console-users.js';
-import {
-  clearHostSessionCookie, constantTimeText, hostSessionCookie, isHostCookieName,
-  scalarHeaderValue, uniqueCookieValue
-} from './http-auth-primitives.js';
+import { clearHostSessionCookie, constantTimeText, hostSessionCookie, isHostCookieName, routedPath, scalarHeaderValue, uniqueCookieValue } from './http-auth-primitives.js';
 import { DECOY_PASSWORD_HASH_PROMISE, MAX_PASSWORD_LENGTH, verifyPassword } from './password.js';
 
 /**
@@ -193,7 +190,7 @@ const SESSION_REQUIRED_MESSAGE = 'se requiere la cookie de sesión de la consola
  * Protects administrative and status routes against direct browser access without a session.
  */
 export function isConsoleSurface(url: string): boolean {
-  const path = url.split('?', 1)[0] ?? '';
+  const path = routedPath(url);
   return path.startsWith('/v3/console/') || path === '/v3/status';
 }
 
@@ -449,8 +446,9 @@ export function registerPasswordAuth(app: FastifyInstance, provider: PasswordAut
     // CSRF is required ONLY for what travels with a cookie: it is the ambient credential a third-party
     // site can make the browser send on its own. An mTLS agent has no way to obtain a CSRF token,
     // nor needs one, and requiring it would leave it unable to publish anything.
-    if (!request.url.startsWith('/v3/') || !isUnsafe(request.method)) return;
-    if (request.url.split('?', 1)[0] === '/v3/auth/login') return;
+    const path = routedPath(request.url);
+    if (!path.startsWith('/v3/') || !isUnsafe(request.method)) return;
+    if (path === '/v3/auth/login') return;
     if (!provider.handles(request)) return;
     try {
       await provider.requireCsrf(request);
