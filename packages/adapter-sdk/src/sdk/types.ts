@@ -211,6 +211,10 @@ export interface AdapterConfig {
   readonly instanceId: string;
   readonly stateDirectory: string;
   readonly heartbeatMs?: number;
+  readonly connectTimeoutMs?: number;
+  readonly helloAckTimeoutMs?: number;
+  readonly heartbeatAckTimeoutMs?: number;
+  readonly sendTimeoutMs?: number;
   readonly defaultTimeoutMs?: number;
   readonly reconnect?: Partial<BackoffConfig>;
 }

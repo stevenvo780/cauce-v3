@@ -217,7 +217,7 @@ export class ClosingConnection extends FakeConnection {
     if (this.withHeartbeatAck) {
       this.push({
         type: "heartbeat_ack",
-        lease_expires_at: new Date(Date.now() + LEASE_MS).toISOString(),
+        lease_expires_at: new Date(Date.now() + LEASE_MS + 60_000).toISOString(),
       });
     }
     this.end();
@@ -350,6 +350,95 @@ export class ImmediateTimerClock implements Clock { // fires a non-positive dela
   }
 }
 
+interface VirtualTimer {
+  at: number;
+  readonly fn: () => void;
+  readonly intervalMs?: number;
+}
+
+export class VirtualClock implements Clock {
+  private currentMs: number;
+  private nextId = 0;
+  private readonly timers = new Map<number, VirtualTimer>();
+
+  constructor(startedAt: number = Date.now()) {
+    this.currentMs = startedAt;
+  }
+
+  now(): Date {
+    return new Date(this.currentMs);
+  }
+
+  sleep(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise<void>((resolveWait, rejectWait) => {
+      if (signal.aborted) {
+        rejectWait(signal.reason instanceof Error ? signal.reason : new Error('Aborted'));
+        return;
+      }
+      const abort = (): void => {
+        this.clearTimer(timer);
+        rejectWait(signal.reason instanceof Error ? signal.reason : new Error('Aborted'));
+      };
+      const timer = this.setTimer(() => {
+        signal.removeEventListener('abort', abort);
+        resolveWait();
+      }, ms);
+      signal.addEventListener('abort', abort, { once: true });
+    });
+  }
+
+  setTimer(fn: () => void, ms: number): TimerHandle {
+    return this.schedule(fn, ms);
+  }
+
+  setRepeating(fn: () => void, ms: number): TimerHandle {
+    return this.schedule(fn, ms, ms);
+  }
+
+  clearTimer(handle: TimerHandle): void {
+    handle.cancel();
+  }
+
+  advance(ms: number): void {
+    if (!Number.isSafeInteger(ms) || ms < 0) throw new RangeError('advance requires a non-negative integer');
+    const target = this.currentMs + ms;
+    for (;;) {
+      const nextAt = Math.min(
+        ...[...this.timers.values()].map((timer) => timer.at),
+        Number.POSITIVE_INFINITY,
+      );
+      if (nextAt > target) break;
+      this.currentMs = nextAt;
+      const due = [...this.timers].filter(([, timer]) => timer.at === nextAt);
+      for (const [id, timer] of due) {
+        if (!this.timers.has(id)) continue;
+        if (timer.intervalMs === undefined) this.timers.delete(id);
+        else timer.at += timer.intervalMs;
+        timer.fn();
+      }
+    }
+    this.currentMs = target;
+  }
+
+  pendingTimers(): number {
+    return this.timers.size;
+  }
+
+  scheduledIn(ms: number): number {
+    return [...this.timers.values()].filter((timer) => timer.at - this.currentMs === ms).length;
+  }
+
+  private schedule(fn: () => void, ms: number, intervalMs?: number): TimerHandle {
+    const id = this.nextId++;
+    this.timers.set(id, {
+      at: this.currentMs + Math.max(0, ms),
+      fn,
+      ...(intervalMs === undefined ? {} : { intervalMs }),
+    });
+    return { cancel: () => { this.timers.delete(id); } };
+  }
+}
+
 export class ScriptedConnector implements ConsumerConnector {
   calls = 0;
   constructor(
@@ -381,6 +470,10 @@ export async function makeClient(
   connector: ConsumerConnector,
   options: {
     heartbeatMs?: number;
+    connectTimeoutMs?: number;
+    helloAckTimeoutMs?: number;
+    heartbeatAckTimeoutMs?: number;
+    sendTimeoutMs?: number;
     epoch?: number;
     onLeaseAcquired?: () => Promise<void>;
     runner?: CommandRunner;
@@ -412,6 +505,12 @@ export async function makeClient(
         instanceId: `instance-${name}`,
         stateDirectory: directory,
         heartbeatMs: options.heartbeatMs ?? 10_000,
+        ...(options.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: options.connectTimeoutMs }),
+        ...(options.helloAckTimeoutMs === undefined ? {} : { helloAckTimeoutMs: options.helloAckTimeoutMs }),
+        ...(options.heartbeatAckTimeoutMs === undefined
+          ? {}
+          : { heartbeatAckTimeoutMs: options.heartbeatAckTimeoutMs }),
+        ...(options.sendTimeoutMs === undefined ? {} : { sendTimeoutMs: options.sendTimeoutMs }),
         reconnect: options.reconnect ?? { initialMs: 1, maxMs: 2, factor: 2, jitter: 0 },
       },
       connector,

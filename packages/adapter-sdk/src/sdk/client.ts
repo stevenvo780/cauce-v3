@@ -5,6 +5,15 @@ import {
 import { nativeProfileContextEnabled } from '../context/native-profile-context.js';
 import { signalAborted } from '../runtime-state.js';
 import { DEFAULT_BACKOFF, ExponentialBackoff, systemClock } from './backoff.js';
+import {
+  closeConnectionWithoutWaiting,
+  ConnectionLiveness,
+  connectionTimeouts,
+  nextWithAbort,
+  raceWithDeadline,
+  releaseIteratorWithoutWaiting,
+  type ConnectionTimeouts,
+} from './connection-liveness.js';
 import { sameDeliveryClaim, sameEventCorrelation } from './correlation.js';
 import { ConsumerLease, DurableStore } from './durable-store.js';
 import { AdapterEngine } from './engine.js';
@@ -74,6 +83,13 @@ interface SendDeadline {
   readonly signal: AbortSignal;
 }
 
+interface ConnectionGeneration {
+  readonly id: number;
+  readonly connection: ConsumerConnection;
+  readonly abortController: AbortController;
+  failure?: AdapterError;
+}
+
 /** Hello capabilities consumed by runtime or operational lease readers. */
 const CAPABILITY_ENCODERS = {
   harness: (value) => [`harness.${value.harness}`],
@@ -96,10 +112,12 @@ export class AdapterClient {
   private readonly store: DurableStore;
   private readonly harness: HarnessAdapter;
   private readonly clock: Clock;
+  private readonly timeouts: ConnectionTimeouts;
   private readonly backoff: ExponentialBackoff;
   private readonly engine: AdapterEngine;
   private readonly logger: AdapterLogger;
-  private activeConnection: ConsumerConnection | undefined;
+  private activeGeneration: ConnectionGeneration | undefined;
+  private nextConnectionGeneration = 0;
   private sendTail: Promise<void> = Promise.resolve();
   private readonly failedConnections = new WeakSet<ConsumerConnection>();
   private readonly executionIntentWaiters = new Map<string, ExecutionIntentWaiter>();
@@ -119,6 +137,7 @@ export class AdapterClient {
     this.logger = options.logger ?? (() => undefined);
     this.onLeaseAcquired = options.onLeaseAcquired;
     this.clock = options.clock ?? systemClock;
+    this.timeouts = connectionTimeouts(options.config);
     this.backoff = new ExponentialBackoff(
       { ...DEFAULT_BACKOFF, ...options.config.reconnect },
       options.random,
@@ -154,13 +173,25 @@ export class AdapterClient {
     try {
       await this.onLeaseAcquired?.();
       while (!signal.aborted) {
+        let connection: ConsumerConnection | undefined;
+        let generation: ConnectionGeneration | undefined;
         try {
-          const connection = await this.connector.connect(signal);
+          connection = await this.connectWithDeadline(signal);
+          if (signalAborted(signal)) {
+            throw signal.reason instanceof Error ? signal.reason : new Error('Connection aborted');
+          }
           this.assertLongLivedConsumer(connection);
-          if (this.activeConnection !== undefined) throw new Error('Concurrent consumer connections are forbidden');
-          this.activeConnection = connection;
-          const closeOnAbort = (): void => { void connection.close(); };
+          if (this.activeGeneration !== undefined) throw new Error('Concurrent consumer connections are forbidden');
+          generation = {
+            id: this.nextConnectionGeneration += 1,
+            connection,
+            abortController: new AbortController(),
+          };
+          this.activeGeneration = generation;
+          const currentGeneration = generation;
+          const closeOnAbort = (): void => { this.abortGeneration(currentGeneration, signal.reason); };
           signal.addEventListener('abort', closeOnAbort, { once: true });
+          if (signalAborted(signal)) closeOnAbort();
           try {
             await this.send({
               type: 'hello',
@@ -170,7 +201,7 @@ export class AdapterClient {
               instance_id: this.config.instanceId,
               capabilities: helloCapabilityStrings(this.harness.definition.capabilities),
             });
-            await this.consume(connection, signal);
+            await this.consume(generation, signal);
           } finally {
             signal.removeEventListener('abort', closeOnAbort);
           }
@@ -187,9 +218,9 @@ export class AdapterClient {
             error_message: error instanceof Error ? error.message : String(error),
           });
         } finally {
-          const connection = this.activeConnection;
-          this.activeConnection = undefined;
-          await connection?.close().catch(() => undefined);
+          if (generation !== undefined) this.abortGeneration(generation);
+          if (this.activeGeneration === generation) this.activeGeneration = undefined;
+          closeConnectionWithoutWaiting(connection);
         }
         if (!signalAborted(signal)) {
           await this.clock.sleep(this.backoff.nextDelay(), signal).catch(() => undefined);
@@ -197,26 +228,40 @@ export class AdapterClient {
       }
     } finally {
       this.engine.stop();
-      this.activeConnection = undefined;
+      this.activeGeneration = undefined;
       this.running = false;
       await lease.release();
     }
   }
 
-  private async consume(connection: ConsumerConnection, signal: AbortSignal): Promise<void> {
+  private async consume(generation: ConnectionGeneration, signal: AbortSignal): Promise<void> {
     let welcomed = false;
     const heartbeatAbort = new AbortController();
     let heartbeat: Promise<void> = Promise.resolve();
+    let iterator: AsyncIterator<ServerFrame> | undefined;
+    const liveness = new ConnectionLiveness({
+      clock: this.clock,
+      helloAckTimeoutMs: this.timeouts.helloAckMs,
+      heartbeatAckTimeoutMs: this.timeouts.heartbeatAckMs,
+      onFailure: (error) => { this.failGeneration(generation, error); },
+    });
+    liveness.start();
     try {
-      for await (const frame of connection.frames()) {
-        if (signal.aborted) break;
+      iterator = generation.connection.frames()[Symbol.asyncIterator]();
+      while (!signal.aborted) {
+        const next = await nextWithAbort(iterator, generation.abortController.signal);
+        this.assertGenerationHealthy(generation);
+        if (next.done) break;
+        const frame = next.value;
         if (frame.type === 'hello_ack') {
           if (welcomed) throw new Error('Gateway sent duplicate hello_ack');
           await this.engine.activateEpoch(frame.epoch);
           welcomed = true;
+          liveness.helloAcknowledged(frame.lease_expires_at);
+          this.assertGenerationHealthy(generation);
           this.sembrarPerfil(frame);
-          heartbeat = this.heartbeatLoop(heartbeatAbort.signal).catch(async () => {
-            await connection.close().catch(() => undefined);
+          heartbeat = this.heartbeatLoop(liveness, heartbeatAbort.signal).catch(() => {
+            closeConnectionWithoutWaiting(generation.connection);
           });
           // Only real traffic credits reconnect pacing; the greeting alone proves nothing.
           const delivered = await this.flushOutbox();
@@ -228,10 +273,13 @@ export class AdapterClient {
           throw new AdapterError('TAKEOVER_REJECTED', frame.reason, false);
         }
         if (!welcomed) throw new Error('Gateway sent traffic before hello_ack');
-        await this.handleFrame(frame);
+        await this.handleFrame(frame, generation, liveness);
       }
+      if (generation.failure !== undefined) throw generation.failure;
     } finally {
+      liveness.stop();
       heartbeatAbort.abort();
+      if (iterator !== undefined) releaseIteratorWithoutWaiting(iterator);
       await heartbeat;
     }
   }
@@ -270,7 +318,11 @@ export class AdapterClient {
     });
   }
 
-  private async handleFrame(frame: Exclude<ServerFrame, { type: 'hello_ack' | 'takeover_rejected' }>): Promise<void> {
+  private async handleFrame(
+    frame: Exclude<ServerFrame, { type: 'hello_ack' | 'takeover_rejected' }>,
+    generation: ConnectionGeneration,
+    liveness: ConnectionLiveness,
+  ): Promise<void> {
     switch (frame.type) {
       case 'delivery':
         void this.engine.handleDelivery(frame).catch((error: unknown) => {
@@ -347,7 +399,10 @@ export class AdapterClient {
         }
         return;
       case 'heartbeat_ack':
-        this.backoff.reset();
+        if (this.activeGeneration === generation
+          && liveness.heartbeatAcknowledged(frame.lease_expires_at)) {
+          this.backoff.reset();
+        }
         return;
       case 'wake':
         return;
@@ -500,7 +555,7 @@ export class AdapterClient {
 
     try {
       await Promise.all([
-        this.sendEvent(event, { at: Date.now() + timeoutMs, signal }),
+        this.sendEvent(event, { at: this.clock.now().getTime() + timeoutMs, signal }),
         confirmation,
       ]);
     } catch (error) {
@@ -521,65 +576,128 @@ export class AdapterClient {
     }
   }
 
-  private send(frame: ClientFrame, deadline?: SendDeadline): Promise<void> {
-    const next = this.sendTail.catch(() => undefined).then(async () => {
-      const connection = this.activeConnection;
-      if (connection === undefined) throw new Error('No active consumer connection');
-      if (this.failedConnections.has(connection)) throw new Error('Consumer connection is no longer writable');
-      if (deadline === undefined) {
-        await connection.send(frame);
-        return;
+  private async connectWithDeadline(signal: AbortSignal): Promise<ConsumerConnection> {
+    if (signal.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error('Connection aborted');
+    }
+    const attempt = new AbortController();
+    const forwardAbort = (): void => { attempt.abort(signal.reason); };
+    signal.addEventListener('abort', forwardAbort, { once: true });
+    const operation = Promise.resolve().then(async () => this.connector.connect(attempt.signal));
+    let returned = false;
+    try {
+      const connection = await raceWithDeadline(operation, {
+        clock: this.clock,
+        at: this.clock.now().getTime() + this.timeouts.connectMs,
+        signals: [attempt.signal],
+        timeoutError: () => new AdapterError(
+          'CONNECT_TIMEOUT',
+          'Consumer connection attempt exceeded its deadline',
+          true,
+        ),
+      });
+      returned = true;
+      return connection;
+    } catch (error) {
+      if (!attempt.signal.aborted) attempt.abort(error);
+      throw error;
+    } finally {
+      signal.removeEventListener('abort', forwardAbort);
+      if (!returned) {
+        void operation.then(
+          (connection) => { closeConnectionWithoutWaiting(connection); },
+          () => undefined,
+        );
       }
-      if (deadline.signal.aborted) {
-        throw deadline.signal.reason instanceof Error
-          ? deadline.signal.reason
-          : new AdapterError('EXECUTION_INTENT_CONFIRMATION_FAILED', 'Execution intent was cancelled', true);
-      }
-      const remainingMs = deadline.at - Date.now();
-      if (remainingMs <= 0) {
-        this.failedConnections.add(connection);
-        void connection.close().catch(() => undefined);
-        throw new AdapterError(
+    }
+  }
+
+  private send(
+    frame: ClientFrame,
+    deadline?: SendDeadline,
+    cancellationSignal?: AbortSignal,
+  ): Promise<void> {
+    const generation = this.activeGeneration;
+    if (generation === undefined) return Promise.reject(new Error('No active consumer connection'));
+    const queuedAt = this.clock.now().getTime();
+    const expiresAt = Math.min(
+      queuedAt + this.timeouts.sendMs,
+      deadline?.at ?? Number.POSITIVE_INFINITY,
+    );
+    const timeoutError = (): AdapterError => deadline === undefined
+      ? new AdapterError(
+          'CONNECTION_SEND_TIMEOUT',
+          'Consumer frame send exceeded the connection deadline',
+          true,
+        )
+      : new AdapterError(
           'EXECUTION_INTENT_CONFIRMATION_FAILED',
           'Execution intent send exceeded the ownership deadline',
           true,
         );
+    const next = this.sendTail.catch(() => undefined).then(async () => {
+      if (this.activeGeneration !== generation) {
+        throw new AdapterError(
+          'CONNECTION_GENERATION_STALE',
+          `Consumer connection generation ${String(generation.id)} is no longer active`,
+          true,
+        );
       }
-      let timer: TimerHandle | undefined;
-      let onAbort: (() => void) | undefined;
-      const timedOut = new Promise<never>((_resolve, reject) => {
-        timer = this.clock.setTimer(() => {
-          reject(new AdapterError(
-            'EXECUTION_INTENT_CONFIRMATION_FAILED',
-            'Execution intent send exceeded the ownership deadline',
-            true,
-          ));
-        }, remainingMs);
-      });
-      const aborted = new Promise<never>((_resolve, reject) => {
-        onAbort = () => {
-          reject(deadline.signal.reason instanceof Error
-            ? deadline.signal.reason
-            : new AdapterError('EXECUTION_INTENT_CONFIRMATION_FAILED', 'Execution intent was cancelled', true));
-        };
-        deadline.signal.addEventListener('abort', onAbort, { once: true });
-      });
+      if (this.failedConnections.has(generation.connection)) {
+        throw new Error('Consumer connection is no longer writable');
+      }
+      const generationSignal = generation.abortController.signal;
+      if (generationSignal.aborted) {
+        throw generationSignal.reason instanceof Error
+          ? generationSignal.reason
+          : new Error('Consumer connection was aborted');
+      }
+      if (deadline?.signal.aborted === true) {
+        throw deadline.signal.reason instanceof Error
+          ? deadline.signal.reason
+          : new AdapterError('EXECUTION_INTENT_CONFIRMATION_FAILED', 'Execution intent was cancelled', true);
+      }
+      if (cancellationSignal?.aborted === true) {
+        throw cancellationSignal.reason instanceof Error
+          ? cancellationSignal.reason
+          : new Error('Consumer frame send was cancelled');
+      }
       try {
-        await Promise.race([connection.send(frame), timedOut, aborted]);
+        if (expiresAt <= this.clock.now().getTime()) throw timeoutError();
+        await raceWithDeadline(generation.connection.send(frame), {
+          clock: this.clock,
+          at: expiresAt,
+          signals: [
+            generationSignal,
+            ...(deadline === undefined ? [] : [deadline.signal]),
+            ...(cancellationSignal === undefined ? [] : [cancellationSignal]),
+          ],
+          timeoutError,
+        });
       } catch (error) {
-        this.failedConnections.add(connection);
-        void connection.close().catch(() => undefined);
+        if (!localFrameRejection(error) && !signalAborted(generationSignal)) {
+          this.failGeneration(
+            generation,
+            error instanceof AdapterError
+              ? error
+              : new AdapterError(
+                  'CONNECTION_SEND_FAILED',
+                  `Consumer connection generation ${String(generation.id)} could not flush a frame`,
+                  true,
+                ),
+          );
+        }
         throw error;
-      } finally {
-        if (timer !== undefined) this.clock.clearTimer(timer);
-        if (onAbort !== undefined) deadline.signal.removeEventListener('abort', onAbort);
       }
     });
     this.sendTail = next;
     return next;
   }
 
-  private async heartbeatLoop(signal: AbortSignal): Promise<void> {
+  private async heartbeatLoop(
+    liveness: ConnectionLiveness,
+    signal: AbortSignal,
+  ): Promise<void> {
     const interval = this.config.heartbeatMs ?? 15_000;
     while (!signal.aborted) {
       await this.clock.sleep(interval, signal);
@@ -589,8 +707,29 @@ export class AdapterClient {
         instance_id: this.config.instanceId,
         epoch: this.engine.epoch,
       };
-      await this.send(heartbeat);
+      liveness.heartbeatStarted();
+      await this.send(heartbeat, undefined, signal);
     }
+  }
+
+  private failGeneration(generation: ConnectionGeneration, error: AdapterError): void {
+    if (this.activeGeneration !== generation || generation.failure !== undefined) return;
+    generation.failure = error;
+    this.failedConnections.add(generation.connection);
+    this.abortGeneration(generation, error);
+  }
+
+  private assertGenerationHealthy(generation: ConnectionGeneration): void {
+    if (generation.failure !== undefined) throw generation.failure;
+    const signal = generation.abortController.signal;
+    if (signal.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error('Connection aborted');
+    }
+  }
+
+  private abortGeneration(generation: ConnectionGeneration, reason?: unknown): void {
+    if (!generation.abortController.signal.aborted) generation.abortController.abort(reason);
+    closeConnectionWithoutWaiting(generation.connection);
   }
 
   private assertLongLivedConsumer(connection: ConsumerConnection): void {

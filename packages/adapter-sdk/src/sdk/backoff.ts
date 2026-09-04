@@ -62,15 +62,21 @@ export const systemClock: Clock = {
         reject(abortError(signal));
         return;
       }
-      const timer = setTimeout(resolve, ms);
-      signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer);
-          reject(abortError(signal));
-        },
-        { once: true },
-      );
+      let settled = false;
+      const onAbort = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+        reject(abortError(signal));
+      };
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      signal.addEventListener("abort", onAbort, { once: true });
     }),
   setTimer: (fn, ms, options) => scheduled(setTimeout(fn, ms), options),
   setRepeating: (fn, ms, options) => scheduled(setInterval(fn, ms), options),
