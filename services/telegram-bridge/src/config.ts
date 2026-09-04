@@ -225,6 +225,16 @@ function aliasConfig(value: unknown): TelegramAliasConfig {
       throw new Error('chats contains duplicate chat_id');
     }
   }
+  const operatorCommands = boolean(row.operator_commands, false, 'operator_commands');
+  if (!operatorCommands && row.operator_user_ids !== undefined) {
+    throw new Error('operator_user_ids requires operator_commands');
+  }
+  const operatorUserIds = operatorCommands
+    ? narrowedUserIds(row.operator_user_ids, allowedUserIds, 'operator_user_ids')
+    : undefined;
+  if (operatorCommands && (operatorUserIds === undefined || operatorUserIds.length === 0)) {
+    throw new Error('operator_commands requires operator_user_ids');
+  }
   return {
     alias,
     tenant_id: tenant,
@@ -238,7 +248,9 @@ function aliasConfig(value: unknown): TelegramAliasConfig {
     ...(chats === undefined ? {} : { chats }),
     recipients,
     poll_timeout_seconds: pollTimeoutSeconds,
-    poll_lease_ms: pollLeaseMs
+    poll_lease_ms: pollLeaseMs,
+    operator_commands: operatorCommands,
+    ...(operatorUserIds === undefined ? {} : { operator_user_ids: operatorUserIds })
   };
 }
 

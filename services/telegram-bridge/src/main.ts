@@ -8,6 +8,8 @@ import {
 import { TelegramEgressWorker } from './egress.js';
 import { startTelegramHealthServer, TelegramBridgeMetrics } from './health.js';
 import { StoreTelegramIngress } from './ingress.js';
+import { OPERATOR_BOT_COMMANDS } from './operator-commands/menu.js';
+import { createStoreOperatorActions } from './operator-commands/store-actions.js';
 import { TelegramPoller } from './poller.js';
 import { PostgresTelegramBridgeRepository } from './repository.js';
 import { boundedTelegramRequestTimeoutMs, TelegramBridgeProgress } from './progress.js';
@@ -36,8 +38,10 @@ logEvent('telegram_transcription_config', {
 });
 
 const pool = createPool(requiredEnv(process.env, 'DATABASE_URL'));
+const store = new CauceRepository(pool);
 const repository = new PostgresTelegramBridgeRepository(pool);
-const ingress = new StoreTelegramIngress(new CauceRepository(pool));
+const ingress = new StoreTelegramIngress(store);
+const operatorActions = createStoreOperatorActions(store, repository);
 const metrics = new TelegramBridgeMetrics();
 const progress = new TelegramBridgeProgress();
 const controller = new AbortController();
@@ -99,6 +103,13 @@ try {
     // `chats: []` (present but empty) is the explicit default-deny mode, so a mismatched alias
     // stops serving groups while every private chat keeps working untouched.
     running.push(mismatched ? { ...alias, chats: [] } : alias);
+    if (alias.operator_commands === true) {
+      try {
+        await api.setMyCommands(OPERATOR_BOT_COMMANDS, { type: 'all_private_chats' });
+      } catch {
+        degraded('operator_command_menu', { alias: alias.alias });
+      }
+    }
     progress.registerPoller(alias.alias, pollStaleMs);
   }
   progress.registerEgress(egressStaleMs);
@@ -125,6 +136,7 @@ try {
       participants: (chatId, threadId) => chatParticipants(config, chatId, threadId),
       ...(username !== undefined ? { botUsername: username } : {}),
       ...(transcription === undefined ? {} : { transcription }),
+      operatorActions,
       onMetric: (metric) => { metrics.increment(metric); },
       observer: progress
     });

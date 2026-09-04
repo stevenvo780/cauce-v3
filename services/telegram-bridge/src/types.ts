@@ -113,6 +113,15 @@ export interface TelegramSendOptions {
   parse_mode?: 'html';
 }
 
+export interface TelegramBotCommand {
+  readonly command: string;
+  readonly description: string;
+}
+
+export interface TelegramBotCommandScope {
+  readonly type: 'all_private_chats';
+}
+
 /** A file ready to upload. Bytes are already validated by `planArtifacts`. */
 export interface TelegramUpload {
   readonly kind: 'photo' | 'document';
@@ -140,6 +149,10 @@ export interface TelegramApi {
    */
   sendPhoto?(chatId: string, upload: TelegramUpload, options?: TelegramSendOptions): Promise<TelegramSendResult>;
   sendDocument?(chatId: string, upload: TelegramUpload, options?: TelegramSendOptions): Promise<TelegramSendResult>;
+  setMyCommands?(
+    commands: readonly TelegramBotCommand[],
+    scope?: TelegramBotCommandScope
+  ): Promise<void>;
   setMessageReaction(
     chatId: string,
     messageId: string,
@@ -218,6 +231,8 @@ export interface TelegramAliasConfig {
   recipients: readonly BridgeRecipient[];
   poll_timeout_seconds: number;
   poll_lease_ms: number;
+  operator_commands?: boolean;
+  operator_user_ids?: readonly string[];
 }
 
 export interface TelegramBridgeConfig {
@@ -349,4 +364,5 @@ export type BridgeMetric =
   // returning paths instead of bytes and the work is not done.
   | 'egress_attachment_uploaded' | 'egress_attachment_listed' | 'egress_attachment_upload_failed'
   // At least one secret was redacted in an incoming message before persisting it.
-  | 'ingress_secret_redacted';
+  | 'ingress_secret_redacted'
+  | 'operator_command_ok' | 'operator_command_error';

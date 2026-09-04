@@ -349,6 +349,48 @@ export class PostgresTelegramBridgeRepository implements TelegramCursorRepositor
     return selected.rows[0] ? effect(selected.rows[0]) : undefined;
   }
 
+  async inspectTelegramReplay(
+    letterId: string,
+    evidenceSha256: string,
+    actorTenant: Tenant,
+    actorAlias: string
+  ): Promise<{ evidenceSha256: string; items: readonly {
+    chunkIndex: number; effectSha256: string; state: string; replayCount: number; duplicateRisk: boolean;
+  }[] }> {
+    if (!RFC_UUID_PATTERN.test(letterId) || !SHA256_HEX_PATTERN.test(evidenceSha256)) {
+      throw new Error('Telegram replay inspection requires exact incident evidence');
+    }
+    const selected = await this.pool.query<{ value: unknown }>(
+      `SELECT cauce_inspect_telegram_replay_030($1::uuid,$2,$3,$4) AS value`,
+      [letterId, evidenceSha256, actorTenant, actorAlias]
+    );
+    const value = selected.rows[0]?.value;
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Telegram replay inspection returned no receipt');
+    }
+    const row = value as Record<string, unknown>;
+    const evidence = typeof row.evidenceSha256 === 'string' ? row.evidenceSha256 : undefined;
+    if (evidence === undefined || !SHA256_HEX_PATTERN.test(evidence)) {
+      throw new Error('Telegram replay inspection returned no evidence');
+    }
+    const items = Array.isArray(row.items) ? row.items.flatMap((entry) => {
+      if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return [];
+      const chunk = entry as Record<string, unknown>;
+      if (typeof chunk.chunkIndex !== 'number' || typeof chunk.effectSha256 !== 'string'
+        || typeof chunk.state !== 'string' || typeof chunk.replayCount !== 'number'
+        || typeof chunk.duplicateRisk !== 'boolean') return [];
+      if (!SHA256_HEX_PATTERN.test(chunk.effectSha256)) return [];
+      return [{
+        chunkIndex: chunk.chunkIndex,
+        effectSha256: chunk.effectSha256,
+        state: chunk.state,
+        replayCount: chunk.replayCount,
+        duplicateRisk: chunk.duplicateRisk
+      }];
+    }) : [];
+    return { evidenceSha256: evidence, items };
+  }
+
   async manualReplayEffect(
     chunkIndex: number,
     payloadHash: string,

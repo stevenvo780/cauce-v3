@@ -24,7 +24,8 @@ const METRICS: readonly BridgeMetric[] = [
   'egress_loop_error',
   'egress_format_downgraded',
   'egress_attachment_uploaded', 'egress_attachment_listed', 'egress_attachment_upload_failed',
-  'ingress_secret_redacted'
+  'ingress_secret_redacted',
+  'operator_command_ok', 'operator_command_error'
 ];
 
 const METRIC_NAME = 'cauce_telegram_bridge_events_total';

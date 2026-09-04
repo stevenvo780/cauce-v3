@@ -24,6 +24,8 @@ import {
   mediaGroupId, messageChatId, prepareMediaGroupAttachments, splitOwnMembers, updateKind,
   updateMessage, type AlbumKey, type UpdateKind
 } from './media-group.js';
+import { handleOperatorCommand } from './operator-commands/handler.js';
+import type { OperatorActions } from './operator-commands/dispatch.js';
 import type { TelegramLoopObserver } from './progress.js';
 import { TelegramApiError } from './telegram.js';
 import { sleep } from './abort-sleep.js';
@@ -64,6 +66,7 @@ interface TelegramPollerOptions {
    * messages arrive as before, with their metadata and a notice that they could not be heard.
    */
   transcription?: TranscriptionConfig;
+  operatorActions?: OperatorActions;
 }
 
 /**
@@ -138,6 +141,7 @@ export class TelegramPoller {
   private readonly participants: ((chatId: string, threadId: string) => ReadonlySet<string>) | undefined;
   private readonly onSuppressed: (record: SuppressedUpdate) => void;
   private readonly transcription: TranscriptionConfig | undefined;
+  private readonly operatorActions: OperatorActions | undefined;
   /**
    * Names under which an outsider could try to impersonate a known identity.
    *
@@ -174,6 +178,7 @@ export class TelegramPoller {
     this.participants = options.participants;
     this.onSuppressed = options.onSuppressed ?? logSuppressedUpdate;
     this.transcription = options.transcription;
+    this.operatorActions = options.operatorActions;
     // Reserved fleet names for impersonation detection in groups.
     this.reservedNames = new Set([
       ...this.fleet.byUsername.keys(),
@@ -342,6 +347,58 @@ export class TelegramPoller {
     return { alias: this.config.alias, tenant_id: this.config.tenant_id };
   }
 
+  private async tryOperatorCommand(
+    message: TelegramMessage,
+    chatId: string,
+    userId: string,
+    updateId: number,
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    if (this.operatorActions === undefined) return false;
+    let handled: { reply: string; command: string } | undefined;
+    try {
+      const result = await handleOperatorCommand({
+        config: this.config,
+        botId: this.botId,
+        userId,
+        privateChat: isPrivateChatId(chatId),
+        text: message.text,
+        entities: message.entities,
+        updateId,
+        botUsername: this.self.username,
+        actions: this.operatorActions
+      });
+      if (result.kind === 'ignored') return false;
+      handled = { reply: result.reply, command: result.command };
+    } catch (error) {
+      this.onMetric('operator_command_error');
+      logEvent('telegram_operator_command_failed', {
+        alias: this.config.alias,
+        tenant_id: this.config.tenant_id,
+        error_name: error instanceof Error ? error.name : undefined
+      });
+      handled = {
+        reply: 'El comando reventó antes de contestarte. No publiqué nada al agente.',
+        command: 'error'
+      };
+    }
+    signal?.throwIfAborted();
+    try {
+      await this.api.sendText(chatId, handled.reply, {
+        reply_to_message_id: String(message.message_id)
+      });
+      this.onMetric('operator_command_ok');
+    } catch {
+      this.onMetric('operator_command_error');
+      logEvent('telegram_operator_command_reply_failed', {
+        alias: this.config.alias,
+        tenant_id: this.config.tenant_id,
+        command: handled.command
+      });
+    }
+    return true;
+  }
+
   private async publish(
     updateId: number,
     message: TelegramMessage,
@@ -498,6 +555,11 @@ export class TelegramPoller {
     // The primary names the album: the idempotency key (bot_id + update_id) and `external_message_id`
     // must point at the same message, or a replay names two different updates.
     const updateId = primary.update_id;
+    if (own.length === 1 && await this.tryOperatorCommand(message, chatId, userId, updateId, signal)) {
+      signal?.throwIfAborted();
+      await this.repository.advanceCursor(current, consumed + 1);
+      return;
+    }
     if (own.length === 1) {
       await this.publish(updateId, message, undefined, frame, signal);
     } else {

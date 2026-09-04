@@ -1,7 +1,8 @@
 import { TELEGRAM_ACTIVITY_REACTIONS } from './types.js';
 import type {
-  TelegramApi, TelegramChatAction, TelegramIdentity, TelegramMessage, TelegramReactionEmoji,
-  TelegramRemoteFile, TelegramSendOptions, TelegramSendResult, TelegramUpdate, TelegramUpload
+  TelegramApi, TelegramBotCommand, TelegramBotCommandScope, TelegramChatAction, TelegramIdentity,
+  TelegramMessage, TelegramReactionEmoji, TelegramRemoteFile, TelegramSendOptions, TelegramSendResult,
+  TelegramUpdate, TelegramUpload
 } from './types.js';
 
 interface TelegramResponse<T> {
@@ -362,6 +363,35 @@ export class TelegramHttpClient implements TelegramApi {
         undefined,
         false
       );
+    }
+  }
+
+  async setMyCommands(
+    commands: readonly TelegramBotCommand[],
+    scope: TelegramBotCommandScope = { type: 'all_private_chats' }
+  ): Promise<void> {
+    if (commands.length < 1 || commands.length > 100) {
+      throw new TelegramApiError('invalid Telegram command menu', false);
+    }
+    const seen = new Set<string>();
+    for (const entry of commands) {
+      if (typeof entry.command !== 'string' || !/^[a-z][a-z0-9_]{0,31}$/.test(entry.command)) {
+        throw new TelegramApiError('invalid Telegram command name', false);
+      }
+      if (typeof entry.description !== 'string'
+        || entry.description.length < 1
+        || entry.description.length > 256) {
+        throw new TelegramApiError('invalid Telegram command description', false);
+      }
+      if (seen.has(entry.command)) throw new TelegramApiError('duplicate Telegram command name', false);
+      seen.add(entry.command);
+    }
+    const result = await this.call<unknown>('setMyCommands', {
+      commands: commands.map((entry) => ({ command: entry.command, description: entry.description })),
+      scope: { type: scope.type }
+    });
+    if (result !== true) {
+      throw new TelegramApiError('Telegram accepted setMyCommands with an invalid result', false, undefined, false);
     }
   }
 
