@@ -104,12 +104,19 @@ para despliegues posteriores:
    `0x26`/`0x27`; un relay anterior tira la pierna multiplexada entera al primer tag desconocido.
 6. Dejar `CAUCE_TERMINAL_RW_ENABLED=0` y `CAUCE_NATIVE_PROFILE_CONTEXT` apagado; encender el
    modo escribible alias a alias en `grants.json` (sin `"*"`) sólo tras fijar
-   `CAUCE_TERMINAL_RECORDING_DIR` y la retención de grabaciones.
+   `CAUCE_TERMINAL_RECORDING_DIR` y la retención de grabaciones. **Este paso no consta cumplido**:
+   el mensaje de `9de3f8ec`, el commit que escribió la fila de esa misma ventana, dice «modo
+   escribible de TUI encendido», y la retención sigue abierta abajo. Desde el árbol no se puede
+   decidir qué quedó en línea — **no lo probé** contra el sistema vivo. Confirmarlo y escribirlo
+   es del dueño (`docs/v3.1-pendientes.md` §1).
 7. Escribir la fila de `deploy/HISTORIAL.md`.
 
-`deploy/HISTORIAL.md` registra el despliegue de `7f25fd6f` con smoke verde y las correcciones
-posteriores. Ese registro demuestra la ventana ejecutada; no sustituye una nueva validación del
-estado vivo desde este checkout.
+`deploy/HISTORIAL.md` registra el despliegue de `7f25fd6f` con smoke verde y dos correcciones de
+esa misma tarde: `d2ef50ff`, con smoke verde, y `0b5bf89e`, con smoke ROJO parcial («bus: 0
+entregas done» en una ventana sin tráfico; el resto OK, sin rollback). Ese registro demuestra la
+ventana ejecutada; no sustituye una nueva validación del estado vivo desde este checkout, y desde
+`0b5bf89e` el árbol de `dev` avanzó sin volver a registrarse (`docs/v3.1-pendientes.md` §1,
+«Deuda de despliegue»).
 
 ## Cómo se verifica
 
@@ -142,8 +149,11 @@ pnpm qa:layout                                    # maquetado 1080p
   baste?
 - **`ultimate-terminal`.** Apagar el worker legado contenedor a contenedor y renombrar el permiso
   con ventana de convivencia son decisiones fuera del árbol.
-- **Raspado del relay.** `6cecfb33` añadió Prometheus a `[backend, edge]`; falta desplegar ese
-  commit y verificar que Prometheus raspa al relay. El código ya decidió la topología.
+- **Raspado del relay.** `6cecfb33` añadió Prometheus a `[backend, edge]` para que el job
+  `cauce-relay` resuelva `terminal-relay`; falta desplegar ese commit y verificar el raspado. Nada
+  en el árbol fija esa pertenencia —no hay test sobre `deploy/compose.yaml`—, así que revertirla
+  no pondría rojo nada y el raspado volvería a faltar en silencio. El cambio deja además a los
+  tres frontales de `edge` con acceso de lectura a la API de consulta de Prometheus.
 - **Auditoría `secret.granted` sin tope** y `pruneSettledHandoffs` sólo en `POST /v3/secrets`:
   anotado en las reseñas del plano de secretos; no cambia el comportamiento pero conviene decidir
   la poda.
