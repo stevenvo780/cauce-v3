@@ -139,6 +139,7 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
    * that awaits `/v3/auth/session` there never leaves the page and the alias stays muted.
    */
   const csrfRef = useRef<CsrfResuelto>(undefined);
+  const tomandoRef = useRef(false);
   const alineadoRef = useRef(false);
   const vivoRef = useRef(true);
   const grantRef = useRef(grant);
@@ -155,12 +156,17 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
     const pendienteDeSoltar = porDevolverRef.current;
     if (pendienteDeSoltar === undefined) return;
     porDevolverRef.current = undefined;
-    void devolverControlDeTui(
+    const soltar = (csrf: CsrfResuelto | undefined) => devolverControlDeTui(
       pendienteDeSoltar.sessionId,
       pendienteDeSoltar.owner,
       apiRef.current,
-      { keepalive, ...(keepalive && csrfRef.current ? { csrf: csrfRef.current } : {}) },
-    ).catch(() => undefined);
+      { keepalive, ...(csrf ? { csrf } : {}) },
+    );
+    void soltar(keepalive ? csrfRef.current : undefined).catch((fallo: unknown) => {
+      if (!keepalive || !(fallo instanceof TerminalApiError) || fallo.status !== 403) return;
+      csrfRef.current = undefined;
+      void apiRef.current.getAuthSession().then(() => soltar(undefined)).catch(() => undefined);
+    });
   }, []);
 
   useEffect(() => { onControlCambia(arriendo !== undefined); }, [arriendo, onControlCambia]);
@@ -226,7 +232,8 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
   }
 
   async function tomar() {
-    if (problema !== undefined || pendiente) return;
+    if (problema !== undefined || pendiente || tomandoRef.current) return;
+    tomandoRef.current = true;
     const escrito = motivo.trim();
     setError(undefined);
     setPerdido(false);
@@ -267,6 +274,7 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
       setError(explicar(fallo));
       setReintentable(true);
     } finally {
+      tomandoRef.current = false;
       if (sigueVivo()) setFase('reposo');
     }
   }
@@ -290,6 +298,11 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
       porDevolverRef.current = undefined;
       setArriendo(undefined);
     } catch (fallo) {
+      if (fallo instanceof TerminalApiError && fallo.status === 409) {
+        porDevolverRef.current = undefined;
+        setArriendo(undefined);
+        setPerdido(true);
+      }
       setError(explicar(fallo));
     } finally {
       if (sigueVivo()) setFase('reposo');

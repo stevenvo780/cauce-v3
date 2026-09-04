@@ -9,6 +9,7 @@ import {
 import {
   DOCUMENT_REASON_MAX, DOCUMENT_REASON_MIN, explicarFalloDeMotivo, problemaDeMotivo,
 } from './ficheros-motivo';
+import { MENSAJES_DE_APLICACION } from './perfil';
 
 function doc(extra: Partial<AgentDocumentItem> = {}): AgentDocumentItem {
   return {
@@ -153,9 +154,10 @@ describe('estado después de escribir', () => {
     expect(esAckAplicado(resultado)).toBe(true);
     const mensaje = mensajeDeGuardado(resultado);
     expect(mensaje).toMatch(/^Escrito en/);
-    expect(mensaje).toMatch(/recargar/);
     expect(mensaje).not.toMatch(/Aplicado/);
     expect(mensaje).not.toMatch(/no quedó confirmada/);
+    expect(mensaje).not.toContain(MENSAJES_DE_APLICACION.written_pending_session);
+    expect(mensaje).not.toMatch(/recarg/);
   });
 
   it('CONTROL NEGATIVO: una respuesta legacy sin evidencia no inventa aplicación', () => {

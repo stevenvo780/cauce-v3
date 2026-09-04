@@ -309,7 +309,7 @@ it('un 202 written_pending_session guarda, lo dice sin fingir aplicación y deja
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   expect(await within(cajon).findByText(/Escrito en .*bytes/)).toBeInTheDocument();
-  expect(within(cajon).getByText(/recargar/)).toBeInTheDocument();
+  expect(cajon.textContent).toContain(MENSAJES_DE_APLICACION.written_pending_session);
   expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
   expect(within(cajon).queryByText(/no confirmó la escritura/)).not.toBeInTheDocument();
 

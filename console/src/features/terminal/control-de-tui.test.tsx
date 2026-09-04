@@ -611,6 +611,87 @@ describe('la toma espera al enganche del relay', () => {
 /* ---------------------------------------------------------------------------------------------
  * `readOnly` stops being "is this the live TUI" and becomes "is this writable AND do I hold it".
  * ------------------------------------------------------------------------------------------- */
+describe('la toma no se dispara dos veces y la devolución tolera un CSRF rotado', () => {
+  it('dos clics en el MISMO frame abren UNA sola sesión con teclado', async () => {
+    const user = userEvent.setup();
+    const { controles, sesiones } = escenario();
+    await abrirZeus(user);
+    engancharLaTui();
+    await screen.findByRole('button', { name: /tomar el control/i });
+    await user.type(campoDeMotivo(), MOTIVO);
+
+    const abiertos = StubWebSocket.instances.length;
+    const boton = botonDeToma();
+    act(() => { boton.click(); boton.click(); });
+
+    await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(abiertos); }, { timeout: 5000 });
+    engancharSocket(StubWebSocket.last());
+    await waitFor(() => { expect(controles).toHaveLength(1); }, { timeout: 5000 });
+    expect(sesiones.filter((sesion) => sesion.mode === WRITABLE_TUI_MODE)).toHaveLength(1);
+    expect(StubWebSocket.instances.length).toBe(abiertos + 1);
+    await screen.findByRole('button', { name: /devolver el control/i });
+    expect(screen.queryByText(/no llegó a abrir la sesión con teclado/i)).not.toBeInTheDocument();
+  }, 20_000);
+
+  it('un 403 en la devolución de `beforeunload` se reintenta resolviendo el CSRF vigente', async () => {
+    const user = userEvent.setup();
+    const { controles } = escenario();
+    await abrirZeus(user);
+    engancharLaTui();
+    await screen.findByRole('button', { name: /tomar el control/i });
+    await tomarElControl(user, controles);
+
+    let devoluciones = 0;
+    const tokens: (string | null)[] = [];
+    server.use(
+      http.get('*/v3/auth/session', () => HttpResponse.json({
+        authenticated: true, subject: 'Steven:kant', roles: ['operator'],
+        permissions: ['route', 'read', 'control'],
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        csrf_token: 'mock-csrf-token-rotado',
+      })),
+      http.post('*/v3/console/terminal/sessions/:sid/control', async ({ request, params }) => {
+        const body = await request.json() as Record<string, unknown>;
+        const sid = String(params.sid);
+        controles.push({ sid, body });
+        tokens.push(request.headers.get('x-csrf-token'));
+        devoluciones += 1;
+        return devoluciones === 1
+          ? HttpResponse.json({ error: 'forbidden', reason: 'csrf_invalid' }, { status: 403 })
+          : HttpResponse.json({ session_id: sid, hold_id: 'hold-1', released: true });
+      }),
+    );
+
+    act(() => { window.dispatchEvent(new Event('beforeunload')); });
+
+    await waitFor(() => { expect(devoluciones).toBe(2); }, { timeout: 5000 });
+    expect(controles.filter((pedido) => pedido.body.action === 'release')).toHaveLength(2);
+    expect(tokens[0]).toBe('mock-csrf-token');
+    expect(tokens[1]).toBe('mock-csrf-token-rotado');
+  }, 20_000);
+
+  it('un 409 al devolver suelta el estado local: el arriendo ya no es de esta sesión', async () => {
+    const user = userEvent.setup();
+    const { controles } = escenario();
+    await abrirZeus(user);
+    engancharLaTui();
+    await screen.findByRole('button', { name: /tomar el control/i });
+    await tomarElControl(user, controles);
+    await screen.findByText(/Tenés el teclado de esta TUI/i);
+
+    server.use(http.post('*/v3/console/terminal/sessions/:sid/control', () => HttpResponse.json(
+      { error: 'conflict', reason: 'stale_terminal_owner', message: 'el arriendo pertenece a otra sesión' },
+      { status: 409 },
+    )));
+
+    await user.click(await screen.findByRole('button', { name: /devolver el control/i }));
+
+    await waitFor(() => { expect(screen.queryByText(/Tenés el teclado de esta TUI/i)).not.toBeInTheDocument(); }, { timeout: 5000 });
+    expect(screen.queryByRole('button', { name: /devolver el control/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/El bus volvió a entregarle a zeus/i)).toBeInTheDocument();
+  }, 20_000);
+});
+
 describe('solo lectura es una función del modo y del control', () => {
   it.each([
     [LIVE_TUI_MODE, false, true],

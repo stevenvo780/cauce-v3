@@ -171,12 +171,12 @@ function DiarioDePerfil({ tenantId, alias, onRestaurar }: HistorialDeContextoPro
                 {onRestaurar === undefined ? null : (
                   <button
                     type="button"
-                    className="button small secondary"
+                    className={vacia ? 'button small historial-restaurar-vacia' : 'button small secondary'}
                     onClick={() => { onRestaurar(camposDeRevision(entrada)); }}
                   >
                     <RotateCcw size={14} aria-hidden="true" />{' '}
                     {/* The only row whose «restore» destroys instead of going back: it says so in
-                        the button, not only in the help line under it. */}
+                        the button and wears its row's warning skin, not only in the help line. */}
                     {vacia ? 'Restaurar este borrado: vacía los siete campos' : 'Restaurar esta revisión'}
                   </button>
                 )}

@@ -148,8 +148,7 @@ export function mensajeDeGuardado(resultado: AgentDocumentGuardado): string {
   if (resultado.state === 'applied') {
     return `Aplicado en ${resultado.path}: la sonda confirmó el ACK de escritura (${bytes} bytes).`;
   }
-  return `Escrito en ${resultado.path} (${bytes} bytes): la sonda acreditó los bytes en disco. `
-    + 'La sesión lo aplica al recargar su contexto; escribir no es que lo haya releído.';
+  return `Escrito en ${resultado.path} (${bytes} bytes): la sonda acreditó los bytes en disco.`;
 }
 
 type EstadoDeEscritura = 'written_pending_session' | 'applied';

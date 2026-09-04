@@ -433,9 +433,13 @@ it('restaurar un borrado del perfil no se ofrece con las mismas palabras que vol
 
   const { dialogo } = await abrirHistorialDeKant();
 
-  expect(await within(dialogo).findByRole('button', { name: /restaurar este borrado/i }))
-    .toBeInTheDocument();
-  // The other row keeps the plain wording: the difference is the point.
-  expect(within(dialogo).getByRole('button', { name: /^restaurar esta revisión$/i }))
-    .toBeInTheDocument();
+  const borrado = await within(dialogo).findByRole('button', { name: /restaurar este borrado/i });
+  expect(borrado).toBeInTheDocument();
+  // The other row keeps the plain wording AND the plain skin: the difference is the point.
+  const volverAtras = within(dialogo).getByRole('button', { name: /^restaurar esta revisión$/i });
+  expect(volverAtras).toBeInTheDocument();
+  expect(borrado.className).toContain('historial-restaurar-vacia');
+  expect(volverAtras.className).not.toContain('historial-restaurar-vacia');
+  expect(volverAtras.className).toContain('secondary');
+  expect(borrado.className).not.toContain('secondary');
 }, 25_000);
