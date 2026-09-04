@@ -10,6 +10,35 @@ El paquete `@cauce/adapter-sdk` conecta un agente CLI real (Claude Code, Codex, 
 - Reconexión y redelivery reutilizan los mismos IDs — un duplicado del mismo intento nunca se ejecuta dos veces.
 - Backoff exponencial ante fallos de conexión.
 
+### Plazos de conexión y reconexión
+
+| Fase | Plazo por defecto | Efecto al vencer |
+|---|---:|---|
+| `connect` | 30 s | aborta el intento y cierra cualquier conexión que llegue tarde |
+| envío de una trama | 15 s desde su entrada en la cola | invalida y cierra esa generación de transporte |
+| `hello_ack` | 15 s después de enviar `hello` | invalida y cierra esa generación |
+| primer `heartbeat_ack` pendiente | `max(30 s, 2 × heartbeatMs)` | invalida y cierra esa generación |
+| lease de conexión | `lease_expires_at` del gateway | cierra 1 s antes si el reloj permite usar ese plazo absoluto |
+
+`connectTimeoutMs`, `sendTimeoutMs`, `helloAckTimeoutMs` y `heartbeatAckTimeoutMs` permiten
+sobrescribir los cuatro plazos locales con enteros positivos compatibles con los timers de Node.
+El heartbeat usa 15 s por defecto.
+El gateway fija el lease; su configuración por defecto es 180 s y no admite menos de 30 s.
+
+Solo un `heartbeat_ack` con una expiración válida y estrictamente posterior renueva el lease,
+cancela el plazo del primer heartbeat pendiente y reinicia el backoff. Un ACK inválido o no
+creciente no prolonga la conexión. Los envíos posteriores tampoco desplazan el plazo del primer
+heartbeat pendiente.
+
+Un `lease_expires_at` pasado o a menos de 1 s puede deberse a sesgo entre relojes. El ACK todavía
+demuestra tráfico actual, pero no arma un timer absoluto; en ese caso manda el plazo relativo del
+próximo `heartbeat_ack`.
+
+Cada conexión tiene una generación y un `AbortSignal` propios. Un timeout aborta y cierra solo la
+generación afectada; una conexión o un envío que termine tarde no puede reemplazar ni fallar la
+siguiente. El bucle conserva la identidad durable y reintenta con backoff. El cercado del gateway
+se describe en [ADR-002](adr/002-lease-epoch-fencing.md).
+
 ## Modelo de ejecución
 
 Entregar = pegar texto en la sesión tmux viva del harness (`paste-runner.ts`, `tmux.ts`: cuarentena de panel, barrera de entrada) y esperar el turno del modelo. Esta es la parte costosa e inherentemente frágil: los errores típicos en producción provienen del turno del harness (ACK timeout, deadline exceeded), no del bus.
@@ -20,6 +49,7 @@ Entregar = pegar texto en la sesión tmux viva del harness (`paste-runner.ts`, `
 |---|---|
 | `sdk/engine.ts` | Loop principal: claim → ACK → pegar texto |
 | `sdk/client.ts` | Cliente WebSocket con hello/heartbeat/fencing |
+| `sdk/connection-liveness.ts` | Plazos de connect, hello, envío, heartbeat y lease por generación |
 | `sdk/websocket-transport.ts` | Capa de transporte con reconexión |
 | `sdk/durable-store.ts` | Persistencia local exacta de deliveries, ACKs e historial terminal |
 | `sdk/process-runner.ts` | Ejecución spawn-based para Claude/Codex |
@@ -237,7 +267,9 @@ Decisión de diseño, alternativas descartadas y esquema durable: [ADR-007](adr/
 ## La cadena: supervisor → runtime → harness
 
 - **Supervisor** (`ops/scripts/container-adapter-supervisor.sh`): invocado por la unidad systemd del alias; resuelve config/bundle/PKI, valida el bind del contenedor, ejecuta con lock.
-- **Runtime** (`ops/container-runtime/cauce-container-runtime.py`): corre dentro del contenedor; gestiona metadatos de generación/PID y falla cerrado si el PID de la generación actual no existe.
+- **Runtime** (`ops/container-runtime/cauce-container-runtime.py`): corre dentro del contenedor;
+  gestiona metadatos de generación/PID, elimina metadatos obsoletos solo tras probar quiescencia y
+  falla cerrado ante cualquier identidad ambigua.
 - **Harness**: el binario SDK que conecta al bus y ejecuta deliveries.
 
 ## Inyección de contexto
@@ -259,7 +291,9 @@ Una proyección **revisionada** (con marcador `CAUCE:REVISION-PERFIL`) cuyo text
 
 Dos detalles que sostienen esto:
 
-- `backoff.reset()` corre **antes** de sembrar. El backoff mide la salud del *transporte*, y un `hello_ack` ya la demuestra. Reseteándolo después, un fallo de siembra dejaba el retardo clavado en su techo mientras durase.
+- `hello_ack` cancela su plazo y siembra el lease inicial, pero no demuestra por sí solo una conexión
+  estable ni reinicia el backoff. Este se reinicia al recibir un `heartbeat_ack` con lease creciente
+  o al acreditar tráfico real enviando el outbox; un fallo de siembra sigue sin cerrar la conexión.
 - `resumenDeLaSiembra` incluye el **motivo** de cada fichero que no se pudo escribir, no sólo el recuento. El recuento a secas (`no-se-pudo-escribir=1`) se registró más de mil veces durante el apagón sin decir nunca cuál de las dos ramas de fallo se había disparado.
 
 ### El presupuesto del fichero anfitrión

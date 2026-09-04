@@ -77,43 +77,67 @@ systemctl --user daemon-reload && systemctl --user enable --now cauce-v3-contain
 
 ```bash
 ops/cli/cauce <alias> estado          # columna ADAPTADOR: activo/failed/inactive
-systemctl --user status cauce-v3-container-<alias>.service   # (host-<alias> para agentes host-native como kant)
+systemctl --user status cauce-v3-container-<alias>.service   # host-<alias> para agentes host-native
 ```
-**`failed` con exit 78 = metadatos preservados, no corrupción.** El runtime del contenedor es fail-closed: si el PID de la generación en curso no existe, rehúsa arrancar en vez de pisar el estado (`current-generation adapter PID is absent; metadata was preserved`). La unit tiene `RestartPreventExitStatus=... 78`: systemd NO reintenta solo.
 
-Recuperación:
-1. Confirmar la causa en el log: `journalctl --user -u cauce-v3-container-<alias>.service -n 50 | grep preserved`.
-2. Verificar DENTRO del contenedor que el PID citado está muerto: `docker exec <contenedor> ps -p <pid>` (debe fallar).
-3. Archivar el metadato forense, no borrarlo (requiere root dentro del contenedor; el control dir es 0700 root:root):
-   ```bash
-   docker exec --user 0 <contenedor> sh -c 'mv /run/cauce-v3-supervisor/<alias>/cauce-v3-adapter.json /run/cauce-v3-supervisor/<alias>/cauce-v3-adapter.json.preserved-$(date -u +%Y%m%dT%H%M%SZ)'
-   ```
-4. Reset y arranque, apuntando SIEMPRE a la sesión `--user` de stev (no la de root):
-   ```bash
-   systemctl --user -M stev@ reset-failed cauce-v3-container-<alias>.service
-   systemctl --user -M stev@ start cauce-v3-container-<alias>.service
-   systemctl --user -M stev@ is-active cauce-v3-container-<alias>.service
-   ```
-5. Confirmar lease fresco: `SELECT alias, lease_until > now() FROM connection_leases WHERE alias='<alias>';`
+**`failed` con exit 78 significa un fallo permanente y cerrado; no diagnostica por sí solo la
+causa.** La unidad no reintenta ese código. Solo el error exacto
+`current-generation adapter PID is absent; metadata was preserved` acredita que ese metadato se
+preservó; otros controles de configuración, identidad o integridad también pueden terminar en 78.
 
-**Aviso**: `ops/cli/cauce <alias> on` ejecutado bajo `su stev` NO arranca nada — sin `XDG_RUNTIME_DIR`, `systemctl --user` falla en silencio (el CLI lo invoca con `|| true`). Usar siempre `-M stev@` desde root, o una sesión real de stev con login/`loginctl`.
+No se recupera automáticamente un metadato abandonado de la misma generación. Comprobar solo PID,
+grupo, sesión y entorno no demuestra ausencia: un descendiente puede crear otra sesión, ejecutar
+con el entorno vacío y seguir vivo. Relanzar en ese estado podría crear dos consumidores. Una
+recuperación desatendida exige primero un cgroup dedicado por alias cuya vaciedad sea enumerable.
+
+Sin ese límite no existe una recuperación segura *in-place* basada en `ps`. Inspeccionar el journal
+y el metadato sirve para diagnosticar, no para demostrar ausencia. No mover, borrar ni archivar el
+metadato y no ejecutar `reset-failed`/`start` basándose solo en ese censo. Mantener la unidad fallida
+y escalar al dueño: la recuperación requiere instrumentar el cgroup por alias o detener y recrear,
+con autorización, el límite completo que contiene necesariamente todos sus procesos.
+
+```bash
+journalctl --user -u cauce-v3-container-<alias>.service -n 50
+systemctl --user -M <usuario>@ is-active cauce-v3-container-<alias>.service
+```
+
+Confirmar el lease:
+`SELECT alias, lease_until > now() FROM connection_leases WHERE alias='<alias>';`.
+
+El médico aplica un veto adicional antes de reiniciar un adaptador: consulta dos veces las entregas
+`leased`, `accepted` o `started`, una al entrar al ciclo y otra inmediatamente antes de
+`systemctl restart`. La captura conserva solo identificadores y metadatos de ruteo; no consulta ni
+registra el cuerpo o texto del mensaje. Cualquier fila impide el reinicio.
+
+Las dos consultas no forman una barrera atómica con `systemctl`: una entrega todavía puede entrar
+después de la segunda consulta. Por esa razón el reinicio requiere el interruptor explícito
+`--reiniciar-adaptadores`, apagado por defecto, y la unidad versionada usa `--solo-detectar`. No se
+habilitó el reinicio automático ni existe reinyección automática del trabajo en vuelo.
 
 ## 4. Plano PTY: detectar y segar bucles del relay
 
-Síntoma: `terminal-relay` expulsa (`superseded`) agentes en bucle porque un mismo alias tiene más de un proceso `cauce-pty-agent-<alias>.py` vivo (comparten certificado). Churn ≈ (N−1)×106 conexiones/3min por cada alias duplicado.
+Síntoma: `terminal-relay` expulsa (`superseded`) agentes en bucle porque un mismo alias tiene más
+de un proceso PTY vivo con el mismo certificado.
+
 ```bash
 # Detectar: >30 conexiones/2min es bucle (umbral de deploy/smoke.sh)
 docker logs cauce-v3-prod-terminal-relay-1 --since 2m | grep -c 'agent_connected"'
-# Censar duplicados por contenedor/alias
-docker exec <contenedor> pgrep -af cauce-pty-agent-<alias>.py    # debe dar exactamente 1
 ```
-Siega: conservar el PID más joven por alias, matar el resto con guarda anti-reuso de PID (reconfirmar el nombre de proceso justo antes de matar):
-```bash
-docker exec <contenedor> sh -c 'ps -o args= -p <PID> | grep -q cauce-pty-agent-<alias>.py && kill <PID>'
-```
-Verificación: repetir el conteo de conexiones tras >2 min (debe volver a ~1 por alias vivo); una sesión TUI abierta desde la consola debe sobrevivir >60s.
 
-**Esto es mitigación, no cura.** La causa raíz (el flock del lanzador en el host muere con el cliente `docker exec` sin que el contenedor reconcilie) sigue sin desplegarse — el bucle reaparece en el próximo rollout del launcher hasta que ese fix salga.
+No usar `pgrep` por substring como censo: omite el argv legado y no acredita el bundle exacto. La
+verificación debe comparar byte a byte ambos argv admitidos y la ruta exacta del bundle mediante el
+mismo parser de `/proc` del reaper.
+
+El launcher versionado prepara los artefactos, vuelve a validar la generación y después ejecuta la
+siega inmediatamente antes del nuevo `exec`. Reconoce de forma exacta el argv actual y el legado.
+Exige `PID + starttime + argv`, fija cada candidato con `pidfd`, envía `SIGTERM` y escala a
+`SIGKILL` solo si la misma identidad sigue viva. Si no puede demostrar la salida, no lanza el
+reemplazo. No seleccionar un PID por antigüedad ni señalizarlo solo por nombre. Detalle: [agente
+PTY](../ops/pty-agent/README.md).
+
+Verificación: debe quedar un solo proceso por bundle; repetir el conteo de conexiones tras más de
+dos minutos y mantener una sesión TUI abierta durante más de un minuto. Comprobar la versión del
+launcher instalada antes de usar la siega como control operativo.
 
 ## 5. Backups y timers
 
