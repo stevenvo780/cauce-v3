@@ -11,11 +11,16 @@ const MAX_JOURNAL_PAGE = 200;
 
 /**
  * Both journals of 041 key on `bigserial`, so a cursor is a positive `bigint` written in base ten
- * and nothing else. The fence lives here as well as in the route: the SQL casts the value to
- * `bigint`, and an unbounded digit string would reach the base as a cast error instead of as a
- * refusal the caller can read.
+ * and nothing else. The route that publishes the cursor imports this ONE fence: the SQL casts the
+ * value to `bigint`, and a second copy of the pattern drifting from this one would reach the base
+ * as a cast error instead of as a refusal the caller can read.
  */
-const JOURNAL_CURSOR = /^[1-9][0-9]{0,18}$/u;
+export function isJournalCursor(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^[1-9][0-9]{0,18}$/u.test(value)
+    && BigInt(value) <= MAX_JOURNAL_ID;
+}
+
 const MAX_JOURNAL_ID = 9223372036854775807n;
 
 const profileColumns =
@@ -117,7 +122,7 @@ function boundedPage(limit: number): number {
 
 function boundedCursor(cursor: string | undefined): string | null {
   if (cursor === undefined) return null;
-  if (!JOURNAL_CURSOR.test(cursor) || BigInt(cursor) > MAX_JOURNAL_ID) {
+  if (!isJournalCursor(cursor)) {
     throw new StoreError('invalid_input', 'context journal cursor is not a journal id');
   }
   return cursor;

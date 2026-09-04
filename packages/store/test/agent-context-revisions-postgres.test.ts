@@ -247,6 +247,7 @@ describe('agent context revisions store', () => {
     const directivas = await journal.listDocumentRevisions(
       'Steven', 'argos', 'directive', 10, tools.next_cursor ?? undefined,
     );
+    expect(directivas.entries.length).toBeGreaterThan(0);
     expect(directivas.entries.every((entry) => entry.kind === 'directive')).toBe(true);
   });
 

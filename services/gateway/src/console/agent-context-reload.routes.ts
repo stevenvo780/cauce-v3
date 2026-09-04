@@ -396,7 +396,7 @@ export function registerAgentContextReloadRoutes(
       });
     }
     const enVuelo = await deps.deliveryInFlight(target.tenant_id, target.alias);
-    if (enVuelo.count > 0) {
+    if (enVuelo.count > 0 || enVuelo.deliveries.length > 0) {
       return denegar(409, {
         error: 'delivery_in_flight',
         message: 'hay una entrega en vuelo para este alias: reescribir sus ficheros de gobierno '

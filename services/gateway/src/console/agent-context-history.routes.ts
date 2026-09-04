@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AliasSchema, TenantSchema } from '@cauce/protocol';
+import { isJournalCursor } from '@cauce/store';
 import type { DocumentKind } from './agent-documents.js';
 
 /**
@@ -85,19 +86,6 @@ const KIND_VOCABULARY: Readonly<Record<DocumentKind, true>> = {
   memory: true, heartbeat: true, configuration: true,
 };
 
-/**
- * The cursor is OPAQUE to the client and strict on the server: both journals of 041 key on
- * `bigserial`, so the only thing this accepts is a positive `bigint` in base ten. It is a position
- * inside the window the tenant, alias and kind predicate already fenced — it can only narrow that
- * window, never widen it, so a cursor minted elsewhere reaches nothing it was not allowed to see.
- */
-const JOURNAL_CURSOR = /^[1-9][0-9]{0,18}$/u;
-const MAX_JOURNAL_ID = 9223372036854775807n;
-
-function admissibleCursor(raw: unknown): raw is string {
-  return typeof raw === 'string' && JOURNAL_CURSOR.test(raw) && BigInt(raw) <= MAX_JOURNAL_ID;
-}
-
 function pageSize(raw: unknown): number | undefined {
   if (raw === undefined) return DEFAULT_PAGE;
   if (typeof raw !== 'string' || !/^[0-9]{1,4}$/u.test(raw)) return undefined;
@@ -134,7 +122,7 @@ export function registerAgentContextHistoryRoutes(
     const raw = request.query.cursor;
     let cursor: string | undefined;
     if (raw !== undefined) {
-      if (!admissibleCursor(raw)) {
+      if (!isJournalCursor(raw)) {
         await reply.code(400).send({
           error: 'invalid_input',
           message: 'cursor tiene que ser el identificador de una fila del diario',

@@ -53,7 +53,7 @@ async function expectativaDeRuntime(
   return { generation: parsed.data.generation, documents: parsed.data.documents };
 }
 
-async function entregaEnVuelo(
+export async function entregaEnVuelo(
   pool: ConsoleRoutes['options']['pool'], tenantId: string, alias: string,
 ): Promise<DeliveriesInFlight> {
   const result = await pool.query<{
