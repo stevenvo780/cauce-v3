@@ -3,9 +3,12 @@ import { withTransaction } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import { terminalAuditMetadata, terminalSessionAuditContext } from '../audit.js';
 import type { TerminalConfig } from '../config.js';
-import { exactObjectKeys } from '../helpers.js';
+import {
+  CONTROL_HOLD_COLUMNS, CONTROL_RELEASED, controlWasReleased, exactObjectKeys,
+  type ControlHoldColumns,
+} from '../helpers.js';
 import { ticketSha256 } from '../tickets.js';
-import { isWritableMode, type TerminalSessionRow } from '../types.js';
+import type { TerminalSessionRow } from '../types.js';
 import {
   relayClaimState, renewRelayClaim, type RenewedRelayClaim,
 } from './claim-transition.js';
@@ -23,9 +26,6 @@ function sessionWindowCeiling(config: TerminalConfig, log: FastifyBaseLogger): n
   log.warn('terminal sessions have no hard ceiling: sessionMaxTotalSeconds is not configured');
   return null;
 }
-
-/** The wire reason terminal-relay maps to a 4410 close: the control was given back or expired. */
-const CONTROL_RELEASED = 'control_released';
 
 export function registerRelayAuthorizationRoute(context: RelayProxyContext): void {
   const {
@@ -53,12 +53,10 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
         return;
       }
       const claimSha256 = ticketSha256(claimToken);
-      interface LockedAuthzSession extends TerminalSessionRow {
+      interface LockedAuthzSession extends TerminalSessionRow, ControlHoldColumns {
         database_now: Date;
         session_expires_at: Date | null;
         session_unexpired: boolean;
-        control_ever_held: boolean;
-        control_held: boolean;
       }
       let renewed: RenewedRelayClaim | undefined;
       let refusal = 'unknown_session';
@@ -68,9 +66,7 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
                   LEAST(GREATEST(consumed_at + make_interval(secs => $2), COALESCE(window_extended_to, 'epoch'::timestamptz)), consumed_at + make_interval(secs => $3)) AS session_expires_at,
                   consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
                     AND LEAST(GREATEST(consumed_at + make_interval(secs => $2), COALESCE(window_extended_to, 'epoch'::timestamptz)), consumed_at + make_interval(secs => $3))>now() AS session_unexpired,
-                  EXISTS(SELECT 1 FROM terminal_control_holds h WHERE h.session_id=terminal_sessions.id) AS control_ever_held,
-                  EXISTS(SELECT 1 FROM terminal_control_holds h WHERE h.session_id=terminal_sessions.id
-                           AND h.released_at IS NULL AND h.expires_at>now()) AS control_held
+                  ${CONTROL_HOLD_COLUMNS}
              FROM terminal_sessions WHERE id=$1 FOR UPDATE`,
           [request.params.sid, config.sessionTtlSeconds, sessionMaxTotalSeconds],
         );
@@ -87,9 +83,7 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
             );
             if (!claim.exact || !claim.live) {
               refusal = 'claim_fenced';
-            } else if (isWritableMode(row.mode) && row.control_ever_held && !row.control_held) {
-              // The operator gave the alias back: this writable session is over, and the relay
-              // closes it as such. A session that never held the control is not touched by this.
+            } else if (controlWasReleased(row)) {
               refusal = CONTROL_RELEASED;
             } else {
               const policy = await currentSessionPolicy(row, false, client);

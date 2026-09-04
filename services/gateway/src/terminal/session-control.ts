@@ -26,7 +26,10 @@ import { registerTerminalTargetRoute } from './session-control/targets.js';
 import {
   deriveAliasKey, issueTicket, ticketDigest, ticketSha256, type TicketPayload,
 } from './tickets.js';
-import { UNATTRIBUTED_OPERATOR, type TerminalMode, type TerminalSessionRow } from './types.js';
+import {
+  UNATTRIBUTED_OPERATOR,
+  type TerminalConflict, type TerminalDenial, type TerminalMode, type TerminalSessionRow,
+} from './types.js';
 
 const MAX_TERMINAL_CLOCK_SKEW_MS = 5_000;
 
@@ -267,7 +270,7 @@ export function registerTerminalSessionControl(
       };
       const deny = async (
         status: 403 | 409,
-        reason: string,
+        reason: TerminalDenial | TerminalConflict,
         extra: Record<string, unknown> = {},
       ): Promise<void> => {
         await recordTerminalAudit(pool, {

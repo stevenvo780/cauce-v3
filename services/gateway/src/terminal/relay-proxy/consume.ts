@@ -2,7 +2,8 @@ import { withTransaction } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import { terminalAuditMetadata, terminalSessionAuditContext } from '../audit.js';
 import {
-  cohortLabels, exactObjectKeys, sessionExpiry, sessionWindowExpression,
+  CONTROL_HOLD_COLUMNS, CONTROL_RELEASED, cohortLabels, controlWasReleased, exactObjectKeys,
+  sessionExpiry, sessionWindowExpression, type ControlHoldColumns,
 } from '../helpers.js';
 import {
   deriveAliasKey, issueResumeToken, ticketDigest, ticketSha256,
@@ -38,7 +39,7 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
       if (typeof ticket !== 'string' || ticket.length === 0 || ticket.length > 4_096
           || claimToken === undefined) { await invalid(); return; }
       const claimSha256 = ticketSha256(claimToken);
-      interface LockedSession extends TerminalSessionRow {
+      interface LockedSession extends TerminalSessionRow, ControlHoldColumns {
         ticket_redeemable: boolean;
         session_recoverable: boolean;
         database_now: Date;
@@ -56,7 +57,8 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
                     AND expires_at > now() AS ticket_redeemable,
                   consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
                     AND ${sessionWindowExpression(2, 3)} > now() AS session_recoverable,
-                  now() AS database_now
+                  now() AS database_now,
+                  ${CONTROL_HOLD_COLUMNS}
              FROM terminal_sessions
             WHERE id=$1
             FOR UPDATE`,
@@ -84,6 +86,8 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
             refusal = { status: 403, reason: 'relay_fenced' };
           } else if (!row.ticket_redeemable && !row.session_recoverable) {
             refusal = { status: 401, reason: 'ticket_invalid' };
+          } else if (controlWasReleased(row)) {
+            refusal = { status: 403, reason: CONTROL_RELEASED };
           } else {
             // This is a synchronous re-check immediately before the state transition/grant. It
             // includes canonical target visibility, the whole current container cohort, ACL and

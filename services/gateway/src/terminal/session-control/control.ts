@@ -16,7 +16,10 @@ import {
   cohortLabels, ownedLiveSessionQuery, subjectFor, type OwnedTerminalSession,
 } from '../helpers.js';
 import type { TerminalSessionControlOptions } from '../session-control.js';
-import { UNATTRIBUTED_OPERATOR, type TerminalSessionRow } from '../types.js';
+import {
+  UNATTRIBUTED_OPERATOR,
+  type TerminalConflict, type TerminalDenial, type TerminalSessionRow,
+} from '../types.js';
 import { authorizeTerminalControlActor } from './control-authorization.js';
 
 /**
@@ -141,7 +144,9 @@ export function registerTerminalControlRoute(
         return;
       }
       const action = body.action === 'take' ? 'terminal.control_taken' : 'terminal.control_released';
-      const deny = async (status: 403 | 409, reason: string): Promise<void> => {
+      const deny = async (
+        status: 403 | 409, reason: TerminalDenial | TerminalConflict,
+      ): Promise<void> => {
         await auditControl(actor, row, action, 'deny', { reason });
         await reply.code(status).send(
           status === 403 ? { error: 'forbidden', reason } : { error: 'conflict', reason },
@@ -153,15 +158,14 @@ export function registerTerminalControlRoute(
       }
       if (body.action === 'release') {
         const releaseReason = body.reason ?? DEFAULT_RELEASE_REASON;
-        const current = await currentControlHold(pool, row.tenant_id, row.alias);
-        const live = current?.session_id === row.id ? current : undefined;
-        // A browser retries this from `beforeunload`, so a hold already gone is a success.
+        const live = await currentControlHold(pool, row.tenant_id, row.alias);
+        // `beforeunload` retries this: a hold already gone is a success, another session's is not.
         if (live === undefined) {
           await reply.code(200).send({ session_id: row.id, hold_id: null, released: true });
           return;
         }
-        if (live.operator_id !== operator.operator_id) {
-          await deny(403, 'control_held');
+        if (live.session_id !== row.id || live.operator_id !== operator.operator_id) {
+          await deny(live.session_id === row.id ? 403 : 409, 'control_held');
           return;
         }
         const released = await releaseControlHold(

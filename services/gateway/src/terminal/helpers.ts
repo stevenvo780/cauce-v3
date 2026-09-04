@@ -5,7 +5,7 @@ import type { Principal } from '../auth.js';
 import { fleetIdentityLabel, type containerCohort, type ResolvedOperator } from './authority.js';
 import type { TerminalConfig } from './config.js';
 import { ticketSha256 } from './tickets.js';
-import type { TerminalSessionRow } from './types.js';
+import { isWritableMode, type TerminalMode, type TerminalSessionRow } from './types.js';
 
 /**
  * The canonical cross-tenant authorizer, derived from the gateway contract so no caller in this
@@ -124,4 +124,23 @@ export function ownedLiveSessionQuery(
       input.config.sessionMaxTotalSeconds ?? null,
     ],
   };
+}
+
+export const CONTROL_HOLD_COLUMNS =
+  `EXISTS(SELECT 1 FROM terminal_control_holds h WHERE h.session_id=terminal_sessions.id)
+     AS control_ever_held,
+   EXISTS(SELECT 1 FROM terminal_control_holds h WHERE h.session_id=terminal_sessions.id
+            AND h.released_at IS NULL AND h.expires_at>now()) AS control_held`;
+
+export interface ControlHoldColumns {
+  readonly control_ever_held: boolean;
+  readonly control_held: boolean;
+}
+
+export const CONTROL_RELEASED = 'control_released';
+
+export function controlWasReleased(
+  row: ControlHoldColumns & { readonly mode: TerminalMode },
+): boolean {
+  return isWritableMode(row.mode) && row.control_ever_held && !row.control_held;
 }

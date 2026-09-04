@@ -329,6 +329,28 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     expect(response.json()).toEqual({ error: 'forbidden', reason: 'control_held' });
   });
 
+  it('devolver un arriendo de OTRA sesión es 409, nunca un released:true con hold_id null', async () => {
+    const pool = controlPool({
+      session: ownedRow(),
+      hold: holdRow({
+        id: OTHER_HOLD_ID,
+        session_id: '99999999-9999-4999-8999-999999999999',
+        operator_id: 'steven-kant',
+      }),
+    });
+    ctx = buildContext({ pool });
+    const response = await control(validControlRequest({ action: 'release' }));
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: 'conflict', reason: 'control_held' });
+    expect(auditRows(pool)).toEqual([expect.objectContaining({
+      action: 'terminal.control_released',
+      decision: 'deny',
+      metadata: expect.objectContaining({ reason: 'control_held' }) as unknown,
+    })]);
+    expect(pool.__queries.some((query) => query.text.includes('UPDATE terminal_control_holds')))
+      .toBe(false);
+  });
+
   it('devolver sin arriendo vivo es idempotente: el navegador reintenta desde beforeunload', async () => {
     const pool = controlPool({ session: ownedRow() });
     ctx = buildContext({ pool });

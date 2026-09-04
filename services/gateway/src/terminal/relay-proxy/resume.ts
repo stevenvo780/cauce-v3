@@ -2,7 +2,8 @@ import { withTransaction } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import { terminalAuditMetadata, terminalSessionAuditContext } from '../audit.js';
 import {
-  cohortLabels, exactObjectKeys, sessionExpiry, sessionWindowExpression,
+  CONTROL_HOLD_COLUMNS, CONTROL_RELEASED, cohortLabels, controlWasReleased, exactObjectKeys,
+  sessionExpiry, sessionWindowExpression, type ControlHoldColumns,
 } from '../helpers.js';
 import {
   ticketSha256, verifyResumeTokenSignature, TicketError,
@@ -54,7 +55,7 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
         return;
       }
       const claimSha256 = ticketSha256(claimToken);
-      interface LockedResumeSession extends TerminalSessionRow {
+      interface LockedResumeSession extends TerminalSessionRow, ControlHoldColumns {
         database_now: Date;
         session_unexpired: boolean;
       }
@@ -66,7 +67,8 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
         const locked = await client.query<LockedResumeSession>(
           `SELECT terminal_sessions.*,now() AS database_now,
                   consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
-                    AND ${sessionWindowExpression(2, 3)}>now() AS session_unexpired
+                    AND ${sessionWindowExpression(2, 3)}>now() AS session_unexpired,
+                  ${CONTROL_HOLD_COLUMNS}
              FROM terminal_sessions WHERE id=$1 FOR UPDATE`,
           [sid, config.sessionTtlSeconds, config.sessionMaxTotalSeconds ?? null],
         );
@@ -92,6 +94,8 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
             refusal = { status: 403, reason: 'closed' };
           } else if (!row.session_unexpired) {
             refusal = { status: 403, reason: 'session_expired' };
+          } else if (controlWasReleased(row)) {
+            refusal = { status: 403, reason: CONTROL_RELEASED };
           } else {
             const policy = await currentSessionPolicy(row, false, client);
             const actor = sessionActor(row);
