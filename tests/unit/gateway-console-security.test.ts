@@ -368,7 +368,33 @@ describe('createConsoleSecurityHook: llamador máquina con certificado cliente',
     expect(captured.sent).toBeUndefined();
   });
 
-  it('sigue exigiendo Origin si la petición con certificado trae cookie: es un navegador tras el proxy', async () => {
+  it.each([
+    ['POST', '/v3/auth/login'],
+    ['POST', '/v3/console/terminal/sessions/s/control'],
+    ['PUT', '/v3/console/tenants/Steven/agents/zeus/perfil'],
+    ['PUT', '/v3/console/tenants/Steven/agents/zeus/documents/directive/content'],
+    ['POST', '/v3/console/tenants/Steven/agents/zeus/context/reload'],
+    ['DELETE', '/v3/console/agents/zeus/context/reload'],
+  ])('el certificado no exime a %s %s: el proxy también lo presenta por el navegador', async (method, url) => {
+    const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+    const { reply, captured } = buildReply();
+    await hook(buildRequest({ url, method, clientCertVerified: true }), asReply(reply));
+    expect(captured.statusCode).toBe(403);
+    expect(captured.sent).toEqual(SAME_ORIGIN_REQUIRED);
+  });
+
+  it('una cabecera Sec-Fetch-* delata un navegador y la recarga propia vuelve a exigir Origin', async () => {
+    const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
+    const { reply, captured } = buildReply();
+    await hook(
+      buildRequest({ url: SELF_RELOAD, method: 'POST', clientCertVerified: true, secFetchSite: 'same-origin' }),
+      asReply(reply),
+    );
+    expect(captured.statusCode).toBe(403);
+    expect(captured.sent).toEqual(SAME_ORIGIN_REQUIRED);
+  });
+
+  it('sigue exigiendo Origin si la petición con certificado trae cookie: una sesión de consola nunca es la máquina', async () => {
     const hook = createConsoleSecurityHook({ allowedOrigins: [ALLOWED] });
     const { reply, captured } = buildReply();
     await hook(

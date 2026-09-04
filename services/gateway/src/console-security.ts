@@ -22,9 +22,16 @@ function ownOrigin(request: FastifyRequest): string | undefined {
   return normalizedOrigin(`${request.protocol}://${host}`);
 }
 
-function certifiedCallerWithoutCookie(request: FastifyRequest): boolean {
+const ALIAS_SELF_RELOAD = /^\/v3\/console\/agents\/[^/]+\/context\/reload$/u;
+
+/* The proxy presents a client certificate on every request, so the certificate alone never exempts. */
+function machineSelfReload(request: FastifyRequest, path: string): boolean {
+  if (request.method !== 'POST' || !ALIAS_SELF_RELOAD.test(path)) return false;
   const { socket } = request.raw;
-  return 'authorized' in socket && socket.authorized === true && request.headers.cookie === undefined;
+  if (!('authorized' in socket) || socket.authorized !== true) return false;
+  const { headers } = request;
+  return headers.cookie === undefined && headers.origin === undefined
+    && Object.keys(headers).every((name) => !name.startsWith('sec-fetch-'));
 }
 
 export function createConsoleSecurityHook(options: ConsoleSecurityOptions = {}) {
@@ -51,7 +58,7 @@ export function createConsoleSecurityHook(options: ConsoleSecurityOptions = {}) 
       return;
     }
     const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(request.method);
-    if (unsafe && !certifiedCallerWithoutCookie(request) && (origin === undefined || !allowed.has(origin))) {
+    if (unsafe && !machineSelfReload(request, path ?? '') && (origin === undefined || !allowed.has(origin))) {
       await reply.code(403).send({ error: 'forbidden', message: 'same-origin Origin is required for console mutations' });
       return;
     }
