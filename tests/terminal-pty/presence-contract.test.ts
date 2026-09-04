@@ -88,6 +88,7 @@ describe('pty-agent -> relay -> gateway presence contract', () => {
       runtime_user: 'claw',
       runtime_uid: 1000,
       harness: 'openclaw',
+      agent_version: AGENT_HELLO.agent_version,
       connected_since: '2026-07-25T18:00:00.000Z',
     });
     expect(parsed.modes).toEqual(['shell']);

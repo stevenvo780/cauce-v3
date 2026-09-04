@@ -250,6 +250,9 @@ export function parseAgentPresence(value: unknown): AgentPresence {
     throw new Error('agent presence modes are invalid');
   }
   const harness = stringField(record.harness, 'harness', 64);
+  const agentVersion = record.agent_version === undefined
+    ? undefined
+    : stringField(record.agent_version, 'agent_version', 64);
   const home = measuredPath(record, 'home');
   const codexHome = measuredPath(record, 'codex_home');
   const claudeConfigDir = measuredPath(record, 'claude_config_dir');
@@ -289,6 +292,7 @@ export function parseAgentPresence(value: unknown): AgentPresence {
     runtime_user: stringField(record.runtime_user, 'runtime_user', 64),
     runtime_uid: uid,
     harness,
+    ...(agentVersion === undefined ? {} : { agent_version: agentVersion }),
     runtime_facts_observed: runtimeFactsObserved,
     ...(runtimeFactsObserved ? {
       home: stringField(home, 'home', 4096),

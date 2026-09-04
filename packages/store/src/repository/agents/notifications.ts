@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import type { Ack, NotifyRequest, Origin, Tenant } from '@cauce/protocol';
+import { deterministicUuidFromSha256, type Ack, type NotifyRequest, type Origin, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
-import { hashToUuidV7 } from '../_hash-to-uuidv7.js';
 import type { EgressDestinationRow } from '../egress-destinations.js';
 import { AgentChainControlRepository } from './chain-control.js';
 import { sha256 } from '../config.js';
@@ -58,7 +57,7 @@ interface NotificationContext {
  * second notification message even if the first idempotency layer were bypassed.
  */
 function agentNotifyRequestId(deliveryId: string, attempt: number, notifyIndex: number): string {
-  return hashToUuidV7(
+  return deterministicUuidFromSha256(
     `agent-notify:${deliveryId}:${String(attempt)}:${String(notifyIndex)}`
   );
 }

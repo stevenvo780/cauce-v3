@@ -5,6 +5,7 @@ import {
   isLiteralTrue,
   isTenant,
   MAX_DELEGATION_FEEDBACK_ITEMS,
+  deterministicUuidFromSha256,
   type Tenant
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient } from '../../../db.js';
@@ -26,7 +27,6 @@ import {
   type ChainPolicy
 } from '../../observability.js';
 import { objectRecord } from '../../outbox.js';
-import { hashToUuidV7 } from '../../_hash-to-uuidv7.js';
 
 const agentOutputHopBudget = 16;
 export const maxAgentOutputExpandedBytes = 512 * 1024;
@@ -86,7 +86,7 @@ export interface AgentOutputLineage {
 }
 
 export function agentOutputRequestId(deliveryId: string, attempt: number, outputIndex: number): string {
-  return hashToUuidV7(
+  return deterministicUuidFromSha256(
     `agent-output:${deliveryId}:${String(attempt)}:${String(outputIndex)}`
   );
 }

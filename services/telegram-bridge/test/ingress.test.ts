@@ -57,6 +57,7 @@ describe('Telegram ingress priority', () => {
     // the egress and the deduplication depend on and must not move with it.
     expect(published?.lane).toBe('interactive');
     expect(published?.idempotency_key).toBe('telegram:900001:42');
+    expect(published?.request_id).toBe('4bc7b08c-978d-5246-b406-33b1d4045022');
     expect(published?.authenticated_context?.channel).toBe('telegram');
   });
 

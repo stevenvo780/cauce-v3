@@ -43,6 +43,7 @@ export interface AgentPresence {
   readonly runtime_user: string;
   readonly runtime_uid: number;
   readonly harness: string;
+  readonly agent_version?: string;
   /** Launcher mark: harness/home come from the real process, not from the declared bundle. */
   readonly runtime_facts_observed?: boolean;
   /**

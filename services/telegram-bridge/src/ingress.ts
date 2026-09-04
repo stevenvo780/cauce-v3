@@ -1,17 +1,10 @@
 import { createHash } from 'node:crypto';
 import {
-  HUMAN_CHAT_PRIORITY, PROTOCOL_VERSION, PublishMessageSchema, type PublishMessage
+  deterministicUuidFromSha256, HUMAN_CHAT_PRIORITY, PROTOCOL_VERSION, PublishMessageSchema,
+  type PublishMessage
 } from '@cauce/protocol';
 import type { CauceRepository } from '@cauce/store';
 import type { TelegramIngress, TelegramIngressMessage } from './types.js';
-
-function stableUuid(namespace: string): string {
-  const bytes = createHash('sha256').update(namespace).digest().subarray(0, 16);
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
 
 export class StoreTelegramIngress implements TelegramIngress {
   constructor(private readonly repository: Pick<CauceRepository, 'publish'>) {}
@@ -20,7 +13,7 @@ export class StoreTelegramIngress implements TelegramIngress {
     const correlation = `telegram:${message.bot_id}:${String(message.update_id)}`;
     const command: PublishMessage = {
       version: PROTOCOL_VERSION,
-      request_id: stableUuid(`request:${correlation}`),
+      request_id: deterministicUuidFromSha256(`request:${correlation}`),
       trace_id: `telegram-${createHash('sha256').update(correlation).digest('hex').slice(0, 32)}`,
       tenant_id: message.tenant_id,
       room_id: message.room_id,
@@ -47,5 +40,3 @@ export class StoreTelegramIngress implements TelegramIngress {
     return { duplicate: result.duplicate };
   }
 }
-
-export { stableUuid };

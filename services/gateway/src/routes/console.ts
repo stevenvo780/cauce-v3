@@ -301,16 +301,17 @@ function registerConsoleAgentRoutes(
         throw error;
       }
     };
+    const resolveProfileOperator = async (request: unknown) => resolveOperator(
+      request as FastifyRequest,
+      await principal(request as FastifyRequest, options.authProvider),
+      options.operatorResolution ?? { operatorHeader: DEFAULT_OPERATOR_HEADER, operators: new Set() },
+    );
     const recordRuntimeExpectation = repository.recordProfileRuntimeExpectation.bind(repository);
     const readRuntimeAdoption = repository.readProfileRuntimeAdoption.bind(repository);
     registerAgentProfileRoutes(app, {
       authorize: autorizarPerfil,
       authorizeTarget: autorizarDestino,
-      resolveOperator: async (request) => resolveOperator(
-        request as FastifyRequest,
-        await principal(request as FastifyRequest, options.authProvider),
-        options.operatorResolution ?? { operatorHeader: DEFAULT_OPERATOR_HEADER, operators: new Set() },
-      ),
+      resolveOperator: resolveProfileOperator,
       recordAudit: (entry) => recordTerminalAudit(options.pool, entry),
       measureContext: (tenantId, alias) =>
         medirContextoDeGobierno(profileProbe, tenantId, alias),
@@ -347,11 +348,7 @@ function registerConsoleAgentRoutes(
        * with those exact words, which is what the screen already knows how to render.
        */
       probe: profileProbe,
-      resolveOperator: async (request) => resolveOperator(
-        request as FastifyRequest,
-        await principal(request as FastifyRequest, options.authProvider),
-        options.operatorResolution ?? { operatorHeader: DEFAULT_OPERATOR_HEADER, operators: new Set() },
-      ),
+      resolveOperator: resolveProfileOperator,
       // A denial leaving no audit row is worse than an unavailable route: the write is awaited.
       recordAudit: (entry) => recordTerminalAudit(options.pool, entry),
     });
@@ -370,11 +367,7 @@ function registerConsoleAgentRoutes(
       authorize: autorizarPerfil,
       authorizeTarget: (actor, tenantId, alias, permission) =>
         autorizarDestino(actor, tenantId, alias, permission),
-      resolveOperator: async (request) => resolveOperator(
-        request as FastifyRequest,
-        await principal(request as FastifyRequest, options.authProvider),
-        options.operatorResolution ?? { operatorHeader: DEFAULT_OPERATOR_HEADER, operators: new Set() },
-      ),
+      resolveOperator: resolveProfileOperator,
       readContext: (tenantId, alias) => perfiles.readContextWithPresence(tenantId, alias),
       prepareRuntime: (tenantId, alias, contexto) =>
         prepareAgentProfileRuntime(profileProbe, tenantId, alias, contexto),

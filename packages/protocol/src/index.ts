@@ -19,3 +19,4 @@ export * from './log.js';
 export * from './redaction.js';
 export * from './sealing.js';
 export * from './artifact-uri.js';
+export * from './deterministic-uuid.js';

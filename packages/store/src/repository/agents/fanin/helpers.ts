@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto'; /* eslint @typescript-eslint/prefer-optional-chain: "error", @typescript-eslint/no-unnecessary-condition: "error" */
-import { isAlias, type DeliveryState, type Tenant } from '@cauce/protocol';
+import { deterministicUuidFromSha256, isAlias, type DeliveryState, type Tenant } from '@cauce/protocol';
 import type { DeliveryRow } from '../../observability.js';
 import { textualReply, visibleText } from '../../outbox.js';
-import { hashToUuidV7 } from '../../_hash-to-uuidv7.js';
 
 export const agentFaninMaxResponseBytes = 4 * 1024;
 export const agentFaninMaxAggregateBytes = 64 * 1024;
@@ -50,11 +49,11 @@ export function agentResponseRequestId(
   attempt: number,
   kind: 'agent-response' | 'agent-response-late' = 'agent-response'
 ): string {
-  return hashToUuidV7(`${kind}:${deliveryId}:${String(attempt)}`);
+  return deterministicUuidFromSha256(`${kind}:${deliveryId}:${String(attempt)}`);
 }
 
 export function agentFaninRequestId(rootMessageId: string): string {
-  return hashToUuidV7(`agent-fanin:${rootMessageId}`);
+  return deterministicUuidFromSha256(`agent-fanin:${rootMessageId}`);
 }
 
 export function agentResponseText(
