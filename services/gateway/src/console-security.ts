@@ -24,7 +24,6 @@ function ownOrigin(request: FastifyRequest): string | undefined {
 
 const ALIAS_SELF_RELOAD = /^\/v3\/console\/agents\/[^/]+\/context\/reload$/u;
 
-/* The proxy presents a client certificate on every request, so the certificate alone never exempts. */
 function machineSelfReload(request: FastifyRequest, path: string): boolean {
   if (request.method !== 'POST' || !ALIAS_SELF_RELOAD.test(path)) return false;
   const { socket } = request.raw;
