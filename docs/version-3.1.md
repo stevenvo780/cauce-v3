@@ -129,17 +129,25 @@ de incidentes incorporados por `a9e08359`; la ventana previa `9b5e2172` incorpor
 adicionales de consola, Telegram y contexto. La identidad reservada de la sonda ya está emitida
 y el canary final de Atlas pasó 20/20 verificaciones durante 609 segundos. El SDK final
 `bus-v3-20260905-sdk-final-fa4f07c5` se activó por separado en 15/15 alias: censo físico con un
-consumidor V3 por alias, ninguno V2 y dos ventanas de heartbeat progresado. Los modelos y sus
-sesiones se conservaron; una entrega iniciada de Zeus y otra de Heráclito quedaron ambiguas durante
+consumidor V3 por alias, ninguno V2 y dos ventanas de heartbeat progresado. No se eliminaron
+historiales; una entrega iniciada de Zeus y otra de Heráclito quedaron ambiguas durante
 el corte autorizado, sin reenvíos emitidos por el rollout. Zeus presentó después una reapertura
 inconsistente de la misma fila, que el WAL rechaza. Se restauró su estado terminal acreditado por
 el ACK, sin repetir efectos ni cerrar como exitoso el trabajo ambiguo. La consola de Zeus y los
 perfiles se verifican por separado: despliegue no equivale a recuperar esas tareas ni a reconciliar los perfiles
-pendientes. La última fila es `8acfacfc`, con reconciliación de perfiles atribuida y auditada,
+pendientes. `8acfacfc` añadió reconciliación de perfiles atribuida y auditada,
 CAS de contenido y bloqueo transaccional sin interrumpir el heartbeat. Su smoke reforzado pasó:
 nueve servicios sanos, quince arriendos V3 frescos y dos entregas con ACK aplicado posteriores
 al arranque. Las cinco entregas previas conservaron su fence, con dos terminadas y tres todavía
-en curso. La matriz completa pasó 11/11 suites y 4603 pruebas unitarias. Aplicar los perfiles
+en curso. Su matriz completa pasó 11/11 suites y 4603 pruebas unitarias. La última fila,
+`f96382d7`, impide reclamar entregas con evidencia terminal durable: smoke verde, nueve servicios
+sanos, quince arriendos frescos y tres fences previos conservados. Se acreditaron cuatro
+entregas `started` con ACK reciente, no un resultado `done` posterior al arranque. Pasaron typecheck,
+lint, 4603 pruebas unitarias, 865 de almacenamiento, 1541 de servicios, 143 de gateway,
+28 de integración y 12 E2E. Argos recibió una reparación exacta de estado terminal sin replay;
+la recuperación durable de TUI sigue pendiente porque los lanzadores Claude aún usan `--continue`.
+En Zeus se reanudó un binding conocido, no se demostró recuperar la conversación humana original.
+Aplicar los perfiles
 divergentes desde Contexto sigue siendo una acción atribuida de operador, no un efecto automático
 del despliegue. Ese registro no sustituye una nueva validación
 del estado vivo desde este checkout, y lo que queda por comprobar por efecto después de esa fila
