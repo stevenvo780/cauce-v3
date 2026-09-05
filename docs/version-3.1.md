@@ -113,10 +113,13 @@ para despliegues posteriores:
 
 `deploy/HISTORIAL.md` registra el despliegue de `7f25fd6f` con smoke verde y dos correcciones de
 esa misma tarde: `d2ef50ff`, con smoke verde, y `0b5bf89e`, con smoke ROJO parcial («bus: 0
-entregas done» en una ventana sin tráfico; el resto OK, sin rollback). Ese registro demuestra la
-ventana ejecutada; no sustituye una nueva validación del estado vivo desde este checkout, y desde
-`0b5bf89e` el árbol de `dev` avanzó sin volver a registrarse (`docs/v3.1-pendientes.md` §1,
-«Deuda de despliegue»).
+entregas done» en una ventana sin tráfico; el resto OK, sin rollback). La última fila es
+`00358416`: la ventana que puso en línea el árbol cerrado de v3.1 —los refactores de ops, consola,
+runtime, store, gateway y adapter-sdk, la siega de huérfanos PTY por pidfd, la reconexión ante
+sockets sordos, los comandos de operador en DM, el acotado de la exención CSRF y Prometheus en
+`[backend, edge]`—. Ese registro demuestra la ventana ejecutada; no sustituye una nueva validación
+del estado vivo desde este checkout, y lo que queda por comprobar por efecto después de esa fila
+está en `docs/v3.1-pendientes.md` §1, «Deuda de despliegue».
 
 ## Cómo se verifica
 
@@ -150,9 +153,10 @@ pnpm qa:layout                                    # maquetado 1080p
 - **`ultimate-terminal`.** Apagar el worker legado contenedor a contenedor y renombrar el permiso
   con ventana de convivencia son decisiones fuera del árbol.
 - **Raspado del relay.** `6cecfb33` añadió Prometheus a `[backend, edge]` para que el job
-  `cauce-relay` resuelva `terminal-relay`; falta desplegar ese commit y verificar el raspado. Nada
-  en el árbol fija esa pertenencia —no hay test sobre `deploy/compose.yaml`—, así que revertirla
-  no pondría rojo nada y el raspado volvería a faltar en silencio. El cambio deja además a los
+  `cauce-relay` resuelva `terminal-relay`; ese commit ya está en línea con la fila `00358416` y lo
+  que falta es verificar el raspado por efecto (el job `cauce-relay` en `up` dentro de `/targets`).
+  Nada en el árbol fija esa pertenencia —no hay test sobre `deploy/compose.yaml`—, así que
+  revertirla no pondría rojo nada y el raspado volvería a faltar en silencio. El cambio deja además a los
   tres frontales de `edge` con acceso de lectura a la API de consulta de Prometheus.
 - **Auditoría `secret.granted` sin tope** y `pruneSettledHandoffs` sólo en `POST /v3/secrets`:
   anotado en las reseñas del plano de secretos; no cambia el comportamiento pero conviene decidir
