@@ -224,7 +224,7 @@ leases=$(docker exec hospital-cauce-postgres-1 psql -XAtq -U cauce_hospital -d c
   -c "SELECT count(*) FROM connection_leases WHERE tenant_id='Hospital' AND lease_until > now()")
 [ "$leases" = 3 ] || { echo "Se esperaban 3 leases y se observaron $leases" >&2; exit 1; }
 
-set_env CAUCE_SMOKE_MIN_FRESH_LEASES 3
+set_env CAUCE_SMOKE_EXPECTED_AGENTS 3
 set_env CAUCE_SMOKE_REQUIRE_GOVERNANCE_AGENT 1
 set_env CAUCE_SMOKE_MAX_ATTEMPTS 6
 set_env CAUCE_SMOKE_RETRY_SECONDS 5
