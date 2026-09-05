@@ -882,19 +882,24 @@ choques_de_codex() {  # $1=alias-que-acabo-de-tocar $2=cuenta
   done
 }
 
-cmd_login() {  # $1=alias  $2=claude|codex|--ver (opcional)
-  local a=$1 arg=${2:-} line ctr cuser uhome harness chome cchome
+cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orden)
+  local a=$1 arg='' line ctr cuser uhome harness chome cchome
   line=$(alias_info "$a") || { printf "  %sno conozco el alias %s%s\n" "$c_err" "$a" "$c_reset"; return 2; }
   IFS=$'\t' read -r _ _ ctr cuser uhome _ harness <<<"$line"
   chome=$(codex_home_de "$a" "$uhome")
   cchome=$(claude_home_de "$a" "$uhome" "$harness")
 
-  local solo_ver=0
-  [ "$arg" = --ver ] && { solo_ver=1; arg=; }
-
-  if [ -n "$arg" ] && [ "$arg" != claude ] && [ "$arg" != codex ]; then
-    printf "  no entiendo '%s'. Usa: cauce %s login [claude|codex|--ver]\n" "$arg" "$a"; return 2
-  fi
+  # El dueno cambia credenciales cuando quiere: un turno en vuelo se AVISA, no se prohibe.
+  local solo_ver=0 forzar=0 opt
+  shift
+  for opt in "$@"; do
+    case "$opt" in
+      --ver) solo_ver=1 ;;
+      --forzar|-f) forzar=1 ;;
+      claude|codex) arg=$opt ;;
+      *) printf "  no entiendo '%s'. Usa: cauce %s login [claude|codex] [--ver] [--forzar]\n" "$opt" "$a"; return 2 ;;
+    esac
+  done
 
   printf "\n  %s%s%s  %s·  contenedor %s  ·  arnes %s%s\n" \
     "$c_b" "$a" "$c_reset" "$c_dim" "${ctr:-(host-native)}" "$harness" "$c_reset"
@@ -953,11 +958,20 @@ cmd_login() {  # $1=alias  $2=claude|codex|--ver (opcional)
   fi
   [ "$solo_ver" = 1 ] && return 0
 
-  # Antes de tocar: un turno a medias muere si paramos el adaptador.
+  # Un turno a medias muere si paramos el adaptador: se dice, y decide el dueno. Con la credencial
+  # VACIA ese turno ya no puede autenticar y no hay nada que salvar; sin --forzar se pregunta.
   if turno_en_vuelo "$a"; then
-    printf "\n  %s%s TIENE UN TURNO EN VUELO ahora mismo%s — pararlo lo mata.\n" "$c_err" "$a" "$c_reset"
-    printf "  %ssalgo sin tocar nada; reintenta cuando cierre.%s\n" "$c_dim" "$c_reset"
-    return 1
+    printf "\n  %s%s TIENE UN TURNO EN VUELO ahora mismo%s — si seguis, ese turno muere.\n" "$c_err" "$a" "$c_reset"
+    printf "  %sla entrega vuelve a la cola o se repone por consola; lo que le escriban se encola.%s\n" "$c_dim" "$c_reset"
+    local vacia=0 o3
+    for o3 in "${objetivos[@]}"; do
+      [ "$o3" = claude ] && [[ $(huella_claude "$a" "$ctr" "$cuser" "$cchome") == VACIA* ]] && vacia=1
+    done
+    [ "$vacia" = 1 ] && printf "  %scon la credencial de claude VACIA ese turno ya no puede autenticar: no hay nada que salvar.%s\n" "$c_warn" "$c_reset"
+    if [ "$forzar" != 1 ]; then
+      local qv; read -r -p "  seguir igual? [s/N]: " qv
+      [[ $qv == [sS] ]] || { printf "  no toco nada. (o pasa --forzar)\n"; return 1; }
+    fi
   fi
 
   # El aviso va ANTES de la pregunta: quien confirma tiene que saber que desde ese "si" el alias
@@ -1435,7 +1449,7 @@ case "${1:-}" in
       sesiones)  cmd_sesiones "$a" ;;
       on)        cmd_on "$a" ;;
       off)       cmd_off "$a" ;;
-      login|auth) shift; cmd_login "$a" "${1:-}" ;;
+      login|auth) shift; cmd_login "$a" "$@" ;;
       aprovisionar) shift; cmd_aprovisionar "$a" "$@" ;;
       retirar)   cmd_retirar "$a" ;;
       *)         echo "no entiendo '$1'"; uso; exit 2 ;;
