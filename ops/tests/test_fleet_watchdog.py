@@ -13,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import patch
 
 OPS_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = OPS_ROOT / 'scripts'
@@ -80,6 +82,143 @@ def test_parse_psql_rows():
     assert rows[0]['alias'] == 'argos', 'first row alias correct'
     assert rows[0]['epoch'] == '15', 'first row epoch correct'
     print('✓ psql output parsing works correctly')
+
+
+def test_psql_preserves_headers_and_rejects_sql_errors():
+    module = load_watchdog_module()
+
+    def fake_run(args, **kwargs):
+        assert '-X' in args and '-Aq' in args
+        assert '-Atqc' not in args and '-t' not in args
+        assert args[args.index('-P') + 1] == 'footer=off'
+        assert args[args.index('-v') + 1] == 'ON_ERROR_STOP=1'
+        assert kwargs['timeout'] == 30
+        return SimpleNamespace(returncode=0, stdout='alias|epoch\natlas|18\n')
+
+    with patch.object(module.subprocess, 'run', fake_run):
+        assert module.parse_psql_rows(module.run_psql('postgres://test', 'SELECT 1')) == [
+            {'alias': 'atlas', 'epoch': '18'},
+        ]
+    with patch.dict(os.environ, {'CAUCE_PSQL_COMMAND': 'docker exec -i test-postgres psql'}), patch.object(
+        module.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout='value\n1\n'),
+    ) as runner:
+        module.run_psql('postgres://test', 'SELECT 1')
+        assert runner.call_args.args[0][:6] == ['docker', 'exec', '-i', 'test-postgres', 'psql', '-X']
+    with patch.dict(os.environ, {'CAUCE_PSQL_COMMAND': ' '}), patch.object(module.subprocess, 'run') as runner:
+        try:
+            module.run_psql('postgres://test', 'SELECT 1')
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('an empty invocation prefix must be rejected')
+        runner.assert_not_called()
+    with patch.object(module.subprocess, 'run', return_value=SimpleNamespace(
+        returncode=3, stderr='query failed', stdout='',
+    )):
+        try:
+            module.run_psql('postgres://test', 'invalid')
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('SQL failures cannot look like an empty result')
+
+
+def test_timezone_aware_checks_and_legacy_state():
+    module = load_watchdog_module()
+    now = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+
+    def healthy_lease_query(_database_url, query):
+        if 'FROM agents' in query:
+            return 'alias\n'
+        return (
+            'alias|lease_until|last_heartbeat_at|epoch|connected_at\n'
+            'atlas|2026-01-01 12:01:00+00|2026-01-01 06:59:59-05|1|2026-01-01 11:00:00+00\n'
+        )
+
+    with patch.object(module, 'EXPECTED_ALIASES', ['atlas']), patch.object(
+        module, 'run_psql', side_effect=healthy_lease_query,
+    ):
+        assert module.check_connection_leases('postgres://test', now)['status'] == 'ok'
+    with patch.object(module, 'run_psql', return_value=(
+        'recipient_alias|status|count|last_terminal_at|oldest_available_at\n'
+        'atlas|dead|1|2026-01-01 11:59:00+00|2026-01-01 11:00:00+00\n'
+    )):
+        result = module.check_dead_failed_deliveries('postgres://test', now, '2026-01-01T11:58:00')
+        assert result['new_dead'] == {'atlas': 1}
+    assert module.utc_timestamp('2026-01-01T12:00:00') == now
+    assert module.utc_timestamp('2026-01-01T07:00:00-05:00') == now
+
+
+def test_enabled_registry_extends_expected_lease_coverage_fail_closed():
+    module = load_watchdog_module()
+    now = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+    assert 'SELECT DISTINCT alias' in module.ENABLED_ALIASES_QUERY
+    assert 'FROM agents' in module.ENABLED_ALIASES_QUERY
+    assert 'WHERE enabled' in module.ENABLED_ALIASES_QUERY
+    lease_header = 'alias|lease_until|last_heartbeat_at|epoch|connected_at\n'
+    live_lease = '|2026-01-01 12:01:00+00|2026-01-01 12:00:00+00|1|2026-01-01 11:00:00+00\n'
+    expired_lease = '|2026-01-01 11:59:00+00|2026-01-01 11:58:00+00|1|2026-01-01 11:00:00+00\n'
+
+    def missing_enabled_query(_database_url, query):
+        if 'FROM agents' in query:
+            return 'alias\nastra\ngaia\n'
+        return lease_header + 'atlas' + live_lease
+
+    with patch.object(module, 'EXPECTED_ALIASES', ['atlas']), patch.object(
+        module, 'run_psql', side_effect=missing_enabled_query,
+    ):
+        result = module.check_connection_leases('postgres://test', now)
+        assert result['status'] == 'critical'
+        assert result['offline'] == ['astra', 'gaia']
+
+    def present_enabled_query(_database_url, query):
+        if 'FROM agents' in query:
+            return 'alias\nastra\n'
+        return lease_header + 'atlas' + live_lease + 'astra' + live_lease
+
+    with patch.object(module, 'EXPECTED_ALIASES', ['atlas']), patch.object(
+        module, 'run_psql', side_effect=present_enabled_query,
+    ):
+        result = module.check_connection_leases('postgres://test', now)
+        assert result['status'] == 'ok', 'a present enabled lease is not reported offline'
+
+    def existing_non_enabled_query(_database_url, query):
+        if 'FROM agents' in query:
+            return 'alias\nastra\n'
+        return lease_header + 'atlas' + live_lease + 'astra' + live_lease + 'retired' + expired_lease
+
+    with patch.object(module, 'EXPECTED_ALIASES', ['atlas']), patch.object(
+        module, 'run_psql', side_effect=existing_non_enabled_query,
+    ):
+        result = module.check_connection_leases('postgres://test', now)
+        assert result['offline'] == ['retired'], 'existing leases retain legacy monitoring when disabled'
+
+    with patch.object(module, 'EXPECTED_ALIASES', ['atlas', 'legacy']), patch.object(
+        module, 'run_psql', side_effect=present_enabled_query,
+    ):
+        result = module.check_connection_leases('postgres://test', now)
+        assert result['offline'] == ['legacy'], 'the static expected source remains enforced'
+
+    for unreadable in ('', 'astra\n', 'alias|enabled\nastra|t\n', 'alias\nINVALID\n'):
+        with patch.object(module, 'EXPECTED_ALIASES', ['atlas']), patch.object(
+            module, 'run_psql', side_effect=[unreadable, lease_header + 'atlas' + live_lease],
+        ):
+            result = module.check_connection_leases('postgres://test', now)
+            assert result['status'] == 'read-error', unreadable
+
+
+def test_oldest_pending_is_not_hidden_by_recent_work():
+    module = load_watchdog_module()
+
+    def pending_query(_database_url, query):
+        assert 'MIN(available_at) as oldest_available_at' in query
+        return 'recipient_alias|status|count|oldest_available_at\natlas|pending|2|2026-01-01 08:00:00+00\n'
+
+    with patch.object(module, 'run_psql', pending_query):
+        result = module.check_pending_deliveries(
+            'postgres://test', datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
+        )
+        assert result['pending_aliases'] == [{'alias': 'atlas', 'count': 2, 'age_min': 240}]
 
 
 # Test 4: State file structure
@@ -281,6 +420,10 @@ if __name__ == '__main__':
     test_script_exists()
     test_missing_database_url()
     test_parse_psql_rows()
+    test_psql_preserves_headers_and_rejects_sql_errors()
+    test_timezone_aware_checks_and_legacy_state()
+    test_enabled_registry_extends_expected_lease_coverage_fail_closed()
+    test_oldest_pending_is_not_hidden_by_recent_work()
     test_state_file()
     test_output_formats()
     test_claimed_not_started()

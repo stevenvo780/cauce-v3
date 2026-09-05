@@ -169,6 +169,15 @@ juego de arneses soportado y la consola no ofrece una edición ficticia para él
   el cajón lo pinta destacado con el motivo y el alias dueño del bloque ajeno, y deja el guardado y
   la recarga deshabilitados mientras dura la cuarentena, en vez de dejar que el operador lo
   descubra por un 409.
+- **Reconciliar una expectativa divergente.** Para Claude y Codex, si el único motivo es
+  `expectation_sha_mismatch`, Contexto permite preparar una vista previa y autorizar explícitamente
+  conservar el exterior sin cambios. La vista muestra huellas, no acredita revisar su contenido.
+  Los POST `context/reconcile/preview` y `context/reconcile/apply` exigen identidad de operador
+  atribuida, permiso de control y motivo; la aplicación compara revisión, generación y huellas
+  exactas, rechaza trabajo en vuelo y sólo regenera el bloque gestionado. Auditoría durable antes
+  del efecto, ACK y lectura posterior preceden al registro de la expectativa y del historial.
+  El resultado es `pending_session_refresh`, no adopción por el modelo. Un efecto incierto exige
+  volver a medir; nunca se presenta como una escritura que no ocurrió.
 - **Historial y diff.** Un panel único sobre `agent_profile_revisions` y
   `agent_document_revisions` lista revisiones con actor y fecha, compara dos revisiones del perfil
   (los siete campos) y del manual (sha y bytes; el cuerpo del manual no se guarda) y restaura por

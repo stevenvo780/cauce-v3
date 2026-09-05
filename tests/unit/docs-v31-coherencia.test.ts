@@ -55,6 +55,12 @@ const vinetaDeDeuda = (): string => {
 };
 
 describe('docs/v3.1-pendientes.md: la deuda de despliegue es la real', () => {
+  it('no reactiva el revividor retirado al cerrar una ventana', () => {
+    const operacion = leer('docs/operacion.md');
+    expect(operacion).toContain('no iniciarlo ni habilitarlo como parte del despliegue');
+    expect(operacion).not.toContain('`systemctl start` de ambos SIEMPRE');
+  });
+
   it('cita el último commit que deploy/HISTORIAL.md registra de verdad', () => {
     const { commit } = ultimaFilaDeHistorial();
     expect(
