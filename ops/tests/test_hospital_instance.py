@@ -138,6 +138,11 @@ class HospitalInstanceTests(unittest.TestCase):
         self.assertIn("last_heartbeat_at > now() - interval '60 seconds'", script)
         self.assertLess(script.index('[ "$leases" = 3 ] ||'), script.index("CAUCE_SMOKE_EXPECTED_AGENTS"))
 
+    def test_access_helper_survives_a_late_provision_failure(self) -> None:
+        script = (INSTANCE / "install.sh").read_text(encoding="utf-8")
+
+        self.assertLess(script.index("hospital-cauce-access"), script.index("provision-agents.sh"))
+
     def test_backup_is_installed_and_restore_verified_before_the_timer(self) -> None:
         script = (INSTANCE / "bootstrap-core.sh").read_text(encoding="utf-8")
         backup = (INSTANCE / "backup.sh").read_text(encoding="utf-8")
