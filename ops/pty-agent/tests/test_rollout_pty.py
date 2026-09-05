@@ -159,6 +159,46 @@ class RolloutPtyTest(unittest.TestCase):
         self.assertIn('DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus"', remote)
         self.assertNotIn("sudo -H root", remote)
 
+    def test_remote_bootstrap_registers_the_lib_module_before_executing_it(self) -> None:
+        # Python 3.14 resolves `sys.modules[cls.__module__]` while decorating a dataclass: a lib
+        # exec'd before being registered crashed every manager worker with AttributeError.
+        with tempfile.TemporaryDirectory() as raw:
+            root = pathlib.Path(raw)
+            (root / "rollout_pty_lib.py").write_text(
+                "import dataclasses\n"
+                "@dataclasses.dataclass(frozen=True)\n"
+                "class Marca:\n"
+                "    valor: int\n"
+                "MARCA = Marca(7)\n",
+                encoding="utf-8",
+            )
+            (root / "rollout-pty.py").write_text(
+                "import json, sys\n"
+                "import rollout_pty_lib\n"
+                "print(json.dumps({'ok': True, 'result': {'marca': rollout_pty_lib.MARCA.valor,"
+                " 'argv': sys.argv}}))\n",
+                encoding="utf-8",
+            )
+            transport = rollout.ProcessTransport("server", "ssh:vpstn", root / "rollout-pty.py")
+            captured: dict[str, str] = {}
+            real_run = subprocess.run
+
+            def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+                captured["remote"] = argv[6]
+                return real_run(["bash", "-c", argv[6]], **kwargs)
+
+            with mock.patch.object(rollout.subprocess, "run", side_effect=fake_run):
+                result = transport.call("inventory", {})
+        remote = captured["remote"]
+        # shlex quoting rewrites the inner quotes, so the order is asserted on quote-free anchors.
+        self.assertLess(
+            remote.index("sys.modules["),
+            remote.index("exec(compile(lib_code"),
+            "the lib must be registered in sys.modules before its code runs",
+        )
+        self.assertEqual(result["marca"], 7)
+        self.assertEqual(result["argv"], ["rollout-pty.py", "--worker", "inventory", "--manager", "server"])
+
     def test_sudo_ssh_transport_rejects_unbounded_host_or_user_syntax(self) -> None:
         for target in ("sudo-ssh:vpstn", "sudo-ssh:vpstn:stev:extra", "sudo-ssh:vpstn:Stev"):
             with self.subTest(target=target), self.assertRaises(rollout.RolloutError):

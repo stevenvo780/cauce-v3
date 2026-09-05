@@ -135,12 +135,12 @@ class ProcessTransport(Transport):
             bootstrap = (
                 "import base64,sys,types;"
                 "lib=types.ModuleType('rollout_pty_lib');"
+                "sys.modules['rollout_pty_lib']=lib;"
                 "lib_code=base64.b64decode(sys.argv[1],validate=True);"
                 "exec(compile(lib_code,'rollout_pty_lib.py','exec'),lib.__dict__);"
-                "sys.modules['rollout_pty_lib']=lib;"
                 "code=base64.b64decode(sys.argv[2],validate=True);"
                 "sys.argv=sys.argv[3:];"
-                "exec(compile(code,'rollout-pty.py','exec'),{'__name__':'__main__'})"
+                "exec(compile(code,'rollout-pty.py','exec'),{'__name__':'__main__','__file__':'rollout-pty.py'})"
             )
             worker = " ".join(
                 shlex.quote(item)
