@@ -3,6 +3,7 @@ const statuses = ['pending', 'processing', 'sent', 'failed', 'dead'];
 const dispositions = [
   'ambiguous', 'safe_retry', 'missing_final', 'auth', 'expected_offline', 'unclassified',
 ];
+const unclassifiedStates = ['pending_classification', 'classified_without_cause'];
 const actionableDispositions = ['ambiguous', 'safe_retry', 'missing_final', 'auth']; // must mirror cauce_dlq_inventory_030/cauce_list_dlq_030 in 030_dlq_causal_reconciliation.sql
 
 function isActionable(disposition) {
@@ -37,7 +38,7 @@ function dlqKey(kind, disposition, actionable) {
 
 /** Exact, label-bounded exporter core kept independent from the runtime-only store bundle. */
 export async function collectOutboxMetrics(pool) {
-  const [depth, oldest, deadLetters, newDeadLetters, oldestActionable] = await Promise.all([
+  const [depth, oldest, deadLetters, newDeadLetters, oldestActionable, unclassified] = await Promise.all([
     pool.query(`SELECT kind, status, count(*)::bigint AS value
       FROM adapter_outbox GROUP BY kind, status`),
     pool.query(`SELECT kind, status,
@@ -68,6 +69,14 @@ export async function collectOutboxMetrics(pool) {
       FROM outbox_dead_letters
       WHERE resolved_at IS NULL AND disposition IN ('ambiguous','safe_retry','missing_final','auth')
       GROUP BY kind, disposition`),
+    pool.query(`SELECT kind,
+        CASE WHEN disposition_at IS NULL
+          THEN 'pending_classification' ELSE 'classified_without_cause'
+        END AS classification_state,
+        count(*)::bigint AS value
+      FROM outbox_dead_letters
+      WHERE resolved_at IS NULL AND disposition='unclassified'
+      GROUP BY kind, classification_state`),
   ]);
   const depthMap = new Map(depth.rows.map((candidate) => {
     const row = exactRow(candidate, 'depth');
@@ -120,6 +129,16 @@ export async function collectOutboxMetrics(pool) {
     }
     return [`${row.kind}:${row.disposition}`, number(row.value)];
   }));
+  const unclassifiedMap = new Map(unclassified.rows.map((candidate) => {
+    const row = exactRow(candidate, 'unclassified state');
+    if (!kinds.includes(row.kind)) {
+      throw new Error('unclassified state query returned an unknown outbox kind');
+    }
+    if (!unclassifiedStates.includes(row.classification_state)) {
+      throw new Error('unclassified state query returned an unknown classification state');
+    }
+    return [`${row.kind}:${row.classification_state}`, number(row.value)];
+  }));
   const lines = [
     '# HELP cauce_outbox_query_success Whether exact PostgreSQL outbox gauges were collected.',
     '# TYPE cauce_outbox_query_success gauge',
@@ -143,11 +162,18 @@ export async function collectOutboxMetrics(pool) {
   );
   for (const kind of kinds) lines.push(`cauce_outbox_dead_letters_open{kind="${kind}"} ${deadMap.get(kind) ?? 0}`);
   lines.push(
-    '# HELP cauce_outbox_dead_letters_unclassified Unresolved adapter outbox incidents still awaiting causal disposition classification.',
+    '# HELP cauce_outbox_dead_letters_unclassified Unresolved adapter outbox incidents without a known causal disposition, including already evaluated incidents.',
     '# TYPE cauce_outbox_dead_letters_unclassified gauge',
   );
   for (const kind of kinds) {
     lines.push(`cauce_outbox_dead_letters_unclassified{kind="${kind}"} ${deadDispositionMap.get(dlqKey(kind, 'unclassified', false)) ?? 0}`);
+  }
+  lines.push(
+    '# HELP cauce_outbox_dead_letters_unclassified_by_state Unresolved unknown-cause incidents split by causal classification state.',
+    '# TYPE cauce_outbox_dead_letters_unclassified_by_state gauge',
+  );
+  for (const kind of kinds) for (const state of unclassifiedStates) {
+    lines.push(`cauce_outbox_dead_letters_unclassified_by_state{kind="${kind}",state="${state}"} ${unclassifiedMap.get(`${kind}:${state}`) ?? 0}`);
   }
   lines.push(
     '# HELP cauce_outbox_dead_letters_open_by_disposition Unresolved adapter outbox incidents by durable disposition and actionability.',

@@ -242,7 +242,7 @@ class TestFicheroDeEstado(unittest.TestCase):
 
 class TestCorrida(unittest.TestCase):
     @contextlib.contextmanager
-    def corrida(self, publicaciones=(True, "202 ok")):
+    def corrida(self, publicaciones=(True, 202)):
         with tempfile.TemporaryDirectory() as carpeta:
             entorno = {"CAUCE_ALERTAS_ESTADO": str(pathlib.Path(carpeta) / "estado.json")}
             salida = io.StringIO()
@@ -262,7 +262,8 @@ class TestCorrida(unittest.TestCase):
             corrida.assert_not_called()
         self.assertEqual(codigo, 0)
         self.assertIn("1 entregas a publicar", salida.getvalue())
-        self.assertIn("alertas-digesto-", salida.getvalue())
+        self.assertIn("dry-run completo", salida.getvalue())
+        self.assertNotIn("alertas-digesto-", salida.getvalue())
 
     def test_una_lectura_fallida_se_publica(self):
         with self.corrida() as (envio, salida):
@@ -272,6 +273,8 @@ class TestCorrida(unittest.TestCase):
         cuerpo = texto(envio.call_args[0][0])
         self.assertIn("SIN LECTURA DE PROMETHEUS", cuerpo)
         self.assertIn("NO asumas que no hay ninguna", cuerpo)
+        self.assertIn("file_read_failed", cuerpo)
+        self.assertNotIn("/no/existe", cuerpo)
         self.assertIn("no se pudieron leer las alertas", salida.getvalue())
 
     def test_la_lectura_fallida_no_marca_la_corrida(self):
@@ -288,10 +291,72 @@ class TestCorrida(unittest.TestCase):
         self.assertEqual(len(estado["firing_conocidas"]), 3)
 
     def test_un_despacho_fallido_devuelve_uno(self):
-        with self.corrida(publicaciones=(False, "500 nope")) as (_, salida):
+        with self.corrida(publicaciones=(False, 500)) as (_, salida):
             codigo = bus.main(["--desde-fichero", str(FIXTURE)])
         self.assertEqual(codigo, 1)
         self.assertIn("FALLO", salida.getvalue())
+        self.assertIn("HTTP 500", salida.getvalue())
+
+    def test_el_log_no_confia_en_detalles_devuelto_por_el_despacho(self):
+        sentinela = "SECRETO-ID-RUTA-NO-IMPRIMIR"
+        with self.corrida(publicaciones=(False, sentinela)) as (_, salida):
+            codigo = bus.main(["--desde-fichero", str(FIXTURE)])
+        self.assertEqual(codigo, 1)
+        self.assertNotIn(sentinela, salida.getvalue())
+        self.assertIn("SIN CODIGO HTTP", salida.getvalue())
+
+    def test_excepcion_de_lectura_no_filtra_detalle_al_log_ni_al_bus(self):
+        sentinela = "SECRETO-ID-RUTA-NO-IMPRIMIR"
+        salida, errores = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as carpeta:
+            entorno = {"CAUCE_ALERTAS_ESTADO": str(pathlib.Path(carpeta) / "estado.json")}
+            with mock.patch.dict("os.environ", entorno), \
+                    mock.patch.object(bus, "obtener_alertas",
+                                      side_effect=RuntimeError(sentinela)) as lectura, \
+                    mock.patch.object(bus, "publicar", return_value=(True, 202)) as envio, \
+                    contextlib.redirect_stdout(salida), contextlib.redirect_stderr(errores):
+                codigo = bus.main([])
+        self.assertEqual(codigo, 1)
+        lectura.assert_called_once()
+        payload = envio.call_args[0][0]
+        expuesto = salida.getvalue() + errores.getvalue() + json.dumps(payload)
+        self.assertNotIn(sentinela, expuesto)
+        self.assertIn("unexpected_read_failure", texto(payload))
+
+    def test_stderr_remoto_no_filtra_detalle_al_log_ni_al_bus(self):
+        sentinela = "SECRETO-ID-RUTA-NO-IMPRIMIR"
+        salida, errores = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as carpeta:
+            entorno = {"CAUCE_ALERTAS_ESTADO": str(pathlib.Path(carpeta) / "estado.json")}
+            with mock.patch.dict("os.environ", entorno), \
+                    mock.patch.object(bus, "sh", return_value=(23, "", sentinela)), \
+                    mock.patch.object(bus, "publicar", return_value=(True, 202)) as envio, \
+                    contextlib.redirect_stdout(salida), contextlib.redirect_stderr(errores):
+                codigo = bus.main([])
+        self.assertEqual(codigo, 1)
+        payload = envio.call_args[0][0]
+        expuesto = salida.getvalue() + errores.getvalue() + json.dumps(payload)
+        self.assertNotIn(sentinela, expuesto)
+        self.assertIn("remote_read_failed", texto(payload))
+
+
+class TestPublicacionSegura(unittest.TestCase):
+    def test_descarta_el_cuerpo_y_stderr_del_gateway(self):
+        sentinela = "SECRETO-ID-RUTA-NO-IMPRIMIR"
+        salida, errores = io.StringIO(), io.StringIO()
+        with mock.patch.object(bus, "sh", return_value=(0, f"500\n{sentinela}", sentinela)), \
+                contextlib.redirect_stdout(salida), contextlib.redirect_stderr(errores):
+            ok, codigo = bus.publicar(bus.payload_de("alerta", "clave"))
+        self.assertFalse(ok)
+        self.assertIsNone(codigo)
+        self.assertNotIn(sentinela, salida.getvalue() + errores.getvalue())
+        self.assertNotIn("r.read", bus.DESPACHO)
+
+    def test_acepta_unicamente_el_codigo_http_controlado(self):
+        with mock.patch.object(bus, "sh", return_value=(0, "202\n", "ignorado")):
+            self.assertEqual(bus.publicar(bus.payload_de("alerta", "clave")), (True, 202))
+        with mock.patch.object(bus, "sh", return_value=(0, "500\n", "ignorado")):
+            self.assertEqual(bus.publicar(bus.payload_de("alerta", "clave")), (False, 500))
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import {
   chmod, chown, copyFile, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile,
 } from "node:fs/promises";
 import { readFileSync, writeFileSync } from "node:fs";
+import { test } from "node:test";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,10 +14,7 @@ const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const supervisor = path.join(ops, "scripts/container-adapter-supervisor.sh");
 const runtimeHelper = path.join(ops, "container-runtime/cauce-container-runtime.py");
 const fakeDockerSource = path.join(ops, "tests/fake-docker.mjs");
-// The lifecycle half of this suite is an UNPRIVILEGED-controller suite: the helper refuses to change
-// identity when not root, and refuses a root adapter when it is, so a root controller can never satisfy
-// the fixture. Release hosts run the gate as root, so drop to a deterministic non-root identity before
-// any fixture exists — never relax the runtime's own UID/GID 0 rejection to make this pass instead.
+// The lifecycle fixtures require an unprivileged controller before any fixture is created.
 const droppedFromRoot = typeof process.getuid === "function" && process.getuid() === 0;
 if (droppedFromRoot) {
   const testUid = Number.parseInt(process.env.CAUCE_TEST_RUNTIME_UID ?? process.env.SUDO_UID ?? "65534", 10);
@@ -31,6 +29,7 @@ if (droppedFromRoot) {
   process.stdout.write(`dropped the supervisor suite to the non-root test identity ${testUid}:${testGid}\n`);
 }
 
+test("container supervisor adversarial scenarios", async () => {
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cauce-container-supervisor-"));
 const configRoot = path.join(temporary, "config");
 const bundleRoot = path.join(temporary, "bundle");
@@ -1690,7 +1689,6 @@ time.sleep(60)
     process.stdout.write("skipping privileged reproductions: passwordless sudo for root and #65534 is unavailable\n");
   }
 
-  process.stdout.write("container supervisor adversarial tests passed\n");
 } finally {
   for (const pgid of cleanupGroups) {
     try { process.kill(-pgid, "SIGKILL"); } catch { /* already gone */ }
@@ -1707,3 +1705,4 @@ time.sleep(60)
   await writableFixture();
   await rm(temporary, { recursive: true, force: true });
 }
+});

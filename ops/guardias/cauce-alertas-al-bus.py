@@ -64,6 +64,12 @@ ESTADO_POR_DEFECTO = "~/.local/state/cauce-alertas-al-bus.json"
 # the shape of the body it describes: change any `cuerpo_de_*` and bump this.
 FORMATO_CUERPO = "v1"
 
+
+class AlertReadError(RuntimeError):
+    def __init__(self, code):
+        super().__init__("alert read failed")
+        self.code = code
+
 # The dispatch runs ON the storage host: the client cert never leaves it. `/v3/messages` is
 # machine-to-machine surface and a daemon with a client cert never sends `Origin`, so this
 # does not send that header either.
@@ -78,8 +84,10 @@ c = http.client.HTTPSConnection("100.64.0.6", 8443, context=ctx, timeout=25)
 c.request("POST", "/v3/messages", body=json.dumps(payload).encode(),
           headers={"content-type": "application/json", "accept": "application/json"})
 r = c.getresponse()
-print(r.status)
-print(r.read().decode("utf-8", "replace")[:500])
+status = r.status
+r.close()
+c.close()
+print(status)
 '''
 
 
@@ -104,22 +112,35 @@ def obtener_alertas(url, contenedor=CONTENEDOR_POR_DEFECTO, http_directo=False,
                     desde_fichero=None):
     """Devuelve la lista cruda de alertas de `/api/v1/alerts`."""
     if desde_fichero:
-        crudo = pathlib.Path(desde_fichero).read_text(encoding="utf-8")
+        try:
+            crudo = pathlib.Path(desde_fichero).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            raise AlertReadError("file_read_failed") from None
     elif http_directo:
-        with urllib.request.urlopen(f"{url}/api/v1/alerts", timeout=20) as r:
-            crudo = r.read().decode("utf-8", "replace")
+        try:
+            with urllib.request.urlopen(f"{url}/api/v1/alerts", timeout=20) as r:
+                crudo = r.read().decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            raise AlertReadError("http_read_failed") from None
     else:
         # `wget` es el cliente que la propia imagen usa en su healthcheck; `curl` no está.
-        rc, out, err = sh(f"docker exec {contenedor} wget -q -O - {url}/api/v1/alerts",
-                          timeout=60)
+        rc, out, _ = sh(f"docker exec {contenedor} wget -q -O - {url}/api/v1/alerts",
+                        timeout=60)
         if rc != 0:
-            raise RuntimeError(
-                f"docker exec {contenedor} en agora fallo (rc={rc}): {err.strip()[:200]}")
+            raise AlertReadError("remote_read_failed")
         crudo = out
-    documento = json.loads(crudo)
-    alertas = documento.get("data", {}).get("alerts", documento.get("alerts", []))
+    try:
+        documento = json.loads(crudo)
+    except (TypeError, ValueError):
+        raise AlertReadError("invalid_json") from None
+    if not isinstance(documento, dict):
+        raise AlertReadError("invalid_response_shape")
+    datos = documento.get("data", {})
+    if not isinstance(datos, dict):
+        raise AlertReadError("invalid_response_shape")
+    alertas = datos.get("alerts", documento.get("alerts", []))
     if not isinstance(alertas, list):
-        raise RuntimeError("la respuesta de Prometheus no trae data.alerts como lista")
+        raise AlertReadError("invalid_alerts_shape")
     return alertas
 
 
@@ -358,10 +379,12 @@ def estado_siguiente(estado, vivas, ahora, lectura_ok, fallos):
 def publicar(payload):
     """Publica UNA entrega Cauce. 202 es éxito, como en el médico."""
     prog = DESPACHO.replace("json.loads(sys.stdin.read())", f"json.loads({json.dumps(payload)!r})")
-    rc, out, err = sh("python3 -", entrada=prog, timeout=90)
-    lineas = [line for line in out.strip().split("\n") if line.strip()]
-    estado = lineas[0] if lineas else "?"
-    return (rc == 0 and estado == "202"), (out.strip() + " " + err.strip())[:400]
+    rc, out, _ = sh("python3 -", entrada=prog, timeout=90)
+    estado = out.strip()
+    if rc != 0 or re.fullmatch(r"[0-9]{3}", estado) is None:
+        return False, None
+    codigo = int(estado)
+    return codigo == 202, codigo
 
 
 def construir_parser():
@@ -374,7 +397,7 @@ def construir_parser():
                    help="consulta por HTTP desde este host: sólo desde la red `backend`")
     p.add_argument("--desde-fichero", help="lee el JSON de /api/v1/alerts de un fichero")
     p.add_argument("--dry-run", action="store_true",
-                   help="imprime los payloads y no publica (tampoco escribe estado)")
+                   help="muestra conteos y no publica (tampoco escribe estado)")
     return p
 
 
@@ -385,8 +408,8 @@ def main(argv=None):
     try:
         alertas = obtener_alertas(args.prometheus_url, args.contenedor,
                                   args.http_directo, args.desde_fichero)
-    except Exception as e:  # noqa: BLE001
-        motivo = f"{type(e).__name__}: {e}"
+    except Exception as error:  # noqa: BLE001
+        motivo = error.code if isinstance(error, AlertReadError) else "unexpected_read_failure"
         ventana = ventana_de(ahora)
         print(f"{GUARDIA}: no se pudieron leer las alertas: {motivo}")
         # Callarse aquí reproduce el fallo que el guardia existe para tapar, así que el
@@ -399,13 +422,14 @@ def main(argv=None):
         payloads = planificar(alertas, estado, ahora)
         print(f"{GUARDIA}: {len(alertas)} alertas leídas, {len(payloads)} entregas a publicar")
     if args.dry_run:
-        for payload in payloads:
-            print(json.dumps(payload, ensure_ascii=False, indent=1))
+        print(f"{GUARDIA}: dry-run completo; {len(payloads)} entregas no publicadas")
         return 0 if lectura_ok else 1
     fallos = 0
-    for payload in payloads:
-        ok, detalle = publicar(payload)
-        print(f"{payload['idempotency_key']} -> {'202' if ok else 'FALLO'} {detalle}")
+    for indice, payload in enumerate(payloads, start=1):
+        ok, codigo = publicar(payload)
+        resultado = f"HTTP {codigo}" if isinstance(codigo, int) and 100 <= codigo <= 599 \
+            else "SIN CODIGO HTTP"
+        print(f"despacho {indice}/{len(payloads)} -> {'OK' if ok else 'FALLO'} ({resultado})")
         fallos += 0 if ok else 1
     guardar_estado(estado_siguiente(estado, alertas_firing(alertas), ahora,
                                     lectura_ok, fallos))

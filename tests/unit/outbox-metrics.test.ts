@@ -80,6 +80,28 @@ describe('exact outbox metrics exporter', () => {
     expect(queries[3]).not.toContain('disposition_at>=');
   });
 
+  it('keeps unresolved unknown causes visible while separating pending and completed classification', async () => {
+    const queries: string[] = [];
+    const body = await collectOutboxMetrics({
+      async query(sql: string) {
+        queries.push(sql);
+        if (queries.length === 3) return { rows: [
+          { kind: 'origin_relay', disposition: 'unclassified', actionable: false, value: '4' },
+        ] };
+        if (queries.length === 6) return { rows: [
+          { kind: 'origin_relay', classification_state: 'pending_classification', value: '3' },
+          { kind: 'origin_relay', classification_state: 'classified_without_cause', value: '1' },
+        ] };
+        return { rows: [] };
+      },
+    });
+    expect(body).toContain('cauce_outbox_dead_letters_unclassified{kind="origin_relay"} 4');
+    expect(body).toContain('cauce_outbox_dead_letters_unclassified_by_state{kind="origin_relay",state="pending_classification"} 3');
+    expect(body).toContain('cauce_outbox_dead_letters_unclassified_by_state{kind="origin_relay",state="classified_without_cause"} 1');
+    expect(queries[5]).toContain("resolved_at IS NULL AND disposition='unclassified'");
+    expect(queries[5]).toContain('disposition_at IS NULL');
+  });
+
   it('matches cauce_dlq_inventory_030/cauce_list_dlq_030: only ambiguous/safe_retry/missing_final/auth are actionable', async () => {
     const queries: string[] = [];
     const body = await collectOutboxMetrics({
@@ -106,5 +128,9 @@ describe('exact outbox metrics exporter', () => {
     await expect(collectOutboxMetrics(pool([
       [], [], [{ kind: 'wake', disposition: 'expected_offline', actionable: true, value: '1' }], [], [],
     ]))).rejects.toThrow('inconsistent actionable flag');
+    await expect(collectOutboxMetrics(pool([
+      [], [], [], [], [],
+      [{ kind: 'wake', classification_state: 'invented', value: '1' }],
+    ]))).rejects.toThrow('unknown classification state');
   });
 });

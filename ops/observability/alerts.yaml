@@ -141,27 +141,27 @@ groups:
           severity: warning
         annotations:
           summary: "Delivery retry backlog is elevated in lane {{ $labels.lane }}"
-      - alert: CauceInteractiveDeliveryStalled
+      - alert: CauceInteractiveDeliveryBacklogAgeHigh
         expr: max(cauce_dispatcher_delivery_oldest_seconds{lane="interactive",status=~"pending|retry"}) > 60
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Interactive delivery queue is not progressing"
-      - alert: CauceBatchDeliveryStalled
+          summary: "Interactive deliveries have been waiting; check availability and consumer capacity before diagnosing a stall"
+      - alert: CauceBatchDeliveryBacklogAgeHigh
         expr: max(cauce_dispatcher_delivery_oldest_seconds{lane="batch",status=~"pending|retry"}) > 300
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "Batch delivery queue is not progressing"
-      - alert: CauceJobLaneStalled
+          summary: "Batch deliveries have been waiting; check availability and consumer capacity before diagnosing a stall"
+      - alert: CauceJobLaneBacklogAgeHigh
         expr: max by (lane) (cauce_dispatcher_job_oldest_seconds{status="queued"}) > 300
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "Job lane {{ $labels.lane }} is stalled"
+          summary: "Jobs in lane {{ $labels.lane }} have been waiting; queue age alone does not prove a stalled worker"
       - alert: CauceUnknownJobKinds
         expr: increase(cauce_dispatcher_jobs_processed_total{result="unknown_kind"}[10m]) > 0
         labels:
@@ -318,7 +318,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Outbox incidents remain unclassified; causal reconciliation is not converging"
+          summary: "Outbox incidents remain without a known causal disposition; review pending and already evaluated incidents"
       - alert: CauceOriginOutboxDlqActionableStale
         expr: max(cauce_outbox_dead_letter_oldest_actionable_seconds{kind="origin_relay"}) > 1800
         for: 5m

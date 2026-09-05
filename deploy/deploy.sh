@@ -76,6 +76,8 @@ if [ "$aplicada_034" = "0" ]; then
 fi
 "${COMPOSE[@]}" run --rm -T migrator || die "migracion fallida (rollback automatico en BD, sigue en la version previa); pero $ENV_FILE YA apunta a los digests nuevos (runtime=$RUNTIME_DIGEST console=$CONSOLE_DIGEST) y no se levanto ningun contenedor con ellos. Restaura antes de reintentar: cp -a $ENV_FILE.pre-deploy-$STAMP $ENV_FILE"
 "${COMPOSE[@]}" up -d --wait --wait-timeout 300 --remove-orphans || die "up fallo; para volver: restaurar $ENV_FILE.pre-deploy-$STAMP y repetir up"
+CAUCE_ENV_FILE="$ENV_FILE" "$REPO/deploy/refresh-observability.sh" \
+  || die "no se pudieron refrescar los bind mounts de observabilidad"
 "$REPO/deploy/smoke.sh" || die "SMOKE ROJO: evalua rollback (restaurar $ENV_FILE.pre-deploy-$STAMP + up -d --wait). La BD ya esta en $LAST_MIGRATION."
 
 echo "| $STAMP | $REV | $RUNTIME_DIGEST | $CONSOLE_DIGEST | smoke OK |" >> "$REPO/deploy/HISTORIAL.md"

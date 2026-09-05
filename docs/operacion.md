@@ -2,7 +2,7 @@
 
 Procedimientos verificados contra producción real. Fuente de verdad de arquitectura: `docs/arquitectura.md`. Fuente de verdad de flota: `docs/flota-y-participantes.md`. Este documento es solo el CÓMO operar; runbooks completos en `ops/runbooks/*.md`.
 
-**Estado a 28-08-2026**: producción corre desde `/datos/workspaces/zeus/cauce-v3` (esquema 037, compose canónico del repo). `/opt/cauce-v3` y `/etc/cauce-v3/compose-overrides/` son ruta de rollback, muertos pero intactos.
+Producción corre desde `/datos/workspaces/zeus/cauce-v3`, con el compose canónico del repo. Consultar la revisión publicada en `deploy/HISTORIAL.md` y el esquema en `schema_migrations`; no deducirlos del checkout. Se conserva material de rollback en `/opt/cauce-v3` y `/etc/cauce-v3/compose-overrides/`. Algunas unidades todavía ejecutan herramientas instaladas en `/opt/cauce-v3`: comprobar su `ExecStart` antes de considerar retirada esa ruta.
 
 ## 1. Desplegar
 
@@ -11,7 +11,7 @@ Procedimientos verificados contra producción real. Fuente de verdad de arquitec
 - Backup <24h en `/var/backups` (o confirmación explícita si no lo hay).
 - `CAUCE_TERMINAL_RELAY_INSTANCE_ID` en `prod.env` = sha256 del DER de `CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH` (el relay no arranca si no coincide).
 - `docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml config` renderiza sin error.
-- 0 filas en `terminal_sessions WHERE closed_at IS NULL AND revoked_at IS NULL` (si no, la migración 034 aborta: revocar esas filas primero).
+- Si la migración 034 sigue pendiente: 0 filas en `terminal_sessions WHERE closed_at IS NULL AND revoked_at IS NULL`. Si ya está aplicada, las terminales abiertas son normales; no revocarlas para superar este control.
 
 **Precondición que el operador verifica a mano, `deploy.sh` NO la comprueba:** gate en verde
 (`pnpm typecheck && pnpm lint && pnpm test:unit`). El script no ejecuta ni un solo comando `pnpm`;
@@ -22,7 +22,9 @@ confía en que quien despliega ya corrió el gate.
 export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si
 ./deploy/deploy.sh
 ```
-Hace, en orden: build de `deploy/Dockerfile --target runtime` y `--target console` (la consola hornea el instance-id) → push y pin por digest SHA256 en `prod.env` → migrator efímero (todas las migraciones pendientes en UNA transacción) → `docker compose up -d --wait --remove-orphans` (recrea los 10 contenedores, reutiliza el volumen `cauce_pgdata` por nombre) → `deploy/smoke.sh`. Registra el resultado en `deploy/HISTORIAL.md` (commitear tras verificar).
+Hace, en orden: build de `deploy/Dockerfile --target runtime` y `--target console` (la consola hornea el instance-id) → push y pin por digest SHA256 en `prod.env` → migrator efímero (todas las migraciones pendientes en UNA transacción) → `docker compose up -d --wait --remove-orphans` (actualiza los servicios afectados y conserva `cauce_pgdata`) → `deploy/refresh-observability.sh` → `deploy/smoke.sh`. Registra el resultado en `deploy/HISTORIAL.md` (commitear tras verificar).
+
+El refresco recrea únicamente Prometheus y OTel que ya estén activos, sin dependencias ni perfiles apagados. Un reemplazo atómico de archivos por Git puede dejar un montaje individual leyendo el inode anterior; `up` sin cambios de imagen/configuración no garantiza su recarga. Si el refresco falla, no se registra un despliegue exitoso. Los adaptadores SDK se publican y activan por separado: el smoke central no prueba sus nuevos pins. Su canary exige la identidad mTLS reservada `gate-probe`; una entrega normal o un snapshot manual no la sustituye.
 
 **Criterios de parada**: cualquier precondición falla → no arranca. Migrator falla → PostgreSQL
 revierte solo la transacción (esquema intacto) y el script muere ahí — pero `prod.env` YA fue
@@ -170,7 +172,7 @@ docker logs cauce-v3-prod-terminal-relay-1 --since 2m | grep -c 'agent_connected
 
 ## 7. Reglas de oro
 
-- `/datos/workspaces/zeus/cauce-v3` es material de PRODUCCIÓN: prometheus, otel y postgres montan ficheros de ahí directamente. No rebasear, no cambiar de rama con prod arriba (`git pull` de `ops/observability/*.yaml` muta prometheus en caliente).
+- `/datos/workspaces/zeus/cauce-v3` es material de PRODUCCIÓN: Prometheus, OTel y PostgreSQL montan ficheros de ahí. No rebasear ni cambiar de rama con producción arriba. Una actualización de Git exige verificar el contenido efectivo de los montajes; no implica una recarga automática.
 - `/opt/cauce-v3` y `/etc/cauce-v3/compose-overrides/` son la ÚNICA ruta de rollback probada hasta que se archiven tras un periodo de reposo — no borrar, no tocar.
 - `deploy/deploy.sh` exige `CAUCE_FASE3_CON_DUENO=si`: ningún despliegue corre sin el dueño presente.
 - Nunca `docker compose down` en producción: pararía postgres antes de poder restaurar. `stop` de los servicios de aplicación, postgres se toca aparte y con backup verificado en mano.

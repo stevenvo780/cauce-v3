@@ -117,10 +117,12 @@ entregas done» en una ventana sin tráfico; el resto OK, sin rollback). Despué
 `00358416`: la ventana que puso en línea el árbol cerrado de v3.1 —los refactores de ops, consola,
 runtime, store, gateway y adapter-sdk, la siega de huérfanos PTY por pidfd, la reconexión ante
 sockets sordos, los comandos de operador en DM, el acotado de la exención CSRF y Prometheus en
-`[backend, edge]`—. La última fila es `caf35316`: el bridge de Telegram reúne en un solo mensaje
+`[backend, edge]`—. `caf35316` corrigió el bridge de Telegram para reunir en un solo mensaje
 las piezas en que el cliente parte un texto de más de 4096 caracteres (antes el agente leía sólo
-la primera) y las pruebas del rollout PTY afirman la colocación real de kant. Ese registro
-demuestra la ventana ejecutada; no sustituye una nueva validación
+la primera) y las pruebas del rollout PTY afirman la colocación real de kant. La última fila es
+`9b5e2172`, con smoke central verde y correcciones adicionales de consola, Telegram y contexto.
+El SDK nuevo está publicado, pero sus pins siguen sin activarse por faltar el principal de la
+sonda canary. Ese registro demuestra la ventana central; no sustituye una nueva validación
 del estado vivo desde este checkout, y lo que queda por comprobar por efecto después de esa fila
 está en `docs/v3.1-pendientes.md` §1, «Deuda de despliegue».
 

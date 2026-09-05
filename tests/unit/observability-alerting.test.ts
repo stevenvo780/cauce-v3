@@ -86,6 +86,28 @@ describe('production alert delivery is observable and identity-safe', () => {
     expect(rules).not.toMatch(/cauce_outbox_dead_letters_new\{kind="(?:wake|origin_relay)"\}\s*>/u);
   });
 
+  it('reports queue age without mistaking scheduled or capacity-bound work for a stalled loop', async () => {
+    const rules = await readFile(resolve(root, 'ops/observability/alerts.yaml'), 'utf8');
+    const cases = [
+      ['InteractiveDelivery', 'max(cauce_dispatcher_delivery_oldest_seconds{lane="interactive",status=~"pending|retry"}) > 60', '5m'],
+      ['BatchDelivery', 'max(cauce_dispatcher_delivery_oldest_seconds{lane="batch",status=~"pending|retry"}) > 300', '10m'],
+      ['JobLane', 'max by (lane) (cauce_dispatcher_job_oldest_seconds{status="queued"}) > 300', '10m'],
+    ] as const;
+    for (const [name, expression, duration] of cases) {
+      const start = rules.indexOf(`      - alert: Cauce${name}BacklogAgeHigh`);
+      expect(start).toBeGreaterThanOrEqual(0);
+      const end = rules.indexOf('\n      - alert:', start + 1);
+      const rule = rules.slice(start, end < 0 ? undefined : end);
+      expect(rule).toContain(`expr: ${expression}`);
+      expect(rule).toContain(`for: ${duration}`);
+      expect(rule).toContain('severity: warning');
+      expect(rule).toContain('have been waiting');
+      expect(rules).not.toContain(`alert: Cauce${name}Stalled`);
+    }
+    expect(rules).toContain('alert: CauceDispatcherLoopStale');
+    expect(rules).toContain('expr: absent(cauce_dispatcher_loop_stale) or cauce_dispatcher_loop_stale == 1');
+  });
+
   it('fails loudly on unknown release state and keeps the rollback bridge visibly degraded', async () => {
     const rules = await readFile(resolve(root, 'ops/observability/alerts.yaml'), 'utf8');
     for (const name of [

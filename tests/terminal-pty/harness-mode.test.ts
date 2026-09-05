@@ -11,6 +11,7 @@
 
 import { type ChildProcess, execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { TUI_WINDOW } from '@cauce/adapter-sdk';
@@ -33,6 +34,7 @@ if (TMUX === null) {
 }
 
 const sockets: string[] = [];
+const socketPaths = new Map<string, string>();
 const socket = (suffix: string): string => {
   const name = `cauce-test-${String(process.pid)}-${randomUUID().slice(0, 8)}-${suffix}`;
   sockets.push(name);
@@ -76,6 +78,9 @@ const createSession = (socketName: string, windowName: string): string => {
   ], { encoding: 'utf8' }).trim();
   execFileSync(tmux, ['-L', socketName, 'set-option', '-t', sessionId, '@cauce_alias', ALIAS]);
   execFileSync(tmux, ['-L', socketName, 'set-option', '-t', sessionId, '@cauce_harness', HARNESS]);
+  socketPaths.set(socketName, execFileSync(
+    tmux, ['-L', socketName, 'display-message', '-p', '#{socket_path}'], { encoding: 'utf8' }
+  ).trim());
   return sessionId;
 };
 
@@ -100,6 +105,8 @@ suite('the pty-agent attaches to the window the adapter-sdk creates', () => {
   afterAll(() => {
     for (const name of sockets) {
       spawnSync(TMUX ?? 'tmux', ['-L', name, 'kill-server'], { stdio: 'ignore' });
+      const path = socketPaths.get(name);
+      if (path !== undefined) rmSync(path, { force: true });
     }
   });
 
@@ -124,7 +131,8 @@ suite('the pty-agent attaches to the window the adapter-sdk creates', () => {
     createSession(name, TUI_WINDOW);
     const argv = agentArgv(name);
     const client = spawn(SCRIPT ?? 'script', ['-qec', quote(argv), '/dev/null'], {
-      stdio: ['ignore', 'ignore', 'pipe']
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: { ...process.env, TERM: 'xterm-256color' }
     });
     // The listener is armed before the wait so an early exit cannot be missed. Detaching on a
     // timer would either race a slow attach or hang until the suite timeout; wait for tmux to

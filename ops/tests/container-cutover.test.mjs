@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { test } from "node:test";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,8 @@ import { fileURLToPath } from "node:url";
 const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cutover = path.join(ops, "scripts/cutover.sh");
 const migrationGate = path.join(ops, "scripts/migration-gate.mjs");
+
+test("container cutover scenarios", async () => {
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cauce-container-cutover-"));
 const bin = path.join(temporary, "bin");
 const lockDir = path.join(temporary, "locks");
@@ -192,7 +195,7 @@ try {
     holder.kill("SIGKILL");
   }
 
-  process.stdout.write("container cutover tests passed\n");
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
+});
