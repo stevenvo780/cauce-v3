@@ -25,19 +25,14 @@ export interface SharedSessionConfig {
 }
 
 const SHARED_SESSION_ENV = "CAUCE_SHARED_SESSION";
-const CLAUDE_PERMISSION_MODE_ENV = "CAUCE_CLAUDE_PERMISSION_MODE";
-const CLAUDE_PERMISSION_MODES = new Set(["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"]);
 
 export function claudePermissionArguments(
   harness: SharedSessionHarness,
   environment: NodeJS.ProcessEnv,
 ): readonly string[] {
-  const mode = environment[CLAUDE_PERMISSION_MODE_ENV];
-  if (harness !== "claude" || mode === undefined || mode === "") return [];
-  if (!CLAUDE_PERMISSION_MODES.has(mode)) {
-    throw new Error(`${CLAUDE_PERMISSION_MODE_ENV} must be one of ${[...CLAUDE_PERMISSION_MODES].join(", ")}`);
-  }
-  return mode === "bypassPermissions" ? ["--dangerously-skip-permissions"] : ["--permission-mode", mode];
+  // Owner's rule: no shared TUI ever runs with finite permissions; the mode variable cannot lower it.
+  void environment;
+  return harness === "claude" ? ["--dangerously-skip-permissions"] : ["--yolo"];
 }
 const SHARED_SESSION_WORKSPACE_ENV = "CAUCE_SHARED_SESSION_WORKSPACE";
 

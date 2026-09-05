@@ -10,33 +10,16 @@ import { FakeTmux, freshState } from "./shared-session-fixtures.js";
 
 const immediate = (): Promise<void> => Promise.resolve();
 
-test("el modo de permisos del alias viaja al binario de la TUI compartida", () => {
-  assert.deepEqual(
-    claudePermissionArguments("claude", { CAUCE_CLAUDE_PERMISSION_MODE: "bypassPermissions" }),
-    ["--dangerously-skip-permissions"],
-  );
-  for (const mode of ["acceptEdits", "auto", "manual", "dontAsk", "plan"]) {
-    assert.deepEqual(
-      claudePermissionArguments("claude", { CAUCE_CLAUDE_PERMISSION_MODE: mode }),
-      ["--permission-mode", mode],
-      mode,
-    );
+test("toda TUI compartida arranca sin permisos finitos: claude con --dangerously-skip-permissions, codex con --yolo", () => {
+  // Regla del dueno: nunca permisos finitos. La variable de modo no puede rebajarlo.
+  for (const environment of [{}, { CAUCE_CLAUDE_PERMISSION_MODE: "" }, { CAUCE_CLAUDE_PERMISSION_MODE: "bypassPermissions" }, { CAUCE_CLAUDE_PERMISSION_MODE: "plan" }]) {
+    assert.deepEqual(claudePermissionArguments("claude", environment), ["--dangerously-skip-permissions"]);
+    assert.deepEqual(claudePermissionArguments("codex", environment), ["--yolo"]);
   }
-  // Without the variable the TUI starts exactly as before; codex never receives claude flags.
-  assert.deepEqual(claudePermissionArguments("claude", {}), []);
-  assert.deepEqual(claudePermissionArguments("claude", { CAUCE_CLAUDE_PERMISSION_MODE: "" }), []);
-  assert.deepEqual(
-    claudePermissionArguments("codex", { CAUCE_CLAUDE_PERMISSION_MODE: "bypassPermissions" }),
-    [],
-  );
-  assert.throws(
-    () => claudePermissionArguments("claude", { CAUCE_CLAUDE_PERMISSION_MODE: "yolo" }),
-    /CAUCE_CLAUDE_PERMISSION_MODE/u,
-  );
 });
 
 test("adaptador y CLI arrancan la TUI con los mismos flags de permisos", () => {
-  const environment = { HOME: "/home/dev", CAUCE_CLAUDE_PERMISSION_MODE: "bypassPermissions" } as NodeJS.ProcessEnv;
+  const environment = { HOME: "/home/dev" } as NodeJS.ProcessEnv;
   const adapter = loadSharedSessionConfig("claude", "kratos", "/estado", {
     ...environment, CAUCE_SHARED_SESSION: "1",
   });
@@ -44,7 +27,7 @@ test("adaptador y CLI arrancan la TUI con los mismos flags de permisos", () => {
   assert.deepEqual(adapter?.harnessArguments, ["--dangerously-skip-permissions"]);
   assert.deepEqual(cli.harnessArguments, adapter.harnessArguments);
   const codex = cliSharedSessionSpec("codex", "socrates", "/workspace", "/home/dev", environment);
-  assert.deepEqual(codex.harnessArguments, []);
+  assert.deepEqual(codex.harnessArguments, ["--yolo"]);
 });
 
 test("los flags de permisos van SIEMPRE en el argv del panel, haya o no conversación que reanudar", async () => {
