@@ -10,7 +10,20 @@ export const DEFAULT_INJECT_TIMEOUT_MS = 30_000;
 export const LIVENESS_EVERY = 8;
 /** Un dialogo no se destraba esperando: rendirse pronto es lo que hace seguro el plazo largo. */
 export const ACQUIRE_MODAL_TIMEOUT_MS = 15_000;
-export const DEFAULT_CORRELATION_TIMEOUT_MS = 25 * 60_000;
+export const DEFAULT_CORRELATION_TIMEOUT_MS = 120 * 60_000;
+const CORRELATION_TIMEOUT_ENV = "CAUCE_SHARED_SESSION_CORRELATION_TIMEOUT_MS";
+const MIN_CORRELATION_TIMEOUT_MS = 60_000;
+const MAX_CORRELATION_TIMEOUT_MS = 24 * 60 * 60_000;
+
+export function correlationTimeoutFromEnvironment(environment: NodeJS.ProcessEnv): number {
+  const raw = environment[CORRELATION_TIMEOUT_ENV];
+  if (raw === undefined || raw === "") return DEFAULT_CORRELATION_TIMEOUT_MS;
+  const value = /^[0-9]{1,9}$/u.test(raw) ? Number(raw) : Number.NaN;
+  if (!Number.isInteger(value) || value < MIN_CORRELATION_TIMEOUT_MS || value > MAX_CORRELATION_TIMEOUT_MS) {
+    throw new Error(`${CORRELATION_TIMEOUT_ENV} must be an integer between ${String(MIN_CORRELATION_TIMEOUT_MS)} and ${String(MAX_CORRELATION_TIMEOUT_MS)} milliseconds`);
+  }
+  return value;
+}
 export const DEFAULT_QUIET_MS = 5 * 60_000;
 
 export function turnBudgetMs(requestTimeoutMs: number, turnTimeoutMs?: number): number {

@@ -18,6 +18,7 @@ import { TenantSchema } from "@cauce/protocol";
 import { loadCliRuntimeConfig } from "./config.js";
 import { CliTmux } from "../shared-session/tmux.js";
 import { PasteSessionRunner } from "../shared-session/paste-runner.js";
+import { correlationTimeoutFromEnvironment } from "../shared-session/paste-runner/runtime.js";
 import { claudeTranscript } from "../shared-session/transcript.js";
 import { codexTranscript } from "../shared-session/rollout.js";
 import { loadSharedSessionConfig, type SharedSessionConfig } from "../shared-session/config.js";
@@ -154,6 +155,7 @@ function sharedSessionRunner(
     fallback,
     sleep,
     quarantineFile: join(shared.stateDirectory, ".shared-session-quarantine"),
+    correlationTimeoutMs: correlationTimeoutFromEnvironment(process.env),
     onDegradation,
     onNotice: (detail: string): void => {
       logger({ event: "shared_session_resume", alias: shared.alias, error_message: detail });

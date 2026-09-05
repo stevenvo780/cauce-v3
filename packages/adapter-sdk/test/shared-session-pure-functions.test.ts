@@ -8,6 +8,7 @@ import {
   ACQUIRE_MODAL_TIMEOUT_MS,
   DEFAULT_ACQUIRE_TIMEOUT_MS,
   DEFAULT_CORRELATION_TIMEOUT_MS,
+  correlationTimeoutFromEnvironment,
 } from "../src/shared-session/paste-runner/runtime.js";
 import { stripJsonFence } from "../src/shared-session/transcript.js";
 import { CliTmux, withoutLifecycleIdentity } from "../src/shared-session/tmux.js";
@@ -174,13 +175,26 @@ test("el vallado Markdown se quita solo cuando envuelve todo el texto", () => {
   assert.equal(stripJsonFence(mixed), mixed);
 });
 test("los plazos del paste-runner: 9 entregas se perdieron por los valores viejos", () => {
-  assert.equal(DEFAULT_CORRELATION_TIMEOUT_MS, 25 * 60_000,
-    "el corte de 5 min mataba entregas con el trabajo ya hecho; vivio parcheado a mano en un "
-    + "bundle y cada reconstruccion lo revertia en silencio");
+  assert.equal(DEFAULT_CORRELATION_TIMEOUT_MS, 120 * 60_000,
+    "el corte de 5 min mataba entregas con el trabajo ya hecho, y el de 25 min mato 8 turnos largos "
+    + "(workflows) en una semana con el arnes todavia trabajando; el claim se renueva durante la "
+    + "ejecucion, asi que el servidor no necesita este corte para vivir");
   assert.equal(DEFAULT_ACQUIRE_TIMEOUT_MS, 20 * 60_000,
     "la caja de entrada ocupada se libera sola cuando el agente termina el turno: vale esperarla");
   assert.equal(ACQUIRE_MODAL_TIMEOUT_MS, 15_000,
     "un dialogo NO se contesta solo: sin este corte corto, el plazo largo lo vuelve un bloqueo");
   assert.ok(ACQUIRE_MODAL_TIMEOUT_MS < DEFAULT_ACQUIRE_TIMEOUT_MS / 10,
     "los dos casos son opuestos y sus plazos tienen que estar en ordenes de magnitud distintos");
+});
+
+test("el corte de correlacion se puede fijar por alias con CAUCE_SHARED_SESSION_CORRELATION_TIMEOUT_MS", () => {
+  assert.equal(correlationTimeoutFromEnvironment({}), DEFAULT_CORRELATION_TIMEOUT_MS,
+    "sin variable vale el default");
+  assert.equal(correlationTimeoutFromEnvironment({ CAUCE_SHARED_SESSION_CORRELATION_TIMEOUT_MS: "3600000" }), 3_600_000);
+  assert.equal(correlationTimeoutFromEnvironment({ CAUCE_SHARED_SESSION_CORRELATION_TIMEOUT_MS: "" }),
+    DEFAULT_CORRELATION_TIMEOUT_MS, "vacia cuenta como ausente");
+  for (const bad of ["abc", "0", "59999", "1.5", "-1", "86400001"]) {
+    assert.throws(() => correlationTimeoutFromEnvironment({ CAUCE_SHARED_SESSION_CORRELATION_TIMEOUT_MS: bad }),
+      /CAUCE_SHARED_SESSION_CORRELATION_TIMEOUT_MS/u, `rechaza ${bad}`);
+  }
 });
