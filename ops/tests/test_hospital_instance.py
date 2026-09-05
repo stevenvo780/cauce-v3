@@ -131,6 +131,13 @@ class HospitalInstanceTests(unittest.TestCase):
         self.assertIn("/probe/identities/mtls_identities.json", script)
         self.assertIn("/probe/release-state", script)
 
+    def test_agent_provision_waits_for_real_fresh_leases(self) -> None:
+        script = (INSTANCE / "provision-agents.sh").read_text(encoding="utf-8")
+
+        self.assertIn("for _attempt in $(seq 1 24)", script)
+        self.assertIn("last_heartbeat_at > now() - interval '60 seconds'", script)
+        self.assertLess(script.index('[ "$leases" = 3 ] ||'), script.index("CAUCE_SMOKE_EXPECTED_AGENTS"))
+
     def test_backup_is_installed_and_restore_verified_before_the_timer(self) -> None:
         script = (INSTANCE / "bootstrap-core.sh").read_text(encoding="utf-8")
         backup = (INSTANCE / "backup.sh").read_text(encoding="utf-8")

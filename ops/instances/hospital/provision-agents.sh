@@ -220,8 +220,13 @@ for _attempt in 1 2 3 4 5 6 7 8 9 10; do
 done
 [ "${active:-0}" -eq 3 ] || { echo "No arrancaron los tres adapters" >&2; exit 1; }
 
-leases=$(docker exec hospital-cauce-postgres-1 psql -XAtq -U cauce_hospital -d cauce_hospital \
-  -c "SELECT count(*) FROM connection_leases WHERE tenant_id='Hospital' AND lease_until > now()")
+leases=0
+for _attempt in $(seq 1 24); do
+  leases=$(docker exec hospital-cauce-postgres-1 psql -XAtq -U cauce_hospital -d cauce_hospital \
+    -c "SELECT count(*) FROM connection_leases WHERE tenant_id='Hospital' AND lease_until > now() AND last_heartbeat_at > now() - interval '60 seconds'")
+  [ "$leases" = 3 ] && break
+  sleep 5
+done
 [ "$leases" = 3 ] || { echo "Se esperaban 3 leases y se observaron $leases" >&2; exit 1; }
 
 set_env CAUCE_SMOKE_EXPECTED_AGENTS 3
