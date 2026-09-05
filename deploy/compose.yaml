@@ -81,6 +81,9 @@ services:
       CAUCE_MEDIA_DIR: /run/cauce-media
       CAUCE_MEDIA_MAX_BYTES: ${CAUCE_MEDIA_MAX_BYTES:-20971520}
       CAUCE_MEDIA_SWEEP_SECONDS: ${CAUCE_MEDIA_SWEEP_SECONDS:-60}
+      # Files too large to ride inline (PUT/GET /v3/blobs), content-addressed by sha256.
+      CAUCE_BLOB_DIR: /var/lib/cauce-v3/blobs
+      CAUCE_BLOB_MAX_BYTES: ${CAUCE_BLOB_MAX_BYTES:-2147483648}
       CAUCE_TERMINAL_ENABLED: ${CAUCE_TERMINAL_ENABLED:-0}
       CAUCE_TERMINAL_WS_PATH: ${CAUCE_TERMINAL_WS_PATH:-/v3/console/terminal/ws}
       CAUCE_TERMINAL_TICKET_KEY_FILE: /run/secrets/terminal_ticket_key
@@ -196,6 +199,11 @@ services:
         target: /run/cauce-media
         bind:
           create_host_path: false
+      # Blob store: a named volume, never a bind, so the read-only runtime owns it (the image
+      # creates the path as uid 1000). Purged by ops/scripts/purgar-blobs.py, never by hand.
+      - type: volume
+        source: blobs_data
+        target: /var/lib/cauce-v3/blobs
     ports:
       - "${CAUCE_PRIVATE_BIND_IP:-127.0.0.1}:${GATEWAY_TLS_PORT:-8443}:8443"
     healthcheck:
@@ -601,6 +609,7 @@ secrets:
 volumes:
   prometheus_data:
   terminal_close_spool:
+  blobs_data:
 
 networks:
   edge:

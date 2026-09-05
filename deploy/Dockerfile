@@ -74,8 +74,8 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=python-runtime /usr/local /usr/local
 RUN python3 -c 'import asyncio, json; assert asyncio and json' \
-  && mkdir -p /var/lib/cauce-adapter /var/lib/cauce-terminal \
-  && chown node:node /var/lib/cauce-adapter /var/lib/cauce-terminal
+  && mkdir -p /var/lib/cauce-adapter /var/lib/cauce-terminal /var/lib/cauce-v3/blobs \
+  && chown node:node /var/lib/cauce-adapter /var/lib/cauce-terminal /var/lib/cauce-v3/blobs
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --from=production-dependencies --chown=node:node /app/packages ./packages
 COPY --from=production-dependencies --chown=node:node /app/services ./services
