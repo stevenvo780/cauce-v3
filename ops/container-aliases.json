@@ -1,176 +1,49 @@
 {
   "schemaVersion": 2,
   "systemPrincipals": {
-    "quota-collector": {
-      "tenant": "Steven",
-      "room": "grp.steven",
+    "console-proxy": {
+      "tenant": "Hospital",
+      "room": "grp.hospital",
       "membershipRole": "operator"
     }
   },
   "historicalAliases": {},
   "aliases": {
-    "argos": {
-      "tenant": "Steven",
-      "room": "grp.steven",
-      "container": "ctrl-infra",
+    "backend": {
+      "tenant": "Hospital",
+      "room": "grp.hospital",
+      "container": "hospital-agent-openclaw-backend-gateway-1",
       "systemdUser": "stev",
-      "user": "dev",
-      "home": "/home/dev",
-      "workspace": "/home/dev/clawd",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/argos",
+      "user": "node",
+      "home": "/home/node",
+      "workspace": "/home/node/clawd",
+      "stateDirectory": "/home/node/.openclaw/cauce-v3/backend",
       "harness": "openclaw",
       "membershipRole": "agent"
     },
-    "atlas": {
-      "tenant": "Miguel",
-      "room": "grp.miguel",
-      "container": "ws-humanizar",
+    "frontend": {
+      "tenant": "Hospital",
+      "room": "grp.hospital",
+      "container": "hospital-agent-openclaw-frontend-gateway-1",
       "systemdUser": "stev",
-      "user": "dev",
-      "home": "/home/dev",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/atlas",
-      "harness": "codex",
-      "membershipRole": "agent"
-    },
-    "gaia": {
-      "tenant": "Miguel",
-      "room": "grp.miguel",
-      "container": "agv2-miguel-finca-oc",
-      "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "workspace": "/home/claw/clawd",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/gaia",
+      "user": "node",
+      "home": "/home/node",
+      "workspace": "/home/node/clawd",
+      "stateDirectory": "/home/node/.openclaw/cauce-v3/frontend",
       "harness": "openclaw",
       "membershipRole": "agent"
     },
-    "hegel": {
-      "tenant": "Jhon",
-      "room": "grp.jhon",
-      "container": "agv2-jhon-hegel-oc",
+    "operador": {
+      "tenant": "Hospital",
+      "room": "grp.hospital",
+      "container": "hospital-agent-openclaw-operator-gateway-1",
       "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "workspace": "/home/claw/clawd",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/hegel",
-      "harness": "openclaw",
-      "membershipRole": "agent"
-    },
-    "heraclito": {
-      "tenant": "Jhon",
-      "room": "grp.jhon",
-      "container": "agv2-jhon-heraclito-oc",
-      "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/heraclito",
-      "harness": "claude",
-      "membershipRole": "agent"
-    },
-    "iza": {
-      "tenant": "Miguel",
-      "room": "grp.miguel",
-      "container": "claw-iza",
-      "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "workspace": "/home/claw/clawd",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/iza",
-      "harness": "openclaw",
-      "membershipRole": "agent"
-    },
-    "janus": {
-      "tenant": "Miguel",
-      "room": "grp.miguel",
-      "container": "claw-miguel",
-      "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "workspace": "/home/claw/clawd",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/janus",
+      "user": "node",
+      "home": "/home/node",
+      "workspace": "/home/node/clawd",
+      "stateDirectory": "/home/node/.openclaw/cauce-v3/operador",
       "harness": "openclaw",
       "membershipRole": "operator"
-    },
-    "jarvis": {
-      "tenant": "Steven",
-      "room": "grp.steven",
-      "container": "claw",
-      "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "workspace": "/home/claw/clawd",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/jarvis",
-      "harness": "openclaw",
-      "membershipRole": "agent_notify"
-    },
-    "kant": {
-      "tenant": "Steven",
-      "room": "grp.steven",
-      "container": "ctrl-infra",
-      "registryContainer": "host:kratos",
-      "dockerHost": "kratos",
-      "systemdUser": "stev",
-      "user": "stev",
-      "home": "/home/stev",
-      "stateDirectory": "/var/lib/cauce-v3/aliases/kant",
-      "harness": "codex",
-      "membershipRole": "operator"
-    },
-    "kratos": {
-      "tenant": "Miguel",
-      "room": "grp.miguel",
-      "container": "ws-humanizar",
-      "systemdUser": "stev",
-      "user": "dev",
-      "home": "/home/dev",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/kratos",
-      "harness": "claude",
-      "membershipRole": "agent"
-    },
-    "salva": {
-      "tenant": "Isa",
-      "room": "grp.isa",
-      "container": "ws-isa",
-      "dockerHost": "kratos",
-      "systemdUser": "stev",
-      "user": "dev",
-      "home": "/home/dev",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/salva",
-      "harness": "claude",
-      "membershipRole": "agent"
-    },
-    "socrates": {
-      "tenant": "Steven",
-      "room": "grp.steven",
-      "container": "ws-prizma",
-      "systemdUser": "stev",
-      "user": "dev",
-      "home": "/home/dev",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/socrates",
-      "harness": "codex",
-      "membershipRole": "agent_notify"
-    },
-    "tales": {
-      "tenant": "Jhon",
-      "room": "grp.jhon",
-      "container": "agv2-jhon-tales-oc",
-      "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/tales",
-      "harness": "codex",
-      "membershipRole": "agent"
-    },
-    "zeus": {
-      "tenant": "Steven",
-      "room": "grp.steven",
-      "container": "ws-zeus",
-      "systemdUser": "stev",
-      "user": "dev",
-      "home": "/home/dev",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/zeus",
-      "harness": "claude",
-      "membershipRole": "agent_notify"
     }
   }
 }
