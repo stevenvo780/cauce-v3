@@ -103,6 +103,8 @@ try:
 except (OSError, ValueError) as error:
     raise SystemExit(f'no puedo leer {OPS_ROOT / "container-aliases.json"}: {error}') from None
 
+CONFIG = {alias: path for alias, path in CONFIG.items() if alias in INVENTORY}
+
 FLEET = {
     alias: (entry['tenant'], entry['harness'], CONFIG.get(alias))
     for alias, entry in INVENTORY.items()

@@ -21,7 +21,7 @@ assert_missing() { # $1=path $2=msg
 }
 
 WORK=$(mktemp -d)
-# shellcheck disable=SC2329  # invoked indirectly, via the EXIT trap below
+# shellcheck disable=SC2329,SC2317  # invoked indirectly, via the EXIT trap below
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 

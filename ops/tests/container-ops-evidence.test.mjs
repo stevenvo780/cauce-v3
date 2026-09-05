@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -130,8 +130,13 @@ assert.match(ignoredBackupCheck.stdout, /ignored-backup-excluded-new-and-tracked
 const rootlessList = spawnSync("python3", [digestScript, "--rootless", "--list"], { encoding: "utf8" });
 assert.equal(rootlessList.status, 0, rootlessList.stderr);
 const rootlessCovered = new Set(rootlessList.stdout.trim().split("\n"));
-assert(rootlessCovered.has("generated/container-systemd/rootless/cauce-v3-container-kant.service"));
-assert(rootlessCovered.has("generated/container-systemd/rootless/configs/kant.env.example"));
+const aliasInventory = JSON.parse(await readFile(path.join(ops, "container-aliases.json"), "utf8")).aliases;
+const representativeAlias = Object.hasOwn(aliasInventory, "operador")
+  ? "operador"
+  : Object.keys(aliasInventory).sort()[0];
+assert(representativeAlias, "container alias inventory must not be empty");
+assert(rootlessCovered.has(`generated/container-systemd/rootless/cauce-v3-container-${representativeAlias}.service`));
+assert(rootlessCovered.has(`generated/container-systemd/rootless/configs/${representativeAlias}.env.example`));
 assert(rootlessCovered.has("scripts/pin-container-release.py"));
 const rootlessCheck = spawnSync("python3", [digestScript, "--rootless", "--check"], { encoding: "utf8" });
 assert.equal(rootlessCheck.status, 0, `${rootlessCheck.stdout} ${rootlessCheck.stderr}`);
@@ -146,7 +151,7 @@ const rootless = path.join(ops, "generated/container-systemd/rootless");
  * to be edited every time the fleet grows.
  */
 const aliasRegistrados = Object.keys(
-  JSON.parse(await readFile(path.join(ops, "container-aliases.json"), "utf8")).aliases,
+  aliasInventory,
 ).length;
 assert.equal(
   (await readdir(rootless)).filter((name) => /^cauce-v3-container-.*\.service$/u.test(name)).length,
@@ -158,17 +163,17 @@ assert.equal(
   aliasRegistrados,
   "hay un alias registrado sin config de ejemplo rootless",
 );
-const rootlessUnit = await readFile(path.join(rootless, "cauce-v3-container-kant.service"), "utf8");
+const rootlessUnit = await readFile(path.join(rootless, `cauce-v3-container-${representativeAlias}.service`), "utf8");
 assert(!/^User=/mu.test(rootlessUnit), "systemd user unit must not set User=");
 assert.match(rootlessUnit, /^WantedBy=default\.target$/mu);
-assert.match(rootlessUnit, /^ExecStart=%h\/\.local\/share\/cauce-v3\/ops\/scripts\/container-adapter-supervisor\.sh start kant$/mu);
+assert.match(rootlessUnit, new RegExp(`^ExecStart=%h/\\.local/share/cauce-v3/ops/scripts/container-adapter-supervisor\\.sh start ${representativeAlias}$`, "mu"));
 assert.match(rootlessUnit, /^Environment=CAUCE_CONTAINER_LOCK_ROOT=%t\/cauce-v3$/mu);
 assert.match(rootlessUnit, /^RestartPreventExitStatus=2 73 78$/mu);
 assert.match(rootlessUnit, /^RestartForceExitStatus=70$/mu);
-const rootlessConfig = await readFile(path.join(rootless, "configs/kant.env.example"), "utf8");
+const rootlessConfig = await readFile(path.join(rootless, `configs/${representativeAlias}.env.example`), "utf8");
 assert.match(rootlessConfig, /^BUNDLE_RELEASE=REPLACE_WITH_IMMUTABLE_RELEASE_NAME$/mu);
 assert.doesNotMatch(rootlessConfig, /^BUNDLE_CURRENT=/mu);
-assert.match(rootlessConfig, /^PKI_DIR=\/home\/dev\/\.config\/cauce-v3\/container-pki\/kant$/mu);
+assert.match(rootlessConfig, new RegExp(`^PKI_DIR=/home/dev/\\.config/cauce-v3/container-pki/${representativeAlias}$`, "mu"));
 const regeneratedRootless = await mkdtemp(path.join(os.tmpdir(), "cauce-rootless-units-"));
 try {
   const generated = spawnSync("python3", [path.join(ops, "scripts/generate-container-units.py"),
@@ -184,6 +189,73 @@ try {
   }
 } finally {
   await rm(regeneratedRootless, { recursive: true, force: true });
+}
+
+const isolatedOpsRoot = await mkdtemp(path.join(os.tmpdir(), "cauce-isolated-ops-"));
+const isolatedOutput = await mkdtemp(path.join(os.tmpdir(), "cauce-isolated-units-"));
+const isolatedInventory = {
+  schemaVersion: 2,
+  systemPrincipals: {},
+  historicalAliases: [],
+  aliases: {
+    "hospital-leader": {
+      tenant: "Hospital",
+      room: "grp.hospital",
+      container: "hospital-leader",
+      user: "claw",
+      home: "/home/claw",
+      stateDirectory: "/home/claw/.openclaw",
+      harness: "openclaw",
+      membershipRole: "agent_notify",
+      systemdUser: "root",
+      workspace: "/home/claw/.openclaw/workspace-hospital-leader",
+    },
+  },
+};
+try {
+  await writeFile(path.join(isolatedOpsRoot, "container-aliases.json"),
+    `${JSON.stringify(isolatedInventory)}\n`);
+  const generated = spawnSync("python3", [path.join(ops, "scripts/generate-container-units.py"),
+    "--ops-root", isolatedOpsRoot,
+    "--output", isolatedOutput,
+    "--install-prefix", "/srv/hospital-cauce",
+    "--config-root", "/etc/hospital-cauce/container-aliases",
+    "--pki-root", "/etc/hospital-cauce/container-pki",
+    "--bundle-root", "/srv/hospital-cauce-adapter",
+    "--lock-root", "/run/lock/hospital-cauce"], { encoding: "utf8" });
+  assert.equal(generated.status, 0, generated.stderr);
+  const unitText = await readFile(
+    path.join(isolatedOutput, "cauce-v3-container-hospital-leader.service"), "utf8",
+  );
+  assert.match(unitText,
+    /^ConditionPathExists=\/etc\/hospital-cauce\/container-aliases\/hospital-leader\.env$/mu);
+  assert.match(unitText, /^Environment=CAUCE_CONTAINER_OPS_ROOT=\/srv\/hospital-cauce\/ops$/mu);
+  assert.match(unitText,
+    /^Environment=CAUCE_CONTAINER_CONFIG_ROOT=\/etc\/hospital-cauce\/container-aliases$/mu);
+  assert.match(unitText,
+    /^Environment=CAUCE_CONTAINER_PKI_ROOT=\/etc\/hospital-cauce\/container-pki$/mu);
+  assert.match(unitText,
+    /^Environment=CAUCE_CONTAINER_BUNDLE_ROOT=\/srv\/hospital-cauce-adapter$/mu);
+  assert.match(unitText,
+    /^Environment=CAUCE_CONTAINER_LOCK_ROOT=\/run\/lock\/hospital-cauce$/mu);
+  assert.match(unitText,
+    /^ExecStart=\/srv\/hospital-cauce\/ops\/scripts\/container-adapter-supervisor\.sh start hospital-leader$/mu);
+  assert.match(unitText,
+    /^ReadOnlyPaths=\/etc\/hospital-cauce\/container-aliases \/etc\/hospital-cauce\/container-pki \/srv\/hospital-cauce \/srv\/hospital-cauce-adapter$/mu);
+  assert.doesNotMatch(unitText, /\/etc\/cauce-v3|\/opt\/cauce-v3/u);
+
+  const hermesInventory = structuredClone(isolatedInventory);
+  hermesInventory.aliases["hospital-leader"].harness = "hermes";
+  delete hermesInventory.aliases["hospital-leader"].workspace;
+  await writeFile(path.join(isolatedOpsRoot, "container-aliases.json"),
+    `${JSON.stringify(hermesInventory)}\n`);
+  const missingHermesPin = spawnSync("python3", [path.join(ops, "scripts/generate-container-units.py"),
+    "--ops-root", isolatedOpsRoot, "--output", isolatedOutput], { encoding: "utf8" });
+  assert.notEqual(missingHermesPin.status, 0);
+  assert.match(missingHermesPin.stderr, /hermes-runtime\.json/u);
+} finally {
+  await rm(isolatedOpsRoot, { recursive: true, force: true });
+  await rm(isolatedOutput, { recursive: true, force: true });
 }
 
 process.stdout.write("container operational digest tests passed\n");

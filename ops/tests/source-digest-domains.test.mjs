@@ -55,6 +55,9 @@ const consolePaths = pathsOf('console');
 const testcontainersPaths = pathsOf('testcontainers');
 const verificationPaths = pathsOf('verification');
 const fullPaths = pathsOf('full');
+const representativeManifest = verificationPaths.has('ops/manifests/operador.yaml')
+  ? 'ops/manifests/operador.yaml'
+  : 'ops/manifests/kant.yaml';
 const union = new Set([
   ...runtimePaths, ...consolePaths, ...testcontainersPaths, ...verificationPaths,
 ]);
@@ -113,7 +116,7 @@ for (const sentinel of [
   'ops/generated/systemd/SHA256SUMS',
   'ops/guardias/cauce-huerfanas.sh',
   'ops/harness/contract-runner.mjs',
-  'ops/manifests/kant.yaml',
+  representativeManifest,
   'ops/observability/alerts.yaml',
   'ops/runbooks/container-adapters.md',
   'ops/scripts/source-digest.py',

@@ -11,9 +11,15 @@ from container_alias_lib import load_container_aliases
 from container_ops_digest import operational_digest
 from fleet_derive import HARNESS_RULES
 
-root = pathlib.Path(__file__).resolve().parents[1]
+source_root = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description="Generate host systemd units for adapters inside existing containers")
 parser.add_argument("--output", type=pathlib.Path)
+parser.add_argument(
+    "--ops-root",
+    type=pathlib.Path,
+    default=source_root,
+    help="ops directory that owns container-aliases.json and generated output",
+)
 parser.add_argument("--rootless", action="store_true", help="generate systemd user units")
 parser.add_argument("--home", type=pathlib.Path, default=pathlib.Path.home(), help="rootless example HOME")
 parser.add_argument("--install-prefix", help="installed source prefix used by ExecStart/ExecStop")
@@ -22,22 +28,27 @@ parser.add_argument("--pki-root", help="host PKI root")
 parser.add_argument("--bundle-root", help="host immutable bundle root")
 parser.add_argument("--lock-root", help="host supervisor lock root")
 args = parser.parse_args()
-aliases = load_container_aliases(root)
-hermes_runtime = json.loads((root / "hermes-runtime.json").read_text(encoding="utf-8"))
-hermes_commit = hermes_runtime["commit"]
-hermes_runtime_root = hermes_runtime.get("runtimeRoot")
-hermes_runtime_id = hermes_runtime.get("runtimeId")
-if not isinstance(hermes_commit, str) or len(hermes_commit) != 40 or any(c not in "0123456789abcdef" for c in hermes_commit):
-    parser.error("ops/hermes-runtime.json must pin an exact lowercase Git commit")
-if hermes_runtime_root != "/opt/cauce-v3-hermes-runtime":
-    parser.error("ops/hermes-runtime.json must use the approved immutable runtime root")
-if (
-    not isinstance(hermes_runtime_id, str)
-    or not hermes_runtime_id
-    or len(hermes_runtime_id) > 128
-    or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-" for c in hermes_runtime_id)
-):
-    parser.error("ops/hermes-runtime.json must declare a safe immutable runtime ID")
+ops_root = args.ops_root.resolve()
+aliases = load_container_aliases(ops_root)
+hermes_commit: str | None = None
+hermes_runtime_root: str | None = None
+hermes_runtime_id: str | None = None
+if any(entry["harness"] == "hermes" for entry in aliases.values()):
+    hermes_runtime = json.loads((ops_root / "hermes-runtime.json").read_text(encoding="utf-8"))
+    hermes_commit = hermes_runtime["commit"]
+    hermes_runtime_root = hermes_runtime.get("runtimeRoot")
+    hermes_runtime_id = hermes_runtime.get("runtimeId")
+    if not isinstance(hermes_commit, str) or len(hermes_commit) != 40 or any(c not in "0123456789abcdef" for c in hermes_commit):
+        parser.error("ops/hermes-runtime.json must pin an exact lowercase Git commit")
+    if hermes_runtime_root != "/opt/cauce-v3-hermes-runtime":
+        parser.error("ops/hermes-runtime.json must use the approved immutable runtime root")
+    if (
+        not isinstance(hermes_runtime_id, str)
+        or not hermes_runtime_id
+        or len(hermes_runtime_id) > 128
+        or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-" for c in hermes_runtime_id)
+    ):
+        parser.error("ops/hermes-runtime.json must declare a safe immutable runtime ID")
 physical_alias_counts: dict[str, int] = {}
 for entry in aliases.values():
     container = entry["container"]
@@ -45,7 +56,7 @@ for entry in aliases.values():
 
 UNIT_PREFIX = "cauce-v3"
 mode = "rootless" if args.rootless else "system"
-args.output = args.output or root / "generated" / "container-systemd" / ("rootless" if args.rootless else "")
+args.output = args.output or ops_root / "generated" / "container-systemd" / ("rootless" if args.rootless else "")
 home = args.home.resolve().as_posix()
 if not home.startswith("/"):
     parser.error("--home must resolve to an absolute path")
@@ -77,7 +88,7 @@ Description=Cauce V3 container adapter {alias} ({entry['container']}/{entry['har
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
-ConditionPathExists=/etc/cauce-v3/container-aliases/{alias}.env
+ConditionPathExists={unit_config_root}/{alias}.env
 StartLimitIntervalSec=300s
 StartLimitBurst=10
 
@@ -86,8 +97,13 @@ Type=simple
 User=root
 Group=root
 UMask=0077
-ExecStart=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh start {alias}
-ExecStop=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop {alias}
+Environment=CAUCE_CONTAINER_OPS_ROOT={install_prefix}/ops
+Environment=CAUCE_CONTAINER_CONFIG_ROOT={unit_config_root}
+Environment=CAUCE_CONTAINER_PKI_ROOT={unit_pki_root}
+Environment=CAUCE_CONTAINER_BUNDLE_ROOT={unit_bundle_root}
+Environment=CAUCE_CONTAINER_LOCK_ROOT={unit_lock_root}
+ExecStart={install_prefix}/ops/scripts/container-adapter-supervisor.sh start {alias}
+ExecStop={install_prefix}/ops/scripts/container-adapter-supervisor.sh stop {alias}
 ExecStartPost=/usr/bin/systemctl start --no-block cauce-v3-profile-expectation@{alias}.service
 Restart=always
 RestartSec=5s
@@ -114,7 +130,7 @@ RestrictAddressFamilies=AF_UNIX
 CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
-ReadOnlyPaths=/etc/cauce-v3/container-aliases /etc/cauce-v3/container-pki /opt/cauce-v3 /opt/cauce-v3-adapter
+ReadOnlyPaths={unit_config_root} {unit_pki_root} {install_prefix} {unit_bundle_root}
 
 [Install]
 WantedBy=multi-user.target
@@ -282,7 +298,7 @@ atomic_write(expectation_path, expectation_unit())
 generated.append(expectation_path)
 
 operations_path = args.output / "OPERATIONS.sha256"
-atomic_write(operations_path, f"{operational_digest(root, args.output.resolve(), rootless=args.rootless)}\n")
+atomic_write(operations_path, f"{operational_digest(source_root, args.output.resolve(), rootless=args.rootless)}\n")
 generated.append(operations_path)
 
 checksum_lines = []

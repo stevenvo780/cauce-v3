@@ -95,5 +95,50 @@ describe('observability bind-mount refresh', () => {
     expect(up).toBeGreaterThan(-1);
     expect(refreshCall).toBeGreaterThan(up);
     expect(smoke).toBeGreaterThan(refreshCall);
+    expect(deploy).toContain('CAUCE_ENV_FILE="$ENV_FILE" "$REPO/deploy/smoke.sh"');
+  });
+
+  it('keeps central deploy defaults while allowing an isolated instance to override them', () => {
+    const deploy = readFileSync(join(root, 'deploy/deploy.sh'), 'utf8');
+    expect(deploy).toContain('CAUCE_DEPLOY_REGISTRY:-127.0.0.1:5000');
+    expect(deploy).toContain('CAUCE_DEPLOY_EXPECTED_GIT_REF:-origin/main');
+    expect(deploy).toContain('CAUCE_DEPLOY_HISTORY_FILE:-$REPO/deploy/HISTORIAL.md');
+    expect(deploy).toContain(
+      'CAUCE_DEPLOY_BACKUP_STATUS_FILE:-/var/log/cauce-v3-backup/status.json',
+    );
+    expect(deploy).toContain(
+      'CAUCE_DEPLOY_BACKUP_MONITOR:-$REPO/ops/scripts/host-backup-monitor.sh',
+    );
+    expect(deploy).toContain('STATUS_FILE="$BACKUP_STATUS_FILE"');
+    expect(deploy).toContain('MAX_AGE_HOURS="$BACKUP_MAX_AGE_HOURS"');
+    expect(deploy).toContain('"$BACKUP_MONITOR" >/dev/null');
+    expect(deploy).toContain('>> "$HISTORY_FILE"');
+  });
+
+  it('requires terminal PKI only for an enabled terminal profile', () => {
+    const deploy = readFileSync(join(root, 'deploy/deploy.sh'), 'utf8');
+    const disabled = deploy.indexOf('  0)');
+    const enabled = deploy.indexOf('  1)', disabled);
+    const terminalCertificate = deploy.indexOf(
+      'CLIENT_CERT="$(env_value CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH)"',
+    );
+    const terminalCaseEnd = deploy.indexOf('    ;;', enabled);
+    expect(disabled).toBeGreaterThan(-1);
+    expect(enabled).toBeGreaterThan(disabled);
+    expect(terminalCertificate).toBeGreaterThan(enabled);
+    expect(terminalCertificate).toBeLessThan(terminalCaseEnd);
+    expect(deploy.slice(disabled, enabled)).toContain(
+      'export CAUCE_GATEWAY_RELAY_CLIENT_CERT_PATH=/dev/null',
+    );
+    expect(deploy.slice(disabled, enabled)).not.toContain('openssl x509');
+  });
+
+  it('allows a first deploy before the PostgreSQL container exists', () => {
+    const deploy = readFileSync(join(root, 'deploy/deploy.sh'), 'utf8');
+    expect(deploy).toContain('if docker inspect "$PG_CONTAINER"');
+    expect(deploy).toContain('PostgreSQL nuevo: la comprobacion de sesiones previas no aplica');
+    expect(deploy.indexOf('if docker inspect "$PG_CONTAINER"')).toBeLessThan(
+      deploy.indexOf('fantasmas="$(docker exec "$PG_CONTAINER"'),
+    );
   });
 });

@@ -17,7 +17,9 @@ EXPECTED_BY_HARNESS = {
     "codex": {"atlas", "kant", "socrates", "tales"},
     "openclaw": {"argos", "gaia", "hegel", "iza", "janus", "jarvis"},
 }
-EXPECTED_ALIASES = set().union(*EXPECTED_BY_HARNESS.values())
+HOSPITAL_EXPECTED_BY_HARNESS = {
+    "openclaw": {"backend", "frontend", "operador"},
+}
 
 
 def run_script(name: str, *arguments: str) -> None:
@@ -33,8 +35,15 @@ def run_script(name: str, *arguments: str) -> None:
 class FleetPhaseATests(unittest.TestCase):
     def test_current_fleet_reproduces_committed_artifacts_byte_for_byte(self) -> None:
         snapshot = json.loads(FLEET.read_text(encoding="utf-8"))
-        self.assertEqual(set(snapshot["fleet"]), EXPECTED_ALIASES)
-        for harness, aliases in EXPECTED_BY_HARNESS.items():
+        tenants = {row["tenant"] for row in snapshot["fleet"].values()}
+        expected_by_harness = (
+            HOSPITAL_EXPECTED_BY_HARNESS
+            if tenants == {"Hospital"}
+            else EXPECTED_BY_HARNESS
+        )
+        expected_aliases = set().union(*expected_by_harness.values())
+        self.assertEqual(set(snapshot["fleet"]), expected_aliases)
+        for harness, aliases in expected_by_harness.items():
             self.assertEqual(
                 {alias for alias, row in snapshot["fleet"].items() if row["harness"] == harness},
                 aliases,
@@ -42,7 +51,7 @@ class FleetPhaseATests(unittest.TestCase):
             )
         self.assertEqual(
             {row["harness"] for row in snapshot["fleet"].values()},
-            set(EXPECTED_BY_HARNESS),
+            set(expected_by_harness),
             "un arnés nuevo exige una expectativa explícita",
         )
 
@@ -69,7 +78,7 @@ class FleetPhaseATests(unittest.TestCase):
                 generated_aliases.read_bytes(),
                 (OPS_ROOT / "container-aliases.json").read_bytes(),
             )
-            expected_names = {f"{alias}.yaml" for alias in EXPECTED_ALIASES}
+            expected_names = {f"{alias}.yaml" for alias in expected_aliases}
             self.assertEqual(
                 {path.name for path in (OPS_ROOT / "manifests").glob("*.yaml")},
                 expected_names,

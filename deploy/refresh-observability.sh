@@ -11,7 +11,9 @@ die() { echo "refresh-observability: $*" >&2; exit 1; }
 
 [ -n "$COMPOSE_BIN" ] || die "CAUCE_OBSERVABILITY_COMPOSE_BIN no puede estar vacio"
 [[ $WAIT_TIMEOUT =~ ^[0-9]+$ ]] || die "timeout invalido"
-[ "$WAIT_TIMEOUT" -ge 1 ] && [ "$WAIT_TIMEOUT" -le 300 ] || die "timeout fuera de rango"
+if [ "$WAIT_TIMEOUT" -lt 1 ] || [ "$WAIT_TIMEOUT" -gt 300 ]; then
+  die "timeout fuera de rango"
+fi
 [ -r "$ENV_FILE" ] || die "no puedo leer $ENV_FILE"
 
 if ! running_services="$("${COMPOSE[@]}" ps --status running --services)"; then

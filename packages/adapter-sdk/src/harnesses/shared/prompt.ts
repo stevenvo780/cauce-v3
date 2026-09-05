@@ -66,6 +66,15 @@ const ROLE_PRECEDENCE =
   + "decidilo y actuá. Consultar lo que ya podés resolver vos no es prudencia, es dejar el trabajo "
   + "a medias.";
 
+function escalationLine(context: HarnessRequestContext | undefined): string {
+  if (context?.tenant_id !== "Hospital") {
+    return "Si la infraestructura te deja sin poder trabajar (el harness no arranca, credenciales vencidas, bwrap/userns, mount perdido, entregas que mueren por deadline), escalá a zeus con el error textual crudo. Para coordinación de trabajo, kant.";
+  }
+  return context.self_alias === "operador"
+    ? "Si la infraestructura te deja sin poder trabajar, informá el error textual crudo a tu humano y cerrá; no inventes un bypass. Vos coordinás todo el trabajo de esta flota."
+    : "Si la infraestructura te deja sin poder trabajar, escalá a operador con el error textual crudo. Para coordinación, decisiones e integración, operador es el líder de esta flota.";
+}
+
 function identityPreamble(
   context: HarnessRequestContext | undefined,
   includeRoom = true,
@@ -82,7 +91,7 @@ function identityPreamble(
     "Cauce funciona por eventos: solo corrés cuando te entregan un mensaje. Entre entregas no existís — no hay bucle, no hay reloj, no hay bandeja que puedas mirar.",
     "Por eso no esperás: si te piden monitorear, vigilar o aguardar a una persona, no dejes el turno abierto. Hacé lo que se pueda ahora, decí en qué estado quedó y qué tendría que pasar después, y cerrá. Si algo SÓLO lo puede resolver un humano, pedilo una vez y cerrá diciendo qué falta.",
     "Comunicación no es autorización: informar, coordinar y pedir ayuda, siempre; producción, borrado de datos, secretos o gasto exigen aprobación explícita y acotada de tu humano directo.",
-    "Si la infraestructura te deja sin poder trabajar (el harness no arranca, credenciales vencidas, bwrap/userns, mount perdido, entregas que mueren por deadline), escalá a zeus con el error textual crudo. Para coordinación de trabajo, kant.",
+    escalationLine(context),
   );
   if (context.self_role) lines.push(ROLE_PRECEDENCE);
   lines.push(IDENTITY_END);
@@ -109,14 +118,14 @@ function deliveryMetadata(
   return metadata;
 }
 
-const DIRECTORES: ReadonlySet<string> = new Set(["Steven/argos"]);
+const DIRECTORES: ReadonlySet<string> = new Set(["Steven/argos", "Hospital/operador"]);
 
 export function esDirector(context: HarnessRequestContext | undefined): boolean {
   return context !== undefined && DIRECTORES.has(`${context.tenant_id}/${context.self_alias}`);
 }
 
 function primaryDuty(context: HarnessRequestContext | undefined): readonly string[] {
-  if (esDirector(context)) return primaryDutyDelDirector();
+  if (context !== undefined && esDirector(context)) return primaryDutyDelDirector(context);
   return [
     PRIMARY_DUTY_HEADER,
     '- Esta entrega es TU trabajo. Hacelo vos, en tu propio workspace, con tus herramientas y tus accesos, y contestá en "reply".',
@@ -128,13 +137,16 @@ function primaryDuty(context: HarnessRequestContext | undefined): readonly strin
   ];
 }
 
-function primaryDutyDelDirector(): readonly string[] {
+function primaryDutyDelDirector(context: HarnessRequestContext): readonly string[] {
+  const stalled = context.tenant_id === "Hospital"
+    ? "- Si algo está parado, desatascalo dirigiendo: medí por qué está parado, re-encargalo más chico o al otro developer, y si es infraestructura informá el error textual crudo a tu humano y cerrá."
+    : "- Si algo está parado, desatascalo dirigiendo: medí por qué está parado, re-encargalo más chico o a otro, escalá a zeus si es infraestructura, y si no hay agente disponible dejalo encolado por escrito y decilo.";
   return [
     PRIMARY_DUTY_HEADER,
     '- Sos el que dirige: tu entrega es REPARTIR y VERIFICAR, no construir. Leé el pedido, decidí quién lo hace, encargalo con alcance, criterio de hecho y plazo, y contestá en "reply" qué repartiste y a quién.',
     '- Construir vos es la excepción y hay que justificarla en el "reply": sólo si ningún agente en línea puede hacerlo, o si terminarlo cuesta menos que explicarlo (una lectura, una medición, una respuesta corta). Escribir código de producto NUNCA es tuyo.',
     '- Un encargo que no salió por "messages" no existe: si tu "reply" dice que delegaste a N, "messages" lleva N entradas. Un fichero, una nota o un anuncio no son un envío.',
-    "- Si algo está parado, desatascalo dirigiendo: medí por qué está parado, re-encargalo más chico o a otro, escalá a zeus si es infraestructura, y si no hay agente disponible dejalo encolado por escrito y decilo.",
+    stalled,
     '- Verificá lo que vuelve antes de darlo por hecho: leé la respuesta, pedí la evidencia que declaraste, y cerrá el frente sólo cuando la tengas.',
     '- Un turno tuyo que termina con "messages":[] tiene que decir por qué no hizo falta repartir; el resultado normal de un director es un "reply" con el reparto y sus encargos en "messages".',
   ];

@@ -373,6 +373,27 @@ test("CONTROL NEGATIVO: el mandato del director es por alias Y tenant; nadie má
   }
 });
 
+test("el operador del Hospital dirige y sus developers escalan hacia él", () => {
+  const leader = protocolPrompt(
+    "request",
+    undefined,
+    context({ self_alias: "operador", tenant_id: "Hospital", room_id: "grp.hospital" }),
+  );
+  const developer = protocolPrompt(
+    "request",
+    undefined,
+    context({ self_alias: "backend", tenant_id: "Hospital", room_id: "grp.hospital" }),
+  );
+
+  assert.match(leader, /REPARTIR y VERIFICAR/u);
+  assert.match(leader, /informá el error textual crudo a tu humano/u);
+  assert.doesNotMatch(leader, /escalá a zeus/u);
+  assert.doesNotMatch(leader, /Para coordinación de trabajo, kant/u);
+  assert.doesNotMatch(developer, /REPARTIR y VERIFICAR/u);
+  assert.match(developer, /escalá a operador/u);
+  assert.doesNotMatch(developer, /escalá a zeus/u);
+});
+
 test("el mandato del director no pesa más que el del ejecutor: el sobre de argos no crece", () => {
   const director = protocolPrompt("request", undefined, context(DIRECTOR));
   const ejecutor = protocolPrompt("request", undefined, context({ ...DIRECTOR, self_alias: "zeus" }));

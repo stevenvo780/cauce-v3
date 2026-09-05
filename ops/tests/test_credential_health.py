@@ -412,6 +412,16 @@ class TestGuardInventory(unittest.TestCase):
             if alias.get("container")
         }
         self.assertGreater(len(targets), 0)
+        tenants = {alias["tenant"] for alias in inventory["aliases"].values()}
+        if tenants == {"Hospital"}:
+            targeted = {container for container, _path, _label in targets}
+            self.assertTrue(known.isdisjoint(targeted))
+            instance_sources = "\n".join(
+                path.read_text(encoding="utf-8")
+                for path in (GUARDS.parent / "instances" / "hospital").glob("*.sh")
+            )
+            self.assertNotIn("cred-guard", instance_sources)
+            return
         for container, _path, label in targets:
             with self.subTest(label=label):
                 self.assertIn(container, known)

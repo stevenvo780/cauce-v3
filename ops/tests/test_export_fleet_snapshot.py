@@ -145,7 +145,21 @@ class FleetSnapshotDocumentTest(unittest.TestCase):
         self.assertLess(body.index(b'"fleet"'), body.index(b'"schemaVersion"'))
 
     def test_rejects_tenant_outside_real_schema_enum(self) -> None:
-        self.assertEqual(MODULE.tenant_enum(), frozenset({"Steven", "Miguel", "Isa", "Jhon"}))
+        self.assertEqual(
+            MODULE.tenant_enum(),
+            frozenset({"Steven", "Miguel", "Isa", "Jhon", "Hospital"}),
+        )
+        hospital = MODULE.snapshot_document(
+            source(
+                agents=[agent("operador", tenant="Hospital", harness="openclaw")],
+                memberships=[
+                    membership(
+                        "operador", tenant="Hospital", room="grp.hospital", role="operator"
+                    )
+                ],
+            )
+        )
+        self.assertEqual(hospital["fleet"]["operador"]["tenant"], "Hospital")
         with self.assertRaisesRegex(MODULE.SnapshotError, "tenant enum"):
             MODULE.snapshot_document(
                 source(

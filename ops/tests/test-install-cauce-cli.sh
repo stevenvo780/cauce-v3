@@ -12,7 +12,7 @@ ok() { printf 'ok: %s\n' "$1"; }
 bad() { printf 'FAIL: %s\n' "$1" >&2; fail=1; }
 
 WORK=$(mktemp -d)
-# shellcheck disable=SC2329  # invoked indirectly, via the EXIT trap below
+# shellcheck disable=SC2329,SC2317  # invoked indirectly, via the EXIT trap below
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
