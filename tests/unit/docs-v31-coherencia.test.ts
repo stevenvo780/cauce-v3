@@ -131,8 +131,8 @@ describe('docs/version-3.1.md: el despliegue que narra y el que quedó registrad
     const texto = version();
     const retencionAbierta = texto.includes('**Retención de grabaciones de TUI.**');
     if (!retencionAbierta) return;
-    expect(texto).toContain('9de3f8ec');
-    expect(texto).toMatch(/no lo probé/u);
+    expect(texto).toMatch(/Esto no acredita concesiones por alias ni\s+retención/u);
+    expect(texto).toMatch(/retención:\s+esa decisión sigue abierta/u);
   });
 
   it('no difumina que la última fila registrada cerró con humo rojo parcial', () => {

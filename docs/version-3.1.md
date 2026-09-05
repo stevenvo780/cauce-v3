@@ -104,11 +104,11 @@ para despliegues posteriores:
    `0x26`/`0x27`; un relay anterior tira la pierna multiplexada entera al primer tag desconocido.
 6. Dejar `CAUCE_TERMINAL_RW_ENABLED=0` y `CAUCE_NATIVE_PROFILE_CONTEXT` apagado; encender el
    modo escribible alias a alias en `grants.json` (sin `"*"`) sólo tras fijar
-   `CAUCE_TERMINAL_RECORDING_DIR` y la retención de grabaciones. **Este paso no consta cumplido**:
-   el mensaje de `9de3f8ec`, el commit que escribió la fila de esa misma ventana, dice «modo
-   escribible de TUI encendido», y la retención sigue abierta abajo. Desde el árbol no se puede
-   decidir qué quedó en línea — **no lo probé** contra el sistema vivo. Confirmarlo y escribirlo
-   es del dueño (`docs/v3.1-pendientes.md` §1).
+   `CAUCE_TERMINAL_RECORDING_DIR` y la retención de grabaciones. En la comprobación posterior
+   contra `fa4f07c5`, el gateway tiene el interruptor escribible en `1` y el terminal-relay
+   tiene directorio de grabaciones configurado. Esto no acredita concesiones por alias ni
+   retención: esa decisión sigue abierta abajo. No se cambiaron permisos ni grabaciones
+   durante esa comprobación.
 7. Escribir la fila de `deploy/HISTORIAL.md`.
 
 `deploy/HISTORIAL.md` registra el despliegue de `7f25fd6f` con smoke verde y dos correcciones de
@@ -120,14 +120,22 @@ sockets sordos, los comandos de operador en DM, el acotado de la exención CSRF 
 `[backend, edge]`—. `caf35316` corrigió el bridge de Telegram para reunir en un solo mensaje
 las piezas en que el cliente parte un texto de más de 4096 caracteres (antes el agente leía sólo
 la primera) y las pruebas del rollout PTY afirman la colocación real de kant. La última fila es
-`fa4f07c5`, con smoke central verde: conserva las correcciones de clasificación y del primer ACK
+`fa4f07c5`, cuyo smoke original salió verde, pero descartaba los eventos stderr del relay:
+ese subcontrol no acreditó ausencia de bucles. La comprobación corregida posterior midió cero
+reconexiones en dos minutos. Conserva las correcciones de clasificación y del primer ACK
 de `6786adca`, e impide que la siembra Codex reescriba un bloque gestionado al reconectar.
 Conserva la recarga efectiva de Prometheus/OTel y el desglose
 de incidentes incorporados por `a9e08359`; la ventana previa `9b5e2172` incorporó correcciones
 adicionales de consola, Telegram y contexto. La identidad reservada de la sonda ya está emitida
-y el primer canary de Atlas pasó 20/20 verificaciones durante 604 segundos. Falta activar en
-toda la flota el SDK final con la política de autorización corregida: la imagen central no
-actualiza esos pins. Ese registro demuestra la ventana central; no sustituye una nueva validación
+y el canary final de Atlas pasó 20/20 verificaciones durante 609 segundos. El SDK final
+`bus-v3-20260905-sdk-final-fa4f07c5` se activó por separado en 15/15 alias: censo físico con un
+consumidor V3 por alias, ninguno V2 y dos ventanas de heartbeat progresado. Los modelos y sus
+sesiones se conservaron; una entrega iniciada de Zeus y otra de Heráclito quedaron ambiguas durante
+el corte autorizado, sin reenvíos emitidos por el rollout. Zeus presentó después una reapertura
+inconsistente de la misma fila, que el WAL rechaza. Se restauró su estado terminal acreditado por
+el ACK, sin repetir efectos ni cerrar como exitoso el trabajo ambiguo. La consola de Zeus y los
+perfiles se verifican por separado: despliegue no equivale a recuperar esas tareas ni a reconciliar los perfiles
+pendientes. Ese registro no sustituye una nueva validación
 del estado vivo desde este checkout, y lo que queda por comprobar por efecto después de esa fila
 está en `docs/v3.1-pendientes.md` §1, «Deuda de despliegue».
 
