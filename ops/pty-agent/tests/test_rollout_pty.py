@@ -121,7 +121,7 @@ class RolloutPtyTest(unittest.TestCase):
 
     def test_mapping_assigns_exactly_two_managers_and_recalculates_source_hashes(self) -> None:
         self.assertEqual(set(self.fleet.placements.values()), {"server", "kratos"})
-        self.assertEqual(self.fleet.placements["kant"], "server")
+        self.assertEqual(self.fleet.placements["kant"], "kratos")
         self.assertEqual(self.fleet.placements["salva"], "kratos")
         self.assertEqual(
             self.bundle.digests["pty-agent/cauce-pty-launcher.sh"],
@@ -160,8 +160,9 @@ class RolloutPtyTest(unittest.TestCase):
         self.assertNotIn("sudo -H root", remote)
 
     def test_remote_bootstrap_registers_the_lib_module_before_executing_it(self) -> None:
-        # Python 3.14 resolves `sys.modules[cls.__module__]` while decorating a dataclass: a lib
-        # exec'd before being registered crashed every manager worker with AttributeError.
+        """Python 3.14 resolves `sys.modules[cls.__module__]` while decorating a dataclass: a lib
+        exec'd before being registered crashed every manager worker with AttributeError. shlex
+        quoting rewrites the inner quotes, so the order is asserted on quote-free anchors."""
         with tempfile.TemporaryDirectory() as raw:
             root = pathlib.Path(raw)
             (root / "rollout_pty_lib.py").write_text(
@@ -190,7 +191,6 @@ class RolloutPtyTest(unittest.TestCase):
             with mock.patch.object(rollout.subprocess, "run", side_effect=fake_run):
                 result = transport.call("inventory", {})
         remote = captured["remote"]
-        # shlex quoting rewrites the inner quotes, so the order is asserted on quote-free anchors.
         self.assertLess(
             remote.index("sys.modules["),
             remote.index("exec(compile(lib_code"),
@@ -248,11 +248,12 @@ class RolloutPtyTest(unittest.TestCase):
         with self.assertRaisesRegex(rollout.RolloutError, "desconocido"):
             rollout.validate_inventories(self.fleet, measured, migrate_kant=False)
 
-    def test_kant_migration_is_explicit_and_never_accepts_double_presence(self) -> None:
-        legacy = {"server": {}, "kratos": {"kant": rollout.UnitPresence(active=True)}}
-        with self.assertRaisesRegex(rollout.RolloutError, "migrate-kant"):
-            rollout.validate_inventories(self.fleet, legacy, migrate_kant=False)
-        rollout.validate_inventories(self.fleet, legacy, migrate_kant=True)
+    def test_kant_lives_on_kratos_and_never_accepts_double_presence(self) -> None:
+        current = {"server": {}, "kratos": {"kant": rollout.UnitPresence(active=True)}}
+        rollout.validate_inventories(self.fleet, current, migrate_kant=False)
+        drifted = {"server": {"kant": rollout.UnitPresence(active=True)}, "kratos": {}}
+        with self.assertRaisesRegex(rollout.RolloutError, "placement drift de kant"):
+            rollout.validate_inventories(self.fleet, drifted, migrate_kant=False)
         duplicate = {
             "server": {"kant": rollout.UnitPresence(selector=True)},
             "kratos": {"kant": rollout.UnitPresence(active=True)},
