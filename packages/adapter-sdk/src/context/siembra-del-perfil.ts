@@ -552,7 +552,11 @@ export function sembrarPerfilDelArnes(
       })),
     };
   }
-  if (revisionNativa !== undefined && generados.some((fichero) => fichero.escribir)) {
+  const managedCodexProfileDiffers = harness === "codex" && generados.some((fichero) => (
+    fichero.escribir && bloqueDePerfil(existentes.get(fichero.nombre) ?? "") !== undefined
+  ));
+  if ((revisionNativa !== undefined || managedCodexProfileDiffers)
+    && generados.some((fichero) => fichero.escribir)) {
     return {
       estado: "hecho",
       ficheros: generados.map((fichero) => ({
@@ -644,7 +648,7 @@ export function resumenDeLaSiembra(resultado: ResultadoDeLaSiembra): string {
   const motivos = [...new Set(resultado.ficheros.flatMap((fichero) => (
     fichero.estado === "no-se-pudo-escribir" ? [`${fichero.nombre}: ${fichero.motivo}`]
       : fichero.estado === "delegado-al-publicador"
-        ? [`${fichero.nombre}: la proyección revisionada difiere; sólo el publicador durable puede cambiarla`]
+        ? [`${fichero.nombre}: la proyección gestionada difiere; sólo el publicador durable puede cambiarla`]
         : []
   )))];
   return motivos.length === 0

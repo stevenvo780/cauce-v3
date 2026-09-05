@@ -223,6 +223,43 @@ test("segunda conexión con el mismo perfil: NO se reescribe el fichero", () => 
   assert.equal(segunda.ficheros[0]?.estado, "ya-estaba");
 });
 
+test("codex siembra una vez y delega cualquier cambio posterior del bloque gestionado", () => {
+  const path = "/home/dev/.codex-atlas/AGENTS.md";
+  const manual = "# Manual de Atlas\n\nContexto exterior válido.\n";
+  const d = disco({ [path]: manual });
+  const opciones = {
+    habilitado: true,
+    disco: d.puerto,
+    entorno: { HOME: "/home/dev", CODEX_HOME: "/home/dev/.codex-atlas" },
+  };
+
+  const primera = sembrarPerfilDelArnes(
+    "codex", contexto({ purpose: "perfil inicial" }, "atlas"), opciones,
+  );
+  const sembrado = d.ficheros.get(path);
+  assert.ok(sembrado);
+  assert.equal(primera.estado, "hecho");
+  assert.equal(primera.ficheros[0]?.estado, "escrito");
+  assert.match(bloqueDePerfil(sembrado) ?? "", /alias: Steven\/atlas/u);
+  assert.match(sembrado, /Contexto exterior válido\./u);
+
+  d.escrituras.length = 0;
+  const igual = sembrarPerfilDelArnes(
+    "codex", contexto({ purpose: "perfil inicial" }, "atlas"), opciones,
+  );
+  assert.deepEqual(d.escrituras, []);
+  assert.equal(igual.estado, "hecho");
+  assert.equal(igual.ficheros[0]?.estado, "ya-estaba");
+
+  const diferente = sembrarPerfilDelArnes(
+    "codex", contexto({ purpose: "perfil nuevo" }, "atlas"), opciones,
+  );
+  assert.deepEqual(d.escrituras, []);
+  assert.equal(d.ficheros.get(path), sembrado);
+  assert.equal(diferente.estado, "hecho");
+  assert.equal(diferente.ficheros[0]?.estado, "delegado-al-publicador");
+});
+
 test("la siembra sólo verifica una proyección revisionada que ya coincide", () => {
   const ctx = contexto({ purpose: "el médico" });
   const projected = ficherosDelArnes("claude", ctx, new Map(), { revision: 4 })[0];
@@ -256,7 +293,7 @@ test("la siembra no modifica una proyección revisionada con drift y la delega a
   assert.equal(d.ficheros.get(path), projected.texto);
   assert.equal(resultado.estado, "hecho");
   assert.equal(resultado.ficheros[0]?.estado, "delegado-al-publicador");
-  assert.match(resumenDeLaSiembra(resultado), /delegado-al-publicador=1 — CLAUDE\.md: la proyección revisionada difiere/u);
+  assert.match(resumenDeLaSiembra(resultado), /delegado-al-publicador=1 — CLAUDE\.md: la proyección gestionada difiere/u);
 });
 
 test("la siembra no finge que un lote OpenClaw revisionado incompleto está vigente", () => {

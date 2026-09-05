@@ -98,6 +98,10 @@ test("la siembra de reconnect es default-on y sólo acepta un lote completo o co
     estado: "hecho",
     ficheros: [{ nombre: "AGENTS.md", estado: "ocupado-por-otro-alias" }],
   }), false);
+  assert.equal(siembraAplicada({
+    estado: "hecho",
+    ficheros: [{ nombre: "AGENTS.md", estado: "delegado-al-publicador" }],
+  }), false);
 });
 
 /**
