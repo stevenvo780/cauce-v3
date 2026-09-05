@@ -15,6 +15,7 @@ import {
   base64CharacterBudget, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_MEDIA_TYPE_LENGTH,
   MAX_ATTACHMENTS_PER_MESSAGE, MAX_ATTACHMENTS_TOTAL_BYTES,
 } from '../attachment-limits.js';
+import { MAX_BLOB_BYTES, parseBlobLocator } from '../blob-reference.js';
 import { isSafeBasename } from '../content-safety.js';
 import { isValidMediaType } from './media-types.js';
 
@@ -44,11 +45,44 @@ export const AttachmentContentSchema = z.object({
   }
 });
 
-export const AttachmentsV1Schema = z.array(AttachmentContentSchema)
+/* The same entry with the bytes elsewhere: `blob` names them by digest in the gateway's blob store
+   and nothing rides inline, so `file_size` may reach the blob ceiling instead of the inline one.
+   A `sha256` field is admitted only when it repeats the locator's digest. */
+export const AttachmentBlobReferenceSchema = z.object({
+  kind: z.enum(['image', 'document']),
+  name: AttachmentNameSchema,
+  mime_type: z.string().max(MAX_ATTACHMENT_MEDIA_TYPE_LENGTH)
+    .refine(isValidMediaType, 'attachment media type is not a valid MIME token'),
+  file_size: z.number().int().positive().max(MAX_BLOB_BYTES),
+  blob: z.string().refine((value) => parseBlobLocator(value) !== undefined, 'blob locator is not sha256:<hex>'),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u).optional()
+}).strict().superRefine((attachment, context) => {
+  if (attachment.kind === 'image' && !attachment.mime_type.toLowerCase().startsWith('image/')) {
+    context.addIssue({ code: 'custom', message: 'attachment kind and MIME do not agree' });
+  }
+  if (attachment.sha256 !== undefined && attachment.sha256 !== parseBlobLocator(attachment.blob)) {
+    context.addIssue({ code: 'custom', path: ['sha256'], message: 'attachment sha256 does not match its blob locator' });
+  }
+});
+
+export const AttachmentEntrySchema = z.union([AttachmentContentSchema, AttachmentBlobReferenceSchema]);
+
+export type AttachmentEntry = z.infer<typeof AttachmentEntrySchema>;
+export type AttachmentBlobReference = z.infer<typeof AttachmentBlobReferenceSchema>;
+
+export function isBlobAttachmentEntry(entry: unknown): entry is AttachmentBlobReference {
+  return typeof entry === 'object' && entry !== null && !Array.isArray(entry)
+    && parseBlobLocator((entry as { blob?: unknown }).blob) !== undefined;
+}
+
+export const AttachmentsV1Schema = z.array(AttachmentEntrySchema)
   .min(1)
   .max(MAX_ATTACHMENTS_PER_MESSAGE)
   .superRefine((attachments, context) => {
-    if (attachments.reduce((total, attachment) => total + attachment.file_size, 0) > MAX_ATTACHMENTS_TOTAL_BYTES) {
+    const inlineBytes = attachments
+      .filter((attachment) => !isBlobAttachmentEntry(attachment))
+      .reduce((total, attachment) => total + attachment.file_size, 0);
+    if (inlineBytes > MAX_ATTACHMENTS_TOTAL_BYTES) {
       context.addIssue({ code: 'custom', message: 'aggregate attachment size exceeds limit' });
     }
   });

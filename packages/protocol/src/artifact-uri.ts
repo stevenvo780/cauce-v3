@@ -1,6 +1,7 @@
 import {
   decodeCanonicalBase64, MAX_ARTIFACT_LOCATOR_CHARACTERS, MAX_ATTACHMENT_BYTES
 } from './attachment-limits.js';
+import { isBlobArtifactUri } from './blob-reference.js';
 import { hasUnsafeTextCodePoint } from './content-safety.js';
 
 /* Which artifact URI the delegation edge can actually hand over. Only two shapes qualify: an
@@ -158,5 +159,6 @@ function isFetchableHttpsUri(uri: string): boolean {
 
 export function isDeliverableArtifactUri(uri: string): boolean {
   if (DATA_PATTERN.test(uri)) return isInlineDataUri(uri);
+  if (isBlobArtifactUri(uri)) return true;
   return isFetchableHttpsUri(uri);
 }
