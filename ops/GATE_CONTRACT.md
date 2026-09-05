@@ -47,6 +47,14 @@ durable al terminalizar; queda sólo el resultado mínimo del ACK y el audit de 
 El probe usa HTTPS con CA/cert/key por paths, timeouts acotados y evidencia efímera 0600. Canary y
 cutover borran su directorio temporal al salir. `CAUCE_ROUNDTRIP_MARKER` está prohibido.
 
+Si falta esta identidad, el dueño debe autorizar su emisión local con
+`ops/scripts/provision-gate-identity.py --output-dir <directorio-nuevo> --ca-cert <CA-publica>
+--ca-key <clave-CA-local> --identities-dir <registro-mTLS>`. La clave permanece en el host emisor,
+modo 0400; el script no reemplaza credenciales existentes ni crea un agente de flota. Registra
+únicamente el principal anterior mediante lock y CAS. Una repetición exacta es idempotente; si
+falló el registro después de emitir, reutiliza el mismo par validado. La vigencia queda acotada
+por la CA. Nunca usar una identidad de agente o de operador para suplir este probe.
+
 ## Reglas por fase
 
 | Fase | Cardinalidad | Drain | Round-trip |
