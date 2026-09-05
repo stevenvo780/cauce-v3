@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AdapterClient } from "../sdk/client.js";
+import { BlobClient, configureDefaultBlobClient } from "../sdk/blob-client.js";
 import { DurableStore } from "../sdk/durable-store.js";
 import { SpawnCommandRunner } from "../sdk/process-runner.js";
 import { WebSocketConsumerConnector } from "../sdk/websocket-transport.js";
@@ -222,6 +223,15 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
       },
     }),
   });
+  try {
+    configureDefaultBlobClient(BlobClient.fromRelayUrl(runtime.relayUrl, {
+      ...(runtime.bearerTokenFile === undefined ? {} : { bearerTokenFile: runtime.bearerTokenFile }),
+      ...(runtime.mutualTls === undefined ? {} : { mutualTls: runtime.mutualTls }),
+      ...(runtime.developmentIdentity ? { developmentIdentity: { tenant_id: tenantId, alias: runtime.alias } } : {}),
+    }));
+  } catch (error) {
+    process.stderr.write(`blob client disabled: ${String(error instanceof Error ? error.message : error)}\n`);
+  }
   const client = new AdapterClient({
     config: {
       tenantId,

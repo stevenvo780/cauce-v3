@@ -10,8 +10,12 @@ import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENTS_TOTAL_BYTES,
+  MAX_BLOB_BYTES,
   objectRecord,
+  parseBlobArtifactUri,
+  parseBlobLocator,
 } from "@cauce/protocol";
+import { BlobClientError, defaultBlobClient, type BlobFetcher } from "./blob-client.js";
 import { AdapterError } from "./errors.js";
 import type { HarnessAttachment } from "./types.js";
 
@@ -120,9 +124,59 @@ function diskName(index: number, name: string): string {
   return `${prefix}${stem}${extension}`;
 }
 
-export async function materializeAttachments(body: Record<string, unknown>): Promise<MaterializedAttachments | undefined> {
-  if (!Array.isArray(body.attachments_v1) || body.attachments_v1.length === 0) return undefined;
-  const encoded = body.attachments_v1;
+interface BlobReference {
+  readonly sha256: string;
+  readonly name: string;
+  readonly mime: string;
+  readonly kind: "image" | "document";
+  readonly size: number | undefined;
+}
+
+/* A file that travels by reference: an `attachments_v1` entry with a `blob` locator, or an
+   `artifacts_v1` ref whose uri names a blob. Both land on disk like inline bytes do. */
+function blobReference(item: Record<string, unknown> | undefined, fromArtifact: boolean): BlobReference | undefined {
+  if (item === undefined) return undefined;
+  const sha256 = fromArtifact ? parseBlobArtifactUri(item.uri) : parseBlobLocator(item.blob);
+  if (sha256 === undefined) return undefined;
+  const name = safeName(item.name);
+  const mime = fromArtifact ? item.media_type ?? "application/octet-stream" : item.mime_type;
+  const rawSize = fromArtifact ? item.size : item.file_size;
+  const size = rawSize === undefined ? undefined : Number(rawSize);
+  if (name === undefined || typeof mime !== "string" || !isValidMediaType(mime)
+      || (size !== undefined && (!Number.isSafeInteger(size) || size <= 0 || size > MAX_BLOB_BYTES))) {
+    throw attachmentError("Delivery contains malformed blob reference metadata");
+  }
+  const kind = fromArtifact ? (mime.toLowerCase().startsWith("image/") ? "image" : "document") : declaredKind(item.kind, mime);
+  if (kind === undefined) throw attachmentError("Delivery attachment kind is unknown or contradicts its MIME type");
+  return { sha256, name, mime, kind, size };
+}
+
+async function fetchBlob(
+  reference: BlobReference, path: string, blobs: BlobFetcher | undefined,
+): Promise<HarnessAttachment> {
+  if (blobs === undefined) throw attachmentError("Delivery references a blob but this adapter has no blob client configured");
+  try {
+    const fetched = await blobs.download(reference.sha256, path, reference.size === undefined ? {} : { expectedBytes: reference.size });
+    return { kind: reference.kind, name: reference.name, mimeType: reference.mime, path, size: fetched.bytes, sha256: fetched.sha256 };
+  } catch (error) {
+    const detail = error instanceof BlobClientError ? `${error.code}: ${error.message}` : String(error);
+    throw attachmentError(`Delivery blob ${reference.sha256} could not be fetched (${detail})`);
+  }
+}
+
+function artifactBlobRefs(body: Record<string, unknown>): Record<string, unknown>[] {
+  if (!Array.isArray(body.artifacts_v1)) return [];
+  return body.artifacts_v1
+    .map((entry) => objectRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => entry !== undefined && parseBlobArtifactUri(entry.uri) !== undefined);
+}
+
+export async function materializeAttachments(
+  body: Record<string, unknown>, blobs: BlobFetcher | undefined = defaultBlobClient(),
+): Promise<MaterializedAttachments | undefined> {
+  const inlineOrBlob = Array.isArray(body.attachments_v1) ? body.attachments_v1 : [];
+  const encoded = [...inlineOrBlob, ...artifactBlobRefs(body).map((entry) => ({ ...entry, cauce_artifact_ref: true }))];
+  if (encoded.length === 0) return undefined;
   if (encoded.length > MAX_ATTACHMENTS_PER_MESSAGE) throw attachmentError("Delivery has too many attachments");
 
   const { directory, workspace } = await createTurnDirectory();
@@ -136,6 +190,16 @@ export async function materializeAttachments(body: Record<string, unknown>): Pro
   try {
     for (const [index, value] of encoded.entries()) {
       const item = objectRecord(value);
+      const reference = blobReference(item, item?.cauce_artifact_ref === true);
+      if (reference !== undefined) {
+        const path = join(directory, diskName(index, reference.name));
+        const fetched = await fetchBlob(reference, path, blobs);
+        attachments.push(fetched);
+        lines.push(`Attachment ${String(index + 1)}: ${JSON.stringify({
+          name: fetched.name, mime_type: fetched.mimeType, file_size: fetched.size, sha256: fetched.sha256, local_path: path,
+        })}`);
+        continue;
+      }
       const name = safeName(item?.name);
       const mime = item?.mime_type;
       const size = item?.file_size;

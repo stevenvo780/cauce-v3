@@ -193,3 +193,14 @@ export class BlobClient implements BlobUploader, BlobFetcher {
     return { sha256, bytes, mediaType: mediaType.split(";")[0]?.trim() ?? "application/octet-stream" };
   }
 }
+
+let configured: (BlobUploader & BlobFetcher) | undefined;
+
+/** The process-wide client the runtime wires from its relay credentials; `undefined` disables blobs. */
+export function configureDefaultBlobClient(client: (BlobUploader & BlobFetcher) | undefined): void {
+  configured = client;
+}
+
+export function defaultBlobClient(): (BlobUploader & BlobFetcher) | undefined {
+  return configured;
+}

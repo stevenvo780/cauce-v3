@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { open, realpath } from "node:fs/promises";
+import { lstat, open, realpath } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -9,8 +9,10 @@ import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENTS_TOTAL_BYTES,
+  MAX_BLOB_BYTES,
   mediaTypeForExtension,
 } from "@cauce/protocol";
+import { defaultBlobClient, type BlobUploader } from "./blob-client.js";
 import { dataUriPayloadBytes, NOT_SENT, reviseFileOnlyOutcome } from "./output-parser/relay-artifacts.js";
 import type { OutputArtifact, RelayMessage, StructuredOutput } from "./types.js";
 
@@ -167,6 +169,26 @@ async function inlineArtifact(
   };
 }
 
+/* A regular file past the inline cap goes to the blob store instead and travels as a reference;
+   the declared sha256, when present, is what the store is asked to verify. A symlink is never
+   followed, matching `readRegularFile`. Any failure leaves the artifact as it was. */
+async function uploadArtifact(
+  artifact: OutputArtifact, path: string, blobs: BlobUploader,
+): Promise<OutputArtifact | undefined> {
+  try {
+    const link = await lstat(path);
+    if (!link.isFile() || link.size <= MAX_INLINED_ARTIFACT_BYTES || link.size > MAX_BLOB_BYTES) return undefined;
+    const declared = artifact.sha256?.trim().toLowerCase() ?? "";
+    if (declared !== "" && !HEX_SHA256.test(declared)) return undefined;
+    const mediaType = mediaTypeFor(artifact, path);
+    const name = artifact.name.trim().length > 0 ? artifact.name : basename(path);
+    const receipt = await blobs.upload(path, { name, mediaType, ...(declared === "" ? {} : { sha256: declared }) });
+    return { name, uri: receipt.uri, media_type: mediaType, sha256: receipt.sha256, size: receipt.bytes };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Shared across `output.artifacts` AND every `messages[].artifacts`: a delegation and the reply to
  * the origin spend ONE aggregate budget, never one each.
@@ -176,6 +198,7 @@ interface InlineBudget {
   lookups: number;
   changed: boolean;
   readonly denied: (path: string) => Promise<boolean>;
+  readonly blobs: BlobUploader | undefined;
 }
 
 /** Keeps the identity of the attachment and drops only its content. */
@@ -227,9 +250,15 @@ async function inlineList(
     }
     budget.lookups += 1;
     const inlined = await inlineArtifact(artifact, path);
-    // Couldn't (missing, symlink, FIFO, sha mismatch, too big): stays as is and the turn ships.
+    // Couldn't (missing, symlink, FIFO, sha mismatch, too big): stays as is and the turn ships,
+    // unless it is only too big and a blob store is reachable: then it travels by reference.
     if (inlined === undefined) {
-      artifacts.push(artifact);
+      const uploaded = budget.blobs === undefined ? undefined : await uploadArtifact(artifact, path, budget.blobs);
+      if (uploaded !== undefined) {
+        remaining -= 1;
+        budget.changed = true;
+      }
+      artifacts.push(uploaded ?? artifact);
       continue;
     }
     // The aggregate cap is measured in file bytes, same as `MAX_ATTACHMENTS_TOTAL_BYTES`.
@@ -250,6 +279,8 @@ async function inlineList(
 export interface InlineArtifactOptions {
   readonly deniedPathPrefixes?: readonly string[];
   readonly denyPath?: (path: string) => boolean;
+  /** Where files past the inline cap go; defaults to the client the runtime configured. */
+  readonly blobs?: BlobUploader;
 }
 
 function asDirectory(prefix: string): string {
@@ -303,6 +334,7 @@ export async function inlineLocalArtifacts(
       lookups: 0,
       changed: false,
       denied: denialFor(options),
+      blobs: options.blobs ?? defaultBlobClient(),
     };
     const artifacts = await inlineList(output.artifacts, budget);
     const messages: RelayMessage[] = [];
