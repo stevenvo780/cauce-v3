@@ -340,11 +340,6 @@ test("el harness recibe identidad y deber antes de la mecanica por stdin", async
   assert.ok(stdin.indexOf(DELEGATION_MECHANICS_HEADER) < stdin.indexOf("--- BEGIN REQUEST ---"));
 });
 
-/* ------------------------------------------------------------------------------------------ */
-/* The PRIMARY DUTY has TWO formulations: the executor's and the director's. Steven (2026-09-05): */
-/* «tú no debes desarrollar, solo debes delegar». The executor mandate told argos the opposite  */
-/* in 100 % of its deliveries, and it obeyed the envelope over its role.                        */
-
 const DIRECTOR = {
   self_alias: "argos", tenant_id: "Steven", room_id: "grp.steven", sender_alias: "zeus",
 } as const;
@@ -357,10 +352,8 @@ test("para el alias que dirige, el deber primario manda REPARTIR y VERIFICAR; co
   assert.match(prompt, /Escribir código de producto NUNCA es tuyo/u);
   assert.match(prompt, /desatascalo dirigiendo/u);
   assert.match(prompt, /"messages" lleva N entradas/u);
-  // The executor mandate must not coexist: two mandates with different edges invite obeying the weaker one.
   assert.equal(prompt.split("Esta entrega es TU trabajo").length - 1, 0);
   assert.equal(prompt.split("Delegar es la excepción").length - 1, 0);
-  // Same header, same place: still the lexical anchor the delegation mechanics quote.
   assert.equal(prompt.split(PRIMARY_DUTY_HEADER).length - 1, 1);
   assert.ok(prompt.indexOf(PRIMARY_DUTY_HEADER) < prompt.indexOf(DELEGATION_MECHANICS_HEADER));
   assert.ok(prompt.indexOf(IDENTITY_END) < prompt.indexOf(PRIMARY_DUTY_HEADER));

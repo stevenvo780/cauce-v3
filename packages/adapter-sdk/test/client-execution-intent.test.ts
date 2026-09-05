@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {DurableStore} from '../src/sdk/durable-store.js';
 import type {ClientFrame} from '../src/sdk/types.js';
-import {CountingRunner, FakeConnection, ScriptedConnector, SequenceConnector, claimDeadline, escala, makeClient, renewableDelivery, startedAcks, waitUntil} from './client-fixtures.js';
+import {CountingRunner, FakeConnection, ScriptedConnector, SequenceConnector, VirtualClock, claimDeadline, escala, makeClient, renewableDelivery, startedAcks, waitUntil} from './client-fixtures.js';
 
 class HangingExecutionIntentConnection extends FakeConnection {
   closeCalls = 0;
@@ -84,10 +84,11 @@ test("the harness waits for the exact durable execution-intent receipt", async (
 test("an unconfirmed execution intent times out before invoking the harness", async () => {
   const connection = new FakeConnection(1, undefined, false);
   const runner = new CountingRunner();
+  const clock = new VirtualClock();
   const context = await makeClient(
     "execution-intent-timeout",
     new ScriptedConnector(connection),
-    { runner, claimWatchdogMs: escala(500) },
+    { runner, clock, claimWatchdogMs: 500 },
   );
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
@@ -96,9 +97,12 @@ test("an unconfirmed execution intent times out before invoking the harness", as
     const input = renewableDelivery(
       "execution-intent-timeout",
       "000000000090",
-      claimDeadline(),
+      clock.now().getTime() + 30_000,
     );
     connection.push(input);
+    await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true),
+      "the execution-intent ACK on the wire");
+    clock.advance(250);
     await waitUntil(() => connection.sent.some((frame) => (
       frame.type === "ack" && frame.delivery_id === input.delivery_id && frame.status === "failed"
     )), escala(3_000), "the failed ACK for the unconfirmed execution intent");
@@ -392,4 +396,3 @@ test("a global fenced frame rejects the execution gate before invocation", async
     await running;
   }
 });
-

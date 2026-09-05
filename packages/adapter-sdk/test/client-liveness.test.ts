@@ -93,6 +93,14 @@ class AcknowledgingConnection extends TrackingConnection {
   }
 
   override async send(frame: ClientFrame): Promise<void> {
+    if (frame.type === 'hello') {
+      this.sent.push(frame);
+      this.push({
+        type: 'hello_ack', version: '3.0', epoch: 1,
+        lease_expires_at: new Date(this.clock.now().getTime() + 30_000).toISOString(),
+      });
+      return;
+    }
     await super.send(frame);
     if (frame.type !== 'heartbeat') return;
     this.push({

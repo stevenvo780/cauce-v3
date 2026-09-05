@@ -123,9 +123,9 @@ test("cada cara del perfil cae en SU fichero y NO en los demás", () => {
   }
 });
 
-test("revocar permisos o cambiar destinos, cuotas y montaje NO deja una fotografía rancia en disco", () => {
-  const antes = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
-  const despues = ficherosDelArnes("openclaw", {
+test.each(["claude", "codex", "openclaw"])("%s no congela permisos, destinos, cuotas ni montaje en disco", (harness) => {
+  const antes = ficherosDelArnes(harness, { perfil: perfil(), hechos: hechos() });
+  const despues = ficherosDelArnes(harness, {
     perfil: perfil(),
     hechos: hechos({
       permisos: { ruta: false, lectura: false, control: false, notificacion: false },
@@ -552,14 +552,16 @@ test("lo que Cauce escribe ya lo acota AGENT_PROFILE_LIMITS.total; sin tope esta
   );
 });
 
-test("el fichero del arnés concentra las SIETE caras del alias, no sólo las autoradas", () => {
-  const claude = textoDe(ficherosDelArnes("claude", { perfil: perfil(), hechos: hechos() }), "CLAUDE.md");
-  assert.match(claude, /## Permisos y acceso vía Cauce/u);
-  assert.match(claude, /## Cuotas y límites/u);
-  assert.match(claude, /## Configuración del arnés/u);
-  assert.match(claude, /CUOTA-TOOLS-steven/u);
-  assert.match(claude, /CAPACIDAD-TOOLS-artifacts/u);
-  assert.match(claude, /Cambiar configuración \(control\): no/u);
+test.each(["claude", "codex"])("%s conserva identidad, reglas y herramientas autoradas sin hechos volátiles", (harness) => {
+  const text = ficherosDelArnes(harness, { perfil: perfil(), hechos: hechos() })[0]?.texto;
+  assert.ok(text);
+  assert.match(text, /<!-- alias: Steven\/zeus -->/u);
+  assert.match(text, /PROPOSITO-SOUL|ROL-IDENTITY/u);
+  assert.match(text, /RESTRICCION-AGENTS/u);
+  assert.match(text, /HERRAMIENTA-TOOLS/u);
+  assert.match(text, /REGLA-AGENTS/u);
+  assert.doesNotMatch(text, /Permisos y acceso|Cuotas y límites|Configuración del arnés/u);
+  assert.doesNotMatch(text, /CUOTA-TOOLS|CAPACIDAD-TOOLS|Cambiar configuración \(control\)/u);
 });
 
 test("las rutas de gobierno salen de UNA tabla; un hecho declarado no canónico falla cerrado", () => {

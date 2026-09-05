@@ -238,6 +238,7 @@ export class AdapterClient {
     let welcomed = false;
     const heartbeatAbort = new AbortController();
     let heartbeat: Promise<void> = Promise.resolve();
+    let replay: Promise<void> = Promise.resolve();
     let iterator: AsyncIterator<ServerFrame> | undefined;
     const liveness = new ConnectionLiveness({
       clock: this.clock,
@@ -264,9 +265,15 @@ export class AdapterClient {
             closeConnectionWithoutWaiting(generation.connection);
           });
           // Only real traffic credits reconnect pacing; the greeting alone proves nothing.
-          const delivered = await this.flushOutbox();
-          if (delivered > 0) this.backoff.reset();
-          void this.engine.recover().catch(() => undefined);
+          replay = this.flushOutbox(generation).then((delivered) => {
+            this.assertGenerationHealthy(generation);
+            if (delivered > 0) this.backoff.reset();
+            void this.engine.recover().catch(() => undefined);
+          }).catch((error: unknown) => {
+            if (signalAborted(generation.abortController.signal)) return;
+            this.failGeneration(generation, error instanceof AdapterError ? error
+              : new AdapterError(connectionErrorCode(error), 'Durable outbox replay failed', true));
+          });
           continue;
         }
         if (frame.type === 'takeover_rejected') {
@@ -279,8 +286,9 @@ export class AdapterClient {
     } finally {
       liveness.stop();
       heartbeatAbort.abort();
+      this.abortGeneration(generation);
       if (iterator !== undefined) releaseIteratorWithoutWaiting(iterator);
-      await heartbeat;
+      await Promise.all([heartbeat, replay]);
     }
   }
 
@@ -410,9 +418,10 @@ export class AdapterClient {
   }
 
   /** Replays the outbox; an entry the transport refuses locally is quarantined, never replayed. */
-  private async flushOutbox(): Promise<number> {
+  private async flushOutbox(generation: ConnectionGeneration): Promise<number> {
     let delivered = 0;
     for (const event of this.store.pendingEvents()) {
+      this.assertGenerationHealthy(generation);
       if (this.quarantinedEvents.has(event.event_id)) continue;
       try {
         await this.sendEvent(event);
@@ -636,13 +645,7 @@ export class AdapterClient {
           true,
         );
     const next = this.sendTail.catch(() => undefined).then(async () => {
-      if (this.activeGeneration !== generation) {
-        throw new AdapterError(
-          'CONNECTION_GENERATION_STALE',
-          `Consumer connection generation ${String(generation.id)} is no longer active`,
-          true,
-        );
-      }
+      this.assertGenerationHealthy(generation);
       if (this.failedConnections.has(generation.connection)) {
         throw new Error('Consumer connection is no longer writable');
       }
@@ -720,6 +723,12 @@ export class AdapterClient {
   }
 
   private assertGenerationHealthy(generation: ConnectionGeneration): void {
+    if (this.activeGeneration !== generation) {
+      throw new AdapterError(
+        'CONNECTION_GENERATION_STALE',
+        `Consumer connection generation ${String(generation.id)} is no longer active`, true,
+      );
+    }
     if (generation.failure !== undefined) throw generation.failure;
     const signal = generation.abortController.signal;
     if (signal.aborted) {

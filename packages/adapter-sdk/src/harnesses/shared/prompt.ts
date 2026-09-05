@@ -109,16 +109,6 @@ function deliveryMetadata(
   return metadata;
 }
 
-/**
- * Aliases whose delivery IS to distribute. Keyed by `tenant/alias` on purpose: the same alias name
- * in another tenant is an executor, and nobody else in the tenant inherits the flip.
- *
- * Why a constant and not a profile field: the role text of `argos` already said "repartís el
- * trabajo" and the executor mandate below still won in 100 % of its deliveries, because the
- * envelope outranks the role by design (`PRIMARY_DUTY_HEADER`). The mandate has to flip HERE, in
- * the one place it lives, or the director keeps building. Measured 2026-09-05 (Steven: «tú no
- * debes desarrollar, solo debes delegar»).
- */
 const DIRECTORES: ReadonlySet<string> = new Set(["Steven/argos"]);
 
 export function esDirector(context: HarnessRequestContext | undefined): boolean {
@@ -138,11 +128,6 @@ function primaryDuty(context: HarnessRequestContext | undefined): readonly strin
   ];
 }
 
-/**
- * The director's formulation. Same header (it is the lexical anchor the mechanics quote), same
- * place, opposite default: distributing is the work, building is the exception to justify.
- * Kept at the executor's weight so the envelope budget does not move for this alias.
- */
 function primaryDutyDelDirector(): readonly string[] {
   return [
     PRIMARY_DUTY_HEADER,

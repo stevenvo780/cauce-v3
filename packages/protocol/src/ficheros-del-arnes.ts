@@ -617,7 +617,7 @@ export function ficherosDelArnes(
     }
     const cuerpo = harness === "openclaw"
       ? bloqueDeFichero(nombre, contexto.perfil)
-      : componerBloqueDePerfil(contexto.perfil, contexto.hechos, { includeDerivedFacts: true });
+      : componerBloqueDePerfil(contexto.perfil, contexto.hechos, { includeDerivedFacts: false });
     const canonico = esFicheroCanonico(harness, nombre);
     const bloque = cuerpo.trim().length === 0
       ? canonico && revisionNativa !== undefined ? renglonDeDueno(contexto.perfil) : ""

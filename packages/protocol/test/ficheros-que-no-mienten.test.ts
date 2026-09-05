@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import {
-  AGENT_PROFILE_LIMITS, measureStrictestUnits,
+  AGENT_PROFILE_LIMITS, componerBloqueDePerfil, measureStrictestUnits,
   type AgentProfile, type ContextoDeAlias, type HechosDelAlias,
 } from "../src/agent-profile.js";
-import { bloqueDePerfil, conBloqueDePerfil, sinBloqueDePerfil } from "../src/marcas-de-bloque.js";
+import { MARCA_PERFIL_INICIO, bloqueDePerfil, conBloqueDePerfil, sinBloqueDePerfil } from "../src/marcas-de-bloque.js";
 import {
   ErrorDeTopeDelArnes, PRESUPUESTOS_DE_CONTEXTO, TOPES_OPENCLAW, ficherosDelArnes,
-  presupuestoDeContextoMedido, topeDeCodexEnConfigToml, type FicheroGenerado,
+  marcaDeRevisionDelPerfil, presupuestoDeContextoMedido, revisionDelPerfil,
+  topeDeCodexEnConfigToml, type FicheroGenerado,
   type PresupuestoDeContexto,
 } from "../src/ficheros-del-arnes.js";
+import { WsOutboundSchema } from "../src/schemas.js";
 
 // Consistency verification tests for harness file generation and update.
 
@@ -38,6 +40,43 @@ function de(ficheros: readonly FicheroGenerado[], nombre: string): FicheroGenera
   assert.ok(f, `no vino ${nombre}`);
   return f;
 }
+
+test.each(["claude", "codex"])("%s retira hechos antiguos sin perder notas, acceso autorado ni revisión", (harness) => {
+  const ctx = contexto(perfil({ purpose: "identidad vigente", tools: ["ssh al host autorizado"] }));
+  const name = harness === "claude" ? "CLAUDE.md" : "AGENTS.md";
+  const manual = "# Notas propias\n\nConservar mi configuración de trabajo.\n";
+  const previous = conBloqueDePerfil(
+    manual,
+    `<!-- alias: Steven/argos -->\n${componerBloqueDePerfil(ctx.perfil, ctx.hechos)}`,
+  );
+  const existing = harness === "claude"
+    ? previous.replace(MARCA_PERFIL_INICIO, `${marcaDeRevisionDelPerfil(9)}\n${MARCA_PERFIL_INICIO}`)
+    : previous;
+  const result = de(ficherosDelArnes(harness, ctx, new Map([[name, existing]]), { revision: 9 }), name);
+  assert.equal(result.escribir, true);
+  assert.match(result.texto, /identidad vigente/u);
+  assert.match(result.texto, /ssh al host autorizado/u);
+  assert.match(result.texto, /<!-- alias: Steven\/argos -->/u);
+  assert.ok(result.texto.includes(manual));
+  assert.doesNotMatch(result.texto, /saldantia|2% semanal|Alias alcanzables|ws-argos|Permisos y acceso/u);
+  assert.equal(revisionDelPerfil(result.texto), harness === "claude" ? 9 : undefined);
+  const repeated = de(ficherosDelArnes(harness, ctx, new Map([[name, result.texto]]), { revision: 9 }), name);
+  assert.equal(repeated.escribir, false);
+  assert.equal(repeated.texto, result.texto);
+});
+
+test("la proyección persistente no borra los hechos transmitidos ni muta el contexto recibido", () => {
+  const ctx = contexto(perfil({ purpose: "identidad vigente" }));
+  const before = structuredClone(ctx);
+  for (const harness of ["claude", "codex", "openclaw"]) ficherosDelArnes(harness, ctx);
+  assert.deepEqual(ctx, before);
+  const frame = WsOutboundSchema.parse({
+    type: "hello_ack", version: "3.0", epoch: 1,
+    lease_expires_at: new Date(60_000).toISOString(), agent_profile: ctx,
+  });
+  assert.equal(frame.type, "hello_ack");
+  assert.deepEqual(frame.agent_profile, before);
+});
 
 // ── 1. Removal of stale blocks ────────────────────────────────────────────────
 

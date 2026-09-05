@@ -130,8 +130,7 @@ test("la identidad describe el mundo del agente y deja el mandato al deber prima
   assert.match(identity, /Comunicación no es autorización/u);
   assert.match(identity, /escalá a zeus con el error textual crudo/u);
 
-  // What identity is NOT: the mandate. It lives only once, in the primary duty — and for
-  // `Steven/argos` (this baseContext) that duty is the director's, not the executor's.
+  // The mandate lives only in the primary duty, which is director-specific for this context.
   assert.doesNotMatch(identity, /Esta entrega es TU trabajo/u);
   assert.doesNotMatch(identity, /Delegar es la excepción/u);
   assert.doesNotMatch(identity, /REPARTIR y VERIFICAR/u);
