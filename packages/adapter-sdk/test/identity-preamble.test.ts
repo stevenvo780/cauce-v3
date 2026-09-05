@@ -130,10 +130,14 @@ test("la identidad describe el mundo del agente y deja el mandato al deber prima
   assert.match(identity, /Comunicación no es autorización/u);
   assert.match(identity, /escalá a zeus con el error textual crudo/u);
 
-  // What identity is NOT: the mandate. It lives only once, in the primary duty.
+  // What identity is NOT: the mandate. It lives only once, in the primary duty — and for
+  // `Steven/argos` (this baseContext) that duty is the director's, not the executor's.
   assert.doesNotMatch(identity, /Esta entrega es TU trabajo/u);
   assert.doesNotMatch(identity, /Delegar es la excepción/u);
-  assert.match(stdin, /Esta entrega es TU trabajo/u);
+  assert.doesNotMatch(identity, /REPARTIR y VERIFICAR/u);
+  assert.ok(stdin.includes(PRIMARY_DUTY_HEADER));
+  assert.match(stdin, /tu entrega es REPARTIR y VERIFICAR/u);
+  assert.doesNotMatch(stdin, /Esta entrega es TU trabajo/u);
 });
 
 test("un role_brief con tildes sobrevive el viaje por stdin hasta el harness", async () => {

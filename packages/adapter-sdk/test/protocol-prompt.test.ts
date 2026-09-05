@@ -339,3 +339,52 @@ test("el harness recibe identidad y deber antes de la mecanica por stdin", async
   assert.ok(stdin.indexOf(PRIMARY_DUTY_HEADER) < stdin.indexOf(DELEGATION_MECHANICS_HEADER));
   assert.ok(stdin.indexOf(DELEGATION_MECHANICS_HEADER) < stdin.indexOf("--- BEGIN REQUEST ---"));
 });
+
+/* ------------------------------------------------------------------------------------------ */
+/* The PRIMARY DUTY has TWO formulations: the executor's and the director's. Steven (2026-09-05): */
+/* «tú no debes desarrollar, solo debes delegar». The executor mandate told argos the opposite  */
+/* in 100 % of its deliveries, and it obeyed the envelope over its role.                        */
+
+const DIRECTOR = {
+  self_alias: "argos", tenant_id: "Steven", room_id: "grp.steven", sender_alias: "zeus",
+} as const;
+
+test("para el alias que dirige, el deber primario manda REPARTIR y VERIFICAR; construir es la excepción", () => {
+  const prompt = protocolPrompt("request", undefined, context(DIRECTOR));
+
+  assert.match(prompt, /tu entrega es REPARTIR y VERIFICAR/u);
+  assert.match(prompt, /Construir vos es la excepción/u);
+  assert.match(prompt, /Escribir código de producto NUNCA es tuyo/u);
+  assert.match(prompt, /desatascalo dirigiendo/u);
+  assert.match(prompt, /"messages" lleva N entradas/u);
+  // The executor mandate must not coexist: two mandates with different edges invite obeying the weaker one.
+  assert.equal(prompt.split("Esta entrega es TU trabajo").length - 1, 0);
+  assert.equal(prompt.split("Delegar es la excepción").length - 1, 0);
+  // Same header, same place: still the lexical anchor the delegation mechanics quote.
+  assert.equal(prompt.split(PRIMARY_DUTY_HEADER).length - 1, 1);
+  assert.ok(prompt.indexOf(PRIMARY_DUTY_HEADER) < prompt.indexOf(DELEGATION_MECHANICS_HEADER));
+  assert.ok(prompt.indexOf(IDENTITY_END) < prompt.indexOf(PRIMARY_DUTY_HEADER));
+});
+
+test("CONTROL NEGATIVO: el mandato del director es por alias Y tenant; nadie más lo hereda", () => {
+  for (const ctx of [
+    context(), // iza / Miguel: the usual executor
+    context({ self_alias: "zeus", tenant_id: "Steven", room_id: "grp.steven" }), // same tenant, other alias
+    context({ self_alias: "argos", tenant_id: "Pablo", room_id: "grp.pablo" }), // same alias, other tenant
+  ]) {
+    const quien = `${ctx.tenant_id}/${ctx.self_alias}`;
+    const prompt = protocolPrompt("request", undefined, ctx);
+    assert.match(prompt, /Esta entrega es TU trabajo/u, `${quien} perdió el mandato del ejecutor`);
+    assert.match(prompt, /Delegar es la excepción, nunca lo normal/u, `${quien} perdió el mandato del ejecutor`);
+    assert.doesNotMatch(prompt, /REPARTIR y VERIFICAR/u, `${quien} heredó el mandato del director`);
+  }
+});
+
+test("el mandato del director no pesa más que el del ejecutor: el sobre de argos no crece", () => {
+  const director = protocolPrompt("request", undefined, context(DIRECTOR));
+  const ejecutor = protocolPrompt("request", undefined, context({ ...DIRECTOR, self_alias: "zeus" }));
+  assert.ok(
+    director.length <= ejecutor.length + 100,
+    `el sobre del director mide ${String(director.length)} y el del ejecutor ${String(ejecutor.length)}`,
+  );
+});

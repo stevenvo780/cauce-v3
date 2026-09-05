@@ -109,7 +109,24 @@ function deliveryMetadata(
   return metadata;
 }
 
-function primaryDuty(): readonly string[] {
+/**
+ * Aliases whose delivery IS to distribute. Keyed by `tenant/alias` on purpose: the same alias name
+ * in another tenant is an executor, and nobody else in the tenant inherits the flip.
+ *
+ * Why a constant and not a profile field: the role text of `argos` already said "repartís el
+ * trabajo" and the executor mandate below still won in 100 % of its deliveries, because the
+ * envelope outranks the role by design (`PRIMARY_DUTY_HEADER`). The mandate has to flip HERE, in
+ * the one place it lives, or the director keeps building. Measured 2026-09-05 (Steven: «tú no
+ * debes desarrollar, solo debes delegar»).
+ */
+const DIRECTORES: ReadonlySet<string> = new Set(["Steven/argos"]);
+
+export function esDirector(context: HarnessRequestContext | undefined): boolean {
+  return context !== undefined && DIRECTORES.has(`${context.tenant_id}/${context.self_alias}`);
+}
+
+function primaryDuty(context: HarnessRequestContext | undefined): readonly string[] {
+  if (esDirector(context)) return primaryDutyDelDirector();
   return [
     PRIMARY_DUTY_HEADER,
     '- Esta entrega es TU trabajo. Hacelo vos, en tu propio workspace, con tus herramientas y tus accesos, y contestá en "reply".',
@@ -118,6 +135,23 @@ function primaryDuty(): readonly string[] {
     "- La comodidad, el volumen, el tedio, la incertidumbre, o el simple hecho de que otro alias también podría hacerlo, NO son razones admisibles.",
     '- Si delegás, tu "reply" tiene que decir qué hiciste vos y por qué la parte delegada no era tuya. Anunciar un traspaso no es una respuesta.',
     '- Un turno que termina con "messages":[] y una respuesta de verdad es el resultado normal y esperado, y así se tiene que ver la mayoría de los turnos.',
+  ];
+}
+
+/**
+ * The director's formulation. Same header (it is the lexical anchor the mechanics quote), same
+ * place, opposite default: distributing is the work, building is the exception to justify.
+ * Kept at the executor's weight so the envelope budget does not move for this alias.
+ */
+function primaryDutyDelDirector(): readonly string[] {
+  return [
+    PRIMARY_DUTY_HEADER,
+    '- Sos el que dirige: tu entrega es REPARTIR y VERIFICAR, no construir. Leé el pedido, decidí quién lo hace, encargalo con alcance, criterio de hecho y plazo, y contestá en "reply" qué repartiste y a quién.',
+    '- Construir vos es la excepción y hay que justificarla en el "reply": sólo si ningún agente en línea puede hacerlo, o si terminarlo cuesta menos que explicarlo (una lectura, una medición, una respuesta corta). Escribir código de producto NUNCA es tuyo.',
+    '- Un encargo que no salió por "messages" no existe: si tu "reply" dice que delegaste a N, "messages" lleva N entradas. Un fichero, una nota o un anuncio no son un envío.',
+    "- Si algo está parado, desatascalo dirigiendo: medí por qué está parado, re-encargalo más chico o a otro, escalá a zeus si es infraestructura, y si no hay agente disponible dejalo encolado por escrito y decilo.",
+    '- Verificá lo que vuelve antes de darlo por hecho: leé la respuesta, pedí la evidencia que declaraste, y cerrá el frente sólo cuando la tengas.',
+    '- Un turno tuyo que termina con "messages":[] tiene que decir por qué no hizo falta repartir; el resultado normal de un director es un "reply" con el reparto y sus encargos en "messages".',
   ];
 }
 
@@ -178,7 +212,7 @@ function bloquesFijos(
 ): readonly string[] {
   return [
     ...identityPreamble(context, !native),
-    ...primaryDuty(),
+    ...primaryDuty(context),
     "Return exactly one structured result with this JSON shape:",
     '{"reply":string|null,"messages":[{"to":string,"body":string}],"notify":[{"to":string,"kind":"alert"|"decision_request"|"task_complete"|"digest","body":string}],"status":"done"|"failed","retryable":boolean,"artifacts":[{"name":string,"uri":string,"media_type"?:string,"sha256"?:string}]}',
     "Do not wrap the result in Markdown.",
