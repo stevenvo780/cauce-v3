@@ -17,6 +17,7 @@ export interface PasteSessionOptions<E> {
   readonly transcript: TranscriptReader<E>;
   /** Environment variables set when creating the pane. */
   readonly environment?: Readonly<Record<string, string>>;
+  readonly harnessArguments?: readonly string[];
   readonly tmux: TmuxController;
   /** Backup runner used when the shared session degrades. */
   readonly fallback: CommandRunner;

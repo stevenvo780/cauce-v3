@@ -26,6 +26,7 @@ export interface SharedSessionSpec {
    * Environment variables applied to the panel startup command (`env K=V ...`).
    */
   readonly environment?: Readonly<Record<string, string>>;
+  readonly harnessArguments?: readonly string[];
   /** Resume specification for a previous conversation if any. See `ResumeSpec`. */
   readonly resume?: ResumeSpec;
 }

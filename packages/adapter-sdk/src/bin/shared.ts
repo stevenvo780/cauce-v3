@@ -150,6 +150,7 @@ function sharedSessionRunner(
     harness: shared.harness,
     workspace: shared.workspace,
     environment: shared.paneEnvironment,
+    harnessArguments: shared.harnessArguments,
     resume: sharedSessionResume(shared.harness, shared.configDirectory, shared.workspace),
     tmux,
     fallback,

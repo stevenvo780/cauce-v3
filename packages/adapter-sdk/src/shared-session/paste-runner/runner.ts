@@ -351,6 +351,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         ...(this.options.command === undefined ? {} : { command: this.options.command }),
         ...(this.options.resume === undefined ? {} : { resume: this.options.resume }),
         ...(this.options.environment === undefined ? {} : { environment: this.options.environment }),
+        ...(this.options.harnessArguments === undefined ? {} : { harnessArguments: this.options.harnessArguments }),
       },
       this.ensureOptions(signal),
     );

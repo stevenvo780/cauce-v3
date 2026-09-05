@@ -507,7 +507,7 @@ export function resumeArgumentSuffix(
   if (args === undefined || args.length === 0) return { ok: true, suffix: "" };
   for (const argument of args) {
     if (!/^[A-Za-z0-9-][A-Za-z0-9_.:@=+-]*$/u.test(argument)) {
-      return { ok: false, detail: `argumento de reanudación inválido: ${argument}` };
+      return { ok: false, detail: `argumento del panel inválido: ${argument}` };
     }
   }
   return { ok: true, suffix: ` ${args.join(" ")}` };
@@ -580,6 +580,10 @@ async function createSession(
   }
   const env = environment.prefix;
   const creationNonce = randomBytes(32).toString("hex");
+  const flags = resumeArgumentSuffix(spec.harnessArguments);
+  if (!flags.ok) {
+    return { ok: false, created: false, failure: "session_absent", detail: flags.detail };
+  }
   const resume = resumeArgumentSuffix(resumeArguments);
   if (!resume.ok) {
     return { ok: false, created: false, failure: "session_absent", detail: resume.detail };
@@ -589,7 +593,7 @@ async function createSession(
   const result = await tmux.run([
     "new-session", "-d", "-P", "-F", "#{session_id}", "-s", session, "-n", TUI_WINDOW,
     "-c", spec.workspace, "-x", width, "-y", height,
-    "bash", "-lc", `exec ${env}${command}${resume.suffix}`,
+    "bash", "-lc", `exec ${env}${command}${flags.suffix}${resume.suffix}`,
     ";", "set-option", "-t", session, CREATION_NONCE_OPTION, creationNonce,
   ]);
   if (result.exitCode !== 0) {
