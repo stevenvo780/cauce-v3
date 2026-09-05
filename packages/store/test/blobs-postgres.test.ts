@@ -78,10 +78,10 @@ describe('blobs repository', () => {
   it('has a down migration that removes the table and an up that recreates it', async () => {
     const down = await readFile(new URL('../migrations/down/042_blobs.sql', import.meta.url), 'utf8');
     await pool.query(down);
-    const gone = await pool.query(`SELECT to_regclass('public.blobs') AS relation`);
+    const gone = await pool.query<{ relation: string | null }>(`SELECT to_regclass('public.blobs') AS relation`);
     expect(gone.rows[0]?.relation).toBeNull();
     await applyMigrations(pool);
-    const back = await pool.query(`SELECT to_regclass('public.blobs') AS relation`);
+    const back = await pool.query<{ relation: string | null }>(`SELECT to_regclass('public.blobs') AS relation`);
     expect(back.rows[0]?.relation).toBe('blobs');
   });
 });

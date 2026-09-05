@@ -65,7 +65,6 @@ export interface OutputArtifact {
   readonly uri: string;
   readonly media_type?: string;
   readonly sha256?: string;
-  /** Bytes of a file that travels by reference; inline artifacts carry their size in the uri. */
   readonly size?: number;
 }
 

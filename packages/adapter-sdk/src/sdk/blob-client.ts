@@ -89,7 +89,7 @@ export class BlobClient implements BlobUploader, BlobFetcher {
   }
 
   private async transport(): Promise<{ request: typeof httpsRequest; agent?: HttpsAgent }> {
-    if (!this.baseUrl.startsWith("https:")) return { request: httpRequest as unknown as typeof httpsRequest };
+    if (!this.baseUrl.startsWith("https:")) return { request: httpRequest };
     const tls = this.options.mutualTls;
     if (tls === undefined) return { request: httpsRequest };
     this.agent ??= new HttpsAgent({

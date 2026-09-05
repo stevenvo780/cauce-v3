@@ -173,7 +173,6 @@ function declaredDigest(value: unknown): string | undefined {
   return typeof value === 'string' && HEX_SHA256.test(value) ? value : undefined;
 }
 
-/* A blob reference may weigh far more than an inline attachment: its ceiling is the blob one. */
 function declaredSize(value: unknown, ceiling = MAX_ATTACHMENT_BYTES): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value)
     && value > 0 && value <= ceiling

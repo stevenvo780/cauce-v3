@@ -45,9 +45,6 @@ export const AttachmentContentSchema = z.object({
   }
 });
 
-/* The same entry with the bytes elsewhere: `blob` names them by digest in the gateway's blob store
-   and nothing rides inline, so `file_size` may reach the blob ceiling instead of the inline one.
-   A `sha256` field is admitted only when it repeats the locator's digest. */
 export const AttachmentBlobReferenceSchema = z.object({
   kind: z.enum(['image', 'document']),
   name: AttachmentNameSchema,

@@ -169,9 +169,6 @@ async function inlineArtifact(
   };
 }
 
-/* A regular file past the inline cap goes to the blob store instead and travels as a reference;
-   the declared sha256, when present, is what the store is asked to verify. A symlink is never
-   followed, matching `readRegularFile`. Any failure leaves the artifact as it was. */
 async function uploadArtifact(
   artifact: OutputArtifact, path: string, blobs: BlobUploader,
 ): Promise<OutputArtifact | undefined> {
@@ -250,8 +247,7 @@ async function inlineList(
     }
     budget.lookups += 1;
     const inlined = await inlineArtifact(artifact, path);
-    // Couldn't (missing, symlink, FIFO, sha mismatch, too big): stays as is and the turn ships,
-    // unless it is only too big and a blob store is reachable: then it travels by reference.
+    // Couldn't (missing, symlink, FIFO, sha mismatch, too big): stays as is and the turn ships.
     if (inlined === undefined) {
       const uploaded = budget.blobs === undefined ? undefined : await uploadArtifact(artifact, path, budget.blobs);
       if (uploaded !== undefined) {
@@ -279,7 +275,6 @@ async function inlineList(
 export interface InlineArtifactOptions {
   readonly deniedPathPrefixes?: readonly string[];
   readonly denyPath?: (path: string) => boolean;
-  /** Where files past the inline cap go; defaults to the client the runtime configured. */
   readonly blobs?: BlobUploader;
 }
 

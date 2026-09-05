@@ -132,8 +132,6 @@ interface BlobReference {
   readonly size: number | undefined;
 }
 
-/* A file that travels by reference: an `attachments_v1` entry with a `blob` locator, or an
-   `artifacts_v1` ref whose uri names a blob. Both land on disk like inline bytes do. */
 function blobReference(item: Record<string, unknown> | undefined, fromArtifact: boolean): BlobReference | undefined {
   if (item === undefined) return undefined;
   const sha256 = fromArtifact ? parseBlobArtifactUri(item.uri) : parseBlobLocator(item.blob);
@@ -174,7 +172,7 @@ function artifactBlobRefs(body: Record<string, unknown>): Record<string, unknown
 export async function materializeAttachments(
   body: Record<string, unknown>, blobs: BlobFetcher | undefined = defaultBlobClient(),
 ): Promise<MaterializedAttachments | undefined> {
-  const inlineOrBlob = Array.isArray(body.attachments_v1) ? body.attachments_v1 : [];
+  const inlineOrBlob: unknown[] = Array.isArray(body.attachments_v1) ? body.attachments_v1 as unknown[] : [];
   const encoded = [...inlineOrBlob, ...artifactBlobRefs(body).map((entry) => ({ ...entry, cauce_artifact_ref: true }))];
   if (encoded.length === 0) return undefined;
   if (encoded.length > MAX_ATTACHMENTS_PER_MESSAGE) throw attachmentError("Delivery has too many attachments");

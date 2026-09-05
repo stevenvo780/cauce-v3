@@ -91,7 +91,7 @@ describe('PUT /v3/blobs', () => {
   it('defaults the media type and refuses an unsafe name', async () => {
     const { app } = await gateway();
     const ok = await app.inject({ method: 'PUT', url: '/v3/blobs', payload: Buffer.from('x'), headers: OCTET });
-    expect(ok.json().media_type).toBe('application/octet-stream');
+    expect(ok.json<{ media_type: string }>().media_type).toBe('application/octet-stream');
     const bad = await app.inject({
       method: 'PUT', url: '/v3/blobs', payload: Buffer.from('x'), headers: { ...OCTET, 'x-cauce-blob-name': '../etc/passwd' },
     });

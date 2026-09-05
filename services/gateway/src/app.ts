@@ -176,7 +176,6 @@ export interface GatewayOptions {
   https?: HttpsServerOptions;
   exposeHealthRoutes?: boolean;
   logger?: boolean;
-  /** Where files too large to ride inline live; without it the blob routes are not mounted. */
   blobs?: BlobStoreOptions;
 }
 

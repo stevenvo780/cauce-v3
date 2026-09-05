@@ -228,7 +228,8 @@ const app = await buildGateway({
     operatorResolution: { operatorHeader: terminal.operatorHeader, operators: terminal.operators },
   }),
   ...(https === undefined ? {} : { https }),
-  blobs: configuredBlobStore(process.env),
+  ...(process.env.CAUCE_BLOB_DIR !== undefined || process.env.NODE_ENV === 'production'
+    ? { blobs: configuredBlobStore(process.env) } : {}),
 });
 // The routes live in a plugin registered after buildGateway so they inherit the console
 // security hook, the Origin allowlist and the websocket support app.ts already installed.

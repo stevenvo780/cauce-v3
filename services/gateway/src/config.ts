@@ -78,8 +78,6 @@ export interface BlobStoreConfig {
   readonly maxBytes: number;
 }
 
-/* Files too large to ride inline. The cap is bounded by the protocol ceiling: a larger value would
-   admit an upload the wire schema then refuses, a file the person would never see arrive. */
 export function configuredBlobStore(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): BlobStoreConfig {
