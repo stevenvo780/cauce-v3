@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cp, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { execFileSync, spawn } from 'node:child_process';
+import { publicOriginEnvironment } from './public-git-origin.mjs';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, '..');
@@ -121,12 +122,13 @@ async function offlineInstall(sourceRoot) {
   }
 }
 
-function childEnvironment(command) {
+function childEnvironment(command, evidenceEnvironment) {
   const inherited = Object.fromEntries(safeInheritedEnvironment.flatMap((key) => (
     process.env[key] === undefined ? [] : [[key, process.env[key]]]
   )));
   return {
     ...inherited,
+    ...evidenceEnvironment,
     CI: '1',
     NO_COLOR: '1',
     ARCHIFY_UPDATE_CHECK_DISABLED: '1',
@@ -197,17 +199,21 @@ async function run() {
 
   if (command === 'visual-check') await assertOfflineArtifact();
   const previousSpecification = command === 'refresh' ? await readFile(specificationPath, 'utf8') : undefined;
-  if (command === 'refresh') await stampRepositoryRevision();
   const rendersArtifact = command === 'render' || command === 'refresh';
-  const derived = rendersArtifact || command === 'preview'
-    ? await offlineInstall(install.root)
-    : undefined;
+  let derived;
+  let evidence;
+  let completed = false;
   try {
+    if (command === 'refresh') await stampRepositoryRevision();
+    derived = rendersArtifact || command === 'preview'
+      ? await offlineInstall(install.root)
+      : undefined;
+    evidence = publicOriginEnvironment(repositoryRoot);
     const cli = join(derived?.root ?? install.root, 'bin/archify.mjs');
     const invocation = argumentsFor(command, cli);
     const child = spawn(process.execPath, invocation, {
       cwd: repositoryRoot,
-      env: childEnvironment(command),
+      env: childEnvironment(command, evidence.environment),
       stdio: 'inherit',
     });
     const exitCode = await new Promise((resolveExit, reject) => {
@@ -215,12 +221,16 @@ async function run() {
       child.once('exit', code => resolveExit(code ?? 1));
     });
     if (exitCode === 0 && rendersArtifact) await assertOfflineArtifact();
-    if (exitCode !== 0 && previousSpecification !== undefined) {
-      await writeFile(specificationPath, previousSpecification, 'utf8');
-    }
+    completed = exitCode === 0;
     process.exitCode = exitCode;
   } finally {
-    await derived?.cleanup();
+    try {
+      if (!completed && previousSpecification !== undefined) {
+        await writeFile(specificationPath, previousSpecification, 'utf8');
+      }
+    } finally {
+      try { evidence?.cleanup(); } finally { await derived?.cleanup(); }
+    }
   }
 }
 
