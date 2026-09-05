@@ -21,7 +21,8 @@ confirmar() {
 [ -r "$ENV_FILE" ] || die "no puedo leer $ENV_FILE"
 cd "$REPO"
 [ -z "$(git status --porcelain)" ] || die "el arbol no esta limpio; commitea o descarta antes de desplegar"
-git fetch -q origin && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || die "HEAD != origin/main; sincroniza primero"
+git fetch -q origin || die "no pude hacer fetch de origin"
+[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || die "HEAD != origin/main; sincroniza primero"
 
 REV="$(git rev-parse --short HEAD)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
