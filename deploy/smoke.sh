@@ -4,6 +4,9 @@ set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="${CAUCE_ENV_FILE:-}"
+if [ -z "$ENV_FILE" ]; then
+  exec "$REPO_DIR/deploy/smoke-central.sh"
+fi
 DOCKER_BIN="${CAUCE_SMOKE_DOCKER_BIN:-docker}"
 CURL_BIN="${CAUCE_SMOKE_CURL_BIN:-curl}"
 fallo=0
