@@ -43,3 +43,31 @@ registro de auditoría, sin métrica y sin forma de que la persona lo supiera �
 álbum cabía en un mensaje, así que si una frase llegaba al agente dependía del presupuesto de bytes
 agregado. Cada miembro aquí ya pasó la regla `AlbumKey`, así que lo que se pliega es el mismo chat,
 el mismo usuario y el mismo tema; nada más se combina.
+
+## `text-chunks.ts` — las piezas en que Telegram parte un texto largo
+
+Un cliente de Telegram no envía un texto de más de 4096 caracteres: lo corta en mensajes
+consecutivos de hasta 4096 y los manda uno detrás de otro. Cada pieza llegaba como un update propio y
+se publicaba sola: el agente contestaba la primera y las demás quedaban como mensajes sueltos que
+nadie leía entero. `CoalescingBuffer` reúne la cadena y el poller la publica como UN mensaje bajo el
+`update_id` y el `message_id` de la primera pieza, con el texto concatenado tal cual (Telegram corta
+sin añadir nada, así que se une sin separador) y las `entities` de las piezas siguientes desplazadas
+por la longitud UTF-16 que las precede.
+
+La regla de continuación es estrecha a propósito, porque el bus no puede inferir que dos mensajes
+humanos son uno: la pieza anterior tiene al menos `TEXT_CHUNK_MIN_CHARACTERS` (4000: la longitud
+de un corte, con margen para clientes que cortan antes), la siguiente es texto plano del mismo chat,
+el mismo usuario y el mismo hilo, y sus `date` distan como mucho `TEXT_CHUNK_MAX_GAP_SECONDS` (5 s).
+Un texto corto nunca se pega al anterior; un mensaje sin `date`, con medios, o de otro remitente
+cierra la cadena; la cadena se cierra sola al llegar una pieza corta (la última de un corte casi
+siempre lo es) o al alcanzar `MAX_TEXT_CHUNKS`.
+
+El reloj es la parte delicada. `getUpdates` devuelve al instante cualquier update no confirmado, y la
+primera pieza no se confirma hasta publicar la cadena: en el ciclo siguiente Telegram la reentrega
+sola, casi siempre ANTES de que el cliente haya terminado de enviar la segunda. La regla de ciclo de
+los álbumes (cerrar lo que no creció en este ciclo) habría publicado la primera pieza suelta, que es
+justo el defecto. Una cadena de texto sólo se asienta `TEXT_CHUNK_SETTLE_MS` (2 s) después de su
+ÚLTIMA pieza; `runOnce` devuelve sólo los updates nuevos, de modo que el bucle duerme `idleMs` entre
+reentregas en vez de martillear la API mientras espera. El coste es que un mensaje suelto de 4000 a
+4096 caracteres tarda esos 2 s en publicarse. `normalizedBody` admite la cadena reunida hasta
+`MAX_CHAINED_TEXT_CHARACTERS`; todo lo demás sigue acotado a un mensaje de Telegram.

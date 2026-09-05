@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { StoreError } from '@cauce/store';
+import { TEXT_CHUNK_MAX_GAP_SECONDS, TEXT_CHUNK_SETTLE_MS } from '../src/text-chunks.js';
 import { TelegramPoller } from '../src/poller.js';
 import type {
   PollLease, TelegramAliasConfig, TelegramApi, TelegramCursorRepository, TelegramIngress,
@@ -11,11 +12,12 @@ const TENANT = 'Steven';
 const CHAT = 201;
 const USER = 101;
 
-function update(updateId: number, text: string): TelegramUpdate {
+function update(updateId: number, text: string, date?: number): TelegramUpdate {
   return {
     update_id: updateId,
     message: {
       message_id: updateId + 700,
+      ...(date === undefined ? {} : { date }),
       from: { id: USER },
       chat: { id: CHAT, type: 'private' },
       text
@@ -135,14 +137,58 @@ function poller(
 }
 
 describe('Telegram update boundaries', () => {
-  it('never infers that two consecutive human messages are fragments of one turn', async () => {
+  it('publishes the pieces Telegram cut from one long message as ONE message under the first piece', async () => {
+    const head = 'a'.repeat(4_096);
+    const tail = 'y fin';
+    const repository = new MemoryCursorRepository();
+    const ingress = new DurableRecordingIngress();
+    const loop = poller(
+      new ScriptedTelegram([[update(1, head, 100)], [update(1, head, 100), update(2, tail, 100)]]),
+      repository,
+      ingress
+    );
+
+    expect(await loop.runOnce()).toBe(1);
+    expect(ingress.calls).toHaveLength(0);
+    expect(repository.advances).toEqual([]);
+
+    expect(await loop.runOnce()).toBe(1);
+    expect(ingress.calls).toHaveLength(1);
+    expect(ingress.calls[0]?.update_id).toBe(1);
+    expect(ingress.calls[0]?.body.text).toBe(head + tail);
+    expect(ingress.calls[0]?.origin.external_message_id).toBe('701');
+    expect(repository.advances).toEqual([3]);
+  });
+
+  it('publishes a lone full-length message by itself once the settle window elapses', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      const head = 'a'.repeat(4_096);
+      const repository = new MemoryCursorRepository();
+      const ingress = new DurableRecordingIngress();
+      const loop = poller(new ScriptedTelegram([[update(1, head, 100)]]), repository, ingress);
+
+      expect(await loop.runOnce()).toBe(1);
+      expect(ingress.calls).toHaveLength(0);
+      vi.setSystemTime(1_000_000 + TEXT_CHUNK_SETTLE_MS);
+
+      expect(await loop.runOnce()).toBe(0);
+      expect(ingress.calls.map((call) => call.body.text)).toEqual([head]);
+      expect(repository.advances).toEqual([2]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never glues an independent message to a long one sent before it', async () => {
     const first = 'a'.repeat(4_096);
     const second = 'mensaje humano independiente';
     const repository = new MemoryCursorRepository();
     const ingress = new DurableRecordingIngress();
 
     await poller(
-      new ScriptedTelegram([[update(1, first), update(2, second)]]),
+      new ScriptedTelegram([[update(1, first, 100), update(2, second, 100 + TEXT_CHUNK_MAX_GAP_SECONDS + 1)]]),
       repository,
       ingress
     ).runOnce();

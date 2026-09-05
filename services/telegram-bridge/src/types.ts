@@ -55,6 +55,7 @@ export interface TelegramReplyTo {
 
 export interface TelegramMessage {
   message_id: number;
+  date?: number;
   from?: TelegramUser;
   /** Anonymous group admin or channel post. Present without a human `from`. */
   sender_chat?: { id: number };

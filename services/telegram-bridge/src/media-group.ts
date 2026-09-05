@@ -4,13 +4,15 @@ import {
   conversationId, screenAttachments,
   type AttachmentScreenMeta, type PreparedAttachments
 } from './ingress-body.js';
+import { continuesText, MAX_TEXT_CHUNKS, TEXT_CHUNK_SETTLE_MS, textPiece } from './text-chunks.js';
 import type { TelegramApi, TelegramMessage, TelegramUpdate } from './types.js';
 
-/* Album coalescing and classification of the update kinds the poller does not serve.
+/* Album and text-chain coalescing, and classification of the update kinds the poller does not serve.
 
    An album is N updates sharing a `media_group_id`, at most one carrying the caption: published one by one they cost
    N deliveries and N model turns, and in `mention` mode the uncaptioned members are addressed to nobody and die as
-   `updates_unaddressed`.
+   `updates_unaddressed`. A text chain is the pieces Telegram cut from one long text (./text-chunks.ts): published
+   one by one the agent answers the first piece and never reads the rest.
 
    THE HARD PART IS THE CURSOR. `getUpdates` advances a durable, destructive offset: past it an update can never be
    requested again, so a buffered member holds the offset where it is until the coalesced message is durably
@@ -48,8 +50,8 @@ export function mediaGroupId(update: TelegramUpdate): string | undefined {
   return typeof raw === 'string' && raw.length > 0 && raw.length <= 128 ? raw : undefined;
 }
 
-/* `normalizedBody` reads `text` first and truncates it at 4096 characters, the caption at 1024: Telegram's own
-   limits, and the bound a fold of several captions has to respect or it discards the tail in silence. */
+/* Telegram's own limits for one message, the bound a fold of several captions has to respect or it discards the
+   tail in silence. A rejoined text chain is the one body allowed past it (`MAX_CHAINED_TEXT_CHARACTERS`). */
 const MAX_TEXT_CHARACTERS = 4_096;
 const MAX_CAPTION_CHARACTERS = 1_024;
 
@@ -135,14 +137,18 @@ export function lastUpdateId(batch: readonly TelegramUpdate[]): number {
   return batch.reduce((highest, entry) => Math.max(highest, entry.update_id), 0);
 }
 
-/* Bounded coalescer, flushed by whichever comes first: a foreign update, MAX_MEDIA_GROUP_MEMBERS,
-   or settling — no new member in this poll cycle, or MEDIA_GROUP_DEBOUNCE_MS elapsed. The cycle
-   rule closes an album that ended a poll response: the cursor did not move, Telegram re-delivers
-   it, `holds()` refuses to buffer it twice and the next cycle publishes it. */
-export class MediaGroupBuffer {
+/* Bounded coalescer, flushed by whichever comes first: a foreign update, the member cap, or settling. An album
+   settles when no member arrived in this poll cycle or MEDIA_GROUP_DEBOUNCE_MS elapsed: the cursor did not move,
+   Telegram re-delivers it, `holds()` refuses to buffer it twice and the next cycle publishes it. A text chain
+   settles only TEXT_CHUNK_SETTLE_MS after its last piece, because the client sends the pieces one by one and the
+   next one is usually not there yet when the cursor makes Telegram re-deliver the first; a short piece closes the
+   chain at once. */
+export class CoalescingBuffer {
+  private kind: 'album' | 'text' | undefined;
   private groupId: string | undefined;
   private members: TelegramUpdate[] = [];
   private startedAt = 0;
+  private appendedAt = 0;
   private cycle = 0;
   private appendedCycle = -1;
 
@@ -156,23 +162,34 @@ export class MediaGroupBuffer {
 
   accept(update: TelegramUpdate, now: number): readonly (readonly TelegramUpdate[])[] {
     const id = mediaGroupId(update);
-    if (id === undefined) return [...this.take(), [update]];
-    if (this.groupId !== undefined && this.groupId !== id) {
+    if (id !== undefined) {
+      if (this.kind === 'album' && this.groupId === id) {
+        this.append(update, now);
+        return this.members.length >= MAX_MEDIA_GROUP_MEMBERS ? this.take() : [];
+      }
       const flushed = this.take();
-      this.start(update, id, now);
+      this.start('album', id, update, now);
       return flushed;
     }
-    if (this.groupId === undefined) {
-      this.start(update, id, now);
-      return [];
+    const last = this.members.at(-1);
+    if (this.kind === 'text' && last !== undefined && continuesText(last, update)) {
+      this.append(update, now);
+      const closes = textPiece(update)?.full !== true || this.members.length >= MAX_TEXT_CHUNKS;
+      return closes ? this.take() : [];
     }
-    this.members.push(update);
-    this.appendedCycle = this.cycle;
-    return this.members.length >= MAX_MEDIA_GROUP_MEMBERS ? this.take() : [];
+    if (textPiece(update)?.full === true) {
+      const flushed = this.take();
+      this.start('text', undefined, update, now);
+      return flushed;
+    }
+    return [...this.take(), [update]];
   }
 
   settled(now: number): readonly TelegramUpdate[] | undefined {
     if (this.members.length === 0) return undefined;
+    if (this.kind === 'text') {
+      return now - this.appendedAt < TEXT_CHUNK_SETTLE_MS ? undefined : this.take()[0];
+    }
     if (this.appendedCycle === this.cycle && now - this.startedAt < MEDIA_GROUP_DEBOUNCE_MS) {
       return undefined;
     }
@@ -184,10 +201,18 @@ export class MediaGroupBuffer {
     this.reset();
   }
 
-  private start(update: TelegramUpdate, id: string, now: number): void {
+  private start(kind: 'album' | 'text', id: string | undefined, update: TelegramUpdate, now: number): void {
+    this.kind = kind;
     this.groupId = id;
     this.members = [update];
     this.startedAt = now;
+    this.appendedAt = now;
+    this.appendedCycle = this.cycle;
+  }
+
+  private append(update: TelegramUpdate, now: number): void {
+    this.members.push(update);
+    this.appendedAt = now;
     this.appendedCycle = this.cycle;
   }
 
@@ -199,9 +224,11 @@ export class MediaGroupBuffer {
   }
 
   private reset(): void {
+    this.kind = undefined;
     this.groupId = undefined;
     this.members = [];
     this.startedAt = 0;
+    this.appendedAt = 0;
     this.appendedCycle = -1;
   }
 }

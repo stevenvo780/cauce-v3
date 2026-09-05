@@ -3,6 +3,7 @@ import {
   AttachmentContentSchema, AttachmentsV1Schema, logEvent, redactionEnabledFromEnv, redactSecretsDeep
 } from '@cauce/protocol';
 import type { SuppressionReason } from './addressing.js';
+import { MAX_CHAINED_TEXT_CHARACTERS } from './text-chunks.js';
 import { prepareTelegramAttachments, prepareTelegramVoice } from './attachments.js';
 import type { transcribeAudio, TranscriptionConfig } from './transcription.js';
 import type {
@@ -191,7 +192,7 @@ export async function normalizedBody(
     message, updateId, meta
   );
   const legacyAttachments = media(message).filter((entry) => entry.kind !== 'photo' && entry.kind !== 'document');
-  const text = safeText(message.text, 4_096);
+  const text = safeText(message.text, MAX_CHAINED_TEXT_CHARACTERS);
   const caption = safeText(message.caption, 1_024);
   const typed = text ?? caption;
   /**

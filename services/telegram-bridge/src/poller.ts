@@ -20,7 +20,7 @@ import {
   type PreparedAttachments,
 } from './ingress-body.js';
 import {
-  AlbumAddressing, albumMessage, batchMembers, captionMember, lastUpdateId, MediaGroupBuffer,
+  AlbumAddressing, albumMessage, batchMembers, captionMember, CoalescingBuffer, lastUpdateId,
   mediaGroupId, messageChatId, prepareMediaGroupAttachments, splitOwnMembers, updateKind,
   updateMessage, type AlbumKey, type UpdateKind
 } from './media-group.js';
@@ -28,6 +28,7 @@ import { handleOperatorCommand } from './operator-commands/handler.js';
 import type { OperatorActions } from './operator-commands/dispatch.js';
 import type { TelegramLoopObserver } from './progress.js';
 import { TelegramApiError } from './telegram.js';
+import { chainedMessage, textPiece } from './text-chunks.js';
 import { sleep } from './abort-sleep.js';
 import type { TranscriptionConfig } from './transcription.js';
 import type {
@@ -151,7 +152,7 @@ export class TelegramPoller {
    */
   private readonly reservedNames: ReadonlySet<string>;
   private currentLease: PollLease | undefined;
-  private readonly buffer = new MediaGroupBuffer();
+  private readonly buffer = new CoalescingBuffer();
   private readonly albumAddressing = new AlbumAddressing<AddressingDecision>();
 
   constructor(options: TelegramPollerOptions) {
@@ -573,6 +574,8 @@ export class TelegramPoller {
     }
     if (own.length === 1) {
       await this.publish(updateId, message, undefined, frame, signal);
+    } else if (own.every((update) => textPiece(update) !== undefined)) {
+      await this.publish(updateId, chainedMessage(batchMembers(own).map((member) => member.message)), undefined, frame, signal);
     } else {
       const members = batchMembers(own);
       const album = await prepareMediaGroupAttachments(members, this.api, updateId, this.attachmentMeta());
@@ -671,10 +674,12 @@ export class TelegramPoller {
     if (signal?.aborted) return 0;
     const updates = await this.api.getUpdates(offset, this.config.poll_timeout_seconds, signal);
     let live = true;
+    let fresh = 0;
     for (const update of updates) {
       if (signal?.aborted) break;
       if (!Number.isSafeInteger(update.update_id) || update.update_id < offset) continue;
       if (this.buffer.holds(update.update_id)) continue;
+      fresh += 1;
       for (const batch of this.buffer.accept(update, Date.now())) {
         const after = await this.runBatch(batch, current, signal);
         if (!after) {
@@ -693,7 +698,7 @@ export class TelegramPoller {
       this.buffer.discard();
       this.albumAddressing.forget();
     }
-    return updates.length;
+    return fresh;
   }
 
   async run(signal: AbortSignal, idleMs = 250): Promise<void> {
