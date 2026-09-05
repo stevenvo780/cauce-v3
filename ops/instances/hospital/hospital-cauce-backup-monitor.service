@@ -1,0 +1,6 @@
+[Unit]
+Description=Vigila antigüedad e integridad del backup Cauce Hospital
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hospital-cauce-backup-monitor

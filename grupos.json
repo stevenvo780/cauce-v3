@@ -1,78 +1,19 @@
 {
   "grupos": [
     {
-      "nombre": "isa",
+      "nombre": "hospital",
       "agentes": [
         {
-          "nombre": "salva",
-          "rol": "Asiste de diseño en ClaudeCode"
-        }
-      ]
-    },
-    {
-      "nombre": "steven",
-      "agentes": [
-        {
-          "nombre": "jarvis",
-          "rol": "Mi asistente persona len OpenClaw"
+          "nombre": "operador",
+          "rol": "Líder técnico de Hospital Conecta: reparte, verifica e integra el trabajo de los developers"
         },
         {
-          "nombre": "zeus",
-          "rol": "Encargado de la gestión de Cuce y de la infraestructura de los agentes"
+          "nombre": "backend",
+          "rol": "Developer de APIs, persistencia, seguridad y pruebas del CRM hospitalario"
         },
         {
-          "nombre": "argos",
-          "rol": "Director general encargado de los proyectos de desarrollo"
-        },
-        {
-          "nombre": "socrates",
-          "rol": "Desarrollador de software encargado esencialmente de desarrollos personales mios"
-        },
-        {
-          "nombre": "kant",
-          "rol": "Devops encargado de la infraestructura de todos los servidores y ayuda a cualquier a gente en todo lado con problemas de infraestructura"
-        }
-      ]
-    },
-    {
-      "nombre": "jhon",
-      "agentes": [
-        {
-          "nombre": "tales",
-          "rol": "Desarrollador para lo que sea que necesite Jhon"
-        },
-        {
-          "nombre": "heraclito",
-          "rol": "Desarrollador para lo que sea que necesite Jhon"
-        },
-        {
-          "nombre": "hegel",
-          "rol": "Asistente personal de jhon para todo lo que necesite y mucho de ventas de sus productos y servicios"
-        }
-      ]
-    },
-    {
-      "nombre": "miguel",
-      "agentes": [
-        {
-          "nombre": "atlas",
-          "rol": "Desarrollador para lo que sea que necesite Miguel"
-        },
-        {
-          "nombre": "kratos",
-          "rol": "Desarrollador para lo que sea que necesite Miguel casi siempre se encarga de Demeter y graf pero es abierto igual"
-        },
-        {
-          "nombre": "iza",
-          "rol": "Asistente empresarial que atiende la empresa humanizar"
-        },
-        {
-          "nombre": "janus",
-          "rol": "Asistente personal de Miguel para todo lo que necesite asistencia de sus multiples empresas y vida personal"
-        },
-        {
-          "nombre": "gaia",
-          "rol": "Asistente empresarial para la empresa de Finca directa de Miguel y ayuda a Miguel en lo que necesite para su empresa"
+          "nombre": "frontend",
+          "rol": "Developer de interfaz, accesibilidad y experiencia hospitalaria del CRM"
         }
       ]
     }
