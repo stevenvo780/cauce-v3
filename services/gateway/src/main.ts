@@ -2,8 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createPool, type DatabasePool } from '@cauce/store';
 import { buildGateway } from './app.js';
 import {
-  configuredAckDeadlineMs, configuredDeliveryAdmission, configuredDeliveryLeaseCap,
-} from './config.js';
+  configuredAckDeadlineMs, configuredDeliveryAdmission, configuredDeliveryLeaseCap, configuredBlobStore } from './config.js';
 import {
   DevOnlyAuthProvider, HashedMtlsIdentityFileProvider, HashedTokenFileAuthProvider,
   JwksJwtAuthProvider, MtlsAuthProvider, type AuthProvider
@@ -228,7 +227,8 @@ const app = await buildGateway({
     terminalCapability: terminalCapabilityAnnouncement(terminal),
     operatorResolution: { operatorHeader: terminal.operatorHeader, operators: terminal.operators },
   }),
-  ...(https === undefined ? {} : { https })
+  ...(https === undefined ? {} : { https }),
+  blobs: configuredBlobStore(process.env),
 });
 // The routes live in a plugin registered after buildGateway so they inherit the console
 // security hook, the Origin allowlist and the websocket support app.ts already installed.

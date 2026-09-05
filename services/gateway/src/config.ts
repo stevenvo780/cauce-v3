@@ -1,3 +1,4 @@
+import { DEFAULT_BLOB_MAX_BYTES, MAX_BLOB_BYTES } from '@cauce/protocol';
 import { integerEnv } from '@cauce/protocol';
 
 export {
@@ -68,4 +69,27 @@ export function configuredDeliveryAdmission(
       fallback: DEFAULT_HUMAN_RESERVED_DELIVERIES, min: 0,
     }),
   });
+}
+
+export const DEFAULT_BLOB_DIRECTORY = '/var/lib/cauce-v3/blobs';
+
+export interface BlobStoreConfig {
+  readonly directory: string;
+  readonly maxBytes: number;
+}
+
+/* Files too large to ride inline. The cap is bounded by the protocol ceiling: a larger value would
+   admit an upload the wire schema then refuses, a file the person would never see arrive. */
+export function configuredBlobStore(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): BlobStoreConfig {
+  const directory = env.CAUCE_BLOB_DIR ?? DEFAULT_BLOB_DIRECTORY;
+  if (!directory.startsWith('/')) throw new Error('CAUCE_BLOB_DIR must be an absolute path');
+  const raw = env.CAUCE_BLOB_MAX_BYTES;
+  if (raw === undefined) return { directory, maxBytes: DEFAULT_BLOB_MAX_BYTES };
+  const maxBytes = /^\d+$/u.test(raw) ? Number(raw) : Number.NaN;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_BLOB_BYTES) {
+    throw new Error(`CAUCE_BLOB_MAX_BYTES must be an integer between 1 and ${String(MAX_BLOB_BYTES)}`);
+  }
+  return { directory, maxBytes };
 }

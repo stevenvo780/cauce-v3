@@ -32,6 +32,7 @@ import { createCoreRoutePhases } from './routes/core.js';
 import { registerConsolePublishIntentRoutes } from './routes/console-publish.js';
 import { registerGatewayHealthRoutes } from './routes/health.js';
 import { registerChainGateRoutes } from './routes/chain-gates.js';
+import { prepareBlobDirectory, registerBlobRoutes, type BlobStoreOptions } from './routes/blobs.js';
 
 export { WakePumpTelemetry } from './wake-pump-telemetry.js';
 export type {
@@ -56,7 +57,7 @@ export interface OutboxLeaseAckResult {
 
 /** Members the gateway consumes with the store's own signature. */
 type StoreDerivedRepository = Pick<CauceRepository,
-  'ackDelivery' | 'agentChain' | 'answerChainGate'
+  'ackDelivery' | 'agentChain' | 'answerChainGate' | 'registerBlob' | 'findBlob'
   | 'assertPermission' | 'assertPrincipal' | 'authorizeAgentTarget' | 'cancelChainGate'
   | 'cancelDelivery' | 'confirmConsolePublishIntent' | 'enqueueJob' | 'enqueueNotification'
   | 'fleetActivity' | 'getAgent' | 'getAgentByIdentity' | 'getConfiguration' | 'getMessage'
@@ -175,6 +176,8 @@ export interface GatewayOptions {
   https?: HttpsServerOptions;
   exposeHealthRoutes?: boolean;
   logger?: boolean;
+  /** Where files too large to ride inline live; without it the blob routes are not mounted. */
+  blobs?: BlobStoreOptions;
 }
 
 // Matches the historical QueryDeliveriesSchema default while keeping the claim limit local.
@@ -275,6 +278,10 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   );
 
   registerChainGateRoutes(app, options, repository);
+  if (options.blobs !== undefined) {
+    await prepareBlobDirectory(options.blobs);
+    registerBlobRoutes(app, options, repository, options.blobs);
+  }
 
   await coreRoutes.registerRuntimeRoutes(agentProfiles);
 

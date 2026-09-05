@@ -85,3 +85,28 @@ describe('gateway delivery admission configuration', () => {
     },
   );
 });
+
+describe('gateway blob store configuration', () => {
+  it('defaults to the production directory and the protocol default cap', async () => {
+    const { configuredBlobStore, DEFAULT_BLOB_DIRECTORY } = await import('./config.js');
+    const { DEFAULT_BLOB_MAX_BYTES } = await import('@cauce/protocol');
+    expect(configuredBlobStore({})).toEqual({ directory: DEFAULT_BLOB_DIRECTORY, maxBytes: DEFAULT_BLOB_MAX_BYTES });
+    expect(DEFAULT_BLOB_DIRECTORY).toBe('/var/lib/cauce-v3/blobs');
+  });
+
+  it('honors an absolute directory and an integer cap from the environment', async () => {
+    const { configuredBlobStore } = await import('./config.js');
+    expect(configuredBlobStore({ CAUCE_BLOB_DIR: '/srv/blobs', CAUCE_BLOB_MAX_BYTES: '3221225472' }))
+      .toEqual({ directory: '/srv/blobs', maxBytes: 3_221_225_472 });
+  });
+
+  it.each(['0', '-1', '1.5', 'x', String(32 * 1024 ** 3)])('fails closed for CAUCE_BLOB_MAX_BYTES=%j', async (value) => {
+    const { configuredBlobStore } = await import('./config.js');
+    expect(() => configuredBlobStore({ CAUCE_BLOB_MAX_BYTES: value })).toThrow(/CAUCE_BLOB_MAX_BYTES/u);
+  });
+
+  it('fails closed for a relative CAUCE_BLOB_DIR', async () => {
+    const { configuredBlobStore } = await import('./config.js');
+    expect(() => configuredBlobStore({ CAUCE_BLOB_DIR: 'blobs' })).toThrow(/CAUCE_BLOB_DIR/u);
+  });
+});
