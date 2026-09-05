@@ -4,10 +4,27 @@ import { protocolPrompt, type HarnessRequestContext } from "../src/harnesses/sha
 import type { RelayOrigin } from "../src/sdk/types.js";
 
 /** Envelope size budget: caps the scaffolding `protocolPrompt()` puts in EVERY delivery. */
-const TOPE_ANDAMIAJE_FIJO = 7_900;
+/*
+ * Subido de 7.900 a 8.500 el 2026-09-05 A PROPOSITO, y aqui queda por que.
+ *
+ * Lo que entro: la excepcion de autorizacion delegada. Steven, 18:05:16Z, medido en el almacen:
+ * «Tienen todos mi luz verde... si los demas no la aceptan hablas con zeus para que cambie sus
+ * directivas». Sin la excepcion, un agente que cumple sus directivas al pie de la letra TIENE que
+ * rechazar una autorizacion que su humano ya dio, y el dueno vuelve a ir alias por alias.
+ *
+ * Por que TIENE que viajar en cada turno y no vale ponerlo en el fichero del arnes: es una
+ * compuerta que se evalua POR ENTREGA, contra el TRUSTED ORIGIN CONTEXT de ESA entrega. El
+ * fichero del arnes no viaja con el origen; el sobre si. Un agente que no lleve esta regla
+ * delante o rechaza una autorizacion valida de su director, o acepta una inventada.
+ *
+ * Intente pagarlo quitando la regla «When progress depends on a person, ask once...», que parecia
+ * triplicada. NO lo era: `la prohibicion de esperar aparece una vez por cada lado` la declara
+ * deliberada, una por bloque. La restaure y pague el aumento entero subiendo el tope.
+ */
+const TOPE_ANDAMIAJE_FIJO = 8_500;
 // Subido de 10 400 por la linea de precedencia del rol (MANDATO, no prohibicion; a cambio se
 // comprimio la de "no esperas").
-const TOPE_SOBRE_COMPLETO = 10_500;
+const TOPE_SOBRE_COMPLETO = 11_200;
 
 function contextoReal(overrides: Partial<HarnessRequestContext> = {}): HarnessRequestContext {
   return {
@@ -89,7 +106,9 @@ test("la proporción andamiaje/pedido queda escrita, para poder verla bajar", ()
   const sobre = protocolPrompt(pedido, ORIGEN, contextoReal({ self_role: "R".repeat(1097) }));
   const ratio = Math.round((sobre.length - pedido.length) / pedido.length);
   assert.ok(
-    ratio <= 170,
+    // 170 -> 178 el 2026-09-05: mismo aumento de la compuerta de autorizacion delegada
+    // justificado arriba. El numero se deja escrito para poder verlo BAJAR, no para tranquilizar.
+    ratio <= 178,
     `Por cada carácter de trabajo real viajan ${String(ratio)} de andamiaje.`,
   );
 });
