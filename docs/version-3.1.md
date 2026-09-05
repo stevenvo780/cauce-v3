@@ -119,7 +119,7 @@ runtime, store, gateway y adapter-sdk, la siega de huérfanos PTY por pidfd, la 
 sockets sordos, los comandos de operador en DM, el acotado de la exención CSRF y Prometheus en
 `[backend, edge]`—. `caf35316` corrigió el bridge de Telegram para reunir en un solo mensaje
 las piezas en que el cliente parte un texto de más de 4096 caracteres (antes el agente leía sólo
-la primera) y las pruebas del rollout PTY afirman la colocación real de kant. La última fila es
+la primera) y las pruebas del rollout PTY afirman la colocación real de kant. Después llegó
 `fa4f07c5`, cuyo smoke original salió verde, pero descartaba los eventos stderr del relay:
 ese subcontrol no acreditó ausencia de bucles. La comprobación corregida posterior midió cero
 reconexiones en dos minutos. Conserva las correcciones de clasificación y del primer ACK
@@ -135,7 +135,13 @@ el corte autorizado, sin reenvíos emitidos por el rollout. Zeus presentó despu
 inconsistente de la misma fila, que el WAL rechaza. Se restauró su estado terminal acreditado por
 el ACK, sin repetir efectos ni cerrar como exitoso el trabajo ambiguo. La consola de Zeus y los
 perfiles se verifican por separado: despliegue no equivale a recuperar esas tareas ni a reconciliar los perfiles
-pendientes. Ese registro no sustituye una nueva validación
+pendientes. La última fila es `8acfacfc`, con reconciliación de perfiles atribuida y auditada,
+CAS de contenido y bloqueo transaccional sin interrumpir el heartbeat. Su smoke reforzado pasó:
+nueve servicios sanos, quince arriendos V3 frescos y dos entregas con ACK aplicado posteriores
+al arranque. Las cinco entregas previas conservaron su fence, con dos terminadas y tres todavía
+en curso. La matriz completa pasó 11/11 suites y 4603 pruebas unitarias. Aplicar los perfiles
+divergentes desde Contexto sigue siendo una acción atribuida de operador, no un efecto automático
+del despliegue. Ese registro no sustituye una nueva validación
 del estado vivo desde este checkout, y lo que queda por comprobar por efecto después de esa fila
 está en `docs/v3.1-pendientes.md` §1, «Deuda de despliegue».
 
