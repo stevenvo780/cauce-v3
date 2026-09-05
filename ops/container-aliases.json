@@ -108,6 +108,7 @@
       "room": "grp.steven",
       "container": "ctrl-infra",
       "registryContainer": "host:kratos",
+      "dockerHost": "kratos",
       "systemdUser": "stev",
       "user": "stev",
       "home": "/home/stev",
