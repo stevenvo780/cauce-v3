@@ -362,17 +362,21 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         Math.max(0, humanReservedCapacity - reservedInFlight),
       );
 
-      /**
-       * Claims one delivery by trusted-at-ingress priority with SKIP LOCKED; the direct attempt
-       * uses `deliveries_claim_idx` to avoid repeated `EXISTS` probes, and returns `undefined`
-       * when no row of that class is available. A control hold gates NEW leases, never in-flight ones.
-       */
+      // A control hold gates new leases; durable terminal evidence survives a corrupted row.
       const claimOne = async (humanOriginated: boolean): Promise<DeliveryRow | undefined> => {
         const claimed = await client.query<DeliveryRow>(
           `WITH picked AS (
              SELECT d.id FROM deliveries d JOIN messages m ON m.id=d.message_id
              WHERE d.recipient_tenant=$1 AND d.recipient_alias=$2
                AND d.status IN ('pending','retry') AND d.available_at<=now()
+               AND d.last_ack_rank=0 AND d.terminal_at IS NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM dead_letters terminal WHERE terminal.delivery_id=d.id
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM delivery_acks terminal
+                  WHERE terminal.delivery_id=d.id AND terminal.applied AND terminal.status='done'
+               )
                AND NOT EXISTS (
                  SELECT 1 FROM terminal_control_holds h
                   WHERE h.tenant_id=d.recipient_tenant AND h.alias=d.recipient_alias
