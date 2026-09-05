@@ -25,6 +25,7 @@ export interface FleetActivityThresholds {
   ack_recent_seconds?: number | null;
   ack_lookback_seconds?: number | null;
   items_per_agent?: number | null;
+  start_after_seconds?: number | null;
 }
 
 /** Subset of PresenceLease relevant to this view; same source (connection_leases). */
@@ -74,7 +75,11 @@ export interface FleetActivityAgent {
   retrying?: number | null;
   overdue_in_flight?: number | null;
   oldest_claimed_at?: string | null;
+  oldest_claimed_not_started_at?: string | null;
   oldest_in_flight_seconds?: number | null;
+  oldest_claimed_not_started_seconds?: number | null;
+  oldest_claimed_not_started_without_ack_seconds?: number | null;
+  oldest_claimed_not_started_activity_seconds?: number | null;
   nearest_ack_deadline_at?: string | null;
   max_attempt?: number | null;
   last_ack_at?: string | null;

@@ -12,7 +12,7 @@ export interface FleetActivityThresholds {
   ack_lookback_seconds: number;
   /** Cap of in-flight deliveries detailed per alias in in_flight_items. */
   items_per_agent: number;
-  start_after_seconds: number; // A claim unstarted beyond this means the alias is not consuming.
+  start_after_seconds: number; // Maximum claim age before its first applied ACK is required.
 }
 
 export const DEFAULT_FLEET_ACTIVITY_THRESHOLDS: FleetActivityThresholds = {
@@ -21,7 +21,7 @@ export const DEFAULT_FLEET_ACTIVITY_THRESHOLDS: FleetActivityThresholds = {
   ack_recent_seconds: 300,
   ack_lookback_seconds: 3600,
   items_per_agent: 10,
-  start_after_seconds: 60  // Healthy claims are unstarted for ms: without a delay it always fires.
+  start_after_seconds: 60
 };
 
 export const FLEET_WORK_STATES = ['idle', 'queued', 'working', 'saturated', 'stalled'] as const;
@@ -41,6 +41,8 @@ export interface FleetActivityWorkStateInput {
   overdue_in_flight: number;
   claimed_not_started: number;
   oldest_in_flight_seconds: number | null; // null when nothing is in flight.
+  oldest_claimed_not_started_without_ack_seconds: number | null;
+  oldest_claimed_not_started_activity_seconds: number | null;
   /** Seconds since the last applied ACK, or null if none was recorded within the window. */
   seconds_since_last_ack: number | null;
   /** true = lease in force, false = lease expired, null = no lease recorded. */
@@ -61,10 +63,11 @@ export function agentWorkState(
   thresholds: FleetActivityThresholds = DEFAULT_FLEET_ACTIVITY_THRESHOLDS
 ): FleetActivityWorkStateResult {
   const ackIsStale = row.seconds_since_last_ack === null || row.seconds_since_last_ack > thresholds.stall_after_seconds;
-  // Handed work, never began: an 8h52m outage read `idle` because only ACK staleness counted.
-  const noEmpieza = row.claimed_not_started > 0
-    && row.oldest_in_flight_seconds !== null
-    && row.oldest_in_flight_seconds > thresholds.start_after_seconds;
+  const neverAcked = row.oldest_claimed_not_started_without_ack_seconds !== null
+    && row.oldest_claimed_not_started_without_ack_seconds > thresholds.start_after_seconds;
+  const ownAckIsStale = row.oldest_claimed_not_started_activity_seconds !== null
+    && row.oldest_claimed_not_started_activity_seconds > thresholds.stall_after_seconds;
+  const noEmpieza = row.claimed_not_started > 0 && (neverAcked || ownAckIsStale);
   const stalled = noEmpieza || (row.in_flight > 0 && (row.overdue_in_flight > 0 || ackIsStale));
   const saturated = row.in_flight >= thresholds.saturation_in_flight;
 
@@ -114,6 +117,13 @@ open_deliveries AS (
     JOIN visible_tenants v ON v.tenant_id = d.recipient_tenant
    WHERE d.status IN ('pending','retry','leased','accepted','started')
 ),
+unstarted_ack_activity AS (
+  SELECT o.id AS delivery_id, max(k.created_at) AS last_ack_at
+    FROM open_deliveries o
+    LEFT JOIN delivery_acks k ON k.delivery_id = o.id AND k.attempt = o.attempt AND k.applied
+   WHERE o.status IN ('leased','accepted')
+   GROUP BY o.id
+),
 work AS (
   SELECT o.recipient_tenant AS tenant_id, o.recipient_alias AS alias,
          count(*) FILTER (WHERE o.status IN ('leased','accepted','started'))::int AS in_flight,
@@ -129,9 +139,16 @@ work AS (
                             AND o.ack_deadline_at IS NOT NULL
                             AND o.ack_deadline_at < now())::int                   AS overdue_in_flight,
          min(o.claimed_at)       FILTER (WHERE o.status IN ('leased','accepted','started')) AS oldest_claimed_at,
+         min(o.claimed_at)       FILTER (WHERE o.status IN ('leased','accepted')) AS oldest_claimed_not_started_at,
+         min(o.claimed_at)       FILTER (WHERE o.status IN ('leased','accepted')
+                                          AND own_ack.last_ack_at IS NULL)
+           AS oldest_claimed_not_started_without_ack_at,
+         max(EXTRACT(EPOCH FROM (now() - COALESCE(own_ack.last_ack_at, o.claimed_at))))
+           FILTER (WHERE o.status IN ('leased','accepted'))::int AS oldest_claimed_not_started_activity_seconds,
          min(o.ack_deadline_at)  FILTER (WHERE o.status IN ('leased','accepted','started')) AS nearest_ack_deadline_at,
          max(o.attempt)          FILTER (WHERE o.status IN ('leased','accepted','started'))::int AS max_attempt
     FROM open_deliveries o
+    LEFT JOIN unstarted_ack_activity own_ack ON own_ack.delivery_id = o.id
    GROUP BY o.recipient_tenant, o.recipient_alias
 ),
 ack_activity AS (
@@ -178,9 +195,15 @@ SELECT p.tenant_id,
        COALESCE(w.retrying, 0)            AS retrying,
        COALESCE(w.overdue_in_flight, 0)   AS overdue_in_flight,
        w.oldest_claimed_at,
+       w.oldest_claimed_not_started_at,
        w.nearest_ack_deadline_at,
        w.max_attempt,
        EXTRACT(EPOCH FROM (now() - w.oldest_claimed_at))::int AS oldest_in_flight_seconds,
+       EXTRACT(EPOCH FROM (now() - w.oldest_claimed_not_started_at))::int
+         AS oldest_claimed_not_started_seconds,
+       EXTRACT(EPOCH FROM (now() - w.oldest_claimed_not_started_without_ack_at))::int
+         AS oldest_claimed_not_started_without_ack_seconds,
+       w.oldest_claimed_not_started_activity_seconds,
        ack.last_ack_at,
        COALESCE(ack.acks_recent, 0)       AS acks_recent,
        -- NULL acá significa "ningún ACK aplicado dentro de $3 segundos", NO "recién ackeado".

@@ -76,6 +76,12 @@ describe('test:core es un escalón por commit, no una suite de la matriz', () =>
 });
 
 describe('la comprobación de la matriz', () => {
+  it('incluye las pruebas de clasificación de flota en el gate unitario', () => {
+    expect(manifiesto.scripts['test:unit']).toContain('packages/store/src');
+    const config = readFileSync(fileURLToPath(new URL('vitest.config.ts', raiz)), 'utf8');
+    expect(/const SUITES_RAPIDAS = \[([\s\S]*?)\];/u.exec(config)?.[1]).toContain("'packages/store/src'");
+  });
+
   it('el árbol real la pasa', async () => {
     await expect(assertMatrixIsComplete()).resolves.toBeUndefined();
   });

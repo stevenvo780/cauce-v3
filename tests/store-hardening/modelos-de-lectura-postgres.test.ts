@@ -25,6 +25,9 @@ interface ActivityAgent {
   tenant_id: string; alias: string; registered: boolean; work_state: FleetWorkState;
   flags: FleetActivityFlag[]; in_flight: number; queued: number; queued_ready: number;
   claimed_not_started: number; overdue_in_flight: number; seconds_since_last_ack: number | null;
+  oldest_claimed_not_started_seconds: number | null;
+  oldest_claimed_not_started_without_ack_seconds: number | null;
+  oldest_claimed_not_started_activity_seconds: number | null;
   presence: { online: boolean | null }; rooms: string[];
   in_flight_items: { delivery_id: string; status: string }[];
   in_flight_items_truncated: boolean;
@@ -108,8 +111,11 @@ afterAll(async () => {
 
 describe('agentWorkState', () => {
   const base = {
-    registered: true, in_flight: 0, queued: 0, overdue_in_flight: 0, claimed_not_started: 0,
-    oldest_in_flight_seconds: null, seconds_since_last_ack: 10, lease_online: true,
+    registered: true, in_flight: 0, queued: 0, overdue_in_flight: 0,
+    claimed_not_started: 0, oldest_in_flight_seconds: null,
+    oldest_claimed_not_started_without_ack_seconds: null,
+    oldest_claimed_not_started_activity_seconds: null,
+    seconds_since_last_ack: 10, lease_online: true,
   };
 
   it(SIN_BASE, () => {
@@ -121,9 +127,25 @@ describe('agentWorkState', () => {
       .toMatchObject({ work_state: 'saturated', flags: ['saturated'] });
     // Entregada y nunca empezada: el corte de 60 s es lo que evita que una garra sana de
     // milisegundos dispare el aviso en cada lectura del panel.
-    expect(agentWorkState({ ...base, in_flight: 1, claimed_not_started: 1, oldest_in_flight_seconds: 59 })
+    expect(agentWorkState({ ...base, in_flight: 1, claimed_not_started: 1,
+      oldest_in_flight_seconds: 59, oldest_claimed_not_started_without_ack_seconds: 59,
+      oldest_claimed_not_started_activity_seconds: 59 })
       .work_state).toBe('working');
-    expect(agentWorkState({ ...base, in_flight: 1, claimed_not_started: 1, oldest_in_flight_seconds: 61 }))
+    expect(agentWorkState({ ...base, in_flight: 1, claimed_not_started: 1,
+      oldest_in_flight_seconds: 61, oldest_claimed_not_started_without_ack_seconds: 61,
+      oldest_claimed_not_started_activity_seconds: 61 }))
+      .toEqual({ work_state: 'stalled', flags: ['claimed_not_started'] });
+    expect(agentWorkState({ ...base, in_flight: 2, claimed_not_started: 1,
+      oldest_in_flight_seconds: 1_800, oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: 61 }))
+      .toEqual({ work_state: 'working', flags: [] });
+    expect(agentWorkState({ ...base, in_flight: 2, claimed_not_started: 1,
+      oldest_in_flight_seconds: 1_800, oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: 120 }))
+      .toEqual({ work_state: 'working', flags: [] });
+    expect(agentWorkState({ ...base, in_flight: 2, claimed_not_started: 1,
+      oldest_in_flight_seconds: 1_800, oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: 301 }))
       .toEqual({ work_state: 'stalled', flags: ['claimed_not_started'] });
     expect(agentWorkState({ ...base, in_flight: 1, seconds_since_last_ack: null }))
       .toEqual({ work_state: 'stalled', flags: ['ack_stalled'] });
@@ -167,6 +189,8 @@ describe('fleetActivity: los cuatro estados que pinta la consola', () => {
     expect([...salva.flags].sort())
       .toEqual(['ack_stalled', 'claimed_not_started', 'overdue_acks']);
     expect(salva).toMatchObject({ in_flight: 1, claimed_not_started: 1, overdue_in_flight: 1 });
+    expect(salva.oldest_claimed_not_started_seconds).toBeGreaterThan(500);
+    expect(salva.oldest_claimed_not_started_without_ack_seconds).toBeGreaterThan(500);
     expect(salva.seconds_since_last_ack).toBeNull();
     expect(salva.in_flight_items).toHaveLength(1);
     expect(salva.in_flight_items[0]).toMatchObject({ delivery_id: entrega, status: 'leased' });
@@ -200,6 +224,81 @@ describe('fleetActivity: los cuatro estados que pinta la consola', () => {
     const salva = agente(await actividad(), 'salva');
     expect(salva).toMatchObject({ work_state: 'saturated', flags: ['saturated'], in_flight: 8 });
     expect(salva.seconds_since_last_ack).not.toBeNull();
+  });
+
+  it('una entrega aceptada espera detrás del turno activo sin marcar atasco', async () => {
+    await registrarAgente('Isa', 'salva');
+    await repository.acquireLease('Isa', 'salva', 'salva-1', [], 60_000);
+    const [started, accepted] = await entregas(2);
+    await pool.query(
+      `UPDATE deliveries SET status='started',attempt=1,claimed_at=now()-interval '30 minutes',
+         ack_deadline_at=now()+interval '5 minutes' WHERE id=$1`, [started]
+    );
+    await pool.query(
+      `UPDATE deliveries SET status='accepted',attempt=1,claimed_at=now()-interval '15 minutes',
+         ack_deadline_at=now()+interval '5 minutes' WHERE id=$1`, [accepted]
+    );
+    await pool.query(
+      `INSERT INTO delivery_acks(delivery_id,status,instance_id,epoch,applied,renewal,claim_token,attempt,event_id)
+       VALUES($1,'accepted','salva-1',1,true,true,gen_random_uuid(),1,gen_random_uuid())`, [accepted]
+    );
+    const salva = agente(await actividad(), 'salva');
+    expect(salva).toMatchObject({
+      work_state: 'working', flags: [], in_flight: 2, claimed_not_started: 1
+    });
+    expect(salva.oldest_claimed_not_started_seconds).toBeGreaterThan(800);
+    expect(salva.oldest_claimed_not_started_without_ack_seconds).toBeNull();
+    expect(salva.oldest_claimed_not_started_activity_seconds).toBeLessThan(60);
+  });
+
+  it('una ejecución vieja no envejece una entrega recién aceptada', async () => {
+    await registrarAgente('Isa', 'salva');
+    await repository.acquireLease('Isa', 'salva', 'salva-1', [], 60_000);
+    const [started, accepted] = await entregas(2);
+    await pool.query(
+      `UPDATE deliveries SET status='started',attempt=1,claimed_at=now()-interval '30 minutes',
+         ack_deadline_at=now()+interval '5 minutes' WHERE id=$1`, [started]
+    );
+    await pool.query(
+      `UPDATE deliveries SET status='accepted',attempt=1,claimed_at=now()-interval '5 seconds',
+         ack_deadline_at=now()+interval '5 minutes' WHERE id=$1`, [accepted]
+    );
+    await pool.query(
+      `INSERT INTO delivery_acks(delivery_id,status,instance_id,epoch,applied,renewal,claim_token,attempt,event_id)
+       VALUES($1,'started','salva-1',1,true,true,gen_random_uuid(),1,gen_random_uuid())`, [started]
+    );
+    const salva = agente(await actividad(), 'salva');
+    expect(salva).toMatchObject({ work_state: 'working', flags: [], claimed_not_started: 1 });
+    expect(salva.oldest_claimed_not_started_without_ack_seconds).toBeLessThan(60);
+    expect(salva.oldest_claimed_not_started_activity_seconds).toBeLessThan(60);
+  });
+
+  it('una entrega aceptada vieja sin ACK propio alerta aunque otra ejecución renueve', async () => {
+    await registrarAgente('Isa', 'salva');
+    await repository.acquireLease('Isa', 'salva', 'salva-1', [], 60_000);
+    const [started, accepted] = await entregas(2);
+    await pool.query(
+      `UPDATE deliveries SET status='started',attempt=1,claimed_at=now()-interval '30 minutes',
+         ack_deadline_at=now()+interval '5 minutes' WHERE id=$1`, [started]
+    );
+    await pool.query(
+      `UPDATE deliveries SET status='accepted',attempt=2,claimed_at=now()-interval '15 minutes',
+         ack_deadline_at=now()+interval '5 minutes' WHERE id=$1`, [accepted]
+    );
+    await pool.query(
+      `INSERT INTO delivery_acks(delivery_id,status,instance_id,epoch,applied,renewal,claim_token,attempt,event_id)
+       VALUES($1,'started','salva-1',1,true,true,gen_random_uuid(),1,gen_random_uuid())`, [started]
+    );
+    await pool.query(
+      `INSERT INTO delivery_acks(delivery_id,status,instance_id,epoch,applied,renewal,claim_token,attempt,event_id)
+       VALUES($1,'accepted','salva-1',1,true,true,gen_random_uuid(),1,gen_random_uuid())`, [accepted]
+    );
+
+    const salva = agente(await actividad(), 'salva');
+    expect(salva.work_state).toBe('stalled');
+    expect(salva.flags).toEqual(['claimed_not_started']);
+    expect(salva.oldest_claimed_not_started_without_ack_seconds).toBeGreaterThan(800);
+    expect(salva.oldest_claimed_not_started_activity_seconds).toBeGreaterThan(800);
   });
 
   it('la lista de entregas en vuelo se recorta y lo declara', async () => {

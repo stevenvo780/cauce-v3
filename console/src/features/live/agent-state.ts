@@ -88,6 +88,10 @@ export interface LiveAgentView {
   inFlight: number;
   queued: number;
   oldestInFlightSeconds?: number | null;
+  oldestClaimedNotStartedSeconds?: number | null;
+  oldestClaimedNotStartedWithoutAckSeconds?: number | null;
+  oldestClaimedNotStartedActivitySeconds?: number | null;
+  claimedNotStartedNeverAcked?: boolean;
   secondsSinceLastAck?: number | null;
   delegatesTo: string[];
   delegatedFrom: string[];
@@ -133,6 +137,7 @@ function decidirEstado(
   const flags = agent.flags ?? [];
   const saturation = context.thresholds?.saturation_in_flight ?? 8;
   const stallAfter = context.thresholds?.stall_after_seconds ?? 300;
+  const startAfter = context.thresholds?.start_after_seconds ?? 60;
   const inFlight = agent.in_flight ?? 0;
   const overloaded = inFlight >= saturation;
 
@@ -148,25 +153,6 @@ function decidirEstado(
     return { state: 'down', reason: 'El lease venció. El adaptador no está sosteniendo la conexión.', overloaded };
   }
 
-  if (flags.includes('claimed_not_started')) { // Never STARTED: «no la cerró» would mislead.
-    const age = agent.oldest_in_flight_seconds;
-    const desde = typeof age === 'number' ? ` hace ${humanSeconds(age)}` : '';
-    return {
-      state: 'blocked',
-      reason: `Tomó trabajo${desde} y nunca lo empezó: no está recibiendo. Revisá su adaptador.`,
-      overloaded,
-    };
-  }
-  if (agent.work_state === 'stalled') {
-    const age = agent.oldest_in_flight_seconds;
-    return {
-      state: 'blocked',
-      reason: typeof age === 'number'
-        ? `Tomó una entrega hace ${humanSeconds(age)} y no la cerró (umbral: ${humanSeconds(stallAfter)}).`
-        : 'El servidor lo marcó estancado: trabajo tomado que no avanza.',
-      overloaded,
-    };
-  }
   if (flags.includes('overdue_acks')) {
     return { state: 'blocked', reason: 'Tiene entregas con el deadline de ACK vencido: el turno se le está muriendo.', overloaded };
   }
@@ -177,6 +163,34 @@ function decidirEstado(
       reason: since === null || since === undefined
         ? 'Trabajo en vuelo y ningún ACK dentro de la ventana de búsqueda: la señal más grave.'
         : `Trabajo en vuelo y el último ACK fue hace ${humanSeconds(since)}.`,
+      overloaded,
+    };
+  }
+  if (flags.includes('claimed_not_started')) {
+    const withoutAckAge = agent.oldest_claimed_not_started_without_ack_seconds;
+    if (typeof withoutAckAge === 'number' && withoutAckAge > startAfter) {
+      return {
+        state: 'blocked',
+        reason: `Tomó trabajo hace ${humanSeconds(withoutAckAge)} y nunca registró un ACK propio.`,
+        overloaded,
+      };
+    }
+    const activityAge = agent.oldest_claimed_not_started_activity_seconds
+      ?? agent.oldest_claimed_not_started_seconds;
+    const desde = typeof activityAge === 'number' ? ` hace ${humanSeconds(activityAge)}` : '';
+    return {
+      state: 'blocked',
+      reason: `Tomó trabajo y no registra actividad propia${desde}: no está empezando esa entrega.`,
+      overloaded,
+    };
+  }
+  if (agent.work_state === 'stalled') {
+    const age = agent.oldest_in_flight_seconds;
+    return {
+      state: 'blocked',
+      reason: typeof age === 'number'
+        ? `Tomó una entrega hace ${humanSeconds(age)} y no la cerró (umbral: ${humanSeconds(stallAfter)}).`
+        : 'El servidor lo marcó estancado: trabajo tomado que no avanza.',
       overloaded,
     };
   }
@@ -258,6 +272,7 @@ export function buildLiveViews(
 
   const agents = snapshot?.agents ?? [];
   const known = new Set(agents.map(agentKey));
+  const startAfter = snapshot?.thresholds?.start_after_seconds ?? 60;
 
   const views = agents.map((agent) => {
     const key = agentKey(agent);
@@ -280,6 +295,12 @@ export function buildLiveViews(
       inFlight: agent.in_flight ?? 0,
       queued: agent.queued ?? 0,
       oldestInFlightSeconds: agent.oldest_in_flight_seconds,
+      oldestClaimedNotStartedSeconds: agent.oldest_claimed_not_started_seconds,
+      oldestClaimedNotStartedWithoutAckSeconds: agent.oldest_claimed_not_started_without_ack_seconds,
+      oldestClaimedNotStartedActivitySeconds: agent.oldest_claimed_not_started_activity_seconds,
+      claimedNotStartedNeverAcked:
+        typeof agent.oldest_claimed_not_started_without_ack_seconds === 'number'
+        && agent.oldest_claimed_not_started_without_ack_seconds > startAfter,
       secondsSinceLastAck: agent.seconds_since_last_ack,
       delegatesTo,
       delegatedFrom: [...new Set(incoming.get(key) ?? [])],
@@ -339,11 +360,31 @@ interface VerdictInput {
 
 function motivoDe(view: LiveAgentView): string {
   if (view.state === 'down') return 'caído';
-  const edad = view.oldestInFlightSeconds;
-  if (typeof edad === 'number') return `trabado hace ${humanSeconds(edad)}`;
-  const ack = view.secondsSinceLastAck;
-  if (ack === null || ack === undefined) return 'trabado, sin una sola señal';
-  return `trabado, último ACK hace ${humanSeconds(ack)}`;
+  const enVuelo = typeof view.oldestInFlightSeconds === 'number'
+    ? `; entrega en vuelo hace ${humanSeconds(view.oldestInFlightSeconds)}`
+    : '';
+  if (view.flags.includes('overdue_acks')) return `trabado: ACK vencido${enVuelo}`;
+  if (view.flags.includes('ack_stalled')) {
+    const ack = view.secondsSinceLastAck;
+    return ack === null || ack === undefined
+      ? `trabado: sin ACK reciente${enVuelo}`
+      : `trabado: último ACK hace ${humanSeconds(ack)}${enVuelo}`;
+  }
+  if (view.flags.includes('claimed_not_started')) {
+    if (view.claimedNotStartedNeverAcked) {
+      const age = view.oldestClaimedNotStartedWithoutAckSeconds;
+      return typeof age === 'number'
+        ? `trabado: tomó y no empezó; nunca dio ACK propio en ${humanSeconds(age)}`
+        : 'trabado: tomó y no empezó; nunca dio ACK propio';
+    }
+    const age = view.oldestClaimedNotStartedActivitySeconds
+      ?? view.oldestClaimedNotStartedSeconds;
+    return typeof age === 'number'
+      ? `trabado: tomó y no empezó; último ACK propio hace ${humanSeconds(age)}`
+      : 'trabado: tomó y no empezó';
+  }
+  if (view.flags.includes('queued_without_consumer')) return 'trabado: cola sin consumidor';
+  return `trabado según el servidor${enVuelo}`;
 }
 
 function horaCorta(marca: number): string {

@@ -37,6 +37,18 @@ describe('liveState', () => {
     expect(result.reason).not.toContain('0 s');
   });
 
+  it('un stall por ACK explica la edad del ACK aunque la entrega sea más vieja', () => {
+    const result = liveState(
+      agent({
+        work_state: 'stalled', flags: ['ack_stalled'], in_flight: 1,
+        oldest_in_flight_seconds: 1_500, seconds_since_last_ack: 840,
+      }),
+      { nowMs: NOW, thresholds: { stall_after_seconds: 300 } },
+    );
+    expect(result.reason).toContain('último ACK fue hace 14 min');
+    expect(result.reason).not.toContain('25 min');
+  });
+
   it('lease vencido es CAÍDO aunque el agente figure habilitado', () => {
     expect(liveState(agent({ flags: ['lease_expired'] }), { nowMs: NOW }).state).toBe('down');
     expect(liveState(agent({ flags: ['never_connected'] }), { nowMs: NOW }).state).toBe('down');
@@ -70,6 +82,61 @@ describe('liveState', () => {
   it('entrega tomada y no empezada es RECIBIENDO, no trabajando', () => {
     const result = liveState(agent({ in_flight: 1, claimed_not_started: 1, started: 0 }), { nowMs: NOW });
     expect(result.state).toBe('receiving');
+  });
+
+  it('explica no empezó con la edad de esa entrega y no la de otra ejecución', () => {
+    const result = liveState(
+      agent({
+        work_state: 'stalled', flags: ['claimed_not_started'], in_flight: 2, started: 0,
+        oldest_in_flight_seconds: 1_800, oldest_claimed_not_started_seconds: 1_800,
+        oldest_claimed_not_started_activity_seconds: 900,
+      }),
+      { nowMs: NOW },
+    );
+    expect(result.reason).toContain('hace 15 min');
+    expect(result.reason).not.toContain('30 min');
+  });
+
+  it('distingue nunca ACK propio de ACK propio inactivo', () => {
+    const neverAcked = liveState(
+      agent({
+        work_state: 'stalled', flags: ['claimed_not_started'], in_flight: 1,
+        oldest_claimed_not_started_without_ack_seconds: 61,
+        oldest_claimed_not_started_activity_seconds: 61,
+      }),
+      { nowMs: NOW, thresholds: { start_after_seconds: 60 } },
+    );
+    const staleAck = liveState(
+      agent({
+        work_state: 'stalled', flags: ['claimed_not_started'], in_flight: 1,
+        oldest_claimed_not_started_without_ack_seconds: null,
+        oldest_claimed_not_started_activity_seconds: 301,
+      }),
+      { nowMs: NOW, thresholds: { start_after_seconds: 60, stall_after_seconds: 300 } },
+    );
+    expect(neverAcked.reason).toContain('nunca registró un ACK propio');
+    expect(staleAck.reason).toContain('actividad propia hace 5 min');
+  });
+
+  it('prioriza ACK vencido y ACK estancado sobre tomó y no empezó', () => {
+    const overdue = liveState(
+      agent({
+        work_state: 'stalled', flags: ['claimed_not_started', 'ack_stalled', 'overdue_acks'],
+        in_flight: 2, seconds_since_last_ack: 900,
+        oldest_claimed_not_started_activity_seconds: 800,
+      }),
+      { nowMs: NOW },
+    );
+    const ack = liveState(
+      agent({
+        work_state: 'stalled', flags: ['claimed_not_started', 'ack_stalled'],
+        in_flight: 2, seconds_since_last_ack: 900,
+        oldest_claimed_not_started_activity_seconds: 800,
+      }),
+      { nowMs: NOW },
+    );
+    expect(overdue.reason).toContain('deadline de ACK vencido');
+    expect(ack.reason).toContain('último ACK fue hace 15 min');
   });
 
   it('marca saturación contra el umbral del servidor, no contra un número fijo del cliente', () => {
@@ -203,7 +270,9 @@ describe('fleetVerdict', () => {
     expect(veredicto.frase).toBe('1 agente necesita atención.');
     expect(veredicto.culpables).toHaveLength(1);
     expect(veredicto.culpables[0].alias).toBe('kratos');
-    expect(veredicto.culpables[0].motivo).toBe('trabado hace 22 min');
+    expect(veredicto.culpables[0].motivo).toBe(
+      'trabado según el servidor; entrega en vuelo hace 22 min',
+    );
   });
 
   it('un agente trabado sin una sola señal no se reporta como "hace 0 s"', () => {
@@ -214,8 +283,51 @@ describe('fleetVerdict', () => {
       })]),
       { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
     );
-    expect(veredicto.culpables[0].motivo).toBe('trabado, sin una sola señal');
+    expect(veredicto.culpables[0].motivo).toBe('trabado: sin ACK reciente');
     expect(veredicto.culpables[0].motivo).not.toContain('0 s');
+  });
+
+  it('el veredicto prioriza ACK vencido y luego ACK estancado sobre no empezó', () => {
+    const base = {
+      work_state: 'stalled' as const, in_flight: 1,
+      oldest_in_flight_seconds: 1_200, seconds_since_last_ack: 900,
+      oldest_claimed_not_started_activity_seconds: 800,
+    };
+    const overdue = fleetVerdict(
+      vistas([agent({ ...base, flags: ['claimed_not_started', 'ack_stalled', 'overdue_acks'] })]),
+      { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
+    );
+    const ack = fleetVerdict(
+      vistas([agent({ ...base, flags: ['claimed_not_started', 'ack_stalled'] })]),
+      { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
+    );
+    expect(overdue.culpables[0].motivo).toContain('ACK vencido');
+    expect(ack.culpables[0].motivo).toContain('último ACK hace 15 min');
+  });
+
+  it('distingue servicio vivo ocupado de servicio vivo sin progreso de ACK', () => {
+    const veredicto = fleetVerdict(
+      vistas([
+        agent({
+          alias: 'jarvis', work_state: 'working', in_flight: 1,
+          oldest_in_flight_seconds: 10_620, seconds_since_last_ack: 20,
+          overdue_in_flight: 0, presence: { online: true },
+        }),
+        agent({
+          alias: 'kant', work_state: 'stalled', flags: ['ack_stalled'], in_flight: 1,
+          oldest_in_flight_seconds: 1_500, seconds_since_last_ack: 840,
+          overdue_in_flight: 0, presence: { online: true },
+        }),
+      ]),
+      { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
+    );
+    expect(veredicto.culpables.map((culpable) => culpable.alias)).toEqual(['kant']);
+    expect(veredicto.culpables[0].motivo).toBe(
+      'trabado: último ACK hace 14 min; entrega en vuelo hace 25 min',
+    );
+    expect(veredicto.culpables[0].motivo).not.toContain('trabado hace 25 min');
+    expect(veredicto.apoyo).toContain('2 conectados');
+    expect(veredicto.apoyo).toContain('1 con trabajo entre manos');
   });
 });
 

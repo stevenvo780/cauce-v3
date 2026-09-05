@@ -14,7 +14,9 @@ describe('agentWorkState', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 3, queued: 1, overdue_in_flight: 0,
       seconds_since_last_ack: 12, lease_online: true,
-      claimed_not_started: 0, oldest_in_flight_seconds: 1
+      claimed_not_started: 0, oldest_in_flight_seconds: 1,
+      oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: null
     };
     expect(agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS)).toEqual({ work_state: 'working', flags: [] });
   });
@@ -23,7 +25,9 @@ describe('agentWorkState', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 41, queued: 12, overdue_in_flight: 41,
       seconds_since_last_ack: 1268, lease_online: false,
-      claimed_not_started: 0, oldest_in_flight_seconds: 1
+      claimed_not_started: 0, oldest_in_flight_seconds: 1,
+      oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: null
     };
     const result = agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS);
     expect(result.work_state).toBe('stalled');
@@ -34,7 +38,9 @@ describe('agentWorkState', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 0, queued: 8, overdue_in_flight: 0,
       seconds_since_last_ack: null, lease_online: false,
-      claimed_not_started: 0, oldest_in_flight_seconds: 1
+      claimed_not_started: 0, oldest_in_flight_seconds: 1,
+      oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: null
     };
     const result = agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS);
     expect(result.work_state).toBe('queued');
@@ -45,7 +51,9 @@ describe('agentWorkState', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 0, queued: 0, overdue_in_flight: 0,
       seconds_since_last_ack: 799, lease_online: true,
-      claimed_not_started: 0, oldest_in_flight_seconds: 1
+      claimed_not_started: 0, oldest_in_flight_seconds: 1,
+      oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: null
     };
     expect(agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS)).toEqual({ work_state: 'idle', flags: [] });
   });
@@ -54,7 +62,9 @@ describe('agentWorkState', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 0, queued: 0, overdue_in_flight: 0,
       seconds_since_last_ack: null, lease_online: null,
-      claimed_not_started: 0, oldest_in_flight_seconds: 1
+      claimed_not_started: 0, oldest_in_flight_seconds: 1,
+      oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: null
     };
     const result = agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS);
     expect(result.work_state).toBe('idle');
@@ -65,7 +75,9 @@ describe('agentWorkState', () => {
     const row: FleetActivityWorkStateInput = {
       registered: false, in_flight: 5, queued: 0, overdue_in_flight: 0,
       seconds_since_last_ack: 5, lease_online: true,
-      claimed_not_started: 0, oldest_in_flight_seconds: 1
+      claimed_not_started: 0, oldest_in_flight_seconds: 1,
+      oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: null
     };
     const result = agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS);
     expect(result.work_state).toBe('working');
@@ -76,7 +88,9 @@ describe('agentWorkState', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 8, queued: 0, overdue_in_flight: 0,
       seconds_since_last_ack: 1, lease_online: true,
-      claimed_not_started: 0, oldest_in_flight_seconds: 1
+      claimed_not_started: 0, oldest_in_flight_seconds: 1,
+      oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: null
     };
     const result = agentWorkState(row, { ...DEFAULT_FLEET_ACTIVITY_THRESHOLDS, saturation_in_flight: 8 });
     expect(result.work_state).toBe('saturated');
@@ -109,7 +123,9 @@ describe('FLEET_ACTIVITY_QUERY contract', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 2, queued: 0, overdue_in_flight: 0,
       seconds_since_last_ack: 30, lease_online: true,
-      claimed_not_started: 2, oldest_in_flight_seconds: 3_100
+      claimed_not_started: 2, oldest_in_flight_seconds: 3_100,
+      oldest_claimed_not_started_without_ack_seconds: 3_100,
+      oldest_claimed_not_started_activity_seconds: 3_100
     };
     const result = agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS);
     expect(result.work_state).toBe('stalled');
@@ -121,9 +137,37 @@ describe('FLEET_ACTIVITY_QUERY contract', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 1, queued: 0, overdue_in_flight: 0,
       seconds_since_last_ack: 5, lease_online: true,
-      claimed_not_started: 1, oldest_in_flight_seconds: 1
+      claimed_not_started: 1, oldest_in_flight_seconds: 1,
+      oldest_claimed_not_started_without_ack_seconds: 1,
+      oldest_claimed_not_started_activity_seconds: 1
     };
     expect(agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS))
       .toEqual({ work_state: 'working', flags: [] });
+  });
+
+  it('trabajo aceptado con actividad propia reciente no se confunde con la ejecución vieja', () => {
+    const row: FleetActivityWorkStateInput = {
+      registered: true, in_flight: 2, queued: 0, overdue_in_flight: 0,
+      seconds_since_last_ack: 4, lease_online: true,
+      claimed_not_started: 1, oldest_in_flight_seconds: 1_800,
+      oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: 4
+    };
+    expect(agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS))
+      .toEqual({ work_state: 'working', flags: [] });
+  });
+
+  it('tolera el intervalo normal de renovación y alerta al superar el stall real', () => {
+    const row: FleetActivityWorkStateInput = {
+      registered: true, in_flight: 1, queued: 0, overdue_in_flight: 0,
+      seconds_since_last_ack: 10, lease_online: true, claimed_not_started: 1,
+      oldest_in_flight_seconds: 900,
+      oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: 120
+    };
+    expect(agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS))
+      .toEqual({ work_state: 'working', flags: [] });
+    expect(agentWorkState({ ...row, oldest_claimed_not_started_activity_seconds: 301 }))
+      .toEqual({ work_state: 'stalled', flags: ['claimed_not_started'] });
   });
 });

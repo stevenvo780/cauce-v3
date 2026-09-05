@@ -11,6 +11,7 @@ const EXCLUSIONES = ['**/node_modules/**', '**/dist/**', '.claude/**'];
 const SUITES_RAPIDAS = [
   'tests/unit',
   'packages/protocol/test',
+  'packages/store/src',
   'packages/mcp-fleet-monitor',
   'services/dispatcher/test',
   'services/gateway/src',

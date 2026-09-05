@@ -148,9 +148,15 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
       const queued = Number(row.queued ?? 0);
       const overdueInFlight = Number(row.overdue_in_flight ?? 0);
       const claimedNotStarted = Number(row.claimed_not_started ?? 0);
-      const oldestInFlightSeconds = row.oldest_in_flight_seconds === null
-        || row.oldest_in_flight_seconds === undefined
-        ? null : Number(row.oldest_in_flight_seconds);
+      const started = Number(row.started ?? 0);
+      const secondsOrNull = (value: unknown): number | null => value === null || value === undefined
+        ? null : Number(value);
+      const oldestInFlightSeconds = secondsOrNull(row.oldest_in_flight_seconds);
+      const oldestUnstartedSeconds = secondsOrNull(row.oldest_claimed_not_started_seconds);
+      const oldestUnstartedWithoutAckSeconds = secondsOrNull(
+        row.oldest_claimed_not_started_without_ack_seconds
+      );
+      const oldestUnstartedActivitySeconds = secondsOrNull(row.oldest_claimed_not_started_activity_seconds);
       const registered = row.registered === true;
 
       const { work_state, flags } = agentWorkState(
@@ -158,6 +164,8 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
           registered, in_flight: inFlight, queued, overdue_in_flight: overdueInFlight,
           claimed_not_started: claimedNotStarted,
           oldest_in_flight_seconds: oldestInFlightSeconds,
+          oldest_claimed_not_started_without_ack_seconds: oldestUnstartedWithoutAckSeconds,
+          oldest_claimed_not_started_activity_seconds: oldestUnstartedActivitySeconds,
           seconds_since_last_ack: secondsSinceLastAck, lease_online: leaseOnline,
         },
         thresholds
@@ -182,15 +190,18 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
         work_state,
         flags,
         in_flight: inFlight,
-        started: Number(row.started ?? 0),
+        started,
         claimed_not_started: Number(row.claimed_not_started ?? 0),
         queued,
         queued_ready: Number(row.queued_ready ?? 0),
         retrying: Number(row.retrying ?? 0),
         overdue_in_flight: overdueInFlight,
         oldest_claimed_at: row.oldest_claimed_at ?? null,
-        oldest_in_flight_seconds: row.oldest_in_flight_seconds === null || row.oldest_in_flight_seconds === undefined
-          ? null : Number(row.oldest_in_flight_seconds),
+        oldest_claimed_not_started_at: row.oldest_claimed_not_started_at ?? null,
+        oldest_in_flight_seconds: oldestInFlightSeconds,
+        oldest_claimed_not_started_seconds: oldestUnstartedSeconds,
+        oldest_claimed_not_started_without_ack_seconds: oldestUnstartedWithoutAckSeconds,
+        oldest_claimed_not_started_activity_seconds: oldestUnstartedActivitySeconds,
         nearest_ack_deadline_at: row.nearest_ack_deadline_at ?? null,
         max_attempt: row.max_attempt === null || row.max_attempt === undefined ? null : Number(row.max_attempt),
         last_ack_at: row.last_ack_at ?? null,
