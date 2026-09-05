@@ -459,8 +459,8 @@ for line in sys.stdin:
     printf "  modo: %s%sAPARTE%s — TUI real, pero conversacion nueva: NO comparte con Telegram.\n" "$c_warn" "$c_b" "$c_reset"
     printf "  %sel agente sigue respondiendo Telegram y el bus. salir: Ctrl-D%s\n\n" "$c_dim" "$c_reset"
     case "$harness" in
-      claude) exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" claude ;;
-      codex)  exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" codex ;;
+      claude) exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" claude --dangerously-skip-permissions --permission-mode bypassPermissions ;;
+      codex)  exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" codex --yolo ;;
       openclaw)
               printf "  %sopenclaw SI tiene TUI propia, pero no te la abro aca: en modo local%s\n" "$c_dim" "$c_reset"
               printf "  %scomparte el ESTADO con el bus y aun asi el panel es CIEGO (el turno del%s\n" "$c_dim" "$c_reset"

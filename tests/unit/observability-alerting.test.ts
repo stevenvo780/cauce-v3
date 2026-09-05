@@ -56,6 +56,21 @@ describe('production alert delivery is observable and identity-safe', () => {
     expect(rules).not.toMatch(/cauce_gateway_console_publish_operations_total\{[^}]*alias/u);
   });
 
+  it('alerts once on degraded or stale profile runtime facts before a governed reload', async () => {
+    const rules = await readFile(resolve(root, 'ops/observability/alerts.yaml'), 'utf8');
+    const name = 'CauceProfileRuntimeExpectationsDegraded';
+    const start = rules.indexOf(`      - alert: ${name}`);
+    const end = rules.indexOf('\n      - alert:', start + 1);
+    const rule = rules.slice(start, end < 0 ? undefined : end);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(rules.match(new RegExp(`alert: ${name}`, 'gu'))).toHaveLength(1);
+    expect(rule).toContain('max({__name__=~"cauce_gateway_profile_runtime_expectations_(degraded|stale)"}) > 0');
+    expect(rule).toContain('for: 5m');
+    expect(rule).toContain('severity: warning');
+    expect(rule).toContain('Review measured runtime facts before requesting a governed profile reload');
+    expect(rule).not.toMatch(/tenant|alias|operator|session/u);
+  });
+
   it('pages only actionable DLQ growth and detects stale or unclassified incidents', async () => {
     const rules = await readFile(resolve(root, 'ops/observability/alerts.yaml'), 'utf8');
     for (const name of [

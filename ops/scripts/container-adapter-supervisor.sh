@@ -65,22 +65,8 @@ valid_absolute_path() {
   [[ $1 != *'//'* && $1 != */../* && $1 != */./* && $1 != */.. && $1 != */. ]]
 }
 
-# ---------------------------------------------------------------------------
-# Per-alias configuration (CONFIG_POR_ALIAS switch, OFF by default).
-#
-# WHY. `kratos` and `atlas` run in the SAME container, with the same user and the same HOME
-# (/home/dev). Their ~/.codex/AGENTS.md is the SAME INODE: it is physically impossible to give them
-# distinct file-level identities. `zeus` and `argos` share CLAUDE.md for the same reason. That arrangement
-# is the reason the role ended up in the database (020_agent_role_brief.sql).
-#
-# CLAUDE_CONFIG_DIR and CODEX_HOME already govern where each CLI looks, so pointing each alias at its own
-# directory is the only thing needed to make the file useful again.
-#
-# The path is DERIVED from the alias and the mapped home; it is not a free-form config value. Whoever copies
-# the files there is ops/scripts/separar-config-alias.mjs, and computes exactly the same. If they were two
-# free values, one day one would copy to one directory and the other would read from another: the alias would
-# boot with factory configuration and NOTHING would fail.
-# ---------------------------------------------------------------------------
+# Alias config paths must match separar-config-alias.mjs and remain isolated across shared HOME users.
+# CONFIG_POR_ALIAS is opt-in; an empty or mismatched directory silently loads factory defaults.
 
 config_por_alias_variable() {
   # Fails (does not return empty) for everything else: exporting `CODEX_HOME=` would be a variable that

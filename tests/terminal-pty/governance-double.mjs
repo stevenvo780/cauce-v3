@@ -428,6 +428,7 @@ export function createGovernanceSandbox(options = {}) {
     const seen = new Set();
     let totalBytes = 0;
     let totalChunks = 0;
+    const maxBatchChunks = MAX_CHUNKS_PER_DOCUMENT + raw.length - 1;
     for (const item of raw) {
       if (item === null || typeof item !== 'object') {
         return batchError(requestId, 'invalid_path', 'batch entry must be an object');
@@ -463,7 +464,7 @@ export function createGovernanceSandbox(options = {}) {
       }
       totalBytes += item.bytes;
       totalChunks += item.chunks;
-      if (totalBytes > GOVERNANCE.max_document_bytes || totalChunks > MAX_CHUNKS_PER_DOCUMENT) {
+      if (totalBytes > GOVERNANCE.max_document_bytes || totalChunks > maxBatchChunks) {
         return batchError(requestId, 'too_large', 'batch exceeds the total governance limit');
       }
       entries.push({ ...item, received: [], received_bytes: 0 });

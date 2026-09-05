@@ -149,6 +149,46 @@ class WriteGovernanceBatchTests(unittest.TestCase):
         self.assertEqual(pathlib.Path(soul).read_bytes(), b"new")
         self.assertEqual(pathlib.Path(tools).read_bytes(), b"tools")
 
+    def test_each_document_can_have_its_own_partial_chunk(self) -> None:
+        names = ("SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md")
+        entries = [write_entry(self.path(name), b"x", "create") for name in names]
+        tag, body = run_batch(self.instance, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", entries)
+        self.assertEqual(tag, agent.TAG_WRITE_BATCH_OK)
+        self.assertEqual(len(body["files"]), len(names))
+        for name in names:
+            self.assertEqual(pathlib.Path(self.path(name)).read_bytes(), b"x")
+
+    def test_fragmented_profile_accepts_exact_byte_limit_and_preserves_verified_files(self) -> None:
+        names = ("SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md")
+        entries = [write_entry(self.path(name), b"x", "create") for name in names[:-1]]
+        entries.append(write_entry(self.path(names[-1]), b"x" * (agent.MAX_WRITE_BATCH_BYTES - 4), "create"))
+        for name in ("MEMORY.md", "HEARTBEAT.md"):
+            pathlib.Path(self.path(name)).write_bytes(b"preserved")
+            entries.append(verify_entry(self.path(name), "present", sha(b"preserved")))
+        before = {name: os.stat(self.path(name)) for name in ("MEMORY.md", "HEARTBEAT.md")}
+        tag, body = run_batch(self.instance, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", entries)
+        self.assertEqual(tag, agent.TAG_WRITE_BATCH_OK)
+        self.assertEqual(len(body["files"]), 7)
+        for name, previous in before.items():
+            current = os.stat(self.path(name))
+            self.assertEqual((current.st_ino, current.st_mtime_ns), (previous.st_ino, previous.st_mtime_ns))
+            self.assertEqual(pathlib.Path(self.path(name)).read_bytes(), b"preserved")
+
+    def test_fragmentation_does_not_increase_the_total_byte_limit(self) -> None:
+        tag, body = run_batch(self.instance, "cccccccc-cccc-cccc-cccc-cccccccccccc", [
+            write_entry(self.path("SOUL.md"), b"x", "create"),
+            write_entry(self.path("TOOLS.md"), b"x" * agent.MAX_WRITE_BATCH_BYTES, "create"),
+        ])
+        self.assertEqual((tag, body["error"]), (agent.TAG_WRITE_BATCH_ERR, "too_large"))
+        self.assertEqual(list(pathlib.Path(self.workspace).iterdir()), [])
+
+    def test_fragmentation_does_not_increase_the_per_document_chunk_limit(self) -> None:
+        entry = write_entry(self.path("SOUL.md"), b"x", "create")
+        entry["chunks"] = (agent.MAX_DOCUMENT_BYTES + agent.MAX_DATA - 1) // agent.MAX_DATA + 1
+        tag, body = run_batch(self.instance, "dddddddd-dddd-dddd-dddd-dddddddddddd", [entry])
+        self.assertEqual((tag, body["error"]), (agent.TAG_WRITE_BATCH_ERR, "too_large"))
+        self.assertEqual(list(pathlib.Path(self.workspace).iterdir()), [])
+
     def test_any_preflight_conflict_leaves_every_file_untouched(self) -> None:
         soul = self.path("SOUL.md")
         tools = self.path("TOOLS.md")

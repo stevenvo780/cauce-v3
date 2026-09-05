@@ -69,6 +69,26 @@ def in_container(container, script):
     return sh(['docker', 'exec', container, 'sh', '-lc', script])
 
 
+def resume_cli(harness, native):
+    if harness == 'claude':
+        return ['claude', '--dangerously-skip-permissions', '--permission-mode',
+                'bypassPermissions', '--resume', native]
+    return ['codex', '--yolo', 'resume', native]
+
+
+def resumes_session(argv, native):
+    for index, argument in enumerate(argv):
+        executable = os.path.basename(argument)
+        tail = argv[index + 1:]
+        if executable == 'claude':
+            return any(option == '--resume' and offset + 1 < len(tail)
+                       and tail[offset + 1] == native for offset, option in enumerate(tail))
+        if executable == 'codex':
+            return any(option == 'resume' and offset + 1 < len(tail)
+                       and tail[offset + 1] == native for offset, option in enumerate(tail))
+    return False
+
+
 def sesiones_mod():
     """cauce-sesiones vive al lado nuestro en ~/.local/bin y es la única fuente de verdad
     sobre qué sesión es cuál. Se importa por ruta para no inventar un paquete ni un PYTHONPATH."""
@@ -91,13 +111,12 @@ def unit_of(alias):
 
 def interactive_writers(info, native, host_native):
     """Sesiones interactivas ya abiertas sobre ESE id. Devuelve [(pid, tty, etime)]."""
-    grep = f"claude --resume {native}|codex resume {native}"
-    cmd = (f"ps -eo pid,tty,etime,args --no-headers 2>/dev/null | grep -E '{grep}' | grep -v grep")
+    cmd = "ps -eo pid,tty,etime,args --no-headers 2>/dev/null"
     raw = sh(['sh', '-lc', cmd]) if host_native else in_container(info['container'], cmd)
     rows = []
     for line in raw.splitlines():
         parts = line.split(None, 3)
-        if len(parts) >= 3:
+        if len(parts) >= 4 and resumes_session(parts[3].split(), native):
             rows.append((parts[0], parts[1], parts[2]))
     return rows
 
@@ -350,11 +369,10 @@ def main():
         print('              AVISO: --sin-parar; si llega una entrega vas a tener dos escritores.')
 
     try:
+        cli = resume_cli(harness, native)
         if host_native:
-            cli = ['claude', '--resume', native] if harness == 'claude' else ['codex', 'resume', native]
             subprocess.run(['bash', '-lc', f'cd {cwd} && ' + ' '.join(cli)], check=False)
         else:
-            cli = ['claude', '--resume', native] if harness == 'claude' else ['codex', 'resume', native]
             subprocess.run(['docker', 'exec', '-it', '--user', info['user'], '-w', cwd,
                             info['container'], 'bash', '-lc', ' '.join(cli)], check=False)
     finally:

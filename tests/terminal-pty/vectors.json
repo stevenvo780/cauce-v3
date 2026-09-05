@@ -769,9 +769,9 @@
       }
     },
     {
-      "name": "governance/batch-of-seven-writes-exceeds-the-total-chunk-budget",
+      "name": "governance/batch-of-seven-writes-allows-a-partial-chunk-per-document",
       "kind": "governance_write_batch",
-      "must_fail": true,
+      "must_fail": false,
       "input": {
         "harness": "openclaw",
         "files": [
@@ -797,19 +797,38 @@
         }
       },
       "expected": {
+        "terminal_tag": "WRITE_BATCH_OK",
+        "files": [
+          { "basename": "SOUL.md", "operation": "replace", "sha": "e5d6f0dab4d7b85b8716ec3f0abe5a33460341b4d3b1e8a1c7297b58007d0bfb", "bytes": 11 },
+          { "basename": "IDENTITY.md", "operation": "replace", "sha": "526a5656bcfc30fb4ec50a355e5a2b45f51202711b136d81843386ea979aa716", "bytes": 15 },
+          { "basename": "USER.md", "operation": "replace", "sha": "6b46cdf4e07b777606aa08dec5f1329cda198646177db99d5f3bfd9aefe8b064", "bytes": 11 },
+          { "basename": "AGENTS.md", "operation": "replace", "sha": "1f8a092ed38110e9cb32a1232d26ec7f562447063210555fb759ee110f773033", "bytes": 13 },
+          { "basename": "MEMORY.md", "operation": "replace", "sha": "f74193fe4bd6cb7294e029d67c3e69dce0619c0d75302ab06a301c21749c38f6", "bytes": 13 },
+          { "basename": "TOOLS.md", "operation": "replace", "sha": "425c95295e22c765ef30dd8635bbbaa7e664b56f0e5c07af3780c12a3b3fa5b7", "bytes": 12 },
+          { "basename": "HEARTBEAT.md", "operation": "replace", "sha": "f97582f9be8b7810bec06114c6847f7ae23d540f05578e8d90a78a2373b89d49", "bytes": 16 }
+        ]
+      }
+    },
+    {
+      "name": "governance/batch-rejects-excess-announced-chunks-after-per-document-rounding",
+      "kind": "governance_write_batch",
+      "must_fail": true,
+      "input": {
+        "harness": "openclaw",
+        "files": [],
+        "request": {
+          "request_id": "cccccccc-1111-2222-3333-888888888888",
+          "entries": [
+            { "basename": "SOUL.md", "mode": "write", "operation": "create", "text": "x", "announce": { "bytes": 100, "chunks": 5 } },
+            { "basename": "TOOLS.md", "mode": "write", "operation": "create", "text": "x", "announce": { "bytes": 100, "chunks": 5 } }
+          ]
+        }
+      },
+      "expected": {
         "terminal_tag": "WRITE_BATCH_ERR",
         "error": "too_large",
         "reason": "batch exceeds the total governance limit",
-        "note": "max_write_batch_files is 7 but the whole batch may only announce ceil(max_document_bytes / max_data) = 5 chunks, so seven non-empty writes can never commit.",
-        "files_after": [
-          { "basename": "SOUL.md", "sha": "c404784033d46338f21d9b71d40dc1ff54ee9c7f0b8822944d239f9c02b1d1f3" },
-          { "basename": "IDENTITY.md", "sha": "bd5d146ca7c958f61a12b951817607293c12eb74aa722e7a6e9c9faf75e7dcd6" },
-          { "basename": "USER.md", "sha": "24aa578eb02414cb7eaefb5df68437593639b6c4b768061a54ac3959407a02bf" },
-          { "basename": "AGENTS.md", "sha": "00267b567504ff64545ea3182ceb2057696f784c6cdad03cbff241da3300ed61" },
-          { "basename": "MEMORY.md", "sha": "9c651a37c4325cd9328dcaf30df8319fb36585e743762ede2e64d639c95918c0" },
-          { "basename": "TOOLS.md", "sha": "33666086fa0749a1665fc6bb3a790fd1e9084d2c52f847bdc2433447bc647d6d" },
-          { "basename": "HEARTBEAT.md", "sha": "b4339e96fb43c50334892bc0e653ed1faa73542a32812d1dae54a1441294a109" }
-        ]
+        "files_after": []
       }
     },
     {

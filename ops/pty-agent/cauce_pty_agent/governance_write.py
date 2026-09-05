@@ -150,7 +150,6 @@ class GovernanceWriteBatch:
 
 
 class GovernanceWriteMixin:
-    # -- escritura de ficheros de gobierno ----------------------------------------------------
 
     def _on_write(self, request: dict[str, Any]) -> None:
         """Empieza una escritura sin abrir procesos ni interpretar el contenido.
@@ -256,6 +255,8 @@ class GovernanceWriteMixin:
         total_bytes = 0
         total_chunks = 0
         max_chunks = (MAX_WRITE_BATCH_BYTES + MAX_DATA - 1) // MAX_DATA
+        # Each document can end with a partial frame independently of the batch byte budget.
+        max_batch_chunks = max_chunks + len(raw_entries) - 1
         for raw in raw_entries:
             if not isinstance(raw, dict):
                 self._write_batch_error(request_id, "invalid_path", "batch entry must be an object")
@@ -320,7 +321,7 @@ class GovernanceWriteMixin:
 
             total_bytes += content_bytes
             total_chunks += chunks
-            if total_bytes > MAX_WRITE_BATCH_BYTES or total_chunks > max_chunks:
+            if total_bytes > MAX_WRITE_BATCH_BYTES or total_chunks > max_batch_chunks:
                 self._write_batch_error(request_id, "too_large", "batch exceeds the total governance limit")
                 return
             entries.append(GovernanceBatchEntry(

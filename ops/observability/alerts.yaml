@@ -65,6 +65,13 @@ groups:
           severity: warning
         annotations:
           summary: "Gateway wake-pump operations are failing"
+      - alert: CauceProfileRuntimeExpectationsDegraded
+        expr: max({__name__=~"cauce_gateway_profile_runtime_expectations_(degraded|stale)"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Review measured runtime facts before requesting a governed profile reload"
       - alert: CauceConsolePublishIntentRateLimited
         expr: increase(cauce_gateway_console_publish_operations_total{operation="prepare",result="rate_limited"}[10m]) > 0
         labels:
@@ -77,7 +84,6 @@ groups:
           severity: warning
         annotations:
           summary: "Console publish owners are repeatedly arriving after their durable reservations expired"
-
   - name: cauce-v3-terminal
     rules:
       # No `absent(...)` in this group. terminal-relay is `profiles: [terminal]` and its job is
