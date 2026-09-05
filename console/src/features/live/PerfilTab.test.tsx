@@ -11,6 +11,15 @@ const RUTA = 'http://localhost/v3/console/tenants/Steven/agents/kant/perfil';
 const RECARGA = 'http://localhost/v3/console/tenants/Steven/agents/kant/context/reload';
 const SHA = 'a'.repeat(64);
 
+function mismatch(harness: string | null, reasons = ['expectation_sha_mismatch']) {
+  server.use(http.get(RUTA, () => HttpResponse.json({
+    ...respuesta(true, { runtime_state: 'drifted', harness }),
+    contaminacion: { contaminated: true, findings: reasons.map((reason) => ({
+      reason, document: 'AGENTS.md', path: '/home/kant/.codex/AGENTS.md',
+    })) },
+  })));
+}
+
 function respuesta(exists: boolean, overrides: Partial<AgentPerfil> = {}): Omit<AgentPerfil, 'publicado'> {
   const revision = exists ? 4 : null;
   return {
@@ -58,6 +67,45 @@ function Vista({ configWritePermission = 'allowed' }: {
     />
   );
 }
+
+it.each(['codex', 'claude'])('ofrece reconciliación sólo para un arnés soportado: %s', async (harness) => {
+  mismatch(harness);
+  renderWithApi(<Vista />);
+  expect(await screen.findByRole('region', { name: 'Reconciliar huellas del contexto' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Recargar contexto' })).toBeDisabled();
+});
+
+it.each(['openclaw', 'hermes', null])('no ofrece una reconciliación imposible para %s', async (harness) => {
+  mismatch(harness);
+  renderWithApi(<Vista />);
+  await screen.findByText(/huella distinta de la esperada/i);
+  expect(screen.queryByRole('region', { name: 'Reconciliar huellas del contexto' })).toBeNull();
+});
+
+it.each([[], ['foreign_managed_block'], ['expectation_sha_mismatch', 'foreign_managed_block']].map((reasons) => ({ reasons })))(
+  'no ofrece reconciliación con hallazgos vacíos, ajenos o mixtos: %j', async ({ reasons }) => {
+    mismatch('codex', reasons);
+    renderWithApi(<Vista />);
+    await screen.findByText(/contienen algo que no es suyo/i);
+    expect(screen.queryByRole('region', { name: 'Reconciliar huellas del contexto' })).toBeNull();
+  },
+);
+
+it.each(['denied', 'unknown'] as const)('no mide ni reconcilia con permiso %s', async (permission) => {
+  mismatch('codex');
+  renderWithApi(<Vista configWritePermission={permission} />);
+  expect(await screen.findByLabelText('Motivo de la reconciliación')).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Medir antes de reconciliar' })).toBeDisabled();
+});
+
+it.each(['profile-draft', 'manual-draft', 'write-in-flight'])('no solapa la reconciliación con %s', async (blocker) => {
+  mismatch('codex');
+  renderWithApi(<PerfilTab tenantId="Steven" alias="kant" configWritePermission="allowed"
+    onBorrador={() => undefined} borrador={blocker === 'profile-draft' ? { purpose: 'borrador pendiente' } : undefined}
+    blockedByManualDraft={blocker === 'manual-draft'} writeInFlight={blocker === 'write-in-flight'} />);
+  expect(await screen.findByLabelText('Motivo de la reconciliación')).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Medir antes de reconciliar' })).toBeDisabled();
+});
 
 interface PutBody {
   expected_revision: number | null;

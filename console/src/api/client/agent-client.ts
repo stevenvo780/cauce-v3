@@ -14,6 +14,7 @@ import type {
 } from '../../features/live/perfil';
 import { ApiError, errorBody } from './core';
 import type { RequestFn } from './system-client';
+import type { ReconciliationApply } from '../../features/live/context-reconciliation';
 
 async function getPublishedResource<T extends object>(
   load: () => Promise<T>,
@@ -36,7 +37,7 @@ async function getPublishedResource<T extends object>(
 }
 
 export function getFleetActivity(request: RequestFn): Promise<FleetActivitySnapshot> {
-  return request('/v3/console/activity');
+  return request('/v3/console/activity', { cache: 'no-store' });
 }
 
 export async function getAgentDirective(
@@ -270,6 +271,17 @@ export function postContextReload(
   );
 }
 
+function postContextReconciliation(
+  request: RequestFn, tenantId: string, alias: string,
+  phase: 'preview' | 'apply', body: { readonly reason: string } | ReconciliationApply,
+): Promise<unknown> {
+  return request(
+    `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/context/reconcile/${phase}`,
+    { method: 'POST', body: JSON.stringify(body) },
+    { mapError: falloDeGobernanza },
+  );
+}
+
 function tramo(page: TramoDeRevisiones | undefined): string {
   const query = new URLSearchParams();
   if (page?.limit !== undefined) query.set('limit', String(page.limit));
@@ -334,6 +346,8 @@ export interface AgentClient {
     reason: string,
   ): Promise<unknown>;
   postContextReload(tenantId: string, alias: string, reason: string): Promise<unknown>;
+  previewContextReconciliation(tenantId: string, alias: string, reason: string): Promise<unknown>;
+  applyContextReconciliation(tenantId: string, alias: string, body: ReconciliationApply): Promise<unknown>;
   getProfileRevisions(
     tenantId: string, alias: string, page?: TramoDeRevisiones,
   ): Promise<PaginaDeRevisiones<PerfilRevision>>;
@@ -356,6 +370,10 @@ export function agentClient(request: RequestFn): AgentClient {
       putAgentPerfil(request, tenantId, alias, profile, expectedRevision, reason),
     postContextReload: (tenantId, alias, reason) =>
       postContextReload(request, tenantId, alias, reason),
+    previewContextReconciliation: (tenantId, alias, reason) =>
+      postContextReconciliation(request, tenantId, alias, 'preview', { reason }),
+    applyContextReconciliation: (tenantId, alias, body) =>
+      postContextReconciliation(request, tenantId, alias, 'apply', body),
     getProfileRevisions: (tenantId, alias, page) =>
       getProfileRevisions(request, tenantId, alias, page),
     getDocumentRevisions: (tenantId, alias, kind, page) =>

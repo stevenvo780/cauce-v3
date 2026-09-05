@@ -273,6 +273,7 @@ export function fakeRepository(overrides: Partial<GatewayRepository> = {}): Gate
       deliveries: []
     })),
     recordProfileRuntimeExpectation: vi.fn(async () => undefined),
+    reconcileAgentContextRuntime: vi.fn(async () => ({ state: 'effect_unknown' as const })),
     readProfileRuntimeAdoption: vi.fn(async () => undefined),
     acquireLease: vi.fn(async () => ({
       acquired: true,

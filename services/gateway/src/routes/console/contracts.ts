@@ -19,7 +19,8 @@ export type ConsoleRouteRepository = Pick<GatewayRepository,
   | 'getConfiguration' | 'getMessage' | 'listAdapters' | 'listAgents' | 'listAudit' | 'listJobs'
   | 'listMessages' | 'listNotifications' | 'listOperationalDlq' | 'listOriginRelays'
   | 'principalAccess' | 'queueSnapshot' | 'quotaSnapshot' | 'readProfileRuntimeAdoption'
-  | 'recordProfileRuntimeExpectation' | 'replayDelivery' | 'resolveOperationalDlqWithoutReplay'
+  | 'reconcileAgentContextRuntime' | 'recordProfileRuntimeExpectation' | 'replayDelivery'
+  | 'resolveOperationalDlqWithoutReplay'
   | 'rollbackConfiguration' | 'status' | 'topology'
 >;
 

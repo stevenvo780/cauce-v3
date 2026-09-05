@@ -12,6 +12,7 @@ import {
 } from './ficheros-motivo';
 import { MedidorDeRol } from './MedidorDeRol';
 import { AvisoDeContaminacion, RecargaDeContexto } from './RecargaDeContexto';
+import { ContextReconciliation } from './ContextReconciliation';
 import {
   CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, CONTAMINACION_ILEGIBLE, ETIQUETAS, MENSAJES_DE_APLICACION,
   camposQueNoEntran, camposVigentes, contaminacionDe, contarUnidades,
@@ -115,6 +116,9 @@ export function PerfilTab({
   const problemaMotivo = problemaDeMotivo(motivo);
   const contaminacion = veredictoVigente(veredicto, contaminacionDe(perfil.data));
   const enCuarentena = contaminacion?.contaminated === true;
+  const reconciliable = enCuarentena && contaminacion.findings.length > 0
+    && contaminacion.findings.every((finding) => finding.reason === 'expectation_sha_mismatch')
+    && (perfil.data?.harness === 'claude' || perfil.data?.harness === 'codex');
   const recargable = perfil.data?.runtime_state === 'pending_session_refresh'
     || perfil.data?.runtime_state === 'drifted';
 
@@ -441,6 +445,17 @@ export function PerfilTab({
         {contaminacion?.contaminated === true
           ? <AvisoDeContaminacion contaminacion={contaminacion} />
           : null}
+        {reconciliable && perfil.data?.publicado && agenteHabilitado && revisionCoherente
+          && typeof perfil.data.revision === 'number' ? (
+          <ContextReconciliation
+            key={`${tenantId}/${alias}/${String(perfil.data.revision)}`}
+            tenantId={tenantId} alias={alias} revision={perfil.data.revision}
+            documents={ficheros.map((document) => document.nombre)}
+            permitida={!soloLectura} bloqueada={busy || sucio || blockedByManualDraft}
+            onVeredicto={setVeredicto} onWriteInFlightChange={onWriteInFlightChange}
+            onSettled={() => { void perfil.reload(); onMutationSettled?.(); }}
+          />
+        ) : null}
         {perfil.data?.publicado && agenteHabilitado && runtimeNoVerificado ? (
           <p className="perfil-aviso perfil-aviso-error" role="alert">
             El runtime no publicó una generación acreditable. Edición y aplicación quedan
