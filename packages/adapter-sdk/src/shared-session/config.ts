@@ -30,7 +30,6 @@ export function claudePermissionArguments(
   harness: SharedSessionHarness,
   environment: NodeJS.ProcessEnv,
 ): readonly string[] {
-  // Owner's rule: no shared TUI ever runs with finite permissions; the mode variable cannot lower it.
   void environment;
   return harness === "claude" ? ["--dangerously-skip-permissions"] : ["--yolo"];
 }
