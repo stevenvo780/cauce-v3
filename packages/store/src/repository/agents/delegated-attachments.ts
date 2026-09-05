@@ -3,8 +3,8 @@ import {
   AttachmentsV1Schema, base64CharacterBudget, dataUriByteLength, decodeCanonicalBase64,
   isDeliverableArtifactUri, isSafeBasename, isValidMediaType, MAX_ARTIFACT_LOCATOR_CHARACTERS,
   MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_MEDIA_TYPE_LENGTH, MAX_ATTACHMENTS_PER_MESSAGE,
-  MAX_ATTACHMENTS_TOTAL_BYTES, objectRecord, parseDataUri, redactAttachmentName, redactSecrets,
-  redactSecretsDeep
+  MAX_ATTACHMENTS_TOTAL_BYTES, MAX_BLOB_BYTES, objectRecord, parseBlobArtifactUri, parseDataUri,
+  redactAttachmentName, redactSecrets, redactSecretsDeep
 } from '@cauce/protocol';
 
 /* Files on the agent-to-agent delegation edge. `output.artifacts` arrives already inlined as `data:`
@@ -173,11 +173,16 @@ function declaredDigest(value: unknown): string | undefined {
   return typeof value === 'string' && HEX_SHA256.test(value) ? value : undefined;
 }
 
-function declaredSize(value: unknown): number | undefined {
+/* A blob reference may weigh far more than an inline attachment: its ceiling is the blob one. */
+function declaredSize(value: unknown, ceiling = MAX_ATTACHMENT_BYTES): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value)
-    && value > 0 && value <= MAX_ATTACHMENT_BYTES
+    && value > 0 && value <= ceiling
     ? value
     : undefined;
+}
+
+function sizeCeiling(uri: string | undefined): number {
+  return uri !== undefined && parseBlobArtifactUri(uri) !== undefined ? MAX_BLOB_BYTES : MAX_ATTACHMENT_BYTES;
 }
 
 function digestOf(bytes: Buffer): string {
@@ -237,8 +242,9 @@ export function attachmentsFromArtifacts(
       } else {
         locators += uri.length;
         const mediaType = declaredMediaType(entry.media_type);
-        const declared = declaredDigest(entry.sha256) ?? declaredDigest(entry.declared_sha256);
-        const size = declaredSize(entry.size);
+        const declared = declaredDigest(entry.sha256) ?? declaredDigest(entry.declared_sha256)
+          ?? parseBlobArtifactUri(uri);
+        const size = declaredSize(entry.size, sizeCeiling(uri));
         refs.push({
           name,
           uri,
@@ -301,14 +307,15 @@ export function artifactRefs(artifacts: unknown): ArtifactRef[] {
       ? undefined
       : decodeCanonicalBase64(inline.base64, MAX_ATTACHMENT_BYTES);
     const mediaType = declaredMediaType(entry.media_type) ?? inline?.mediaType;
-    const declared = declaredDigest(entry.sha256) ?? declaredDigest(entry.declared_sha256);
     const uri = referenceUri(entry.uri);
+    const declared = declaredDigest(entry.sha256) ?? declaredDigest(entry.declared_sha256)
+      ?? (uri === undefined ? undefined : parseBlobArtifactUri(uri));
     if (uri !== undefined && locators + uri.length > MAX_LOCATOR_AGGREGATE_CHARACTERS) continue;
     locators += uri?.length ?? 0;
     /* Only a measurement is called a size: an inline payload nobody could decode declares none,
        and its entry's own claim is not promoted, because on the durable record of a file an
        arithmetic guess over `@@@@` or `QUJD====` reads exactly like a weigh-in. */
-    const size = bytes?.length ?? (inline === undefined ? declaredSize(entry.size) : undefined);
+    const size = bytes?.length ?? (inline === undefined ? declaredSize(entry.size, sizeCeiling(uri)) : undefined);
     refs.push({
       name,
       ...(uri === undefined ? {} : { uri }),

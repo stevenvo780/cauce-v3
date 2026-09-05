@@ -238,3 +238,27 @@ describe('a file wrapped in lines is the same file', () => {
     expect(carried.note).toBe('1 adjunto(s) no viajaron: exceden el cupo del mensaje');
   });
 });
+
+describe('a file that travels by reference to the blob store', () => {
+  const BLOB_SHA = 'b'.repeat(64);
+  const BLOB_URI = `cauce-blob:sha256:${BLOB_SHA}`;
+  const BIG = 1_200_000_000;
+
+  it('keeps the blob locator, its size past the inline ceiling and its digest as declared', () => {
+    const carried = attachmentsFromArtifacts([
+      { name: 'video.mp4', uri: BLOB_URI, media_type: 'video/mp4', size: BIG, sha256: BLOB_SHA }
+    ]);
+    expect(carried.attachments).toEqual([]);
+    expect(carried.dropped).toBe(0);
+    expect(carried.refs).toEqual([
+      { name: 'video.mp4', uri: BLOB_URI, media_type: 'video/mp4', declared_sha256: BLOB_SHA, size: BIG }
+    ]);
+    expect(artifactRefs([{ name: 'video.mp4', uri: BLOB_URI, media_type: 'video/mp4', size: BIG }]))
+      .toEqual([{ name: 'video.mp4', uri: BLOB_URI, media_type: 'video/mp4', declared_sha256: BLOB_SHA, size: BIG }]);
+  });
+
+  it('still bounds an inline-shaped size claim by the inline ceiling', () => {
+    const [ref] = artifactRefs([{ name: 'x.bin', uri: 'https://example.test/x.bin', size: BIG }]);
+    expect(ref?.size).toBeUndefined();
+  });
+});
