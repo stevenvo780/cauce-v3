@@ -120,7 +120,9 @@ sockets sordos, los comandos de operador en DM, el acotado de la exención CSRF 
 `[backend, edge]`—. `caf35316` corrigió el bridge de Telegram para reunir en un solo mensaje
 las piezas en que el cliente parte un texto de más de 4096 caracteres (antes el agente leía sólo
 la primera) y las pruebas del rollout PTY afirman la colocación real de kant. La última fila es
-`9b5e2172`, con smoke central verde y correcciones adicionales de consola, Telegram y contexto.
+`a9e08359`, con smoke central verde, recarga efectiva de Prometheus/OTel y métricas que separan
+incidentes pendientes de clasificación de los ya evaluados sin causa. La ventana previa
+`9b5e2172` incorporó las correcciones adicionales de consola, Telegram y contexto.
 El SDK nuevo está publicado, pero sus pins siguen sin activarse por faltar el principal de la
 sonda canary. Ese registro demuestra la ventana central; no sustituye una nueva validación
 del estado vivo desde este checkout, y lo que queda por comprobar por efecto después de esa fila
