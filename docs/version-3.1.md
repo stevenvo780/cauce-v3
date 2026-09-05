@@ -113,11 +113,14 @@ para despliegues posteriores:
 
 `deploy/HISTORIAL.md` registra el despliegue de `7f25fd6f` con smoke verde y dos correcciones de
 esa misma tarde: `d2ef50ff`, con smoke verde, y `0b5bf89e`, con smoke ROJO parcial («bus: 0
-entregas done» en una ventana sin tráfico; el resto OK, sin rollback). La última fila es
+entregas done» en una ventana sin tráfico; el resto OK, sin rollback). Después vino
 `00358416`: la ventana que puso en línea el árbol cerrado de v3.1 —los refactores de ops, consola,
 runtime, store, gateway y adapter-sdk, la siega de huérfanos PTY por pidfd, la reconexión ante
 sockets sordos, los comandos de operador en DM, el acotado de la exención CSRF y Prometheus en
-`[backend, edge]`—. Ese registro demuestra la ventana ejecutada; no sustituye una nueva validación
+`[backend, edge]`—. La última fila es `caf35316`: el bridge de Telegram reúne en un solo mensaje
+las piezas en que el cliente parte un texto de más de 4096 caracteres (antes el agente leía sólo
+la primera) y las pruebas del rollout PTY afirman la colocación real de kant. Ese registro
+demuestra la ventana ejecutada; no sustituye una nueva validación
 del estado vivo desde este checkout, y lo que queda por comprobar por efecto después de esa fila
 está en `docs/v3.1-pendientes.md` §1, «Deuda de despliegue».
 
