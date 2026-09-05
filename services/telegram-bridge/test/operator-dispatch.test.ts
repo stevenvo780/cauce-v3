@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dispatchOperatorCommand } from '../src/operator-commands/dispatch.js';
 import type { OperatorActions, OperatorDispatchContext } from '../src/operator-commands/dispatch.js';
-import type { OperatorCommand } from '../src/operator-commands/parse.js';
+import { parseOperatorCommand, type OperatorCommand } from '../src/operator-commands/parse.js';
 import { StoreError } from '@cauce/store';
 
 const CTX: OperatorDispatchContext = {
@@ -113,7 +113,31 @@ describe('dispatchOperatorCommand', () => {
     const id = '11111111-1111-4111-8111-111111111111';
     const { text, calls } = await run({ name: 'replay', deliveryId: id });
     expect(calls).toEqual([`replay:${id}`]);
-    expect(text).toContain('22222222');
+    expect(text).toContain('22222222-2222-4222-8222-222222222222');
+  });
+
+  it.each(['replay', 'cancelar'] as const)('the queue ID can be copied into /%s', async (name) => {
+    const { text } = await run({ name: 'colas' });
+    const id = text.split('\n').find((line) => line.includes(' · zeus · dead ·'))?.split(' · ')[0] ?? '';
+    expect(parseOperatorCommand({
+      text: `/${name} ${id}`,
+      entities: [{ type: 'bot_command', offset: 0, length: name.length + 1 }]
+    })).toEqual({
+      kind: 'command',
+      command: { name, deliveryId: '11111111-1111-4111-8111-111111111111' }
+    });
+  });
+
+  it.each([false, true])('the listed egress ID supports inspection and replay (duplicateOk=%s)', async (duplicateOk) => {
+    const { text } = await run({ name: 'forzar_salida', duplicateOk: false });
+    const id = text.split('\n').find((line) => line.includes(' · ambiguous ·'))?.split(' · ')[0] ?? '';
+    expect(parseOperatorCommand({
+      text: `/forzar_salida ${id}${duplicateOk ? ' duplicado-ok' : ''}`,
+      entities: [{ type: 'bot_command', offset: 0, length: 14 }]
+    })).toEqual({
+      kind: 'command',
+      command: { name: 'forzar_salida', letterId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', duplicateOk }
+    });
   });
 
   it('replay maps a store not_found into Spanish without leaking a stack', async () => {

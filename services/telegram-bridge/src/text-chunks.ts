@@ -23,6 +23,7 @@ export function textPiece(update: TelegramUpdate): TextPiece | undefined {
   const message = update.message;
   if (message === undefined || typeof message.text !== 'string' || message.text.length === 0) return undefined;
   if (message.media_group_id !== undefined) return undefined;
+  if (message.entities?.some((entity) => entity.type === 'bot_command' && entity.offset === 0)) return undefined;
   const chat = (message as { chat?: { id?: unknown } }).chat?.id;
   const user = message.from?.id;
   const date = message.date;
@@ -32,7 +33,7 @@ export function textPiece(update: TelegramUpdate): TextPiece | undefined {
     chat: String(chat),
     user: String(user),
     thread: String(message.message_thread_id ?? 0),
-    date: date as number,
+    date: Number(date),
     full: message.text.length >= TEXT_CHUNK_MIN_CHARACTERS
   };
 }

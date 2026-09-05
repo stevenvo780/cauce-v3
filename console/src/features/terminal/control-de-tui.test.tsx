@@ -670,7 +670,8 @@ describe('la toma no se dispara dos veces y la devolución tolera un CSRF rotado
     expect(tokens[1]).toBe('mock-csrf-token-rotado');
   }, 20_000);
 
-  it('un 409 al devolver suelta el estado local: el arriendo ya no es de esta sesión', async () => {
+  it.each(['stale_terminal_owner', 'control_held'])(
+    'un 409 %s al devolver informa que esta sesión perdió el control sin afirmar que el bus se reanudó', async (reason) => {
     const user = userEvent.setup();
     const { controles } = escenario();
     await abrirZeus(user);
@@ -680,15 +681,38 @@ describe('la toma no se dispara dos veces y la devolución tolera un CSRF rotado
     await screen.findByText(/Tenés el teclado de esta TUI/i);
 
     server.use(http.post('*/v3/console/terminal/sessions/:sid/control', () => HttpResponse.json(
-      { error: 'conflict', reason: 'stale_terminal_owner', message: 'el arriendo pertenece a otra sesión' },
+      { error: 'conflict', reason },
       { status: 409 },
     )));
 
     await user.click(await screen.findByRole('button', { name: /devolver el control/i }));
 
-    await waitFor(() => { expect(screen.queryByText(/Tenés el teclado de esta TUI/i)).not.toBeInTheDocument(); }, { timeout: 5000 });
+    await waitFor(() => { expect(document.querySelector(`.pty-negativa[data-codigo="${reason}"]`)).toBeInTheDocument(); });
+    expect(screen.queryByText(/El bus volvió a entregarle/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Tenés el teclado de esta TUI/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /devolver el control/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/El bus volvió a entregarle a zeus/i)).toBeInTheDocument();
+    expect(screen.getByText(/Esta sesión ya no tiene el control de la TUI de zeus/i)).toBeInTheDocument();
+    expect(screen.getByText(/Otra sesión puede mantener el bus en pausa/i)).toBeInTheDocument();
+  }, 20_000);
+
+  it('un 409 sin evidencia de pérdida conserva el control local para poder reintentar la devolución', async () => {
+    const user = userEvent.setup();
+    const { controles } = escenario();
+    await abrirZeus(user);
+    engancharLaTui();
+    await screen.findByRole('button', { name: /tomar el control/i });
+    await tomarElControl(user, controles);
+
+    server.use(http.post('*/v3/console/terminal/sessions/:sid/control', () => HttpResponse.json(
+      { error: 'conflict', reason: 'release_not_confirmed' },
+      { status: 409 },
+    )));
+
+    await user.click(await screen.findByRole('button', { name: /devolver el control/i }));
+
+    await screen.findByText(/Tenés el teclado de esta TUI/i);
+    expect(screen.getByRole('button', { name: /devolver el control/i })).toBeEnabled();
+    expect(screen.queryByText(/Esta sesión ya no tiene el control/i)).not.toBeInTheDocument();
   }, 20_000);
 });
 

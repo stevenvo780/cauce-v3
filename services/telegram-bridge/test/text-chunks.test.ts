@@ -12,7 +12,7 @@ function text(
   body: string,
   date: number,
   overrides: { chatId?: number; userId?: number; threadId?: number } = {}
-): TelegramUpdate {
+): TelegramUpdate & { message: NonNullable<TelegramUpdate['message']> } {
   return {
     update_id: updateId,
     message: {
@@ -56,6 +56,26 @@ describe('CoalescingBuffer — the pieces Telegram cuts from one long text', () 
     expect(buffer.accept(head, 0)).toEqual([]);
     expect(buffer.accept(tail, 200)).toEqual([[head, tail]]);
     expect(buffer.holds(1)).toBe(false);
+  });
+
+  it.each(['/cancelar', '/cancelar@kant_bot', '/estado', '/forzar_salida'])('keeps %s separate after a long text', (name) => {
+    const buffer = started();
+    const head = text(1, 'a'.repeat(4_000), 100);
+    const command = text(2, `${name} 11111111-1111-4111-8111-111111111111`, 101);
+    command.message.entities = [{ type: 'bot_command', offset: 0, length: name.length }];
+
+    expect(buffer.accept(head, 0)).toEqual([]);
+    expect(buffer.accept(command, 200)).toEqual([[head], [command]]);
+  });
+
+  it('does not hold a long operator command or absorb the following text', () => {
+    const buffer = started();
+    const command = text(1, `/cancelar 11111111-1111-4111-8111-111111111111 ${FULL}`, 100);
+    command.message.entities = [{ type: 'bot_command', offset: 0, length: 9 }];
+    const next = text(2, 'otra instrucción', 101);
+
+    expect(buffer.accept(command, 0)).toEqual([[command]]);
+    expect(buffer.accept(next, 200)).toEqual([[next]]);
   });
 
   it('keeps holding while every piece is full and closes at the cap', () => {
@@ -136,7 +156,7 @@ describe('CoalescingBuffer — the pieces Telegram cuts from one long text', () 
   it('does not continue a full text with a message that carries no date', () => {
     const buffer = started();
     const head = text(1, FULL, 100);
-    const { date: _date, ...undatedMessage } = text(2, 'y fin', 100).message!;
+    const { date: _date, ...undatedMessage } = text(2, 'y fin', 100).message;
     const undated: TelegramUpdate = { update_id: 2, message: undatedMessage };
 
     expect(buffer.accept(head, 0)).toEqual([]);

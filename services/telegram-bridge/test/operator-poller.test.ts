@@ -120,6 +120,36 @@ describe('TelegramPoller operator intercept', () => {
     expect(api.sends).toHaveLength(0);
   });
 
+  it('dispatches /cancelar separately from a preceding long text and advances both updates', async () => {
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    const head = commandUpdate(50, 'a'.repeat(4_000));
+    head.message.entities = [];
+    head.message.date = 100;
+    const command = commandUpdate(51, `/cancelar ${DELIVERY}`);
+    command.message.date = 101;
+    const api = new FakeTelegram([head, command]);
+    const cancelled: string[] = [];
+
+    await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
+      config: enabled, botId: '900001', api, repository, ingress,
+      operatorActions: actions({
+        async cancelDelivery(deliveryId) {
+          cancelled.push(deliveryId);
+          return { delivery_id: deliveryId, state: 'dead' };
+        }
+      })
+    }).runOnce();
+
+    expect(ingress.calls).toHaveLength(1);
+    expect(ingress.calls[0]?.body).toMatchObject({ text: head.message.text });
+    expect(cancelled).toEqual([DELIVERY]);
+    expect(api.sends).toHaveLength(1);
+    expect(api.sends[0]?.options?.reply_to_message_id).toBe('151');
+    expect(repository.next).toBe(52);
+  });
+
   it('does not intercept a group /estado even from the operator', async () => {
     const repository = new MemoryCursorRepository();
     const ingress = new DeduplicatingIngress();

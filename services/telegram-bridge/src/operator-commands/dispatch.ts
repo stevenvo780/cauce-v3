@@ -1,7 +1,7 @@
 import { StoreError } from '@cauce/store';
 import type { OperatorCommand } from './parse.js';
 import {
-  clipTelegramText, compactId, formatFleet, formatQueue, formatReplayInspection,
+  clipTelegramText, formatFleet, formatQueue, formatReplayInspection,
   formatStuckAgents, formatStuckEgress, formatUnknownCommand, OPERATOR_HELP
 } from './format.js';
 
@@ -184,7 +184,7 @@ export async function dispatchOperatorCommand(
     if (command.name === 'replay') {
       return guarded(
         () => actions.replayDelivery(command.deliveryId, context.actorTenant, context.actorAlias),
-        (result) => `Replay encolado: ${compactId(result.delivery_id)} (desde ${compactId(command.deliveryId)}).`
+        (result) => `Replay encolado: ${result.delivery_id} (desde ${command.deliveryId}).`
       );
     }
     if (command.name === 'cancelar') {
@@ -192,7 +192,7 @@ export async function dispatchOperatorCommand(
         () => actions.cancelDelivery(
           command.deliveryId, context.actorTenant, context.actorAlias, command.reason
         ),
-        (result) => `Cancelada ${compactId(result.delivery_id)} (${result.state}). Se puede /replay después.`
+        (result) => `Cancelada ${result.delivery_id} (${result.state}). Se puede /replay después.`
       );
     }
     if (command.name === 'nudge') {

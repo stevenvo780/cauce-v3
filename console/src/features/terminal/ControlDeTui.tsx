@@ -33,7 +33,7 @@ import {
   tomarControlDeTui,
   type ControlDeTuiTomado,
 } from './api-control';
-import { explicarDenegacionPty, type DenegacionExplicada } from './denegaciones';
+import { codigoDeDenegacion, explicarDenegacionPty, type DenegacionExplicada } from './denegaciones';
 import { WRITABLE_TUI_MODE } from './fleet';
 import { NegativaPty } from './PtySessionDialog';
 import type { PtyChannelState } from './pty-types';
@@ -298,7 +298,10 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
       porDevolverRef.current = undefined;
       setArriendo(undefined);
     } catch (fallo) {
-      if (fallo instanceof TerminalApiError && fallo.status === 409) {
+      const conflicto = fallo instanceof TerminalApiError && fallo.status === 409
+        ? codigoDeDenegacion(fallo.code) ?? codigoDeDenegacion(fallo.message)
+        : undefined;
+      if (conflicto === 'stale_terminal_owner' || conflicto === 'control_held') {
         porDevolverRef.current = undefined;
         setArriendo(undefined);
         setPerdido(true);
@@ -373,7 +376,7 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
 
       {perdido ? (
         <p className="pty-control-perdido" role="status">
-          El bus volvió a entregarle a {alias}. Si necesitás el teclado otra vez, tomá el control de nuevo.
+          Esta sesión ya no tiene el control de la TUI de {alias}. Otra sesión puede mantener el bus en pausa.
         </p>
       ) : null}
 

@@ -23,10 +23,6 @@ export function clipTelegramText(value: string): string {
   return `${chars.slice(0, TELEGRAM_TEXT_CAP - 1).join('')}…`;
 }
 
-export function compactId(value: string): string {
-  return value.slice(0, 8);
-}
-
 export function formatUnknownCommand(raw: string): string {
   return `No hay un comando «${raw}».\n\n${OPERATOR_HELP}`;
 }
@@ -84,7 +80,7 @@ export function formatQueue(queue: QueueView, alias?: string): string {
     const error = typeof item.last_error === 'string' && item.last_error.length > 0
       ? ` · ${item.last_error.slice(0, 80)}`
       : '';
-    return `${compactId(item.delivery_id)} · ${item.recipient_alias} · ${item.state} · intento ${String(item.attempts)}${error}`;
+    return `${item.delivery_id} · ${item.recipient_alias} · ${item.state} · intento ${String(item.attempts)}${error}`;
   });
   const more = items.length > 12 ? `\n… y ${String(items.length - 12)} más en esta página.` : '';
   return `${head}\n${rows.join('\n')}${more}`;
@@ -98,7 +94,7 @@ export function formatStuckEgress(items: readonly StuckEgressItem[]): string {
     return 'No hay origin_relay de Telegram abierto y accionable en la DLQ visible.';
   }
   const lines = rows.slice(0, 12).map((item) =>
-    `${compactId(item.id)} · ${item.disposition} · intentos ${String(item.attempts)}`
+    `${item.id} · ${item.disposition} · intentos ${String(item.attempts)}`
   );
   return [
     'Replies ambiguos/muertos (Telegram). Inspeccioná con /forzar_salida <id>.',
@@ -112,13 +108,13 @@ export function formatReplayInspection(
   chunks: readonly TelegramReplayChunk[],
   duplicateOk: boolean
 ): string {
-  if (chunks.length === 0) return `El incidente ${compactId(letterId)} no trajo chunks inspeccionables.`;
+  if (chunks.length === 0) return `El incidente ${letterId} no trajo chunks inspeccionables.`;
   const lines = chunks.map((chunk) =>
     `chunk ${String(chunk.chunkIndex)} · ${chunk.state} · replays ${String(chunk.replayCount)} · duplicado=${chunk.duplicateRisk ? 'sí' : 'no'}`
   );
   if (duplicateOk) return lines.join('\n');
   return [
-    `Incidente ${compactId(letterId)}. Esto NO reenvió nada.`,
+    `Incidente ${letterId}. Esto NO reenvió nada.`,
     ...lines,
     chunks.length === 1
       ? `Para reenviar: /forzar_salida ${letterId} duplicado-ok`
