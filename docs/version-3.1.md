@@ -120,8 +120,9 @@ sockets sordos, los comandos de operador en DM, el acotado de la exención CSRF 
 `[backend, edge]`—. `caf35316` corrigió el bridge de Telegram para reunir en un solo mensaje
 las piezas en que el cliente parte un texto de más de 4096 caracteres (antes el agente leía sólo
 la primera) y las pruebas del rollout PTY afirman la colocación real de kant. La última fila es
-`6786adca`, con smoke central verde: corrige la clasificación de reclamaciones sin inicio y
-respeta el margen del primer ACK. Conserva la recarga efectiva de Prometheus/OTel y el desglose
+`fa4f07c5`, con smoke central verde: conserva las correcciones de clasificación y del primer ACK
+de `6786adca`, e impide que la siembra Codex reescriba un bloque gestionado al reconectar.
+Conserva la recarga efectiva de Prometheus/OTel y el desglose
 de incidentes incorporados por `a9e08359`; la ventana previa `9b5e2172` incorporó correcciones
 adicionales de consola, Telegram y contexto. La identidad reservada de la sonda ya está emitida
 y el primer canary de Atlas pasó 20/20 verificaciones durante 604 segundos. Falta activar en
