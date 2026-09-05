@@ -175,7 +175,21 @@ describe('fleetActivity: los cuatro estados que pinta la consola', () => {
     expect(salva.rooms).toEqual(['grp.isa']);
   });
 
-  it('una garra atascada sale como stalled con las tres banderas del diagnóstico', async () => {
+  it.each(['leased', 'accepted'])('una reclamación %s recién tomada sin ACK no inventa atasco', async (status) => {
+    await registrarAgente('Isa', 'salva');
+    await repository.acquireLease('Isa', 'salva', 'salva-1', [], 60_000);
+    const [entrega] = await entregas(1);
+    await pool.query(
+      `UPDATE deliveries SET status=$2,attempt=1,claimed_at=now()-interval '1 second',
+         ack_deadline_at=now()+interval '5 minutes' WHERE id=$1`, [entrega, status]
+    );
+    expect(agente(await actividad(), 'salva')).toMatchObject({
+      work_state: 'working', flags: [], in_flight: 1, claimed_not_started: 1,
+      seconds_since_last_ack: null, overdue_in_flight: 0
+    });
+  });
+
+  it('una garra atascada sale como stalled sin atribuirle una ejecución iniciada', async () => {
     await registrarAgente('Isa', 'salva');
     await repository.acquireLease('Isa', 'salva', 'salva-1', [], 60_000);
     const [entrega] = await entregas(1);
@@ -187,7 +201,7 @@ describe('fleetActivity: los cuatro estados que pinta la consola', () => {
     const salva = agente(await actividad(), 'salva');
     expect(salva.work_state).toBe('stalled');
     expect([...salva.flags].sort())
-      .toEqual(['ack_stalled', 'claimed_not_started', 'overdue_acks']);
+      .toEqual(['claimed_not_started', 'overdue_acks']);
     expect(salva).toMatchObject({ in_flight: 1, claimed_not_started: 1, overdue_in_flight: 1 });
     expect(salva.oldest_claimed_not_started_seconds).toBeGreaterThan(500);
     expect(salva.oldest_claimed_not_started_without_ack_seconds).toBeGreaterThan(500);

@@ -62,13 +62,14 @@ export function agentWorkState(
   row: FleetActivityWorkStateInput,
   thresholds: FleetActivityThresholds = DEFAULT_FLEET_ACTIVITY_THRESHOLDS
 ): FleetActivityWorkStateResult {
-  const ackIsStale = row.seconds_since_last_ack === null || row.seconds_since_last_ack > thresholds.stall_after_seconds;
+  const startedWithoutRecentAck = row.in_flight > row.claimed_not_started
+    && (row.seconds_since_last_ack === null || row.seconds_since_last_ack > thresholds.stall_after_seconds);
   const neverAcked = row.oldest_claimed_not_started_without_ack_seconds !== null
     && row.oldest_claimed_not_started_without_ack_seconds > thresholds.start_after_seconds;
   const ownAckIsStale = row.oldest_claimed_not_started_activity_seconds !== null
     && row.oldest_claimed_not_started_activity_seconds > thresholds.stall_after_seconds;
   const noEmpieza = row.claimed_not_started > 0 && (neverAcked || ownAckIsStale);
-  const stalled = noEmpieza || (row.in_flight > 0 && (row.overdue_in_flight > 0 || ackIsStale));
+  const stalled = noEmpieza || row.overdue_in_flight > 0 || startedWithoutRecentAck;
   const saturated = row.in_flight >= thresholds.saturation_in_flight;
 
   const work_state: FleetWorkState = stalled
@@ -83,7 +84,7 @@ export function agentWorkState(
 
   const flags: FleetActivityFlag[] = [];
   if (saturated) flags.push('saturated');
-  if (row.in_flight > 0 && ackIsStale) flags.push('ack_stalled');
+  if (startedWithoutRecentAck) flags.push('ack_stalled');
   if (row.overdue_in_flight > 0) flags.push('overdue_acks');
   if (row.lease_online === false) flags.push('lease_expired');
   if (row.lease_online === null) flags.push('never_connected');

@@ -133,16 +133,43 @@ describe('FLEET_ACTIVITY_QUERY contract', () => {
   });
 
   // CONTROL NEGATIVO: sin la antigüedad, esto se dispararía en toda la flota.
-  it('una reclamación recién tomada NO es un fallo', () => {
+  it.each([1, 60])('una reclamación sin ACK a los %i segundos NO es un fallo', (age) => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 1, queued: 0, overdue_in_flight: 0,
-      seconds_since_last_ack: 5, lease_online: true,
-      claimed_not_started: 1, oldest_in_flight_seconds: 1,
-      oldest_claimed_not_started_without_ack_seconds: 1,
-      oldest_claimed_not_started_activity_seconds: 1
+      seconds_since_last_ack: null, lease_online: true,
+      claimed_not_started: 1, oldest_in_flight_seconds: age,
+      oldest_claimed_not_started_without_ack_seconds: age,
+      oldest_claimed_not_started_activity_seconds: age
     };
     expect(agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS))
       .toEqual({ work_state: 'working', flags: [] });
+  });
+
+  it('una reclamación sin ACK sólo alerta tras el umbral, salvo deadline vencido', () => {
+    const row: FleetActivityWorkStateInput = {
+      registered: true, in_flight: 1, queued: 0, overdue_in_flight: 0,
+      seconds_since_last_ack: null, lease_online: true,
+      claimed_not_started: 1, oldest_in_flight_seconds: 61,
+      oldest_claimed_not_started_without_ack_seconds: 61,
+      oldest_claimed_not_started_activity_seconds: 61
+    };
+    expect(agentWorkState(row)).toEqual({ work_state: 'stalled', flags: ['claimed_not_started'] });
+    expect(agentWorkState({
+      ...row, overdue_in_flight: 1, oldest_in_flight_seconds: 1,
+      oldest_claimed_not_started_without_ack_seconds: 1,
+      oldest_claimed_not_started_activity_seconds: 1
+    })).toEqual({ work_state: 'stalled', flags: ['overdue_acks'] });
+  });
+
+  it.each([null, 301])('una ejecución iniciada sin ACK reciente conserva su alerta (%s)', (ackAge) => {
+    const row: FleetActivityWorkStateInput = {
+      registered: true, in_flight: 1, queued: 0, overdue_in_flight: 0,
+      seconds_since_last_ack: ackAge, lease_online: true,
+      claimed_not_started: 0, oldest_in_flight_seconds: 900,
+      oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: null
+    };
+    expect(agentWorkState(row)).toEqual({ work_state: 'stalled', flags: ['ack_stalled'] });
   });
 
   it('trabajo aceptado con actividad propia reciente no se confunde con la ejecución vieja', () => {
