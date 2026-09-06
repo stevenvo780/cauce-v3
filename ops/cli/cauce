@@ -70,13 +70,16 @@ helper_en_contenedor() {  # $1=alias
 # `container-adapter-supervisor.sh:571`): el panel de la TUI y el adaptador COMPITEN por crear la
 # sesion tmux y el ganador le impone su entorno. Vacio cuando el alias no declara la clave.
 credencial_env_de() {  # $1=alias $2=harness  -> "VAR=valor", o nada
-  local h
+  local h key
+  case "$2" in codex) key=CODEX_HOME ;; claude) key=CLAUDE_CONFIG_DIR ;; *) return 0 ;; esac
+  if es_host_native "$1"; then
+    h=$(systemctl --user show "cauce-v3-host-$1.service" -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n "s/^$key=//p" | head -1)
+    [ -n "$h" ] && printf '%s=%s\n' "$key" "$h"
+    return 0
+  fi
   h=$(sed -n 's/^CREDENTIAL_HOME=//p' "$CONFIG/$1.env" 2>/dev/null | head -1)
   [ -n "$h" ] || return 0
-  case "$2" in
-    codex)  printf 'CODEX_HOME=%s\n' "$h" ;;
-    claude) printf 'CLAUDE_CONFIG_DIR=%s\n' "$h" ;;
-  esac
+  printf '%s=%s\n' "$key" "$h"
 }
 
 # El modo de permisos del panel de claude. Mismo motivo que la credencial de arriba, con un
@@ -92,7 +95,7 @@ modo_permisos_de() {  # $1=alias $2=harness  -> "VAR=valor", o nada
 }
 
 # `ensure|status` de la sesión compartida, ejecutado dentro del contenedor como el usuario del alias.
-sesion() {  # $1=accion $2=alias $3=contenedor $4=usuario $5=harness
+sesion() {  # $1=accion $2=alias $3=contenedor $4=usuario $5=harness $6=state
   local helper ws panel cred modo
   local -a env_cred=()
   helper=$(helper_en_contenedor "$2") || return 3
@@ -112,9 +115,10 @@ sesion() {  # $1=accion $2=alias $3=contenedor $4=usuario $5=harness
     fi
     ws=$(systemctl --user show "cauce-v3-host-$2.service" -p Environment --value 2>/dev/null \
          | tr ' ' '\n' | sed -n 's/^CAUCE_SHARED_SESSION_WORKSPACE=//p' | head -1)
-    modo=$(modo_permisos_de "$2" "$5")
-    [ -n "$modo" ] && export CAUCE_CLAUDE_PERMISSION_MODE="${modo#*=}"
-    node "$helper" "$1" --alias "$2" --harness "$5" --workspace "${ws:-$HOME}"
+    cred=$(credencial_env_de "$2" "$5"); [ -n "$cred" ] && env_cred=("$cred")
+    modo=$(modo_permisos_de "$2" "$5"); [ -n "$modo" ] && env_cred+=("$modo")
+    env "${env_cred[@]}" node "$helper" "$1" --alias "$2" --harness "$5" \
+      --workspace "${ws:-$HOME}" --state "$6"
     return $?
   fi
   docker exec --user "$4" "$3" test -f "$helper" || return 3
@@ -125,7 +129,8 @@ sesion() {  # $1=accion $2=alias $3=contenedor $4=usuario $5=harness
   modo=$(modo_permisos_de "$2" "$5")
   [ -n "$modo" ] && env_cred+=(-e "$modo")
   ws=$(sed -n 's/^SHARED_SESSION_WORKSPACE=//p' "$CONFIG/$2.env" 2>/dev/null | head -1)  # misma fuente que la rama host-native de arriba
-  docker exec --user "$4" "${env_cred[@]}" "$3" node "$helper" "$1" --alias "$2" --harness "$5" --workspace "${ws:-/workspace}"
+  docker exec --user "$4" "${env_cred[@]}" "$3" node "$helper" "$1" --alias "$2" \
+    --harness "$5" --workspace "${ws:-/workspace}" --state "$6"
 }
 
 # Los avisos de caída que quedaron registrados mientras el dueño no estaba mirando.
@@ -167,7 +172,7 @@ EOF
 cmd_flota() {
   printf "\n  %s%-9s %-22s %-9s %-9s %-9s %s%s\n" "$c_b" ALIAS CONTENEDOR HARNESS ADAPTADOR TUI MODO "$c_reset"
   printf "  %s\n" "$(printf '─%.0s' $(seq 1 76))"
-  local a line ctr cuser harness ad modo color term
+  local a line ctr cuser state harness ad modo color term
   local -a sin_gateway=()
   for a in $(todos_los_alias); do
     # Un alias que vive en el VPS no se puede pintar desde aca: su docker y su systemd son otros.
@@ -175,9 +180,9 @@ cmd_flota() {
     # es peor que no mostrarlo. Va en su propia tabla, mas abajo, preguntada al host que si lo ve.
     [ "$(sitio "$a")" = vps ] && continue
     line=$(alias_info "$a") || continue
-    IFS=$'\t' read -r _ _ ctr cuser _ _ harness _ <<<"$line"
+    IFS=$'\t' read -r _ _ ctr cuser _ state harness _ <<<"$line"
     ad=$(adaptador_activo "$a")
-    if compartida_configurada "$a" && sesion status "$a" "$ctr" "$cuser" "$harness" >/dev/null 2>&1; then
+    if compartida_configurada "$a" && sesion status "$a" "$ctr" "$cuser" "$harness" "$state" >/dev/null 2>&1; then
       modo=compartida; color=$c_ok; term="${c_ok}si${c_reset}"
     elif [[ $harness == openclaw ]] && openclaw_gateway_vivo "$ctr"; then
       # En openclaw la sesión compartida no tiene interruptor propio: la da el gateway. Si acepta
@@ -357,7 +362,7 @@ cmd_entrar() {
 
   # 1) sesion compartida: la TUI real, y la misma conversacion que Telegram.
   if compartida_configurada "$a"; then
-    if salida=$(sesion ensure "$a" "$ctr" "$cuser" "$harness" 2>&1); then
+    if salida=$(sesion ensure "$a" "$ctr" "$cuser" "$harness" "$state" 2>&1); then
       printf "  modo: %s%sCOMPARTIDA%s — la TUI real, y la misma conversacion que Telegram.\n" "$c_ok" "$c_b" "$c_reset"
       printf "  %slo que llegue por el bus aparece aca EN VIVO. salir sin cerrarla: Ctrl-b d%s\n" "$c_dim" "$c_reset"
       # Lo que se rompio mientras no estabas mirando. Si el bus tuvo que contestar por el camino
@@ -533,8 +538,8 @@ cmd_on() {
       (( transcurrido % 20 == 0 )) && printf "  %s%s sigue esperando (%ss/%ss)…%s\n" "$c_dim" "$a" "$transcurrido" "$techo" "$c_reset"
     done
   fi
-  local line ctr cuser harness
-  line=$(alias_info "$a") && IFS=$'\t' read -r _ _ ctr cuser _ _ harness <<<"$line"
+  local line ctr cuser state harness
+  line=$(alias_info "$a") && IFS=$'\t' read -r _ _ ctr cuser _ state harness _ <<<"$line"
   if [ -z "${pids// /}" ]; then
     printf "  %s%s: todavia sin proceso vivo tras %ss%s  (systemd dice: %s)\n" "$c_err" "$a" "$techo" "$c_reset" "$(adaptador_activo "$a")"
     printf "  %scomprobado: ningun proceso con CAUCE_ALIAS=%s (ni cmdline .../cauce-v3-adapter/%s/) en su contenedor/host.%s\n" "$c_dim" "$a" "$a" "$c_reset"
@@ -550,8 +555,8 @@ cmd_on() {
     # segundos mas en aparecer. `ensure` es idempotente, asi que reintentarlo no hace dano.
     local s_techo=30 s_paso=3 s_transcurrido=0 tui=''
     while :; do
-      sesion ensure "$a" "$ctr" "$cuser" "$harness" >/dev/null 2>&1 || true
-      tui=$(sesion status "$a" "$ctr" "$cuser" "$harness" 2>&1)
+      sesion ensure "$a" "$ctr" "$cuser" "$harness" "$state" >/dev/null 2>&1 || true
+      tui=$(sesion status "$a" "$ctr" "$cuser" "$harness" "$state" 2>&1)
       printf '%s' "$tui" | grep -q '"present":true' && break
       (( s_transcurrido >= s_techo )) && break
       sleep "$s_paso"

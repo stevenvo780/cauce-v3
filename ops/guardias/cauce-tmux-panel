@@ -14,12 +14,20 @@ grep -qx 'SHARED_SESSION=1' "$CONFIG/$A.env" 2>/dev/null || {
 
 LINE=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/container-alias-query.py" "$A" 2>/dev/null) || {
   echo "alias desconocido: $A" >&2; exit 1; }
-IFS=$'\t' read -r _ _ CTR CUSER _ _ HARNESS _ <<<"$LINE"
+IFS=$'\t' read -r _ _ CTR CUSER _ STATE HARNESS _ <<<"$LINE"
 
 RELEASE=$(sed -n 's/^BUNDLE_RELEASE=//p' "$CONFIG/$A.env" | head -1)
 [ -n "$RELEASE" ] || { echo "$A sin BUNDLE_RELEASE" >&2; exit 1; }
 HELPER="/opt/cauce-v3-adapter/$A/releases/$RELEASE/packages/adapter-sdk/dist/src/bin/shared-session.js"
 WS=$(sed -n 's/^SHARED_SESSION_WORKSPACE=//p' "$CONFIG/$A.env" | head -1)
+CREDENTIAL_HOME=$(sed -n 's/^CREDENTIAL_HOME=//p' "$CONFIG/$A.env" | head -1)
+ENV_CREDENTIAL=()
+if [ -n "$CREDENTIAL_HOME" ]; then
+  case "$HARNESS" in
+    claude) ENV_CREDENTIAL=(-e "CLAUDE_CONFIG_DIR=$CREDENTIAL_HOME") ;;
+    codex) ENV_CREDENTIAL=(-e "CODEX_HOME=$CREDENTIAL_HOME") ;;
+  esac
+fi
 
 # The bundle is copied by the supervisor at startup. A cold start may take a moment: we wait,
 # because failing here would leave the alias without a panel for the rest of the day.
@@ -30,5 +38,5 @@ done
 docker exec --user "$CUSER" "$CTR" test -f "$HELPER" 2>/dev/null || {
   echo "$A: el helper no aparecio en 60s ($HELPER)" >&2; exit 1; }
 
-docker exec --user "$CUSER" "$CTR" node "$HELPER" ensure \
-  --alias "$A" --harness "$HARNESS" --workspace "${WS:-/workspace}"
+docker exec --user "$CUSER" "${ENV_CREDENTIAL[@]}" "$CTR" node "$HELPER" ensure \
+  --alias "$A" --harness "$HARNESS" --workspace "${WS:-/workspace}" --state "$STATE"
