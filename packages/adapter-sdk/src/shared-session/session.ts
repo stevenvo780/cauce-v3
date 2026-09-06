@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { realpath } from "node:fs/promises";
 import { signalAborted } from "../runtime-state.js";
 import {
   CREATION_NONCE_OPTION,
@@ -20,6 +19,7 @@ import {
   type TmuxController,
 } from "./tmux.js";
 import { inputBoxState } from "./pane.js";
+import { ensureExactSessionLaunch, paneWorkspaceState } from "./exact-launch.js";
 import {
   LEGACY_DEGRADED_WINDOW,
   TUI_WINDOW,
@@ -34,12 +34,9 @@ import {
   type SharedSessionSpec,
   verifyExistingSessionIdentity,
 } from "./session/identity.js";
-
 export type { SharedSessionSpec } from "./session/identity.js";
-
 /** Reasons `ensureSharedSession` can decline a usable session; `workspace_mismatch` is detected here, against the freshly created pane, never inside `session/identity.ts`. */
 export type EnsureFailure = IdentityEnsureFailure | "workspace_mismatch";
-
 export interface EnsureOptions {
   readonly sleep: (ms: number) => Promise<void>;
   /** Cancels the preflight before a delivery touches the input box. */
@@ -52,8 +49,7 @@ export interface EnsureOptions {
   /** Logging function for resume events or incidents. */
   readonly log?: (detail: string) => void;
 }
-
-interface EnsureResult {
+export interface EnsureResult {
   readonly ready: boolean;
   /** True if this call had to create the session (it did not exist). */
   readonly created: boolean;
@@ -118,6 +114,14 @@ export async function ensureSharedSession(
   if (existingId !== undefined) {
     return inspectExistingSession(tmux, spec, options, session, existingId);
   }
+
+  const exact = await ensureExactSessionLaunch(
+    spec.resume,
+    spec.alias,
+    () => signalAborted(options.signal),
+    (args) => startTui(tmux, spec, options, args),
+  );
+  if (exact !== undefined) return exact;
 
   if (await hasResumableConversation(spec, options)) {
     if (signalAborted(options.signal)) return cancelledEnsure(false);
@@ -250,6 +254,25 @@ async function inspectExistingSession(
       detail: `el pane de ${session} cambió de generación durante el preflight; no se reutiliza`,
     };
   }
+  const workspace = await paneWorkspaceState(tmux, pane, spec.workspace);
+  if (workspace === "unreadable") {
+    return {
+      ready: false,
+      created: false,
+      sessionId,
+      failure: "session_identity_unverified",
+      detail: `no se pudo acreditar el directorio de trabajo del pane de ${session}`,
+    };
+  }
+  if (workspace === "mismatch") {
+    return {
+      ready: false,
+      created: false,
+      sessionId,
+      failure: "workspace_mismatch",
+      detail: `el pane existente de ${session} pertenece a otro directorio; se conserva intacto`,
+    };
+  }
   return {
     ready: true,
     created: false,
@@ -268,7 +291,7 @@ async function hasResumableConversation(
   options: EnsureOptions,
 ): Promise<boolean> {
   const resume = spec.resume;
-  if (resume === undefined || resume.args.length === 0) return false;
+  if (resume === undefined || resume.resolveLaunch !== undefined || resume.args.length === 0) return false;
   try {
     return await resume.hasPreviousConversation();
   } catch (error: unknown) {
@@ -513,29 +536,6 @@ export function resumeArgumentSuffix(
   return { ok: true, suffix: ` ${args.join(" ")}` };
 }
 
-/** The pane's OBSERVED workspace when it differs from `workspace`, or `undefined` when they match or the pane could not be read (tmux accepts a bad `-c` and starts elsewhere instead of failing). */
-async function mismatchedPaneWorkspace(
-  tmux: TmuxController,
-  ownership: CreatedSessionOwnership,
-  workspace: string,
-): Promise<string | undefined> {
-  const result = await tmux.run([
-    "display-message", "-p", "-t", ownership.paneId, "#{pane_current_path}",
-  ]);
-  if (result.exitCode !== 0) return undefined;
-  const observed = result.stdout.trim();
-  if (observed === "") return undefined;
-  const resolve = async (value: string): Promise<string> => {
-    try {
-      return await realpath(value);
-    } catch {
-      return value;
-    }
-  };
-  const [expectedReal, observedReal] = await Promise.all([resolve(workspace), resolve(observed)]);
-  return expectedReal === observedReal ? undefined : observed;
-}
-
 async function createSession(
   tmux: TmuxController,
   spec: SharedSessionSpec,
@@ -673,16 +673,18 @@ async function createSession(
   }
 
   if (ownership !== undefined) {
-    const observedWorkspace = await mismatchedPaneWorkspace(tmux, ownership, spec.workspace);
-    if (observedWorkspace !== undefined) {
-      await killSessionIdIfNamed(tmux, ownership);
+    const observedWorkspace = await paneWorkspaceState(tmux, ownership, spec.workspace);
+    if (observedWorkspace !== "match") {
+      if (observedWorkspace === "mismatch") await killSessionIdIfNamed(tmux, ownership);
       return {
         ok: false,
         created: true,
         sessionId,
-        failure: "workspace_mismatch",
-        detail: `tmux debía arrancar ${session} en ${spec.workspace} y arrancó el pane en`
-          + ` ${observedWorkspace}; esa generación se mató`,
+        failure: observedWorkspace === "mismatch"
+          ? "workspace_mismatch" : "session_identity_unverified",
+        detail: observedWorkspace === "mismatch"
+          ? `tmux arrancó ${session} fuera del workspace esperado; esa generación se mató`
+          : `no se pudo acreditar el workspace de ${session}; esa generación se conserva intacta`,
       };
     }
   }

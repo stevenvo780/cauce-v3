@@ -266,6 +266,9 @@ class FakeTmux implements TmuxController {
         stderr: "",
       };
     }
+    if (command === "display-message" && args[1] === "-p" && args.at(-1) === "#{pane_current_path}") {
+      return { exitCode: 0, stdout: "/workspace\n", stderr: "" };
+    }
     if (command === "display-message" && args[1] === "-p") {
       return { exitCode: 0, stdout: "4242\n", stderr: "" };
     }

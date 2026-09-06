@@ -24,7 +24,7 @@ describe('CauceApi', () => {
     // `Object.assign` en el constructor pone los métodos en la instancia, no en el prototipo: si un
     // módulo deja de mezclarse el tipo sigue compilando y la vista revienta en tiempo de ejecución.
     const api = new CauceApi();
-    expect(metodosDeLosModulos).toHaveLength(32);
+    expect(metodosDeLosModulos).toHaveLength(34);
     for (const nombre of metodosDeLosModulos) {
       expect(typeof (api as unknown as Record<string, unknown>)[nombre]).toBe('function');
     }
@@ -40,6 +40,18 @@ describe('CauceApi', () => {
     await Promise.all([atada.getStatus(), atada.listMessages(), atada.getFleetActivity()]);
 
     expect(rutas).toEqual(['/v3/status', '/v3/console/messages', '/v3/console/activity']);
+  });
+
+  it('requests live fleet activity without reusing an HTTP cache entry', async () => {
+    let cache: RequestCache | undefined;
+    const fetcher: typeof fetch = (_input, init) => {
+      cache = init?.cache;
+      return Promise.resolve(new Response('{}', {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }));
+    };
+    await new CauceApi('http://localhost', fetcher).getFleetActivity();
+    expect(cache).toBe('no-store');
   });
 
   it('uses cookie credentials and strips client identity fields from publish', async () => {

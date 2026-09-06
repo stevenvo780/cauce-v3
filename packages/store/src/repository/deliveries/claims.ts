@@ -2,6 +2,7 @@ import type { ProfileRuntimeContract, Tenant } from '@cauce/protocol'; /* eslint
 import { HUMAN_PRIORITY_FLOOR, isLiteralTrue, PROTOCOL_VERSION } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withAbortableTransaction, withTransaction } from '../../db.js';
+import { agentContextReconcileLockKey } from '../agent-context-lock.js';
 import { StoreError } from '../errors.js';
 import { MessagesRepository } from '../messages.js';
 import { validConnectionToken } from '../outbox.js';
@@ -237,9 +238,24 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
     }
     const work = async (client: DatabaseClient): Promise<ClaimedDeliveryEnvelope[]> => {
       await this.assertRuntimeRoute(client, tenantId, alias);
+      await client.query("SET LOCAL lock_timeout='85000ms'");
+      try {
+        await client.query(`SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))`, [
+          agentContextReconcileLockKey(tenantId, alias),
+        ]);
+      } catch (error) {
+        const code = error !== null && typeof error === 'object' && 'code' in error
+          ? String(error.code)
+          : '';
+        if (code === '55P03') {
+          throw new StoreError('conflict', 'context reconciliation temporarily fences delivery claims');
+        }
+        throw error;
+      }
       const lease = await client.query<{ capabilities: unknown }>(
         `SELECT capabilities FROM connection_leases
-         WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4 AND lease_until>now()
+         WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4
+           AND lease_until>now()
            AND ($5::uuid IS NULL OR connection_token=$5::uuid)
          FOR UPDATE`,
         [tenantId, alias, instanceId, epoch, connectionToken ?? null]
@@ -280,6 +296,16 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
           WHERE tenant_id=$1 AND alias=$2 FOR SHARE`,
         [tenantId, alias],
       );
+      const liveLease = await client.query(
+        `SELECT 1 FROM connection_leases
+         WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4
+           AND lease_until>clock_timestamp()
+           AND ($5::uuid IS NULL OR connection_token=$5::uuid)`,
+        [tenantId, alias, instanceId, epoch, connectionToken ?? null],
+      );
+      if (liveLease.rowCount !== 1) {
+        throw new StoreError('fenced', 'delivery claim lease expired while acquiring capacity');
+      }
       const capacity = await client.query<{
         in_flight: string; human_in_flight: string;
       }>(
@@ -336,17 +362,21 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         Math.max(0, humanReservedCapacity - reservedInFlight),
       );
 
-      /**
-       * Claims one delivery by trusted-at-ingress priority with SKIP LOCKED; the direct attempt
-       * uses `deliveries_claim_idx` to avoid repeated `EXISTS` probes, and returns `undefined`
-       * when no row of that class is available. A control hold gates NEW leases, never in-flight ones.
-       */
+      // A control hold gates new leases; durable terminal evidence survives a corrupted row.
       const claimOne = async (humanOriginated: boolean): Promise<DeliveryRow | undefined> => {
         const claimed = await client.query<DeliveryRow>(
           `WITH picked AS (
              SELECT d.id FROM deliveries d JOIN messages m ON m.id=d.message_id
              WHERE d.recipient_tenant=$1 AND d.recipient_alias=$2
                AND d.status IN ('pending','retry') AND d.available_at<=now()
+               AND d.last_ack_rank=0 AND d.terminal_at IS NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM dead_letters terminal WHERE terminal.delivery_id=d.id
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM delivery_acks terminal
+                  WHERE terminal.delivery_id=d.id AND terminal.applied AND terminal.status='done'
+               )
                AND NOT EXISTS (
                  SELECT 1 FROM terminal_control_holds h
                   WHERE h.tenant_id=d.recipient_tenant AND h.alias=d.recipient_alias

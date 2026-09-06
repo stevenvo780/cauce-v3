@@ -126,6 +126,7 @@ export interface DelegationBranchProgress {
 }
 
 export const CANONICAL_OPEN_CODE_SESSION_FILE = "canonical-opencode-session.json";
+export const SHARED_TUI_POINTER_FILE = "shared-tui-session.json";
 export const MAX_SESSIONS_FILE_BYTES = 1024 * 1024;
 export const MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS = 24 * 60 * 60 * 1_000;
 export const DELEGATION_CONTEXT_PRUNE_RETRY_MS = 60_000;
@@ -231,6 +232,7 @@ export const ATOMIC_STATE_FILES = [
   "sessions.json",
   "fencing.json",
   CANONICAL_OPEN_CODE_SESSION_FILE,
+  SHARED_TUI_POINTER_FILE,
 ] as const;
 export type AtomicStateFile = typeof ATOMIC_STATE_FILES[number];
 export type AtomicArtifactKind = "tmp" | "backup-tmp" | "backup" | "committed";

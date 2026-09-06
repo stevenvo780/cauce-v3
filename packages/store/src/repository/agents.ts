@@ -1,7 +1,11 @@
 import type { Ack, ProfileRuntimeAdoptionEvidence, ProfileRuntimeContract, Tenant } from '@cauce/protocol';
-import { ProfileRuntimeContractSchema, PROTOCOL_VERSION, SYSTEM_PRINCIPAL_ALIASES } from '@cauce/protocol';
+import { PROTOCOL_VERSION, SYSTEM_PRINCIPAL_ALIASES } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 import { withTransaction } from '../db.js';
+import {
+  canonicalProfileRuntimeContract, reconcileAgentContextWithFence,
+  type AgentContextReconcileFenceInput, type AgentContextReconcileFenceResult,
+} from './agent-context-reconcile.js';
 import { canonicallyEqual } from './config.js';
 import { DeliveryAcksRepository, type RoutingTarget } from './deliveries.js';
 import { StoreError } from './errors.js';
@@ -11,17 +15,13 @@ export type ProfileRuntimeAdoptionAck = ProfileRuntimeAdoptionEvidence & {
   readonly adopted_at: string;
 };
 
-function canonicalProfileRuntimeContract(value: unknown): ProfileRuntimeContract | undefined {
-  const parsed = ProfileRuntimeContractSchema.safeParse(value);
-  if (!parsed.success) return undefined;
-  return {
-    ...parsed.data,
-    documents: [...parsed.data.documents].sort((left, right) =>
-      left.name.localeCompare(right.name) || left.path.localeCompare(right.path)),
-  };
-}
-
 export abstract class AgentsRepository extends DeliveryAcksRepository {
+
+  async reconcileAgentContextRuntime<Value>(
+    input: AgentContextReconcileFenceInput<Value>,
+  ): Promise<AgentContextReconcileFenceResult<Value>> {
+    return reconcileAgentContextWithFence(this.pool, input);
+  }
 
   async recordProfileRuntimeExpectation(
     tenantId: Tenant,

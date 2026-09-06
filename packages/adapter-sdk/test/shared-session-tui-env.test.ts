@@ -178,7 +178,7 @@ test(
     const tmux = new CliTmux(socket);
     try {
       const created = await tmux.run([
-        "new-session", "-d", "-s", "cauce-kratos", "-n", "agente", "exec sleep 30",
+        "new-session", "-d", "-s", "cauce-kratos", "-n", "agente", "-c", "/tmp", "exec sleep 30",
       ]);
       assert.equal(created.exitCode, 0, created.stderr);
       assert.equal((await tmux.run([

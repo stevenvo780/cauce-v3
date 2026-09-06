@@ -30,6 +30,8 @@ import datetime
 import json
 import os
 import pathlib
+import re
+import shlex
 import subprocess
 import sys
 from typing import Any
@@ -46,13 +48,24 @@ THRESHOLDS = {
 
 OPS_ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXPECTED_ALIASES = sorted(load_container_aliases(OPS_ROOT))
+ENABLED_ALIASES_QUERY = '''
+        SELECT DISTINCT alias
+        FROM agents
+        WHERE enabled
+        ORDER BY alias ASC;
+    '''
+ALIAS_PATTERN = re.compile(r'^[a-z][a-z0-9_-]{0,63}$')
 
 
 def run_psql(database_url: str, query: str) -> str:
     """Run PostgreSQL query via psql command line (zero-dependency)."""
+    prefix = shlex.split(os.getenv('CAUCE_PSQL_COMMAND', 'psql'))
+    if not prefix:
+        raise ValueError('CAUCE_PSQL_COMMAND must name a PostgreSQL client')
     try:
         result = subprocess.run(
-            ['psql', database_url, '-Atqc', query],
+            [*prefix, '-X', database_url, '-Aq', '-P', 'footer=off',
+             '-v', 'ON_ERROR_STOP=1', '-c', query],
             capture_output=True,
             text=True,
             timeout=30,
@@ -111,6 +124,28 @@ def parse_psql_rows(output: str) -> list[dict[str, str]]:
     return rows
 
 
+def parse_enabled_aliases(output: str) -> set[str]:
+    """Parse the enabled-agent registry without accepting partial or headerless output."""
+    lines = output.splitlines()
+    while lines and not lines[-1]:
+        lines.pop()
+    if not lines or lines[0] != 'alias':
+        raise ValueError('enabled agent registry returned an unreadable header')
+    aliases = lines[1:]
+    if any(not ALIAS_PATTERN.fullmatch(alias) for alias in aliases):
+        raise ValueError('enabled agent registry returned an unreadable alias')
+    if len(aliases) != len(set(aliases)):
+        raise ValueError('enabled agent registry returned duplicate aliases')
+    return set(aliases)
+
+
+def utc_timestamp(value: str) -> datetime.datetime:
+    parsed = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.astimezone(datetime.timezone.utc)
+
+
 def check_connection_leases(database_url: str, now: datetime.datetime) -> dict[str, Any]:
     """Check connection_leases: offline and stale heartbeat."""
     check = {
@@ -132,6 +167,7 @@ def check_connection_leases(database_url: str, now: datetime.datetime) -> dict[s
     '''
 
     try:
+        enabled_aliases = parse_enabled_aliases(run_psql(database_url, ENABLED_ALIASES_QUERY))
         output = run_psql(database_url, query)
         rows = parse_psql_rows(output)
     except ValueError as error:
@@ -139,20 +175,22 @@ def check_connection_leases(database_url: str, now: datetime.datetime) -> dict[s
         check['message'] = str(error)
         return check
 
+    required_aliases = set(EXPECTED_ALIASES) | enabled_aliases
+
     if not rows:
-        check['offline'] = EXPECTED_ALIASES.copy()
+        check['offline'] = sorted(required_aliases)
         check['status'] = 'critical'
         check['message'] = f'{len(check["offline"])} offline aliases'
         return check
 
     alias_lease_map = {row['alias']: row for row in rows}
-    missing_aliases = [a for a in EXPECTED_ALIASES if a not in alias_lease_map]
+    missing_aliases = sorted(required_aliases - alias_lease_map.keys())
     stale_aliases = []
 
     for alias, lease in alias_lease_map.items():
         try:
-            lease_until = datetime.datetime.fromisoformat(lease['lease_until'].replace('Z', '+00:00'))
-            heartbeat_at = datetime.datetime.fromisoformat(lease['last_heartbeat_at'].replace('Z', '+00:00'))
+            lease_until = utc_timestamp(lease['lease_until'])
+            heartbeat_at = utc_timestamp(lease['last_heartbeat_at'])
 
             if lease_until <= now:
                 check['offline'].append(alias)
@@ -211,7 +249,7 @@ def check_dead_failed_deliveries(
     last_run_time = None
     if last_run_at:
         try:
-            last_run_time = datetime.datetime.fromisoformat(last_run_at)
+            last_run_time = utc_timestamp(last_run_at)
         except ValueError:
             pass
 
@@ -224,7 +262,7 @@ def check_dead_failed_deliveries(
 
             if status == 'dead' and terminal_at_str:
                 try:
-                    terminal_time = datetime.datetime.fromisoformat(terminal_at_str.replace('Z', '+00:00'))
+                    terminal_time = utc_timestamp(terminal_at_str)
                     if not last_run_time or terminal_time >= last_run_time:
                         check['new_dead'][alias] = count
                 except ValueError:
@@ -232,7 +270,7 @@ def check_dead_failed_deliveries(
 
             if status == 'failed' and terminal_at_str:
                 try:
-                    terminal_time = datetime.datetime.fromisoformat(terminal_at_str.replace('Z', '+00:00'))
+                    terminal_time = utc_timestamp(terminal_at_str)
                     if not last_run_time or terminal_time >= last_run_time:
                         check['new_failed'][alias] = count
                 except ValueError:
@@ -369,7 +407,7 @@ def check_pending_deliveries(database_url: str, now: datetime.datetime) -> dict[
             recipient_alias,
             status,
             COUNT(*) as count,
-            MAX(available_at) as oldest_available_at
+            MIN(available_at) as oldest_available_at
         FROM deliveries
         WHERE status = 'pending'
         GROUP BY recipient_alias, status;
@@ -390,7 +428,7 @@ def check_pending_deliveries(database_url: str, now: datetime.datetime) -> dict[
             oldest_available = row.get('oldest_available_at')
 
             if oldest_available:
-                available_time = datetime.datetime.fromisoformat(oldest_available.replace('Z', '+00:00'))
+                available_time = utc_timestamp(oldest_available)
                 age_ms = (now - available_time).total_seconds() * 1000
                 age_min = age_ms / 1000 / 60
 
@@ -607,7 +645,7 @@ def main() -> None:
 
     # Load previous state
     previous_state = load_state(state_file)
-    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    now = datetime.datetime.now(datetime.timezone.utc)
 
     # Run checks
     checks = {

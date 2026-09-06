@@ -9,6 +9,7 @@ import type { SharedSessionRunner } from "../types.js";
 import {
   acquirePaneInputBarrier,
   clearDegradation,
+  paneGenerationKey,
   paneIdentityStillCurrent,
   pastePrompt,
   releasePaneInputBarrier,
@@ -108,6 +109,12 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     const baseline = await this.baseline(request.signal);
     if (baseline === undefined || signalAborted(request.signal)) {
       return result({ cancelled: true, harnessStarted: false });
+    }
+    const nativeSnapshot = await this.options.nativePointer?.capture(baseline);
+    if (this.options.nativePointer !== undefined && nativeSnapshot === undefined) {
+      try {
+        this.options.onNotice?.("no se pudo preparar la acreditación de reanudación durable de este turno");
+      } catch { /* A notice cannot prevent a delivery from running. */ }
     }
     if (!await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(request.signal))) {
       return replacedBeforeSubmission();
@@ -231,6 +238,19 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       correlationId,
       pending,
     );
+    if (nativeSnapshot !== undefined && harvested.terminalBoundary
+      && harvested.result.exitCode === 0 && !harvested.result.timedOut
+      && !harvested.result.cancelled && !signalAborted(request.signal)) {
+      const published = await this.options.nativePointer?.publish(
+        nativeSnapshot, correlationId, promptText, paneGenerationKey(identity),
+        () => paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(request.signal)),
+      );
+      if (published === "conflict" || published === "unverified") {
+        try {
+          this.options.onNotice?.("el turno terminó, pero no se pudo acreditar su reanudación durable");
+        } catch { /* A notice cannot invalidate a terminal result. */ }
+      }
+    }
     if (harvested.terminalBoundary) await this.disarmPendingQuarantine(pending);
     return harvested.result;
   }

@@ -10,6 +10,7 @@ import {
   DELIVERY_IN_FLIGHT_LISTED, medirContextoDeGobierno, registerAgentContextReloadRoutes,
   type DeliveriesInFlight,
 } from '../console/agent-context-reload.routes.js';
+import { registerAgentContextReconcileRoutes } from '../console/agent-context-reconcile.routes.js';
 import { registerAgentDocumentRoutes } from '../console/agent-documents.routes.js';
 import { prepareAgentProfileRuntime } from '../console/agent-profile-runtime.js';
 import { registerAgentProfileRoutes } from '../console/agent-profile.routes.js';
@@ -36,21 +37,22 @@ export { createConsoleRoutes } from './console/access.js';
 async function expectativaDeRuntime(
   pool: ConsoleRoutes['options']['pool'], tenantId: string, alias: string,
 ): Promise<{
+  revision: number;
   generation: string;
   documents: readonly { name: string; path: string; sha: string }[];
 } | undefined> {
-  const result = await pool.query<{ generation: string; documents: unknown }>(
-    `SELECT generation,documents FROM agent_profile_runtime_expectations
+  const result = await pool.query<{ revision: string | number; generation: string; documents: unknown }>(
+    `SELECT revision,generation,documents FROM agent_profile_runtime_expectations
       WHERE tenant_id=$1 AND alias=$2`,
     [tenantId, alias],
   );
   const row = result.rows[0];
   if (row === undefined || !Array.isArray(row.documents)) return undefined;
   const parsed = ProfileRuntimeContractSchema.safeParse({
-    revision: 1, generation: row.generation, documents: row.documents,
+    revision: Number(row.revision), generation: row.generation, documents: row.documents,
   });
   if (!parsed.success) return undefined;
-  return { generation: parsed.data.generation, documents: parsed.data.documents };
+  return parsed.data;
 }
 
 export async function entregaEnVuelo(
@@ -238,6 +240,7 @@ function registerConsoleAgentRoutes(
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'read');
+      reply.header('Cache-Control', 'no-store');
       return await repository.fleetActivity(actor.tenant_id, actor.alias);
     } catch (error) { replyError(reply, error); }
   });
@@ -381,6 +384,23 @@ function registerConsoleAgentRoutes(
         ),
       deliveryInFlight: (tenantId, alias) => entregaEnVuelo(options.pool, tenantId, alias),
       recordDocumentRevision: (input) => diario.recordDocumentRevision(input),
+      recordAudit: (entry) => recordTerminalAudit(options.pool, entry),
+    });
+    registerAgentContextReconcileRoutes(app, {
+      authorize: autorizarPerfil,
+      authorizeTarget: (actor, tenantId, alias, permission) =>
+        autorizarDestino(actor, tenantId, alias, permission),
+      resolveOperator: resolveProfileOperator,
+      readContext: (tenantId, alias) => perfiles.readContextWithPresence(tenantId, alias),
+      prepareRuntime: (tenantId, alias, contexto) =>
+        prepareAgentProfileRuntime(profileProbe, tenantId, alias, contexto),
+      readRuntimeExpectation: (tenantId, alias) =>
+        expectativaDeRuntime(options.pool, tenantId, alias),
+      deliveryInFlight: (tenantId, alias) => entregaEnVuelo(options.pool, tenantId, alias),
+      reconcileRuntime: (input) => repository.reconcileAgentContextRuntime({
+        ...input,
+        tenantId: input.tenantId,
+      }),
       recordAudit: (entry) => recordTerminalAudit(options.pool, entry),
     });
 

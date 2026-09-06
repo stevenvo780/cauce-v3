@@ -46,7 +46,7 @@ for env in "$CONFIG"/*.env; do
   [ "$(systemctl --user is-active "cauce-v3-container-$a.service" 2>/dev/null)" = active ] || continue
 
   line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/container-alias-query.py" "$a" 2>/dev/null) || continue
-  IFS=$'\t' read -r _ _ ctr cuser _ _ harness _ <<<"$line"
+  IFS=$'\t' read -r _ _ ctr cuser _ state harness _ <<<"$line"
   [ -n "$ctr" ] || continue
 
   # Second half, the one that doesn't lie: an adapter process must exist inside the container.
@@ -56,11 +56,20 @@ for env in "$CONFIG"/*.env; do
   [ -n "$release" ] || continue
   helper="/opt/cauce-v3-adapter/$a/releases/$release/packages/adapter-sdk/dist/src/bin/shared-session.js"
   ws=$(sed -n 's/^SHARED_SESSION_WORKSPACE=//p' "$env" | head -1)
+  credential_home=$(sed -n 's/^CREDENTIAL_HOME=//p' "$env" | head -1)
+  credential_env=()
+  if [ -n "$credential_home" ]; then
+    case "$harness" in
+      claude) credential_env=(-e "CLAUDE_CONFIG_DIR=$credential_home") ;;
+      codex) credential_env=(-e "CODEX_HOME=$credential_home") ;;
+    esac
+  fi
 
   # Ask the SAME helper the adapter and CLI use, so the three agree on what "session is"
   # means.
-  estado=$(docker exec --user "$cuser" "$ctr" node "$helper" status \
-             --alias "$a" --harness "$harness" --workspace "${ws:-/workspace}" 2>/dev/null)
+  estado=$(docker exec --user "$cuser" "${credential_env[@]}" "$ctr" node "$helper" status \
+             --alias "$a" --harness "$harness" --workspace "${ws:-/workspace}" \
+             --state "$state" 2>/dev/null)
 
   # With a live panel, write nothing: the guard must stay silent when all is well.
   case "$estado" in

@@ -158,17 +158,23 @@ LATEST=$(ls -t /opt/_archive/cauce-v3-db-backups/*.dump | head -n 1)
 docker exec -i cauce-v3-prod-postgres-1 pg_restore --list < "$LATEST" | grep -c "TABLE DATA"   # ~60 tablas
 cat /var/log/cauce-v3-backup/status.json   # "overall":"ok"
 ```
-**Timers a parar en una ventana de despliegue** (toman locks exclusivos en `agents` durante las migraciones 026/034/037): `systemctl stop cauce-revividor-de-colas.timer cauce-v3-fleet-watchdog.timer` — y `systemctl start` de ambos SIEMPRE al cerrar la ventana, éxito o rollback.
+**Timers durante una ventana de despliegue.** Registrar primero cuáles están activos y pausar
+los que puedan competir por locks durante una migración. Al cerrar la ventana, éxito o rollback,
+restaurar sólo los que estaban activos y siguen autorizados. `cauce-revividor-de-colas.timer`
+está desactivado por reemitir trabajo ambiguo: no iniciarlo ni habilitarlo como parte del despliegue.
+El watchdog de flota es de lectura; conservar su estado previo, sin convertir una pausa temporal
+en una activación de guardias retiradas.
 
 ## 6. Smoke y comprobaciones rápidas de salud
 
 ```bash
-./deploy/smoke.sh   # 7 sondas: gateway ready, 5 contenedores healthy, esquema esperado, leases, entregas done, relay sin bucle, rutas de gobernanza
-docker exec cauce-v3-prod-gateway-1 node /app/deploy/readiness-probe.mjs http://127.0.0.1:8081/health/ready ready
-docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -tAc "SELECT max(version) FROM schema_migrations"                                    # esperar la última de packages/store/migrations (hoy 038_*)
-docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -tAc "SELECT count(*) FROM connection_leases WHERE last_heartbeat_at > now() - interval '60 seconds'"   # esperar >=8
-docker logs cauce-v3-prod-terminal-relay-1 --since 2m | grep -c 'agent_connected"'   # esperar <30
+./deploy/smoke.sh   # readiness, 9 contenedores, esquema, 15 leases, ACK aplicado, relay y TLS verificado
 ```
+
+Ejecutarlo en el host que dispone de la CA pública de consola. El control deriva el esquema del
+repositorio, exige la cardinalidad independiente `CAUCE_SMOKE_EXPECTED_AGENTS` (15 por defecto),
+lee ambas salidas del relay y falla si no puede realizar una consulta. No sustituirlo por conteos
+parciales ni usar una conexión sin TLS verificado para acreditar salud.
 
 ## 7. Reglas de oro
 

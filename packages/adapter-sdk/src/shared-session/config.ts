@@ -75,6 +75,7 @@ export function cliSharedSessionSpec(
   workspace: string,
   home: string,
   environment: NodeJS.ProcessEnv = process.env,
+  stateDirectory?: string,
 ): SharedSessionSpec {
   const configDirectory = harnessConfigDirectory(harness, home, environment);
   return {
@@ -83,7 +84,12 @@ export function cliSharedSessionSpec(
     workspace,
     environment: sharedSessionPaneEnvironment(harness, home, environment),
     harnessArguments: claudePermissionArguments(harness, environment),
-    resume: sharedSessionResume(harness, configDirectory, workspace),
+    resume: sharedSessionResume(
+      harness,
+      configDirectory,
+      workspace,
+      stateDirectory === undefined ? undefined : { alias, stateDirectory },
+    ),
   };
 }
 

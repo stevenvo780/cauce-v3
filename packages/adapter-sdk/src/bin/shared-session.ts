@@ -66,6 +66,8 @@ function spec(options: Options, home: string): SharedSessionSpec {
     options.alias,
     options.workspace,
     home,
+    process.env,
+    options.stateDirectory,
   );
 }
 
