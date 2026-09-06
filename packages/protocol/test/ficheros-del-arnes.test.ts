@@ -466,10 +466,11 @@ test("un fichero que pasa de 60.000 da error CLARO, y no un fichero truncado", (
   );
 });
 
-test("el TOTAL que pasa de 150.000 da error, aunque NINGÚN fichero pase por su cuenta", () => {
+test("el TOTAL que pasa del tope da error, aunque NINGÚN fichero pase por su cuenta", () => {
   // Each field fits comfortably in its file; what does not fit is the sum. Without the total cap
   // this would pass, and openclaw would stop loading the whole person without saying why.
-  const grande = "y".repeat(50_000);
+  // Sized from the constants so raising the cap does not silently disarm this guard.
+  const grande = "y".repeat(Math.floor(TOPES_OPENCLAW.porFichero * 0.8));
   assert.throws(
     () => ficherosDelArnes("openclaw", {
       perfil: perfil({ purpose: grande, role_summary: grande, human_brief: grande }),
@@ -519,9 +520,9 @@ test("claude no declara tope: un perfil enorme NO se rechaza por el tope de otro
 
 test("openclaw conserva EXACTAMENTE los topes de hoy, y los declara en su unidad UTF-16", () => {
   assert.deepEqual(PRESUPUESTOS_DE_CONTEXTO.openclaw, {
-    unit: "utf16_strictest", porFichero: 60_000, total: 150_000,
+    unit: "utf16_strictest", porFichero: 90_000, total: 200_000,
   });
-  assert.deepEqual({ ...TOPES_OPENCLAW }, { porFichero: 60_000, total: 150_000 });
+  assert.deepEqual({ ...TOPES_OPENCLAW }, { porFichero: 90_000, total: 200_000 });
 });
 
 test("codex se mide en BYTES UTF-8, y el hecho medido por alias manda sobre el defecto", () => {
