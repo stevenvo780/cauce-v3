@@ -7,9 +7,11 @@ Este perfil instala una instancia separada de la flota central. Usa el proyecto 
 ## Topología
 
 - tenant `Hospital`, sala `grp.hospital`;
-- `operador`: líder y único receptor de Telegram; usa el gateway privado ya existente;
+- `operador`: director, único receptor de Telegram y supervisor; delega todo desarrollo y no
+  implementa cambios;
 - `backend`: developer Grok en contenedor y estado propios;
 - `frontend`: developer Grok en contenedor y estado propios;
+- los tres usan Grok con workspace, estado, sesión y contexto independientes;
 - cada developer tiene un candidato del CRM separado; el operador ve ambos y los integra al
   candidato canónico; los developers no tienen red clínica, navegador ni `hospital_ops`;
 - Cauce publica gateway y consola sólo sobre `172.17.0.1`, fuera de la interfaz pública del VPS.
