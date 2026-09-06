@@ -1,8 +1,8 @@
 [Unit]
-Description=Cauce V3 rootless container adapter frontend (hospital-agent-openclaw-frontend-gateway-1/openclaw)
+Description=Cauce V3 rootless container adapter perseo (hospital-agent-openclaw-frontend-gateway-1/openclaw)
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=%h/.config/cauce-v3/container-aliases/frontend.env
+ConditionPathExists=%h/.config/cauce-v3/container-aliases/perseo.env
 StartLimitIntervalSec=300s
 StartLimitBurst=10
 
@@ -14,9 +14,9 @@ Environment=CAUCE_CONTAINER_CONFIG_ROOT=%h/.config/cauce-v3/container-aliases
 Environment=CAUCE_CONTAINER_PKI_ROOT=%h/.config/cauce-v3/container-pki
 Environment=CAUCE_CONTAINER_BUNDLE_ROOT=%h/.local/share/cauce-v3-adapter
 Environment=CAUCE_CONTAINER_LOCK_ROOT=%t/cauce-v3
-ExecStart=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh start frontend
-ExecStop=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop frontend
-ExecStartPost=/usr/bin/systemctl --user start --no-block cauce-v3-profile-expectation@frontend.service
+ExecStart=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh start perseo
+ExecStop=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop perseo
+ExecStartPost=/usr/bin/systemctl --user start --no-block cauce-v3-profile-expectation@perseo.service
 Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78

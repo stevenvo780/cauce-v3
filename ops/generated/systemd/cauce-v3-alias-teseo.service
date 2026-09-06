@@ -1,8 +1,8 @@
 [Unit]
-Description=Cauce V3 alias consumer frontend (Hospital/openclaw)
+Description=Cauce V3 alias consumer teseo (Hospital/openclaw)
 After=network-online.target cauce-v3-compose@prod.service
 Wants=network-online.target
-ConditionPathExists=/etc/cauce-v3/aliases/frontend.env
+ConditionPathExists=/etc/cauce-v3/aliases/teseo.env
 StartLimitIntervalSec=60s
 StartLimitBurst=5
 
@@ -11,7 +11,7 @@ Type=simple
 User=cauce-v3
 Group=cauce-v3
 UMask=0077
-Environment=CAUCE_ALIAS=frontend
+Environment=CAUCE_ALIAS=teseo
 Environment=CAUCE_TENANT=Hospital
 Environment=CAUCE_ROOM=grp.hospital
 Environment=CAUCE_HARNESS=openclaw
@@ -19,21 +19,21 @@ Environment=CAUCE_SEMBRAR_PERFIL=1
 Environment=CAUCE_OPENCLAW_WORKSPACE=/home/node/clawd
 Environment=CAUCE_ORIGIN_TRANSPORT=telegram
 Environment=CAUCE_ENVIRONMENT=production
-Environment=CAUCE_INSTANCE_ID=systemd-frontend
-Environment=CAUCE_STATE_DIR=/var/lib/cauce-v3/aliases/frontend
-Environment=CAUCE_RELAY_URL_ENV=CAUCE_FRONTEND_RELAY_URL
-Environment=CAUCE_TOKEN_PATH_ENV=CAUCE_FRONTEND_TOKEN_PATH
-Environment=CAUCE_CERT_PATH_ENV=CAUCE_FRONTEND_CERT_PATH
-Environment=CAUCE_KEY_PATH_ENV=CAUCE_FRONTEND_KEY_PATH
-Environment=CAUCE_CA_PATH_ENV=CAUCE_FRONTEND_CA_PATH
-Environment=CAUCE_EXEC_PATH_ENV=CAUCE_FRONTEND_EXEC_PATH
-EnvironmentFile=/etc/cauce-v3/aliases/frontend.env
-ExecStart=/opt/cauce-v3/ops/scripts/alias-runner.sh frontend
+Environment=CAUCE_INSTANCE_ID=systemd-teseo
+Environment=CAUCE_STATE_DIR=/var/lib/cauce-v3/aliases/teseo
+Environment=CAUCE_RELAY_URL_ENV=CAUCE_TESEO_RELAY_URL
+Environment=CAUCE_TOKEN_PATH_ENV=CAUCE_TESEO_TOKEN_PATH
+Environment=CAUCE_CERT_PATH_ENV=CAUCE_TESEO_CERT_PATH
+Environment=CAUCE_KEY_PATH_ENV=CAUCE_TESEO_KEY_PATH
+Environment=CAUCE_CA_PATH_ENV=CAUCE_TESEO_CA_PATH
+Environment=CAUCE_EXEC_PATH_ENV=CAUCE_TESEO_EXEC_PATH
+EnvironmentFile=/etc/cauce-v3/aliases/teseo.env
+ExecStart=/opt/cauce-v3/ops/scripts/alias-runner.sh teseo
 Restart=always
 RestartSec=5s
 TimeoutStopSec=90s
 KillMode=mixed
-StateDirectory=cauce-v3/aliases/frontend
+StateDirectory=cauce-v3/aliases/teseo
 StateDirectoryMode=0700
 NoNewPrivileges=true
 PrivateTmp=true
@@ -54,7 +54,7 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
 ReadOnlyPaths=/opt/cauce-v3
-ReadWritePaths=/var/lib/cauce-v3/aliases/frontend
+ReadWritePaths=/var/lib/cauce-v3/aliases/teseo
 
 [Install]
 WantedBy=multi-user.target

@@ -1,3 +1,3 @@
-68fde0b37de32c24ecaa3ec50c10898ddfa69543970afd66419c9f677346e074  cauce-v3-alias-backend.service
-6d6c362a98175d1403c519557d3644632005e1d5c711f5ef4e0e25874ea62f01  cauce-v3-alias-frontend.service
 c450cfb0abf0993054a25e5eec7f8ef2bcfb78eee5fd65075708de786cfb7620  cauce-v3-alias-operador.service
+dcd23984eaca2cdf3418f85b1bed92c4d580e157653ed0f1a921b2920ac6a684  cauce-v3-alias-perseo.service
+cd4d3dcf991a159a65aa54fa3fe08f0875067cce2a1cf7187469e60f8f01c8b4  cauce-v3-alias-teseo.service
