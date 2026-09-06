@@ -60,8 +60,32 @@ export function inputBoxState(pane: string | undefined): InputBoxState {
   };
 }
 
-/** Pattern that indicates the TUI is actively generating. */
-const IN_FLIGHT_MARK = /\besc(?:ape)?\s+to\s+interrupt\b/iu;
+/**
+ * Patterns that indicate the TUI is actively generating.
+ *
+ * `esc to interrupt` alone is NOT enough, and the gap was measured on 2026-09-06 with kratos:
+ * while a Bash tool runs, Claude Code REPLACES that hint with the background hint and the token
+ * counter, so its status band reads `· Fermenting… (14m 17s · ↓ 14.2k tokens)` with
+ * `(ctrl+b ctrl+b (twice) to run in background)` above it — and not one line says «interrupt».
+ * The runner concluded «not generating», the safety net fired, and the delivery died
+ * EXECUTION_TIMEOUT_AMBIGUOUS while the turn kept working for another 14 minutes. Ten of the
+ * fifteen timeouts of that day were kratos.
+ *
+ * Widening this can only make the detector say "in flight" MORE often, which is the safe
+ * direction: it holds the delivery (bounded by the correlation deadline) instead of killing a
+ * turn that is working.
+ */
+const IN_FLIGHT_MARKS: readonly RegExp[] = [
+  /\besc(?:ape)?\s+to\s+interrupt\b/iu,
+  // A tool is running: the TUI offers to send it to the background.
+  /\bctrl\+b\b[^\n]*\bto\s+run\s+in\s+background\b/iu,
+  // Streaming counter of the band: «(14m 17s · ↓ 14.2k tokens)».
+  /↓\s*[\d.]+\s*k?\s+tokens\b/iu,
+];
+
+function inFlightMark(line: string): boolean {
+  return IN_FLIGHT_MARKS.some((mark) => mark.test(line));
+}
 
 /** Determines whether the TUI is currently generating a reply. */
 export function turnInFlight(pane: string | undefined): boolean {
@@ -70,11 +94,18 @@ export function turnInFlight(pane: string | undefined): boolean {
   let end = lines.length;
   while (end > 0 && (lines[end - 1] ?? "").trim() === "") end -= 1;
   return lines.slice(Math.max(0, end - IN_FLIGHT_WINDOW), end)
-    .some((line) => IN_FLIGHT_MARK.test(line));
+    .some((line) => inFlightMark(line));
 }
 
-/** How many lines around the input box count as the "status band". */
-const IN_FLIGHT_WINDOW = 6;
+/**
+ * How many lines around the input box count as the "status band".
+ *
+ * 6 was too few, measured with kratos on 2026-09-06: its pane carries TWO extra statusline rows
+ * (the `ultracode` banner and the model/quota row) plus the tip line, so the band lands on the
+ * SEVENTH line from the bottom and fell outside the window. 12 covers that without reaching the
+ * conversation itself.
+ */
+const IN_FLIGHT_WINDOW = 12;
 
 /**
  * The contents of the last prompt line, with the cursor and box borders removed.
