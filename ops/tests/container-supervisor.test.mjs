@@ -9,6 +9,7 @@ import { test } from "node:test";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { materializeSupervisorOpsFixture } from "./fixtures/container-supervisor-ops-root.mjs";
 
 const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const supervisor = path.join(ops, "scripts/container-adapter-supervisor.sh");
@@ -31,6 +32,7 @@ if (droppedFromRoot) {
 
 test("container supervisor adversarial scenarios", async () => {
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cauce-container-supervisor-"));
+const fixtureOpsRoot = await materializeSupervisorOpsFixture(ops, temporary);
 const configRoot = path.join(temporary, "config");
 const bundleRoot = path.join(temporary, "bundle");
 const release = path.join(bundleRoot, "releases/release-1");
@@ -47,8 +49,6 @@ const firstGenerationStartedAt = "2026-07-22T10:00:00.000000000Z";
 const secondGenerationStartedAt = "2026-07-22T10:01:00.000000000Z";
 const labelKey = "com.example.runtime";
 const labelValue = "approved-runtime";
-// kant is the host-branch operator alias (stev/ctrl-infra); atlas/kratos are the codex pair co-located
-// on ws-humanizar; iza/jarvis are openclaw agents under /home/claw; argos moved to /home/dev (ctrl-infra); zeus is the fleet's only claude-harness alias.
 const aliasState = {
   kant: "/var/lib/cauce-v3/aliases/kant", argos: "/home/dev/.local/state/cauce-v3/argos",
   atlas: "/home/dev/.local/state/cauce-v3/atlas", iza: "/home/claw/.openclaw/cauce-v3/iza",
@@ -175,6 +175,7 @@ function environment(statePath) {
     PATH: `${binRoot}:${process.env.PATH ?? ""}`,
     CAUCE_CONTAINER_TEST_MODE: "1",
     CAUCE_ALLOW_ROOT_TEST_MODE: "1",
+    CAUCE_CONTAINER_OPS_ROOT: fixtureOpsRoot,
     CAUCE_CONTAINER_CONFIG_ROOT: configRoot,
     CAUCE_CONTAINER_BUNDLE_ROOT: bundleRoot,
     CAUCE_CONTAINER_PKI_ROOT: pkiRoot,

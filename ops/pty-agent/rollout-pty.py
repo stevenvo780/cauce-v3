@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rollout transaccional del agente PTY en los dos managers de la flota.
+"""Rollout transaccional del agente PTY en los managers declarados por la flota.
 
 El controlador se ejecuta desde un checkout de Cauce. El mismo fichero se envia como codigo
 efimero al manager remoto: no presupone que el host ya tenga una copia mutable del deployer. Las
@@ -74,8 +74,9 @@ def parse_inventory(value: Mapping[str, Any]) -> dict[str, UnitPresence]:
 
 
 def validate_inventories(fleet: Fleet, inventories: Mapping[str, Mapping[str, UnitPresence]], *, migrate_kant: bool) -> None:
-    if set(inventories) != set(MANAGERS):
-        fail("faltan inventarios de los dos managers")
+    inventory_managers = set(inventories)
+    if inventory_managers != set(fleet.managers):
+        fail("faltan inventarios de los managers declarados")
     observed: dict[str, list[str]] = {}
     for manager, inventory in inventories.items():
         for alias, presence in inventory.items():
@@ -178,15 +179,16 @@ class ProcessTransport(Transport):
         return response["result"]
 
 
-def parse_targets(values: Sequence[str]) -> dict[str, str]:
+def parse_targets(values: Sequence[str], required_managers: Sequence[str] = MANAGERS) -> dict[str, str]:
     targets: dict[str, str] = {}
     for value in values:
         manager, separator, target = value.partition("=")
         if not separator or manager not in MANAGERS or not target or manager in targets:
             fail(f"--manager invalido: {value}")
         targets[manager] = target
-    if set(targets) != set(MANAGERS):
-        fail("hay que declarar exactamente los managers server y kratos")
+    required = set(required_managers)
+    if not required or set(targets) != required:
+        fail("hay que declarar exactamente todos los managers usados por la flota")
     return targets
 
 
@@ -248,20 +250,21 @@ def controller(args: argparse.Namespace) -> dict[str, Any]:
     ops_root = script.parents[1]
     bundle = ReleaseBundle.from_ops_root(ops_root)
     fleet = Fleet.load(bundle.files["container-aliases.json"])
-    targets = parse_targets(args.manager)
+    targets = parse_targets(args.manager, fleet.managers)
+    managers = fleet.managers
     transports = {
         manager: ProcessTransport(manager, targets[manager], script)
-        for manager in MANAGERS
+        for manager in managers
     }
     inventories = {
         manager: parse_inventory(transports[manager].call("inventory", {}).get("inventory", {}))
-        for manager in MANAGERS
+        for manager in managers
     }
     retirement_results: list[dict[str, Any]] = []
     if getattr(args, "preflight_only", False) and getattr(args, "retire_historical", False):
         fail("--preflight-only no puede combinarse con --retire-historical")
     if args.command == "retire-historical" or getattr(args, "retire_historical", False):
-        for manager in MANAGERS:
+        for manager in managers:
             for alias, presence in sorted(inventories[manager].items()):
                 if alias not in fleet.retired or not presence.present:
                     continue
@@ -273,13 +276,15 @@ def controller(args: argparse.Namespace) -> dict[str, Any]:
                 )
         inventories = {
             manager: parse_inventory(transports[manager].call("inventory", {}).get("inventory", {}))
-            for manager in MANAGERS
+            for manager in managers
         }
     validate_inventories(
         fleet,
         inventories,
         migrate_kant=args.migrate_kant or args.command == "retire-historical",
     )
+    if args.migrate_kant and "kratos" not in inventories:
+        fail("--migrate-kant requiere declarar el manager kratos")
     if args.command == "retire-historical":
         return {
             "status": "ok",
@@ -327,15 +332,15 @@ def controller(args: argparse.Namespace) -> dict[str, Any]:
             "preflight": preflight_results,
         }
 
-    for manager in MANAGERS:
+    for manager in managers:
         transports[manager].call("publish", {"bundle": bundle.request_value()})
 
     kant_migration: dict[str, Any] | None = None
-    if args.migrate_kant and inventories["kratos"].get("kant", UnitPresence()).present:
+    if args.migrate_kant and inventories.get("kratos", {}).get("kant", UnitPresence()).present:
         kant_migration = transports["kratos"].call("deactivate-kant", {})
         refreshed = {
             manager: parse_inventory(transports[manager].call("inventory", {}).get("inventory", {}))
-            for manager in MANAGERS
+            for manager in managers
         }
         validate_inventories(fleet, refreshed, migrate_kant=False)
 

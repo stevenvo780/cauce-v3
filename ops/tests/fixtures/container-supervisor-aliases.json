@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 2,
+  "systemPrincipals": {},
+  "historicalAliases": {},
+  "aliases": {
+    "argos": {
+      "tenant": "Steven",
+      "room": "grp.steven",
+      "container": "ctrl-infra",
+      "systemdUser": "stev",
+      "user": "dev",
+      "home": "/home/dev",
+      "workspace": "/home/dev/clawd",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/argos",
+      "harness": "openclaw",
+      "membershipRole": "agent"
+    },
+    "atlas": {
+      "tenant": "Miguel",
+      "room": "grp.miguel",
+      "container": "ws-humanizar",
+      "systemdUser": "stev",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/atlas",
+      "harness": "codex",
+      "membershipRole": "agent"
+    },
+    "iza": {
+      "tenant": "Miguel",
+      "room": "grp.miguel",
+      "container": "claw-iza",
+      "systemdUser": "stev",
+      "user": "claw",
+      "home": "/home/claw",
+      "workspace": "/home/claw/clawd",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/iza",
+      "harness": "openclaw",
+      "membershipRole": "agent"
+    },
+    "jarvis": {
+      "tenant": "Steven",
+      "room": "grp.steven",
+      "container": "claw",
+      "systemdUser": "stev",
+      "user": "claw",
+      "home": "/home/claw",
+      "workspace": "/home/claw/clawd",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/jarvis",
+      "harness": "openclaw",
+      "membershipRole": "agent_notify"
+    },
+    "janus": {
+      "tenant": "Miguel",
+      "room": "grp.miguel",
+      "container": "claw-miguel",
+      "systemdUser": "stev",
+      "user": "claw",
+      "home": "/home/claw",
+      "workspace": "/home/claw/clawd",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/janus",
+      "harness": "openclaw",
+      "membershipRole": "operator"
+    },
+    "kant": {
+      "tenant": "Steven",
+      "room": "grp.steven",
+      "container": "ctrl-infra",
+      "registryContainer": "host:kratos",
+      "dockerHost": "kratos",
+      "systemdUser": "stev",
+      "user": "stev",
+      "home": "/home/stev",
+      "stateDirectory": "/var/lib/cauce-v3/aliases/kant",
+      "harness": "codex",
+      "membershipRole": "operator"
+    },
+    "kratos": {
+      "tenant": "Miguel",
+      "room": "grp.miguel",
+      "container": "ws-humanizar",
+      "systemdUser": "stev",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/kratos",
+      "harness": "claude",
+      "membershipRole": "agent"
+    },
+    "salva": {
+      "tenant": "Isa",
+      "room": "grp.isa",
+      "container": "ws-isa",
+      "dockerHost": "kratos",
+      "systemdUser": "stev",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/salva",
+      "harness": "claude",
+      "membershipRole": "agent"
+    },
+    "zeus": {
+      "tenant": "Steven",
+      "room": "grp.steven",
+      "container": "ws-zeus",
+      "systemdUser": "stev",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/zeus",
+      "harness": "claude",
+      "membershipRole": "agent_notify"
+    }
+  }
+}

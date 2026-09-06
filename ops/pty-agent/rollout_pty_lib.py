@@ -95,7 +95,7 @@ def manager_for_entry(entry: Mapping[str, Any], alias: str) -> str:
         return "server"
     if docker_host == "kratos":
         return "kratos"
-    fail(f"{alias}.dockerHost no pertenece a los dos managers admitidos: {docker_host!r}")
+    fail(f"{alias}.dockerHost no pertenece a los managers admitidos: {docker_host!r}")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -135,9 +135,12 @@ class Fleet:
         for alias, value in historical.items():
             if not isinstance(value, dict) or value.get("expectedEnabled") is not False:
                 fail(f"alias historico {alias} no permanece explicitamente deshabilitado")
-        if set(placements.values()) != set(MANAGERS):
-            fail("el catalogo no cubre exactamente los managers server y kratos")
         return cls(raw=raw, aliases=parsed, retired=retired, placements=placements)
+
+    @property
+    def managers(self) -> tuple[str, ...]:
+        present = set(self.placements.values())
+        return tuple(manager for manager in MANAGERS if manager in present)
 
     def entry_digest(self, alias: str) -> str:
         return sha256(canonical_json(self.aliases[alias]))

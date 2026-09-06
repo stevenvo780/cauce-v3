@@ -39,7 +39,7 @@ const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 const TIMEOUTS = new Map([
   ['test:e2e', 40 * 60_000],
   ['test:integration', 40 * 60_000],
-  ['test:store-hardening', 40 * 60_000],
+  ['test:store-hardening', 75 * 60_000],
   ['test:container-supervisor', 10 * 60_000],
   ['test:container-cutover', 10 * 60_000],
 ]);

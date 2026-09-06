@@ -14,6 +14,7 @@ from unittest import mock
 
 AGENT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 OPS_ROOT = AGENT_ROOT.parent
+FLEET_FIXTURE = OPS_ROOT / "tests/fixtures/container-supervisor-aliases.json"
 SPEC = importlib.util.spec_from_file_location("rollout_pty", AGENT_ROOT / "rollout-pty.py")
 assert SPEC is not None and SPEC.loader is not None
 rollout = importlib.util.module_from_spec(SPEC)
@@ -103,8 +104,50 @@ class FakeTransport(rollout.Transport):
 class RolloutPtyTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.bundle = rollout.ReleaseBundle.from_ops_root(OPS_ROOT)
+        cls.current_bundle = rollout.ReleaseBundle.from_ops_root(OPS_ROOT)
+        cls.fixture = tempfile.TemporaryDirectory()
+        fixture_root = pathlib.Path(cls.fixture.name)
+        for relative in rollout.RELEASE_FILES:
+            source = FLEET_FIXTURE if relative == "container-aliases.json" else OPS_ROOT / relative
+            destination = fixture_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes())
+        cls.bundle = rollout.ReleaseBundle.from_ops_root(fixture_root)
         cls.fleet = rollout.Fleet.load(cls.bundle.files["container-aliases.json"])
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.fixture.cleanup()
+
+    def test_current_instance_bundle_accepts_its_declared_manager_subset(self) -> None:
+        fleet = rollout.Fleet.load(self.current_bundle.files["container-aliases.json"])
+        self.assertEqual(fleet.managers, ("server",))
+        self.assertEqual(set(fleet.placements.values()), {"server"})
+
+    def test_current_instance_status_only_contacts_its_declared_manager(self) -> None:
+        constructed: list[tuple[str, str]] = []
+
+        def transport(manager: str, target: str, _script: pathlib.Path) -> FakeTransport:
+            constructed.append((manager, target))
+            result = FakeTransport()
+            result.call = mock.Mock(return_value={"inventory": {}})
+            return result
+
+        arguments = types.SimpleNamespace(
+            command="status", manager=["server=local"], migrate_kant=False,
+            preflight_only=False, retire_historical=False,
+        )
+        with mock.patch.object(rollout, "ProcessTransport", side_effect=transport):
+            result = rollout.controller(arguments)
+        self.assertEqual(constructed, [("server", "local")])
+        self.assertEqual(set(result["inventory"]), {"server"})
+
+        arguments.manager = ["server=local", "kratos=ssh:kratos"]
+        constructed.clear()
+        with mock.patch.object(rollout, "ProcessTransport", side_effect=transport):
+            with self.assertRaisesRegex(rollout.RolloutError, "exactamente"):
+                rollout.controller(arguments)
+        self.assertEqual(constructed, [])
 
     def worker(self, manager: str = "server") -> tuple[tempfile.TemporaryDirectory[str], TestWorker, FakeRunner]:
         temporary = tempfile.TemporaryDirectory()
@@ -137,7 +180,7 @@ class RolloutPtyTest(unittest.TestCase):
         )
         self.assertEqual(
             self.bundle.mapping_sha,
-            rollout.sha256((OPS_ROOT / "container-aliases.json").read_bytes()),
+            rollout.sha256(FLEET_FIXTURE.read_bytes()),
         )
 
     def test_sudo_ssh_transport_enters_the_real_user_bus_without_inheriting_root_home(self) -> None:
@@ -207,9 +250,9 @@ class RolloutPtyTest(unittest.TestCase):
                 )
 
     def test_both_physical_managers_must_be_declared_once(self) -> None:
-        with self.assertRaisesRegex(rollout.RolloutError, "exactamente"):
+        with self.assertRaisesRegex(rollout.RolloutError, "todos los managers"):
             rollout.parse_targets([])
-        with self.assertRaisesRegex(rollout.RolloutError, "exactamente"):
+        with self.assertRaisesRegex(rollout.RolloutError, "todos los managers"):
             rollout.parse_targets(["server=local"])
         with self.assertRaisesRegex(rollout.RolloutError, "invalido"):
             rollout.parse_targets(["server=local", "server=ssh:vpstn", "kratos=ssh:kratos"])
@@ -219,6 +262,12 @@ class RolloutPtyTest(unittest.TestCase):
             ]),
             {"server": "sudo-ssh:vpstn:stev", "kratos": "ssh:kratos"},
         )
+        self.assertEqual(
+            rollout.parse_targets(["server=local"], ("server",)),
+            {"server": "local"},
+        )
+        with self.assertRaisesRegex(rollout.RolloutError, "exactamente"):
+            rollout.parse_targets(["server=local", "kratos=ssh:kratos"], ("server",))
 
     def test_duplicate_json_keys_are_rejected_before_a_mapping_can_be_used(self) -> None:
         with self.assertRaisesRegex(rollout.RolloutError, "duplicada"):
