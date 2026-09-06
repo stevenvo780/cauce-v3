@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import {readFile, readdir, rm} from 'node:fs/promises';
+import {mkdir, readFile, readdir, rm, writeFile} from 'node:fs/promises';
 import { resolve } from "node:path";
 import test from "node:test";
-import {ATOMIC_STATE_FILES, CANONICAL_OPEN_CODE_SESSION_FILE, DurableStore} from '../src/sdk/durable-store.js';
+import {
+  ATOMIC_STATE_FILES,
+  CANONICAL_OPEN_CODE_SESSION_FILE,
+  DurableStore,
+  SHARED_TUI_POINTER_FILE,
+} from '../src/sdk/durable-store.js';
 import type { AtomicCrashWindow } from "./durable-store-fixtures.js";
 import {root, scopeA} from './durable-store-fixtures.js';
 
@@ -93,7 +98,11 @@ async function crashChildAtAtomicWindow(
   return window === "committed" ? next : previous;
 }
 test("SIGKILL recovery is deterministic at every atomic artifact window", async (t) => {
-  const images: Record<(typeof ATOMIC_STATE_FILES)[number], readonly [string, string]> = {
+  type StartupAtomicStateFile = Exclude<
+    (typeof ATOMIC_STATE_FILES)[number],
+    typeof SHARED_TUI_POINTER_FILE
+  >;
+  const images: Record<StartupAtomicStateFile, readonly [string, string]> = {
     "delivery-transaction.json": [
       `${JSON.stringify({
         version: 1,
@@ -150,7 +159,10 @@ test("SIGKILL recovery is deterministic at every atomic artifact window", async 
   };
   const windows: readonly AtomicCrashWindow[] = ["tmp", "backup-tmp", "backup", "committed"];
 
-  for (const target of ATOMIC_STATE_FILES) {
+  const startupTargets = ATOMIC_STATE_FILES.filter(
+    (target): target is StartupAtomicStateFile => target !== SHARED_TUI_POINTER_FILE,
+  );
+  for (const target of startupTargets) {
     for (const window of windows) {
       await t.test(`${target}:${window}`, async () => {
         const directory = resolve(root, `sigkill-${target.replaceAll(".", "-")}-${window}`);
@@ -172,3 +184,17 @@ test("SIGKILL recovery is deterministic at every atomic artifact window", async 
   }
 });
 
+test("generic startup leaves shared TUI pointer recovery to its lease-bound writer", async () => {
+  const directory = resolve(root, "shared-tui-pointer-not-startup-recovered");
+  await rm(directory, { recursive: true, force: true });
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const transaction = "77777777-7777-4777-8777-777777777777";
+  const target = resolve(directory, SHARED_TUI_POINTER_FILE);
+  const artifact = `${target}.${transaction}.atomic-tmp`;
+  await writeFile(target, "{}\n", { mode: 0o600 });
+  await writeFile(artifact, "{}\n", { mode: 0o600 });
+
+  await DurableStore.open(directory);
+
+  assert.equal(await readFile(artifact, "utf8"), "{}\n");
+});

@@ -14,6 +14,7 @@ import {
   EMPTY_OUTBOX,
   EMPTY_SESSIONS,
   MAX_INLINE_TERMINAL_RECORDS,
+  SHARED_TUI_POINTER_FILE,
   TERMINAL_HISTORY_DIRECTORY,
   type AtomicStateFile,
   type DeliveryTransactionFile,
@@ -31,6 +32,7 @@ export {
   MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS,
   MAX_SESSIONS_FILE_BYTES,
   TERMINAL_HISTORY_DIRECTORY,
+  SHARED_TUI_POINTER_FILE,
   UNSUPPORTED_DIRECTORY_FSYNC_CODES,
 } from "./durable-store/contracts.js";
 export type {
@@ -79,9 +81,14 @@ export class DurableStore extends DurableStoreSessions {
     }
     await prepareStateDirectory(directory);
     const directoryFsync = options.directoryFsync ?? defaultDirectoryFsync;
-    const startupRecoveryTargets: readonly AtomicStateFile[] = options.deferSessions === true
+    const recoveryTargets: readonly AtomicStateFile[] = options.deferSessions === true
       ? ["delivery-transaction.json", "inbox.json", "outbox.json", "fencing.json"]
       : ATOMIC_STATE_FILES;
+    const startupRecoveryTargets = recoveryTargets.filter(
+      (target): target is Exclude<AtomicStateFile, typeof SHARED_TUI_POINTER_FILE> => (
+        target !== SHARED_TUI_POINTER_FILE
+      ),
+    );
     await recoverAtomicArtifacts(directory, startupRecoveryTargets, directoryFsync);
     const terminalHistory = await TerminalHistory.open(
       join(directory, TERMINAL_HISTORY_DIRECTORY),
