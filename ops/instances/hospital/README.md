@@ -9,11 +9,12 @@ Este perfil instala una instancia separada de la flota central. Usa el proyecto 
 - tenant `Hospital`, sala `grp.hospital`;
 - `operador`: director, único receptor de Telegram y supervisor; delega todo desarrollo y no
   implementa cambios;
-- `backend`: developer Grok en contenedor y estado propios;
-- `frontend`: developer Grok en contenedor y estado propios;
+- `teseo`: developer generalista Grok en contenedor, contexto y candidato propios;
+- `perseo`: developer generalista Grok en contenedor, contexto y candidato propios;
 - los tres usan Grok con workspace, estado, sesión y contexto independientes;
-- cada developer tiene un candidato del CRM separado; el operador ve ambos y los integra al
-  candidato canónico; los developers no tienen red clínica, navegador ni `hospital_ops`;
+- cada developer puede recibir cualquier capa con archivos disjuntos; el operador ve ambos
+  candidatos y los integra al canónico; los developers no tienen red clínica, navegador ni
+  `hospital_ops`;
 - Cauce publica gateway y consola sólo sobre `172.17.0.1`, fuera de la interfaz pública del VPS.
 
 ## Orden de instalación
@@ -56,11 +57,24 @@ Este perfil instala una instancia separada de la flota central. Usa el proyecto 
 - Los tres adapters deben quedar `active` y PostgreSQL debe observar tres leases del tenant.
 - El backup nocturno debe mostrar dump, checksum y una restauración completa dentro de un
   contenedor sin red; `hospital-cauce-backup-monitor.service` valida su integridad cada seis horas.
-- Antes de considerar Telegram cerrado: mensaje permitido → operador → una tarea a `backend` y otra
-  a `frontend` → dos respuestas materializadas → una sola respuesta al DM.
+- Antes de considerar Telegram cerrado: mensaje permitido → operador → una tarea a `teseo` y otra
+  a `perseo` → dos respuestas materializadas → una sola respuesta al DM.
 - El token del bot vive únicamente en
   `/etc/cauce-v3-hospital/telegram-runtime/operador.token`, propietario 1000 y modo `0600`.
 - Las credenciales xAI viven en los estados OpenClaw separados; ningún script las copia.
+
+## Nombres lógicos de los developers
+
+Los aliases activos son `operador`, `teseo` y `perseo`. Teseo y Perseo son developers generalistas
+con las mismas capacidades; el director reparte archivos por entrega. Los nombres técnicos de los
+contenedores (`backend` y `frontend`) se conservan sólo como slots físicos para no migrar redes,
+volúmenes ni tokens.
+
+Una instalación que todavía tenga los aliases históricos debe detener primero Telegram y los tres
+adapters, ejecutar `rename-developers.sql` con psql y volver a correr `provision-agents.sh`. El SQL
+conserva `backend` y `frontend` deshabilitados para que mensajes y auditoría históricos no pierdan
+integridad; activos siguen siendo exactamente tres. La reversa no reescribe historia: restaura el
+dump completo tomado antes del corte y los estados respaldados.
 
 ## Rollback
 
@@ -74,8 +88,8 @@ No usar `docker compose down -v`.
      --project-directory deploy stop telegram-bridge
    sudo systemctl disable --now \
      cauce-v3-container-operador.service \
-     cauce-v3-container-backend.service \
-     cauce-v3-container-frontend.service
+     cauce-v3-container-teseo.service \
+     cauce-v3-container-perseo.service
    ```
 
 2. Restaurar los dos pins `CAUCE_RUNTIME_IMAGE` y `CAUCE_CONSOLE_IMAGE` desde el respaldo

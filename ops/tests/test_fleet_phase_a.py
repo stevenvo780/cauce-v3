@@ -18,7 +18,7 @@ EXPECTED_BY_HARNESS = {
     "openclaw": {"argos", "gaia", "hegel", "iza", "janus", "jarvis"},
 }
 HOSPITAL_EXPECTED_BY_HARNESS = {
-    "openclaw": {"backend", "frontend", "operador"},
+    "openclaw": {"operador", "perseo", "teseo"},
 }
 
 

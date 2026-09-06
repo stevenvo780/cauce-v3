@@ -1,24 +1,24 @@
 {
   "fleet": {
-    "backend": {
-      "container": "hospital-agent-openclaw-backend-gateway-1",
-      "enabled": true,
-      "harness": "openclaw",
-      "home": "/home/node",
-      "role": "agent",
-      "room": "grp.hospital",
-      "runtimeStateDirectory": "/home/node/.openclaw/cauce-v3/backend",
-      "tenant": "Hospital",
-      "user": "node"
-    },
-    "frontend": {
+    "perseo": {
       "container": "hospital-agent-openclaw-frontend-gateway-1",
       "enabled": true,
       "harness": "openclaw",
       "home": "/home/node",
       "role": "agent",
       "room": "grp.hospital",
-      "runtimeStateDirectory": "/home/node/.openclaw/cauce-v3/frontend",
+      "runtimeStateDirectory": "/home/node/.openclaw/cauce-v3/perseo",
+      "tenant": "Hospital",
+      "user": "node"
+    },
+    "teseo": {
+      "container": "hospital-agent-openclaw-backend-gateway-1",
+      "enabled": true,
+      "harness": "openclaw",
+      "home": "/home/node",
+      "role": "agent",
+      "room": "grp.hospital",
+      "runtimeStateDirectory": "/home/node/.openclaw/cauce-v3/teseo",
       "tenant": "Hospital",
       "user": "node"
     },
@@ -35,7 +35,10 @@
     }
   },
   "placement": {},
-  "retired": {},
+  "retired": {
+    "backend": {},
+    "frontend": {}
+  },
   "schemaVersion": 1,
   "systemPrincipals": {
     "console-proxy": {

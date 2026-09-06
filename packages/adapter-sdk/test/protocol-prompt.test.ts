@@ -382,7 +382,7 @@ test("el operador del Hospital dirige y sus developers escalan hacia él", () =>
   const developer = protocolPrompt(
     "request",
     undefined,
-    context({ self_alias: "backend", tenant_id: "Hospital", room_id: "grp.hospital" }),
+    context({ self_alias: "teseo", tenant_id: "Hospital", room_id: "grp.hospital" }),
   );
 
   assert.match(leader, /REPARTIR y VERIFICAR/u);

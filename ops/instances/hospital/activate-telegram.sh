@@ -31,7 +31,7 @@ COMPOSE=(
 for command in docker openssl python3 systemctl; do
   command -v "$command" >/dev/null || { echo "Falta $command" >&2; exit 1; }
 done
-for alias in operador backend frontend; do
+for alias in operador teseo perseo; do
   [ "$(systemctl is-active "cauce-v3-container-$alias.service" 2>/dev/null)" = active ] \
     || { echo "El adapter $alias no está activo" >&2; exit 1; }
 done

@@ -123,20 +123,20 @@ IFS=$'\t' read -r migrations tenants rooms agents profiles memberships acl_edges
     "SELECT (SELECT count(*) FROM schema_migrations),
             (SELECT count(*) FROM tenants),
             (SELECT count(*) FROM rooms),
-            (SELECT count(*) FROM agents),
-            (SELECT count(*) FROM agent_profiles),
-            (SELECT count(*) FROM memberships),
+            (SELECT count(*) FROM agents WHERE enabled),
+            (SELECT count(*) FROM agent_profiles p JOIN agents a USING (tenant_id, alias) WHERE a.enabled),
+            (SELECT count(*) FROM memberships WHERE enabled),
             (SELECT count(*) FROM acl_edges),
             (SELECT string_agg(a.alias || ':' || a.role_template_slug || ':' || m.role, ',' ORDER BY a.alias)
                FROM agents a
                JOIN memberships m ON m.tenant_id=a.tenant_id AND m.alias=a.alias
-              WHERE a.tenant_id='Hospital' AND m.room_id='grp.hospital'),
+              WHERE a.tenant_id='Hospital' AND m.room_id='grp.hospital' AND a.enabled AND m.enabled),
             (SELECT count(*) FROM information_schema.tables WHERE table_schema='public');"
 )
 if ! [[ "$migrations" =~ ^[1-9][0-9]*$ ]] \
    || [ "$tenants" != 1 ] || [ "$rooms" != 1 ] || [ "$agents" != 3 ] \
    || [ "$profiles" != 3 ] || [ "$memberships" != 4 ] || [ "$acl_edges" != 0 ] \
-   || [ "$topology" != 'backend:hospital-developer:agent,frontend:hospital-developer:agent,operador:hospital-lider:operator' ] \
+   || [ "$topology" != 'operador:hospital-lider:operator,perseo:hospital-developer:agent,teseo:hospital-developer:agent' ] \
    || ! [[ "$core_tables" =~ ^[1-9][0-9]*$ ]]; then
   echo "La restauración aislada no conserva la topología Hospital" >&2
   exit 1

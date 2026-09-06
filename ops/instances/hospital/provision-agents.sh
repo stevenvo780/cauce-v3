@@ -17,7 +17,7 @@ CONFIG_ROOT=$INSTANCE_ETC/container-aliases
 PKI_ROOT=$INSTANCE_ETC/container-pki
 LOCK_ROOT=/run/lock/hospital-cauce
 RELAY_URL=wss://172.17.0.1:18443/v3/ws
-ALIASES=(operador backend frontend)
+ALIASES=(operador teseo perseo)
 
 for command in docker openssl python3 systemctl flock; do
   command -v "$command" >/dev/null || { echo "Falta $command" >&2; exit 1; }
@@ -81,8 +81,8 @@ PY
 container_for() {
   case "$1" in
     operador) printf 'hospital-agent-openclaw-operator-gateway-1' ;;
-    backend) printf 'hospital-agent-openclaw-backend-gateway-1' ;;
-    frontend) printf 'hospital-agent-openclaw-frontend-gateway-1' ;;
+    teseo) printf 'hospital-agent-openclaw-backend-gateway-1' ;;
+    perseo) printf 'hospital-agent-openclaw-frontend-gateway-1' ;;
     *) return 1 ;;
   esac
 }
@@ -90,8 +90,8 @@ container_for() {
 token_key_for() {
   case "$1" in
     operador) printf 'OPENCLAW_OPERATOR_TOKEN' ;;
-    backend) printf 'OPENCLAW_BACKEND_TOKEN' ;;
-    frontend) printf 'OPENCLAW_FRONTEND_TOKEN' ;;
+    teseo) printf 'OPENCLAW_BACKEND_TOKEN' ;;
+    perseo) printf 'OPENCLAW_FRONTEND_TOKEN' ;;
     *) return 1 ;;
   esac
 }
@@ -99,8 +99,8 @@ token_key_for() {
 state_source_for() {
   case "$1" in
     operador) printf '/opt/hospital-agent/runtime/state-operator' ;;
-    backend) printf '/opt/hospital-agent/runtime/state-backend' ;;
-    frontend) printf '/opt/hospital-agent/runtime/state-frontend' ;;
+    teseo) printf '/opt/hospital-agent/runtime/state-backend' ;;
+    perseo) printf '/opt/hospital-agent/runtime/state-frontend' ;;
     *) return 1 ;;
   esac
 }

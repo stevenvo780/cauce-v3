@@ -1,58 +1,37 @@
+\set ON_ERROR_STOP on
+
 BEGIN;
 
-DO $$
+LOCK TABLE agents, memberships, agent_profiles, connection_leases, delivery_lane_fairness
+  IN SHARE ROW EXCLUSIVE MODE;
+
+DO $guard$
 DECLARE
-  hospital_exists boolean;
+  active_aliases text[];
 BEGIN
-  SELECT EXISTS (SELECT 1 FROM tenants WHERE id = 'Hospital') INTO hospital_exists;
+  SELECT array_agg(alias ORDER BY alias)
+    INTO active_aliases
+    FROM agents
+   WHERE tenant_id = 'Hospital' AND enabled;
 
-  IF hospital_exists THEN
-    IF (SELECT count(*) FROM tenants) <> 1
-       OR (SELECT count(*) FROM rooms) <> 1
-       OR NOT EXISTS (
-         SELECT 1 FROM tenants
-          WHERE id = 'Hospital' AND enabled = true AND is_hub = true
-       )
-       OR NOT EXISTS (
-         SELECT 1 FROM rooms
-          WHERE id = 'grp.hospital' AND tenant_id = 'Hospital' AND enabled = true
-       )
-       OR (SELECT count(*) FROM agents WHERE tenant_id = 'Hospital' AND enabled) <> 3
-       OR (SELECT count(*) FROM memberships WHERE tenant_id = 'Hospital' AND enabled) <> 4
-       OR EXISTS (SELECT 1 FROM acl_edges)
-    THEN
-      RAISE EXCEPTION 'hospital topology drifted; bootstrap refuses to rewrite it';
-    END IF;
-  ELSE
-    IF EXISTS (SELECT 1 FROM agents)
-       OR EXISTS (SELECT 1 FROM messages)
-       OR EXISTS (SELECT 1 FROM deliveries)
-       OR EXISTS (SELECT 1 FROM console_users)
-    THEN
-      RAISE EXCEPTION 'hospital bootstrap requires a fresh migrated database';
-    END IF;
-
-    DELETE FROM acl_edges;
-    DELETE FROM memberships;
-    DELETE FROM rooms;
-    DELETE FROM tenants;
+  IF active_aliases IS DISTINCT FROM ARRAY['backend', 'frontend', 'operador']::text[]
+     AND active_aliases IS DISTINCT FROM ARRAY['operador', 'perseo', 'teseo']::text[]
+  THEN
+    RAISE EXCEPTION 'hospital developer rename requires an exact old or new active topology: %',
+      active_aliases;
   END IF;
-END $$;
 
-INSERT INTO tenants(id, display_name, enabled, is_hub)
-VALUES ('Hospital', 'Hospital Conecta', true, true)
-ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO rooms(id, tenant_id, display_name, enabled)
-VALUES ('grp.hospital', 'Hospital', 'Equipo de desarrollo Hospital Conecta', true)
-ON CONFLICT (id) DO NOTHING;
-
-UPDATE role_policies
-   SET allow_route = true,
-       allow_read = true,
-       allow_control = true,
-       allow_notify = true
- WHERE role = 'operator';
+  IF EXISTS (
+    SELECT 1
+      FROM deliveries
+     WHERE recipient_tenant = 'Hospital'
+       AND recipient_alias IN ('backend', 'frontend', 'teseo', 'perseo')
+       AND terminal_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'hospital developer rename refuses non-terminal developer deliveries';
+  END IF;
+END
+$guard$;
 
 INSERT INTO agent_role_templates(slug, display_name, brief, enabled)
 VALUES
@@ -76,27 +55,20 @@ ON CONFLICT (slug) DO UPDATE SET
 INSERT INTO agents(
   tenant_id, alias, harness_id, display_name, enabled,
   container_name, runtime_user, home_directory, state_directory,
-  role_brief, role_template_slug
+  max_concurrent_deliveries, role_brief, role_template_slug
 )
 VALUES
   (
-    'Hospital', 'operador', 'openclaw', 'Operador de Hospital Conecta', true,
-    'hospital-agent-openclaw-operator-gateway-1', 'node', '/home/node',
-    '/home/node/.openclaw/cauce-v3/operador',
-    (SELECT brief FROM agent_role_templates WHERE slug = 'hospital-lider'),
-    'hospital-lider'
-  ),
-  (
     'Hospital', 'teseo', 'openclaw', 'Teseo · Developer generalista', true,
     'hospital-agent-openclaw-backend-gateway-1', 'node', '/home/node',
-    '/home/node/.openclaw/cauce-v3/teseo',
+    '/home/node/.openclaw/cauce-v3/teseo', 2,
     (SELECT brief FROM agent_role_templates WHERE slug = 'hospital-developer'),
     'hospital-developer'
   ),
   (
     'Hospital', 'perseo', 'openclaw', 'Perseo · Developer generalista', true,
     'hospital-agent-openclaw-frontend-gateway-1', 'node', '/home/node',
-    '/home/node/.openclaw/cauce-v3/perseo',
+    '/home/node/.openclaw/cauce-v3/perseo', 2,
     (SELECT brief FROM agent_role_templates WHERE slug = 'hospital-developer'),
     'hospital-developer'
   )
@@ -108,19 +80,40 @@ ON CONFLICT (tenant_id, alias) DO UPDATE SET
   runtime_user = EXCLUDED.runtime_user,
   home_directory = EXCLUDED.home_directory,
   state_directory = EXCLUDED.state_directory,
+  max_concurrent_deliveries = EXCLUDED.max_concurrent_deliveries,
   role_brief = EXCLUDED.role_brief,
   role_template_slug = EXCLUDED.role_template_slug,
   updated_at = now();
 
+UPDATE agents
+   SET role_brief = (SELECT brief FROM agent_role_templates WHERE slug = 'hospital-lider'),
+       display_name = 'Director de Hospital Conecta',
+       updated_at = now()
+ WHERE tenant_id = 'Hospital' AND alias = 'operador';
+
 INSERT INTO memberships(tenant_id, room_id, alias, role, enabled)
 VALUES
-  ('Hospital', 'grp.hospital', 'operador', 'operator', true),
   ('Hospital', 'grp.hospital', 'teseo', 'agent', true),
-  ('Hospital', 'grp.hospital', 'perseo', 'agent', true),
-  ('Hospital', 'grp.hospital', 'console-proxy', 'operator', true)
+  ('Hospital', 'grp.hospital', 'perseo', 'agent', true)
 ON CONFLICT (tenant_id, room_id, alias) DO UPDATE SET
   role = EXCLUDED.role,
   enabled = EXCLUDED.enabled;
+
+UPDATE memberships
+   SET enabled = false
+ WHERE tenant_id = 'Hospital'
+   AND room_id = 'grp.hospital'
+   AND alias IN ('backend', 'frontend');
+
+UPDATE agents
+   SET enabled = false,
+       updated_at = now()
+ WHERE tenant_id = 'Hospital' AND alias IN ('backend', 'frontend');
+
+DELETE FROM connection_leases
+ WHERE tenant_id = 'Hospital' AND alias IN ('backend', 'frontend', 'teseo', 'perseo');
+DELETE FROM delivery_lane_fairness
+ WHERE tenant_id = 'Hospital' AND alias IN ('backend', 'frontend', 'teseo', 'perseo');
 
 INSERT INTO agent_profiles(
   tenant_id, alias, purpose, role_summary, responsibilities,
@@ -190,45 +183,28 @@ ON CONFLICT (tenant_id, alias) DO UPDATE SET
   operating_rules = EXCLUDED.operating_rules,
   updated_at = now();
 
-DO $$
+DO $verify$
 BEGIN
-  IF (SELECT count(*) FROM tenants) <> 1
-     OR (SELECT count(*) FROM rooms WHERE tenant_id = 'Hospital') <> 1
-     OR (SELECT count(*) FROM agents WHERE tenant_id = 'Hospital' AND enabled) <> 3
-     OR (SELECT array_agg(alias || ':' || container_name || ':' || role_template_slug ORDER BY alias)
-           FROM agents WHERE tenant_id = 'Hospital' AND enabled) IS DISTINCT FROM ARRAY[
-         'operador:hospital-agent-openclaw-operator-gateway-1:hospital-lider',
-         'perseo:hospital-agent-openclaw-frontend-gateway-1:hospital-developer',
-         'teseo:hospital-agent-openclaw-backend-gateway-1:hospital-developer'
-       ]::text[]
-     OR (SELECT count(*) FROM agent_profiles p JOIN agents a USING (tenant_id, alias)
-          WHERE p.tenant_id = 'Hospital' AND a.enabled) <> 3
-     OR (SELECT count(*) FROM memberships WHERE tenant_id = 'Hospital' AND enabled) <> 4
-     OR (SELECT array_agg(alias || ':' || role ORDER BY alias)
-           FROM memberships WHERE tenant_id = 'Hospital' AND enabled) IS DISTINCT FROM ARRAY[
-         'console-proxy:operator', 'operador:operator', 'perseo:agent', 'teseo:agent'
-       ]::text[]
-     OR (SELECT count(*) FROM memberships WHERE tenant_id = 'Hospital' AND role = 'operator' AND enabled) <> 2
-     OR (SELECT count(*) FROM memberships WHERE tenant_id = 'Hospital' AND role = 'agent' AND enabled) <> 2
-     OR NOT EXISTS (
-       SELECT 1 FROM agent_role_templates
-        WHERE slug = 'hospital-lider' AND enabled = true
+  IF (SELECT array_agg(alias ORDER BY alias) FROM agents
+       WHERE tenant_id = 'Hospital' AND enabled)
+       IS DISTINCT FROM ARRAY['operador', 'perseo', 'teseo']::text[]
+     OR (SELECT array_agg(alias ORDER BY alias) FROM memberships
+          WHERE tenant_id = 'Hospital' AND room_id = 'grp.hospital'
+            AND role = 'agent' AND enabled)
+       IS DISTINCT FROM ARRAY['perseo', 'teseo']::text[]
+     OR EXISTS (
+       SELECT 1 FROM connection_leases
+        WHERE tenant_id = 'Hospital' AND alias IN ('backend', 'frontend', 'teseo', 'perseo')
      )
-     OR NOT EXISTS (
-       SELECT 1 FROM agent_role_templates
-        WHERE slug = 'hospital-developer' AND enabled = true
-     )
-     OR EXISTS (SELECT 1 FROM acl_edges)
   THEN
-    RAISE EXCEPTION 'hospital topology verification failed';
+    RAISE EXCEPTION 'hospital developer rename verification failed';
   END IF;
-END $$;
+END
+$verify$;
 
 COMMIT;
 
-SELECT
-  (SELECT count(*) FROM tenants) AS tenants,
-  (SELECT count(*) FROM rooms) AS rooms,
-  (SELECT count(*) FROM agents WHERE enabled) AS agents,
-  (SELECT count(*) FROM agent_profiles p JOIN agents a USING (tenant_id, alias) WHERE a.enabled) AS profiles,
-  (SELECT count(*) FROM acl_edges) AS acl_edges;
+SELECT alias, display_name, enabled, container_name, state_directory
+  FROM agents
+ WHERE tenant_id = 'Hospital'
+ ORDER BY enabled DESC, alias;

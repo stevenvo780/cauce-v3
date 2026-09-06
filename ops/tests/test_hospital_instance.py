@@ -49,7 +49,7 @@ class HospitalInstanceTests(unittest.TestCase):
                     "profile_count": 3,
                     "membership_count": 4,
                     "acl_edge_count": 0,
-                    "agent_topology": "backend:hospital-developer:agent,frontend:hospital-developer:agent,operador:hospital-lider:operator",
+                    "agent_topology": "operador:hospital-lider:operator,perseo:hospital-developer:agent,teseo:hospital-developer:agent",
                     "public_table_count": 30,
                     "isolated": True,
                     "network": "none",
@@ -230,17 +230,22 @@ class HospitalInstanceTests(unittest.TestCase):
         script = (INSTANCE / "activate-telegram.sh").read_text(encoding="utf-8")
 
         self.assertIn("--aliases operador", script)
-        self.assertNotIn("--aliases operador backend", script)
+        self.assertNotIn("--aliases operador teseo", script)
         self.assertIn('"operador": {"user_ids": [candidate]', script)
 
     def test_bootstrap_declares_exactly_three_hospital_agents(self) -> None:
         sql = (INSTANCE / "bootstrap.sql").read_text(encoding="utf-8")
 
-        for alias in ("operador", "backend", "frontend"):
+        for alias in ("operador", "teseo", "perseo"):
             self.assertIn(f"'Hospital', '{alias}'", sql)
         self.assertNotIn("ADD CONSTRAINT tenants_known", sql)
         self.assertIn("requires a fresh migrated database", sql)
         self.assertIn("hospital topology verification failed", sql)
+
+        rename = (INSTANCE / "rename-developers.sql").read_text(encoding="utf-8")
+        self.assertIn("ARRAY['operador', 'perseo', 'teseo']", rename)
+        self.assertIn("SET enabled = false", rename)
+        self.assertNotIn("DELETE FROM agents", rename)
 
     def test_redeploy_refuses_to_bypass_a_missing_backup(self) -> None:
         script = (INSTANCE / "bootstrap-core.sh").read_text(encoding="utf-8")
@@ -263,6 +268,9 @@ class HospitalInstanceTests(unittest.TestCase):
     def test_agent_provision_waits_for_real_fresh_leases(self) -> None:
         script = (INSTANCE / "provision-agents.sh").read_text(encoding="utf-8")
 
+        self.assertIn("ALIASES=(operador teseo perseo)", script)
+        self.assertIn("teseo) printf 'hospital-agent-openclaw-backend-gateway-1'", script)
+        self.assertIn("perseo) printf 'hospital-agent-openclaw-frontend-gateway-1'", script)
         self.assertIn("for _attempt in $(seq 1 24)", script)
         self.assertIn("last_heartbeat_at > now() - interval '60 seconds'", script)
         self.assertLess(script.index('[ "$leases" = 3 ] ||'), script.index("CAUCE_SMOKE_EXPECTED_AGENTS"))

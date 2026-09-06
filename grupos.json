@@ -5,15 +5,15 @@
       "agentes": [
         {
           "nombre": "operador",
-          "rol": "Líder técnico de Hospital Conecta: reparte, verifica e integra el trabajo de los developers"
+          "rol": "Director técnico de Hospital Conecta: delega, supervisa, verifica e integra"
         },
         {
-          "nombre": "backend",
-          "rol": "Developer de APIs, persistencia, seguridad y pruebas del CRM hospitalario"
+          "nombre": "teseo",
+          "rol": "Developer generalista con contexto y candidato propios"
         },
         {
-          "nombre": "frontend",
-          "rol": "Developer de interfaz, accesibilidad y experiencia hospitalaria del CRM"
+          "nombre": "perseo",
+          "rol": "Developer generalista con contexto y candidato propios"
         }
       ]
     }
