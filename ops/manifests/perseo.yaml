@@ -1,0 +1,19 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: perseo
+spec:
+  tenant: Hospital
+  room: grp.hospital
+  alias: perseo
+  harness: openclaw
+  profile: {seedOnConnect: true, configScope: alias, workspace: /home/node/clawd}
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_PERSEO_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_PERSEO_TOKEN_PATH
+    clientCertificate: CAUCE_PERSEO_CERT_PATH
+    clientKey: CAUCE_PERSEO_KEY_PATH
+    certificateAuthority: CAUCE_PERSEO_CA_PATH
+  process: {executablePathEnv: CAUCE_PERSEO_EXEC_PATH}
+  stateDirectory: /var/lib/cauce-v3/aliases/perseo

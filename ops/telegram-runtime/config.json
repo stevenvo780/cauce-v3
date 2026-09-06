@@ -1,48 +1,6 @@
 {
   "aliases": [
     {
-      "alias": "backend",
-      "tenant_id": "Hospital",
-      "room_id": "grp.hospital",
-      "token_file": "/run/cauce-telegram/backend.token",
-      "v2_shutdown_marker_file": "/run/cauce-telegram/backend.disabled",
-      "allowed_user_ids": [
-        "999999999999999999"
-      ],
-      "allowed_chat_ids": [
-        "-999999999999999999"
-      ],
-      "recipients": [
-        {
-          "tenant_id": "Hospital",
-          "alias": "backend"
-        }
-      ],
-      "poll_timeout_seconds": 25,
-      "poll_lease_ms": 60000
-    },
-    {
-      "alias": "frontend",
-      "tenant_id": "Hospital",
-      "room_id": "grp.hospital",
-      "token_file": "/run/cauce-telegram/frontend.token",
-      "v2_shutdown_marker_file": "/run/cauce-telegram/frontend.disabled",
-      "allowed_user_ids": [
-        "999999999999999999"
-      ],
-      "allowed_chat_ids": [
-        "-999999999999999999"
-      ],
-      "recipients": [
-        {
-          "tenant_id": "Hospital",
-          "alias": "frontend"
-        }
-      ],
-      "poll_timeout_seconds": 25,
-      "poll_lease_ms": 60000
-    },
-    {
       "alias": "operador",
       "tenant_id": "Hospital",
       "room_id": "grp.hospital",
@@ -58,6 +16,48 @@
         {
           "tenant_id": "Hospital",
           "alias": "operador"
+        }
+      ],
+      "poll_timeout_seconds": 25,
+      "poll_lease_ms": 60000
+    },
+    {
+      "alias": "perseo",
+      "tenant_id": "Hospital",
+      "room_id": "grp.hospital",
+      "token_file": "/run/cauce-telegram/perseo.token",
+      "v2_shutdown_marker_file": "/run/cauce-telegram/perseo.disabled",
+      "allowed_user_ids": [
+        "999999999999999999"
+      ],
+      "allowed_chat_ids": [
+        "-999999999999999999"
+      ],
+      "recipients": [
+        {
+          "tenant_id": "Hospital",
+          "alias": "perseo"
+        }
+      ],
+      "poll_timeout_seconds": 25,
+      "poll_lease_ms": 60000
+    },
+    {
+      "alias": "teseo",
+      "tenant_id": "Hospital",
+      "room_id": "grp.hospital",
+      "token_file": "/run/cauce-telegram/teseo.token",
+      "v2_shutdown_marker_file": "/run/cauce-telegram/teseo.disabled",
+      "allowed_user_ids": [
+        "999999999999999999"
+      ],
+      "allowed_chat_ids": [
+        "-999999999999999999"
+      ],
+      "recipients": [
+        {
+          "tenant_id": "Hospital",
+          "alias": "teseo"
         }
       ],
       "poll_timeout_seconds": 25,

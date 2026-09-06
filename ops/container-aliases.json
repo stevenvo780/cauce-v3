@@ -7,32 +7,15 @@
       "membershipRole": "operator"
     }
   },
-  "historicalAliases": {},
-  "aliases": {
+  "historicalAliases": {
     "backend": {
-      "tenant": "Hospital",
-      "room": "grp.hospital",
-      "container": "hospital-agent-openclaw-backend-gateway-1",
-      "systemdUser": "stev",
-      "user": "node",
-      "home": "/home/node",
-      "workspace": "/home/node/clawd",
-      "stateDirectory": "/home/node/.openclaw/cauce-v3/backend",
-      "harness": "openclaw",
-      "membershipRole": "agent"
+      "expectedEnabled": false
     },
     "frontend": {
-      "tenant": "Hospital",
-      "room": "grp.hospital",
-      "container": "hospital-agent-openclaw-frontend-gateway-1",
-      "systemdUser": "stev",
-      "user": "node",
-      "home": "/home/node",
-      "workspace": "/home/node/clawd",
-      "stateDirectory": "/home/node/.openclaw/cauce-v3/frontend",
-      "harness": "openclaw",
-      "membershipRole": "agent"
-    },
+      "expectedEnabled": false
+    }
+  },
+  "aliases": {
     "operador": {
       "tenant": "Hospital",
       "room": "grp.hospital",
@@ -44,6 +27,30 @@
       "stateDirectory": "/home/node/.openclaw/cauce-v3/operador",
       "harness": "openclaw",
       "membershipRole": "operator"
+    },
+    "perseo": {
+      "tenant": "Hospital",
+      "room": "grp.hospital",
+      "container": "hospital-agent-openclaw-frontend-gateway-1",
+      "systemdUser": "stev",
+      "user": "node",
+      "home": "/home/node",
+      "workspace": "/home/node/clawd",
+      "stateDirectory": "/home/node/.openclaw/cauce-v3/perseo",
+      "harness": "openclaw",
+      "membershipRole": "agent"
+    },
+    "teseo": {
+      "tenant": "Hospital",
+      "room": "grp.hospital",
+      "container": "hospital-agent-openclaw-backend-gateway-1",
+      "systemdUser": "stev",
+      "user": "node",
+      "home": "/home/node",
+      "workspace": "/home/node/clawd",
+      "stateDirectory": "/home/node/.openclaw/cauce-v3/teseo",
+      "harness": "openclaw",
+      "membershipRole": "agent"
     }
   }
 }

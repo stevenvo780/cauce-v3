@@ -1,25 +1,5 @@
 {
   "aliases": {
-    "backend": {
-      "container": "hospital-agent-openclaw-backend-gateway-1",
-      "enabled": true,
-      "harness": "openclaw",
-      "home": "/home/node",
-      "room": "grp.hospital",
-      "stateDirectory": "/home/node/.openclaw/cauce-v3/backend",
-      "tenant": "Hospital",
-      "user": "node"
-    },
-    "frontend": {
-      "container": "hospital-agent-openclaw-frontend-gateway-1",
-      "enabled": true,
-      "harness": "openclaw",
-      "home": "/home/node",
-      "room": "grp.hospital",
-      "stateDirectory": "/home/node/.openclaw/cauce-v3/frontend",
-      "tenant": "Hospital",
-      "user": "node"
-    },
     "operador": {
       "container": "hospital-agent-openclaw-operator-gateway-1",
       "enabled": true,
@@ -27,6 +7,26 @@
       "home": "/home/node",
       "room": "grp.hospital",
       "stateDirectory": "/home/node/.openclaw/cauce-v3/operador",
+      "tenant": "Hospital",
+      "user": "node"
+    },
+    "perseo": {
+      "container": "hospital-agent-openclaw-frontend-gateway-1",
+      "enabled": true,
+      "harness": "openclaw",
+      "home": "/home/node",
+      "room": "grp.hospital",
+      "stateDirectory": "/home/node/.openclaw/cauce-v3/perseo",
+      "tenant": "Hospital",
+      "user": "node"
+    },
+    "teseo": {
+      "container": "hospital-agent-openclaw-backend-gateway-1",
+      "enabled": true,
+      "harness": "openclaw",
+      "home": "/home/node",
+      "room": "grp.hospital",
+      "stateDirectory": "/home/node/.openclaw/cauce-v3/teseo",
       "tenant": "Hospital",
       "user": "node"
     }
