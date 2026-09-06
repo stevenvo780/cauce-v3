@@ -341,10 +341,9 @@ for line in sys.stdin:
       exec docker exec -it --user "$cuser" "$ctr" \
         tmux -L "$TMUX_SOCKET" attach-session -t "cauce-$a:agente"
     fi
-    # El interruptor esta encendido pero la sesion no se pudo abrir. Se DICE, y se cae a lo de
-    # siempre: exactamente lo contrario del fallback silencioso que mato al intento anterior.
-    printf "  %sla sesion compartida esta configurada pero NO se pudo abrir:%s\n" "$c_err" "$c_reset"
+    printf "  %sla sesion compartida esta configurada pero NO se pudo abrir; no se lanzara una sesion aparte:%s\n" "$c_err" "$c_reset"
     printf "  %s%s%s\n" "$c_dim" "${salida:-sin detalle}" "$c_reset"
+    return 1
   elif [[ $harness == openclaw ]]; then
     local lineas clave_oc n
     mapfile -t lineas < <(openclaw_sesiones "$a" "$ctr" "$cuser" "$state")

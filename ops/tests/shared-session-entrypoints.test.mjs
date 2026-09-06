@@ -30,6 +30,7 @@ async function fixture(harness) {
     mkdir(config, { recursive: true }),
     mkdir(scripts, { recursive: true }),
     mkdir(localBin, { recursive: true }),
+    writeFile(log, ""),
   ]);
   await writeFile(path.join(config, "zeus.env"), [
     "SHARED_SESSION=1",
@@ -219,9 +220,16 @@ cmd_entrar native
           encoding: "utf8",
           env: { ...test.environment, HOME: path.join(test.directory, "unrelated-home") },
         });
+        const calls = await readFile(test.log, "utf8");
+        if (shared) {
+          assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+          assert.match(result.stdout, /NO se pudo abrir; no se lanzara una sesion aparte/u);
+          assert.doesNotMatch(result.stdout, /modo: .*APARTE/u);
+          assert.equal(calls, "");
+          continue;
+        }
         assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
         assert.match(result.stdout, /APARTE/u);
-        const calls = await readFile(test.log, "utf8");
         assert.match(calls, hostNative ? /^NATIVE\t/u : /^DOCKER\t/u);
         assert.ok(calls.includes(harness === "claude" ? "--dangerously-skip-permissions" : "--yolo"), calls);
         if (harness === "claude") assert.ok(calls.includes("--permission-mode\tbypassPermissions"), calls);
