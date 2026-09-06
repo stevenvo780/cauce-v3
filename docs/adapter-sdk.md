@@ -95,6 +95,46 @@ primera compactación no es seguro volver a una versión del SDK que desconozca
 `terminal-history/`, porque esa versión vería solo el inbox inline; cualquier rollback debe
 conservar un binario compatible con este formato.
 
+## Reanudación exacta de la TUI Claude
+
+`shared-tui-session.json` pertenece al directorio de estado del alias, no al directorio de
+credenciales ni a `sessions.json`. Sólo guarda versión de esquema, binding de alias/harness,
+rutas canónicas de configuración/workspace e identificador nativo. No contiene prompts,
+transcripts, orígenes ni nonces. El identificador no debe imprimirse en diagnósticos.
+
+El único escritor es el consumidor de la sesión compartida, protegido por su lease local. Antes
+de conectar recupera los artefactos atómicos; la apertura genérica de `DurableStore` y el CLI no
+recuperan ni modifican este archivo. Los lectores rechazan artefactos pendientes. Escritura,
+fsync y rollback reutilizan el protocolo durable existente; el CAS se serializa entre instancias
+del mismo proceso, no sustituye una exclusión entre procesos.
+
+La publicación requiere un sobre terminal estructurado válido, nonce exacto de 256 bits,
+crecimiento posterior al corte y un único archivo candidato. Se cruzan el UUID del archivo y
+el identificador de la respuesta. Si hay una entrada inyectada exacta, su identificador también
+debe coincidir. Un turno fusionado puede acreditar la sesión mediante el sobre correlacionado
+sin afirmar que exista una entrada propia ni una relación de ascendencia.
+
+El lector verifica tipo, propietario, enlaces, modo, inode, timestamps y prefijo SHA-256 del
+archivo anterior. La generación de terminal se vuelve a comprobar dentro de la sección
+serializada antes de publicar. La lectura se limita a 1000 archivos, 128 MiB por archivo y
+256 MiB por fase. Un fallo de acreditación o persistencia genera aviso, pero no convierte un
+trabajo ya terminado en un reintento. El fallback aislado nunca publica este pointer.
+
+Adaptador, CLI y guardias usan el mismo binding; los entrypoints pasan `--state` explícitamente.
+Con pointer válido y transcript exacto seguro se usa `--resume UUID`. Sin pointer ni historial
+se crea un UUID nuevo con `--session-id`, que no se acredita hasta observar su primer sobre.
+Estos argumentos corresponden a la [referencia oficial de Claude Code](https://code.claude.com/docs/en/cli-usage).
+Historial heredado sin pointer, corrupción o reanudación fallida no autorizan `--continue` ni
+rehacer la conversación en blanco. Los artefactos y la TUI existente se conservan sin modificar;
+el bus puede usar el fallback aislado, que no hereda ese contexto.
+Una TUI existente puede seguir trabajando y acreditar el pointer con su siguiente sobre.
+
+Este registro identifica la última sesión acreditada por el bus: no recupera retroactivamente
+una conversación humana desconocida ni demuestra la adopción de un perfil por el modelo.
+Si el humano cambia a otra sesión nativa después del último sobre, todavía se necesita una nueva
+acreditación. Los mensajes dentro de la misma sesión no invalidan el pointer. Codex conserva su
+política de reanudación previa en esta revisión.
+
 ## Ficheros en el borde de delegación
 
 `messages[].artifacts` transporta ficheros de un agente a otro con la misma forma que
