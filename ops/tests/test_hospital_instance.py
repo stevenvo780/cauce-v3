@@ -243,9 +243,13 @@ class HospitalInstanceTests(unittest.TestCase):
         self.assertIn("hospital topology verification failed", sql)
 
         rename = (INSTANCE / "rename-developers.sql").read_text(encoding="utf-8")
+        restore = (INSTANCE / "restore-developer-aliases.sql").read_text(encoding="utf-8")
         self.assertIn("ARRAY['operador', 'perseo', 'teseo']", rename)
         self.assertIn("SET enabled = false", rename)
         self.assertNotIn("DELETE FROM agents", rename)
+        self.assertIn("restore the pre-cutover dump instead", restore)
+        self.assertIn("DELETE FROM agents", restore)
+        self.assertIn("ARRAY['backend', 'frontend', 'operador']", restore)
 
     def test_redeploy_refuses_to_bypass_a_missing_backup(self) -> None:
         script = (INSTANCE / "bootstrap-core.sh").read_text(encoding="utf-8")

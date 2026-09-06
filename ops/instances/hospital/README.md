@@ -73,8 +73,9 @@ volúmenes ni tokens.
 Una instalación que todavía tenga los aliases históricos debe detener primero Telegram y los tres
 adapters, ejecutar `rename-developers.sql` con psql y volver a correr `provision-agents.sh`. El SQL
 conserva `backend` y `frontend` deshabilitados para que mensajes y auditoría históricos no pierdan
-integridad; activos siguen siendo exactamente tres. La reversa no reescribe historia: restaura el
-dump completo tomado antes del corte y los estados respaldados.
+integridad; activos siguen siendo exactamente tres. Antes de que los nombres nuevos produzcan
+mensajes, `restore-developer-aliases.sql` ofrece la reversa transaccional. Después de la primera
+entrega nueva, la reversa restaura el dump completo tomado antes del corte y los estados respaldados.
 
 ## Rollback
 
