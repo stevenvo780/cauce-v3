@@ -1,4 +1,6 @@
 import { isIP } from "node:net"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { signalAborted } from "../runtime-state.js";
 import { ProcessExecutionError } from "./errors.js";
 import { readBearerTokenFile } from "./secure-files.js";
@@ -35,32 +37,22 @@ function loopbackEndpoint(endpoint: string): URL {
   return parsed;
 }
 
-async function boundedResponse(response: Response, limit: number): Promise<string> {
-  if (response.body === null) return "";
-  const reader = response.body.getReader();
+async function boundedResponse(response: IncomingMessage, limit: number): Promise<string> {
   const chunks: Uint8Array[] = [];
   let bytes = 0;
-  for (;;) {
-    const next = await reader.read();
-    if (next.done) break;
-    bytes += next.value.byteLength;
+  for await (const chunk of response as AsyncIterable<Uint8Array>) {
+    bytes += chunk.byteLength;
     if (bytes > limit) {
-      await reader.cancel().catch(() => undefined);
+      response.destroy();
       throw new ProcessExecutionError(
         "OPENCLAW_OUTPUT_LIMIT_AMBIGUOUS",
         "OpenClaw API output exceeded the configured limit after dispatch",
         false,
       );
     }
-    chunks.push(next.value);
+    chunks.push(chunk);
   }
-  const joined = new Uint8Array(bytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    joined.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(joined);
+  return new TextDecoder().decode(Buffer.concat(chunks, bytes));
 }
 
 /** Secure, non-streaming OpenClaw OpenAI-compatible loopback client. */
@@ -111,31 +103,25 @@ export class OpenClawApiRunner implements CommandRunner {
 
     try {
       dispatched = true;
-      const response = await fetch(this.endpoint, {
-        method: "POST",
-        redirect: "error",
-        signal: controller.signal,
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
+      const { stdout, status } = await this.requestCompletion(
+        JSON.stringify({
           model: this.agentTarget,
           stream: false,
           ...(request.sessionId === undefined ? {} : { user: request.sessionId }),
           messages: [{ role: "user", content: request.stdin }],
         }),
-      });
-      const stdout = await boundedResponse(response, this.maxOutputBytes);
-      if (!response.ok) {
-        if (response.status === 425 || response.status === 429) {
+        token,
+        controller.signal,
+      );
+      if (status < 200 || status >= 300) {
+        if (status === 425 || status === 429) {
           throw new ProcessExecutionError(
             "OPENCLAW_HTTP_PRE_EXECUTION",
             "OpenClaw API rejected the request before execution",
             true,
           );
         }
-        const ambiguous = response.status === 408 || response.status >= 500;
+        const ambiguous = status === 408 || status >= 500;
         throw new ProcessExecutionError(
           ambiguous ? "OPENCLAW_HTTP_AMBIGUOUS" : "OPENCLAW_HTTP",
           ambiguous
@@ -152,7 +138,7 @@ export class OpenClawApiRunner implements CommandRunner {
         timedOut: false,
         cancelled: false,
       };
-    } catch (error) { // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Abort callbacks can mutate both flags before fetch rejects.
+    } catch (error) { // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Abort callbacks can mutate both flags before the transport rejects.
       if (timedOut || cancelled) {
         if (!dispatched) throw this.cancelledBeforeDispatch();
         return this.abortedResult(timedOut);
@@ -167,6 +153,46 @@ export class OpenClawApiRunner implements CommandRunner {
       clearTimeout(timeout);
       request.signal.removeEventListener("abort", onAbort);
     }
+  }
+
+  private requestCompletion(body: string, token: string, signal: AbortSignal): Promise<{ stdout: string; status: number }> {
+    return new Promise((resolveResponse, rejectResponse) => {
+      let responseReceived = false;
+      const send = this.endpoint.protocol === "https:" ? httpsRequest : httpRequest;
+      const outgoing = send(this.endpoint, {
+        method: "POST",
+        agent: false,
+        timeout: 0,
+        signal,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+          "accept-encoding": "identity",
+        },
+      }, (response) => {
+        responseReceived = true;
+        const status = response.statusCode ?? 500;
+        if ([301, 302, 303, 307, 308].includes(status)) {
+          response.destroy();
+          rejectResponse(new Error("OpenClaw API redirects are forbidden"));
+          return;
+        }
+        void boundedResponse(response, this.maxOutputBytes).then(
+          (stdout) => { resolveResponse({ stdout, status }); },
+          rejectResponse,
+        );
+      });
+      outgoing.once("error", rejectResponse);
+      outgoing.once("upgrade", (_response, socket) => {
+        socket.destroy();
+        rejectResponse(new Error("OpenClaw API protocol upgrades are forbidden"));
+      });
+      outgoing.once("close", () => {
+        if (!responseReceived) rejectResponse(new Error("OpenClaw API connection closed before a response"));
+      });
+      outgoing.end(body);
+    });
   }
 
   private abortedResult(timedOut: boolean): CommandRunResult {
