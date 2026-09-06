@@ -95,6 +95,13 @@ primera compactación no es seguro volver a una versión del SDK que desconozca
 `terminal-history/`, porque esa versión vería solo el inbox inline; cualquier rollback debe
 conservar un binario compatible con este formato.
 
+Conservar la conversación no equivale a recuperar una entrega interrumpida. Si el consumidor
+reinicia con una entrega `started` y recibo de intención de ejecución, la recuperación termina
+en `INTERRUPTED_AMBIGUOUS`, sin reintento: no vuelve a recoger su sobre ni a ejecutar el pedido.
+Sólo el caso `preinvoke-v1` sin recibo remoto admite un nuevo intento seguro. Para actualizar
+trabajo iniciado hay que impedir nuevas reclamaciones y dejar que el mismo proceso alcance
+el ACK terminal y vacíe su WAL antes del corte; no basta con conservar la TUI o su cuarentena.
+
 ## Reanudación exacta de la TUI Claude
 
 `shared-tui-session.json` pertenece al directorio de estado del alias, no al directorio de
