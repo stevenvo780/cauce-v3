@@ -6,8 +6,10 @@
 # Idempotent: `ensure` leaves the session alone when it already exists.
 set -uo pipefail
 A=${1:?uso: cauce-tmux-panel <alias>}
-OPS=$HOME/.local/share/cauce-v3/ops
-CONFIG=$HOME/.config/cauce-v3/container-aliases
+panel_home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)
+[[ -n "$panel_home" && -d "$panel_home" ]] || panel_home=$HOME
+OPS=$panel_home/.local/share/cauce-v3/ops
+CONFIG=$panel_home/.config/cauce-v3/container-aliases
 
 grep -qx 'SHARED_SESSION=1' "$CONFIG/$A.env" 2>/dev/null || {
   echo "$A no tiene sesión compartida configurada: no hay panel que crear"; exit 0; }

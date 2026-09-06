@@ -44,6 +44,10 @@ print("Steven\\tgrp.steven\\tws-zeus\\tdev\\t/home/dev\\t/state/zeus\\t${harness
   await executable(path.join(localBin, "cauce-tmux-panel"), `#!/usr/bin/env bash
 printf 'PANEL\\t%s\\n' "$*" >> "$CAUCE_TEST_LOG"
 `);
+  await executable(path.join(bin, "getent"), `#!/usr/bin/env bash
+[ "\${CAUCE_TEST_NO_PASSWD:-}" != 1 ] || exit 2
+printf 'test:x:1000:1000::%s:/bin/bash\\n' "$CAUCE_TEST_ACCOUNT_HOME"
+`);
   await executable(path.join(bin, "docker"), `#!/usr/bin/env bash
 {
   printf 'DOCKER'
@@ -80,6 +84,7 @@ printf '{"present":true,"pid":1}\\n'
       HOME: home,
       PATH: `${bin}:${process.env.PATH ?? ""}`,
       CAUCE_TEST_LOG: log,
+      CAUCE_TEST_ACCOUNT_HOME: home,
     },
   };
 }
@@ -105,6 +110,14 @@ for (const harness of ["claude", "codex"]) {
     const credentialValue = harness === "claude" ? "/home/dev/.claude" : "/home/dev/.codex";
 
     run(panel, ["zeus"], test.environment);
+    assertInvocation(await readFile(test.log, "utf8"), "ensure", harness, credentialKey, credentialValue);
+
+    await writeFile(test.log, "");
+    run(panel, ["zeus"], { ...test.environment, HOME: path.join(test.directory, "native-workspace") });
+    assertInvocation(await readFile(test.log, "utf8"), "ensure", harness, credentialKey, credentialValue);
+
+    await writeFile(test.log, "");
+    run(panel, ["zeus"], { ...test.environment, CAUCE_TEST_NO_PASSWD: "1" });
     assertInvocation(await readFile(test.log, "utf8"), "ensure", harness, credentialKey, credentialValue);
 
     await writeFile(test.log, "");
