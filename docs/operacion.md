@@ -77,6 +77,14 @@ systemctl --user daemon-reload && systemctl --user enable --now cauce-v3-contain
 
 ## 3. Diagnóstico y recuperación de un adaptador caído
 
+`cauce <alias>` resuelve primero `~/.config/cauce-v3/alias-host.tsv` del usuario real de la
+cuenta. Cada alias presente debe tener un único registro de dos campos: alias y `local`, `vps` o
+`ssh:usuario@host`. El destino SSH ejecuta el CLI instalado en el home real de esa cuenta;
+no busca el alias en el inventario local ni abre otra conversación como alternativa. Una
+ruta presente desconocida o duplicada, o un mapa existente ilegible, aborta el comando. Por
+compatibilidad, un mapa inexistente o un alias ausente se resuelve como local. El mapa de
+acceso no sustituye el inventario del bus: verificar el destino y la respuesta del modelo.
+
 ```bash
 ops/cli/cauce <alias> estado          # columna ADAPTADOR: activo/failed/inactive
 systemctl --user status cauce-v3-container-<alias>.service   # host-<alias> para agentes host-native
