@@ -67,48 +67,120 @@ if body.get("ok") is not True or not isinstance(result, dict) or result.get("use
 PY
 
 activation_nonce="hospital-$(openssl rand -hex 8)"
-issued_at=$(date +%s)
-echo "Mandá /start $activation_nonce por DM a @$EXPECTED_BOT y después presioná Enter acá."
-read -r _confirmation
-
-python3 - "$TEMP_TOKEN" "$ALLOWLIST" "$activation_nonce" "$issued_at" <<'PY'
+python3 - "$TEMP_TOKEN" "$ALLOWLIST" "$activation_nonce" "$EXPECTED_BOT" <<'PY'
 from pathlib import Path
 import json
+import math
 import os
 import sys
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 
 token = Path(sys.argv[1]).read_text(encoding="utf-8").strip()
 target = Path(sys.argv[2])
-expected_text = "/start " + sys.argv[3]
-issued_at = int(sys.argv[4])
-query = urllib.parse.urlencode({"timeout": "30", "allowed_updates": json.dumps(["message"])})
-url = "https://api.telegram.org/bot" + urllib.parse.quote(token, safe=":") + "/getUpdates?" + query
-with urllib.request.urlopen(url, timeout=40) as response:
-    body = json.load(response)
-updates = body.get("result") if isinstance(body, dict) else None
-if body.get("ok") is not True or not isinstance(updates, list):
+nonce = sys.argv[3]
+expected_bot = sys.argv[4]
+api = "https://api.telegram.org/bot" + urllib.parse.quote(token, safe=":") + "/"
+
+
+def telegram(method: str, parameters: dict[str, str | int]) -> object:
+    query = urllib.parse.urlencode(parameters)
+    with urllib.request.urlopen(api + method + "?" + query, timeout=int(parameters.get("timeout", 0)) + 10) as response:
+        body = json.load(response)
+    result = body.get("result") if isinstance(body, dict) else None
+    if body.get("ok") is not True:
+        raise SystemExit(f"Telegram rechazó {method}")
+    return result
+
+
+webhook = telegram("getWebhookInfo", {})
+if isinstance(webhook, dict) and webhook.get("url"):
+    raise SystemExit("El bot tiene un webhook activo; retiralo antes de usar Cauce")
+
+backlog = telegram(
+    "getUpdates",
+    {"offset": -1, "limit": 1, "timeout": 0, "allowed_updates": json.dumps(["message"])},
+)
+if not isinstance(backlog, list):
     raise SystemExit("Telegram no devolvió actualizaciones válidas")
+offset = None
+for previous in backlog:
+    if isinstance(previous, dict) and isinstance(previous.get("update_id"), int):
+        offset = previous["update_id"] + 1
+
+issued_at = int(time.time()) - 5
+deadline = time.monotonic() + 300
+link = f"https://t.me/{expected_bot}?start={nonce}"
+print(f"Abrí {link}, tocá Start y dejá esta terminal abierta; espero hasta 5 minutos.", flush=True)
+
 candidate = None
-for update in reversed(updates):
-    message = update.get("message") if isinstance(update, dict) else None
-    chat = message.get("chat") if isinstance(message, dict) else None
-    sender = message.get("from") if isinstance(message, dict) else None
-    if (
-        isinstance(chat, dict)
-        and isinstance(sender, dict)
-        and chat.get("type") == "private"
-        and str(chat.get("id", "")) == str(sender.get("id", ""))
-        and message.get("text") == expected_text
-        and isinstance(message.get("date"), int)
-        and message["date"] >= issued_at
-    ):
-        candidate = str(chat["id"])
-        break
-if candidate is None or not candidate.isdigit():
-    raise SystemExit("No encontré un /start privado reciente; repetí la activación")
+candidate_update_id = None
+observed = 0
+private_messages = 0
+start_commands = 0
+while candidate is None and time.monotonic() < deadline:
+    remaining = max(1, math.ceil(deadline - time.monotonic()))
+    parameters: dict[str, str | int] = {
+        "timeout": min(20, remaining),
+        "limit": 100,
+        "allowed_updates": json.dumps(["message"]),
+    }
+    if offset is not None:
+        parameters["offset"] = offset
+    updates = telegram("getUpdates", parameters)
+    if not isinstance(updates, list):
+        raise SystemExit("Telegram no devolvió actualizaciones válidas")
+    for update in updates:
+        if not isinstance(update, dict):
+            continue
+        update_id = update.get("update_id")
+        if isinstance(update_id, int):
+            offset = update_id + 1
+        observed += 1
+        message = update.get("message")
+        chat = message.get("chat") if isinstance(message, dict) else None
+        sender = message.get("from") if isinstance(message, dict) else None
+        if not (
+            isinstance(chat, dict)
+            and isinstance(sender, dict)
+            and chat.get("type") == "private"
+            and str(chat.get("id", "")) == str(sender.get("id", ""))
+        ):
+            continue
+        private_messages += 1
+        text = message.get("text")
+        parts = text.replace("\u00a0", " ").strip().split() if isinstance(text, str) else []
+        if parts and parts[0] in {"/start", f"/start@{expected_bot}"}:
+            start_commands += 1
+        if (
+            len(parts) == 2
+            and parts[0] in {"/start", f"/start@{expected_bot}"}
+            and parts[1] == nonce
+            and isinstance(message.get("date"), int)
+            and message["date"] >= issued_at
+            and isinstance(update_id, int)
+        ):
+            candidate = str(chat["id"])
+            candidate_update_id = update_id
+            break
+if candidate is None or not candidate.isdigit() or candidate_update_id is None:
+    raise SystemExit(
+        "No encontré el desafío privado "
+        f"(actualizaciones={observed}, privados={private_messages}, comandos_start={start_commands})"
+    )
+confirmed = telegram(
+    "getUpdates",
+    {
+        "offset": candidate_update_id + 1,
+        "limit": 1,
+        "timeout": 0,
+        "allowed_updates": json.dumps(["message"]),
+    },
+)
+if not isinstance(confirmed, list):
+    raise SystemExit("Telegram no confirmó el desafío de activación")
 document = {
     "aliases": {
         "operador": {"user_ids": [candidate], "chat_ids": [candidate]}

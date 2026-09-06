@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import io
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
+import time
 import unittest
+import urllib.parse
+import urllib.request
+from unittest import mock
 
 # cauce:requiere none
 
@@ -91,11 +97,88 @@ class HospitalInstanceTests(unittest.TestCase):
         script = (INSTANCE / "activate-telegram.sh").read_text(encoding="utf-8")
 
         self.assertIn('activation_nonce="hospital-$(openssl rand -hex 8)"', script)
-        self.assertIn('expected_text = "/start " + sys.argv[3]', script)
+        self.assertIn('"offset": -1', script)
+        self.assertIn('link = f"https://t.me/{expected_bot}?start={nonce}"', script)
+        self.assertIn("deadline = time.monotonic() + 300", script)
+        self.assertIn('parts[0] in {"/start", f"/start@{expected_bot}"}', script)
         self.assertIn('message["date"] >= issued_at', script)
-        self.assertNotIn('message.get("text") == "/start"', script)
+        self.assertIn("actualizaciones={observed}", script)
+        self.assertNotIn("read -r _confirmation", script)
         self.assertIn("trap cleanup EXIT", script)
         self.assertIn('rm -f "$TEMP_TOKEN"', script)
+
+    def test_telegram_activation_discards_backlog_and_accepts_deep_link_command(self) -> None:
+        script = (INSTANCE / "activate-telegram.sh").read_text(encoding="utf-8")
+        blocks = re.findall(r"<<'PY'\n(.*?)\nPY", script, re.DOTALL)
+        self.assertEqual(len(blocks), 3)
+        enrollment = compile(blocks[1], "telegram-enrollment", "exec")
+        calls: list[str] = []
+
+        class Response(io.BytesIO):
+            def __enter__(self) -> Response:
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                self.close()
+
+        def urlopen(url: str, timeout: int) -> Response:
+            self.assertGreater(timeout, 0)
+            calls.append(url)
+            parsed = urllib.parse.urlparse(url)
+            method = parsed.path.rsplit("/", 1)[-1]
+            query = urllib.parse.parse_qs(parsed.query)
+            if method == "getWebhookInfo":
+                result: object = {"url": ""}
+            elif query.get("offset") == ["-1"]:
+                result = [{"update_id": 40}]
+            elif query.get("offset") == ["41"]:
+                result = [
+                    {
+                        "update_id": 41,
+                        "message": {
+                            "date": int(time.time()),
+                            "text": "/start@hospitales_builder_developer_bot\u00a0hospital-fixture",
+                            "chat": {"id": 123456, "type": "private"},
+                            "from": {"id": 123456},
+                        },
+                    }
+                ]
+            elif query.get("offset") == ["42"]:
+                result = []
+            else:
+                self.fail(f"unexpected Telegram request: {url}")
+            return Response(json.dumps({"ok": True, "result": result}).encode("utf-8"))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            token = root / "token"
+            target = root / "allowlist.json"
+            token.write_text("123456:fixture", encoding="utf-8")
+            stdout = io.StringIO()
+            argv = [
+                "enroll",
+                str(token),
+                str(target),
+                "hospital-fixture",
+                "hospitales_builder_developer_bot",
+            ]
+            with (
+                mock.patch.object(urllib.request, "urlopen", side_effect=urlopen),
+                mock.patch("sys.argv", argv),
+                mock.patch("sys.stdout", stdout),
+            ):
+                exec(enrollment, {})
+
+            document = json.loads(target.read_text(encoding="utf-8"))
+            self.assertEqual(
+                document,
+                {"aliases": {"operador": {"chat_ids": ["123456"], "user_ids": ["123456"]}}},
+            )
+            self.assertIn("https://t.me/hospitales_builder_developer_bot?start=hospital-fixture", stdout.getvalue())
+            self.assertEqual(len(calls), 4)
+            self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlparse(calls[1]).query)["offset"], ["-1"])
+            self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlparse(calls[2]).query)["offset"], ["41"])
+            self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlparse(calls[3]).query)["offset"], ["42"])
 
     def test_only_the_leader_is_enrolled_in_telegram(self) -> None:
         script = (INSTANCE / "activate-telegram.sh").read_text(encoding="utf-8")
