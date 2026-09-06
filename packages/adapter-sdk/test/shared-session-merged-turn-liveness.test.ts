@@ -19,7 +19,6 @@ import test from "node:test";
 import { transcriptDirectory } from "../src/shared-session/session.js";
 import {
   FakeTmux,
-  RecordingFallback,
   adapterFor,
   assistantEntry,
   claudeRunner,
@@ -45,14 +44,12 @@ test("un turno fundido callado en el transcript pero con el panel GENERANDO no s
 
   const tmux = new FakeTmux();
   tmux.paneContent = "✻ Herding… (esc to interrupt · ctrl+t to hide todos)\n❯ ";
-  const fallback = new RecordingFallback("{}");
 
   const runner = claudeRunner({
     alias: "kratos",
     home,
     workspace,
     tmux,
-    fallback,
     correlationTimeoutMs: 20,
     // Silence window an order of magnitude SHORTER than the block of thinking that follows it.
     quietTimeoutMs: 60,
@@ -82,7 +79,6 @@ test("un turno fundido callado en el transcript pero con el panel GENERANDO no s
 
   assert.equal(output.status, "done");
   assert.ok((output.reply ?? "").includes("lo pensado"), output.reply ?? "(null)");
-  assert.equal(fallback.calls, 0);
 });
 
 test("un panel que ya no se puede capturar no cuenta como vivo y la entrega se suelta igual", async () => {
@@ -94,7 +90,6 @@ test("un panel que ya no se puede capturar no cuenta como vivo y la entrega se s
 
   const tmux = new FakeTmux();
   tmux.paneContent = "✻ Herding… (esc to interrupt)\n❯ ";
-  const fallback = new RecordingFallback("{}");
   let capturaRota = false;
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
@@ -113,7 +108,6 @@ test("un panel que ya no se puede capturar no cuenta como vivo y la entrega se s
     home,
     workspace,
     tmux,
-    fallback,
     correlationTimeoutMs: 20,
     quietTimeoutMs: 20,
     // Long budget on purpose: what must release the session is the silence, not the deadline.
@@ -128,5 +122,4 @@ test("un panel que ya no se puede capturar no cuenta como vivo y la entrega se s
     (error: Error) => /execution deadline/iu.test(error.message),
   );
   assert.ok(Date.now() - empezo < 9_000, `tardó ${String(Date.now() - empezo)} ms`);
-  assert.equal(fallback.calls, 0);
 });

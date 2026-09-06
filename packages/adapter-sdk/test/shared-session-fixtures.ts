@@ -745,15 +745,6 @@ export function controlledDelayedTmuxMutation(
   });
 }
 
-export class RecordingFallback implements CommandRunner {
-  calls = 0;
-  constructor(private readonly stdout: string) {}
-  run(): Promise<CommandRunResult> {
-    this.calls += 1;
-    return Promise.resolve({ stdout: this.stdout, stderr: "", exitCode: 0, signal: null, timedOut: false, cancelled: false });
-  }
-}
-
 const immediate = (): Promise<void> => Promise.resolve();
 
 export function claudeRunner(
@@ -762,7 +753,6 @@ export function claudeRunner(
     home: string;
     workspace: string;
     tmux: FakeTmux;
-    fallback?: CommandRunner;
     sleep?: (ms: number) => Promise<void>;
     cancelDrainTimeoutMs?: number;
     quarantineFile?: string;

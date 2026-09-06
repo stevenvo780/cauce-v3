@@ -1,4 +1,4 @@
-import type { CommandRunResult, CommandRunner } from "../../sdk/types.js";
+import type { CommandRunResult } from "../../sdk/types.js";
 import type { PaneIdentity, TmuxController } from "../tmux.js";
 import type { NativePointerAttestor } from "../native-witness.js";
 import type {
@@ -21,7 +21,6 @@ export interface PasteSessionOptions<E> {
   readonly environment?: Readonly<Record<string, string>>;
   readonly harnessArguments?: readonly string[];
   readonly tmux: TmuxController;
-  readonly fallback?: CommandRunner;
   readonly sleep: (ms: number) => Promise<void>;
   /** How long to wait for the input box to free up before degrading. */
   readonly acquireTimeoutMs?: number;

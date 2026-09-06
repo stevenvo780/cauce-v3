@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
+import { sharedSessionRunner } from "../src/bin/shared.js";
+import { ProcessExecutionError } from "../src/sdk/errors.js";
+import type { AdapterLog } from "../src/sdk/types.js";
 import {
   cliSharedSessionSpec,
   loadSharedSessionConfig,
@@ -16,6 +19,24 @@ import { CliTmux } from "../src/shared-session/tmux.js";
 import { FakeTmux, freshState } from "./shared-session-fixtures.js";
 
 const immediate = (): Promise<void> => Promise.resolve();
+
+test("un binding Claude ilegible aborta antes de construir el runner compartido", async () => {
+  const missing = `/tmp/cauce-missing-${randomUUID()}`;
+  const configured = loadSharedSessionConfig("claude", "kratos", "/state/kratos", {
+    CAUCE_SHARED_SESSION: "1",
+    CAUCE_SHARED_SESSION_WORKSPACE: `${missing}/workspace`,
+    CLAUDE_CONFIG_DIR: `${missing}/config`,
+    HOME: `${missing}/home`,
+  });
+  assert.ok(configured);
+  const logs: AdapterLog[] = [];
+  await assert.rejects(
+    sharedSessionRunner(configured, (entry) => { logs.push(entry); }),
+    (error: unknown) => error instanceof ProcessExecutionError
+      && error.code === "SHARED_TUI_UNAVAILABLE" && !error.retryable,
+  );
+  assert.deepEqual(logs.map((entry) => entry.event), ["shared_session_degraded"]);
+});
 
 // ---------------------------------------------------------------------------
 // Pane environment: the same no matter who creates it.
