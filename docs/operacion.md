@@ -85,6 +85,11 @@ ruta presente desconocida o duplicada, o un mapa existente ilegible, aborta el c
 compatibilidad, un mapa inexistente o un alias ausente se resuelve como local. El mapa de
 acceso no sustituye el inventario del bus: verificar el destino y la respuesta del modelo.
 
+Si el alias tiene sesión compartida habilitada y no puede abrirse, `cauce <alias>` termina con
+error: no abre una terminal «APARTE». El consumidor tampoco ejecuta por otra conversación.
+Recuperar la TUI canónica exige acreditar su contexto; no elegir el último historial ni crear
+uno vacío para sustituir una conversación desconocida. Ver [contrato de recuperación](adapter-sdk.md#reanudación-exacta-de-la-tui-claude).
+
 ```bash
 ops/cli/cauce <alias> estado          # columna ADAPTADOR: activo/failed/inactive
 systemctl --user status cauce-v3-container-<alias>.service   # host-<alias> para agentes host-native
