@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# cauce — un CLI para la flota Cauce V3: `cauce <alias>` hace LO CORRECTO sin elegir variante.
-# Reemplaza a: ia, ia-tui, ia-tui-session. Delega en cauce-attach, cauce-estado, cauce-sesiones y ia-ver.
-# ESTE FICHERO ES LA FUENTE: se instala en kratos como ~/.local/bin/cauce con
-# `ops/scripts/install-cauce-cli.sh` (vivio catorce meses solo en el home de stev, irrevisable).
-# MODO COMPARTIDA: `cauce <alias>` abre la TUI REAL del harness dentro de una sesion tmux que el
-# adaptador tambien usa para los turnos del bus: el binario de verdad, con sus /comandos.
+# Shared terminals use the same native session as their adapter.
 set -uo pipefail
-OPS=$HOME/.local/share/cauce-v3/ops
-BIN=$HOME/.local/bin
-CONFIG=$HOME/.config/cauce-v3/container-aliases
+cli_home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)
+[[ -n "$cli_home" && -d "$cli_home" ]] || cli_home=$HOME
+OPS=$cli_home/.local/share/cauce-v3/ops
+BIN=$cli_home/.local/bin
+CONFIG=$cli_home/.config/cauce-v3/container-aliases
 TMUX_SOCKET=cauce
 
 c_reset=$'\033[0m'; c_b=$'\033[1m'; c_dim=$'\033[90m'
@@ -22,8 +19,6 @@ todos_los_alias() {
     [ -e "$f" ] || continue; basename "$f" .env
   done | sort
 }
-# kant no corre en contenedor: su unit es cauce-v3-host-<alias>.service. Sin este respaldo el CLI
-# lo da por "parado" aunque este atendiendo entregas del bus.
 adaptador_activo() {
   local e
   e=$(systemctl --user is-active "cauce-v3-container-$1.service" 2>/dev/null)
@@ -34,7 +29,6 @@ adaptador_activo() {
   fi
 }
 
-# ¿Tiene ENCENDIDA la sesión compartida? Único interruptor de verdad: el que lee el supervisor.
 compartida_configurada() {
   [ -f "$CONFIG/$1.env" ] && grep -qx 'SHARED_SESSION=1' "$CONFIG/$1.env" && return 0
   # kant es host-native: no tiene contenedor y su interruptor vive en la UNIT, no en el .env.
@@ -43,7 +37,6 @@ compartida_configurada() {
     | tr ' ' '\n' | grep -qx 'CAUCE_SHARED_SESSION=1'
 }
 
-# ¿El adaptador de este alias corre en el HOST en vez de dentro de un contenedor?
 es_host_native() {
   systemctl --user cat "cauce-v3-host-$1.service" >/dev/null 2>&1
 }
@@ -56,7 +49,7 @@ helper_en_contenedor() {  # $1=alias
   if es_host_native "$1"; then
     systemctl --user cat "cauce-v3-host-$1.service" 2>/dev/null \
       | sed -n 's|^ExecStart=.*node \(.*\)/packages/adapter-sdk/dist/src/bin/.*|\1/packages/adapter-sdk/dist/src/bin/shared-session.js|p' \
-      | head -1 | sed "s|^~|$HOME|; s|^%h|$HOME|"
+      | head -1 | sed "s|^~|$cli_home|; s|^%h|$cli_home|"
     return 0
   fi
   local release
@@ -73,7 +66,7 @@ credencial_env_de() {  # $1=alias $2=harness  -> "VAR=valor", o nada
   local h key
   case "$2" in codex) key=CODEX_HOME ;; claude) key=CLAUDE_CONFIG_DIR ;; *) return 0 ;; esac
   if es_host_native "$1"; then
-    h=$(systemctl --user show "cauce-v3-host-$1.service" -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n "s/^$key=//p" | head -1)
+    h=$(systemctl --user show "cauce-v3-host-$1.service" -p Environment --value 2>/dev/null | python3 -c 'import shlex,sys; values=dict(item.split("=",1) for item in shlex.split(sys.stdin.read())); sys.stdout.write(values.get(sys.argv[1],""))' "$key") || return 1
     [ -n "$h" ] && printf '%s=%s\n' "$key" "$h"
     return 0
   fi
@@ -351,7 +344,6 @@ s.on("timeout",()=>process.exit(1));
 ' >/dev/null 2>&1
 }
 
-# ---------- entrar ----------
 cmd_entrar() {
   local a=$1 line ctr cuser chome state harness ad salida
   line=$(alias_info "$a") || { echo "alias desconocido: $a"; exit 2; }
@@ -458,14 +450,22 @@ for line in sys.stdin:
     printf "  %sel harness %s no tiene sesion compartida%s\n" "$c_dim" "$harness" "$c_reset"
   fi
 
-  # 2) conversacion aparte, sin parar al agente
   wsa=$(sed -n 's/^SHARED_SESSION_WORKSPACE=//p' "$CONFIG/$a.env" 2>/dev/null | head -1)
   if [[ $ad == active ]]; then
     printf "  modo: %s%sAPARTE%s — TUI real, pero conversacion nueva: NO comparte con Telegram.\n" "$c_warn" "$c_b" "$c_reset"
     printf "  %sel agente sigue respondiendo Telegram y el bus. salir: Ctrl-D%s\n\n" "$c_dim" "$c_reset"
     case "$harness" in
-      claude) exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" claude --dangerously-skip-permissions --permission-mode bypassPermissions ;;
-      codex)  exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" codex --yolo ;;
+      claude|codex)
+              local credential
+              local -a launch=("$harness") native_environment=()
+              if [[ $harness == claude ]]; then launch+=(--dangerously-skip-permissions --permission-mode bypassPermissions); else launch+=(--yolo); fi
+              if es_host_native "$a"; then
+                credential=$(credencial_env_de "$a" "$harness") || return 1
+                [[ -z $credential ]] || native_environment+=("$credential")
+                cd "${chome:-$cli_home}" || return 1
+                exec env "HOME=${chome:-$cli_home}" "${native_environment[@]}" "${launch[@]}"
+              fi
+              exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" "${launch[@]}" ;;
       openclaw)
               printf "  %sopenclaw SI tiene TUI propia, pero no te la abro aca: en modo local%s\n" "$c_dim" "$c_reset"
               printf "  %scomparte el ESTADO con el bus y aun asi el panel es CIEGO (el turno del%s\n" "$c_dim" "$c_reset"
@@ -628,7 +628,7 @@ cmd_off() {
 # argos estado` en la torre contestaba sobre un contenedor apagado — no falla, MIENTE, que es
 # peor. El mapa se genera de la realidad: ~/.config/cauce-v3/alias-host.tsv -> <alias>\t<local|vps>.
 # Para los remotos no se reimplementa nada: se reenvia el mismo comando al `cauce` del otro host.
-MAPA_HOST=$HOME/.config/cauce-v3/alias-host.tsv
+MAPA_HOST=$cli_home/.config/cauce-v3/alias-host.tsv
 sitio() {
   [ -r "$MAPA_HOST" ] || { echo local; return; }
   awk -v a="$1" '$1==a {print $2; f=1} END{if(!f) print "local"}' "$MAPA_HOST"

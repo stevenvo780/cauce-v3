@@ -148,7 +148,7 @@ try {
   await executable(path.join(native.directory, "bin/systemctl"), `#!/usr/bin/env bash
 case " $* " in
   *" cat cauce-v3-host-kant.service"*) printf 'ExecStart=node ${releaseRoot}/packages/adapter-sdk/dist/src/bin/adapter.js\\n'; exit 0 ;;
-  *" show cauce-v3-host-kant.service -p Environment"*) printf 'CAUCE_SHARED_SESSION_WORKSPACE=/workspace/cauce-v3 CODEX_HOME=/home/stev/.codex\\n' ;;
+  *" show cauce-v3-host-kant.service -p Environment"*) printf 'CAUCE_SHARED_SESSION_WORKSPACE=/workspace/cauce-v3 CODEX_HOME=/home/stev/.codex\\n'; exit 0 ;;
 esac
 exit 1
 `);
@@ -185,6 +185,55 @@ cmd_on zeus
   assert.ok(!calls.includes("claude\tlocal"), calls);
 } finally {
   await rm(tuple.directory, { recursive: true, force: true });
+}
+
+for (const harness of ["claude", "codex"]) {
+  for (const hostNative of [true, false]) {
+    for (const shared of [true, false]) {
+      const test = await fixture(harness);
+      try {
+        const credentialKey = harness === "claude" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
+        const credentialValue = "/unit/configuration with spaces";
+        await executable(path.join(test.directory, "bin", harness), `#!/usr/bin/env bash
+{
+  printf 'NATIVE\\tHOME=%s\\tPWD=%s\\tCREDENTIAL=%s' "$HOME" "$PWD" "$${credentialKey}"
+  for argument in "$@"; do printf '\\t%s' "$argument"; done
+  printf '\\n'
+} >> "$CAUCE_TEST_LOG"
+`);
+        await executable(path.join(test.directory, "bin/systemctl"), `#!/usr/bin/env bash
+case " $* " in
+  *" show cauce-v3-host-native.service -p Environment"*) printf '%s\\n' '"${credentialKey}=${credentialValue}" OTHER=x'; exit 0 ;;
+esac
+exit 1
+`);
+        const source = `source <(sed '/^case /,$d' ${JSON.stringify(cli)})
+alias_info() { printf 'Steven\\tgrp.steven\\tws-native\\tdev\\t${test.home}\\t/state/native\\t${harness}\\tlocal\\n'; }
+adaptador_activo() { printf 'active\\n'; }
+compartida_configurada() { return ${shared ? 0 : 1}; }
+sesion() { return 1; }
+es_host_native() { return ${hostNative ? 0 : 1}; }
+cmd_entrar native
+`;
+        const result = spawnSync("bash", ["-c", source], {
+          encoding: "utf8",
+          env: { ...test.environment, HOME: path.join(test.directory, "unrelated-home") },
+        });
+        assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+        assert.match(result.stdout, /APARTE/u);
+        const calls = await readFile(test.log, "utf8");
+        assert.match(calls, hostNative ? /^NATIVE\t/u : /^DOCKER\t/u);
+        assert.ok(calls.includes(harness === "claude" ? "--dangerously-skip-permissions" : "--yolo"), calls);
+        if (harness === "claude") assert.ok(calls.includes("--permission-mode\tbypassPermissions"), calls);
+        if (hostNative) {
+          assert.ok(calls.includes(`HOME=${test.home}\tPWD=${test.home}\tCREDENTIAL=${credentialValue}`), calls);
+          assert.ok(!calls.includes("DOCKER"), calls);
+        }
+      } finally {
+        await rm(test.directory, { recursive: true, force: true });
+      }
+    }
+  }
 }
 
 console.log("shared session entrypoints: OK");

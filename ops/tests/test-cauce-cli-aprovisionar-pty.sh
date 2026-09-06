@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# `cauce <alias> aprovisionar` must also emit the PTY channel plane (sub-pieces 3b/3c/3d):
-# client cert, relay identity registry and launcher env. Dry-run must announce each step as
-# 'haria:' WITHOUT writing anything, and an already-provisioned alias must skip every sub-piece.
+# Dry-run announces PTY provisioning without writes; existing valid artifacts are skipped.
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -35,12 +33,15 @@ openssl req -x509 -newkey rsa:2048 -nodes -subj "/CN=test-ca" -days 2 \
   -keyout "$WORK/ca.key" -out "$WORK/ca.crt" 2>/dev/null || { echo "FAIL: cannot mint test CA" >&2; exit 1; }
 REG="$WORK/reg.json"
 
-corre_dry() {
+corre_dry() (
+  # shellcheck disable=SC2329
+  getent() { printf 'test:x:1000:1000::%s:/bin/bash\n' "$HOME"; }
+  export -f getent
   HOME="$H" XDG_CONFIG_HOME="$H/.config" \
     CAUCE_CLIENT_CA_CERT="$WORK/ca.crt" CAUCE_CLIENT_CA_KEY="$WORK/ca.key" \
     CAUCE_PTY_RELAY_IDENTITIES="$REG" \
     "$CLI" probe aprovisionar --dry-run 2>&1
-}
+)
 
 # --- 1) fresh alias, dry-run: every PTY sub-piece is announced and NOTHING is written --------
 salida=$(corre_dry); rc=$?
