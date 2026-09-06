@@ -41,7 +41,7 @@ leases=$(docker exec hospital-cauce-postgres-1 psql -XAtq -U cauce_hospital -d c
 [ "$leases" = 3 ] || { echo "La flota no tiene sus tres leases activos" >&2; exit 1; }
 
 install -d -o 1000 -g 1000 -m 0700 "$RUNTIME"
-read -r -s -p "Token ROTADO de BotFather para @$EXPECTED_BOT: " bot_token
+read -r -s -p "Pegá únicamente el token completo más reciente de @$EXPECTED_BOT: " bot_token
 echo
 [ -n "$bot_token" ] || { echo "Token vacío" >&2; exit 1; }
 printf '%s\n' "$bot_token" >"$TEMP_TOKEN"
@@ -52,17 +52,32 @@ chmod 0600 "$TEMP_TOKEN"
 python3 - "$TEMP_TOKEN" "$EXPECTED_BOT" <<'PY'
 from pathlib import Path
 import json
+import re
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 
 token = Path(sys.argv[1]).read_text(encoding="utf-8").strip()
 expected = sys.argv[2]
+if re.fullmatch(r"[0-9]{6,12}:[A-Za-z0-9_-]{30,80}", token) is None:
+    raise SystemExit("El valor ingresado no tiene formato de token de BotFather")
 url = "https://api.telegram.org/bot" + urllib.parse.quote(token, safe=":") + "/getMe"
-with urllib.request.urlopen(url, timeout=15) as response:
-    body = json.load(response)
+try:
+    with urllib.request.urlopen(url, timeout=15) as response:
+        body = json.load(response)
+except urllib.error.HTTPError as error:
+    if error.code in {401, 404}:
+        raise SystemExit(
+            f"Telegram rechazó el token (HTTP {error.code}); copiá el último token completo desde BotFather"
+        ) from None
+    raise SystemExit(f"Telegram no pudo validar el token (HTTP {error.code})") from None
+except (urllib.error.URLError, TimeoutError, OSError):
+    raise SystemExit("No se pudo contactar a Telegram para validar el token") from None
 result = body.get("result") if isinstance(body, dict) else None
-if body.get("ok") is not True or not isinstance(result, dict) or result.get("username") != expected:
+if not isinstance(body, dict) or body.get("ok") is not True or not isinstance(result, dict):
+    raise SystemExit("Telegram devolvió una respuesta inválida al validar el token")
+if result.get("username") != expected:
     raise SystemExit("El token no pertenece al bot esperado")
 PY
 
@@ -75,6 +90,7 @@ import os
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -87,10 +103,20 @@ api = "https://api.telegram.org/bot" + urllib.parse.quote(token, safe=":") + "/"
 
 def telegram(method: str, parameters: dict[str, str | int]) -> object:
     query = urllib.parse.urlencode(parameters)
-    with urllib.request.urlopen(api + method + "?" + query, timeout=int(parameters.get("timeout", 0)) + 10) as response:
-        body = json.load(response)
+    try:
+        with urllib.request.urlopen(
+            api + method + "?" + query,
+            timeout=int(parameters.get("timeout", 0)) + 10,
+        ) as response:
+            body = json.load(response)
+    except urllib.error.HTTPError as error:
+        if error.code == 409 and method == "getUpdates":
+            raise SystemExit("Otro proceso está consumiendo getUpdates para este bot (HTTP 409)") from None
+        raise SystemExit(f"Telegram rechazó {method} (HTTP {error.code})") from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise SystemExit(f"No se pudo contactar a Telegram durante {method}") from None
     result = body.get("result") if isinstance(body, dict) else None
-    if body.get("ok") is not True:
+    if not isinstance(body, dict) or body.get("ok") is not True:
         raise SystemExit(f"Telegram rechazó {method}")
     return result
 

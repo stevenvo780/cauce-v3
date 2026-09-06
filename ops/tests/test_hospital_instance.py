@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import urllib.error
 import urllib.parse
 import urllib.request
 from unittest import mock
@@ -179,6 +180,51 @@ class HospitalInstanceTests(unittest.TestCase):
             self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlparse(calls[1]).query)["offset"], ["-1"])
             self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlparse(calls[2]).query)["offset"], ["41"])
             self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlparse(calls[3]).query)["offset"], ["42"])
+
+    def test_telegram_token_validation_rejects_malformed_input_before_network(self) -> None:
+        script = (INSTANCE / "activate-telegram.sh").read_text(encoding="utf-8")
+        blocks = re.findall(r"<<'PY'\n(.*?)\nPY", script, re.DOTALL)
+        probe = compile(blocks[0], "telegram-token-probe", "exec")
+        with tempfile.TemporaryDirectory() as temporary:
+            token = pathlib.Path(temporary) / "token"
+            token.write_text("valor pegado incompleto", encoding="utf-8")
+            with (
+                mock.patch.object(urllib.request, "urlopen") as urlopen,
+                mock.patch("sys.argv", ["probe", str(token), "hospitales_builder_developer_bot"]),
+                self.assertRaisesRegex(SystemExit, "no tiene formato de token de BotFather"),
+            ):
+                exec(probe, {})
+            urlopen.assert_not_called()
+
+    def test_telegram_token_validation_sanitizes_real_http_failure(self) -> None:
+        script = (INSTANCE / "activate-telegram.sh").read_text(encoding="utf-8")
+        blocks = re.findall(r"<<'PY'\n(.*?)\nPY", script, re.DOTALL)
+        probe = compile(blocks[0], "telegram-token-probe", "exec")
+        synthetic = "1234567890:" + "A" * 35
+        error = urllib.error.HTTPError(
+            f"https://api.telegram.org/bot{synthetic}/getMe",
+            404,
+            "Not Found",
+            hdrs=None,
+            fp=None,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            token = pathlib.Path(temporary) / "token"
+            token.write_text(synthetic, encoding="utf-8")
+            argv = ["probe", str(token), "hospitales_builder_developer_bot"]
+            with (
+                mock.patch.object(urllib.request, "urlopen", side_effect=error),
+                mock.patch("sys.argv", argv),
+                self.assertRaises(SystemExit) as raised,
+            ):
+                exec(probe, {})
+        message = str(raised.exception)
+        self.assertEqual(
+            message,
+            "Telegram rechazó el token (HTTP 404); copiá el último token completo desde BotFather",
+        )
+        self.assertNotIn(synthetic, message)
+        self.assertNotIn("api.telegram.org", message)
 
     def test_only_the_leader_is_enrolled_in_telegram(self) -> None:
         script = (INSTANCE / "activate-telegram.sh").read_text(encoding="utf-8")
