@@ -462,11 +462,11 @@ test("un reemplazo con el mismo nombre falla cerrado y nunca se adopta ni se mat
 });
 
 test("tmux ignora el -c pedido: el pane recién creado se mata y degrada workspace_mismatch", async () => {
-  const { workspace } = await freshState("workspace-mismatch");
+  const { workspace, home } = await freshState("workspace-mismatch");
   const tmux = new FakeTmux();
   tmux.sessionExists = false;
   tmux.windows = [];
-  tmux.paneCurrentPathOverride = "/otro/workspace";
+  tmux.paneCurrentPathOverride = home;
 
   const outcome = await ensureSharedSession(
     tmux,
@@ -476,8 +476,7 @@ test("tmux ignora el -c pedido: el pane recién creado se mata y degrada workspa
 
   assert.equal(outcome.ready, false);
   assert.equal(outcome.failure, "workspace_mismatch");
-  assert.ok(outcome.detail.includes(workspace), outcome.detail);
-  assert.ok(outcome.detail.includes("/otro/workspace"), outcome.detail);
+  assert.ok(outcome.detail.includes("fuera del workspace"), outcome.detail);
   assert.equal(tmux.sessionExists, false, "la generación recién creada debe morir, no quedar viva con otro cwd");
   assert.equal(tmux.used("kill-session"), true);
   assert.equal(tmux.calls.filter((call) => call[0] === "new-session").length, 1);

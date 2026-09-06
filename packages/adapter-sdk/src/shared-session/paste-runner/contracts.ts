@@ -1,5 +1,6 @@
 import type { CommandRunResult, CommandRunner } from "../../sdk/types.js";
 import type { PaneIdentity, TmuxController } from "../tmux.js";
+import type { NativePointerAttestor } from "../native-witness.js";
 import type {
   ResumeSpec,
   SharedSessionDegradation,
@@ -8,6 +9,7 @@ import type {
 } from "../types.js";
 
 export interface PasteSessionOptions<E> {
+  readonly nativePointer?: NativePointerAttestor;
   readonly alias: string;
   /** Which TUI runs in the pane. It determines the shared session binary. */
   readonly harness: SharedSessionHarness;

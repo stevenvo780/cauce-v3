@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { AdapterClient } from "../sdk/client.js";
 import { DurableStore } from "../sdk/durable-store.js";
@@ -23,6 +24,8 @@ import { claudeTranscript } from "../shared-session/transcript.js";
 import { codexTranscript } from "../shared-session/rollout.js";
 import { loadSharedSessionConfig, type SharedSessionConfig } from "../shared-session/config.js";
 import { sharedSessionResume } from "../shared-session/resume.js";
+import { SharedTuiPointerStore } from "../shared-session/native-pointer.js";
+import { NativePointerAttestor } from "../shared-session/native-witness.js";
 import type { CommandRunner } from "../sdk/types.js";
 
 function commandOverride(
@@ -126,11 +129,23 @@ function operationalLogger(alias: string): AdapterLogger {
 /**
  * Wraps the base runner with the shared-session runner when configured.
  */
-function sharedSessionRunner(
-  shared: SharedSessionConfig,
+async function sharedSessionRunner(
+  configured: SharedSessionConfig,
   fallback: CommandRunner,
   logger: AdapterLogger,
-): CommandRunner {
+): Promise<CommandRunner> {
+  let shared = configured;
+  if (configured.harness === "claude") {
+    try {
+      shared = { ...configured,
+        configDirectory: await realpath(configured.configDirectory),
+        workspace: await realpath(configured.workspace) };
+    } catch {
+      logger({ event: "shared_session_degraded", alias: configured.alias,
+        reason: "session_identity_unverified", error_message: "el binding de la TUI no está disponible" });
+      return fallback;
+    }
+  }
   const tmux = new CliTmux();
   const sleep = (ms: number): Promise<void> =>
     new Promise<void>((resolveSleep) => {
@@ -151,7 +166,9 @@ function sharedSessionRunner(
     workspace: shared.workspace,
     environment: shared.paneEnvironment,
     harnessArguments: shared.harnessArguments,
-    resume: sharedSessionResume(shared.harness, shared.configDirectory, shared.workspace),
+    resume: sharedSessionResume(shared.harness, shared.configDirectory, shared.workspace, {
+      alias: shared.alias, stateDirectory: shared.stateDirectory,
+    }),
     tmux,
     fallback,
     sleep,
@@ -166,6 +183,10 @@ function sharedSessionRunner(
     ? new PasteSessionRunner({
       ...comun,
       transcript: claudeTranscript(shared.configDirectory, shared.workspace),
+      nativePointer: new NativePointerAttestor(new SharedTuiPointerStore(shared.stateDirectory), {
+        alias: shared.alias, harness: "claude",
+        configDirectory: shared.configDirectory, workspace: shared.workspace,
+      }),
     })
     : new PasteSessionRunner({
       ...comun,
@@ -207,7 +228,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   const shared = loadSharedSessionConfig(harnessId, runtime.alias, runtime.stateDirectory);
   const runner = shared === undefined
     ? baseRunner
-    : sharedSessionRunner(shared, baseRunner, logger);
+    : await sharedSessionRunner(shared, baseRunner, logger);
   const override = commandOverride(harnessId, definition, runtime);
   const harness = new HarnessAdapter({
     definition: definitionWithVerifiedBridge(definition, override, logger),
@@ -247,7 +268,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     }),
     store,
     harness,
-    ...(canonicalOpenCodeSession || canonicalOpenClawTerminalSession
+    ...(canonicalOpenCodeSession || canonicalOpenClawTerminalSession || shared?.harness === "claude"
       ? {
           onLeaseAcquired: async () => {
             if (canonicalOpenCodeSession) {
@@ -255,6 +276,14 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
             }
             if (canonicalOpenClawTerminalSession) {
               await store.reconcileCanonicalOpenClawTerminalSession(runtime.alias);
+            }
+            if (shared?.harness === "claude") {
+              try {
+                await new SharedTuiPointerStore(shared.stateDirectory).recover();
+              } catch {
+                logger({ event: "shared_session_resume", alias: shared.alias,
+                  error_message: "la recuperación del pointer TUI es ambigua; se conserva el estado" });
+              }
             }
           },
         }

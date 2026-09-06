@@ -237,12 +237,12 @@ test("claude: cuenta el transcript del directorio, y solo si tiene algo dentro",
   assert.equal(await claudeHasPreviousConversation(configDirectory, "/otro"), false);
 });
 
-test("los dos creadores del panel reanudan igual", async () => {
+test("los dos creadores del panel comparten la misma politica de lanzamiento", async () => {
   // The adapter and `cauce <alias>` are the only two session creators, and whichever wins the race
   // imposes its shape on the panel forever. If only one resumed, the owner's conversation would
   // depend on who arrived first — which is how kant's 38 MB were lost: via the CLI.
   const cli = cliSharedSessionSpec("codex", "socrates", "/workspace", "/home/dev", {});
   assert.deepEqual(cli.resume?.args, ["resume", "--last"]);
   const claude = cliSharedSessionSpec("claude", "kratos", "/workspace", "/home/dev", {});
-  assert.deepEqual(claude.resume?.args, ["--continue"]);
+  assert.equal(typeof claude.resume?.resolveLaunch, "function");
 });

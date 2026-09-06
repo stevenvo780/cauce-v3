@@ -124,15 +124,26 @@ export function sessionName(alias: string): string {
   return `cauce-${alias}`;
 }
 
-/**
- * Conversation resume specification for a harness.
- */
-export interface ResumeSpec {
-  /** Resume args: `resume --last` in codex, `--continue` in claude. */
-  readonly args: readonly string[];
-  /** Does that `args` actually have anything to resume? */
-  hasPreviousConversation(): Promise<boolean>;
-}
+export type ResumeLaunchPlan =
+  | {
+    readonly state: "launch";
+    readonly args: readonly string[];
+    readonly resumed: boolean;
+  }
+  | { readonly state: "blocked"; readonly detail: string };
+
+/** Conversation launch policy for a shared harness. */
+export type ResumeSpec =
+  | {
+    readonly args: readonly string[];
+    hasPreviousConversation(): Promise<boolean>;
+    readonly resolveLaunch?: never;
+  }
+  | {
+    readonly args?: never;
+    readonly hasPreviousConversation?: never;
+    resolveLaunch(): Promise<ResumeLaunchPlan>;
+  };
 
 /**
  * Dedicated tmux socket for Cauce.
@@ -144,4 +155,3 @@ export const TUI_WINDOW = "agente";
 
 /** Legacy window name used in previous versions. */
 export const LEGACY_DEGRADED_WINDOW = "⚠ CAUCE-DEGRADADO";
-
