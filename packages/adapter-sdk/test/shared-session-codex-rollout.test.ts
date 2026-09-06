@@ -2,16 +2,15 @@ import assert from "node:assert/strict";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import type { CommandRunner } from "../src/sdk/types.js";
 import { readDegradations } from "../src/shared-session/degradation-log.js";
 import { CONTEXT_MARK } from "../src/shared-session/notice.js";
 import { PasteSessionRunner } from "../src/shared-session/paste-runner.js";
 import { codexTranscript, rolloutSessionId, type RolloutLine } from "../src/shared-session/rollout.js";
 import {
   FakeTmux,
-  RecordingFallback,
   TmuxResult,
   adapterFor,
+  assertExecutionPrevented,
   claudeRunner,
   correlationIdFromPrompt,
   envelopeText,
@@ -78,7 +77,7 @@ async function codexWorkspace(name: string): Promise<{
 }
 
 function codexRunner(
-  options: { alias: string; codexHome: string; tmux: FakeTmux; fallback: CommandRunner },
+  options: { alias: string; codexHome: string; tmux: FakeTmux },
 ): PasteSessionRunner<RolloutLine> {
   options.tmux.sessionName = `cauce-${options.alias}`;
   if (options.tmux.sessionOptions.size === 0) options.tmux.paneStartCommand = "exec codex";
@@ -88,7 +87,6 @@ function codexRunner(
     workspace: "/workspace",
     transcript: codexTranscript(options.codexHome),
     tmux: options.tmux,
-    fallback: options.fallback,
     sleep: immediate,
     acquireTimeoutMs: 30,
     turnTimeoutMs: 2_000,
@@ -104,7 +102,6 @@ test("el turno del bus entra por la caja de codex y el sobre sale de su rollout"
   const tmux = new FakeTmux();
   // The codex box is drawn with `›`, not with `❯`.
   tmux.paneContent = "› ";
-  const fallback = new RecordingFallback("{}");
   const turnId = "019fb910-ddd9-7d80-af14-8cb69357d917";
   tmux.onSubmit = async (text) => {
     await appendFile(rollout, `${[
@@ -114,12 +111,11 @@ test("el turno del bus entra por la caja de codex y el sobre sale de su rollout"
     ].join("\n")}\n`);
   };
 
-  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux });
   const adapter = await adapterFor(runner, state, "socrates", "codex");
   const output = await execute(adapter);
 
   assert.equal(output.reply, "desde codex");
-  assert.equal(fallback.calls, 0);
   // The request entered through the input box, between brackets and as a SINGLE entry.
   assert.ok(tmux.used("load-buffer"));
   assert.ok(tmux.calls.some((call) => call[0] === "paste-buffer" && call.includes("-p")));
@@ -145,7 +141,6 @@ test("codex ignora un rollout headless ajeno y rescata sólo el sobre con su non
   );
   const tmux = new FakeTmux();
   tmux.paneContent = "› \nEsc to interrupt\n";
-  const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
     await appendFile(
       headless,
@@ -160,13 +155,12 @@ test("codex ignora un rollout headless ajeno y rescata sólo el sobre con su non
     );
   };
 
-  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux });
   const adapter = await adapterFor(runner, state, "socrates", "codex");
   const output = await execute(adapter);
 
   assert.ok((output.reply ?? "").includes("RESPUESTA TUI"));
   assert.ok(!(output.reply ?? "").includes("RESPUESTA HEADLESS"));
-  assert.equal(fallback.calls, 0);
 });
 
 test("codex recorta el salto final al enviar y aun así se reconoce el turno", async () => {
@@ -174,7 +168,6 @@ test("codex recorta el salto final al enviar y aun así se reconoce el turno", a
   const { state, codexHome, rollout } = await codexWorkspace("codex-recorte");
   const tmux = new FakeTmux();
   tmux.paneContent = "› ";
-  const fallback = new RecordingFallback("{}");
   const turnId = "019fb92d-2577-7c12-a243-7152c7e05bce";
   tmux.onSubmit = async (text) => {
     // Exactly what the codex box does: trims the trailing whitespace.
@@ -186,13 +179,12 @@ test("codex recorta el salto final al enviar y aun así se reconoce el turno", a
     ].join("\n")}\n`);
   };
 
-  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux });
   const adapter = await adapterFor(runner, state, "socrates", "codex");
   const output = await execute(adapter);
 
   assert.equal(output.reply, "recortado y reconocido");
   // What matters: it did NOT degrade to the usual path and did NOT consume the budget.
-  assert.equal(fallback.calls, 0);
 });
 
 test("el turno del dueño no puede cortar la cosecha del turno del bus", async () => {
@@ -201,7 +193,6 @@ test("el turno del dueño no puede cortar la cosecha del turno del bus", async (
   // would take the foreign response.
   const { state, codexHome, rollout } = await codexWorkspace("codex-turno-ajeno");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
     await appendFile(rollout, `${[
       codexStarted("turno-del-bus"),
@@ -213,18 +204,16 @@ test("el turno del dueño no puede cortar la cosecha del turno del bus", async (
     ].join("\n")}\n`);
   };
 
-  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux });
   const adapter = await adapterFor(runner, state, "socrates", "codex");
   const output = await execute(adapter);
 
   assert.equal(output.reply, "MI RESPUESTA");
-  assert.equal(fallback.calls, 0);
 });
 
 test("codex avisa cuando compacta durante el turno", async () => {
   const { state, codexHome, rollout } = await codexWorkspace("codex-compactacion");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
     await appendFile(rollout, `${[
       codexStarted("t1"),
@@ -235,7 +224,7 @@ test("codex avisa cuando compacta durante el turno", async () => {
     ].join("\n")}\n`);
   };
 
-  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux });
   const adapter = await adapterFor(runner, state, "socrates", "codex");
   const output = await execute(adapter);
 
@@ -243,7 +232,6 @@ test("codex avisa cuando compacta durante el turno", async () => {
   assert.ok(reply.includes("respondido tras compactar"));
   assert.ok(reply.includes(CONTEXT_MARK));
   assert.ok(reply.includes("context_compacted"));
-  assert.equal(fallback.calls, 0);
   assert.equal((await readDegradations(state))[0]?.fellBack, false);
 });
 
@@ -252,11 +240,10 @@ test("Enter aceptado sin startedTurn queda ambiguo y bloquea un segundo pegado",
   // didn't run. The old fallback could run the same request twice and free the same pane.
   const { state: _state, codexHome, rollout } = await codexWorkspace("codex-sin-registro");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   // The Enter produces nothing: the rollout doesn't grow.
   tmux.onSubmit = undefined;
 
-  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux });
   const first = await runner.run({
     command: "codex",
     args: [],
@@ -269,7 +256,6 @@ test("Enter aceptado sin startedTurn queda ambiguo y bloquea un segundo pegado",
   assert.equal(first.timedOut, true);
   assert.equal(first.harnessStarted, undefined);
   assert.match(first.stderr, /paste\+Enter.*cuarentena/u);
-  assert.equal(fallback.calls, 0);
   assert.equal(tmux.submittedCount, 1);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
 
@@ -283,7 +269,7 @@ test("Enter aceptado sin startedTurn queda ambiguo y bloquea un segundo pegado",
     signal: new AbortController().signal,
   });
   assert.equal(second.cancelled, false);
-  assert.equal(fallback.calls, 1, "codex sigue generando: la cuarentena no se levanta sola");
+  assertExecutionPrevented(runner, second, "session_identity_unverified");
   assert.equal(tmux.submittedCount, 1, "el segundo pedido no entra en el pane ambiguo");
 
   tmux.paneContent = "› ";
@@ -302,7 +288,6 @@ test("Enter aceptado sin startedTurn queda ambiguo y bloquea un segundo pegado",
     timeoutMs: 2_000,
     signal: new AbortController().signal,
   });
-  assert.equal(fallback.calls, 1, "codex ocioso recupera su pane sin que nadie lo respawnee");
   assert.equal(tmux.submittedCount, 2, "el tercer pedido sí entra por la caja de codex");
   assert.match(third.stdout, /codex recuperado/u);
   assert.equal(tmux.sessionOptions.has("@cauce_quarantined_pane"), false);
@@ -314,7 +299,6 @@ test("un turno que el dueño interrumpe no se cobra como respuesta", async () =>
   const { state, codexHome, rollout } = await codexWorkspace("codex-interrumpido");
   void state;
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
     await appendFile(rollout, `${[
       codexStarted("t1"),
@@ -323,7 +307,7 @@ test("un turno que el dueño interrumpe no se cobra como respuesta", async () =>
     ].join("\n")}\n`);
   };
 
-  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux });
   const outcome = await runner.run({
     command: "codex",
     args: [],
@@ -336,13 +320,11 @@ test("un turno que el dueño interrumpe no se cobra como respuesta", async () =>
   assert.equal(outcome.exitCode, 1);
   assert.match(outcome.stderr, /se interrumpió/u);
   // And it does NOT retry via the usual path: the turn did enter the terminal.
-  assert.equal(fallback.calls, 0);
 });
 
 test("cancelar durante el preflight corta después del await y no ejecuta ningún camino", async () => {
   const { home, workspace } = await freshState("abort-preflight");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin, _control): Promise<TmuxResult> => {
@@ -350,7 +332,7 @@ test("cancelar durante el preflight corta después del await y no ejecuta ningú
     if (args[0] === "list-sessions") controller.abort();
     return response;
   };
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const outcome = await runner.run({
     command: "claude",
@@ -363,7 +345,6 @@ test("cancelar durante el preflight corta después del await y no ejecuta ningú
 
   assert.equal(outcome.cancelled, true);
   assert.equal(outcome.harnessStarted, false);
-  assert.equal(fallback.calls, 0);
   assert.equal(tmux.used("load-buffer"), false);
   assert.equal(tmux.calls.some((call) => call.includes("Enter")), false);
 });

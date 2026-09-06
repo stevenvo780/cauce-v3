@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DurableStore } from "../src/sdk/durable-store.js";
+import { ProcessExecutionError } from "../src/sdk/errors.js";
 import { HarnessAdapter } from "../src/harnesses/shared.js";
 import { claudeDefinition, codexDefinition } from "../src/harnesses/index.js";
-import type { CommandRunRequest, CommandRunResult, CommandRunner } from "../src/sdk/types.js";
+import type { CommandRunner, CommandRunResult } from "../src/sdk/types.js";
+import type { SharedSessionRunner } from "../src/shared-session/types.js";
 import type { TmuxController, TmuxResult, TmuxRunControl } from "../src/shared-session/tmux.js";
 
 export type { TmuxController, TmuxResult, TmuxRunControl };
@@ -92,7 +94,6 @@ export async function freshState(name: string): Promise<{ state: string; home: s
   return { state: directory, home, workspace };
 }
 
-/** A transcript entry with the same shape that real `claude` writes. */
 export function userEntry(uuid: string, parentUuid: string | null, text: string, sessionId: string): string {
   return JSON.stringify({
     type: "user", uuid, parentUuid, isSidechain: false, sessionId,
@@ -113,7 +114,6 @@ export function assistantEntry(
   });
 }
 
-/** Simulated tmux with the fidelity these tests need: commands received, input box, what ended up pasted. The transcript is written by the test itself when the "TUI" receives an Enter, like claude does. */
 export class FakeTmux implements TmuxController {
   readonly calls: string[][] = [];
   readonly sessionOptions = new Map<string, string>();
@@ -126,7 +126,6 @@ export class FakeTmux implements TmuxController {
   private nextWindowNumber = 1;
   paneId = "%0";
   private nextPaneNumber = 1;
-  /** Windows actually present in the session. By default, the TUI's one. */
   windows: string[] = ["agente"];
   paneContent = "❯ ";
   panePid = "4242";
@@ -135,12 +134,9 @@ export class FakeTmux implements TmuxController {
   readonly configuredInputHooks = new Set<string>();
   private readonly waitSignals = new Set<string>();
   private readonly waiters = new Map<string, Set<(result: TmuxResult) => void>>();
-  /** Original panel command, used to accredit sessions prior to the markers. */
   paneStartCommand = "exec claude";
-  /** `pane_current_path`, tracked from `new-session -c`; `paneCurrentPathOverride` wins over it when set, modeling tmux accepting a bad `-c` and starting the pane elsewhere instead of failing. */
   paneCurrentPath = "/workspace";
   paneCurrentPathOverride: string | undefined = undefined;
-  /** Additional panes inside the TUI window, a situation that must fail closed. */
   extraPaneCount = 0;
   failQuarantineRead = false;
   failQuarantineWrite = false;
@@ -152,7 +148,6 @@ export class FakeTmux implements TmuxController {
   failBufferScrub = false;
   failBufferInspection = false;
   newSessionFails = false;
-  /** Substring of the panel argv that makes the process exit immediately, modeling `claude --continue` with no prior conversation writing "No conversation found to continue" and exiting 1. */
   fatalPaneArguments: string | undefined;
   readonly buffers = new Map<string, string>();
   inputContent = "";
@@ -182,7 +177,6 @@ export class FakeTmux implements TmuxController {
     return this.sessionId;
   }
 
-  /** `respawn-pane -k` keeps `%pane_id`, but changes the process and clears its input. */
   respawnPane(command?: string): void {
     this.panePid = String(Number(this.panePid) + 1);
     if (command !== undefined) this.paneStartCommand = command;
@@ -191,7 +185,6 @@ export class FakeTmux implements TmuxController {
     this.paneContent = "❯ ";
   }
 
-  /** Models bytes from an attached client; `select-pane -d` discards them. */
   humanType(text: string): boolean {
     if (this.inputOff) return false;
     this.inputContent += text;
@@ -696,7 +689,6 @@ export function ambiguousTmuxResult(reason: string): TmuxResult {
   return { exitCode: null, stdout: "", stderr: reason };
 }
 
-/** A fake client that only finishes when its cancellation/deadline reaps it. */
 export function controlledTmuxHang(control?: TmuxRunControl): Promise<TmuxResult> {
   return new Promise((resolveHang) => {
     const signalAborted = (): boolean => control?.signal?.aborted === true;
@@ -753,15 +745,12 @@ export function controlledDelayedTmuxMutation(
   });
 }
 
-/** The regular path. Records whether it was called, which is exactly what needs to be assertable. */
 export class RecordingFallback implements CommandRunner {
   calls = 0;
   constructor(private readonly stdout: string) {}
-  run(_request: CommandRunRequest): Promise<CommandRunResult> {
+  run(): Promise<CommandRunResult> {
     this.calls += 1;
-    return Promise.resolve({
-      stdout: this.stdout, stderr: "", exitCode: 0, signal: null, timedOut: false, cancelled: false,
-    });
+    return Promise.resolve({ stdout: this.stdout, stderr: "", exitCode: 0, signal: null, timedOut: false, cancelled: false });
   }
 }
 
@@ -773,7 +762,7 @@ export function claudeRunner(
     home: string;
     workspace: string;
     tmux: FakeTmux;
-    fallback: CommandRunner;
+    fallback?: CommandRunner;
     sleep?: (ms: number) => Promise<void>;
     cancelDrainTimeoutMs?: number;
     quarantineFile?: string;
@@ -793,7 +782,6 @@ export function claudeRunner(
     workspace: options.workspace,
     transcript: claudeTranscript(join(options.home, ".claude"), options.workspace),
     tmux: options.tmux,
-    fallback: options.fallback,
     sleep: options.sleep ?? immediate,
     acquireTimeoutMs: 30,
     turnTimeoutMs: options.turnTimeoutMs ?? 2_000,
@@ -847,5 +835,17 @@ export function execute(adapter: HarnessAdapter, prompt = "hola"): Promise<{
   });
 }
 
-export { randomUUID };
-export { fileQuarantinePersistence };
+export async function expectSharedTuiUnavailable<T>(operation: Promise<T>): Promise<ProcessExecutionError> {
+  try { await operation; } catch (error) {
+    assert.ok(error instanceof ProcessExecutionError); assert.equal(error.code, "SHARED_TUI_UNAVAILABLE");
+    assert.equal(error.retryable, false); return error;
+  }
+  return assert.fail("expected SHARED_TUI_UNAVAILABLE");
+}
+export function assertExecutionPrevented(runner: SharedSessionRunner, outcome: CommandRunResult, reason?: string): void {
+  assert.equal(outcome.exitCode, 1); assert.equal(outcome.harnessStarted, false);
+  const degradation = runner.takeDegradation(); assert.equal(degradation?.executionPrevented, true);
+  assert.equal(degradation.fellBack, false);
+  if (reason !== undefined) assert.equal(degradation.reason, reason);
+}
+export { randomUUID, fileQuarantinePersistence };

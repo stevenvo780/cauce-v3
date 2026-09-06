@@ -3,6 +3,7 @@ import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { AdapterClient } from "../sdk/client.js";
 import { DurableStore } from "../sdk/durable-store.js";
+import { ProcessExecutionError } from "../sdk/errors.js";
 import { SpawnCommandRunner } from "../sdk/process-runner.js";
 import { WebSocketConsumerConnector } from "../sdk/websocket-transport.js";
 import { OpenClawApiRunner } from "../sdk/openclaw-api-runner.js";
@@ -127,11 +128,10 @@ function operationalLogger(alias: string): AdapterLogger {
 }
 
 /**
- * Wraps the base runner with the shared-session runner when configured.
+ * Creates the canonical terminal runner without an alternative executor.
  */
-async function sharedSessionRunner(
+export async function sharedSessionRunner(
   configured: SharedSessionConfig,
-  fallback: CommandRunner,
   logger: AdapterLogger,
 ): Promise<CommandRunner> {
   let shared = configured;
@@ -143,7 +143,9 @@ async function sharedSessionRunner(
     } catch {
       logger({ event: "shared_session_degraded", alias: configured.alias,
         reason: "session_identity_unverified", error_message: "el binding de la TUI no está disponible" });
-      return fallback;
+      throw new ProcessExecutionError("SHARED_TUI_UNAVAILABLE",
+        "La terminal canónica no pudo acreditarse; el consumidor no aceptará pedidos hasta recuperar su binding",
+        false);
     }
   }
   const tmux = new CliTmux();
@@ -170,7 +172,6 @@ async function sharedSessionRunner(
       alias: shared.alias, stateDirectory: shared.stateDirectory,
     }),
     tmux,
-    fallback,
     sleep,
     quarantineFile: join(shared.stateDirectory, ".shared-session-quarantine"),
     correlationTimeoutMs: correlationTimeoutFromEnvironment(process.env),
@@ -228,7 +229,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   const shared = loadSharedSessionConfig(harnessId, runtime.alias, runtime.stateDirectory);
   const runner = shared === undefined
     ? baseRunner
-    : await sharedSessionRunner(shared, baseRunner, logger);
+    : await sharedSessionRunner(shared, logger);
   const override = commandOverride(harnessId, definition, runtime);
   const harness = new HarnessAdapter({
     definition: definitionWithVerifiedBridge(definition, override, logger),

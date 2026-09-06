@@ -12,7 +12,7 @@ import {
 } from "../src/shared-session/transcript.js";
 import {
   FakeTmux,
-  RecordingFallback,
+  assertExecutionPrevented,
   claudeRunner,
   freshState,
   userEntry,
@@ -50,7 +50,6 @@ test("un pegado que nunca aparece en el registro suelta la sesion en vez de rete
   const { state: _state, home, workspace } = await freshState("pegado-perdido");
   const tmux = new FakeTmux();
   tmux.sessionName = "cauce-zeus";
-  const fallback = new RecordingFallback("{}");
   // The paste is lost: the TUI NEVER writes the entry into the transcript.
   tmux.onSubmit = async () => {
     return;
@@ -62,7 +61,6 @@ test("un pegado que nunca aparece en el registro suelta la sesion en vez de rete
     workspace,
     transcript: claudeTranscript(join(home, ".claude"), workspace),
     tmux,
-    fallback,
     sleep: immediate,
     acquireTimeoutMs: 30,
     settleMs: 0,
@@ -94,12 +92,11 @@ test("un pegado que nunca aparece en el registro suelta la sesion en vez de rete
   assert.equal(outcome.timedOut, true);
   assert.equal(outcome.harnessStarted, undefined);
   // ...and does NOT re-run it through the fallback path: if the paste had actually entered, it would run twice.
-  assert.equal(fallback.calls, 0);
   assert.match(outcome.stderr, /correlated boundary.*cuarentena/u);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
 
   tmux.paneContent = "✻ Herding… (esc to interrupt)\n❯ ";
-  await runner.run({
+  const second = await runner.run({
     command: "claude",
     args: [],
     harness: "claude",
@@ -107,7 +104,7 @@ test("un pegado que nunca aparece en el registro suelta la sesion en vez de rete
     timeoutMs: 24 * 60 * 60_000,
     signal: new AbortController().signal,
   });
-  assert.equal(fallback.calls, 1, "el pane sigue generando: la cuarentena no se levanta sola");
+  assertExecutionPrevented(runner, second, "session_identity_unverified");
   assert.equal(tmux.submittedCount, 1, "no se pega nada en una generacion que no prueba estar ociosa");
 });
 
@@ -119,7 +116,6 @@ test("el timeout general con turno correlacionado bloquea la generación hasta u
   const head = randomUUID();
   await appendFile(file, `${userEntry(head, null, "turno previo", sessionId)}\n`);
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
     await appendFile(file, `${userEntry(randomUUID(), head, text, sessionId)}\n`);
     tmux.paneContent = "✻ Working… (esc to interrupt)\n❯ ";
@@ -129,7 +125,6 @@ test("el timeout general con turno correlacionado bloquea la generación hasta u
     home,
     workspace,
     tmux,
-    fallback,
     turnTimeoutMs: 20,
     sleep: (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, Math.max(ms, 1))),
   });
@@ -146,11 +141,10 @@ test("el timeout general con turno correlacionado bloquea la generación hasta u
   assert.equal(first.timedOut, true);
   assert.equal(first.harnessStarted, undefined);
   assert.match(first.stderr, /budget ended.*cuarentena/u);
-  assert.equal(fallback.calls, 0);
   assert.equal(tmux.submittedCount, 1);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
 
-  await runner.run({
+  const second = await runner.run({
     command: "claude",
     args: [],
     harness: "claude",
@@ -158,7 +152,7 @@ test("el timeout general con turno correlacionado bloquea la generación hasta u
     timeoutMs: 10_000,
     signal: new AbortController().signal,
   });
-  assert.equal(fallback.calls, 1);
+  assertExecutionPrevented(runner, second, "session_identity_unverified");
   assert.equal(tmux.submittedCount, 1);
 });
 

@@ -106,6 +106,8 @@ export interface SharedSessionDegradation {
   readonly occurredAt: string;
   /** `true` when the turn was served by the alternative executor instead of the shared session. */
   readonly fellBack: boolean;
+  /** The canonical terminal was unavailable; no model received this turn. */
+  readonly executionPrevented?: true;
 }
 
 /**

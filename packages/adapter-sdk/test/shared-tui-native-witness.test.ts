@@ -10,7 +10,8 @@ import { transcriptDirectory } from "../src/shared-session/session.js";
 import { claudeTranscript } from "../src/shared-session/transcript.js";
 import {
   adapterFor, assistantEntry, correlationIdFromPrompt, envelopeText, execute,
-  FakeTmux, freshState, RecordingFallback, userEntry,
+  expectSharedTuiUnavailable,
+  FakeTmux, freshState, userEntry,
 } from "./shared-session-fixtures.js";
 
 const generation = "$1:@2:%3:1234";
@@ -162,14 +163,11 @@ test("native witness accepts a failed business envelope as a terminal conversati
   assert.equal(await f.publish(), "written");
 });
 
-for (const scenario of ["terminal", "fallback", "persistence_failure", "capture_failure"] as const) {
+for (const scenario of ["terminal", "unavailable", "persistence_failure", "capture_failure"] as const) {
   test(`shared runner native witness: ${scenario} preserves the terminal result`, async () => {
     const f = await fixture(`runner-${scenario}`);
     const tmux = new FakeTmux();
     tmux.sessionName = "cauce-zeus";
-    const fallback = new RecordingFallback(JSON.stringify({
-      type: "result", subtype: "success", result: envelopeText("headless"), session_id: randomUUID(),
-    }));
     let publishes = 0;
     const notices: string[] = [];
     const store = scenario === "persistence_failure"
@@ -184,7 +182,7 @@ for (const scenario of ["terminal", "fallback", "persistence_failure", "capture_
         return super.publish(...args);
       }
     }
-    if (scenario === "fallback") {
+    if (scenario === "unavailable") {
       tmux.sessionExists = false;
       tmux.newSessionFails = true;
     }
@@ -194,17 +192,21 @@ for (const scenario of ["terminal", "fallback", "persistence_failure", "capture_
         + `${assistantEntry(randomUUID(), key, envelopeText("shared", correlationIdFromPrompt(prompt)), f.nativeId)}\n`);
     };
     const runner = new PasteSessionRunner({
-      alias: "zeus", harness: "claude", workspace: f.workspace, tmux, fallback,
+      alias: "zeus", harness: "claude", workspace: f.workspace, tmux,
       transcript: claudeTranscript(f.binding.configDirectory, f.workspace),
       nativePointer: new ObservedAttestor(store, f.binding),
       onNotice: (detail) => { notices.push(detail); },
       sleep: () => Promise.resolve(), settleMs: 0, pollMs: 1, readyTimeoutMs: 20,
     });
-    const output = await execute(await adapterFor(runner, f.state, "zeus", "claude"));
-    assert.equal(output.status, "done");
-    assert.equal(publishes, scenario === "fallback" || scenario === "capture_failure" ? 0 : 1);
+    const execution = execute(await adapterFor(runner, f.state, "zeus", "claude"));
+    if (scenario === "unavailable") {
+      const error = await expectSharedTuiUnavailable(execution);
+      assert.match(error.message, /session_absent/u);
+    } else {
+      assert.equal((await execution).status, "done");
+    }
+    assert.equal(publishes, scenario === "unavailable" || scenario === "capture_failure" ? 0 : 1);
     assert.equal((await f.store.read(f.binding)).state, scenario === "terminal" ? "valid" : "absent");
-    assert.equal(fallback.calls, scenario === "fallback" ? 1 : 0);
     if (scenario === "capture_failure") assert.ok(notices.some((notice) => notice.includes("acreditación")));
   });
 }

@@ -21,8 +21,7 @@ export interface PasteSessionOptions<E> {
   readonly environment?: Readonly<Record<string, string>>;
   readonly harnessArguments?: readonly string[];
   readonly tmux: TmuxController;
-  /** Backup runner used when the shared session degrades. */
-  readonly fallback: CommandRunner;
+  readonly fallback?: CommandRunner;
   readonly sleep: (ms: number) => Promise<void>;
   /** How long to wait for the input box to free up before degrading. */
   readonly acquireTimeoutMs?: number;

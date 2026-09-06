@@ -642,11 +642,7 @@ export abstract class PasteSessionRunnerBase<E> {
     });
   }
 
-  /**
-   * Falls back SAYING SO, on three surfaces at once.
-   *
-   * Silent degradation is indistinguishable from success, so it cannot exist.
-   */
+  /** An unavailable canonical terminal must never dispatch to another conversation. */
   protected async degrade(
     reason: EnsureFailure
       | "input_busy"
@@ -660,7 +656,8 @@ export abstract class PasteSessionRunnerBase<E> {
       reason,
       detail,
       occurredAt: new Date().toISOString(),
-      fellBack: true,
+      fellBack: false,
+      executionPrevented: true,
     };
     this.record(degradation);
     if (this.exactSessionId !== undefined) {
@@ -672,25 +669,25 @@ export abstract class PasteSessionRunnerBase<E> {
       );
     }
     if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
-    return this.options.fallback.run(request);
+    return result({ exitCode: 1, harnessStarted: false, stderr: `${reason}: ${detail}` });
   }
 
   /**
    * Accumulates notices within the same turn without losing any.
    *
-   * There can be two: TUI restarted (`context_reset`) and the turn also ended up on the fallback
-   * path. Keeping only the last would drop the first, so details are concatenated and the
-   * degrading one wins, being the more severe.
+   * Failure to execute takes precedence over context notices, without discarding their details.
    */
   protected record(degradation: SharedSessionDegradation): void {
     const previous = this.pending;
     this.pending = previous === undefined
       ? degradation
       : {
-        reason: degradation.fellBack ? degradation.reason : previous.reason,
+        reason: degradation.executionPrevented === true ? degradation.reason : previous.reason,
         detail: `${previous.detail}; ${degradation.detail}`,
         occurredAt: degradation.occurredAt,
         fellBack: previous.fellBack || degradation.fellBack,
+        ...(previous.executionPrevented === true || degradation.executionPrevented === true
+          ? { executionPrevented: true as const } : {}),
       };
     this.options.onDegradation?.(degradation);
   }

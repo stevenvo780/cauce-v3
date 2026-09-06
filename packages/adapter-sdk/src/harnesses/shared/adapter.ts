@@ -367,6 +367,7 @@ export class HarnessAdapter {
     const measuredProfileAtStart = invocationContext?.native_profile_measurement
       ?? invocationContext?.runtime_profile
       ?? (request.context === undefined ? undefined : this.perfilVivoDelRuntime(request.context));
+    let degradation: SharedSessionDegradation | undefined;
     const result = await this.runner.run({
       ...invocation,
       ...workspaceCwd(),
@@ -382,12 +383,21 @@ export class HarnessAdapter {
         ? {}
         : { startWitness: this.definition.startWitness }),
       ...(request.onHarnessStart === undefined ? {} : { onHarnessStart: request.onHarnessStart }),
+    }).finally(() => {
+      degradation = isSharedSessionRunner(this.runner) ? this.runner.takeDegradation() : undefined;
     });
-    // Consumed RIGHT NEXT to execution, not later: if the turn fails and an exception is thrown,
-    // the notice cannot stay stored and contaminate the next turn, which might have actually shared.
-    const degradation = isSharedSessionRunner(this.runner)
-      ? this.runner.takeDegradation()
-      : undefined;
+
+    if (degradation?.executionPrevented === true) {
+      const shared = this.sharedSession;
+      if (shared !== undefined) {
+        await recordDegradation(shared.stateDirectory, {
+          ...degradation, alias: shared.alias, harness: shared.harness,
+        });
+      }
+      throw new ProcessExecutionError("SHARED_TUI_UNAVAILABLE",
+        shared === undefined ? "The canonical terminal is unavailable; no model received this turn"
+          : degradationNotice(shared.alias, shared.harness, degradation), false);
+    }
 
     if (result.timedOut) {
       throw new ProcessExecutionError(
