@@ -40,12 +40,13 @@ const UNNEGOTIATED = [
 test("hello advertises only capabilities consumed by runtime or operational readers", () => {
   for (const definition of Object.values(HARNESS_DEFINITIONS)) {
     const advertised = helloCapabilityStrings(definition.capabilities);
+    const workState = definition.id === 'openclaw' ? ['conversation_work_v1'] : [];
     assert.deepEqual(
       [...advertised].sort(),
-      [`harness.${definition.id}`, ...HELLO_SUFFIXES].sort(),
+      [`harness.${definition.id}`, ...HELLO_SUFFIXES, ...workState].sort(),
       definition.id,
     );
-    assert.equal(advertised.length, 8, definition.id);
+    assert.equal(advertised.length, 8 + workState.length, definition.id);
     assert.equal(new Set(advertised).size, advertised.length, definition.id);
   }
 });

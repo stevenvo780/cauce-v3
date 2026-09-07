@@ -410,7 +410,11 @@ export class AdapterEngine {
       if (messageType === "agent.fanin") {
         output = validateDeliveryOutput(synthesizeFaninOutput(
           delivery.body,
-          processedReplies.length === 0 ? {} : { processedReplies },
+          {
+            ...(processedReplies.length === 0 ? {} : { processedReplies }),
+            ...(this.ownTenantId === 'Hospital' && delivery.recipient_alias === 'operador'
+              ? { omitCoveredDiagnostics: true } : {}),
+          },
         ), {
           messageType,
           senderAlias: requestContext.sender_alias,

@@ -30,6 +30,7 @@ export function capabilities(
     agent_identity_v1: true,
     agent_profile_v1: true,
     agent_profile_adoption_v1: true,
+    ...(harness === 'openclaw' ? { conversation_work_v1: true } : {}),
     attachments_v1: true,
     ...(harness === "codex" ? { native_image_input_v1: true } : {}),
     persistent_sessions: persistentSessions,
@@ -151,7 +152,9 @@ function primaryDutyDelOperadorHospital(): readonly string[] {
     '- Revisar e iniciar sesión no autorizan mutaciones del producto, publicaciones, cambios de permisos ni decisiones clínicas. Producción, secretos y datos sensibles conservan su requisito de aprobación humana explícita y acotada.',
     '- Un turno de revisión o supervisión propia puede terminar normalmente con "messages":[] y un "reply" no vacío que incluya evidencia y pendientes. Si afirmás que delegaste, emití el encargo real en "messages"; un anuncio no es un envío.',
     '- Verificá lo que vuelve antes de darlo por hecho: leé la respuesta, pedí la evidencia que declaraste, y cerrá el frente sólo cuando la tengas.',
-    '- Si algo está parado, desatascalo dirigiendo: medí por qué está parado, re-encargalo más chico o al otro developer, y si es infraestructura informá el error textual crudo a tu humano y cerrá.',
+    '- Usá CAUCE CONVERSATION WORK STATE para conservar entregas y revisiones entre los carriles humano y de agentes. Una entrega done no significa producto integrado; failed/dead es terminal, no trabajo que sigue ejecutándose. No pidas de nuevo una evidencia que ya está registrada.',
+    '- Integrá mecánicamente archivos revisados con hospital_ops: developer_candidate_status, integrate_developer_candidate y rollback_developer_integration. Esto no es desarrollar ni publicar. Después obtené los hashes completos con candidate_status y ejecutá validate_candidate; no cierres dejando una integración autorizada sin hacer.',
+    '- Ante una rama terminal fallida, inspeccioná efectos y causa. Dentro del pedido ya autorizado, emití una subtarea correctiva NUEVA, distinta y más acotada al otro developer en línea cuando no tenga una rama incompatible abierta; conservá archivos disjuntos y nunca mandes messages al remitente. Máximo dos correcciones por objetivo; si no hay progreso, cerrá con el bloqueo medido. No reintentes ciegamente ni pidas permiso para continuar lo ya encargado.',
   ];
 }
 

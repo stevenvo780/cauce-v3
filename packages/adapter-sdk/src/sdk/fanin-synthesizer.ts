@@ -15,6 +15,7 @@ interface AttributedText {
 }
 
 export interface FaninSynthesisOptions {
+  readonly omitCoveredDiagnostics?: boolean;
   /**
    * Validated terminal replies produced by this same local adapter while
    * processing correlated child responses. They never come from
@@ -267,6 +268,12 @@ export function synthesizeFaninOutput(
     + `${processedReplies.length === 1 ? "reply" : "replies"}; `
     + `${String(responses.length)} branch ${responses.length === 1 ? "response" : "responses"} `
     + `in this chain; ${String(uncovered.length)} without local synthesis]`;
+  if (options.omitCoveredDiagnostics === true && sections.length === 0) {
+    return {
+      reply: boundedUtf8(primary.text, MAX_FINAL_TEXT_BYTES),
+      messages: [], notify: [], status: 'done', retryable: false, artifacts: [],
+    };
+  }
   const separator = "\n\n";
   const separatorBytes = Buffer.byteLength(separator, "utf8");
   const availableBytes = MAX_FINAL_TEXT_BYTES

@@ -10,6 +10,7 @@ import {
 import type { AdapterLog, AdapterLogger, Delivery } from "../types.js";
 import { promptForDelivery, secretsPromptBlock } from "./delivery-context.js";
 import type { TurnSecrets } from "./secret-guard.js";
+import { conversationWorkPrompt } from './conversation-work.js';
 
 /**
  * Lifetime of everything a turn materializes on disk.
@@ -82,6 +83,8 @@ export async function materializeTurnInput(
   try {
     secrets = await materializeTurnSecrets(delivery, deps);
     const blocks = [promptForDelivery(delivery, store)];
+    const workState = conversationWorkPrompt(delivery.conversation_work_state);
+    if (workState !== undefined) blocks.push(workState);
     if (attachments !== undefined) blocks.push(attachments.prompt);
     const secretsBlock = secretsPromptBlock(secrets?.secrets ?? []);
     if (secretsBlock !== undefined) blocks.push(secretsBlock);

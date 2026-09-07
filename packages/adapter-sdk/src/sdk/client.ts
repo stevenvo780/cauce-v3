@@ -100,6 +100,7 @@ const CAPABILITY_ENCODERS = {
   agent_identity_v1: (value) => matchesCapability(value.agent_identity_v1, true) ? ['agent_identity_v1'] : [],
   agent_profile_v1: (value) => matchesCapability(value.agent_profile_v1, true) ? ['agent_profile_v1'] : [],
   agent_profile_adoption_v1: (value) => matchesCapability(value.agent_profile_adoption_v1, true) ? ['agent_profile_adoption_v1'] : [],
+  conversation_work_v1: (value) => matchesCapability(value.conversation_work_v1, true) ? ['conversation_work_v1'] : [],
 } satisfies Partial<Record<keyof AdapterCapabilities, CapabilityEncoder>>;
 
 export function helloCapabilityStrings(capabilities: AdapterCapabilities): string[] {

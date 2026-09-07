@@ -21,6 +21,7 @@ import {
   TraceIdSchema,
 } from './core.js';
 import { MessageBodySchema } from './messages.js';
+import { ConversationWorkStateSchema } from './conversation-work.js';
 
 export const BaseAckSchema = z.object({
   version: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
@@ -184,6 +185,7 @@ export const DeliveryEnvelopeSchema = z.object({
    * only behind `agent_profile_adoption_v1`; old strict adapters must never see it.
    */
   profile_runtime_contract: ProfileRuntimeContractSchema.optional(),
+  conversation_work_state: ConversationWorkStateSchema.optional(),
 }).strict();
 
 /**

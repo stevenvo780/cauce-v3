@@ -4,7 +4,7 @@ import { AdapterError } from "../src/sdk/errors.js";
 import { synthesizeFaninOutput } from "../src/sdk/fanin-synthesizer.js";
 import { MAX_FINAL_TEXT_BYTES } from "../src/sdk/output-parser.js";
 
-function synthesizedFixture(uncoveredBranch: boolean): string {
+function synthesizedFixture(uncoveredBranch: boolean, omitCoveredDiagnostics = false): string {
   const uncovered = {
     tenant_id: "Steven",
     alias: "socrates",
@@ -28,6 +28,7 @@ function synthesizedFixture(uncoveredBranch: boolean): string {
       ],
     },
   }, {
+    omitCoveredDiagnostics,
     processedReplies: [{
       tenantId: "Steven",
       alias: "seneca",
@@ -80,6 +81,12 @@ test("a lead turn that covers every branch still carries the counting footer", (
     "Locally synthesized.\n\n[1 locally synthesized branch reply; 1 branch response in this chain;"
     + " 0 without local synthesis]",
   );
+});
+
+test('human presentation omits covered diagnostics without hiding an uncovered branch', () => {
+  assert.equal(synthesizedFixture(false, true), 'Locally synthesized.');
+  assert.match(synthesizedFixture(true, true), /unsynthesized branch/u);
+  assert.match(synthesizedFixture(true, true), /1 without local synthesis/u);
 });
 
 test("fan-in footer reports processed, total and uncovered branch counts", () => {
