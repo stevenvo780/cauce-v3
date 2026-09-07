@@ -186,7 +186,7 @@ for alias in "${ALIASES[@]}"; do
     printf 'OPENCLAW_API_URL=http://127.0.0.1:18789/v1/chat/completions\n'
     printf 'OPENCLAW_TOKEN_FILE=/opt/cauce-v3-secrets/%s/openclaw-token\n' "$alias"
     printf 'OPENCLAW_AGENT_TARGET=openclaw/%s\n' "$alias"
-    printf 'DEFAULT_TIMEOUT_MS=600000\n'
+    printf 'DEFAULT_TIMEOUT_MS=1800000\n'
   } >"$temporary_config"
   chmod 0600 "$temporary_config"
   mv "$temporary_config" "$config"
