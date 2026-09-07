@@ -5,6 +5,7 @@ import { signalAborted } from "../runtime-state.js";
 import { ProcessExecutionError } from "./errors.js";
 import { readBearerTokenFile } from "./secure-files.js";
 import type { CommandRunRequest, CommandRunResult, CommandRunner } from "./types.js";
+import { openClawHttpAmbiguous, openClawHttpDiagnostic } from './openclaw-api-error.js';
 
 interface OpenClawApiRunnerOptions {
   readonly endpoint: string;
@@ -114,19 +115,13 @@ export class OpenClawApiRunner implements CommandRunner {
         controller.signal,
       );
       if (status < 200 || status >= 300) {
-        if (status === 425 || status === 429) {
-          throw new ProcessExecutionError(
-            "OPENCLAW_HTTP_PRE_EXECUTION",
-            "OpenClaw API rejected the request before execution",
-            true,
-          );
-        }
-        const ambiguous = status === 408 || status >= 500;
+        const diagnostic = openClawHttpDiagnostic(status, stdout);
+        const ambiguous = openClawHttpAmbiguous(status, stdout);
         throw new ProcessExecutionError(
           ambiguous ? "OPENCLAW_HTTP_AMBIGUOUS" : "OPENCLAW_HTTP",
           ambiguous
-            ? "OpenClaw API failed after request dispatch; execution state is unknown"
-            : "OpenClaw API rejected the request",
+            ? `OpenClaw API failed after request dispatch; execution state is unknown (${diagnostic})`
+            : `OpenClaw API rejected the request (${diagnostic})`,
           false,
         );
       }

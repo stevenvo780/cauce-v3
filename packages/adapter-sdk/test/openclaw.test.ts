@@ -217,7 +217,7 @@ test("OpenClaw API does not POST when the signal is already aborted", async () =
   await api.close();
 });
 
-test("OpenClaw API retries only an explicit pre-execution rejection", async () => {
+test("OpenClaw API does not replay a whole turn after a provider error", async () => {
   const api = await setupServer();
   const token = await tokenFile("api-token");
   const adapter = new HarnessAdapter({
@@ -234,8 +234,8 @@ test("OpenClaw API retries only an explicit pre-execution rejection", async () =
     }),
     (error: unknown) =>
       error instanceof AdapterError
-      && error.code === "OPENCLAW_HTTP_PRE_EXECUTION"
-      && error.retryable,
+      && error.code === "OPENCLAW_HTTP_AMBIGUOUS"
+      && !error.retryable,
   );
   await assert.rejects(
     adapter.execute({
@@ -249,6 +249,27 @@ test("OpenClaw API retries only an explicit pre-execution rejection", async () =
       && !error.retryable,
   );
   await api.close();
+});
+
+test('OpenClaw upstream 429 after a side effect remains ambiguous and is not replayed', async (t) => {
+  let sideEffects = 0;
+  const api = await setupServer((response) => {
+    sideEffects += 1;
+    response.writeHead(429, {'content-type': 'application/json'});
+    response.end(JSON.stringify({error: {type: 'api_error', message: 'upstream provider timeout; private=DO_NOT_ECHO'}}));
+  });
+  t.after(api.close);
+  const runner = new OpenClawApiRunner({endpoint: api.endpoint, tokenFile: await tokenFile('api-token')});
+  await assert.rejects(runner.run(apiRequest()), (error: unknown) => {
+    assert.ok(error instanceof AdapterError);
+    assert.equal(error.code, 'OPENCLAW_HTTP_AMBIGUOUS');
+    assert.equal(error.retryable, false);
+    assert.match(error.message, /HTTP 429; category=upstream_timeout/u);
+    assert.doesNotMatch(error.message, /DO_NOT_ECHO/u);
+    return true;
+  });
+  assert.equal(sideEffects, 1);
+  assert.equal(api.requests.length, 1);
 });
 
 test("OpenClaw native sessions are isolated by stable alias namespace", async () => {
@@ -395,7 +416,7 @@ test("OpenClaw API preserves HTTP classifications and never follows redirects or
   const runner = new OpenClawApiRunner({ endpoint: api.endpoint, tokenFile: await tokenFile("api-token") });
   for (const [code, expected, retryable] of [
     [401, "OPENCLAW_HTTP", false], [403, "OPENCLAW_HTTP", false],
-    [425, "OPENCLAW_HTTP_PRE_EXECUTION", true], [429, "OPENCLAW_HTTP_PRE_EXECUTION", true],
+    [425, "OPENCLAW_HTTP_AMBIGUOUS", false], [429, "OPENCLAW_HTTP_AMBIGUOUS", false],
     [408, "OPENCLAW_HTTP_AMBIGUOUS", false], [500, "OPENCLAW_HTTP_AMBIGUOUS", false],
     [503, "OPENCLAW_HTTP_AMBIGUOUS", false],
     ...[301, 302, 303, 307, 308].map((redirect) => [redirect, "OPENCLAW_API_AMBIGUOUS", false] as const),
