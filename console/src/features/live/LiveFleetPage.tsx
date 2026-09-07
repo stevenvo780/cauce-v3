@@ -28,6 +28,7 @@ import {
   type PulseMap,
 } from './agent-state';
 import { derivaDelRegistro } from './deriva';
+import { projectLiveFleet } from './live-projection';
 import { LiveHypergraph, type HypergraphLayer } from './LiveHypergraph';
 import { LiveFleetToolbar } from './LiveFleetToolbar';
 import { LiveFleetTally } from './LiveFleetTally';
@@ -68,7 +69,9 @@ export function LiveFleetPage() {
   const [tip, setTip] = useState<TooltipTarget | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
-  const snapshot = activity.data;
+  const { snapshot, topology: liveTopology } = useMemo(
+    () => projectLiveFleet(activity.data, topology.data), [activity.data, topology.data],
+  );
 
   const [drawer, setDrawer] = useState<{
     key: string; tab: DrawerTab; contextFocusTarget?: ContextFocusTarget;
@@ -122,10 +125,20 @@ export function LiveFleetPage() {
   usePolling(reload, intervalMs);
 
   const { views, edges } = useMemo(
-    () => buildLiveViews(snapshot, pulses, now),
-    [snapshot, pulses, now],
+    () => {
+      const original = buildLiveViews(activity.data, pulses, now);
+      const visible = new Set((snapshot?.agents ?? []).map((agent) => `${agent.tenant_id}/${agent.alias}`));
+      return {
+        views: original.views.filter((view) => visible.has(view.key)),
+        edges: original.edges.filter((edge) => visible.has(edge.from) && visible.has(edge.to)),
+      };
+    },
+    [activity.data, snapshot, pulses, now],
   );
-  const origins = useMemo(() => humanOrigins(snapshot), [snapshot]);
+  const origins = useMemo(() => {
+    const visible = new Set(views.map((view) => view.key));
+    return humanOrigins(activity.data).filter((origin) => visible.has(origin.agentKey));
+  }, [activity.data, views]);
 
   const tenants = useMemo(() => {
     const vistos = new Set<string>();
@@ -140,7 +153,7 @@ export function LiveFleetPage() {
   );
 
   const topologiaEnAlcance = useMemo(() => {
-    const completa = topology.data;
+    const completa = liveTopology;
     if (!completa || tenantFilter === 'todos') return completa;
     return {
       ...completa,
@@ -149,7 +162,7 @@ export function LiveFleetPage() {
         (edge) => edge.from_tenant === tenantFilter || edge.to_tenant === tenantFilter,
       ),
     };
-  }, [topology.data, tenantFilter]);
+  }, [liveTopology, tenantFilter]);
 
   const topologiaDelMapa = useMemo<TopologySnapshot | undefined>(() => {
     const base = topologiaEnAlcance;

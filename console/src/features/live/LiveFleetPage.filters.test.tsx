@@ -125,7 +125,7 @@ describe('the Client selector', () => {
 
     const aviso = await screen.findByTestId('aviso-recorte');
     expect(aviso).toHaveTextContent(/Mapa acotado a/);
-    expect(aviso).toHaveTextContent(/11 alias de otros clientes/);
+    expect(aviso).toHaveTextContent(/10 alias de otros clientes/);
   });
 
   it('the header cannot claim a scope that the drawing contradicts', async () => {
@@ -140,7 +140,7 @@ describe('the Client selector', () => {
 
     await user.click(screen.getByRole('button', { name: /Qué es «La flota ahora»/ }));
     const ayuda = await screen.findByRole('dialog');
-    expect(within(ayuda).getByText(/Los 4 alias de Miguel/)).toBeInTheDocument();
+    expect(within(ayuda).getByText(/Los 3 alias de Miguel/)).toBeInTheDocument();
     await user.keyboard('{Escape}');
     await waitFor(() => { expect(dibujados().every((key) => key.startsWith('Miguel/'))).toBe(true); });
   });
@@ -156,11 +156,11 @@ describe('the Client selector', () => {
     // registrations are half-done".
     const sumaChips = () => [...document.querySelectorAll('.live-tally-chip:not(.is-unreported) strong')]
       .reduce((total, chip) => total + Number(chip.textContent), 0);
-    await waitFor(() => { expect(sumaChips()).toBe(15); });
+    await waitFor(() => { expect(sumaChips()).toBe(13); });
 
     await elegirCliente(user, 'Miguel');
-    // The four aliases of Miguel that activity reports.
-    await waitFor(() => { expect(sumaChips()).toBe(4); });
+    // The three live aliases exclude the explicitly retired slot.
+    await waitFor(() => { expect(sumaChips()).toBe(3); });
   });
 
   it('a client about which activity reports NOTHING does not go green: it shows "I don\'t know"', async () => {
