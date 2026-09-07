@@ -38,7 +38,9 @@ import {
 } from "./engine/delivery-context.js";
 import type { ClaimMonitor, ClaimRenewalDeps } from "./engine/claim-renewal.js";
 import { startClaimRenewal } from "./engine/claim-renewal.js";
-import { interruptedStartedError } from "./engine/recovery.js";
+import {
+  entregaVencidaAlRecuperar, interruptedStartedError, vencidaAlRecuperarError,
+} from "./engine/recovery.js";
 import { inlineWithoutSecrets } from "./engine/secret-guard.js";
 import type { SealedSecretGateway, TurnInput, TurnInputDeps } from "./engine/turn-cleanup.js";
 import { materializeTurnInput, releaseTurn } from "./engine/turn-cleanup.js";
@@ -263,6 +265,13 @@ export class AdapterEngine {
         await this.replayPending(recovered);
         await this.finishError(recovered, interruptedStartedError(recovered));
       } else if (record.request !== undefined) {
+        // Una entrega que ya pasó su plazo de ACK está MUERTA en el bus: reejecutarla gasta el
+        // turno y deja un sobre que nadie puede casar, mientras la entrega viva espera. Medido
+        // con kratos el 2026-09-07 (176 min parado). Ver `entregaVencidaAlRecuperar`.
+        if (entregaVencidaAlRecuperar(record.request, this.clock.now())) {
+          await this.finishError(record, vencidaAlRecuperarError(record));
+          continue;
+        }
         await this.handleDelivery(record.request);
       }
     }
