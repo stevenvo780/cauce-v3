@@ -15,7 +15,8 @@ Este perfil instala una instancia separada de la flota central. Usa el proyecto 
 - cada developer puede recibir cualquier capa con archivos disjuntos; el operador ve ambos
   candidatos y los integra al canónico; los developers no tienen red clínica, navegador ni
   `hospital_ops`;
-- Cauce publica gateway y consola sólo sobre `172.17.0.1`, fuera de la interfaz pública del VPS.
+- Cauce enlaza gateway y consola sólo sobre `172.17.0.1`. El acceso público de la consola
+  pasa por Caddy con HTTPS en `https://cauce-hospital.stevenvallejo.com`.
 
 ## Orden de instalación
 
@@ -28,11 +29,15 @@ Este perfil instala una instancia separada de la flota central. Usa el proyecto 
    sudo ./ops/instances/hospital/install.sh
    ```
 
-3. Mostrar el acceso privado a la consola:
+3. Mostrar el acceso de la consola en una terminal privada:
 
    ```bash
    sudo hospital-cauce-access
    ```
+
+   La cuenta existente `steven@hospital.local` tiene rol operador del tenant Hospital.
+   La contraseña queda en el archivo privado local; no se publica en documentación ni logs.
+   Para la URL pública seguir [el procedimiento de dominio](public-console.md).
 
 4. Steven autentica únicamente los dos builders, sin pegar la clave en el chat:
 
