@@ -174,20 +174,27 @@ function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; 
 
 
 /** The answer's own files are judged over the prefix the egress renders and by the SAME field rules as the delegation edge -- a safe basename, a real media type, a `sha256` of 64 hex or nothing -- so what survives is bounded in every field and no entry is a free-text channel out of the turn; an entry that fails one of them is dropped whole, exactly as `parseOne` drops it, and one whose bytes do not fit the shared turn budget keeps its (already bounded) identity and loses its content. */
-function parseArtifacts(value: unknown, budget: RelayArtifactBudget): readonly OutputArtifact[] {
-  if (value === undefined || value === null) return [];
+function parseArtifacts(
+  value: unknown,
+  budget: RelayArtifactBudget,
+): { artifacts: readonly OutputArtifact[]; descartes: readonly string[] } {
+  if (value === undefined || value === null) return { artifacts: [], descartes: [] };
   if (!Array.isArray(value)) {
-    throw new MalformedOutputError("'artifacts' must be an array");
+    return { artifacts: [], descartes: ["'artifacts' no era una lista; se descarto entera"] };
   }
-  return value.slice(0, MAX_ARTIFACTS_CONSIDERED).flatMap((entry, index) => {
+  const descartes: string[] = [];
+  const artifacts = value.slice(0, MAX_ARTIFACTS_CONSIDERED).flatMap((entry, index) => {
     if (!isObject(entry) || typeof entry.name !== "string" || typeof entry.uri !== "string") {
-      throw new MalformedOutputError(`artifacts[${String(index)}] must contain string 'name' and 'uri'`);
+      descartes.push(`artifacts[${String(index)}] descartado: necesita 'name' y 'uri' de texto (un objeto {name, uri}, no una ruta suelta)`);
+      return [];
     }
     if (entry.media_type !== undefined && typeof entry.media_type !== "string") {
-      throw new MalformedOutputError(`artifacts[${String(index)}].media_type must be a string`);
+      descartes.push(`artifacts[${String(index)}] descartado: 'media_type' tiene que ser texto`);
+      return [];
     }
     if (entry.sha256 !== undefined && typeof entry.sha256 !== "string") {
-      throw new MalformedOutputError(`artifacts[${String(index)}].sha256 must be a string`);
+      descartes.push(`artifacts[${String(index)}] descartado: 'sha256' tiene que ser texto`);
+      return [];
     }
     if (!isSafeBasename(entry.name)) return [];
     if (entry.media_type !== undefined && !isValidMediaType(entry.media_type)) return [];
@@ -205,6 +212,7 @@ function parseArtifacts(value: unknown, budget: RelayArtifactBudget): readonly O
       ...(sha256 === undefined ? {} : { sha256 }),
     }];
   });
+  return { artifacts, descartes };
 }
 
 const STATUS_QUE_DECLARAN_FALLO = new Set([
@@ -256,8 +264,15 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
   const notificaciones = value.notify === undefined
     ? { directives: [] as readonly NotifyDirective[], descartes: [] as readonly string[] }
     : parseNotify(value.notify);
+  // The budget is shared and claimed in order: the delegation edge first, the answer's own
+  // files with what is left. Both are parsed BEFORE the notice so their discards reach the agent.
+  const artifactBudget = newRelayArtifactBudget();
+  const mensajes = value.messages === undefined ? [] : parseMessages(value.messages, artifactBudget);
+  const artefactos = parseArtifacts(value.artifacts, artifactBudget);
   // The agent must learn what was discarded, or it will repeat the same error every turn.
-  const notas = [...estado.descartes, ...retryableDescartes, ...notificaciones.descartes];
+  const notas = [
+    ...estado.descartes, ...retryableDescartes, ...notificaciones.descartes, ...artefactos.descartes,
+  ];
   if (ausentes.length > 0) {
     notas.push(
       `faltaba ${ausentes.map((key) => `'${key}'`).join(", ")} en el sobre; se normalizo para no `
@@ -265,12 +280,11 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
     );
   }
   const aviso = notas.length === 0 ? "" : `\n\n[Cauce] ${notas.join(". ")}.`;
-  const artifactBudget = newRelayArtifactBudget();
   return {
     reply: aviso === ""
       ? value.reply
       : `${value.reply === null || value.reply.trim() === "" ? "(sin respuesta)" : value.reply}${aviso}`,
-    messages: value.messages === undefined ? [] : parseMessages(value.messages, artifactBudget),
+    messages: mensajes,
     notify: notificaciones.directives,
     status,
     // `retryable` has no meaning after a successful terminal result. Native
@@ -278,7 +292,7 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
     // `{status:"done", retryable:true}`; canonicalize that one pair without
     // re-executing or weakening validation of the field's type.
     retryable: status === "done" ? false : retryable,
-    artifacts: parseArtifacts(value.artifacts, artifactBudget),
+    artifacts: artefactos.artifacts,
   };
 }
 
