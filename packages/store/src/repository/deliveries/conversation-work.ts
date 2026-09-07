@@ -30,6 +30,7 @@ interface WorkRow {
   review_status: ConversationWorkState['branches'][number]['review_status'];
   review_updated_at: Date | null;
   review_input_at: Date | null;
+  review_matches_current_result: boolean;
   as_of: Date;
   has_more: boolean;
 }
@@ -77,6 +78,8 @@ export async function conversationWorkState(
      SELECT visible.*,review.result->'output'->>'reply' AS review,review.status AS review_status,
             review.updated_at AS review_updated_at,
             review.input_at AS review_input_at,
+            COALESCE(review.input_at>=visible.updated_at AND review.status IN ('done','failed'),false)
+              AS review_matches_current_result,
             statement_timestamp() AS as_of,(SELECT count(*)>16 FROM selected) AS has_more
        FROM visible
        LEFT JOIN LATERAL (
@@ -115,9 +118,7 @@ export async function conversationWorkState(
       review_status: row.review_status,
       review_updated_at: row.review_updated_at?.toISOString() ?? null,
       review_input_at: row.review_input_at?.toISOString() ?? null,
-      review_matches_current_result: row.review_input_at !== null
-        && (row.review_status === 'done' || row.review_status === 'failed')
-        && row.review_input_at >= row.updated_at,
+      review_matches_current_result: row.review_matches_current_result,
     })),
   };
 }

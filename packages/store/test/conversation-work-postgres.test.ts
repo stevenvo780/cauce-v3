@@ -132,6 +132,13 @@ it('exposes a newer terminal result while marking the prior review as stale', as
   await repository.publish(request());
   const completedLater = await nextDelivery(repository, parent);
   expect(completedLater.conversation_work_state?.branches[0]?.review_matches_current_result).toBe(false);
+  await ackWith(repository, parent, completedLater);
+  await pool.query(`UPDATE messages SET created_at='2026-09-07 01:00:00.005001+00'
+    WHERE body->>'type'='agent.response' AND body->'correlation'->>'child_delivery_id'=$1`, [child.delivery_id]);
+  await pool.query("UPDATE deliveries SET updated_at='2026-09-07 01:00:00.005002+00' WHERE id=$1", [child.delivery_id]);
+  await repository.publish(request());
+  const subMillisecond = await nextDelivery(repository, parent);
+  expect(subMillisecond.conversation_work_state?.branches[0]?.review_matches_current_result).toBe(false);
 });
 
 it('does not send the new field to an older strict adapter', async () => {
