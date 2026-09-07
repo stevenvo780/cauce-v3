@@ -1,3 +1,4 @@
+import { rescatarResultadoTardio } from "./resultado-tardio.js";
 import { randomBytes } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -115,13 +116,27 @@ export abstract class PasteSessionRunnerBase<E> {
       );
       if (!markerRead.completed || markerRead.value?.state !== "present") continue;
       if (markerRead.value.value !== paneGenerationKey(identity)) continue;
-      if (!await this.hasValidTerminalEnvelope(candidate.correlationId, findEnvelope)) continue;
+      const sobreTardio = await this.hasValidTerminalEnvelope(candidate.correlationId, findEnvelope);
+      if (sobreTardio === undefined) continue;
       const cleared = await beforeDeadline(
         this.quarantinePersistence().clear(candidate.file),
         this.quarantineDeadline(),
       );
       if (cleared.completed && cleared.value === true) {
         clearedCurrent = true;
+        // Llegar aquí significa que un turno que ya murió terminó DESPUÉS y dejó su respuesta.
+        // Se guarda antes de olvidar la cuarentena, que es cuando deja de saberse de quién era.
+        const rescatado = await rescatarResultadoTardio({
+          quarantineFile,
+          correlationId: candidate.correlationId,
+          texto: sobreTardio,
+        });
+        if (rescatado !== undefined) {
+          this.options.onNotice?.(
+            "un turno terminó DESPUÉS de que su entrega muriera y su respuesta se habría perdido:"
+              + ` rescatada en ${rescatado.ruta} (correlación ${candidate.correlationId})`,
+          );
+        }
         this.heldQuarantines.delete(candidate.correlationId);
       }
     }
@@ -178,15 +193,22 @@ export abstract class PasteSessionRunnerBase<E> {
     });
   }
 
+  /**
+   * El sobre terminal de esa correlación, o `undefined`.
+   *
+   * Devolvía `boolean` y TIRABA el texto. Pero llegar hasta aquí significa exactamente que un
+   * turno que ya murió terminó después y dejó su respuesta: es el único sitio donde ese trabajo
+   * todavía existe y se sabe de quién era. Devolverlo permite rescatarlo sin volver a leer nada.
+   */
   protected async hasValidTerminalEnvelope(
     correlationId: string,
     findEnvelope: NonNullable<TranscriptReader<E>["findEnvelope"]>,
-  ): Promise<boolean> {
+  ): Promise<string | undefined> {
     const filesRead = await beforeDeadline(
       this.options.transcript.files(),
       this.quarantineDeadline(),
     );
-    if (!filesRead.completed || filesRead.value === undefined) return false;
+    if (!filesRead.completed || filesRead.value === undefined) return undefined;
     // Latest transcript/rollout files sort last. Finding the active one first avoids re-reading
     // years of history during exceptional recovery.
     for (const file of [...filesRead.value].reverse()) {
@@ -194,19 +216,19 @@ export abstract class PasteSessionRunnerBase<E> {
         this.options.transcript.read(file, 0),
         this.quarantineDeadline(),
       );
-      if (!sliceRead.completed || sliceRead.value === undefined) return false;
+      if (!sliceRead.completed || sliceRead.value === undefined) return undefined;
       const outcome = findEnvelope(sliceRead.value.entries, correlationId);
       if (outcome === undefined) continue;
       if (outcome.kind !== "answer"
-        || !envelopeHasCorrelation(outcome.text, correlationId)) return false;
+        || !envelopeHasCorrelation(outcome.text, correlationId)) return undefined;
       try {
         validateStructuredOutput(JSON.parse(stripJsonFence(outcome.text)) as unknown);
-        return true;
+        return outcome.text;
       } catch {
-        return false;
+        return undefined;
       }
     }
-    return false;
+    return undefined;
   }
 
   /**

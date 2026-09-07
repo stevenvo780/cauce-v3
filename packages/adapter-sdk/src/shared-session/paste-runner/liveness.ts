@@ -8,8 +8,7 @@ import {
 } from "../tmux.js";
 import { PasteSessionRunnerBase } from "./base.js";
 import { readQuarantineMarker } from "./persistence.js";
-import { rescatarResultadoTardio } from "./resultado-tardio.js";
-import { beforeDeadline, fileSize } from "./runtime.js";
+import { beforeDeadline } from "./runtime.js";
 
 /**
  * What the PANE says about the generation, not the transcript file; every answer fails closed. Full rationale: ./liveness.md
@@ -69,23 +68,6 @@ export abstract class PasteSessionLivenessRunner<E> extends PasteSessionRunnerBa
         this.quarantineDeadline(),
       );
       if (!cleared.completed || cleared.value !== true) return;
-      // El panel dejó de generar, o sea que el turno TERMINÓ. Si dejó un sobre después de que su
-      // entrega muriera, éste es el único instante en que sigue existiendo y todavía se sabe a qué
-      // correlación pertenece. Se guarda antes de olvidar la cuarentena. Nunca lanza: si fallara,
-      // levantar la cuarentena importa más que el rescate.
-      const rescatado = await rescatarResultadoTardio({
-        transcript: this.options.transcript,
-        quarantineFile: this.options.quarantineFile,
-        file: held.file,
-        correlationId,
-        tamano: fileSize,
-      });
-      if (rescatado !== undefined) {
-        this.options.onNotice?.(
-          `el turno terminó DESPUÉS de que su entrega muriera y su respuesta se habría perdido:`
-            + ` rescatada en ${rescatado.ruta} (correlación ${correlationId})`,
-        );
-      }
       this.heldQuarantines.delete(correlationId);
     }
     if (!await this.releaseDurableQuarantine(identity, generation, mine)) return;
