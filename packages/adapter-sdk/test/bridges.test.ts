@@ -168,6 +168,21 @@ test("OpenClaw bridge declares a failed turn when every model in the chain is ex
   );
 });
 
+test("the OpenClaw bridge abandons a run that exceeds its own deadline with a failed envelope", () => {
+  const result = spawnSync(process.execPath, [sourceOpenClaw, "--session-key", "session-deadline"], {
+    input: "BRIDGE_WAIT",
+    encoding: "utf8",
+    env: { ...process.env, CAUCE_OPENCLAW_DIST_DIR: fakeOpenClaw, CAUCE_OPENCLAW_RUN_DEADLINE_MS: "300" },
+    timeout: 20_000,
+  });
+  assert.equal(result.status, 1, "an abandoned run is a failed turn, never an ambiguous one");
+  const envelope = JSON.parse(result.stdout.trim().split(/\r?\n/u).at(-1) ?? "{}") as { result?: { ok?: boolean; error?: string }; session_id?: string };
+  assert.equal(envelope.result?.ok, false);
+  assert.match(envelope.result?.error ?? "", /exceeded 300 ms/u);
+  assert.equal(envelope.session_id, "session-deadline");
+  assert.match(result.stderr, /<<cauce:harness-started>>/u, "the witness precedes the abandonment: the turn did start");
+});
+
 test("external timeout terminates an OpenClaw bridge invocation", async () => {
   const result = await new SpawnCommandRunner({ killGraceMs: 15 }).run({
     command: process.execPath,
