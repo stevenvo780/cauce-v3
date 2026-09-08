@@ -168,6 +168,35 @@ test("OpenClaw bridge declares a failed turn when every model in the chain is ex
   );
 });
 
+test("the OpenClaw bridge exits after emitting its envelope even with a live handle open", () => {
+  // Regression: OpenClaw's embedded fallback leaves the app-server holding the event loop, so
+  // returning from main() never ended the process. The answer sat in the pipe and the delivery
+  // lived in `started` until somebody killed the bridge by hand.
+  const result = spawnSync(process.execPath, [sourceOpenClaw, "--session-key", "session-linger"], {
+    input: "BRIDGE_LINGER prompt",
+    encoding: "utf8",
+    env: { ...process.env, CAUCE_OPENCLAW_DIST_DIR: fakeOpenClaw },
+    timeout: 20_000,
+  });
+  assert.equal(result.status, 0, `the bridge must exit on its own: ${result.stderr}`);
+  const parsed = parseOpenClawOutput(result.stdout);
+  assert.equal(parsed.output.reply, "openclaw bridge success");
+  assert.equal(parsed.nativeSessionId, "session-linger");
+});
+
+test("OpenClaw output keeps an answer that runtime noise precedes", () => {
+  // Regression: parsing the whole stdout turned a produced answer into malformed output, and the
+  // engine buried the delivery as a non-retryable failure.
+  const envelope = JSON.stringify({
+    result: { payloads: [{ text: JSON.stringify({ reply: "answer after noise", messages: [],
+      status: "done", retryable: false, artifacts: [] }) }] },
+    status: "ok",
+  });
+  const noisy = `(node:35497) ExperimentalWarning: SQLite is an experimental feature\n`
+    + `(Use \`node --trace-warnings ...\` to show where the warning was created)\n${envelope}\n`;
+  assert.equal(parseOpenClawOutput(noisy).output.reply, "answer after noise");
+});
+
 test("the OpenClaw bridge abandons a run that exceeds its own deadline with a failed envelope", () => {
   const result = spawnSync(process.execPath, [sourceOpenClaw, "--session-key", "session-deadline"], {
     input: "BRIDGE_WAIT",
