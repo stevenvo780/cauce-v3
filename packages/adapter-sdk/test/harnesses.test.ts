@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
-import { CANONICAL_OPEN_CODE_SESSION_FILE, DurableStore } from "../src/sdk/durable-store.js";
+import { DurableStore } from "../src/sdk/durable-store.js";
 import { AdapterError } from "../src/sdk/errors.js";
 import { SpawnCommandRunner } from "../src/sdk/process-runner.js";
 import type {
@@ -18,7 +18,6 @@ import { testStateRoot } from "./test-state.js";
 
 const stateRoot = testStateRoot();
 const definitions = Object.values(HARNESS_DEFINITIONS);
-const canonicalScope = `auth-v3:${"A".repeat(43)}`;
 
 function requirePosixProcessGroups(): void {
   assert.notEqual(process.platform, "win32", "POSIX process-group tests require a POSIX runner");
@@ -324,10 +323,6 @@ test("OpenCode starts without a session, stores the observed ID, then resumes it
     "run",
     "--format",
     "json",
-    "--attach",
-    "http://127.0.0.1:4097",
-    "--dir",
-    "/workspace/kant",
   ]);
   assert.deepEqual(store.getSession("opencode:conversation-observed"), {
     native_id: "ses_opencode_native",
@@ -340,141 +335,9 @@ test("OpenCode starts without a session, stores the observed ID, then resumes it
     "run",
     "--format",
     "json",
-    "--attach",
-    "http://127.0.0.1:4097",
-    "--dir",
-    "/workspace/kant",
     "--session",
     "ses_opencode_native",
   ]);
-});
-
-test("Kant OpenCode persists its mapping before publishing a sticky canonical pointer", async () => {
-  const definition = HARNESS_DEFINITIONS.opencode;
-  const directoryName = "opencode-canonical-session";
-  const directory = resolve(stateRoot, directoryName);
-  const store = await freshStore(directoryName);
-  await store.reconcileCanonicalOpenCodeSession();
-  const adapter = new HarnessAdapter({
-    definition,
-    runner: new SpawnCommandRunner(),
-    store,
-    sessionNamespace: "kant",
-    canonicalOpenCodeSession: true,
-    commandOverride: { command: process.execPath, prefixArgs: [fixture(definition)] },
-  });
-
-  await adapter.execute({
-    prompt: "SCENARIO:success",
-    sessionKey: canonicalScope,
-    timeoutMs: 2_000,
-    signal: new AbortController().signal,
-  });
-  assert.deepEqual(store.getSession(`opencode:kant:${canonicalScope}`), {
-    native_id: "ses_opencode_native",
-    initialized: true,
-  });
-  const firstPointer = JSON.parse(
-    await readFile(resolve(directory, CANONICAL_OPEN_CODE_SESSION_FILE), "utf8"),
-  ) as Record<string, unknown>;
-  assert.deepEqual(firstPointer, {
-    version: 1,
-    state: "active",
-    alias: "kant",
-    harness: "opencode",
-    scope_key: canonicalScope,
-    session_id: "ses_opencode_native",
-  });
-
-  const otherScope = `auth-v3:${"B".repeat(43)}`;
-  await adapter.execute({
-    prompt: "SCENARIO:success",
-    sessionKey: otherScope,
-    timeoutMs: 2_000,
-    signal: new AbortController().signal,
-  });
-  const stickyPointer = JSON.parse(
-    await readFile(resolve(directory, CANONICAL_OPEN_CODE_SESSION_FILE), "utf8"),
-  ) as Record<string, unknown>;
-  assert.equal(stickyPointer.scope_key, canonicalScope);
-});
-
-test("Kant OpenCode never publishes nonzero, malformed, missing or invalid native sessions", async () => {
-  const definition = HARNESS_DEFINITIONS.opencode;
-  for (const scenario of ["fail", "malformed", "no-session", "invalid-session"] as const) {
-    const directoryName = `opencode-canonical-reject-${scenario}`;
-    const directory = resolve(stateRoot, directoryName);
-    const store = await freshStore(directoryName);
-    await store.reconcileCanonicalOpenCodeSession();
-    const adapter = new HarnessAdapter({
-      definition,
-      runner: new SpawnCommandRunner(),
-      store,
-      sessionNamespace: "kant",
-      canonicalOpenCodeSession: true,
-      commandOverride: { command: process.execPath, prefixArgs: [fixture(definition)] },
-    });
-    const execution = adapter.execute({
-      prompt: `SCENARIO:${scenario}`,
-      sessionKey: canonicalScope,
-      timeoutMs: 2_000,
-      signal: new AbortController().signal,
-    });
-    if (scenario === "malformed") await assert.rejects(execution, AdapterError);
-    else await execution;
-
-    assert.equal(store.getSession(`opencode:kant:${canonicalScope}`), undefined);
-    const current = JSON.parse(
-      await readFile(resolve(directory, CANONICAL_OPEN_CODE_SESSION_FILE), "utf8"),
-    ) as Record<string, unknown>;
-    assert.equal(current.state, "unavailable");
-    assert.equal(current.reason, "missing");
-  }
-});
-
-test("Kant OpenCode repairs one invalid legacy mapping without resuming it", async () => {
-  const definition = HARNESS_DEFINITIONS.opencode;
-  const directoryName = "opencode-canonical-repair-invalid";
-  const directory = resolve(stateRoot, directoryName);
-  const store = await freshStore(directoryName);
-  await store.setSession(`opencode:kant:${canonicalScope}`, {
-    native_id: "legacy-generated-uuid",
-    initialized: true,
-  });
-  assert.equal((await store.reconcileCanonicalOpenCodeSession()).state, "unavailable");
-  const runner = new RecordingRunner(new SpawnCommandRunner());
-  const adapter = new HarnessAdapter({
-    definition,
-    runner,
-    store,
-    sessionNamespace: "kant",
-    canonicalOpenCodeSession: true,
-    commandOverride: { command: process.execPath, prefixArgs: [fixture(definition)] },
-  });
-
-  await adapter.execute({
-    prompt: "SCENARIO:success",
-    sessionKey: canonicalScope,
-    timeoutMs: 2_000,
-    signal: new AbortController().signal,
-  });
-  assert.equal(runner.requests[0]?.args.includes("--session"), false);
-  assert.equal(store.getSession(`opencode:kant:${canonicalScope}`)?.native_id, "ses_opencode_native");
-  const repaired = JSON.parse(
-    await readFile(resolve(directory, CANONICAL_OPEN_CODE_SESSION_FILE), "utf8"),
-  ) as Record<string, unknown>;
-  assert.equal(repaired.state, "active");
-  assert.equal(repaired.session_id, "ses_opencode_native");
-});
-
-test("canonical OpenCode publication cannot be enabled for another alias", async () => {
-  assert.throws(() => new HarnessAdapter({
-    definition: HARNESS_DEFINITIONS.opencode,
-    runner: new SpawnCommandRunner(),
-    store: {} as DurableStore,
-    sessionNamespace: "other",
-    canonicalOpenCodeSession: true,
-  }), /restricted to alias 'kant'/u);
 });
 
 test("Hermes remains explicitly stateless", async () => {

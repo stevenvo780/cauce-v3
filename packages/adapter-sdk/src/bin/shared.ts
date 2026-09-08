@@ -205,11 +205,10 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     harnessDefinition(harnessId),
     runtime.openClaw?.transport,
   );
-  const canonicalOpenCodeSession = harnessId === "opencode" && runtime.alias === "kant";
   const canonicalOpenClawTerminalSession = harnessId === "openclaw";
   const store = await DurableStore.open(
     runtime.stateDirectory,
-    canonicalOpenCodeSession || canonicalOpenClawTerminalSession
+    canonicalOpenClawTerminalSession
       ? { deferSessions: true }
       : {},
   );
@@ -238,7 +237,6 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     runner,
     store,
     sessionNamespace: runtime.alias,
-    ...(canonicalOpenCodeSession ? { canonicalOpenCodeSession: true } : {}),
     ...(harnessId === "openclaw" ? { fallbackSessionKey: "alias-default" } : {}),
     ...(override === undefined ? {} : { commandOverride: override }),
     ...(shared === undefined ? {} : {
@@ -275,9 +273,6 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     harness,
     onLeaseAcquired: async () => {
       await emission.listen();
-      if (canonicalOpenCodeSession) {
-        await store.reconcileCanonicalOpenCodeSession();
-      }
       if (canonicalOpenClawTerminalSession) {
         await store.reconcileCanonicalOpenClawTerminalSession(runtime.alias);
       }

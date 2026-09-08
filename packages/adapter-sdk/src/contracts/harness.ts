@@ -70,8 +70,6 @@ export interface HarnessAdapterOptions {
   readonly sessionNamespace?: string;
   /** Trusted local fallback used when a harness requires a session selector. */
   readonly fallbackSessionKey?: string;
-  /** Exact Kant/OpenCode-only opt-in for the canonical native-session pointer. */
-  readonly canonicalOpenCodeSession?: boolean;
   /**
    * Resolves rotating credential environment variables before each execution.
    */

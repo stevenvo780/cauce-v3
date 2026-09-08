@@ -4,7 +4,6 @@ import { clone } from "./atomic-state.js";
 import {
   EMPTY_SESSIONS,
   MAX_SESSIONS_FILE_BYTES,
-  type CanonicalOpenCodeSessionPointer,
   type SessionOrigin,
   type SessionRecord,
   type SessionsFile,
@@ -244,41 +243,8 @@ export async function readSessionsSecure(path: string): Promise<SessionsFile> {
   }
 }
 
-export function isCanonicalOpenCodeScopeKey(value: string): boolean {
-  return /^auth-v3:[A-Za-z0-9_-]{43}$/u.test(value);
-}
-
-export function isCanonicalOpenCodeSessionId(value: string): boolean {
-  return /^ses_[A-Za-z0-9_-]{4,124}$/u.test(value);
-}
-
 export function canonicalOpenClawTerminalKey(alias: string): string | undefined {
   return /^[a-z][a-z0-9_-]{0,63}$/u.test(alias)
     ? `openclaw:${alias}:shared:${alias}`
     : undefined;
-}
-
-export function unavailableCanonicalOpenCodeSession(
-  reason: "missing" | "ambiguous" | "invalid",
-): CanonicalOpenCodeSessionPointer {
-  return {
-    version: 1,
-    state: "unavailable",
-    alias: "kant",
-    harness: "opencode",
-    scope_key: null,
-    session_id: null,
-    reason,
-  };
-}
-
-export function activeCanonicalOpenCodeSession(scopeKey: string, sessionId: string): CanonicalOpenCodeSessionPointer {
-  return {
-    version: 1,
-    state: "active",
-    alias: "kant",
-    harness: "opencode",
-    scope_key: scopeKey,
-    session_id: sessionId,
-  };
 }

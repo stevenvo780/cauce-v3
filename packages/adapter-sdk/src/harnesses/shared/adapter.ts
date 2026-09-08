@@ -8,12 +8,7 @@ import {
 } from "../../context/native-profile-context.js";
 import { AdapterError, ProcessExecutionError } from "../../sdk/errors.js";
 import { signalAborted } from "../../runtime-state.js";
-import {
-  isCanonicalOpenCodeSessionId,
-  isCanonicalOpenCodeScopeKey,
-  type DurableStore,
-  type SessionOrigin,
-} from "../../sdk/durable-store.js";
+import type { DurableStore, SessionOrigin } from "../../sdk/durable-store.js";
 import type {
   CommandRunner,
   HarnessCommandOverride,
@@ -78,7 +73,6 @@ export class HarnessAdapter {
   private readonly commandOverride: HarnessCommandOverride | undefined;
   private readonly sessionNamespace: string | undefined;
   private readonly fallbackSessionKey: string | undefined;
-  private readonly canonicalOpenCodeSession: boolean;
   private readonly resolveCredentialEnv: (() => Promise<Readonly<Record<string, string>>>) | undefined;
   private readonly sharedSession: HarnessAdapterOptions["sharedSession"];
   private readonly nativeProfileContext: NativeProfileContext | undefined;
@@ -91,7 +85,6 @@ export class HarnessAdapter {
     this.commandOverride = options.commandOverride;
     this.sessionNamespace = options.sessionNamespace;
     this.fallbackSessionKey = options.fallbackSessionKey;
-    this.canonicalOpenCodeSession = options.canonicalOpenCodeSession === true;
     this.resolveCredentialEnv = options.resolveCredentialEnv;
     const environment = options.environment ?? process.env;
     let nativeEnabled = nativeProfileContextEnabled(environment.CAUCE_NATIVE_PROFILE_CONTEXT);
@@ -108,10 +101,6 @@ export class HarnessAdapter {
     this.nativeProfileContext = nativeEnabled
       ? new NativeProfileContext(this.definition.id, this.sharedSession !== undefined, environment)
       : undefined;
-    if (this.canonicalOpenCodeSession
-      && (this.definition.id !== "opencode" || this.sessionNamespace !== "kant")) {
-      throw new Error("Canonical OpenCode session publication is restricted to alias 'kant'");
-    }
   }
 
   prepareContext(context: HarnessRequestContext): HarnessRequestContext;
@@ -518,19 +507,11 @@ export class HarnessAdapter {
         }
       }
       if (this.definition.sessionStrategy.kind === "observed" && parsed.nativeSessionId !== undefined) {
-        if (this.canonicalOpenCodeSession) {
-          if (result.exitCode === 0
-            && isCanonicalOpenCodeScopeKey(effectiveSessionKey)
-            && isCanonicalOpenCodeSessionId(parsed.nativeSessionId)) {
-            await this.store.setCanonicalOpenCodeSession(effectiveSessionKey, parsed.nativeSessionId);
-          }
-        } else {
-          await this.store.setSession(this.sessionStoreKey(effectiveSessionKey), {
-            native_id: parsed.nativeSessionId,
-            initialized: true,
-            ...origin,
-          });
-        }
+        await this.store.setSession(this.sessionStoreKey(effectiveSessionKey), {
+          native_id: parsed.nativeSessionId,
+          initialized: true,
+          ...origin,
+        });
       }
     }
 
@@ -602,11 +583,6 @@ export class HarnessAdapter {
     }
     const existing = this.store.getSession(this.sessionStoreKey(sessionKey));
     if (existing !== undefined) {
-      if (this.canonicalOpenCodeSession
-        && (!isCanonicalOpenCodeScopeKey(sessionKey)
-          || !isCanonicalOpenCodeSessionId(existing.native_id))) {
-        return { context: { resume: false } };
-      }
       return {
         context: { sessionId: existing.native_id, resume: existing.initialized },
         nativeId: existing.native_id,

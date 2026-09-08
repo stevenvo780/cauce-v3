@@ -1,11 +1,9 @@
-// Shared helpers for the split durable-store.test.ts tests (Task 2 of opencode-minimax.md).
-// NOT a test: the `dist/test/*.test.js` runner does not pick it up.
-import {readFile, rm} from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { resolve } from "node:path";
-import {CANONICAL_OPEN_CODE_SESSION_FILE, DurableStore, type CanonicalOpenCodeSessionPointer} from '../src/sdk/durable-store.js';
+import { DurableStore } from '../src/sdk/durable-store.js';
 import type {Delivery, StructuredOutput} from '../src/sdk/types.js';
 import { testStateRoot } from "./test-state.js";
-export const root = testStateRoot("canonical-open-code-store");
+export const root = testStateRoot("durable-store");
 export const scopeA = `auth-v3:${"A".repeat(43)}`;
 export const scopeB = `auth-v3:${"B".repeat(43)}`;
 
@@ -15,12 +13,6 @@ export async function freshStore(name: string): Promise<{ directory: string; sto
   const directory = resolve(root, name);
   await rm(directory, { recursive: true, force: true });
   return { directory, store: await DurableStore.open(directory) };
-}
-
-export async function pointer(directory: string): Promise<CanonicalOpenCodeSessionPointer> {
-  return JSON.parse(
-    await readFile(resolve(directory, CANONICAL_OPEN_CODE_SESSION_FILE), "utf8"),
-  ) as CanonicalOpenCodeSessionPointer;
 }
 
 export function delivery(id: string): Delivery {

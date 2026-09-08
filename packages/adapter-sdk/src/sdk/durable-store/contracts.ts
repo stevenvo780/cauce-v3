@@ -125,7 +125,6 @@ export interface DelegationBranchProgress {
   readonly pendingBranches: readonly DelegationBranchIdentity[];
 }
 
-export const CANONICAL_OPEN_CODE_SESSION_FILE = "canonical-opencode-session.json";
 export const SHARED_TUI_POINTER_FILE = "shared-tui-session.json";
 export const MAX_SESSIONS_FILE_BYTES = 1024 * 1024;
 export const MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS = 24 * 60 * 60 * 1_000;
@@ -142,31 +141,12 @@ export type UnsupportedDirectoryFsyncCode = typeof UNSUPPORTED_DIRECTORY_FSYNC_C
 export type DirectoryFsync = (directory: FileHandle) => Promise<void>;
 
 export interface DurableStoreOpenOptions {
-  /** Kant/OpenCode reloads sessions under its acquired stable-alias lease. */
+  /** OpenClaw reloads sessions under its acquired stable-alias lease. */
   readonly deferSessions?: boolean;
   /** Deterministic fault injection for durability tests; production omits it. */
   readonly directoryFsync?: DirectoryFsync;
   readonly maxInlineTerminalRecords?: number;
 }
-
-export type CanonicalOpenCodeSessionPointer =
-  | {
-      readonly version: 1;
-      readonly state: "active";
-      readonly alias: "kant";
-      readonly harness: "opencode";
-      readonly scope_key: string;
-      readonly session_id: string;
-    }
-  | {
-      readonly version: 1;
-      readonly state: "unavailable";
-      readonly alias: "kant";
-      readonly harness: "opencode";
-      readonly scope_key: null;
-      readonly session_id: null;
-      readonly reason: "missing" | "ambiguous" | "invalid";
-    };
 
 export interface SessionsFile {
   readonly version: 1;
@@ -231,7 +211,6 @@ export const ATOMIC_STATE_FILES = [
   "outbox.json",
   "sessions.json",
   "fencing.json",
-  CANONICAL_OPEN_CODE_SESSION_FILE,
   SHARED_TUI_POINTER_FILE,
 ] as const;
 export type AtomicStateFile = typeof ATOMIC_STATE_FILES[number];
