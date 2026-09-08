@@ -10,6 +10,16 @@
       "tenant": "Steven",
       "user": "dev"
     },
+    "astra": {
+      "container": "vm:pc-agente",
+      "enabled": true,
+      "harness": "codex",
+      "home": "/home/ubuntu/astra",
+      "room": "grp.steven",
+      "stateDirectory": "/home/ubuntu/.local/state/cauce-v3/astra",
+      "tenant": "Steven",
+      "user": "ubuntu"
+    },
     "atlas": {
       "container": "ws-humanizar",
       "enabled": true,
@@ -81,14 +91,14 @@
       "user": "claw"
     },
     "kant": {
-      "container": "ctrl-infra",
+      "container": "host:server2",
       "enabled": true,
-      "harness": "codex",
-      "home": "/home/stev",
+      "harness": "claude",
+      "home": "/home/server/red-servidores",
       "room": "grp.steven",
-      "stateDirectory": "/var/lib/cauce-v3/aliases/kant",
+      "stateDirectory": "/home/server/estado/cauce-v3/kant",
       "tenant": "Steven",
-      "user": "stev"
+      "user": "server"
     },
     "kratos": {
       "container": "ws-humanizar",

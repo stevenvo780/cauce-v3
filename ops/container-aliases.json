@@ -1,6 +1,11 @@
 {
   "schemaVersion": 2,
   "systemPrincipals": {
+    "medico": {
+      "tenant": "Steven",
+      "room": "grp.steven",
+      "membershipRole": "operator"
+    },
     "quota-collector": {
       "tenant": "Steven",
       "room": "grp.steven",
@@ -103,19 +108,6 @@
       "harness": "openclaw",
       "membershipRole": "agent_notify"
     },
-    "kant": {
-      "tenant": "Steven",
-      "room": "grp.steven",
-      "container": "ctrl-infra",
-      "registryContainer": "host:kratos",
-      "dockerHost": "kratos",
-      "systemdUser": "stev",
-      "user": "stev",
-      "home": "/home/stev",
-      "stateDirectory": "/var/lib/cauce-v3/aliases/kant",
-      "harness": "codex",
-      "membershipRole": "operator"
-    },
     "kratos": {
       "tenant": "Miguel",
       "room": "grp.miguel",
@@ -131,8 +123,8 @@
       "tenant": "Isa",
       "room": "grp.isa",
       "container": "ws-isa",
-      "dockerHost": "kratos",
-      "systemdUser": "stev",
+      "dockerHost": "server2",
+      "systemdUser": "server",
       "user": "dev",
       "home": "/home/dev",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/salva",
@@ -170,7 +162,7 @@
       "home": "/home/dev",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/zeus",
       "harness": "claude",
-      "membershipRole": "agent_notify"
+      "membershipRole": "operator"
     }
   }
 }

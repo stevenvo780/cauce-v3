@@ -11,6 +11,8 @@ these two namespaces.
 
 from __future__ import annotations
 
+import json
+import pathlib
 from collections.abc import Mapping
 from typing import Any
 
@@ -80,7 +82,7 @@ def _render(template: str, alias: str, row: Mapping[str, Any]) -> str:
 def runtime_state_directory(alias: str, row: Mapping[str, Any]) -> str:
     """Derive the adapter state path in its container or host namespace."""
     rule = _harness_rule(row)
-    branch = "host" if row["container"].startswith("host:") else "container"
+    branch = "host" if row["container"].startswith(("host:", "vm:")) else "container"
     template = rule["stateDirectory"][branch]
     return _render(template, alias, row)
 
@@ -103,13 +105,14 @@ def alias_entry(
     entry: dict[str, Any] = {
         "tenant": row["tenant"],
         "room": row["room"],
-        "container": placement.get("healthContainer", row["container"]),
+        "container": row["container"] if row["container"].startswith(("host:", "vm:"))
+        else placement.get("healthContainer", row["container"]),
     }
     for key in ("registryContainer", "dockerHost"):
         if key in placement:
             entry[key] = placement[key]
     entry.update({
-        "systemdUser": SYSTEMD_USER,
+        "systemdUser": placement.get("systemdUser", SYSTEMD_USER),
         "user": row["user"],
         "home": row["home"],
     })
@@ -165,3 +168,34 @@ def manifest_doc(alias: str, row: Mapping[str, Any]) -> dict[str, Any]:
             "stateDirectory": HOST_STATE_DIRECTORY.format(alias=alias),
         },
     }
+
+
+def load_fleet_assignments(root: pathlib.Path) -> dict[str, dict[str, Any]]:
+    """Read all declared agents, including native hosts, from the canonical snapshot."""
+    from container_alias_lib import HARNESS, NAME_RE, ROOM_RE, TENANT_RE
+
+    document = json.loads((root / "flota.json").read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or document.get("schemaVersion") != 1:
+        raise ValueError("fleet snapshot must use schemaVersion 1")
+    fleet = document.get("fleet")
+    if not isinstance(fleet, dict) or not fleet:
+        raise ValueError("fleet snapshot must contain enabled agents")
+    placement = document.get("placement", {})
+    if not isinstance(placement, dict):
+        raise ValueError("fleet placement must be an object")
+    assignments = {}
+    for alias, row in sorted(fleet.items()):
+        if not isinstance(alias, str) or NAME_RE.fullmatch(alias) is None:
+            raise ValueError("fleet snapshot contains an invalid alias")
+        if not isinstance(row, dict) or row.get("enabled") is not True:
+            raise ValueError(f"fleet.{alias} is not an enabled agent")
+        for field, pattern in (("tenant", TENANT_RE), ("room", ROOM_RE)):
+            if not isinstance(row.get(field), str) or pattern.fullmatch(row[field]) is None:
+                raise ValueError(f"fleet.{alias}.{field} is invalid")
+        if row.get("harness") not in HARNESS:
+            raise ValueError(f"fleet.{alias}.harness is invalid")
+        overlay = placement.get(alias, {})
+        if not isinstance(overlay, dict):
+            raise ValueError(f"placement.{alias} must be an object")
+        assignments[alias] = alias_entry(alias, row, overlay)
+    return assignments

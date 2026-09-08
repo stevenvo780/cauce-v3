@@ -6,12 +6,11 @@ import hashlib
 import pathlib
 
 from atomic_file import atomic_write
-from container_alias_lib import load_container_aliases
-from fleet_derive import HOST_STATE_DIRECTORY
+from fleet_derive import HOST_STATE_DIRECTORY, load_fleet_assignments
 from manifest_lib import load_manifests
 
 root = pathlib.Path(__file__).resolve().parents[1]
-aliases = load_container_aliases(root)
+aliases = load_fleet_assignments(root)
 parser = argparse.ArgumentParser(description="Generate hardened systemd units from exact alias manifests")
 parser.add_argument("--output", type=pathlib.Path, default=root / "generated" / "systemd")
 parser.add_argument("--alias", choices=sorted(aliases))

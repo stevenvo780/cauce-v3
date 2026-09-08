@@ -73,9 +73,9 @@ import sys
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import container_alias_lib  # noqa: E402  same-directory ops library (stdlib-only)
 import telegram_config_merge as merge_lib  # noqa: E402
 from atomic_file import atomic_write as _atomic_write  # noqa: E402
+from fleet_derive import load_fleet_assignments  # noqa: E402  same-directory ops library (stdlib-only)
 
 # --- constraints mirrored verbatim from services/telegram-bridge/src/config.ts ---
 ALIAS_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")         # config.ts text(..., 64) for alias / recipient.alias
@@ -151,10 +151,10 @@ class GeneratorError(ValueError):
 def load_fleet(ops_dir: pathlib.Path, cross_check: bool = True) -> dict[str, dict[str, str]]:
     """Return {alias: {'tenant','room','harness'}} for the fleet.
 
-    container-aliases.json is the primary source (stdlib-only, carries tenant/room/
+    flota.json is the primary source (stdlib-only, carries tenant/room/
     harness). When cross_check is on, ops/manifests/*.yaml must agree exactly.
     """
-    aliases = container_alias_lib.load_container_aliases(ops_dir)  # validates the fleet mapping
+    aliases = load_fleet_assignments(ops_dir)  # validates the fleet mapping
     fleet = {
         alias: {"tenant": entry["tenant"], "room": entry["room"], "harness": entry["harness"]}
         for alias, entry in aliases.items()
@@ -180,7 +180,7 @@ def _cross_check_manifests(ops_dir: pathlib.Path, fleet: dict[str, dict[str, str
             "harness": spec["harness"],
         }
     if manifest_fleet != fleet:
-        raise GeneratorError("container-aliases.json and ops/manifests/*.yaml disagree on the fleet")
+        raise GeneratorError("flota.json and ops/manifests/*.yaml disagree on the fleet")
 
 
 # -------------------------------------------------------------------------- allowlists
