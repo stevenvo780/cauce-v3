@@ -161,11 +161,11 @@ describe('lo que la ruta NO sabe, lo dice', () => {
 
 describe('los topes del arnés se contestan con los dos números, no con un 500', () => {
   it('un openclaw pasado de tope sigue devolviendo el perfil y dice QUÉ fichero y cuánto mide', async () => {
-    abierto = await servidor(contexto({ purpose: 'x'.repeat(60_001) }, 'openclaw'));
+    abierto = await servidor(contexto({ purpose: 'x'.repeat(TOPES_OPENCLAW.porFichero + 1) }, 'openclaw'));
     const res = await abierto.inject({ method: 'GET', url: RUTA });
     expect(res.statusCode).toBe(200);
     const cuerpo = res.json<RespuestaDelPerfil>();
-    expect(cuerpo.perfil.purpose).toHaveLength(60_001);
+    expect(cuerpo.perfil.purpose).toHaveLength(TOPES_OPENCLAW.porFichero + 1);
     expect(cuerpo.ficheros).toEqual([]);
     expect(cuerpo.runtime_verification?.state).toBe('unverified');
     const motivo = cuerpo.runtime_verification?.reason ?? '';

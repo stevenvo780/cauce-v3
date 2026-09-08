@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
-  bloqueDePerfil, sinBloqueDePerfil, validaTopologiaDeBloquesGestionados,
+  bloqueDePerfil, esFicheroDelAgente, sinBloqueDePerfil, validaTopologiaDeBloquesGestionados,
 } from '@cauce/protocol';
 import type { ProfileRuntimePreflight, PreparedProfileRuntime } from './agent-profile.routes.js';
 import { DOCUMENT_REASON_MAX, DOCUMENT_REASON_MIN, SHA256_PATTERN } from './agent-documents/write-admission.js';
@@ -140,11 +140,12 @@ function exactDocumentSet(
   expectation: ContextReconcileExpectation,
 ): boolean {
   const names = prepared.documents;
+  const authoredNames = names.filter((name) => !esFicheroDelAgente(name));
   const evidence = prepared.verification.documents;
   const preview = prepared.preview;
   const existingNames = [...(preflight.existentes?.keys() ?? [])];
   if (names.length === 0 || evidence.length !== names.length || preview.length !== names.length
-    || expectation.documents.length !== names.length
+    || authoredNames.length === 0 || expectation.documents.length !== authoredNames.length
     || existingNames.length !== names.length
     || new Set(names).size !== names.length
     || new Set(evidence.map((document) => document.name)).size !== evidence.length
@@ -159,9 +160,9 @@ function exactDocumentSet(
     const observed = evidenceByName.get(name);
     const expected = expectedByName.get(name);
     return previewNames.has(name) && existingNameSet.has(name)
-      && observed !== undefined && observed.path === expected?.path
-      && expected.path.slice(expected.path.lastIndexOf('/') + 1) === name
-      && SHA256_PATTERN.test(expected.sha);
+      && observed?.path.split('/').at(-1) === name
+      && (esFicheroDelAgente(name) ? expected === undefined
+        : observed.path === expected?.path && SHA256_PATTERN.test(expected.sha));
   });
 }
 
@@ -188,7 +189,7 @@ export function prepareContextReconcileSnapshot(input: {
     throw new ContextReconcileError('runtime_generation_conflict', 'runtime generation differs from the expectation');
   }
   if (prepared.revision !== input.revision
-    || (prepared.harness !== 'claude' && prepared.harness !== 'codex')
+    || !['claude', 'codex', 'openclaw'].includes(prepared.harness)
     || !exactDocumentSet(prepared, input.preflight, expectation)) {
     throw new ContextReconcileError('document_set_conflict', 'runtime documents are not the exact managed set');
   }
@@ -199,13 +200,12 @@ export function prepareContextReconcileSnapshot(input: {
   );
   const previewByName = new Map(prepared.preview.map((document) => [document.nombre, document]));
   const owner = `${input.tenantId}/${input.alias}`;
-  const documents = prepared.documents.map((name): ContextReconcileDocumentSnapshot => {
+  const documents = prepared.documents.filter((name) => !esFicheroDelAgente(name))
+    .map((name): ContextReconcileDocumentSnapshot => {
     const current = input.preflight.existentes?.get(name);
     const evidence = evidenceByName.get(name);
-    const expected = expectedByName.get(name);
     const projected = previewByName.get(name);
     if (current === undefined || evidence?.observed_sha === undefined || evidence.observed_sha === null
-      || expected === undefined
       || projected?.politica !== 'bloque-gestionado') {
       throw new ContextReconcileError(
         'context_not_reconcilable', 'a managed profile document is absent or unreadable',
@@ -218,11 +218,14 @@ export function prepareContextReconcileSnapshot(input: {
       throw new ContextReconcileError('context_contaminated', 'managed block topology is invalid');
     }
     const block = bloqueDePerfil(current);
-    if (block === undefined || ownerOfProfileBlock(block) !== owner) {
+    const projectedBlock = bloqueDePerfil(projected.texto);
+    const preservedUnmanaged = prepared.harness === 'openclaw'
+      && block === undefined && projectedBlock === undefined && current === projected.texto;
+    if (!preservedUnmanaged && (block === undefined || ownerOfProfileBlock(block) !== owner)) {
       throw new ContextReconcileError('context_contaminated', 'managed profile block is absent or foreign');
     }
-    const projectedBlock = bloqueDePerfil(projected.texto);
-    if (projectedBlock === undefined || ownerOfProfileBlock(projectedBlock) !== owner) {
+    if (!preservedUnmanaged
+      && (projectedBlock === undefined || ownerOfProfileBlock(projectedBlock) !== owner)) {
       throw new ContextReconcileError('runtime_measurement_conflict', 'durable projection has no owned block');
     }
     if (!SHA256_PATTERN.test(evidence.observed_sha)
