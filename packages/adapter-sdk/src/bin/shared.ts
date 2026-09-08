@@ -28,6 +28,8 @@ import { sharedSessionResume } from "../shared-session/resume.js";
 import { SharedTuiPointerStore } from "../shared-session/native-pointer.js";
 import { NativePointerAttestor } from "../shared-session/native-witness.js";
 import type { CommandRunner } from "../sdk/types.js";
+import { EmissionRuntime } from "../sdk/mcp-emission/runtime.js";
+import { emissionGateway } from "../sdk/mcp-emission/gateway.js";
 
 function commandOverride(
   harnessId: HarnessId,
@@ -247,7 +249,9 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
       },
     }),
   });
+  const emission = new EmissionRuntime(runtime.stateDirectory, runtime.instanceId, emissionGateway(runtime));
   const client = new AdapterClient({
+    emission,
     config: {
       tenantId,
       alias: runtime.alias,
@@ -269,26 +273,23 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     }),
     store,
     harness,
-    ...(canonicalOpenCodeSession || canonicalOpenClawTerminalSession || shared?.harness === "claude"
-      ? {
-          onLeaseAcquired: async () => {
-            if (canonicalOpenCodeSession) {
-              await store.reconcileCanonicalOpenCodeSession();
-            }
-            if (canonicalOpenClawTerminalSession) {
-              await store.reconcileCanonicalOpenClawTerminalSession(runtime.alias);
-            }
-            if (shared?.harness === "claude") {
-              try {
-                await new SharedTuiPointerStore(shared.stateDirectory).recover();
-              } catch {
-                logger({ event: "shared_session_resume", alias: shared.alias,
-                  error_message: "la recuperación del pointer TUI es ambigua; se conserva el estado" });
-              }
-            }
-          },
+    onLeaseAcquired: async () => {
+      await emission.listen();
+      if (canonicalOpenCodeSession) {
+        await store.reconcileCanonicalOpenCodeSession();
+      }
+      if (canonicalOpenClawTerminalSession) {
+        await store.reconcileCanonicalOpenClawTerminalSession(runtime.alias);
+      }
+      if (shared?.harness === "claude") {
+        try {
+          await new SharedTuiPointerStore(shared.stateDirectory).recover();
+        } catch {
+          logger({ event: "shared_session_resume", alias: shared.alias,
+            error_message: "la recuperación del pointer TUI es ambigua; se conserva el estado" });
         }
-      : {}),
+      }
+    },
     onError: (code) => process.stderr.write(`${code}: adapter retry\n`),
     logger,
   });
@@ -302,6 +303,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
+    await emission.close();
   }
 }
 

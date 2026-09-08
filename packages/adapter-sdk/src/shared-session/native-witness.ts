@@ -154,6 +154,7 @@ export class NativePointerAttestor {
     promptText: string,
     paneGeneration: string,
     stillCurrent: () => Promise<boolean>,
+    mcpDeposited = false,
   ): Promise<WitnessResult> {
     try {
       if (!/^[a-f0-9]{64}$/u.test(correlationId)) return "unverified";
@@ -177,6 +178,11 @@ export class NativePointerAttestor {
         const nativeId = basename(file, ".jsonl");
         const injected = port.findInjected(file, entries, promptText);
         let matched = false;
+        if (mcpDeposited && injected !== undefined) {
+          const terminal = port.findAnswer(entries, injected.key);
+          if (terminal?.kind === "answer" && UUID.test(nativeId)
+            && terminal.sessionId === nativeId && injected.sessionId === nativeId) matched = true;
+        }
         for (const entry of entries) {
           const outcome = port.findEnvelope?.([entry], correlationId);
           if (outcome === undefined) continue;

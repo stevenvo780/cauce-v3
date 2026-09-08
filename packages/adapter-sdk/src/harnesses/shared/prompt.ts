@@ -25,6 +25,7 @@ export function capabilities(
     claim_token_correlation: true,
     authenticated_session_scope: true,
     routing_targets_v1: true,
+    mcp_emit: true,
     renewable_delivery_claims_v1: true,
     delegation_feedback_v1: true,
     agent_identity_v1: true,
@@ -237,6 +238,10 @@ export function protocolPrompt(
 
   return [
     ...cabecera,
+    ...(context?.mcp_emit === true ? [
+      "CAUCE EMISSION: Use cauce_send, cauce_notify and cauce_artifact_add to stage any authorized outputs, then cauce_reply exactly once to deposit your answer. Validation errors keep the turn open: correct them and retry the rejected call.",
+      "After cauce_reply succeeds, finish this CLI turn with a short ordinary final message. The engine supplies delivery identity and uses your deposited result; you do not need to print JSON or copy a correlation ID. cauce_status reports staging; cauce_queue reads your actual delivery queue. If no cauce_reply succeeds, use the JSON envelope above as fallback, including any staged outputs.",
+    ] : []),
     ...(native ? agentResponseRules(context) : []),
     ...(native || context?.runtime_profile === undefined
       ? []

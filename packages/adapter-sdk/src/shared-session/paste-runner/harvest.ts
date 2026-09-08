@@ -193,6 +193,16 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           }
         }
 
+        const deposited = request.emissionOutput?.();
+        if (deposited !== undefined && Date.now() - lastActivityAt >= quietMs) {
+          const idle = await beforeAbort(() => this.paneIsIdle(activeIdentity, request.signal), request.signal);
+          if (idle.aborted) continue;
+          if (idle.value) return {
+            result: result({ exitCode: 0, stdout: port.stdout(JSON.stringify(deposited), injected?.sessionId) }),
+            terminalBoundary: true,
+          };
+        }
+
         const localized = injected;
         if (localized !== undefined && Date.now() - lastActivityAt >= quietMs) {
           const idle = await beforeAbort(

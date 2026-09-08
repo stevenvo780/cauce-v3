@@ -6,6 +6,7 @@ import type {
   HarnessCommandOverride,
   HarnessDefinition,
   RelayOrigin,
+  StructuredOutput,
 } from "../sdk/types.js";
 import type { MotivoDeReenvio, SelloDeContextoFijo } from "../harnesses/contexto-fijo.js";
 import type { SharedSessionHarness } from "../shared-session/types.js";
@@ -13,6 +14,7 @@ import type { SharedSessionHarness } from "../shared-session/types.js";
 export type { HarnessAdapter } from "../harnesses/shared/adapter.js";
 
 export interface HarnessRequestContext {
+  readonly mcp_emit?: true;
   readonly self_alias: string;
   readonly sender_alias: string;
   readonly tenant_id: string;
@@ -91,6 +93,8 @@ export interface HarnessAdapterOptions {
 export type SessionLane = "human" | "agent";
 
 export interface HarnessExecuteRequest {
+  readonly emissionOutput?: () => StructuredOutput | undefined;
+  readonly onEmissionReady?: (correlationId?: string) => void;
   readonly prompt: string;
   readonly attachments?: readonly HarnessAttachment[];
   readonly context?: HarnessRequestContext;

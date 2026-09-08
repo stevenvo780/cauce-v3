@@ -368,6 +368,7 @@ export class HarnessAdapter {
       ?? invocationContext?.runtime_profile
       ?? (request.context === undefined ? undefined : this.perfilVivoDelRuntime(request.context));
     let degradation: SharedSessionDegradation | undefined;
+    if (!isSharedSessionRunner(this.runner)) request.onEmissionReady?.();
     const result = await this.runner.run({
       ...invocation,
       ...workspaceCwd(),
@@ -375,6 +376,8 @@ export class HarnessAdapter {
       stdin: protocolPrompt(effectivePrompt, request.origin, invocationContext),
       timeoutMs: request.timeoutMs,
       signal: request.signal,
+      ...(request.emissionOutput === undefined ? {} : { emissionOutput: request.emissionOutput }),
+      ...(request.onEmissionReady === undefined ? {} : { onEmissionReady: request.onEmissionReady }),
       ...(session.context.sessionId === undefined ? {} : { sessionId: session.context.sessionId }),
       // The start witness and its notice travel together to the transport: it is the only thing
       // that sees the harness's bytes, and therefore the only one that can tell when it actually
@@ -424,7 +427,14 @@ export class HarnessAdapter {
 
     let parsed;
     try {
-      parsed = this.definition.parse(result.stdout);
+      const deposited = request.emissionOutput?.();
+      if (deposited === undefined) parsed = this.definition.parse(result.stdout);
+      else {
+        // Session metadata is still useful; damaged final text cannot replace the MCP result.
+        let nativeSessionId: string | undefined;
+        try { nativeSessionId = this.definition.parse(result.stdout).nativeSessionId; } catch { /* MCP owns the output. */ }
+        parsed = { output: deposited, ...(nativeSessionId === undefined ? {} : { nativeSessionId }) };
+      }
     } catch (error) {
       if (result.exitCode !== 0) {
         // Extract real cause from stderr, sanitized to avoid leaking secrets

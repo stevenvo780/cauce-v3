@@ -18,6 +18,7 @@ import { sameDeliveryClaim, sameEventCorrelation } from './correlation.js';
 import { ConsumerLease, DurableStore } from './durable-store.js';
 import { AdapterEngine } from './engine.js';
 import { AdapterError } from './errors.js';
+import type { EmissionRuntime } from './mcp-emission/runtime.js';
 import type { HarnessAdapter } from '../contracts/harness.js';
 import type {
   AdapterCapabilities,
@@ -34,6 +35,7 @@ import type {
 } from './types.js';
 
 interface AdapterClientOptions {
+  readonly emission?: EmissionRuntime;
   readonly config: AdapterConfig;
   readonly connector: ConsumerConnector;
   readonly store: DurableStore;
@@ -42,7 +44,6 @@ interface AdapterClientOptions {
   readonly random?: () => number;
   readonly onError?: (code: string) => void;
   readonly logger?: AdapterLogger;
-  /** Runs under the stable-alias lease before the first transport connection. */
   readonly onLeaseAcquired?: () => Promise<void>;
   /** Test/diagnostic override; production derives renewal cadence from the delivery claim. */
   readonly claimRenewalMs?: number;
@@ -64,7 +65,6 @@ function validateIdentity(config: AdapterConfig): void {
 
 type CapabilityEncoder = (capabilities: AdapterCapabilities) => readonly string[];
 
-/** Public JavaScript harnesses may supply non-literal capability values at runtime. */
 function matchesCapability(value: unknown, expected: string | boolean): boolean {
   return value === expected;
 }
@@ -90,8 +90,8 @@ interface ConnectionGeneration {
   failure?: AdapterError;
 }
 
-/** Hello capabilities consumed by runtime or operational lease readers. */
 const CAPABILITY_ENCODERS = {
+  mcp_emit: (value) => matchesCapability(value.mcp_emit, true) ? ['mcp_emit'] : [],
   harness: (value) => [`harness.${value.harness}`],
   heartbeat: (value) => matchesCapability(value.heartbeat, true) ? ['heartbeat'] : [],
   routing_targets_v1: (value) => matchesCapability(value.routing_targets_v1, true) ? ['routing_targets_v1'] : [],
@@ -143,6 +143,7 @@ export class AdapterClient {
       options.random,
     );
     this.engine = new AdapterEngine({
+      ...(options.emission === undefined ? {} : { emission: options.emission }),
       store: this.store,
       harness: this.harness,
       publish: (event) => this.sendEvent(event),

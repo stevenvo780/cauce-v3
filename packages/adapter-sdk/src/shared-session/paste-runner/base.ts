@@ -5,8 +5,9 @@ import { basename, dirname, join } from "node:path";
 import { signalAborted } from "../../runtime-state.js";
 import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js";
 import { validateStructuredOutput } from "../../sdk/output-parser.js";
+import { correlatedEmission } from "../../sdk/mcp-emission/recovery.js";
 import { envelopeHasCorrelation, stripJsonFence } from "../envelope.js";
-import { inputBoxState } from "../pane.js";
+import { inputBoxState, turnInFlight } from "../pane.js";
 import type { EnsureFailure } from "../session.js";
 import { TUI_WINDOW } from "../types.js";
 import type { SharedSessionDegradation, TranscriptReader, TurnOutcome } from "../types.js";
@@ -116,7 +117,13 @@ export abstract class PasteSessionRunnerBase<E> {
       );
       if (!markerRead.completed || markerRead.value?.state !== "present") continue;
       if (markerRead.value.value !== paneGenerationKey(identity)) continue;
-      const sobreTardio = await this.hasValidTerminalEnvelope(candidate.correlationId, findEnvelope);
+      let sobreTardio = await this.hasValidTerminalEnvelope(candidate.correlationId, findEnvelope);
+      if (sobreTardio === undefined) {
+        const pane = await this.capturedPane(identity);
+        if (pane !== undefined && !turnInFlight(pane) && !inputBoxState(pane).occupied) {
+          sobreTardio = await correlatedEmission(quarantineFile, candidate.correlationId);
+        }
+      }
       if (sobreTardio === undefined) continue;
       const cleared = await beforeDeadline(
         this.quarantinePersistence().clear(candidate.file),
