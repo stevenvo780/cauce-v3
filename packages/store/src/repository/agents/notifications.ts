@@ -1,5 +1,9 @@
+import { type AgentEgressRow, toAgentEgressItem } from './egress-state.js';
 import { randomUUID } from 'node:crypto';
-import { deterministicUuidFromSha256, type Ack, type NotifyRequest, type Origin, type Tenant } from '@cauce/protocol';
+import {
+  AGENT_EGRESS_MAX_DELIVERY_IDS, deterministicUuidFromSha256,
+  type Ack, type AgentEgressResponse, type NotifyRequest, type Origin, type Tenant,
+} from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
 import type { EgressDestinationRow } from '../egress-destinations.js';
@@ -532,5 +536,47 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
       [actorTenant, actorAlias, limit]
     );
     return { items: result.rows };
+  }
+  /**
+   * Receipts of the notifications one agent emitted from the given deliveries. Own alias only:
+   * room neighbours are never a context source here. Bounded by the caller's id list and the
+   * partial index on (source_delivery_id, source_attempt, notify_index). Read-only.
+   */
+  async listAgentEgress(
+    actorTenant: Tenant, actorAlias: string, deliveryIds: readonly string[],
+  ): Promise<AgentEgressResponse> {
+    await this.assertPermission(actorTenant, actorAlias, 'read');
+    const requested = Array.from(new Set(deliveryIds));
+    if (requested.length === 0 || requested.length > AGENT_EGRESS_MAX_DELIVERY_IDS) {
+      throw new StoreError('invalid_input', `delivery_ids must hold 1..${String(AGENT_EGRESS_MAX_DELIVERY_IDS)} ids`);
+    }
+    const result = await this.pool.query<AgentEgressRow>(
+      `SELECT notification.id AS notification_id,notification.source_delivery_id,
+              notification.source_attempt,notification.notify_index,notification.handle,
+              notification.kind,notification.adapter,notification.conversation_id,
+              notification.decision,notification.denial_code,notification.produced_outbox_id,
+              notification.created_at,
+              outbox.status AS outbox_status,
+              effects.chunk_count,effects.chunks_seen,effects.chunks_sent,effects.states,
+              effects.provider_message_ids,effects.effect_ids,effects.last_sent_at
+       FROM egress_notifications notification
+       LEFT JOIN adapter_outbox outbox ON outbox.id=notification.produced_outbox_id
+       LEFT JOIN LATERAL (
+         SELECT max(effect.chunk_count) AS chunk_count,
+                count(*)::int AS chunks_seen,
+                count(*) FILTER (WHERE effect.state='sent')::int AS chunks_sent,
+                array_agg(effect.state ORDER BY effect.chunk_index) AS states,
+                array_agg(effect.provider_message_id ORDER BY effect.chunk_index) AS provider_message_ids,
+                array_agg(effect.effect_id ORDER BY effect.chunk_index) AS effect_ids,
+                max(effect.sent_at) AS last_sent_at
+         FROM telegram_egress_effects effect WHERE effect.outbox_id=outbox.id
+       ) effects ON outbox.id IS NOT NULL
+       WHERE notification.source='agent_output'
+         AND notification.source_delivery_id=ANY($3::uuid[])
+         AND notification.tenant_id=$1 AND notification.alias=$2
+       ORDER BY notification.created_at ASC,notification.source_attempt ASC,notification.notify_index ASC`,
+      [actorTenant, actorAlias, requested]
+    );
+    return { requested, items: result.rows.map(toAgentEgressItem) };
   }
 }

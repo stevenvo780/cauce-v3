@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { DeliveryIdSchema } from '@cauce/protocol';
+import { AgentEgressQueryError, DeliveryIdSchema, parseAgentEgressQuery } from '@cauce/protocol';
 import { parseAgentProgress, StoreError } from '@cauce/store';
 import { AuthError, AuthorizationError, requirePermission, type AuthProvider, type Principal } from '../auth.js';
 import type { GatewayRepository } from '../app.js';
@@ -8,7 +8,7 @@ import { principal, replyError } from './shared.js';
 
 export function registerAgentEmissionRoutes(
   app: FastifyInstance, authProvider: AuthProvider,
-  repository: Pick<GatewayRepository, 'agentQueue' | 'recordAgentProgress' | 'retryOwnDelivery'>,
+  repository: Pick<GatewayRepository, 'agentQueue' | 'listAgentEgress' | 'recordAgentProgress' | 'retryOwnDelivery'>,
 ): void {
   const agent = async (request: FastifyRequest): Promise<Principal> => {
     if (authProvider.mode === 'production' && !isAuthorizedTlsSocket(request.raw.socket)) {
@@ -26,6 +26,23 @@ export function registerAgentEmissionRoutes(
       const actor = await agent(request);
       requirePermission(actor, 'read');
       return await repository.agentQueue(actor.tenant_id, actor.alias);
+    } catch (error) { replyError(reply, error); }
+  });
+
+  // Receipts of the notifications this agent itself emitted. Scope comes only from the
+  // authenticated identity; the query may carry delivery ids and nothing else.
+  app.get<{ Querystring: Record<string, unknown> }>('/v3/agent/egress', async (request, reply) => {
+    try {
+      const actor = await agent(request);
+      requirePermission(actor, 'read');
+      let deliveryIds: readonly string[];
+      try {
+        deliveryIds = parseAgentEgressQuery(request.query);
+      } catch (error) {
+        if (error instanceof AgentEgressQueryError) throw new StoreError('invalid_input', error.message);
+        throw error;
+      }
+      return await repository.listAgentEgress(actor.tenant_id, actor.alias, deliveryIds);
     } catch (error) { replyError(reply, error); }
   });
 

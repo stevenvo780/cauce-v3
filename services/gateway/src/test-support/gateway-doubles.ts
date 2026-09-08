@@ -210,6 +210,7 @@ export function fakeRepository(overrides: Partial<GatewayRepository> = {}): Gate
       duplicate: false,
       dry_run: false
     })),
+    listAgentEgress: vi.fn(async (_tenant: string, _alias: string, ids: readonly string[]) => ({ requested: ids, items: [] })),
     listNotifications: vi.fn(async () => ({ items: [] })),
     listAudit: vi.fn(async () => ({ items: [] })),
     agentChain: vi.fn(async (traceId: string) => ({
