@@ -15,7 +15,8 @@ export async function insertProgressRelay(
   policy: ChainPolicy,
   rootMessageId: string | undefined,
   stage: Exclude<AgentChainProgressStage, 'capped'>,
-  summary: string
+  summary: string,
+  eventKey?: string,
 ): Promise<void> {
   if (!policy.progressRelayEnabled || policy.progressRelayMaxEvents < 1) return;
   if (row.origin?.adapter !== 'telegram') return;
@@ -37,7 +38,7 @@ export async function insertProgressRelay(
   const relayStage: AgentChainProgressStage = capped ? 'capped' : stage;
   const idempotencyKey = capped
     ? `relay-progress-capped:${rootMessageId}`
-    : `relay-progress:${row.id}:${String(attempt)}:${stage}`;
+    : `relay-progress:${row.id}:${String(attempt)}:${stage}${eventKey === undefined ? '' : `:${eventKey}`}`;
   const text = capped
     ? progressRelayCappedText
     : truncateUtf8(summary, maxProgressSummaryBytes).value;

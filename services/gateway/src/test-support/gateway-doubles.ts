@@ -165,6 +165,12 @@ export function fakeRepository(overrides: Partial<GatewayRepository> = {}): Gate
       state: 'pending',
       replayed: true
     })),
+    agentQueue: vi.fn(async () => ({ deliveries: [], total: 0 })),
+    recordAgentProgress: vi.fn(async (deliveryId: string) => ({ delivery_id: deliveryId, recorded: true, duplicate: false })),
+    retryOwnDelivery: vi.fn(async (deliveryId: string) => ({
+      delivery_id: ids.deliveryTwo, replayed_from_delivery_id: deliveryId, state: 'pending',
+      replayed: true, already_replayed: false,
+    })),
     cancelDelivery: vi.fn(async (deliveryId: string) => ({
       delivery_id: deliveryId,
       state: 'dead',

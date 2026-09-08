@@ -32,6 +32,7 @@ import { createCoreRoutePhases } from './routes/core.js';
 import { registerConsolePublishIntentRoutes } from './routes/console-publish.js';
 import { registerGatewayHealthRoutes } from './routes/health.js';
 import { registerChainGateRoutes } from './routes/chain-gates.js';
+import { registerAgentEmissionRoutes } from './routes/agent-emission.js';
 
 export { WakePumpTelemetry } from './wake-pump-telemetry.js';
 export type {
@@ -64,7 +65,7 @@ type StoreDerivedRepository = Pick<CauceRepository,
   | 'listNotifications' | 'listOperationalDlq' | 'listOriginRelays' | 'liveDeliveryClaims'
   | 'principalAccess' | 'queueSnapshot' | 'quotaSnapshot' | 'readProfileRuntimeAdoption'
   | 'reconcileAgentContextRuntime' | 'recordProfileRuntimeExpectation' | 'recordQuotaSample'
-  | 'renewWakeOutbox' | 'replayDelivery'
+  | 'renewWakeOutbox' | 'replayDelivery' | 'retryOwnDelivery' | 'agentQueue' | 'recordAgentProgress'
   | 'resolveOperationalDlqWithoutReplay' | 'selectAccount' | 'topology'
 >;
 
@@ -276,6 +277,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   );
 
   registerChainGateRoutes(app, options, repository);
+  registerAgentEmissionRoutes(app, options.authProvider, repository);
 
   await coreRoutes.registerRuntimeRoutes(agentProfiles);
 

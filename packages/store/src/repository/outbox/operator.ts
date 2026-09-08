@@ -18,23 +18,27 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
     row: {
       recipient_tenant: Tenant; recipient_alias: string;
       tenant_id: Tenant; room_id: string; actor_alias: string;
-    }
+    },
+    own = false,
   ): Promise<void> {
     const denied = (): never => {
       throw new StoreError('not_found', 'delivery not found or not visible');
     };
-    const actorControl = await client.query(
-      `SELECT 1 FROM memberships membership
-       JOIN role_policies role ON role.role=membership.role
-       JOIN tenants tenant ON tenant.id=membership.tenant_id
-       JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
-       WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
-         AND tenant.enabled AND room.enabled AND role.allow_control
-       ORDER BY membership.tenant_id,membership.room_id,membership.alias
-       FOR SHARE OF membership,role,tenant,room`,
-      [actorTenant, actorAlias]
-    );
-    if (actorControl.rowCount === 0) denied();
+    if (own && (row.tenant_id !== actorTenant || row.actor_alias !== actorAlias)) denied();
+    if (!own) {
+      const actorControl = await client.query(
+        `SELECT 1 FROM memberships membership
+         JOIN role_policies role ON role.role=membership.role
+         JOIN tenants tenant ON tenant.id=membership.tenant_id
+         JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
+         WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
+           AND tenant.enabled AND room.enabled AND role.allow_control
+         ORDER BY membership.tenant_id,membership.room_id,membership.alias
+         FOR SHARE OF membership,role,tenant,room`,
+        [actorTenant, actorAlias]
+      );
+      if (actorControl.rowCount === 0) denied();
+    }
 
     const sourceRoute = await client.query(
       `SELECT 1 FROM memberships membership
@@ -68,7 +72,7 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
       if (route.rowCount === 0) denied();
     }
 
-    if (row.recipient_tenant === actorTenant) return;
+    if (own || row.recipient_tenant === actorTenant) return;
     if (row.tenant_id === actorTenant) {
       const sourceVisibility = await client.query(
         `SELECT 1 FROM memberships membership
@@ -96,7 +100,17 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
    * that lacked it.
    */
   async replayDelivery(deliveryId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
-    await this.assertPermission(actorTenant, actorAlias, 'control');
+    return this.replayAuthorizedDelivery(deliveryId, actorTenant, actorAlias, false);
+  }
+
+  async retryOwnDelivery(deliveryId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
+    return this.replayAuthorizedDelivery(deliveryId, actorTenant, actorAlias, true);
+  }
+
+  private async replayAuthorizedDelivery(
+    deliveryId: string, actorTenant: Tenant, actorAlias: string, own: boolean,
+  ): Promise<Record<string, unknown>> {
+    await this.assertPermission(actorTenant, actorAlias, own ? 'route' : 'control');
     return withTransaction(this.pool, async (client) => {
       const selected = await client.query<{
         id: string; message_id: string; dead_letter_id: string;
@@ -110,76 +124,16 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
          FROM deliveries d
          JOIN messages m ON m.id=d.message_id
          JOIN dead_letters dl ON dl.delivery_id=d.id
-         WHERE d.id=$1 AND d.status IN ('dead','failed')
-           AND EXISTS (
-             SELECT 1 FROM memberships actor_member
-             JOIN role_policies role ON role.role=actor_member.role
-             JOIN tenants operator_tenant ON operator_tenant.id=actor_member.tenant_id
-             JOIN rooms operator_room
-               ON operator_room.id=actor_member.room_id AND operator_room.tenant_id=actor_member.tenant_id
-             WHERE actor_member.tenant_id=$2 AND actor_member.alias=$3 AND actor_member.enabled
-               AND operator_tenant.enabled AND operator_room.enabled AND role.allow_control
-           )
-           AND EXISTS (
-             SELECT 1 FROM memberships source_actor
-             JOIN role_policies source_role ON source_role.role=source_actor.role
-             JOIN tenants source_tenant ON source_tenant.id=source_actor.tenant_id
-             JOIN rooms source_room
-               ON source_room.id=source_actor.room_id AND source_room.tenant_id=source_actor.tenant_id
-             WHERE source_actor.tenant_id=m.tenant_id AND source_actor.room_id=m.room_id
-               AND source_actor.alias=m.actor_alias AND source_actor.enabled
-               AND source_role.allow_route AND source_tenant.enabled AND source_room.enabled
-           )
-           AND EXISTS (
-             SELECT 1 FROM memberships recipient
-             JOIN tenants recipient_tenant ON recipient_tenant.id=recipient.tenant_id
-             JOIN rooms recipient_room
-               ON recipient_room.id=recipient.room_id AND recipient_room.tenant_id=recipient.tenant_id
-             WHERE recipient.tenant_id=d.recipient_tenant AND recipient.alias=d.recipient_alias
-               AND recipient.enabled AND recipient_tenant.enabled AND recipient_room.enabled
-           )
-           AND (
-             m.tenant_id=d.recipient_tenant
-             OR EXISTS (
-               SELECT 1 FROM acl_edges route_edge
-               JOIN tenants source_tenant ON source_tenant.id=route_edge.from_tenant
-               JOIN tenants target_tenant ON target_tenant.id=route_edge.to_tenant
-               WHERE route_edge.from_tenant=m.tenant_id AND route_edge.to_tenant=d.recipient_tenant
-                 AND route_edge.enabled AND route_edge.allow_route
-                 AND source_tenant.enabled AND target_tenant.enabled
-                 AND (source_tenant.is_hub OR target_tenant.is_hub)
-             )
-           )
-           AND (
-            d.recipient_tenant=$2
-            OR EXISTS (
-              SELECT 1 FROM memberships source_member
-              JOIN tenants source_tenant ON source_tenant.id=source_member.tenant_id
-              JOIN rooms source_room
-                ON source_room.id=source_member.room_id AND source_room.tenant_id=source_member.tenant_id
-              WHERE m.tenant_id=$2 AND source_member.tenant_id=$2
-                AND source_member.room_id=m.room_id AND source_member.alias=$3 AND source_member.enabled
-                AND source_tenant.enabled AND source_room.enabled
-            )
-            OR EXISTS (
-              SELECT 1 FROM acl_edges edge
-              JOIN tenants source_tenant ON source_tenant.id=edge.from_tenant
-              JOIN tenants target_tenant ON target_tenant.id=edge.to_tenant
-              WHERE edge.from_tenant=$2 AND edge.to_tenant=d.recipient_tenant
-                AND edge.enabled AND edge.allow_control
-                AND source_tenant.enabled AND target_tenant.enabled
-                AND (source_tenant.is_hub OR target_tenant.is_hub)
-            )
-          )
+         WHERE d.id=$1 AND d.status=ANY($2::text[])
          FOR UPDATE OF d,m,dl`,
-        [deliveryId, actorTenant, actorAlias]
+        [deliveryId, own ? ['dead'] : ['dead', 'failed']]
       );
       const row = selected.rows[0];
       if (!row) throw new StoreError('not_found', 'terminal delivery not found or not visible');
-      await this.assertReplayAuthorization(client, actorTenant, actorAlias, row);
+      await this.assertReplayAuthorization(client, actorTenant, actorAlias, row, own);
 
-      const existingReplay = await client.query(
-        `SELECT 1
+      const existingReplay = await client.query<{ delivery_id: string; state: string }>(
+        `SELECT replayed_delivery.id AS delivery_id,replayed_delivery.status AS state
          FROM audit_events replay
          JOIN deliveries replayed_delivery ON replayed_delivery.id=replay.delivery_id
          JOIN messages replayed_message ON replayed_message.id=replay.message_id
@@ -189,7 +143,9 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
          LIMIT 1`,
         [row.id]
       );
-      if (existingReplay.rowCount) {
+      const existing = existingReplay.rows[0];
+      if (existing) {
+        if (own) return { ...existing, replayed_from_delivery_id: row.id, replayed: true, already_replayed: true };
         throw new StoreError('conflict', 'delivery already has a durable replay clone');
       }
 
@@ -263,6 +219,7 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
             replayed_from_delivery_id: row.id,
             replayed_from_message_id: row.message_id,
             legacy_dead_letter_recovery: legacyReplay,
+            ...(own ? { initiated_by_agent: true } : {}),
             recipient_tenant: row.recipient_tenant,
             recipient_alias: row.recipient_alias
           })
@@ -276,7 +233,8 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
         delivery_id: replayedDeliveryId,
         replayed_from_delivery_id: row.id,
         state: 'pending',
-        replayed: true
+        replayed: true,
+        ...(own ? { already_replayed: false } : {}),
       };
     });
   }
