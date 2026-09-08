@@ -273,16 +273,6 @@ export function verifyManagedContextEdit(
  * `openclaw` are agent-managed and are not overwritten if they exist.
  */
 
-/**
- * Per-file and total size caps for openclaw, measured in UTF-16 units.
- *
- * These are OURS, not a limit of the OpenClaw runtime: the runtime knob is `agents.defaults.
- * contextTokens` (200 000 for the fleet today). They exist so a governance file cannot eat the
- * turn budget. Raised 2026-09-06 from 60 000/150 000 after the publisher rejected argos's own
- * revision 29 times with `413 too_large` and left `applied_revision` NULL: crossing the cap does
- * not degrade, it BLOCKS the configuration, and the fleet writes real rules faster than that.
- * Only the five authored files count (MEMORY.md and HEARTBEAT.md belong to the agent).
- */
 export const TOPES_OPENCLAW = { porFichero: 90_000, total: 200_000 } as const;
 
 export type UnidadDeTope = "utf16_strictest" | "utf8_bytes";

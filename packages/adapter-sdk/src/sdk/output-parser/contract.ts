@@ -264,8 +264,6 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
   const notificaciones = value.notify === undefined
     ? { directives: [] as readonly NotifyDirective[], descartes: [] as readonly string[] }
     : parseNotify(value.notify);
-  // The budget is shared and claimed in order: the delegation edge first, the answer's own
-  // files with what is left. Both are parsed BEFORE the notice so their discards reach the agent.
   const artifactBudget = newRelayArtifactBudget();
   const mensajes = value.messages === undefined ? [] : parseMessages(value.messages, artifactBudget);
   const artefactos = parseArtifacts(value.artifacts, artifactBudget);

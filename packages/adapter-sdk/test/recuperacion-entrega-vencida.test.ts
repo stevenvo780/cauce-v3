@@ -5,11 +5,6 @@ import {
 } from "../src/sdk/engine/recovery.js";
 import type { InboxRecord } from "../src/sdk/durable-store/contracts.js";
 
-/**
- * El caso REAL: kratos, 2026-09-07. Su entrega de las 23:40 murió en el bus a las 23:47 y el
- * reinicio del adaptador (02:25) la reejecutó: el arnés la contestó a las 02:58 con una
- * correlación muerta, el trabajo quedó huérfano y la entrega VIVA estuvo 176 min esperando.
- */
 const MUERTA_A_LAS_23_47 = "2026-09-06T23:47:00.000Z";
 const REINICIO_02_25 = new Date("2026-09-07T02:25:00.000Z");
 

@@ -7,11 +7,6 @@ import {
   directorioResultadosTardios, rescatarResultadoTardio,
 } from "../src/shared-session/paste-runner/resultado-tardio.js";
 
-/**
- * Unidad del guardado. El circuito real —quién encuentra el sobre y cuándo— se prueba en
- * `resultado-tardio-circuito.test.ts` con ficheros de verdad, porque un lector simulado ya dejó
- * pasar dos veces el mismo error.
- */
 const CORRELACION = "c9edd58d6154ee8ddeeaf9ded61e2054063665393dbcc266c09deafd6500ca91";
 const TEXTO = '{"reply":"Los tres remates publicados en `graf-admin-dev-00062-jzr`."}';
 

@@ -469,7 +469,6 @@ test("un fichero que pasa de 60.000 da error CLARO, y no un fichero truncado", (
 test("el TOTAL que pasa del tope da error, aunque NINGÚN fichero pase por su cuenta", () => {
   // Each field fits comfortably in its file; what does not fit is the sum. Without the total cap
   // this would pass, and openclaw would stop loading the whole person without saying why.
-  // Sized from the constants so raising the cap does not silently disarm this guard.
   const grande = "y".repeat(Math.floor(TOPES_OPENCLAW.porFichero * 0.8));
   assert.throws(
     () => ficherosDelArnes("openclaw", {

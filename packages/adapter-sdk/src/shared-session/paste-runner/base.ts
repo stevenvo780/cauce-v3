@@ -124,8 +124,6 @@ export abstract class PasteSessionRunnerBase<E> {
       );
       if (cleared.completed && cleared.value === true) {
         clearedCurrent = true;
-        // Llegar aquí significa que un turno que ya murió terminó DESPUÉS y dejó su respuesta.
-        // Se guarda antes de olvidar la cuarentena, que es cuando deja de saberse de quién era.
         const rescatado = await rescatarResultadoTardio({
           quarantineFile,
           correlationId: candidate.correlationId,
@@ -193,13 +191,6 @@ export abstract class PasteSessionRunnerBase<E> {
     });
   }
 
-  /**
-   * El sobre terminal de esa correlación, o `undefined`.
-   *
-   * Devolvía `boolean` y TIRABA el texto. Pero llegar hasta aquí significa exactamente que un
-   * turno que ya murió terminó después y dejó su respuesta: es el único sitio donde ese trabajo
-   * todavía existe y se sabe de quién era. Devolverlo permite rescatarlo sin volver a leer nada.
-   */
   protected async hasValidTerminalEnvelope(
     correlationId: string,
     findEnvelope: NonNullable<TranscriptReader<E>["findEnvelope"]>,

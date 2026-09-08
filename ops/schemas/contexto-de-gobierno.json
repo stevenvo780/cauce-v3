@@ -53,8 +53,8 @@
       ],
       "presupuesto": {
         "unidad": "utf16_strictest",
-        "por_fichero": 60000,
-        "total": 150000
+        "por_fichero": 90000,
+        "total": 200000
       }
     }
   },

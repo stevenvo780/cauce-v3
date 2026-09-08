@@ -536,7 +536,7 @@ test("un tope superado NO escribe NINGUNO de los siete", () => {
    * has no way of knowing which to believe. Better to write nothing and say so.
    */
   const d = disco();
-  const resultado = sembrarPerfilDelArnes("openclaw", contexto({ purpose: "x".repeat(60_001) }), {
+  const resultado = sembrarPerfilDelArnes("openclaw", contexto({ purpose: "x".repeat(90_001) }), {
     habilitado: true, disco: d.puerto, entorno: { HOME: "/h", CAUCE_OPENCLAW_WORKSPACE: "/ws" },
   });
   assert.equal(resultado.estado, "no-entra");
