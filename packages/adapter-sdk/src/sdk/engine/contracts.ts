@@ -1,3 +1,4 @@
+import type { EgressReceiptSource } from "../notify-history.js";
 import {
   profileRuntimeAdoptionFor,
   type ProfileRuntimeAdoptionEvidence,
@@ -21,6 +22,7 @@ export type ExecutionIntentPublisher = (
 export const DEFAULT_QUEUE_WAIT_TIMEOUT_MS = 6 * 60 * 60_000;
 
 interface AdapterEngineBaseOptions {
+  readonly egressReceipts?: EgressReceiptSource;
   readonly emission?: EmissionRuntime;
   readonly store: DurableStore;
   readonly harness: HarnessAdapter;

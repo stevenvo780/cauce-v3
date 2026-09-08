@@ -1,3 +1,4 @@
+import type { EgressReceiptSource } from "./notify-history.js";
 import { AliasSchema, PROTOCOL_VERSION } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import {
   resumenDeLaSiembra, sembrarPerfilDelArnes, type ResultadoDeLaSiembra,
@@ -33,8 +34,8 @@ import type {
   ServerFrame,
   TimerHandle,
 } from './types.js';
-
 interface AdapterClientOptions {
+  readonly egressReceipts?: EgressReceiptSource;
   readonly emission?: EmissionRuntime;
   readonly config: AdapterConfig;
   readonly connector: ConsumerConnector;
@@ -50,7 +51,6 @@ interface AdapterClientOptions {
   /** Test/diagnostic override; production derives the watchdog from the delivery claim. */
   readonly claimWatchdogMs?: number;
 }
-
 function validateIdentity(config: AdapterConfig): void {
   if (!AliasSchema.safeParse(config.alias).success) {
     throw new Error('Alias must be a stable lowercase identifier');
@@ -62,9 +62,7 @@ function validateIdentity(config: AdapterConfig): void {
     throw new Error('A durable state directory is required; ephemeral consumers are forbidden');
   }
 }
-
 type CapabilityEncoder = (capabilities: AdapterCapabilities) => readonly string[];
-
 function matchesCapability(value: unknown, expected: string | boolean): boolean {
   return value === expected;
 }
@@ -143,6 +141,7 @@ export class AdapterClient {
       options.random,
     );
     this.engine = new AdapterEngine({
+      ...(options.egressReceipts === undefined ? {} : { egressReceipts: options.egressReceipts }),
       ...(options.emission === undefined ? {} : { emission: options.emission }),
       store: this.store,
       harness: this.harness,

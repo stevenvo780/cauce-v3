@@ -1,3 +1,4 @@
+import { HttpEgressReceiptSource } from "../sdk/egress-receipt-source.js";
 import { readFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
@@ -250,6 +251,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   const emission = new EmissionRuntime(runtime.stateDirectory, runtime.instanceId, emissionGateway(runtime));
   const client = new AdapterClient({
     emission,
+    egressReceipts: new HttpEgressReceiptSource(emissionGateway(runtime), { tenant_id: runtime.tenant, alias: runtime.alias }),
     config: {
       tenantId,
       alias: runtime.alias,

@@ -362,7 +362,7 @@ export class HarnessAdapter {
       ...invocation,
       ...workspaceCwd(),
       ...(Object.keys(credentialEnv).length === 0 ? {} : { env: credentialEnv }),
-      stdin: protocolPrompt(effectivePrompt, request.origin, invocationContext),
+      stdin: protocolPrompt(effectivePrompt, request.origin, invocationContext, request.noticeHistory),
       timeoutMs: request.timeoutMs,
       signal: request.signal,
       ...(request.emissionOutput === undefined ? {} : { emissionOutput: request.emissionOutput }),
