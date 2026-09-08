@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rollout transaccional del agente PTY en los dos managers de la flota.
+"""Rollout transaccional del agente PTY en los managers declarados de la flota.
 
 El controlador se ejecuta desde un checkout de Cauce. El mismo fichero se envia como codigo
 efimero al manager remoto: no presupone que el host ya tenga una copia mutable del deployer. Las
@@ -27,7 +27,6 @@ if _agent_dir not in sys.path:
 
 from rollout_pty_lib import (  # noqa: E402,F401  (sys.path.insert deliberado arriba; superficie de re-export: la suite usa rollout.<nombre>)
     EXECUTABLE_FILES,
-    MANAGERS,
     MODE_RE,
     NAME_RE,
     RELEASE_FILES,
@@ -73,9 +72,9 @@ def parse_inventory(value: Mapping[str, Any]) -> dict[str, UnitPresence]:
     return parsed
 
 
-def validate_inventories(fleet: Fleet, inventories: Mapping[str, Mapping[str, UnitPresence]], *, migrate_kant: bool) -> None:
-    if set(inventories) != set(MANAGERS):
-        fail("faltan inventarios de los dos managers")
+def validate_inventories(fleet: Fleet, inventories: Mapping[str, Mapping[str, UnitPresence]]) -> None:
+    if set(inventories) != set(fleet.managers):
+        fail("el inventario no cubre los managers declarados")
     observed: dict[str, list[str]] = {}
     for manager, inventory in inventories.items():
         for alias, presence in inventory.items():
@@ -94,10 +93,6 @@ def validate_inventories(fleet: Fleet, inventories: Mapping[str, Mapping[str, Un
         desired = fleet.placements[alias]
         if actual == desired:
             continue
-        if alias == "kant" and actual == "kratos" and desired == "server" and migrate_kant:
-            continue
-        if alias == "kant" and actual == "kratos" and desired == "server":
-            fail("kant requiere --migrate-kant para retirar kratos antes de activar server")
         fail(f"placement drift de {alias}: observado={actual} esperado={desired}")
 
 
@@ -178,15 +173,15 @@ class ProcessTransport(Transport):
         return response["result"]
 
 
-def parse_targets(values: Sequence[str]) -> dict[str, str]:
+def parse_targets(values: Sequence[str], managers: Sequence[str]) -> dict[str, str]:
     targets: dict[str, str] = {}
     for value in values:
         manager, separator, target = value.partition("=")
-        if not separator or manager not in MANAGERS or not target or manager in targets:
+        if not separator or manager not in managers or not target or manager in targets:
             fail(f"--manager invalido: {value}")
         targets[manager] = target
-    if set(targets) != set(MANAGERS):
-        fail("hay que declarar exactamente los managers server y kratos")
+    if set(targets) != set(managers):
+        fail("hay que declarar exactamente los managers del catalogo")
     return targets
 
 
@@ -248,20 +243,20 @@ def controller(args: argparse.Namespace) -> dict[str, Any]:
     ops_root = script.parents[1]
     bundle = ReleaseBundle.from_ops_root(ops_root)
     fleet = Fleet.load(bundle.files["container-aliases.json"])
-    targets = parse_targets(args.manager)
+    targets = parse_targets(args.manager, fleet.managers)
     transports = {
         manager: ProcessTransport(manager, targets[manager], script)
-        for manager in MANAGERS
+        for manager in fleet.managers
     }
     inventories = {
         manager: parse_inventory(transports[manager].call("inventory", {}).get("inventory", {}))
-        for manager in MANAGERS
+        for manager in fleet.managers
     }
     retirement_results: list[dict[str, Any]] = []
     if getattr(args, "preflight_only", False) and getattr(args, "retire_historical", False):
         fail("--preflight-only no puede combinarse con --retire-historical")
     if args.command == "retire-historical" or getattr(args, "retire_historical", False):
-        for manager in MANAGERS:
+        for manager in fleet.managers:
             for alias, presence in sorted(inventories[manager].items()):
                 if alias not in fleet.retired or not presence.present:
                     continue
@@ -273,12 +268,11 @@ def controller(args: argparse.Namespace) -> dict[str, Any]:
                 )
         inventories = {
             manager: parse_inventory(transports[manager].call("inventory", {}).get("inventory", {}))
-            for manager in MANAGERS
+            for manager in fleet.managers
         }
     validate_inventories(
         fleet,
         inventories,
-        migrate_kant=args.migrate_kant or args.command == "retire-historical",
     )
     if args.command == "retire-historical":
         return {
@@ -327,17 +321,8 @@ def controller(args: argparse.Namespace) -> dict[str, Any]:
             "preflight": preflight_results,
         }
 
-    for manager in MANAGERS:
+    for manager in fleet.managers:
         transports[manager].call("publish", {"bundle": bundle.request_value()})
-
-    kant_migration: dict[str, Any] | None = None
-    if args.migrate_kant and inventories["kratos"].get("kant", UnitPresence()).present:
-        kant_migration = transports["kratos"].call("deactivate-kant", {})
-        refreshed = {
-            manager: parse_inventory(transports[manager].call("inventory", {}).get("inventory", {}))
-            for manager in MANAGERS
-        }
-        validate_inventories(fleet, refreshed, migrate_kant=False)
 
     results: list[dict[str, Any]] = []
     try:
@@ -360,13 +345,6 @@ def controller(args: argparse.Namespace) -> dict[str, Any]:
             )
     except BaseException as original:
         rollback_failures = rollback_applied_results(transports, fleet, results)
-        if kant_migration is not None:
-            try:
-                transports["kratos"].call(
-                    "rollback", {"alias": "kant", "transaction": kant_migration["transaction"]}
-                )
-            except RolloutError:
-                rollback_failures.append("kant@kratos")
         if rollback_failures:
             fail(
                 "el rollout fallo y la compensacion no pudo restaurar: "
@@ -379,7 +357,6 @@ def controller(args: argparse.Namespace) -> dict[str, Any]:
         "mappingSha256": bundle.mapping_sha,
         "aliases": aliases,
         "results": results,
-        "kantMigration": kant_migration,
         "retired": retirement_results,
     }
 
@@ -420,8 +397,6 @@ def worker(args: argparse.Namespace) -> dict[str, Any]:
         if transaction is not None and (not isinstance(transaction, str) or "/" in transaction or transaction in {".", ".."}):
             fail("transaction de rollback invalida")
         return implementation.rollback(str(request.get("alias", "")), transaction)
-    if operation == "deactivate-kant":
-        return implementation.deactivate_for_migration("kant")
     if operation == "deactivate-retired":
         bundle = decode_release_request(request.get("bundle", {}))
         return implementation.deactivate_retired(str(request.get("alias", "")), bundle)
@@ -433,7 +408,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--worker",
         choices=(
-            "inventory", "publish", "preflight", "apply", "rollback", "deactivate-kant",
+            "inventory", "publish", "preflight", "apply", "rollback",
             "deactivate-retired",
         ),
         help=argparse.SUPPRESS,
@@ -445,7 +420,6 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--manager", action="append", default=[])
         command.add_argument("--aliases")
         command.add_argument("--include-zeus", action="store_true")
-        command.add_argument("--migrate-kant", action="store_true")
         command.add_argument("--require-mode", action="append", default=[])
         command.add_argument("--health-attempts", type=int, default=20)
         command.add_argument("--health-delay", type=float, default=1.0)
@@ -461,7 +435,6 @@ def parser() -> argparse.ArgumentParser:
     rollback.set_defaults(
         aliases=None,
         include_zeus=False,
-        migrate_kant=False,
         require_mode=[],
         health_attempts=20,
         health_delay=1.0,
@@ -472,7 +445,6 @@ def parser() -> argparse.ArgumentParser:
     retirement.set_defaults(
         aliases=None,
         include_zeus=False,
-        migrate_kant=False,
         require_mode=[],
         health_attempts=20,
         health_delay=1.0,
@@ -487,7 +459,7 @@ def main() -> int:
     try:
         if arguments.worker is not None:
             if len(arguments.manager) != 1 or "=" in arguments.manager[0]:
-                fail("worker requiere --manager server o --manager kratos")
+                fail("worker requiere un nombre --manager del catalogo")
             arguments.manager = arguments.manager[0]
             output = worker(arguments)
         else:

@@ -19,7 +19,6 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final
 
 SCHEMA_VERSION: Final = 1
-MANAGERS: Final = ("server", "kratos")
 NAME_RE: Final = re.compile(r"^[a-z][a-z0-9.-]*$")
 SHA_RE: Final = re.compile(r"^[a-f0-9]{64}$")
 UNIT_RE: Final = re.compile(r"^cauce-v3-pty@([a-z][a-z0-9.-]*)\.service$")
@@ -96,9 +95,9 @@ def manager_for_entry(entry: Mapping[str, Any], alias: str) -> str:
     docker_host = entry.get("dockerHost", "local")
     if docker_host == "local":
         return "server"
-    if docker_host == "kratos":
-        return "kratos"
-    fail(f"{alias}.dockerHost no pertenece a los dos managers admitidos: {docker_host!r}")
+    if isinstance(docker_host, str) and NAME_RE.fullmatch(docker_host):
+        return docker_host
+    fail(f"{alias}.dockerHost no es un nombre seguro: {docker_host!r}")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -129,6 +128,8 @@ class Fleet:
             for field in ("container", "systemdUser", "user", "home", "harness"):
                 if not isinstance(value.get(field), str) or not value[field]:
                     fail(f"mapping de {alias} no contiene {field}")
+            if NAME_RE.fullmatch(value["container"]) is None:
+                fail(f"{alias}.container no identifica un contenedor Docker")
             parsed[alias] = dict(value)
             placements[alias] = manager_for_entry(value, alias)
         retired = frozenset(historical)
@@ -138,9 +139,11 @@ class Fleet:
         for alias, value in historical.items():
             if not isinstance(value, dict) or value.get("expectedEnabled") is not False:
                 fail(f"alias historico {alias} no permanece explicitamente deshabilitado")
-        if set(placements.values()) != set(MANAGERS):
-            fail("el catalogo no cubre exactamente los managers server y kratos")
         return cls(raw=raw, aliases=parsed, retired=retired, placements=placements)
+
+    @property
+    def managers(self) -> tuple[str, ...]:
+        return tuple(sorted(set(self.placements.values())))
 
     def entry_digest(self, alias: str) -> str:
         return sha256(canonical_json(self.aliases[alias]))
@@ -330,7 +333,7 @@ class ManagerWorker:
         runner: Runner | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        if manager not in MANAGERS:
+        if NAME_RE.fullmatch(manager) is None:
             fail(f"manager invalido: {manager}")
         if os.geteuid() == 0:
             fail("el rollout PTY debe correr como el usuario systemd de la flota, nunca root")
@@ -740,11 +743,6 @@ class ManagerWorker:
         state["deactivationReason"] = reason
         self._write_state(transaction, state)
         return {"status": "deactivated", "alias": alias, "transaction": transaction.name}
-
-    def deactivate_for_migration(self, alias: str) -> dict[str, Any]:
-        if alias != "kant" or self.manager != "kratos":
-            fail("solo la migracion explicita de kant puede retirar un placement")
-        return self._deactivate_assignment(alias, "kant-placement-migration")
 
     def deactivate_retired(self, alias: str, bundle: ReleaseBundle) -> dict[str, Any]:
         fleet = Fleet.load(bundle.files["container-aliases.json"])

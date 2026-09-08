@@ -1,6 +1,6 @@
 # Agente PTY (`ops/pty-agent`)
 
-El paquete `cauce_pty_agent/` (Python stdlib, sin dependencias) corre **dentro del contenedor de cada alias** y marca SALIENTE por TLS mutuo hacia el terminal-relay — nunca escucha en un puerto. Un módulo por responsabilidad:
+El paquete `cauce_pty_agent/` (Python stdlib, sin dependencias) corre junto al runtime de cada alias, dentro de Docker o en su host nativo y marca SALIENTE por TLS mutuo hacia el terminal-relay — nunca escucha en un puerto. Un módulo por responsabilidad:
 
 | Módulo | Qué contiene |
 |---|---|
@@ -22,8 +22,12 @@ del contenedor salvo el propio paquete): `cauce-pty-launcher.sh` (lanzamiento),
 `rollout-pty.py` + `rollout_pty_lib.py` (despliegue y drop-ins), `derive-alias-key.py` y
 `publish-alias-key.sh` (material de ticket por alias), `install-pty-agent.sh`, `systemd/`
 (plantillas de unidad) y `tests/`
-(unittest, sin socket real). Launcher y rollout corren en el manager `server` o `kratos`; el reaper
-se ejecuta dentro del contenedor desde stdin y no queda instalado allí.
+(unittest, sin socket real). El rollout obtiene los managers de los placements Docker: `local`
+corresponde a `server`; cada remoto usa su nombre declarado. El reaper se ejecuta dentro del
+contenedor desde stdin y no queda instalado allí. `container-aliases.json` contiene únicamente
+contenedores; los agentes `host:` y `vm:` permanecen en `flota.json` y sus manifiestos, y usan
+el launcher nativo descrito abajo. El controlador exige un destino por manager, comprueba
+duplicados y placement y conserva la reversión por transacción.
 
 **Hace:** abre PTYs bajo demanda (`shell`, o `harness` = TUI real vía `tmux attach` de solo lectura o TUI de OpenClaw) y sirve lectura/escritura de ficheros de gobierno (tags 0x50–0x5E: READ/LIST/WRITE/WRITE_BATCH con CAS y rollback; paths validados con realpath + lista NEVER_SERVE).
 
