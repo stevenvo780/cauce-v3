@@ -90,7 +90,6 @@ al_salir() {
   local codigo=$?
   if [[ -n $WORKTREE ]]; then
     git -C "$ROOT" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || rm -rf "$WORKTREE"
-    git -C "$ROOT" worktree prune >/dev/null 2>&1 || true
   fi
   if [[ $ESTADO != completo ]]; then
     SALIDA=2

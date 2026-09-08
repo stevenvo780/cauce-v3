@@ -11,6 +11,7 @@ No imprime ni copia secretos: solo longitudes, vencimientos y sha256(refreshToke
 import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,9 @@ OBJETIVOS = [
 
 DESTINO_REMOTO = "vps:/var/lib/cauce-v3/cred-guard-kratos.json"
 LOCAL = os.path.expanduser("~/.local/state/cauce-v3/cred-guard-kratos.json")
+HOST = os.environ.get("CAUCE_CRED_GUARD_HOST", "kratos")
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", HOST):
+    raise SystemExit("CAUCE_CRED_GUARD_HOST is invalid")
 
 ahora = datetime.datetime.now(datetime.timezone.utc)
 filas, problemas = [], 0
@@ -54,7 +58,7 @@ for contenedor, ruta, etiqueta in OBJETIVOS:
     filas.append({"huella": huella or "SIN-RT", "etiqueta": etiqueta, "contenedor": contenedor,
                   "estado": estado, "detalle": detalle, "problema": problema})
 
-doc = {"host": "kratos", "ts": ahora.isoformat(), "filas": filas, "problemas": problemas}
+doc = {"host": HOST, "ts": ahora.isoformat(), "filas": filas, "problemas": problemas}
 
 os.makedirs(os.path.dirname(LOCAL), exist_ok=True)
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(LOCAL))
