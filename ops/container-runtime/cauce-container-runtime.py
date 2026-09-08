@@ -1367,13 +1367,11 @@ def run_adapter(args: argparse.Namespace) -> int:
             "bundleDigest": args.bundle_digest,
             "executable": starting_executable_identity(args.command[0]),
         }
-        # Publish the starting phase atomically the instant we own the control plane,
-        # before any long operation. A concurrent stop can now identify us in any phase.
+        # Publish before long operations so concurrent stop can identify this controller.
         validate_metadata(base_document)
         atomic_metadata(control_fd, base_document)
         published_starting = True
 
-        # Phase "starting": starting metadata is on disk, no child yet.
         phase_gate("starting", should_stop)
         if termination_requested:
             remove_metadata(control_fd)
@@ -1384,7 +1382,6 @@ def run_adapter(args: argparse.Namespace) -> int:
             raise PermanentError("active bundle digest differs before adapter launch")
         set_subreaper()
 
-        # Phase "pre-child": about to fork the adapter.
         phase_gate("pre-child", should_stop)
         if termination_requested:
             remove_metadata(control_fd)
@@ -1406,33 +1403,34 @@ def run_adapter(args: argparse.Namespace) -> int:
                 process.wait(timeout=max(1.0, args.kill_seconds))
             raise
         try:
-            # Phase "post-child": the child exists but metadata is still "starting".
             phase_gate("post-child", should_stop)
             if termination_requested:
                 signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=False)
                 wait_process_tracking(process, process_tree, timeout=max(1.0, args.kill_seconds))
                 raise PermanentError("adapter launch was cancelled before metadata publication")
             executable = wait_for_exec(process_tree, args.command[0])
-            details = proc_stat(process.pid)
-            if details["pgid"] != process.pid or details["sid"] != process.pid:
-                raise PermanentError("adapter did not start in a dedicated process session")
-            running_document = dict(base_document)
-            running_document.update({
-                "phase": "running",
-                "pid": process.pid,
-                "pgid": process.pid,
-                "sid": process.pid,
-                "starttime": int(details["starttime"]),
-                "executable": executable,
-            })
-            validate_metadata(running_document)
-            verify_adapter(running_document, args.alias, args.state)
+            try:
+                details = proc_stat(process.pid)
+                if details["pgid"] != process.pid or details["sid"] != process.pid:
+                    raise PermanentError("adapter did not start in a dedicated process session")
+                running_document = dict(base_document)
+                running_document.update({
+                    "phase": "running",
+                    "pid": process.pid,
+                    "pgid": process.pid,
+                    "sid": process.pid,
+                    "starttime": int(details["starttime"]),
+                    "executable": executable,
+                })
+                validate_metadata(running_document)
+                verify_adapter(running_document, args.alias, args.state)
+            except (OSError, PermanentError) as error:
+                if not pidfd_running(process_tree.leader_fd):
+                    raise AdapterExitedBeforeIdentity from error
+                raise
             atomic_metadata(control_fd, running_document)
         except AdapterExitedBeforeIdentity:
-            # Popen returned only after the requested executable was launched,
-            # so a child exit here is an adapter outcome, not proof of invalid
-            # identity. Preserve its real status (remapping reserved supervisor
-            # codes) and tear down only descendants pinned while the leader lived.
+            # Preserve the child status and clean up only descendants pinned while it lived.
             status = wait_process_tracking(process, process_tree, timeout=max(1.0, args.kill_seconds))
             signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=True)
             remove_metadata(control_fd)

@@ -3,10 +3,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { serverEnvironment } from './src/server-environment.ts';
+import { tsImport } from 'tsx/esm/api';
+
+const { serverEnvironment } = process.versions.bun
+  ? await import('./src/server-environment.ts')
+  : await tsImport('./src/server-environment.ts', import.meta.url);
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-const serverScript = path.join(directory, 'dist', 'server.js');
+const serverScript = path.join(directory, 'src', 'server.ts');
 const REQUIRED_TOOLS = ['chain', 'dead_letters', 'deliveries', 'fleet_status', 'health'];
 
 function textContent(result) {
@@ -18,7 +22,7 @@ function textContent(result) {
 async function main() {
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [serverScript],
+    args: process.versions.bun ? [serverScript] : ['--import', import.meta.resolve('tsx'), serverScript],
     env: serverEnvironment(),
     stderr: 'inherit',
   });

@@ -47,10 +47,9 @@ const firstGenerationStartedAt = "2026-07-22T10:00:00.000000000Z";
 const secondGenerationStartedAt = "2026-07-22T10:01:00.000000000Z";
 const labelKey = "com.example.runtime";
 const labelValue = "approved-runtime";
-// kant is the host-branch operator alias (stev/ctrl-infra); atlas/kratos are the codex pair co-located
-// on ws-humanizar; iza/jarvis are openclaw agents under /home/claw; argos moved to /home/dev (ctrl-infra); zeus is the fleet's only claude-harness alias.
+// Atlas and Kratos share ws-humanizar with distinct Codex and Claude profiles.
 const aliasState = {
-  kant: "/var/lib/cauce-v3/aliases/kant", argos: "/home/dev/.local/state/cauce-v3/argos",
+  argos: "/home/dev/.local/state/cauce-v3/argos",
   atlas: "/home/dev/.local/state/cauce-v3/atlas", iza: "/home/claw/.openclaw/cauce-v3/iza",
   jarvis: "/home/claw/.openclaw/cauce-v3/jarvis", kratos: "/home/dev/.local/state/cauce-v3/kratos",
   zeus: "/home/dev/.local/state/cauce-v3/zeus",
@@ -58,7 +57,7 @@ const aliasState = {
 // The real fleet never dedicates a mount to the state dir: the state lives inside a broad
 // persistent bind. Physical co-location does not imply that aliases share the same mapped HOME.
 const aliasMount = {
-  kant: "/var/lib/cauce-v3/aliases", argos: "/home/dev/.local", atlas: "/home/dev/.local",
+  argos: "/home/dev/.local", atlas: "/home/dev/.local",
   iza: "/home/claw/.openclaw", jarvis: "/home/claw/.openclaw", kratos: "/home/dev/.local",
   zeus: "/home/dev/.local",
 };
@@ -94,7 +93,7 @@ async function writeConfig(alias, extra = [], overrides = {}, omit = []) {
     MOUNT_DESTINATION: aliasMount[alias],
     MOUNT_RW: "true",
     CAUCE_SEMBRAR_PERFIL: "1",
-    ...(alias === "kant" || alias === "atlas" || alias === "kratos" ? { CONFIG_POR_ALIAS: "1" } : {}),
+    ...(alias === "atlas" || alias === "kratos" ? { CONFIG_POR_ALIAS: "1" } : {}),
     ...(alias === "zeus" || alias === "kratos" ? { EXPECTED_CLI_VERSION: "2.1.220" } : {}),
     ...(alias === "argos" ? { OPENCLAW_WORKSPACE: "/home/dev/clawd" } : {}),
     ...(alias === "iza" || alias === "jarvis" ? { OPENCLAW_WORKSPACE: "/home/claw/clawd" } : {}),
@@ -134,7 +133,7 @@ async function dockerState(alias, overrides = {}) {
       : alias === "iza" ? "claw-iza"
       : alias === "atlas" || alias === "kratos" ? "ws-humanizar"
       : alias === "zeus" ? "ws-zeus"
-      : "ctrl-infra", // kant, argos
+      : "ctrl-infra", // argos
     currentId: firstId,
     replacementId: secondId,
     running: true,
@@ -148,7 +147,7 @@ async function dockerState(alias, overrides = {}) {
     labelValue,
     mounts: [
       bind(alias, aliasMount[alias]),
-      ...(alias === "kant" ? [bind(`${alias}-home`, "/home/stev"), bind(`${alias}-workspace`, "/workspace")] : []),
+      ...(alias === "atlas" ? [bind(`${alias}-workspace`, "/workspace")] : []),
       ...(alias === "atlas" || alias === "kratos" ? [bind(`${alias}-codex`, "/home/dev/.codex")] : []),
       ...(alias === "zeus" ? [bind(`${alias}-claude`, "/home/dev/.claude"), bind(`${alias}-claude-json`, "/home/dev/.claude.json")] : []),
       ...(alias === "argos" ? [bind(`${alias}-workspace`, "/home/dev/clawd")] : []),
@@ -340,14 +339,14 @@ async function makeControl(name) {
 }
 
 function lifecycleArgs(action, state, control, generation = lifecycleGeneration) {
-  return [runtimeHelper, action, "--alias", "kant", "--state", state, "--control-dir", control,
+  return [runtimeHelper, action, "--alias", "atlas", "--state", state, "--control-dir", control,
     "--container-id", lifecycleContainerId, "--generation", generation, "--term-seconds", "0.2", "--kill-seconds", "1"];
 }
 
 function lifecycleEnv(state, control, generation, extra = {}) {
   return {
     ...process.env,
-    CAUCE_ALIAS: "kant",
+    CAUCE_ALIAS: "atlas",
     CAUCE_STATE_DIR: state,
     CAUCE_CONTROL_DIR: control,
     CAUCE_CONTAINER_ID: lifecycleContainerId,
@@ -477,15 +476,14 @@ try {
   bundleDigest2 = bundleDigestFor(release2);
   await copyFile(fakeDockerSource, path.join(binRoot, "docker"));
   await chmod(path.join(binRoot, "docker"), 0o755);
-  for (const alias of ["kant", "argos", "atlas", "iza", "jarvis", "kratos", "zeus"]) {
-    await preparePki(alias, { bearer: alias !== "kant" });
+  for (const alias of ["atlas", "argos", "iza", "jarvis", "kratos", "zeus"]) {
+    await preparePki(alias, { bearer: alias !== "atlas" });
     await mkdir(path.join(mountSourceRoot, alias), { recursive: true });
   }
   await writeFile(path.join(pkiRoot, "jarvis/openclaw-token"), "FAKE_OPENCLAW_TOKEN\n");
   await chmod(path.join(pkiRoot, "jarvis/openclaw-token"), 0o600);
-  await writeConfig("kant");
-  await writeConfig("argos");
   await writeConfig("atlas");
+  await writeConfig("argos");
   await writeConfig("iza");
   await writeConfig("kratos");
   await writeConfig("zeus");
@@ -497,75 +495,75 @@ try {
 
   // Offline fails before any copy.
   await clearLog();
-  let statePath = await dockerState("kant", { running: false });
-  let result = runSupervisor("start", "kant", statePath);
+  let statePath = await dockerState("atlas", { running: false });
+  let result = runSupervisor("start", "atlas", statePath);
   assert.notEqual(result.status, 0);
   assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false);
 
   // The alias pin selects one direct release directory; a symlink alias is never accepted.
   await symlink("release-1", path.join(bundleRoot, "releases/release-link"));
-  await writeConfig("kant", [], { BUNDLE_RELEASE: "release-link" });
+  await writeConfig("atlas", [], { BUNDLE_RELEASE: "release-link" });
   await clearLog();
-  result = runSupervisor("start", "kant", await dockerState("kant"));
+  result = runSupervisor("start", "atlas", await dockerState("atlas"));
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /non-symlink release directory/u);
   assert.equal((await records()).length, 0, "release symlink must fail before Docker");
   await rm(path.join(bundleRoot, "releases/release-link"));
-  await writeConfig("kant");
+  await writeConfig("atlas");
 
   // Full start: full ID only after discovery, structured mount, digest, safe state helper and path-only secrets.
   await clearLog();
-  statePath = await dockerState("kant");
-  result = runSupervisor("start", "kant", statePath);
+  statePath = await dockerState("atlas");
+  result = runSupervisor("start", "atlas", statePath);
   assert.equal(result.status, 0, result.stderr);
   let calls = await records();
   const firstInspect = calls.find(({ argv }) => argv[0] === "inspect" && argv[2] === "{{.Id}}");
-  assert.equal(firstInspect?.target, "ctrl-infra");
+  assert.equal(firstInspect?.target, "ws-humanizar");
   for (const call of calls.filter(({ argv }) => ["inspect", "exec", "cp"].includes(argv[0]) && argv[2] !== "{{.Id}}")) {
     assert.equal(call.target, firstId, `post-discovery Docker target must be full ID: ${JSON.stringify(call.argv)}`);
   }
   assert(calls.some(({ argv }) => argv.includes("prepare-control") && argv.includes("/run/cauce-v3-supervisor")));
-  assert(calls.some(({ argv }) => argv.includes("prepare-state") && argv.includes(aliasState.kant)));
-  assert(calls.some(({ argv }) => argv.includes("bundle-digest") && argv.includes("/opt/cauce-v3-adapter/kant/releases/release-1")));
+  assert(calls.some(({ argv }) => argv.includes("prepare-state") && argv.includes(aliasState.atlas)));
+  assert(calls.some(({ argv }) => argv.includes("bundle-digest") && argv.includes("/opt/cauce-v3-adapter/atlas/releases/release-1")));
   const stopIndex = calls.findIndex(({ argv }) => argv.includes("stop") && argv.includes("--container-id"));
   const bundleCopyIndex = calls.findIndex(({ argv }) => argv[0] === "cp" && argv[1] === `${release}/.`);
   assert(stopIndex >= 0 && stopIndex < bundleCopyIndex);
   // The pre-deploy stop of a prior consumer runs as root against the root-owned control dir.
   const stopCall = calls[stopIndex];
-  assert(stopCall.argv.includes("--control-dir") && stopCall.argv.includes("/run/cauce-v3-supervisor/kant"));
+  assert(stopCall.argv.includes("--control-dir") && stopCall.argv.includes("/run/cauce-v3-supervisor/atlas"));
   const stopUserIdx = stopCall.argv.indexOf("--user");
   assert(stopUserIdx >= 0 && stopCall.argv[stopUserIdx + 1] === "0", "stop must run as root");
-  const final = calls.find(({ argv }) => argv[0] === "exec" && argv.includes("/usr/bin/env") && argv.includes("CAUCE_ALIAS=kant"));
-  assert(final?.argv.includes("CAUCE_INSTANCE_ID=systemd-container-kant"));
+  const final = calls.find(({ argv }) => argv[0] === "exec" && argv.includes("/usr/bin/env") && argv.includes("CAUCE_ALIAS=atlas"));
+  assert(final?.argv.includes("CAUCE_INSTANCE_ID=systemd-container-atlas"));
   assert(final?.argv.includes(`CAUCE_CONTAINER_ID=${firstId}`));
   assert(final?.argv.some((value) => value.startsWith("CAUCE_CONTAINER_GENERATION=")));
   assert.equal(final?.argv.some((value) => value.startsWith("CAUCE_TOKEN_FILE=")), false,
-    "mTLS-only kant must not receive a nonexistent bearer token path");
-  assert(final?.argv.includes("CAUCE_TLS_CERT_FILE=/opt/cauce-v3-secrets/kant/client.crt"));
-  assert(final?.argv.includes("CAUCE_TLS_KEY_FILE=/opt/cauce-v3-secrets/kant/client.key"));
-  assert(final?.argv.includes("CAUCE_TLS_CA_FILE=/opt/cauce-v3-secrets/kant/ca.crt"));
-  assert.equal(final?.argv.some((value) => value.includes("FAKE_TOKEN_kant") || value.includes("FAKE_KEY_kant")), false);
+    "mTLS-only atlas must not receive a nonexistent bearer token path");
+  assert(final?.argv.includes("CAUCE_TLS_CERT_FILE=/opt/cauce-v3-secrets/atlas/client.crt"));
+  assert(final?.argv.includes("CAUCE_TLS_KEY_FILE=/opt/cauce-v3-secrets/atlas/client.key"));
+  assert(final?.argv.includes("CAUCE_TLS_CA_FILE=/opt/cauce-v3-secrets/atlas/ca.crt"));
+  assert.equal(final?.argv.some((value) => value.includes("FAKE_TOKEN_atlas") || value.includes("FAKE_KEY_atlas")), false);
   assert(final?.argv.includes("--bundle-digest") && final.argv.includes(bundleDigest));
   // The lifecycle controller runs as root and drops the adapter to the mapped non-root UID/GID.
   const finalUserIdx = final.argv.indexOf("--user");
   assert(finalUserIdx >= 0 && final.argv[finalUserIdx + 1] === "0", "controller exec must run as root");
-  assert(final.argv.includes("--control-dir") && final.argv.includes("/run/cauce-v3-supervisor/kant"));
+  assert(final.argv.includes("--control-dir") && final.argv.includes("/run/cauce-v3-supervisor/atlas"));
   assert(final.argv.includes("--runtime-uid") && final.argv.includes("--runtime-gid"));
-  assert(final.argv.includes("CAUCE_CONTROL_DIR=/run/cauce-v3-supervisor/kant"));
+  assert(final.argv.includes("CAUCE_CONTROL_DIR=/run/cauce-v3-supervisor/atlas"));
   assert(final.argv.includes("CAUCE_DEFAULT_TIMEOUT_MS=86400000"),
     "an omitted DEFAULT_TIMEOUT_MS must use the renewable 24-hour agentic default");
-  result = runSupervisor("stop", "kant", statePath);
-  assert.equal(result.status, 0, `mTLS-only kant stop must succeed: ${result.stderr}`);
-  process.stdout.write("mTLS-only kant: start and stop passed without bearer token\n");
+  result = runSupervisor("stop", "atlas", statePath);
+  assert.equal(result.status, 0, `mTLS-only atlas stop must succeed: ${result.stderr}`);
+  process.stdout.write("mTLS-only atlas: start and stop passed without bearer token\n");
 
   // Adapter execution defaults to 24 hours, accepts a bounded per-alias override, and rejects every
   // malformed/ambiguous value before Docker, carried through the clean `env -i` boundary explicitly.
-  await writeConfig("kant", [], { DEFAULT_TIMEOUT_MS: "480000" });
+  await writeConfig("atlas", [], { DEFAULT_TIMEOUT_MS: "480000" });
   await clearLog();
-  result = runSupervisor("start", "kant", await dockerState("kant"));
+  result = runSupervisor("start", "atlas", await dockerState("atlas"));
   assert.equal(result.status, 0, `valid DEFAULT_TIMEOUT_MS override must start: ${result.stderr}`);
   const timeoutOverrideFinal = (await records())
-    .find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
+    .find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=atlas"));
   assert(timeoutOverrideFinal?.argv.includes("CAUCE_DEFAULT_TIMEOUT_MS=480000"),
     "a valid DEFAULT_TIMEOUT_MS override must be exported verbatim");
 
@@ -577,14 +575,14 @@ try {
     ["duplicate", ["DEFAULT_TIMEOUT_MS=420000"], { DEFAULT_TIMEOUT_MS: "480000" },
       /config key is duplicated: DEFAULT_TIMEOUT_MS/u],
   ]) {
-    await writeConfig("kant", extra, override);
+    await writeConfig("atlas", extra, override);
     await clearLog();
-    result = runSupervisor("start", "kant", await dockerState("kant"));
+    result = runSupervisor("start", "atlas", await dockerState("atlas"));
     assert.notEqual(result.status, 0, `${name} DEFAULT_TIMEOUT_MS must fail`);
     assert.match(result.stderr, expected);
     assert.equal((await records()).length, 0, `${name} DEFAULT_TIMEOUT_MS must fail before Docker`);
   }
-  await writeConfig("kant");
+  await writeConfig("atlas");
   process.stdout.write("default timeout: 86400000 default and 480000 override exported; invalid values rejected before Docker\n");
 
   // Claude containers are upgraded independently, so the version pin belongs to each alias config and
@@ -635,11 +633,11 @@ try {
   // ---- Shared session: a single conversation in the terminal and in Telegram. ----
   // The switch only exists for claude and codex, only accepts the exact value 1, and when on it must
   // reach the adapter with a usable TERM (else tmux creates the session unknown-terminal and broken).
-  await writeConfig("kant", ["SHARED_SESSION=1", "SHARED_SESSION_WORKSPACE=/workspace"]);
+  await writeConfig("atlas", ["SHARED_SESSION=1", "SHARED_SESSION_WORKSPACE=/workspace"]);
   await clearLog();
-  result = runSupervisor("start", "kant", await dockerState("kant"));
+  result = runSupervisor("start", "atlas", await dockerState("atlas"));
   assert.equal(result.status, 0, `shared session must start: ${result.stderr}`);
-  const sharedFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
+  const sharedFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=atlas"));
   assert(sharedFinal?.argv.includes("CAUCE_SHARED_SESSION=1"));
   assert(sharedFinal?.argv.includes("CAUCE_SHARED_SESSION_WORKSPACE=/workspace"));
   assert(sharedFinal?.argv.includes("TERM=xterm-256color"),
@@ -656,11 +654,11 @@ try {
   await writeConfig("zeus");
 
   // Without the switch, the behavior is byte-for-byte the same as always.
-  await writeConfig("kant");
+  await writeConfig("atlas");
   await clearLog();
-  result = runSupervisor("start", "kant", await dockerState("kant"));
+  result = runSupervisor("start", "atlas", await dockerState("atlas"));
   assert.equal(result.status, 0, result.stderr);
-  const plainFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
+  const plainFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=atlas"));
   assert(!plainFinal?.argv.some((value) => value.startsWith("CAUCE_SHARED_SESSION")),
     "sin SHARED_SESSION no se exporta ninguna variable de sesión compartida");
   assert(!plainFinal?.argv.some((value) => value.startsWith("TERM=")),
@@ -676,9 +674,9 @@ try {
       ["SHARED_SESSION=1", "SHARED_SESSION_WORKSPACE=/workspace", "CAUCE_NATIVE_PROFILE_CONTEXT=1"],
       /CAUCE_NATIVE_PROFILE_CONTEXT is incompatible with SHARED_SESSION/u],
   ]) {
-    await writeConfig("kant", extra);
+    await writeConfig("atlas", extra);
     await clearLog();
-    result = runSupervisor("start", "kant", await dockerState("kant"));
+    result = runSupervisor("start", "atlas", await dockerState("atlas"));
     assert.notEqual(result.status, 0, `${name} debe fallar`);
     assert.match(result.stderr, expected);
     assert.equal((await records()).length, 0, `${name} debe fallar antes de tocar Docker`);
@@ -692,11 +690,11 @@ try {
   assert.notEqual(result.status, 0, "openclaw no tiene sesión compartida");
   assert.match(result.stderr, /config key is not allowed for openclaw: SHARED_SESSION/u);
   await writeConfig("iza");
-  await writeConfig("kant");
+  await writeConfig("atlas");
   process.stdout.write("shared session: switch exported with TERM for claude/codex, rejected elsewhere and for non-1 values\n");
 
   const nativeProfileContextGatedByValueNotByPresence = [
-    ["zeus", "1", true], ["argos", "1", true], ["kant", "0", true], ["kant", "1", false],
+    ["zeus", "1", true], ["argos", "1", true], ["atlas", "0", true], ["atlas", "1", false],
   ];
   for (const [alias, value, starts] of nativeProfileContextGatedByValueNotByPresence) {
     await writeConfig(alias, [`CAUCE_NATIVE_PROFILE_CONTEXT=${value}`]);
@@ -715,45 +713,42 @@ try {
   process.stdout.write("native profile context: el 1 solo arranca en claude/openclaw; un 0 ya escrito en el .env sigue arrancando en cualquier arnes\n");
 
   // ---- Per-alias configuration: each alias with its OWN configuration directory. ----
-  // kratos and atlas run in the SAME container with the same HOME, and their ~/.codex/AGENTS.md is the
-  // same INODE: per-file it is impossible to give them distinct identities. CODEX_HOME/CLAUDE_CONFIG_DIR
-  // already govern where each CLI looks, so the supervisor points each alias to its own; mandatory in
-  // every multi-alias container. Omitting the switch must fail before Docker, never falling back silently.
-  await writeConfig("kant", [], {}, ["CONFIG_POR_ALIAS"]);
+  // Shared container homes require per-alias profiles; omission must fail before Docker.
+  await writeConfig("atlas", [], {}, ["CONFIG_POR_ALIAS"]);
   await clearLog();
-  result = runSupervisor("start", "kant", await dockerState("kant"));
+  result = runSupervisor("start", "atlas", await dockerState("atlas"));
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /multi-alias container requires CONFIG_POR_ALIAS=1/u);
   assert.equal((await records()).length, 0, "missing isolation policy must fail before Docker");
 
-  await writeConfig("kant");
+  await writeConfig("atlas");
   await clearLog();
-  result = runSupervisor("start", "kant", await dockerState("kant"));
+  result = runSupervisor("start", "atlas", await dockerState("atlas"));
   assert.equal(result.status, 0, `config por alias debe arrancar: ${result.stderr}`);
-  const conInterruptor = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
-  // kant is codex and its mapped home is /home/stev. The path is DERIVED from the alias: the
+  const conInterruptor = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=atlas"));
+  // atlas is codex and its mapped home is /home/dev. The path is DERIVED from the alias: the
   // same one computed by ops/scripts/separar-config-alias.mjs, which copies the files there.
-  assert(conInterruptor?.argv.includes("CODEX_HOME=/home/stev/.local/share/cauce-v3/config/kant/.codex"),
+  assert(conInterruptor?.argv.includes("CODEX_HOME=/home/dev/.local/share/cauce-v3/config/atlas/.codex"),
     "el interruptor tiene que exportar el directorio derivado del alias");
   assert(!conInterruptor?.argv.some((value) => value.startsWith("CLAUDE_CONFIG_DIR=")),
     "un alias codex no puede recibir además la variable de claude");
 
-  await writeConfig("kant", ["CREDENTIAL_HOME=/mnt/kant-credentials/.codex"]);
+  await writeConfig("atlas", ["CREDENTIAL_HOME=/mnt/atlas-credentials/.codex"]);
   await clearLog();
-  result = runSupervisor("start", "kant", await dockerState("kant"));
+  result = runSupervisor("start", "atlas", await dockerState("atlas"));
   assert.equal(result.status, 0, `CONFIG_POR_ALIAS + CREDENTIAL_HOME debe arrancar: ${result.stderr}`);
-  assert.match(result.stderr, /CONFIG_POR_ALIAS overrides CREDENTIAL_HOME for kant/u, "el solapamiento se anuncia");
-  const credentialFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
-  assert.equal(credentialFinal?.argv.filter((value) => value.startsWith("CODEX_HOME=")).at(-1), "CODEX_HOME=/home/stev/.local/share/cauce-v3/config/kant/.codex", "gana el directorio por alias");
-  await writeConfig("kant");
+  assert.match(result.stderr, /CONFIG_POR_ALIAS overrides CREDENTIAL_HOME for atlas/u, "el solapamiento se anuncia");
+  const credentialFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=atlas"));
+  assert.equal(credentialFinal?.argv.filter((value) => value.startsWith("CODEX_HOME=")).at(-1), "CODEX_HOME=/home/dev/.local/share/cauce-v3/config/atlas/.codex", "gana el directorio por alias");
+  await writeConfig("atlas");
 
   for (const [name, value, expected] of [
     ["valor distinto de 1", "true", /CONFIG_POR_ALIAS must be exactly 1/u],
     ["valor 0", "0", /CONFIG_POR_ALIAS must be exactly 1/u],
   ]) {
-    await writeConfig("kant", [], { CONFIG_POR_ALIAS: value });
+    await writeConfig("atlas", [], { CONFIG_POR_ALIAS: value });
     await clearLog();
-    result = runSupervisor("start", "kant", await dockerState("kant"));
+    result = runSupervisor("start", "atlas", await dockerState("atlas"));
     assert.notEqual(result.status, 0, `${name} debe fallar`);
     assert.match(result.stderr, expected);
     assert.equal((await records()).length, 0, `${name} debe fallar antes de tocar Docker`);
@@ -783,14 +778,14 @@ try {
     "OPENCLAW_API_URL=http://127.0.0.1:18789/v1/chat/completions",
     "OPENCLAW_TOKEN_FILE=/opt/cauce-v3-secrets/jarvis/openclaw-token",
   ]);
-  await writeConfig("kant");
+  await writeConfig("atlas");
   process.stdout.write("config por alias: mandatory for multi-alias containers, derived per alias, rejected outside claude/codex\n");
 
   // ---- Bundle layout regression guard: mini-monorepo vs legacy root layout. ----
   // The real production bundle ships adapters at packages/adapter-sdk/dist/src/bin/<harness>.js; the
   // supervisor must resolve exactly that path. Positive: the standard fixture uses that layout.
   await clearLog();
-  assert.equal(runSupervisor("start", "kant", await dockerState("kant")).status, 0,
+  assert.equal(runSupervisor("start", "atlas", await dockerState("atlas")).status, 0,
     "packages/adapter-sdk/dist/src/bin layout must pass validate_bundle");
   process.stdout.write("layout guard: packages/adapter-sdk/dist/src/bin bundle accepted by validate_bundle\n");
   // Negative: a bundle carrying only the legacy root layout dist/src/bin/<harness>.js (WITHOUT the
@@ -810,22 +805,22 @@ try {
   const legacyConfig = {
     BUNDLE_RELEASE: "release-legacy",
     BUNDLE_SHA256: legacyDigest,
-    PKI_DIR: `${pkiRoot}/kant`,
+    PKI_DIR: `${pkiRoot}/atlas`,
     RELAY_URL: "wss://gateway.example.invalid/v3/ws",
     EXPECTED_IMAGE_ID: imageId,
     CAUCE_SEMBRAR_PERFIL: "1",
     CONFIG_POR_ALIAS: "1",
   };
-  await writeFile(path.join(configRoot, "kant.env"),
+  await writeFile(path.join(configRoot, "atlas.env"),
     `${Object.entries(legacyConfig).map(([key, value]) => `${key}=${value}`).join("\n")}\n`);
-  await chmod(path.join(configRoot, "kant.env"), 0o600);
-  const legacyEnv = { ...environment(await dockerState("kant")), CAUCE_CONTAINER_BUNDLE_ROOT: legacyRoot };
-  result = spawnSync(supervisor, ["start", "kant"], { encoding: "utf8", env: legacyEnv });
+  await chmod(path.join(configRoot, "atlas.env"), 0o600);
+  const legacyEnv = { ...environment(await dockerState("atlas")), CAUCE_CONTAINER_BUNDLE_ROOT: legacyRoot };
+  result = spawnSync(supervisor, ["start", "atlas"], { encoding: "utf8", env: legacyEnv });
   assert.notEqual(result.status, 0, "legacy dist/src/bin layout (no packages/adapter-sdk) must fail validate_bundle");
   assert.match(result.stderr, /bundle does not contain the assigned executable adapter/u);
   assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false,
     "a layout-rejected bundle must fail before any container copy");
-  await writeConfig("kant");
+  await writeConfig("atlas");
   // Restore write bits on the immutable legacy fixture so the final recursive cleanup can remove it.
   for (const directory of [
     "releases/release-legacy",
@@ -906,14 +901,14 @@ try {
   for (const [name, override, expected] of [
     ["image", { imageId: `sha256:${"f".repeat(64)}` }, /image ID/u],
     ["label", { labelValue: "wrong" }, /label/u],
-    ["tmpfs", { mounts: [{ Type: "tmpfs", Source: "", Destination: aliasMount.kant, RW: true }] }, /mount/u],
-    ["source", { mounts: [{ Type: "bind", Source: "/wrong", Destination: aliasMount.kant, RW: true }] }, /mount/u],
-    ["readonly", { mounts: [{ Type: "bind", Source: `${mountSourceRoot}/kant`, Destination: aliasMount.kant, RW: false }] }, /mount/u],
-    ["no-ancestor", { mounts: [{ Type: "bind", Source: `${mountSourceRoot}/kant`, Destination: "/unrelated/mount", RW: true }] }, /mount/u],
+    ["tmpfs", { mounts: [{ Type: "tmpfs", Source: "", Destination: aliasMount.atlas, RW: true }] }, /mount/u],
+    ["source", { mounts: [{ Type: "bind", Source: "/wrong", Destination: aliasMount.atlas, RW: true }] }, /mount/u],
+    ["readonly", { mounts: [{ Type: "bind", Source: `${mountSourceRoot}/atlas`, Destination: aliasMount.atlas, RW: false }] }, /mount/u],
+    ["no-ancestor", { mounts: [{ Type: "bind", Source: `${mountSourceRoot}/atlas`, Destination: "/unrelated/mount", RW: true }] }, /mount/u],
   ]) {
     await clearLog();
-    statePath = await dockerState("kant", override);
-    result = runSupervisor("start", "kant", statePath);
+    statePath = await dockerState("atlas", override);
+    result = runSupervisor("start", "atlas", statePath);
     assert.notEqual(result.status, 0, `${name} policy must fail`);
     assert.match(result.stderr, expected);
     assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false);
@@ -922,10 +917,10 @@ try {
   // A persistent state mount does not make an ephemeral harness home acceptable: Codex auth/config
   // live on a separate mounted home and must survive the same container recreation as the state.
   await clearLog();
-  statePath = await dockerState("kant", { mounts: [{
-    Type: "bind", Source: `${mountSourceRoot}/kant`, Destination: aliasMount.kant, RW: true,
+  statePath = await dockerState("atlas", { mounts: [{
+    Type: "bind", Source: `${mountSourceRoot}/atlas`, Destination: aliasMount.atlas, RW: true,
   }] });
-  result = runSupervisor("start", "kant", statePath);
+  result = runSupervisor("start", "atlas", statePath);
   assert.notEqual(result.status, 0, "state persistence without persistent Codex auth/config must fail");
   assert.match(result.stderr, /required harness path/u);
   assert.equal((await records()).some(({ mutating }) => mutating), false,
@@ -934,75 +929,75 @@ try {
   // The on-disk isolated layout is rechecked by start/check, not trusted merely because the env points
   // to its directory. The fake models a broken/missing identity or a link redirected away from source.
   await clearLog();
-  result = runSupervisor("start", "kant", await dockerState("kant", { isolatedConfigOk: false }));
+  result = runSupervisor("start", "atlas", await dockerState("atlas", { isolatedConfigOk: false }));
   assert.notEqual(result.status, 0, "a broken isolated config must fail closed");
   assert.match(result.stderr, /isolated harness configuration verification failed/u);
   assert.equal((await records()).some(({ mutating }) => mutating), false,
     "isolated config verification must precede helper/state/bundle/PKI mutation");
 
   // A declared volume-name that differs from the discovered mount fails before any copy.
-  await writeConfig("kant", [], {
+  await writeConfig("atlas", [], {
     MOUNT_TYPE: "volume",
-    MOUNT_SOURCE: `${mountSourceRoot}/kant-volume`,
-    MOUNT_NAME: "expected-kant-volume",
+    MOUNT_SOURCE: `${mountSourceRoot}/atlas-volume`,
+    MOUNT_NAME: "expected-atlas-volume",
   });
   await clearLog();
-  statePath = await dockerState("kant", { mounts: [{
+  statePath = await dockerState("atlas", { mounts: [{
     Type: "volume",
-    Source: `${mountSourceRoot}/kant-volume`,
+    Source: `${mountSourceRoot}/atlas-volume`,
     Name: "wrong-volume-name",
-    Destination: aliasMount.kant,
+    Destination: aliasMount.atlas,
     RW: true,
   }] });
-  result = runSupervisor("start", "kant", statePath);
+  result = runSupervisor("start", "atlas", statePath);
   assert.notEqual(result.status, 0);
   assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false);
-  await writeConfig("kant");
+  await writeConfig("atlas");
 
   // `check` is a complete read-only preflight: it revalidates host PKI before accepting
   // lifecycle metadata.  Missing PKI cannot be hidden behind a healthy old adapter process.
-  await rm(path.join(pkiRoot, "kant/ca.crt"));
+  await rm(path.join(pkiRoot, "atlas/ca.crt"));
   await clearLog();
-  result = runSupervisor("check", "kant", await dockerState("kant"));
+  result = runSupervisor("check", "atlas", await dockerState("atlas"));
   assert.notEqual(result.status, 0, "check must reject missing PKI");
   assert.equal((await records()).some(({ argv }) => argv.includes("check")), false,
     "lifecycle check must not run after PKI preflight failure");
-  await writeFile(path.join(pkiRoot, "kant/ca.crt"), "fake-ca\n");
-  await chmod(path.join(pkiRoot, "kant/ca.crt"), 0o600);
+  await writeFile(path.join(pkiRoot, "atlas/ca.crt"), "fake-ca\n");
+  await chmod(path.join(pkiRoot, "atlas/ca.crt"), 0o600);
 
   await clearLog();
-  result = runSupervisor("check", "kant", await dockerState("kant"));
+  result = runSupervisor("check", "atlas", await dockerState("atlas"));
   assert.equal(result.status, 0, `full check must pass: ${result.stderr}`);
   process.stdout.write("complete check: PKI precedes lifecycle metadata\n");
 
   // Optional-key omission still starts. First: image ID correct, NO label declared, so the
   // label check is skipped even though the container reports an unverified label value.
   await clearLog();
-  await writeConfig("kant", [], {}, ["EXPECTED_LABEL_KEY", "EXPECTED_LABEL_VALUE"]);
-  assert.equal(runSupervisor("start", "kant", await dockerState("kant", { labelValue: "unverified" })).status, 0,
+  await writeConfig("atlas", [], {}, ["EXPECTED_LABEL_KEY", "EXPECTED_LABEL_VALUE"]);
+  assert.equal(runSupervisor("start", "atlas", await dockerState("atlas", { labelValue: "unverified" })).status, 0,
     "an image-verified container with no declared label must start");
   // Second: no MOUNT_* declared at all -- the supervisor discovers the ancestor bind itself
   // and bounds safe state creation to it.
   await clearLog();
-  await writeConfig("kant", [], {}, ["EXPECTED_LABEL_KEY", "EXPECTED_LABEL_VALUE", "MOUNT_TYPE", "MOUNT_SOURCE", "MOUNT_DESTINATION", "MOUNT_RW"]);
-  result = runSupervisor("start", "kant", await dockerState("kant"));
+  await writeConfig("atlas", [], {}, ["EXPECTED_LABEL_KEY", "EXPECTED_LABEL_VALUE", "MOUNT_TYPE", "MOUNT_SOURCE", "MOUNT_DESTINATION", "MOUNT_RW"]);
+  result = runSupervisor("start", "atlas", await dockerState("atlas"));
   assert.equal(result.status, 0, `discovery-only config must start: ${result.stderr}`);
-  assert((await records()).some(({ argv }) => argv.includes("prepare-state") && argv.includes(aliasMount.kant) && argv.includes(aliasState.kant)),
+  assert((await records()).some(({ argv }) => argv.includes("prepare-state") && argv.includes(aliasMount.atlas) && argv.includes(aliasState.atlas)),
     "prepare-state must bound creation to the discovered ancestor mount, not the state dir");
-  await writeConfig("kant");
+  await writeConfig("atlas");
 
   // Alias/path/config injection remains fail-closed before Docker.
   await clearLog();
-  result = runSupervisor("start", "kant;bad", await dockerState("kant"));
+  result = runSupervisor("start", "atlas;bad", await dockerState("atlas"));
   assert.notEqual(result.status, 0);
   assert.equal((await records()).length, 0);
-  await writeFile(path.join(configRoot, "kant.env"), "BUNDLE_RELEASE=../escape\nEVIL=$(touch /tmp/pwned)\n");
-  await chmod(path.join(configRoot, "kant.env"), 0o600);
+  await writeFile(path.join(configRoot, "atlas.env"), "BUNDLE_RELEASE=../escape\nEVIL=$(touch /tmp/pwned)\n");
+  await chmod(path.join(configRoot, "atlas.env"), 0o600);
   await clearLog();
-  result = runSupervisor("start", "kant", await dockerState("kant"));
+  result = runSupervisor("start", "atlas", await dockerState("atlas"));
   assert.notEqual(result.status, 0);
   assert.equal((await records()).length, 0);
-  await writeConfig("kant");
+  await writeConfig("atlas");
 
   // atlas and kratos share ONE persistent bind (/home/dev/.local, one Source) in ws-humanizar. Each
   // alias state dir is a disjoint subtree, so both discover the same mount without colliding.
@@ -1031,26 +1026,26 @@ try {
 
   // Recreate with same declared mount relaunches on the new ID and retains state/instance identity.
   await clearLog();
-  assert.equal(runSupervisor("start", "kant", await dockerState("kant", { currentId: firstId })).status, 0);
-  assert.equal(runSupervisor("start", "kant", await dockerState("kant", { currentId: secondId, replacementId: firstId, startedAt: secondGenerationStartedAt })).status, 0);
+  assert.equal(runSupervisor("start", "atlas", await dockerState("atlas", { currentId: firstId })).status, 0);
+  assert.equal(runSupervisor("start", "atlas", await dockerState("atlas", { currentId: secondId, replacementId: firstId, startedAt: secondGenerationStartedAt })).status, 0);
   calls = await records();
-  const relaunches = calls.filter(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
+  const relaunches = calls.filter(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=atlas"));
   assert.equal(relaunches.length, 2);
   assert(relaunches[0].argv.includes(`CAUCE_CONTAINER_ID=${firstId}`));
   assert(relaunches[1].argv.includes(`CAUCE_CONTAINER_ID=${secondId}`));
-  assert(relaunches.every(({ argv }) => argv.includes(`CAUCE_STATE_DIR=${aliasState.kant}`) && argv.includes("CAUCE_INSTANCE_ID=systemd-container-kant")));
+  assert(relaunches.every(({ argv }) => argv.includes(`CAUCE_STATE_DIR=${aliasState.atlas}`) && argv.includes("CAUCE_INSTANCE_ID=systemd-container-atlas")));
 
   // Every mutating Docker step aborts a recreate race without applying to the replacement ID.
   await clearLog();
-  statePath = await dockerState("kant");
-  assert.equal(runSupervisor("start", "kant", statePath).status, 0);
+  statePath = await dockerState("atlas");
+  assert.equal(runSupervisor("start", "atlas", statePath).status, 0);
   const baseline = await records();
   const mutatingCalls = baseline.filter(({ mutating, applied, target }) => mutating && applied && target === firstId).map(({ call }) => call);
   assert(mutatingCalls.length > 10);
   for (const raceAt of mutatingCalls) {
     await clearLog();
-    statePath = await dockerState("kant", { raceAt });
-    result = runSupervisor("start", "kant", statePath);
+    statePath = await dockerState("atlas", { raceAt });
+    result = runSupervisor("start", "atlas", statePath);
     assert.notEqual(result.status, 0, `recreate race at Docker call ${raceAt} must abort`);
     const raced = await records();
     assert.equal(raced.some(({ mutating, applied, target }) => mutating && applied && target === secondId), false,
@@ -1062,8 +1057,8 @@ try {
   assert(guardedMutationCalls.length > 10);
   for (const restartRaceAt of guardedMutationCalls) {
     await clearLog();
-    statePath = await dockerState("kant", { restartRaceAt });
-    result = runSupervisor("start", "kant", statePath);
+    statePath = await dockerState("atlas", { restartRaceAt });
+    result = runSupervisor("start", "atlas", statePath);
     assert.notEqual(result.status, 0, `same-ID restart race at guarded call ${restartRaceAt} must abort`);
     const raced = await records();
     assert.equal(raced.some(({ call, mutating, applied }) => call === restartRaceAt && mutating && applied), false,
@@ -1073,11 +1068,11 @@ try {
   // Host flock rejects a duplicate supervisor before its first Docker operation can run.
   await clearLog();
   const flockGate = path.join(temporary, `flock-owner-${Math.random().toString(16).slice(2)}.gate`);
-  statePath = await dockerState("kant", { startGate: flockGate });
-  const firstOwner = spawn(supervisor, ["start", "kant"], { stdio: "ignore", env: environment(statePath) });
+  statePath = await dockerState("atlas", { startGate: flockGate });
+  const firstOwner = spawn(supervisor, ["start", "atlas"], { stdio: "ignore", env: environment(statePath) });
   await waitForLogOrExit(firstOwner,
     (entries) => entries.some(({ call, argv }) => call === 1 && argv[0] === "inspect"));
-  result = runSupervisor("start", "kant", statePath);
+  result = runSupervisor("start", "atlas", statePath);
   assert.equal(result.status, 73);
   await writeFile(flockGate, "release\n");
   const firstOwnerExit = await waitForChildExit(firstOwner);
@@ -1456,7 +1451,7 @@ time.sleep(60)
   const identityControl = await makeControl("identity");
   await mkdir(identityState, { mode: 0o700 });
   managed = await startManaged(identityState, identityControl, simple);
-  result = spawnSync("python3", [runtimeHelper, "stop", "--alias", "kant", "--state", identityState,
+  result = spawnSync("python3", [runtimeHelper, "stop", "--alias", "atlas", "--state", identityState,
     "--control-dir", identityControl, "--container-id", "e".repeat(64), "--generation", replacementGeneration], { encoding: "utf8" });
   assert.equal(result.status, 78);
   assert.equal(processAlive(managed.document.pid), true);
@@ -1499,22 +1494,22 @@ time.sleep(60)
   // real helper while keeping all other container operations observable.  An inert metadata
   // document from the prior generation must not strand the unit before its guarded final exec.
   await writeFile(managed.metadata, `${JSON.stringify(staleDocument)}\n`);
-  await writeConfig("kant");
+  await writeConfig("atlas");
   await clearLog();
-  statePath = await dockerState("kant", {
+  statePath = await dockerState("atlas", {
     runtimeStopFixture: {
       helper: runtimeHelper,
       state: staleState,
       control: staleControl,
     },
   });
-  result = runSupervisor("start", "kant", statePath);
+  result = runSupervisor("start", "atlas", statePath);
   assert.equal(result.status, 0,
     `supervisor restart must tolerate inert prior-generation metadata: ${result.stderr}`);
   calls = await records();
   assert(calls.some(({ argv }) => argv.includes("stop") && argv.includes("--generation")),
     "supervisor must ask the real lifecycle helper to stop the prior generation");
-  assert(calls.some(({ argv }) => argv.includes("guard-exec") && argv.includes("CAUCE_ALIAS=kant")),
+  assert(calls.some(({ argv }) => argv.includes("guard-exec") && argv.includes("CAUCE_ALIAS=atlas")),
     "supervisor must reach the guarded adapter exec after stale-generation stop");
   process.stdout.write("host supervisor restart: inert prior-generation metadata reached guarded exec\n");
 
@@ -1634,9 +1629,9 @@ time.sleep(60)
     const pctl = path.join(priv, "control");
     assert.equal(sudo(["mkdir", "-m", "0700", pstate]).status, 0);
     assert.equal(sudo(["mkdir", "-m", "0700", pctl]).status, 0);
-    const rootEnv = ["env", "CAUCE_ALIAS=kant", `CAUCE_STATE_DIR=${pstate}`, `CAUCE_CONTROL_DIR=${pctl}`,
+    const rootEnv = ["env", "CAUCE_ALIAS=atlas", `CAUCE_STATE_DIR=${pstate}`, `CAUCE_CONTROL_DIR=${pctl}`,
       `CAUCE_CONTAINER_ID=${lifecycleContainerId}`, `CAUCE_CONTAINER_GENERATION=${lifecycleGeneration}`];
-    const rootRun = ["python3", runtimeHelper, "run", "--alias", "kant", "--state", pstate, "--control-dir", pctl,
+    const rootRun = ["python3", runtimeHelper, "run", "--alias", "atlas", "--state", pstate, "--control-dir", pctl,
       "--runtime-uid", "65534", "--runtime-gid", "65534", "--container-id", lifecycleContainerId,
       "--generation", lifecycleGeneration, "--term-seconds", "1", "--kill-seconds", "2",
       "--bundle", release, "--bundle-digest", bundleDigest, psimple];
@@ -1668,12 +1663,12 @@ time.sleep(60)
     assert.equal(sudo(["test", "-f", path.join(pctl, lockName)]).status, 0, "lock survived the failed unlink");
     assert.equal(sudo(["test", "-d", `/proc/${rootDoc.pid}`]).status, 0, "the adapter is still alive after the failed tampering");
     // A root runtime identity is rejected outright before the control plane is touched.
-    const rootRuntime = sudo([...rootEnv, "python3", runtimeHelper, "run", "--alias", "kant", "--state", pstate,
+    const rootRuntime = sudo([...rootEnv, "python3", runtimeHelper, "run", "--alias", "atlas", "--state", pstate,
       "--control-dir", pctl, "--runtime-uid", "0", "--runtime-gid", "0", "--container-id", lifecycleContainerId,
       "--generation", lifecycleGeneration, "--bundle", release, "--bundle-digest", bundleDigest, psimple]);
     assert.equal(rootRuntime.status, 78, `a root runtime identity must be rejected: ${rootRuntime.stdout} ${rootRuntime.stderr}`);
     // Tear the root-owned adapter down and prove it stopped.
-    const rootStop = sudo(["python3", runtimeHelper, "stop", "--alias", "kant", "--state", pstate, "--control-dir", pctl,
+    const rootStop = sudo(["python3", runtimeHelper, "stop", "--alias", "atlas", "--state", pstate, "--control-dir", pctl,
       "--container-id", lifecycleContainerId, "--generation", lifecycleGeneration, "--term-seconds", "1", "--kill-seconds", "2"]);
     assert.equal(rootStop.status, 0, `the root-owned stop must succeed: ${rootStop.stderr}`);
     process.stdout.write("privileged root-owned control-plane reproductions passed\n");

@@ -582,7 +582,7 @@ MAPA_HOST=$cli_home/.config/cauce-v3/alias-host.tsv
 sitio() {
   local alias_name=$1 route_record route match_count invalid_fields
   [ -e "$MAPA_HOST" ] || { echo local; return; }
-  if [ ! -r "$MAPA_HOST" ] || ! route_record=$(awk -v a="$alias_name" '$1==a {n++; if(NF!=2) bad=1; r=$2} END{if(n) printf "%d\t%d\t%s",n,bad+0,r}' "$MAPA_HOST" 2>/dev/null); then
+  if [ ! -f "$MAPA_HOST" ] || [ ! -r "$MAPA_HOST" ] || ! route_record=$(awk -v a="$alias_name" '$1==a {n++; if(NF!=2) bad=1; r=$2} END{if(n) printf "%d\t%d\t%s",n,bad+0,r}' "$MAPA_HOST" 2>/dev/null); then
     printf 'no se pudo leer el mapa de rutas\n' >&2
     return 2
   fi
