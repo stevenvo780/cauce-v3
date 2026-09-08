@@ -28,8 +28,8 @@ function run(arguments_, extra = {}) {
 
 try {
   await writeFile(inventory, `${JSON.stringify({
-    schemaVersion: 2,
-    aliases: { kant: { tenant: 'Steven', room: 'grp.steven' } },
+    schemaVersion: 1,
+    fleet: { kant: { tenant: 'Steven', room: 'grp.steven', enabled: true } },
   })}\n`);
   await writeFile(baseline, `${JSON.stringify({
     schemaVersion: 2, tenant: 'Steven', alias: 'kant', capturedAt: new Date().toISOString(),

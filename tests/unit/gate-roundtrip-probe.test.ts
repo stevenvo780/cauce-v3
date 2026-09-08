@@ -53,8 +53,8 @@ async function fixture() {
   await chmod(join(directory, 'client.key'), 0o600);
   const inventory = join(directory, 'inventory.json');
   await writeFile(inventory, `${JSON.stringify({
-    schemaVersion: 2,
-    aliases: { kant: { tenant: 'Steven', room: 'grp.steven' } },
+    schemaVersion: 1,
+    fleet: { kant: { tenant: 'Steven', room: 'grp.steven', enabled: true } },
   })}\n`);
   return {
     directory,

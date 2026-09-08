@@ -27,28 +27,20 @@ SENTINEL_USER = [MODULE.PLACEHOLDER_USER_ID]
 SENTINEL_CHAT = [MODULE.PLACEHOLDER_CHAT_ID]
 
 
-def _write_container_aliases(root: pathlib.Path, aliases: dict[str, str]) -> None:
+def _write_fleet(root: pathlib.Path, aliases: dict[str, str]) -> None:
     """aliases: {alias: tenant}. Fixed room/harness, distinct per-alias container/user/home."""
     document = {
-        "schemaVersion": 2,
-        "systemPrincipals": {},
-        "historicalAliases": {},
-        "aliases": {
+        "schemaVersion": 1,
+        "fleet": {
             alias: {
-                "tenant": tenant,
-                "room": f"grp.{tenant.lower()}",
-                "container": alias,
-                "user": alias,
-                "home": f"/home/{alias}",
-                "stateDirectory": f"/home/{alias}/.state",
-                "harness": "claude",
-                "membershipRole": "agent",
-                "systemdUser": alias,
+                "tenant": tenant, "room": f"grp.{tenant.lower()}", "container": alias,
+                "enabled": True, "user": alias, "home": f"/home/{alias}",
+                "runtimeStateDirectory": f"/home/{alias}/.state", "harness": "claude", "role": "agent",
             }
             for alias, tenant in aliases.items()
         },
     }
-    (root / "container-aliases.json").write_text(json.dumps(document), encoding="utf-8")
+    (root / "flota.json").write_text(json.dumps(document), encoding="utf-8")
 
 
 def _write_json(path: pathlib.Path, document: object) -> None:
@@ -68,7 +60,7 @@ class FixtureTestCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.ops_dir = pathlib.Path(self._tmp.name) / "ops"
         self.ops_dir.mkdir()
-        _write_container_aliases(self.ops_dir, {"argos": "Steven", "atlas": "Miguel"})
+        _write_fleet(self.ops_dir, {"argos": "Steven", "atlas": "Miguel"})
         self.dest = pathlib.Path(self._tmp.name) / "config.json"
 
     def base_argv(self, *extra: str) -> list[str]:

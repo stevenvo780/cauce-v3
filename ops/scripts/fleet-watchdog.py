@@ -36,7 +36,7 @@ import subprocess
 import sys
 from typing import Any
 
-from container_alias_lib import load_container_aliases
+from fleet_derive import load_fleet_assignments
 
 THRESHOLDS = {
     'heartbeat_stale_minutes': 30,
@@ -47,7 +47,7 @@ THRESHOLDS = {
 }
 
 OPS_ROOT = pathlib.Path(__file__).resolve().parents[1]
-EXPECTED_ALIASES = sorted(load_container_aliases(OPS_ROOT))
+EXPECTED_ALIASES = sorted(load_fleet_assignments(OPS_ROOT))
 ENABLED_ALIASES_QUERY = '''
         SELECT DISTINCT alias
         FROM agents

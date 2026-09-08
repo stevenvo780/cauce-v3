@@ -130,8 +130,11 @@ assert.match(ignoredBackupCheck.stdout, /ignored-backup-excluded-new-and-tracked
 const rootlessList = spawnSync("python3", [digestScript, "--rootless", "--list"], { encoding: "utf8" });
 assert.equal(rootlessList.status, 0, rootlessList.stderr);
 const rootlessCovered = new Set(rootlessList.stdout.trim().split("\n"));
-assert(rootlessCovered.has("generated/container-systemd/rootless/cauce-v3-container-kant.service"));
-assert(rootlessCovered.has("generated/container-systemd/rootless/configs/kant.env.example"));
+const containerAliases = Object.keys(JSON.parse(await readFile(path.join(ops, "container-aliases.json"), "utf8")).aliases);
+for (const alias of containerAliases) {
+  assert(rootlessCovered.has(`generated/container-systemd/rootless/cauce-v3-container-${alias}.service`));
+  assert(rootlessCovered.has(`generated/container-systemd/rootless/configs/${alias}.env.example`));
+}
 assert(rootlessCovered.has("scripts/pin-container-release.py"));
 const rootlessCheck = spawnSync("python3", [digestScript, "--rootless", "--check"], { encoding: "utf8" });
 assert.equal(rootlessCheck.status, 0, `${rootlessCheck.stdout} ${rootlessCheck.stderr}`);
@@ -145,9 +148,7 @@ const rootless = path.join(ops, "generated/container-systemd/rootless");
  * Tied to the registry, the test keeps catching what matters —a missing unit— and stops asking
  * to be edited every time the fleet grows.
  */
-const aliasRegistrados = Object.keys(
-  JSON.parse(await readFile(path.join(ops, "container-aliases.json"), "utf8")).aliases,
-).length;
+const aliasRegistrados = containerAliases.length;
 assert.equal(
   (await readdir(rootless)).filter((name) => /^cauce-v3-container-.*\.service$/u.test(name)).length,
   aliasRegistrados,
@@ -158,17 +159,20 @@ assert.equal(
   aliasRegistrados,
   "hay un alias registrado sin config de ejemplo rootless",
 );
-const rootlessUnit = await readFile(path.join(rootless, "cauce-v3-container-kant.service"), "utf8");
-assert(!/^User=/mu.test(rootlessUnit), "systemd user unit must not set User=");
-assert.match(rootlessUnit, /^WantedBy=default\.target$/mu);
-assert.match(rootlessUnit, /^ExecStart=%h\/\.local\/share\/cauce-v3\/ops\/scripts\/container-adapter-supervisor\.sh start kant$/mu);
-assert.match(rootlessUnit, /^Environment=CAUCE_CONTAINER_LOCK_ROOT=%t\/cauce-v3$/mu);
-assert.match(rootlessUnit, /^RestartPreventExitStatus=2 73 78$/mu);
-assert.match(rootlessUnit, /^RestartForceExitStatus=70$/mu);
-const rootlessConfig = await readFile(path.join(rootless, "configs/kant.env.example"), "utf8");
-assert.match(rootlessConfig, /^BUNDLE_RELEASE=REPLACE_WITH_IMMUTABLE_RELEASE_NAME$/mu);
-assert.doesNotMatch(rootlessConfig, /^BUNDLE_CURRENT=/mu);
-assert.match(rootlessConfig, /^PKI_DIR=\/home\/dev\/\.config\/cauce-v3\/container-pki\/kant$/mu);
+for (const alias of containerAliases) {
+  const rootlessUnit = await readFile(path.join(rootless, `cauce-v3-container-${alias}.service`), "utf8");
+  assert(!/^User=/mu.test(rootlessUnit), "systemd user unit must not set User=");
+  assert.match(rootlessUnit, /^WantedBy=default\.target$/mu);
+  assert(rootlessUnit.split("\n").includes(`ExecStart=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh start ${alias}`));
+  assert.match(rootlessUnit, /^Environment=CAUCE_CONTAINER_LOCK_ROOT=%t\/cauce-v3$/mu);
+  assert.match(rootlessUnit, /^RestartPreventExitStatus=2 73 78$/mu);
+  assert.match(rootlessUnit, /^RestartForceExitStatus=70$/mu);
+  const rootlessConfig = await readFile(path.join(rootless, `configs/${alias}.env.example`), "utf8");
+  assert.match(rootlessConfig, /^BUNDLE_RELEASE=REPLACE_WITH_IMMUTABLE_RELEASE_NAME$/mu);
+  assert.doesNotMatch(rootlessConfig, /^BUNDLE_CURRENT=/mu);
+  assert(rootlessConfig.split("\n").includes(`PKI_DIR=/home/dev/.config/cauce-v3/container-pki/${alias}`));
+}
+
 const regeneratedRootless = await mkdtemp(path.join(os.tmpdir(), "cauce-rootless-units-"));
 try {
   const generated = spawnSync("python3", [path.join(ops, "scripts/generate-container-units.py"),

@@ -18,7 +18,7 @@ const aliasGenerator = path.join(ops, "scripts/generate-container-aliases.py");
 const hermesRuntime = path.join(ops, "hermes-runtime.json");
 const fleetFixture = path.join(ops, "tests/fixtures/fleet_snapshot/minimal/flota.json");
 const HERMES_ALIAS = "fixture-hermes";
-const NON_HERMES_ALIAS = "fixture-codex";
+const NON_HERMES_ALIAS = "fixture-openclaw";
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "cauce-hermes-provision-"));
