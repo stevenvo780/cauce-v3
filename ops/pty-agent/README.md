@@ -35,17 +35,21 @@ exactamente `{harness}` — el vector `modes` de `tests/terminal-pty/vectors.jso
 respuesta DA/DSR del emulador: escrito como «lo que no es de solo lectura», una TUI escribible se
 quedaba sin el canal técnico que necesita para pintarse.
 
-**La escritura es gobernada, no libre.** `harness_rw` sólo se resuelve por la vía tmux, la única con
-barrera de panel: `HARNESS_COMMAND` se escribe a mano en el `.env` del alias y la TUI nativa de
-OpenClaw no tiene equivalente de `-r`, así que las dos rechazan el modo con `OPEN_ERR`
-`writable_tui_unavailable` (el `detail` nombra la vía) en vez de abrir un teclado que nadie puede
-frenar. Sobre la vía tmux el ataque es el mismo comando `if-shell` de siempre —mismas seis
-condiciones de identidad, misma rama falsa `exit 77`— y lo único que cambia es que el attach pierde
-`-r` y `-f ignore-size`, para que la ventana compartida siga al navegador mientras el operador tenga
-el control.
+**Control sobre la conversación actual.** `harness_rw` abre la misma TUI de tmux o la
+conversación nativa de OpenClaw. El gateway exige una sesión atribuida, concesión nominal,
+grabación y toma de control. Si hay entregas en curso, la toma normal devuelve `agent_busy`;
+la consola permite intervenir explícitamente con `allow_busy`, registrado en auditoría.
+Tomar el control pausa entregas nuevas; el turno actual sólo se detiene desde su propia TUI.
+Los comandos estáticos `HARNESS_COMMAND` siguen sin escritura porque no resuelven una
+conversación verificable. En OpenClaw cada ráfaga comprueba que el puntero durable sigue
+identificando la conversación abierta; una rotación cierra la sesión sin enviar esos bytes.
+El launcher publica el descriptor del binario aunque todavía no exista conversación, y el
+agente anuncia los modos únicamente cuando puede resolverla.
 
 Con el teclado abierto, cada ráfaga de STDIN se consulta contra tres fuentes locales e
-independientes, las tres a prueba de fallos (lo que no se puede leer cuenta como retenido):
+independientes, las tres a prueba de fallos (lo que no se puede leer cuenta como retenido).
+Las sondas de panel y prefijo se aplican a tmux; OpenClaw conserva el bloqueo de escritura
+de gobierno, con el control de entregas y el puntero de conversación descritos arriba:
 
 | Motivo de `INPUT_REFUSED` (0x26) | Quién retiene el teclado |
 |---|---|
@@ -71,17 +75,6 @@ inventada repintaría el panel del operador a un tamaño que no existe. La medid
 mismo `INPUT_BARRIER_TTL` que la sonda de panel: arrastrar el borde de la ventana emite una RESIZE
 por cada columna que cambia, y cada medida es un fork bloqueante dentro del `select` monohilo que
 además sirve STDOUT y PING de todas las sesiones.
-
-> **Despliegue acoplado (no es opcional).** El agente anuncia `harness_rw` en el hello en cuanto la
-> vía tmux resuelve, y emite `INPUT_REFUSED` (0x26) y `GEOMETRY` (0x27) —esta última también en el
-> modo visor, tras el `OPEN_OK`—. Hoy el relay rompe por los dos lados:
-> `services/terminal-relay/src/agent-hello.ts` estrecha `modes` a `shell|harness` y **una entrada
-> fuera de ese par invalida el hello entero**, y `services/terminal-relay/src/framing.ts` no tiene
-> 0x26 ni 0x27 en `FRAME_TAGS`, donde **un tag desconocido tira la pata multiplexada completa del
-> alias**, no una sesión. Ampliar sólo `modes` deja el segundo fallo en pie y el primer OPEN de
-> `harness` se lleva por delante todas las terminales del alias. Este paquete no se publica hasta
-> que el relay conozca **los dos tags Y `harness_rw`** (W3B-06): relay y pty-agent se despliegan
-> juntos, siempre.
 
 **Lanzamiento:** `cauce-pty-launcher.sh` borra y recrea `/var/tmp/cauce-pty-agent-<alias>/` (raíz compartida por todos los releases: un módulo retirado, o cualquier `.py` que el usuario runtime hubiera dejado ahí, no puede sobrevivir en el `PYTHONPATH`), hace `docker cp` del paquete y lo deja root y no escribible; luego `docker exec ... -e PYTHONPATH=<raíz> python3 -m cauce_pty_agent`, supervisado por unidades user `cauce-v3-pty@<alias>` (drop-ins escritos por `rollout-pty.py`). Cada módulo nuevo del paquete tiene que entrar además en `RELEASE_FILES` de `rollout_pty_lib.py`: publicar el paquete a medias arranca con `ModuleNotFoundError` y salida 1, que la unidad reintenta para siempre.
 

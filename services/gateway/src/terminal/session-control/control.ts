@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import {
   StoreError, currentControlHold, releaseControlHold, releaseSessionControlHolds, takeControlHold,
-  type DatabaseClient,
+  TerminalAgentBusyError, type DatabaseClient,
 } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import type { Principal } from '../../auth.js';
@@ -77,6 +77,7 @@ export function registerTerminalControlRoute(
     operator: ResolvedOperator,
     session: OwnedTerminalSession,
     holdReason: string,
+    allowBusy: boolean,
   ): Promise<void> {
     let hold;
     try {
@@ -86,11 +87,17 @@ export function registerTerminalControlRoute(
         sessionId: session.id,
         operatorId: operator.operator_id,
         reason: holdReason,
+        allowBusy,
         windowMs: Math.max(1, (config.controlHoldSeconds ?? 0) * 1_000),
         sessionTtlSeconds: config.sessionTtlSeconds,
         sessionMaxTotalSeconds: config.sessionMaxTotalSeconds ?? null,
       });
     } catch (error) {
+      if (error instanceof TerminalAgentBusyError) {
+        await auditControl(actor, session, 'terminal.control_taken', 'deny', { reason: 'agent_busy' });
+        await reply.code(409).send({ error: 'conflict', reason: 'agent_busy' });
+        return;
+      }
       if (error instanceof StoreError && error.code === 'not_found') {
         // The session died between the owner fence and the take; the browser must re-open.
         await reply.code(409).send({ error: 'conflict', reason: 'stale_terminal_owner' });
@@ -108,6 +115,7 @@ export function registerTerminalControlRoute(
     }
     await auditControl(actor, session, 'terminal.control_taken', 'allow', {
       operator_reason: holdReason,
+      allow_busy: allowBusy,
       hold_id: hold.id,
       expires_at: hold.expires_at.toISOString(),
     });
@@ -195,7 +203,7 @@ export function registerTerminalControlRoute(
         return;
       }
       if (body.reason === undefined) throw new Error('taking control requires a typed reason');
-      await takeHold(reply, actor, operator, row, body.reason);
+      await takeHold(reply, actor, operator, row, body.reason, body.allow_busy === true);
     } catch (error) { replyError(reply, error); }
   });
 }

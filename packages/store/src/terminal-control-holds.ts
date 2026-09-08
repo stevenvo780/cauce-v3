@@ -34,6 +34,13 @@ export interface ControlHoldTake {
   windowMs: number;
   sessionTtlSeconds: number;
   sessionMaxTotalSeconds: number | null;
+  allowBusy?: boolean;
+}
+
+export class TerminalAgentBusyError extends StoreError {
+  constructor() {
+    super('conflict', 'agent_busy');
+  }
 }
 
 export interface ControlHoldChange {
@@ -107,6 +114,21 @@ export async function takeControlHold(pool: DatabasePool, input: ControlHoldTake
     ? null : boundedSeconds(input.sessionMaxTotalSeconds);
   const sessionWindow = terminalSessionWindowExpression(7, 8);
   return withTransaction(pool, async (client) => {
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+      `connection-lease:${input.tenantId}:${input.alias}`,
+    ]);
+    await client.query(
+      'SELECT alias FROM connection_leases WHERE tenant_id=$1 AND alias=$2 FOR UPDATE',
+      [input.tenantId, input.alias],
+    );
+    if (input.allowBusy !== true) {
+      const active = await client.query(
+        `SELECT id FROM deliveries WHERE recipient_tenant=$1 AND recipient_alias=$2
+          AND status IN ('leased','accepted','started') LIMIT 1`,
+        [input.tenantId, input.alias],
+      );
+      if (active.rows.length > 0) throw new TerminalAgentBusyError();
+    }
     await releaseExpired(client, input.tenantId, input.alias);
     const taken = await client.query<ControlHold>(
       `WITH live AS (

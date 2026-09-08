@@ -69,6 +69,7 @@ interface ControlPoolOptions {
   readonly hold?: HoldRow | undefined;
   readonly takeConflict?: boolean;
   readonly takeMissing?: boolean;
+  readonly busy?: boolean;
   readonly releaseFails?: boolean;
   readonly revoked?: TerminalSessionRow | undefined;
 }
@@ -105,6 +106,7 @@ function controlPool(
     }),
     connect: vi.fn(async () => transactionClient((text: string, values: unknown[]) => {
       queries.push({ text, values });
+      if (text.includes('SELECT id FROM deliveries')) return rows(options.busy ? { id: UUID_OK } : undefined);
       if (text.includes('INSERT INTO terminal_control_holds')) {
         if (options.takeConflict === true) {
           throw Object.assign(new Error('duplicate key value'), { code: '23505' });
@@ -257,6 +259,26 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
         mode: 'harness_rw',
       }) as unknown,
     })]);
+  });
+
+  it('mantiene el teclado cerrado durante un turno hasta que el operador lo elija explícitamente', async () => {
+    const pool = controlPool({ session: ownedRow(), busy: true });
+    ctx = buildContext({ pool });
+    const waiting = await control(validControlRequest());
+    expect(waiting.statusCode).toBe(409);
+    expect(waiting.json()).toEqual({ error: 'conflict', reason: 'agent_busy' });
+    expect(pool.__queries.some((query) => query.text.includes('INSERT INTO terminal_control_holds'))).toBe(false);
+    const takeover = await control({ ...validControlRequest(), allow_busy: true });
+    expect(takeover.statusCode).toBe(200);
+    expect(auditRows(pool).at(-1)).toMatchObject({
+      action: 'terminal.control_taken', decision: 'allow', metadata: { allow_busy: true },
+    });
+  });
+
+  it('rechaza una excepción busy mal tipada o aplicada a la devolución', async () => {
+    ctx = buildContext({ pool: controlPool({ session: ownedRow() }) });
+    expect((await control({ ...validControlRequest(), allow_busy: 'true' })).statusCode).toBe(400);
+    expect((await control({ ...validControlRequest(), action: 'release', allow_busy: true })).statusCode).toBe(400);
   });
 
   it('la ventana del arriendo la acota la base: la ruta pasa TTL y techo, no un resto de JS', async () => {

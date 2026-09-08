@@ -18,6 +18,7 @@ export type TerminalDenialCode =
   | 'no_recognized_mode'
   | 'writable_tui_disabled'
   | 'control_held'
+  | 'agent_busy'
   | 'extension_exhausted'
   | 'stale_terminal_owner'
   | 'writable_requires_attribution'
@@ -112,6 +113,13 @@ export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, Termina
     porQue: 'El control se toma de a uno: mientras alguien lo tenga, el bus deja las entregas de ese alias en '
       + 'espera y nadie más teclea. El aviso dice quién lo tiene y hasta cuándo, nada más.',
     quienLoLevanta: 'Quien lo tiene, devolviéndolo. Si cerró la pestaña sin devolverlo, vence solo al terminar la sesión.',
+  },
+  agent_busy: {
+    titulo: 'El agente tiene un turno en curso',
+    porQue: 'No se tomó el teclado. Podés esperar y reintentar, o tomar control durante el turno '
+      + 'de forma explícita. Esa toma pausa las entregas nuevas, pero no cancela la ejecución actual.',
+    quienLoLevanta: 'Vos: si necesitás detener el turno, tomá el control y usá Esc o Ctrl+C según la TUI. '
+      + 'Verificá en pantalla que se detuvo antes de escribir.',
   },
   extension_exhausted: {
     titulo: 'La sesión ya no admite más prórroga',

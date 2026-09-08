@@ -231,7 +231,7 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
     }
   }
 
-  async function tomar() {
+  async function tomar(allowBusy = false) {
     if (problema !== undefined || pendiente || tomandoRef.current) return;
     tomandoRef.current = true;
     const escrito = motivo.trim();
@@ -264,7 +264,7 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
       }
       setFase('tomando');
       const tomado = await tomarControlDeTui(
-        escribible.session_id, dueno(escribible), escrito, apiRef.current,
+        escribible.session_id, dueno(escribible), escrito, apiRef.current, allowBusy,
       );
       porDevolverRef.current = { sessionId: escribible.session_id, owner: dueno(escribible) };
       recordarCsrf();
@@ -371,6 +371,16 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
               ? ETIQUETA_DE_FASE[fase]
               : reintentable ? 'Reintentar la toma' : 'Tomar el control'}
           </button>
+          {error?.codigo === 'agent_busy' ? (
+            <button
+              className="button small secondary"
+              type="button"
+              disabled={problema !== undefined || pendiente || pidiendoSesion}
+              onClick={() => void tomar(true)}
+            >
+              Tomar control durante el turno
+            </button>
+          ) : null}
         </>
       )}
 

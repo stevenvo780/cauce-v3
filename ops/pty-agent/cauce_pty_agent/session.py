@@ -241,13 +241,7 @@ class SessionMixin:
         self._queue(encode_json(TAG_OPEN_ERR, document))
 
     def _resolve_command(self, mode: str) -> list[str] | None:
-        """Three argv sources, in order; only the tmux one can be handed the keyboard.
-
-        A writable attach is sound solely where a pane barrier exists. `HARNESS_COMMAND` is
-        hand-written in the alias `.env` and the native OpenClaw TUI has no read-only equivalent,
-        so neither route can prove that a burst will not land in the middle of someone's turn:
-        both refuse the mode by name instead of quietly attaching a keyboard.
-        """
+        """Resolve the current conversation; static commands cannot receive governed input."""
         if mode in TUI_MODES:
             writable = mode in WRITABLE_TUI_MODES
             if self.bundle["harness_command"] is not None:
@@ -256,9 +250,7 @@ class SessionMixin:
                 return self.bundle["harness_command"]
             if self.bundle.get("tmux_tui") is not None:
                 return resolve_tmux_tui_command(self.bundle, mode)
-            if writable and self.bundle.get("openclaw_tui") is not None:
-                raise OpenRefused("writable_tui_unavailable", "openclaw_tui")
-            return None if writable else resolve_openclaw_tui_command(self.bundle)
+            return resolve_openclaw_tui_command(self.bundle)
         for candidate in self.bundle["shell_candidates"]:
             if os.access(candidate[0], os.X_OK):
                 return candidate
@@ -308,6 +300,10 @@ class SessionMixin:
                 log(f"input refused on a read-only session mode={session.mode} session={session_id}")
             return
         if session.mode in WRITABLE_TUI_MODES:
+            if self.bundle.get("openclaw_tui") is not None \
+                    and resolve_openclaw_tui_command(self.bundle) != session.argv:
+                self._hangup(session, "native_session_changed")
+                return
             refusal = self.input_barrier.refusal(
                 data, bool(self.pending_writes or self.pending_write_batches), time.monotonic())
             if refusal is not None:

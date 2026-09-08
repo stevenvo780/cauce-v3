@@ -107,6 +107,7 @@ export type TerminalDenial =
   | 'control_permission_required';
 
 export type TerminalConflict =
+  | 'agent_busy'
   | 'agent_offline'
   | 'session_limit'
   | 'container_busy'

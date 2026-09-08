@@ -149,7 +149,6 @@ class DeriveOpenClawTuiTest(unittest.TestCase):
             fake = _fake_docker(tmp, **kwargs)  # type: ignore[arg-type]
             script = (
                 PRELUDE
-                + _function_source("validate_openclaw_tui_pointer")
                 + _function_source("derive_openclaw_tui_command")
                 + EPILOGUE
             )
@@ -200,18 +199,10 @@ class DeriveOpenClawTuiTest(unittest.TestCase):
             "NO_TUI",
         )
 
-    def test_missing_corrupt_uninitialized_or_ambiguous_pointer_is_not_advertised(self) -> None:
+    def test_binary_descriptor_survives_an_unready_pointer_for_dynamic_resolution(self) -> None:
         for pointer in ("missing", "corrupt", "uninitialized", "ambiguous"):
             with self.subTest(pointer=pointer):
-                self.assertEqual(self._run(pointer=pointer), "NO_TUI")
-
-    def test_pointer_validator_never_emits_the_native_session_id(self) -> None:
-        source = _function_source("validate_openclaw_tui_pointer")
-        self.assertNotIn("print(", source)
-        self.assertNotIn("printf", source)
-
-class DerivedOpenClawArgvTest(unittest.TestCase):
-    """The bundle carries a resolver, never the frozen native id."""
+                self.assertEqual(self._run(pointer=pointer), "DERIVED /usr/bin/node")
 
     def test_the_launcher_builds_a_dynamic_resolver_without_a_session_key(self) -> None:
         text = LAUNCHER.read_text(encoding="utf-8")

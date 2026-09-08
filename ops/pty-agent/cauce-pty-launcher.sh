@@ -294,81 +294,6 @@ OPENCLAW_HISTORY_LIMIT=${CAUCE_PTY_OPENCLAW_HISTORY_LIMIT:-200}
 # `harness` when the canonical pointer exists, is initialised, and passes the same
 # ownership/mode/schema boundary the agent re-checks on every OPEN. The native id never leaves
 # that process nor is frozen in the bundle.
-validate_openclaw_tui_pointer() {
-  docker_control exec -i --user "$runtime_uid:$runtime_gid" \
-    --env "CAUCE_PTY_OPENCLAW_POINTER_ALIAS=$alias_name" \
-    --env "CAUCE_PTY_OPENCLAW_POINTER_STATE=$state_directory" \
-    "$container_id" /usr/bin/python3 - <<'PYTHON'
-import json
-import os
-import re
-import stat
-
-alias = os.environ["CAUCE_PTY_OPENCLAW_POINTER_ALIAS"]
-state_directory = os.environ["CAUCE_PTY_OPENCLAW_POINTER_STATE"]
-native_id_pattern = re.compile(r"^[A-Za-z0-9._:-]{1,512}$")
-
-
-def reject_duplicates(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate key")
-        result[key] = value
-    return result
-
-
-try:
-    directory = os.lstat(state_directory)
-    if (not stat.S_ISDIR(directory.st_mode)
-            or directory.st_uid != os.geteuid()
-            or directory.st_mode & 0o022
-            or os.path.realpath(state_directory) != state_directory):
-        raise SystemExit(1)
-    path = os.path.join(state_directory, "sessions.json")
-    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
-    descriptor = os.open(path, flags)
-    try:
-        details = os.fstat(descriptor)
-        if (not stat.S_ISREG(details.st_mode)
-                or details.st_uid != os.geteuid()
-                or details.st_mode & 0o777 != 0o600
-                or details.st_nlink != 1
-                or details.st_size > 1024 * 1024):
-            raise SystemExit(1)
-        raw = bytearray()
-        while len(raw) <= 1024 * 1024:
-            chunk = os.read(descriptor, min(65536, 1024 * 1024 + 1 - len(raw)))
-            if not chunk:
-                break
-            raw.extend(chunk)
-        if len(raw) > 1024 * 1024:
-            raise SystemExit(1)
-    finally:
-        os.close(descriptor)
-    document = json.loads(bytes(raw).decode("utf-8"), object_pairs_hook=reject_duplicates)
-except (OSError, UnicodeError, ValueError):
-    raise SystemExit(1)
-
-if (not isinstance(document, dict)
-        or set(document) != {"version", "sessions"}
-        or document.get("version") != 1
-        or not isinstance(document.get("sessions"), dict)
-        or len(document["sessions"]) > 4096):
-    raise SystemExit(1)
-
-# An exact key, derived locally. The object_pairs_hook above prevents two pointers with the same
-# name from surviving the parser by silently picking the last one.
-pointer = document["sessions"].get(f"openclaw:{alias}:shared:{alias}")
-if (not isinstance(pointer, dict)
-        or set(pointer) not in ({"native_id", "initialized"}, {"native_id", "initialized", "origin"})
-        or pointer.get("initialized") is not True
-        or not isinstance(pointer.get("native_id"), str)
-        or native_id_pattern.fullmatch(pointer["native_id"]) is None):
-    raise SystemExit(1)
-PYTHON
-}
-
 derive_openclaw_tui_command() {
   local node_path tui_help entry configured_dist
   local -a entry_candidates=()
@@ -376,8 +301,6 @@ derive_openclaw_tui_command() {
     sh -c 'command -v node' 2>/dev/null) || return 1
   node_path=${node_path//[$'\r\n']/}
   valid_absolute_path "$node_path" || return 1
-  # Detecting the binary is not enough: a TUI without a resolvable conversation is a false capability.
-  validate_openclaw_tui_pointer >/dev/null 2>&1 || return 1
 
   configured_dist=${CONFIG[OPENCLAW_DIST_DIR]:-}
   if [[ -n $configured_dist ]]; then

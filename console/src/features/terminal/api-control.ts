@@ -76,10 +76,11 @@ export async function tomarControlDeTui(
   owner: TerminalSessionOwner,
   reason: string,
   session?: SesionConToken,
+  allowBusy = false,
 ): Promise<ControlDeTuiTomado> {
   const body = await terminalRequest<unknown>(rutaDeSesion(sessionId, 'control'), {
     method: 'POST',
-    body: JSON.stringify({ action: 'take', reason, ...cuerpoConDueno(owner) }),
+    body: JSON.stringify({ action: 'take', reason, ...(allowBusy ? { allow_busy: true } : {}), ...cuerpoConDueno(owner) }),
   }, session);
   const legible = body !== null && typeof body === 'object' && !Array.isArray(body);
   const record = legible ? body as Record<string, unknown> : {};
