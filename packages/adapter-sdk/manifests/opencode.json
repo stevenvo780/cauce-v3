@@ -29,6 +29,7 @@
     }
   },
   "capabilities": {
+    "mcp_emit": true,
     "protocol_version": "3.0",
     "harness": "opencode",
     "structured_output": true,

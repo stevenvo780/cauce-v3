@@ -11,6 +11,7 @@
     "session_scope": "alias+authenticated tenant+actor+origin channel/session/conversation"
   },
   "capabilities": {
+    "mcp_emit": true,
     "protocol_version": "3.0",
     "harness": "openclaw",
     "structured_output": true,

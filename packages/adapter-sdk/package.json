@@ -4,7 +4,9 @@
   "private": true,
   "description": "Durable Cauce V3 adapters and harness doubles",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "exports": {
     ".": {
       "types": "./dist/src/index.d.ts",
@@ -13,7 +15,13 @@
     "./bridge/hermes-stdin-bridge.py": "./dist/bridge/hermes-stdin-bridge.py",
     "./bridge/openclaw-stdin-bridge.mjs": "./dist/bridge/openclaw-stdin-bridge.mjs"
   },
-  "files": ["dist/src", "dist/bridge", "manifests", "docs", "README.md"],
+  "files": [
+    "dist/src",
+    "dist/bridge",
+    "manifests",
+    "docs",
+    "README.md"
+  ],
   "bin": {
     "cauce-adapter-hermes": "./dist/src/bin/hermes.js",
     "cauce-adapter-opencode": "./dist/src/bin/opencode.js",
@@ -22,7 +30,8 @@
     "cauce-adapter-openclaw": "./dist/src/bin/openclaw.js",
     "cauce-adapter-fake": "./dist/src/bin/fake.js",
     "cauce-fake-harness": "./dist/src/bin/fake-harness.js",
-    "cauce-shared-session": "./dist/src/bin/shared-session.js"
+    "cauce-shared-session": "./dist/src/bin/shared-session.js",
+    "cauce-mcp": "./dist/src/bin/cauce-mcp.js"
   },
   "scripts": {
     "clean": "node --eval \"import('node:fs/promises').then(fs => Promise.all(['dist'].map(path => fs.rm(path,{recursive:true,force:true,maxRetries:5,retryDelay:50}))))\"",
@@ -34,7 +43,8 @@
   },
   "dependencies": {
     "@cauce/protocol": "workspace:*",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.15",

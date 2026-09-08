@@ -144,6 +144,9 @@ importers:
       '@cauce/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.0.0
+        version: 1.29.0(zod@4.4.3)
       ws:
         specifier: ^8.18.3
         version: 8.21.1
