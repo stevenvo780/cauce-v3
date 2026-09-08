@@ -111,47 +111,24 @@ para despliegues posteriores:
    durante esa comprobación.
 7. Escribir la fila de `deploy/HISTORIAL.md`.
 
-`deploy/HISTORIAL.md` registra el despliegue de `7f25fd6f` con smoke verde y dos correcciones de
-esa misma tarde: `d2ef50ff`, con smoke verde, y `0b5bf89e`, con smoke ROJO parcial («bus: 0
-entregas done» en una ventana sin tráfico; el resto OK, sin rollback). Después vino
-`00358416`: la ventana que puso en línea el árbol cerrado de v3.1 —los refactores de ops, consola,
-runtime, store, gateway y adapter-sdk, la siega de huérfanos PTY por pidfd, la reconexión ante
-sockets sordos, los comandos de operador en DM, el acotado de la exención CSRF y Prometheus en
-`[backend, edge]`—. `caf35316` corrigió el bridge de Telegram para reunir en un solo mensaje
-las piezas en que el cliente parte un texto de más de 4096 caracteres (antes el agente leía sólo
-la primera) y las pruebas del rollout PTY afirman la colocación real de kant. Después llegó
-`fa4f07c5`, cuyo smoke original salió verde, pero descartaba los eventos stderr del relay:
-ese subcontrol no acreditó ausencia de bucles. La comprobación corregida posterior midió cero
-reconexiones en dos minutos. Conserva las correcciones de clasificación y del primer ACK
-de `6786adca`, e impide que la siembra Codex reescriba un bloque gestionado al reconectar.
-Conserva la recarga efectiva de Prometheus/OTel y el desglose
-de incidentes incorporados por `a9e08359`; la ventana previa `9b5e2172` incorporó correcciones
-adicionales de consola, Telegram y contexto. La identidad reservada de la sonda ya está emitida
-y el canary final de Atlas pasó 20/20 verificaciones durante 609 segundos. El SDK final
-`bus-v3-20260905-sdk-final-fa4f07c5` se activó por separado en 15/15 alias: censo físico con un
-consumidor V3 por alias, ninguno V2 y dos ventanas de heartbeat progresado. No se eliminaron
-historiales; una entrega iniciada de Zeus y otra de Heráclito quedaron ambiguas durante
-el corte autorizado, sin reenvíos emitidos por el rollout. Zeus presentó después una reapertura
-inconsistente de la misma fila, que el WAL rechaza. Se restauró su estado terminal acreditado por
-el ACK, sin repetir efectos ni cerrar como exitoso el trabajo ambiguo. La consola de Zeus y los
-perfiles se verifican por separado: despliegue no equivale a recuperar esas tareas ni a reconciliar los perfiles
-pendientes. `8acfacfc` añadió reconciliación de perfiles atribuida y auditada,
-CAS de contenido y bloqueo transaccional sin interrumpir el heartbeat. Su smoke reforzado pasó:
-nueve servicios sanos, quince arriendos V3 frescos y dos entregas con ACK aplicado posteriores
-al arranque. Las cinco entregas previas conservaron su fence, con dos terminadas y tres todavía
-en curso. Su matriz completa pasó 11/11 suites y 4603 pruebas unitarias. La última fila,
-`f96382d7`, impide reclamar entregas con evidencia terminal durable: smoke verde, nueve servicios
-sanos, quince arriendos frescos y tres fences previos conservados. Se acreditaron cuatro
-entregas `started` con ACK reciente, no un resultado `done` posterior al arranque. Pasaron typecheck,
-lint, 4603 pruebas unitarias, 865 de almacenamiento, 1541 de servicios, 143 de gateway,
-28 de integración y 12 E2E. Argos recibió una reparación exacta de estado terminal sin replay;
-la recuperación durable de TUI sigue pendiente porque los lanzadores Claude aún usan `--continue`.
-En Zeus se reanudó un binding conocido, no se demostró recuperar la conversación humana original.
-Aplicar los perfiles
-divergentes desde Contexto sigue siendo una acción atribuida de operador, no un efecto automático
-del despliegue. Ese registro no sustituye una nueva validación
-del estado vivo desde este checkout, y lo que queda por comprobar por efecto después de esa fila
-está en `docs/v3.1-pendientes.md` §1, «Deuda de despliegue».
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) es `9a6fba27`, desplegada el
+8 de septiembre: nueve servicios sanos, quince arriendos frescos y un resultado `done` con
+ACK aplicado posterior al arranque. El gateway incorpora la emisión MCP, consulta de cola,
+progreso y reintento propios del agente; la consola ofrece shell, visor y control de TUI
+para los quince alias habilitados.
+
+Las pruebas posteriores acreditan emisión MCP y ACK final en Zeus, Atlas, Argos, Astra y Kant.
+Argos recuperó las herramientas tras reiniciar el proceso nativo de Codex, cuya renovación
+de autenticación agotaba el tiempo; su respaldo Gemini carecía de herramientas. Los doce adaptadores locales fueron reiniciados y Kant ya
+funciona en server2 conservando su sesión Claude. El traslado de Salva sigue en curso.
+La shell web fue ejercitada en los doce alias locales y en Astra y Kant. Claude y Codex
+pasaron el control real de teclado; el arreglo de pulsaciones rápidas de borrar en OpenClaw
+está pendiente de publicación.
+
+Quedan la reconciliación de las notas locales de Iza, las pruebas de Salva y la observación
+MCP de 48 horas antes de ampliar la cohorte. El formato de texto de transición permanece
+habilitado. Los detalles de las ventanas anteriores viven en el historial de despliegues y
+Git; el estado pendiente se mantiene en [v3.1-pendientes](v3.1-pendientes.md).
 
 ## Cómo se verifica
 
