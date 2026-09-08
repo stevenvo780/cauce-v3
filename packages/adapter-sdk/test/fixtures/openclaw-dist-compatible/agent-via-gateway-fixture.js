@@ -7,6 +7,12 @@ export async function agentCliCommand(options, runtime) {
     error.name = "FallbackSummaryError";
     throw error;
   }
+  if (options.message.includes("BRIDGE_LINGER")) {
+    // Stands in for the embedded app-server OpenClaw falls back to: a live handle that keeps the
+    // event loop running after the run resolved. Before the explicit exit, the bridge stayed here
+    // forever with the answer already written, and the delivery hung in `started`.
+    setInterval(() => {}, 1_000);
+  }
   process.stdout.write("native log that the bridge must suppress\n");
   process.stdout.write(`${JSON.stringify({
     result: {

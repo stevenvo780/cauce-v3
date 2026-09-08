@@ -141,8 +141,27 @@ export function parseCodexOutput(stdout: string): ParsedHarnessOutput {
   return sessionResult(parseCandidate(candidate, "Codex agent message"), sessionId);
 }
 
+/**
+ * The bridge writes one JSON envelope per line, but a run can leave earlier lines behind: a
+ * runtime warning, or an abandon envelope emitted by a signal after the real answer. Parsing the
+ * whole buffer turned those runs into malformed output and killed deliveries whose answer the
+ * model had already produced, so the last complete JSON object wins.
+ */
+function lastJsonObject(stdout: string): JsonObject | undefined {
+  const lines = stdout.split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]?.trim();
+    if (line === undefined || !line.startsWith("{")) continue;
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (isObject(parsed)) return parsed;
+    } catch { continue; }
+  }
+  return undefined;
+}
+
 export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
-  const value = parseJson(stdout.trim(), "OpenClaw output");
+  const value = lastJsonObject(stdout) ?? parseJson(stdout.trim(), "OpenClaw output");
   if (!isObject(value)) throw new MalformedOutputError("OpenClaw result must be an object");
 
   const seen = new Set<JsonObject>();

@@ -163,6 +163,17 @@ async function main() {
 
   let returned;
   let empezado = false;
+  // The embedded app-server OpenClaw falls back to keeps its handles open after the run resolves,
+  // so returning from main() never ends the process: the envelope stayed in the pipe and the
+  // delivery lived in `started` until somebody killed the bridge by hand. Every exit path now ends
+  // the process explicitly, and this flag keeps a signal from appending a second envelope after a
+  // real one was already written (that extra line is what turned answers into malformed output).
+  let emitido = false;
+  const salir = (codigo) => {
+    // A pipe write can still be queued: exit from the flush callback, with a timer as a backstop
+    // in case the callback never fires. Both paths are exits, never a return to the loop.
+    setTimeout(() => { process.exit(codigo); }, 2000);
+  };
   try {
     const { agentCliCommand, defaultRuntime } = await loadOpenClaw();
     // From the next line on the turn MAY have side effects. The marker goes here and not before
@@ -174,8 +185,12 @@ async function main() {
     empezado = true;
     const abandon = (reason) => {
       process.stdout.write = originalWrite;
-      originalWrite(failureEnvelope(reason, nativeSessionKey));
       process.stderr.write(`openclaw stdin bridge abandoned the run: ${reason}\n`);
+      // A real envelope already went out: appending a failure line would corrupt the contract and
+      // throw away an answer the model had already produced.
+      if (emitido) { process.exit(0); return; }
+      emitido = true;
+      originalWrite(failureEnvelope(reason, nativeSessionKey));
       process.exit(1);
     };
     const deadline = runDeadlineMs();
@@ -200,7 +215,9 @@ async function main() {
       ...(nativeSessionKey === undefined ? {} : { session_id: nativeSessionKey }),
     })}\n`);
     process.stderr.write(`openclaw stdin bridge failed: ${describeFailure(error)}\n`);
+    emitido = true;
     process.exitCode = 1;
+    salir(1);
     return;
   } finally {
     process.stdout.write = originalWrite;
@@ -211,7 +228,9 @@ async function main() {
     result,
     ...(nativeSessionKey === undefined ? {} : { session_id: nativeSessionKey }),
   };
-  originalWrite(`${JSON.stringify(envelope)}\n`);
+  emitido = true;
+  originalWrite(`${JSON.stringify(envelope)}\n`, () => { process.exit(0); });
+  salir(0);
 }
 
 main().catch((error) => {
