@@ -29,6 +29,7 @@ from .framing import (
     log,
     verify_ticket,
 )
+from .openclaw_input import OpenClawInput
 from .tmux import resolve_openclaw_tui_command, resolve_tmux_tui_command
 
 MAX_SESSIONS = 2
@@ -111,6 +112,7 @@ class PtySession:
         self.argv = argv
         self.out = bytearray()
         self.pending_input = bytearray()
+        self.openclaw_input = OpenClawInput()
         self.output_paused = False
         # Logged once per session: a viewer receives keystrokes in bursts and the journal must not
         # become the echo of the operator's keyboard.
@@ -313,6 +315,8 @@ class SessionMixin:
                     "session_id": session_id, "reason": refusal,
                 }))
                 return
+        if session.mode in WRITABLE_TUI_MODES and self.bundle.get("openclaw_tui") is not None:
+            data = session.openclaw_input.translate(data)
         self._enqueue_session_input(session, data)
 
     def _on_terminal_response(self, session_id: str, data: bytes) -> None:

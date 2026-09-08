@@ -42,6 +42,7 @@ RELEASE_FILES: Final = (
     "pty-agent/cauce_pty_agent/governance_read.py",
     "pty-agent/cauce_pty_agent/governance_write.py",
     "pty-agent/cauce_pty_agent/input_barrier.py",
+    "pty-agent/cauce_pty_agent/openclaw_input.py",
     "pty-agent/cauce_pty_agent/runtime_facts.py",
     "pty-agent/cauce_pty_agent/session.py",
     "pty-agent/cauce_pty_agent/tmux.py",
