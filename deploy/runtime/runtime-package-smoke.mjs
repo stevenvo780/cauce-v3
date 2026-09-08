@@ -23,6 +23,7 @@ const runtimeModules = [
   ['store', '../packages/store/dist/index.js'],
   ['adapter-sdk', '../packages/adapter-sdk/dist/src/index.js'],
   ['adapter CLI runtime', '../packages/adapter-sdk/dist/src/bin/shared.js'],
+  ['emission MCP server', '../packages/adapter-sdk/dist/src/sdk/mcp-emission/server.js', 'createEmissionMcpServer'],
   ['gateway', '../services/gateway/dist/app.js'],
   ['dispatcher', '../services/dispatcher/dist/index.js'],
   ['telegram-bridge', '../services/telegram-bridge/dist/index.js'],
@@ -40,6 +41,7 @@ const runtimeEntrypoints = [
 ];
 
 const adapterBins = [
+  'cauce-mcp',
   'claude',
   'codex',
   'fake',
@@ -75,14 +77,15 @@ const openClawAgentFixture = `export async function agentCliCommand(options, run
 
 const openClawRuntimeFixture = 'export const defaultRuntime = { fixture: true };\n';
 
-function dependencyIsInstalled(require, dependency) {
+export function dependencyIsInstalled(require, dependency) {
+  const entrypoint = dependency === '@modelcontextprotocol/sdk' ? `${dependency}/server/index.js` : dependency;
   try {
-    require.resolve(dependency);
+    require.resolve(entrypoint);
     return true;
   } catch (error) {
     // An import-only package can be installed and valid for ESM while exposing no
     // CommonJS resolution target. Its package boundary was still found.
-    if (error?.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') return true;
+    if (error?.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') return entrypoint === dependency;
     if (error?.code === 'MODULE_NOT_FOUND') return false;
     throw error;
   }

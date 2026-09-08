@@ -748,9 +748,7 @@ ensure_isolated_config() {
     *) die "isolated configuration is unsupported for $harness" 78 ;;
   esac
 
-  # Probe only file types, ownership/mode and link destinations; never read a credential or print a
-  # container-supplied path. Config files stay single-source symlinks; the credential may be a link or
-  # the private file the CLI leaves behind after an atomic refresh (a link there never survives one).
+  # Alias-specific MCP config and atomically refreshed credentials may be private files.
   docker_id_exec --user "$container_user" /usr/bin/python3 -c '
 import os, stat, sys
 
@@ -776,8 +774,7 @@ if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != uid or directory.s
     raise SystemExit(1)
 if not regular_private_enough(os.path.join(destination, identity)):
     raise SystemExit(1)
-def credential(name, source_path):
-    # The CLI rewrites its credential atomically and turns the link into a private file: both are valid.
+def private_file_or_link(name, source_path):
     details = os.lstat(os.path.join(destination, name))
     if stat.S_ISLNK(details.st_mode):
         exact_link(name, source_path)
@@ -785,11 +782,11 @@ def credential(name, source_path):
         raise SystemExit(1)
 
 if harness == "codex":
-    exact_link(required_one, os.path.join(source, required_one))
-    credential(required_two, os.path.join(source, required_two))
+    private_file_or_link(required_one, os.path.join(source, required_one))
+    private_file_or_link(required_two, os.path.join(source, required_two))
 else:
-    credential(required_one, os.path.join(source, required_one))
-    exact_link(required_two, os.path.join(os.path.dirname(source), required_two))
+    private_file_or_link(required_one, os.path.join(source, required_one))
+    private_file_or_link(required_two, os.path.join(os.path.dirname(source), required_two))
     source_optional = os.path.join(source, optional)
     destination_optional = os.path.join(destination, optional)
     if os.path.lexists(source_optional) or os.path.lexists(destination_optional):

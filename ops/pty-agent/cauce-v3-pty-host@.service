@@ -1,0 +1,18 @@
+[Unit]
+Description=Cauce V3 native host PTY for %i
+After=network-online.target cauce-v3-host-%i.service
+PartOf=cauce-v3-host-%i.service
+
+[Service]
+Type=simple
+Environment=CAUCE_PTY_HOST_CONFIG_ROOT=%h/.config/cauce-v3/pty-host
+ExecStart=/bin/bash -c 'exec "$${CAUCE_PTY_RELEASE_ROOT:?set an immutable PTY release}/pty-agent/cauce-pty-host-launcher.sh" %i'
+Restart=on-failure
+RestartSec=2
+RestartPreventExitStatus=78
+KillMode=control-group
+TimeoutStopSec=10
+UMask=0077
+
+[Install]
+WantedBy=default.target

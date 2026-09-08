@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +17,51 @@ const composePath = join(repositoryRoot, 'deploy', 'compose.yaml');
 const buildTsconfigPath = join(repositoryRoot, 'tsconfig.build.json');
 const packageManifestPath = join(repositoryRoot, 'package.json');
 const sourceBridgeDirectory = join(repositoryRoot, 'packages', 'adapter-sdk', 'bridge');
+
+function mcpDependencyIsInstalled(manifestPath: string): boolean {
+  const result = spawnSync(process.execPath, [
+    '--input-type=module', '--eval',
+    `import { createRequire } from 'node:module';
+     import { dependencyIsInstalled } from ${JSON.stringify(smokeModuleUrl)};
+     console.log(dependencyIsInstalled(createRequire(process.argv[1]), '@modelcontextprotocol/sdk'));`,
+    manifestPath,
+  ], { encoding: 'utf8', env: {}, timeout: 5_000 });
+  expect(result.error).toBeUndefined();
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toMatch(/^(true|false)\n$/u);
+  return result.stdout === 'true\n';
+}
+
+describe('runtime dependency packaging smoke', () => {
+  let directory: string;
+
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'cauce-runtime-dependency-test-'));
+  });
+
+  afterEach(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  it('resolves the real MCP SDK server used by the emission adapter', () => {
+    expect(mcpDependencyIsInstalled(join(repositoryRoot, 'packages', 'adapter-sdk', 'package.json'))).toBe(true);
+  });
+
+  it('rejects an absent MCP SDK', () => {
+    expect(mcpDependencyIsInstalled(join(directory, 'package.json'))).toBe(false);
+  });
+
+  it.each([
+    { './server/index.js': './missing-server.js' },
+    { '.': './index.js' },
+  ])('rejects an installed SDK whose server cannot resolve: %j', async (exports) => {
+    const sdk = join(directory, 'node_modules', '@modelcontextprotocol', 'sdk');
+    await mkdir(sdk, { recursive: true });
+    await writeFile(join(sdk, 'package.json'), JSON.stringify({ name: '@modelcontextprotocol/sdk', exports }));
+    await writeFile(join(sdk, 'index.js'), 'module.exports = {};\n');
+    expect(mcpDependencyIsInstalled(join(directory, 'package.json'))).toBe(false);
+  });
+});
 
 describe('runtime bridge packaging smoke', () => {
   let directory: string;

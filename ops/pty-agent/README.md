@@ -99,3 +99,39 @@ o tags. El contrato de `tests/terminal-pty/vectors.json` debe cubrir cada tag; l
 
 **Probar:** `python3 -m unittest discover -s ops/pty-agent` (unit, sin socket real); un fichero
 suelto, p. ej. `python3 ops/pty-agent/tests/test_vectors_contract.py`.
+
+## Hosts nativos con Claude o Codex
+
+`cauce-pty-host-launcher.sh` ejecuta el mismo agente Python como el usuario del adaptador.
+Acredita `MainPID` de la unidad configurada, tenant, alias, arnés, HOME, perfil y workspace del
+proceso; exige el panel `cauce-<alias>:agente` vivo con sus marcadores y directorio exactos.
+Anuncia `host:<hostname>` y una generación ligada al arranque del host. Sus modos son
+`shell`, `harness` y `harness_rw`, con los mismos controles del gateway y barreras tmux.
+
+Crear `~/.config/cauce-v3/pty-host/<alias>.env` como el usuario runtime, modo 0600 y directorio
+0700. El contenido usa valores literales, sin comillas ni expansión de variables:
+
+```ini
+TENANT_ID=Steven
+ADAPTER_UNIT=cauce-v3-host-astra.service
+RELAY_HOST=100.64.0.6
+RELAY_PORT=8445
+PKI_DIR=/home/ubuntu/.config/cauce-v3/pty-pki/astra
+ALIAS_KEY_FILE=/home/ubuntu/.config/cauce-v3/pty-pki/astra/alias-key.hex
+```
+
+El endpoint y nombre TLS deben coincidir con el relay de ese despliegue. `PKI_DIR` contiene
+`client.crt`, `client.key` y `ca.crt` en 0600, y la clave derivada **de ese alias** en
+`alias-key.hex` 0400; todos pertenecen al usuario runtime y el directorio tiene modo 0700.
+El launcher crea un bundle temporal privado que el agente consume y elimina inmediatamente.
+
+Publicar la release PTY inmutable, instalar `cauce-v3-pty-host@.service` en el directorio de
+unidades del usuario y fijar `CAUCE_PTY_RELEASE_ROOT` a esa release mediante un drop-in de la
+instancia. `--preflight-only <alias>` verifica configuración y proceso sin abrir un canal.
+Después se puede iniciar `cauce-v3-pty-host@<alias>.service` y verificar los tres modos en el
+registro del relay. La unidad acompaña los reinicios de `cauce-v3-host-<alias>.service`; si el
+adaptador usa otro nombre, ajustar también `After` y `PartOf` en su drop-in.
+
+El adaptador y su TUI deben estar listos antes de iniciar esta unidad. La publicación de la
+release y el preflight no cambian el historial del arnés. Reiniciar sólo el PTY cierra sus
+conexiones web y clientes tmux adjuntos; conserva el panel nativo del agente.
