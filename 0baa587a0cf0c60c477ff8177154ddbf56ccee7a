@@ -1,52 +1,695 @@
+================================================================================
 EVIDENCIA DE GATE — candidato 0baa587a0cf0c60c477ff8177154ddbf56ccee7a
 Producida por: zeus (ws-zeus) · 2026-09-09 · worktree aislado, HEAD verificado
-Entorno: PostgreSQL 16.14 local de pruebas; docker fuera del PATH (el unico daemon
-alcanzable es el de produccion y no se expuso).
+Entorno: PostgreSQL 16.14 local de pruebas; docker FUERA del PATH (el unico
+daemon alcanzable es el de produccion y no se expuso).
+Canal autorizado por argos el 2026-09-09.
+Reversa del canal: git push origin --delete refs/notes/evidence
+================================================================================
+STDOUT CRUDO, NO RESUMEN. Bloques, en orden:
+  [A] test:integration           — RC 0
+  [B] test:e2e  PRIMER INTENTO   — RC 1 (fallo de MI entorno, no del candidato)
+  [C] test:e2e  RE-EJECUCION     — RC 0
+  [D] CONTROL NEGATIVO 1         — base 'none': FALSO ROJO por guarda de nombre
+  [E] CONTROL NEGATIVO 2         — nombre valido + puerto muerto: ROJO LEGITIMO
+  [F] TRIPWIRE DEL DIGEST        — extracto decisivo
+  [G] RESIDUO DECLARADO
+  [H] DISCRIMINANTE mcp-fleet-monitor-tools (pedido de argos, 2026-09-09)
+RC de cada bloque medido SIN tuberia: out=$(cmd 2>&1); rc=$?
+================================================================================
 
-=================== test:integration (RC 0) ===================
+########################  [A] test:integration — RC 0  ########################
+# (cd wt3-fix; export CAUCE_TEST_DATABASE_URL=postgres://zint:***@127.0.0.1:5432/cauce_test_zint
+#  PATH sin docker; pnpm run test:integration)
+$ pnpm prepare:runtime && pnpm build:mcp && ./scripts/test.sh tests/integration --testTimeout=120000
+$ pnpm --filter @cauce/protocol build
+$ tsc -p tsconfig.json
+$ pnpm --filter @cauce/mcp-fleet-monitor build
+$ pnpm typecheck && pnpm exec esbuild src/server.ts --bundle --platform=node --format=esm --external:pg --outfile=dist/server.js && pnpm exec esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js
+$ tsc --noEmit
+
+  dist/server.js  1002.9kb
+
+⚡ Done in 38ms
+
+  dist/index.js  8.8kb
+
+⚡ Done in 5ms
+
+ RUN  v3.2.7 /tmp/claude-1000/-workspace-cauce-v3/976441a4-467a-471d-8c9e-31edaa3c32cb/scratchpad/wt3-fix
+
  ✓ |datos| tests/integration/vertical.test.ts (17 tests) 57427ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > returns the execution-intent receipt only after PostgreSQL persists the fence  3085ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > records accepted/started/done and ignores duplicate or out-of-order ACKs  3106ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > rejects a second live consumer and fences by epoch  3164ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > durably queues offline and delivers after reconnect  3050ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > supports the canonical HTTP hello/query/ack vertical path and retains terminal rows  2954ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > answers a new consumer ACKing work of an older epoch with a correlated ownership_lost  2980ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > requeues a delivery when the consumer dies before terminal ACK  4233ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > renews a started delivery lease and reaps it only after the renewed deadline expires  3020ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > deduplicates repeated publish and rejects idempotency-key mutation  2925ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > default-denies tenant-to-tenant, allows Steven hub edges, and returns no_route for zero recipients  2908ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > derives presence from lease heartbeat expiry  3206ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > pushes an asynchronous wake and delivery over WebSocket  3021ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > creates an idempotent origin relay outbox event with full correlation  2978ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > backs off retries and moves exhausted delivery to DLQ  6001ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > dead-letters an ambiguous execution ACK and permits exactly one manual replay clone  3079ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > rejects an invented ambiguous suffix while preserving ordinary failure replay evidence  3258ms
+   ✓ Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > fences job completion and dead-letters exhausted jobs  3015ms
  ✓ |datos| tests/integration/mcp-fleet-monitor-tools.test.ts (7 tests) 298ms
+stderr | tests/integration/busybox-console-healthcheck.test.ts > BusyBox console healthcheck runtime > trusts the mounted self-signed CA through SSL_CERT_FILE and rejects it without that trust
 [docker] test skipped: Docker CLI unavailable; not checked: nginx-unprivileged BusyBox healthcheck with the mounted CA and all three negative TLS controls
+
+stderr | tests/integration/busybox-console-healthcheck.test.ts
+[capacidad] busybox-console-healthcheck.test.ts: 0 ejecutados, 1 saltados — Docker CLI unavailable
+
  ✓ |datos| tests/integration/busybox-console-healthcheck.test.ts (1 test | 1 skipped) 4ms
+   ↓ BusyBox console healthcheck runtime > trusts the mounted self-signed CA through SSL_CERT_FILE and rejects it without that trust [Docker CLI unavailable; not checked: nginx-unprivileged BusyBox healthcheck with the mounted CA and all three negative TLS controls]
+stdout | tests/integration/notify-history-postgres.test.ts
+NOTIFY_E2E_RUNTIME {"database":"cauce_test_notify_31dabe71de34414a807b08ed90219c3c","driver":"pg.Pool","route":"registerAgentEmissionRoutes","store":"CauceRepository.listAgentEgress","pgDouble":false,"gatewayDouble":false,"harness":"ControlledRunner","auth":"DevOnlyAuthProvider.forTests"}
+
  ✓ |datos| tests/integration/notify-history-postgres.test.ts (8 tests) 7290ms
+   ✓ real PostgreSQL and Fastify notify history pipeline > selects the representative originless incident through real SQL, HTTP, engine and prompt  1131ms
+   ✓ real PostgreSQL and Fastify notify history pipeline > keeps 1-of-3 partial and does not attach the other notification receipt or destination  691ms
+   ✓ real PostgreSQL and Fastify notify history pipeline > filters another authorized alias in the real store and consumer  686ms
+   ✓ real PostgreSQL and Fastify notify history pipeline > filters another authorized tenant in the real store and consumer  700ms
+   ✓ real PostgreSQL and Fastify notify history pipeline > does not attribute a notice to another authenticated conversation  689ms
+   ✓ real PostgreSQL and Fastify notify history pipeline > does not attach an old attempt receipt to a newer local body  714ms
+   ✓ real PostgreSQL and Fastify notify history pipeline > renders history as data and not as instructions or authorization  688ms
+stderr | tests/integration/otel-collector-config.test.ts > OpenTelemetry Collector 0.130.1 Docker compatibility > pins the tested release and validates its supported internal metrics schema
 [docker] test skipped: Docker CLI unavailable; not checked: Collector image digest and config validation
+
+stderr | tests/integration/otel-collector-config.test.ts > OpenTelemetry Collector 0.130.1 Docker compatibility > serves health, internal metrics, and pipeline metrics
 [docker] test skipped: Docker CLI unavailable; not checked: Collector health endpoint and internal and pipeline metrics
+
  ✓ |datos| tests/integration/otel-collector-config.test.ts (3 tests | 2 skipped) 5ms
+   ↓ OpenTelemetry Collector 0.130.1 Docker compatibility > pins the tested release and validates its supported internal metrics schema [Docker CLI unavailable; not checked: Collector image digest and config validation]
+   ↓ OpenTelemetry Collector 0.130.1 Docker compatibility > serves health, internal metrics, and pipeline metrics [Docker CLI unavailable; not checked: Collector health endpoint and internal and pipeline metrics]
+
  Test Files  5 passed (5)
       Tests  33 passed | 3 skipped (36)
+   Start at  20:05:10
    Duration  67.41s (transform 685ms, setup 0ms, collect 1.95s, tests 65.02s, environment 0ms, prepare 147ms)
 
-=================== test:e2e (RC 0, ruta corta) ===================
+##############  [B] test:e2e PRIMER INTENTO — RC 1 (entorno mio)  ##############
+# Entero A PROPOSITO. Los 2 fallos son de MI entorno, no del candidato: el
+# worktree vivia en una ruta de 136 bytes y sun_path de AF_UNIX admite 108.
+# Comprobado con un bind() en vivo. Re-ejecutado en ruta corta -> [C].
+$ pnpm prepare:runtime && pnpm build:adapter && ./scripts/test.sh tests/e2e --testTimeout=180000
+$ pnpm --filter @cauce/protocol build
+$ tsc -p tsconfig.json
+$ pnpm --filter @cauce/adapter-sdk build
+$ pnpm clean && tsc && node scripts/copy-bridges.mjs && node scripts/chmod-bins.mjs
+$ node --eval "import('node:fs/promises').then(fs => Promise.all(['dist'].map(path => fs.rm(path,{recursive:true,force:true,maxRetries:5,retryDelay:50}))))"
+
+ RUN  v3.2.7 /tmp/claude-1000/-workspace-cauce-v3/976441a4-467a-471d-8c9e-31edaa3c32cb/scratchpad/wt3-fix
+
+ ❯ |datos| tests/e2e/real-qa.test.ts (3 tests | 2 failed) 105265ms
+   × real external QA harness > passes against Fastify WebSocket and PostgreSQL and emits evidence 80571ms
+     → real QA harness failed
+--- stdout ---
+PASS 15 aliases and four harness kinds over real WS
+FAIL OpenCode adapter process fan-out, duplicate publish, and tenant isolation: adapter process round-trip failed; reason=adapter round-trip timed out after 45000ms; diagnostics=[{"alias":"qa-opencode","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-opencode\",\"reason\":\"siembra del perfil: apagada\"}"]},{"alias":"qa-reviewer-a","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-reviewer-a\",\"reason\":\"siembra del perfil: apagada\"}"]},{"alias":"qa-reviewer-b","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-reviewer-b\",\"reason\":\"siembra del perfil: apagada\"}"]},{"alias":"qa-isolated-source","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-isolated-source\",\"reason\":\"siembra del perfil: apagada\"}"]},{"alias":"qa-isolated-target","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-isolated-target\",\"reason\":\"siembra del perfil: apagada\"}"]}]
+PASS double consumer rejected and fencing retained
+PASS presence derives from heartbeat lease
+PASS offline durable queue delivers on connect
+PASS asynchronous wake and push delivery
+PASS ACK accepted-started-done rejects duplicate and out-of-order
+PASS lost ACK redelivers after reconnect
+PASS idempotency suppresses duplicate and rejects mutation
+PASS origin relay uses authenticated context correlation
+PASS zero recipient is no_route and identity fields are rejected
+PASS complete Steven/Isa/Jhon/Pablo/Miguel ACL matrix
+PASS retry backoff exhausts into DLQ
+PASS lane priority and bounded fairness on real dispatcher
+PASS console facades reflect real core state
+
+--- stderr ---
+
+--- sanitized recovery state ---
+[{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-80","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null}]
+   × real external QA harness > runs two permanent-style fake adapters through async push and terminal ACK 18279ms
+     → fake adapter presence timed out; child exits=1,1; diagnostics=ENOENT: adapter stopped: ENOENT: no such file or directory, chmod '/tmp/claude-1000/-workspace-cauce-v3/976441a4-467a-471d-8c9e-31edaa3c32cb/scratchpad/wt3-fix/.adapter-e2e-NNNTMm/hegel/mcp-emission.sock'|ENOENT: adapter stopped: ENOENT: no such file or directory, chmod '/tmp/claude-1000/-workspace-cauce-v3/976441a4-467a-471d-8c9e-31edaa3c32cb/scratchpad/wt3-fix/.adapter-e2e-NNNTMm/salva/mcp-emission.sock'
+   ✓ real external QA harness > preserves offline deliveries across authentic gateway and PostgreSQL restarts  6219ms
+ ✓ |datos| tests/e2e/console-login.test.ts (7 tests) 901ms
+   ✓ login E2E de la consola contra PostgreSQL real (base dev aislada y efímera) > la cuenta se creó por el camino de producción y sin imprimir la contraseña  451ms
+ ✓ |datos| tests/e2e/adapter-roundtrip-fixture.test.mjs (2 tests) 88ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |datos| tests/e2e/real-qa.test.ts > real external QA harness > passes against Fastify WebSocket and PostgreSQL and emits evidence
+Error: real QA harness failed
+--- stdout ---
+PASS 15 aliases and four harness kinds over real WS
+FAIL OpenCode adapter process fan-out, duplicate publish, and tenant isolation: adapter process round-trip failed; reason=adapter round-trip timed out after 45000ms; diagnostics=[{"alias":"qa-opencode","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-opencode\",\"reason\":\"siembra del perfil: apagada\"}"]},{"alias":"qa-reviewer-a","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-reviewer-a\",\"reason\":\"siembra del perfil: apagada\"}"]},{"alias":"qa-reviewer-b","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-reviewer-b\",\"reason\":\"siembra del perfil: apagada\"}"]},{"alias":"qa-isolated-source","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-isolated-source\",\"reason\":\"siembra del perfil: apagada\"}"]},{"alias":"qa-isolated-target","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-isolated-target\",\"reason\":\"siembra del perfil: apagada\"}"]}]
+PASS double consumer rejected and fencing retained
+PASS presence derives from heartbeat lease
+PASS offline durable queue delivers on connect
+PASS asynchronous wake and push delivery
+PASS ACK accepted-started-done rejects duplicate and out-of-order
+PASS lost ACK redelivers after reconnect
+PASS idempotency suppresses duplicate and rejects mutation
+PASS origin relay uses authenticated context correlation
+PASS zero recipient is no_route and identity fields are rejected
+PASS complete Steven/Isa/Jhon/Pablo/Miguel ACL matrix
+PASS retry backoff exhausts into DLQ
+PASS lane priority and bounded fairness on real dispatcher
+PASS console facades reflect real core state
+
+--- stderr ---
+
+--- sanitized recovery state ---
+[{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-80","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null},{"status":"pending","attempt":0,"max_attempts":3,"available_in_seconds":"-4","claimed":false,"last_error":null}]
+ ❯ tests/e2e/real-qa.test.ts:202:13
+    200|           ORDER BY created_at`
+    201|       ).then((result) => result.rows).catch(() => []);
+    202|       throw new Error(
+       |             ^
+    203|         `real QA harness failed\n--- stdout ---\n${detail.stdout ?? ''…
+    204|           `\n--- stderr ---\n${detail.stderr ?? ''}` +
+ ❯ tests/e2e/real-qa.test.ts:170:32
+
+Caused by: Error: Command failed: /usr/bin/node ops/harness/runner.mjs --live --artifact-dir ops/artifacts/real
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 1, killed: false, signal: null, cmd: '/usr/bin/node ops/harness/runner.mjs --live --artifact-dir ops/artifacts/real', stdout: 'PASS 15 aliases and four harness kinds over real WS\nFAIL OpenCode adapter process fan-out, duplicate publish, and tenant isolation: adapter process round-trip failed; reason=adapter round-trip timed out after 45000ms; diagnostics=[{"alias":"qa-opencode","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-opencode\",\"reason\":\"siembra del perfil: apagada\"}"]},{"alias":"qa-reviewer-a","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-reviewer-a\",\"reason\":\"siembra del perfil: apagada\"}"]},{"alias":"qa-reviewer-b","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-reviewer-b\",\"reason\":\"siembra del perfil: apagada\"}"]},{"alias":"qa-isolated-source","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-isolated-source\",\"reason\":\"siembra del perfil: apagada\"}"]},{"alias":"qa-isolated-target","exitCode":null,"signal":null,"events":["{\"event\":\"profile_seed\",\"alias\":\"qa-isolated-target\",\"reason\":\"siembra del perfil: apagada\"}"]}]\nPASS double consumer rejected and fencing retained\nPASS presence derives from heartbeat lease\nPASS offline durable queue delivers on connect\nPASS asynchronous wake and push delivery\nPASS ACK accepted-started-done rejects duplicate and out-of-order\nPASS lost ACK redelivers after reconnect\nPASS idempotency suppresses duplicate and rejects mutation\nPASS origin relay uses authenticated context correlation\nPASS zero recipient is no_route and identity fields are rejected\nPASS complete Steven/Isa/Jhon/Pablo/Miguel ACL matrix\nPASS retry backoff exhausts into DLQ\nPASS lane priority and bounded fairness on real dispatcher\nPASS console facades reflect real core state\n', stderr: '' }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  |datos| tests/e2e/real-qa.test.ts > real external QA harness > runs two permanent-style fake adapters through async push and terminal ACK
+Error: fake adapter presence timed out; child exits=1,1; diagnostics=ENOENT: adapter stopped: ENOENT: no such file or directory, chmod '/tmp/claude-1000/-workspace-cauce-v3/976441a4-467a-471d-8c9e-31edaa3c32cb/scratchpad/wt3-fix/.adapter-e2e-NNNTMm/hegel/mcp-emission.sock'|ENOENT: adapter stopped: ENOENT: no such file or directory, chmod '/tmp/claude-1000/-workspace-cauce-v3/976441a4-467a-471d-8c9e-31edaa3c32cb/scratchpad/wt3-fix/.adapter-e2e-NNNTMm/salva/mcp-emission.sock'
+ ❯ tests/e2e/real-qa.test.ts:262:15
+    260|         });
+    261|       } catch (error) {
+    262|         throw new Error(
+       |               ^
+    263|           `fake adapter presence timed out; child exits=${adapters.map…
+    264|           { cause: error },
+
+Caused by: Error: condition timed out after 15000ms
+ ❯ waitFor tests/e2e/real-qa.test.ts:522:9
+ ❯ tests/e2e/real-qa.test.ts:256:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  2 failed | 10 passed (12)
+   Start at  20:06:23
+   Duration  107.86s (transform 677ms, setup 0ms, collect 1.33s, tests 106.25s, environment 0ms, prepare 82ms)
+
+[ELIFECYCLE] Command failed with exit code 1.
+
+####################  [C] test:e2e RE-EJECUCION — RC 0  ######################
+# Mismo commit, mismo DSN; unica diferencia: worktree accedido por mount --bind
+# en /var/tmp/w para acortar la ruta del socket.
+$ pnpm prepare:runtime && pnpm build:adapter && ./scripts/test.sh tests/e2e --testTimeout=180000
+$ pnpm --filter @cauce/protocol build
+$ tsc -p tsconfig.json
+$ pnpm --filter @cauce/adapter-sdk build
+$ pnpm clean && tsc && node scripts/copy-bridges.mjs && node scripts/chmod-bins.mjs
+$ node --eval "import('node:fs/promises').then(fs => Promise.all(['dist'].map(path => fs.rm(path,{recursive:true,force:true,maxRetries:5,retryDelay:50}))))"
+
+ RUN  v3.2.7 /var/tmp/w
+
  ✓ |datos| tests/e2e/real-qa.test.ts (3 tests) 53720ms
+   ✓ real external QA harness > passes against Fastify WebSocket and PostgreSQL and emits evidence  42624ms
+   ✓ real external QA harness > runs two permanent-style fake adapters through async push and terminal ACK  4890ms
+   ✓ real external QA harness > preserves offline deliveries across authentic gateway and PostgreSQL restarts  6006ms
  ✓ |datos| tests/e2e/console-login.test.ts (7 tests) 958ms
+   ✓ login E2E de la consola contra PostgreSQL real (base dev aislada y efímera) > la cuenta se creó por el camino de producción y sin imprimir la contraseña  511ms
  ✓ |datos| tests/e2e/adapter-roundtrip-fixture.test.mjs (2 tests) 117ms
+
  Test Files  3 passed (3)
       Tests  12 passed (12)
+   Start at  20:09:25
    Duration  56.35s (transform 618ms, setup 0ms, collect 1.27s, tests 54.79s, environment 0ms, prepare 86ms)
 
-=========== CONTROL NEGATIVO 1: base 'none' (guarda de nombre) ===========
-RC=1
-     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
-     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
-     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
-     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+#########  [D] CONTROL NEGATIVO 1 — base 'none' — RC 1 (FALSO ROJO)  #########
+# export CAUCE_TEST_DATABASE_URL='postgres://127.0.0.1:1/none'
+# NO prueba nada sobre la base: el arnes rechaza el DSN por el NOMBRE antes de
+# abrir conexion (tests/helpers/postgres.ts:78). Lo cuelgo porque nos engaño una
+# vez y tiene que quedar distinguible del control de verdad, que es [E].
+$ pnpm prepare:runtime && pnpm build:mcp && ./scripts/test.sh tests/integration --testTimeout=120000
+$ pnpm --filter @cauce/protocol build
+$ tsc -p tsconfig.json
+$ pnpm --filter @cauce/mcp-fleet-monitor build
+$ pnpm typecheck && pnpm exec esbuild src/server.ts --bundle --platform=node --format=esm --external:pg --outfile=dist/server.js && pnpm exec esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js
+$ tsc --noEmit
 
-=========== CONTROL NEGATIVO 2: nombre valido + puerto muerto ===========
-RC=1
-     → connect ECONNREFUSED 127.0.0.1:1
-     → connect ECONNREFUSED 127.0.0.1:1
-     → connect ECONNREFUSED 127.0.0.1:1
-     → connect ECONNREFUSED 127.0.0.1:1
-     → connect ECONNREFUSED 127.0.0.1:1
+  dist/server.js  1002.9kb
 
-=================== TRIPWIRE DEL DIGEST ===================
-fichero cubierto tocado -> node ops/tests/container-ops-evidence.test.mjs -> RC 1
-  AssertionError: container operational digest failed: OPERATIONS.sha256 differs from current operational inputs
-revertido -> RC 0 ; git status --porcelain vacio ; HEAD sin cambios
+⚡ Done in 31ms
 
-=================== RESIDUO DECLARADO ===================
+  dist/index.js  8.8kb
+
+⚡ Done in 5ms
+
+ RUN  v3.2.7 /tmp/claude-1000/-workspace-cauce-v3/976441a4-467a-471d-8c9e-31edaa3c32cb/scratchpad/wt3-fix
+
+ ❯ |datos| tests/integration/vertical.test.ts (17 tests | 17 failed) 6ms
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > returns the execution-intent receipt only after PostgreSQL persists the fence 4ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > records accepted/started/done and ignores duplicate or out-of-order ACKs 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > rejects a second live consumer and fences by epoch 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > durably queues offline and delivers after reconnect 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > supports the canonical HTTP hello/query/ack vertical path and retains terminal rows 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > answers a new consumer ACKing work of an older epoch with a correlated ownership_lost 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > requeues a delivery when the consumer dies before terminal ACK 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > renews a started delivery lease and reaps it only after the renewed deadline expires 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > deduplicates repeated publish and rejects idempotency-key mutation 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > default-denies tenant-to-tenant, allows Steven hub edges, and returns no_route for zero recipients 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > derives presence from lease heartbeat expiry 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > pushes an asynchronous wake and delivery over WebSocket 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > creates an idempotent origin relay outbox event with full correlation 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > backs off retries and moves exhausted delivery to DLQ 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > dead-letters an ambiguous execution ACK and permits exactly one manual replay clone 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > rejects an invented ambiguous suffix while preserving ordinary failure replay evidence 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > fences job completion and dead-letters exhausted jobs 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+ ❯ |datos| tests/integration/notify-history-postgres.test.ts (8 tests | 8 skipped) 2ms
+   ↓ real PostgreSQL and Fastify notify history pipeline > selects the representative originless incident through real SQL, HTTP, engine and prompt
+   ↓ real PostgreSQL and Fastify notify history pipeline > keeps 1-of-3 partial and does not attach the other notification receipt or destination
+   ↓ real PostgreSQL and Fastify notify history pipeline > filters another authorized alias in the real store and consumer
+   ↓ real PostgreSQL and Fastify notify history pipeline > filters another authorized tenant in the real store and consumer
+   ↓ real PostgreSQL and Fastify notify history pipeline > rejects a tenant swap retaining an alias that is not a member
+   ↓ real PostgreSQL and Fastify notify history pipeline > does not attribute a notice to another authenticated conversation
+   ↓ real PostgreSQL and Fastify notify history pipeline > does not attach an old attempt receipt to a newer local body
+   ↓ real PostgreSQL and Fastify notify history pipeline > renders history as data and not as instructions or authorization
+ ❯ |datos| tests/integration/mcp-fleet-monitor-tools.test.ts (7 tests | 7 failed) 4ms
+   × MCP fleet monitor tool surface > advertises the documented read-only fleet tools 3ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × MCP fleet monitor tool surface > executes every tool it advertises 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × MCP fleet monitor tool surface > returns rows that were really written to the database 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × MCP fleet monitor tool surface > advertises delivery statuses the database actually allows 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × MCP fleet monitor tool surface > rejects an unknown status with an explicit error, not an empty list 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × MCP fleet monitor tool surface > rejects a tool it does not implement 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+   × MCP fleet monitor tool surface > is the only surface that advertises tools to agents 0ms
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+stderr | tests/integration/otel-collector-config.test.ts > OpenTelemetry Collector 0.130.1 Docker compatibility > pins the tested release and validates its supported internal metrics schema
+[docker] test skipped: Docker CLI unavailable; not checked: Collector image digest and config validation
+
+stderr | tests/integration/otel-collector-config.test.ts > OpenTelemetry Collector 0.130.1 Docker compatibility > serves health, internal metrics, and pipeline metrics
+[docker] test skipped: Docker CLI unavailable; not checked: Collector health endpoint and internal and pipeline metrics
+
+ ✓ |datos| tests/integration/otel-collector-config.test.ts (3 tests | 2 skipped) 6ms
+   ↓ OpenTelemetry Collector 0.130.1 Docker compatibility > pins the tested release and validates its supported internal metrics schema [Docker CLI unavailable; not checked: Collector image digest and config validation]
+   ↓ OpenTelemetry Collector 0.130.1 Docker compatibility > serves health, internal metrics, and pipeline metrics [Docker CLI unavailable; not checked: Collector health endpoint and internal and pipeline metrics]
+stderr | tests/integration/busybox-console-healthcheck.test.ts > BusyBox console healthcheck runtime > trusts the mounted self-signed CA through SSL_CERT_FILE and rejects it without that trust
+[docker] test skipped: Docker CLI unavailable; not checked: nginx-unprivileged BusyBox healthcheck with the mounted CA and all three negative TLS controls
+
+stderr | tests/integration/busybox-console-healthcheck.test.ts
+[capacidad] busybox-console-healthcheck.test.ts: 0 ejecutados, 1 saltados — Docker CLI unavailable
+
+ ✓ |datos| tests/integration/busybox-console-healthcheck.test.ts (1 test | 1 skipped) 4ms
+   ↓ BusyBox console healthcheck runtime > trusts the mounted self-signed CA through SSL_CERT_FILE and rejects it without that trust [Docker CLI unavailable; not checked: nginx-unprivileged BusyBox healthcheck with the mounted CA and all three negative TLS controls]
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |datos| tests/integration/notify-history-postgres.test.ts [ tests/integration/notify-history-postgres.test.ts ]
+Error: Only an explicit cauce_test PostgreSQL database in a non-production environment is accepted.
+ ❯ requireTestDatabaseUrl tests/integration/notify-history/database.ts:11:11
+      9|     || !/^cauce_test(?:_|$)/u.test(decodeURIComponent(url.pathname.sli…
+     10|     || process.env.NODE_ENV === 'production') {
+     11|     throw new Error('Only an explicit cauce_test PostgreSQL database i…
+       |           ^
+     12|   }
+     13|   return value;
+ ❯ tests/integration/notify-history-postgres.test.ts:36:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/25]⎯
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 24 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > advertises the documented read-only fleet tools
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > executes every tool it advertises
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > returns rows that were really written to the database
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > advertises delivery statuses the database actually allows
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > rejects an unknown status with an explicit error, not an empty list
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > rejects a tool it does not implement
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > is the only surface that advertises tools to agents
+Error: CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+ ❯ assertTestDatabaseUrl tests/helpers/postgres.ts:78:9
+     76| function assertTestDatabaseUrl(url: string): void {
+     77|   if (esBaseDePruebas(url)) return;
+     78|   throw new Error(
+       |         ^
+     79|     `CAUCE_TEST_DATABASE_URL apunta a la base "${nombreDeBase(url)}" y…
+     80|       `TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece …
+ ❯ startTestDatabase tests/helpers/postgres.ts:442:5
+ ❯ setupSuite tests/integration/mcp-fleet-monitor-tools.test.ts:164:35
+ ❯ tests/integration/mcp-fleet-monitor-tools.test.ts:193:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/25]⎯
+
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > returns the execution-intent receipt only after PostgreSQL persists the fence
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > records accepted/started/done and ignores duplicate or out-of-order ACKs
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > rejects a second live consumer and fences by epoch
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > durably queues offline and delivers after reconnect
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > supports the canonical HTTP hello/query/ack vertical path and retains terminal rows
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > answers a new consumer ACKing work of an older epoch with a correlated ownership_lost
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > requeues a delivery when the consumer dies before terminal ACK
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > renews a started delivery lease and reaps it only after the renewed deadline expires
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > deduplicates repeated publish and rejects idempotency-key mutation
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > default-denies tenant-to-tenant, allows Steven hub edges, and returns no_route for zero recipients
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > derives presence from lease heartbeat expiry
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > pushes an asynchronous wake and delivery over WebSocket
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > creates an idempotent origin relay outbox event with full correlation
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > backs off retries and moves exhausted delivery to DLQ
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > dead-letters an ambiguous execution ACK and permits exactly one manual replay clone
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > rejects an invented ambiguous suffix while preserving ordinary failure replay evidence
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > fences job completion and dead-letters exhausted jobs
+Error: CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+ ❯ assertTestDatabaseUrl tests/helpers/postgres.ts:78:9
+     76| function assertTestDatabaseUrl(url: string): void {
+     77|   if (esBaseDePruebas(url)) return;
+     78|   throw new Error(
+       |         ^
+     79|     `CAUCE_TEST_DATABASE_URL apunta a la base "${nombreDeBase(url)}" y…
+     80|       `TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece …
+ ❯ startTestDatabase tests/helpers/postgres.ts:442:5
+ ❯ setupSuite tests/integration/vertical.test.ts:150:33
+ ❯ tests/integration/vertical.test.ts:180:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/25]⎯
+
+ Test Files  3 failed | 2 passed (5)
+      Tests  24 failed | 1 passed | 11 skipped (36)
+   Start at  20:26:40
+   Duration  2.23s (transform 642ms, setup 0ms, collect 1.78s, tests 22ms, environment 1ms, prepare 141ms)
+
+[ELIFECYCLE] Command failed with exit code 1.
+
+######  [E] CONTROL NEGATIVO 2 — nombre valido + puerto muerto — RC 1  ######
+# DSN con nombre que SI pasa la guarda (prefijo cauce_test) y puerto 1 muerto.
+# Discriminante: la guarda de nombre no dispara y la corrida muere en
+# ECONNREFUSED 127.0.0.1:1, que es lo que se queria probar.
+$ pnpm prepare:runtime && pnpm build:mcp && ./scripts/test.sh tests/integration --testTimeout=120000
+$ pnpm --filter @cauce/protocol build
+$ tsc -p tsconfig.json
+$ pnpm --filter @cauce/mcp-fleet-monitor build
+$ pnpm typecheck && pnpm exec esbuild src/server.ts --bundle --platform=node --format=esm --external:pg --outfile=dist/server.js && pnpm exec esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js
+$ tsc --noEmit
+
+  dist/server.js  1002.9kb
+
+⚡ Done in 31ms
+
+  dist/index.js  8.8kb
+
+⚡ Done in 5ms
+
+ RUN  v3.2.7 /tmp/claude-1000/-workspace-cauce-v3/976441a4-467a-471d-8c9e-31edaa3c32cb/scratchpad/wt3-fix
+
+ ❯ |datos| tests/integration/vertical.test.ts (17 tests | 17 failed) 10537ms
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > returns the execution-intent receipt only after PostgreSQL persists the fence 10535ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > records accepted/started/done and ignores duplicate or out-of-order ACKs 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > rejects a second live consumer and fences by epoch 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > durably queues offline and delivers after reconnect 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > supports the canonical HTTP hello/query/ack vertical path and retains terminal rows 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > answers a new consumer ACKing work of an older epoch with a correlated ownership_lost 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > requeues a delivery when the consumer dies before terminal ACK 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > renews a started delivery lease and reaps it only after the renewed deadline expires 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > deduplicates repeated publish and rejects idempotency-key mutation 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > default-denies tenant-to-tenant, allows Steven hub edges, and returns no_route for zero recipients 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > derives presence from lease heartbeat expiry 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > pushes an asynchronous wake and delivery over WebSocket 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > creates an idempotent origin relay outbox event with full correlation 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > backs off retries and moves exhausted delivery to DLQ 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > dead-letters an ambiguous execution ACK and permits exactly one manual replay clone 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > rejects an invented ambiguous suffix while preserving ordinary failure replay evidence 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > fences job completion and dead-letters exhausted jobs 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+ ❯ |datos| tests/integration/mcp-fleet-monitor-tools.test.ts (7 tests | 7 failed) 10535ms
+   × MCP fleet monitor tool surface > advertises the documented read-only fleet tools 10534ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × MCP fleet monitor tool surface > executes every tool it advertises 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × MCP fleet monitor tool surface > returns rows that were really written to the database 1ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × MCP fleet monitor tool surface > advertises delivery statuses the database actually allows 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × MCP fleet monitor tool surface > rejects an unknown status with an explicit error, not an empty list 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × MCP fleet monitor tool surface > rejects a tool it does not implement 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+   × MCP fleet monitor tool surface > is the only surface that advertises tools to agents 0ms
+     → connect ECONNREFUSED 127.0.0.1:1
+ ❯ |datos| tests/integration/notify-history-postgres.test.ts (8 tests | 8 skipped) 10ms
+   ↓ real PostgreSQL and Fastify notify history pipeline > selects the representative originless incident through real SQL, HTTP, engine and prompt
+   ↓ real PostgreSQL and Fastify notify history pipeline > keeps 1-of-3 partial and does not attach the other notification receipt or destination
+   ↓ real PostgreSQL and Fastify notify history pipeline > filters another authorized alias in the real store and consumer
+   ↓ real PostgreSQL and Fastify notify history pipeline > filters another authorized tenant in the real store and consumer
+   ↓ real PostgreSQL and Fastify notify history pipeline > rejects a tenant swap retaining an alias that is not a member
+   ↓ real PostgreSQL and Fastify notify history pipeline > does not attribute a notice to another authenticated conversation
+   ↓ real PostgreSQL and Fastify notify history pipeline > does not attach an old attempt receipt to a newer local body
+   ↓ real PostgreSQL and Fastify notify history pipeline > renders history as data and not as instructions or authorization
+stderr | tests/integration/otel-collector-config.test.ts > OpenTelemetry Collector 0.130.1 Docker compatibility > pins the tested release and validates its supported internal metrics schema
+[docker] test skipped: Docker CLI unavailable; not checked: Collector image digest and config validation
+
+stderr | tests/integration/otel-collector-config.test.ts > OpenTelemetry Collector 0.130.1 Docker compatibility > serves health, internal metrics, and pipeline metrics
+[docker] test skipped: Docker CLI unavailable; not checked: Collector health endpoint and internal and pipeline metrics
+
+ ✓ |datos| tests/integration/otel-collector-config.test.ts (3 tests | 2 skipped) 5ms
+   ↓ OpenTelemetry Collector 0.130.1 Docker compatibility > pins the tested release and validates its supported internal metrics schema [Docker CLI unavailable; not checked: Collector image digest and config validation]
+   ↓ OpenTelemetry Collector 0.130.1 Docker compatibility > serves health, internal metrics, and pipeline metrics [Docker CLI unavailable; not checked: Collector health endpoint and internal and pipeline metrics]
+stderr | tests/integration/busybox-console-healthcheck.test.ts > BusyBox console healthcheck runtime > trusts the mounted self-signed CA through SSL_CERT_FILE and rejects it without that trust
+[docker] test skipped: Docker CLI unavailable; not checked: nginx-unprivileged BusyBox healthcheck with the mounted CA and all three negative TLS controls
+
+stderr | tests/integration/busybox-console-healthcheck.test.ts
+[capacidad] busybox-console-healthcheck.test.ts: 0 ejecutados, 1 saltados — Docker CLI unavailable
+
+ ✓ |datos| tests/integration/busybox-console-healthcheck.test.ts (1 test | 1 skipped) 5ms
+   ↓ BusyBox console healthcheck runtime > trusts the mounted self-signed CA through SSL_CERT_FILE and rejects it without that trust [Docker CLI unavailable; not checked: nginx-unprivileged BusyBox healthcheck with the mounted CA and all three negative TLS controls]
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |datos| tests/integration/notify-history-postgres.test.ts [ tests/integration/notify-history-postgres.test.ts ]
+Error: connect ECONNREFUSED 127.0.0.1:1
+ ❯ node_modules/.pnpm/pg-pool@3.14.0_pg@8.22.0/node_modules/pg-pool/index.js:45:11
+ ❯ openIsolatedDatabase tests/integration/notify-history/database.ts:30:20
+     28|   };
+     29|   try {
+     30|     const result = await admin.query<{ name: string; version: string }…
+       |                    ^
+     31|       'SELECT current_database() AS name, version() AS version');
+     32|     if (result.rows[0]?.name !== decodeURIComponent(new URL(serverUrl)…
+ ❯ tests/integration/notify-history-postgres.test.ts:38:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/25]⎯
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 24 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > advertises the documented read-only fleet tools
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > executes every tool it advertises
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > returns rows that were really written to the database
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > advertises delivery statuses the database actually allows
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > rejects an unknown status with an explicit error, not an empty list
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > rejects a tool it does not implement
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > is the only surface that advertises tools to agents
+Error: connect ECONNREFUSED 127.0.0.1:1
+ ❯ node_modules/.pnpm/pg-pool@3.14.0_pg@8.22.0/node_modules/pg-pool/index.js:45:11
+ ❯ waitForDatabase tests/helpers/postgres.ts:33:7
+     31|   for (let attempt = 1; attempt <= 20; attempt += 1) {
+     32|     try {
+     33|       await pool.query('SELECT 1');
+       |       ^
+     34|       return;
+     35|     } catch (error) {
+ ❯ asegurarPlantilla tests/helpers/postgres.ts:315:3
+ ❯ crearBaseEfimera tests/helpers/postgres.ts:360:21
+ ❯ startTestDatabase tests/helpers/postgres.ts:444:46
+ ❯ setupSuite tests/integration/mcp-fleet-monitor-tools.test.ts:164:29
+ ❯ tests/integration/mcp-fleet-monitor-tools.test.ts:195:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/25]⎯
+
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > returns the execution-intent receipt only after PostgreSQL persists the fence
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > records accepted/started/done and ignores duplicate or out-of-order ACKs
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > rejects a second live consumer and fences by epoch
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > durably queues offline and delivers after reconnect
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > supports the canonical HTTP hello/query/ack vertical path and retains terminal rows
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > answers a new consumer ACKing work of an older epoch with a correlated ownership_lost
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > requeues a delivery when the consumer dies before terminal ACK
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > renews a started delivery lease and reaps it only after the renewed deadline expires
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > deduplicates repeated publish and rejects idempotency-key mutation
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > default-denies tenant-to-tenant, allows Steven hub edges, and returns no_route for zero recipients
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > derives presence from lease heartbeat expiry
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > pushes an asynchronous wake and delivery over WebSocket
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > creates an idempotent origin relay outbox event with full correlation
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > backs off retries and moves exhausted delivery to DLQ
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > dead-letters an ambiguous execution ACK and permits exactly one manual replay clone
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > rejects an invented ambiguous suffix while preserving ordinary failure replay evidence
+ FAIL  |datos| tests/integration/vertical.test.ts > Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice > fences job completion and dead-letters exhausted jobs
+Error: connect ECONNREFUSED 127.0.0.1:1
+ ❯ node_modules/.pnpm/pg-pool@3.14.0_pg@8.22.0/node_modules/pg-pool/index.js:45:11
+ ❯ waitForDatabase tests/helpers/postgres.ts:33:7
+     31|   for (let attempt = 1; attempt <= 20; attempt += 1) {
+     32|     try {
+     33|       await pool.query('SELECT 1');
+       |       ^
+     34|       return;
+     35|     } catch (error) {
+ ❯ asegurarPlantilla tests/helpers/postgres.ts:315:3
+ ❯ crearBaseEfimera tests/helpers/postgres.ts:360:21
+ ❯ startTestDatabase tests/helpers/postgres.ts:444:46
+ ❯ setupSuite tests/integration/vertical.test.ts:150:27
+ ❯ tests/integration/vertical.test.ts:182:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/25]⎯
+
+ Test Files  3 failed | 2 passed (5)
+      Tests  24 failed | 1 passed | 11 skipped (36)
+   Start at  20:27:09
+   Duration  23.46s (transform 794ms, setup 0ms, collect 1.93s, tests 21.09s, environment 0ms, prepare 147ms)
+
+[ELIFECYCLE] Command failed with exit code 1.
+
+##################  [F] TRIPWIRE DEL DIGEST — extracto crudo  #################
+# 1) toco un fichero que el digest cubre y corro pnpm test:ops
+=== ops/bounded-environment-integer.test.mjs
+bounded environment integer tests passed
+
+=== ops/container-ops-evidence.test.mjs
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]:  container operational digest failed: OPERATIONS.sha256 differs from current operational inputs
+
+1 !== 0
+
+    at file:///tmp/claude-1000/-workspace-cauce-v3/976441a4-467a-471d-8c9e-31edaa3c32cb/scratchpad/wt3-fix/ops/tests/container-ops-evidence.test.mjs:54:8
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+# RC de esa corrida = 1
+# 2) revierto el fichero y vuelvo a correr:
+=== ops/bounded-environment-integer.test.mjs
+bounded environment integer tests passed
+
+=== ops/container-ops-evidence.test.mjs
+container ops evidence mutation: operational digest changed
+container operational digest tests passed
+
+=== ops/fleet-reader-parity.test.mjs
+fleet reader parity tests passed
+
+=== ops/fleet-snapshot-gates.test.mjs
+# RC de esa corrida = 0 ; git status --porcelain vacio ; HEAD sin cambios.
+# El tripwire sigue armado: no es verde por ausencia.
+
+#########################  [G] RESIDUO DECLARADO  #############################
 3 casos saltados, todos por Docker ausente (skipIfUnavailable, motivo registrado):
-  - nginx-unprivileged BusyBox healthcheck with the mounted CA and all three negative TLS controls
+  - nginx-unprivileged BusyBox healthcheck with the mounted CA and all three
+    negative TLS controls
   - Collector image digest and config validation
   - Collector health endpoint and internal and pipeline metrics
 TOTAL DEL GATE: 7911 aprobados · 0 fallidos · 3 saltados.
+
+===============================================================================
+  [H] DISCRIMINANTE mcp-fleet-monitor-tools.test.ts — pedido de argos 2026-09-09
+===============================================================================
+PREGUNTA: sus 7 casos en 298 ms (42,5 ms/caso) contra 911 ms/caso del fichero
+que si habla con la base, ¿son la firma de un fichero blindado contra Postgres?
+METODO: el MISMO fichero, SOLO, dos veces, cambiando unicamente el DSN.
+  bueno   = postgres://zint:***@127.0.0.1:5432/cauce_test_zint
+  afilado = postgres://zint:***@127.0.0.1:1/cauce_test_none   (nombre valido +
+            puerto muerto: pasa la guarda de nombre, no hay base al otro lado)
+RESULTADO (RC sin tuberia):
+  bueno    RC 0   6s de reloj
+  afilado  RC 1  16s de reloj
+VEREDICTO: **NO esta blindado. Se pone ROJO.** Su verde SI era cobertura de
+integracion. La lectura de acoplamiento era la correcta; los 42,5 ms/caso no son
+firma de ceguera: el fichero paga la base UNA vez en setup (crea una base
+efimera desde plantilla) y despues consulta filas ya materializadas, mientras
+vertical.test.ts levanta HTTP+WS, leases con temporizadores reales y reaping en
+CADA caso. Rapido no es lo mismo que desconectado.
+Traza que lo prueba: la muerte ocurre en el camino de la base, no en un assert.
+
+------------------------- [H.1] DSN bueno, fichero solo -------------------------
+
+ RUN  v3.2.7 /tmp/claude-1000/-workspace-cauce-v3/976441a4-467a-471d-8c9e-31edaa3c32cb/scratchpad/wt3-fix
+
+ ✓ |datos| tests/integration/mcp-fleet-monitor-tools.test.ts (7 tests) 357ms
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  21:13:20
+   Duration  946ms (transform 260ms, setup 0ms, collect 495ms, tests 357ms, environment 0ms, prepare 26ms)
+----------------------- [H.2] DSN afilado, fichero solo ------------------------
+
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > advertises the documented read-only fleet tools
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > executes every tool it advertises
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > returns rows that were really written to the database
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > advertises delivery statuses the database actually allows
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > rejects an unknown status with an explicit error, not an empty list
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > rejects a tool it does not implement
+ FAIL  |datos| tests/integration/mcp-fleet-monitor-tools.test.ts > MCP fleet monitor tool surface > is the only surface that advertises tools to agents
+Error: connect ECONNREFUSED 127.0.0.1:1
+ ❯ node_modules/.pnpm/pg-pool@3.14.0_pg@8.22.0/node_modules/pg-pool/index.js:45:11
+ ❯ waitForDatabase tests/helpers/postgres.ts:33:7
+     31|   for (let attempt = 1; attempt <= 20; attempt += 1) {
+     32|     try {
+     33|       await pool.query('SELECT 1');
+       |       ^
+     34|       return;
+     35|     } catch (error) {
+ ❯ asegurarPlantilla tests/helpers/postgres.ts:315:3
+ ❯ crearBaseEfimera tests/helpers/postgres.ts:360:21
+ ❯ startTestDatabase tests/helpers/postgres.ts:444:46
+ ❯ setupSuite tests/integration/mcp-fleet-monitor-tools.test.ts:164:29
+ ❯ tests/integration/mcp-fleet-monitor-tools.test.ts:195:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+ Test Files  1 failed (1)
+      Tests  7 failed (7)
+   Start at  21:13:26
+   Duration  11.17s (transform 279ms, setup 0ms, collect 530ms, tests 10.54s, environment 0ms, prepare 28ms)
+Cadena de llamadas del fallo (del bloque anterior):
+  waitForDatabase  tests/helpers/postgres.ts:33   <- await pool.query('SELECT 1')
+  asegurarPlantilla                        :315
+  crearBaseEfimera                         :360
+  startTestDatabase                        :444
+  setupSuite   tests/integration/mcp-fleet-monitor-tools.test.ts:164
+MATIZ HONESTO: esto prueba que el fichero EXIGE la base y falla cerrado sin
+ella. No prueba por si solo que los 7 asserts lean filas reales; de eso
+responden los pool.query de las lineas 254, 275 y 302 del propio test, que leen
+filas escritas y la definicion de un constraint vivo.
+===============================================================================
+FIN DE LA EVIDENCIA
+===============================================================================
