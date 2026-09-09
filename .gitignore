@@ -83,3 +83,6 @@ docs/diagramas/*.visual-check.*
 
 # Ordenes de trabajo para la flota: locales, nunca versionadas.
 ordenes-locales/
+
+# Doc interna de flota/instancia: local, nunca versionada.
+interno/
