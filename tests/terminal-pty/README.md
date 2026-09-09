@@ -6,10 +6,10 @@ Three teams implement the same protocol separately and without seeing each other
 |---|---|---|
 | `gateway` | TypeScript | issues and redeems tickets, decides authorization, writes the audit |
 | `terminal-relay` | TypeScript | multiplexes bytes between the browser (WebSocket) and the agent (raw TLS) |
-| `pty-agent` | Python 3, standard library only | opens the PTY inside the target container, on another host (kratos) |
+| `pty-agent` | Python 3, standard library only | opens the PTY inside the target container, usually on another host |
 
-The core (gateway, dispatcher, console) lives in `agora-storage`; the agent containers
-live in `kratos`. Every terminal session crosses that boundary, so the only place
+The core (gateway, dispatcher, console) and the agent containers may live on different
+hosts. Every terminal session crosses that boundary, so the only place
 where all three implementations meet is this directory. **If these tests do not
 pass, the PTY channel is not deployed.**
 
@@ -26,16 +26,15 @@ pnpm vitest run tests/terminal-pty
 # only the golden vectors: ticket + framing byte-by-byte
 pnpm vitest run tests/terminal-pty/vectors.test.ts
 
-# only the circuit: fake gateway + fake agent (+ real relay if merged)
+# only the gateway leg (the agent leg and the end-to-end circuit are sibling files)
 pnpm vitest run tests/terminal-pty/relay-contract.test.ts
 ```
 
 `pnpm vitest run tests/terminal-pty` works with the vitest config as it is at the
 root (no need to touch `vitest.config.ts`: the default include already covers
-`**/*.test.ts`). There is intentionally no script in `package.json` for this —
-the root `package.json` belongs to another module; the integrator may add
-`"test:terminal-pty": "vitest run tests/terminal-pty"` if they want it in the
-general battery.
+`**/*.test.ts`). The root `package.json` also exposes it as `pnpm test:terminal-pty`,
+which is the same run preceded by `pnpm prepare:runtime` so the protocol build is
+current.
 
 Requirements: Node >= 22, `vitest` and `ws` (already in the lockfile) and
 `openssl` on PATH, used to mint self-signed certificates in a temp directory at
@@ -85,21 +84,22 @@ agent).
 the gates that separate them are written with different polarities in different legs. `read_only`
 is exactly `{harness}` and does not move: it is the set whose STDIN the agent drops before touching
 the descriptor (`ops/pty-agent/cauce_pty_agent/session.py:READ_ONLY_MODES`). `writable` is the set
-whose STDIN reaches the pty. `tui` is the set allowed to send `TERMINAL_RESPONSE`; the agent now
-names it outright (`TUI_MODES`, with `WRITABLE_TUI_MODES` derived from it) while the relay still
-expresses it as the complement of read-only (`mode !== 'harness'`), so on the relay leg a writable
-TUI mode such as `harness_rw` still loses the emulator response channel its TUI needs to render.
+whose STDIN reaches the pty. `tui` is the set allowed to send `TERMINAL_RESPONSE`; both legs name it
+outright — `TUI_MODES` in the agent, with `WRITABLE_TUI_MODES` derived from it, and `TUI_MODES` in
+`services/terminal-relay/src/session-limits.ts` on the relay, where the writable TUI is the
+intersection with `WRITABLE_MODES`.
 `all` is the union of `writable` and `tui`, and `harness_rw` is the only mode in both.
 `vectors.test.ts` asserts those four relations and re-reads the `READ_ONLY_MODES` and `TUI_MODES`
 frozenset literals out of `ops/pty-agent/cauce_pty_agent/session.py`, comparing them with the
 arrays, so neither set can drift from the agent.
 
-The agent side of `all` is implemented: `ops/pty-agent/cauce_pty_agent/framing.py:MODES` lists the
-three modes and the tmux route serves `harness_rw`. The relay side is not, on two counts, and both
-have to land together (W3B-06): `services/terminal-relay/src/agent-hello.ts` still narrows a hello
-to `shell|harness`, and `services/terminal-relay/src/framing.ts:FRAME_TAGS` still knows neither
-`INPUT_REFUSED` (0x26) nor `GEOMETRY` (0x27) — an unknown tag there tears down the alias's whole
-multiplexed leg, not one session.
+Both sides of `all` are implemented: `ops/pty-agent/cauce_pty_agent/framing.py:MODES` lists the
+three modes and the tmux route serves `harness_rw`; on the relay,
+`services/terminal-relay/src/agent-hello.ts` admits `shell`, `harness` and `harness_rw`, and
+`services/terminal-relay/src/framing.ts:FRAME_TAGS` carries `INPUT_REFUSED` (0x26) and `GEOMETRY`
+(0x27). The order is not interchangeable: an unknown tag on the relay tears down the alias's whole
+multiplexed leg, not one session, so the relay learns an agent -> relay tag before any agent emits
+it.
 
 `input_refused` declares the reasons `INPUT_REFUSED` may carry, and it only grows: a new holder of
 the keyboard adds a value, it never renames one. `vectors.test.ts` compares that list with the
@@ -139,7 +139,7 @@ itself does not self-confirm. It also verifies the vectors file is still the
 frozen one (if someone "improves" it, the test says so) and that every byte from
 0x00 to 0xff survives a round trip through a STDIN frame without transcoding.
 
-### `fake-pty-agent.mjs` — the agent leg, without kratos
+### `fake-pty-agent.mjs` — the agent leg, without a real agent host
 
 Standalone Node executable that speaks like the Python agent against a real
 relay: sends `AGENT_HELLO`, replies `PONG` to `PING`, **verifies each `OPEN`
@@ -152,17 +152,13 @@ any of the three reasons of the `input_refused` block — `governance_write_in_f
 and `geometry` makes it emit `GEOMETRY` right after each `OPEN_OK`
 (`AGENT_GEOMETRY=120x40`, both sides validated against the `geometry` clamp — a malformed value
 is a `bad_config` exit, never a `null` on the wire). Every other tag is still an `unexpected_tag`
-abort. `modes` may name `harness_rw` for these tests, but **not against the real relay**: today
-`services/terminal-relay/src/agent-hello.ts` accepts only `shell` and `harness` and one foreign
-entry invalidates the whole hello, and `services/terminal-relay/src/framing.ts:FRAME_TAGS` does not
-carry 0x26 or 0x27 either, so the first `INPUT_REFUSED` or `GEOMETRY` would drop the alias's entire
-multiplexed leg. Widening both is the job of the later W3b task that teaches the relay the mode and
-the two tags (W3B-06); until it lands, `harness_rw` lives between this double and a scratch
-server.
+abort. `modes` may name `harness_rw`, and that mode is driven both against a scratch listener
+(`fake-agent-writable.test.ts`) and against the real relay (`control-de-tui.test.ts`), whose hello
+parser admits it and whose `FRAME_TAGS` carry 0x26 and 0x27.
 
 ```bash
 RELAY_HOST=127.0.0.1 RELAY_PORT=8600 \
-TENANT=Steven ALIAS=jarvis ALIAS_KEY_HEX=<64 hex> \
+TENANT=<tenant> ALIAS=<alias> ALIAS_KEY_HEX=<64 hex> \
 AGENT_CERT=/tmp/agent.pem AGENT_KEY=/tmp/agent.key AGENT_CA=/tmp/ca.pem \
 CONTAINER_ID=claw GENERATION=gen-1 IMAGE_ID=sha256:... RUNTIME_USER=claw RUNTIME_UID=1000 \
 node tests/terminal-pty/fake-pty-agent.mjs
@@ -264,41 +260,53 @@ As a library it exposes `startFakeGateway()` with `setGrants([])` (empties
 `grants.json`), `revokeAll()`, `goDown()`, `restore()`, `audit`, and
 `auditOf(event)`.
 
-### `relay-contract.test.ts` — the circuit
+### `relay-contract.test.ts` — the gateway leg
 
-Two halves:
+The fake gateway and the relay contract against each other, with no relay process in the way:
+single redemption (200 -> 409), forged, expired and cross-sid tickets,
+`attribution_required` for another tenant, hot revocation, emptied `grants.json`, the full audit,
+a downed gateway, idempotent claim recovery, and the fencing of a relay instance whose claim
+another one took over.
 
-1. **Always runs**: the fake gateway and the fake agent verify each other and
-   against the contract. Single redemption (200 -> 409), forged, expired and
-   cross-sid tickets, `attribution_required` for another tenant, hot revocation,
-   emptied `grants.json`, full audit, downed gateway; and on the agent side:
-   HELLO/ACK, PING/PONG, valid open, byte-by-byte echo, `pong-<n>`, Ctrl-C,
-   RESIZE, readonly mode, rejection of another alias's ticket, expired, repeated
-   sid (`session_conflict`) and root target, close with `CLOSED`, abort on
-   unknown tag, and exit codes 78 and 2.
-2. **Only runs with the real relay merged**: valid attach -> `ready` and echo;
-   attach without ticket -> 4401; first frame that is not attach -> 4400; no
-   agent connected -> 4404; hot revocation -> 4403; gateway unreachable past
-   grace -> fail-closed close; mass output -> 4413; strict binary/text
-   separation towards the browser. While `services/terminal-relay` does not
-   exist, those seven cases are skipped and the `terminal-relay availability`
-   test prints the exact reason.
+### `relay-contract-agent.test.ts` — the agent leg
 
-To point it at a relay that is not yet in its canonical path:
+HELLO/ACK, PING/PONG, valid open, byte-by-byte echo, `pong-<n>`, container identity, RESIZE,
+read-only mode, rejection of another alias's ticket, an expired one and a replayed session id
+(`session_conflict`), a `uid: 0` target, close with `CLOSED`, abort on an unknown tag, no ticket
+ever logged, and exit codes 78 and 2.
+
+### `relay-contract-lifecycle.test.ts` — the end-to-end circuit
+
+Browser, real relay, agent double and gateway double, each as a process: valid attach -> `ready`
+and echo; reconnect to the same PTY with scrollback replay and a second socket refused; another
+relay instance's path -> 404; attach without ticket -> 4400; refused ticket -> 4401; first frame
+that is not an attach -> 4400; no agent for the alias -> 4404; revocation in flight -> 4403;
+gateway unreachable past the grace window -> fail-closed; output flood -> 4413. When the suite
+runs as root, relay and agent are dropped to an unprivileged uid with `setpriv`, because each
+refuses euid 0.
+
+`terminal-relay availability` is the test that states whether that circuit can run at all: the
+entry point is `services/terminal-relay/dist/main.js`, else `src/main.ts`, else the override
+below; if none exists the end-to-end describe is skipped and the exact reason is printed.
 
 ```bash
 CAUCE_TERMINAL_RELAY_ENTRY=services/terminal-relay/src/main.ts pnpm vitest run tests/terminal-pty
 ```
 
-Environment contract the suite passes to the relay (if the M4 module uses other
-names, adjust here, this is the only place that mentions them):
-`CAUCE_TERMINAL_RELAY_WS_PORT`, `CAUCE_TERMINAL_RELAY_AGENT_PORT`,
-`CAUCE_TERMINAL_RELAY_AGENT_TLS_CERT`, `CAUCE_TERMINAL_RELAY_AGENT_TLS_KEY`,
-`CAUCE_TERMINAL_RELAY_GATEWAY_URL`, `CAUCE_TERMINAL_RELAY_GATEWAY_TOKEN`,
-`CAUCE_TERMINAL_RELAY_GATEWAY_CA`,
-`CAUCE_TERMINAL_RELAY_OUTPUT_LIMIT_BYTES`,
-`CAUCE_TERMINAL_RELAY_GATEWAY_GRACE_MS`,
-`CAUCE_TERMINAL_RELAY_AUTHZ_INTERVAL_MS`.
+The environment the suite hands the relay is what the relay's own loader requires
+(`services/terminal-relay/src/config.ts`). All but three are published in
+`services/terminal-relay/CONFIGURATION.md`; `CAUCE_TERMINAL_RELAY_INSTANCE_ID`,
+`CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE` and `CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE` are
+required by the loader and documented nowhere in that file:
+`CAUCE_TERMINAL_RELAY_BROWSER_PORT`, `CAUCE_TERMINAL_RELAY_AGENT_PORT`,
+`CAUCE_TERMINAL_RELAY_HEALTH_PORT`, `CAUCE_TERMINAL_RELAY_INSTANCE_ID`,
+`CAUCE_TERMINAL_RELAY_TLS_CERT_FILE`, `CAUCE_TERMINAL_RELAY_TLS_KEY_FILE`,
+`CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE`, `CAUCE_TERMINAL_RELAY_CONSOLE_CN`,
+`CAUCE_TERMINAL_RELAY_AGENT_CA_FILE`, `CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE`,
+`CAUCE_TERMINAL_RELAY_TOKEN_FILE`, `CAUCE_TERMINAL_GATEWAY_URL`,
+`CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE`, `CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE`,
+`CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC`, `CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS`,
+`CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS`, `CAUCE_TERMINAL_CLOSE_SPOOL_FILE`.
 
 ## Contract reminder
 
@@ -389,7 +397,7 @@ expired), `4413` output_flood, `4423` ttl_expired, `1011` internal_error.
 
 - Native Node only, `ws` and `vitest`. No new dependencies.
 - Everything runs locally with self-signed certs in a temp; no production, no
-  database, no bus, no kratos.
+  database, no bus, no agent host.
 - Never print a secret: only variable names, paths, lengths, and truncated hashes.
 - Type-check with `tsc --noEmit -p tsconfig.json`, never `tsc --build` (leaves
   `.js` files in the tree).

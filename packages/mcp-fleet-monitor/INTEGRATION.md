@@ -25,7 +25,7 @@ The MCP Fleet Monitor is a Model Context Protocol (MCP) server that exposes read
 1. **Build the package**:
 
 ```bash
-cd /workspace/cauce-v3
+cd <ruta-del-repo>
 pnpm install
 pnpm -F @cauce/mcp-fleet-monitor build
 ```
@@ -39,7 +39,7 @@ packages/mcp-fleet-monitor/dist/server.js
 
 ```bash
 export DATABASE_URL="postgresql://cauce:password@localhost:5432/cauce"
-export CAUCE_TENANT_ID="Steven"  # Adjust for your tenant
+export CAUCE_TENANT_ID="<tenant>"  # the tenant whose fleet this server may read
 ```
 
 3. **Test the server**:
@@ -48,7 +48,7 @@ export CAUCE_TENANT_ID="Steven"  # Adjust for your tenant
 node packages/mcp-fleet-monitor/dist/server.js
 # Output:
 # [mcp-fleet-monitor] Connected to database
-# [mcp-fleet-monitor] Tenant: Steven
+# [mcp-fleet-monitor] Tenant: <tenant>
 # [mcp-fleet-monitor] Connecting stdio transport...
 # [mcp-fleet-monitor] Server running on stdio
 ```
@@ -69,7 +69,7 @@ Add to your Claude Code MCP servers config (typically `~/.claude/mcp.json` or vi
       "args": ["/absolute/path/to/packages/mcp-fleet-monitor/dist/server.js"],
       "env": {
         "DATABASE_URL": "postgresql://cauce:password@localhost:5432/cauce",
-        "CAUCE_TENANT_ID": "Steven"
+        "CAUCE_TENANT_ID": "<tenant>"
       }
     }
   }
@@ -89,7 +89,7 @@ cat > ~/.claude/mcp.json << 'EOF'
       "args": ["/path/to/packages/mcp-fleet-monitor/dist/server.js"],
       "env": {
         "DATABASE_URL": "postgresql://...",
-        "CAUCE_TENANT_ID": "Steven"
+        "CAUCE_TENANT_ID": "<tenant>"
       }
     }
   }
@@ -109,7 +109,7 @@ Then restart Claude Code for the config to take effect.
    - **Arguments**: `/path/to/packages/mcp-fleet-monitor/dist/server.js`
    - **Environment**:
      - `DATABASE_URL=postgresql://...`
-     - `CAUCE_TENANT_ID=Steven`
+     - `CAUCE_TENANT_ID=<tenant>`
 
 Claude will automatically load the server on connection.
 
@@ -127,8 +127,8 @@ Get current state of all aliases in the fleet.
 **Example:**
 
 ```
-Claude: Can you check the status of jarvis?
-@fleet-monitor fleet_status(alias="jarvis")
+Claude: Can you check the status of <alias>?
+@fleet-monitor fleet_status(alias="<alias>")
 ```
 
 **Response:**
@@ -137,9 +137,9 @@ Claude: Can you check the status of jarvis?
 {
   "data": [
     {
-      "alias": "jarvis",
+      "alias": "<alias>",
       "lease_alive": true,
-      "active_instance_id": "kratos-1234",
+      "active_instance_id": "<instance-id>",
       "lease_expires_at": "2026-07-25T15:00:00Z",
       "epoch": 42,
       "last_activity": "2026-07-25T14:50:00Z",
@@ -162,8 +162,8 @@ List deliveries filtered by alias and/or status.
 **Example:**
 
 ```
-Claude: Show me dead deliveries for atlas.
-@fleet-monitor deliveries(alias="atlas", status="dead", limit=10)
+Claude: Show me dead deliveries for <alias>.
+@fleet-monitor deliveries(alias="<alias>", status="dead", limit=10)
 ```
 
 ### 3. chain
@@ -188,15 +188,15 @@ Claude: Show the delegation chain for trace abc123.
   "data": [
     {
       "hop": 0,
-      "source_alias": "jarvis",
-      "target_alias": "atlas",
+      "source_alias": "<alias-a>",
+      "target_alias": "<alias-b>",
       "status": "delegated",
       "created_at": "2026-07-25T13:00:00Z"
     },
     {
       "hop": 1,
-      "source_alias": "atlas",
-      "target_alias": "argos",
+      "source_alias": "<alias-b>",
+      "target_alias": "<alias-c>",
       "status": "delegated",
       "created_at": "2026-07-25T13:05:00Z"
     }
@@ -227,7 +227,7 @@ Claude: What's causing delivery failures?
       "recent_examples": [
         {
           "delivery_id": "del-123",
-          "alias": "vulcano",
+          "alias": "<alias>",
           "created_at": "2026-07-25T12:00:00Z"
         }
       ]
@@ -252,7 +252,7 @@ Claude: What's the fleet health?
 
 ```json
 {
-  "summary": "Flota: 14 alias, 9 vivos (degraded), 87% entregas OK",
+  "summary": "Flota: 3 alias, 2 vivos (degraded), 87% entregas OK",
   "timestamp": "2026-07-25T14:50:00Z"
 }
 ```
@@ -284,10 +284,10 @@ Claude: I want to debug delivery del-12345. Show me what happened.
 ### Monitoring Specific Agent
 
 ```
-Claude: Monitor atlas in real-time. Show its status and deliveries.
+Claude: Monitor <alias> in real-time. Show its status and deliveries.
 
-1. @fleet-monitor fleet_status(alias="atlas")
-2. @fleet-monitor deliveries(alias="atlas")
+1. @fleet-monitor fleet_status(alias="<alias>")
+2. @fleet-monitor deliveries(alias="<alias>")
 ```
 
 ## Troubleshooting
@@ -316,7 +316,7 @@ psql $DATABASE_URL
 
 **Solution**:
 1. Verify tenant ID is correct: `echo $CAUCE_TENANT_ID`
-2. Check database has data: `psql $DATABASE_URL -c "SELECT COUNT(*) FROM connection_leases WHERE tenant_id = 'Steven';"`
+2. Check database has data: `psql $DATABASE_URL -c "SELECT COUNT(*) FROM connection_leases WHERE tenant_id = '<tenant>';"`
 
 ### MCP client doesn't see the server
 

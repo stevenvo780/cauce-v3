@@ -1,6 +1,6 @@
 # @cauce/telegram-bridge
 
-El canal de entrada/salida más usado del sistema (en producción: ~12.000 mensajes entrantes por Telegram frente a 1 real de la consola).
+Canal de entrada/salida por Telegram: ingress por polling del Bot API y egress de las respuestas, ambos cercados.
 
 **Entrada:** polling del Bot API con lease cercado por bot (`channel_bridge_leases`: owner + epoch; un poller viejo queda `fenced`) y cursor durable — nunca dos pollers vivos ni updates repetidos.
 

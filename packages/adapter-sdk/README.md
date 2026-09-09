@@ -8,7 +8,7 @@ Conecta un agente CLI real a Cauce: consumidor durable + ejecución sobre la ses
 
 **Ejecución:** entregar significa **pegar el texto en la sesión tmux viva** del harness (`paste-runner.ts`, `tmux.ts`: cuarentena de panel, barrera de input) y esperar el turno del modelo. Es la parte cara e inherentemente frágil del diseño: el error típico de producción es del turno del harness (timeouts de ACK, deadline excedido), no del bus.
 
-**Ejecutables (`src/bin/`):** `openclaw`, `claude`, `codex` — los que usa la flota real. `hermes`, `opencode` y `fake` no tienen ningún usuario en producción (candidatos a retiro con `git rm` — git es el archivo; `fake` lo usan los tests).
+**Ejecutables (`src/bin/`):** uno por harness soportado — `openclaw`, `claude`, `codex`, `hermes`, `opencode` — más `fake` y `fake-harness`, que sólo usan los tests. Un ejecutable que ningún alias arranca es candidato a retiro con `git rm`: git es el archivo.
 
 **Despliegue:** la versión activa de cada adaptador se acredita contra la flota viva; no se infiere desde este README.
 

@@ -1,4 +1,4 @@
-# Protocolo de trabajo en `dev` — 4 instancias, cero colisiones
+# Protocolo de trabajo en `dev` — varias instancias, cero colisiones
 
 Lo lee TODA instancia antes de tocar nada. Qué falta y por qué: `docs/roadmap.md`. Procedimientos operativos: `docs/operacion.md` y `ops/runbooks/*.md` (incluye `ops/runbooks/ventana-primer-despliegue.md` para la próxima ventana de despliegue).
 
@@ -9,29 +9,31 @@ Lo lee TODA instancia antes de tocar nada. Qué falta y por qué: `docs/roadmap.
 
 ## Convivir en `dev` sin pisarse (esto sustituye a las ramas)
 
-Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3` en `dev`. Las reglas que evitan el choque:
+Todas las instancias comparten un único checkout del repo en `dev`. Las reglas que evitan el choque:
 
 1. **Propiedad por sector** (tabla abajo) — es LA protección principal. Prohibido tocar un fichero fuera de tu sector; si tu tarea lo exige, se pide al integrador — no se toca "de paso".
 2. **`git add` solo por rutas propias.** PROHIBIDO `git add -A`, `git add .` y `git commit -a`: barren el trabajo a medias de otra instancia. Se añade fichero a fichero (o por directorio propio).
 3. **Commit pequeño e inmediato** tras el gate: nada de acumular horas de cambios sin commitear en el árbol compartido.
 4. **Gate ANTES de cada commit** que toque código: `dev` nunca queda en rojo. Commits que solo tocan `.md` no requieren gate completo.
-5. Si `git commit` falla por lock o el árbol cambió bajo tus pies: espera y reintenta; nunca hagas `reset`/`checkout` sobre ficheros que no son tuyos. **PROHIBIDO `git clean`, `git reset --hard` y `git stash` en el checkout compartido** — un clean ya destruyó dos veces ficheros recién creados de otra instancia, y un reset ajeno reescribió la historia local.
-6. **Commitea SIEMPRE con pathspec: `git commit <tus rutas> -m "..."`** — así el commit incluye SOLO tus rutas aunque haya cosas ajenas staged en el índice compartido. `git commit -m` a secas se lleva TODO el índice (ya barrió trabajo ajeno tres veces, una de ellas sin gate). `git diff --cached --stat` antes, para saber qué hay.
+5. Si `git commit` falla por lock o el árbol cambió bajo tus pies: espera y reintenta; nunca hagas `reset`/`checkout` sobre ficheros que no son tuyos. **PROHIBIDO `git clean`, `git reset --hard` y `git stash` en el checkout compartido** — un clean destruye ficheros recién creados por otra instancia y un reset ajeno reescribe la historia local.
+6. **Commitea SIEMPRE con pathspec: `git commit <tus rutas> -m "..."`** — así el commit incluye SOLO tus rutas aunque haya cosas ajenas staged en el índice compartido. `git commit -m` a secas se lleva TODO el índice, incluido trabajo ajeno a medias o sin gate. `git diff --cached --stat` antes, para saber qué hay.
 7. **Nunca dejes nada staged sin commitear al terminar tu turno** — un stage huérfano es una mina para el siguiente commit de cualquiera.
 
 | Sector | Dueño | Revisor |
 |---|---|---|
-| `console/**` | Gemini | Claude |
-| `services/terminal-relay/**`, `services/telegram-bridge/**` | Gemini | Claude |
-| `packages/store/src/**`, `services/gateway/src/**`, maquinaria de release de `ops/scripts/` + sus tests | Codex | Claude |
-| Higiene de disco, `docs/`, residuos, verificaciones mecánicas | OpenCode/MiniMax | Claude |
-| `ops/pty-agent/**` (agente+launcher+tests), `tests/**` (estructura y suites generales) | Gemini | Claude |
-| `packages/protocol/**`, `packages/mcp-fleet-monitor/**`, `ops/scripts/**` (utilidades vivas), `ops/tests/**`, `ops/harness/**` | Codex | Claude |
-| `packages/adapter-sdk/**`, `ops/schemas/**` | Codex | Claude |
-| `services/dispatcher/**`, `ops/runbooks/**` | Gemini | Claude |
-| `scripts/**` (tooling: calidad, grafo, test-all), `ops/{systemd,generated,manifests,observability,config,guardias,container-runtime,openclaw-gateway,cli,instances,patches,private,telegram-runtime}/**` | Claude (+dueño donde toque flota) | dueño |
-| `ordenes/`, `ordenes-locales/`, documentación (README/CLAUDE.md/AGENTS.md), integración de merges, despliegue/flota/BD | Claude + dueño | dueño |
+| `console/**` | `<instancia>` | `<otra-instancia>` |
+| `services/terminal-relay/**`, `services/telegram-bridge/**` | `<instancia>` | `<otra-instancia>` |
+| `packages/store/src/**`, `services/gateway/src/**`, maquinaria de release de `ops/scripts/` + sus tests | `<instancia>` | `<otra-instancia>` |
+| Higiene de disco, `docs/`, residuos, verificaciones mecánicas | `<instancia>` | `<otra-instancia>` |
+| `ops/pty-agent/**` (agente+launcher+tests), `tests/**` (estructura y suites generales) | `<instancia>` | `<otra-instancia>` |
+| `packages/protocol/**`, `packages/mcp-fleet-monitor/**`, `ops/scripts/**` (utilidades vivas), `ops/tests/**`, `ops/harness/**` | `<instancia>` | `<otra-instancia>` |
+| `packages/adapter-sdk/**`, `ops/schemas/**` | `<instancia>` | `<otra-instancia>` |
+| `services/dispatcher/**`, `ops/runbooks/**` | `<instancia>` | `<otra-instancia>` |
+| `scripts/**` (tooling: calidad, grafo, test-all), `ops/{systemd,generated,manifests,observability,config,guardias,container-runtime,openclaw-gateway,cli,instances,patches,private,telegram-runtime}/**` | `<instancia>` (+dueño donde toque flota) | dueño |
+| `ordenes/`, `ordenes-locales/`, documentación (README/CLAUDE.md/AGENTS.md), integración de merges, despliegue/flota/BD | `<instancia>` + dueño | dueño |
 | `packages/store/migrations/**`, `deploy/**`, `/etc/cauce-v3`, `/opt`, contenedores, systemd, base de datos | NADIE sin el dueño presente | — |
+
+El reparto concreto de sectores entre instancias se fija por ronda y no vive en esta tabla; lo que no cambia es la forma: cada sector tiene UN dueño de escritura por ronda y un revisor que no es su dueño, y una instancia puede sostener varios sectores.
 
 ## Reglas de todo commit (sin excepción)
 
@@ -43,18 +45,18 @@ Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3` en 
 
 ## Subagentes: sí, con disciplina
 
-Todos los harness de la flota los soportan — **úsalos** para agilizar lo paralelizable (barridos, renombres masivos, verificaciones, extracciones módulo a módulo). Reglas, aprendidas de la quema de agosto:
+Todos los harness de la flota los soportan — **úsalos** para agilizar lo paralelizable (barridos, renombres masivos, verificaciones, extracciones módulo a módulo). Reglas:
 
 1. **Ficheros disjuntos por subagente** — un fichero tiene UN dueño por ronda. Reparte por fichero/directorio ANTES de lanzar, por escrito en el prompt de cada uno.
-2. **Tope de concurrencia por instancia**: MiniMax, Gemini y Codex: 4 (MiniMax con 6 da rate limit; decirle el tope EXPLÍCITO en cada orden o no usa ninguno). Profundidad 1 (un subagente no lanza subagentes).
+2. **Tope de concurrencia por instancia**: 4 subagentes; por encima de eso los harness dan rate limit. El tope va EXPLÍCITO en cada orden o la instancia no usa ninguno. Profundidad 1 (un subagente no lanza subagentes).
 3. **Solo el proceso principal commitea.** Los subagentes editan y reportan; el padre revisa, pasa el gate y hace el commit. Nunca dos procesos commiteando a la vez.
 4. Los subagentes heredan TODO este protocolo: sector de su instancia, NO-TOCAR, sin ramas, sin `add -A`, sin comentarios narrativos.
-5. Si un subagente reporta "hecho" sin evidencia (salida de comando, diff), su trabajo se verifica antes de commitear — la auditoría midió subagentes declarando "1091 tests pasan" cuando fallaban 53 ficheros.
+5. Si un subagente reporta "hecho" sin evidencia (salida de comando, diff), su trabajo se verifica antes de commitear.
 
 ## Modo de sesión por instancia
 
-- **Gemini y MiniMax: sesión NUEVA por cada orden** (el dueño hace `new`). Las órdenes son autocontenidas: arranque = pull + protocolo + la orden; verificar con comandos qué está hecho, nunca confiar en memoria.
-- **Codex: sesión larga persistente** (re-leer contexto le cuesta mucho); su orden se mantiene estable hasta cerrarla.
+- **Sesión NUEVA por cada orden** (el dueño hace `new`) para las instancias que no conservan contexto útil entre órdenes: la orden es autocontenida — arranque = pull + protocolo + la orden — y qué está hecho se verifica con comandos, nunca confiando en memoria.
+- **Sesión larga persistente** para las instancias a las que re-leer el contexto les cuesta mucho: su orden se mantiene estable hasta cerrarla.
 
 ## Al terminar cada tarea
 

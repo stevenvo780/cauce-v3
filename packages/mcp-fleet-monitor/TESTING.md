@@ -14,7 +14,7 @@ pnpm -F @cauce/mcp-fleet-monitor build
 
 ```bash
 export DATABASE_URL="postgresql://cauce:password@localhost:5432/cauce"
-export CAUCE_TENANT_ID="Steven"
+export CAUCE_TENANT_ID="<tenant>"
 ```
 
 ## Running the Server
@@ -29,7 +29,7 @@ The server will start and output logs to stderr:
 
 ```
 [mcp-fleet-monitor] Connected to database
-[mcp-fleet-monitor] Tenant: Steven
+[mcp-fleet-monitor] Tenant: <tenant>
 [mcp-fleet-monitor] Connecting stdio transport...
 [mcp-fleet-monitor] Server running on stdio
 ```
@@ -64,7 +64,7 @@ Add to your MCP config (e.g., `~/.claude/mcp.json`):
       "args": ["/path/to/packages/mcp-fleet-monitor/dist/server.js"],
       "env": {
         "DATABASE_URL": "postgresql://...",
-        "CAUCE_TENANT_ID": "Steven"
+        "CAUCE_TENANT_ID": "<tenant>"
       }
     }
   }
@@ -92,7 +92,7 @@ fleet_status()
 Filter by one alias:
 
 ```
-fleet_status(alias="jarvis")
+fleet_status(alias="<alias>")
 ```
 
 **Expected response:**
@@ -101,9 +101,9 @@ fleet_status(alias="jarvis")
 {
   "data": [
     {
-      "alias": "jarvis",
+      "alias": "<alias>",
       "lease_alive": true,
-      "active_instance_id": "kratos-12345",
+      "active_instance_id": "<instance-id>",
       "lease_expires_at": "2026-07-25T14:30:00.000Z",
       "epoch": 42,
       "last_activity": "2026-07-25T14:20:00.000Z",
@@ -136,7 +136,7 @@ deliveries(status="done", limit=10)
     {
       "id": "del-uuid-123",
       "message_id": "msg-uuid-456",
-      "recipient_alias": "atlas",
+      "recipient_alias": "<alias>",
       "status": "done",
       "attempt": 1,
       "max_attempts": 3,
@@ -163,10 +163,10 @@ chain(trace_id="some-trace-id")
   "data": [
     {
       "hop": 0,
-      "source_alias": "jarvis",
-      "source_tenant": "Steven",
-      "target_alias": "atlas",
-      "target_tenant": "Steven",
+      "source_alias": "<alias-a>",
+      "source_tenant": "<tenant>",
+      "target_alias": "<alias-b>",
+      "target_tenant": "<tenant>",
       "status": "delegated",
       "created_at": "2026-07-25T13:00:00.000Z"
     }
@@ -193,7 +193,7 @@ dead_letters()
       "recent_examples": [
         {
           "delivery_id": "del-uuid-123",
-          "alias": "vulcano",
+          "alias": "<alias>",
           "created_at": "2026-07-25T12:00:00.000Z"
         }
       ]
@@ -213,7 +213,7 @@ health()
 
 ```json
 {
-  "summary": "Flota: 14 alias, 9 vivos (degraded), 87% entregas OK",
+  "summary": "Flota: 3 alias, 2 vivos (degraded), 87% entregas OK",
   "timestamp": "2026-07-25T14:03:00.000Z"
 }
 ```
