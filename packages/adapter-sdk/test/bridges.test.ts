@@ -178,7 +178,7 @@ test("the OpenClaw bridge abandons a run that exceeds its own deadline with a fa
   assert.equal(result.status, 1, "an abandoned run is a failed turn, never an ambiguous one");
   const envelope = JSON.parse(result.stdout.trim().split(/\r?\n/u).at(-1) ?? "{}") as { result?: { ok?: boolean; error?: string }; session_id?: string };
   assert.equal(envelope.result?.ok, false);
-  assert.match(envelope.result?.error ?? "", /exceeded 300 ms/u);
+  assert.match(envelope.result.error ?? "", /exceeded 300 ms/u);
   assert.equal(envelope.session_id, "session-deadline");
   assert.match(result.stderr, /<<cauce:harness-started>>/u, "the witness precedes the abandonment: the turn did start");
 });

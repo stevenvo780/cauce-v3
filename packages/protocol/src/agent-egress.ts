@@ -4,17 +4,7 @@ import { DeliveryIdSchema } from './schemas/core.js';
 /** Upper bound of delivery ids one agent may ask about in a single call. */
 export const AGENT_EGRESS_MAX_DELIVERY_IDS = 20;
 
-/**
- * Delivery state of one notification as the receipt source reports it.
- * - `sent`: every chunk of the produced outbox has a provider receipt.
- * - `partial`: some chunks have a receipt, others do not yet.
- * - `pending`: the outbox exists but no chunk has a receipt yet.
- * - `ambiguous`: the bridge could not tell whether the provider accepted a chunk.
- * - `dead`: the outbox or a chunk was given up.
- * - `denied`: the notification was refused before any outbox existed (`denial_code`).
- * - `unconfirmed`: the outbox claims sent but no per-chunk receipt exists.
- * - `unknown`: allowed but nothing was produced; nothing to confirm.
- */
+/** Receipt state. Only `sent` (every chunk has a provider receipt) confirms reception. */
 export type AgentEgressState =
   | 'sent' | 'partial' | 'pending' | 'ambiguous' | 'dead' | 'denied' | 'unconfirmed' | 'unknown';
 
@@ -38,11 +28,8 @@ export interface AgentEgressItem {
   readonly state: AgentEgressState;
   /** Chunks of the produced outbox: `expected` is null until the bridge declared it. */
   readonly chunks: { readonly expected: number | null; readonly sent: number };
-  /** Provider ids per chunk, in chunk order; present only when at least one chunk was sent. */
   readonly provider_message_ids?: readonly string[];
-  /** Receipt of the first chunk; present only when every chunk was sent. */
   readonly provider_message_id?: string;
-  /** Last chunk receipt time; present only when at least one chunk was sent. */
   readonly sent_at?: string;
   readonly outbox_id: string | null;
   readonly effect_ids: readonly string[];
@@ -56,10 +43,7 @@ export interface AgentEgressResponse {
 
 const DeliveryIdList = z.array(DeliveryIdSchema).min(1).max(AGENT_EGRESS_MAX_DELIVERY_IDS);
 
-/**
- * Parses `?delivery_ids=<uuid>,<uuid>` (repeatable). Rejects any authority field so scope can only
- * come from the authenticated identity. Returns unique ids in request order.
- */
+/** Parses `?delivery_ids=` (repeatable), rejecting authority fields; scope comes from identity. */
 export function parseAgentEgressQuery(query: unknown): readonly string[] {
   if (query === null || typeof query !== 'object' || Array.isArray(query)) {
     throw new AgentEgressQueryError('query must be an object');

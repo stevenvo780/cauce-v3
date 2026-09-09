@@ -66,18 +66,18 @@ test("convergencia: el recibo real correlaciona por notificacion/entrega/intento
   assert.equal(receipts.length, 1);
   const receipt = receipts[0];
   assert.equal(receipt?.notification_id, NOTIFICATION);
-  assert.equal(receipt?.delivery_id, INCIDENT);
-  assert.equal(receipt?.attempt, 1);
-  assert.equal(receipt?.notify_index, 0);
-  assert.equal(receipt?.destination, "steven_dm");
-  assert.equal(receipt?.conversation_id, "6979524541");
-  assert.equal(receipt?.status, "sent");
+  assert.equal(receipt.delivery_id, INCIDENT);
+  assert.equal(receipt.attempt, 1);
+  assert.equal(receipt.notify_index, 0);
+  assert.equal(receipt.destination, "steven_dm");
+  assert.equal(receipt.conversation_id, "6979524541");
+  assert.equal(receipt.status, "sent");
   const selected = pertinentNotices([incidentRecord()], scope, receipts, now);
   assert.equal(selected.selection, "recent");
   assert.equal(selected.records.length, 1);
   assert.equal(selected.records[0]?.body, BODY);
-  assert.equal(selected.records[0]?.kind, "decision_request");
-  assert.deepEqual(selected.records[0]?.provider_message_ids, ["2703"]);
+  assert.equal(selected.records[0].kind, "decision_request");
+  assert.deepEqual(selected.records[0].provider_message_ids, ["2703"]);
 });
 
 test("convergencia: aislamiento por tenant, alias y conversacion", async () => {

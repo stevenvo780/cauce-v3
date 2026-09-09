@@ -507,10 +507,8 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
   }
 
   /**
-   * Denied notifications have no produced message and no outbox row, so the
-   * visibility filter of listOriginRelays (which joins messages through the
-   * outbox) would discard exactly the rows an operator needs to see. Visibility
-   * is derived from the emitting (tenant, alias) against memberships instead.
+   * Denied notifications have no outbox row, so listOriginRelays' visibility filter would discard
+   * exactly the rows an operator needs. Visibility comes from the emitting (tenant, alias).
    */
   async listNotifications(actorTenant: Tenant, actorAlias: string, limit = 200): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'read');
@@ -537,11 +535,7 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
     );
     return { items: result.rows };
   }
-  /**
-   * Receipts of the notifications one agent emitted from the given deliveries. Own alias only:
-   * room neighbours are never a context source here. Bounded by the caller's id list and the
-   * partial index on (source_delivery_id, source_attempt, notify_index). Read-only.
-   */
+  /** Receipts this agent emitted, own alias only, bounded by the caller's id list. Read-only. */
   async listAgentEgress(
     actorTenant: Tenant, actorAlias: string, deliveryIds: readonly string[],
   ): Promise<AgentEgressResponse> {
