@@ -314,7 +314,7 @@ Decisión de diseño, alternativas descartadas y esquema durable: [ADR-007](adr/
 
 ## Inyección de contexto
 
-- **Contexto nativo de perfil** (`context/native-profile-context.ts`): inyecta `CLAUDE.md`/`AGENTS.md`/etc. como archivos de contexto nativos del harness (actualmente OFF — de los seis puntos de [roadmap.md](roadmap.md) §1 quedan dos sin verificar).
+- **Contexto nativo de perfil** (`context/native-profile-context.ts`): inyecta `CLAUDE.md`/`AGENTS.md`/etc. como archivos de contexto nativos del harness. Apagado por defecto detrás de `CAUCE_NATIVE_PROFILE_CONTEXT`; qué falta para encenderlo, en [roadmap.md](roadmap.md) §1.
 - **Contexto fijo** (`harnesses/contexto-fijo.ts`): contexto estático por tipo de harness.
 
 ### Siembra no fatal
@@ -323,7 +323,7 @@ Al recibir `hello_ack`, `sdk/client.ts` siembra el perfil del agente en los fich
 
 Antes lanzaba un `PROFILE_SEED_FAILED` reintentable, que cerraba la conexión antes de reclamar una sola entrega. El problema es que hay fallos de siembra que el adaptador **no puede resolver por sí mismo**: el caso común es una revisión de perfil subida desde la consola que todavía no se aplicó al disco. La guarda de `siembra-del-perfil.ts` se niega entonces a escribir («sólo el publicador durable puede cambiarla»), y el adaptador reintentaba contra un desajuste que sólo un operador humano podía deshacer.
 
-Medido en producción el 01-09-2026 sobre el alias `zeus`: **1.074 reconexiones en 8 h 52 min**, todas muriendo en el mismo punto, con cada mensaje dirigido a ese alias caducando en la cola. El dueño no se enteró porque el bus le acusaba recibo igualmente.
+El coste de esa decisión anterior, medido en producción, era un bucle silencioso: **1.074 reconexiones en 8 h 52 min**, todas muriendo en el mismo punto, mientras cada mensaje dirigido a ese alias caducaba en la cola. Nadie se enteraba, porque el bus seguía acusando recibo igual.
 
 El intercambio elegido: correr con un perfil desactualizado es un problema de *contenido*; quedarse sordo **y callado** es peor. Por eso el fallo ahora es ruidoso en tres sitios —línea de log, `onError('PROFILE_SEED_FAILED')` para las superficies del operador, y un evento `connection_degraded`— y el alias sigue consumiendo con el perfil anterior.
 

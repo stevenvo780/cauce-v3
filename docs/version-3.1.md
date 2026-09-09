@@ -1,11 +1,10 @@
 # Cauce V3 — versión 3.1
 
-Qué entrega v3.1, cómo se desplegó y qué queda en manos del dueño. Las decisiones
-que la gobiernan están en `docs/v3.1-programa.md` (D1–D12); este documento es la cara de salida:
-lo que cambia para quien opera, despliega o revisa. El detalle de cada cambio vive en los commits
-de `dev` posteriores a la etiqueta `v3.1-snap-base` y en los ADR 007, 008 y 009. Lo que queda
-después del cierre —del dueño, recortado por el plan, notas de las reseñas y no probado— está en
-`docs/v3.1-pendientes.md`.
+Qué entrega v3.1, cómo se despliega y qué queda fuera de este árbol. Las decisiones que la
+gobiernan están en `docs/v3.1-programa.md` (D1–D10); este documento es la cara de salida: lo que
+cambia para quien opera, despliega o revisa. El detalle de cada cambio vive en los commits de `dev`
+y en los ADR 007, 008 y 009. Lo que queda después del cierre —decisiones fuera del árbol, recortes
+del plan, notas de las reseñas y lo no probado— está en `docs/v3.1-pendientes.md`.
 
 ## Qué cambia, por capacidad
 
@@ -37,7 +36,7 @@ deshabilita guardar y recargar mientras dure, y un panel «Historial y diff» so
 perfil y de documentos (paginados por cursor, `next_cursor`) con restauración del snapshot
 completo por el PUT canónico. Una recarga rechazada por entrega en vuelo nombra hasta veinte
 entregas (id, estado, fechas; nunca cuerpos). El motor de contexto nativo sigue apagado hasta que
-el dueño lo encienda alias a alias.
+se encienda alias a alias.
 
 **Control real de TUI y PTY desde la consola.** Modo `harness_rw` (ADR 009): tomar y devolver el
 teclado de la TUI compartida con motivo obligatorio, operador atribuido y sin comodín en
@@ -72,7 +71,7 @@ versión posterior aplicada: las capas por migración son lo que permite bajar u
 
 | Variable | Servicio | Por defecto | Para qué |
 |---|---|---|---|
-| `CAUCE_TERMINAL_RW_ENABLED` | gateway | `0` | interruptor del modo escribible; apagado hasta que el dueño lo encienda |
+| `CAUCE_TERMINAL_RW_ENABLED` | gateway | `0` | interruptor del modo escribible; apagado hasta que se encienda a propósito |
 | `CAUCE_TERMINAL_CONTROL_HOLD_SECONDS` | gateway | `900` | duración del arriendo de control; nunca por encima del techo de sesión |
 | `CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS` | gateway | `3600` (tope `14400`) | techo absoluto de una sesión prorrogada; no puede bajar del TTL de sesión |
 | `CAUCE_TERMINAL_RECORDING_DIR` | terminal-relay | sin valor = sin grabación | dónde se escriben las grabaciones (0700/0600) |
@@ -83,12 +82,12 @@ versión posterior aplicada: las capas por migración son lo que permite bajar u
 | `CAUCE_AGENT_WORKSPACE` | adaptadores | workspace declarado del alias | raíz de adjuntos y del modo aparte del CLI |
 
 La grabación de una TUI contiene lo que el agente tenía en pantalla: material sensible. No hay
-poda: cuánto se guarda y quién lo borra es decisión del dueño (abajo).
+poda: cuánto se guarda y quién lo borra es una decisión de operación todavía abierta (abajo).
 
-## Cómo se desplegó (dueño)
+## Cómo se despliega
 
-La secuencia específica de v3.1 fue ésta; `docs/operacion.md §1` conserva el procedimiento vigente
-para despliegues posteriores:
+El procedimiento vigente para cualquier despliegue está en `docs/operacion.md §1`. Lo que v3.1 añade
+sobre él, y sólo eso:
 
 1. Fusionar `dev` en `main`; `package.json` raíz en `3.1.0`.
 2. Construir las imágenes de runtime y consola y aplicar `039`, `040` y `041` en ese orden (el
@@ -97,61 +96,28 @@ para despliegues posteriores:
    perfil ya no registra la expectativa y el oneshot de arranque
    (`ops/scripts/refresh-profile-expectation.sh`) hace ahora `POST …/context/reload`: los dos
    cambios tienen que estar en línea a la vez o el oneshot de cada contenedor no refresca nada.
-4. Copiar los ejecutables de ops que cambian (`ops/guardias/cauce-contexto-colisiones.py` a
-   `kratos:~/.local/bin/`, el oneshot a su ruta actual) y regenerar/instalar las unidades desde
-   `ops/generated/` (el digest `OPERATIONS.sha256` ya corresponde a este árbol).
+4. Copiar a cada host de la flota los ejecutables de ops que cambian
+   (`ops/guardias/cauce-contexto-colisiones.py` y el oneshot, cada uno a su ruta de instalación) y
+   regenerar e instalar las unidades desde `ops/generated/`. El digest
+   `ops/generated/container-systemd/rootless/OPERATIONS.sha256` es el contraste de que lo copiado
+   sale de este árbol, pero sólo vale si `ops/scripts/validate.sh` lo da por vigente: ese gate
+   regenera el digest y exige identidad byte a byte con el commiteado, y avisa
+   `checked-in container systemd output is stale` cuando no coinciden. Con el gate en rojo hay que
+   regenerar y commitear antes de usarlo como contraste.
 5. Publicar el paquete del pty-agent **después** del relay: el relay de v3.1 acepta los avisos
    `0x26`/`0x27`; un relay anterior tira la pierna multiplexada entera al primer tag desconocido.
 6. Dejar `CAUCE_TERMINAL_RW_ENABLED=0` y `CAUCE_NATIVE_PROFILE_CONTEXT` apagado; encender el
    modo escribible alias a alias en `grants.json` (sin `"*"`) sólo tras fijar
-   `CAUCE_TERMINAL_RECORDING_DIR` y la retención de grabaciones. En la comprobación posterior
-   contra `fa4f07c5`, el gateway tiene el interruptor escribible en `1` y el terminal-relay
-   tiene directorio de grabaciones configurado. Esto no acredita concesiones por alias ni
-   retención: esa decisión sigue abierta abajo. No se cambiaron permisos ni grabaciones
-   durante esa comprobación.
+   `CAUCE_TERMINAL_RECORDING_DIR` y la retención de grabaciones. Una instalación puede acabar con el
+   interruptor en `1` y un directorio de grabaciones configurado. Esto no acredita concesiones por alias ni
+   retención: esa decisión sigue abierta abajo.
 7. Escribir la fila de `deploy/HISTORIAL.md`.
 
-`deploy/HISTORIAL.md` registra el despliegue de `7f25fd6f` con smoke verde y dos correcciones de
-esa misma tarde: `d2ef50ff`, con smoke verde, y `0b5bf89e`, con smoke ROJO parcial («bus: 0
-entregas done» en una ventana sin tráfico; el resto OK, sin rollback). Después vino
-`00358416`: la ventana que puso en línea el árbol cerrado de v3.1 —los refactores de ops, consola,
-runtime, store, gateway y adapter-sdk, la siega de huérfanos PTY por pidfd, la reconexión ante
-sockets sordos, los comandos de operador en DM, el acotado de la exención CSRF y Prometheus en
-`[backend, edge]`—. `caf35316` corrigió el bridge de Telegram para reunir en un solo mensaje
-las piezas en que el cliente parte un texto de más de 4096 caracteres (antes el agente leía sólo
-la primera) y las pruebas del rollout PTY afirman la colocación real de kant. Después llegó
-`fa4f07c5`, cuyo smoke original salió verde, pero descartaba los eventos stderr del relay:
-ese subcontrol no acreditó ausencia de bucles. La comprobación corregida posterior midió cero
-reconexiones en dos minutos. Conserva las correcciones de clasificación y del primer ACK
-de `6786adca`, e impide que la siembra Codex reescriba un bloque gestionado al reconectar.
-Conserva la recarga efectiva de Prometheus/OTel y el desglose
-de incidentes incorporados por `a9e08359`; la ventana previa `9b5e2172` incorporó correcciones
-adicionales de consola, Telegram y contexto. La identidad reservada de la sonda ya está emitida
-y el canary final de Atlas pasó 20/20 verificaciones durante 609 segundos. El SDK final
-`bus-v3-20260905-sdk-final-fa4f07c5` se activó por separado en 15/15 alias: censo físico con un
-consumidor V3 por alias, ninguno V2 y dos ventanas de heartbeat progresado. No se eliminaron
-historiales; una entrega iniciada de Zeus y otra de Heráclito quedaron ambiguas durante
-el corte autorizado, sin reenvíos emitidos por el rollout. Zeus presentó después una reapertura
-inconsistente de la misma fila, que el WAL rechaza. Se restauró su estado terminal acreditado por
-el ACK, sin repetir efectos ni cerrar como exitoso el trabajo ambiguo. La consola de Zeus y los
-perfiles se verifican por separado: despliegue no equivale a recuperar esas tareas ni a reconciliar los perfiles
-pendientes. `8acfacfc` añadió reconciliación de perfiles atribuida y auditada,
-CAS de contenido y bloqueo transaccional sin interrumpir el heartbeat. Su smoke reforzado pasó:
-nueve servicios sanos, quince arriendos V3 frescos y dos entregas con ACK aplicado posteriores
-al arranque. Las cinco entregas previas conservaron su fence, con dos terminadas y tres todavía
-en curso. Su matriz completa pasó 11/11 suites y 4603 pruebas unitarias. La última fila,
-`f96382d7`, impide reclamar entregas con evidencia terminal durable: smoke verde, nueve servicios
-sanos, quince arriendos frescos y tres fences previos conservados. Se acreditaron cuatro
-entregas `started` con ACK reciente, no un resultado `done` posterior al arranque. Pasaron typecheck,
-lint, 4603 pruebas unitarias, 865 de almacenamiento, 1541 de servicios, 143 de gateway,
-28 de integración y 12 E2E. Argos recibió una reparación exacta de estado terminal sin replay;
-la recuperación durable de TUI sigue pendiente porque los lanzadores Claude aún usan `--continue`.
-En Zeus se reanudó un binding conocido, no se demostró recuperar la conversación humana original.
-Aplicar los perfiles
-divergentes desde Contexto sigue siendo una acción atribuida de operador, no un efecto automático
-del despliegue. Ese registro no sustituye una nueva validación
-del estado vivo desde este checkout, y lo que queda por comprobar por efecto después de esa fila
-está en `docs/v3.1-pendientes.md` §1, «Deuda de despliegue».
+`deploy/deploy.sh` exige árbol limpio y `HEAD` igual a `origin/main`, y escribe siempre «smoke OK»:
+si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
+registra la fila, y ese commit es también el que actualiza estos documentos. La última fila
+registrada es la de `f96382d7`; lo que queda por comprobar por efecto después de una ventana de
+despliegue está en `docs/v3.1-pendientes.md` §1, «Deuda de despliegue».
 
 ## Cómo se verifica
 
@@ -164,13 +130,13 @@ bash ops/scripts/validate.sh && node ops/tests/run-all.mjs
 pnpm qa:layout                                    # maquetado 1080p
 ```
 
-## Preguntas abiertas para el dueño
+## Preguntas abiertas
 
 - **Retención de grabaciones de TUI.** Se escriben 0600 con tope por sesión y nadie las borra.
   ¿Cuánto tiempo, en qué volumen, quién poda?
-- **Inventario.** `ws-isa-workspace` no está en `ops/flota.json`, así que la guardia de
-  colisiones no ve el caso documentado de dos contenedores montando el mismo `.claude`. Añadir el
-  contenedor al inventario es la única forma de que lo vea (D8: sin tablas a mano).
+- **Inventario.** Un contenedor que no esté en `ops/flota.json` es invisible para la guardia de
+  colisiones: no puede ver dos contenedores que monten el mismo directorio de configuración del
+  arnés. Añadirlo al inventario es la única forma de que lo vea (D8: sin tablas a mano).
 - **Métrica de colisiones.** `cauce_context_path_collisions` se escribe en
   `~/.local/state/cauce-v3/contexto-colisiones.prom` y hoy nadie lo raspa; la señal es el código
   de salida y el informe. ¿Se cablea un raspado de ficheros o basta la guardia?
@@ -184,12 +150,12 @@ pnpm qa:layout                                    # maquetado 1080p
   baste?
 - **`ultimate-terminal`.** Apagar el worker legado contenedor a contenedor y renombrar el permiso
   con ventana de convivencia son decisiones fuera del árbol.
-- **Raspado del relay.** `6cecfb33` añadió Prometheus a `[backend, edge]` para que el job
-  `cauce-relay` resuelva `terminal-relay`; ese commit ya está en línea con la fila `00358416` y lo
-  que falta es verificar el raspado por efecto (el job `cauce-relay` en `up` dentro de `/targets`).
-  Nada en el árbol fija esa pertenencia —no hay test sobre `deploy/compose.yaml`—, así que
-  revertirla no pondría rojo nada y el raspado volvería a faltar en silencio. El cambio deja además a los
-  tres frontales de `edge` con acceso de lectura a la API de consulta de Prometheus.
+- **Raspado del relay.** Prometheus está en las redes `[backend, edge]` para que el job
+  `cauce-relay` resuelva `terminal-relay`; lo que falta es verificar el raspado por efecto (el job
+  `cauce-relay` en `up` dentro de `/targets`). Nada en el árbol fija esa pertenencia —no hay test
+  sobre `deploy/compose.yaml`—, así que revertirla no pondría rojo nada y el raspado volvería a
+  faltar en silencio. Estar en `edge` deja además a los frontales de esa red (gateway,
+  terminal-relay y consola) con acceso de lectura a la API de consulta de Prometheus.
 - **Auditoría `secret.granted` sin tope** y `pruneSettledHandoffs` sólo en `POST /v3/secrets`:
   anotado en las reseñas del plano de secretos; no cambia el comportamiento pero conviene decidir
   la poda.

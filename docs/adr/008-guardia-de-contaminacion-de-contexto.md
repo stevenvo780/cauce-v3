@@ -8,17 +8,16 @@ hace legible el histórico. Ningún arnés se reinicia por esto, ni antes ni des
 ## Contexto
 
 Cauce escribe los ficheros de gobierno de un alias —`CLAUDE.md`, `AGENTS.md`, los del workspace de
-openclaw— dentro de su contenedor. Toda la seguridad de esa escritura descansa en una suposición que
-la propia flota **ya viola en dos sitios**, documentados en el §4 de
-`docs/directiva-ficheros-del-agente.md`:
+openclaw— dentro de su contenedor, y da por hecho que esos ficheros son de ese alias y de nadie más.
+Un despliegue puede violar esa suposición de dos formas, ambas descritas en el §4 de
+`../directiva-ficheros-del-agente.md`:
 
-- **`ws-isa` y `ws-isa-workspace`, los dos en kratos, montan el MISMO
-  `/datos/agents/isa-config/.claude`.** Ahí escribir «el `CLAUDE.md` de un alias» cambia el del
-  otro. No hay dos ficheros: hay uno con dos dueños declarados.
-- **`ws-humanizar` aloja dos alias, atlas y kratos, con un solo `$HOME`.** Hoy no chocan sólo porque
-  usan arneses distintos —uno lee `AGENTS.md` y el otro `CLAUDE.md`—, y dejarían de no chocar en
-  cuanto los dos fueran claude. Es decir: no choca por una coincidencia de configuración, no por un
-  control.
+- **Dos contenedores que montan el MISMO directorio de configuración del arnés.** Ahí escribir «el
+  `CLAUDE.md` de un alias» cambia el del otro. No hay dos ficheros: hay uno con dos dueños
+  declarados.
+- **Un contenedor que aloja dos alias con un solo `$HOME`.** Puede no chocar mientras usen arneses
+  distintos —uno lee `AGENTS.md` y el otro `CLAUDE.md`— y deja de no chocar en cuanto los dos usen
+  el mismo. Es decir: no choca por una coincidencia de configuración, no por un control.
 
 El generador ya se defiende de una parte de esto: `ficherosDelArnes` se niega a reescribir un bloque
 gestionado cuyo renglón `<!-- alias: tenant/alias -->` declara otro dueño, y
@@ -128,8 +127,8 @@ registra la expectativa y devuelve un resultado tipado con el vocabulario de
 Tres cosas que la recarga **no** hace, y son decisiones, no omisiones:
 
 - **No reinicia la TUI ni abre una shell.** Reiniciar una TUI viva destruye la conversación de su
-  dueño; eso es terreno del dueño y de nadie más. Por eso el estado que devuelve un éxito es
-  `pending_session_refresh` y nunca `applied`: el lote acredita **bytes en disco** y nada más. Que
+  dueño; eso es terreno de quien la tiene abierta y de nadie más. Por eso el estado que devuelve un
+  éxito es `pending_session_refresh` y nunca `applied`: el lote acredita **bytes en disco** y nada más. Que
   el proceso los esté leyendo sólo lo dice el ACK de adopción del adaptador, que llega en su
   siguiente entrega.
 - **No sube la revisión del perfil.** Re-materializa exactamente la revisión durable vigente. Una
@@ -190,10 +189,11 @@ sigue siendo la prueba de QUÉ huella quedó; quién la puso se pregunta a la au
 
 ## Consecuencias
 
-- Los dos casos conocidos de la flota dejan de ser latentes por las tres vías cableadas: un alias
-  que se recargue sobre el `.claude` compartido de otro, una persona que guarde ahí un documento de
-  gobierno a mano, o una que guarde ahí el perfil desde Contexto, reciben `409 context_contaminated`
-  con el nombre del dueño en un campo estructurado, fila de auditoría y contador.
+- Los dos modos de contexto compartido dejan de ser latentes por las tres vías cableadas: un alias
+  que se recargue sobre el directorio de configuración compartido de otro, una persona que guarde
+  ahí un documento de gobierno a mano, o una que guarde ahí el perfil desde Contexto, reciben
+  `409 context_contaminated` con el nombre del alias dueño en un campo estructurado, fila de
+  auditoría y contador.
 - El `GET` del perfil lleva SIEMPRE el veredicto (`contaminacion`), también limpio y también para
   una sesión sin persona: leer nunca exigió atribución, y una pantalla que sólo muestra la
   cuarentena cuando algo falla obliga a intentar guardar para enterarse.
@@ -212,7 +212,7 @@ sigue siendo la prueba de QUÉ huella quedó; quién la puso se pregunta a la au
 ## Fuera de alcance, dicho explícitamente
 
 - **Reiniciar arneses.** Ni esta ADR ni la recarga tocan un proceso vivo. Que un alias adopte el
-  contexto nuevo depende de su siguiente turno, y forzarlo es del dueño.
+  contexto nuevo depende de su siguiente turno, y forzarlo queda fuera de este plano.
 - **Encender el flag de contexto nativo.** `CAUCE_NATIVE_PROFILE_CONTEXT` sigue decidiéndose por
   alias y fuera de aquí.
 - **Detectar dos alias que resuelven al MISMO inodo.** Es un hecho de disco —hace falta comparar
@@ -222,4 +222,4 @@ sigue siendo la prueba de QUÉ huella quedó; quién la puso se pregunta a la au
 - **El `SET LOCAL` del actor en la transacción del perfil.** Sigue sin emitirse, y se explica arriba
   por qué: el nombre y el motivo viven en `audit_events`, no en el diario.
 - **Poda de retención del diario.** `agent_document_revisions` guarda huellas, no cuerpos, y por eso
-  crece despacio; cuándo podarlo es una decisión de coste que es del dueño y todavía no está tomada.
+  crece despacio; cuándo podarlo es una decisión de coste de la operación y todavía no está tomada.

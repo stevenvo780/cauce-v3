@@ -8,13 +8,13 @@ sigue comportándose exactamente como antes.
 
 ## Contexto
 
-Hasta W3b la consola podía **mirar** la TUI de un alias y nada más. `harness` abre la sesión tmux
-real del agente en modo visor (`tmux attach -r -f ignore-size`) y el agente PTY descarta su STDIN
-antes de tocar el descriptor (`ops/pty-agent/README.md`, §«Los tres modos de sesión»). Para
-teclear en la TUI de un alias había que entrar a kratos por SSH y usar `ops/guardias/cauce-attach`,
-que es una herramienta de operador fuera de banda.
+Antes de este cambio la consola podía **mirar** la TUI de un alias y nada más. `harness` abre la
+sesión tmux real del agente en modo visor (`tmux attach -r -f ignore-size`) y el agente PTY descarta
+su STDIN antes de tocar el descriptor (`ops/pty-agent/README.md`, §«Los tres modos de sesión»). Para
+teclear en la TUI de un alias había que entrar por SSH al host de ese contenedor y usar
+`ops/guardias/cauce-attach`, que es una herramienta de operador fuera de banda.
 
-El pedido D3 del programa v3.1 es que el operador pueda **escribir** en esa misma TUI desde la
+El pedido D3 del programa v3.1 es que un operador pueda **escribir** en esa misma TUI desde la
 consola. Eso cambia la naturaleza de la superficie: una consola comprometida deja de poder observar
 a un agente y pasa a poder actuar como él, con su identidad, dentro de su contenedor y sobre sus
 ficheros. Y trae un conflicto que no existía: mientras un humano teclea en la TUI compartida, el
@@ -131,8 +131,8 @@ modo con una fila de auditoría que no acredita nada.
 
 Una sesión de sólo lectura **nunca** se graba —no tiene teclado que grabar— y un `shell` normal
 sólo detrás de `CAUCE_TERMINAL_RECORD_SHELL_SESSIONS`, apagado por defecto: las pulsaciones de un
-shell de operador (una contraseña de `psql`, un token pegado) no se persisten salvo que el dueño
-lo pida.
+shell de operador (una contraseña de `psql`, un token pegado) no se persisten salvo que se pida a
+propósito.
 
 ### 7. Interruptor propio, apagado por defecto
 
@@ -170,11 +170,11 @@ despliegue del gateway en una decisión de seguridad que nadie tomó a propósit
 ## Fuera de alcance, dicho explícitamente
 
 - **La retención de las grabaciones.** Nada poda el directorio. Cuánto se guarda un `.cast`, en qué
-  volumen y quién lo borra es una decisión del dueño y **no está tomada**. Mientras no lo esté, el
+  volumen y quién lo borra es una decisión de operación y **no está tomada**. Mientras no lo esté, el
   directorio acumula material sensible con el mismo perfil de amenaza que el propio flujo del PTY
   (`0700` el directorio, `0600` los ficheros, abiertos con `O_EXCL`).
-- **La otra puerta a la misma shell.** El worker legado de ultimate-terminal sigue vivo en 9 de los
-  11 contenedores y tiene su propio modelo de autorización: vaciar `grants.json` no lo cierra.
-  Sigue siendo la deuda con fecha del §5 de `docs/terminal-pty.md`.
+- **La otra puerta a la misma shell.** El worker legado de ultimate-terminal sigue vivo en los
+  contenedores que la consola todavía no cubre y tiene su propio modelo de autorización: vaciar
+  `grants.json` no lo cierra. Sigue siendo la deuda con fecha del §5 de `../terminal-pty.md`.
 - **El cableado en `deploy/`.** Ninguna de las tres variables del modo está declarada en
-  `deploy/compose.yaml`. Encenderlo exige tocar ese árbol, que es del dueño.
+  `deploy/compose.yaml`. Encenderlo exige tocar ese árbol, y eso requiere autorización explícita.

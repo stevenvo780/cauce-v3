@@ -10,16 +10,14 @@ PTY salvo por la autorización.
 
 La frontera de hosts es real y hay que decirla en voz alta:
 
-- El core (gateway, dispatcher, consola, postgres, telegram-bridge) corre en
-  **`agora-storage`**. Ahí corre también `terminal-relay`, hermano del gateway
-  en la red `edge`.
-- Los contenedores de los agentes (`claw`, `ctrl-infra`, `ws-prizma`, …) corren
-  en **`kratos`**, bajo units systemd de usuario del usuario `stev`.
-- Por lo tanto **toda terminal cruza agora→kratos**. La pata que cruza es
-  agente→relay, no relay→agente: el agente PTY de kratos disca hacia la pierna
+- El core (gateway, dispatcher, consola, postgres, telegram-bridge) corre en **un** host, y ahí
+  corre también `terminal-relay`, hermano del gateway en la red `edge`.
+- Los contenedores de los agentes pueden correr en **otro** host, bajo units systemd de usuario.
+- Cuando es así, **toda terminal cruza de un host al otro**. La pata que cruza es
+  agente→relay, no relay→agente: el agente PTY disca hacia la pierna
   de agentes del relay, `8445`, publicada en la IP privada del tailnet
-  (`CAUCE_PRIVATE_BIND_IP`), con mTLS contra la CA interna. Así kratos no
-  necesita puertos entrantes nuevos y agora no necesita alcanzar contenedores
+  (`CAUCE_PRIVATE_BIND_IP`), con mTLS contra la CA interna. Así el host de los agentes no
+  necesita puertos entrantes nuevos y el del core no necesita alcanzar contenedores
   ajenos.
 
 Piernas del relay:
@@ -27,7 +25,7 @@ Piernas del relay:
 | Pierna | Puerto | Publicada al host | Quién entra | Cómo se autentica |
 |---|---|---|---|---|
 | navegador | 8446 | **no** | sólo el nginx de la consola por la red `edge` | mTLS: cert de cliente `console_gateway_client_cert`, CN exigido en `CAUCE_TERMINAL_RELAY_CONSOLE_CN` |
-| agentes | 8445 | sí, `${CAUCE_PRIVATE_BIND_IP}:8445` | agentes PTY en kratos, por el tailnet | mTLS contra `gateway_client_ca` + registro `pty_agent_identities.json` |
+| agentes | 8445 | sí, `${CAUCE_PRIVATE_BIND_IP}:8445` | agentes PTY de cualquier host, por el tailnet | mTLS contra `gateway_client_ca` + registro `pty_agent_identities.json` |
 
 El nginx de la consola rutea `/v3/console/terminal/ws` al relay con un `location`
 de **match exacto**, que gana sobre el prefijo `/v3/`. Todo el resto de
@@ -39,7 +37,7 @@ entera. Con resolver, un relay caído es un 502 en esa ruta y nada más.
 
 ## 1. Aprovisionamiento
 
-Todo vive fuera del repo, en `agora-storage`, con dueño `1000:1000` (el usuario
+Todo vive fuera del repo, en el host del core, con dueño `1000:1000` (el usuario
 del runtime). Nunca imprimir el contenido de estos archivos: para verificar,
 usar longitud (`wc -c`) y hash truncado (`sha256sum | cut -c1-12`).
 
@@ -138,7 +136,7 @@ y quedarse con una lista de permisos incompleta o vacía por accidente.
 umask 027
 tmp=$(mktemp /etc/cauce-v3/terminal/.grants.json.XXXXXX)   # mismo filesystem
 cat > "$tmp" <<'JSON'
-{"version":1,"grants":[{"operator":"<correo de console_users>","tenant_id":"Steven","alias":"jarvis","modes":["shell","harness"]}]}
+{"version":1,"grants":[{"operator":"<correo de console_users>","tenant_id":"<tenant>","alias":"<alias>","modes":["shell","harness"]}]}
 JSON
 chown 1000:1000 "$tmp"; chmod 0440 "$tmp"
 mv -f "$tmp" /etc/cauce-v3/terminal/grants.json                # rename atómico
@@ -146,13 +144,13 @@ docker exec cauce-v3-prod-gateway-1 node -e 'const g=JSON.parse(require("fs").re
 ```
 
 Los cuatro campos son exactamente los que exige `parseGrants`
-(`services/gateway/src/terminal/authority.ts:110-115`): `operator`, `tenant_id` y `alias` no
+(`services/gateway/src/terminal/authority.ts`): `operator`, `tenant_id` y `alias` no
 vacíos, y `modes` como **array de cadenas**. Escribir `tenant` o `mode` en singular levanta
 `grant fields are invalid`, y `rw` ni siquiera es un modo: los únicos son `shell`, `harness` y
 `harness_rw` (`services/gateway/src/terminal/types.ts:7`). Con el login por contraseña el
-`operator_id` es el **correo** de `console_users` (`ops/runbooks/console-login.md:235`), así que
-poner `steven` repite el fallo de atribución ya documentado ahí: la sesión es válida y todos los
-destinos contestan `authorized:false`.
+`operator_id` es el **correo** de `console_users` (`ops/runbooks/console-login.md:178`), así que
+poner un nombre de usuario en lugar del correo repite el fallo de atribución ya documentado ahí:
+la sesión es válida y todos los destinos contestan `authorized:false`.
 
 **El comodín `"*"` sólo abre lo que se mira, nunca lo que se teclea.** Sigue siendo el único
 comodín y sólo en `operator`, pero ahora únicamente con `harness`, el modo de sólo lectura. Una
@@ -162,12 +160,12 @@ escribir dentro del contenedor la fila tiene que **nombrar** al operador.
 
 **Un error tipográfico cierra la puerta a todos.** Cualquier excepción dentro de `parseGrants`
 deja el archivo ENTERO en `grants: []` y se registra una sola vez por minuto
-(`authority.ts:144-158`): no hay rechazo por fila ni lista parcialmente válida, y la consola sólo
+(`GrantStore.grants`, en `authority.ts`): no hay rechazo por fila ni lista parcialmente válida, y la consola sólo
 muestra un `no_grant` genérico que no distingue "a este operador no le toca" de "el archivo no
 parseó".
 
 **Ese log no sirve como comprobación inmediata.** `GrantStore` lee el archivo de forma perezosa,
-dentro de una request (`authority.ts:142-145`): nadie vigila la ruta ni la sondea, así que recién
+dentro de una request (`GrantStore.grants`, en `authority.ts`): nadie vigila la ruta ni la sondea, así que recién
 renombrado el archivo `docker logs ... | grep 'terminal grants'` sale vacío tanto si el JSON es
 bueno como si es basura. Por eso la comprobación pegada al rename es el `docker exec ... node -e`
 de arriba, que lee el mismo inodo montado y revienta ruidosamente si el fichero no parsea. La
@@ -190,8 +188,7 @@ Precondiciones, todas verificadas antes de empezar:
 - Imágenes publicadas y pinneadas por digest (`CAUCE_RUNTIME_IMAGE`,
   `CAUCE_CONSOLE_IMAGE` con `@sha256:`). Anotar el digest anterior: es el
   rollback.
-- Ventana anunciada a la flota, compartida con la tarea #9, y **socrates ya
-  terminó el despliegue de su cliente**.
+- Ventana anunciada a la flota, y **ningún despliegue de agente en curso**.
 - `grants.json` vacío y `CAUCE_TERMINAL_ENABLED=0` todavía.
 
 ### Paso 1 — migrator, relay y consola (no se toca el gateway)
@@ -213,21 +210,21 @@ Verificación de este paso:
 ```sh
 docker ps --filter name=cauce-v3-prod-terminal-relay --format '{{.Names}} {{.Status}}'
 docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}} {{.State.Health.Status}}' cauce-v3-prod-console-1
-curl -sk -o /dev/null -w '%{http_code}\n' https://100.64.0.6:8444/        # 200, la consola sigue entera
-curl -sk -o /dev/null -w '%{http_code}\n' https://100.64.0.6:8444/v3/console/terminal/ws   # 400/426, no 502: el relay contesta
+curl -sk -o /dev/null -w '%{http_code}\n' https://<ip-privada-consola>:8444/        # 200, la consola sigue entera
+curl -sk -o /dev/null -w '%{http_code}\n' https://<ip-privada-consola>:8444/v3/console/terminal/ws   # 400/426, no 502: el relay contesta
 ```
 
 Un 502 acá significa relay caído o certificado firmado por otra CA. Un 501
 significa que el gateway todavía no tiene el canal habilitado, que es lo
 esperado hasta el paso 3.
 
-### Paso 2 — agente PTY en kratos
+### Paso 2 — agente PTY en el host de los agentes
 
-Instalación por alias, según el runbook del agente. kratos usa fish, así que las
-órdenes remotas van en base64:
+Instalación por alias, según el runbook del agente. Si el shell de login de ese host no es POSIX
+(fish, por ejemplo), las órdenes remotas van en base64:
 
 ```sh
-ssh kratos "echo '<b64>' | base64 -d | bash -l"
+ssh <host> "echo '<b64>' | base64 -d | bash -l"
 ```
 
 El alta del agente escribe su identidad en `pty_agent_identities.json` con el
@@ -237,20 +234,19 @@ en "PTY online" con el resto en "agente PTY no instalado".
 
 ### Paso 3 — el ÚNICO reinicio del gateway
 
-Anunciado, en la ventana compartida con la tarea #9, con socrates fuera de su
-despliegue. Anotar la hora exacta.
+Anunciado, en una ventana sin despliegues de agente en curso. Anotar la hora exacta.
 
 ```sh
 # en el env privado: CAUCE_TERMINAL_ENABLED=1
 CAUCE_ENV_FILE=/etc/cauce-v3/prod.env ops/scripts/compose.sh prod up -d --no-build --wait gateway
 ```
 
-**Riesgo, textual:** reiniciar el gateway mata adaptadores con trabajo en vuelo.
-Hoy dejó a `argos` muerto en un bucle de `CONNECTION_ZODERROR` del que no se
-recupera ni reiniciándolo. Por eso es un único reinicio, anunciado, y por eso
-todo lo demás se hizo antes con `--no-deps`.
+**Riesgo, textual:** reiniciar el gateway mata adaptadores con trabajo en vuelo, y un adaptador
+puede quedarse muerto en un bucle de `CONNECTION_ZODERROR` del que no se recupera ni
+reiniciándolo. Por eso es un único reinicio, anunciado, y por eso
+todo lo demás se hace antes con `--no-deps`.
 
-Verificación de que los 13 adaptadores vivos volvieron. La única señal fiable es
+Verificación de que los adaptadores vivos volvieron. La única señal fiable es
 la cadencia de ACKs `started`; `systemd`, el lease y `auth status` mienten. SQL
 siempre en solo lectura:
 
@@ -275,12 +271,11 @@ SELECT d.recipient_tenant, d.recipient_alias,
 COMMIT;
 ```
 
-Criterio: 13 filas en la consulta 1 con `last_heartbeat_at` dentro de los
-últimos 90 s, y ningún alias vivo sin ACK `started` en la ventana después de
-recibir tráfico. `argos` se cuenta aparte: sigue muerto por su propio bug.
+Criterio: una fila en la consulta 1 por cada alias habilitado, con `last_heartbeat_at` dentro de
+los últimos 90 s, y ningún alias vivo sin ACK `started` en la ventana después de
+recibir tráfico. Un adaptador con un fallo propio se cuenta aparte.
 
-Rollback, por digest pinneado, sin tocar schema ni datos (ver
-`el historial de git rollback.md`, histórico del último rollback aplicado):
+Rollback, por digest pinneado, sin tocar schema ni datos:
 
 ```sh
 CAUCE_PREVIOUS_RUNTIME_IMAGE=repo/cauce-runtime@sha256:<digest-anterior> \
@@ -299,7 +294,7 @@ Recién ahora se abre la puerta, y se abre para un alias:
 umask 027
 tmp=$(mktemp /etc/cauce-v3/terminal/.grants.json.XXXXXX)
 cat > "$tmp" <<'JSON'
-{"version":1,"grants":[{"operator":"<correo de console_users>","tenant_id":"Steven","alias":"jarvis","modes":["shell","harness"]}]}
+{"version":1,"grants":[{"operator":"<correo de console_users>","tenant_id":"<tenant>","alias":"<alias>","modes":["shell","harness"]}]}
 JSON
 chown 1000:1000 "$tmp"; chmod 0440 "$tmp"
 mv -f "$tmp" /etc/cauce-v3/terminal/grants.json
@@ -311,19 +306,17 @@ falla, la fila no se aplicó y además quedaron revocados los grants que ya hubi
 JSON y repetir el rename antes de seguir. El `grep 'terminal grants'` del log sólo dice algo
 **después** de una lectura real (§1.4), así que va al final de la verificación de abajo, no acá.
 
-Verificación de extremo a extremo, en la consola publicada
-(https://consola.elenxos.com, detrás de Caddy con basic auth, que no se toca):
-la barra de flota muestra el estado de PTY de los 15 alias, `jarvis` habilitado,
-el diálogo exige motivo de 8 caracteres o más y nombra a los agentes que
-comparten el contenedor destino (por ejemplo `ctrl-infra` es compartido por
-`argos` y `kant`; el mapa vive en `ops/container-aliases.json`). Dentro de la
-shell, `id -un` devuelve el usuario del contenedor (`claw` para `jarvis`,
-nunca root) y `hostname` devuelve el contenedor esperado. En `/audit` tienen que
+Verificación de extremo a extremo, en la consola publicada (`https://<dominio-consola>`): la barra
+de flota muestra el estado de PTY de cada alias, el alias con grant habilitado, el diálogo exige
+motivo de 8 caracteres o más y nombra a los agentes que comparten el contenedor destino (el mapa de
+contenedor↔alias vive en `ops/container-aliases.json`). Dentro de la
+shell, `id -un` devuelve el usuario del contenedor —nunca root— y `hostname` devuelve el contenedor
+esperado. En `/audit` tienen que
 aparecer `terminal.session.request` (allow), `terminal.session.consume` y
 `terminal.session.close` con alias, contenedor, digest de imagen, generación y
 el motivo escrito a mano. Cargada esa barra, el gateway ya leyó `grants.json`: ahí
 `docker logs --since 2m cauce-v3-prod-gateway-1 | grep 'terminal grants'` sin salida confirma que
-la lista se aplicó, y con salida delata la errata que dejó a los 15 alias sin puerta.
+la lista se aplicó, y con salida delata la errata que dejó a TODOS los alias sin puerta.
 
 ## 3. Los tres kill switches
 
@@ -400,8 +393,8 @@ orden (`services/gateway/src/terminal/session-control.ts`). Cada denegación esc
 La regla de cohorte de las compuertas 2, 3, 4 y 5 es la misma de siempre (`containerCohort` en
 `services/gateway/src/terminal/authority.ts`): un teclado dentro de un contenedor compartido ve los
 directorios de todos sus alias, así que la autoridad sobre uno no puede abrir a los otros por la
-puerta de atrás. En `ctrl-infra`, tomar la TUI de `kant` exige permiso y grant sobre `argos`
-también.
+puerta de atrás. En un contenedor compartido por dos alias, tomar la TUI de uno exige permiso y
+grant sobre el otro también.
 
 **El comodín `"*"` no sirve para escribir.** `parseGrants`
 (`services/gateway/src/terminal/authority.ts`) levanta `wildcard operator cannot hold a writable
@@ -416,9 +409,9 @@ cat > "$tmp" <<'JSON'
 {
   "version": 1,
   "grants": [
-    {"operator": "<correo de console_users>", "tenant_id": "Steven", "alias": "jarvis",
+    {"operator": "<correo de console_users>", "tenant_id": "<tenant>", "alias": "<alias>",
      "modes": ["shell", "harness", "harness_rw"],
-     "note": "W3b: teclado sobre la TUI de jarvis"}
+     "note": "teclado sobre la TUI de <alias>"}
   ]
 }
 JSON
@@ -429,7 +422,7 @@ mv -f "$tmp" /etc/cauce-v3/terminal/grants.json
 **Un operador no atribuido tampoco escribe.** Con la credencial compartida de basic auth el
 `operator_id` es `unattributed:console-basic-auth`
 (`services/gateway/src/terminal/types.ts`) y la compuerta 3 lo rechaza. Un `shell` sí se abre así
-—es el comportamiento de hoy y cerrarlo dejaría al dueño fuera de sus propias consolas—, pero un
+—es el comportamiento de hoy y cerrarlo dejaría al operador fuera de sus propias consolas—, pero un
 teclado sobre la TUI de un agente, no: una traza de auditoría que no puede nombrar a la persona no
 es una traza.
 
@@ -450,13 +443,13 @@ Junto a él hay dos ajustes nuevos en el mismo fichero:
 
 **Ninguna de las tres está declarada en `deploy/compose.yaml`.** Un despliegue de producción tal
 cual arranca con el modo escribible apagado y sin directorio de grabación —la posición segura—,
-pero encenderlo exige tocar `deploy/`, que es del dueño.
+pero encenderlo exige tocar `deploy/`, que requiere autorización explícita.
 
 Y una corrección a §3, que promete de más: **vaciar `grants.json` no cierra todas las puertas al
 contenedor.** Cierra la del canal PTY de la consola y nada más.
 
-- El worker legado de **ultimate-terminal** sigue vivo en 9 de los 11 contenedores con su propio
-  modelo de autorización (§5).
+- El worker legado de **ultimate-terminal** sigue vivo en los contenedores que la consola todavía
+  no cubre, con su propio modelo de autorización (§5).
 - La **escritura de ficheros de gobierno** desde la consola (`CLAUDE.md`, `AGENTS.md`, workspaces
   de OpenClaw) no pasa por `grants.json`: va por las rutas
   `/v3/console/agents/...` del gateway (`services/gateway/src/console/agent-documents.routes.ts`,
@@ -584,7 +577,7 @@ tope el fichero deja de crecer, `input_batches` se congela con él y `bytes_in` 
 `sha256` acredita el fichero truncado, no la sesión.
 
 **La retención no está resuelta.** Nada poda ese directorio. Cuánto se guarda, en qué volumen y
-quién borra es una decisión del dueño y no está tomada; hasta que lo esté, el directorio acumula
+quién borra es una decisión de operación que no está tomada; hasta que lo esté, el directorio acumula
 material con el mismo perfil de amenaza que el propio flujo del PTY.
 
 Las series del relay que miran este modo están en `/metrics`
@@ -593,9 +586,10 @@ sesiones escribibles atadas) y `cauce_terminal_recordings_total{result}` con
 `started|refused|capped|failed`. Prometheus descubre el relay por DNS en el job `cauce-relay`
 (`ops/observability/prometheus.yaml`) y las alertas del grupo `cauce-v3-terminal`
 (`ops/observability/alerts.yaml`) no usan `absent()` a propósito: sin el perfil `terminal` el
-nombre no resuelve, no hay target y nadie pagina. Falta un detalle de despliegue para que el job
-vea datos: el relay está sólo en la red `edge` y Prometheus en `backend`, así que hoy el nombre no
-resuelve para el scraper.
+nombre no resuelve, no hay target y nadie pagina. El relay vive sólo en la red `edge`, así que para
+que ese job resuelva el nombre Prometheus tiene que estar también en `edge` —hoy `deploy/compose.yaml`
+lo declara en `[backend, edge]`—; nada en el árbol fija esa pertenencia, así que el raspado se
+verifica por efecto, mirando el job `cauce-relay` en `up` dentro de `/targets`.
 
 ### 4.6 Cuando el agente rechaza el teclado
 
@@ -624,7 +618,7 @@ de un binario.
 ## 5. Deuda con fecha: las dos puertas
 
 Mientras la consola sirva terminales, los workers de **ultimate-terminal**
-siguen corriendo en 9 de los 11 contenedores de la flota. Eso significa **dos
+siguen corriendo en los contenedores que la consola todavía no cubre. Eso significa **dos
 puertas a la misma shell con dos modelos de autorización distintos**, y revocar
 en una **no** revoca en la otra: vaciar `grants.json` cierra la puerta de la
 consola y deja abierta la de ultimate-terminal.
@@ -674,13 +668,13 @@ falla, que no es el orden en que se descubre. Los cuatro puntos, en cascada:
    `CAUCE_TERMINAL_RELAY_INSTANCE_ID` ni para el gateway (env en las líneas 57-68) ni para el
    relay (118-136), y los dos lo exigen: el gateway tira
    `CAUCE_TERMINAL_RELAY_INSTANCE_ID is required when the terminal plane is enabled`
-   (`services/gateway/src/terminal/config.ts:66-73`, alcanzado porque dev trae
+   (`services/gateway/src/terminal/config.ts:79`, alcanzado porque dev trae
    `CAUCE_TERMINAL_ENABLED` en `1`) y el relay lo pide por `requiredEnv`
-   (`services/terminal-relay/src/config.ts:84-90`). Esto precede a cualquier problema de PTY: sin
+   (`services/terminal-relay/src/config.ts:96`). Esto precede a cualquier problema de PTY: sin
    resolverlo no hay nada que probar.
 2. **La ruta que reparte el gateway no existe en el nginx de dev.** El grant devuelve
    `/v3/console/terminal/relays/<64hex>/ws`
-   (`services/gateway/src/terminal/session-control.ts:60-63`), y dev sólo declara
+   (`services/gateway/src/terminal/session-control.ts:77`), y dev sólo declara
    `location = /v3/console/terminal/ws` (`console/nginx.conf:15`). El upgrade del navegador cae
    entonces en `location /v3/` (`console/nginx.conf:36-40`), que va al gateway y **no** manda
    `Upgrade` ni `Connection`: el WebSocket no llega a nacer.
@@ -698,7 +692,7 @@ falla, que no es el orden en que se descubre. Los cuatro puntos, en cascada:
    un rechazo del relay — por eso este punto se descubre el último aunque falle el primero.
 
 **El `location` de match exacto de producción no se convierte en prefijo.** El literal está
-fijado por `tests/unit/terminal-relay-operability.test.ts:57-59`, y el match exacto es una
+fijado por `tests/unit/terminal-relay-operability.test.ts:56-58`, y el match exacto es una
 propiedad de cerco: la identidad de otro relay tiene que seguir siendo un 404 en el borde. Lo que
 se arregla es dev, alineándolo con el literal de producción; no al revés.
 
@@ -709,9 +703,9 @@ resto del runtime ya están cerradas:
 
 - `pnpm-lock.yaml` incluye el workspace `services/terminal-relay`: la etapa `build` de la imagen
   (`pnpm install --frozen-lockfile`) no falla con `ERR_PNPM_OUTDATED_LOCKFILE`.
-- `deploy/runtime/runtime-package-smoke.mjs` (se movió desde `deploy/runtime-package-smoke.mjs`)
-  lista `terminal-relay` tanto en `runtimePackages` como en `runtimeModules`: el smoke que corre
-  dentro de la imagen valida sus dependencias y que `dist/main.js` cargue.
+- `deploy/runtime/runtime-package-smoke.mjs` lista `terminal-relay` tanto en `runtimePackages` como
+  en `runtimeModules`: el smoke que corre dentro de la imagen valida sus dependencias y que
+  `dist/main.js` cargue.
 - `ops/config/prod.env.example` ya trae las variables del plano (`CAUCE_TERMINAL_ENABLED`,
   `CAUCE_TERMINAL_WS_PATH`, `CAUCE_TERMINAL_OPERATORS`, `CAUCE_TERMINAL_CONSOLE_CN`,
   `CAUCE_TERMINAL_CONFIG_DIR`, `CAUCE_TERMINAL_TICKET_KEY_PATH`,
@@ -739,13 +733,13 @@ Lo que debería importarse en vez de copiarse:
 
 Las cuatro copias que existen hoy:
 
-- `services/gateway/src/terminal/plugin.ts:49-52` — `COLS_MIN`/`COLS_MAX`/`ROWS_MIN`/`ROWS_MAX`.
-- `services/terminal-relay/src/session-limits.ts:28-31` — `MIN_COLS`/`MAX_COLS`/`MIN_ROWS`/`MAX_ROWS`,
-  con `CLOSE_CODES` en `:12-26` y los topes de stdin y de ventana justo debajo.
-- El agente PTY: `ops/pty-agent/cauce_pty_agent/framing.py:63-66` (`MAX_FRAME`,
-  `SESSION_ID_BYTES`, `MAX_DATA`; los tags `TAG_*` están arriba, en `:23-61`, y `DATA_TAGS` en
-  `:67`) y `ops/pty-agent/cauce_pty_agent/session.py:47-59` (plazos y cotas de geometría).
-- `console/src/features/terminal/pty-types.ts:73-76` — `MAX_FILAS_REMOTAS`, `MAX_COLUMNAS_REMOTAS`,
+- `services/gateway/src/terminal/plugin.ts:51-54` — `COLS_MIN`/`COLS_MAX`/`ROWS_MIN`/`ROWS_MAX`.
+- `services/terminal-relay/src/session-limits.ts:48-51` — `MIN_COLS`/`MAX_COLS`/`MIN_ROWS`/`MAX_ROWS`,
+  con `CLOSE_CODES` en `:13-29` y los topes de stdin y de ventana en el mismo módulo.
+- El agente PTY: `ops/pty-agent/cauce_pty_agent/framing.py:67-70` (`MAX_FRAME`,
+  `SESSION_ID_BYTES`, `MAX_DATA`; los tags `TAG_*` están arriba, en `:23-65`, y `DATA_TAGS` en
+  `:71`) y `ops/pty-agent/cauce_pty_agent/session.py:45-61` (plazos y cotas de geometría).
+- `console/src/features/terminal/pty-types.ts:87-90` — `MAX_FILAS_REMOTAS`, `MAX_COLUMNAS_REMOTAS`,
   `MAX_INPUT_FRAME_BYTES`, `MAX_PENDING_INPUT_BYTES`.
 
 El agente Python es la referencia de la que salieron los valores, y

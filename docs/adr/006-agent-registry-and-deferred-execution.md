@@ -1,20 +1,16 @@
 # ADR-006: registro de agentes, pool de suscripciones cross-tenant, y ejecución remota diferida
 
-**Estado:** parcialmente implementado. La parte de datos/configuración (esta entrega) está aceptada;
-la parte de ejecución remota en kratos es **diseño únicamente, no implementado**.
-
-Este ADR fija la forma acordada en `plan-reestructura/` (el plan operativo de la fase en vuelo:
-inventario de alias, fases de alta de iza/atlas). El doc histórico `POOL-SUSCRIPCIONES-Y-ALTA-AGENTES`
-ya no está en el árbol (`find docs/ -name 'POOL-*'` → 0 resultados); este ADR es ahora la decisión
-de arquitectura y lo que efectivamente quedó en el código.
+**Estado:** parcialmente implementado. La parte de datos/configuración está aceptada; la parte de
+ejecución remota sobre un host de la flota distinto del que lleva el stack es **diseño únicamente,
+no implementado**.
 
 ## Decisión central: la cuenta no pertenece a quien la usa, pertenece a quien la paga
 
 El borrador anterior de esta migración tenía `agent_account_bindings` con
 `FOREIGN KEY (tenant_id, account_id) REFERENCES provider_accounts(tenant_id, id)`. Ese FK compuesto
 obligaba a que la cuenta viviera en el **mismo tenant** que el alias que la usa, es decir hacía
-**estructuralmente imposible** el requisito literal del operador: "todos pueden usar el pool de
-todos". Se descartó.
+**estructuralmente imposible** el requisito de que cualquier tenant pueda usar el pool de
+cualquier otro. Se descartó.
 
 El modelo que lo reemplaza:
 
@@ -92,44 +88,45 @@ egress_destination. No hay ruta de escritura nueva.
 
 ### Lecturas
 
-`GET /v3/console/agents` y `GET /v3/console/agents/:alias` (`repository/agents.ts`: `listAgents`/`getAgent` desde la extracción de la fachada de 11K → 42 líneas)
-filtran por el mismo criterio que `topology()`/`listMessages()`/`queueSnapshot()` — tenant propio más
-cualquier tenant con `acl_edge.allow_read` desde el actor — para no introducir un segundo modelo de
+`GET /v3/console/agents` y `GET /v3/console/agents/:alias` (`packages/store/src/repository/agents.ts`:
+`listAgents`/`getAgent`) filtran por el mismo criterio que
+`topology()`/`listMessages()`/`queueSnapshot()` — tenant propio más cualquier tenant con
+`acl_edge.allow_read` desde el actor — para no introducir un segundo modelo de
 visibilidad. `deployment_status` (`disabled`/`unknown`/`online`/`offline`) se deriva sólo de
 `agents.enabled` + `connection_leases`: es honesto sobre lo que Postgres sabe hoy y no simula un
 estado de contenedor que nadie reporta.
 
 ### Qué se dejó fuera a propósito
 
-- **`health_status` / `health_checked_at` / `consecutive_failures`** en `provider_accounts`
-  (§1.2 del plan): no hay poller ni ningún otro escritor. Una columna que nadie escribe es una
-  mentira en el esquema; entra el día que entre su consumidor.
-- **`agents.routing_account_required`** (§1.4b): su único efecto sería un predicado extra en el CTE
+- **`health_status` / `health_checked_at` / `consecutive_failures`** en `provider_accounts`:
+  no hay poller ni ningún otro escritor. Una columna que nadie escribe es una mentira en el esquema;
+  entra el día que entre su consumidor.
+- **`agents.routing_account_required`**: su único efecto sería un predicado extra en el CTE
   `picked` de `claimDeliveries`, que no está en esta entrega. La columna sola no hace nada.
 - **`allowed_tiers`** en el techo: el concepto de tier todavía no existe en `packages/protocol`.
-- **Partir la migración en dos** (`008` + `009`, como sugería el plan): quedó sin efecto. Ninguno de
-  los dos archivos llegó a commitearse, y `008`/`009` los tomaron agent-chain-visibility y
-  proactive-egress —ambos ya aplicados en producción e inmutables—, así que todo esto aterriza junto
-  como `010_agent_account_registry.sql`.
+- **Partir la migración en dos** (`008` + `009`): esos dos números los tomaron
+  `008_agent_chain_visibility.sql` y `009_proactive_egress.sql` —ya aplicadas e inmutables—, así que
+  todo esto aterriza junto como `010_agent_account_registry.sql`.
 - **Atribución de uso** (`delivery_account_assignments`, prorrateo por tokens): `payer_tenant_id` es
   la pieza mínima para responder "quién paga esta cuenta"; facturar por cliente es otra entrega.
 
-## Diferido: ejecución remota en kratos (systemd/docker)
+## Diferido: ejecución remota en un host de la flota distinto del que lleva el stack
 
-Fuera de esta entrega, sin implementar: nada en este cambio abre una ruta de ejecución hacia kratos.
+Sin implementar: nada en esta parte abre una ruta de ejecución hacia otro host.
 `agents`/`provider_accounts` son intención declarada en Postgres; el contenedor/unit/PKI real sigue
-siendo 100% manual (`ops/scripts/manifest_lib.py` y `container_alias_lib.py` con sus diccionarios
-`EXPECTED` hardcodeados) hasta que exista una segunda fase explícita. Diseño para esa fase, a
-decidir/construir después:
+siendo 100% manual (`ops/scripts/manifest_lib.py` y `ops/scripts/container_alias_lib.py`, con sus
+diccionarios `EXPECTED` en el propio código) hasta que exista una segunda fase explícita. Diseño para
+esa fase, a decidir/construir después:
 
-- **No** exponer un servicio HTTP entrante nuevo en kratos, ni SSH `command=` desde el gateway: ambos
-  abren superficie de ejecución de código nueva y duplican PKI/auditoría que el bus ya resuelve.
-- Patrón preferido: un "ops-executor" en kratos como una unidad systemd más, con su propia identidad
-  mTLS **saliente** (mismo patrón que los 12 adapters de producción), recibiendo un verbo de un
-  conjunto cerrado (`unit.start|stop|check`, `bundle.pin|rollback`) como delivery del bus hacia un
-  tenant/alias reservado — mapeado 1:1 a argv fijo de `container-adapter-supervisor.sh` y
-  `pin-container-release.py` (los dos scripts ya hardened con CAS real), nunca a un string ejecutado
-  en un shell.
+- **No** exponer un servicio HTTP entrante nuevo en el host remoto, ni SSH `command=` desde el
+  gateway: ambos abren superficie de ejecución de código nueva y duplican PKI/auditoría que el bus ya
+  resuelve.
+- Patrón preferido: un "ops-executor" en el host remoto como una unidad systemd más, con su propia
+  identidad mTLS **saliente** (el mismo patrón que usan los adapters del stack), recibiendo un verbo
+  de un conjunto cerrado (`unit.start|stop|check`, `bundle.pin|rollback`) como delivery del bus hacia un
+  tenant/alias reservado — mapeado 1:1 a argv fijo de `ops/scripts/container-adapter-supervisor.sh` y
+  `ops/scripts/pin-container-release.py` (ambos con CAS real), nunca a un string ejecutado en un
+  shell.
 - Un `agents` habilitado en Postgres describe una intención; sincronizarlo con
   `ops/container-aliases.json` (o reemplazar ese archivo) requiere un paso de reconciliación
   humano/CI-gateado explícito — automatizarlo sin ese paso sería abrir ejecución remota de código no

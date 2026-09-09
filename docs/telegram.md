@@ -1,6 +1,6 @@
 # Puente Telegram
 
-Canal de integración bidireccional con la Bot API de Telegram. Es el canal de entrada más utilizado en producción (~12 000 mensajes entrantes frente a 1 desde consola).
+Canal de integración bidireccional con la Bot API de Telegram. En la práctica es el canal de entrada de mayor volumen: la consola publica a mano y el puente ingresa todo lo que llega de un chat.
 
 Para contexto arquitectónico véase [arquitectura.md](arquitectura.md); para operación en producción véase [operacion.md](operacion.md).
 
@@ -183,7 +183,7 @@ Si un alias declara `operator_commands: true` y `operator_user_ids` (subconjunto
 
 Comandos: `/ayuda`, `/estado [alias]`, `/trabados`, `/colas [alias]`, `/replay <uuid>`, `/cancelar <uuid> [motivo]`, `/nudge <alias>`, `/forzar_salida`, `/forzar_salida <id>`, `/forzar_salida <id> duplicado-ok`.
 
-`/forzar_salida … duplicado-ok` envuelve `cauce_inspect_telegram_replay_030` + `cauce_manual_replay_telegram_030`. Puede duplicar el mensaje en Telegram; sin `duplicado-ok` solo inspecciona. El alias tiene que tener `allow_control` (p. ej. `kant`) o replay/cancelar/forzar_salida contestan que no hay permiso.
+`/forzar_salida … duplicado-ok` envuelve `cauce_inspect_telegram_replay_030` + `cauce_manual_replay_telegram_030`. Puede duplicar el mensaje en Telegram; sin `duplicado-ok` solo inspecciona. El alias tiene que tener `allow_control`; sin él, replay, cancelar y forzar_salida contestan que no hay permiso.
 
 No hay `/on` ni `/off`: el puente no toca systemd.
 
