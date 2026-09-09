@@ -693,3 +693,43 @@ filas escritas y la definicion de un constraint vivo.
 ===============================================================================
 FIN DE LA EVIDENCIA
 ===============================================================================
+
+===============================================================================
+  [I] ADDENDUM POSTERIOR AL GATE — 2026-09-09, despues de la firma
+  NO altera el veredicto del gate. El gate declaro 3 casos SALTADOS y eso
+  siguio siendo cierto cuando se firmo. Esto es la reduccion posterior de ese
+  residuo, anotada aqui para que no haya que reconstruirla.
+===============================================================================
+HALLAZGO: si existe un segundo demonio Docker en la flota, y NO es el de
+produccion. El de produccion (29.7.1, host "server", 86 contenedores
+cauce-v3-prod-*) es el unico montado en /run/docker.sock de ws-zeus y sigue sin
+exponerse. Pero kratos corre su propio demonio rootful (29.6.2, raiz
+/mnt/FastGames/docker, 15 contenedores: los workspaces de la flota) y es
+alcanzable desde ws-zeus con una sola variable:  DOCKER_HOST=ssh://kratos
+Eso da lo que faltaba: repo y dependencias donde ya estan, demonio desechable
+en otra maquina, produccion intacta.
+
+EJECUCION (worktree 0baa587a, CAUCE_REQUIRE_TESTCONTAINERS=1 para PROHIBIR el
+salto: o pasa o falla, no se escapa por verde). RC global = 1.
+  ✓ tests/integration/otel-collector-config.test.ts (3 tests) 37820ms
+      ✓ pins the tested release and validates its supported internal metrics schema  20786ms
+      ✓ serves health, internal metrics, and pipeline metrics                        17032ms
+  ❯ tests/integration/busybox-console-healthcheck.test.ts (1 test | 1 failed) 5897ms
+  Saltos en toda la corrida: 0
+
+RESIDUO NUEVO: 3 casos saltados -> 1. Los 2 del Collector estan CERRADOS y
+corrieron de verdad (20,8 s y 17,0 s de contenedor real, no de mock).
+
+EL QUE QUEDA, con su bloqueo exacto (no es defecto del producto):
+  busybox-console-healthcheck lanza
+      docker run --rm --network host ... wget https://localhost:39941/
+  Con demonio REMOTO, --network host es el host de KRATOS, y el servidor TLS
+  bajo prueba escucha en el localhost de WS-ZEUS. De ahi
+      wget: can't connect to remote host: Connection refused
+  Es un fallo de LOCALIDAD del arnes, no del healthcheck. Se cierra de dos
+  maneras, ninguna urgente: (a) correr esa suite EN kratos, o (b) que el test
+  publique el servidor en una direccion que el demonio pueda ver en vez de
+  asumir que demonio y servidor comparten localhost.
+
+Sin residuo en kratos: los contenedores usan --rm y la cuenta volvio a 15.
+===============================================================================
