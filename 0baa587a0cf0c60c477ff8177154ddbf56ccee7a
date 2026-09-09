@@ -1,0 +1,52 @@
+EVIDENCIA DE GATE — candidato 0baa587a0cf0c60c477ff8177154ddbf56ccee7a
+Producida por: zeus (ws-zeus) · 2026-09-09 · worktree aislado, HEAD verificado
+Entorno: PostgreSQL 16.14 local de pruebas; docker fuera del PATH (el unico daemon
+alcanzable es el de produccion y no se expuso).
+
+=================== test:integration (RC 0) ===================
+ ✓ |datos| tests/integration/vertical.test.ts (17 tests) 57427ms
+ ✓ |datos| tests/integration/mcp-fleet-monitor-tools.test.ts (7 tests) 298ms
+[docker] test skipped: Docker CLI unavailable; not checked: nginx-unprivileged BusyBox healthcheck with the mounted CA and all three negative TLS controls
+ ✓ |datos| tests/integration/busybox-console-healthcheck.test.ts (1 test | 1 skipped) 4ms
+ ✓ |datos| tests/integration/notify-history-postgres.test.ts (8 tests) 7290ms
+[docker] test skipped: Docker CLI unavailable; not checked: Collector image digest and config validation
+[docker] test skipped: Docker CLI unavailable; not checked: Collector health endpoint and internal and pipeline metrics
+ ✓ |datos| tests/integration/otel-collector-config.test.ts (3 tests | 2 skipped) 5ms
+ Test Files  5 passed (5)
+      Tests  33 passed | 3 skipped (36)
+   Duration  67.41s (transform 685ms, setup 0ms, collect 1.95s, tests 65.02s, environment 0ms, prepare 147ms)
+
+=================== test:e2e (RC 0, ruta corta) ===================
+ ✓ |datos| tests/e2e/real-qa.test.ts (3 tests) 53720ms
+ ✓ |datos| tests/e2e/console-login.test.ts (7 tests) 958ms
+ ✓ |datos| tests/e2e/adapter-roundtrip-fixture.test.mjs (2 tests) 117ms
+ Test Files  3 passed (3)
+      Tests  12 passed (12)
+   Duration  56.35s (transform 618ms, setup 0ms, collect 1.27s, tests 54.79s, environment 0ms, prepare 86ms)
+
+=========== CONTROL NEGATIVO 1: base 'none' (guarda de nombre) ===========
+RC=1
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+     → CAUCE_TEST_DATABASE_URL apunta a la base "none" y las pruebas TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por "cauce_test". Rechazado antes de abrir la conexión.
+
+=========== CONTROL NEGATIVO 2: nombre valido + puerto muerto ===========
+RC=1
+     → connect ECONNREFUSED 127.0.0.1:1
+     → connect ECONNREFUSED 127.0.0.1:1
+     → connect ECONNREFUSED 127.0.0.1:1
+     → connect ECONNREFUSED 127.0.0.1:1
+     → connect ECONNREFUSED 127.0.0.1:1
+
+=================== TRIPWIRE DEL DIGEST ===================
+fichero cubierto tocado -> node ops/tests/container-ops-evidence.test.mjs -> RC 1
+  AssertionError: container operational digest failed: OPERATIONS.sha256 differs from current operational inputs
+revertido -> RC 0 ; git status --porcelain vacio ; HEAD sin cambios
+
+=================== RESIDUO DECLARADO ===================
+3 casos saltados, todos por Docker ausente (skipIfUnavailable, motivo registrado):
+  - nginx-unprivileged BusyBox healthcheck with the mounted CA and all three negative TLS controls
+  - Collector image digest and config validation
+  - Collector health endpoint and internal and pipeline metrics
+TOTAL DEL GATE: 7911 aprobados · 0 fallidos · 3 saltados.
