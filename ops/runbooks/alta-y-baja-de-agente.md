@@ -45,14 +45,14 @@ INSERT INTO agents (
   home_directory,
   state_directory
 ) VALUES (
-  'Steven',                             -- Tenant: Steven | Miguel | Jhon | Isa
-  'probeta',                            -- Alias único del agente
+  '<tenant>',                           -- Tenant ya declarado en la base
+  '<alias>',                            -- Alias único del agente
   'codex',                              -- Harness: claude | codex | openclaw | hermes | opencode
   true,                                 -- Habilitado
-  'ctrl-infra',                         -- Contenedor Docker (o 'host:<hostname>' para agentes host-native)
-  'dev',                                -- Usuario de ejecución dentro del contenedor/host
-  '/home/dev',                          -- Home directory
-  '/home/dev/.local/state/cauce-v3/probeta' -- Runtime state directory
+  '<contenedor>',                       -- Contenedor Docker (o 'host:<hostname>' para agentes host-native)
+  '<usuario-runtime>',                  -- Usuario de ejecución dentro del contenedor/host
+  '/home/<usuario-runtime>',            -- Home directory
+  '/home/<usuario-runtime>/.local/state/cauce-v3/<alias>' -- Runtime state directory
 );
 
 -- 2. Membresía del agente en su sala
@@ -63,9 +63,9 @@ INSERT INTO memberships (
   role,
   enabled
 ) VALUES (
-  'Steven',
-  'probeta',
-  'grp.steven',                         -- Sala principal del tenant
+  '<tenant>',
+  '<alias>',
+  '<sala>',                             -- Sala principal del tenant
   'operator',                           -- Rol: operator | agent | agent_notify | member
   true
 );
@@ -170,23 +170,23 @@ El aprovisionamiento del Paso 5 solo cubre la pieza 3 (`alias-key.hex`); el rest
 1. **Certificado mTLS del canal PTY (`CN=pty-<alias>`)**:
    - Emitir con OpenSSL firmado por la CA raíz (`/etc/cauce-v3/pki/ca.crt` + `ca.key`, con `-CAserial /etc/cauce-v3/pki/ca.srl`).
    - Parámetros: RSA 4096, validez 365 días, extensiones `extendedKeyUsage = clientAuth`, `basicConstraints = critical,CA:FALSE`, `keyUsage = critical,digitalSignature,keyEncipherment`.
-   - Destino: `~stev/.config/cauce-v3/pty-pki/<alias>/{client.crt,client.key,ca.crt}` en modo `0600` cada uno, propiedad `stev` (el `alias-key.hex` del Paso 5 vive en el mismo directorio en `0400`).
+   - Destino: `~<usuario-manager>/.config/cauce-v3/pty-pki/<alias>/{client.crt,client.key,ca.crt}` en modo `0600` cada uno, propiedad de ese mismo usuario —el que corre las units `--user` del launcher PTY— (el `alias-key.hex` del Paso 5 vive en el mismo directorio en `0400`).
 
 2. **Registrar la identidad en el relay**:
    - Huella: `openssl x509 -in client.crt -noout -fingerprint -sha256`, sin dos puntos y en MAYÚSCULAS.
-   - Añadir la entrada al array `agents` de `/etc/cauce-v3/terminal/pty_agent_identities.json`: objetos `{ tenant_id, alias, fingerprint_sha256, expires_at }` bajo `{"version": 1, "agents": [...]}`, con `expires_at` en ISO-8601 UTC (p. ej. `2027-08-29T20:21:02Z`).
+   - Añadir la entrada al array `agents` de `/etc/cauce-v3/terminal/pty_agent_identities.json`: objetos `{ tenant_id, alias, fingerprint_sha256, expires_at }` bajo `{"version": 1, "agents": [...]}`, con `expires_at` en ISO-8601 UTC (`<AAAA-MM-DD>T<hh:mm:ss>Z`).
    - El relay relee el archivo **por conexión**: no requiere reinicio.
 
-3. **Archivo de entorno del launcher**: crear `~stev/.config/cauce-v3/pty/<alias>.env` en modo `0600`:
+3. **Archivo de entorno del launcher**: crear `~<usuario-manager>/.config/cauce-v3/pty/<alias>.env` en modo `0600`:
    ```
-   RELAY_HOST=100.64.0.6
+   RELAY_HOST=<host-del-relay>
    RELAY_PORT=8445
-   PKI_DIR=/home/stev/.config/cauce-v3/pty-pki/<alias>
-   ALIAS_KEY_FILE=/home/stev/.config/cauce-v3/pty-pki/<alias>/alias-key.hex
+   PKI_DIR=/home/<usuario-manager>/.config/cauce-v3/pty-pki/<alias>
+   ALIAS_KEY_FILE=/home/<usuario-manager>/.config/cauce-v3/pty-pki/<alias>/alias-key.hex
    ```
 
 4. **Drop-in de release y arranque del unit**:
-   - Crear `~stev/.config/systemd/user/cauce-v3-pty@<alias>.service.d/20-cauce-release.conf` con SOLO dos líneas `Environment=` (`CAUCE_PTY_OPS_ROOT` y `CAUCE_PTY_AGENT_VERSION`) apuntando al release vigente content-addressed de `~stev/.local/share/cauce-v3/pty-releases/`.
+   - Crear `~<usuario-manager>/.config/systemd/user/cauce-v3-pty@<alias>.service.d/20-cauce-release.conf` con SOLO dos líneas `Environment=` (`CAUCE_PTY_OPS_ROOT` y `CAUCE_PTY_AGENT_VERSION`) apuntando al release vigente content-addressed de `~<usuario-manager>/.local/share/cauce-v3/pty-releases/`.
    - **Prohibido añadir `ExecStart` al drop-in**: la plantilla `cauce-v3-pty@.service` ya pasa `%i` como alias; un `ExecStart` clonado con el alias literal de otro conf arranca el launcher con el alias equivocado (exit 73 `another PTY launcher owns alias X`).
    - Activar:
      ```sh

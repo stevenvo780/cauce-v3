@@ -1,7 +1,9 @@
 # Instalación de gates (procedimiento, no ejecutado)
 
-1. Instalar desde el mismo release inmutable, sin symlinks: collector, probe, migration gate,
-   canary/cutover/guard, fleet parity/mode, physical fleet gate, helper, schemas e inventario.
+1. Instalar desde el mismo release inmutable, sin symlinks: collector
+   (`ops/scripts/gate-collector.mjs`), probe (`gate-roundtrip-probe.mjs`), gate de migración
+   (`migration-gate.mjs`), canary/cutover/guard (`canary.sh`, `cutover.sh`, `guard-check.sh`),
+   gate de flota física (`physical-fleet-gate.py`), sus ayudantes, los schemas y el inventario.
 
 2. Configurar paths, nunca valores secretos:
 
@@ -15,8 +17,11 @@
    al mapa mTLS por rename atómico. Principal exacto:
 
    ```json
-   {"tenant_id":"Steven","alias":"gate-probe","session_id":"gate-probe","channel":"gate","roles":["agent"],"permissions":["route","read"]}
+   {"tenant_id":"<tenant>","alias":"gate-probe","session_id":"gate-probe","channel":"gate","roles":["agent"],"permissions":["route","read"]}
    ```
+
+   El tenant y la sala de origen exactos que exige el gateway están en
+   `services/gateway/src/routes/core/publish.ts`; el resto de los campos es literal.
 
    No crear agent row, membership, lease, cuota ni entrada en `container-aliases.json`. No reutilizar
    el certificado de consola o de un adapter. Ver `runbooks/authentication.md` para permisos del
@@ -37,6 +42,3 @@
 
 6. Conservar como baseline privado el snapshot de cutover exitoso y pasarlo a watchdog/reconciler
    mediante `CAUCE_GATE_BASELINE_FILE`. Esos guards no crean probes ni reinician servicios.
-
-7. Si Zeus debe estar offline durante mantenimiento, usar sólo `--maintenance-offline-zeus` junto
-   con `CAUCE_CHANGE_ID` y la confirmación exacta. Ejecutar después el modo final sin excepción.

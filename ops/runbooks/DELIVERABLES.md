@@ -6,11 +6,11 @@ Estado implementado, todavía no desplegado:
 - poller auténtico por lease+heartbeat y prueba publish→delivery→ACK model-free;
 - baseline obligatorio y DLQ delta, preservando DLQ histórico;
 - canary/cutover fail-closed con cleanup y timeout;
-- flota exacta de 15 agentes, un principal de sistema y tres históricos;
+- paridad exacta de la flota: los alias habilitados, los principales de sistema y los retirados,
+  tal como los declara el snapshot;
 - filtro compartido de `gate-probe` y `quota-collector` en destinos/routing;
-- policy `agent_notify` exacta y verificada por snapshot v3;
+- policy `agent_notify` exacta y verificada contra el snapshot de flota;
 - placements físicos declarados y gate de existencia Docker;
-- excepción de mantenimiento únicamente para Zeus, con confirmación exacta y gate final obligatorio;
 - down 028/029 coordinados con el advisory lock del migrador; down 029 además bloquea writers y
   rechaza cualquier conflicto CAS antes de mutar o borrar `schema_migrations`.
 

@@ -22,8 +22,9 @@ del contenedor salvo el propio paquete): `cauce-pty-launcher.sh` (lanzamiento),
 `rollout-pty.py` + `rollout_pty_lib.py` (despliegue y drop-ins), `derive-alias-key.py` y
 `publish-alias-key.sh` (material de ticket por alias), `install-pty-agent.sh`, `systemd/`
 (plantillas de unidad) y `tests/`
-(unittest, sin socket real). Launcher y rollout corren en el manager `server` o `kratos`; el reaper
-se ejecuta dentro del contenedor desde stdin y no queda instalado allí.
+(unittest, sin socket real). Launcher y rollout corren en el host manager —el que tiene el demonio
+Docker de los contenedores y el systemd de usuario que supervisa las unidades—; el reaper se ejecuta
+dentro del contenedor desde stdin y no queda instalado allí.
 
 **Hace:** abre PTYs bajo demanda (`shell`, o `harness` = TUI real vía `tmux attach` de solo lectura o TUI de OpenClaw) y sirve lectura/escritura de ficheros de gobierno (tags 0x50–0x5E: READ/LIST/WRITE/WRITE_BATCH con CAS y rollback; paths validados con realpath + lista NEVER_SERVE).
 

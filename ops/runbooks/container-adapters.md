@@ -3,7 +3,7 @@
 ## Cuándo usar
 Supervisar, desplegar, actualizar y hacer rollback de adapters V3 que se ejecutan dentro de contenedores Docker existentes mediante systemd (rootless o system).
 
-> **Importante**: `ops/container-aliases.json`, `ops/manifests/*.yaml` y `ops/generated/container-systemd/**` son estrictamente GENERADOS a partir de `ops/flota.json` (exportado desde PostgreSQL). La edición manual de estos archivos está estrictamente PROHIBIDA y bloqueada por el gate de validación (`ops/scripts/validate.sh`). Para altas, bajas o aprovisionamiento de adaptadores en contenedor, consultar [Runbook: Alta y Baja de Agente](file:///datos/workspaces/zeus/cauce-v3/ops/runbooks/alta-y-baja-de-agente.md) y utilizar `ops/scripts/regenerate-fleet.sh` junto con `cauce <alias> aprovisionar`.
+> **Importante**: `ops/container-aliases.json`, `ops/manifests/*.yaml` y `ops/generated/container-systemd/**` son estrictamente GENERADOS a partir de `ops/flota.json` (exportado desde PostgreSQL). La edición manual de estos archivos está estrictamente PROHIBIDA y bloqueada por el gate de validación (`ops/scripts/validate.sh`). Para altas, bajas o aprovisionamiento de adaptadores en contenedor, consultar [Runbook: Alta y Baja de Agente](alta-y-baja-de-agente.md) y utilizar `ops/scripts/regenerate-fleet.sh` junto con `cauce <alias> aprovisionar`.
 
 ## Pasos
 1. Regenerar y verificar unidades systemd y digests desde el snapshot de flota:
@@ -28,7 +28,7 @@ Supervisar, desplegar, actualizar y hacer rollback de adapters V3 que se ejecuta
    supervisor: `/opt/cauce-v3-adapter` en el despliegue como root de la flota, y
    `$XDG_DATA_HOME/cauce-v3-adapter` (`~/.local/share/cauce-v3-adapter`, lo que fijan las unidades
    rootless generadas) cuando lo corre un usuario. El release tiene que cumplir lo que comprueba
-   `validate_bundle` (`ops/scripts/container-adapter-supervisor.sh:414-441`):
+   `validate_bundle` (`ops/scripts/container-adapter-supervisor.sh:400-427`):
    - contiene `packages/adapter-sdk/dist/src/bin/<harness>.js`, fichero regular, ejecutable y no
      enlace simbólico (`<harness>` es el arnés asignado al alias);
    - el directorio del release, todas sus entradas y todos sus enlaces simbólicos pertenecen al
@@ -45,30 +45,30 @@ Supervisar, desplegar, actualizar y hacer rollback de adapters V3 que se ejecuta
    ```sh
    # [no ejecutable en verificación]
    python3 ops/container-runtime/cauce-container-runtime.py bundle-digest \
-     "$HOME/.local/share/cauce-v3-adapter/kant/releases/release-nuevo"   # rootless; /opt/... como root
+     "$HOME/.local/share/cauce-v3-adapter/<alias>/releases/release-nuevo"   # rootless; /opt/... como root
    ```
 4. Fijar el release mediante compare-and-swap (CAS):
    ```sh
    # [no ejecutable en verificación]
-   ops/scripts/pin-container-release.py pin kant \
+   ops/scripts/pin-container-release.py pin <alias> \
      --expected-release release-anterior \
      --expected-sha256 sha256:<digest-anterior> \
      --release release-nuevo \
      --sha256 sha256:<digest-nuevo>
-   systemctl --user restart cauce-v3-container-kant.service
+   systemctl --user restart cauce-v3-container-<alias>.service
    ```
 
 ## Verificar efecto
 1. Validar el estado del proceso con el supervisor:
    ```sh
    # [no ejecutable en verificación]
-   ops/scripts/container-adapter-supervisor.sh check kant
-   systemctl --user is-active cauce-v3-container-kant.service
+   ops/scripts/container-adapter-supervisor.sh check <alias>
+   systemctl --user is-active cauce-v3-container-<alias>.service
    ```
 2. Inspeccionar logs del servicio sin filtrar credenciales:
    ```sh
    # [no ejecutable en verificación]
-   journalctl --user -u cauce-v3-container-kant.service --since -10m
+   journalctl --user -u cauce-v3-container-<alias>.service --since -10m
    ```
 3. Validar un round-trip real con entrega `done` por el bus.
 
@@ -76,18 +76,18 @@ Supervisar, desplegar, actualizar y hacer rollback de adapters V3 que se ejecuta
 1. Revertir el pin mediante rollback CAS:
    ```sh
    # [no ejecutable en verificación]
-   ops/scripts/pin-container-release.py rollback kant \
+   ops/scripts/pin-container-release.py rollback <alias> \
      --expected-release release-nuevo \
      --expected-sha256 sha256:<digest-nuevo> \
      --release release-anterior \
      --sha256 sha256:<digest-anterior>
-   systemctl --user restart cauce-v3-container-kant.service
+   systemctl --user restart cauce-v3-container-<alias>.service
    ```
 2. Si se requiere apagar el adapter por completo (para baja definitiva seguir `ops/runbooks/alta-y-baja-de-agente.md`):
    ```sh
    # [no ejecutable en verificación]
-   systemctl --user disable --now cauce-v3-container-kant.service
-   ops/scripts/container-adapter-supervisor.sh stopped kant
+   systemctl --user disable --now cauce-v3-container-<alias>.service
+   ops/scripts/container-adapter-supervisor.sh stopped <alias>
    ```
 
 ## Expectativa de perfil nativo: los dos nombres de una encarnación

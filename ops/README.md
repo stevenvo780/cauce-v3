@@ -107,11 +107,9 @@ acredite binarios/imágenes finales; ver `el historial de git (--diff-filter=AD)
 - Rollback de schema es restore hacia DB V3 nueva; no hay down migrations.
 - CSP permite a xterm solo atributos de estilo inline (`style-src-attr`), sin abrir scripts inline.
 
-## Snapshot histórico de Telegram bridge V3
+## Límite de la evidencia del bridge Telegram
 
-> La evidencia privada conserva fecha, host, aliases, releases y métricas exactas. Se observó un
-> único bridge saludable, selector acumulativo y preflight secret-free de metadata. El corte
-> también observó V2 drenado para su alcance, pero no acredita el presente: `poll_fenced` estable
-> no prueba ausencia de V2. Antes de un release se repiten el gate V2 y los round-trips por alias.
-> Las advertencias operativas vigentes están en `runbooks/telegram-cutover.md`; el incidente y
-> su remediación detallada permanecen en evidencia privada no versionada.
+Una sola instancia del bridge atiende todos los alias del selector acumulativo, y su preflight de
+metadata es secret-free: ninguno de los dos observa el lado V2. Por eso un `poll_fenced` estable
+**no** acredita ausencia de un poller V2 — antes de cada release se repiten el gate V2 y los
+round-trips por alias. Advertencias operativas vigentes: `runbooks/telegram-cutover.md`.

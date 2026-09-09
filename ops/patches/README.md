@@ -33,9 +33,8 @@ node --check ops/patches/*.mjs
 
 **Paquete:** `openclaw` 2026.6.6 (instalación global, `/usr/lib/node_modules/openclaw`).
 **Archivo:** `dist/agent-command-DimMXeog.js`.
-**Aplicado el 2026-08-06 en 10 contenedores**: `claw`, `claw-miguel`, `claw-iza`, `ctrl-infra`,
-`agv2-pablo-personal-oc`, `agv2-pablo-marcas-oc`, `agv2-jhon-hegel-oc`, `agv2-jhon-heraclito-oc`
-(VPS) y `agv2-pablo-infra-oc`, `agv2-pablo-developer-oc` (kratos).
+**Objetivo:** cada contenedor cuyo alias corra el arnés `openclaw`, en cualquier host donde exista
+ese contenedor.
 
 ### Qué falla
 
@@ -69,7 +68,7 @@ turno completo.
 
 ```bash
 # Sobre el contenedor donde corre openclaw (uno o varios):
-ops/patches/apply-openclaw-turn-compaction-guard.sh claw claw-miguel claw-iza
+ops/patches/apply-openclaw-turn-compaction-guard.sh <contenedor> [<contenedor>...]
 
 # Sobre esta máquina, si openclaw está instalado acá:
 ops/patches/apply-openclaw-turn-compaction-guard.sh --local
@@ -85,7 +84,7 @@ en el próximo arranque del proceso.
 ### Cómo comprobar que está puesto
 
 ```bash
-docker exec claw grep -c 'Turn compaction failed' \
+docker exec <contenedor> grep -c 'Turn compaction failed' \
   /usr/lib/node_modules/openclaw/dist/agent-command-DimMXeog.js   # 1 = parcheado, 0 = no
 ```
 

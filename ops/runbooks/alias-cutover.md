@@ -14,23 +14,23 @@ Ejecutar la transición (cutover) de un alias hacia Cauce V3 (modo `host-native`
    ```sh
    # [no ejecutable en verificación]
    export CAUCE_CHANGE_ID=CHG-123
-   export CAUCE_CUTOVER_CONFIRM=cutover:host-native:jarvis:CHG-123
+   export CAUCE_CUTOVER_CONFIRM=cutover:host-native:<alias>:CHG-123
    export CAUCE_GATE_CAPTURE_PATH=/usr/local/libexec/cauce-gate-collector
    export CAUCE_GATE_PROBE_PATH=/usr/local/libexec/cauce-gate-roundtrip-probe
-   ops/scripts/cutover.sh host-native jarvis /ruta/snapshot-drain.json
+   ops/scripts/cutover.sh host-native <alias> /ruta/snapshot-drain.json
    ```
 
 ## Verificar efecto
 1. Ejecutar canary sobre el baseline de cutover:
    ```sh
    # [no ejecutable en verificación]
-   ops/scripts/canary.sh jarvis /ruta/baseline-cutover.json
+   ops/scripts/canary.sh <alias> /ruta/baseline-cutover.json
    ```
 2. Verificar que exista exactamente un consumer, poller y lease owner V3 sin DLQ nuevo.
 3. Confirmar que la unidad systemd está activa:
    ```sh
    # [no ejecutable en verificación]
-   systemctl is-active cauce-v3-alias-jarvis.service
+   systemctl is-active cauce-v3-alias-<alias>.service
    ```
 4. Verificar ausencia de overlap o leases duplicadas en base de datos.
 
@@ -39,11 +39,11 @@ Ejecutar la transición (cutover) de un alias hacia Cauce V3 (modo `host-native`
 2. Detener y deshabilitar la unidad V3 para impedir auto-resurrección:
    ```sh
    # [no ejecutable en verificación]
-   systemctl disable --now cauce-v3-alias-jarvis.service
+   systemctl disable --now cauce-v3-alias-<alias>.service
    ```
 3. Para modo container, verificar ausencia de procesos con el supervisor:
    ```sh
    # [no ejecutable en verificación]
-   ops/scripts/container-adapter-supervisor.sh stopped jarvis
+   ops/scripts/container-adapter-supervisor.sh stopped <alias>
    ```
 4. Restaurar el estado previo según el procedimiento correspondiente una vez validado el drenado total.
