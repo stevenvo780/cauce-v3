@@ -17,7 +17,10 @@ pnpm --filter @cauce/adapter-sdk deploy --legacy --prod "$release_target/package
 python3 - "$release_target" <<'PY'
 import os
 import pathlib
+import shutil
+import stat
 import sys
+import tempfile
 
 root = pathlib.Path(sys.argv[1]).resolve()
 package = root / 'packages/adapter-sdk'
@@ -28,6 +31,28 @@ if self_link.is_symlink():
 for entry in root.rglob('*'):
     if entry.is_symlink() and not entry.resolve().is_relative_to(root):
         raise SystemExit(f'bundle link escapes release: {entry.relative_to(root)}')
+private_files = {}
+for entry in list(root.rglob('*')):
+    details = entry.lstat()
+    if not stat.S_ISREG(details.st_mode):
+        continue
+    identity = (details.st_dev, details.st_ino)
+    previous = private_files.get(identity)
+    if previous is None and details.st_nlink == 1:
+        continue
+    descriptor, temporary = tempfile.mkstemp(prefix='.bundle-private-', dir=entry.parent)
+    os.close(descriptor)
+    try:
+        if previous is None:
+            shutil.copy2(entry, temporary, follow_symlinks=False)
+        else:
+            os.unlink(temporary)
+            os.link(previous, temporary)
+        os.replace(temporary, entry)
+        private_files.setdefault(identity, entry)
+    finally:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
 for harness in ('claude', 'codex', 'openclaw'):
     entry = package / f'dist/src/bin/{harness}.js'
     if not entry.is_file() or not entry.stat().st_mode & 0o111:
