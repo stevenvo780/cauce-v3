@@ -17,12 +17,12 @@ Todo commit que toque código **debe pasar el gate antes de hacer commit**. Comm
 | Comando | Qué ejecuta | Cuándo |
 |---|---|---|
 | `pnpm typecheck` | TypeScript strict (core, adapter, mcp, console) | Cada commit |
-| `pnpm lint` | ESLint por zona + `lint:estricto:zonas` (console, terminal-relay, telegram-bridge, dispatcher, tests) + `ruff check` (Python) + ratchet `scripts/calidad.mjs` | Cada commit |
+| `pnpm lint` | ESLint por zona + `lint:estricto:zonas` (13 rutas enumeradas a mano en `package.json:30`: `console`, `services/{terminal-relay,telegram-bridge,dispatcher}`, `services/gateway/src`, `tests`, `packages/protocol/{src,test}`, `packages/mcp-fleet-monitor/src`, `packages/adapter-sdk/{src,test}`, `packages/store/{src,test}`) + `ruff check` (Python) + ratchet `scripts/calidad.mjs` | Cada commit |
 | `pnpm lint:cycles` | AST de imports/reexportaciones runtime, incluidas entradas del workspace; baseline cero de ciclos | Dentro de `pnpm lint` |
 | `pnpm test:unit` | Gate rápido: protocol, adapter-sdk, mcp, console, `tests/unit` | Cada commit |
 | `pnpm test:core` | Escalón de Postgres: preflight de la base + `test:services` + `test:gateway-hardening` | Cada commit que toque `services/**` |
 | `pnpm test` (`scripts/test-all.mjs`) | Gate completo: orquesta 11 suites secuenciales, cuenta tests ejecutados y saltados por suite, y verifica que ningún guion `test:*`/`qa:*`/`coverage:*` quede huérfano | Gate completo |
-| `pnpm test:ops` | Descubre y ejecuta en serie las 31 pruebas directas de `ops/tests`; no abandona al primer rojo | Al tocar ops |
+| `pnpm test:ops` | Descubre y ejecuta en serie las pruebas directas de `ops/tests` (`ops/tests/run-all.mjs`, que las enumera del directorio); no abandona al primer rojo | Al tocar ops |
 | `ops/scripts/validate.sh` | Sintaxis de `.sh`/`.mjs` en ops+deploy, ShellCheck obligatorio, YAML/JSON Schema de manifiestos, paridad byte-a-byte G-SNAP | Al tocar fleet/ops |
 | `pnpm qa:layout` (`console/qa/layout-gate.mjs`) | Regresión de maquetado en Chromium a 360/760/1100/1440/1920/2560 px — desperdicio horizontal, accesibilidad de la nav, desperdicio vertical y objetivos de pliegue por ruta (abajo) | Al tocar console |
 | `pnpm arch:validate` / `pnpm arch:visual-check` | Valida la especificación Archify fijada y revisa el mapa navegable en temas y viewports múltiples | Al cambiar límites o dependencias |
@@ -49,7 +49,7 @@ Dos cosas hay que decirlas en voz alta:
 
 - **Su verde no sustituye al gate de release.** `test:core` corre por la ruta de la base externa
   (`CAUCE_TEST_DATABASE_URL`), y esa ruta es justamente la que `CAUCE_REQUIRE_TESTCONTAINERS=1`
-  **rechaza** (`tests/helpers/postgres.ts:438`). El gate de release aprovisiona con Testcontainers;
+  **rechaza** (`tests/helpers/postgres.ts:439-440`). El gate de release aprovisiona con Testcontainers;
   son dos caminos distintos y el verde de uno no acredita al otro.
 - **`packages/store/test` se queda fuera por coste**: 277 s medidos, casi cinco minutos metidos en
   casi cualquier commit de código, contra la regla de commits inmediatos de `AGENTS.md`. Quien
@@ -173,13 +173,13 @@ número mejoró y la línea base sigue tolerando el valor viejo.
 
 | Suite | Directorio | Qué valida |
 |---|---|---|
-| Unit | `tests/unit/` (80) | Políticas Docker, probes liveness/readiness, parseo de perfil de agente, cierre source-digest, contratos canary/gate |
-| Operación | `ops/tests/` (31) | Generadores, CLI, supervisor, cutover, watchdog, permisos y evidencia operacional con fixtures herméticos |
-| Gateway hardening | `tests/gateway-hardening/` (19) | mTLS, admisión de entrega, correlación WS, reintentos de publish receipt, seguridad |
-| Store hardening | `tests/store-hardening/` (9) | PostgreSQL real / Testcontainers: locks, config OCC, migration ledger, admisión terminal, selección de cuentas |
-| Integration | `tests/integration/` (4) | End-to-end vertical con PostgreSQL y observabilidad |
-| E2E | `tests/e2e/` (3) | Login de console, QA real y fixture de fan-out concurrente entre adapters |
-| Terminal PTY | `tests/terminal-pty/` (5) | Protocolo binario PTY, doubles de relay, fixtures vectoriales |
+| Unit | `tests/unit/` | Políticas Docker, probes liveness/readiness, parseo de perfil de agente, cierre source-digest, contratos canary/gate |
+| Operación | `ops/tests/` | Generadores, CLI, supervisor, cutover, watchdog, permisos y evidencia operacional con fixtures herméticos |
+| Gateway hardening | `tests/gateway-hardening/` | mTLS, admisión de entrega, correlación WS, reintentos de publish receipt, seguridad |
+| Store hardening | `tests/store-hardening/` | PostgreSQL real / Testcontainers: locks, config OCC, migration ledger, admisión terminal, selección de cuentas |
+| Integration | `tests/integration/` | End-to-end vertical con PostgreSQL y observabilidad |
+| E2E | `tests/e2e/` | Login de console, QA real y fixture de fan-out concurrente entre adapters |
+| Terminal PTY | `tests/terminal-pty/` | Protocolo binario PTY, doubles de relay, fixtures vectoriales |
 | Package tests | `packages/*/test/` | Por paquete: protocol (unit), store (DB), adapter-sdk (`node:test`), mcp-fleet-monitor |
 | Service tests | `services/*/` | gateway, dispatcher, telegram-bridge, terminal-relay |
 
@@ -199,8 +199,9 @@ corrida por dominio**:
 | adapter-sdk | `packages/adapter-sdk/src/**` | `node --test` sobre `dist`, remapeado por source maps |
 
 Raíz y consola cubren ficheros disjuntos, así que sus totales se suman sin fusionar mapas.
-adapter-sdk va **declarado aparte**: sus 689 tests corren con `node --test` y ninguna corrida de
-vitest los ve, así que instrumentado por vitest sale al 2-4 % cuando por su método está al 90,7 %.
+adapter-sdk va **declarado aparte**: sus tests corren con `node --test` y ninguna corrida de
+vitest los ve, así que instrumentado por vitest sale al 2-4 % cuando por su método está por encima
+del 90 % (la cifra vigente vive en `scripts/cobertura-base.json`, no aquí).
 
 ### Por qué no se mide por zonas
 

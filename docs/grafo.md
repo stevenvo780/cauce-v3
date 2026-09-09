@@ -2,6 +2,8 @@
 
 Generado por `pnpm grafo` (determinista — regenerar tras reordenar). Nodo = directorio; arista A→B = ficheros de A que referencian ficheros de B (peso = nº de referencias). Mapa navegable: [Arquitectura visual de Cauce V3](diagramas/cauce-v3.architecture.html).
 
+> **Al regenerar**: el generador enumera ficheros, así que vuelve a escribir un `ops/manifests/<alias>.yaml` por cada alias del snapshot y el recuento de ese nodo. Esos nombres son datos de una instalación, no del producto: colapsarlos otra vez a la línea genérica antes de commitear.
+
 ## El grafo (aristas con peso ≥2)
 
 ```mermaid
@@ -300,19 +302,7 @@ graph LR
 - ops/guardias/catalogo-mouseion-health.sh
 - ops/guardias/credential_health.py
 - ops/guardias/telegram-bridge.override.yaml
-- ops/manifests/argos.yaml
-- ops/manifests/atlas.yaml
-- ops/manifests/gaia.yaml
-- ops/manifests/hegel.yaml
-- ops/manifests/heraclito.yaml
-- ops/manifests/iza.yaml
-- ops/manifests/janus.yaml
-- ops/manifests/jarvis.yaml
-- ops/manifests/kratos.yaml
-- ops/manifests/salva.yaml
-- ops/manifests/socrates.yaml
-- ops/manifests/tales.yaml
-- ops/manifests/zeus.yaml
+- ops/manifests/*.yaml (uno por alias del snapshot; generados desde `ops/flota.json`)
 - ops/schemas/alias-manifest.schema.json
 - ops/scripts/fleet_derive.py
 - ops/scripts/refresh-profile-expectation.sh
@@ -346,7 +336,7 @@ graph LR
 | ops/pty-agent | 27 |
 | tests/gateway-hardening | 20 |
 | deploy/runtime | 18 |
-| ops/manifests | 14 |
+| ops/manifests | uno por alias del snapshot |
 | services/dispatcher | 13 |
 | ops/guardias | 12 |
 | scripts | 11 |

@@ -41,12 +41,14 @@ reciben agregados sin tenant/payload.
 - OIDC/JWKS, mTLS, token-file y `/v3/console/access` existen, pero cada entorno
   debe aportar certificados/identity maps/provider correctos y evidenciar
   negativos/rotación. Configuración incompleta falla cerrado.
-- **W3b no cierra las dos puertas que quedan sobre la misma shell.** (a) El worker legado de
-  **ultimate-terminal** sigue vivo en 9 de los 11 contenedores de la flota, fuera de este árbol y
-  con su propio modelo de autorización: vaciar `grants.json` cierra la puerta de la consola y deja
-  la suya abierta. Su retiro es contenedor por contenedor (§5 de `docs/terminal-pty.md`). (b) La
-  identidad del relay está **soldada en la imagen de la consola** (GAP-14): vive en `deploy/`, que
-  es del dueño, y ninguna de las tres variables del modo escribible
+- **Quedan dos puertas abiertas sobre la misma shell.** (a) El worker legado de
+  **ultimate-terminal** sigue instalado dentro de los contenedores donde se desplegó en su día:
+  vive fuera de este árbol y con su propio modelo de autorización, así que vaciar `grants.json`
+  cierra la puerta de la consola y deja la suya abierta. Su retiro es contenedor por contenedor
+  (§5 de [terminal-pty.md](terminal-pty.md)), y hasta que no quede ninguno el control de escritura
+  de la consola no es el único camino a esa shell. (b) La
+  identidad del relay está **soldada en la imagen de la consola** (GAP-14): se hornea al construirla, así
+  que rotarla exige rebuild, y ninguna de las tres variables del modo escribible
   (`CAUCE_TERMINAL_RW_ENABLED`, `CAUCE_TERMINAL_CONTROL_HOLD_SECONDS`,
   `CAUCE_TERMINAL_RECORDING_DIR`) está declarada hoy en `deploy/compose.yaml`.
 - **La retención de las grabaciones de terminal no está decidida.** El `.cast` de una sesión
