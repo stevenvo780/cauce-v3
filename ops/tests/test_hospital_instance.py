@@ -279,6 +279,24 @@ class HospitalInstanceTests(unittest.TestCase):
         self.assertIn("last_heartbeat_at > now() - interval '60 seconds'", script)
         self.assertLess(script.index('[ "$leases" = 3 ] ||'), script.index("CAUCE_SMOKE_EXPECTED_AGENTS"))
 
+    def test_agent_provision_refuses_a_checkout_that_is_not_the_expected_commit(self) -> None:
+        script = (INSTANCE / "provision-agents.sh").read_text(encoding="utf-8")
+
+        self.assertIn("CAUCE_HOSPITAL_EXPECTED_GIT_REF", script)
+        self.assertIn('[ -z "$(git -C "$REPO" status --porcelain)" ]', script)
+        self.assertIn('[ "$(git -C "$REPO" rev-parse HEAD)" = "$EXPECTED_COMMIT" ]', script)
+        self.assertIn("CAUCE_HOSPITAL_PROVISION_SIN_RED", script)
+        self.assertLess(script.index("EXPECTED_COMMIT"), script.index("flock -n 9"))
+        self.assertLess(script.index("EXPECTED_COMMIT"), script.index('install -d -m 0700 "$BUNDLE_ROOT"'))
+
+    def test_agent_provision_restarts_adapters_so_the_new_bundle_runs(self) -> None:
+        script = (INSTANCE / "provision-agents.sh").read_text(encoding="utf-8")
+
+        self.assertNotIn("systemctl enable --now", script)
+        self.assertIn('systemctl restart "cauce-v3-container-$alias.service"', script)
+        self.assertIn("status IN ('leased','accepted','started')", script)
+        self.assertLess(script.index('[ "$inflight" = 0 ]'), script.index("systemctl restart"))
+
     def test_access_helper_survives_a_late_provision_failure(self) -> None:
         script = (INSTANCE / "install.sh").read_text(encoding="utf-8")
 

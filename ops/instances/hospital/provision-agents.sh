@@ -19,11 +19,26 @@ LOCK_ROOT=/run/lock/hospital-cauce
 RELAY_URL=wss://172.17.0.1:18443/v3/ws
 ALIASES=(operador teseo perseo)
 
-for command in docker openssl python3 systemctl flock; do
+for command in docker openssl python3 systemctl flock git; do
   command -v "$command" >/dev/null || { echo "Falta $command" >&2; exit 1; }
 done
 [ -r "$ENV_FILE" ] || { echo "Falta $ENV_FILE" >&2; exit 1; }
 [ -r "$HOSPITAL_ENV" ] || { echo "Falta $HOSPITAL_ENV" >&2; exit 1; }
+
+# El bundle se empaqueta desde este checkout: sin este guard sale verde con codigo viejo.
+EXPECTED_REF=${CAUCE_HOSPITAL_EXPECTED_GIT_REF:-origin/socrates/hospital-fleet-20260905}
+if [ "${CAUCE_HOSPITAL_PROVISION_SIN_RED:-}" = "si" ]; then
+  echo "AVISO: guard de commit OMITIDO por CAUCE_HOSPITAL_PROVISION_SIN_RED=si; el bundle sale del checkout tal cual" >&2
+else
+  [ -z "$(git -C "$REPO" status --porcelain)" ] \
+    || { echo "El arbol no esta limpio; el bundle saldria de codigo sin commitear" >&2; exit 1; }
+  git -C "$REPO" fetch -q origin \
+    || { echo "No pude hacer fetch de origin (si es a proposito: CAUCE_HOSPITAL_PROVISION_SIN_RED=si)" >&2; exit 1; }
+  EXPECTED_COMMIT=$(git -C "$REPO" rev-parse --verify "${EXPECTED_REF}^{commit}" 2>/dev/null) \
+    || { echo "No pude resolver CAUCE_HOSPITAL_EXPECTED_GIT_REF=$EXPECTED_REF" >&2; exit 1; }
+  [ "$(git -C "$REPO" rev-parse HEAD)" = "$EXPECTED_COMMIT" ] \
+    || { echo "HEAD != $EXPECTED_REF; sincroniza antes de empaquetar el bundle" >&2; exit 1; }
+fi
 
 umask 077
 install -d -m 0755 /run/lock
@@ -205,8 +220,15 @@ install -m 0644 "$units"/cauce-v3-container-*.service /etc/systemd/system/
 install -m 0644 "$units/cauce-v3-profile-expectation@.service" /etc/systemd/system/
 systemctl daemon-reload
 
+inflight=$(docker exec hospital-cauce-postgres-1 psql -XAtq -U cauce_hospital -d cauce_hospital \
+  -c "SELECT count(*) FROM deliveries WHERE status IN ('leased','accepted','started')")
+[ "$inflight" = 0 ] \
+  || { echo "Hay $inflight entregas en vuelo; reintenta con el bus quieto para no dejar dos consumidores" >&2; exit 1; }
+
 for alias in "${ALIASES[@]}"; do
-  systemctl enable --now "cauce-v3-container-$alias.service"
+  # `enable --now` no reinicia una unit ya activa: sin el restart el BUNDLE_RELEASE nuevo no llega a correr.
+  systemctl enable "cauce-v3-container-$alias.service"
+  systemctl restart "cauce-v3-container-$alias.service"
 done
 
 for _attempt in 1 2 3 4 5 6 7 8 9 10; do
