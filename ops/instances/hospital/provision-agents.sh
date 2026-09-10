@@ -131,6 +131,14 @@ done
 runtime_image=$(env_value "$ENV_FILE" CAUCE_RUNTIME_IMAGE)
 [[ "$runtime_image" =~ @sha256:[a-f0-9]{64}$ ]] \
   || { echo "CAUCE_RUNTIME_IMAGE no está fijada por digest" >&2; exit 1; }
+# El release se nombra con el HEAD pero su contenido sale de la imagen: si divergen, el nombre miente.
+head_commit=$(git -C "$REPO" rev-parse HEAD)
+image_revision=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+  "$runtime_image" 2>/dev/null)
+if [ -z "$image_revision" ] || [ "${head_commit#"$image_revision"}" = "$head_commit" ]; then
+  echo "La imagen pineada es de «$image_revision» y el checkout de «$head_commit»; despliega antes de empaquetar" >&2
+  exit 1
+fi
 release="release-$(git -C "$REPO" rev-parse --short=12 HEAD)"
 release_dir=$BUNDLE_ROOT/releases/$release
 if [ ! -e "$release_dir" ]; then
@@ -215,10 +223,15 @@ python3 "$REPO/ops/scripts/generate-container-units.py" \
   --config-root "$CONFIG_ROOT" \
   --pki-root "$PKI_ROOT" \
   --bundle-root "$BUNDLE_ROOT" \
-  --lock-root "$LOCK_ROOT" >/dev/null
+  --lock-root "$LOCK_ROOT" \
+  --no-profile-expectation >/dev/null
 install -m 0644 "$units"/cauce-v3-container-*.service /etc/systemd/system/
-install -m 0644 "$units/cauce-v3-profile-expectation@.service" /etc/systemd/system/
+# Esta instancia no tiene pty-agent: sin hechos medidos la expectativa no puede cumplirse nunca.
+rm -f /etc/systemd/system/cauce-v3-profile-expectation@.service
 systemctl daemon-reload
+for alias in "${ALIASES[@]}"; do
+  systemctl reset-failed "cauce-v3-profile-expectation@$alias.service" 2>/dev/null || true
+done
 
 inflight=$(docker exec hospital-cauce-postgres-1 psql -XAtq -U cauce_hospital -d cauce_hospital \
   -c "SELECT count(*) FROM deliveries WHERE status IN ('leased','accepted','started')")

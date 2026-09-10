@@ -27,6 +27,8 @@ parser.add_argument("--config-root", help="host alias config root")
 parser.add_argument("--pki-root", help="host PKI root")
 parser.add_argument("--bundle-root", help="host immutable bundle root")
 parser.add_argument("--lock-root", help="host supervisor lock root")
+parser.add_argument("--no-profile-expectation", action="store_true",
+                    help="instance without a pty-agent: no runtime facts, so no expectation to keep fresh")
 args = parser.parse_args()
 ops_root = args.ops_root.resolve()
 aliases = load_container_aliases(ops_root)
@@ -82,6 +84,12 @@ else:
     unit_lock_root = args.lock_root or "/run/lock"
 
 
+def expectation_hook(scope: str, alias: str) -> str:
+    if args.no_profile_expectation:
+        return ""
+    return f"ExecStartPost=/usr/bin/systemctl {scope}start --no-block {UNIT_PREFIX}-profile-expectation@{alias}.service\n"
+
+
 def system_unit(alias: str, entry: dict[str, str]) -> str:
     return f"""[Unit]
 Description=Cauce V3 container adapter {alias} ({entry['container']}/{entry['harness']})
@@ -104,8 +112,7 @@ Environment=CAUCE_CONTAINER_BUNDLE_ROOT={unit_bundle_root}
 Environment=CAUCE_CONTAINER_LOCK_ROOT={unit_lock_root}
 ExecStart={install_prefix}/ops/scripts/container-adapter-supervisor.sh start {alias}
 ExecStop={install_prefix}/ops/scripts/container-adapter-supervisor.sh stop {alias}
-ExecStartPost=/usr/bin/systemctl start --no-block cauce-v3-profile-expectation@{alias}.service
-Restart=always
+{expectation_hook("", alias)}Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78
 RestartForceExitStatus=70
@@ -156,8 +163,7 @@ Environment=CAUCE_CONTAINER_BUNDLE_ROOT={unit_bundle_root}
 Environment=CAUCE_CONTAINER_LOCK_ROOT={unit_lock_root}
 ExecStart={install_prefix}/ops/scripts/container-adapter-supervisor.sh start {alias}
 ExecStop={install_prefix}/ops/scripts/container-adapter-supervisor.sh stop {alias}
-ExecStartPost=/usr/bin/systemctl --user start --no-block cauce-v3-profile-expectation@{alias}.service
-Restart=always
+{expectation_hook("--user ", alias)}Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78
 RestartForceExitStatus=70
@@ -293,9 +299,10 @@ for stale in sorted(args.output.glob("cauce-v3-container-*.service")):
         (config_output / f"{stale_alias}.env.example").unlink(missing_ok=True)
         print(f"retired {stale}")
 
-expectation_path = args.output / f"{UNIT_PREFIX}-profile-expectation@.service"
-atomic_write(expectation_path, expectation_unit())
-generated.append(expectation_path)
+if not args.no_profile_expectation:
+    expectation_path = args.output / f"{UNIT_PREFIX}-profile-expectation@.service"
+    atomic_write(expectation_path, expectation_unit())
+    generated.append(expectation_path)
 
 operations_path = args.output / "OPERATIONS.sha256"
 atomic_write(operations_path, f"{operational_digest(source_root, args.output.resolve(), rootless=args.rootless)}\n")

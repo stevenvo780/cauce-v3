@@ -297,6 +297,37 @@ class HospitalInstanceTests(unittest.TestCase):
         self.assertIn("status IN ('leased','accepted','started')", script)
         self.assertLess(script.index('[ "$inflight" = 0 ]'), script.index("systemctl restart"))
 
+    def test_agent_provision_refuses_an_image_that_is_not_the_checkout(self) -> None:
+        script = (INSTANCE / "provision-agents.sh").read_text(encoding="utf-8")
+
+        self.assertIn('org.opencontainers.image.revision', script)
+        self.assertIn('[ -z "$image_revision" ]', script)
+        self.assertIn('"${head_commit#"$image_revision"}" = "$head_commit"', script)
+        self.assertLess(script.index("image_revision"), script.index('release="release-'))
+
+    def test_agent_provision_wires_no_expectation_without_a_pty_agent(self) -> None:
+        script = (INSTANCE / "provision-agents.sh").read_text(encoding="utf-8")
+
+        self.assertIn("--no-profile-expectation", script)
+        self.assertNotIn('install -m 0644 "$units/cauce-v3-profile-expectation@.service"', script)
+        self.assertIn("rm -f /etc/systemd/system/cauce-v3-profile-expectation@.service", script)
+        self.assertIn('systemctl reset-failed "cauce-v3-profile-expectation@$alias.service"', script)
+
+    def test_container_units_drop_the_expectation_hook_when_asked(self) -> None:
+        generator = ROOT / "ops" / "scripts" / "generate-container-units.py"
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory)
+            subprocess.run(
+                ["python3", str(generator), "--rootless", "--home", "/home/dev",
+                 "--no-profile-expectation", "--output", str(output)],
+                check=True, capture_output=True,
+            )
+            units = sorted(output.glob("cauce-v3-container-*.service"))
+            self.assertTrue(units)
+            for unit in units:
+                self.assertNotIn("profile-expectation", unit.read_text(encoding="utf-8"))
+            self.assertFalse((output / "cauce-v3-profile-expectation@.service").exists())
+
     def test_access_helper_survives_a_late_provision_failure(self) -> None:
         script = (INSTANCE / "install.sh").read_text(encoding="utf-8")
 
