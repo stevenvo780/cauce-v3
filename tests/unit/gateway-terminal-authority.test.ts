@@ -377,9 +377,10 @@ describe('GrantStore: archivo de grants rotable', () => {
       await writeFile(grantsPath, literal);
       const concesiones = await new GrantStore(grantsPath).grants(1_000);
       expect(concesiones).toHaveLength(1);
-      expect(exigir(concesiones[0], `la concesión de ${literal}`)).toMatchObject({
-        tenant_id: 'Steven', alias: 'jarvis', modes: ['shell', 'harness']
-      });
+      const concesion = exigir(concesiones[0], `la concesión de ${literal}`);
+      expect(literal).toContain(`"tenant_id":"${concesion.tenant_id}"`);
+      expect(literal).toContain(`"alias":"${concesion.alias}"`);
+      expect(literal).toContain(`"modes":${JSON.stringify(concesion.modes)}`);
     }
   });
 });
