@@ -141,7 +141,6 @@ docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce \
   -c "SELECT alias,generation,updated_at FROM agent_profile_runtime_expectations WHERE alias='<alias>';"
 ```
 
-Deshacer: borrar los drop-in `cauce-v3-container-<alias>.service.d/profile-expectation.conf`,
-`systemctl --user daemon-reload`, y —si además se quiere revertir el supervisor— restaurar
-`container-adapter-supervisor.sh.bak-presence-gen`. Sin el drop-in nada más cambia: la variable
-extra que exporta el supervisor es inerte para cualquier adaptador que no la lea.
+Deshacer: regenerar las units sin el `ExecStartPost`, reinstalarlas y `daemon-reload`. El gancho
+vive dentro de la propia unit que emite `generate-container-units.py`; no hay drop-in que borrar ni
+copia de seguridad del supervisor que restaurar.
