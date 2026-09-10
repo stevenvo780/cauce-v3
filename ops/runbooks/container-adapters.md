@@ -141,7 +141,19 @@ docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce \
   -c "SELECT alias,generation,updated_at FROM agent_profile_runtime_expectations WHERE alias='<alias>';"
 ```
 
-Deshacer: borrar los drop-in `cauce-v3-container-<alias>.service.d/profile-expectation.conf`,
-`systemctl --user daemon-reload`, y —si además se quiere revertir el supervisor— restaurar
-`container-adapter-supervisor.sh.bak-presence-gen`. Sin el drop-in nada más cambia: la variable
-extra que exporta el supervisor es inerte para cualquier adaptador que no la lea.
+### Instancias sin pty-agent
+
+Los hechos que la expectativa necesita los publica el pty-agent en su presencia
+(`services/gateway/src/terminal/hechos-del-registro.ts`). Una instancia desplegada sin capa de
+terminal no los tiene, así que el POST responde `503 unavailable` («el runtime no publicó hechos
+medidos del alias») y el oneshot agota sus reintentos y muere en cada arranque del adaptador. No es
+un fallo que se pueda reparar en esa instancia: no hay nada que medir.
+
+Para esas instancias, `generate-container-units.py --no-profile-expectation` deja el
+`ExecStartPost` fuera de las units de adaptador y no emite la plantilla
+`cauce-v3-profile-expectation@.service`. Sin el flag la salida es idéntica byte a byte, así que una
+instancia con pty-agent no cambia. Quien lo pase debe borrar además la plantilla ya instalada y
+hacer `reset-failed` de las instancias que quedaron en rojo.
+
+Deshacer en una instancia que sí mide runtime: regenerar las units sin el flag, reinstalarlas y
+`daemon-reload`. El `ExecStartPost` vive dentro de la propia unit; no hay drop-in que borrar.
