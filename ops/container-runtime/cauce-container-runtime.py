@@ -482,42 +482,37 @@ def command_line_hash(pid: int) -> str:
     return framed_hash([raw])
 
 
-def executable_identity(pid: int, requested_path: str) -> dict[str, Any]:
+def requested_executable_identity(requested_path: str) -> dict[str, Any]:
     canonical = os.path.realpath(requested_path)
     requested = os.stat(canonical, follow_symlinks=False)
     if not stat.S_ISREG(requested.st_mode):
         raise PermanentError("adapter executable is not a regular file")
-    target_uid, target_gid = process_credentials(pid)
-    with matched_fs_credentials(target_uid, target_gid):
-        proc_link = os.readlink(f"/proc/{pid}/exe")
-        proc_details = os.stat(f"/proc/{pid}/exe")
     return {
         "path": canonical,
         "sha256": file_sha256(canonical),
         "device": requested.st_dev,
         "inode": requested.st_ino,
-        "procPath": proc_link,
-        "procDevice": proc_details.st_dev,
-        "procInode": proc_details.st_ino,
-        "cmdlineSha256": command_line_hash(pid),
     }
+
+
+def executable_identity(pid: int, requested_path: str) -> dict[str, Any]:
+    identity = requested_executable_identity(requested_path)
+    target_uid, target_gid = process_credentials(pid)
+    try:
+        with matched_fs_credentials(target_uid, target_gid):
+            proc_link = os.readlink(f"/proc/{pid}/exe")
+            proc_details = os.stat(f"/proc/{pid}/exe")
+    except FileNotFoundError as error:
+        raise ProcessLookupError(pid) from error
+    identity.update({"procPath": proc_link, "procDevice": proc_details.st_dev,
+                     "procInode": proc_details.st_ino, "cmdlineSha256": command_line_hash(pid)})
+    return identity
 
 
 def starting_executable_identity(requested_path: str) -> dict[str, Any]:
-    canonical = os.path.realpath(requested_path)
-    requested = os.stat(canonical, follow_symlinks=False)
-    if not stat.S_ISREG(requested.st_mode):
-        raise PermanentError("adapter executable is not a regular file")
-    return {
-        "path": canonical,
-        "sha256": file_sha256(canonical),
-        "device": requested.st_dev,
-        "inode": requested.st_ino,
-        "procPath": None,
-        "procDevice": None,
-        "procInode": None,
-        "cmdlineSha256": None,
-    }
+    identity = requested_executable_identity(requested_path)
+    identity.update({"procPath": None, "procDevice": None, "procInode": None, "cmdlineSha256": None})
+    return identity
 
 
 def wait_for_exec(tree: PinnedLeaderTree, requested_path: str, timeout: float = 3.0) -> dict[str, Any]:
@@ -1426,7 +1421,10 @@ def run_adapter(args: argparse.Namespace) -> int:
                 "executable": executable,
             })
             validate_metadata(running_document)
-            verify_adapter(running_document, args.alias, args.state)
+            try:
+                verify_adapter(running_document, args.alias, args.state)
+            except ProcessLookupError as error:
+                raise AdapterExitedBeforeIdentity from error
             atomic_metadata(control_fd, running_document)
         except AdapterExitedBeforeIdentity:
             # Popen returned only after the requested executable was launched,
