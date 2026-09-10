@@ -86,3 +86,4 @@ ordenes-locales/
 
 # Doc interna de flota/instancia: local, nunca versionada.
 interno/
+accesos.md
