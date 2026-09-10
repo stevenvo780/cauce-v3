@@ -14,7 +14,7 @@ PROJECT=hospital-cauce
 PG_CONTAINER=$PROJECT-postgres-1
 PG_VOLUME=${PROJECT}_cauce_pgdata
 LOCK_FILE=/run/lock/hospital-cauce-bootstrap.lock
-EXPECTED_REF=${CAUCE_HOSPITAL_EXPECTED_GIT_REF:-origin/socrates/hospital-fleet-20260905}
+EXPECTED_REF=${CAUCE_HOSPITAL_EXPECTED_GIT_REF:-origin/hospitales}
 BACKUP_STATUS=/var/backups/cauce-v3-hospital/status.json
 BACKUP_MONITOR=$REPO/ops/instances/hospital/backup-monitor.sh
 

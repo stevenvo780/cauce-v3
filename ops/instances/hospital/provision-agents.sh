@@ -26,7 +26,7 @@ done
 [ -r "$HOSPITAL_ENV" ] || { echo "Falta $HOSPITAL_ENV" >&2; exit 1; }
 
 # El bundle se empaqueta desde este checkout: sin este guard sale verde con codigo viejo.
-EXPECTED_REF=${CAUCE_HOSPITAL_EXPECTED_GIT_REF:-origin/socrates/hospital-fleet-20260905}
+EXPECTED_REF=${CAUCE_HOSPITAL_EXPECTED_GIT_REF:-origin/hospitales}
 if [ "${CAUCE_HOSPITAL_PROVISION_SIN_RED:-}" = "si" ]; then
   echo "AVISO: guard de commit OMITIDO por CAUCE_HOSPITAL_PROVISION_SIN_RED=si; el bundle sale del checkout tal cual" >&2
 else
