@@ -60,7 +60,8 @@ export abstract class JobsRepository extends ObservabilityRepository {
       const fairness = await client.query<{ interactive_streak: number }>(
         `SELECT interactive_streak FROM job_lane_fairness WHERE scope=$1 FOR UPDATE`, [scope]
       );
-      let interactiveStreak = fairness.rows[0]?.interactive_streak ?? 0;
+      const rachaInicial = fairness.rows[0]?.interactive_streak ?? 0;
+      let interactiveStreak = rachaInicial;
       const jobs: JobClaim[] = [];
       for (let index = 0; index < Math.min(limit, 100); index += 1) {
         const availability = await client.query<{ interactive: boolean; batch: boolean }>(
@@ -86,10 +87,21 @@ export abstract class JobsRepository extends ObservabilityRepository {
         jobs.push(job);
         interactiveStreak = lane === 'interactive' ? interactiveStreak + 1 : 0;
       }
-      await client.query(
-        `UPDATE job_lane_fairness SET interactive_streak=$2,updated_at=now() WHERE scope=$1`,
-        [scope, interactiveStreak]
-      );
+      /*
+       * The dispatcher calls this every DISPATCHER_POLL_MS (250 ms by default), so with an EMPTY
+       * queue the loop above breaks on its first turn and the streak comes out exactly as it went
+       * in. Writing it back anyway cost a new tuple version and its WAL on every tick: measured on
+       * 2026-09-12 with production idle, 9.97 UPDATEs per second against a table that holds ONE
+       * row -- about 860k row versions a day for a system that dispatched nothing. Nobody reads
+       * `updated_at` here (the only three statements that touch this table are in this function),
+       * so skipping the write when the value did not change loses no information.
+       */
+      if (interactiveStreak !== rachaInicial) {
+        await client.query(
+          `UPDATE job_lane_fairness SET interactive_streak=$2,updated_at=now() WHERE scope=$1`,
+          [scope, interactiveStreak]
+        );
+      }
       return jobs;
     });
   }
