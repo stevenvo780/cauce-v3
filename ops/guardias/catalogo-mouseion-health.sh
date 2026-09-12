@@ -20,6 +20,8 @@ TENANT_AVISO="${CAUCE_TENANT_AVISO:-Steven}"
 ESPERA="${CATALOGO_TIMEOUT:-20}"
 # Cuerpo mas chico que esto = dominio aparcado o error generico. El sano mas chico pesa 1777 B.
 MINIMO="${CATALOGO_MINIMO:-1024}"
+# Segundos de espera antes de la segunda muestra cuando la primera no da 200.
+REINTENTO="${CATALOGO_REINTENTO:-5}"
 
 PRUEBA=0
 case "${1:-}" in
@@ -39,10 +41,24 @@ while IFS=$'\t' read -r url marca; do
   TOTAL=$((TOTAL + 1))
   cuerpo="$(mktemp)"
   # -L: cuenta la respuesta FINAL, que es la que ve una persona. 000 (DNS/TLS/timeout) es caida.
-  linea="$(curl -sL -o "$cuerpo" --max-time "$ESPERA" \
-             -w '%{http_code} %{size_download} %{url_effective}' "$url" 2>/dev/null)"
+  # UNA sola muestra no distingue una caida de un pico de latencia. Medido 2026-09-10:
+  # aletheia.humanizar.tech oscila entre 0,7 s y 10,2 s y ese dia paso de los 20 s de $ESPERA una
+  # vez; entro en el conjunto de rotas, disparo el aviso, y a los minutos volvia a responder 200 con
+  # sus 43 KB de siempre. Un servicio REALMENTE caido falla las dos muestras, asi que el reintento
+  # quita el falso positivo sin tapar ninguna caida.
+  sondear() {
+    curl -sL -o "$cuerpo" --max-time "$ESPERA" \
+         -w '%{http_code} %{size_download} %{url_effective}' "$1" 2>/dev/null
+  }
+  linea="$(sondear "$url")"
   codigo="${linea%% *}"; resto="${linea#* }"; peso="${resto%% *}"; final="${resto#* }"
   [ -n "$codigo" ] || { codigo=000; peso=0; final="$url"; }
+  if [ "$codigo" != "200" ]; then
+    sleep "$REINTENTO"
+    linea="$(sondear "$url")"
+    codigo="${linea%% *}"; resto="${linea#* }"; peso="${resto%% *}"; final="${resto#* }"
+    [ -n "$codigo" ] || { codigo=000; peso=0; final="$url"; }
+  fi
 
   # Un 200 no prueba que sea LA pagina: un aparcado y el catch-all de una SPA tambien contestan
   # 200 a cualquier ruta. Se exige ademas peso y, si la lista lo declara, su marcador.
@@ -123,6 +139,13 @@ NUEVAS="$(printf '%s\n' "${ROTAS[@]}" | awk '{print $NF}' | sort \
           | comm -23 - <(sort "$ESTADO" 2>/dev/null || true))"
 if [ -z "$NUEVAS" ]; then
   echo "sin novedades respecto del aviso anterior: no aviso"
+  # PERO hay que PODAR las que se recuperaron. El estado solo se reescribia al avisar, asi que una
+  # URL que entraba por un pico se quedaba apuntada para siempre y su caida REAL posterior ya no
+  # contaba como nueva: aviso mudo. Es el mismo fallo que el comentario de abajo describe, entrando
+  # por la otra puerta. Aqui NUEVAS esta vacio, o sea el conjunto actual es un subconjunto del
+  # guardado: escribir el actual es exactamente la interseccion, nunca agrega nada sin aviso.
+  printf '%s\n' "${ROTAS[@]}" | awk '{print $NF}' | sort > "$ESTADO" \
+    || echo "no pude podar el estado en $ESTADO" >&2
   exit 1
 fi
 
