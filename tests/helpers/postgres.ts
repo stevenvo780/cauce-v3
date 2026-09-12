@@ -465,19 +465,6 @@ export async function startTestDatabase(): Promise<TestDatabase> {
       POSTGRES_USER: 'cauce_test',
       POSTGRES_PASSWORD: password
     })
-    /*
-     * This database dies with the test, so its durability buys nothing and its writes are not free:
-     * the CI runs on the SAME host and the SAME array (md3) as the production database. Measured on
-     * 2026-09-12, the coverage step sustained 5.4 MB/s of writes -- 9x production's own -- and md3's
-     * w_await went from 0.04 ms to 5.56 ms while it ran. PGDATA on tmpfs plus fsync off moves that
-     * load to RAM. `size` caps what a runaway suite can take from the host: initdb, the migrations
-     * and the fixtures measure well under 200 MB.
-     */
-    .withTmpFs({ '/var/lib/postgresql/data': 'rw,noexec,nosuid,size=768m' })
-    .withCommand([
-      'postgres', '-c', 'fsync=off', '-c', 'synchronous_commit=off',
-      '-c', 'full_page_writes=off', '-c', 'wal_level=minimal', '-c', 'max_wal_senders=0'
-    ])
     .withHealthCheck({
       test: ['CMD-SHELL', 'pg_isready -U cauce_test -d cauce_test'],
       interval: 1_000,
