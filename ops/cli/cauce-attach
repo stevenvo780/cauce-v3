@@ -42,6 +42,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -300,6 +301,10 @@ def main():
         elegida, avisos = elegir(mod, alias, datos, preferencia, sys.stdin.isatty())
 
     native = elegida['native']
+    # `native` and `cwd` come from sessions.json and transcripts, which the agent itself can write:
+    # they are validated and never spliced into a shell string (see the exec below).
+    if not isinstance(native, str) or not re.fullmatch(r'[0-9A-Za-z][0-9A-Za-z_.:-]{0,127}', native):
+        die(f'id de sesión inválido en el estado de {alias}: {native!r}')
     transcript = elegida.get('transcripto') or '(sin transcript)'
 
     # guarantee 2: single writer
@@ -323,6 +328,8 @@ def main():
             f'mientras tanto: ia {alias} watch.')
 
     cwd = elegida.get('cwd') or info['home']
+    if not isinstance(cwd, str) or not cwd.startswith('/') or any(c in cwd for c in '\n\r\0'):
+        die(f'cwd inválido para la sesión de {alias}: {cwd!r}')
 
     for indice, linea in enumerate(avisos):
         print(('cauce-attach: ' if indice == 0 else '              ') + linea)
@@ -377,11 +384,13 @@ def main():
 
     try:
         cli = resume_cli(harness, native)
+        # Login shell for the PATH, but every value travels as a positional argument, never as code.
         if host_native:
-            subprocess.run(['bash', '-lc', f'cd {cwd} && ' + ' '.join(cli)], check=False)
+            subprocess.run(['bash', '-lc', 'cd -- "$1" && shift && exec "$@"', 'bash', cwd, *cli],
+                           check=False)
         else:
             subprocess.run(['docker', 'exec', '-it', '--user', info['user'], '-w', cwd,
-                            info['container'], 'bash', '-lc', ' '.join(cli)], check=False)
+                            info['container'], 'bash', '-lc', 'exec "$@"', 'bash', *cli], check=False)
     finally:
         if parado:
             print(f'\ncauce-attach: levantando {unit} de nuevo…')
