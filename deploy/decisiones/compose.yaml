@@ -1,0 +1,76 @@
+# Separate compose project on purpose: `deploy/deploy.sh` runs `up --remove-orphans` on the bus
+# project, and a service declared there under another file would be removed as an orphan. This
+# project never touches the gateway, and the gateway's deploys never touch it.
+name: cauce-decisiones
+
+services:
+  decisiones:
+    image: ${CAUCE_DECISIONES_IMAGE:?imagen inmutable cauce-decisiones:<commit>}
+    user: "1000:1000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 20s
+    environment:
+      NODE_ENV: production
+      CAUCE_DECISIONES_PORT: "8447"
+      CAUCE_DECISIONES_HEALTH_PORT: "8088"
+      CAUCE_DECISIONES_TLS_CERT_FILE: /run/secrets/decisiones_tls_cert
+      CAUCE_DECISIONES_TLS_KEY_FILE: /run/secrets/decisiones_tls_key
+      CAUCE_DECISIONES_CLIENT_CA_FILE: /run/secrets/decisiones_client_ca
+      # Same registry the gateway reads, through a directory bind: rotations by atomic rename and
+      # revocations are seen on the next request.
+      CAUCE_DECISIONES_IDENTITY_FILE: /run/cauce-identities/mtls_identities.json
+      CAUCE_DECISIONES_JEV_KEY_FILE: /run/secrets/typesafe_jev_key
+      CAUCE_DECISIONES_JEV_MODEL: ${CAUCE_DECISIONES_JEV_MODEL:-jev-latest}
+      CAUCE_DECISIONES_ALIASES: ${CAUCE_DECISIONES_ALIASES:-zeus}
+      CAUCE_DECISIONES_HABILITAR_PLANTILLAS: ${CAUCE_DECISIONES_HABILITAR_PLANTILLAS:-}
+      CAUCE_DECISIONES_TIMEOUT_MS: ${CAUCE_DECISIONES_TIMEOUT_MS:-30000}
+      CAUCE_DECISIONES_HEDGE_MS: ${CAUCE_DECISIONES_HEDGE_MS:-3000}
+      CAUCE_DECISIONES_POR_MINUTO: ${CAUCE_DECISIONES_POR_MINUTO:-60}
+      CAUCE_DECISIONES_RAFAGA: ${CAUCE_DECISIONES_RAFAGA:-20}
+      CAUCE_DECISIONES_TOKENS_DIA: ${CAUCE_DECISIONES_TOKENS_DIA:-2000000}
+      CAUCE_DECISIONES_AUDIT_FILE: /var/lib/cauce-decisiones/auditoria.jsonl
+    secrets:
+      - decisiones_tls_cert
+      - decisiones_tls_key
+      - decisiones_client_ca
+      - typesafe_jev_key
+    volumes:
+      - type: bind
+        source: ${CAUCE_GATEWAY_IDENTITY_DIR:?directorio con mtls_identities.json}
+        target: /run/cauce-identities
+        read_only: true
+        bind:
+          create_host_path: false
+      - decisiones_auditoria:/var/lib/cauce-decisiones
+    ports:
+      - "${CAUCE_PRIVATE_BIND_IP:?IP del tailnet}:${CAUCE_DECISIONES_TLS_PORT:-8447}:8447"
+    networks: [salida]
+
+# File secrets are bind mounts outside swarm: the HOST owner is what the container sees, so every
+# file here must be readable by uid 1000 (stev) on the host.
+secrets:
+  decisiones_tls_cert:
+    file: ${CAUCE_GATEWAY_TLS_CERT_PATH:?certificado de servidor con SAN 100.64.0.11}
+  decisiones_tls_key:
+    file: ${CAUCE_GATEWAY_TLS_KEY_PATH:?clave del certificado de servidor}
+  decisiones_client_ca:
+    file: ${CAUCE_GATEWAY_CLIENT_CA_PATH:?CA de los certificados de cliente de los alias}
+  # Opt-in like the gateway's optional secrets: without the variable it is /dev/null and every
+  # decision answers 503 jev_sin_credencial with its fallback, so agents keep deciding with their LLM.
+  typesafe_jev_key:
+    file: ${CAUCE_TYPESAFE_JEV_KEY_PATH:-/dev/null}
+
+volumes:
+  decisiones_auditoria:
+
+networks:
+  salida:
+    driver: bridge
