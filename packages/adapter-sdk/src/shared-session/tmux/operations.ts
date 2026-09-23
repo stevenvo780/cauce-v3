@@ -200,10 +200,34 @@ async function windowExists(
   return result.stdout.split(/\r?\n/u).some((name) => name.trim() === window);
 }
 
+/**
+ * The prompt as it may reach a TUI: every control character made visible and inert.
+ *
+ * The paste goes in between bracketed-paste markers (`paste-buffer -p`), and the body of a bus
+ * delivery is free text from another alias. An `ESC[201~` inside it closed the bracket and turned
+ * the rest into KEYSTROKES: Enter sent the sender's own text as a turn of the owner, `/new` reset
+ * the conversation (and the pointer witness followed it), two C-c killed grok. ESC and every other
+ * C0 control except tab and newline become their Unicode control pictures (U+2400 block), DEL its
+ * picture, C1 controls the replacement character, and CR/CRLF a newline: the text keeps saying
+ * what it said, and nothing in it is a key.
+ */
+export function pasteSafeText(text: string): string {
+  return text
+    .replace(/\r\n?/gu, "\n")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b-\u001f]/gu, (control) => String.fromCodePoint(0x2400 + control.charCodeAt(0)))
+    .replace(/\u007f/gu, "\u2421")
+    .replace(/[\u0080-\u009f]/gu, "\ufffd");
+}
+
 export interface PastePromptResult {
   /** `ambiguous` only appears if the transport lost the atomic mutation result. */
   readonly state: "not_pasted" | "pasted" | "ambiguous";
-  readonly reason?: "cancelled" | "identity_changed" | "input_busy" | "mutation_rejected";
+  /**
+   * `turn_in_flight`: with `requireIdle`, a turn started before the final guard (nothing pasted;
+   * the caller may wait again). `input_busy`: the box itself holds something.
+   */
+  readonly reason?: "cancelled" | "identity_changed" | "input_busy" | "turn_in_flight" | "mutation_rejected";
   /** Postcondition verified: the buffer no longer exists or contains only the harmless marker. */
   readonly bufferScrubbed: boolean;
 }
@@ -320,7 +344,7 @@ export async function pastePrompt(
         const load = hooksSafeBeforeLoad
           ? await tmux.run(
             ["load-buffer", "-b", buffer, "-"],
-            text,
+            pasteSafeText(text),
             mutationControl,
           )
           : { exitCode: 78, stdout: "", stderr: "unsafe_hooks" };
@@ -377,7 +401,7 @@ export async function pastePrompt(
   };
 }
 
-type PastePrecondition = "ready" | "identity_changed" | "input_busy" | "unreadable";
+type PastePrecondition = "ready" | "identity_changed" | "input_busy" | "turn_in_flight" | "unreadable";
 
 /**
  * Snapshot immediately before the paste, already under human-keyboard exclusion.
@@ -419,13 +443,13 @@ async function pastePrecondition(
   const pane = await capturePane(tmux, identity.paneId, { styled: true, control });
   if (pane === undefined) return "unreadable";
   if (inputBoxState(pane).occupied) return "input_busy";
-  return requireIdle && turnInFlight(pane) ? "input_busy" : "ready";
+  return requireIdle && turnInFlight(pane) ? "turn_in_flight" : "ready";
 }
 
 function pasteGuardReason(
   guard: Exclude<PastePrecondition, "ready" | "unreadable">,
 ): PastePromptResult["reason"] {
-  return guard === "input_busy" ? "input_busy" : "identity_changed";
+  return guard === "input_busy" || guard === "turn_in_flight" ? guard : "identity_changed";
 }
 
 export async function sendEnter(

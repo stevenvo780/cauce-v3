@@ -186,7 +186,7 @@ test("grok: texto a medio escribir en la caja degrada sin pegar ni ejecutar nada
   assert.equal(tmux.submittedCount, 0);
 });
 
-test("grok: un turno que no termina nunca deja la caja tomada y degrada como input_busy", async () => {
+test("grok: un turno que no termina nunca agota la espera propia de 'generando' (tui_generating), no la de la caja", async () => {
   const { grokHome } = await grokWorkspace("grok-siempre-generando");
   const tmux = new GrokTmux();
   tmux.paneContent = grokFrame({ footer: "tool", spinner: THINKING });
@@ -197,7 +197,7 @@ test("grok: un turno que no termina nunca deja la caja tomada y degrada como inp
     signal: new AbortController().signal,
   });
 
-  assertExecutionPrevented(runner, outcome, "input_busy");
+  assertExecutionPrevented(runner, outcome, "tui_generating");
   assert.match(outcome.stderr, /encolaría/u);
   assert.equal(tmux.submittedCount, 0);
 });

@@ -45,6 +45,7 @@ export {
   panePid,
   paneStartCommand,
   pastePrompt,
+  pasteSafeText,
   repairLegacyDegradedWindow,
   sendEnter,
   type PastePromptResult,

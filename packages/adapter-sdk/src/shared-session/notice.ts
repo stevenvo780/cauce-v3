@@ -21,6 +21,7 @@ const REASON_TEXT: Readonly<Record<SharedSessionDegradation["reason"], string>> 
   session_identity_unverified: "la identidad alias+harness de la sesión no pudo acreditarse",
   workspace_mismatch: "tmux arrancó el panel fuera del workspace pedido y esa generación se mató",
   input_busy: "la caja de entrada quedó ocupada con texto a medio escribir",
+  tui_generating: "la terminal estuvo generando otro turno durante toda la espera y el pedido no entró",
   modal_blocking: "la TUI está esperando que el dueño conteste un diálogo",
   handshake_failed: "el mecanismo de sesión compartida no respondió",
   context_reset: "la TUI se reinició y la conversación empezó de cero",
@@ -28,6 +29,7 @@ const REASON_TEXT: Readonly<Record<SharedSessionDegradation["reason"], string>> 
   context_cleared: "el dueño vació el contexto de la terminal (/clear en claude, /new en codex o grok)",
   context_compacted: "la terminal compactó su contexto: lo anterior quedó resumido, no íntegro",
   turn_merged: "el panel estaba ocupado y la terminal fundió este pedido con el turno en curso",
+  background_pending: "se respondió con trabajo en segundo plano todavía corriendo en la terminal",
 };
 
 const CONTEXT_RESET_NOTICE = {
@@ -53,6 +55,12 @@ const CONTEXT_NOTICE: Readonly<Record<string, { readonly mark: string; readonly 
     mark: CONTEXT_MARK,
     consequence: "Este turno SÍ pasó por la terminal, pero lo anterior quedó RESUMIDO y no"
       + " íntegro: si algo importante se perdió, hay que volver a decirlo.",
+  },
+  background_pending: {
+    mark: CONTEXT_MARK,
+    consequence: "Este turno SÍ pasó por la terminal, pero dejó subagentes o comandos en segundo plano"
+      + " que seguían corriendo al responder: lo que produzcan después aparece en la terminal del"
+      + " dueño y NO vuelve a este pedido.",
   },
   turn_merged: {
     mark: MERGED_MARK,
@@ -84,6 +92,9 @@ export function degradationNotice(
   const remedio = degradation.reason === "modal_blocking"
     ? `Para restablecerlo: contestá el diálogo abierto en el panel de \`cauce ${alias}\``
       + ` (mecanismo: ${mecanismo}).`
+    : degradation.reason === "tui_generating"
+      ? `No hay nada roto: la terminal de \`cauce ${alias}\` seguía ocupada con otro turno; el pedido`
+        + ` se reintenta solo cuando se libere (mecanismo: ${mecanismo}).`
     : identityFailure
       ? `Para restablecerlo: revisá y drená/archivá la sesión incompatible de \`cauce ${alias}\``
         + ` antes de crear la correcta; el adaptador la conservó intacta (mecanismo: ${mecanismo}).`
@@ -94,7 +105,9 @@ export function degradationNotice(
       + ` (${degradation.reason}). Detalle: ${degradation.detail}`,
     degradation.executionPrevented === true
       ? "El modelo no recibió este pedido y no se usó ningún ejecutor ni conversación alternativa."
-        + " Restablecé la terminal canónica antes de volver a enviarlo."
+        + (degradation.reason === "tui_generating"
+          ? " No hay que restablecer nada."
+          : " Restablecé la terminal canónica antes de volver a enviarlo.")
       : "Se respondió por el camino de siempre, así que este intercambio NO aparece en el panel"
         + " del dueño y el agente no lo verá en la conversación de la terminal.",
     remedio,

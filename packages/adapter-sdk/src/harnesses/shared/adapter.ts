@@ -390,9 +390,12 @@ export class HarnessAdapter {
           ...degradation, alias: shared.alias, harness: shared.harness,
         });
       }
+      // Only a terminal that was busy with ANOTHER turn the whole wait is transient by nature: no
+      // model received this turn and nothing is wrong, so the bus may deliver it again later.
       throw new ProcessExecutionError("SHARED_TUI_UNAVAILABLE",
         shared === undefined ? "The canonical terminal is unavailable; no model received this turn"
-          : degradationNotice(shared.alias, shared.harness, degradation), false);
+          : degradationNotice(shared.alias, shared.harness, degradation),
+        degradation.reason === "tui_generating");
     }
 
     if (result.timedOut) {

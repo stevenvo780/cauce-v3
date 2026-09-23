@@ -28,6 +28,11 @@ type DegradationReason =
   | "workspace_mismatch"
   /** The owner had half-typed text in the box and never let it go within the deadline. */
   | "input_busy"
+  /**
+   * The TUI kept generating a turn (the owner's, or a wake) for the whole wait. Only for TUIs that
+   * queue a paste behind the running turn instead of merging it (grok, `pasteOnlyWhenIdle`).
+   */
+  | "tui_generating"
   /** The TUI is blocked waiting for an answer in a modal dialog. */
   | "modal_blocking"
   /** The paste could not be sent or the TUI did not register the turn. */
@@ -41,7 +46,13 @@ type DegradationReason =
   /** The terminal compacted its conversation context. */
   | "context_compacted"
   /** The turn merged with an execution already in progress in the TUI. */
-  | "turn_merged";
+  | "turn_merged"
+  /**
+   * The delivery was answered while background work its turn started (subagents, background
+   * commands) was still running; whatever that work produces later reaches the terminal, not this
+   * delivery.
+   */
+  | "background_pending";
 
 /**
  * Portion of the transcript with historical and current-turn entries.
@@ -83,10 +94,28 @@ export interface TranscriptReader<E> {
   files(): Promise<readonly string[]>;
   /** Reads from `offset`; `entries` is what is needed to correlate, `appended` only the new. */
   read(file: string, offset: number): Promise<TranscriptSlice<E>>;
-  /** The entry that created THIS turn, identified by the exact pasted text. */
-  findInjected(file: string, entries: readonly E[], promptText: string): InjectedTurn | undefined;
+  /**
+   * The entry that created THIS turn, identified by the exact pasted text. `correlationId` is the
+   * nonce the runner put in that text, for readers that also correlate by it.
+   */
+  findInjected(
+    file: string,
+    entries: readonly E[],
+    promptText: string,
+    correlationId?: string,
+  ): InjectedTurn | undefined;
   /** The outcome of that turn, or `undefined` while it is still running. */
   findAnswer(entries: readonly E[], key: string): TurnOutcome | undefined;
+  /**
+   * Every turn of the delivery closed, but work it started in the background is still running and
+   * may wake the agent for another turn (grok): the outcome as it stands, and a `progress` token
+   * that changes whenever that work moves. `undefined` when nothing lingers. `findAnswer` stays
+   * `undefined` meanwhile; the runner decides how long to wait (`backgroundWaitMs`).
+   */
+  lingering?(
+    entries: readonly E[],
+    key: string,
+  ): { readonly outcome: TurnOutcome; readonly progress: string } | undefined;
   /**
    * Searches the transcript entries for a correlated structured envelope.
    */

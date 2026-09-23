@@ -47,11 +47,11 @@ const LAYOUTS: Readonly<Record<NativePointerBinding["harness"], WitnessLayout>> 
   },
   grok: {
     root: (binding) => grokSessionsRoot(binding.configDirectory),
-    files: async (binding) => {
-      const files = await grokSessionFilesStrict(binding.configDirectory);
-      if (files.length > MAX_FILES) throw new Error("Native transcript inventory exceeds witness budget");
-      return files.filter((file) => existsSyncSafe(file));
-    },
+    // The SAME inventory the harvest polls (`capture` compares it with the baseline): already
+    // bounded to the most recently written conversations and without subagent sessions, which
+    // grow on their own (one folder per subagent) and used to push it past this witness's budget.
+    files: async (binding) => (await grokSessionFilesStrict(binding.configDirectory))
+      .filter((file) => existsSyncSafe(file)),
     nativeIdOf: grokSessionIdOf,
     port: (binding) => grokTranscript(binding.configDirectory),
     completedTurnAttests: true,
@@ -237,10 +237,12 @@ export class NativePointerAttestor {
           || digest(read.buffer.subarray(0, offset)) !== before.digest)) return "unverified";
         const entries = appendedEntries(read.buffer, offset);
         const nativeId = layout.nativeIdOf(file);
-        const injected = port.findInjected(file, entries, promptText);
+        const injected = port.findInjected(file, entries, promptText, correlationId);
         let matched = false;
         if ((mcpDeposited || layout.completedTurnAttests) && injected !== undefined) {
-          const terminal = port.findAnswer(entries, injected.key);
+          // A turn whose background work was still running when the delivery closed has closed too.
+          const terminal = port.findAnswer(entries, injected.key)
+            ?? port.lingering?.(entries, injected.key)?.outcome;
           if (terminal?.kind === "answer" && UUID.test(nativeId)
             && terminal.sessionId === nativeId && injected.sessionId === nativeId) matched = true;
         }

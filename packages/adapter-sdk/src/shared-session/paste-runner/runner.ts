@@ -7,21 +7,23 @@ import { ensureSharedSession, type EnsureFailure, type EnsureOptions } from "../
 import { TUI_WINDOW, sessionName } from "../types.js";
 import { tuiProfile } from "../tui-profile.js";
 import type { SharedSessionRunner } from "../types.js";
+import type { NativeTurnSnapshot } from "../native-witness.js";
 import {
   acquirePaneInputBarrier,
   clearDegradation,
   paneGenerationKey,
   paneIdentityStillCurrent,
   pastePrompt,
+  pasteSafeText,
   releasePaneInputBarrier,
   sendEnter,
   type PaneIdentity,
   type PaneInputBarrier,
   type PastePromptResult,
 } from "../tmux.js";
-import type { PasteSessionOptions } from "./contracts.js";
+import type { PasteSessionOptions, PendingQuarantine } from "./contracts.js";
 import { PasteSessionHarvestRunner } from "./harvest.js";
-import { beforeDeadline, replacedBeforeSubmission, result, SETTLE_MS } from "./runtime.js";
+import { beforeDeadline, replacedBeforeSubmission, result, SETTLE_MS, turnBudgetMs } from "./runtime.js";
 
 type PromptCommitOutcome =
   | { readonly state: "entered" }
@@ -91,134 +93,157 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
 
     // Paste and Enter must be a single operation from the owner's perspective: between checking
     // the input box is free and submitting it, no extra waits beyond what is strictly required.
-    const acquired = await this.acquireInputBox(
-      target,
-      identity,
-      request.signal,
-    );
-    if ("cancelled" in acquired || signalAborted(request.signal)) {
-      return result({ cancelled: true, harnessStarted: false });
-    }
-    if ("replaced" in acquired) return replacedBeforeSubmission();
-    if (!acquired.ok) return this.degrade(acquired.reason, acquired.detail, request);
-
-    // If the terminal was GENERATING when we pasted, the paste is queued and merges with the
-    // in-flight turn: there will be no dedicated turn to descend from. What is done does not change —
-    // pasting remains correct, the turn executes in the shared conversation — what changes is what
-    // we can CLAIM afterwards and the notice read by the owner. See `turnInFlight`.
-    const generating = turnInFlight(acquired.pane);
-    const baseline = await this.baseline(request.signal);
-    if (baseline === undefined || signalAborted(request.signal)) {
-      return result({ cancelled: true, harnessStarted: false });
-    }
-    const nativeSnapshot = await this.options.nativePointer?.capture(baseline);
-    if (this.options.nativePointer !== undefined && nativeSnapshot === undefined) {
-      try {
-        this.options.onNotice?.("no se pudo preparar la acreditación de reanudación durable de este turno");
-      } catch { /* A notice cannot prevent a delivery from running. */ }
-    }
-    if (!await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(request.signal))) {
-      return replacedBeforeSubmission();
-    }
-    if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
-
-    const correlationId = randomBytes(32).toString("hex");
-    const promptText = correlateEnvelopePrompt(request.stdin, correlationId, request.emissionOutput !== undefined);
-    const armed = await this.armPendingQuarantine(identity, correlationId);
-    if (!armed.ok) {
-      if (signalAborted(request.signal)) {
+    // A TUI that queues pastes can start a turn between that check and the barrier (the owner's
+    // Enter): the paste is refused intact and this SAME wait resumes. See `acquireWait`.
+    const wait = this.acquireWait(turnBudgetMs(request.timeoutMs, this.options.turnTimeoutMs));
+    let attempt: {
+      readonly generating: boolean;
+      readonly baseline: ReadonlyMap<string, number>;
+      readonly nativeSnapshot: NativeTurnSnapshot | undefined;
+      readonly correlationId: string;
+      readonly promptText: string;
+      readonly pending: PendingQuarantine;
+    } | undefined;
+    while (attempt === undefined) {
+      const acquired = await this.acquireInputBox(
+        target,
+        identity,
+        request.signal,
+        wait,
+      );
+      if ("cancelled" in acquired || signalAborted(request.signal)) {
         return result({ cancelled: true, harnessStarted: false });
       }
-      return this.degrade(
-        "handshake_failed",
-        "no se pudo persistir quarantine-pending antes de tocar la caja de entrada",
-        request,
-      );
-    }
-    const pending = armed.pending;
+      if ("replaced" in acquired) return replacedBeforeSubmission();
+      if (!acquired.ok) return this.degrade(acquired.reason, acquired.detail, request);
 
-    const buffer = `cauce-${this.options.alias}-${correlationId}`;
-    if (signalAborted(request.signal)) {
-      await this.disarmPendingQuarantine(pending);
-      return result({ cancelled: true, harnessStarted: false });
-    }
-    const acquiredBarrier = await acquirePaneInputBarrier(
-      this.options.tmux,
-      identity,
-      correlationId,
-      this.tmuxControl(request.signal),
-    );
-    if (acquiredBarrier.state === "not_applied") {
-      await this.disarmPendingQuarantine(pending);
-      return replacedBeforeSubmission();
-    }
-    if (acquiredBarrier.state === "busy") {
-      await this.disarmPendingQuarantine(pending);
-      if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
-      return this.degrade(
-        "input_busy",
-        "otra exclusión de input ya protege la caja; no se adopta ni se concatena",
-        request,
-      );
-    }
-    if (acquiredBarrier.state === "unsafe_hooks") {
-      await this.disarmPendingQuarantine(pending);
-      if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
-      return this.degrade(
-        "handshake_failed",
-        "la configuración tmux tiene hooks de input que abren una carrera; no se tocó la caja",
-        request,
-      );
-    }
-    if (acquiredBarrier.state === "ambiguous") {
-      return this.ambiguousBarrierAcquisitionState(
-        identity,
-        "tmux perdió el resultado al adquirir la exclusión real de input",
-        request.signal.aborted,
-        pending,
-      );
-    }
-    if (acquiredBarrier.state !== "acquired") { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- A tmux boundary must fail closed if a runtime implementation returns a state outside its declared union.
-      return this.ambiguousCommittedState(
-        identity,
-        "tmux devolvió un estado imposible al adquirir la exclusión de input",
-        request.signal.aborted,
-        pending,
-        true,
-      );
-    }
-    const committed = await this.commitUnderInputBarrier(
-      acquiredBarrier.barrier,
-      buffer,
-      promptText,
-      request.signal,
-    );
-    if (committed.state === "ambiguous") {
-      return this.ambiguousCommittedState(
-        identity,
-        committed.detail,
-        request.signal.aborted,
-        pending,
-        committed.forceTerminate,
-      );
-    }
-    if (committed.state === "not_pasted") {
-      const { paste } = committed;
-      await this.disarmPendingQuarantine(pending);
-      if (paste.reason === "identity_changed"
-        || !await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl())) {
+      // If the terminal was GENERATING when we pasted, the paste is queued and merges with the
+      // in-flight turn: there will be no dedicated turn to descend from. What is done does not change —
+      // pasting remains correct, the turn executes in the shared conversation — what changes is what
+      // we can CLAIM afterwards and the notice read by the owner. See `turnInFlight`.
+      const generating = turnInFlight(acquired.pane);
+      const baseline = await this.baseline(request.signal);
+      if (baseline === undefined || signalAborted(request.signal)) {
+        return result({ cancelled: true, harnessStarted: false });
+      }
+      const nativeSnapshot = await this.options.nativePointer?.capture(baseline);
+      if (this.options.nativePointer !== undefined && nativeSnapshot === undefined) {
+        try {
+          this.options.onNotice?.("no se pudo preparar la acreditación de reanudación durable de este turno");
+        } catch { /* A notice cannot prevent a delivery from running. */ }
+      }
+      if (!await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(request.signal))) {
         return replacedBeforeSubmission();
       }
       if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
-      if (paste.reason === "input_busy") {
+
+      const correlationId = randomBytes(32).toString("hex");
+      // Neutralized BEFORE anything else sees it: the transcript matchers compare against exactly
+      // what reached the pane. See `pasteSafeText`.
+      const promptText = pasteSafeText(
+        correlateEnvelopePrompt(request.stdin, correlationId, request.emissionOutput !== undefined),
+      );
+      const armed = await this.armPendingQuarantine(identity, correlationId);
+      if (!armed.ok) {
+        if (signalAborted(request.signal)) {
+          return result({ cancelled: true, harnessStarted: false });
+        }
         return this.degrade(
-          "input_busy",
-          "la caja cambió mientras se persistía quarantine-pending; se preserva intacta",
+          "handshake_failed",
+          "no se pudo persistir quarantine-pending antes de tocar la caja de entrada",
           request,
         );
       }
-      return this.degrade("handshake_failed", "tmux no aceptó el pegado del prompt", request);
+      const pending = armed.pending;
+
+      const buffer = `cauce-${this.options.alias}-${correlationId}`;
+      if (signalAborted(request.signal)) {
+        await this.disarmPendingQuarantine(pending);
+        return result({ cancelled: true, harnessStarted: false });
+      }
+      const acquiredBarrier = await acquirePaneInputBarrier(
+        this.options.tmux,
+        identity,
+        correlationId,
+        this.tmuxControl(request.signal),
+      );
+      if (acquiredBarrier.state === "not_applied") {
+        await this.disarmPendingQuarantine(pending);
+        return replacedBeforeSubmission();
+      }
+      if (acquiredBarrier.state === "busy") {
+        await this.disarmPendingQuarantine(pending);
+        if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
+        return this.degrade(
+          "input_busy",
+          "otra exclusión de input ya protege la caja; no se adopta ni se concatena",
+          request,
+        );
+      }
+      if (acquiredBarrier.state === "unsafe_hooks") {
+        await this.disarmPendingQuarantine(pending);
+        if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
+        return this.degrade(
+          "handshake_failed",
+          "la configuración tmux tiene hooks de input que abren una carrera; no se tocó la caja",
+          request,
+        );
+      }
+      if (acquiredBarrier.state === "ambiguous") {
+        return this.ambiguousBarrierAcquisitionState(
+          identity,
+          "tmux perdió el resultado al adquirir la exclusión real de input",
+          request.signal.aborted,
+          pending,
+        );
+      }
+      if (acquiredBarrier.state !== "acquired") { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- A tmux boundary must fail closed if a runtime implementation returns a state outside its declared union.
+        return this.ambiguousCommittedState(
+          identity,
+          "tmux devolvió un estado imposible al adquirir la exclusión de input",
+          request.signal.aborted,
+          pending,
+          true,
+        );
+      }
+      const committed = await this.commitUnderInputBarrier(
+        acquiredBarrier.barrier,
+        buffer,
+        promptText,
+        request.signal,
+      );
+      if (committed.state === "ambiguous") {
+        return this.ambiguousCommittedState(
+          identity,
+          committed.detail,
+          request.signal.aborted,
+          pending,
+          committed.forceTerminate,
+        );
+      }
+      if (committed.state === "not_pasted") {
+        const { paste } = committed;
+        await this.disarmPendingQuarantine(pending);
+        if (paste.reason === "identity_changed"
+          || !await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl())) {
+          return replacedBeforeSubmission();
+        }
+        if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
+        // A turn started between the acquisition and the barrier (the owner's Enter, a wake): the
+        // paste was refused and the barrier released with nothing pasted, so back to waiting for idle.
+        if (paste.reason === "turn_in_flight") continue;
+        if (paste.reason === "input_busy") {
+          return this.degrade(
+            "input_busy",
+            "la caja cambió mientras se persistía quarantine-pending; se preserva intacta",
+            request,
+          );
+        }
+        return this.degrade("handshake_failed", "tmux no aceptó el pegado del prompt", request);
+      }
+      attempt = { generating, baseline, nativeSnapshot, correlationId, promptText, pending };
     }
+    const { generating, baseline, nativeSnapshot, correlationId, promptText, pending } = attempt;
 
     // From here the turn MAY be in flight inside the TUI. No uncertainty falls back to the
     // alternative transport; see `harvest`.

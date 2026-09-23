@@ -28,14 +28,23 @@ const request = (stdin: string): Parameters<ReturnType<typeof grokRunner>["run"]
 });
 
 test("grok pane: el pie Ctrl+c:cancel y el spinner [stop] son turno en curso; ocioso, tecleado y salida armada no", () => {
+  // Without the footer on screen (a pane cut short) the spinner still tells.
+  const withoutFooter = (frame: string): string => frame.split("\n").slice(0, -3).join("\n");
   for (const frame of [
     grokFrame({ footer: "running", spinner: THINKING }),
     grokFrame({ footer: "tool", spinner: TOOL_RUNNING }),
     grokFrame({ footer: "queued", spinner: THINKING, queue: "respondé solo: encolado" }),
-    grokFrame({ footer: "idle", spinner: THINKING }),
     grokFrame({ footer: "running" }),
+    withoutFooter(grokFrame({ footer: "running", spinner: THINKING })),
   ]) assert.equal(turnInFlight(frame), true, frame);
-  for (const frame of [grokFrame(), grokFrame({ footer: "typed", box: "respondé solo: ho" }), grokFrame({ footer: "quit" })]) {
+  // With the footer on screen the footer alone decides: a spinner-looking line above an idle footer
+  // is conversation text (a quoted spinner kept the bus out of an idle TUI; review 2026-09-23).
+  for (const frame of [
+    grokFrame(),
+    grokFrame({ footer: "typed", box: "respondé solo: ho" }),
+    grokFrame({ footer: "quit" }),
+    grokFrame({ footer: "idle", spinner: THINKING }),
+  ]) {
     assert.equal(turnInFlight(frame), false, frame);
   }
   // Conversation text that quotes the footer or a spinner is not the footer nor the spinner.

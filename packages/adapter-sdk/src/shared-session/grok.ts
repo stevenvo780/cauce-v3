@@ -27,11 +27,28 @@ export interface GrokUpdateLine {
   readonly params?: unknown;
 }
 
-/** Cap on sessions listed; a runaway tree must not turn every poll into a full scan. */
-const MAX_SESSIONS = 2_000;
+/**
+ * Cap on conversations handed to the poller and the witness (they stat or hash every one).
+ *
+ * Over the cap the MOST RECENTLY WRITTEN ones are kept, never none: the shared conversation is
+ * written on every turn, so it is always among them, while an empty list would blind the harvest
+ * for good (every delivery held to the correlation deadline) and the pointer witness with it.
+ */
+export const MAX_GROK_SESSIONS = 1_000;
 const O_CLOEXEC = Number((fsConstants as unknown as Record<string, unknown>).O_CLOEXEC ?? 0);
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const CORRELATION_MEMBER = /"cauce_correlation_id":"[a-f0-9]{64}"/u;
+const CORRELATION_MEMBER = /"cauce_correlation_id":"[a-f0-9]{64}"/gu;
+const SUMMARY_FILE = "summary.json";
+const MAX_SUMMARY_BYTES = 256 * 1024;
+/**
+ * `summary.json` `session_kind` of folders that are not a conversation of their own. Every
+ * subagent gets its own session folder next to its parent's (measured on hades: 4 in one turn),
+ * nothing prunes them, and their activity is already reported in the parent's log
+ * (`subagent_spawned`/`subagent_finished`).
+ */
+const CHILD_SESSION_KINDS: ReadonlySet<string> = new Set(["subagent"]);
+/** A folder's kind never changes once grok wrote it; only definite answers are cached. */
+const childSessionCache = new Map<string, boolean>();
 
 /** Root of every conversation of this grok home, whatever cwd created it. */
 export function grokSessionsRoot(grokHome: string): string {
@@ -50,16 +67,48 @@ export function isGrokSessionId(value: string): boolean {
 
 interface Listing { readonly files: readonly string[]; readonly unreadable: boolean }
 
+/** Whether a session folder belongs to a subagent; unknown (no summary yet) counts as a conversation. */
+async function isChildSession(folder: string): Promise<boolean> {
+  const cached = childSessionCache.get(folder);
+  if (cached !== undefined) return cached;
+  let handle;
+  try {
+    handle = await open(join(folder, SUMMARY_FILE), fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+      | fsConstants.O_NONBLOCK | O_CLOEXEC);
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > MAX_SUMMARY_BYTES) return false;
+    const summary = asObject(JSON.parse(await handle.readFile("utf8")) as unknown);
+    const sessionKind = asString(summary?.session_kind);
+    if (sessionKind === undefined) return false;
+    const child = CHILD_SESSION_KINDS.has(sessionKind);
+    childSessionCache.set(folder, child);
+    return child;
+  } catch {
+    return false;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+async function modifiedAt(file: string): Promise<number> {
+  try {
+    return (await lstat(file)).mtimeMs;
+  } catch {
+    return -1;
+  }
+}
+
 /**
- * Every `sessions/<group>/<id>/updates.jsonl`, oldest conversation first.
+ * Every `sessions/<group>/<id>/updates.jsonl` of a conversation, oldest conversation first.
  *
  * ALL cwd groups are listed, not only the workspace's: `--resume <id>` reopens a conversation in
  * the folder where it was born (measured: the DM of hades lives under `/home/claw` whatever cwd
  * the TUI runs in), so restricting to one group would lose the very conversation being shared.
- * Session ids are UUIDv7, so sorting by id is sorting by creation time, which is what
- * `hasValidTerminalEnvelope` relies on to try the newest first.
+ * Subagent sessions are left out (see `CHILD_SESSION_KINDS`). Session ids are UUIDv7, so sorting
+ * by id is sorting by creation time, which is what `hasValidTerminalEnvelope` relies on to try the
+ * newest first.
  */
-async function listGrokSessionFiles(grokHome: string): Promise<Listing> {
+async function listGrokSessionFiles(grokHome: string, limit = MAX_GROK_SESSIONS): Promise<Listing> {
   const root = grokSessionsRoot(grokHome);
   let groups: Dirent[];
   try {
@@ -67,7 +116,7 @@ async function listGrokSessionFiles(grokHome: string): Promise<Listing> {
   } catch (error) {
     return { files: [], unreadable: (error as NodeJS.ErrnoException).code !== "ENOENT" };
   }
-  const found: { id: string; file: string }[] = [];
+  let found: { id: string; file: string }[] = [];
   let unreadable = false;
   for (const group of groups) {
     if (!group.isDirectory()) continue;
@@ -80,9 +129,15 @@ async function listGrokSessionFiles(grokHome: string): Promise<Listing> {
     }
     for (const session of sessions) {
       if (!session.isDirectory()) continue;
-      found.push({ id: session.name, file: join(root, group.name, session.name, GROK_TRANSCRIPT_FILE) });
-      if (found.length > MAX_SESSIONS) return { files: [], unreadable: true };
+      const folder = join(root, group.name, session.name);
+      if (await isChildSession(folder)) continue;
+      found.push({ id: session.name, file: join(folder, GROK_TRANSCRIPT_FILE) });
     }
+  }
+  if (found.length > limit) {
+    const dated = await Promise.all(found.map(async (entry) => ({ ...entry, at: await modifiedAt(entry.file) })));
+    dated.sort((left, right) => right.at - left.at);
+    found = dated.slice(0, Math.max(0, limit)).map(({ id, file }) => ({ id, file }));
   }
   found.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1
     : left.file < right.file ? -1 : left.file > right.file ? 1 : 0));
@@ -264,13 +319,30 @@ function normalizedPrompt(text: string): string {
 }
 
 /**
+ * The member that correlates this delivery's prompt: `"cauce_correlation_id":"<nonce>"`.
+ *
+ * Built from the nonce the runner generated when it is known. Otherwise the LAST member of the
+ * prompt: the transport block that carries it goes after `--- END REQUEST ---`
+ * (`correlateEnvelopePrompt`), so a member a sender wrote inside the request body comes first and
+ * can never stand in for it.
+ */
+function correlationMember(promptText: string, correlationId: string | undefined): string | undefined {
+  if (correlationId !== undefined) {
+    return /^[a-f0-9]{64}$/u.test(correlationId)
+      ? `"cauce_correlation_id":${JSON.stringify(correlationId)}`
+      : undefined;
+  }
+  return [...promptText.matchAll(CORRELATION_MEMBER)].at(-1)?.[0];
+}
+
+/**
  * The prompt is this delivery's when it is the same text, or when it carries this delivery's
  * 256-bit correlation member: nothing but our paste can contain that nonce inside a user prompt,
  * so a TUI that re-renders or wraps the paste still correlates.
  */
-function isOurPrompt(recorded: string, promptText: string): boolean {
+function isOurPrompt(recorded: string, promptText: string, correlationId?: string): boolean {
   if (normalizedPrompt(recorded) === normalizedPrompt(promptText)) return true;
-  const member = CORRELATION_MEMBER.exec(promptText)?.[0];
+  const member = correlationMember(promptText, correlationId);
   return member !== undefined && recorded.includes(member);
 }
 
@@ -297,12 +369,13 @@ function findInjectedGrokTurn(
   file: string,
   entries: readonly GrokUpdateLine[],
   promptText: string,
+  correlationId?: string,
 ): InjectedTurn | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const line = entries[index];
     if (kind(line) !== USER) continue;
     const text = textOf(line);
-    if (text === undefined || !isOurPrompt(text, promptText)) continue;
+    if (text === undefined || !isOurPrompt(text, promptText, correlationId)) continue;
     const sessionId = sessionOf(line) ?? grokSessionIdOf(file);
     return { key: keyOf(entries, index), sessionId };
   }
@@ -313,6 +386,23 @@ interface GrokTurn {
   readonly promptId?: string;
   readonly body: readonly GrokUpdateLine[];
   readonly completion?: GrokUpdateLine;
+  readonly completionIndex?: number;
+}
+
+/** Lines of the turn `promptId` in `[from, to)`: the ones it tagged, plus untagged updates. */
+function bodyOf(
+  entries: readonly GrokUpdateLine[],
+  from: number,
+  to: number,
+  promptId: string,
+): readonly GrokUpdateLine[] {
+  const body: GrokUpdateLine[] = [];
+  for (let index = from; index < to; index += 1) {
+    const line = entries[index];
+    const tagged = promptIdOf(line);
+    if (line !== undefined && (tagged === undefined || tagged === promptId)) body.push(line);
+  }
+  return body;
 }
 
 /**
@@ -335,8 +425,8 @@ function turnFrom(entries: readonly GrokUpdateLine[], start: number): GrokTurn {
       if (promptId === undefined || closes === promptId) {
         const turnId = promptId ?? closes;
         return turnId === undefined
-          ? { body, completion: line }
-          : { promptId: turnId, body, completion: line };
+          ? { body, completion: line, completionIndex: index }
+          : { promptId: turnId, body, completion: line, completionIndex: index };
       }
       continue;
     }
@@ -345,6 +435,141 @@ function turnFrom(entries: readonly GrokUpdateLine[], start: number): GrokTurn {
     if (line !== undefined && (tagged === undefined || tagged === promptId)) body.push(line);
   }
   return { ...(promptId === undefined ? {} : { promptId }), body };
+}
+
+const SUBAGENT_SPAWNED = "subagent_spawned";
+const SUBAGENT_FINISHED = "subagent_finished";
+const TASK_BACKGROUNDED = "task_backgrounded";
+const TASK_COMPLETED = "task_completed";
+const TOOL_CALL = "tool_call";
+
+interface ClosedTurn {
+  readonly body: readonly GrokUpdateLine[];
+  readonly completion: GrokUpdateLine;
+}
+
+/**
+ * The delivery's work as grok's log tells it: the pasted turn, the background work it started,
+ * and the wake turns that work caused.
+ *
+ * In the TUI a turn is not the end of the work (Grok CLI 1.0.41 docs, "The Still-Running Status
+ * Line"): subagents and background commands outlive it and, when they finish with `will_wake`,
+ * start a NEW turn with no prompt of anyone's. The owner typing while the turn is blocked in
+ * `get_command_or_subagent_output` cancels it (`stop_reason: cancelled`) and the subagents keep
+ * running; a model may also background the work and close with "te aviso cuando termine". Closing
+ * the delivery at the first `turn_completed` left the real answer to a wake turn no delivery owns,
+ * where `cauce_reply` is refused ("No unique active turn"). Headless never showed it because
+ * `grok --output-format json` itself waits for that work (`--background-wait-timeout`, 600 s).
+ *
+ * - Work is attributed by what grok writes: `subagent_spawned.parent_prompt_id`, and
+ *   `task_backgrounded.tool_call_id` -> the `tool_call` that carries `_meta.promptId`.
+ * - A wake turn is the first turn tagged after a `will_wake` completion with no user line since the
+ *   previous close; it joins the chain (its own background work too) and its close is the new end.
+ * - grok's wake prompt was never measured: if a wake opens with a user line it is taken for an
+ *   owner turn and the wake stays due, so the delivery lingers until the harvest's background wait
+ *   runs out (`backgroundWaitMs`) and keeps the last turn of its own, or the MCP deposit made
+ *   meanwhile (the delivery was still open, so `cauce_reply` from the wake was accepted).
+ */
+interface GrokChain {
+  /** `running`: a turn of the chain is open; `lingering`: all closed, work still pending; `settled`. */
+  readonly state: "running" | "lingering" | "settled";
+  readonly last?: ClosedTurn;
+  /** Changes whenever the chain or the conversation moves, to restart the background wait. */
+  readonly progress: string;
+}
+
+function grokChain(entries: readonly GrokUpdateLine[], start: number): GrokChain {
+  const first = turnFrom(entries, start);
+  if (first.completion === undefined || first.completionIndex === undefined) {
+    return { state: "running", progress: "" };
+  }
+  const chain = new Set<string>(first.promptId === undefined ? [] : [first.promptId]);
+  let last: ClosedTurn = { body: first.body, completion: first.completion };
+  const toolTurns = new Map<string, string>();
+  const subagents = new Set<string>();
+  const tasks = new Set<string>();
+  let wakeDue = false;
+  let finished = 0;
+  let lastUser = start;
+  let lastClose = first.completionIndex;
+  let open: { readonly promptId: string; readonly from: number } | undefined;
+  for (let index = start + 1; index < entries.length; index += 1) {
+    const line = entries[index];
+    const type = kind(line);
+    const payload = update(line);
+    if (type === TOOL_CALL) {
+      const call = asString(payload?.toolCallId);
+      const owner = promptIdOf(line);
+      if (call !== undefined && owner !== undefined) toolTurns.set(call, owner);
+    } else if (type === SUBAGENT_SPAWNED) {
+      const parent = asString(payload?.parent_prompt_id);
+      const id = asString(payload?.subagent_id) ?? asString(payload?.child_session_id);
+      if (parent !== undefined && id !== undefined && chain.has(parent)) subagents.add(id);
+      continue;
+    } else if (type === TASK_BACKGROUNDED) {
+      const call = asString(payload?.tool_call_id);
+      const task = asString(payload?.task_id);
+      const owner = call === undefined ? undefined : toolTurns.get(call);
+      if (task !== undefined && owner !== undefined && chain.has(owner)) tasks.add(task);
+      continue;
+    } else if (type === SUBAGENT_FINISHED || type === TASK_COMPLETED) {
+      const id = type === SUBAGENT_FINISHED
+        ? asString(payload?.subagent_id) ?? asString(payload?.child_session_id)
+        : asString(asObject(payload?.task_snapshot)?.task_id);
+      const pending = type === SUBAGENT_FINISHED ? subagents : tasks;
+      if (id !== undefined && pending.delete(id)) {
+        finished += 1;
+        if (payload?.will_wake === true) wakeDue = true;
+      }
+      continue;
+    }
+    if (index <= first.completionIndex) continue;
+    if (type === USER) {
+      lastUser = index;
+      continue;
+    }
+    if (type === COMPLETED) {
+      const closes = asString(payload?.prompt_id);
+      if (open !== undefined && closes === open.promptId && line !== undefined) {
+        last = { body: bodyOf(entries, open.from, index, open.promptId), completion: line };
+        open = undefined;
+      } else if (wakeDue && lastUser < lastClose) {
+        // A wake answered silently: grok closed it without tagging anything.
+        wakeDue = false;
+      }
+      lastClose = index;
+      continue;
+    }
+    const tagged = promptIdOf(line);
+    if (open === undefined && wakeDue && tagged !== undefined && !chain.has(tagged)
+      && lastUser < lastClose) {
+      chain.add(tagged);
+      open = { promptId: tagged, from: index };
+      wakeDue = false;
+    }
+  }
+  const progress = `${String(chain.size)}:${String(finished)}:${String(lastClose)}:${String(lastUser)}`;
+  if (open !== undefined) return { state: "running", last, progress };
+  return subagents.size > 0 || tasks.size > 0 || wakeDue
+    ? { state: "lingering", last, progress }
+    : { state: "settled", last, progress };
+}
+
+function outcomeOf(entries: readonly GrokUpdateLine[], start: number, turn: ClosedTurn): TurnOutcome {
+  const sessionId = sessionOf(turn.completion) ?? sessionOf(entries[start]);
+  const stopReason = asString(update(turn.completion)?.stop_reason) ?? "sin stop_reason";
+  if (stopReason !== "end_turn") {
+    return {
+      kind: "failed",
+      detail: stopReason === "cancelled"
+        ? "el turno se canceló dentro de la terminal (Ctrl+C) antes de terminar"
+        : `el turno terminó en la terminal con stop_reason '${stopReason}'`,
+    };
+  }
+  // An empty text is still an answer: after a `cauce_reply` deposit grok may close with no text,
+  // and the adapter takes the deposit; without one, the parser reports the silent turn as failed.
+  const text = finalMessage(turn.body);
+  return sessionId === undefined ? { kind: "answer", text } : { kind: "answer", text, sessionId };
 }
 
 /**
@@ -374,25 +599,27 @@ function finalMessage(body: readonly GrokUpdateLine[]): string {
   return segments.at(-1) ?? "";
 }
 
+/** The delivery's outcome once its chain settled (see `GrokChain`); `undefined` while it runs. */
 function findGrokOutcome(entries: readonly GrokUpdateLine[], key: string): TurnOutcome | undefined {
   const start = indexOfKey(entries, key);
   if (start === undefined) return undefined;
-  const turn = turnFrom(entries, start);
-  if (turn.completion === undefined) return undefined;
-  const sessionId = sessionOf(turn.completion) ?? sessionOf(entries[start]);
-  const stopReason = asString(update(turn.completion)?.stop_reason) ?? "sin stop_reason";
-  if (stopReason !== "end_turn") {
-    return {
-      kind: "failed",
-      detail: stopReason === "cancelled"
-        ? "el turno se canceló dentro de la terminal (Ctrl+C) antes de terminar"
-        : `el turno terminó en la terminal con stop_reason '${stopReason}'`,
-    };
-  }
-  // An empty text is still an answer: after a `cauce_reply` deposit grok may close with no text,
-  // and the adapter takes the deposit; without one, the parser reports the silent turn as failed.
-  const text = finalMessage(turn.body);
-  return sessionId === undefined ? { kind: "answer", text } : { kind: "answer", text, sessionId };
+  const chain = grokChain(entries, start);
+  return chain.state === "settled" && chain.last !== undefined
+    ? outcomeOf(entries, start, chain.last)
+    : undefined;
+}
+
+/** Every turn of the delivery closed but its background work still runs: the outcome so far. */
+function findGrokLingering(
+  entries: readonly GrokUpdateLine[],
+  key: string,
+): { readonly outcome: TurnOutcome; readonly progress: string } | undefined {
+  const start = indexOfKey(entries, key);
+  if (start === undefined) return undefined;
+  const chain = grokChain(entries, start);
+  return chain.state === "lingering" && chain.last !== undefined
+    ? { outcome: outcomeOf(entries, start, chain.last), progress: chain.progress }
+    : undefined;
 }
 
 /**
@@ -479,6 +706,7 @@ export function grokTranscript(grokHome: string): TranscriptReader<GrokUpdateLin
     read: (file, offset) => readJsonlSince<GrokUpdateLine>(file, offset),
     findInjected: findInjectedGrokTurn,
     findAnswer: findGrokOutcome,
+    lingering: findGrokLingering,
     findEnvelope: findGrokEnvelope,
     compactions: grokCompactions,
     // The shape `parseGrokOutput` accepts from `grok --output-format json`.

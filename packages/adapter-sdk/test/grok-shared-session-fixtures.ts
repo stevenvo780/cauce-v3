@@ -123,6 +123,39 @@ export class GrokLog {
       { promptId });
   }
 
+  /** `spawn_subagent` with `background: true`, as the parent's log records it (hades DM, line 142-157). */
+  spawned(promptId: string, subagentId: string): string {
+    return this.line("_x.ai/session/update", {
+      sessionUpdate: "subagent_spawned", subagent_id: subagentId, child_session_id: subagentId,
+      parent_session_id: this.sessionId, parent_prompt_id: promptId, subagent_type: "general-purpose",
+      description: "[reviewer] tarea larga", effective_context_source: "new", model: "grok-4.7",
+    });
+  }
+
+  subagentFinished(subagentId: string, willWake: boolean): string {
+    return this.line("_x.ai/session/update", {
+      sessionUpdate: "subagent_finished", subagent_id: subagentId, child_session_id: subagentId,
+      status: "completed", tool_calls: 58, turns: 1, duration_ms: 617_667, output: "resultado del subagente",
+      will_wake: willWake,
+    });
+  }
+
+  /** A command the model sent to the background from the tool call `callId` of turn `promptId`. */
+  backgrounded(callId: string, taskId: string): string {
+    return this.line("_x.ai/session/update", {
+      sessionUpdate: "task_backgrounded", tool_call_id: callId, task_id: taskId,
+      command: "sleep 900 && make", cwd: "/home/claw", output_file: "/tmp/out", description: "compila",
+    });
+  }
+
+  taskCompleted(taskId: string, willWake: boolean): string {
+    return this.line("_x.ai/session/update", {
+      sessionUpdate: "task_completed",
+      task_snapshot: { task_id: taskId, completed: true, exit_code: 0, kind: "bash", is_backgrounded: true },
+      will_wake: willWake,
+    });
+  }
+
   completed(promptId: string, stopReason = "end_turn"): string {
     return this.line("_x.ai/session/update", {
       sessionUpdate: "turn_completed", prompt_id: promptId, stop_reason: stopReason,
@@ -173,6 +206,9 @@ export function grokRunner(options: {
   resume?: ResumeSpec;
   nativePointer?: NativePointerAttestor;
   correlationTimeoutMs?: number;
+  generatingWaitMs?: number;
+  backgroundWaitMs?: number;
+  turnTimeoutMs?: number;
 }): PasteSessionRunner<GrokUpdateLine> {
   const alias = options.alias ?? "hades";
   options.tmux.sessionName = `cauce-${alias}`;
@@ -185,7 +221,9 @@ export function grokRunner(options: {
     tmux: options.tmux,
     sleep: options.sleep ?? immediate,
     acquireTimeoutMs: options.acquireTimeoutMs ?? 30,
-    turnTimeoutMs: 2_000,
+    generatingWaitMs: options.generatingWaitMs ?? 40,
+    backgroundWaitMs: options.backgroundWaitMs ?? 1_500,
+    turnTimeoutMs: options.turnTimeoutMs ?? 2_000,
     // Tiny on purpose: grok must NOT be judged "never started" by the 30 s inject deadline.
     injectTimeoutMs: 20,
     settleMs: 0,
