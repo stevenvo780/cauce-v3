@@ -45,7 +45,8 @@ export async function startService(config: ServiceConfig, fetchImpl?: typeof fet
     service,
     identify: mtlsIdentity({
       identitiesFile: config.identitiesFile,
-      ...(config.allowedAliases === undefined ? {} : { allowedAliases: config.allowedAliases }),
+      allowedAliases: config.allowedAliases,
+      allowedTenants: config.allowedTenants,
     }),
     credentialPresent: () => jev.credentialPresent(),
     jevModel: config.jev.model,

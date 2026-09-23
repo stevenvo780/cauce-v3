@@ -9,7 +9,10 @@ export interface ServiceConfig {
   readonly tlsKeyFile: string;
   readonly clientCaFile: string;
   readonly identitiesFile: string;
-  readonly allowedAliases: ReadonlySet<string> | undefined;
+  /** Aliases that may ask, or `*`; empty = nobody. */
+  readonly allowedAliases: ReadonlySet<string>;
+  /** Tenants whose agents may spend the Jev key, named one by one; empty = nobody. */
+  readonly allowedTenants: ReadonlySet<string>;
   readonly enabledTemplates: ReadonlySet<string>;
   readonly catalogDir: string;
   readonly auditFile: string;
@@ -57,6 +60,14 @@ function list(env: Env, name: string): Set<string> | undefined {
   return new Set(raw.split(',').map((item) => item.trim()).filter((item) => item.length > 0));
 }
 
+/* No wildcard: letting a tenant's agents spend Steven's key and send their data to TypeSafe is a
+   decision taken tenant by tenant. */
+function tenants(env: Env): Set<string> {
+  const allowed = list(env, 'TENANTS') ?? new Set<string>();
+  if (allowed.has('*')) throw new Error(`${PREFIX}TENANTS no admite '*': nombrá cada tenant`);
+  return allowed;
+}
+
 export function loadConfig(env: Env = process.env): ServiceConfig {
   const production = env.NODE_ENV === 'production';
   const url = env[`${PREFIX}JEV_URL`] ?? DEFAULT_JEV_URL;
@@ -70,7 +81,8 @@ export function loadConfig(env: Env = process.env): ServiceConfig {
     tlsKeyFile: required(env, 'TLS_KEY_FILE'),
     clientCaFile: required(env, 'CLIENT_CA_FILE'),
     identitiesFile: required(env, 'IDENTITY_FILE'),
-    allowedAliases: list(env, 'ALIASES'),
+    allowedAliases: list(env, 'ALIASES') ?? new Set(),
+    allowedTenants: tenants(env),
     enabledTemplates: list(env, 'HABILITAR_PLANTILLAS') ?? new Set(),
     catalogDir: env[`${PREFIX}CATALOGO_DIR`] ?? fileURLToPath(new URL('../catalogo/', import.meta.url)),
     auditFile: env[`${PREFIX}AUDIT_FILE`] ?? '/var/lib/cauce-decisiones/auditoria.jsonl',

@@ -43,7 +43,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   const config: ServiceConfig = {
     host: '127.0.0.1', port: 0, healthPort: 0,
     tlsCertFile: pki.serverCert, tlsKeyFile: pki.serverKey, clientCaFile: pki.caCert,
-    identitiesFile, allowedAliases: undefined, enabledTemplates: new Set(),
+    identitiesFile, allowedAliases: new Set(['*']), allowedTenants: new Set(['Steven']), enabledTemplates: new Set(),
     catalogDir: fileURLToPath(new URL('../../catalogo/', import.meta.url)),
     auditFile, auditMaxBytes: 10 * 1024 * 1024, redact: true,
     jev: { url: jev.url, keyFile, model: 'jev-latest', totalTimeoutMs: 3_000, attemptTimeoutMs: 1_000, maxRounds: 2, hedgeAfterMs: 0 },

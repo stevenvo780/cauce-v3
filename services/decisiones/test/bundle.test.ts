@@ -51,6 +51,7 @@ describe('bundle de despliegue', () => {
         CAUCE_DECISIONES_CLIENT_CA_FILE: pki.caCert, CAUCE_DECISIONES_IDENTITY_FILE: identities,
         CAUCE_DECISIONES_JEV_URL: jev.url, CAUCE_DECISIONES_JEV_KEY_FILE: keyFile,
         CAUCE_DECISIONES_AUDIT_FILE: join(directory, 'auditoria.jsonl'),
+        CAUCE_DECISIONES_ALIASES: 'zeus', CAUCE_DECISIONES_TENANTS: 'Steven',
       },
       stdio: ['ignore', 'ignore', 'pipe'],
     });

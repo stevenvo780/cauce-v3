@@ -18,8 +18,14 @@ modelo ─ MCP stdio «cauce-decisiones» (sin credenciales)
 
 - **Identidad.** Sale del certificado de cliente. El servicio verifica la cadena contra la CA de Cauce
   y busca el SHA-256 del certificado en el mismo `mtls_identities.json` del gateway, que relee en cada
-  petición, así que revocar a un alias en el gateway también lo revoca acá. Hace falta rol `agent` o
+  petición: borrar la fila de un alias en ese registro lo revoca también acá. Hace falta rol `agent` o
   `adapter` y permiso `route`. Un cuerpo que traiga `alias`, `tenant` o `from` se rechaza.
+- **Habilitación explícita, cerrada por defecto.** El servicio **no** consulta la base: deshabilitar un
+  tenant, un agente o una membresía desde la consola corta al alias en el bus, pero su certificado
+  sigue vigente acá. Por eso, además del certificado, hacen falta dos listas: `CAUCE_DECISIONES_TENANTS`
+  (tenants cuyos agentes gastan la clave de Jev de Steven y mandan su `state` a TypeSafe, uno por uno y
+  sin comodín) y `CAUCE_DECISIONES_ALIASES` (alias, o `*` para todos los de esos tenants). Vacías o
+  ausentes = nadie. Para revocar a un alias acá, sacalo de la lista y reiniciá sólo este servicio.
 - **La clave de Jev** sólo existe en vpstn. Se monta en este contenedor y en ningún otro, se lee en
   cada llamada (rotarla no pide reinicio) y no aparece en logs, errores, auditoría ni respuestas. En
   producción sólo se acepta el origen `https://api.typesafe.ai`, para que ningún error de configuración
@@ -163,7 +169,8 @@ un umbral, ese test es la regresión de calibración.
 | `CAUCE_DECISIONES_JEV_URL` | `https://api.typesafe.ai/v1/systemone` (en producción no se acepta otro origen) |
 | `CAUCE_DECISIONES_JEV_MODEL` | `jev-latest` (`jev-1.13.0` congela la calibración) |
 | `CAUCE_DECISIONES_TIMEOUT_MS` / `_INTENTO_TIMEOUT_MS` / `_RONDAS` / `_HEDGE_MS` | 30000 / 15000 / 3 / 3000 |
-| `CAUCE_DECISIONES_ALIASES` | vacío = todos (piloto: `zeus`) |
+| `CAUCE_DECISIONES_ALIASES` | vacío = nadie; `*` = todos los alias de los tenants habilitados (piloto: `zeus`) |
+| `CAUCE_DECISIONES_TENANTS` | vacío = nadie; sin comodín (compose: `Steven`) |
 | `CAUCE_DECISIONES_HABILITAR_PLANTILLAS` | vacío (`guardia_privacidad_jarvis` queda apagada) |
 | `CAUCE_DECISIONES_POR_MINUTO` / `_RAFAGA` / `_TOKENS_DIA` / `_CONCURRENCIA` | 60 / 20 / 2000000 / 16 |
 | `CAUCE_DECISIONES_AUDIT_FILE` / `_AUDIT_MAX_BYTES` | `/var/lib/cauce-decisiones/auditoria.jsonl` / 50 MiB (rota a `.1`) |
@@ -219,8 +226,9 @@ un umbral, ese test es la regresión de calibración.
    - **Cuándo entra en vigor.** El arnés toma el MCP en su próxima sesión.
    - **Por qué un servidor aparte.** Es independiente de `cauce`: registrarlo no enciende la emisión
      por MCP en alias que hoy no la tienen.
-4. **Piloto.** Primero sólo zeus (`CAUCE_DECISIONES_ALIASES=zeus` en `decisiones.env`). Después se
-   agregan alias de a uno y se reinicia sólo este servicio.
+4. **Piloto.** Primero sólo zeus (`CAUCE_DECISIONES_ALIASES=zeus` y `CAUCE_DECISIONES_TENANTS=Steven` en
+   `decisiones.env`). Después se agregan alias de a uno y se reinicia sólo este servicio. Un tenant
+   cliente entra sólo si Steven lo decide: su `state` sale a un tercero y lo paga la clave de Steven.
 5. **Efecto.** Una decisión desde el arnés y su línea en la auditoría, que se lee con
    `docker compose -p cauce-decisiones exec decisiones tail -n 5 /var/lib/cauce-decisiones/auditoria.jsonl`.
 

@@ -16,8 +16,10 @@ export type IdentifyCaller = (socket: unknown) => Promise<Caller>;
 export interface MtlsIdentityOptions {
   /** The gateway's `mtls_identities.json`: the same file, read-only, so revocation is shared. */
   readonly identitiesFile: string;
-  /** When set, only these aliases may ask (pilot rollout). */
-  readonly allowedAliases?: ReadonlySet<string>;
+  /** Only these aliases may ask (`*` = any alias of an allowed tenant); empty = nobody. */
+  readonly allowedAliases: ReadonlySet<string>;
+  /** Only agents of these tenants may ask; empty = nobody. */
+  readonly allowedTenants: ReadonlySet<string>;
   readonly now?: () => number;
 }
 
@@ -61,6 +63,8 @@ function stringList(value: unknown): string[] {
 /**
  * Same mapping as the gateway: Node verified the chain against the Cauce CA, and the SHA-256 of
  * the leaf selects exactly one principal. The file is re-read per request so a removal revokes at once.
+ * The database is not consulted: a tenant, agent or membership disabled there keeps its certificate,
+ * which is why access also needs both explicit allowlists, and both fail closed.
  */
 export function mtlsIdentity(options: MtlsIdentityOptions): IdentifyCaller {
   const now = options.now ?? Date.now;
@@ -84,7 +88,10 @@ export function mtlsIdentity(options: MtlsIdentityOptions): IdentifyCaller {
       throw new DecisionError('no_autorizado', 'sólo agentes y adaptadores consultan decisiones');
     }
     if (!stringList(match.principal.permissions).includes('route')) throw new DecisionError('no_autorizado', 'hace falta el permiso route');
-    if (options.allowedAliases !== undefined && !options.allowedAliases.has(alias.data)) {
+    if (!options.allowedTenants.has(tenant.data)) {
+      throw new DecisionError('no_autorizado', `el tenant ${tenant.data} no está habilitado para decisiones`);
+    }
+    if (!options.allowedAliases.has('*') && !options.allowedAliases.has(alias.data)) {
       throw new DecisionError('no_autorizado', `${alias.data} todavía no está habilitado para decisiones`);
     }
     return { tenant: tenant.data, alias: alias.data };

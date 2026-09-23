@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
+import { loadConfig } from '../src/config.js';
 import { defaultAnswers } from './support/fake-jev.js';
 import { startHarness, TEST_KEY, type Harness } from './support/servicio.js';
 
@@ -13,6 +14,7 @@ beforeAll(async () => {
       { fingerprint: pki.client('consola').fingerprint, alias: 'kant', roles: ['operator'] },
       { fingerprint: pki.client('sinruta').fingerprint, alias: 'socrates', permissions: ['read'] },
       { fingerprint: pki.client('vencido').fingerprint, alias: 'tales', expiresAt: '2020-01-01T00:00:00Z' },
+      { fingerprint: pki.client('pablo').fingerprint, alias: 'dedalo', tenant: 'Pablo' },
     ],
   });
 });
@@ -40,6 +42,10 @@ describe('servicio de decisiones sobre mTLS', () => {
     expect((await h.call(h.pki.client('vencido'), 'GET', '/v1/plantillas')).status).toBe(401);
     expect((await h.call(h.pki.client('consola'), 'GET', '/v1/plantillas')).status).toBe(403);
     expect((await h.call(h.pki.client('sinruta'), 'GET', '/v1/plantillas')).status).toBe(403);
+    const otroTenant = await h.call(h.pki.client('pablo'), 'POST', '/v1/decidir', { state: 'x', questions: { a: { type: 'noul', instructions: 'x' } } });
+    expect(otroTenant.status).toBe(403);
+    expect(otroTenant.body.mensaje).toContain('tenant Pablo');
+    expect(h.jev.seen).toHaveLength(0);
     const forged = await h.call(zeus(), 'POST', '/v1/decidir', { alias: 'argos', state: 'x', questions: { a: { type: 'noul', instructions: 'x' } } });
     expect(forged.status).toBe(400);
     expect(forged.body.mensaje).toContain('certificado');
@@ -125,6 +131,21 @@ describe('servicio de decisiones sobre mTLS', () => {
     expect(decided?.state_bytes).toBeGreaterThan(0);
     expect(decided?.preguntas).toEqual(expect.arrayContaining([{ id: 'toca_produccion', tipo: 'noul' }]));
     expect(lines.some((line) => line.origen === 'fallo' && line.estado === 'jev_sobrecargado')).toBe(true);
+  });
+});
+
+describe('habilitación explícita', () => {
+  it('sin lista de alias o de tenants no pasa nadie, y los tenants no admiten comodín', async () => {
+    const base = { CAUCE_DECISIONES_TLS_CERT_FILE: 'c', CAUCE_DECISIONES_TLS_KEY_FILE: 'k', CAUCE_DECISIONES_CLIENT_CA_FILE: 'a', CAUCE_DECISIONES_IDENTITY_FILE: 'i' };
+    expect(loadConfig(base)).toMatchObject({ allowedAliases: new Set(), allowedTenants: new Set() });
+    expect(loadConfig({ ...base, CAUCE_DECISIONES_ALIASES: ' ', CAUCE_DECISIONES_TENANTS: '' })).toMatchObject({ allowedAliases: new Set(), allowedTenants: new Set() });
+    expect(() => loadConfig({ ...base, CAUCE_DECISIONES_TENANTS: 'Steven,*' })).toThrow(/nombrá cada tenant/u);
+    const cerrado = await startHarness({ config: { allowedAliases: new Set(), allowedTenants: new Set(['Steven']) } });
+    try {
+      const body = { state: 'x', questions: { a: { type: 'noul', instructions: 'x' } } };
+      expect((await cerrado.call(cerrado.pki.client('zeus'), 'POST', '/v1/decidir', body)).status).toBe(403);
+      expect(cerrado.jev.seen).toHaveLength(0);
+    } finally { await cerrado.stop(); }
   });
 });
 
