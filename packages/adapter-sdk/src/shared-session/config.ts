@@ -31,31 +31,45 @@ export function claudePermissionArguments(
   environment: NodeJS.ProcessEnv,
 ): readonly string[] {
   void environment;
-  return harness === "claude" ? ["--dangerously-skip-permissions"] : ["--yolo"];
+  switch (harness) {
+    case "claude": return ["--dangerously-skip-permissions"];
+    case "codex": return ["--yolo"];
+    case "grok": return ["--always-approve"]; // grok 1.0.41 --help; `--yolo` is only `grok agent`.
+  }
 }
 const SHARED_SESSION_WORKSPACE_ENV = "CAUCE_SHARED_SESSION_WORKSPACE";
 
 const DEFAULT_WORKSPACE = "/workspace";
 
+function configDirectoryVariable(
+  harness: SharedSessionHarness,
+): { readonly variable: string; readonly fallback: string } {
+  switch (harness) {
+    case "claude": return { variable: "CLAUDE_CONFIG_DIR", fallback: ".claude" };
+    case "codex": return { variable: "CODEX_HOME", fallback: ".codex" };
+    case "grok": return { variable: "GROK_HOME", fallback: ".grok" }; // login, MCP, sessions.
+  }
+}
+
 /**
- * Resolves the harness configuration directory (`CODEX_HOME` or `CLAUDE_CONFIG_DIR`).
+ * Resolves the harness configuration directory (`CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `GROK_HOME`).
  */
 export function harnessConfigDirectory(
   harness: SharedSessionHarness,
   home: string,
   environment: NodeJS.ProcessEnv,
 ): string {
-  const variable = harness === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR";
+  const { variable, fallback } = configDirectoryVariable(harness);
   const declared = environment[variable];
   if (declared === undefined || declared === "") {
-    return join(home, harness === "codex" ? ".codex" : ".claude");
+    return join(home, fallback);
   }
   if (!isAbsolute(declared)) throw new Error(`${variable} debe ser una ruta absoluta`);
   return declared;
 }
 
 /**
- * Generates the minimal environment-variable map for the TUI's tmux pane.
+ * Generates the minimal environment-variable map for the TUI's tmux pane (always the config dir).
  */
 export function sharedSessionPaneEnvironment(
   harness: SharedSessionHarness,
@@ -63,7 +77,7 @@ export function sharedSessionPaneEnvironment(
   environment: NodeJS.ProcessEnv = process.env,
 ): Readonly<Record<string, string>> {
   const directory = harnessConfigDirectory(harness, home, environment);
-  return harness === "codex" ? { CODEX_HOME: directory } : { CLAUDE_CONFIG_DIR: directory };
+  return { [configDirectoryVariable(harness).variable]: directory };
 }
 
 /**
@@ -109,7 +123,7 @@ export function loadSharedSessionConfig(
   }
   if (!isSharedSessionHarness(harnessId)) {
     throw new Error(
-      `${SHARED_SESSION_ENV} sólo existe para claude y codex; '${harnessId}' no tiene sesión compartida`,
+      `${SHARED_SESSION_ENV} sólo existe para claude, codex y grok; '${harnessId}' no tiene sesión compartida`,
     );
   }
   const workspace = environment[SHARED_SESSION_WORKSPACE_ENV] ?? DEFAULT_WORKSPACE;

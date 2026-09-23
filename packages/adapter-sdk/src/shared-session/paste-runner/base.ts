@@ -10,6 +10,7 @@ import { envelopeHasCorrelation, stripJsonFence } from "../envelope.js";
 import { inputBoxState, turnInFlight } from "../pane.js";
 import type { EnsureFailure } from "../session.js";
 import { TUI_WINDOW } from "../types.js";
+import { tuiProfile } from "../tui-profile.js";
 import type { SharedSessionDegradation, TranscriptReader, TurnOutcome } from "../types.js";
 import {
   announceDegradation,
@@ -486,10 +487,16 @@ export abstract class PasteSessionRunnerBase<E> {
       }
       if (signalAborted(signal)) return { ok: false, cancelled: true };
       const state = inputBoxState(pane);
+      // grok queues a paste made while it generates and runs it later as its own turn: the box
+      // is only "free" for it when no turn is in flight. See `tuiProfile`.
+      const queuesBehindTurn = !state.occupied
+        && tuiProfile(this.options.harness).pasteOnlyWhenIdle && turnInFlight(pane);
       // The pane we decided to paste into is the one to inspect for merged turn: recapturing later
       // would be a different moment.
-      if (!state.occupied) return { ok: true, pane };
-      evidence = state.evidence;
+      if (!state.occupied && !queuesBehindTurn) return { ok: true, pane };
+      evidence = queuesBehindTurn
+        ? "la terminal está generando un turno y encolaría el pedido detrás de él"
+        : state.evidence;
       modal = state.kind === "modal";
       if (Date.now() >= (modal ? Math.min(deadline, modalDeadline) : deadline)) {
         return modal
@@ -530,7 +537,8 @@ export abstract class PasteSessionRunnerBase<E> {
       await this.note({
         reason: "context_cleared",
         detail: `la conversación de la terminal pasó de ${this.lastSessionId} a ${sessionId}`
-          + " sin que el proceso se reiniciara (/clear en claude, /new en codex)",
+          + ` sin que el proceso se reiniciara (${tuiProfile(this.options.harness).clearCommand}`
+          + ` en ${this.options.harness})`,
         occurredAt: new Date().toISOString(),
         fellBack: false,
       });

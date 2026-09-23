@@ -1,4 +1,4 @@
-import { inputBoxState } from "../pane.js";
+import { inputBoxState, turnInFlight } from "../pane.js";
 import { signalAborted } from "../../runtime-state.js";
 import {
   CREATION_NONCE_OPTION,
@@ -213,6 +213,7 @@ interface PastePromptOptions extends TmuxRunControl {
   readonly verifyInputEmpty?: boolean;
   /** Already-acquired exclusion; mandatory when verifying the input box. */
   readonly inputBarrier?: PaneInputBarrier;
+  readonly requireIdle?: boolean; // Also refuse while a turn is in flight (grok queues the paste).
 }
 
 const SCRUBBED_BUFFER_CONTENT = "CAUCE_BUFFER_SCRUBBED";
@@ -305,7 +306,9 @@ export async function pastePrompt(
     } else {
       const firstGuard = options.verifyInputEmpty === false
         ? "ready"
-        : await pastePrecondition(tmux, identity, options.inputBarrier, mutationControl);
+        : await pastePrecondition(
+          tmux, identity, options.inputBarrier, mutationControl, options.requireIdle === true,
+        );
       if (firstGuard !== "ready") {
         state = firstGuard === "unreadable" ? "ambiguous" : "not_pasted";
         reason = firstGuard === "unreadable" ? undefined : pasteGuardReason(firstGuard);
@@ -333,7 +336,9 @@ export async function pastePrompt(
         } else {
           const finalGuard = options.verifyInputEmpty === false
             ? "ready"
-            : await pastePrecondition(tmux, identity, options.inputBarrier, mutationControl);
+            : await pastePrecondition(
+              tmux, identity, options.inputBarrier, mutationControl, options.requireIdle === true,
+            );
           if (finalGuard !== "ready") {
             state = finalGuard === "unreadable" ? "ambiguous" : "not_pasted";
             reason = finalGuard === "unreadable" ? undefined : pasteGuardReason(finalGuard);
@@ -387,6 +392,7 @@ async function pastePrecondition(
   identity: PaneIdentity,
   barrier: PaneInputBarrier | undefined,
   control: TmuxRunControl,
+  requireIdle = false,
 ): Promise<PastePrecondition> {
   if (barrier === undefined || !samePaneIdentity(barrier.identity, identity)) return "unreadable";
   // `capture-pane` triggers `after-capture-pane`; all effective configuration must be rejected
@@ -412,7 +418,8 @@ async function pastePrecondition(
   }
   const pane = await capturePane(tmux, identity.paneId, { styled: true, control });
   if (pane === undefined) return "unreadable";
-  return inputBoxState(pane).occupied ? "input_busy" : "ready";
+  if (inputBoxState(pane).occupied) return "input_busy";
+  return requireIdle && turnInFlight(pane) ? "input_busy" : "ready";
 }
 
 function pasteGuardReason(
@@ -444,16 +451,17 @@ export async function sendEnter(
     );
 }
 
-/** Interrupts the TUI by its exact pane id; never by session or window name. */
+/** Interrupts the TUI by its exact pane id with the harness's key (`tuiProfile`); never by name. */
 export async function interruptPane(
   tmux: TmuxController,
   identity: PaneIdentity,
   control?: TmuxRunControl,
+  key: "Escape" | "C-c" = "Escape",
 ): Promise<TmuxMutationState> {
   return mutateExactPane(
     tmux,
     identity,
-    `send-keys -t ${identity.paneId} Escape`,
+    `send-keys -t ${identity.paneId} ${key}`,
     control,
   );
 }

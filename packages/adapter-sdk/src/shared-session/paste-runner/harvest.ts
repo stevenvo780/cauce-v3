@@ -1,6 +1,14 @@
 import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { signalAborted } from "../../runtime-state.js";
-import { inspectExactPane, interruptPane, samePaneProcess, type PaneIdentity } from "../tmux.js";
+import {
+  capturePane,
+  inspectExactPane,
+  interruptPane,
+  samePaneProcess,
+  type PaneIdentity,
+} from "../tmux.js";
+import { turnInFlight } from "../pane.js";
+import { tuiProfile } from "../tui-profile.js";
 import type { CommittedRunResult, PendingQuarantine } from "./contracts.js";
 import { PasteSessionLivenessRunner } from "./liveness.js";
 import {
@@ -381,15 +389,24 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
       activeIdentity = inspected.identity;
 
       if (!interruptDelivered) {
-        const interrupted = await interruptPane(
-          this.options.tmux,
-          activeIdentity,
-          this.tmuxControlUntil(deadline),
-        );
-        if (interrupted === "ambiguous") {
-          return this.quarantineCancelled(activeIdentity, pending);
+        const profile = tuiProfile(this.options.harness);
+        const mayInterrupt = !profile.interruptOnlyWhileGenerating
+          || turnInFlight(await capturePane(this.options.tmux, activeIdentity.paneId, {
+            styled: true,
+            control: this.tmuxControlUntil(deadline),
+          }));
+        if (mayInterrupt) {
+          const interrupted = await interruptPane(
+            this.options.tmux,
+            activeIdentity,
+            this.tmuxControlUntil(deadline),
+            profile.interruptKey,
+          );
+          if (interrupted === "ambiguous") {
+            return this.quarantineCancelled(activeIdentity, pending);
+          }
+          interruptDelivered = interrupted === "applied";
         }
-        interruptDelivered = interrupted === "applied";
       }
 
       const terminal = await beforeDeadline(

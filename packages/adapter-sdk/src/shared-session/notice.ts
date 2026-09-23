@@ -25,7 +25,7 @@ const REASON_TEXT: Readonly<Record<SharedSessionDegradation["reason"], string>> 
   handshake_failed: "el mecanismo de sesión compartida no respondió",
   context_reset: "la TUI se reinició y la conversación empezó de cero",
   session_created: "no había terminal abierta y se creó una nueva, vacía, para este turno",
-  context_cleared: "el dueño vació el contexto de la terminal (/clear en claude, /new en codex)",
+  context_cleared: "el dueño vació el contexto de la terminal (/clear en claude, /new en codex o grok)",
   context_compacted: "la terminal compactó su contexto: lo anterior quedó resumido, no íntegro",
   turn_merged: "el panel estaba ocupado y la terminal fundió este pedido con el turno en curso",
 };

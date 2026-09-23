@@ -5,6 +5,7 @@ import { correlateEnvelopePrompt } from "../envelope.js";
 import { turnInFlight } from "../pane.js";
 import { ensureSharedSession, type EnsureFailure, type EnsureOptions } from "../session.js";
 import { TUI_WINDOW, sessionName } from "../types.js";
+import { tuiProfile } from "../tui-profile.js";
 import type { SharedSessionRunner } from "../types.js";
 import {
   acquirePaneInputBarrier,
@@ -283,6 +284,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
           timeoutMs: this.quarantineOperationTimeoutMs(),
           verifyInputEmpty: true,
           inputBarrier: barrier,
+          requireIdle: tuiProfile(this.options.harness).pasteOnlyWhenIdle,
         },
       );
       if (!paste.bufferScrubbed) {

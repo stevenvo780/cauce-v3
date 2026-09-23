@@ -1,10 +1,13 @@
 import type { CommandRunner, HarnessId } from "../sdk/types.js";
 
 /** Harnesses compatible with the shared session mechanism. */
-export type SharedSessionHarness = Extract<HarnessId, "claude" | "codex">;
+export type SharedSessionHarness = Extract<HarnessId, "claude" | "codex" | "grok">;
+
+/** Every shared harness, so a check over "the other TUIs" cannot silently forget one. */
+export const SHARED_SESSION_HARNESSES: readonly SharedSessionHarness[] = ["claude", "codex", "grok"];
 
 export function isSharedSessionHarness(harness: HarnessId): harness is SharedSessionHarness {
-  return harness === "claude" || harness === "codex";
+  return (SHARED_SESSION_HARNESSES as readonly HarnessId[]).includes(harness);
 }
 
 /**
@@ -33,7 +36,7 @@ type DegradationReason =
   | "context_reset"
   /** There was no prior shared session and a new one was created for this turn. */
   | "session_created"
-  /** The conversation context was deliberately cleared (/clear or /new). */
+  /** The conversation context was deliberately cleared (/clear in claude, /new in codex or grok). */
   | "context_cleared"
   /** The terminal compacted its conversation context. */
   | "context_compacted"
@@ -52,7 +55,7 @@ export interface TranscriptSlice<E> {
 
 /** The turn our paste created, already identified inside the log. */
 export interface InjectedTurn {
-  /** What tracks the turn: the entry uuid in claude, the `turn_id` in codex. */
+  /** What tracks the turn: the entry uuid in claude, the `turn_id` in codex, the update event in grok. */
   readonly key: string;
   /** Conversation identity, to detect a clear and for the result's `session_id`. */
   readonly sessionId?: string;

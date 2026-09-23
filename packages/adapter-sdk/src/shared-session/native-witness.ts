@@ -1,12 +1,62 @@
 import { createHash } from "node:crypto";
-import { constants, type BigIntStats } from "node:fs";
+import { constants, lstatSync, type BigIntStats } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { validateStructuredOutput } from "../sdk/output-parser.js";
 import { envelopeHasCorrelation, stripJsonFence } from "./envelope.js";
+import {
+  grokSessionFilesStrict,
+  grokSessionIdOf,
+  grokSessionsRoot,
+  grokTranscript,
+} from "./grok.js";
 import { SharedTuiPointerStore, type NativePointerBinding } from "./native-pointer.js";
 import { transcriptDirectoryIn } from "./session.js";
-import { claudeTranscript, type TranscriptEntry } from "./transcript.js";
+import { claudeTranscript } from "./transcript.js";
+import type { TranscriptReader } from "./types.js";
+
+/**
+ * Where a harness keeps the transcripts that can attest its shared TUI's conversation.
+ *
+ * claude: flat `<projects>/<slug>/<id>.jsonl`; grok: `sessions/<cwd>/<id>/updates.jsonl` in any
+ * cwd group. The attestation itself (snapshot, prefix digests, exactly-one candidate, CAS on the
+ * pointer) is the same for both.
+ */
+interface WitnessLayout {
+  /** Directory that must stay canonical (no symlink swapped in) for the whole turn. */
+  root(binding: NativePointerBinding): string;
+  /** Every transcript under `root`; throws when the tree cannot be listed. */
+  files(binding: NativePointerBinding, root: string): Promise<readonly string[]>;
+  nativeIdOf(file: string): string;
+  port(binding: NativePointerBinding): TranscriptReader<object>;
+  /**
+   * A turn found by its exact prompt and closed normally attests the conversation by itself.
+   * grok records the prompt verbatim with its 256-bit correlation member; claude only credits it
+   * together with an MCP deposit or a correlated envelope.
+   */
+  readonly completedTurnAttests: boolean;
+}
+
+const LAYOUTS: Readonly<Record<NativePointerBinding["harness"], WitnessLayout>> = {
+  claude: {
+    root: (binding) => transcriptDirectoryIn(binding.configDirectory, binding.workspace),
+    files: (_binding, root) => filesIn(root),
+    nativeIdOf: (file) => basename(file, ".jsonl"),
+    port: (binding) => claudeTranscript(binding.configDirectory, binding.workspace),
+    completedTurnAttests: false,
+  },
+  grok: {
+    root: (binding) => grokSessionsRoot(binding.configDirectory),
+    files: async (binding) => {
+      const files = await grokSessionFilesStrict(binding.configDirectory);
+      if (files.length > MAX_FILES) throw new Error("Native transcript inventory exceeds witness budget");
+      return files.filter((file) => existsSyncSafe(file));
+    },
+    nativeIdOf: grokSessionIdOf,
+    port: (binding) => grokTranscript(binding.configDirectory),
+    completedTurnAttests: true,
+  },
+};
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const MAX_FILE_BYTES = 128 * 1024 * 1024;
@@ -81,13 +131,22 @@ async function filesIn(directory: string): Promise<readonly string[]> {
   return files.map((name) => join(directory, name));
 }
 
-function appendedEntries(buffer: Buffer, offset: number): readonly TranscriptEntry[] {
+/** A grok session folder exists before its first prompt; only real transcripts are inventoried. */
+function existsSyncSafe(file: string): boolean {
+  try {
+    return lstatSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function appendedEntries(buffer: Buffer, offset: number): readonly object[] {
   // A line started before the cut cannot attest this turn, even when it is completed afterwards.
   const start = offset === 0 || buffer[offset - 1] === 10 ? offset : buffer.indexOf(10, offset) + 1;
   if (start === 0 && offset !== 0) return [];
   const end = buffer.lastIndexOf(10);
   if (end < start) return [];
-  const entries: TranscriptEntry[] = [];
+  const entries: object[] = [];
   for (const line of buffer.subarray(start, end).toString("utf8").split("\n")) {
     if (line.trim() === "") continue;
     const value: unknown = JSON.parse(line);
@@ -122,7 +181,8 @@ export class NativePointerAttestor {
         if (canonicalBaseline.has(canonical)) return undefined;
         canonicalBaseline.set(canonical, size);
       }
-      const directory = transcriptDirectoryIn(binding.configDirectory, binding.workspace);
+      const layout = LAYOUTS[binding.harness];
+      const directory = layout.root(binding);
       try {
         if (await realpath(directory) !== directory) return undefined;
       } catch (error) {
@@ -130,7 +190,7 @@ export class NativePointerAttestor {
       }
       const files = new Map<string, FileSnapshot>();
       let total = 0;
-      for (const file of await filesIn(directory)) {
+      for (const file of await layout.files(binding, directory)) {
         const read = await secureRead(file, MAX_SNAPSHOT_BYTES - total);
         const size = canonicalBaseline.get(file);
         if (size === undefined || size !== read.buffer.length) return undefined;
@@ -159,10 +219,11 @@ export class NativePointerAttestor {
     try {
       if (!/^[a-f0-9]{64}$/u.test(correlationId)) return "unverified";
       if (await realpath(snapshot.directory) !== snapshot.directory) return "unverified";
-      const port = claudeTranscript(snapshot.binding.configDirectory, snapshot.binding.workspace);
+      const layout = LAYOUTS[snapshot.binding.harness];
+      const port = layout.port(snapshot.binding);
       const candidates: { file: string; nativeId: string; metadata: BigIntStats }[] = [];
       let total = 0;
-      for (const file of await filesIn(snapshot.directory)) {
+      for (const file of await layout.files(snapshot.binding, snapshot.directory)) {
         const before = snapshot.files.get(file);
         const observed = await lstat(file, { bigint: true });
         if (!safeFile(observed)) return "unverified";
@@ -175,10 +236,10 @@ export class NativePointerAttestor {
           || before.metadata.ino !== read.metadata.ino || offset > read.buffer.length
           || digest(read.buffer.subarray(0, offset)) !== before.digest)) return "unverified";
         const entries = appendedEntries(read.buffer, offset);
-        const nativeId = basename(file, ".jsonl");
+        const nativeId = layout.nativeIdOf(file);
         const injected = port.findInjected(file, entries, promptText);
         let matched = false;
-        if (mcpDeposited && injected !== undefined) {
+        if ((mcpDeposited || layout.completedTurnAttests) && injected !== undefined) {
           const terminal = port.findAnswer(entries, injected.key);
           if (terminal?.kind === "answer" && UUID.test(nativeId)
             && terminal.sessionId === nativeId && injected.sessionId === nativeId) matched = true;

@@ -23,6 +23,8 @@ import { PasteSessionRunner } from "../shared-session/paste-runner.js";
 import { correlationTimeoutFromEnvironment } from "../shared-session/paste-runner/runtime.js";
 import { claudeTranscript } from "../shared-session/transcript.js";
 import { codexTranscript } from "../shared-session/rollout.js";
+import { grokTranscript } from "../shared-session/grok.js";
+import type { PasteSessionOptions } from "../shared-session/paste-runner/contracts.js";
 import { loadSharedSessionConfig, type SharedSessionConfig } from "../shared-session/config.js";
 import { sharedSessionResume } from "../shared-session/resume.js";
 import { SharedTuiPointerStore } from "../shared-session/native-pointer.js";
@@ -137,7 +139,7 @@ export async function sharedSessionRunner(
   logger: AdapterLogger,
 ): Promise<CommandRunner> {
   let shared = configured;
-  if (configured.harness === "claude") {
+  if (configured.harness === "claude" || configured.harness === "grok") {
     try {
       shared = { ...configured,
         configDirectory: await realpath(configured.configDirectory),
@@ -182,18 +184,29 @@ export async function sharedSessionRunner(
       logger({ event: "shared_session_resume", alias: shared.alias, error_message: detail });
     },
   };
-  return shared.harness === "claude"
-    ? new PasteSessionRunner({
-      ...comun,
-      transcript: claudeTranscript(shared.configDirectory, shared.workspace),
-      nativePointer: new NativePointerAttestor(new SharedTuiPointerStore(shared.stateDirectory), {
-        alias: shared.alias, harness: "claude",
-        configDirectory: shared.configDirectory, workspace: shared.workspace,
-      }),
-    })
+  switch (shared.harness) {
+    case "claude":
+    case "grok":
+      return pointedRunner(shared, shared.harness, comun);
+    case "codex":
+      return new PasteSessionRunner({ ...comun, transcript: codexTranscript(shared.configDirectory) });
+  }
+}
+
+function pointedRunner(
+  shared: SharedSessionConfig,
+  harness: "claude" | "grok",
+  comun: Omit<PasteSessionOptions<unknown>, "transcript">,
+): CommandRunner {
+  const nativePointer = new NativePointerAttestor(new SharedTuiPointerStore(shared.stateDirectory), {
+    alias: shared.alias, harness, configDirectory: shared.configDirectory, workspace: shared.workspace,
+  });
+  return harness === "grok"
+    ? new PasteSessionRunner({ ...comun, transcript: grokTranscript(shared.configDirectory), nativePointer })
     : new PasteSessionRunner({
       ...comun,
-      transcript: codexTranscript(shared.configDirectory),
+      transcript: claudeTranscript(shared.configDirectory, shared.workspace),
+      nativePointer,
     });
 }
 
@@ -276,7 +289,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
       if (canonicalOpenClawTerminalSession) {
         await store.reconcileCanonicalOpenClawTerminalSession(runtime.alias);
       }
-      if (shared?.harness === "claude") {
+      if (shared?.harness === "claude" || shared?.harness === "grok") {
         try {
           await new SharedTuiPointerStore(shared.stateDirectory).recover();
         } catch {

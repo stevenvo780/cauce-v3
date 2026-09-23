@@ -2,7 +2,9 @@
 import { homedir } from "node:os";
 import { CliTmux } from "../shared-session/tmux.js";
 import { ensureSharedSession, sharedSessionStatus } from "../shared-session/session.js";
-import { cliSharedSessionSpec } from "../shared-session/config.js";
+import { cliSharedSessionSpec, harnessConfigDirectory } from "../shared-session/config.js";
+import { SharedTuiPointerStore } from "../shared-session/native-pointer.js";
+import { exactConversationIsSecure } from "../shared-session/resume.js";
 import { readDegradations } from "../shared-session/degradation-log.js";
 import { TUI_WINDOW, isSharedSessionHarness, sessionName } from "../shared-session/types.js";
 import type { SharedSessionSpec } from "../shared-session/session.js";
@@ -17,12 +19,13 @@ interface Options {
   readonly harness: string;
   readonly workspace: string;
   readonly stateDirectory?: string;
+  readonly nativeId?: string;
 }
 
 function usage(): never {
   process.stderr.write(
-    "uso: shared-session.js <ensure|status|degradations> --alias A --harness claude|codex"
-    + " [--workspace /workspace] [--state DIR]\n",
+    "uso: shared-session.js <ensure|status|degradations|seed> --alias A --harness claude|codex|grok"
+    + " [--workspace /workspace] [--state DIR] [--native-id ID]\n",
   );
   process.exit(2);
 }
@@ -42,19 +45,20 @@ function parse(argv: readonly string[]): Options {
   if (alias === undefined || harness === undefined) usage();
   if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(alias)) usage();
   const stateDirectory = values.get("state");
+  const nativeId = values.get("native-id");
   return {
     command,
     alias,
     harness,
     workspace: values.get("workspace") ?? "/workspace",
     ...(stateDirectory === undefined ? {} : { stateDirectory }),
+    ...(nativeId === undefined ? {} : { nativeId }),
   };
 }
 
 function spec(options: Options, home: string): SharedSessionSpec {
-  if (!isSharedSessionHarness(
-    options.harness as Parameters<typeof isSharedSessionHarness>[0],
-  )) {
+  const harness = options.harness as Parameters<typeof isSharedSessionHarness>[0];
+  if (!isSharedSessionHarness(harness)) {
     process.stderr.write(`el harness '${options.harness}' no tiene sesión compartida\n`);
     process.exit(3);
   }
@@ -62,7 +66,7 @@ function spec(options: Options, home: string): SharedSessionSpec {
   // server keeps the environment of the first creator and discards the second's, so two
   // similar routines would yield a different TUI depending on who won the race.
   return cliSharedSessionSpec(
-    options.harness as "claude" | "codex",
+    harness,
     options.alias,
     options.workspace,
     home,
@@ -100,6 +104,11 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (options.command === "seed") {
+    await seed(options, sessionSpec, home);
+    return;
+  }
+
   if (options.command === "ensure") {
     // Notice goes to stderr, not stdout JSON: invoked by `cauce <alias>` parsing stdout.
     const result = await ensureSharedSession(tmux, sessionSpec, {
@@ -118,6 +127,27 @@ async function main(): Promise<void> {
   }
 
   usage();
+}
+
+async function seed(options: Options, sessionSpec: SharedSessionSpec, home: string): Promise<void> {
+  const harness = sessionSpec.harness; // Migration: names the canonical conversation, never replaces one.
+  if (options.stateDirectory === undefined || options.nativeId === undefined) usage();
+  if (harness === "codex") {
+    process.stderr.write("codex reanuda con resume --last; no tiene puntero que sembrar\n");
+    process.exit(3);
+  }
+  const binding = {
+    alias: options.alias,
+    harness,
+    configDirectory: harnessConfigDirectory(harness, home, process.env),
+    workspace: options.workspace,
+  };
+  const secure = await exactConversationIsSecure(harness, binding, options.nativeId);
+  const result = secure
+    ? await new SharedTuiPointerStore(options.stateDirectory).seed(binding, options.nativeId)
+    : "unverified";
+  process.stdout.write(`${JSON.stringify({ result, alias: options.alias, harness, native_id: options.nativeId })}\n`);
+  process.exitCode = result === "written" || result === "unchanged" ? 0 : 1;
 }
 
 main().catch((error: unknown) => {

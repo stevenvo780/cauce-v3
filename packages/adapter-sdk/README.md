@@ -48,6 +48,32 @@ o una mención de fichero de Grok.
   `skills = false` bajo `[compat.claude]` y `[compat.cursor]`. Dos alias grok no deben compartir
   `~/.grok`.
 
+### Sesión compartida de grok (`SHARED_SESSION=1`)
+
+Igual que claude/codex: UNA sola conversación viva, la TUI real de grok en `tmux -L cauce`
+(`cauce-<alias>:agente`), donde el bus pega los pedidos y el dueño entra con `cauce <alias>`.
+Sin sesión compartida grok es headless por turno y `cauce <alias>` abre una RAMA (`--fork-session`).
+
+- **Arranque exacto:** `grok --always-approve --resume <id>` con `GROK_HOME` exportado en el panel.
+  El id sale del puntero `shared-tui-session.json` del alias (el mismo almacén que claude); sin
+  puntero y sin historia arranca `--session-id <uuidv7>`; con historia y sin puntero se BLOQUEA
+  (nunca elige sola entre DM, delegaciones o ramas). Migración: sembrar una vez la conversación
+  canónica con `shared-session.js seed --alias A --harness grok --workspace W --state S --native-id <id>`
+  (sólo escribe si no hay puntero). Tras cada turno cerrado el testigo mueve el puntero con CAS
+  (así un `/new` en la TUI se sigue).
+- **Transcript:** `$GROK_HOME/sessions/<cwd>/<id>/updates.jsonl` de TODOS los cwd (`--resume`
+  reabre la conversación en la carpeta donde nació). El prompt se reconoce por texto (también
+  envuelto en `<user_query>`) o por su `cauce_correlation_id`; la respuesta es el texto posterior
+  a la última herramienta del turno, que cierra `turn_completed` (`stop_reason` ≠ `end_turn` =
+  fallo). Un depósito `cauce_reply` sin texto final cierra en ese mismo `turn_completed`.
+- **Panel:** turno en curso = pie `Ctrl+c:cancel` (última línea) o spinner `… [stop]`. grok
+  ENCOLA lo que se pega mientras genera, así que el bus sólo toma la caja con la TUI ociosa.
+  Cancelar es `C-c` y sólo con un turno en curso (en ociosa arma la salida); Escape no cancela.
+- **Operación:** tmux dentro del contenedor (el supervisor lo exige para grok) y un workspace en
+  el que grok confíe sin diálogo: `SHARED_SESSION_WORKSPACE=$HOME` (el cwd del headless) está
+  permitido aunque `$HOME` no sea un montaje persistente, porque la conversación vive en `~/.grok`.
+  `cauce-attach` se niega a abrir un segundo grok sobre un alias compartido (grok no bloquea sesiones).
+
 **Probar:** `pnpm --filter @cauce/adapter-sdk test` (`node:test`).
 
 ## Emisión mediante MCP

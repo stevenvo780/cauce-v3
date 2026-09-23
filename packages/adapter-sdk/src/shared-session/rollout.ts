@@ -44,11 +44,11 @@ async function rolloutFiles(directory: string): Promise<readonly string[]> {
   }
 }
 
-/** Reads JSON entries from the rollout starting at the given offset. */
-async function readRolloutSince(
+/** Reads the JSON-object lines of an append-only JSONL log past `offset` (entries === appended). */
+export async function readJsonlSince<T extends object>(
   file: string,
   offset: number,
-): Promise<TranscriptSlice<RolloutLine>> {
+): Promise<TranscriptSlice<T>> {
   let raw: string;
   try {
     const chunks: string[] = [];
@@ -62,14 +62,14 @@ async function readRolloutSince(
   // If the file ends with a newline, the last chunk is "" and nothing is lost; otherwise it's a
   // half-written line. In both cases it is discarded.
   lines.pop();
-  const entries: RolloutLine[] = [];
+  const entries: T[] = [];
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
     try {
       const value: unknown = JSON.parse(trimmed);
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-        entries.push(value);
+        entries.push(value as T);
       }
     } catch {
 // A cut mid-multibyte-character on the first byte read, or a half-written line: on the next
@@ -238,7 +238,7 @@ export function codexTranscript(codexHome: string): TranscriptReader<RolloutLine
   const directory = rolloutDirectory(codexHome);
   return {
     files: () => rolloutFiles(directory),
-    read: (file, offset) => readRolloutSince(file, offset),
+    read: (file, offset) => readJsonlSince<RolloutLine>(file, offset),
     findInjected: findInjectedRolloutTurn,
     findAnswer: findRolloutOutcome,
     findEnvelope: (entries, correlationId) => findRolloutEnvelope(entries, correlationId),

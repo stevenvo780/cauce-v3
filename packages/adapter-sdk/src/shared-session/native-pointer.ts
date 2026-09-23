@@ -21,9 +21,16 @@ const NATIVE_ID = /^[A-Za-z0-9._:-]{1,512}$/u;
 const PANE_GENERATION = /^\$[0-9]+:@[0-9]+:%[0-9]+:[1-9][0-9]*$/u;
 const O_CLOEXEC = Number((fsConstants as unknown as Record<string, unknown>).O_CLOEXEC ?? 0);
 
+/** Harnesses whose shared TUI is relaunched on an EXACT conversation id kept in this store. */
+export type NativePointerHarness = "claude" | "grok";
+
+function isPointerHarness(value: unknown): value is NativePointerHarness {
+  return value === "claude" || value === "grok";
+}
+
 export interface NativePointerBinding {
   readonly alias: string;
-  readonly harness: "claude";
+  readonly harness: NativePointerHarness;
   readonly configDirectory: string;
   readonly workspace: string;
 }
@@ -116,14 +123,14 @@ async function normalizeBinding(value: unknown): Promise<NativePointerBinding> {
   if (!exactKeys(binding, ["alias", "harness", "configDirectory", "workspace"])
     || typeof binding.alias !== "string"
     || !ALIAS.test(binding.alias)
-    || binding.harness !== "claude"
+    || !isPointerHarness(binding.harness)
     || typeof binding.configDirectory !== "string"
     || typeof binding.workspace !== "string") invalidInput("Native pointer binding is invalid");
   const [configDirectory, workspace] = await Promise.all([
     canonicalDirectory(binding.configDirectory),
     canonicalDirectory(binding.workspace),
   ]);
-  return { alias: binding.alias, harness: "claude", configDirectory, workspace };
+  return { alias: binding.alias, harness: binding.harness, configDirectory, workspace };
 }
 
 function validateDocument(value: unknown): NativePointerDocument | undefined {
@@ -140,7 +147,7 @@ function validateDocument(value: unknown): NativePointerDocument | undefined {
   if (!exactKeys(binding, ["alias", "harness", "configDirectory", "workspace"])
     || typeof binding.alias !== "string"
     || !ALIAS.test(binding.alias)
-    || binding.harness !== "claude"
+    || !isPointerHarness(binding.harness)
     || typeof binding.configDirectory !== "string"
     || !validPathInput(binding.configDirectory)
     || normalize(binding.configDirectory) !== binding.configDirectory
@@ -151,7 +158,7 @@ function validateDocument(value: unknown): NativePointerDocument | undefined {
     schemaVersion: 1,
     binding: {
       alias: binding.alias,
-      harness: "claude",
+      harness: binding.harness,
       configDirectory: binding.configDirectory,
       workspace: binding.workspace,
     },
@@ -224,6 +231,7 @@ async function readStored(path: string): Promise<StoredRead> {
 
 function sameBinding(left: NativePointerBinding, right: NativePointerBinding): boolean {
   return left.alias === right.alias
+    && left.harness === right.harness
     && left.configDirectory === right.configDirectory
     && left.workspace === right.workspace;
 }
@@ -317,6 +325,35 @@ export class SharedTuiPointerStore {
       if (input.expectedNativeId === undefined) return "conflict";
       if (!await witnessIsStillCurrent(input)) return "conflict";
       await this.write(binding, input.nativeId);
+      return "written";
+    });
+  }
+
+  /**
+   * Operator seed: names the canonical conversation when there is none yet.
+   *
+   * Never replaces a pointer (that is only the witness's job, after a correlated turn): an absent
+   * pointer is written, the same one is `unchanged`, anything else is a `conflict` and is left
+   * intact. It exists for the migration of an alias whose conversation predates the shared TUI.
+   */
+  async seed(bindingInput: NativePointerBinding, nativeId: string): Promise<PublishWitnessResult> {
+    const binding = await normalizeBinding(bindingInput);
+    if (!NATIVE_ID.test(nativeId)) invalidInput("Shared TUI native pointer seed is invalid");
+    return serialize(this.pointerPath, async () => {
+      if (!await this.stateDirectoryIsSecure()) return "conflict";
+      await recoverAtomicArtifacts(
+        this.stateDirectory,
+        [SHARED_TUI_POINTER_FILE],
+        this.directoryFsync,
+      );
+      const stored = await this.readStoredSecurely();
+      if (stored.state === "invalid") return "conflict";
+      if (stored.state === "valid") {
+        return sameBinding(stored.document.binding, binding) && stored.document.native_id === nativeId
+          ? "unchanged"
+          : "conflict";
+      }
+      await this.write(binding, nativeId);
       return "written";
     });
   }
