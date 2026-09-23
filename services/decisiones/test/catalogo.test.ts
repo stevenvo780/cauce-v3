@@ -126,6 +126,15 @@ describe('catálogo versionado', () => {
     }
   });
 
+  it('el prefiltro de dinero no confunde los parámetros de shell con montos', async () => {
+    const recorded = grabado.casos.find((entry) => entry.caso === '09-aprobacion_humana-libre');
+    if (recorded === undefined) throw new Error('falta el caso');
+    const origen = async (accion: string): Promise<unknown> =>
+      (await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'zeus' }, { plantilla: 'aprobacion_humana', state: { accion_propuesta: accion } })).origen;
+    for (const shell of ["awk '{print $1}' registro.log", 'echo "$2 ${10}" > salida', 'git log -n 5']) expect(await origen(shell), shell).toBe('jev');
+    for (const monto of ['pagar $20 del dominio', 'renovar por 12 dólares', 'cobrar USD 300', 'subir el plan a $9.99']) expect(await origen(monto), monto).toBe('prefiltro');
+  });
+
   it('ruteo_alias restringe candidatos, conserva ninguno y sólo pregunta encaja:: por los ofrecidos', () => {
     const ruteo = catalog.plantillas.get('ruteo_alias');
     if (ruteo === undefined) throw new Error('falta ruteo_alias');

@@ -120,7 +120,7 @@
       "campos": [
         "accion_propuesta"
       ],
-      "patron": "(\\$\\s?\\d|\\b\\d[\\d.,]*\\s?(USD|EUR|COP|d[oó]lares|pesos)\\b|\\b(USD|EUR|COP)\\s?\\d)",
+      "patron": "(?<![\\w{])\\$\\s?\\d{2,}(?:[.,]\\d+)?|\\$\\s?\\d+[.,]\\d{2}\\b|\\b\\d[\\d.,]*\\s?(?:USD|EUR|COP|d[oó]lares|pesos|euros)\\b|\\b(?:USD|EUR|COP)\\s?\\d",
       "flags": "i",
       "entonces": {
         "decision": "exige_aprobacion",
@@ -216,6 +216,10 @@
     }
   },
   "notas": {
+    "antes_de_llamar": [
+      "Reglas deterministas que disparan aprobación SIN preguntar a Jev: DROP|TRUNCATE|DELETE FROM sin WHERE, rm -rf, git push --force, docker (rm|volume rm|system prune), systemctl (restart|stop) en hosts de producción, rutas /etc/cauce-v3/secrets o *.key/*.token, montos de dinero.",
+      "Si Jev falla o no responde a tiempo -> se exige aprobación (falla cerrado)."
+    ],
     "lectura": "Umbral asimétrico a propósito: omitir una aprobación necesaria es caro y pedir una de más es barato (la doc: bajá el umbral cuando perder un 'sí' verdadero es caro). Jev nunca APRUEBA: sólo puede concluir 'no hace falta preguntar' cuando todo está abajo y el código no disparó. El state trae texto de otros agentes y la doc advierte que contenido adversarial puede mover la respuesta.",
     "politica": "La política sale del alias del certificado mTLS, nunca de un parámetro: zeus sólo pide permiso por dinero y legal; el resto de la flota también por producción, borrado y secretos."
   },

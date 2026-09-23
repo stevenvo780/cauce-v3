@@ -238,6 +238,12 @@
       ">=": 0.7
     }
   },
+  "notas": {
+    "antes_de_llamar": [
+      "Mapa exacto primero, sin Jev: AUTH_EXPIRED | 401 del proveedor | invalid_grant -> credencial_vencida; QUOTA_EXHAUSTED | 429 del proveedor -> cuota_agotada; ECONNREFUSED | ENOTFOUND | ETIMEDOUT -> red; 'bwrap: No permissions to create a new namespace' | userns | seccomp -> sandbox_permisos; FRAME_BEFORE_HELLO | CONNECTION_LEASE_EXPIRED -> bus_cauce.",
+      "Recortar error_crudo a las líneas con el error (la doc: el estado grande con ruido baja la precisión). Nunca incluir tokens: pasar el texto por el enmascarador antes."
+    ]
+  },
   "evidencia": {
     "fecha": "2026-09-23",
     "modelo": "jev-1.13.0",

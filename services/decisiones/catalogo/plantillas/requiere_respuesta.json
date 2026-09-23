@@ -68,6 +68,10 @@
     "llm": true
   },
   "notas": {
+    "antes_de_llamar": [
+      "Las menciones explícitas (@alias) y el destinatario del sobre se resuelven en código.",
+      "Nunca aplicar a mensajes de una persona por canal directo: ahí siempre se contesta."
+    ],
     "lectura": "Umbrales altos a propósito: perder un pedido real es mucho más caro que gastar un turno de más."
   },
   "evidencia": {

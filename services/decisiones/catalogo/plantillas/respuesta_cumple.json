@@ -125,6 +125,12 @@
       ">=": 0.7
     }
   },
+  "notas": {
+    "antes_de_llamar": [
+      "Los requisitos se listan antes: los escribe quien encarga, o los extrae un LLM una sola vez al crear la tarea.",
+      "Jev juzga lo que el TEXTO de la respuesta afirma y muestra; la verificación dura (el commit existe, la URL responde) la hace el código."
+    ]
+  },
   "evidencia": {
     "fecha": "2026-09-23",
     "modelo": "jev-1.13.0",

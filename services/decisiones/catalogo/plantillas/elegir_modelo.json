@@ -132,6 +132,9 @@
     }
   },
   "notas": {
+    "antes_de_llamar": [
+      "El tamaño de la entrada en tokens lo mide el código y entra como balde en texto ('pequeña', 'mediana', 'grande: más de 200 mil tokens')."
+    ],
     "mapeo": {
       "mecanico": "minimax/MiniMax-M3",
       "lectura_masiva": "gemini/flash; gemini/pro si dificultad.score >= 2",

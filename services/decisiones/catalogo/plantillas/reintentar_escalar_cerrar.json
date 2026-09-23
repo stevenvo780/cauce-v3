@@ -106,6 +106,13 @@
       ">=": 0.7
     }
   },
+  "notas": {
+    "antes_de_llamar": [
+      "El número de reintentos lo cuenta el código y entra como texto ('ninguno', 'uno', 'dos o más'); con dos o más nunca se reintenta.",
+      "Clase credencial_vencida, sandbox_permisos o bus_cauce -> escalar_zeus directo, sin Jev.",
+      "Antes de llamar, el código junta evidencia de trabajo hecho después del fallo: commits del alias, archivos tocados, respuesta parcial. Una entrega dead no es trabajo perdido."
+    ]
+  },
   "evidencia": {
     "fecha": "2026-09-23",
     "modelo": "jev-1.13.0",

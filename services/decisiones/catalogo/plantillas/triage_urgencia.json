@@ -153,6 +153,9 @@
     }
   },
   "notas": {
+    "antes_de_llamar": [
+      "Todo lo numérico se calcula en código y entra como texto ya resuelto (por ejemplo 'el alias lleva más de 1 hora sin responder'): Jev no compara fechas ni hace cuentas."
+    ],
     "formula": "prioridad = 0.45*impacto.score/4 + 0.30*plazo.score/3 + 0.15*persona_esperando + 0.10*afecta_clientes",
     "lectura": "Normalizar cada score dividiendo por su nivel máximo antes de ponderar (la doc lo exige para que los pesos signifiquen lo que dicen). El score es una posición entre niveles, no una magnitud. Medido: ante 'el token de GitHub quedó en un log público' plazo dio score 1.91 con confidence 0.00 (0.34 en 'no menciona plazo' y 0.60 en 'inmediato'): una distribución bimodal hace que el score promedio no signifique nada; con confidence < 0.3 se lee probabilities, no score."
   },

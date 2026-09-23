@@ -147,6 +147,9 @@
     "llm": true
   },
   "notas": {
+    "antes_de_llamar": [
+      "Si el pedido trae una hora o un intervalo explícito, el cálculo de cuándo lo hace el código, no Jev."
+    ],
     "lectura": "Son tres Nouls separados y no uno ('¿es larga?') porque cada uno lleva a una acción distinta en código y la doc pide una condición por Noul."
   },
   "evidencia": {
