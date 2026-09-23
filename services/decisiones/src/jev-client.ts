@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { logEvent } from '@cauce/protocol';
 import { DecisionError, type DecisionErrorCode } from './errors.js';
 import { isPlainObject, type JevQuestions, type JsonValue } from './questions.js';
 
@@ -146,6 +147,7 @@ function hedged(launch: (signal: AbortSignal) => Promise<Success>, hedgeAfterMs:
 export class JevClient implements JevCaller {
   private readonly fetchImpl: typeof fetch;
   private readonly random: () => number;
+  private missingLoggedAt = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly options: JevClientOptions) {
     this.fetchImpl = options.fetch ?? fetch;
@@ -156,21 +158,40 @@ export class JevClient implements JevCaller {
     return this.options.maxRounds * (this.options.hedgeAfterMs > 0 ? 2 : 1);
   }
 
-  /** The key is read on every call so a rotation needs no restart; its value never leaves this method. */
+  /**
+   * Read on every call, so an in-place rotation needs no restart (a replaced file is not: the secret
+   * is a bind mount pinned to its inode). The value never leaves this method.
+   */
   private async key(): Promise<string> {
     let raw: string;
     try {
       raw = await readFile(this.options.keyFile, 'utf8');
     } catch {
-      throw new DecisionError('jev_sin_credencial', 'el servicio no tiene la credencial de Jev: decidí con tu propio razonamiento');
+      throw this.missing('el servicio no tiene la credencial de Jev: aplicá el respaldo');
     }
     const key = raw.trim();
-    if (!KEY_SHAPE.test(key)) throw new DecisionError('jev_sin_credencial', 'la credencial de Jev está vacía o mal formada');
+    if (!KEY_SHAPE.test(key)) throw this.missing('la credencial de Jev está vacía o mal formada');
     return key;
   }
 
+  /* The container stays healthy without a key on purpose (that is how Jev is switched off), so the
+     log is where an unreadable key after a rotation shows up. */
+  private missing(message: string): DecisionError {
+    const now = Date.now();
+    if (now - this.missingLoggedAt >= 60_000) {
+      this.missingLoggedAt = now;
+      logEvent('decisiones_sin_credencial_jev', { reason: message }, { level: 'error' });
+    }
+    return new DecisionError('jev_sin_credencial', message);
+  }
+
   async credentialPresent(): Promise<boolean> {
-    return this.key().then(() => true, () => false);
+    try {
+      const raw = await readFile(this.options.keyFile, 'utf8');
+      return KEY_SHAPE.test(raw.trim());
+    } catch {
+      return false;
+    }
   }
 
   private async once(body: string, key: string, timeoutMs: number, signal: AbortSignal): Promise<Success> {

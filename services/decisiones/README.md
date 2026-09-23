@@ -27,7 +27,8 @@ modelo ─ MCP stdio «cauce-decisiones» (sin credenciales)
   sin comodín) y `CAUCE_DECISIONES_ALIASES` (alias, o `*` para todos los de esos tenants). Vacías o
   ausentes = nadie. Para revocar a un alias acá, sacalo de la lista y reiniciá sólo este servicio.
 - **La clave de Jev** sólo existe en vpstn. Se monta en este contenedor y en ningún otro, se lee en
-  cada llamada (rotarla no pide reinicio) y no aparece en logs, errores, auditoría ni respuestas. En
+  cada llamada (rotarla in-place no pide reinicio; ver «Rotar la clave de Jev») y no aparece en logs,
+  errores, auditoría ni respuestas. En
   producción sólo se acepta el origen `https://api.typesafe.ai`, para que ningún error de configuración
   mande la clave a un sitio que imite a Jev.
 - **El MCP no tiene credenciales.** Habla con el socket del adaptador, y el adaptador sólo convierte tres
@@ -212,41 +213,81 @@ hasta que se re-graba el caso contra Jev y se actualiza el hash.
 
 ## Despliegue (preparado, no aplicado)
 
-1. **Servicio, en vpstn como root.** Desde el checkout que contiene el commit:
-   - `deploy/decisiones/desplegar.sh plan <commit>` no cambia nada.
-   - `deploy/decisiones/desplegar.sh aplicar <commit>` hace cuatro cosas:
-     1. Deja la clave en `stev:stev 0400`, sin copiarla ni leerla, y anota el estado previo en
-        `/etc/cauce-v3/decisiones.revert`.
-     2. Construye `cauce-decisiones:<commit>` desde `git archive`.
-     3. Genera `/etc/cauce-v3/decisiones.env` con las rutas de `prod.env`.
-     4. Levanta el proyecto compose `cauce-decisiones` y corre el humo: health, TLS y una decisión
-        real con el certificado de zeus.
+1. **Servicio, en vpstn como root.** El script, el compose y la imagen salen del commit, no del árbol
+   de trabajo: sirve cualquier clon que tenga el commit, esté en la rama que esté. En vpstn el worktree
+   de ws-zeus no sirve (su `.git` apunta a una ruta que sólo existe dentro del contenedor) y
+   `/opt/cauce-v3` no es un repositorio. El clon principal sí tiene el commit, aunque su rama no traiga
+   `deploy/decisiones`:
+
+   ```
+   G=/datos/workspaces/zeus/cauce-v3
+   git -C "$G" show <commit>:deploy/decisiones/desplegar.sh > /root/desplegar-decisiones.sh
+   CAUCE_DECISIONES_GIT=$G bash /root/desplegar-decisiones.sh plan <commit>      # no cambia nada
+   CAUCE_DECISIONES_GIT=$G bash /root/desplegar-decisiones.sh aplicar <commit>
+   ```
+
+   `aplicar` hace cinco cosas:
+   1. Deja la clave en `stev:stev 0400`, sin copiarla ni leerla, y anota el estado previo en
+      `/etc/cauce-v3/decisiones.revert`.
+   2. Construye `cauce-decisiones:<commit>` desde `git archive`.
+   3. Guarda el `compose.yaml` de ese commit en `/etc/cauce-v3/decisiones.d/<commit>/`: `down`,
+      `estado` y `anterior` usan siempre el compose que levantó el contenedor.
+   4. La primera vez genera `/etc/cauce-v3/decisiones.env` con las rutas de `prod.env`; las siguientes
+      sólo cambia la imagen y anota la que reemplaza (`IMAGEN_ANTES`).
+   5. Levanta el proyecto compose `cauce-decisiones` y corre el humo: health, TLS y una decisión real
+      con el certificado de zeus.
 
    El proyecto es independiente del bus: `deploy/deploy.sh` no lo toca, y este despliegue no toca el
    gateway.
-2. **Adaptadores, de a uno.** Hacen falta dos cosas:
-   - Una release del adaptador que incluya este commit, porque trae la ruta `/decisiones` del socket y
-     el bin `cauce-decisiones-mcp.js`.
-   - El supervisor con la clave `DECISIONES_URL`. Se despliega copiándolo desde el staging de stev,
-     sin reconstruir la imagen.
+2. **Adaptadores, de a uno.** Hacen falta dos cosas, en este orden:
+   - **Una release del adaptador que incluya este commit**, porque trae la ruta `/decisiones` del
+     socket y el bin `cauce-decisiones-mcp.js`. **Que no retroceda a nadie:** esta rama sale de
+     `zeus/arnes-grok` y no tiene dos arreglos que hoy corren en caliente. Construida sólo desde acá,
+     la release le quita a zeus (el piloto) el arreglo de `pasted_content` (su release actual termina en
+     `-pasted-quiet`; ese arreglo existe sólo en el dist desplegado, no en ningún commit), y con Claude
+     Code 2.1.280 zeus deja de cosechar: toda entrega queda en `started` hasta el reaper de 6 h. A
+     jarvis le quita `d74334c0` (rama `zeus/jarvis-cuelgue`: el puente OpenClaw sale tras responder y
+     el parser conserva la respuesta), y sus turnos quedan vivos para siempre. Primero hay que llevar
+     los dos al fuente de la release (cherry-pick de `d74334c0`; portar el matcher de `pasted_content`
+     a `packages/adapter-sdk/src/shared-session/transcript.ts` con su test) y comprobarlo:
 
-   Luego, en `/home/stev/.config/cauce-v3/container-aliases/<alias>.env`, se ponen `BUNDLE_RELEASE`,
-   `BUNDLE_SHA256` y `DECISIONES_URL=https://100.64.0.11:8447`. Antes de reiniciar
+     ```
+     git merge-base --is-ancestor d74334c0 <commit-release> && echo jarvis-ok
+     git grep -q -i pasted_content <commit-release> -- packages/adapter-sdk/src && echo zeus-ok
+     ```
+
+     Sin los dos `ok` no se construye. hades (`d6189328`) y argos/atlas (`a6fd5495`, el parche quiet)
+     no pierden nada: ya están en esta rama.
+   - **El supervisor que admite `DECISIONES_URL`, antes que el `.env`.** Se despliega copiándolo desde
+     el staging de stev, sin reconstruir la imagen. El supervisor que corre hoy rechaza toda clave que
+     no esté en su lista (`container alias config key is not allowlisted`) y sale con 2, y las unidades
+     tienen `RestartPreventExitStatus=2`: systemd no lo reintenta y el alias queda caído en silencio en
+     su próximo reinicio.
+
+   Recién entonces, en `/home/stev/.config/cauce-v3/container-aliases/<alias>.env`, se ponen
+   `BUNDLE_RELEASE`, `BUNDLE_SHA256` y `DECISIONES_URL=https://100.64.0.11:8447`. Antes de reiniciar
    `cauce-v3-container-<alias>.service`, mirá si hay una entrega en vuelo. En kant, que corre nativo en
    server2, la variable es `CAUCE_DECISIONES_URL` en el entorno de su unidad.
-3. **MCP en cada arnés.** Se registra dentro del contenedor, como el usuario del arnés y sin turno en
-   vuelo. Primero se simula y después se agrega `--aplicar`:
+3. **MCP en cada arnés, sólo en los alias ya habilitados** en `CAUCE_DECISIONES_ALIASES` (a los demás
+   el servicio les responde 403 con el respaldo). Se registra dentro del contenedor, como el usuario
+   del arnés y sin turno en vuelo. Primero se simula y después se agrega `--aplicar`:
 
    ```
    B=/opt/cauce-v3-adapter/<alias>/releases/<release>/packages/adapter-sdk/dist/src/bin/cauce-decisiones-mcp.js
    python3 ops/scripts/decisiones-registrar-mcp.py --arnes claude   --config /home/dev/.claude/.claude.json --bin "$B"      # zeus, kant (su .claude.json)
-   python3 ops/scripts/decisiones-registrar-mcp.py --arnes openclaw --config ~/.openclaw/openclaw.json  --bin "$B"        # argos, jarvis
+   python3 ops/scripts/decisiones-registrar-mcp.py --arnes openclaw --config /home/dev/.openclaw/openclaw.json --bin "$B"  # argos
+   python3 ops/scripts/decisiones-registrar-mcp.py --arnes openclaw --config /home/claw/.openclaw/openclaw.json --bin "$B" \
+     --socket /home/claw/.openclaw/cauce-v3/jarvis/mcp-emission.sock --command /usr/bin/node                              # jarvis
    python3 ops/scripts/decisiones-registrar-mcp.py --arnes grok     --config /home/claw/.grok/config.toml --bin "$B"      # hades
    python3 ops/scripts/decisiones-registrar-mcp.py --arnes codex    --config "$CODEX_HOME/config.toml" --bin "$B" \
-     --socket /home/<usuario>/.local/state/cauce-v3/<alias>/mcp-emission.sock                                             # socrates, tales
+     --socket <runtimeStateDirectory del alias en ops/flota.json>/mcp-emission.sock                                     # socrates, tales
    ```
 
-   - **El socket.** Si el arnés ya tiene `cauce` registrado, el script toma el socket de esa entrada.
+   - **El socket.** Es `<runtimeStateDirectory>/mcp-emission.sock`, con el directorio de
+     `ops/flota.json`. Si el arnés ya tiene `cauce` registrado, el script lo toma de esa entrada. jarvis
+     no la tiene, así que sin `--socket` el script aborta. Antes de registrar, comprobá con `ls -la`
+     que el socket exista: si el adaptador no lo abre, cada decisión responde `adaptador_no_responde`
+     con su respaldo.
    - **Lo que imprime.** Sólo la entrada y cuántas líneas cambian, nunca líneas del fichero: jarvis
      tiene una API key en claro en otro servidor MCP.
    - **Al escribir.** Deja un respaldo 0600 al lado del fichero.
@@ -257,19 +298,41 @@ hasta que se re-graba el caso contra Jev y se actualiza el hash.
    `decisiones.env`). Después se agregan alias de a uno y se reinicia sólo este servicio. Un tenant
    cliente entra sólo si Steven lo decide: su `state` sale a un tercero y lo paga la clave de Steven.
 5. **Efecto.** Una decisión desde el arnés y su línea en la auditoría, que se lee con
-   `docker compose -p cauce-decisiones exec decisiones tail -n 5 /var/lib/cauce-decisiones/auditoria.jsonl`.
+   `docker exec cauce-decisiones-decisiones-1 tail -n 5 /var/lib/cauce-decisiones/auditoria.jsonl`.
+
+## Rotar la clave de Jev
+
+El secreto de compose es un bind mount de un fichero y fija su inodo. Rotá **in-place**, como root:
+`cat nueva.key > /etc/cauce-v3/secrets/typesafe-jev.key` conserva inodo, dueño y modo, y el servicio
+la lee en la próxima decisión, sin reinicio. Si el fichero se **reemplazó** (`mv`, `install`, un
+editor que guarda en uno nuevo), el contenedor sigue leyendo la clave vieja y el fichero nuevo (root
+600) es ilegible para uid 1000: `desplegar.sh recrear` le devuelve `stev:stev 0400` y recrea el
+contenedor con la misma imagen. En los dos casos, comprobá con `desplegar.sh estado`: el healthcheck
+de Docker sigue verde sin credencial, a propósito, porque así se apaga Jev. Lo que delata una clave
+ilegible es `credencial_jev: false` en `estado` y el evento `decisiones_sin_credencial_jev` en
+`docker logs cauce-decisiones-decisiones-1`.
 
 ## Reversa
 
 - **Un alias.** Quitar el MCP con `decisiones-registrar-mcp.py --arnes … --config … --quitar --aplicar`,
-  o restaurar el respaldo. Quitar `DECISIONES_URL` del `<alias>.env`, volver al `BUNDLE_*` anterior si
-  hace falta y reiniciar su unidad. Sin `DECISIONES_URL`, el adaptador responde
-  `decisiones_no_configurado` con el respaldo (cerrado en las plantillas de seguridad).
-- **El servicio.** `deploy/decisiones/desplegar.sh revertir` hace `compose down`, conserva el volumen
-  de auditoría y devuelve la clave a su dueño y modo anteriores. Para volver a una versión anterior,
-  `aplicar <commit-anterior>`.
+  o restaurar el respaldo. Después, borrar **la línea entera** `DECISIONES_URL` del `<alias>.env`: no
+  dejarla vacía, porque `DECISIONES_URL=` también hace salir al supervisor con 2. Recién después volver
+  al supervisor o al `BUNDLE_*` anteriores si hace falta, y reiniciar su unidad. Sin `DECISIONES_URL`,
+  el adaptador responde `decisiones_no_configurado` con el respaldo (cerrado en las plantillas de
+  seguridad).
+- **Volver la release de ops** (los `~/.local/share/cauce-v3/ops-before-*`): antes,
+  `grep -l '^DECISIONES_URL' /home/stev/.config/cauce-v3/container-aliases/*.env` tiene que dar vacío.
+  El supervisor anterior no conoce la clave, y cada alias que la tenga no arranca en su próximo
+  reinicio, sin que systemd lo reintente.
+- **El servicio, a la versión anterior.** `desplegar.sh anterior` vuelve a la imagen que reemplazó el
+  último `aplicar`, con el compose con el que se había desplegado, sin reconstruir ni llamar a git.
+  Repetido, alterna entre las dos. Si esa imagen ya no está, `aplicar <commit-anterior>`.
+- **El servicio, fuera.** `desplegar.sh revertir` hace `compose down`, conserva el volumen de auditoría
+  y devuelve la clave a su dueño y modo anteriores.
 - **Apagar Jev sin tocar nada más.** Vaciar `CAUCE_TYPESAFE_JEV_KEY_PATH` en `decisiones.env` (pasa a
-  `/dev/null`) y hacer `up -d`. Todas las decisiones responden `jev_sin_credencial` con su respaldo.
+  `/dev/null`) y recrear: `docker compose -p cauce-decisiones --env-file /etc/cauce-v3/decisiones.env
+  -f /etc/cauce-v3/decisiones.d/<commit>/compose.yaml up -d --force-recreate` (no `recrear`, cuyo humo
+  exige la credencial). Todas las decisiones responden `jev_sin_credencial` con su respaldo.
 
 ## Decisiones pendientes de Steven
 

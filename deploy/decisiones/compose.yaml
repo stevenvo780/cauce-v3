@@ -68,6 +68,7 @@ secrets:
     file: ${CAUCE_GATEWAY_CLIENT_CA_PATH:?CA de los certificados de cliente de los alias}
   # Opt-in like the gateway's optional secrets: without the variable it is /dev/null and every
   # decision answers 503 jev_sin_credencial with its fallback, so agents keep deciding with their LLM.
+  # A bind mount pins the inode: rotate in place, or run `desplegar.sh recrear` after replacing it.
   typesafe_jev_key:
     file: ${CAUCE_TYPESAFE_JEV_KEY_PATH:-/dev/null}
 
