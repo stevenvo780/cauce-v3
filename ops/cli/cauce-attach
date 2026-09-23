@@ -31,6 +31,9 @@ Cuatro garantías, en este orden:
     cauce-attach <alias> --reciente      sin preguntar: la de último turno, sea cual sea
     cauce-attach <alias> --sesion <id>   una sesión concreta (basta el prefijo que muestra --lista)
     cauce-attach <alias> --sin-parar     NO para el adaptador (dos escritores: solo para leer)
+    cauce-attach <alias> --bifurcar      abre una RAMA de la sesión (grok/claude --fork-session): ves
+                                         toda la conversación y el agente sigue atendiendo Telegram;
+                                         lo que hagas en la terminal no vuelve a la conversación del bus
     cauce-attach <alias> --forzar        entra aunque ya haya otra sesión interactiva abierta
     cauce-attach <alias> --sin-aviso     no intenta avisar por Telegram
     cauce-attach <alias> --simular       muestra a qué entraría y no toca nada (ni unit ni CLI)
@@ -55,6 +58,9 @@ AVISO_CONF = os.path.expanduser('~/.config/cauce-v3/attach-aviso.json')
 GATEWAY = os.environ.get('CAUCE_GATEWAY_URL', 'https://100.64.0.6:8443')
 HOST_NATIVE = {'kant': 'cauce-v3-host-kant'}
 ATTACHABLE = {'claude', 'codex', 'grok'}
+# --fork-session: the terminal starts from the whole conversation but writes a NEW session id, so the
+# adapter can keep answering Telegram on the original without two writers on one transcript.
+FORKABLE = {'claude', 'grok'}
 
 
 def die(msg):
@@ -264,7 +270,8 @@ def main():
             '[--sin-parar] [--forzar] [--sin-aviso]')
     alias = args[0]
     listar = '--lista' in args
-    parar = '--sin-parar' not in args
+    bifurcar = '--bifurcar' in args
+    parar = '--sin-parar' not in args and not bifurcar
     forzar = '--forzar' in args
     sin_aviso = '--sin-aviso' in args
     simular = '--simular' in args
@@ -277,6 +284,8 @@ def main():
     host_native = alias in HOST_NATIVE
     unit = unit_of(alias)
 
+    if bifurcar and harness not in FORKABLE:
+        die(f'{alias} usa {harness}: --bifurcar sólo existe para {", ".join(sorted(FORKABLE))}.')
     if harness not in ATTACHABLE:
         die(f'{alias} usa {harness}: no tiene CLI con sesión reanudable.\n'
             f'             para verlo en vivo: ia {alias} watch')
@@ -313,6 +322,8 @@ def main():
     # harness for a delivery. Blocking on that would mislead; we just wait a few seconds.
     humanas = [row for row in abiertas if row[1] not in ('?', '-')]
     sin_tty = [row for row in abiertas if row[1] in ('?', '-')]
+    if bifurcar:
+        humanas, sin_tty = [], []
     if humanas and not forzar:
         detalle = '\n'.join(f'                pid {p} en {t} (hace {e})' for p, t, e in humanas)
         libre = ''
@@ -379,11 +390,19 @@ def main():
                                        f'por consola. Estoy mudo acá hasta que salga; tu mensaje '
                                        f'queda encolado y lo proceso apenas vuelva.', 'in'))
         print('')
+    elif bifurcar:
+        print('')
+        print('  modo BIFURCADA: ves toda la conversación del DM hasta ahora, en una RAMA.')
+        print(f'  {alias} sigue atendiendo Telegram y el bus mientras estás acá; lo que hagas en')
+        print('  esta terminal NO vuelve a esa conversación. Salir: /exit o Ctrl-D.')
+        print('')
     elif not parar:
         print('              AVISO: --sin-parar; si llega una entrega vas a tener dos escritores.')
 
     try:
         cli = resume_cli(harness, native)
+        if bifurcar:
+            cli.append('--fork-session')
         # Login shell for the PATH, but every value travels as a positional argument, never as code.
         if host_native:
             subprocess.run(['bash', '-lc', 'cd -- "$1" && shift && exec "$@"', 'bash', cwd, *cli],
