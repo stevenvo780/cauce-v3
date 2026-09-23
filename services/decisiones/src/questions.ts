@@ -14,12 +14,14 @@ export interface JevQuestion {
 
 export type JevQuestions = Readonly<Record<string, JevQuestion>>;
 
-/* Limits sit below what Jev accepts (64k tokens, 255 options, 10 levels) so a request is refused
-   here, for free, instead of upstream after being paid for. */
+/* Byte bounds standing in for Jev's token limits (64k tokens per request, 32k for state plus the
+   longest question, 255 options, 10 levels): the catalog measured about 3 bytes per token, so 96 KiB
+   is near 32k tokens. Text that tokenizes far worse can still exceed upstream and get a 422. */
 export const LIMITS = {
   maxQuestions: 32,
   maxStateBytes: 64 * 1024,
   maxQuestionBytes: 16 * 1024,
+  maxRequestBytes: 96 * 1024,
   maxChoiceOptions: 255,
   minScoreLevels: 2,
   maxScoreLevels: 10,
@@ -136,6 +138,13 @@ export function validateState(value: unknown): JsonValue {
     throw new DecisionError('state_demasiado_grande', `state supera ${String(LIMITS.maxStateBytes)} bytes: recortalo a lo que la pregunta necesita`);
   }
   return value;
+}
+
+/** State and questions together, measured on the JSON that is sent. */
+export function validateRequestSize(state: JsonValue, questions: JevQuestions): void {
+  if (jsonBytes({ state, questions }) > LIMITS.maxRequestBytes) {
+    throw new DecisionError('solicitud_demasiado_grande', `state y questions juntos superan ${String(LIMITS.maxRequestBytes)} bytes: recortalos`);
+  }
 }
 
 export function criteriaOptions(question: JevQuestion): string[] {

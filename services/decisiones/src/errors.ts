@@ -4,6 +4,7 @@ export type DecisionErrorCode =
   | 'plantilla_desconocida'
   | 'plantilla_deshabilitada'
   | 'state_demasiado_grande'
+  | 'solicitud_demasiado_grande'
   | 'no_autenticado'
   | 'no_autorizado'
   | 'limite_excedido'
@@ -24,6 +25,7 @@ const STATUS: Readonly<Record<DecisionErrorCode, number>> = {
   plantilla_desconocida: 404,
   plantilla_deshabilitada: 403,
   state_demasiado_grande: 413,
+  solicitud_demasiado_grande: 413,
   no_autenticado: 401,
   no_autorizado: 403,
   limite_excedido: 429,

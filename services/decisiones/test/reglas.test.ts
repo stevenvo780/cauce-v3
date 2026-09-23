@@ -1,7 +1,7 @@
 import type { JevAnswer } from '../src/answers.js';
 import { certainty, parseJevResponse, signalView, validateThresholds, DEFAULT_THRESHOLDS } from '../src/answers.js';
 import { DecisionError } from '../src/errors.js';
-import { validateQuestions, validateState } from '../src/questions.js';
+import { validateQuestions, validateRequestSize, validateState } from '../src/questions.js';
 import {
   computeIndicator, evaluate, parseCondition, resolveTemplate,
   type Condition, type EvaluationScope, type References,
@@ -86,6 +86,10 @@ describe('preguntas y respuestas de Jev', () => {
     expect(() => validateQuestions(Object.fromEntries(Array.from({ length: 33 }, (_v, i) => [`q${String(i)}`, { type: 'noul', instructions: 'x' }])))).toThrow(/32/u);
     expect(() => validateState('x'.repeat(70_000))).toThrow(DecisionError);
     expect(() => validateState(42)).toThrow(/texto, un objeto o una lista/u);
+    const preguntas = validateQuestions(Object.fromEntries(Array.from({ length: 3 }, (_v, i) => [`q${String(i)}`, { type: 'noul', instructions: 'x'.repeat(15_000) }])));
+    const excedida = (() => { try { validateRequestSize(validateState('s'.repeat(60_000)), preguntas); return undefined; } catch (error) { return error; } })();
+    expect(excedida).toMatchObject({ code: 'solicitud_demasiado_grande', status: 413 });
+    expect(() => { validateRequestSize('s'.repeat(40_000), preguntas); }).not.toThrow();
   });
 
   it('rechaza respuestas que no coinciden con la pregunta', () => {

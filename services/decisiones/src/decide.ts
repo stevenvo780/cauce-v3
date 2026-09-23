@@ -13,7 +13,7 @@ import { DecisionError, invalid, type FallbackOutcome } from './errors.js';
 import type { Caller } from './identity.js';
 import type { JevCaller } from './jev-client.js';
 import type { Limits } from './limits.js';
-import { isPlainObject, levelMap, validateQuestions, validateState, type JevQuestions, type JsonValue } from './questions.js';
+import { isPlainObject, levelMap, validateQuestions, validateRequestSize, validateState, type JevQuestions, type JsonValue } from './questions.js';
 import { computeIndicator, evaluate, resolveTemplate, type EvaluationScope } from './rules.js';
 
 export interface DecisionServiceOptions {
@@ -246,6 +246,7 @@ export class DecisionService {
   }
 
   private async decideFree(caller: Caller, request: DecideRequest, questions: JevQuestions): Promise<Record<string, unknown>> {
+    validateRequestSize(request.state, questions);
     const base = this.baseAudit(caller, undefined, questions, request.state);
     const result = await this.ask(base, questions, request.state, FREE_FALLBACK, true);
     const answers = result.parsed.answers;
@@ -301,6 +302,7 @@ export class DecisionService {
       };
     }
     const expanded = expandQuestions(plantilla, state, request.restringir);
+    validateRequestSize(state, expanded.questions);
     const base = this.baseAudit(caller, plantilla, expanded.questions, state);
     const result = await this.ask(base, expanded.questions, state, fallback, false);
     const answers = result.parsed.answers;

@@ -13,7 +13,8 @@ export interface AppOptions {
 }
 
 export const SERVICE_VERSION = '0.1.0';
-/* Largest legitimate body: a 64 KiB state plus 32 questions of up to 16 KiB each, with margin. */
+/* Room for the largest body each part admits (64 KiB state, 32 questions of 16 KiB), so an oversized
+   request gets the typed 413 with its fallback instead of Fastify's generic one. */
 const BODY_LIMIT = 640 * 1024;
 
 function send(reply: FastifyReply, error: unknown): FastifyReply {

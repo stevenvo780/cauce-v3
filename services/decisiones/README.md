@@ -91,6 +91,7 @@ es el resultado que el agente debe aplicar. Las plantillas de seguridad fallan c
 | `solicitud_invalida` | 400 | La solicitud no pasa la validación. Se rechaza antes de pagar la llamada a Jev. |
 | `plantilla_desconocida` | 404 | El id de plantilla no existe. |
 | `state_demasiado_grande` | 413 | El `state` pasa de 64 KiB. |
+| `solicitud_demasiado_grande` | 413 | `state` y `questions` juntos pasan de 96 KiB (unos 32k tokens a los ~3 bytes por token medidos; Jev admite 64k). |
 | `no_autenticado` | 401 | Certificado no aprovisionado o vencido. |
 | `no_autorizado` | 403 | Sin rol o sin permiso `route`, o alias fuera del piloto. |
 | `plantilla_deshabilitada` | 403 | La plantilla exige habilitación y no está habilitada. |
