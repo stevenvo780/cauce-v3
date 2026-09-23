@@ -1,6 +1,6 @@
 {
   "id": "aprobacion_humana",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "nombre": "¿Requiere aprobación humana?",
   "cuando_usar": "Antes de ejecutar una acción: decidir si hace falta la luz verde del humano dueño. Jev da una señal atómica por categoría de riesgo; la POLÍTICA de qué categorías exigen aprobación vive en código y es por alias (zeus sólo pide permiso por dinero y legal; el resto de la flota también por producción, borrado y secretos).",
   "state": {
@@ -120,7 +120,7 @@
       "campos": [
         "accion_propuesta"
       ],
-      "patron": "(?<![\\w{])\\$\\s?\\d{2,}(?:[.,]\\d+)?|\\$\\s?\\d+[.,]\\d{2}\\b|\\b\\d[\\d.,]*\\s?(?:USD|EUR|COP|d[oó]lares|pesos|euros)\\b|\\b(?:USD|EUR|COP)\\s?\\d",
+      "patron": "(?<![\\w{}$\"'`(\\[,=+*/<>!|&\\\\-])\\$\\s?(?=\\d[.,]?\\d)\\d(?:[.,]?\\d)*(?![\\w}\\])\"'`,;=<>+*|&%]|[.,]\\d)|(?<![\\d.,])(?=[\\d.,]*\\s?(?:USD|EUR|COP|d[oó]lares|pesos|euros)\\b)(?:(?<!\\w)\\d|[\\d.,]*?[.,]\\d)|\\b(?:USD|EUR|COP)\\s?\\d",
       "flags": "i",
       "entonces": {
         "decision": "exige_aprobacion",
@@ -131,7 +131,7 @@
       "campos": [
         "accion_propuesta"
       ],
-      "patron": "\\brm\\s+-[a-zA-Z]*(r[a-zA-Z]*f|f[a-zA-Z]*r)|\\bDROP\\s+(TABLE|DATABASE|SCHEMA)\\b|\\bTRUNCATE\\b|\\bDELETE\\s+FROM\\s+[\\w.\"]+\\s*(;|$)|\\bgit\\s+push\\b[^\\n]*\\s(--force|-f)\\b|\\bdocker\\s+(rm|volume\\s+rm|system\\s+prune)\\b|\\bdocker\\s+compose\\b[^\\n]*\\bdown\\b[^\\n]*\\s-v\\b|\\bsystemctl\\s+(--user\\s+)?(restart|stop)\\b",
+      "patron": "\\brm\\s+-(?=[a-zA-Z]*r)(?=[a-zA-Z]*f)|\\bDROP\\s+(?:TABLE|DATABASE|SCHEMA)\\b|\\bTRUNCATE\\b|\\bDELETE\\s+FROM\\s+[\\w.\"]+\\s*(?:;|$)|^(?=(?<push>[^\\n]*?\\bgit\\s+push\\b))\\k<push>[^\\n]*?\\s(?:--force|-f)\\b|\\bdocker\\s+(?:rm|volume\\s+rm|system\\s+prune)\\b|^(?=(?<compose>[^\\n]*?\\bdocker\\s+compose\\b))\\k<compose>(?=(?<down>[^\\n]*?\\bdown\\b))\\k<down>[^\\n]*?\\s-v\\b|\\bsystemctl\\s+(?:--user\\s+)?(?:restart|stop)\\b",
       "flags": "im",
       "excepto_alias": [
         "zeus"
@@ -145,7 +145,7 @@
       "campos": [
         "accion_propuesta"
       ],
-      "patron": "/etc/cauce-v3/secrets|\\bclient\\.key\\b|[\\w-]+\\.(key|token)\\b",
+      "patron": "/etc/cauce-v3/secrets|\\bclient\\.key\\b|[\\w-]\\.(?:key|token)\\b",
       "flags": "i",
       "excepto_alias": [
         "zeus"
@@ -217,11 +217,12 @@
   },
   "notas": {
     "antes_de_llamar": [
-      "Reglas deterministas que disparan aprobación SIN preguntar a Jev: DROP|TRUNCATE|DELETE FROM sin WHERE, rm -rf, git push --force, docker (rm|volume rm|system prune), systemctl (restart|stop) en hosts de producción, rutas /etc/cauce-v3/secrets o *.key/*.token, montos de dinero.",
+      "Reglas deterministas que disparan aprobación SIN preguntar a Jev: DROP|TRUNCATE|DELETE FROM sin WHERE, rm -rf, git push --force, docker (rm|volume rm|system prune), docker compose down -v, systemctl (restart|stop), rutas /etc/cauce-v3/secrets o *.key/*.token, montos de dinero ($20, $9.99, 12 dólares, USD 300). Un $NN pegado a sintaxis de awk o shell (llaves, comillas, paréntesis, coma, operadores) no cuenta como monto: lo juzga gasta_dinero en Jev.",
       "Si Jev falla o no responde a tiempo -> se exige aprobación (falla cerrado)."
     ],
     "lectura": "Umbral asimétrico a propósito: omitir una aprobación necesaria es caro y pedir una de más es barato (la doc: bajá el umbral cuando perder un 'sí' verdadero es caro). Jev nunca APRUEBA: sólo puede concluir 'no hace falta preguntar' cuando todo está abajo y el código no disparó. El state trae texto de otros agentes y la doc advierte que contenido adversarial puede mover la respuesta.",
-    "politica": "La política sale del alias del certificado mTLS, nunca de un parámetro: zeus sólo pide permiso por dinero y legal; el resto de la flota también por producción, borrado y secretos."
+    "politica": "La política sale del alias del certificado mTLS, nunca de un parámetro: zeus sólo pide permiso por dinero y legal; el resto de la flota también por producción, borrado y secretos.",
+    "prefiltros": "Los patrones corren sobre texto del agente y en el único hilo del servicio: cada uno es lineal (sin cuantificadores anidados ni dos [^\\n]* seguidos; el 'primero en la línea' se fija con (?=(?<g>…))\\k<g>, que no retrocede). test/catalogo.test.ts los mide con entradas hostiles de 64 KiB."
   },
   "evidencia": {
     "fecha": "2026-09-23",

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expandQuestions, loadCatalog, parsePlantilla, type Catalog } from '../src/catalog.js';
-import { DecisionService } from '../src/decide.js';
+import { DecisionService, PREFILTER_SCAN } from '../src/decide.js';
 import type { AuditRecord } from '../src/audit.js';
 import { DecisionError } from '../src/errors.js';
 import type { JevCaller } from '../src/jev-client.js';
@@ -131,8 +131,54 @@ describe('catálogo versionado', () => {
     if (recorded === undefined) throw new Error('falta el caso');
     const origen = async (accion: string): Promise<unknown> =>
       (await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'zeus' }, { plantilla: 'aprobacion_humana', state: { accion_propuesta: accion } })).origen;
-    for (const shell of ["awk '{print $1}' registro.log", 'echo "$2 ${10}" > salida', 'git log -n 5']) expect(await origen(shell), shell).toBe('jev');
-    for (const monto of ['pagar $20 del dominio', 'renovar por 12 dólares', 'cobrar USD 300', 'subir el plan a $9.99']) expect(await origen(monto), monto).toBe('prefiltro');
+    const shell = [
+      "awk '{print $1}' registro.log", 'echo "$2 ${10}" > salida', 'git log -n 5', "awk '{print $12}' /var/log/cauce/acceso.log | sort | uniq -c",
+      'echo "$10 $11" en un script de prueba', "awk '$12 > 100' datos.tsv", "awk '{print $10, $12}' x", "awk '{s+=$12} END {print s}' x",
+    ];
+    for (const comando of shell) expect(await origen(comando), comando).toBe('jev');
+    const montos = ['pagar $20 del dominio', 'renovar por 12 dólares', 'cobrar USD 300', 'subir el plan a $9.99', 'cuesta $1.500 al mes', 'son 1.500 pesos', '$ 300 al mes'];
+    for (const monto of montos) expect(await origen(monto), monto).toBe('prefiltro');
+  });
+
+  it('los prefiltros de aprobación siguen reconociendo lo destructivo y las rutas de secretos', async () => {
+    const recorded = grabado.casos.find((entry) => entry.caso === '09-aprobacion_humana-libre');
+    if (recorded === undefined) throw new Error('falta el caso');
+    const origen = async (accion: string): Promise<unknown> =>
+      (await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'jarvis' }, { plantilla: 'aprobacion_humana', state: { accion_propuesta: accion } })).origen;
+    const peligrosas = [
+      'rm -rf /srv/datos', 'rm -Rf x', 'rm -fr x', 'git push origin main --force', 'git push -f', 'docker compose -f prod.yaml down -v',
+      'DELETE FROM clientes;', 'DROP TABLE x', 'TRUNCATE eventos', 'systemctl --user restart cauce', 'docker volume rm datos',
+      'cat /etc/cauce-v3/secrets/x', 'leer zeus.token', 'copiar client.key',
+    ];
+    for (const accion of peligrosas) expect(await origen(accion), accion).toBe('prefiltro');
+    for (const accion of ['rm -r x', 'git push origin main', 'docker compose down', 'docker compose up -d', 'DELETE FROM t WHERE id=1;', 'pnpm test']) {
+      expect(await origen(accion), accion).toBe('jev');
+    }
+  });
+
+  it('ningún prefiltro del catálogo retrocede de forma catastrófica con 64 KiB hostiles', async () => {
+    const repetir = (fragmento: string, prefijo = ''): string =>
+      (prefijo + fragmento.repeat(Math.ceil(PREFILTER_SCAN / fragmento.length))).slice(0, PREFILTER_SCAN);
+    const genericos = ['a', '1.', '1,', '$1', '$12 ', ' ', '\n', 'a-', 'a.', 'eyJ-', 'docker compose down ', 'git push ', 'DELETE FROM a ', '-----BEGIN A '];
+    for (const plantilla of catalog.plantillas.values()) {
+      for (const [indice, prefiltro] of plantilla.prefilters.entries()) {
+        const palabras = [...new Set(prefiltro.patron.source.match(/[A-Za-z_]{2,}/gu) ?? [])];
+        const entradas = [
+          ...genericos.map((fragmento) => repetir(fragmento)), repetir('r', 'rm -'), repetir('f', 'rm -'),
+          ...palabras.flatMap((palabra) => [repetir(`${palabra} `), repetir(`${palabra}-`), repetir(`${palabra}.`), repetir('a', palabra)]),
+        ];
+        for (const entrada of entradas) {
+          const inicio = performance.now();
+          prefiltro.patron.test(entrada);
+          expect(performance.now() - inicio, `${plantilla.id}.prefiltros[${String(indice)}] ${JSON.stringify(entrada.slice(0, 24))}`).toBeLessThan(250);
+        }
+      }
+    }
+    const recorded = grabado.casos.find((entry) => entry.caso === '09-aprobacion_humana-libre');
+    if (recorded === undefined) throw new Error('falta el caso');
+    const inicio = performance.now();
+    await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'jarvis' }, { plantilla: 'aprobacion_humana', state: { accion_propuesta: 'docker compose down '.repeat(3_000) } });
+    expect(performance.now() - inicio).toBeLessThan(500);
   });
 
   it('ruteo_alias restringe candidatos, conserva ninguno y sólo pregunta encaja:: por los ofrecidos', () => {

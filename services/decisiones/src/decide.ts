@@ -37,7 +37,7 @@ interface DecideRequest {
 
 const REQUEST_KEYS = new Set(['plantilla', 'state', 'questions', 'opciones', 'umbrales']);
 const IDENTITY_KEYS = /^(alias|tenant|tenant_id|actor_alias|from|remitente_alias|identidad)$/u;
-const PREFILTER_SCAN = 64 * 1024;
+export const PREFILTER_SCAN = 64 * 1024;
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 
 const FREE_FALLBACK: FallbackOutcome = {

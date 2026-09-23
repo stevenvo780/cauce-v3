@@ -1,6 +1,6 @@
 {
   "id": "guardia_privacidad_jarvis",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "nombre": "Guardia de privacidad saliente (jarvis)",
   "cuando_usar": "Antes de que jarvis publique en el bus a alguien que no es Steven: la regla dura dice que lo personal de Steven nunca sale por el bus. Un Noul por categoría (patrón de guardrails de la doc). Los secretos se detectan con regex en código, no con Jev.",
   "requiere_habilitacion": "Envía a TypeSafe (tercero, sin ZDR) el texto que jarvis quiere publicar, que puede traer datos personales de Steven: necesita su visto bueno explícito.",
@@ -38,7 +38,7 @@
       "campos": [
         "texto_saliente"
       ],
-      "patron": "-----BEGIN [A-Z ]*PRIVATE KEY-----|\\bgh[pousr]_[A-Za-z0-9]{20,}|\\bsk-[A-Za-z0-9_-]{20,}|\\bxox[abprs]-[A-Za-z0-9-]{10,}|\\bAKIA[0-9A-Z]{16}\\b|\\beyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.",
+      "patron": "-----BEGIN [A-Z ]*PRIVATE KEY-----|\\bgh[pousr]_[A-Za-z0-9]{20,}|\\bsk-[A-Za-z0-9_-]{20,}|\\bxox[abprs]-[A-Za-z0-9-]{10,}|\\bAKIA[0-9A-Z]{16}\\b|(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.",
       "entonces": {
         "decision": "bloquear",
         "motivo": "El texto trae un secreto: bloqueado sin consultar a Jev."
