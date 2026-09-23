@@ -431,8 +431,11 @@ for line in sys.stdin:
               printf "  %sbus nunca aparece). La conversacion mutaria debajo tuyo sin dejar rastro.%s\n" "$c_dim" "$c_reset"
               printf "  %sTe abro un shell; para la TUI compartida hace falta gateway.%s\n\n" "$c_dim" "$c_reset"
               exec docker exec -it --user "$cuser" -w "${chome:-/}" "$ctr" bash -l ;;
-      grok)   printf "  %sgrok SI tiene TUI propia: te abro la TUI real de Grok (conversacion nueva).%s\n\n" "$c_dim" "$c_reset"
-              exec docker exec -it --user "$cuser" -w "${chome:-/}" "$ctr" grok ;;
+      grok)   # grok no tiene sesion compartida en vivo: abrir una conversacion nueva se siente como
+              # un hades duplicado que no recuerda Telegram. Se entra a LA del DM (cauce-attach
+              # para el adaptador mientras tanto: un solo escritor sobre la sesion).
+              printf "  %sgrok: te abro la TUI real de Grok sobre LA MISMA conversacion del DM de Telegram.%s\n\n" "$c_dim" "$c_reset"
+              exec python3 "$BIN/cauce-attach" "$a" --dm ;;
       *)      printf "  %ssin TUI propia: te abro un shell%s\n\n" "$c_dim" "$c_reset"
               exec docker exec -it --user "$cuser" -w "${wsa:-${chome:-/}}" "$ctr" bash -l ;;
     esac
