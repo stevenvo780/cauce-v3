@@ -111,24 +111,29 @@ para despliegues posteriores:
    durante esa comprobación.
 7. Escribir la fila de `deploy/HISTORIAL.md`.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) es `54e984cc`, desplegada el
-8 de septiembre. El smoke quedó ROJO parcial porque aún exige dos formatos antiguos de
-`instance_id` y excluye el nombre de Kant en server2. La comprobación directa acredita
-quince arriendos vigentes, nueve servicios sanos y entregas `done` con ACK desde el arranque;
-el filtro del smoke está pendiente de corrección.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) es `60788e41`, desplegada el
+8 de septiembre. El smoke final pasó con nueve servicios sanos, quince arriendos vigentes
+y una entrega nueva `done` con ACK aplicado. La espera inicial terminó antes de que llegara
+tráfico; el chequeo posterior usó la entrega real y las mismas imágenes.
 
-Los quince adaptadores fueron reiniciados y los quince alias completaron una entrega real
-al primer intento. Iza conservó su mismo encargo pendiente; su discrepancia de notas fue
-reconciliada después desde la web, verificando siete archivos sin alterar sus bytes.
-Kant y Salva funcionan en server2 con sus historiales conservados. La shell web y el visor
-fueron ejercitados en los quince alias, y el control de teclado pasó en los tres harnesses,
-incluido el borrado rápido de OpenClaw. El audio de Telegram usa ahora server1.
+Los quince alias completaron una entrega real al primer intento, y se reiniciaron sus
+adaptadores y sesiones nativas. La shell y el visor web se volvieron a probar en los quince
+tras este despliegue. El teclado pasó en Claude, Codex y OpenClaw, incluido el borrado rápido.
+Iza conservó su encargo pendiente y sus siete archivos; la reconciliación posterior desde
+la web actualizó cinco huellas sin alterar los bytes.
 
-Zeus, Atlas, Argos, Astra y Kant acreditaron emisión MCP con ACK final. Continúa la observación
-de 48 horas antes de ampliar la cohorte; el formato de texto de transición permanece
-habilitado. La delegación entre harnesses y la retirada de las últimas dependencias de la
-workstation se verifican por separado. El trabajo pendiente vive en
-[v3.1-pendientes](v3.1-pendientes.md), y la evidencia detallada en el índice privado de mantenimiento.
+Kant, Salva y el acceso público a sus archivos funcionan en server2. El audio de Telegram
+funciona en server1, también probado con el origen de la workstation detenido. Las cuotas
+se publican desde el VPS con identidad y fecha observadas. El inventario refleja trece alias
+Docker en doce contenedores, más Astra y Kant nativos; las herramientas de ops instaladas
+conservan sus versiones anteriores para reversión.
+
+Zeus, Atlas, Argos, Astra y Kant ejecutan el SDK MCP simplificado. Sus cinco pruebas posteriores
+al cambio acreditan `mcp_deposit` y ACK final. La cadena Zeus→Argos→Astra completó delegación,
+respuestas y síntesis final, con seis entregas al primer intento y adjunto identificado por
+huella y tamaño. Los otros diez alias conservan la fase de reparación mientras transcurren
+las 48 horas de observación antes de extender MCP. El formato de texto sigue disponible.
+El detalle pendiente vive en [v3.1-pendientes](v3.1-pendientes.md).
 
 ## Cómo se verifica
 

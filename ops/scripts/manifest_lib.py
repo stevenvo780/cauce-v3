@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 import yaml
-from container_alias_lib import load_container_aliases
+from fleet_derive import load_fleet_assignments
 from jsonschema import Draft202012Validator
 from schema_diagnostics import safe_schema_diagnostic, schema_error_sort_key
 
@@ -102,7 +102,7 @@ def validate_manifest(
 
 
 def load_manifests(root: pathlib.Path) -> list[dict[str, Any]]:
-    assignments = load_container_aliases(root)
+    assignments = load_fleet_assignments(root)
     schema = root / "schemas" / "alias-manifest.schema.json"
     with schema.open(encoding="utf-8") as stream:
         schema_document = json.load(stream)

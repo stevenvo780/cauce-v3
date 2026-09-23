@@ -12,7 +12,7 @@ Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Co
 | `docs/arquitectura.md` | cómo está construido el sistema hoy — si solo lees un documento, que sea este |
 | `docs/operacion.md` | cómo desplegar, dar de alta/baja un agente, diagnosticar, hacer backup |
 | `docs/roadmap.md` | qué falta, priorizado |
-| `docs/flota-y-participantes.md` | máquinas, humanos, los 14 agentes, los 5 escenarios esenciales |
+| `docs/flota-y-participantes.md` | máquinas, humanos, los 15 agentes, los 5 escenarios esenciales |
 | `ordenes/00-PROTOCOLO.md` | cómo conviven varias instancias en `dev` sin pisarse — LÉELO antes de tocar nada |
 
 Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threat-model.md` (amenazas y controles), `docs/grafo.md` (mapa de dependencias, generado con `pnpm grafo`), `docs/consola.md` (consola web del operador), `docs/telegram.md` (puente Telegram), `docs/adapter-sdk.md` (SDK del consumidor durable), `docs/calidad-y-gates.md` (sistema de calidad y gates).
@@ -26,7 +26,7 @@ Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threa
 - **Efecto demostrado.** Nada está "hecho" sin pegar la salida del gate; un despliegue no está hecho sin mostrar el efecto real contra el sistema vivo.
 - **Revisor ≠ autor.** Todo sector tiene un dueño de escritura y un revisor distinto (tabla abajo); ninguna instancia se autoaprueba.
 - **Trabajo en `dev`, publicación de `main` por el dueño.** Prohibido crear ramas de tarea. Convivencia por sector + `git add` solo de rutas propias + commit siempre con pathspec, nunca `-a` ni `add -A`. Cambiar o publicar `main` requiere autorización explícita del dueño.
-- **La flota corre como root.** Es el entorno real de esta VPS: no se cablean guardias anti-root ni se chownea para "corregirlo"; el gate y el CI nocturno también corren como root. Única excepción: `pnpm qa:runtime-packaging` valida ownership y exige usuario normal.
+- **Usuarios de ejecución.** Cada alias conserva el usuario de `ops/flota.json`: `dev`, `claw`, `ubuntu` o `server` según el entorno. Los supervisores usan `placement.systemdUser` o el valor predeterminado `stev`. No cambiar propietarios de perfiles o sesiones para acomodar un gate. El CI de root usa un worktree desechable; los builds del workspace usan su propietario. `pnpm qa:runtime-packaging` exige usuario normal.
 - **GitHub Actions prohibido.** El gate completo corre en el propio host (`cauce-v3-ci-local.timer`), no en un servicio pagado.
 - **Idioma: `.md` en español, código en inglés.** Identificadores y comentarios exportados en inglés; toda la documentación de proyecto en español.
 - **Comentarios sin narrativa, sin fechas, sin nombres.** Solo restricciones que el código no puede expresar por sí solo. Lo que se poda: funciones sin propósito claro, sin nombre que describa qué hacen, repetidas en vez de reutilizadas, sin patrón de organización consistente, sobre-ingeniería innecesaria.

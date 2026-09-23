@@ -437,6 +437,8 @@ export async function startFakeGateway(options = {}) {
       session_id: sessionId, alias: session.alias, container_id: session.container_id,
       image_id: session.image_id, generation: session.generation,
       reason: body.reason ?? 'unspecified', exit_code: body.exit_code ?? null,
+      bytes_in: body.bytes_in, bytes_out: body.bytes_out, input_batches: body.input_batches,
+      recording_sha256: body.recording_sha256, recording_capped: body.recording_capped,
     });
     reply(response, 200, { ok: true, ...identity });
   }

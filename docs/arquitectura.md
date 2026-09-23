@@ -30,9 +30,9 @@ Todos los servicios de runtime comparten una sola imagen (`CAUCE_RUNTIME_IMAGE`,
 | Paquete | Exporta | Fuente |
 |---|---|---|
 | `packages/protocol` | schemas Zod del wire `3.0`: `PublishMessage` estricto sin identidad, escalera de ACK `accepted→started→done|failed`, prioridad, perfiles de agente | `packages/protocol/src/index.ts`, `schemas.ts`, `agent-profile.ts`, `publish-receipt.ts` (`packages/protocol/README.md:3-6`) |
-| `packages/store` | `CauceRepository`: mensajes, entregas con fencing claim/epoch, outbox, DLQ, jobs, config versionada, agentes, auditoría; migrator transaccional 001→038 con huecos deliberados (022/025/029/036) | `packages/store/src/repository.ts` (fachada, 43 líneas) + `repository/{messages,outbox,jobs,config,observability,quotas,deliveries,agents}/**`; `migrations/` (`packages/store/README.md:5`) |
+| `packages/store` | `CauceRepository`: mensajes, entregas con fencing claim/epoch, outbox, DLQ, jobs, config versionada, agentes, auditoría; migrator transaccional 001→041 con huecos deliberados (022/025/029/036) | `packages/store/src/repository.ts` + `repository/{messages,outbox,jobs,config,observability,quotas,deliveries,agents}/**`; `migrations/` (`packages/store/README.md:5`) |
 | `packages/adapter-sdk` | motor del consumidor durable (WS de larga vida, ACK correlacionado por `event_id`+`delivery_id`+`attempt`+`claim_token`) y ejecución sobre el harness (pegar en tmux) | `src/sdk/engine.ts`, `src/shared-session/{paste-runner,tmux}.ts`, ejecutables reales `src/bin/{claude,codex,openclaw}.ts` (`packages/adapter-sdk/README.md:3-9`) |
-| `packages/mcp-fleet-monitor` | servidor MCP de solo lectura: `estado_flota`, `entregas`, `cadena`, `dead_letters`, `salud` — escrito y probado, sin registrar en ningún alias hoy | `packages/mcp-fleet-monitor/README.md:3-5` |
+| `packages/mcp-fleet-monitor` | servidor MCP de solo lectura: `fleet_status`, `deliveries`, `chain`, `dead_letters`, `health`; su registro se comprueba en la configuración de cada cliente | `packages/mcp-fleet-monitor/README.md:3-5` |
 
 ### 2.3 El adaptador dentro del contenedor: supervisor → runtime → harness
 
@@ -54,7 +54,7 @@ Todos los servicios de runtime comparten una sola imagen (`CAUCE_RUNTIME_IMAGE`,
 
 **Deliveries → claim por adaptador** — `packages/store/src/repository/deliveries/claims.ts:22` (`acquireLease`) concede el lease con `claim_token`+`epoch`; el adapter lo confirma con `packages/store/src/repository/deliveries/acks.ts:36` (`DeliveryAcksRepository`).
 
-**Harness** — `packages/adapter-sdk/src/sdk/engine.ts` corre el bucle claim→ACK→pegar texto; `shared-session/paste-runner.ts` + `tmux.ts` hacen el pegado real con marcadores de bloque.
+**Harness** — `packages/adapter-sdk/src/sdk/engine.ts` reclama y ejecuta cada entrega. La sesión nativa recibe el encargo y puede depositar respuesta, delegaciones y adjuntos mediante MCP local. El motor confirma el resultado al terminar el turno del CLI. Durante la transición admite el sobre de texto; `shared-session/paste-runner.ts` y `tmux.ts` conservan el transporte a la TUI.
 
 **ACK** — escalera monotónica `accepted → started → done|failed`; un `event_id` repetido nunca reaplica una transición (`packages/protocol/README.md:5`).
 
@@ -66,7 +66,12 @@ Todos los servicios de runtime comparten una sola imagen (`CAUCE_RUNTIME_IMAGE`,
 
 La BD (`agents` + `memberships`) es la única verdad; todo lo demás se deriva (`ops/runbooks/alta-y-baja-de-agente.md`). Cadena de generación: `ops/scripts/export-fleet-snapshot.py` lee `agents`/`memberships` con `fleet-query.sql` y escribe canónico `ops/flota.json` (`schemaVersion: 1`, sin timestamps ni comentarios) → `ops/scripts/generate-container-aliases.py`, `generate-manifests.py`, `generate-runtime-fleet.py`, `generate-units.py`, `generate-container-units.py`, `generate-telegram-config.py`, encadenados por `ops/scripts/regenerate-fleet.sh:11-43`, producen `ops/container-aliases.json`, `ops/manifests/*.yaml`, las units systemd y `ops/telegram-runtime/config.json`. Las fórmulas puras (`env_name`, reglas por harness) viven en una sola casa, `ops/scripts/fleet_derive.py`.
 
-`ops/flota.json` (14 entradas hoy) define por alias: `tenant`, `room`, `role`, `harness`, `enabled`, `container`, `user`, `home`, `runtimeStateDirectory` (`ops/flota.json:2-157`). `enabled` tiene una sola fuente (`agents.enabled`): deshabilitado va a `retired`, no a bookkeeping manual (`ops/flota.json:167`). El único fichero editado a mano es el overlay físico `ops/flota-fisica.json`, que el exportador funde en `placement` — hoy `kant` (health en `ctrl-infra`, registro en `host:kratos`) y `salva` (`dockerHost: kratos`) (`ops/flota-fisica.json:2-9`).
+`ops/flota.json` describe quince agentes habilitados y sus rutas reales. Los lectores globales
+usan `load_fleet_assignments`; `ops/container-aliases.json` incluye sólo trece alias Docker.
+Astra (`vm:pc-agente`, usuario `ubuntu`) y Kant (`host:server2`, usuario `server`) usan sus
+unidades nativas existentes. `ops/flota-fisica.json` aporta los usuarios de supervisor y
+sitúa el contenedor de Salva en server2. Las rutas de estado observadas se conservan sin
+sustituirlas por las rutas de las plantillas de instalación.
 
 **Gates G-SNAP**: `ops/scripts/validate.sh` regenera `container-aliases.json` y `manifests/` desde `ops/flota.json` en un tmpdir y exige identidad byte a byte con lo commiteado — es el gate contra edición manual de generados (`ops/scripts/validate.sh:5-33`).
 
@@ -84,7 +89,12 @@ Fuente única: el compose del propio repo, sin overrides externos — `deploy/de
 
 | Máquina | Papel | Qué corre |
 |---|---|---|
-| VPS (esta, Ryzen 9700X) | centro de mando: repo, bus, producción | los 10 contenedores `cauce-v3-prod-*`; todos los alias de la flota menos `kant` y `salva`, uno por contenedor de tenant (`docs/flota-y-participantes.md:8`) |
-| Torre `kratos` (9950X3D) | desarrollo del dueño | los alias `kant` y `salva` (`ops/flota-fisica.json:2-9`); contenedores de prueba y respaldo |
+| VPS `server` (.11) | centro de mando | nueve servicios permanentes de producción, migrador al desplegar y doce alias locales |
+| server2 (.13) | runtimes permanentes | Kant nativo, Salva en `ws-isa` y acceso público a sus archivos |
+| server1 (.14) | virtualización y audio | VM de Astra en `.15` y transcripción de Telegram en CPU |
+| ILS (.5) | navegadores dedicados | sesiones de cuenta para medir cuotas; el colector vive en el VPS |
+| Workstation `kratos` (.1) | desarrollo personal y respaldo | sin runtimes de la flota ni dependencia para audio, cuotas o archivos de Salva |
 
-Cada alias vive en su propio contenedor (`agv2-<tenant>-<alias>-oc`, `ws-<alias>`, `claw`, `claw-<tenant>`…), listados uno a uno en `ops/flota.json:2-157`; varios alias de un mismo tenant pueden compartir contenedor (p. ej. `atlas` y `kratos` en `ws-humanizar`).
+Los trece alias Docker ocupan doce contenedores: Atlas y Kratos comparten `ws-humanizar`.
+Astra y Kant tienen runtimes nativos. Las plantillas generadas no sustituyen sus unidades
+instaladas ni cambian sus usuarios o directorios.

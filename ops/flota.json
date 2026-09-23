@@ -11,6 +11,17 @@
       "tenant": "Steven",
       "user": "dev"
     },
+    "astra": {
+      "container": "vm:pc-agente",
+      "enabled": true,
+      "harness": "codex",
+      "home": "/home/ubuntu/astra",
+      "role": "agent_notify",
+      "room": "grp.steven",
+      "runtimeStateDirectory": "/home/ubuntu/.local/state/cauce-v3/astra",
+      "tenant": "Steven",
+      "user": "ubuntu"
+    },
     "atlas": {
       "container": "ws-humanizar",
       "enabled": true,
@@ -89,15 +100,15 @@
       "user": "claw"
     },
     "kant": {
-      "container": "host:kratos",
+      "container": "host:server2",
       "enabled": true,
-      "harness": "codex",
-      "home": "/home/stev",
+      "harness": "claude",
+      "home": "/home/server/red-servidores",
       "role": "operator",
       "room": "grp.steven",
-      "runtimeStateDirectory": "/var/lib/cauce-v3/aliases/kant",
+      "runtimeStateDirectory": "/home/server/estado/cauce-v3/kant",
       "tenant": "Steven",
-      "user": "stev"
+      "user": "server"
     },
     "kratos": {
       "container": "ws-humanizar",
@@ -148,7 +159,7 @@
       "enabled": true,
       "harness": "claude",
       "home": "/home/dev",
-      "role": "agent_notify",
+      "role": "operator",
       "room": "grp.steven",
       "runtimeStateDirectory": "/home/dev/.local/state/cauce-v3/zeus",
       "tenant": "Steven",
@@ -156,18 +167,25 @@
     }
   },
   "placement": {
+    "astra": {
+      "systemdUser": "ubuntu"
+    },
     "kant": {
-      "healthContainer": "ctrl-infra",
-      "registryContainer": "host:kratos",
-      "dockerHost": "kratos"
+      "systemdUser": "server"
     },
     "salva": {
-      "dockerHost": "kratos"
+      "dockerHost": "server2",
+      "systemdUser": "server"
     }
   },
   "retired": {},
   "schemaVersion": 1,
   "systemPrincipals": {
+    "medico": {
+      "role": "operator",
+      "room": "grp.steven",
+      "tenant": "Steven"
+    },
     "quota-collector": {
       "role": "operator",
       "room": "grp.steven",

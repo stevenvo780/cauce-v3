@@ -131,7 +131,7 @@ class FleetDeriveTests(unittest.TestCase):
         self.assertEqual(entry, {
             "tenant": "Miguel",
             "room": "grp.miguel",
-            "container": "ctrl-infra",
+            "container": "host:kratos",
             "registryContainer": "host:kratos",
             "dockerHost": "kratos",
             "systemdUser": "stev",

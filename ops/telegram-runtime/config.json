@@ -22,6 +22,27 @@
       "poll_lease_ms": 60000
     },
     {
+      "alias": "astra",
+      "tenant_id": "Steven",
+      "room_id": "grp.steven",
+      "token_file": "/run/cauce-telegram/astra.token",
+      "v2_shutdown_marker_file": "/run/cauce-telegram/astra.disabled",
+      "allowed_user_ids": [
+        "999999999999999999"
+      ],
+      "allowed_chat_ids": [
+        "-999999999999999999"
+      ],
+      "recipients": [
+        {
+          "tenant_id": "Steven",
+          "alias": "astra"
+        }
+      ],
+      "poll_timeout_seconds": 25,
+      "poll_lease_ms": 60000
+    },
+    {
       "alias": "atlas",
       "tenant_id": "Miguel",
       "room_id": "grp.miguel",

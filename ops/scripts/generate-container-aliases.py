@@ -8,6 +8,7 @@ import sys
 from typing import Any
 
 from atomic_file import atomic_write
+from container_alias_lib import NAME_RE
 from fleet_derive import alias_entry
 
 OPS_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -18,7 +19,7 @@ SNAPSHOT_KEYS = {
     "retired",
     "placement",
 }
-PLACEMENT_KEYS = frozenset({"dockerHost", "registryContainer", "healthContainer"})
+PLACEMENT_KEYS = frozenset({"dockerHost", "registryContainer", "healthContainer", "systemdUser"})
 
 
 class GeneratorError(ValueError):
@@ -45,6 +46,9 @@ def validate_placement_defaults(
         for key, value in entry.items():
             if not isinstance(value, str) or not value or value != value.strip():
                 raise GeneratorError(f"placement.{alias}.{key} must be a non-empty trimmed string")
+        for key in ("dockerHost", "systemdUser"):
+            if key in entry and NAME_RE.fullmatch(entry[key]) is None:
+                raise GeneratorError(f"placement.{alias}.{key} must be a safe name")
         container = fleet[alias].get("container")
         health_container = entry.get("healthContainer", container)
         if entry.get("dockerHost") == "local":
@@ -103,7 +107,8 @@ def render(document: dict[str, Any]) -> str:
             for alias in sorted(principals)
         },
         "historicalAliases": {alias: {"expectedEnabled": False} for alias in sorted(retired)},
-        "aliases": {alias: alias_entry(alias, fleet[alias], placement.get(alias, {})) for alias in sorted(fleet)},
+        "aliases": {alias: alias_entry(alias, fleet[alias], placement.get(alias, {})) for alias in sorted(fleet)
+                    if not fleet[alias]["container"].startswith(("host:", "vm:"))},
     }
     return json.dumps(generated, indent=2, ensure_ascii=False) + "\n"
 

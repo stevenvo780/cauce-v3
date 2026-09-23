@@ -288,12 +288,17 @@ class PhysicalFleetOverlayTest(unittest.TestCase):
     def test_missing_overlay_means_no_physical_exceptions(self) -> None:
         self.assertEqual(MODULE.load_placement(self.path), {})
 
-    def test_rejects_unknown_key_and_docker_host(self) -> None:
-        for entry in ({"volume": "x"}, {"dockerHost": "remote"}):
+    def test_rejects_unknown_key_and_unsafe_placement_names(self) -> None:
+        for entry in ({"volume": "x"}, {"dockerHost": "-remote"}):
             with self.subTest(entry=entry):
                 self.write({"schemaVersion": 1, "placement": {"kant": entry}})
                 with self.assertRaises(MODULE.SnapshotError):
                     MODULE.load_placement(self.path)
+
+    def test_accepts_safe_remote_manager_and_its_systemd_user(self) -> None:
+        expected = {"kant": {"dockerHost": "server2", "systemdUser": "server"}}
+        self.write({"schemaVersion": 1, "placement": expected})
+        self.assertEqual(MODULE.load_placement(self.path), expected)
 
     def test_rejects_boolean_schema_version(self) -> None:
         self.write({"schemaVersion": True, "placement": {}})
@@ -312,7 +317,7 @@ class PhysicalFleetOverlayTest(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.SnapshotError, "dockerHost"):
             MODULE.snapshot_document(
                 source(),
-                {"kant": {"dockerHost": "remote"}},
+                {"kant": {"dockerHost": "-remote"}},
                 frozenset({"Steven"}),
             )
 

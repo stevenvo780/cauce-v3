@@ -30,11 +30,11 @@ if [ -z "$ESPERADA" ]; then
 elif [ "$ver" = "$ESPERADA" ]; then echo "OK  esquema $ver"
 else echo "ROJO esquema en '$ver' (el repo declara '$ESPERADA')"; fallo=1; fi
 
-# 4) Every enabled registry agent must have an unexpired, fresh lease.
+# 4) Every enabled agent needs its current authenticated, fresh lease; instance names are opaque.
 # The fleet reconnects after `up`, so give it up to 2 minutes before calling it red.
 vivos=0; esperados=0; flota_valida=0
 for intento in 1 2 3 4 5 6; do
-  if censo="$("${PG[@]}" "SELECT count(*), count(*) FILTER (WHERE l.lease_until > now() AND l.last_heartbeat_at > now() - interval '60 seconds' AND l.last_heartbeat_at > l.connected_at AND l.capabilities ? 'heartbeat' AND l.instance_id IN ('systemd-'||a.alias,'systemd-container-'||a.alias)) FROM agents a LEFT JOIN connection_leases l ON l.tenant_id = a.tenant_id AND l.alias = a.alias WHERE a.enabled" 2>/dev/null)" \
+  if censo="$("${PG[@]}" "SELECT count(*), count(*) FILTER (WHERE l.lease_until > now() AND l.last_heartbeat_at > now() - interval '60 seconds' AND l.last_heartbeat_at > l.connected_at AND l.capabilities ? 'heartbeat') FROM agents a LEFT JOIN connection_leases l ON l.tenant_id = a.tenant_id AND l.alias = a.alias WHERE a.enabled" 2>/dev/null)" \
     && [[ "$censo" =~ ^([0-9]+)\|([0-9]+)$ ]]; then
     esperados=${BASH_REMATCH[1]}; vivos=${BASH_REMATCH[2]}
     if (( esperados == FLEET_EXPECTED && vivos == esperados )); then flota_valida=1; break; fi

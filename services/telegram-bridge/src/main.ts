@@ -35,7 +35,7 @@ const transcription = transcriptionConfig();
 logEvent('telegram_transcription_config', {
   enabled: transcription !== undefined,
   ...(transcription === undefined ? {} : { model: transcription.model, language: transcription.language })
-});
+}, { level: 'info' });
 
 const pool = createPool(requiredEnv(process.env, 'DATABASE_URL'));
 const store = new CauceRepository(pool);

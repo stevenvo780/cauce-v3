@@ -118,7 +118,12 @@ for path in sorted((root / 'tests').glob('*.py')) + sorted((root / 'tests/fixtur
     print(f'python syntax ok: {path}')
 PY
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/validate-manifests.py"
-fleet_size=$(python3 - "$ROOT/container-aliases.json" <<'PY'
+fleet_size=$(python3 - "$ROOT/flota.json" <<'PY'
+import json, pathlib, sys
+print(len(json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))['fleet']))
+PY
+)
+container_size=$(python3 - "$ROOT/container-aliases.json" <<'PY'
 import json, pathlib, sys
 print(len(json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))['aliases']))
 PY
@@ -142,8 +147,8 @@ done
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-container-units.py" --rootless --home /home/dev --output "$tmp_container_units" >/dev/null
 container_units=("$tmp_container_units"/cauce-v3-container-*.service)
 container_configs=("$tmp_container_units"/configs/*.env.example)
-[[ ${#container_units[@]} -eq "$fleet_size" && ${#container_configs[@]} -eq "$fleet_size" ]] || {
-  printf 'container unit generator did not emit the declarative fleet size (%s)\n' "$fleet_size" >&2
+[[ ${#container_units[@]} -eq "$container_size" && ${#container_configs[@]} -eq "$container_size" ]] || {
+  printf 'container unit generator did not emit the container fleet size (%s)\n' "$container_size" >&2
   exit 1
 }
 (cd "$tmp_container_units" && sha256sum -c SHA256SUMS >/dev/null)

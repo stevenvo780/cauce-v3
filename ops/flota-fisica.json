@@ -1,12 +1,14 @@
 {
   "placement": {
+    "astra": {
+      "systemdUser": "ubuntu"
+    },
     "kant": {
-      "healthContainer": "ctrl-infra",
-      "registryContainer": "host:kratos",
-      "dockerHost": "kratos"
+      "systemdUser": "server"
     },
     "salva": {
-      "dockerHost": "kratos"
+      "dockerHost": "server2",
+      "systemdUser": "server"
     }
   },
   "schemaVersion": 1

@@ -84,13 +84,13 @@ async function regularJsonFile(file, label, { privateFile = false, maxBytes = 1_
 
 async function targetFromInventory() {
   const configured = process.env.CAUCE_GATE_INVENTORY_FILE;
-  const inventoryFile = configured ?? path.resolve(here, '..', 'container-aliases.json');
+  const inventoryFile = configured ?? path.resolve(here, '..', 'flota.json');
   const decoded = await regularJsonFile(inventoryFile, 'gate inventory');
   if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded) ||
-      !decoded.aliases || typeof decoded.aliases !== 'object' || Array.isArray(decoded.aliases)) {
+      !decoded.fleet || typeof decoded.fleet !== 'object' || Array.isArray(decoded.fleet)) {
     throw new Error('gate inventory is invalid');
   }
-  const entry = decoded.aliases[alias];
+  const entry = decoded.fleet[alias];
   if (!entry || typeof entry !== 'object' || Array.isArray(entry) ||
       typeof entry.tenant !== 'string' || entry.tenant.length === 0) {
     throw new Error('alias is not declared in the gate inventory');
