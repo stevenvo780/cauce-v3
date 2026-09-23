@@ -57,22 +57,57 @@ Sin sesión compartida grok es headless por turno y `cauce <alias>` abre una RAM
 - **Arranque exacto:** `grok --always-approve --resume <id>` con `GROK_HOME` exportado en el panel.
   El id sale del puntero `shared-tui-session.json` del alias (el mismo almacén que claude); sin
   puntero y sin historia arranca `--session-id <uuidv7>`; con historia y sin puntero se BLOQUEA
-  (nunca elige sola entre DM, delegaciones o ramas). Migración: sembrar una vez la conversación
-  canónica con `shared-session.js seed --alias A --harness grok --workspace W --state S --native-id <id>`
-  (sólo escribe si no hay puntero). Tras cada turno cerrado el testigo mueve el puntero con CAS
-  (así un `/new` en la TUI se sigue).
+  (nunca elige sola entre DM, delegaciones o ramas). La conversación canónica se nombra con
+  `SHARED_SESSION_NATIVE_ID=<id>` en el `.env` del alias: el adaptador la siembra él mismo al
+  arrancar, con la release que corre (sólo si no hay puntero; nunca lo pisa). `shared-session.js
+  seed` sigue existiendo, pero sólo sirve desde una release que ya esté en el contenedor. Tras cada
+  turno cerrado el testigo mueve el puntero con CAS (así un `/new` en la TUI se sigue).
 - **Transcript:** `$GROK_HOME/sessions/<cwd>/<id>/updates.jsonl` de TODOS los cwd (`--resume`
-  reabre la conversación en la carpeta donde nació). El prompt se reconoce por texto (también
-  envuelto en `<user_query>`) o por su `cauce_correlation_id`; la respuesta es el texto posterior
-  a la última herramienta del turno, que cierra `turn_completed` (`stop_reason` ≠ `end_turn` =
-  fallo). Un depósito `cauce_reply` sin texto final cierra en ese mismo `turn_completed`.
-- **Panel:** turno en curso = pie `Ctrl+c:cancel` (última línea) o spinner `… [stop]`. grok
-  ENCOLA lo que se pega mientras genera, así que el bus sólo toma la caja con la TUI ociosa.
-  Cancelar es `C-c` y sólo con un turno en curso (en ociosa arma la salida); Escape no cancela.
-- **Operación:** tmux dentro del contenedor (el supervisor lo exige para grok) y un workspace en
-  el que grok confíe sin diálogo: `SHARED_SESSION_WORKSPACE=$HOME` (el cwd del headless) está
-  permitido aunque `$HOME` no sea un montaje persistente, porque la conversación vive en `~/.grok`.
-  `cauce-attach` se niega a abrir un segundo grok sobre un alias compartido (grok no bloquea sesiones).
+  reabre la conversación en la carpeta donde nació), sin las sesiones de subagentes
+  (`summary.json` `session_kind: "subagent"`, una carpeta por subagente que nadie poda) y acotado a
+  las `MAX_GROK_SESSIONS` escritas más recientemente (nunca a una lista vacía). El prompt se
+  reconoce por texto (también envuelto en `<user_query>`) o por el `cauce_correlation_id` que generó
+  el ejecutor (nunca por uno escrito dentro del pedido).
+- **Fin de la entrega = fin del TRABAJO, no del primer turno.** En la TUI los subagentes y los
+  comandos en segundo plano sobreviven al turno y lo despiertan (`will_wake`) con un turno nuevo;
+  escribir mientras el turno espera en `get_command_or_subagent_output` lo CANCELA. La entrega sigue
+  lo que su turno lanzó (`subagent_spawned.parent_prompt_id`, `task_backgrounded` → `tool_call`) y
+  los turnos de despertar que eso causa, y cierra cuando todo terminó: la respuesta es la del último
+  turno de esa cadena (texto tras su última herramienta) o, si lo hubo, el depósito `cauce_reply`,
+  que un cancelled posterior ya no tira. Si el trabajo en segundo plano no avanza en
+  `backgroundWaitMs` (10 min, el mismo tope que el headless de grok) se entrega lo que había con el
+  aviso `background_pending`. Mientras la entrega sigue abierta, `cauce_reply` de un despertar se
+  acepta. No medido: la forma exacta del prompt de un despertar (se asume sin línea de usuario; si la
+  tuviera, la entrega espera hasta ese tope y entrega el depósito).
+- **Panel:** turno en curso = pie `Ctrl+c:cancel`. Con el pie de grok a la vista, SÓLO el pie
+  decide (una respuesta que cita un spinner o «esc to interrupt» no bloquea el bus); el spinner
+  `… [stop]` cuenta sólo si el pie no se ve. grok ENCOLA lo que se pega mientras genera, así que el
+  bus sólo toma la caja con la TUI ociosa: espera hasta `generatingWaitMs` (2 h) a que termine el
+  turno ajeno —un turno que empieza bajo la barrera devuelve el pedido a esa misma espera— y, si no,
+  falla REINTENTABLE con `tui_generating` (nunca culpa al dueño de «texto a medio escribir»).
+  Cancelar es `C-c` y sólo si el turno correlacionado está localizado y abierto (nunca el del dueño);
+  en ociosa `C-c` arma la salida y Escape no cancela.
+- **Pegado:** el cuerpo de una entrega es texto libre de otro alias: ESC, los demás C0 (menos tab y
+  salto de línea), DEL y C1 se vuelven sus símbolos visibles (`pasteSafeText`) antes de
+  `load-buffer`, así un `ESC[201~` no cierra el pegado entre corchetes ni convierte el resto en teclas.
+- **Operación:** tmux dentro del contenedor y un workspace en el que grok confíe sin diálogo:
+  `SHARED_SESSION_WORKSPACE=$HOME` (el cwd del headless) está permitido aunque `$HOME` no sea un
+  montaje persistente, porque la conversación vive en `~/.grok`. Sin tmux el supervisor arranca el
+  adaptador headless y lo dice (antes moría con 78 y Telegram quedaba mudo). `cauce-attach` (única
+  fuente: `ops/guardias/cauce-attach`) se niega a abrir un segundo grok sobre un alias compartido.
+- **Orden de despliegue seguro** (el supervisor y `update_alias_lib.py` vivos rechazan
+  `SHARED_SESSION` para grok con `die` 2, que systemd no reintenta):
+  1. Desplegar primero el árbol `ops` de esta rama (ya fusionada con `main`, con el alta de hades)
+     e instalar el CLI con `ops/scripts/install-cauce-cli.sh`.
+  2. tmux en la imagen: construir una imagen NUEVA (no re-etiquetar `claw:latest`, que fija por ID
+     a otros siete alias) y poner su ID en `EXPECTED_IMAGE_ID` de `hades.env` ANTES de recrear el
+     contenedor; si no, el supervisor lo rechaza (`container image ID is not allowlisted`).
+  3. En una sola edición de `hades.env`: `BUNDLE_RELEASE`/`BUNDLE_SHA256` nuevos, `SHARED_SESSION=1`,
+     `SHARED_SESSION_WORKSPACE=/home/claw` y `SHARED_SESSION_NATIVE_ID=<id del DM>`; un solo
+     reinicio. El adaptador siembra el puntero con su propia release.
+  4. Recién con la release nueva dentro del contenedor, re-registrar el MCP `cauce` con su ruta
+     (`grok mcp add cauce --scope user -- node <release>/…/cauce-mcp.js …`): antes apuntaría a un
+     fichero que no existe.
 
 **Probar:** `pnpm --filter @cauce/adapter-sdk test` (`node:test`).
 

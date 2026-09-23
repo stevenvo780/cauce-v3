@@ -7,7 +7,7 @@ import unittest
 from importlib import machinery, util
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-SOURCE = ROOT / 'ops/cli/cauce-attach'
+SOURCE = ROOT / 'ops/guardias/cauce-attach'
 
 
 def load_attach():

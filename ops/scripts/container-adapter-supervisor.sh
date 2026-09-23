@@ -144,6 +144,8 @@ inventory_workspace=${inventory_policy[1]}
 
 config_file="$CONFIG_ROOT/$alias_name.env"
 declare -A CONFIG=()
+# Set by validation when SHARED_SESSION cannot hold in this container (grok without tmux).
+shared_session_disabled=false
 
 load_config() {
   local line key value
@@ -643,7 +645,13 @@ validate_container_identity_and_mount() {
   if [[ -n $shared_session_workspace ]]; then
     docker_id_exec test -d "$shared_session_workspace" >/dev/null 2>&1 \
       || die "SHARED_SESSION workspace does not exist inside the container: $shared_session_workspace"
-    [[ $harness != grok ]] || docker_id_exec sh -c 'command -v tmux' >/dev/null 2>&1 || die 'SHARED_SESSION for grok needs tmux in the container' 78
+    # grok's image did not ship tmux. Dying here (78, never restarted) left Telegram mute until someone
+    # noticed; without tmux the shared TUI cannot exist, so this start serves the bus headless (the
+    # previous mode) and says so. `cauce <alias>` reports the missing panel instead of opening another.
+    if [[ $harness == grok ]] && ! docker_id_exec sh -c 'command -v tmux' >/dev/null 2>&1; then
+      printf 'warning: SHARED_SESSION=1 ignored for %s: the container has no tmux; the adapter starts headless\n' "$alias_name" >&2
+      shared_session_disabled=true
+    fi
   fi
   after=$(read_state_signature) || die 'container disappeared during policy validation' 75
   [[ $after == "$before" ]] || die 'container generation changed during policy validation' 75
@@ -914,7 +922,7 @@ start_adapter() {
     environment+=("CAUCE_CLAUDE_PERMISSION_MODE=${CONFIG[CLAUDE_PERMISSION_MODE]}")
   fi
   if [[ $bearer_token_present == true ]]; then environment+=("CAUCE_TOKEN_FILE=$secret_directory/token"); fi
-  if [[ -v CONFIG[SHARED_SESSION] ]]; then
+  if [[ -v CONFIG[SHARED_SESSION] && $shared_session_disabled != true ]]; then
     environment+=("CAUCE_SHARED_SESSION=${CONFIG[SHARED_SESSION]}")
     [[ -v CONFIG[SHARED_SESSION_WORKSPACE] ]] \
       && environment+=("CAUCE_SHARED_SESSION_WORKSPACE=${CONFIG[SHARED_SESSION_WORKSPACE]}")

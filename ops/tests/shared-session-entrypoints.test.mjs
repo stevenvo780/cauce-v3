@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -281,6 +281,33 @@ cmd_entrar hades
     }
   } finally {
     await rm(test.directory, { recursive: true, force: true });
+  }
+}
+
+// The alias sweep counts the adapter (by CAUCE_ALIAS or by its release path) but not the MCP bridge
+// the SHARED TUI starts from that same release: tmux strips CAUCE_ALIAS from it, so `off` could never
+// kill it and stopped with "SIGUE VIVO" before tearing the panel down (review 2026-09-23, hades).
+{
+  const alias = `barrido${process.pid}`;
+  const release = `/opt/cauce-v3-adapter/${alias}/releases/r1/packages/adapter-sdk/dist/src/bin`;
+  const spawnProbe = (script, environment) => spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", `${release}/${script}`], {
+    env: environment, stdio: "ignore", detached: false,
+  });
+  const clean = { PATH: process.env.PATH ?? "/usr/bin:/bin" };
+  const tuiBridge = spawnProbe("cauce-mcp.js", clean);
+  const headlessBridge = spawnProbe("cauce-mcp.js", { ...clean, CAUCE_ALIAS: alias });
+  const adapter = spawnProbe("grok.js", clean);
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const sweep = /^BARRIDO='(.*)'$/mu.exec(await readFile(cli, "utf8"))?.[1];
+    assert.ok(sweep !== undefined, "cauce defines BARRIDO");
+    const found = spawnSync("sh", ["-c", sweep.replaceAll("@@A@@", alias)], { encoding: "utf8" })
+      .stdout.split("\n").filter((line) => line !== "");
+    assert.ok(found.includes(String(adapter.pid)), `the adapter counts: ${found.join(" ")}`);
+    assert.ok(found.includes(String(headlessBridge.pid)), `a bridge with CAUCE_ALIAS counts: ${found.join(" ")}`);
+    assert.ok(!found.includes(String(tuiBridge.pid)), `the shared TUI's bridge does not: ${found.join(" ")}`);
+  } finally {
+    for (const child of [tuiBridge, headlessBridge, adapter]) child.kill("SIGKILL");
   }
 }
 

@@ -31,6 +31,9 @@ Cuatro garantías, en este orden:
     cauce-attach <alias> --reciente      sin preguntar: la de último turno, sea cual sea
     cauce-attach <alias> --sesion <id>   una sesión concreta (basta el prefijo que muestra --lista)
     cauce-attach <alias> --sin-parar     NO para el adaptador (dos escritores: solo para leer)
+    cauce-attach <alias> --bifurcar      abre una RAMA de la sesión (grok/claude --fork-session): ves
+                                         toda la conversación y el agente sigue atendiendo Telegram;
+                                         lo que hagas en la terminal no vuelve a la conversación del bus
     cauce-attach <alias> --forzar        entra aunque ya haya otra sesión interactiva abierta
     cauce-attach <alias> --sin-aviso     no intenta avisar por Telegram
     cauce-attach <alias> --simular       muestra a qué entraría y no toca nada (ni unit ni CLI)
@@ -42,6 +45,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -51,9 +55,13 @@ MAP = os.path.join(OPS, 'container-aliases.json')
 MARKERS = os.path.expanduser('~/.local/state/cauce-attach')
 PKI = os.path.expanduser('~/.config/cauce-v3/container-pki')
 AVISO_CONF = os.path.expanduser('~/.config/cauce-v3/attach-aviso.json')
+CONFIG = os.path.expanduser('~/.config/cauce-v3/container-aliases')
 GATEWAY = os.environ.get('CAUCE_GATEWAY_URL', 'https://100.64.0.6:8443')
 HOST_NATIVE = {'kant': 'cauce-v3-host-kant'}
-ATTACHABLE = {'claude', 'codex'}
+ATTACHABLE = {'claude', 'codex', 'grok'}
+# --fork-session: the terminal starts from the whole conversation but writes a NEW session id, so the
+# adapter can keep answering Telegram on the original without two writers on one transcript.
+FORKABLE = {'claude', 'grok'}
 
 
 def die(msg):
@@ -73,6 +81,10 @@ def resume_cli(harness, native):
     if harness == 'claude':
         return ['claude', '--dangerously-skip-permissions', '--permission-mode',
                 'bypassPermissions', '--resume', native]
+    if harness == 'grok':
+        # The adapter runs every bus turn as `grok -p ... --resume <id>`: resuming the same id in
+        # the TUI is entering THE conversation of Telegram, not a new one.
+        return ['grok', '--always-approve', '--resume', native]
     return ['codex', '--yolo', 'resume', native]
 
 
@@ -85,6 +97,9 @@ def resumes_session(argv, native):
                        and tail[offset + 1] == native for offset, option in enumerate(tail))
         if executable == 'codex':
             return any(option == 'resume' and offset + 1 < len(tail)
+                       and tail[offset + 1] == native for offset, option in enumerate(tail))
+        if executable == 'grok':
+            return any(option == '--resume' and offset + 1 < len(tail)
                        and tail[offset + 1] == native for offset, option in enumerate(tail))
     return False
 
@@ -103,6 +118,15 @@ def sesiones_mod():
     modulo = importlib.util.module_from_spec(spec)
     cargador.exec_module(modulo)
     return modulo
+
+
+def compartida(alias):
+    """SHARED_SESSION=1 in the alias .env: its ONE live TUI is the adapter's tmux pane."""
+    try:
+        with open(os.path.join(CONFIG, f'{alias}.env')) as handle:
+            return any(line.strip() == 'SHARED_SESSION=1' for line in handle)
+    except OSError:
+        return False
 
 
 def unit_of(alias):
@@ -256,7 +280,8 @@ def main():
             '[--sin-parar] [--forzar] [--sin-aviso]')
     alias = args[0]
     listar = '--lista' in args
-    parar = '--sin-parar' not in args
+    bifurcar = '--bifurcar' in args
+    parar = '--sin-parar' not in args and not bifurcar
     forzar = '--forzar' in args
     sin_aviso = '--sin-aviso' in args
     simular = '--simular' in args
@@ -269,6 +294,12 @@ def main():
     host_native = alias in HOST_NATIVE
     unit = unit_of(alias)
 
+    # grok does not lock sessions: a second process on the shared conversation splits it in two.
+    if harness == 'grok' and compartida(alias) and not forzar:
+        die(f'{alias} tiene sesion compartida: su TUI es el panel tmux del adaptador, entra con '
+            f'«cauce {alias}».\n             Otro grok sobre esa conversacion la parte en dos (--forzar).')
+    if bifurcar and harness not in FORKABLE:
+        die(f'{alias} usa {harness}: --bifurcar sólo existe para {", ".join(sorted(FORKABLE))}.')
     if harness not in ATTACHABLE:
         die(f'{alias} usa {harness}: no tiene CLI con sesión reanudable.\n'
             f'             para verlo en vivo: ia {alias} watch')
@@ -293,6 +324,10 @@ def main():
         elegida, avisos = elegir(mod, alias, datos, preferencia, sys.stdin.isatty())
 
     native = elegida['native']
+    # `native` and `cwd` come from sessions.json and transcripts, which the agent itself can write:
+    # they are validated and never spliced into a shell string (see the exec below).
+    if not isinstance(native, str) or not re.fullmatch(r'[0-9A-Za-z][0-9A-Za-z_.:-]{0,127}', native):
+        die(f'id de sesión inválido en el estado de {alias}: {native!r}')
     transcript = elegida.get('transcripto') or '(sin transcript)'
 
     # guarantee 2: single writer
@@ -301,6 +336,8 @@ def main():
     # harness for a delivery. Blocking on that would mislead; we just wait a few seconds.
     humanas = [row for row in abiertas if row[1] not in ('?', '-')]
     sin_tty = [row for row in abiertas if row[1] in ('?', '-')]
+    if bifurcar:
+        humanas, sin_tty = [], []
     if humanas and not forzar:
         detalle = '\n'.join(f'                pid {p} en {t} (hace {e})' for p, t, e in humanas)
         libre = ''
@@ -316,6 +353,8 @@ def main():
             f'mientras tanto: ia {alias} watch.')
 
     cwd = elegida.get('cwd') or info['home']
+    if not isinstance(cwd, str) or not cwd.startswith('/') or any(c in cwd for c in '\n\r\0'):
+        die(f'cwd inválido para la sesión de {alias}: {cwd!r}')
 
     for indice, linea in enumerate(avisos):
         print(('cauce-attach: ' if indice == 0 else '              ') + linea)
@@ -365,16 +404,26 @@ def main():
                                        f'por consola. Estoy mudo acá hasta que salga; tu mensaje '
                                        f'queda encolado y lo proceso apenas vuelva.', 'in'))
         print('')
+    elif bifurcar:
+        print('')
+        print('  modo BIFURCADA: ves toda la conversación del DM hasta ahora, en una RAMA.')
+        print(f'  {alias} sigue atendiendo Telegram y el bus mientras estás acá; lo que hagas en')
+        print('  esta terminal NO vuelve a esa conversación. Salir: /exit o Ctrl-D.')
+        print('')
     elif not parar:
         print('              AVISO: --sin-parar; si llega una entrega vas a tener dos escritores.')
 
     try:
         cli = resume_cli(harness, native)
+        if bifurcar:
+            cli.append('--fork-session')
+        # Login shell for the PATH, but every value travels as a positional argument, never as code.
         if host_native:
-            subprocess.run(['bash', '-lc', f'cd {cwd} && ' + ' '.join(cli)], check=False)
+            subprocess.run(['bash', '-lc', 'cd -- "$1" && shift && exec "$@"', 'bash', cwd, *cli],
+                           check=False)
         else:
             subprocess.run(['docker', 'exec', '-it', '--user', info['user'], '-w', cwd,
-                            info['container'], 'bash', '-lc', ' '.join(cli)], check=False)
+                            info['container'], 'bash', '-lc', 'exec "$@"', 'bash', *cli], check=False)
     finally:
         if parado:
             print(f'\ncauce-attach: levantando {unit} de nuevo…')
