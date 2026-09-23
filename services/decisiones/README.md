@@ -104,7 +104,9 @@ es el resultado que el agente debe aplicar. Las plantillas de seguridad fallan c
 **Llamadas a Jev.** Cada intento tiene 15 s y la decisión entera tiene 30 s. Si un intento tarda más
 de 3 s se lanza una segunda solicitud idéntica, y gana la primera que responda: lo medido fue bimodal,
 con la mitad por debajo de 650 ms y colas de 5 a 28 s. Se reintentan 408, 429, 5xx, 520 y 529, con
-backoff exponencial y respetando `retry-after`. Los 401 y 422 no se reintentan.
+backoff exponencial y respetando `retry-after`. Los 401 y 422 no se reintentan, y cortan también la
+copia del hedge que siga en vuelo: el error que se audita es el de la credencial o el cuerpo, no un
+timeout.
 
 ## Catálogo (`catalogo/`)
 

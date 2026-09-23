@@ -29,7 +29,7 @@
     "Noul no trae confidence: su certeza es la distancia a 0.5; se lee con dos umbrales (sí / no) y una franja intermedia que va al LLM.",
     "Choice y Score traen confidence (forma de la distribución): se exige más confianza cuanto más cara es la acción.",
     "Los umbrales de un Noul no se trasladan a una Choice ni al revés (la doc lo advierte).",
-    "Latencia: timeout de 15 s por intento y presupuesto total de 30 s por decisión (lo medido tuvo colas de 5 a 28 s); si un intento tarda más de 3 s sale una segunda solicitud idéntica (hedge, como máximo 2 en vuelo) y gana la primera; hasta 3 rondas. 429, 529, 408 y 5xx (incluido 520) se reintentan con backoff exponencial respetando retry-after; 401 y 422 no se reintentan. Los valores viven en config.ts y el compose.",
+    "Latencia: timeout de 15 s por intento y presupuesto total de 30 s por decisión (lo medido tuvo colas de 5 a 28 s); si un intento tarda más de 3 s sale una segunda solicitud idéntica (hedge, como máximo 2 en vuelo) y gana la primera; hasta 3 rondas. 429, 529, 408 y 5xx (incluido 520) se reintentan con backoff exponencial respetando retry-after; 401 y 422 no se reintentan y cortan también la copia del hedge en vuelo. Los valores viven en config.ts y el compose.",
     "Cada decisión se registra: plantilla, versión de plantilla, response.model, x-typesafe-request-id, señales, decisión y si cayó al LLM. Ese registro es el set de calibración.",
     "La política por alias (qué exige aprobación, quién es zeus) se toma de la identidad del certificado mTLS, nunca de un parámetro del pedido."
   ],

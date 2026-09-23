@@ -106,7 +106,11 @@ async function limitedText(response: Response): Promise<string> {
 
 interface Success { readonly body: unknown; readonly requestId: string | undefined }
 
-/** Races up to two identical requests: the second starts only if the first is still pending. */
+/**
+ * Races up to two identical requests: the second starts only if the first is still pending. A
+ * rejection that no retry can cure (credential, request body) ends the race at once, so waiting on
+ * the other copy can never turn it into a retryable timeout.
+ */
 function hedged(launch: (signal: AbortSignal) => Promise<Success>, hedgeAfterMs: number): Promise<Success> {
   return new Promise((resolve, reject) => {
     const controllers: AbortController[] = [];
@@ -128,7 +132,8 @@ function hedged(launch: (signal: AbortSignal) => Promise<Success>, hedgeAfterMs:
         resolve(success);
       }, (error: unknown) => {
         inFlight -= 1;
-        if (settled || inFlight > 0) return;
+        const final = error instanceof Failure && !error.retryable;
+        if (settled || (inFlight > 0 && !final)) return;
         settle();
         reject(error instanceof Error ? error : new Error('fallo desconocido'));
       });

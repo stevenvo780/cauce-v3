@@ -80,6 +80,19 @@ describe('cliente de Jev', () => {
     expect(result.requests).toBe(2);
   });
 
+  it('un rechazo no reintentable corta el hedge en vuelo en vez de esperar su timeout', async () => {
+    for (const [status, esperado] of [[401, 'jev_credencial_rechazada'], [422, 'jev_solicitud_rechazada']] as const) {
+      jev.seen.length = 0;
+      jev.respond((_request, index) => index === 0 ? { delayMs: 300, status, body: { detail: { error_type: 'x' } } } : { delayMs: 3_000, body: {} });
+      const started = Date.now();
+      const error = await failure(client({ hedgeAfterMs: 100, attemptTimeoutMs: 1_000, totalTimeoutMs: 4_000 }).evaluate('x', QUESTIONS));
+      expect(error.code).toBe(esperado);
+      expect(Date.now() - started).toBeLessThan(900);
+      expect(jev.seen).toHaveLength(2);
+      expect(error.details).toMatchObject({ requests: 2, billable: 1 });
+    }
+  });
+
   it('sin fichero de clave responde jev_sin_credencial sin tocar la red', async () => {
     const error = await failure(client({ keyFile: join(directory, 'no-existe') }).evaluate('x', QUESTIONS));
     expect(error.code).toBe('jev_sin_credencial');
