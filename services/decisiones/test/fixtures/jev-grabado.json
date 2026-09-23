@@ -55,7 +55,8 @@
    "usage": {
     "input_tokens": 1599,
     "output_tokens": 188
-   }
+   },
+   "questions_sha256": "1be229cbe9a8bf9b6898b70d5cb26d4852265cc8e48779c33398388da115c874"
   },
   {
    "caso": "01-ruteo_alias-kant",
@@ -110,7 +111,8 @@
    "usage": {
     "input_tokens": 1586,
     "output_tokens": 187
-   }
+   },
+   "questions_sha256": "1be229cbe9a8bf9b6898b70d5cb26d4852265cc8e48779c33398388da115c874"
   },
   {
    "caso": "02-ruteo_alias-jarvis",
@@ -165,7 +167,8 @@
    "usage": {
     "input_tokens": 1581,
     "output_tokens": 188
-   }
+   },
+   "questions_sha256": "1be229cbe9a8bf9b6898b70d5cb26d4852265cc8e48779c33398388da115c874"
   },
   {
    "caso": "03-ruteo_alias-ninguno/persona",
@@ -220,7 +223,8 @@
    "usage": {
     "input_tokens": 1586,
     "output_tokens": 188
-   }
+   },
+   "questions_sha256": "1be229cbe9a8bf9b6898b70d5cb26d4852265cc8e48779c33398388da115c874"
   },
   {
    "caso": "04-ruteo_alias-argos",
@@ -275,7 +279,8 @@
    "usage": {
     "input_tokens": 1588,
     "output_tokens": 188
-   }
+   },
+   "questions_sha256": "1be229cbe9a8bf9b6898b70d5cb26d4852265cc8e48779c33398388da115c874"
   },
   {
    "caso": "05-triage_urgencia-P3",
@@ -339,7 +344,8 @@
    "usage": {
     "input_tokens": 633,
     "output_tokens": 90
-   }
+   },
+   "questions_sha256": "c067f6a8f69273adcea08f29e4160605f63e39d44c62406082835b1cff104a80"
   },
   {
    "caso": "06-triage_urgencia-P0",
@@ -403,7 +409,8 @@
    "usage": {
     "input_tokens": 640,
     "output_tokens": 90
-   }
+   },
+   "questions_sha256": "c067f6a8f69273adcea08f29e4160605f63e39d44c62406082835b1cff104a80"
   },
   {
    "caso": "07-triage_urgencia-P0-seguridad",
@@ -467,7 +474,8 @@
    "usage": {
     "input_tokens": 631,
     "output_tokens": 90
-   }
+   },
+   "questions_sha256": "c067f6a8f69273adcea08f29e4160605f63e39d44c62406082835b1cff104a80"
   },
   {
    "caso": "08-aprobacion_humana-prod",
@@ -510,7 +518,8 @@
    "usage": {
     "input_tokens": 988,
     "output_tokens": 141
-   }
+   },
+   "questions_sha256": "7739d71c3b0cad0ed2f979db87b67f63c5cd2eb24ca772a237b9c4166bfbaae9"
   },
   {
    "caso": "09-aprobacion_humana-libre",
@@ -553,7 +562,8 @@
    "usage": {
     "input_tokens": 971,
     "output_tokens": 141
-   }
+   },
+   "questions_sha256": "7739d71c3b0cad0ed2f979db87b67f63c5cd2eb24ca772a237b9c4166bfbaae9"
   },
   {
    "caso": "10-aprobacion_humana-dinero",
@@ -596,7 +606,8 @@
    "usage": {
     "input_tokens": 969,
     "output_tokens": 141
-   }
+   },
+   "questions_sha256": "7739d71c3b0cad0ed2f979db87b67f63c5cd2eb24ca772a237b9c4166bfbaae9"
   },
   {
    "caso": "11-aprobacion_humana-adversarial",
@@ -639,7 +650,8 @@
    "usage": {
     "input_tokens": 997,
     "output_tokens": 141
-   }
+   },
+   "questions_sha256": "7739d71c3b0cad0ed2f979db87b67f63c5cd2eb24ca772a237b9c4166bfbaae9"
   },
   {
    "caso": "12-cabe_en_un_turno-vigilancia",
@@ -686,7 +698,8 @@
    "usage": {
     "input_tokens": 629,
     "output_tokens": 95
-   }
+   },
+   "questions_sha256": "9b4531cb92d6521be0e441cc1d711092dd154b9255208f0e28c7c03d42cd8dfe"
   },
   {
    "caso": "13-cabe_en_un_turno-cabe",
@@ -733,7 +746,8 @@
    "usage": {
     "input_tokens": 622,
     "output_tokens": 95
-   }
+   },
+   "questions_sha256": "9b4531cb92d6521be0e441cc1d711092dd154b9255208f0e28c7c03d42cd8dfe"
   },
   {
    "caso": "14-cabe_en_un_turno-recurrente",
@@ -780,7 +794,8 @@
    "usage": {
     "input_tokens": 620,
     "output_tokens": 95
-   }
+   },
+   "questions_sha256": "9b4531cb92d6521be0e441cc1d711092dd154b9255208f0e28c7c03d42cd8dfe"
   },
   {
    "caso": "15-aclarar_o_actuar-falta_dato",
@@ -815,7 +830,8 @@
    "usage": {
     "input_tokens": 477,
     "output_tokens": 104
-   }
+   },
+   "questions_sha256": "721f3837408792d7459dbad1e9261204d3258932e4185cf14ecad6b69569461e"
   },
   {
    "caso": "16-aclarar_o_actuar-ambiguo_caro",
@@ -850,7 +866,8 @@
    "usage": {
     "input_tokens": 503,
     "output_tokens": 104
-   }
+   },
+   "questions_sha256": "721f3837408792d7459dbad1e9261204d3258932e4185cf14ecad6b69569461e"
   },
   {
    "caso": "17-aclarar_o_actuar-pregunta",
@@ -885,7 +902,8 @@
    "usage": {
     "input_tokens": 485,
     "output_tokens": 104
-   }
+   },
+   "questions_sha256": "721f3837408792d7459dbad1e9261204d3258932e4185cf14ecad6b69569461e"
   },
   {
    "caso": "18-clasificar_fallo-credencial",
@@ -925,7 +943,8 @@
    "usage": {
     "input_tokens": 1286,
     "output_tokens": 136
-   }
+   },
+   "questions_sha256": "0af38a24cbf1ca547ca6a74856ac7f3068d8f6f8f6e6c118be76fbad443429f4"
   },
   {
    "caso": "19-clasificar_fallo-cuota",
@@ -965,7 +984,8 @@
    "usage": {
     "input_tokens": 1281,
     "output_tokens": 135
-   }
+   },
+   "questions_sha256": "0af38a24cbf1ca547ca6a74856ac7f3068d8f6f8f6e6c118be76fbad443429f4"
   },
   {
    "caso": "20-clasificar_fallo-codigo",
@@ -1005,7 +1025,8 @@
    "usage": {
     "input_tokens": 1295,
     "output_tokens": 131
-   }
+   },
+   "questions_sha256": "0af38a24cbf1ca547ca6a74856ac7f3068d8f6f8f6e6c118be76fbad443429f4"
   },
   {
    "caso": "21-clasificar_fallo-harness",
@@ -1045,7 +1066,8 @@
    "usage": {
     "input_tokens": 1280,
     "output_tokens": 135
-   }
+   },
+   "questions_sha256": "0af38a24cbf1ca547ca6a74856ac7f3068d8f6f8f6e6c118be76fbad443429f4"
   },
   {
    "caso": "22-reintentar_escalar_cerrar-despues",
@@ -1082,7 +1104,8 @@
    "usage": {
     "input_tokens": 730,
     "output_tokens": 105
-   }
+   },
+   "questions_sha256": "68a3e7c47cfb8ab7f5b713ec59eb246f8003989c39e4131b91be0ee644e34e28"
   },
   {
    "caso": "23-reintentar_escalar_cerrar-cerrar",
@@ -1119,7 +1142,8 @@
    "usage": {
     "input_tokens": 754,
     "output_tokens": 101
-   }
+   },
+   "questions_sha256": "68a3e7c47cfb8ab7f5b713ec59eb246f8003989c39e4131b91be0ee644e34e28"
   },
   {
    "caso": "25-elegir_modelo-mecanico",
@@ -1173,7 +1197,8 @@
    "usage": {
     "input_tokens": 881,
     "output_tokens": 126
-   }
+   },
+   "questions_sha256": "c6856a7615c11c161096bda108cb6ab587c38afb5569c170f052b8a6af1404be"
   },
   {
    "caso": "26-elegir_modelo-dificil",
@@ -1227,7 +1252,8 @@
    "usage": {
     "input_tokens": 892,
     "output_tokens": 130
-   }
+   },
+   "questions_sha256": "c6856a7615c11c161096bda108cb6ab587c38afb5569c170f052b8a6af1404be"
   },
   {
    "caso": "27-elegir_modelo-lectura",
@@ -1281,7 +1307,8 @@
    "usage": {
     "input_tokens": 887,
     "output_tokens": 128
-   }
+   },
+   "questions_sha256": "c6856a7615c11c161096bda108cb6ab587c38afb5569c170f052b8a6af1404be"
   },
   {
    "caso": "28-respuesta_cumple-parcial",
@@ -1339,7 +1366,8 @@
    "usage": {
     "input_tokens": 661,
     "output_tokens": 123
-   }
+   },
+   "questions_sha256": "b27ddb894153556ce5ea3c79257a9b47a7b9d14644d973a690a212f2632e47e0"
   },
   {
    "caso": "29-respuesta_cumple-sin_evidencia",
@@ -1397,7 +1425,8 @@
    "usage": {
     "input_tokens": 606,
     "output_tokens": 123
-   }
+   },
+   "questions_sha256": "b27ddb894153556ce5ea3c79257a9b47a7b9d14644d973a690a212f2632e47e0"
   },
   {
    "caso": "30-requiere_respuesta-cortesia",
@@ -1420,7 +1449,8 @@
    "usage": {
     "input_tokens": 470,
     "output_tokens": 43
-   }
+   },
+   "questions_sha256": "48c6116896c4e5f610c6431ed2d3e3e671501177bea827d090a0e97140fff237"
   },
   {
    "caso": "31-requiere_respuesta-pedido",
@@ -1443,7 +1473,8 @@
    "usage": {
     "input_tokens": 473,
     "output_tokens": 43
-   }
+   },
+   "questions_sha256": "48c6116896c4e5f610c6431ed2d3e3e671501177bea827d090a0e97140fff237"
   },
   {
    "caso": "32-guardia_privacidad_jarvis-fuga",
@@ -1478,7 +1509,8 @@
    "usage": {
     "input_tokens": 424,
     "output_tokens": 90
-   }
+   },
+   "questions_sha256": "0318b0c8ea929585b6f5f3963f942f1a12367238c0b35093ff54bd8ae9ab2c99"
   },
   {
    "caso": "33-guardia_privacidad_jarvis-tecnico",
@@ -1513,7 +1545,9 @@
    "usage": {
     "input_tokens": 423,
     "output_tokens": 90
-   }
+   },
+   "questions_sha256": "0318b0c8ea929585b6f5f3963f942f1a12367238c0b35093ff54bd8ae9ab2c99"
   }
- ]
+ ],
+ "preguntas": "questions_sha256 es el SHA-256 del JSON de las preguntas que el catálogo manda para ese state, fijado con las preguntas del catálogo tal como estaban al agregar este fixture (no cambiaron desde 8319f4da). Si una plantilla cambia una pregunta, su respuesta grabada deja de valer y el test lo marca: hay que re-grabar el caso contra Jev."
 }

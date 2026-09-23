@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expandQuestions, loadCatalog, parsePlantilla, type Catalog } from '../src/catalog.js';
@@ -17,6 +18,7 @@ interface RecordedCase {
   readonly state: Record<string, unknown>;
   readonly answers: Record<string, unknown>;
   readonly usage: Record<string, number>;
+  readonly questions_sha256?: string;
 }
 
 const grabado = JSON.parse(readFileSync(new URL('./fixtures/jev-grabado.json', import.meta.url), 'utf8')) as { casos: RecordedCase[] };
@@ -66,14 +68,16 @@ const ESPERADO_ZEUS: Record<string, string> = {
   '11-aprobacion_humana-adversarial': 'sin_aprobacion',
 };
 
+/** Replays one recorded answer, and notes when it is asked questions other than the ones that produced it. */
 class RecordedJev implements JevCaller {
   readonly maxRequests = 1;
   calls = 0;
-  asked: JevQuestions[] = [];
+  stale = false;
   constructor(private readonly recorded: RecordedCase) {}
   async evaluate(_state: unknown, questions: JevQuestions) {
     this.calls += 1;
-    this.asked.push(questions);
+    const sha256 = createHash('sha256').update(JSON.stringify(questions)).digest('hex');
+    if (this.recorded.questions_sha256 !== undefined && sha256 !== this.recorded.questions_sha256) this.stale = true;
     return { body: { model: this.recorded.modelo, answers: this.recorded.answers, usage: this.recorded.usage }, requestId: 'req_grabado', requests: 1, billable: 1, ms: 5 };
   }
   async credentialPresent() { return true; }
@@ -111,6 +115,8 @@ describe('catálogo versionado', () => {
       if (expected === undefined) continue;
       const jev = new RecordedJev(recorded);
       const result = await service(catalog, jev).decide({ tenant: 'Steven', alias: 'argos' }, { plantilla: recorded.plantilla, state: recorded.state });
+      expect(recorded.questions_sha256, recorded.caso).toMatch(/^[a-f0-9]{64}$/u);
+      expect(jev.stale, `${recorded.caso}: las preguntas cambiaron desde la grabación, re-grabá el caso contra Jev`).toBe(false);
       expect([result.decision, result.valor, result.origen], recorded.caso).toEqual([expected[0], expected[1], expected[2] ?? 'jev']);
       expect(jev.calls, recorded.caso).toBe(expected[2] === 'prefiltro' ? 0 : 1);
       vistos.add(recorded.caso);
@@ -154,6 +160,20 @@ describe('catálogo versionado', () => {
       expect(result.decision, plantilla).not.toMatch(/^(cabe|partir|cumple|incompleta|P1|P2|P3|extremo)$/u);
       if (plantilla !== 'elegir_modelo') expect(result.caer_a_llm, plantilla).toBe(true);
     }
+  });
+
+  it('una respuesta grabada sólo vale para las preguntas que la produjeron', async () => {
+    const recorded = grabado.casos.find((entry) => entry.caso === '30-requiere_respuesta-cortesia');
+    const original = catalog.plantillas.get('requiere_respuesta');
+    if (recorded === undefined || original === undefined) throw new Error('falta el caso');
+    const definicion = structuredClone(original.definition) as { questions: Record<string, { instructions: unknown }> };
+    const pregunta = definicion.questions.solo_cortesia;
+    if (pregunta === undefined) throw new Error('falta solo_cortesia');
+    pregunta.instructions = '¿`mensaje` es sólo un saludo?';
+    const alterado: Catalog = { ...catalog, plantillas: new Map([...catalog.plantillas, ['requiere_respuesta', parsePlantilla(definicion, 'requiere_respuesta.json')]]) };
+    const jev = new RecordedJev(recorded);
+    await service(alterado, jev).decide({ tenant: 'Steven', alias: 'argos' }, { plantilla: 'requiere_respuesta', state: recorded.state });
+    expect(jev.stale).toBe(true);
   });
 
   it('la política de aprobación sale del alias que pregunta', async () => {

@@ -169,9 +169,12 @@ La lógica es trivalente: si falta una respuesta, la condición no dispara, tamp
 Un **resultado** es `{decision, motivo, valor?, llm?}`. `decision` y `valor` admiten
 `{eleccion:<choice>}`, y `llm: true` significa «caer al LLM».
 
-`test/fixtures/jev-grabado.json` guarda las respuestas reales de Jev a 33 casos sintéticos.
-`test/catalogo.test.ts` comprueba que cada caso lleva a la decisión esperada. Al cambiar una regla o
-un umbral, ese test es la regresión de calibración.
+`test/fixtures/jev-grabado.json` guarda las respuestas reales de Jev a 33 casos sintéticos, cada una
+con el SHA-256 de las preguntas que la produjeron (`questions_sha256`). `test/catalogo.test.ts`
+comprueba que cada caso lleva a la decisión esperada y que el catálogo le sigue mandando las mismas
+preguntas. Al cambiar una regla o un umbral, ese test es la regresión de calibración. Al cambiar el
+texto de una pregunta (instructions o criteria), las respuestas grabadas dejan de valer: el test falla
+hasta que se re-graba el caso contra Jev y se actualiza el hash.
 
 ## Configuración
 
