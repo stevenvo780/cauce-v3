@@ -6,7 +6,7 @@ import type { AuditRecord } from '../src/audit.js';
 import { DecisionError } from '../src/errors.js';
 import type { JevCaller } from '../src/jev-client.js';
 import { Limits } from '../src/limits.js';
-import type { JevQuestions } from '../src/questions.js';
+import type { JevQuestions, JsonObject } from '../src/questions.js';
 
 const CATALOGO = fileURLToPath(new URL('../catalogo/', import.meta.url));
 
@@ -116,6 +116,44 @@ describe('catálogo versionado', () => {
       vistos.add(recorded.caso);
     }
     expect(vistos.size).toBe(Object.keys(ESPERADO).length);
+  });
+
+  it('la confianza es la de las señales que decidieron, no la de la pregunta más dudosa del fan-out', async () => {
+    const esperada: Record<string, number> = {
+      '01-ruteo_alias-kant': 0.94, '07-triage_urgencia-P0-seguridad': 0.94, '17-aclarar_o_actuar-pregunta': 0.94,
+      '23-reintentar_escalar_cerrar-cerrar': 0.74, '29-respuesta_cumple-sin_evidencia': 0.96, '09-aprobacion_humana-libre': 0.8,
+    };
+    for (const recorded of grabado.casos) {
+      const result = await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'argos' }, { plantilla: recorded.plantilla, state: recorded.state });
+      if (recorded.caso in esperada) expect(result.confianza, recorded.caso).toBe(esperada[recorded.caso]);
+      if (result.origen === 'jev' && result.caer_a_llm === false) expect(result.confianza, recorded.caso).toBeGreaterThanOrEqual(0.5);
+    }
+  });
+
+  it('un score poco confiable nunca da una decisión firme', async () => {
+    const dudoso = { confidence: 0.05, legend: {} };
+    const casos: [plantilla: string, state: JsonObject, respuestas: Record<string, unknown>][] = [
+      ['cabe_en_un_turno', { pedido: 'x' }, { tamano: { type: 'score', score: 1.35, probabilities: { 0: 0.45, 1: 0.05, 2: 0.05, 3: 0.45 }, ...dudoso } }],
+      ['respuesta_cumple', { pedido: 'p', respuesta: 'r', requisitos: ['a', 'b'] }, {
+        cobertura: { type: 'score', score: 3.1, probabilities: { 3: 0.5, 4: 0.3, 1: 0.2 }, ...dudoso }, 'cumple_req::0': { type: 'noul', noul: 0.65 }, 'cumple_req::1': { type: 'noul', noul: 0.65 },
+      }],
+      ['triage_urgencia', { mensaje: 'x' }, {
+        impacto: { type: 'score', score: 1.5, probabilities: { 0: 0.4, 3: 0.4, 1: 0.2 }, ...dudoso }, plazo: { type: 'score', score: 1.2, probabilities: { 0: 0.5, 3: 0.4, 1: 0.1 }, ...dudoso },
+      }],
+      ['elegir_modelo', { tarea: 'x' }, { dificultad: { type: 'score', score: 2, probabilities: { 0: 0.5, 4: 0.5 }, ...dudoso } }],
+    ];
+    for (const [plantilla, state, respuestas] of casos) {
+      const definicion = catalog.plantillas.get(plantilla);
+      if (definicion === undefined) throw new Error(plantilla);
+      const { questions } = expandQuestions(definicion, state, undefined);
+      const answers = Object.fromEntries(Object.entries(questions).map(([id, question]) => [id, respuestas[id] ?? (question.type === 'noul'
+        ? { type: 'noul', noul: 0.1 }
+        : { type: 'choice', choice: Object.keys(question.criteria as object)[0], confidence: 0.9, probabilities: { [Object.keys(question.criteria as object)[0] ?? '']: 0.95 } })]));
+      const fijo = new RecordedJev({ caso: plantilla, plantilla, modelo: 'jev-1.13.0', state, answers, usage: { input_tokens: 1 } });
+      const result = await service(catalog, fijo).decide({ tenant: 'Steven', alias: 'argos' }, { plantilla, state });
+      expect(result.decision, plantilla).not.toMatch(/^(cabe|partir|cumple|incompleta|P1|P2|P3|extremo)$/u);
+      if (plantilla !== 'elegir_modelo') expect(result.caer_a_llm, plantilla).toBe(true);
+    }
   });
 
   it('la política de aprobación sale del alias que pregunta', async () => {

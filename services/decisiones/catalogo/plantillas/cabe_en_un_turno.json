@@ -1,6 +1,6 @@
 {
   "id": "cabe_en_un_turno",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "nombre": "¿La tarea es imposible de terminar en un turno?",
   "cuando_usar": "Al recibir un pedido, antes de arrancar: detectar si pide esperar, vigilar o repetir algo. En Cauce la entrega muere a los ~30 min (deadline de ACK) y un Workflow en background muere con el turno: esas tareas hay que acusarlas corto, programarlas en un proceso desacoplado (cron, monitor) y cerrar el turno.",
   "state": {
@@ -109,8 +109,16 @@
     },
     {
       "si": {
-        "puntaje": "tamano",
-        ">=": 2.5
+        "todas": [
+          {
+            "puntaje": "tamano",
+            ">=": 2.5
+          },
+          {
+            "confianza": "tamano",
+            ">=": 0.6
+          }
+        ]
       },
       "entonces": {
         "decision": "partir",
@@ -127,6 +135,10 @@
           {
             "puntaje": "tamano",
             "<": 2
+          },
+          {
+            "confianza": "tamano",
+            ">=": 0.6
           }
         ]
       },
@@ -150,7 +162,8 @@
     "antes_de_llamar": [
       "Si el pedido trae una hora o un intervalo explícito, el cálculo de cuándo lo hace el código, no Jev."
     ],
-    "lectura": "Son tres Nouls separados y no uno ('¿es larga?') porque cada uno lleva a una acción distinta en código y la doc pide una condición por Noul."
+    "lectura": "Son tres Nouls separados y no uno ('¿es larga?') porque cada uno lleva a una acción distinta en código y la doc pide una condición por Noul.",
+    "confianza": "Un score decide solo con su confidence: cuando la distribución no es firme la regla no dispara y la decisión cae al LLM, como pide la regla global del catálogo ('más confianza cuanto más cara es la acción')."
   },
   "evidencia": {
     "fecha": "2026-09-23",

@@ -1,6 +1,6 @@
 {
   "id": "triage_urgencia",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "nombre": "Urgencia / triage de un mensaje",
   "cuando_usar": "Ordenar la cola de un alias o decidir si un mensaje justifica avisar a un humano ya (notify) o puede esperar. Composite scoring: dos Scores atómicos y tres Nouls que se combinan con pesos en código.",
   "state": {
@@ -84,21 +84,20 @@
     },
     {
       "si": {
-        "todas": [
+        "alguna": [
           {
             "confianza": "impacto",
             "<": 0.4
           },
           {
-            "indicador": "prioridad",
-            ">=": 0.6,
-            "<": 0.85
+            "confianza": "plazo",
+            "<": 0.4
           }
         ]
       },
       "entonces": {
         "decision": "llm",
-        "motivo": "Cerca de la frontera de avisar y con impacto dudoso: decidí vos si se avisa al humano.",
+        "motivo": "Jev no está seguro del impacto o del plazo: la prioridad ponderada no es firme, que lo decida el LLM.",
         "llm": true
       }
     },
@@ -157,7 +156,8 @@
       "Todo lo numérico se calcula en código y entra como texto ya resuelto (por ejemplo 'el alias lleva más de 1 hora sin responder'): Jev no compara fechas ni hace cuentas."
     ],
     "formula": "prioridad = 0.45*impacto.score/4 + 0.30*plazo.score/3 + 0.15*persona_esperando + 0.10*afecta_clientes",
-    "lectura": "Normalizar cada score dividiendo por su nivel máximo antes de ponderar (la doc lo exige para que los pesos signifiquen lo que dicen). El score es una posición entre niveles, no una magnitud. Medido: ante 'el token de GitHub quedó en un log público' plazo dio score 1.91 con confidence 0.00 (0.34 en 'no menciona plazo' y 0.60 en 'inmediato'): una distribución bimodal hace que el score promedio no signifique nada; con confidence < 0.3 se lee probabilities, no score."
+    "lectura": "Normalizar cada score dividiendo por su nivel máximo antes de ponderar (la doc lo exige para que los pesos signifiquen lo que dicen). El score es una posición entre niveles, no una magnitud. Medido: ante 'el token de GitHub quedó en un log público' plazo dio score 1.91 con confidence 0.00 (0.34 en 'no menciona plazo' y 0.60 en 'inmediato'): una distribución bimodal hace que el score promedio no signifique nada; con confidence < 0.3 se lee probabilities, no score.",
+    "confianza": "Un score decide solo con su confidence: cuando la distribución no es firme la regla no dispara y la decisión cae al LLM, como pide la regla global del catálogo ('más confianza cuanto más cara es la acción'). Aplica a impacto y plazo en cualquier franja; P0 por incidente de seguridad o por impacto máximo probable dispara antes, a propósito: subestimar urgencia es lo caro."
   },
   "evidencia": {
     "fecha": "2026-09-23",

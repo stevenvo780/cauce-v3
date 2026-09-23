@@ -3,7 +3,7 @@ import { certainty, parseJevResponse, signalView, validateThresholds, DEFAULT_TH
 import { DecisionError } from '../src/errors.js';
 import { validateQuestions, validateRequestSize, validateState } from '../src/questions.js';
 import {
-  computeIndicator, evaluate, parseCondition, resolveTemplate,
+  computeIndicator, evaluate, parseCondition, resolveTemplate, strength,
   type Condition, type EvaluationScope, type References,
 } from '../src/rules.js';
 
@@ -64,6 +64,19 @@ describe('lenguaje de reglas', () => {
     const answers = { nivel: { type: 'score', score: 2, probabilities: { 2: 1 }, confidence: 1 } as JevAnswer, si: noul(1) };
     expect(computeIndicator({ ponderado: { nivel: 0.5, si: 0.5 } }, scope(answers))).toBeCloseTo(0.75);
     expect(computeIndicator({ ponderado: { nivel: 1, falta: 1 } }, scope(answers))).toBeUndefined();
+  });
+
+  it('la fuerza de una condición es la de las respuestas que la deciden', () => {
+    const answers = { alto: noul(0.98), medio: noul(0.5), bajo: noul(0.1), otro: noul(0.2) };
+    const base = scope(answers);
+    expect(strength(condition({ max: ['alto', 'medio'], '>=': 0.3 }), base)).toBeCloseTo(0.96);
+    expect(strength(condition({ todas: [{ p: 'alto', '>=': 0.5 }, { p: 'bajo', '<': 0.3 }] }), base)).toBeCloseTo(0.8);
+    expect(strength(condition({ todas: [{ p: 'medio', '>=': 0.9 }, { p: 'bajo', '>=': 0.9 }] }), base)).toBeCloseTo(0.8);
+    expect(strength(condition({ alguna: [{ p: 'medio', '>=': 0.4 }, { p: 'alto', '>=': 0.9 }] }), base)).toBeCloseTo(0.96);
+    expect(strength(condition({ alguna: [{ p: 'bajo', '>=': 0.5 }, { p: 'otro', '>=': 0.5 }] }), base)).toBeCloseTo(0.6);
+    expect(strength(condition({ no: { p: 'falta', '>=': 0.5 } }), base)).toBe(0);
+    const ponderado: EvaluationScope = { ...base, indicators: new Map([['i', 0.5]]), indicatorDefinitions: new Map([['i', { ponderado: { alto: 1, bajo: 1, medio: 0 } }]]) };
+    expect(strength(condition({ indicador: 'i', '>=': 0.1 }), ponderado)).toBeCloseTo(0.8);
   });
 
   it('rechaza condiciones mal formadas al cargar, no al decidir', () => {

@@ -30,6 +30,8 @@ export interface AuditRecord {
   readonly usage: { readonly input_tokens: number; readonly output_tokens: number } | null;
   readonly certeza: Readonly<Record<string, number>>;
   readonly certeza_min: number | null;
+  /** The decision's own certainty: that of the answers the deciding rule rested on. */
+  readonly confianza: number | null;
   readonly decision: string | null;
   readonly caer_a_llm: boolean;
 }

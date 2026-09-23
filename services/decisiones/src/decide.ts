@@ -16,7 +16,7 @@ import type { Limits, Reservation } from './limits.js';
 import {
   isPlainObject, jsonBytes, levelMap, validateQuestions, validateRequestSize, validateState, type JevQuestions, type JsonValue,
 } from './questions.js';
-import { computeIndicator, evaluate, resolveTemplate, type EvaluationScope } from './rules.js';
+import { computeIndicator, evaluate, resolveTemplate, strength, type EvaluationScope } from './rules.js';
 
 export interface DecisionServiceOptions {
   readonly catalog: Catalog;
@@ -259,7 +259,7 @@ export class DecisionService {
       await this.write({
         ...base, ts: new Date().toISOString(), redacciones: redactions, origen: 'fallo', estado: failure.code,
         ms: Date.now() - started, solicitudes_jev: failure.details.requests ?? 0, tokens_cobrados: charged, modelo: null, jev_request_id: null,
-        usage: null, certeza: {}, certeza_min: null, decision: fallback.decision, caer_a_llm: fallback.caer_a_llm,
+        usage: null, certeza: {}, certeza_min: null, confianza: null, decision: fallback.decision, caer_a_llm: fallback.caer_a_llm,
       });
       throw failure.withFallback(fallback);
     }
@@ -303,7 +303,7 @@ export class DecisionService {
     await this.write({
       ...base, ts: new Date().toISOString(), redacciones: result.redactions, origen: 'jev', estado: 'ok', ms: result.ms,
       solicitudes_jev: result.requests, tokens_cobrados: result.charged, modelo: result.parsed.model, jev_request_id: result.requestId,
-      usage: result.parsed.usage, certeza: map, certeza_min: min, decision: null, caer_a_llm: fallsBack,
+      usage: result.parsed.usage, certeza: map, certeza_min: min, confianza: min, decision: null, caer_a_llm: fallsBack,
     });
     return {
       id: base.id,
@@ -333,7 +333,7 @@ export class DecisionService {
       const base = this.baseAudit(caller, plantilla, {}, state);
       await this.write({
         ...base, ts: new Date().toISOString(), redacciones: 0, origen: 'prefiltro', estado: 'ok', ms: 0, solicitudes_jev: 0, tokens_cobrados: 0,
-        modelo: null, jev_request_id: null, usage: null, certeza: {}, certeza_min: null,
+        modelo: null, jev_request_id: null, usage: null, certeza: {}, certeza_min: null, confianza: 1,
         decision: shortcut.decision, caer_a_llm: shortcut.caer_a_llm,
       });
       return {
@@ -352,16 +352,21 @@ export class DecisionService {
       const value = computeIndicator(indicator, partial);
       if (value !== undefined && Number.isFinite(value)) indicators.set(name, value);
     }
-    const scope: EvaluationScope = { ...partial, indicators };
+    const scope: EvaluationScope = { ...partial, indicators, indicatorDefinitions: plantilla.indicators };
     const fired = plantilla.rules.find((rule) => evaluate(rule.si, scope) === true);
-    const outcome = (fired === undefined ? undefined : resolveOutcome(fired.entonces, answers)) ?? staticOutcome(plantilla.sino);
+    const resolved = fired === undefined ? undefined : resolveOutcome(fired.entonces, answers);
+    const outcome = resolved ?? staticOutcome(plantilla.sino);
+    const confianza = fired !== undefined && resolved !== undefined
+      ? strength(fired.si, scope)
+      : plantilla.rules.reduce<number | null>((weakest, rule) => Math.min(weakest ?? 1, strength(rule.si, scope)), null);
     const marks = [...plantilla.marks].filter(([, condition]) => evaluate(condition, scope) === true).map(([name]) => name);
     const views = Object.fromEntries([...answers].map(([id, answer]) => [id, signalView(answer, expanded.levels.get(id) ?? 0, request.thresholds)]));
     const { map, min } = this.certainties(answers);
     await this.write({
       ...base, ts: new Date().toISOString(), redacciones: result.redactions, origen: 'jev', estado: 'ok', ms: result.ms,
       solicitudes_jev: result.requests, tokens_cobrados: result.charged, modelo: result.parsed.model, jev_request_id: result.requestId,
-      usage: result.parsed.usage, certeza: map, certeza_min: min, decision: outcome.decision, caer_a_llm: outcome.caer_a_llm,
+      usage: result.parsed.usage, certeza: map, certeza_min: min, confianza: confianza === null ? null : round(confianza),
+      decision: outcome.decision, caer_a_llm: outcome.caer_a_llm,
     });
     return {
       id: base.id,
@@ -370,7 +375,7 @@ export class DecisionService {
       version_catalogo: this.options.catalog.version,
       origen: 'jev',
       ...outcome,
-      confianza: min,
+      confianza: confianza === null ? null : round(confianza),
       marcas: marks,
       indicadores: Object.fromEntries([...indicators].map(([name, value]) => [name, round(value)])),
       senales: views,

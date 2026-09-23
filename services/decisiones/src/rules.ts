@@ -1,4 +1,4 @@
-import type { JevAnswer } from './answers.js';
+import { certainty, type JevAnswer } from './answers.js';
 import { isPlainObject } from './questions.js';
 
 /**
@@ -37,6 +37,8 @@ export interface EvaluationScope {
   readonly levels: ReadonlyMap<string, number>;
   readonly indicators: ReadonlyMap<string, number>;
   readonly sets: (name: string) => readonly string[];
+  /** Only needed to weigh how sure a condition on an indicator is. */
+  readonly indicatorDefinitions?: ReadonlyMap<string, Indicator>;
 }
 
 /** What a rule references, so the loader can check every id against the template's questions. */
@@ -265,4 +267,56 @@ export function evaluate(condition: Condition, scope: EvaluationScope): boolean 
   if ('confianza' in condition) return compare(answer.confidence, comparison);
   if ('prob_elegida' in condition) return compare(answer.type === 'choice' ? answer.probabilities[answer.choice] : undefined, comparison);
   return compare(answer.type === 'score' ? answer.score : undefined, comparison);
+}
+
+function answerCertainty(id: string | undefined, scope: EvaluationScope): number {
+  const answer = id === undefined ? undefined : scope.answers.get(id);
+  return answer === undefined ? 0 : certainty(answer);
+}
+
+/* The compared value of a max/min is one element's: that element is what the comparison rests on. */
+function extremeCertainty(ref: SetRef, kind: 'max' | 'min', scope: EvaluationScope): number {
+  let chosen: string | undefined;
+  let best = kind === 'max' ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+  for (const id of resolveSet(ref, scope)) {
+    const value = noulValue(id, scope);
+    if (value === undefined) return 0;
+    if (kind === 'max' ? value > best : value < best) [chosen, best] = [id, value];
+  }
+  return chosen === undefined ? 1 : answerCertainty(chosen, scope);
+}
+
+function indicatorCertainty(name: string, scope: EvaluationScope): number {
+  const indicator = scope.indicatorDefinitions?.get(name);
+  if (indicator === undefined) return 0;
+  if ('ponderado' in indicator) {
+    const ids = Object.entries(indicator.ponderado).filter(([, weight]) => weight !== 0).map(([id]) => id);
+    return Math.min(1, ...ids.map((id) => answerCertainty(id, scope)));
+  }
+  return 'max' in indicator ? extremeCertainty(indicator.max, 'max', scope) : extremeCertainty(indicator.min, 'min', scope);
+}
+
+/**
+ * How sure the answers that settle a condition are, on the certainty scale of answers.ts. `todas`
+ * true and `alguna` false need every branch, so the weakest counts; `todas` false and `alguna` true
+ * need only one, so the surest deciding branch counts. A missing answer counts as 0.
+ */
+export function strength(condition: Condition, scope: EvaluationScope): number {
+  if ('todas' in condition || 'alguna' in condition) {
+    const children = 'todas' in condition ? condition.todas : condition.alguna;
+    const decisive = 'alguna' in condition;
+    const value = evaluate(condition, scope);
+    if (value === null) return 0;
+    if (value !== decisive) return Math.min(...children.map((child) => strength(child, scope)));
+    return Math.max(...children.filter((child) => evaluate(child, scope) === decisive).map((child) => strength(child, scope)));
+  }
+  if ('no' in condition) return strength(condition.no, scope);
+  if ('max' in condition) return extremeCertainty(condition.max, 'max', scope);
+  if ('min' in condition) return extremeCertainty(condition.min, 'min', scope);
+  if ('indicador' in condition) return indicatorCertainty(condition.indicador, scope);
+  if ('p' in condition) return answerCertainty(resolvedId(condition.p, scope), scope);
+  if ('eleccion' in condition) return answerCertainty(condition.eleccion, scope);
+  if ('prob' in condition) return answerCertainty(condition.prob, scope);
+  if ('normalizado' in condition) return answerCertainty(condition.normalizado, scope);
+  return answerCertainty('confianza' in condition ? condition.confianza : 'prob_elegida' in condition ? condition.prob_elegida : condition.puntaje, scope);
 }

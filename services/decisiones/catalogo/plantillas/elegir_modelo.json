@@ -1,6 +1,6 @@
 {
   "id": "elegir_modelo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "nombre": "Elegir modelo o proveedor para delegar una subtarea",
   "cuando_usar": "Antes de delegar una subtarea (Workflow, subagente, delegar_a_cloud). Jev juzga los ATRIBUTOS de la tarea; el mapeo a modelo concreto y el ruteo por cuota (get_ai_quotas) son código, porque los nombres de modelo cambian y Jev no los conoce.",
   "state": {
@@ -76,9 +76,17 @@
   "reglas": [
     {
       "si": {
-        "prob": "dificultad",
-        "opcion": "4",
-        ">=": 0.5
+        "todas": [
+          {
+            "prob": "dificultad",
+            "opcion": "4",
+            ">=": 0.5
+          },
+          {
+            "confianza": "dificultad",
+            ">=": 0.6
+          }
+        ]
       },
       "entonces": {
         "decision": "extremo",
@@ -147,7 +155,8 @@
       "Si critico >= 0.6 -> subir un escalón en el mapeo.",
       "Si tipo.confidence < 0.4 -> subir un escalón en vez de gastar un LLM en decidir (regla de la casa: ante la duda, subí; nunca bajes calidad en lo crítico).",
       "La cuota viva (get_ai_quotas) sólo rutea alrededor de un proveedor agotado hacia el siguiente MÁS capaz, y reparte carga en fan-outs."
-    ]
+    ],
+    "confianza": "Un score decide solo con su confidence: cuando la distribución no es firme la regla no dispara y la decisión cae al LLM, como pide la regla global del catálogo ('más confianza cuanto más cara es la acción'). 'extremo' elige el modelo más caro."
   },
   "evidencia": {
     "fecha": "2026-09-23",

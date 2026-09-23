@@ -75,6 +75,12 @@ Cómo leer los campos:
 
 - **`origen`** es `jev`, o `prefiltro` si una regla determinista decidió sin llamar a Jev (por ejemplo,
   un `rm -rf`).
+- **`confianza`** es la certeza de las respuestas en las que se apoyó la regla que decidió: en un
+  `todas` cuenta la más débil; en un `alguna`, la rama más firme que lo hizo verdadero; en un `max`, el
+  elemento que dio el máximo. Si no disparó ninguna regla, es la de las respuestas que las
+  descartaron. No mezcla las preguntas del fan-out que no pesaron en la decisión; la certeza de cada
+  una sigue en `senales`. Un score decide sólo con su `confidence` (0,6; 0,7 para declarar cumplida
+  una respuesta): si la distribución no es firme, la plantilla cae al LLM.
 - **`modelo_distinto_al_calibrado: true`** aparece cuando `jev-latest` ya apunta a otra versión: los
   umbrales se calibraron con `jev-1.13.0`.
 - **Una pregunta libre** responde `respuestas` con cada señal, más `caer_a_llm` e `inciertas`. Los
