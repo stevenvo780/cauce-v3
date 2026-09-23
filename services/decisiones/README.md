@@ -246,9 +246,12 @@ un umbral, ese test es la regresión de calibración.
 
 ## Decisiones pendientes de Steven
 
-- **Datos a un tercero.** Todo `state` sale hacia TypeSafe. TypeSafe no entrena con esos datos, pero
-  sin plan enterprise no hay retención cero. El servicio enmascara tokens, claves, JWT y URIs con
-  credenciales antes de enviar, pero no quita datos personales.
+- **Datos a un tercero.** Todo `state` sale hacia TypeSafe, y en la forma libre también las
+  `questions` que escribe el agente. TypeSafe no entrena con esos datos, pero sin plan enterprise no
+  hay retención cero. El servicio enmascara tokens, claves, JWT y URIs con credenciales en los valores
+  de ambos antes de enviar (conservando el orden de campos y opciones) y rechaza con 400 un secreto
+  escrito en un nombre de campo, un id de pregunta o una opción, que no se pueden enmascarar sin
+  cambiar la pregunta. No quita datos personales.
 - **`guardia_privacidad_jarvis`** envía justamente los textos personales que quiere proteger. Queda
   apagada hasta que Steven la habilite en `CAUCE_DECISIONES_HABILITAR_PLANTILLAS`.
 - **Gasto.** Jev cobra por token de entrada, y el tope diario por alias lo acota.

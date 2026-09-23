@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { redactSecretsDeep } from '@cauce/protocol';
+import { redactSecrets, redactSecretsDeep } from '@cauce/protocol';
 import {
   certainty, parseJevResponse, signalView, validateThresholds,
   type JevAnswer, type ParsedJevResponse, type Thresholds,
@@ -69,6 +69,32 @@ function parseRequest(body: unknown): DecideRequest {
   };
 }
 
+/* redactSecretsDeep masks values, never keys: a secret in a field name, a question id or a choice
+   option would travel intact and the id would reach the audit log, so such a request is refused. */
+function secretInKeys(value: unknown): boolean {
+  const pending: unknown[] = [value];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (Array.isArray(node)) pending.push(...(node as unknown[]));
+    else if (isPlainObject(node)) {
+      for (const [key, item] of Object.entries(node)) {
+        if (redactSecrets(key, { enabled: true }).count > 0) return true;
+        pending.push(item);
+      }
+    }
+  }
+  return false;
+}
+
+/* redactSecretsDeep walks with a stack and rebuilds every object in reverse key order; Jev gets the
+   caller's order back, since the order of state fields and choice options is part of the input. */
+function inOriginalOrder<T>(original: T, redacted: T): T {
+  if (Array.isArray(original) && Array.isArray(redacted)) return original.map((item: unknown, index) => inOriginalOrder(item, redacted[index] as unknown)) as T;
+  if (isPlainObject(original) && isPlainObject(redacted)) {
+    return Object.fromEntries(Object.keys(original).map((key) => [key, inOriginalOrder(original[key], redacted[key])])) as T;
+  }
+  return redacted;
+}
+
 function resolveOutcome(outcome: Outcome, answers: ReadonlyMap<string, JevAnswer>): FallbackOutcome | undefined {
   const decision = resolveTemplate(outcome.decision, answers);
   const valor = outcome.valor === undefined ? null : resolveTemplate(outcome.valor, answers);
@@ -110,6 +136,9 @@ export class DecisionService {
 
   async decide(caller: Caller, body: unknown): Promise<Record<string, unknown>> {
     const request = parseRequest(body);
+    if (this.options.redact && (secretInKeys(request.state) || secretInKeys(request.questions))) {
+      throw invalid('hay un secreto en un nombre de campo, un id de pregunta o una opción: sacalo antes de preguntar');
+    }
     const plantilla = request.plantilla === undefined ? undefined : this.options.catalog.plantillas.get(request.plantilla);
     if (request.plantilla !== undefined && plantilla === undefined) {
       throw new DecisionError('plantilla_desconocida', `no existe la plantilla '${request.plantilla.slice(0, 64)}': usá listar_plantillas`);
@@ -159,24 +188,36 @@ export class DecisionService {
     return undefined;
   }
 
-  /** Sends to Jev and parses; every failure is audited and carries the fallback the caller must apply. */
+  /**
+   * Sends to Jev and parses; every failure is audited and carries the fallback the caller must apply.
+   * The caller's own questions are masked like the state: an agent naturally quotes what it wants
+   * judged inside `instructions`. Catalog questions are not, so calibration never shifts silently.
+   */
   private async ask(
     base: ReturnType<DecisionService['baseAudit']>, questions: JevQuestions, state: JsonValue, fallback: FallbackOutcome,
+    callerQuestions: boolean,
   ): Promise<{ parsed: ParsedJevResponse; requestId: string | null; ms: number; requests: number; redactions: number }> {
     const started = Date.now();
-    const redaction = redactSecretsDeep(state, { enabled: this.options.redact });
+    const enabled = this.options.redact;
+    const redaction = redactSecretsDeep(state, { enabled });
+    const asked = callerQuestions ? redactSecretsDeep(questions, { enabled }) : undefined;
+    const redactions = redaction.count + (asked?.count ?? 0);
     try {
-      if (redaction.unscanned !== undefined) throw invalid('state no se pudo revisar entero en busca de secretos: recortalo');
+      if (redaction.unscanned !== undefined || asked?.unscanned !== undefined) {
+        throw invalid('state o questions no se pudieron revisar enteros en busca de secretos: recortalos');
+      }
       this.options.limits.assertDailyBudget(base.alias);
-      const call = await this.options.limits.withSlot(() => this.options.jev.evaluate(redaction.value, questions));
+      const sentState = inOriginalOrder(state, redaction.value);
+      const sentQuestions = asked === undefined ? questions : inOriginalOrder(questions, asked.value);
+      const call = await this.options.limits.withSlot(() => this.options.jev.evaluate(sentState, sentQuestions));
       const parsed = parseJevResponse(call.body, questions);
       this.options.limits.charge(base.alias, parsed.usage.input_tokens);
       const requestId = call.requestId !== undefined && REQUEST_ID.test(call.requestId) ? call.requestId : null;
-      return { parsed, requestId, ms: call.ms, requests: call.requests, redactions: redaction.count };
+      return { parsed, requestId, ms: call.ms, requests: call.requests, redactions };
     } catch (error) {
       const failure = error instanceof DecisionError ? error : new DecisionError('jev_error', 'fallo inesperado del servicio de decisiones');
       await this.write({
-        ...base, ts: new Date().toISOString(), redacciones: redaction.count, origen: 'fallo', estado: failure.code,
+        ...base, ts: new Date().toISOString(), redacciones: redactions, origen: 'fallo', estado: failure.code,
         ms: Date.now() - started, solicitudes_jev: failure.details.requests ?? 0, modelo: null, jev_request_id: null, usage: null,
         certeza: {}, certeza_min: null, decision: fallback.decision, caer_a_llm: fallback.caer_a_llm,
       });
@@ -206,7 +247,7 @@ export class DecisionService {
 
   private async decideFree(caller: Caller, request: DecideRequest, questions: JevQuestions): Promise<Record<string, unknown>> {
     const base = this.baseAudit(caller, undefined, questions, request.state);
-    const result = await this.ask(base, questions, request.state, FREE_FALLBACK);
+    const result = await this.ask(base, questions, request.state, FREE_FALLBACK, true);
     const answers = result.parsed.answers;
     const levels = levelMap(questions);
     const views: Record<string, unknown> = {};
@@ -261,7 +302,7 @@ export class DecisionService {
     }
     const expanded = expandQuestions(plantilla, state, request.restringir);
     const base = this.baseAudit(caller, plantilla, expanded.questions, state);
-    const result = await this.ask(base, expanded.questions, state, fallback);
+    const result = await this.ask(base, expanded.questions, state, fallback, false);
     const answers = result.parsed.answers;
     const partial: EvaluationScope = { answers, levels: expanded.levels, indicators: new Map(), sets: setResolver(plantilla, caller.alias) };
     const indicators = new Map<string, number>();

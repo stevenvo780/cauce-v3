@@ -101,6 +101,35 @@ describe('servicio de decisiones sobre mTLS', () => {
     expect(sent).toContain('docker compose up -d gateway');
   });
 
+  it('enmascara secretos también en questions y rechaza los que viajan en claves', async () => {
+    const secreto = 'ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+    const libre = await h.call(zeus(), 'POST', '/v1/decidir', {
+      state: `contexto con ${secreto}`,
+      questions: { publicar: { type: 'noul', instructions: `¿Es seguro publicar este texto? "token: ${secreto}"`, criteria: { true: `filtra ${secreto}`, false: 'nada sensible' } } },
+    });
+    expect(libre.status).toBe(200);
+    expect(libre.body.redacciones).toBe(3);
+    expect(JSON.stringify(h.jev.seen.at(-1)?.body)).not.toContain(secreto);
+    await h.call(zeus(), 'POST', '/v1/decidir', { state: { zeta: 1, alfa: { dos: 2, uno: 1 } }, questions: { b: { type: 'choice', instructions: 'x', criteria: { segunda: 's', primera: 'p' } }, a: { type: 'noul', instructions: 'y' } } });
+    const orden = h.jev.seen.at(-1)?.body;
+    expect(JSON.stringify(orden?.state)).toBe('{"zeta":1,"alfa":{"dos":2,"uno":1}}');
+    expect(Object.keys(orden?.questions ?? {})).toEqual(['b', 'a']);
+    expect(Object.keys(orden?.questions.b?.criteria ?? {})).toEqual(['segunda', 'primera']);
+    const enviadas = h.jev.seen.length;
+    const enClaves = [
+      { state: 'x', questions: { [secreto]: { type: 'noul', instructions: 'x' } } },
+      { state: 'x', questions: { destino: { type: 'choice', instructions: 'x', criteria: { [secreto]: 'a', otra: 'b' } } } },
+      { state: { [secreto]: 'valor' }, questions: { a: { type: 'noul', instructions: 'x' } } },
+    ];
+    for (const body of enClaves) {
+      const rechazo = await h.call(zeus(), 'POST', '/v1/decidir', body);
+      expect(rechazo.status).toBe(400);
+      expect(rechazo.body.mensaje).toContain('secreto');
+    }
+    expect(h.jev.seen).toHaveLength(enviadas);
+    expect(readFileSync(h.auditFile, 'utf8')).not.toContain(secreto);
+  });
+
   it('un prefiltro determinista decide sin llamar a Jev', async () => {
     const result = await h.call(jarvis(), 'POST', '/v1/decidir', { plantilla: 'aprobacion_humana', state: { accion_propuesta: 'rm -rf /datos/viejo' } });
     expect(result.body).toMatchObject({ decision: 'exige_aprobacion', origen: 'prefiltro' });

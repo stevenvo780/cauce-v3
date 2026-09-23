@@ -36,7 +36,7 @@ export const DECISIONES_TOOLS: Tool[] = [
   },
   {
     name: "decidir",
-    description: "Pregunta libre a Jev con preguntas tipadas: questions = {id: {type: noul|choice|score, instructions, criteria}}. noul = sí/no (criteria opcional {true,false}); choice = criteria {opcion: descripción}; score = criteria [niveles ordenados, 2 a 10]. Devuelve cada respuesta con certeza y caer_a_llm si alguna queda bajo el umbral. Nunca pongas secretos en state.",
+    description: "Pregunta libre a Jev con preguntas tipadas: questions = {id: {type: noul|choice|score, instructions, criteria}}. noul = sí/no (criteria opcional {true,false}); choice = criteria {opcion: descripción}; score = criteria [niveles ordenados, 2 a 10]. Devuelve cada respuesta con certeza y caer_a_llm si alguna queda bajo el umbral. Nunca pongas secretos en state ni en questions: se enmascaran, y en ids u opciones se rechazan.",
     inputSchema: {
       type: "object",
       properties: { state: {}, questions: object, umbrales: object },
