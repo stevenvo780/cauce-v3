@@ -54,6 +54,8 @@ export interface DecisionErrorDetails {
   readonly retryAfterMs?: number;
   /** HTTP requests already sent to Jev when the failure happened, for the audit line. */
   readonly requests?: number;
+  /** Of those, the ones Jev may have billed (not answered with an HTTP error). */
+  readonly billable?: number;
   readonly respaldo?: FallbackOutcome;
 }
 

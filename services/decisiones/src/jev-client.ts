@@ -25,10 +25,14 @@ export interface JevCallResult {
   readonly body: unknown;
   readonly requestId: string | undefined;
   readonly requests: number;
+  /** Requests Jev may have billed: all of them except those it answered with an HTTP error. */
+  readonly billable: number;
   readonly ms: number;
 }
 
 export interface JevCaller {
+  /** Most requests one decision can send (rounds times hedged copies), to reserve its budget. */
+  readonly maxRequests: number;
   evaluate(state: JsonValue, questions: JevQuestions): Promise<JevCallResult>;
   credentialPresent(): Promise<boolean>;
 }
@@ -37,6 +41,9 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 const KEY_SHAPE = /^[\x21-\x7e]{16,512}$/u;
 
 class Failure extends Error {
+  /** Jev answered with an HTTP error status, so it did not bill the request. */
+  rejected = false;
+
   constructor(
     readonly code: DecisionErrorCode,
     readonly retryable: boolean,
@@ -140,6 +147,10 @@ export class JevClient implements JevCaller {
     this.random = options.random ?? Math.random;
   }
 
+  get maxRequests(): number {
+    return this.options.maxRounds * (this.options.hedgeAfterMs > 0 ? 2 : 1);
+  }
+
   /** The key is read on every call so a rotation needs no restart; its value never leaves this method. */
   private async key(): Promise<string> {
     let raw: string;
@@ -180,7 +191,11 @@ export class JevClient implements JevCaller {
       if (error instanceof Failure) throw error;
       throw new Failure(timeout.aborted ? 'jev_timeout' : 'jev_red', true, 'la respuesta de Jev se cortó');
     }
-    if (!response.ok) throw classify(response.status, text, parseRetryAfter(response.headers, Date.now()));
+    if (!response.ok) {
+      const failure = classify(response.status, text, parseRetryAfter(response.headers, Date.now()));
+      failure.rejected = true;
+      throw failure;
+    }
     try {
       return { body: JSON.parse(text) as unknown, requestId };
     } catch {
@@ -199,6 +214,7 @@ export class JevClient implements JevCaller {
     const deadline = started + this.options.totalTimeoutMs;
     const body = JSON.stringify({ model: this.options.model, state, questions });
     let requests = 0;
+    let rejected = 0;
     let last = new Failure('jev_timeout', true, `Jev no respondió en ${String(this.options.totalTimeoutMs)} ms`);
     for (let round = 0; round < this.options.maxRounds; round += 1) {
       const remaining = deadline - Date.now();
@@ -206,9 +222,12 @@ export class JevClient implements JevCaller {
       try {
         const success = await hedged((signal) => {
           requests += 1;
-          return this.once(body, key, Math.min(this.options.attemptTimeoutMs, deadline - Date.now()), signal);
+          return this.once(body, key, Math.min(this.options.attemptTimeoutMs, deadline - Date.now()), signal).catch((error: unknown) => {
+            if (error instanceof Failure && error.rejected) rejected += 1;
+            throw error;
+          });
         }, this.options.hedgeAfterMs);
-        return { ...success, requests, ms: Date.now() - started };
+        return { ...success, requests, billable: requests - rejected, ms: Date.now() - started };
       } catch (error) {
         last = error instanceof Failure ? error : new Failure('jev_error', false, 'fallo inesperado llamando a Jev');
         if (!last.retryable || round === this.options.maxRounds - 1) break;
@@ -219,6 +238,7 @@ export class JevClient implements JevCaller {
     }
     throw new DecisionError(last.code, `${last.detail} tras ${String(requests)} solicitud(es)`, {
       requests,
+      billable: requests - rejected,
       ...(last.retryAfterMs === undefined ? {} : { retryAfterMs: last.retryAfterMs }),
     });
   }

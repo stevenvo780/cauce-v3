@@ -67,13 +67,14 @@ const ESPERADO_ZEUS: Record<string, string> = {
 };
 
 class RecordedJev implements JevCaller {
+  readonly maxRequests = 1;
   calls = 0;
   asked: JevQuestions[] = [];
   constructor(private readonly recorded: RecordedCase) {}
   async evaluate(_state: unknown, questions: JevQuestions) {
     this.calls += 1;
     this.asked.push(questions);
-    return { body: { model: this.recorded.modelo, answers: this.recorded.answers, usage: this.recorded.usage }, requestId: 'req_grabado', requests: 1, ms: 5 };
+    return { body: { model: this.recorded.modelo, answers: this.recorded.answers, usage: this.recorded.usage }, requestId: 'req_grabado', requests: 1, billable: 1, ms: 5 };
   }
   async credentialPresent() { return true; }
 }
@@ -81,7 +82,7 @@ class RecordedJev implements JevCaller {
 function service(catalog: Catalog, jev: JevCaller, audit: AuditRecord[] = []): DecisionService {
   return new DecisionService({
     catalog, jev, redact: true,
-    limits: new Limits({ perMinute: 600, burst: 100, dailyInputTokens: 1_000_000, concurrency: 4 }),
+    limits: new Limits({ perMinute: 600, burst: 100, dailyInputTokens: 1_000_000, dailyInputTokensTotal: 10_000_000, concurrency: 4, concurrencyPerAlias: 4 }),
     audit: { write: async (record) => { audit.push(record); } },
     enabledTemplates: new Set(['guardia_privacidad_jarvis']),
   });
@@ -227,7 +228,7 @@ describe('catálogo versionado', () => {
     const jev = new RecordedJev(recorded);
     const apagado = new DecisionService({
       catalog, jev, redact: true,
-      limits: new Limits({ perMinute: 60, burst: 5, dailyInputTokens: 10_000, concurrency: 1 }),
+      limits: new Limits({ perMinute: 60, burst: 5, dailyInputTokens: 10_000, dailyInputTokensTotal: 10_000, concurrency: 1, concurrencyPerAlias: 1 }),
       audit: { write: async () => undefined },
     });
     const error = await apagado.decide({ tenant: 'Steven', alias: 'jarvis' }, { plantilla: 'guardia_privacidad_jarvis', state: recorded.state }).catch((failure: unknown) => failure);

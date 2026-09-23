@@ -23,6 +23,8 @@ export interface AuditRecord {
   readonly estado: string;
   readonly ms: number;
   readonly solicitudes_jev: number;
+  /** What this decision took from the daily caps: usage (or the estimate) times the billable requests. */
+  readonly tokens_cobrados: number;
   readonly modelo: string | null;
   readonly jev_request_id: string | null;
   readonly usage: { readonly input_tokens: number; readonly output_tokens: number } | null;

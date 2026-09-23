@@ -173,15 +173,26 @@ un umbral, ese test es la regresión de calibración.
 | `CAUCE_DECISIONES_ALIASES` | vacío = nadie; `*` = todos los alias de los tenants habilitados (piloto: `zeus`) |
 | `CAUCE_DECISIONES_TENANTS` | vacío = nadie; sin comodín (compose: `Steven`) |
 | `CAUCE_DECISIONES_HABILITAR_PLANTILLAS` | vacío (`guardia_privacidad_jarvis` queda apagada) |
-| `CAUCE_DECISIONES_POR_MINUTO` / `_RAFAGA` / `_TOKENS_DIA` / `_CONCURRENCIA` | 60 / 20 / 2000000 / 16 |
+| `CAUCE_DECISIONES_POR_MINUTO` / `_RAFAGA` / `_TOKENS_DIA` / `_TOKENS_DIA_TOTAL` | 60 / 20 / 2000000 por alias / 20000000 la flota |
+| `CAUCE_DECISIONES_CONCURRENCIA` / `_CONCURRENCIA_ALIAS` | 16 en total / 4 por alias |
 | `CAUCE_DECISIONES_AUDIT_FILE` / `_AUDIT_MAX_BYTES` | `/var/lib/cauce-decisiones/auditoria.jsonl` / 50 MiB (rota a `.1`) |
 | `CAUCE_DECISIONES_PORT` / `_HEALTH_PORT` / `_REDACTAR` | 8447 / 8088 (sólo 127.0.0.1) / `1` |
 
 - **Límites.** Viven en memoria: al reiniciar se pierde, como mucho, una ráfaga y el cupo de un día.
-  `_TOKENS_DIA` acota el gasto de cada alias a unos USD 0,08 por día.
+- **Cupo diario, un techo y no una estimación.** Antes de llamar, cada decisión reserva su peor caso:
+  los bytes que envía más 256 (lo medido fue de 1,5 a 2,7 bytes por token más unos 240 fijos), por
+  cada solicitud que puede llegar a mandar (rondas por 2 si hay hedge). Al terminar cobra
+  `usage.input_tokens` por cada solicitud que Jev pudo haber facturado: la ganadora, la copia del hedge
+  aunque se aborte y los intentos que expiraron. No cobra las que Jev rechazó con un código HTTP de
+  error. Sin `usage`, o si la respuesta no sirve, cobra la estimación. No probé si TypeSafe factura una
+  solicitud abortada: se cuenta como si sí. `_TOKENS_DIA` acota así a unos USD 0,08 por alias y día, y
+  `_TOKENS_DIA_TOTAL` a unos USD 0,84 por día para toda la flota. Cada línea de auditoría lleva
+  `tokens_cobrados`.
+- **Concurrencia.** Un alias no ocupa más de `_CONCURRENCIA_ALIAS` plazas: si un agente se desboca, el
+  resto de la flota sigue decidiendo con Jev en vez de recibir `servicio_ocupado`.
 - **Auditoría.** Registra una línea por decisión con alias, tenant, plantilla y versión, ids y tipos
-  de las preguntas, SHA-256 y longitud del `state`, latencia, solicitudes a Jev, modelo, request id,
-  usage, certeza por pregunta, decisión y `caer_a_llm`. **Nunca** guarda el `state`, las instrucciones
+  de las preguntas, SHA-256 y longitud del `state`, latencia, solicitudes a Jev, tokens cobrados al
+  cupo, modelo, request id, usage, certeza por pregunta, decisión y `caer_a_llm`. **Nunca** guarda el `state`, las instrucciones
   ni la clave.
 
 ## Despliegue (preparado, no aplicado)
@@ -255,4 +266,4 @@ un umbral, ese test es la regresión de calibración.
   cambiar la pregunta. No quita datos personales.
 - **`guardia_privacidad_jarvis`** envía justamente los textos personales que quiere proteger. Queda
   apagada hasta que Steven la habilite en `CAUCE_DECISIONES_HABILITAR_PLANTILLAS`.
-- **Gasto.** Jev cobra por token de entrada, y el tope diario por alias lo acota.
+- **Gasto.** Jev cobra por token de entrada; los topes diarios por alias y de la flota lo acotan de verdad (ver Configuración).

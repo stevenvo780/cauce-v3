@@ -27,6 +27,7 @@ export interface HarnessOptions {
   readonly identities?: (pki: TestPki) => IdentityEntry[];
   readonly config?: Partial<ServiceConfig>;
   readonly limits?: Partial<ServiceConfig['limits']>;
+  readonly jev?: Partial<ServiceConfig['jev']>;
 }
 
 /** The real service on loopback: TLS with mandatory client certs, the test CA and a fake Jev. */
@@ -46,8 +47,8 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     identitiesFile, allowedAliases: new Set(['*']), allowedTenants: new Set(['Steven']), enabledTemplates: new Set(),
     catalogDir: fileURLToPath(new URL('../../catalogo/', import.meta.url)),
     auditFile, auditMaxBytes: 10 * 1024 * 1024, redact: true,
-    jev: { url: jev.url, keyFile, model: 'jev-latest', totalTimeoutMs: 3_000, attemptTimeoutMs: 1_000, maxRounds: 2, hedgeAfterMs: 0 },
-    limits: { perMinute: 600, burst: 100, dailyInputTokens: 1_000_000, concurrency: 8, ...(options.limits ?? {}) },
+    jev: { url: jev.url, keyFile, model: 'jev-latest', totalTimeoutMs: 3_000, attemptTimeoutMs: 1_000, maxRounds: 2, hedgeAfterMs: 0, ...(options.jev ?? {}) },
+    limits: { perMinute: 600, burst: 100, dailyInputTokens: 1_000_000, dailyInputTokensTotal: 10_000_000, concurrency: 8, concurrencyPerAlias: 8, ...(options.limits ?? {}) },
     ...(options.config ?? {}),
   };
   const service = await startService(config);

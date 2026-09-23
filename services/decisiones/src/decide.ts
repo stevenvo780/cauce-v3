@@ -12,8 +12,10 @@ import {
 import { DecisionError, invalid, type FallbackOutcome } from './errors.js';
 import type { Caller } from './identity.js';
 import type { JevCaller } from './jev-client.js';
-import type { Limits } from './limits.js';
-import { isPlainObject, levelMap, validateQuestions, validateRequestSize, validateState, type JevQuestions, type JsonValue } from './questions.js';
+import type { Limits, Reservation } from './limits.js';
+import {
+  isPlainObject, jsonBytes, levelMap, validateQuestions, validateRequestSize, validateState, type JevQuestions, type JsonValue,
+} from './questions.js';
 import { computeIndicator, evaluate, resolveTemplate, type EvaluationScope } from './rules.js';
 
 export interface DecisionServiceOptions {
@@ -83,6 +85,12 @@ function secretInKeys(value: unknown): boolean {
     }
   }
   return false;
+}
+
+/* Pessimistic on purpose, since it both reserves the budget and bills a request whose usage never
+   came back: the catalog measured 1.5 to 2.7 bytes per input token plus a fixed ~240-token cost. */
+function estimateInputTokens(state: JsonValue, questions: JevQuestions): number {
+  return jsonBytes({ state, questions }) + 256;
 }
 
 /* redactSecretsDeep walks with a stack and rebuilds every object in reverse key order; Jev gets the
@@ -196,30 +204,39 @@ export class DecisionService {
   private async ask(
     base: ReturnType<DecisionService['baseAudit']>, questions: JevQuestions, state: JsonValue, fallback: FallbackOutcome,
     callerQuestions: boolean,
-  ): Promise<{ parsed: ParsedJevResponse; requestId: string | null; ms: number; requests: number; redactions: number }> {
+  ): Promise<{ parsed: ParsedJevResponse; requestId: string | null; ms: number; requests: number; redactions: number; charged: number }> {
     const started = Date.now();
+    const { limits, jev } = this.options;
     const enabled = this.options.redact;
     const redaction = redactSecretsDeep(state, { enabled });
     const asked = callerQuestions ? redactSecretsDeep(questions, { enabled }) : undefined;
     const redactions = redaction.count + (asked?.count ?? 0);
+    let reservation: Reservation | undefined;
+    let estimate = 0;
+    let billable = 0;
     try {
       if (redaction.unscanned !== undefined || asked?.unscanned !== undefined) {
         throw invalid('state o questions no se pudieron revisar enteros en busca de secretos: recortalos');
       }
-      this.options.limits.assertDailyBudget(base.alias);
       const sentState = inOriginalOrder(state, redaction.value);
       const sentQuestions = asked === undefined ? questions : inOriginalOrder(questions, asked.value);
-      const call = await this.options.limits.withSlot(() => this.options.jev.evaluate(sentState, sentQuestions));
+      estimate = estimateInputTokens(sentState, sentQuestions);
+      reservation = limits.reserve(base.alias, estimate * jev.maxRequests);
+      const call = await limits.withSlot(base.alias, () => jev.evaluate(sentState, sentQuestions));
+      billable = call.billable;
       const parsed = parseJevResponse(call.body, questions);
-      this.options.limits.charge(base.alias, parsed.usage.input_tokens);
+      const charged = (parsed.usage.input_tokens > 0 ? parsed.usage.input_tokens : estimate) * billable;
+      limits.settle(reservation, charged);
       const requestId = call.requestId !== undefined && REQUEST_ID.test(call.requestId) ? call.requestId : null;
-      return { parsed, requestId, ms: call.ms, requests: call.requests, redactions };
+      return { parsed, requestId, ms: call.ms, requests: call.requests, redactions, charged };
     } catch (error) {
       const failure = error instanceof DecisionError ? error : new DecisionError('jev_error', 'fallo inesperado del servicio de decisiones');
+      const charged = estimate * (failure.details.billable ?? billable);
+      if (reservation !== undefined) limits.settle(reservation, charged);
       await this.write({
         ...base, ts: new Date().toISOString(), redacciones: redactions, origen: 'fallo', estado: failure.code,
-        ms: Date.now() - started, solicitudes_jev: failure.details.requests ?? 0, modelo: null, jev_request_id: null, usage: null,
-        certeza: {}, certeza_min: null, decision: fallback.decision, caer_a_llm: fallback.caer_a_llm,
+        ms: Date.now() - started, solicitudes_jev: failure.details.requests ?? 0, tokens_cobrados: charged, modelo: null, jev_request_id: null,
+        usage: null, certeza: {}, certeza_min: null, decision: fallback.decision, caer_a_llm: fallback.caer_a_llm,
       });
       throw failure.withFallback(fallback);
     }
@@ -262,7 +279,7 @@ export class DecisionService {
     const fallsBack = uncertain.length > 0;
     await this.write({
       ...base, ts: new Date().toISOString(), redacciones: result.redactions, origen: 'jev', estado: 'ok', ms: result.ms,
-      solicitudes_jev: result.requests, modelo: result.parsed.model, jev_request_id: result.requestId,
+      solicitudes_jev: result.requests, tokens_cobrados: result.charged, modelo: result.parsed.model, jev_request_id: result.requestId,
       usage: result.parsed.usage, certeza: map, certeza_min: min, decision: null, caer_a_llm: fallsBack,
     });
     return {
@@ -292,7 +309,7 @@ export class DecisionService {
     if (shortcut !== undefined) {
       const base = this.baseAudit(caller, plantilla, {}, state);
       await this.write({
-        ...base, ts: new Date().toISOString(), redacciones: 0, origen: 'prefiltro', estado: 'ok', ms: 0, solicitudes_jev: 0,
+        ...base, ts: new Date().toISOString(), redacciones: 0, origen: 'prefiltro', estado: 'ok', ms: 0, solicitudes_jev: 0, tokens_cobrados: 0,
         modelo: null, jev_request_id: null, usage: null, certeza: {}, certeza_min: null,
         decision: shortcut.decision, caer_a_llm: shortcut.caer_a_llm,
       });
@@ -320,7 +337,7 @@ export class DecisionService {
     const { map, min } = this.certainties(answers);
     await this.write({
       ...base, ts: new Date().toISOString(), redacciones: result.redactions, origen: 'jev', estado: 'ok', ms: result.ms,
-      solicitudes_jev: result.requests, modelo: result.parsed.model, jev_request_id: result.requestId,
+      solicitudes_jev: result.requests, tokens_cobrados: result.charged, modelo: result.parsed.model, jev_request_id: result.requestId,
       usage: result.parsed.usage, certeza: map, certeza_min: min, decision: outcome.decision, caer_a_llm: outcome.caer_a_llm,
     });
     return {

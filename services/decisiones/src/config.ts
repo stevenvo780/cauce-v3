@@ -31,7 +31,9 @@ export interface ServiceConfig {
     readonly perMinute: number;
     readonly burst: number;
     readonly dailyInputTokens: number;
+    readonly dailyInputTokensTotal: number;
     readonly concurrency: number;
+    readonly concurrencyPerAlias: number;
   };
 }
 
@@ -101,7 +103,9 @@ export function loadConfig(env: Env = process.env): ServiceConfig {
       perMinute: integer(env, 'POR_MINUTO', 60, 1, 6_000),
       burst: integer(env, 'RAFAGA', 20, 1, 1_000),
       dailyInputTokens: integer(env, 'TOKENS_DIA', 2_000_000, 1_000, 1_000_000_000),
+      dailyInputTokensTotal: integer(env, 'TOKENS_DIA_TOTAL', 20_000_000, 1_000, 10_000_000_000),
       concurrency: integer(env, 'CONCURRENCIA', 16, 1, 256),
+      concurrencyPerAlias: integer(env, 'CONCURRENCIA_ALIAS', 4, 1, 256),
     },
   };
 }
