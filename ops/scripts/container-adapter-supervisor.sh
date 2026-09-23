@@ -159,6 +159,7 @@ load_config() {
     [[ ! -v "CONFIG[$key]" ]] || die "container alias config key is duplicated: $key"
     case "$key" in
       BUNDLE_RELEASE|BUNDLE_SHA256|PKI_DIR|RELAY_URL|EXPECTED_IMAGE_ID|EXPECTED_LABEL_KEY|EXPECTED_LABEL_VALUE|MOUNT_TYPE|MOUNT_SOURCE|MOUNT_NAME|MOUNT_DESTINATION|MOUNT_RW|DEFAULT_TIMEOUT_MS|CAUCE_SEMBRAR_PERFIL) ;;
+      DECISIONES_URL) [[ $value =~ ^https://([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(:[0-9]{1,5})?$ ]] || die 'DECISIONES_URL must be a bare https origin' ;;
       CAUCE_NATIVE_PROFILE_CONTEXT) [[ $value =~ ^[01]$ ]] || die "CAUCE_NATIVE_PROFILE_CONTEXT must be exactly 0 or 1" ;;
       EXPECTED_CLI_VERSION) [[ $harness == claude ]] || die "config key is not allowed for $harness: $key" ;;
       HERMES_HOME|HERMES_INFERENCE_MODEL|HERMES_PYTHON|HERMES_SOURCE_COMMIT) [[ $harness == hermes ]] || die "config key is not allowed for $harness: $key" ;;
@@ -893,6 +894,7 @@ start_adapter() {
     "CAUCE_TLS_CERT_FILE=$secret_directory/client.crt" "CAUCE_TLS_KEY_FILE=$secret_directory/client.key" "CAUCE_TLS_CA_FILE=$secret_directory/ca.crt"
   )
   environment+=("CAUCE_SEMBRAR_PERFIL=${CONFIG[CAUCE_SEMBRAR_PERFIL]}")
+  [[ ! -v CONFIG[DECISIONES_URL] ]] || environment+=("CAUCE_DECISIONES_URL=${CONFIG[DECISIONES_URL]}")
   [[ ! -v CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT] ]] || environment+=("CAUCE_NATIVE_PROFILE_CONTEXT=${CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT]}")
   if [[ -v CONFIG[CREDENTIAL_HOME] ]]; then
     valid_absolute_path "${CONFIG[CREDENTIAL_HOME]}" || die "CREDENTIAL_HOME must be a canonical absolute path"

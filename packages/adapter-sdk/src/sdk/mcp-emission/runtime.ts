@@ -5,6 +5,7 @@ import { atomicWrite, prepareStateDirectory } from "../durable-store/atomic-stat
 import {
   EmissionTurn, toolArguments, type EmissionGateway, type EmissionTurnOptions,
 } from "./tools.js";
+import { answerDecisiones, type DecisionesForwarder } from "./decisiones.js";
 
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 export interface EmissionToolResult {
@@ -27,6 +28,7 @@ export class EmissionRuntime {
     readonly stateDirectory: string,
     readonly instanceId: string,
     readonly gateway: EmissionGateway,
+    readonly decisiones?: DecisionesForwarder,
   ) { this.socketPath = join(stateDirectory, "mcp-emission.sock"); }
 
   begin(options: Omit<EmissionTurnOptions, "persist" | "gateway" | "instanceId">): EmissionTurn {
@@ -102,7 +104,8 @@ export class EmissionRuntime {
           response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ turn_token: turn?.token ?? null }));
           return;
         }
-        if (incoming.method !== "POST" || incoming.url !== "/tool") { response.writeHead(404).end(); return; }
+        const route = incoming.method === "POST" ? incoming.url : undefined;
+        if (route !== "/tool" && route !== "/decisiones") { response.writeHead(404).end(); return; }
         const chunks: Buffer[] = [];
         let bytes = 0;
         for await (const chunk of incoming) {
@@ -111,7 +114,15 @@ export class EmissionRuntime {
           if (bytes > MAX_REQUEST_BYTES) { response.writeHead(413).end(); return; }
           chunks.push(buffer);
         }
-        const value = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { name?: unknown; arguments?: unknown; turn_token?: unknown };
+        const value = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+          name?: unknown; arguments?: unknown; turn_token?: unknown; operacion?: unknown; argumentos?: unknown;
+        };
+        // Decisions need no turn and never wait behind this.tail: a slow Jev must not delay a reply.
+        if (route === "/decisiones") {
+          const answer = await answerDecisiones(this.decisiones, value.operacion, value.argumentos);
+          response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(answer));
+          return;
+        }
         if (typeof value.name !== "string") throw new Error("Missing tool name");
         const result = await this.call(value.name, value.arguments ?? {}, { turn, token: value.turn_token });
         response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(result));
@@ -144,7 +155,9 @@ export async function forwardEmission(socketPath: string, name: string, args: un
   return await socketExchange(socketPath, "/tool", "POST", { name, arguments: args, turn_token: token }) as EmissionToolResult;
 }
 
-function socketExchange(socketPath: string, path: string, method: "GET" | "POST", body?: unknown): Promise<Record<string, unknown>> {
+export function socketExchange(
+  socketPath: string, path: string, method: "GET" | "POST", body?: unknown, timeoutMs = 30_000,
+): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const outgoing = request({ socketPath, path, method, headers: { "content-type": "application/json" } }, (response) => {
       let received = "";
@@ -161,7 +174,7 @@ function socketExchange(socketPath: string, path: string, method: "GET" | "POST"
       });
       response.on("error", reject);
     });
-    outgoing.setTimeout(30_000, () => { outgoing.destroy(new Error("Emission socket timed out")); });
+    outgoing.setTimeout(timeoutMs, () => { outgoing.destroy(new Error("Emission socket timed out")); });
     outgoing.on("error", reject);
     outgoing.end(body === undefined ? undefined : JSON.stringify(body));
   });

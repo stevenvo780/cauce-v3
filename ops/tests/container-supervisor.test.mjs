@@ -587,6 +587,18 @@ try {
   await writeConfig("atlas");
   process.stdout.write("default timeout: 86400000 default and 480000 override exported; invalid values rejected before Docker\n");
 
+  // DECISIONES_URL is optional, exported verbatim when valid and rejected before Docker otherwise.
+  assert(!timeoutOverrideFinal.argv.some((value) => value.startsWith("CAUCE_DECISIONES_URL=")));
+  for (const [url, valid] of [["https://100.64.0.11:8447", true], ["http://100.64.0.11:8447", false], ["https://h:8447/v1", false], ["https://u@h:8447", false]]) {
+    await writeConfig("atlas", [`DECISIONES_URL=${url}`]);
+    await clearLog();
+    result = runSupervisor("start", "atlas", await dockerState("atlas"));
+    const exported = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=atlas"));
+    assert.equal(result.status === 0 && exported?.argv.includes(`CAUCE_DECISIONES_URL=${url}`) === true, valid, `${url}: ${result.stderr}`);
+    if (!valid) assert.match(result.stderr, /DECISIONES_URL must be a bare https origin/u);
+  }
+  await writeConfig("atlas");
+
   // Claude containers are upgraded independently, so the version pin belongs to each alias config and
   // must be exact; a source-global version would reject two healthy containers whose images differ.
   await writeConfig("zeus", [], {}, ["EXPECTED_CLI_VERSION"]);
