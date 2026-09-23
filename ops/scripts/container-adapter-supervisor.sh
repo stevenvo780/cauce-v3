@@ -144,8 +144,7 @@ inventory_workspace=${inventory_policy[1]}
 
 config_file="$CONFIG_ROOT/$alias_name.env"
 declare -A CONFIG=()
-# Set by validation when SHARED_SESSION cannot hold in this container (grok without tmux).
-shared_session_disabled=false
+shared_session_disabled=false  # Set by validation when SHARED_SESSION cannot hold (grok without tmux).
 
 load_config() {
   local line key value
@@ -168,11 +167,7 @@ load_config() {
       SHARED_SESSION|SHARED_SESSION_WORKSPACE)
         [[ $harness == claude || $harness == codex || $harness == grok ]] || die "config key is not allowed for $harness: $key"
         ;;
-      # The conversation the shared TUI must resume when the alias has no pointer yet (claude/grok resume
-      # by exact id; codex by `resume --last`). The adapter seeds it itself with the release it runs.
-      SHARED_SESSION_NATIVE_ID)
-        [[ $harness == claude || $harness == grok ]] || die "config key is not allowed for $harness: $key"
-        ;;
+      SHARED_SESSION_NATIVE_ID) [[ $harness == claude || $harness == grok ]] || die "config key is not allowed for $harness: $key" ;;  # Seeded by the adapter (exact-resume harnesses).
       # Per-alias configuration: only for the two harnesses that read a directory governed by a
       # variable. hermes reads stdin and openclaw does not read ~/.codex or ~/.claude; accepting
       # the key there would export a variable nobody reads and claim a separated alias.
@@ -261,11 +256,8 @@ validate_config_values() {
     [[ -v CONFIG[SHARED_SESSION] ]] || die 'SHARED_SESSION_WORKSPACE requires SHARED_SESSION=1'
     valid_absolute_path "${CONFIG[SHARED_SESSION_WORKSPACE]}" || die 'SHARED_SESSION_WORKSPACE must be a canonical absolute path'
   fi
-  if [[ -v CONFIG[SHARED_SESSION_NATIVE_ID] ]]; then
-    [[ -v CONFIG[SHARED_SESSION] ]] || die 'SHARED_SESSION_NATIVE_ID requires SHARED_SESSION=1'
-    [[ ${CONFIG[SHARED_SESSION_NATIVE_ID]} =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] \
-      || die 'SHARED_SESSION_NATIVE_ID must be a canonical lowercase UUID'
-  fi
+  [[ ! -v CONFIG[SHARED_SESSION_NATIVE_ID] || -v CONFIG[SHARED_SESSION] ]] || die 'SHARED_SESSION_NATIVE_ID requires SHARED_SESSION=1'
+  [[ ! -v CONFIG[SHARED_SESSION_NATIVE_ID] || ${CONFIG[SHARED_SESSION_NATIVE_ID]} =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || die 'SHARED_SESSION_NATIVE_ID must be a canonical lowercase UUID'
   # Both rewrite the same harness config directory live, racing the seeded profile against the owner.
   if [[ -v CONFIG[SHARED_SESSION] && ${CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT]:-0} == 1 ]]; then
     die 'CAUCE_NATIVE_PROFILE_CONTEXT is incompatible with SHARED_SESSION'
@@ -645,13 +637,8 @@ validate_container_identity_and_mount() {
   if [[ -n $shared_session_workspace ]]; then
     docker_id_exec test -d "$shared_session_workspace" >/dev/null 2>&1 \
       || die "SHARED_SESSION workspace does not exist inside the container: $shared_session_workspace"
-    # grok's image did not ship tmux. Dying here (78, never restarted) left Telegram mute until someone
-    # noticed; without tmux the shared TUI cannot exist, so this start serves the bus headless (the
-    # previous mode) and says so. `cauce <alias>` reports the missing panel instead of opening another.
-    if [[ $harness == grok ]] && ! docker_id_exec sh -c 'command -v tmux' >/dev/null 2>&1; then
-      printf 'warning: SHARED_SESSION=1 ignored for %s: the container has no tmux; the adapter starts headless\n' "$alias_name" >&2
-      shared_session_disabled=true
-    fi
+    [[ $harness != grok ]] || docker_id_exec sh -c 'command -v tmux' >/dev/null 2>&1 || { shared_session_disabled=true  # 78 left Telegram mute: headless.
+      printf 'warning: SHARED_SESSION=1 ignored for %s: the container has no tmux; the adapter starts headless\n' "$alias_name" >&2; }
   fi
   after=$(read_state_signature) || die 'container disappeared during policy validation' 75
   [[ $after == "$before" ]] || die 'container generation changed during policy validation' 75
@@ -926,8 +913,7 @@ start_adapter() {
     environment+=("CAUCE_SHARED_SESSION=${CONFIG[SHARED_SESSION]}")
     [[ -v CONFIG[SHARED_SESSION_WORKSPACE] ]] \
       && environment+=("CAUCE_SHARED_SESSION_WORKSPACE=${CONFIG[SHARED_SESSION_WORKSPACE]}")
-    [[ -v CONFIG[SHARED_SESSION_NATIVE_ID] ]] \
-      && environment+=("CAUCE_SHARED_SESSION_NATIVE_ID=${CONFIG[SHARED_SESSION_NATIVE_ID]}")
+    [[ -v CONFIG[SHARED_SESSION_NATIVE_ID] ]] && environment+=("CAUCE_SHARED_SESSION_NATIVE_ID=${CONFIG[SHARED_SESSION_NATIVE_ID]}")
     # tmux creates the session with this TERM. Without it the server is born with an unknown terminal
     # and the TUI renders broken for the owner, who is the one who joins afterwards.
     environment+=('TERM=xterm-256color'); [[ $harness != grok ]] || environment+=("GROK_HOME=$container_home/.grok")

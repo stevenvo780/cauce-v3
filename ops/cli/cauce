@@ -456,14 +456,8 @@ systemctl_user_o_avisa() {  # $1=verbo(start|stop) $2=unit
   local verbo=$1 unit=$2 salida candidato; [ -z "${XDG_RUNTIME_DIR:-}" ] && { candidato="/run/user/$(id -u)"; [ -d "$candidato" ] && export XDG_RUNTIME_DIR="$candidato"; }; [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "${XDG_RUNTIME_DIR:-}/bus" ] && export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; salida=$(systemctl --user "$verbo" "$unit" 2>&1) && return 0; printf "  %ssystemctl --user %s %s fallo%s\n" "$c_err" "$verbo" "$unit" "$c_reset">&2; printf "  %s%s%s\n" "$c_dim" "$salida" "$c_reset">&2; printf "  %ssin XDG_RUNTIME_DIR se intento derivar de /run/user/\$(id -u); desde root: systemctl --user -M stev@ %s %s%s\n" "$c_dim" "$verbo" "$unit" "$c_reset">&2; return 1
 }
 
-# The MCP bridge (`cauce-mcp.js`) of the SHARED TUI runs from the alias's release too, but it is a
-# child of the TUI in tmux, not of the adapter, and tmux strips CAUCE_ALIAS from its environment:
-# counted by its cmdline alone, `off` could not kill it (the kill re-checks CAUCE_ALIAS), said
-# "SIGUE VIVO" and returned before tearing the panel down, and `on` took it for a live adapter.
-# It dies with the panel. A bridge that DOES carry CAUCE_ALIAS belongs to a headless harness of the
-# adapter and still counts.
 # shellcheck disable=SC2016  # corre en otro shell (eval / docker exec): sus $ se expanden alla
-BARRIDO='for p in /proc/[0-9]*; do c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null); set -- $c; case "${1:-}" in *node*|*python*) ;; *) continue;; esac; h=""; e=$(tr "\0" "\n" < "$p/environ" 2>/dev/null | sed -n "s/^CAUCE_ALIAS=//p" | head -1); [ "$e" = "@@A@@" ] && h=1; case "$c" in *cauce-v3-adapter/@@A@@/*/cauce-mcp.js*) ;; *cauce-v3-adapter/@@A@@/*) h=1;; esac; [ -n "$h" ] && echo "${p#/proc/}"; done'
+BARRIDO='for p in /proc/[0-9]*; do c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null); set -- $c; case "${1:-}" in *node*|*python*) ;; *) continue;; esac; h=""; e=$(tr "\0" "\n" < "$p/environ" 2>/dev/null | sed -n "s/^CAUCE_ALIAS=//p" | head -1); [ "$e" = "@@A@@" ] && h=1; case "$c" in *cauce-v3-adapter/@@A@@/*/cauce-mcp.js*) ;; *cauce-v3-adapter/@@A@@/*) h=1;; esac; [ -n "$h" ] && echo "${p#/proc/}"; done'  # The shared TUI's MCP bridge (cauce-mcp.js, no CAUCE_ALIAS) is the panel's, not the adapter's.
 
 pids_del_alias() {  # $1=alias -> un PID por linea (vacio = de verdad no hay nada)
   local a=$1 line ctr cuser

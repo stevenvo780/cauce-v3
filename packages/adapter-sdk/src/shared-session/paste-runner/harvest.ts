@@ -64,10 +64,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     let probe = 0;
     // Timestamp is fixed by the EVENT, not by the next poll — a slow transcript read
     // cannot start counting the deadline only when it finishes.
-    // Every turn of the delivery closed but the background work they started still runs (grok).
-    // While it lingers the pane looks idle between turns, so neither silence cut applies; the
-    // delivery waits for that work, bounded by `backgroundWaitMs` since its last progress.
-    let lingering: { readonly outcome: TurnOutcome; readonly progress: string } | undefined;
+    let lingering: { readonly outcome: TurnOutcome; readonly progress: string } | undefined; // No silence cut then.
     let lingeringSince = 0;
     const backgroundWaitMs = Math.max(0, this.options.backgroundWaitMs ?? DEFAULT_BACKGROUND_WAIT_MS);
     let cancelObservedAt = request.signal.aborted ? Date.now() : undefined;
@@ -360,14 +357,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     }
   }
 
-  /**
-   * The delivery's result once its turn (and whatever it caused) ended.
-   *
-   * A reply already deposited with `cauce_reply` is the answer even if the turn then ended badly:
-   * the owner cancelling a turn blocked on its subagents, or a later failure, does not retract what
-   * the model already delivered. Without a deposit, a failed turn is a declared failure; it DID
-   * enter the terminal and may have run tools, so it is never retried on the default path.
-   */
+  /** A `cauce_reply` deposit is the answer even if the turn then ended badly (e.g. the owner cancelled it). */
   protected settledResult(
     outcome: TurnOutcome,
     sessionId: string | undefined,
@@ -431,9 +421,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
         const profile = tuiProfile(this.options.harness);
         let mayInterrupt = true;
         if (profile.interruptOnlyWhileGenerating) {
-          // The turn on screen may not be ours (grok runs the owner's turns, and wake turns, in the
-          // same pane): look for OUR turn first and interrupt only while it is located and open.
-          const located = await beforeDeadline(
+          const located = await beforeDeadline( // The turn on screen may be the owner's: find OURS first.
             this.cancelledTranscriptBoundary(baseline, correlatedTurn, promptText, correlationId),
             deadline,
           );
@@ -540,8 +528,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
         correlated.file,
         baseline.get(correlated.file) ?? 0,
       );
-      // Background work still running does not keep a cancelled delivery open.
-      const outcome = this.options.transcript.findAnswer(slice.entries, correlated.key)
+      const outcome = this.options.transcript.findAnswer(slice.entries, correlated.key) // Lingering work: still terminal.
         ?? this.options.transcript.lingering?.(slice.entries, correlated.key)?.outcome
         ?? this.options.transcript.findEnvelope?.(
           slice.entries,
@@ -594,8 +581,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
    * A paste merged into an in-flight turn is never recorded as its own user entry (claude stores
    * it as a `queued_command` attachment), so `injected` stays undefined and the only activity
    * signal is this one. Measured against the baseline instead, it never went quiet: the MCP
-   * deposit was ready but the delivery was held to the 6 h lease cap (zeus f30f2319, kant 57cb2fe0,
-   * 2026-09-23).
+   * deposit was ready but the delivery was held to the 6 h lease cap (zeus f30f2319, kant 57cb2fe0).
    */
   protected async transcriptMoved(seen: Map<string, number>): Promise<boolean> {
     let moved = false;

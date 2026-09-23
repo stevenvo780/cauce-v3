@@ -40,7 +40,7 @@ test("grok pane: el pie Ctrl+c:cancel y el spinner [stop] son turno en curso; oc
     withoutFooter(grokFrame({ footer: "running", spinner: THINKING })),
   ]) assert.equal(turnInFlight(frame), true, frame);
   // With the footer on screen the footer alone decides: a spinner-looking line above an idle footer
-  // is conversation text (a quoted spinner kept the bus out of an idle TUI; review 2026-09-23).
+  // is conversation text (a quoted spinner kept the bus out of an idle TUI)
   for (const frame of [
     grokFrame(),
     grokFrame({ footer: "typed", box: "respondé solo: ho" }),
@@ -186,8 +186,8 @@ test("grok arranque: el adaptador siembra solo la conversación de SHARED_SESSIO
     CAUCE_SHARED_SESSION_NATIVE_ID: log.sessionId,
   };
   const config = loadSharedSessionConfig("grok", "hades", state, environment);
-  assert.equal(config?.nativeId, log.sessionId);
-  if (config === undefined) return;
+  assert.ok(config !== undefined);
+  assert.equal(config.nativeId, log.sessionId);
 
   // The history exists and there is no pointer: before the adapter starts the TUI would block.
   assert.equal((await resolveGrokLaunch(grokHome, workspace, { alias: "hades", stateDirectory: state })).state, "blocked");

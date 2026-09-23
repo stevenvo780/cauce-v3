@@ -27,28 +27,16 @@ export interface GrokUpdateLine {
   readonly params?: unknown;
 }
 
-/**
- * Cap on conversations handed to the poller and the witness (they stat or hash every one).
- *
- * Over the cap the MOST RECENTLY WRITTEN ones are kept, never none: the shared conversation is
- * written on every turn, so it is always among them, while an empty list would blind the harvest
- * for good (every delivery held to the correlation deadline) and the pointer witness with it.
- */
+/** Over this cap the most recently written are kept, never none (an empty list blinded the harvest). */
 export const MAX_GROK_SESSIONS = 1_000;
 const O_CLOEXEC = Number((fsConstants as unknown as Record<string, unknown>).O_CLOEXEC ?? 0);
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CORRELATION_MEMBER = /"cauce_correlation_id":"[a-f0-9]{64}"/gu;
 const SUMMARY_FILE = "summary.json";
 const MAX_SUMMARY_BYTES = 256 * 1024;
-/**
- * `summary.json` `session_kind` of folders that are not a conversation of their own. Every
- * subagent gets its own session folder next to its parent's (measured on hades: 4 in one turn),
- * nothing prunes them, and their activity is already reported in the parent's log
- * (`subagent_spawned`/`subagent_finished`).
- */
+/** `summary.json` `session_kind` of folders that are no conversation (one per subagent, never pruned). */
 const CHILD_SESSION_KINDS: ReadonlySet<string> = new Set(["subagent"]);
-/** A folder's kind never changes once grok wrote it; only definite answers are cached. */
-const childSessionCache = new Map<string, boolean>();
+const childSessionCache = new Map<string, boolean>(); // A folder's kind never changes once written.
 
 /** Root of every conversation of this grok home, whatever cwd created it. */
 export function grokSessionsRoot(grokHome: string): string {
@@ -67,7 +55,6 @@ export function isGrokSessionId(value: string): boolean {
 
 interface Listing { readonly files: readonly string[]; readonly unreadable: boolean }
 
-/** Whether a session folder belongs to a subagent; unknown (no summary yet) counts as a conversation. */
 async function isChildSession(folder: string): Promise<boolean> {
   const cached = childSessionCache.get(folder);
   if (cached !== undefined) return cached;
@@ -104,9 +91,8 @@ async function modifiedAt(file: string): Promise<number> {
  * ALL cwd groups are listed, not only the workspace's: `--resume <id>` reopens a conversation in
  * the folder where it was born (measured: the DM of hades lives under `/home/claw` whatever cwd
  * the TUI runs in), so restricting to one group would lose the very conversation being shared.
- * Subagent sessions are left out (see `CHILD_SESSION_KINDS`). Session ids are UUIDv7, so sorting
- * by id is sorting by creation time, which is what `hasValidTerminalEnvelope` relies on to try the
- * newest first.
+ * Subagent sessions are left out. Session ids are UUIDv7, so sorting by id is sorting by creation
+ * time, which is what `hasValidTerminalEnvelope` relies on to try the newest first.
  */
 async function listGrokSessionFiles(grokHome: string, limit = MAX_GROK_SESSIONS): Promise<Listing> {
   const root = grokSessionsRoot(grokHome);
@@ -318,14 +304,7 @@ function normalizedPrompt(text: string): string {
   return (wrapped?.[1] ?? unix).replace(/\s+$/u, "");
 }
 
-/**
- * The member that correlates this delivery's prompt: `"cauce_correlation_id":"<nonce>"`.
- *
- * Built from the nonce the runner generated when it is known. Otherwise the LAST member of the
- * prompt: the transport block that carries it goes after `--- END REQUEST ---`
- * (`correlateEnvelopePrompt`), so a member a sender wrote inside the request body comes first and
- * can never stand in for it.
- */
+/** The runner's nonce member, else the prompt's LAST one (the transport block goes after the body). */
 function correlationMember(promptText: string, correlationId: string | undefined): string | undefined {
   if (correlationId !== undefined) {
     return /^[a-f0-9]{64}$/u.test(correlationId)
@@ -389,7 +368,6 @@ interface GrokTurn {
   readonly completionIndex?: number;
 }
 
-/** Lines of the turn `promptId` in `[from, to)`: the ones it tagged, plus untagged updates. */
 function bodyOf(
   entries: readonly GrokUpdateLine[],
   from: number,
@@ -449,33 +427,17 @@ interface ClosedTurn {
 }
 
 /**
- * The delivery's work as grok's log tells it: the pasted turn, the background work it started,
- * and the wake turns that work caused.
- *
- * In the TUI a turn is not the end of the work (Grok CLI 1.0.41 docs, "The Still-Running Status
- * Line"): subagents and background commands outlive it and, when they finish with `will_wake`,
- * start a NEW turn with no prompt of anyone's. The owner typing while the turn is blocked in
- * `get_command_or_subagent_output` cancels it (`stop_reason: cancelled`) and the subagents keep
- * running; a model may also background the work and close with "te aviso cuando termine". Closing
- * the delivery at the first `turn_completed` left the real answer to a wake turn no delivery owns,
- * where `cauce_reply` is refused ("No unique active turn"). Headless never showed it because
- * `grok --output-format json` itself waits for that work (`--background-wait-timeout`, 600 s).
- *
- * - Work is attributed by what grok writes: `subagent_spawned.parent_prompt_id`, and
- *   `task_backgrounded.tool_call_id` -> the `tool_call` that carries `_meta.promptId`.
- * - A wake turn is the first turn tagged after a `will_wake` completion with no user line since the
- *   previous close; it joins the chain (its own background work too) and its close is the new end.
- * - grok's wake prompt was never measured: if a wake opens with a user line it is taken for an
- *   owner turn and the wake stays due, so the delivery lingers until the harvest's background wait
- *   runs out (`backgroundWaitMs`) and keeps the last turn of its own, or the MCP deposit made
- *   meanwhile (the delivery was still open, so `cauce_reply` from the wake was accepted).
+ * The delivery = the pasted turn + the background work it started + the wake turns that work causes
+ * (in the TUI subagents and background commands outlive the turn and wake the agent, `will_wake`;
+ * the owner typing during `get_command_or_subagent_output` cancels it). Work is attributed by
+ * `subagent_spawned.parent_prompt_id` and `task_backgrounded.tool_call_id` -> `tool_call`; a wake is
+ * the first turn tagged after a `will_wake` finish with no user line since the last close (grok's wake
+ * prompt was never measured: with a user line the delivery lingers until `backgroundWaitMs`).
  */
 interface GrokChain {
-  /** `running`: a turn of the chain is open; `lingering`: all closed, work still pending; `settled`. */
-  readonly state: "running" | "lingering" | "settled";
+  readonly state: "running" | "lingering" | "settled"; // lingering: all turns closed, work pending.
   readonly last?: ClosedTurn;
-  /** Changes whenever the chain or the conversation moves, to restart the background wait. */
-  readonly progress: string;
+  readonly progress: string; // Changes whenever the chain or the conversation moves.
 }
 
 function grokChain(entries: readonly GrokUpdateLine[], start: number): GrokChain {
@@ -534,8 +496,7 @@ function grokChain(entries: readonly GrokUpdateLine[], start: number): GrokChain
         last = { body: bodyOf(entries, open.from, index, open.promptId), completion: line };
         open = undefined;
       } else if (wakeDue && lastUser < lastClose) {
-        // A wake answered silently: grok closed it without tagging anything.
-        wakeDue = false;
+        wakeDue = false; // A wake answered silently: grok closed it without tagging anything.
       }
       lastClose = index;
       continue;
@@ -599,7 +560,6 @@ function finalMessage(body: readonly GrokUpdateLine[]): string {
   return segments.at(-1) ?? "";
 }
 
-/** The delivery's outcome once its chain settled (see `GrokChain`); `undefined` while it runs. */
 function findGrokOutcome(entries: readonly GrokUpdateLine[], key: string): TurnOutcome | undefined {
   const start = indexOfKey(entries, key);
   if (start === undefined) return undefined;
@@ -609,7 +569,6 @@ function findGrokOutcome(entries: readonly GrokUpdateLine[], key: string): TurnO
     : undefined;
 }
 
-/** Every turn of the delivery closed but its background work still runs: the outcome so far. */
 function findGrokLingering(
   entries: readonly GrokUpdateLine[],
   key: string,

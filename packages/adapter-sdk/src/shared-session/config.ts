@@ -22,13 +22,7 @@ export interface SharedSessionConfig {
   /** What the TUI must see in its environment, whoever creates it. */
   readonly paneEnvironment: Readonly<Record<string, string>>;
   readonly harnessArguments: readonly string[];
-  /**
-   * The conversation to name canonical when the alias has none yet (`CAUCE_SHARED_SESSION_NATIVE_ID`).
-   * The adapter seeds it itself on start, from the release it runs: the `shared-session.js seed`
-   * step could only run from a release that reaches the container WITH that same start, and an
-   * alias with history and no pointer blocks every delivery.
-   */
-  readonly nativeId?: string;
+  readonly nativeId?: string; // CAUCE_SHARED_SESSION_NATIVE_ID: seeded on start while there is no pointer.
 }
 
 const SHARED_SESSION_ENV = "CAUCE_SHARED_SESSION";

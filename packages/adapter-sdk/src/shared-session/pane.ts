@@ -64,8 +64,7 @@ const IN_FLIGHT_MARKS: readonly RegExp[] = [
   /\besc(?:ape)?\s+to\s+interrupt\b/iu,
   /\bctrl\+b\b[^\n]*\bto\s+run\s+in\s+background\b/iu,
   /↓\s*[\d.]+\s*k?\s+tokens\b/iu,
-  // grok 1.0.41 spinner (`⠸ Thinking… 0.7s   2.6s ⇣2.42k [stop]`), for a grok frame whose footer
-  // is not on screen; with the footer visible it is never consulted (see `grokFooterState`).
+  // grok 1.0.41 spinner (`⠸ Thinking… 0.7s ⇣2.42k [stop]`); only read when its footer is not on screen.
   /^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s.*….*\[stop\][\s█▐▌]*$/u,
 ];
 
@@ -73,16 +72,7 @@ function inFlightMark(line: string): boolean {
   return IN_FLIGHT_MARKS.some((mark) => mark.test(line));
 }
 
-/**
- * What grok's footer (its LAST line) says, or `undefined` when the last line is not grok's footer.
- *
- * The footer is the TUI's own state: `Ctrl+c:cancel` exactly while a turn or its queue is alive,
- * and every frame of 1.0.41 ends in `Ctrl+x:shortcuts` (idle, typing, running, queued, tool) or, one
- * C-c into an idle TUI, `Ctrl+c:press again to quit`. When it is on screen it alone decides: the
- * lines above it are the conversation, and an answer that quotes a spinner line, "esc to interrupt"
- * or "↓ 2.4k tokens" must not make an idle TUI look busy (it blocked the bus, kept the quarantine
- * and armed the exit with a C-c).
- */
+/** grok's LAST line (`…Ctrl+x:shortcuts`/`…press again to quit`): on screen it alone decides (`Ctrl+c:cancel`). */
 function grokFooterState(lastLine: string): "in_flight" | "idle" | undefined {
   const footer = /\bCtrl\+x:shortcuts\b/u.test(lastLine)
     || /\bCtrl\+c:press again to quit\b/u.test(lastLine);

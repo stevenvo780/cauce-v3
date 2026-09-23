@@ -23,7 +23,7 @@ import {
 } from "./grok-shared-session-fixtures.js";
 
 // ---------------------------------------------------------------------------------------------
-// Review of the grok shared session (2026-09-23): each test is one confirmed finding.
+// Review of the grok shared session: each test is one confirmed finding.
 // ---------------------------------------------------------------------------------------------
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

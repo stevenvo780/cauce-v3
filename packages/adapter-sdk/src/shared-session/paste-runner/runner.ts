@@ -93,9 +93,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
 
     // Paste and Enter must be a single operation from the owner's perspective: between checking
     // the input box is free and submitting it, no extra waits beyond what is strictly required.
-    // A TUI that queues pastes can start a turn between that check and the barrier (the owner's
-    // Enter): the paste is refused intact and this SAME wait resumes. See `acquireWait`.
-    const wait = this.acquireWait(turnBudgetMs(request.timeoutMs, this.options.turnTimeoutMs));
+    const wait = this.acquireWait(turnBudgetMs(request.timeoutMs, this.options.turnTimeoutMs)); // One wait for all attempts.
     let attempt: {
       readonly generating: boolean;
       readonly baseline: ReadonlyMap<string, number>;
@@ -138,9 +136,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
 
       const correlationId = randomBytes(32).toString("hex");
-      // Neutralized BEFORE anything else sees it: the transcript matchers compare against exactly
-      // what reached the pane. See `pasteSafeText`.
-      const promptText = pasteSafeText(
+      const promptText = pasteSafeText( // Matchers compare against exactly what reaches the pane.
         correlateEnvelopePrompt(request.stdin, correlationId, request.emissionOutput !== undefined),
       );
       const armed = await this.armPendingQuarantine(identity, correlationId);
@@ -229,9 +225,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
           return replacedBeforeSubmission();
         }
         if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
-        // A turn started between the acquisition and the barrier (the owner's Enter, a wake): the
-        // paste was refused and the barrier released with nothing pasted, so back to waiting for idle.
-        if (paste.reason === "turn_in_flight") continue;
+        if (paste.reason === "turn_in_flight") continue; // A turn began before the barrier: wait again.
         if (paste.reason === "input_busy") {
           return this.degrade(
             "input_busy",

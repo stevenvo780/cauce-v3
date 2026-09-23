@@ -44,11 +44,9 @@ import {
   result,
 } from "./runtime.js";
 
-/** Mutable deadlines of one delivery's wait for the input box (see `acquireWait`). */
+/** Deadlines of one delivery's wait for the box, shared by every attempt (see `acquireWait`). */
 export interface AcquireWait {
-  /** Since when the terminal stopped generating: the owner's box deadlines count from here. */
-  freeSince: number;
-  /** When a TUI that queues pastes may no longer keep generating another turn. */
+  freeSince: number; // The owner's box deadlines count from when the TUI stopped generating.
   readonly generatingDeadline: number;
 }
 
@@ -468,10 +466,6 @@ export abstract class PasteSessionRunnerBase<E> {
     this.lastPanePid = pid;
   }
 
-  /**
-   * Deadlines of one delivery's wait for the input box, shared by every attempt: a retry after the
-   * owner won the race under the barrier resumes this wait, it does not start a new one.
-   */
   protected acquireWait(requestTimeoutMs: number): AcquireWait {
     const now = Date.now();
     const generatingMs = Math.min(
@@ -519,9 +513,7 @@ export abstract class PasteSessionRunnerBase<E> {
       if (!state.occupied && !generating) return { ok: true, pane };
       const now = Date.now();
       if (generating) {
-        // Waiting for a turn to END is not the owner holding the box: it has its own, longer
-        // deadline and a reason that says so (never "texto a medio escribir").
-        wait.freeSince = now;
+        wait.freeSince = now; // Another turn, not the owner's text: own deadline and own reason.
         if (now >= wait.generatingDeadline) {
           return {
             ok: false,
@@ -530,8 +522,6 @@ export abstract class PasteSessionRunnerBase<E> {
           };
         }
       } else {
-        // Text or a dialog left by the owner: the box deadlines count from when the terminal
-        // stopped generating, so a long turn does not eat them up.
         const modal = state.kind === "modal";
         if (now >= wait.freeSince + (modal ? Math.min(acquireMs, ACQUIRE_MODAL_TIMEOUT_MS) : acquireMs)) {
           return modal

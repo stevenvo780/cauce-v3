@@ -286,7 +286,7 @@ cmd_entrar hades
 
 // The alias sweep counts the adapter (by CAUCE_ALIAS or by its release path) but not the MCP bridge
 // the SHARED TUI starts from that same release: tmux strips CAUCE_ALIAS from it, so `off` could never
-// kill it and stopped with "SIGUE VIVO" before tearing the panel down (review 2026-09-23, hades).
+// kill it and stopped with "SIGUE VIVO" before tearing the panel down.
 {
   const alias = `barrido${process.pid}`;
   const release = `/opt/cauce-v3-adapter/${alias}/releases/r1/packages/adapter-sdk/dist/src/bin`;
@@ -299,8 +299,9 @@ cmd_entrar hades
   const adapter = spawnProbe("grok.js", clean);
   try {
     await new Promise((resolve) => setTimeout(resolve, 300));
-    const sweep = /^BARRIDO='(.*)'$/mu.exec(await readFile(cli, "utf8"))?.[1];
+    const sweep = /^BARRIDO='(.*)'(?:\s+#.*)?$/mu.exec(await readFile(cli, "utf8"))?.[1];
     assert.ok(sweep !== undefined, "cauce defines BARRIDO");
+    assert.equal(/^BARRIDO='(.*)'$/mu.exec(await readFile(guard, "utf8"))?.[1], sweep, "the panel guard sweeps the same way");
     const found = spawnSync("sh", ["-c", sweep.replaceAll("@@A@@", alias)], { encoding: "utf8" })
       .stdout.split("\n").filter((line) => line !== "");
     assert.ok(found.includes(String(adapter.pid)), `the adapter counts: ${found.join(" ")}`);

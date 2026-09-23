@@ -2,18 +2,7 @@ import { stat } from "node:fs/promises";
 import type { CommandRunResult } from "../../sdk/types.js";
 
 export const DEFAULT_ACQUIRE_TIMEOUT_MS = 20 * 60_000;
-/**
- * How long a TUI that queues pastes (grok) may keep generating ANOTHER turn before the delivery
- * gives up, retryably. Its turns last 19 min with 6-7 min subagent waits (hades, 2026-09-23): the
- * 20 min box deadline, meant for text the owner left half-typed, killed messages that only had to
- * wait for the terminal to finish.
- */
 export const DEFAULT_GENERATING_WAIT_MS = 2 * 60 * 60_000;
-/**
- * How long a delivery whose turns already closed keeps waiting for the background work they started
- * (grok subagents and background commands, which wake the agent for a new turn). Restarted on every
- * progress; the same default as grok's own headless wait (`--background-wait-timeout 600`).
- */
 export const DEFAULT_BACKGROUND_WAIT_MS = 10 * 60_000;
 export const DEFAULT_POLL_MS = 750;
 export const DEFAULT_CANCEL_DRAIN_TIMEOUT_MS = 30_000;

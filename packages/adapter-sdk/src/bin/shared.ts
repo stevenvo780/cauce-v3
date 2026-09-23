@@ -196,13 +196,7 @@ export async function sharedSessionRunner(
   }
 }
 
-/**
- * Names the canonical conversation from the release the adapter runs (`nativeId` in its config),
- * only while the alias has no pointer: never replaces one (the witness moves it after a /new) and
- * never picks one on its own. Every outcome is logged; none stops the adapter, because a missing
- * pointer already fails each delivery closed with its own notice.
- */
-async function seedCanonicalConversation(
+async function seedCanonicalConversation( // Only while there is no pointer; logs, never stops the adapter.
   shared: SharedSessionConfig,
   harness: "claude" | "grok",
   nativeId: string,

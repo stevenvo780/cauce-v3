@@ -59,9 +59,7 @@ CONFIG = os.path.expanduser('~/.config/cauce-v3/container-aliases')
 GATEWAY = os.environ.get('CAUCE_GATEWAY_URL', 'https://100.64.0.6:8443')
 HOST_NATIVE = {'kant': 'cauce-v3-host-kant'}
 ATTACHABLE = {'claude', 'codex', 'grok'}
-# --fork-session: the terminal starts from the whole conversation but writes a NEW session id, so the
-# adapter can keep answering Telegram on the original without two writers on one transcript.
-FORKABLE = {'claude', 'grok'}
+FORKABLE = {'claude', 'grok'}  # --fork-session: whole conversation, NEW id, so no two writers.
 
 
 def die(msg):
@@ -82,9 +80,7 @@ def resume_cli(harness, native):
         return ['claude', '--dangerously-skip-permissions', '--permission-mode',
                 'bypassPermissions', '--resume', native]
     if harness == 'grok':
-        # The adapter runs every bus turn as `grok -p ... --resume <id>`: resuming the same id in
-        # the TUI is entering THE conversation of Telegram, not a new one.
-        return ['grok', '--always-approve', '--resume', native]
+        return ['grok', '--always-approve', '--resume', native]  # THE conversation the bus resumes.
     return ['codex', '--yolo', 'resume', native]
 
 
@@ -294,8 +290,7 @@ def main():
     host_native = alias in HOST_NATIVE
     unit = unit_of(alias)
 
-    # grok does not lock sessions: a second process on the shared conversation splits it in two.
-    if harness == 'grok' and compartida(alias) and not forzar:
+    if harness == 'grok' and compartida(alias) and not forzar:  # grok does not lock sessions.
         die(f'{alias} tiene sesion compartida: su TUI es el panel tmux del adaptador, entra con '
             f'«cauce {alias}».\n             Otro grok sobre esa conversacion la parte en dos (--forzar).')
     if bifurcar and harness not in FORKABLE:
@@ -324,10 +319,8 @@ def main():
         elegida, avisos = elegir(mod, alias, datos, preferencia, sys.stdin.isatty())
 
     native = elegida['native']
-    # `native` and `cwd` come from sessions.json and transcripts, which the agent itself can write:
-    # they are validated and never spliced into a shell string (see the exec below).
     if not isinstance(native, str) or not re.fullmatch(r'[0-9A-Za-z][0-9A-Za-z_.:-]{0,127}', native):
-        die(f'id de sesión inválido en el estado de {alias}: {native!r}')
+        die(f'id de sesión inválido en el estado de {alias}: {native!r}')  # Agent-writable: never in a shell string.
     transcript = elegida.get('transcripto') or '(sin transcript)'
 
     # guarantee 2: single writer
@@ -417,8 +410,7 @@ def main():
         cli = resume_cli(harness, native)
         if bifurcar:
             cli.append('--fork-session')
-        # Login shell for the PATH, but every value travels as a positional argument, never as code.
-        if host_native:
+        if host_native:  # Login shell for PATH; every value travels as a positional argument.
             subprocess.run(['bash', '-lc', 'cd -- "$1" && shift && exec "$@"', 'bash', cwd, *cli],
                            check=False)
         else:
