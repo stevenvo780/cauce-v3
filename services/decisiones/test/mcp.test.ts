@@ -2,9 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { createDecisionesMcpServer, decisionesForwarder, EmissionRuntime } from '@cauce/adapter-sdk';
+import { createDecisionesMcpServer, decisionesForwarder, EmissionRuntime, RESPALDO_SIN_SERVICIO } from '@cauce/adapter-sdk';
+import { loadCatalog } from '../src/catalog.js';
 import { defaultAnswers } from './support/fake-jev.js';
 import { startHarness, type Harness } from './support/servicio.js';
 
@@ -116,19 +118,41 @@ describe('MCP cauce-decisiones a través del adaptador', () => {
     expect((await slow).isError).toBeUndefined();
   });
 
-  it('sin servicio configurado el adaptador lo dice y el modelo decide solo', async () => {
+  it('sin servicio configurado, inalcanzable o sin adaptador, el modelo recibe igual un respaldo que falla cerrado', async () => {
+    const aprobar = { name: 'decidir_plantilla', arguments: { plantilla: 'aprobacion_humana', state: { accion_propuesta: 'DROP TABLE clientes en prod' } } };
     const bare = await mkdtemp(join(tmpdir(), 'cauce-decisiones-sin-'));
     const unconfigured = new EmissionRuntime(bare, 'sin-decisiones', async () => ({}));
+    const zeus = h.pki.client('zeus');
+    const unreachable = new EmissionRuntime(join(bare, 'caido'), 'caido', async () => ({}), decisionesForwarder('https://127.0.0.1:9', { certFile: zeus.cert, keyFile: zeus.key, caFile: h.pki.caCert }));
     await unconfigured.listen();
+    await unreachable.listen();
     const orphan = await connect(unconfigured.socketPath);
+    const lost = await connect(unreachable.socketPath);
+    const noAdapter = await connect(join(bare, 'no-existe.sock'));
     try {
-      const result = await orphan.callTool({ name: 'decidir', arguments: { state: 'x', questions: { ok: { type: 'noul', instructions: 'x' } } } });
-      expect(result.isError).toBe(true);
-      expect(text(result)).toMatchObject({ error: 'decisiones_no_configurado' });
+      const libre = await orphan.callTool({ name: 'decidir', arguments: { state: 'x', questions: { ok: { type: 'noul', instructions: 'x' } } } });
+      expect(libre.isError).toBe(true);
+      expect(text(libre)).toMatchObject({ error: 'decisiones_no_configurado', respaldo: { decision: 'llm', caer_a_llm: true } });
+      expect(text(await orphan.callTool(aprobar))).toMatchObject({ error: 'decisiones_no_configurado', respaldo: { decision: 'exige_aprobacion', caer_a_llm: false } });
+      expect(text(await lost.callTool(aprobar))).toMatchObject({ error: 'decisiones_inalcanzable', respaldo: { decision: 'exige_aprobacion' } });
+      const caido = await noAdapter.callTool(aprobar);
+      expect(caido.isError).toBe(true);
+      expect(text(caido)).toMatchObject({ error: 'adaptador_no_responde', respaldo: { decision: 'exige_aprobacion' } });
+      expect(text(await lost.callTool({ name: 'decidir_plantilla', arguments: { plantilla: 'guardia_privacidad_jarvis', state: { texto: 'x' } } }))).toMatchObject({ respaldo: { decision: 'bloquear' } });
     } finally {
-      await orphan.close();
-      await unconfigured.close();
+      await Promise.all([orphan.close(), lost.close(), noAdapter.close()]);
+      await Promise.all([unconfigured.close(), unreachable.close()]);
       await rm(bare, { recursive: true, force: true });
+    }
+  });
+
+  it('el respaldo del adaptador para las plantillas de seguridad es el si_falla del catálogo', async () => {
+    const catalogo = await loadCatalog(fileURLToPath(new URL('../catalogo/', import.meta.url)));
+    const cerradas = [...catalogo.plantillas.values()].filter((plantilla) => !plantilla.siFalla.llm).map((plantilla) => plantilla.id);
+    expect(cerradas).toEqual(expect.arrayContaining(Object.keys(RESPALDO_SIN_SERVICIO)));
+    for (const [id, respaldo] of Object.entries(RESPALDO_SIN_SERVICIO)) {
+      const plantilla = catalogo.plantillas.get(id);
+      expect([respaldo.decision, respaldo.caer_a_llm], id).toEqual([plantilla?.siFalla.decision, plantilla?.siFalla.llm]);
     }
   });
 });

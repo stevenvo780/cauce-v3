@@ -81,10 +81,14 @@ Cómo leer los campos:
   umbrales por defecto son: confianza 0,6 y noul firme a partir de 0,8 para «sí» o por debajo de 0,2
   para «no».
 
-**Errores.** Todo error trae `{error, mensaje}`. Cuando se sabe qué hacer, trae además `respaldo`, que
-es el resultado que el agente debe aplicar. Las plantillas de seguridad fallan cerradas:
-`aprobacion_humana` exige aprobación y `guardia_privacidad_jarvis` bloquea. Las demás devuelven
-`caer_a_llm: true`.
+**Errores.** Todo error trae `{error, mensaje}`. Todo rechazo de `POST /v1/decidir` trae además
+`respaldo`, el resultado que el agente debe aplicar: también un 400 por un campo faltante, un 403 por
+alias fuera del piloto o un 413. Las plantillas de seguridad fallan cerradas: `aprobacion_humana` exige
+aprobación y `guardia_privacidad_jarvis` bloquea. Las demás devuelven `caer_a_llm: true`. Cuando el
+servicio ni siquiera contesta (adaptador sin `DECISIONES_URL`, servicio inalcanzable, adaptador caído,
+timeout), el respaldo lo pone el adaptador con la misma regla: `RESPALDO_SIN_SERVICIO` en
+`packages/adapter-sdk/src/sdk/mcp-emission/decisiones.ts`, que un test compara con el `si_falla` del
+catálogo. Sólo `plantilla_desconocida` y `listar_plantillas` no traen respaldo.
 
 | Código | HTTP | Cuándo |
 |---|---|---|
@@ -251,7 +255,7 @@ un umbral, ese test es la regresión de calibración.
 - **Un alias.** Quitar el MCP con `decisiones-registrar-mcp.py --arnes … --config … --quitar --aplicar`,
   o restaurar el respaldo. Quitar `DECISIONES_URL` del `<alias>.env`, volver al `BUNDLE_*` anterior si
   hace falta y reiniciar su unidad. Sin `DECISIONES_URL`, el adaptador responde
-  `decisiones_no_configurado` y el modelo decide solo.
+  `decisiones_no_configurado` con el respaldo (cerrado en las plantillas de seguridad).
 - **El servicio.** `deploy/decisiones/desplegar.sh revertir` hace `compose down`, conserva el volumen
   de auditoría y devuelve la clave a su dueño y modo anteriores. Para volver a una versión anterior,
   `aplicar <commit-anterior>`.

@@ -8,6 +8,7 @@ import { readOwnerOnlyFile } from "../secure-files.js";
  * operations cross the socket, so no path or header chosen by the model reaches the network.
  */
 export interface DecisionesRespuesta { readonly status: number; readonly body: unknown }
+export interface DecisionesRespaldo { readonly decision: string; readonly valor: null; readonly motivo: string; readonly caer_a_llm: boolean }
 export type DecisionesForwarder = (method: "GET" | "POST", path: string, body?: unknown) => Promise<DecisionesRespuesta>;
 export interface DecisionesTls { readonly certFile: string; readonly keyFile: string; readonly caFile: string }
 interface DecisionesRoute { readonly method: "GET" | "POST"; readonly path: string; readonly body?: unknown }
@@ -16,6 +17,31 @@ interface DecisionesRoute { readonly method: "GET" | "POST"; readonly path: stri
 export const DECISIONES_TIMEOUT_MS = 40_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const PLANTILLA_ID = /^[a-z][a-z0-9_]{1,63}$/u;
+
+const RESPALDO_LLM: DecisionesRespaldo = {
+  decision: "llm", valor: null, caer_a_llm: true, motivo: "No hubo decisión de Jev: resolvelo con tu propio razonamiento",
+};
+
+/**
+ * What the model applies when no answer can come from the service at all. The security templates
+ * fail closed here too; each entry must equal that template's si_falla (the decisions service's
+ * tests compare them against the catalog).
+ */
+export const RESPALDO_SIN_SERVICIO: Readonly<Record<string, DecisionesRespaldo>> = {
+  aprobacion_humana: { decision: "exige_aprobacion", valor: null, caer_a_llm: false, motivo: "Sin respuesta del servicio de decisiones: falla cerrado, pedí aprobación." },
+  guardia_privacidad_jarvis: { decision: "bloquear", valor: null, caer_a_llm: false, motivo: "Sin respuesta del servicio de decisiones: falla cerrado, no lo compartas." },
+};
+
+export function respaldoSinServicio(operacion: unknown, argumentos: unknown): DecisionesRespaldo | undefined {
+  if (operacion === "listar_plantillas") return undefined;
+  const plantilla = typeof argumentos === "object" && argumentos !== null ? (argumentos as Record<string, unknown>).plantilla : undefined;
+  return operacion === "decidir_plantilla" && typeof plantilla === "string" ? (RESPALDO_SIN_SERVICIO[plantilla] ?? RESPALDO_LLM) : RESPALDO_LLM;
+}
+
+function withRespaldo(status: number, body: unknown, respaldo: DecisionesRespaldo | undefined): DecisionesRespuesta {
+  if (respaldo === undefined || status < 400 || typeof body !== "object" || body === null || Array.isArray(body) || "respaldo" in body) return { status, body };
+  return { status, body: { ...body, respaldo } };
+}
 
 const object = { type: "object" };
 export const DECISIONES_TOOLS: Tool[] = [
@@ -26,7 +52,7 @@ export const DECISIONES_TOOLS: Tool[] = [
   },
   {
     name: "decidir_plantilla",
-    description: "Decide con una plantilla del catálogo (mirá listar_plantillas) en segundos y por una fracción de centavo, sin gastar tokens de LLM. Devuelve decision, valor, confianza, senales y caer_a_llm: si caer_a_llm es true, decidí vos usando las senales como pista. Si devuelve error, aplicá su respaldo. Nunca pongas secretos en state; la identidad la pone el adaptador.",
+    description: "Decide con una plantilla del catálogo (mirá listar_plantillas) en segundos y por una fracción de centavo, sin gastar tokens de LLM. Devuelve decision, valor, confianza, senales y caer_a_llm: si caer_a_llm es true, decidí vos usando las senales como pista. Si devuelve error, aplicá su respaldo (siempre viene; en aprobacion_humana y guardia_privacidad_jarvis falla cerrado). Nunca pongas secretos en state; la identidad la pone el adaptador.",
     inputSchema: {
       type: "object",
       properties: { plantilla: { type: "string" }, state: object, restringir: object },
@@ -112,14 +138,19 @@ export function decisionesForwarder(url: string | undefined, tls: DecisionesTls 
   };
 }
 
-/** What the socket answers when it cannot reach the service; the model falls back to its own reasoning. */
+/** Every failed decision reaches the model with a respaldo: the service's own, or the adapter's. */
 export async function answerDecisiones(forwarder: DecisionesForwarder | undefined, operacion: unknown, argumentos: unknown): Promise<DecisionesRespuesta> {
+  const respaldo = respaldoSinServicio(operacion, argumentos);
   if (forwarder === undefined) {
-    return { status: 503, body: { error: "decisiones_no_configurado", mensaje: "Este adaptador no tiene servicio de decisiones: decidí con tu propio razonamiento" } };
+    return withRespaldo(503, { error: "decisiones_no_configurado", mensaje: "Este adaptador no tiene servicio de decisiones: aplicá el respaldo" }, respaldo);
   }
   let route: DecisionesRoute;
   try { route = decisionesRoute(operacion, argumentos); }
-  catch (error) { return { status: 400, body: { error: "solicitud_invalida", mensaje: error instanceof Error ? error.message : "solicitud inválida" } }; }
-  try { return await forwarder(route.method, route.path, route.body); }
-  catch { return { status: 503, body: { error: "decisiones_inalcanzable", mensaje: "No se pudo llegar al servicio de decisiones: decidí con tu propio razonamiento" } }; }
+  catch (error) { return withRespaldo(400, { error: "solicitud_invalida", mensaje: error instanceof Error ? error.message : "solicitud inválida" }, respaldo); }
+  try {
+    const answer = await forwarder(route.method, route.path, route.body);
+    return withRespaldo(answer.status, answer.body, respaldo);
+  } catch {
+    return withRespaldo(503, { error: "decisiones_inalcanzable", mensaje: "No se pudo llegar al servicio de decisiones: aplicá el respaldo" }, respaldo);
+  }
 }

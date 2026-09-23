@@ -142,7 +142,30 @@ export class DecisionService {
     return { version_catalogo: this.options.catalog.version, plantilla: plantilla.definition };
   }
 
+  /** The fallback of the template the body names, or the free one; undefined when it names none known. */
+  fallbackFor(body: unknown): FallbackOutcome | undefined {
+    if (!isPlainObject(body)) return undefined;
+    if (body.plantilla === undefined) return body.questions === undefined ? undefined : FREE_FALLBACK;
+    const plantilla = typeof body.plantilla === 'string' ? this.options.catalog.plantillas.get(body.plantilla) : undefined;
+    return plantilla === undefined ? undefined : staticOutcome(plantilla.siFalla);
+  }
+
+  /** Any refusal of a decision carries the fallback to apply: a security template fails closed even on a 400. */
+  withFallback(error: unknown, body: unknown): unknown {
+    if (!(error instanceof DecisionError) || error.details.respaldo !== undefined) return error;
+    const fallback = this.fallbackFor(body);
+    return fallback === undefined ? error : error.withFallback(fallback);
+  }
+
   async decide(caller: Caller, body: unknown): Promise<Record<string, unknown>> {
+    try {
+      return await this.decideRequest(caller, body);
+    } catch (error) {
+      throw this.withFallback(error, body);
+    }
+  }
+
+  private async decideRequest(caller: Caller, body: unknown): Promise<Record<string, unknown>> {
     const request = parseRequest(body);
     if (this.options.redact && (secretInKeys(request.state) || secretInKeys(request.questions))) {
       throw invalid('hay un secreto en un nombre de campo, un id de pregunta o una opción: sacalo antes de preguntar');

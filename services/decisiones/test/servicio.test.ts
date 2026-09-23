@@ -130,6 +130,20 @@ describe('servicio de decisiones sobre mTLS', () => {
     expect(readFileSync(h.auditFile, 'utf8')).not.toContain(secreto);
   });
 
+  it('todo rechazo de una decisión trae el respaldo de su plantilla, también los 400 y 413', async () => {
+    const faltaCampo = await h.call(jarvis(), 'POST', '/v1/decidir', { plantilla: 'aprobacion_humana', state: { entorno: 'vpstn' } });
+    expect(faltaCampo.status).toBe(400);
+    expect(faltaCampo.body).toMatchObject({ error: 'solicitud_invalida', respaldo: { decision: 'exige_aprobacion', caer_a_llm: false } });
+    const enorme = await h.call(jarvis(), 'POST', '/v1/decidir', { plantilla: 'aprobacion_humana', state: { accion_propuesta: `rm -rf /srv/datos && ${'x'.repeat(70_000)}` } });
+    expect(enorme.status).toBe(413);
+    expect(enorme.body).toMatchObject({ error: 'state_demasiado_grande', respaldo: { decision: 'exige_aprobacion' } });
+    const libre = await h.call(zeus(), 'POST', '/v1/decidir', { state: 'x', questions: { a: { type: 'noul', instructions: 'x' } }, umbrales: { confianza: 2 } });
+    expect(libre.body).toMatchObject({ error: 'solicitud_invalida', respaldo: { decision: 'llm', caer_a_llm: true } });
+    const ajeno = await h.call(h.pki.client('pablo'), 'POST', '/v1/decidir', { plantilla: 'aprobacion_humana', state: { accion_propuesta: 'x' } });
+    expect(ajeno.body).toMatchObject({ error: 'no_autorizado', respaldo: { decision: 'exige_aprobacion' } });
+    expect(h.jev.seen).toHaveLength(0);
+  });
+
   it('un prefiltro determinista decide sin llamar a Jev', async () => {
     const result = await h.call(jarvis(), 'POST', '/v1/decidir', { plantilla: 'aprobacion_humana', state: { accion_propuesta: 'rm -rf /datos/viejo' } });
     expect(result.body).toMatchObject({ decision: 'exige_aprobacion', origen: 'prefiltro' });
@@ -199,6 +213,7 @@ describe('límites por alias', () => {
       expect(Number(third.headers['retry-after'])).toBeGreaterThan(0);
       const pilot = await limited.call(limited.pki.client('jarvis'), 'POST', '/v1/decidir', body);
       expect(pilot.status).toBe(403);
+      expect(pilot.body).toMatchObject({ error: 'no_autorizado', respaldo: { decision: 'llm' } });
     } finally { await limited.stop(); }
   });
 });

@@ -67,7 +67,7 @@ export function buildApp(options: AppOptions): FastifyInstance {
     try {
       const caller = await options.identify(request.raw.socket);
       return await service.decide(caller, request.body);
-    } catch (error) { return send(reply, error); }
+    } catch (error) { return send(reply, service.withFallback(error, request.body)); }
   });
 
   return app;

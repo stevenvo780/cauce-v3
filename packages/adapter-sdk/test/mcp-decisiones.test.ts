@@ -23,6 +23,8 @@ async function fixture(forwarder: DecisionesForwarder | undefined) {
   return { client, close: async () => { await client.close(); await runtime.close(); await rm(directory, { recursive: true, force: true }); } };
 }
 
+const RESPALDO_LLM_ESPERADO = { decision: "llm", valor: null, caer_a_llm: true, motivo: "No hubo decisión de Jev: resolvelo con tu propio razonamiento" };
+
 function payload(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, unknown> {
   const [first] = result.content as { text: string }[];
   return JSON.parse(first?.text ?? "{}") as Record<string, unknown>;
@@ -63,6 +65,9 @@ test("an adapter without a decisions service answers so the model falls back to 
     const result = await f.client.callTool({ name: "decidir", arguments: { state: "x", questions: {} } });
     assert.equal(result.isError, true);
     assert.equal(payload(result).error, "decisiones_no_configurado");
+    assert.deepEqual(payload(result).respaldo, RESPALDO_LLM_ESPERADO);
+    const cerrado = await f.client.callTool({ name: "decidir_plantilla", arguments: { plantilla: "aprobacion_humana", state: { accion_propuesta: "x" } } });
+    assert.equal((payload(cerrado).respaldo as { decision: string }).decision, "exige_aprobacion");
   } finally { await f.close(); }
 });
 
@@ -72,6 +77,9 @@ test("an unreachable service is a typed tool error, never a crash of the MCP ser
     const result = await f.client.callTool({ name: "listar_plantillas", arguments: {} });
     assert.equal(result.isError, true);
     assert.equal(payload(result).error, "decisiones_inalcanzable");
+    assert.equal(payload(result).respaldo, undefined);
+    const guardia = await f.client.callTool({ name: "decidir_plantilla", arguments: { plantilla: "guardia_privacidad_jarvis", state: { texto: "x" } } });
+    assert.equal((payload(guardia).respaldo as { decision: string }).decision, "bloquear");
     assert.equal((await f.client.listTools()).tools.length, 3);
   } finally { await f.close(); }
 });

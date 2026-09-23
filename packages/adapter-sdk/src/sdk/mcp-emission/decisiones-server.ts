@@ -1,10 +1,14 @@
 /* eslint @typescript-eslint/no-deprecated: "off" -- JSON Schema tools require the low-level request handlers. */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { DECISIONES_TIMEOUT_MS, DECISIONES_TOOLS } from "./decisiones.js";
+import { DECISIONES_TIMEOUT_MS, DECISIONES_TOOLS, respaldoSinServicio } from "./decisiones.js";
 import { socketExchange, type EmissionToolResult } from "./runtime.js";
 
-const UNAVAILABLE = "El adaptador de Cauce no responde: decidí con tu propio razonamiento";
+function unavailable(operacion: string, argumentos: unknown): EmissionToolResult {
+  const respaldo = respaldoSinServicio(operacion, argumentos);
+  const body = { error: "adaptador_no_responde", mensaje: "El adaptador de Cauce no responde: aplicá el respaldo", ...(respaldo === undefined ? {} : { respaldo }) };
+  return { isError: true, content: [{ type: "text", text: JSON.stringify(body) }] };
+}
 
 export async function callDecisiones(socketPath: string, operacion: string, argumentos: unknown): Promise<EmissionToolResult> {
   const answer = await socketExchange(socketPath, "/decisiones", "POST", { operacion, argumentos }, DECISIONES_TIMEOUT_MS + 5_000);
@@ -20,8 +24,9 @@ export function createDecisionesMcpServer(socketPath: string): Server {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name } = request.params;
     if (!DECISIONES_TOOLS.some((tool) => tool.name === name)) return { isError: true, content: [{ type: "text", text: `Herramienta desconocida: ${name}` }] };
-    try { return await callDecisiones(socketPath, name, request.params.arguments ?? {}); }
-    catch { return { isError: true, content: [{ type: "text", text: UNAVAILABLE }] }; }
+    const argumentos = request.params.arguments ?? {};
+    try { return await callDecisiones(socketPath, name, argumentos); }
+    catch { return unavailable(name, argumentos); }
   });
   return server;
 }
