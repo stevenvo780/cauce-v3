@@ -166,6 +166,11 @@ load_config() {
       SHARED_SESSION|SHARED_SESSION_WORKSPACE)
         [[ $harness == claude || $harness == codex || $harness == grok ]] || die "config key is not allowed for $harness: $key"
         ;;
+      # The conversation the shared TUI must resume when the alias has no pointer yet (claude/grok resume
+      # by exact id; codex by `resume --last`). The adapter seeds it itself with the release it runs.
+      SHARED_SESSION_NATIVE_ID)
+        [[ $harness == claude || $harness == grok ]] || die "config key is not allowed for $harness: $key"
+        ;;
       # Per-alias configuration: only for the two harnesses that read a directory governed by a
       # variable. hermes reads stdin and openclaw does not read ~/.codex or ~/.claude; accepting
       # the key there would export a variable nobody reads and claim a separated alias.
@@ -253,6 +258,11 @@ validate_config_values() {
   if [[ -v CONFIG[SHARED_SESSION_WORKSPACE] ]]; then
     [[ -v CONFIG[SHARED_SESSION] ]] || die 'SHARED_SESSION_WORKSPACE requires SHARED_SESSION=1'
     valid_absolute_path "${CONFIG[SHARED_SESSION_WORKSPACE]}" || die 'SHARED_SESSION_WORKSPACE must be a canonical absolute path'
+  fi
+  if [[ -v CONFIG[SHARED_SESSION_NATIVE_ID] ]]; then
+    [[ -v CONFIG[SHARED_SESSION] ]] || die 'SHARED_SESSION_NATIVE_ID requires SHARED_SESSION=1'
+    [[ ${CONFIG[SHARED_SESSION_NATIVE_ID]} =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] \
+      || die 'SHARED_SESSION_NATIVE_ID must be a canonical lowercase UUID'
   fi
   # Both rewrite the same harness config directory live, racing the seeded profile against the owner.
   if [[ -v CONFIG[SHARED_SESSION] && ${CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT]:-0} == 1 ]]; then
@@ -908,6 +918,8 @@ start_adapter() {
     environment+=("CAUCE_SHARED_SESSION=${CONFIG[SHARED_SESSION]}")
     [[ -v CONFIG[SHARED_SESSION_WORKSPACE] ]] \
       && environment+=("CAUCE_SHARED_SESSION_WORKSPACE=${CONFIG[SHARED_SESSION_WORKSPACE]}")
+    [[ -v CONFIG[SHARED_SESSION_NATIVE_ID] ]] \
+      && environment+=("CAUCE_SHARED_SESSION_NATIVE_ID=${CONFIG[SHARED_SESSION_NATIVE_ID]}")
     # tmux creates the session with this TERM. Without it the server is born with an unknown terminal
     # and the TUI renders broken for the owner, who is the one who joins afterwards.
     environment+=('TERM=xterm-256color'); [[ $harness != grok ]] || environment+=("GROK_HOME=$container_home/.grok")

@@ -70,8 +70,9 @@ export async function resolveGrokLaunch(
     if (history === "present") {
       return {
         state: "blocked",
-        detail: "Grok has conversations but no shared TUI pointer; seed the canonical one"
-          + " (shared-session.js seed --native-id <id>)",
+        detail: "Grok has conversations but no shared TUI pointer; name the canonical one with"
+          + " SHARED_SESSION_NATIVE_ID=<id> in the alias config (the adapter seeds it on start)"
+          + " or shared-session.js seed --native-id <id>",
       };
     }
     if (history === "unreadable") return { state: "blocked", detail: "Grok history could not be inspected" };

@@ -26,7 +26,7 @@ import { codexTranscript } from "../shared-session/rollout.js";
 import { grokTranscript } from "../shared-session/grok.js";
 import type { PasteSessionOptions } from "../shared-session/paste-runner/contracts.js";
 import { loadSharedSessionConfig, type SharedSessionConfig } from "../shared-session/config.js";
-import { sharedSessionResume } from "../shared-session/resume.js";
+import { exactConversationIsSecure, sharedSessionResume } from "../shared-session/resume.js";
 import { SharedTuiPointerStore } from "../shared-session/native-pointer.js";
 import { NativePointerAttestor } from "../shared-session/native-witness.js";
 import type { CommandRunner } from "../sdk/types.js";
@@ -152,6 +152,9 @@ export async function sharedSessionRunner(
         false);
     }
   }
+  if (shared.nativeId !== undefined && (shared.harness === "claude" || shared.harness === "grok")) {
+    await seedCanonicalConversation(shared, shared.harness, shared.nativeId, logger);
+  }
   const tmux = new CliTmux();
   const sleep = (ms: number): Promise<void> =>
     new Promise<void>((resolveSleep) => {
@@ -191,6 +194,40 @@ export async function sharedSessionRunner(
     case "codex":
       return new PasteSessionRunner({ ...comun, transcript: codexTranscript(shared.configDirectory) });
   }
+}
+
+/**
+ * Names the canonical conversation from the release the adapter runs (`nativeId` in its config),
+ * only while the alias has no pointer: never replaces one (the witness moves it after a /new) and
+ * never picks one on its own. Every outcome is logged; none stops the adapter, because a missing
+ * pointer already fails each delivery closed with its own notice.
+ */
+async function seedCanonicalConversation(
+  shared: SharedSessionConfig,
+  harness: "claude" | "grok",
+  nativeId: string,
+  logger: AdapterLogger,
+): Promise<void> {
+  const binding = { alias: shared.alias, harness, configDirectory: shared.configDirectory, workspace: shared.workspace };
+  let outcome: string;
+  try {
+    outcome = await exactConversationIsSecure(harness, binding, nativeId)
+      ? await new SharedTuiPointerStore(shared.stateDirectory).seed(binding, nativeId)
+      : "unverified";
+  } catch {
+    outcome = "unverified";
+  }
+  logger({
+    event: "shared_session_resume",
+    alias: shared.alias,
+    error_message: outcome === "written"
+      ? `la conversación canónica ${nativeId} quedó sembrada para la TUI compartida`
+      : outcome === "unchanged"
+        ? `la conversación canónica ${nativeId} ya era la sembrada`
+        : outcome === "conflict"
+          ? `no se sembró ${nativeId}: el puntero ya nombra otra conversación y nunca se reemplaza`
+          : `no se sembró ${nativeId}: esa conversación no existe o no es segura en ${shared.configDirectory}`,
+  });
 }
 
 function pointedRunner(

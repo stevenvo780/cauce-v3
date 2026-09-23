@@ -22,6 +22,13 @@ export interface SharedSessionConfig {
   /** What the TUI must see in its environment, whoever creates it. */
   readonly paneEnvironment: Readonly<Record<string, string>>;
   readonly harnessArguments: readonly string[];
+  /**
+   * The conversation to name canonical when the alias has none yet (`CAUCE_SHARED_SESSION_NATIVE_ID`).
+   * The adapter seeds it itself on start, from the release it runs: the `shared-session.js seed`
+   * step could only run from a release that reaches the container WITH that same start, and an
+   * alias with history and no pointer blocks every delivery.
+   */
+  readonly nativeId?: string;
 }
 
 const SHARED_SESSION_ENV = "CAUCE_SHARED_SESSION";
@@ -38,6 +45,8 @@ export function claudePermissionArguments(
   }
 }
 const SHARED_SESSION_WORKSPACE_ENV = "CAUCE_SHARED_SESSION_WORKSPACE";
+const SHARED_SESSION_NATIVE_ID_ENV = "CAUCE_SHARED_SESSION_NATIVE_ID";
+const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 const DEFAULT_WORKSPACE = "/workspace";
 
@@ -132,7 +141,15 @@ export function loadSharedSessionConfig(
   }
   const home = environment.HOME ?? homedir();
   if (!isAbsolute(home)) throw new Error("HOME debe ser una ruta absoluta para la sesión compartida");
+  const nativeId = environment[SHARED_SESSION_NATIVE_ID_ENV];
+  if (nativeId !== undefined && nativeId !== "") {
+    if (harnessId === "codex") {
+      throw new Error(`${SHARED_SESSION_NATIVE_ID_ENV} no existe para codex: reanuda con resume --last`);
+    }
+    if (!CANONICAL_UUID.test(nativeId)) throw new Error(`${SHARED_SESSION_NATIVE_ID_ENV} debe ser un UUID canónico`);
+  }
   return {
+    ...(nativeId === undefined || nativeId === "" ? {} : { nativeId }),
     harness: harnessId,
     alias,
     workspace,
