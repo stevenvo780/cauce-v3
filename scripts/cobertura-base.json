@@ -14,6 +14,10 @@
  "packages/store/src": {
   "lineas_pct": 93.67
  },
+ "services/decisiones/src": {
+  "lineas_pct": null,
+  "pendiente_de_siembra": true
+ },
  "services/dispatcher/src": {
   "lineas_pct": 89.13
  },

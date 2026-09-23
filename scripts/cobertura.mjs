@@ -43,7 +43,7 @@ const SALIDAS_COMPILADAS = [
 export const PAQUETES_RAIZ = [
   'packages/protocol/src', 'packages/store/src', 'packages/mcp-fleet-monitor/src',
   'services/dispatcher/src', 'services/gateway/src', 'services/telegram-bridge/src',
-  'services/terminal-relay/src',
+  'services/terminal-relay/src', 'services/decisiones/src',
 ];
 export const PAQUETE_CONSOLA = 'console/src';
 export const PAQUETE_ADAPTER = 'packages/adapter-sdk';

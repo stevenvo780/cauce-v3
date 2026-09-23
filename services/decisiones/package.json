@@ -1,0 +1,19 @@
+{
+  "name": "@cauce/decisiones",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/app.ts",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/decisiones.mjs --banner:js=\"import { createRequire as __cauceRequire } from 'node:module'; const require = __cauceRequire(import.meta.url);\"",
+    "typecheck": "tsc --noEmit -p ../../tsconfig.json"
+  },
+  "dependencies": {
+    "@cauce/protocol": "workspace:*",
+    "fastify": "^5.4.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "esbuild": "0.28.1"
+  }
+}
