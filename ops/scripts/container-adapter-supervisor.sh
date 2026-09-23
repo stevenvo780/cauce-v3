@@ -606,6 +606,10 @@ validate_container_identity_and_mount() {
     runtime_paths+=("${CONFIG[HERMES_HOME]}")
   elif [[ $harness == openclaw ]]; then
     runtime_paths+=("${CONFIG[OPENCLAW_WORKSPACE]}")
+  elif [[ $harness == grok ]]; then
+    # ~/.grok holds the login (auth.json), the cauce MCP registration (config.toml) and the
+    # per-cwd sessions that --resume reads: losing it on a recreate logs out and forks threads.
+    runtime_paths+=("$container_home/.grok")
   fi
   if [[ ${CONFIG[CONFIG_POR_ALIAS]:-} == 1 ]]; then
     runtime_path=$(config_por_alias_directorio "$harness" "$container_home" "$alias_name") \

@@ -20,3 +20,4 @@ export {
   parseOpenClawOutput,
   parseOpenCodeOutput,
 } from "./output-parser/harnesses.js";
+export { parseGrokOutput } from "./output-parser/grok.js";

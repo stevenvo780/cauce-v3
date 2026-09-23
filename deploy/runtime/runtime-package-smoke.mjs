@@ -46,6 +46,7 @@ const adapterBins = [
   'codex',
   'fake',
   'fake-harness',
+  'grok',
   'hermes',
   'openclaw',
   'opencode',

@@ -51,6 +51,20 @@ class HardenedReadTests(unittest.TestCase):
         self.assertEqual(sorted(aliases), ["fixture"])
         self.assertEqual(entry["harness"], "claude")
 
+    def test_grok_is_an_accepted_headless_harness_and_unknown_ones_are_not(self) -> None:
+        for harness, accepted in (("grok", True), ("grok-cli", False)):
+            document = {
+                "schemaVersion": 2, "systemPrincipals": {}, "historicalAliases": {},
+                "aliases": {"fixture": dict(ENTRY, harness=harness)},
+            }
+            self.inventory.write_text(json.dumps(document), encoding="utf-8")
+            with self.subTest(harness=harness):
+                if accepted:
+                    self.assertEqual(LIB.load_container_aliases(self.root)["fixture"]["harness"], harness)
+                else:
+                    with self.assertRaises(LIB.ContainerAliasError):
+                        LIB.load_container_aliases(self.root)
+
     def test_hardened_read_rejects_a_group_writable_inventory(self) -> None:
         self.inventory.chmod(0o664)
         with self.assertRaises(LIB.InventoryAccessError):

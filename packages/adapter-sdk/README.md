@@ -8,9 +8,45 @@ Conecta un agente CLI real a Cauce: consumidor durable + ejecución sobre la ses
 
 **Ejecución:** entregar significa **pegar el texto en la sesión tmux viva** del harness (`paste-runner.ts`, `tmux.ts`: cuarentena de panel, barrera de input) y esperar el turno del modelo. Es la parte cara e inherentemente frágil del diseño: el error típico de producción es del turno del harness (timeouts de ACK, deadline excedido), no del bus.
 
-**Ejecutables (`src/bin/`):** `openclaw`, `claude`, `codex` — los que usa la flota real. `hermes`, `opencode` y `fake` no tienen ningún usuario en producción (candidatos a retiro con `git rm` — git es el archivo; `fake` lo usan los tests).
+**Ejecutables (`src/bin/`):** `openclaw`, `claude`, `codex` — los que usa la flota real. `hermes`, `opencode` y `fake` no tienen ningún usuario en producción (candidatos a retiro con `git rm` — git es el archivo; `fake` lo usan los tests). `grok` es nuevo y todavía no tiene alias (ver abajo).
 
 **Despliegue:** la versión activa de cada adaptador se acredita contra la flota viva; no se infiere desde este README.
+
+## Arnés `grok` (Grok CLI, `@xai-official/grok`, medido en 1.0.41)
+
+Headless de un turno, como `opencode`: `grok --prompt-file /dev/stdin --output-format json
+--always-approve --verbatim [--resume <sessionId>]`, ejecutable `cauce-adapter-grok`.
+`--always-approve` porque en headless nadie aprueba una tool (el turno se bloquearía);
+`--verbatim` para que una línea de la petición que empieza por `/` o `@` sea texto y no un comando
+o una mención de fichero de Grok.
+
+- **Prompt:** sigue entrando SOLO por fd 0, pero Grok no lee el stream de stdin: únicamente acepta
+  el prompt como ruta (`--prompt-file`) o en argv (`-p`, prohibido por el runner). El pipe por
+  defecto de libuv es un socketpair y `open("/dev/stdin")` sobre él falla con ENXIO (medido:
+  `Error: Failed to read '/dev/stdin': No such device or address (os error 6)`, exit 1). Por eso la
+  definición declara `stdinSource: "file"`: el runner respalda fd 0 con un fichero regular 0600 ya
+  desenlazado antes de arrancar el proceso.
+- **Salida:** un único objeto JSON al terminar (`text`, `stopReason`, `sessionId`, …). `text`
+  concatena todo el texto del turno sin separador; `thought` nunca llega a la respuesta. Un
+  `stopReason` distinto de `end_turn` o un objeto `{"type":"error"}` es un turno `failed` con el
+  mensaje crudo de Grok. Sin testigo de arranque: nada sale por stdout antes del final.
+- **Sesiones:** `observed` (`sessionId` → `--resume`). Grok las guarda por directorio de trabajo:
+  el alias necesita un `CAUCE_AGENT_WORKSPACE` estable. Una sesión que ni el disco ni el registro
+  de xAI conocen sale con exit 1 y `Failed to restore session from remote … 404`: el adaptador la
+  olvida y reintenta (`PROCESS_EXIT_PREFLIGHT`). Un fallo de red al restaurar reintenta sin olvidar.
+- **Emisión MCP:** Grok no tiene flag de MCP por invocación, así que, como en claude/codex/openclaw,
+  el servidor `cauce` se registra en la configuración nativa al desplegar, con scope de usuario
+  (el de proyecto exige carpeta "trusted", imposible en headless):
+  `grok mcp add cauce --scope user -- node <release>/packages/adapter-sdk/dist/src/bin/cauce-mcp.js <estado-del-alias>/mcp-emission.sock`
+  (queda en `~/.grok/config.toml`, verificable con `grok mcp list`). Grok expone las tools a través
+  de `search_tool`/`use_tool` como `cauce__cauce_reply`. Sin ese registro, o si el modelo no llama a
+  la tool, el turno sigue funcionando por el sobre JSON de respaldo (`emission_result=text_fallback`).
+- **Aislamiento:** por defecto Grok también importa de `~/.claude` y `~/.claude.json` los MCP, las
+  instrucciones (`CLAUDE.md`), las reglas y los hooks. En un HOME compartido con un alias claude,
+  eso le daría a Grok la identidad del vecino y su `cauce` MCP, que apunta al socket de otro alias.
+  En el `~/.grok/config.toml` del alias grok hay que poner `mcps`, `agents`, `rules`, `hooks` y
+  `skills = false` bajo `[compat.claude]` y `[compat.cursor]`. Dos alias grok no deben compartir
+  `~/.grok`.
 
 **Probar:** `pnpm --filter @cauce/adapter-sdk test` (`node:test`).
 
