@@ -55,6 +55,7 @@ MAP = os.path.join(OPS, 'container-aliases.json')
 MARKERS = os.path.expanduser('~/.local/state/cauce-attach')
 PKI = os.path.expanduser('~/.config/cauce-v3/container-pki')
 AVISO_CONF = os.path.expanduser('~/.config/cauce-v3/attach-aviso.json')
+CONFIG = os.path.expanduser('~/.config/cauce-v3/container-aliases')
 GATEWAY = os.environ.get('CAUCE_GATEWAY_URL', 'https://100.64.0.6:8443')
 HOST_NATIVE = {'kant': 'cauce-v3-host-kant'}
 ATTACHABLE = {'claude', 'codex', 'grok'}
@@ -117,6 +118,15 @@ def sesiones_mod():
     modulo = importlib.util.module_from_spec(spec)
     cargador.exec_module(modulo)
     return modulo
+
+
+def compartida(alias):
+    """SHARED_SESSION=1 in the alias .env: its ONE live TUI is the adapter's tmux pane."""
+    try:
+        with open(os.path.join(CONFIG, f'{alias}.env')) as handle:
+            return any(line.strip() == 'SHARED_SESSION=1' for line in handle)
+    except OSError:
+        return False
 
 
 def unit_of(alias):
@@ -284,6 +294,10 @@ def main():
     host_native = alias in HOST_NATIVE
     unit = unit_of(alias)
 
+    # grok does not lock sessions: a second process on the shared conversation splits it in two.
+    if harness == 'grok' and compartida(alias) and not forzar:
+        die(f'{alias} tiene sesion compartida: su TUI es el panel tmux del adaptador, entra con '
+            f'«cauce {alias}».\n             Otro grok sobre esa conversacion la parte en dos (--forzar).')
     if bifurcar and harness not in FORKABLE:
         die(f'{alias} usa {harness}: --bifurcar sólo existe para {", ".join(sorted(FORKABLE))}.')
     if harness not in ATTACHABLE:

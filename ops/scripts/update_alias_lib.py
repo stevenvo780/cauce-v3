@@ -97,6 +97,7 @@ HARNESS_ALLOWED: dict[str, frozenset[str]] = {
         }
     ),
     "codex": frozenset({"SHARED_SESSION", "SHARED_SESSION_WORKSPACE", "CONFIG_POR_ALIAS"}),
+    "grok": frozenset({"SHARED_SESSION", "SHARED_SESSION_WORKSPACE"}),
     "hermes": frozenset(
         {"HERMES_HOME", "HERMES_INFERENCE_MODEL", "HERMES_PYTHON", "HERMES_SOURCE_COMMIT"}
     ),
@@ -115,6 +116,7 @@ HARNESS_ALLOWED: dict[str, frozenset[str]] = {
 HARNESS_REQUIRED: dict[str, frozenset[str]] = {
     "claude": frozenset({"EXPECTED_CLI_VERSION"}),
     "codex": frozenset(),
+    "grok": frozenset(),
     "hermes": frozenset(
         {"HERMES_HOME", "HERMES_INFERENCE_MODEL", "HERMES_PYTHON", "HERMES_SOURCE_COMMIT"}
     ),

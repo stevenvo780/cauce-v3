@@ -57,6 +57,9 @@ async function fixture(name) {
         container: "claw-only", user: "claw", home: "/home/claw", harness: "openclaw",
         workspace: "/home/claw/clawd",
       },
+      hades: {
+        container: "grok-only", user: "claw", home: "/home/claw", harness: "grok",
+      },
     },
   })}\n`, { mode: 0o600 });
   return { root, configRoot, inventory, pkiRoot };
@@ -539,6 +542,30 @@ test("la matriz por alias impide quitar aislamiento o inyectar claves de otro ha
     assert.match(foreignPki.stderr, /PKI_DIR.*ruta acotada/u);
     assert.equal(await readFile(file, "utf8"), original);
     await assert.rejects(stat(path.join(context.configRoot, "backups")), /ENOENT/u);
+  } finally {
+    await rm(context.root, { recursive: true, force: true });
+  }
+});
+
+test("grok acepta la sesion compartida y rechaza el aislamiento de config que no lee", async () => {
+  const context = await fixture("grok");
+  try {
+    const file = path.join(context.configRoot, "hades.env");
+    const original = config("hades", "release-a").replace("CONFIG_POR_ALIAS=1\n", "");
+    await writeFile(file, original, { mode: 0o600 });
+
+    const shared = output(run(context, "apply", [
+      "--alias", "hades", "--expected-old-digest", digest(original),
+      "--set", "SHARED_SESSION=1", "--set", "SHARED_SESSION_WORKSPACE=/home/claw",
+    ]));
+    assert.equal(shared.status, "updated");
+    assert.match(await readFile(file, "utf8"), /^SHARED_SESSION=1\nSHARED_SESSION_WORKSPACE=\/home\/claw$/mu);
+
+    const isolated = run(context, "apply", [
+      "--alias", "hades", "--expected-old-digest", shared.newDigest, "--set", "CONFIG_POR_ALIAS=1",
+    ]);
+    assert.equal(isolated.status, 2);
+    assert.match(isolated.stderr, /claves incompatibles/u);
   } finally {
     await rm(context.root, { recursive: true, force: true });
   }

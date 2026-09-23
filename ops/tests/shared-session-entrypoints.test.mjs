@@ -244,4 +244,44 @@ cmd_entrar native
   }
 }
 
+// grok: with SHARED_SESSION=1 `cauce <alias>` attaches to the adapter's tmux TUI (the SAME
+// conversation as Telegram); only without it does it fall back to a branch of the DM.
+for (const shared of [true, false]) {
+  const test = await fixture("grok");
+  try {
+    await writeFile(path.join(test.home, ".config/cauce-v3/container-aliases/hades.env"),
+      "SHARED_SESSION=1\nBUNDLE_RELEASE=release-test\nSHARED_SESSION_WORKSPACE=/home/claw\n");
+    await executable(path.join(test.home, ".local/bin/cauce-attach"), `#!/usr/bin/env python3
+import os, sys
+with open(os.environ["CAUCE_TEST_LOG"], "a") as log:
+    log.write("ATTACH\\t" + "\\t".join(sys.argv[1:]) + "\\n")
+`);
+    const source = `source <(sed '/^case /,$d' ${JSON.stringify(cli)})
+alias_info() { printf 'Steven\\tgrp.steven\\tagv2-steven-hades-oc\\tclaw\\t/home/claw\\t/state/hades\\tgrok\\tlocal\\n'; }
+adaptador_activo() { printf 'active\\n'; }
+compartida_configurada() { return ${shared ? 0 : 1}; }
+avisos() { :; }
+cmd_entrar hades
+`;
+    const result = spawnSync("bash", ["-c", source], { encoding: "utf8", env: test.environment });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const calls = await readFile(test.log, "utf8");
+    if (shared) {
+      assert.match(result.stdout, /COMPARTIDA/u);
+      const ensure = calls.split("\n").find((line) => line.includes("\tensure\t"));
+      assert.ok(ensure?.includes("\t--harness\tgrok"), calls);
+      assert.ok(ensure.includes("\t--state\t/state/hades") && ensure.includes("\t--workspace\t/home/claw"), calls);
+      assert.match(calls, /DOCKER\texec\t-it\t--user\tclaw\tagv2-steven-hades-oc\ttmux\t-L\tcauce\tattach-session\t-t\tcauce-hades:agente/u);
+      assert.ok(!calls.includes("ATTACH"), "la compartida no abre un segundo grok");
+    } else {
+      assert.match(result.stdout, /APARTE.*rama \(--fork-session\) del DM/u);
+      assert.match(result.stdout, /falta SHARED_SESSION=1/u);
+      assert.match(calls, /ATTACH\thades\t--dm\t--bifurcar/u);
+      assert.ok(!calls.includes("attach-session"), calls);
+    }
+  } finally {
+    await rm(test.directory, { recursive: true, force: true });
+  }
+}
+
 console.log("shared session entrypoints: OK");
