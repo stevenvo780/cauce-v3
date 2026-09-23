@@ -1,0 +1,143 @@
+{
+  "id": "aclarar_o_actuar",
+  "version": "1.0.0",
+  "nombre": "¿Pedir aclaración o actuar?",
+  "cuando_usar": "Antes de empezar un pedido ambiguo. La doctrina de Steven es 'ejecutá, no preguntes': la plantilla sólo manda a preguntar cuando falta algo imprescindible o cuando equivocarse sería caro.",
+  "state": {
+    "pedido": "texto del pedido",
+    "contexto_disponible": "hilo previo, memoria relevante y archivos citados, recortados a lo pertinente"
+  },
+  "state_requerido": [
+    "pedido"
+  ],
+  "questions": {
+    "falta_dato": {
+      "type": "noul",
+      "instructions": {
+        "pregunta": "¿Falta saber sobre qué hay que trabajar para poder empezar `pedido`?",
+        "foco": "Leé `pedido` junto con `contexto_disponible`. Una pregunta informativa no carece de datos: su respuesta es el trabajo."
+      }
+    },
+    "varias_interpretaciones": {
+      "type": "noul",
+      "instructions": "¿`pedido` se puede entender de dos o más maneras que llevarían a hacer trabajos distintos?"
+    },
+    "error_seria_caro": {
+      "type": "noul",
+      "instructions": "¿Hacer mal `pedido` causaría un daño difícil de deshacer, como borrar datos, desplegar a producción o escribirle a un cliente?"
+    },
+    "pide_confirmar": {
+      "type": "noul",
+      "instructions": "¿`pedido` pide explícitamente que se consulte o se confirme antes de actuar?"
+    },
+    "solo_pregunta": {
+      "type": "noul",
+      "instructions": "¿`pedido` es sólo una pregunta que se contesta con información, sin pedir ningún cambio?"
+    }
+  },
+  "reglas": [
+    {
+      "si": {
+        "p": "solo_pregunta",
+        ">=": 0.7
+      },
+      "entonces": {
+        "decision": "contestar",
+        "motivo": "Es una pregunta informativa: su respuesta es el trabajo."
+      }
+    },
+    {
+      "si": {
+        "p": "pide_confirmar",
+        ">=": 0.7
+      },
+      "entonces": {
+        "decision": "aclarar",
+        "motivo": "El pedido pide confirmar antes de actuar."
+      }
+    },
+    {
+      "si": {
+        "p": "falta_dato",
+        ">=": 0.7
+      },
+      "entonces": {
+        "decision": "aclarar",
+        "motivo": "Falta saber sobre qué trabajar: no se puede ni empezar."
+      }
+    },
+    {
+      "si": {
+        "todas": [
+          {
+            "p": "varias_interpretaciones",
+            ">=": 0.6
+          },
+          {
+            "p": "error_seria_caro",
+            ">=": 0.5
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "aclarar",
+        "motivo": "Es ambiguo y equivocarse sería caro."
+      }
+    },
+    {
+      "si": {
+        "todas": [
+          {
+            "p": "varias_interpretaciones",
+            ">=": 0.6
+          },
+          {
+            "p": "error_seria_caro",
+            "<": 0.3
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "actuar_declarando",
+        "motivo": "Es ambiguo pero barato: actuá y declarà la interpretación elegida."
+      }
+    },
+    {
+      "si": {
+        "todas": [
+          {
+            "p": "falta_dato",
+            "<": 0.3
+          },
+          {
+            "p": "varias_interpretaciones",
+            "<": 0.4
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "actuar",
+        "motivo": "Claro y completo: ejecutá, no preguntes."
+      }
+    }
+  ],
+  "sino": {
+    "decision": "llm",
+    "motivo": "Franja intermedia: decidí vos con las cinco señales.",
+    "llm": true
+  },
+  "si_falla": {
+    "decision": "llm",
+    "motivo": "Jev no respondió: aplicá la doctrina de siempre (ejecutá, no preguntes).",
+    "llm": true
+  },
+  "evidencia": {
+    "fecha": "2026-09-23",
+    "modelo": "jev-1.13.0",
+    "casos": [
+      "'Arreglá eso.' sin contexto -> falta_dato 0.94 -> aclarar",
+      "'Borrá los worktrees viejos' (hay trabajo sin commitear) -> falta_dato 0.75, varias 0.83, caro 0.66 -> aclarar",
+      "'¿Qué versión de Claude Code corre?' -> solo_pregunta 0.96 -> contestar; falta_dato v1 daba 0.79 (falso positivo), v2 0.36-0.39"
+    ]
+  }
+}

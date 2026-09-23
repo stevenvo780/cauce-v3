@@ -1,0 +1,118 @@
+{
+  "id": "reintentar_escalar_cerrar",
+  "version": "1.0.0",
+  "nombre": "¿Reintentar, escalar a zeus o cerrar?",
+  "cuando_usar": "Después de clasificar un fallo (clasificar_fallo): decidir el paso siguiente. Depende de la salida de clasificar_fallo, así que es una segunda llamada; o se piden las dos en una sola llamada especulativa si el state ya trae todo.",
+  "state": {
+    "pedido_original": "texto del pedido que falló",
+    "clase_fallo": "salida de clasificar_fallo, en texto",
+    "error_crudo": "recortado y enmascarado",
+    "reintentos_previos": "ninguno | uno | dos o más",
+    "evidencia_de_trabajo": "commits, archivos o respuesta parcial hallados después del fallo, o 'ninguna'"
+  },
+  "state_requerido": [
+    "pedido_original",
+    "clase_fallo",
+    "reintentos_previos"
+  ],
+  "questions": {
+    "accion": {
+      "type": "choice",
+      "instructions": "¿Qué hay que hacer ahora con `pedido_original` después de este fallo?",
+      "criteria": {
+        "reintentar_ya": {
+          "que": "Volver a entregar el mismo pedido ahora: el fallo fue pasajero y el pedido sigue vigente",
+          "no_para": "Fallos que se repetirían igual, como credencial, cuota o un bug de código"
+        },
+        "reintentar_despues": {
+          "que": "Reintentar más tarde: el fallo se resuelve solo con tiempo, como una cuota que se reinicia o un proveedor sobrecargado",
+          "no_para": "Fallos que necesitan que alguien arregle algo"
+        },
+        "escalar_zeus": {
+          "que": "Mandar el error crudo a zeus: el fallo es de infraestructura y reintentar no lo arregla",
+          "no_para": "Fallos pasajeros o trabajo que ya quedó hecho"
+        },
+        "cerrar": {
+          "que": "No hacer nada más: el trabajo ya quedó hecho pese al fallo, el pedido ya no aplica o era un duplicado",
+          "no_para": "Pedidos vigentes sin evidencia de trabajo hecho"
+        }
+      }
+    },
+    "trabajo_ya_hecho": {
+      "type": "noul",
+      "instructions": "¿`evidencia_de_trabajo` muestra que lo pedido en `pedido_original` ya quedó hecho?"
+    },
+    "pedido_vencido": {
+      "type": "noul",
+      "instructions": "¿`pedido_original` dejó de tener sentido, por ejemplo porque ya pasó su momento o porque otro ya lo resolvió?"
+    }
+  },
+  "prefiltros": [
+    {
+      "campos": [
+        "reintentos_previos"
+      ],
+      "patron": "^\\s*dos o m[aá]s\\s*$",
+      "flags": "i",
+      "entonces": {
+        "decision": "escalar_zeus",
+        "motivo": "Ya hubo dos o más reintentos: nunca un tercero."
+      }
+    },
+    {
+      "campos": [
+        "clase_fallo"
+      ],
+      "patron": "credencial_vencida|sandbox_permisos|bus_cauce",
+      "entonces": {
+        "decision": "escalar_zeus",
+        "motivo": "Credencial, sandbox o bus: va directo a zeus."
+      }
+    }
+  ],
+  "reglas": [
+    {
+      "si": {
+        "p": "trabajo_ya_hecho",
+        ">=": 0.7
+      },
+      "entonces": {
+        "decision": "cerrar",
+        "motivo": "Hay evidencia de que el trabajo ya quedó hecho: cerrá y entregá lo encontrado, no reentregues."
+      }
+    },
+    {
+      "si": {
+        "confianza": "accion",
+        ">=": 0.6
+      },
+      "entonces": {
+        "decision": "{eleccion:accion}",
+        "motivo": "La acción supera confianza 0.6."
+      }
+    }
+  ],
+  "sino": {
+    "decision": "escalar_zeus",
+    "motivo": "Acción dudosa: lo dudoso va a zeus con el error crudo."
+  },
+  "si_falla": {
+    "decision": "escalar_zeus",
+    "motivo": "Jev no respondió: lo dudoso va a zeus."
+  },
+  "marcas": {
+    "pedido_vencido": {
+      "p": "pedido_vencido",
+      ">=": 0.7
+    }
+  },
+  "evidencia": {
+    "fecha": "2026-09-23",
+    "modelo": "jev-1.13.0",
+    "casos": [
+      "cuota que se reinicia a las 4pm -> reintentar_despues conf=1.00",
+      "entrega muerta pero con commit posterior y CI verde -> cerrar conf=0.98, trabajo_ya_hecho 0.86",
+      "un solo ETIMEDOUT al gateway -> reintentar_ya conf=0.83"
+    ]
+  }
+}

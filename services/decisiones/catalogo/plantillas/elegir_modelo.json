@@ -1,0 +1,159 @@
+{
+  "id": "elegir_modelo",
+  "version": "1.0.0",
+  "nombre": "Elegir modelo o proveedor para delegar una subtarea",
+  "cuando_usar": "Antes de delegar una subtarea (Workflow, subagente, delegar_a_cloud). Jev juzga los ATRIBUTOS de la tarea; el mapeo a modelo concreto y el ruteo por cuota (get_ai_quotas) son código, porque los nombres de modelo cambian y Jev no los conoce.",
+  "state": {
+    "tarea": "descripción de la subtarea a delegar",
+    "tamano_entrada": "pequeña | mediana | grande: más de 200 mil tokens",
+    "consecuencia": "opcional: qué pasa si sale mal"
+  },
+  "state_requerido": [
+    "tarea"
+  ],
+  "questions": {
+    "tipo": {
+      "type": "choice",
+      "instructions": "¿Qué clase de trabajo es `tarea`?",
+      "criteria": {
+        "mecanico": {
+          "que": "Trabajo mecánico, voluminoso o paralelizable: buscar, mapear, convertir formatos, borradores o código repetitivo",
+          "ejemplos": [
+            "listar todos los usos de una función",
+            "convertir 40 archivos YAML a JSON"
+          ]
+        },
+        "codificacion": {
+          "que": "Programación seria: arreglar un bug, refactorizar, escribir tests o lógica no trivial",
+          "ejemplos": [
+            "arreglar la carrera en el reaper",
+            "escribir los tests del parser"
+          ]
+        },
+        "lectura_masiva": {
+          "que": "Leer, resumir o analizar mucho texto o documentos largos",
+          "ejemplos": [
+            "resumir 300 páginas de logs",
+            "leer toda la documentación de una API"
+          ]
+        },
+        "razonamiento_dificil": {
+          "que": "Arquitectura, razonamiento complejo, diagnóstico de fallos raros o verificación adversarial",
+          "ejemplos": [
+            "diseñar el protocolo de reentrega",
+            "revisar adversarialmente un cambio de seguridad"
+          ]
+        },
+        "orquestacion_critica": {
+          "que": "Decidir, coordinar agentes o sintetizar el resultado final de algo crítico",
+          "ejemplos": [
+            "decidir el plan de migración de producción",
+            "sintetizar los hallazgos de cinco agentes"
+          ]
+        }
+      }
+    },
+    "dificultad": {
+      "type": "score",
+      "instructions": "¿Qué tan difícil es `tarea` para un modelo de IA?",
+      "criteria": [
+        "Cualquier modelo lo resuelve siguiendo instrucciones claras",
+        "Hay que entender el contexto del proyecto pero el camino es conocido",
+        "Hay que diseñar una solución entre varias alternativas razonables",
+        "Un error sutil o un problema abierto donde los modelos buenos suelen fallar",
+        "Dificultad extrema: arquitectura nueva o razonamiento adversarial al límite"
+      ]
+    },
+    "critico": {
+      "type": "noul",
+      "instructions": "¿Un error en `tarea` afectaría producción, datos de clientes o una decisión difícil de revertir?"
+    },
+    "contexto_largo": {
+      "type": "noul",
+      "instructions": "¿`tarea` exige leer de una sola vez documentos o código muy largos?"
+    }
+  },
+  "reglas": [
+    {
+      "si": {
+        "prob": "dificultad",
+        "opcion": "4",
+        ">=": 0.5
+      },
+      "entonces": {
+        "decision": "extremo",
+        "motivo": "Dificultad extrema: Fable sólo si Opus lo confirma.",
+        "valor": "{eleccion:tipo}"
+      }
+    },
+    {
+      "si": {
+        "alguna": [
+          {
+            "p": "critico",
+            ">=": 0.6
+          },
+          {
+            "confianza": "tipo",
+            "<": 0.4
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "subir_escalon",
+        "motivo": "Crítico o tipo dudoso: subí un escalón en el mapeo.",
+        "valor": "{eleccion:tipo}"
+      }
+    },
+    {
+      "si": {
+        "confianza": "tipo",
+        ">=": 0.4
+      },
+      "entonces": {
+        "decision": "asignar",
+        "motivo": "Asigná según el mapeo del tipo.",
+        "valor": "{eleccion:tipo}"
+      }
+    }
+  ],
+  "sino": {
+    "decision": "subir_escalon",
+    "motivo": "Ante la duda, subí un escalón."
+  },
+  "si_falla": {
+    "decision": "subir_escalon",
+    "motivo": "Jev no respondió: ante la duda, subí un escalón."
+  },
+  "marcas": {
+    "contexto_largo": {
+      "p": "contexto_largo",
+      ">=": 0.6
+    }
+  },
+  "notas": {
+    "mapeo": {
+      "mecanico": "minimax/MiniMax-M3",
+      "lectura_masiva": "gemini/flash; gemini/pro si dificultad.score >= 2",
+      "codificacion": "codex/gpt-5.6-sol (effort medium si dificultad < 1.5, high si < 2.5, xhigh si >= 2.5); minimax/MiniMax-M3 si dificultad < 1 y critico < 0.3",
+      "razonamiento_dificil": "codex/gpt-5.6-sol effort xhigh u Opus",
+      "orquestacion_critica": "Opus (no se delega)",
+      "extremo": "claude-fable-5 sólo si dificultad.probabilities['4'] >= 0.5 y Opus lo confirma"
+    },
+    "reglas": [
+      "Si critico >= 0.6 -> subir un escalón en el mapeo.",
+      "Si tipo.confidence < 0.4 -> subir un escalón en vez de gastar un LLM en decidir (regla de la casa: ante la duda, subí; nunca bajes calidad en lo crítico).",
+      "La cuota viva (get_ai_quotas) sólo rutea alrededor de un proveedor agotado hacia el siguiente MÁS capaz, y reparte carga en fan-outs."
+    ]
+  },
+  "evidencia": {
+    "fecha": "2026-09-23",
+    "modelo": "jev-1.13.0",
+    "casos": [
+      "convertir 60 YAML a JSON -> mecanico conf=1.00, dificultad 0.73 -> minimax",
+      "protocolo de reentrega idempotente -> razonamiento_dificil conf=1.00, dificultad 2.10, critico 0.76 -> sube un escalón",
+      "resumir una semana de logs -> lectura_masiva conf=1.00, contexto_largo 0.78 -> gemini",
+      "dificultad sale con confidence 0.37-0.39 en tareas fáciles: usar su score con umbral y probabilities['4'] para lo extremo, no su confidence"
+    ]
+  }
+}

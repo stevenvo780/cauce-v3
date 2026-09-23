@@ -1,0 +1,168 @@
+{
+  "id": "triage_urgencia",
+  "version": "1.0.0",
+  "nombre": "Urgencia / triage de un mensaje",
+  "cuando_usar": "Ordenar la cola de un alias o decidir si un mensaje justifica avisar a un humano ya (notify) o puede esperar. Composite scoring: dos Scores atómicos y tres Nouls que se combinan con pesos en código.",
+  "state": {
+    "mensaje": "texto del mensaje",
+    "remitente": "alias o persona",
+    "tipo_remitente": "persona | agente",
+    "contexto_operativo": "opcional: hechos calculados en código, en frases ('zeus no responde desde hace más de una hora')"
+  },
+  "state_requerido": [
+    "mensaje"
+  ],
+  "questions": {
+    "impacto": {
+      "type": "score",
+      "instructions": {
+        "pregunta": "¿Qué tan grave es lo que describe `mensaje`?",
+        "foco": "Juzgá el daño o el bloqueo descrito, no el tono ni la prisa."
+      },
+      "criteria": [
+        "Una consulta, una idea o información, sin nada roto",
+        "Un pedido de trabajo normal, sin nada roto",
+        "Algo funciona mal pero hay un rodeo, o afecta a una sola tarea",
+        "Un agente, un servicio o una persona está bloqueado sin rodeo y no puede seguir trabajando",
+        "Producción de un cliente caída, pérdida de datos o un secreto expuesto"
+      ]
+    },
+    "plazo": {
+      "type": "score",
+      "instructions": "¿Qué plazo pide o implica `mensaje` para ser atendido?",
+      "criteria": [
+        "No menciona plazo ni prisa",
+        "Un plazo de días, o 'cuando puedas'",
+        "Pide que sea hoy o en las próximas horas",
+        "Pide atención inmediata o dice que alguien está esperando ahora"
+      ]
+    },
+    "persona_esperando": {
+      "type": "noul",
+      "instructions": "¿`mensaje` dice que una persona está esperando la respuesta en este momento?"
+    },
+    "afecta_clientes": {
+      "type": "noul",
+      "instructions": "¿`mensaje` describe un problema que afecta a clientes o usuarios finales, y no sólo a la flota interna?"
+    },
+    "incidente_seguridad": {
+      "type": "noul",
+      "instructions": "¿`mensaje` describe una contraseña, token o clave expuesta, o un acceso no autorizado?"
+    }
+  },
+  "indicadores": {
+    "prioridad": {
+      "ponderado": {
+        "impacto": 0.45,
+        "plazo": 0.3,
+        "persona_esperando": 0.15,
+        "afecta_clientes": 0.1
+      }
+    }
+  },
+  "reglas": [
+    {
+      "si": {
+        "p": "incidente_seguridad",
+        ">=": 0.6
+      },
+      "entonces": {
+        "decision": "P0",
+        "motivo": "Incidente de seguridad: avisá al humano ya."
+      }
+    },
+    {
+      "si": {
+        "prob": "impacto",
+        "opcion": "4",
+        ">=": 0.5
+      },
+      "entonces": {
+        "decision": "P0",
+        "motivo": "Impacto máximo (producción de un cliente, pérdida de datos o secreto expuesto)."
+      }
+    },
+    {
+      "si": {
+        "todas": [
+          {
+            "confianza": "impacto",
+            "<": 0.4
+          },
+          {
+            "indicador": "prioridad",
+            ">=": 0.6,
+            "<": 0.85
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "llm",
+        "motivo": "Cerca de la frontera de avisar y con impacto dudoso: decidí vos si se avisa al humano.",
+        "llm": true
+      }
+    },
+    {
+      "si": {
+        "indicador": "prioridad",
+        ">=": 0.75
+      },
+      "entonces": {
+        "decision": "P0",
+        "motivo": "Prioridad ponderada >= 0.75: avisá al humano ya."
+      }
+    },
+    {
+      "si": {
+        "indicador": "prioridad",
+        ">=": 0.5
+      },
+      "entonces": {
+        "decision": "P1",
+        "motivo": "Prioridad ponderada >= 0.5."
+      }
+    },
+    {
+      "si": {
+        "indicador": "prioridad",
+        ">=": 0.25
+      },
+      "entonces": {
+        "decision": "P2",
+        "motivo": "Prioridad ponderada >= 0.25."
+      }
+    }
+  ],
+  "sino": {
+    "decision": "P3",
+    "motivo": "Prioridad ponderada < 0.25: puede esperar."
+  },
+  "si_falla": {
+    "decision": "llm",
+    "motivo": "Jev no respondió: priorizá con tu propio criterio.",
+    "llm": true
+  },
+  "marcas": {
+    "persona_esperando": {
+      "p": "persona_esperando",
+      ">=": 0.7
+    },
+    "afecta_clientes": {
+      "p": "afecta_clientes",
+      ">=": 0.7
+    }
+  },
+  "notas": {
+    "formula": "prioridad = 0.45*impacto.score/4 + 0.30*plazo.score/3 + 0.15*persona_esperando + 0.10*afecta_clientes",
+    "lectura": "Normalizar cada score dividiendo por su nivel máximo antes de ponderar (la doc lo exige para que los pesos signifiquen lo que dicen). El score es una posición entre niveles, no una magnitud. Medido: ante 'el token de GitHub quedó en un log público' plazo dio score 1.91 con confidence 0.00 (0.34 en 'no menciona plazo' y 0.60 en 'inmediato'): una distribución bimodal hace que el score promedio no signifique nada; con confidence < 0.3 se lee probabilities, no score."
+  },
+  "evidencia": {
+    "fecha": "2026-09-23",
+    "modelo": "jev-1.13.0",
+    "casos": [
+      "tests flaky 'cuando puedas' -> impacto 1.27, plazo 1.00 -> prioridad 0.27 (P2)",
+      "producción de Deméter caída con Miguel esperando -> impacto 3.94, plazo 3.00, persona 0.89, clientes 0.96 -> P0",
+      "token de GitHub en log público -> seguridad 0.98, impacto 4.00 -> P0 por override (plazo bimodal, confidence 0.00)"
+    ]
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "id": "guardia_privacidad_jarvis",
+  "version": "1.0.0",
+  "nombre": "Guardia de privacidad saliente (jarvis)",
+  "cuando_usar": "Antes de que jarvis publique en el bus a alguien que no es Steven: la regla dura dice que lo personal de Steven nunca sale por el bus. Un Noul por categoría (patrón de guardrails de la doc). Los secretos se detectan con regex en código, no con Jev.",
+  "requiere_habilitacion": "Envía a TypeSafe (tercero, sin ZDR) el texto que jarvis quiere publicar, que puede traer datos personales de Steven: necesita su visto bueno explícito.",
+  "state": {
+    "texto_saliente": "lo que jarvis va a enviar",
+    "destinatario": "alias destino"
+  },
+  "state_requerido": [
+    "texto_saliente"
+  ],
+  "questions": {
+    "agenda": {
+      "type": "noul",
+      "instructions": "¿`texto_saliente` revela citas, viajes, horarios o planes personales de Steven?"
+    },
+    "finanzas": {
+      "type": "noul",
+      "instructions": "¿`texto_saliente` revela dinero, pagos, deudas o cuentas personales de Steven?"
+    },
+    "salud": {
+      "type": "noul",
+      "instructions": "¿`texto_saliente` revela información de salud de Steven?"
+    },
+    "relaciones": {
+      "type": "noul",
+      "instructions": "¿`texto_saliente` revela información sobre la familia, la pareja o las relaciones personales de Steven?"
+    },
+    "ubicacion": {
+      "type": "noul",
+      "instructions": "¿`texto_saliente` revela dónde está o dónde vive Steven?"
+    }
+  },
+  "prefiltros": [
+    {
+      "campos": [
+        "texto_saliente"
+      ],
+      "patron": "-----BEGIN [A-Z ]*PRIVATE KEY-----|\\bgh[pousr]_[A-Za-z0-9]{20,}|\\bsk-[A-Za-z0-9_-]{20,}|\\bxox[abprs]-[A-Za-z0-9-]{10,}|\\bAKIA[0-9A-Z]{16}\\b|\\beyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.",
+      "entonces": {
+        "decision": "bloquear",
+        "motivo": "El texto trae un secreto: bloqueado sin consultar a Jev."
+      }
+    }
+  ],
+  "reglas": [
+    {
+      "si": {
+        "max": [
+          "agenda",
+          "finanzas",
+          "salud",
+          "relaciones",
+          "ubicacion"
+        ],
+        ">=": 0.4
+      },
+      "entonces": {
+        "decision": "bloquear",
+        "motivo": "Revela algo personal de Steven: devolvelo a jarvis para reescribir sólo lo técnico."
+      }
+    }
+  ],
+  "sino": {
+    "decision": "permitir",
+    "motivo": "Nada personal de Steven: puede salir."
+  },
+  "si_falla": {
+    "decision": "bloquear",
+    "motivo": "Jev no respondió: ante la duda no se comparte."
+  },
+  "evidencia": {
+    "fecha": "2026-09-23",
+    "modelo": "jev-1.13.0",
+    "casos": [
+      "'Steven está en Medellín... cita con el cardiólogo' -> agenda 0.98, salud 0.91, ubicacion 0.93 -> bloquear",
+      "reinicio del gateway de openclaw -> todo <= 0.02 -> pasa"
+    ]
+  }
+}
