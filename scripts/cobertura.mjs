@@ -30,6 +30,7 @@ const SUITES_RAIZ = [
   'tests/store-hardening', 'tests/terminal-pty', 'packages/mcp-fleet-monitor',
   'packages/protocol/test', 'packages/store/test', 'services/dispatcher/test',
   'services/gateway/src', 'services/telegram-bridge/test', 'services/terminal-relay/src',
+  'services/decisiones/test',
 ];
 
 const INCLUIR_RAIZ = ['packages/*/src/**/*.ts', 'services/*/src/**/*.ts'];
