@@ -45,6 +45,9 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     // Last time the transcript grew; distinguishes "paste was lost" (nothing writes)
     // from "paste merged with an in-flight turn" (terminal writes the whole time). See DEFAULT_QUIET_MS.
     let lastActivityAt = Date.now();
+    // Sizes seen on the previous poll. `scan.activity` compares against the PRE-paste baseline, so
+    // once anything was written it stays true forever; activity has to be growth since the last poll.
+    const seenSizes = new Map(baseline);
     // Long-conversation transcripts weigh megabytes and a turn may run for an hour;
     // re-reading the whole file every poll would cost more than the turn itself, so we only read on growth.
     let lastSize = -1;
@@ -113,7 +116,11 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           if (scanned.aborted) continue;
           const scan = scanned.value;
           started = started || scan.started;
-          if (scan.activity) lastActivityAt = Date.now();
+          if (scan.activity) {
+            const moved = await beforeAbort(() => this.transcriptMoved(seenSizes), request.signal);
+            if (moved.aborted) continue;
+            if (moved.value) lastActivityAt = Date.now();
+          }
           injected = scan.injected;
           if (injected !== undefined) {
             const noted = await beforeAbort(
@@ -500,6 +507,26 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
 
   protected async grew(file: string, lastSize: number): Promise<boolean> {
     return await fileSize(file) > lastSize;
+  }
+
+  /**
+   * Whether any transcript changed size since the previous call, updating `seen` in place.
+   *
+   * A paste merged into an in-flight turn is never recorded as its own user entry (claude stores
+   * it as a `queued_command` attachment), so `injected` stays undefined and the only activity
+   * signal is this one. Measured against the baseline instead, it never went quiet: the MCP
+   * deposit was ready but the delivery was held to the 6 h lease cap (zeus f30f2319, kant 57cb2fe0,
+   * 2026-09-23).
+   */
+  protected async transcriptMoved(seen: Map<string, number>): Promise<boolean> {
+    let moved = false;
+    for (const file of await this.options.transcript.files()) {
+      const size = await fileSize(file);
+      if (size < 0) continue;
+      if (seen.get(file) !== size) moved = true;
+      seen.set(file, size);
+    }
+    return moved;
   }
 
 }
