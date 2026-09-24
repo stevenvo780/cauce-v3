@@ -828,6 +828,22 @@ deploy_bundle() {
   [[ $active == "$bundle_digest" ]] || die 'copied active bundle digest differs' 78
   adapter_in_container="$release/packages/adapter-sdk/dist/src/bin/$harness.js"
   active_bundle_in_container=$release
+  prune_bundle_cache
+}
+
+# La caché de releases del contenedor crecía una por despliegue (~40 MB c/u, 30 por alias = 13 GB en
+# vps-tn el 2026-09-24). Cada arranque vuelve a copiar la release desde el staging del host, así que
+# lo podado no se pierde. Conserva: la activa, las que usa un proceso vivo o nombra una configuración
+# de arnés (MCP), y las CAUCE_BUNDLE_CACHE_KEEP (2) más recientes. Nunca aborta el arranque.
+prune_bundle_cache() {
+  local script="$ROOT/container-runtime/podar-releases.py" out
+  [[ -f $script && ! -L $script ]] || return 0
+  if out=$(docker_id_mutate --user 0 /usr/bin/python3 -c "$(cat "$script")" \
+      "$instance_root/releases" "$bundle_release" "${CAUCE_BUNDLE_CACHE_KEEP:-2}" 2>&1); then
+    printf '%s\n' "$out" >&2
+  else
+    printf 'warning: la poda de la cache de releases fallo y no bloquea el arranque: %s\n' "$out" >&2
+  fi
 }
 
 deploy_pki() {
