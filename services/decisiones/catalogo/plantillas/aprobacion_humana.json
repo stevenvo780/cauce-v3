@@ -111,6 +111,15 @@
         "zeus": [
           "gasta_dinero",
           "implicacion_legal"
+        ],
+        "argos": [
+          "gasta_dinero",
+          "implicacion_legal",
+          "sale_de_la_flota"
+        ],
+        "kant": [
+          "gasta_dinero",
+          "implicacion_legal"
         ]
       }
     }

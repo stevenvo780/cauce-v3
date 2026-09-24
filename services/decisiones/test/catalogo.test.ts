@@ -23,7 +23,7 @@ interface RecordedCase {
 
 const grabado = JSON.parse(readFileSync(new URL('./fixtures/jev-grabado.json', import.meta.url), 'utf8')) as { casos: RecordedCase[] };
 
-/** Expected decision per recorded case and per asking alias (default argos: the stricter fleet policy). */
+/** Expected decision per recorded case and per asking alias (default hades: an alias on the stricter fleet policy; argos has its own since 2026-09-24). */
 const ESPERADO: Record<string, readonly [decision: string, valor: string | null, origen?: 'prefiltro']> = {
   '00-ruteo_alias-zeus': ['rutear', 'zeus'],
   '01-ruteo_alias-kant': ['rutear', 'kant'],
@@ -107,6 +107,16 @@ describe('catálogo versionado', () => {
     for (const plantilla of catalog.plantillas.values()) expect(plantilla.version).toMatch(/^\d+\.\d+\.\d+$/u);
   });
 
+  it('argos sólo pide aprobación por dinero, legal o terceros: producción sola no lo frena (criterio de Steven)', async () => {
+    const recorded = grabado.casos.find((entry) => entry.caso === '08-aprobacion_humana-prod');
+    expect(recorded).toBeDefined();
+    if (recorded === undefined) return;
+    const comoArgos = await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'argos' }, { plantilla: recorded.plantilla, state: recorded.state });
+    const comoHades = await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'hades' }, { plantilla: recorded.plantilla, state: recorded.state });
+    expect(comoArgos.decision).toBe('sin_aprobacion');
+    expect(comoHades.decision).toBe('exige_aprobacion');
+  });
+
   it('cada caso grabado contra Jev real lleva a la decisión esperada con las reglas del catálogo', async () => {
     const vistos = new Set<string>();
     for (const recorded of grabado.casos) {
@@ -114,7 +124,7 @@ describe('catálogo versionado', () => {
       expect(expected, recorded.caso).toBeDefined();
       if (expected === undefined) continue;
       const jev = new RecordedJev(recorded);
-      const result = await service(catalog, jev).decide({ tenant: 'Steven', alias: 'argos' }, { plantilla: recorded.plantilla, state: recorded.state });
+      const result = await service(catalog, jev).decide({ tenant: 'Steven', alias: 'hades' }, { plantilla: recorded.plantilla, state: recorded.state });
       expect(recorded.questions_sha256, recorded.caso).toMatch(/^[a-f0-9]{64}$/u);
       expect(jev.stale, `${recorded.caso}: las preguntas cambiaron desde la grabación, re-grabá el caso contra Jev`).toBe(false);
       expect([result.decision, result.valor, result.origen], recorded.caso).toEqual([expected[0], expected[1], expected[2] ?? 'jev']);
@@ -130,7 +140,7 @@ describe('catálogo versionado', () => {
       '23-reintentar_escalar_cerrar-cerrar': 0.74, '29-respuesta_cumple-sin_evidencia': 0.96, '09-aprobacion_humana-libre': 0.8,
     };
     for (const recorded of grabado.casos) {
-      const result = await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'argos' }, { plantilla: recorded.plantilla, state: recorded.state });
+      const result = await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'hades' }, { plantilla: recorded.plantilla, state: recorded.state });
       if (recorded.caso in esperada) expect(result.confianza, recorded.caso).toBe(esperada[recorded.caso]);
       if (result.origen === 'jev' && result.caer_a_llm === false) expect(result.confianza, recorded.caso).toBeGreaterThanOrEqual(0.5);
     }
@@ -156,7 +166,7 @@ describe('catálogo versionado', () => {
         ? { type: 'noul', noul: 0.1 }
         : { type: 'choice', choice: Object.keys(question.criteria as object)[0], confidence: 0.9, probabilities: { [Object.keys(question.criteria as object)[0] ?? '']: 0.95 } })]));
       const fijo = new RecordedJev({ caso: plantilla, plantilla, modelo: 'jev-1.13.0', state, answers, usage: { input_tokens: 1 } });
-      const result = await service(catalog, fijo).decide({ tenant: 'Steven', alias: 'argos' }, { plantilla, state });
+      const result = await service(catalog, fijo).decide({ tenant: 'Steven', alias: 'hades' }, { plantilla, state });
       expect(result.decision, plantilla).not.toMatch(/^(cabe|partir|cumple|incompleta|P1|P2|P3|extremo)$/u);
       if (plantilla !== 'elegir_modelo') expect(result.caer_a_llm, plantilla).toBe(true);
     }
@@ -172,7 +182,7 @@ describe('catálogo versionado', () => {
     pregunta.instructions = '¿`mensaje` es sólo un saludo?';
     const alterado: Catalog = { ...catalog, plantillas: new Map([...catalog.plantillas, ['requiere_respuesta', parsePlantilla(definicion, 'requiere_respuesta.json')]]) };
     const jev = new RecordedJev(recorded);
-    await service(alterado, jev).decide({ tenant: 'Steven', alias: 'argos' }, { plantilla: 'requiere_respuesta', state: recorded.state });
+    await service(alterado, jev).decide({ tenant: 'Steven', alias: 'hades' }, { plantilla: 'requiere_respuesta', state: recorded.state });
     expect(jev.stale).toBe(true);
   });
 
