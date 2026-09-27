@@ -12,6 +12,7 @@ ops/backups
 .serena
 *.log
 .env*
+interno/
 
 # SQL scratch owned by the operator. It is intentionally not part of the
 console/src/features/_grafo/
