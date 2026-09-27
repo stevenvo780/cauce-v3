@@ -273,6 +273,19 @@ def example(alias: str, entry: dict[str, str]) -> str:
             "# OPENCLAW_AGENT_TARGET=openclaw/default",
             "# OPENCLAW_DIST_DIR=/home/claw/.openclaw/node_modules/openclaw/dist",
         ))
+    if entry["harness"] == "muse":
+        workspace = HARNESS_RULES["muse"]["workspace"].format(
+            alias=alias, home=entry["home"]
+        )
+        lines.extend((
+            "MUSE_EXECUTABLE=/opt/muse-code/muse",
+            f"MUSE_CONFIG_HOME={entry['home']}/.muse/config",
+            f"MUSE_DATA_HOME={entry['home']}/.muse/data",
+            f"MUSE_WORKSPACE={workspace}",
+            "MUSE_MODEL=muse-spark-1.3",
+            "MUSE_REASONING_EFFORT=high",
+            "MUSE_APPROVAL_MODE=denyUnmatched",
+        ))
     if entry["harness"] in {"claude", "codex"} and physical_alias_counts[entry["container"]] > 1:
         lines.extend((
             "# Required: this runtime home is shared by multiple aliases.",

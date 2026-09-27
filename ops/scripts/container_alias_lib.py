@@ -16,7 +16,7 @@ NAME_RE = re.compile(r"^[a-z][a-z0-9.-]*$")
 PLACEMENT_RE = re.compile(r"^(?:[a-z][a-z0-9.-]*|host:[a-z][a-z0-9.-]*)$")
 TENANT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 ROOM_RE = re.compile(r"^grp\.[a-z][a-z0-9_-]{0,63}$")
-HARNESS = {"openclaw", "opencode", "claude", "hermes", "codex"}
+HARNESS = {"openclaw", "opencode", "claude", "hermes", "codex", "muse"}
 MEMBERSHIP_ROLES = {"agent", "agent_notify", "operator"}
 MAX_INVENTORY_BYTES = 1024 * 1024
 READ_CHUNK_BYTES = 65536
@@ -159,10 +159,10 @@ def load_container_aliases(
         if not isinstance(docker_host, str) or not NAME_RE.fullmatch(docker_host):
             raise ContainerAliasError(f"{alias}.dockerHost is invalid")
         workspace = entry.get("workspace")
-        if entry["harness"] == "openclaw":
+        if entry["harness"] in {"openclaw", "muse"}:
             _absolute_path(workspace, f"{alias}.workspace")
         elif workspace is not None:
-            raise ContainerAliasError(f"{alias}.workspace is only valid for openclaw")
+            raise ContainerAliasError(f"{alias}.workspace is only valid for openclaw or muse")
         # The persistent mount that backs the state directory is no longer pinned here:
         # every real container keeps the alias state inside a broad persistent bind, so the
         # supervisor discovers the containing bind/volume from `docker inspect` at runtime.
@@ -204,5 +204,4 @@ def load_system_principals(root: pathlib.Path) -> dict[str, dict[str, str]]:
             f"system principals overlap fleet aliases: {sorted(overlap)}"
         )
     return validated
-
 

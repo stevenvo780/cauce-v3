@@ -273,8 +273,8 @@ class HospitalInstanceTests(unittest.TestCase):
         script = (INSTANCE / "provision-agents.sh").read_text(encoding="utf-8")
 
         self.assertIn("ALIASES=(operador teseo perseo)", script)
-        self.assertIn("teseo) printf 'hospital-agent-openclaw-backend-gateway-1'", script)
-        self.assertIn("perseo) printf 'hospital-agent-openclaw-frontend-gateway-1'", script)
+        self.assertIn("teseo) printf 'hospital-agent-muse-backend-1'", script)
+        self.assertIn("perseo) printf 'hospital-agent-muse-frontend-1'", script)
         self.assertIn("for _attempt in $(seq 1 24)", script)
         self.assertIn("last_heartbeat_at > now() - interval '60 seconds'", script)
         self.assertLess(script.index('[ "$leases" = 3 ] ||'), script.index("CAUCE_SMOKE_EXPECTED_AGENTS"))

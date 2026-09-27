@@ -19,7 +19,7 @@ from fleet_derive import (  # noqa: E402
     runtime_state_directory,
 )
 
-HARNESSES = {"claude", "codex", "hermes", "openclaw", "opencode"}
+HARNESSES = {"claude", "codex", "hermes", "muse", "openclaw", "opencode"}
 
 
 def fleet_row(harness: str, **overrides: Any) -> dict[str, Any]:
@@ -58,11 +58,12 @@ class FleetDeriveTests(unittest.TestCase):
                     HOST_STATE_DIRECTORY,
                 )
         self.assertEqual(HARNESS_RULES["openclaw"]["workspace"], "{home}/clawd")
+        self.assertEqual(HARNESS_RULES["muse"]["workspace"], "{home}/clawd")
         self.assertEqual(
             HARNESS_RULES["hermes"]["operationalModelEnv"],
             "HERMES_INFERENCE_MODEL",
         )
-        for harness in HARNESSES - {"openclaw"}:
+        for harness in HARNESSES - {"openclaw", "muse"}:
             self.assertNotIn("workspace", HARNESS_RULES[harness])
         for harness in HARNESSES - {"hermes"}:
             self.assertNotIn("operationalModelEnv", HARNESS_RULES[harness])
@@ -70,7 +71,10 @@ class FleetDeriveTests(unittest.TestCase):
     def test_runtime_state_directory_uses_each_container_rule(self) -> None:
         for harness in HARNESSES:
             row = fleet_row(harness, home="/srv/runtime-user")
-            expected_parent = ".openclaw" if harness == "openclaw" else ".local/state"
+            expected_parent = {
+                "openclaw": ".openclaw",
+                "muse": ".muse",
+            }.get(harness, ".local/state")
             with self.subTest(harness=harness):
                 self.assertEqual(
                     runtime_state_directory("agent-one", row),
@@ -165,12 +169,12 @@ class FleetDeriveTests(unittest.TestCase):
             "/workspace/.cauce-v3/custom",
         )
 
-    def test_alias_entry_derives_openclaw_workspace_only_for_openclaw(self) -> None:
+    def test_alias_entry_derives_workspace_for_workspace_harnesses(self) -> None:
         for harness in HARNESSES:
             row = fleet_row(harness, home="/srv/agent")
             entry = alias_entry("argos", row, {})
             with self.subTest(harness=harness):
-                if harness == "openclaw":
+                if harness in {"openclaw", "muse"}:
                     self.assertEqual(entry["workspace"], "/srv/agent/clawd")
                 else:
                     self.assertNotIn("workspace", entry)
@@ -228,7 +232,7 @@ class FleetDeriveTests(unittest.TestCase):
                     "seedOnConnect": True,
                     "configScope": "alias",
                 }
-                if harness == "openclaw":
+                if harness in {"openclaw", "muse"}:
                     expected_profile["workspace"] = "/srv/agent/clawd"
                 self.assertEqual(profile, expected_profile)
 

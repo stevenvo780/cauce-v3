@@ -175,6 +175,7 @@ load_config() {
       OPENCLAW_TRANSPORT|OPENCLAW_API_URL|OPENCLAW_TOKEN_FILE|OPENCLAW_AGENT_TARGET|OPENCLAW_DIST_DIR|OPENCLAW_WORKSPACE)
         [[ $harness == openclaw ]] || die "config key is not allowed for $harness: $key"
         ;;
+      MUSE_EXECUTABLE|MUSE_CONFIG_HOME|MUSE_DATA_HOME|MUSE_WORKSPACE|MUSE_MODEL|MUSE_REASONING_EFFORT|MUSE_APPROVAL_MODE) [[ $harness == muse ]] || die "config key is not allowed for $harness: $key" ;;
       CLAUDE_PERMISSION_MODE) [[ $harness == claude ]] || die "config key is not allowed for $harness: $key" ;;
       CREDENTIAL_HOME)
         [[ $harness == claude || $harness == codex ]] || die "config key is not allowed for $harness: $key"
@@ -391,6 +392,15 @@ PY
       valid_absolute_path "${CONFIG[OPENCLAW_DIST_DIR]}" || die 'OPENCLAW_DIST_DIR path is invalid'
     fi
   fi
+  if [[ $harness == muse ]]; then
+    [[ ${CONFIG[MUSE_EXECUTABLE]:-} == /opt/muse-code/muse ]] || die 'MUSE_EXECUTABLE must use the pinned Muse mount'
+    [[ ${CONFIG[MUSE_CONFIG_HOME]:-} == "$container_home/.muse/config" ]] || die 'MUSE_CONFIG_HOME must use the isolated persistent profile'
+    [[ ${CONFIG[MUSE_DATA_HOME]:-} == "$container_home/.muse/data" ]] || die 'MUSE_DATA_HOME must use the isolated persistent profile'
+    [[ ${CONFIG[MUSE_WORKSPACE]:-} == "$inventory_workspace" ]] || die 'MUSE_WORKSPACE differs from the canonical inventory workspace'
+    [[ ${CONFIG[MUSE_APPROVAL_MODE]:-} == denyUnmatched ]] || die 'MUSE_APPROVAL_MODE must deny unmatched tools'
+    [[ ! -v CONFIG[MUSE_MODEL] || ${CONFIG[MUSE_MODEL]} =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die 'MUSE_MODEL is invalid'
+    [[ ! -v CONFIG[MUSE_REASONING_EFFORT] || ${CONFIG[MUSE_REASONING_EFFORT]} =~ ^(none|minimal|low|medium|high|xhigh|max|ultra)$ ]] || die 'MUSE_REASONING_EFFORT is invalid'
+  fi
 }
 
 bundle_source=''
@@ -429,13 +439,13 @@ validate_bundle() {
 validate_pki() {
   local pki=${CONFIG[PKI_DIR]} path name expected_openclaw=0
   assert_secure_directory "$pki" 'alias PKI directory'
-  [[ ${CONFIG[OPENCLAW_TRANSPORT]:-cli} == api ]] && expected_openclaw=1
+  [[ $harness == openclaw && ${CONFIG[OPENCLAW_TRANSPORT]:-cli} == api ]] && expected_openclaw=1
   shopt -s nullglob dotglob
   for path in "$pki"/*; do
     name=${path##*/}
     case "$name" in
       token|client.crt|client.key|ca.crt) ;;
-      openclaw-token) (( expected_openclaw == 1 )) || die 'unexpected OpenClaw token file in PKI directory' ;;
+      openclaw-token) (( expected_openclaw == 1 )) || [[ $harness == muse ]] || die 'unexpected OpenClaw token file in PKI directory' ;;
       *) die 'alias PKI directory contains a non-allowlisted entry' ;;
     esac
     assert_secure_file "$path" 600 'alias PKI file'
@@ -606,6 +616,9 @@ validate_container_identity_and_mount() {
     runtime_paths+=("${CONFIG[HERMES_HOME]}")
   elif [[ $harness == openclaw ]]; then
     runtime_paths+=("${CONFIG[OPENCLAW_WORKSPACE]}")
+  elif [[ $harness == muse ]]; then
+    runtime_paths+=("${CONFIG[MUSE_CONFIG_HOME]}" "${CONFIG[MUSE_DATA_HOME]}" "${CONFIG[MUSE_WORKSPACE]}")
+    docker_id_exec --user "$container_user" test -x "${CONFIG[MUSE_EXECUTABLE]}" >/dev/null 2>&1 || die 'Muse executable is missing inside the assigned container'
   fi
   if [[ ${CONFIG[CONFIG_POR_ALIAS]:-} == 1 ]]; then
     runtime_path=$(config_por_alias_directorio "$harness" "$container_home" "$alias_name") \
@@ -825,29 +838,23 @@ deploy_pki() {
   local pki=${CONFIG[PKI_DIR]} stage="/opt/cauce-v3-secrets/.stage-$alias_name-$container_generation-$$" name
   docker_id_mutate --user 0 rm -rf "$stage"
   docker_id_mutate --user 0 mkdir -p "$stage"
-  docker_id_cp "$pki/." "$stage/"
+  if [[ $harness == muse ]]; then
+    for name in token client.crt client.key ca.crt; do [[ ! -f "$pki/$name" ]] || docker_id_cp "$pki/$name" "$stage/$name"; done
+  else
+    docker_id_cp "$pki/." "$stage/"
+  fi
   docker_id_mutate --user 0 chown -R "$container_uid:$container_gid" "$stage"
   docker_id_mutate --user 0 chmod 0700 "$stage"
   for name in client.crt client.key ca.crt; do docker_id_mutate --user 0 chmod 0600 "$stage/$name"; done
   if [[ $bearer_token_present == true ]]; then docker_id_mutate --user 0 chmod 0600 "$stage/token"; fi
-  if [[ ${CONFIG[OPENCLAW_TRANSPORT]:-cli} == api ]]; then docker_id_mutate --user 0 chmod 0600 "$stage/openclaw-token"; fi
+  if [[ $harness == openclaw && ${CONFIG[OPENCLAW_TRANSPORT]:-cli} == api ]]; then docker_id_mutate --user 0 chmod 0600 "$stage/openclaw-token"; fi
   docker_id_mutate --user 0 mkdir -p /opt/cauce-v3-secrets
   docker_id_mutate --user 0 chmod 0711 /opt/cauce-v3-secrets
   docker_id_mutate --user 0 rm -rf "$secret_directory"
   docker_id_mutate --user 0 mv "$stage" "$secret_directory"
 }
 
-start_adapter() {
-  local runtime_path effective_default_timeout_ms
-  command -v docker >/dev/null 2>&1 || die 'docker is unavailable' 127
-  [[ -f $ALIAS_LOCK_EXEC && ! -L $ALIAS_LOCK_EXEC ]] || die 'alias lock helper is unavailable' 73
-  if [[ -z ${CAUCE_ALIAS_LOCK_FD:-} ]]; then
-    exec env CAUCE_CONTAINER_OPS_ROOT="$ROOT" CAUCE_CONTAINER_LOCK_ROOT="$LOCK_ROOT" \
-      python3 "$ALIAS_LOCK_EXEC" run --lock-root "$LOCK_ROOT" --alias "$alias_name" -- \
-      "$0" start "$alias_name"
-  fi
-  python3 "$ALIAS_LOCK_EXEC" verify --lock-root "$LOCK_ROOT" --alias "$alias_name" \
-    || die "another supervisor owns alias $alias_name" 73
+preflight_adapter() {
   load_config
   validate_bundle
   wait_for_container
@@ -857,6 +864,20 @@ start_adapter() {
   ensure_isolated_config
   ensure_claude_binary
   ensure_hermes_runtime
+}
+
+start_adapter() {
+  local runtime_path key
+  command -v docker >/dev/null 2>&1 || die 'docker is unavailable' 127
+  [[ -f $ALIAS_LOCK_EXEC && ! -L $ALIAS_LOCK_EXEC ]] || die 'alias lock helper is unavailable' 73
+  if [[ -z ${CAUCE_ALIAS_LOCK_FD:-} ]]; then
+    exec env CAUCE_CONTAINER_OPS_ROOT="$ROOT" CAUCE_CONTAINER_LOCK_ROOT="$LOCK_ROOT" \
+      python3 "$ALIAS_LOCK_EXEC" run --lock-root "$LOCK_ROOT" --alias "$alias_name" -- \
+      "$0" start "$alias_name"
+  fi
+  python3 "$ALIAS_LOCK_EXEC" verify --lock-root "$LOCK_ROOT" --alias "$alias_name" \
+    || die "another supervisor owns alias $alias_name" 73
+  preflight_adapter
   copy_control_helper
   prepare_control_securely
   prepare_state_securely
@@ -864,11 +885,6 @@ start_adapter() {
   deploy_bundle
   deploy_pki
   runtime_path="$container_home/.local/bin:$container_home/.npm-global/bin:$container_home/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-  if [[ -v CONFIG[DEFAULT_TIMEOUT_MS] ]]; then
-    effective_default_timeout_ms=${CONFIG[DEFAULT_TIMEOUT_MS]}
-  else
-    effective_default_timeout_ms=86400000
-  fi
   environment=(
     "HOME=$container_home" "USER=$container_user" "LOGNAME=$container_user" "PATH=$runtime_path"
     'LANG=C.UTF-8' 'LC_ALL=C.UTF-8' 'NODE_ENV=production' 'CAUCE_ENVIRONMENT=production'
@@ -878,7 +894,7 @@ start_adapter() {
     "CAUCE_CONTAINER_ID=$container_id" "CAUCE_CONTAINER_GENERATION=$container_generation"
     "CAUCE_CONTAINER_PRESENCE_GENERATION=$container_presence_generation"
     "CAUCE_RELAY_URL=${CONFIG[RELAY_URL]}"
-    "CAUCE_DEFAULT_TIMEOUT_MS=$effective_default_timeout_ms"
+    "CAUCE_DEFAULT_TIMEOUT_MS=${CONFIG[DEFAULT_TIMEOUT_MS]:-86400000}"
     "CAUCE_TLS_CERT_FILE=$secret_directory/client.crt" "CAUCE_TLS_KEY_FILE=$secret_directory/client.key" "CAUCE_TLS_CA_FILE=$secret_directory/ca.crt"
   )
   environment+=("CAUCE_SEMBRAR_PERFIL=${CONFIG[CAUCE_SEMBRAR_PERFIL]}")
@@ -924,14 +940,12 @@ start_adapter() {
     environment+=("CAUCE_HERMES_SOURCE_DIR=$hermes_source_dir")
     environment+=("CAUCE_HERMES_PYTHON=${CONFIG[HERMES_PYTHON]}")
   fi
-  if [[ $harness == openclaw ]]; then
-    environment+=("CAUCE_OPENCLAW_WORKSPACE=${CONFIG[OPENCLAW_WORKSPACE]}")
-    environment+=("CAUCE_OPENCLAW_TRANSPORT=${CONFIG[OPENCLAW_TRANSPORT]:-cli}")
-    [[ -v CONFIG[OPENCLAW_API_URL] ]] && environment+=("CAUCE_OPENCLAW_API_URL=${CONFIG[OPENCLAW_API_URL]}")
-    [[ -v CONFIG[OPENCLAW_TOKEN_FILE] ]] && environment+=("CAUCE_OPENCLAW_TOKEN_FILE=${CONFIG[OPENCLAW_TOKEN_FILE]}")
-    [[ -v CONFIG[OPENCLAW_AGENT_TARGET] ]] && environment+=("CAUCE_OPENCLAW_AGENT_TARGET=${CONFIG[OPENCLAW_AGENT_TARGET]}")
-    [[ -v CONFIG[OPENCLAW_DIST_DIR] ]] && environment+=("CAUCE_OPENCLAW_DIST_DIR=${CONFIG[OPENCLAW_DIST_DIR]}")
-  fi
+  [[ $harness != openclaw ]] || environment+=("CAUCE_OPENCLAW_TRANSPORT=${CONFIG[OPENCLAW_TRANSPORT]:-cli}")
+  for key in \
+    OPENCLAW_WORKSPACE OPENCLAW_API_URL OPENCLAW_TOKEN_FILE OPENCLAW_AGENT_TARGET OPENCLAW_DIST_DIR \
+    MUSE_EXECUTABLE MUSE_CONFIG_HOME MUSE_DATA_HOME MUSE_WORKSPACE MUSE_APPROVAL_MODE MUSE_MODEL MUSE_REASONING_EFFORT; do
+    [[ ! -v "CONFIG[$key]" ]] || environment+=("CAUCE_$key=${CONFIG[$key]}")
+  done
   assert_generation
   # The lifecycle controller runs as root (to own the control plane) and drops the
   # adapter child to the mapped non-root UID/GID. This exec is intentionally unbounded.
@@ -958,15 +972,7 @@ stop_adapter() {
 
 check_adapter() {
   command -v docker >/dev/null 2>&1 || die 'docker is unavailable' 127
-  load_config
-  validate_bundle
-  wait_for_container
-  validate_container_identity_and_mount
-  validate_pki
-  resolve_container_identity
-  ensure_isolated_config
-  ensure_claude_binary
-  ensure_hermes_runtime
+  preflight_adapter
   docker_id_exec test -x "$control_helper" >/dev/null 2>&1 || die 'container lifecycle helper is absent' 78
   docker_id_exec --user 0 /usr/bin/python3 "$control_helper" check \
     --alias "$alias_name" --state "$state_directory" --control-dir "$control_dir" \

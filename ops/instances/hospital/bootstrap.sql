@@ -73,6 +73,10 @@ ON CONFLICT (slug) DO UPDATE SET
   brief = EXCLUDED.brief,
   enabled = EXCLUDED.enabled;
 
+INSERT INTO harness_definitions(id, display_name, capabilities)
+VALUES ('muse', 'Muse Code', '["messages.receive","jobs.interactive","jobs.batch"]'::jsonb)
+ON CONFLICT (id) DO NOTHING;
+
 INSERT INTO agents(
   tenant_id, alias, harness_id, display_name, enabled,
   container_name, runtime_user, home_directory, state_directory,
@@ -87,16 +91,16 @@ VALUES
     'hospital-lider'
   ),
   (
-    'Hospital', 'teseo', 'openclaw', 'Teseo · Developer generalista', true,
-    'hospital-agent-openclaw-backend-gateway-1', 'node', '/home/node',
-    '/home/node/.openclaw/cauce-v3/teseo',
+    'Hospital', 'teseo', 'muse', 'Teseo · Developer generalista', true,
+    'hospital-agent-muse-backend-1', 'node', '/home/node',
+    '/home/node/.muse/cauce-v3/teseo',
     (SELECT brief FROM agent_role_templates WHERE slug = 'hospital-developer'),
     'hospital-developer'
   ),
   (
-    'Hospital', 'perseo', 'openclaw', 'Perseo · Developer generalista', true,
-    'hospital-agent-openclaw-frontend-gateway-1', 'node', '/home/node',
-    '/home/node/.openclaw/cauce-v3/perseo',
+    'Hospital', 'perseo', 'muse', 'Perseo · Developer generalista', true,
+    'hospital-agent-muse-frontend-1', 'node', '/home/node',
+    '/home/node/.muse/cauce-v3/perseo',
     (SELECT brief FROM agent_role_templates WHERE slug = 'hospital-developer'),
     'hospital-developer'
   )

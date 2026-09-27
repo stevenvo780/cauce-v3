@@ -44,6 +44,15 @@ umask 077
 install -d -m 0755 /run/lock
 exec 9>/run/lock/hospital-cauce-provision.lock
 flock -n 9 || { echo "Ya hay un aprovisionamiento Hospital en ejecución" >&2; exit 75; }
+
+inflight=$(docker exec hospital-cauce-postgres-1 psql -XAtq -U cauce_hospital -d cauce_hospital \
+  -c "SELECT count(*) FROM deliveries WHERE status IN ('leased','accepted','started')")
+[ "$inflight" = 0 ] \
+  || { echo "Hay $inflight entregas en vuelo; no se modificó el aprovisionamiento" >&2; exit 1; }
+registered=$(docker exec hospital-cauce-postgres-1 psql -XAtq -U cauce_hospital -d cauce_hospital \
+  -c "SELECT string_agg(alias || ':' || harness_id || ':' || container_name, ',' ORDER BY alias) FROM agents WHERE tenant_id='Hospital' AND enabled")
+[ "$registered" = 'operador:openclaw:hospital-agent-openclaw-operator-gateway-1,perseo:muse:hospital-agent-muse-frontend-1,teseo:muse:hospital-agent-muse-backend-1' ] \
+  || { echo "El registro Hospital todavía no coincide con la topología Muse; abortando antes de cambiar configs" >&2; exit 1; }
 install -d -m 0700 "$BUNDLE_ROOT" "$BUNDLE_ROOT/releases" "$CONFIG_ROOT" "$PKI_ROOT" "$LOCK_ROOT"
 temporary=
 image_container=
@@ -96,8 +105,8 @@ PY
 container_for() {
   case "$1" in
     operador) printf 'hospital-agent-openclaw-operator-gateway-1' ;;
-    teseo) printf 'hospital-agent-openclaw-backend-gateway-1' ;;
-    perseo) printf 'hospital-agent-openclaw-frontend-gateway-1' ;;
+    teseo) printf 'hospital-agent-muse-backend-1' ;;
+    perseo) printf 'hospital-agent-muse-frontend-1' ;;
     *) return 1 ;;
   esac
 }
@@ -114,8 +123,8 @@ token_key_for() {
 state_source_for() {
   case "$1" in
     operador) printf '/opt/hospital-agent/runtime/state-operator' ;;
-    teseo) printf '/opt/hospital-agent/runtime/state-backend' ;;
-    perseo) printf '/opt/hospital-agent/runtime/state-frontend' ;;
+    teseo) printf '/opt/hospital-agent/runtime/state-muse-backend' ;;
+    perseo) printf '/opt/hospital-agent/runtime/state-muse-frontend' ;;
     *) return 1 ;;
   esac
 }
@@ -178,13 +187,15 @@ for alias in "${ALIASES[@]}"; do
   install -m 0600 "$issued/agent-$alias.key" "$pki/client.key"
   install -m 0600 "$INSTANCE_ETC/pki/ca.crt" "$pki/ca.crt"
 
-  gateway_token=$(env_value "$HOSPITAL_ENV" "$(token_key_for "$alias")")
-  [[ "$gateway_token" =~ ^[a-f0-9]{64}$ ]] \
-    || { echo "Token local OpenClaw inválido para $alias" >&2; exit 1; }
-  printf '%s\n' "$gateway_token" >"$pki/openclaw-token.tmp"
-  unset gateway_token
-  chmod 0600 "$pki/openclaw-token.tmp"
-  mv "$pki/openclaw-token.tmp" "$pki/openclaw-token"
+  if [ "$alias" = operador ]; then
+    gateway_token=$(env_value "$HOSPITAL_ENV" "$(token_key_for "$alias")")
+    [[ "$gateway_token" =~ ^[a-f0-9]{64}$ ]] \
+      || { echo "Token local OpenClaw inválido para $alias" >&2; exit 1; }
+    printf '%s\n' "$gateway_token" >"$pki/openclaw-token.tmp"
+    unset gateway_token
+    chmod 0600 "$pki/openclaw-token.tmp"
+    mv "$pki/openclaw-token.tmp" "$pki/openclaw-token"
+  fi
 
   container=$(container_for "$alias")
   image_id=$(docker inspect --format '{{.Image}}' "$container")
@@ -202,13 +213,27 @@ for alias in "${ALIASES[@]}"; do
     printf 'CAUCE_SEMBRAR_PERFIL=1\n'
     printf 'MOUNT_TYPE=bind\n'
     printf 'MOUNT_SOURCE=%s\n' "$state_source"
-    printf 'MOUNT_DESTINATION=/home/node/.openclaw\n'
+    if [ "$alias" = operador ]; then
+      printf 'MOUNT_DESTINATION=/home/node/.openclaw\n'
+    else
+      printf 'MOUNT_DESTINATION=/home/node/.muse\n'
+    fi
     printf 'MOUNT_RW=true\n'
-    printf 'OPENCLAW_WORKSPACE=/home/node/clawd\n'
-    printf 'OPENCLAW_TRANSPORT=api\n'
-    printf 'OPENCLAW_API_URL=http://127.0.0.1:18789/v1/chat/completions\n'
-    printf 'OPENCLAW_TOKEN_FILE=/opt/cauce-v3-secrets/%s/openclaw-token\n' "$alias"
-    printf 'OPENCLAW_AGENT_TARGET=openclaw/%s\n' "$alias"
+    if [ "$alias" = operador ]; then
+      printf 'OPENCLAW_WORKSPACE=/home/node/clawd\n'
+      printf 'OPENCLAW_TRANSPORT=api\n'
+      printf 'OPENCLAW_API_URL=http://127.0.0.1:18789/v1/chat/completions\n'
+      printf 'OPENCLAW_TOKEN_FILE=/opt/cauce-v3-secrets/%s/openclaw-token\n' "$alias"
+      printf 'OPENCLAW_AGENT_TARGET=openclaw/%s\n' "$alias"
+    else
+      printf 'MUSE_EXECUTABLE=/opt/muse-code/muse\n'
+      printf 'MUSE_CONFIG_HOME=/home/node/.muse/config\n'
+      printf 'MUSE_DATA_HOME=/home/node/.muse/data\n'
+      printf 'MUSE_WORKSPACE=/home/node/clawd\n'
+      printf 'MUSE_MODEL=muse-spark-1.3\n'
+      printf 'MUSE_REASONING_EFFORT=high\n'
+      printf 'MUSE_APPROVAL_MODE=denyUnmatched\n'
+    fi
     printf 'DEFAULT_TIMEOUT_MS=1800000\n'
   } >"$temporary_config"
   chmod 0600 "$temporary_config"
@@ -232,11 +257,6 @@ systemctl daemon-reload
 for alias in "${ALIASES[@]}"; do
   systemctl reset-failed "cauce-v3-profile-expectation@$alias.service" 2>/dev/null || true
 done
-
-inflight=$(docker exec hospital-cauce-postgres-1 psql -XAtq -U cauce_hospital -d cauce_hospital \
-  -c "SELECT count(*) FROM deliveries WHERE status IN ('leased','accepted','started')")
-[ "$inflight" = 0 ] \
-  || { echo "Hay $inflight entregas en vuelo; reintenta con el bus quieto para no dejar dos consumidores" >&2; exit 1; }
 
 for alias in "${ALIASES[@]}"; do
   # `enable --now` no reinicia una unit ya activa: sin el restart el BUNDLE_RELEASE nuevo no llega a correr.

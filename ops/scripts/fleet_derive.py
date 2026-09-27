@@ -19,6 +19,7 @@ HOST_STATE_DIRECTORY = "/var/lib/cauce-v3/aliases/{alias}"
 
 _LOCAL_RUNTIME_STATE_DIRECTORY = "{home}/.local/state/cauce-v3/{alias}"
 _OPENCLAW_RUNTIME_STATE_DIRECTORY = "{home}/.openclaw/cauce-v3/{alias}"
+_MUSE_RUNTIME_STATE_DIRECTORY = "{home}/.muse/cauce-v3/{alias}"
 
 HARNESS_RULES: dict[str, dict[str, Any]] = {
     "claude": {
@@ -43,6 +44,13 @@ HARNESS_RULES: dict[str, dict[str, Any]] = {
     "openclaw": {
         "stateDirectory": {
             "container": _OPENCLAW_RUNTIME_STATE_DIRECTORY,
+            "host": HOST_STATE_DIRECTORY,
+        },
+        "workspace": "{home}/clawd",
+    },
+    "muse": {
+        "stateDirectory": {
+            "container": _MUSE_RUNTIME_STATE_DIRECTORY,
             "host": HOST_STATE_DIRECTORY,
         },
         "workspace": "{home}/clawd",

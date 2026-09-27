@@ -111,6 +111,13 @@ HARNESS_ALLOWED: dict[str, frozenset[str]] = {
             "CAUCE_NATIVE_PROFILE_CONTEXT",
         }
     ),
+    "muse": frozenset(
+        {
+            "MUSE_EXECUTABLE", "MUSE_CONFIG_HOME", "MUSE_DATA_HOME",
+            "MUSE_WORKSPACE", "MUSE_MODEL", "MUSE_REASONING_EFFORT",
+            "MUSE_APPROVAL_MODE",
+        }
+    ),
 }
 HARNESS_REQUIRED: dict[str, frozenset[str]] = {
     "claude": frozenset({"EXPECTED_CLI_VERSION"}),
@@ -119,6 +126,10 @@ HARNESS_REQUIRED: dict[str, frozenset[str]] = {
         {"HERMES_HOME", "HERMES_INFERENCE_MODEL", "HERMES_PYTHON", "HERMES_SOURCE_COMMIT"}
     ),
     "openclaw": frozenset({"OPENCLAW_WORKSPACE"}),
+    "muse": frozenset({
+        "MUSE_EXECUTABLE", "MUSE_CONFIG_HOME", "MUSE_DATA_HOME",
+        "MUSE_WORKSPACE", "MUSE_APPROVAL_MODE",
+    }),
 }
 
 
@@ -429,6 +440,25 @@ def validate_policy(document: EnvDocument, policy: AliasPolicy, pki_root: pathli
             raise ConfigUpdateError("OPENCLAW_AGENT_TARGET tiene formato invalido")
         if "OPENCLAW_DIST_DIR" in values and not is_absolute_value(values["OPENCLAW_DIST_DIR"]):
             raise ConfigUpdateError("OPENCLAW_DIST_DIR debe ser una ruta absoluta canonica")
+    if policy.harness == "muse":
+        if policy.canonical_workspace is None or values.get("MUSE_WORKSPACE") != policy.canonical_workspace:
+            raise ConfigUpdateError("MUSE_WORKSPACE no coincide con el inventario")
+        expected = {
+            "MUSE_EXECUTABLE": "/opt/muse-code/muse",
+            "MUSE_CONFIG_HOME": f"{policy.home}/.muse/config",
+            "MUSE_DATA_HOME": f"{policy.home}/.muse/data",
+        }
+        for key, required_value in expected.items():
+            if values.get(key) != required_value:
+                raise ConfigUpdateError(f"{key} no usa la ruta aislada aprobada")
+        if values.get("MUSE_APPROVAL_MODE") != "denyUnmatched":
+            raise ConfigUpdateError("MUSE_APPROVAL_MODE debe ser denyUnmatched")
+        if "MUSE_MODEL" in values and MODEL_RE.fullmatch(values["MUSE_MODEL"]) is None:
+            raise ConfigUpdateError("MUSE_MODEL tiene formato invalido")
+        if "MUSE_REASONING_EFFORT" in values and values["MUSE_REASONING_EFFORT"] not in {
+            "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+        }:
+            raise ConfigUpdateError("MUSE_REASONING_EFFORT es invalido")
     for key in ("PKI_DIR", "MOUNT_SOURCE", "MOUNT_DESTINATION", "HERMES_HOME", "HERMES_PYTHON"):
         if key in values and not is_absolute_value(values[key]):
             raise ConfigUpdateError(f"{key} debe ser una ruta absoluta canonica")
