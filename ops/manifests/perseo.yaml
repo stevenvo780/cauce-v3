@@ -6,7 +6,7 @@ spec:
   tenant: Hospital
   room: grp.hospital
   alias: perseo
-  harness: openclaw
+  harness: muse
   profile: {seedOnConnect: true, configScope: alias, workspace: /home/node/clawd}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_PERSEO_RELAY_URL, requiredScheme: wss}

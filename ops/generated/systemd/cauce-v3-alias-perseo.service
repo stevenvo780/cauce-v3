@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 alias consumer perseo (Hospital/openclaw)
+Description=Cauce V3 alias consumer perseo (Hospital/muse)
 After=network-online.target cauce-v3-compose@prod.service
 Wants=network-online.target
 ConditionPathExists=/etc/cauce-v3/aliases/perseo.env
@@ -14,9 +14,8 @@ UMask=0077
 Environment=CAUCE_ALIAS=perseo
 Environment=CAUCE_TENANT=Hospital
 Environment=CAUCE_ROOM=grp.hospital
-Environment=CAUCE_HARNESS=openclaw
+Environment=CAUCE_HARNESS=muse
 Environment=CAUCE_SEMBRAR_PERFIL=1
-Environment=CAUCE_OPENCLAW_WORKSPACE=/home/node/clawd
 Environment=CAUCE_ORIGIN_TRANSPORT=telegram
 Environment=CAUCE_ENVIRONMENT=production
 Environment=CAUCE_INSTANCE_ID=systemd-perseo

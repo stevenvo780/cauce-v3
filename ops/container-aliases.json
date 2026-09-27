@@ -31,25 +31,25 @@
     "perseo": {
       "tenant": "Hospital",
       "room": "grp.hospital",
-      "container": "hospital-agent-openclaw-frontend-gateway-1",
+      "container": "hospital-agent-muse-frontend-1",
       "systemdUser": "stev",
       "user": "node",
       "home": "/home/node",
       "workspace": "/home/node/clawd",
-      "stateDirectory": "/home/node/.openclaw/cauce-v3/perseo",
-      "harness": "openclaw",
+      "stateDirectory": "/home/node/.muse/cauce-v3/perseo",
+      "harness": "muse",
       "membershipRole": "agent"
     },
     "teseo": {
       "tenant": "Hospital",
       "room": "grp.hospital",
-      "container": "hospital-agent-openclaw-backend-gateway-1",
+      "container": "hospital-agent-muse-backend-1",
       "systemdUser": "stev",
       "user": "node",
       "home": "/home/node",
       "workspace": "/home/node/clawd",
-      "stateDirectory": "/home/node/.openclaw/cauce-v3/teseo",
-      "harness": "openclaw",
+      "stateDirectory": "/home/node/.muse/cauce-v3/teseo",
+      "harness": "muse",
       "membershipRole": "agent"
     }
   }

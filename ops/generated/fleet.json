@@ -11,22 +11,22 @@
       "user": "node"
     },
     "perseo": {
-      "container": "hospital-agent-openclaw-frontend-gateway-1",
+      "container": "hospital-agent-muse-frontend-1",
       "enabled": true,
-      "harness": "openclaw",
+      "harness": "muse",
       "home": "/home/node",
       "room": "grp.hospital",
-      "stateDirectory": "/home/node/.openclaw/cauce-v3/perseo",
+      "stateDirectory": "/home/node/.muse/cauce-v3/perseo",
       "tenant": "Hospital",
       "user": "node"
     },
     "teseo": {
-      "container": "hospital-agent-openclaw-backend-gateway-1",
+      "container": "hospital-agent-muse-backend-1",
       "enabled": true,
-      "harness": "openclaw",
+      "harness": "muse",
       "home": "/home/node",
       "room": "grp.hospital",
-      "stateDirectory": "/home/node/.openclaw/cauce-v3/teseo",
+      "stateDirectory": "/home/node/.muse/cauce-v3/teseo",
       "tenant": "Hospital",
       "user": "node"
     }

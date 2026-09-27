@@ -1,24 +1,24 @@
 {
   "fleet": {
     "perseo": {
-      "container": "hospital-agent-openclaw-frontend-gateway-1",
+      "container": "hospital-agent-muse-frontend-1",
       "enabled": true,
-      "harness": "openclaw",
+      "harness": "muse",
       "home": "/home/node",
       "role": "agent",
       "room": "grp.hospital",
-      "runtimeStateDirectory": "/home/node/.openclaw/cauce-v3/perseo",
+      "runtimeStateDirectory": "/home/node/.muse/cauce-v3/perseo",
       "tenant": "Hospital",
       "user": "node"
     },
     "teseo": {
-      "container": "hospital-agent-openclaw-backend-gateway-1",
+      "container": "hospital-agent-muse-backend-1",
       "enabled": true,
-      "harness": "openclaw",
+      "harness": "muse",
       "home": "/home/node",
       "role": "agent",
       "room": "grp.hospital",
-      "runtimeStateDirectory": "/home/node/.openclaw/cauce-v3/teseo",
+      "runtimeStateDirectory": "/home/node/.muse/cauce-v3/teseo",
       "tenant": "Hospital",
       "user": "node"
     },
