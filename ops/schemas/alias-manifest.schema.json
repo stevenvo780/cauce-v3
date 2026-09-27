@@ -22,7 +22,7 @@
         "tenant": { "enum": ["Steven", "Miguel", "Isa", "Jhon", "Hospital"] },
         "room": { "enum": ["grp.steven", "grp.miguel", "grp.isa", "grp.jhon", "grp.hospital"] },
         "alias": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
-        "harness": { "enum": ["openclaw", "opencode", "claude", "hermes", "codex"] },
+        "harness": { "enum": ["openclaw", "opencode", "claude", "hermes", "codex", "muse"] },
         "profile": {
           "type": "object",
           "additionalProperties": false,
@@ -86,7 +86,7 @@
         {
           "if": {
             "required": ["harness"],
-            "properties": { "harness": { "const": "openclaw" } }
+            "properties": { "harness": { "enum": ["openclaw", "muse"] } }
           },
           "then": {
             "properties": { "profile": { "required": ["workspace"] } }

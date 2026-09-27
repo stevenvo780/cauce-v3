@@ -218,6 +218,26 @@ describe('el hello declara qué sabe hacer el agente', () => {
     expect(parsedPartial?.home).toBeUndefined();
     expect(parsedPartial?.project_doc_max_bytes).toBeUndefined();
   });
+
+  it('acredita Muse sólo con un workspace canónico medido', () => {
+    const base = {
+      v: 1, tenant_id: 'Hospital', alias: 'teseo', container_id: 'muse-teseo', generation: 'a'.repeat(32),
+      image_id: 'sha256:beef', runtime_user: 'node', runtime_uid: 1000, harness: 'muse',
+      agent_version: '0.6.0', modes: ['shell'], runtime_facts_observed: true,
+      home: '/home/node', muse_workspace: '/home/node/clawd',
+    };
+    expect(parseAgentHello(Buffer.from(JSON.stringify(base)))).toMatchObject({
+      runtime_facts_observed: true, muse_workspace: '/home/node/clawd',
+    });
+    for (const museWorkspace of [undefined, 'home/node/clawd', '/home/node/../other']) {
+      const parsed = parseAgentHello(Buffer.from(JSON.stringify({
+        ...base, muse_workspace: museWorkspace,
+      })));
+      expect(parsed).toBeDefined();
+      expect(parsed?.runtime_facts_observed).toBe(false);
+      expect(parsed?.muse_workspace).toBeUndefined();
+    }
+  });
 });
 
 describe('requestFileRead no pregunta cuando no debe', () => {

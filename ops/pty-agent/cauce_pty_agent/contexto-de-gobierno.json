@@ -38,6 +38,17 @@
         "unidad": "utf16_strictest"
       }
     },
+    "muse": {
+      "raiz": {
+        "hecho": "muse_workspace"
+      },
+      "documentos": [
+        "AGENTS.md"
+      ],
+      "presupuesto": {
+        "unidad": "utf16_strictest"
+      }
+    },
     "openclaw": {
       "raiz": {
         "hecho": "openclaw_workspace"

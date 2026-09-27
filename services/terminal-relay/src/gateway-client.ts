@@ -97,6 +97,7 @@ export interface AgentPresence {
   readonly codex_home?: string;
   readonly claude_config_dir?: string;
   readonly openclaw_workspace?: string;
+  readonly muse_workspace?: string;
   readonly cwd?: string;
   readonly workspace_root?: string;
   readonly project_root?: string;

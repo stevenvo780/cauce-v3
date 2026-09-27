@@ -308,7 +308,6 @@ alias = os.environ["CAUCE_PTY_OPENCLAW_POINTER_ALIAS"]
 state_directory = os.environ["CAUCE_PTY_OPENCLAW_POINTER_STATE"]
 native_id_pattern = re.compile(r"^[A-Za-z0-9._:-]{1,512}$")
 
-
 def reject_duplicates(pairs):
     result = {}
     for key, value in pairs:
@@ -454,6 +453,7 @@ wire_for_harness = {
     "codex": ("CODEX_HOME", "codex_home"),
     "claude": ("CLAUDE_CONFIG_DIR", "claude_config_dir"),
     "openclaw": ("CAUCE_OPENCLAW_WORKSPACE", "openclaw_workspace"),
+    "muse": ("CAUCE_MUSE_WORKSPACE", "muse_workspace"),
 }.get(harness)
 observed = set()
 for name in os.listdir("/proc"):
