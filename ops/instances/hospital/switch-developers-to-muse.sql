@@ -25,10 +25,10 @@ BEGIN
        SELECT 1 FROM deliveries
         WHERE recipient_tenant = 'Hospital'
           AND recipient_alias IN ('teseo', 'perseo')
-          AND terminal_at IS NULL
+          AND status IN ('leased', 'accepted', 'started')
      )
   THEN
-    RAISE EXCEPTION 'Hospital Muse cutover requires three expected agents and no open developer deliveries';
+    RAISE EXCEPTION 'Hospital Muse cutover requires three expected agents and no inflight developer deliveries';
   END IF;
 END
 $guard$;
