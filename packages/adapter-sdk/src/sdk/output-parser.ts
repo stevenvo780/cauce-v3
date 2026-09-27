@@ -18,5 +18,6 @@ export {
   parseDirectOutput,
   parseHermesOutput,
   parseOpenClawOutput,
+  parseMuseOutput,
   parseOpenCodeOutput,
 } from "./output-parser/harnesses.js";

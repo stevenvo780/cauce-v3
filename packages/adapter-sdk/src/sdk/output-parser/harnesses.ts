@@ -95,6 +95,41 @@ export function parseOpenCodeOutput(stdout: string): ParsedHarnessOutput {
   return sessionResult(parseCandidate(candidate, "OpenCode result"), sessionId);
 }
 
+/**
+ * Muse Code (Meta) `muse exec --json`: JSONL records whose `stream.kind === "session"` carries the session id.
+ * The turn ends with `payload.kind === "run_terminal"`; `terminal === "completed"` brings the final text in
+ * `payload.text`, and any other terminal is a failure. `run_output_delta` fragments are the fallback when the
+ * terminal record carries no text.
+ */
+export function parseMuseOutput(stdout: string): ParsedHarnessOutput {
+  const events = jsonLines(stdout, "Muse Code");
+  let sessionId: unknown;
+  let candidate: unknown;
+  let failure: string | undefined;
+  const deltas: string[] = [];
+  for (const event of events) {
+    if (isObject(event.stream) && event.stream.kind === "session" && typeof event.stream.id === "string") {
+      sessionId = event.stream.id;
+    }
+    const payload = event.payload;
+    if (!isObject(payload)) continue;
+    if (payload.kind === "run_output_delta" && typeof payload.text === "string") deltas.push(payload.text);
+    if (payload.kind === "run_terminal") {
+      if (payload.terminal === "completed") {
+        candidate = typeof payload.text === "string" && payload.text.length > 0 ? payload.text : deltas.join("");
+        failure = undefined;
+      } else {
+        failure = failureText(payload.reason) ?? `Muse Code run ended as ${String(payload.terminal)}`;
+      }
+    }
+  }
+  if (candidate === undefined && deltas.length > 0) candidate = deltas.join("");
+  if (failure !== undefined) {
+    return sessionResult(failedTurnOutput(candidate, "Muse Code result", failure), sessionId);
+  }
+  return sessionResult(parseCandidate(candidate, "Muse Code result"), sessionId);
+}
+
 export function parseClaudeOutput(stdout: string): ParsedHarnessOutput {
   const value = parseJson(stdout.trim(), "Claude Code output");
   if (!isObject(value)) throw new MalformedOutputError("Claude Code result must be an object");
