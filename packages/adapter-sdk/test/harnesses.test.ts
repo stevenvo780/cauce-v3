@@ -18,6 +18,7 @@ import { testStateRoot } from "./test-state.js";
 
 const stateRoot = testStateRoot();
 const definitions = Object.values(HARNESS_DEFINITIONS);
+const spawnDefinitions = definitions.filter((definition) => definition.id !== "muse");
 const canonicalScope = `auth-v3:${"A".repeat(43)}`;
 
 function requirePosixProcessGroups(): void {
@@ -53,7 +54,7 @@ class RecordingRunner implements CommandRunner {
   }
 }
 
-for (const definition of definitions) {
+for (const definition of spawnDefinitions) {
   for (const scenario of ["success", "fail", "timeout", "malformed", "retry"] as const) {
     test(`${definition.id}: ${scenario} with fake executable`, async () => {
       const store = await freshStore(`matrix-${definition.id}-${scenario}`);
@@ -185,7 +186,7 @@ test("process exit after execution begins is ambiguous and non-retryable", async
 
 test("prompt secrets are confined to stdin and omitted from safe logs for every adapter", async () => {
   const secret = "TOP-SECRET-PROMPT-71d626";
-  for (const definition of definitions) {
+  for (const definition of spawnDefinitions) {
     const logs: SafeRunnerLog[] = [];
     const recording = new RecordingRunner(new SpawnCommandRunner({ logger: (entry) => logs.push(entry) }));
     const adapter = new HarnessAdapter({
@@ -260,7 +261,7 @@ test("a provider without a native document input gets an explicit filesystem fal
 });
 
 test("persistent session mappings survive adapter reconstruction where supported", async () => {
-  for (const definition of definitions.filter((candidate) => candidate.capabilities.persistent_sessions)) {
+  for (const definition of spawnDefinitions.filter((candidate) => candidate.capabilities.persistent_sessions)) {
     const directoryName = `session-${definition.id}`;
     const firstStore = await freshStore(directoryName);
     const firstRunner = new RecordingRunner(new SpawnCommandRunner());

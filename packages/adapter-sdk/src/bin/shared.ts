@@ -6,6 +6,7 @@ import { DurableStore } from "../sdk/durable-store.js";
 import { SpawnCommandRunner } from "../sdk/process-runner.js";
 import { WebSocketConsumerConnector } from "../sdk/websocket-transport.js";
 import { OpenClawApiRunner } from "../sdk/openclaw-api-runner.js";
+import { MuseMspRunner } from "../sdk/muse-msp-runner.js";
 import { HarnessAdapter, sanitizeProcessOutput } from "../harnesses/shared.js";
 import { harnessDefinition } from "../harnesses/index.js";
 import type {
@@ -34,9 +35,10 @@ function commandOverride(
   runtime: Awaited<ReturnType<typeof loadCliRuntimeConfig>>,
 ): HarnessCommandOverride | undefined {
   const command = runtime.harnessCommand
+    ?? (harnessId === "muse" ? runtime.muse?.executable : undefined)
     ?? (harnessId === "hermes" ? runtime.hermesPython : undefined)
     ?? definition.command;
-  if (runtime.harnessCommand === undefined && runtime.hermesPython === undefined
+  if (runtime.harnessCommand === undefined && runtime.muse === undefined && runtime.hermesPython === undefined
     && runtime.harnessBridge === undefined) return undefined;
   return {
     command,
@@ -197,6 +199,14 @@ async function sharedSessionRunner(
 export async function runCli(harnessId: HarnessId): Promise<void> {
   const runtime = await loadCliRuntimeConfig(harnessId);
   const tenantId = TenantSchema.parse(runtime.tenant);
+  if (harnessId === "muse" && tenantId === "Hospital"
+    && runtime.muse?.workspace !== "/home/node/clawd") {
+    throw new Error("Hospital Muse workspace must be exactly /home/node/clawd");
+  }
+  if (harnessId === "muse" && runtime.harnessCommand !== undefined
+    && runtime.harnessCommand !== runtime.muse?.executable) {
+    throw new Error("CAUCE_HARNESS_COMMAND conflicts with CAUCE_MUSE_EXECUTABLE");
+  }
   const definition = runtimeHarnessDefinition(
     harnessId,
     harnessDefinition(harnessId),
@@ -221,6 +231,9 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
       tokenFile,
       ...(runtime.openClaw.agentTarget === undefined ? {} : { agentTarget: runtime.openClaw.agentTarget }),
     });
+  } else if (harnessId === "muse") {
+    if (runtime.muse === undefined) throw new Error("Muse adapter requires Muse configuration");
+    baseRunner = new MuseMspRunner(runtime.muse);
   } else {
     baseRunner = new SpawnCommandRunner();
   }
@@ -236,7 +249,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     store,
     sessionNamespace: runtime.alias,
     ...(canonicalOpenCodeSession ? { canonicalOpenCodeSession: true } : {}),
-    ...(harnessId === "openclaw" ? { fallbackSessionKey: "alias-default" } : {}),
+    ...(harnessId === "openclaw" || harnessId === "muse" ? { fallbackSessionKey: "alias-default" } : {}),
     ...(override === undefined ? {} : { commandOverride: override }),
     ...(shared === undefined ? {} : {
       sharedSession: {

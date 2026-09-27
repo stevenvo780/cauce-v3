@@ -13,3 +13,11 @@ Conecta un agente CLI real a Cauce: consumidor durable + ejecución sobre la ses
 **Despliegue:** la versión activa de cada adaptador se acredita contra la flota viva; no se infiere desde este README.
 
 **Probar:** `pnpm --filter @cauce/adapter-sdk test` (`node:test`).
+
+## Muse Code (MSP)
+
+`cauce-adapter-muse` usa `@muse-code/sdk` para hablar con `muse serve --trust-workspace` por MSP. Cauce guarda un UUIDv7 por ámbito de conversación y reanuda la sesión nativa en cada entrega. El consumidor conserva su barrera durable anterior a la invocación; si el turno queda sin terminal acreditado, lo marca ambiguo y no reenvía el prompt automáticamente.
+
+El arranque por entorno exige `CAUCE_MUSE_EXECUTABLE`, `CAUCE_MUSE_CONFIG_HOME`, `CAUCE_MUSE_DATA_HOME` y `CAUCE_MUSE_WORKSPACE` como rutas absolutas. Los dos directorios XDG deben ser hermanos bajo el HOME persistente del alias. `CAUCE_MUSE_MODEL` y `CAUCE_MUSE_REASONING_EFFORT` son opcionales. `CAUCE_MUSE_APPROVAL_MODE` solo acepta `denyUnmatched`, también su valor por defecto: una herramienta sin autorización recibe una denegación visible para el modelo en lugar de bloquear indefinidamente la entrega. Las solicitudes de aprobación residuales se responden con la opción de denegar ofrecida por Muse. La sandbox permanece activa. Para Hospital el workspace debe ser exactamente `/home/node/clawd` y resolver a sí mismo; el host no arranca si allí o en el HOME aislado aparecen directorios personales `.claude` o `.codex`.
+
+El adaptador siembra el bloque gestionado en `AGENTS.md` del workspace medido, conservando las instrucciones manuales. Muse necesita un login propio en su XDG config; el paquete nunca copia credenciales de otro arnés. El binario y la cuenta reales se prueban en el host de despliegue, mientras la suite local usa un host MSP sintético sin credenciales.

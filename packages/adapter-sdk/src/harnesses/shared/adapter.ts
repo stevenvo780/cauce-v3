@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
+import { createUuidV7Mint } from "@muse-code/sdk";
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { FICHEROS_OPENCLAW, bloqueDePerfil, esFicheroDelAgente } from "@cauce/protocol";
@@ -59,6 +60,7 @@ import { SessionReservation } from "./session-reservation.js";
 
 /** Suffix distinguishing the agent lane's session key. */
 const AGENT_LANE_SUFFIX = ".agent-lane";
+const mintMuseSessionId = createUuidV7Mint();
 
 function workspaceCwd(): { cwd?: string } {
   const workspace = process.env.CAUCE_AGENT_WORKSPACE?.trim() ?? "";
@@ -291,6 +293,10 @@ export class HarnessAdapter {
         // MEMORY/HEARTBEAT belong to the agent, not an authored facet of the profile.
         if (!esFicheroDelAgente(name)) paths.push(`${workspace}/${name}`);
       }
+    } else if (this.definition.id === "muse") {
+      const workspace = process.env.CAUCE_MUSE_WORKSPACE;
+      if (!workspace?.startsWith("/")) return undefined;
+      paths.push(`${workspace}/AGENTS.md`);
     } else {
       return undefined;
     }
@@ -375,6 +381,7 @@ export class HarnessAdapter {
       timeoutMs: request.timeoutMs,
       signal: request.signal,
       ...(session.context.sessionId === undefined ? {} : { sessionId: session.context.sessionId }),
+      ...(this.definition.id === "muse" ? { resumeSession: session.context.resume } : {}),
       // The start witness and its notice travel together to the transport: it is the only thing
       // that sees the harness's bytes, and therefore the only one that can tell when it actually
       // started. A runner that doesn't understand them ignores them and everything continues.
@@ -593,7 +600,7 @@ export class HarnessAdapter {
       };
     }
     if (this.definition.sessionStrategy.kind === "generated") {
-      const nativeId = randomUUID();
+      const nativeId = this.definition.id === "muse" ? mintMuseSessionId() : randomUUID();
       await this.store.setSession(this.sessionStoreKey(sessionKey), {
         native_id: nativeId,
         initialized: false,

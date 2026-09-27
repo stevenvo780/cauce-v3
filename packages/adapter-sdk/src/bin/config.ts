@@ -1,8 +1,9 @@
 import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs } from "@cauce/protocol";
 import { DEFAULT_MESSAGE_TIMEOUT_MS } from "../sdk/message-timeout.js";
 import type { HarnessId } from "../sdk/types.js";
+import type { MuseReasoningEffort, MuseRunnerConfig } from "../sdk/muse-msp-runner.js";
 
 type RuntimeEnvironment = "production" | "development" | "test";
 
@@ -28,6 +29,7 @@ interface CliRuntimeConfig {
     readonly tokenFile?: string;
     readonly agentTarget?: string;
   };
+  readonly muse?: MuseRunnerConfig;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -93,6 +95,63 @@ function optionalPath(base: string, value: unknown, context: string): string | u
   return value === undefined ? undefined : resolve(base, string(value, context));
 }
 
+function absolutePath(value: unknown, context: string): string {
+  const path = string(value, context);
+  if (!isAbsolute(path)) throw new Error(`${context} must be an absolute path`);
+  return resolve(path);
+}
+
+const MUSE_REASONING_EFFORTS = new Set([
+  "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+]);
+
+function museReasoningEffort(value: unknown): MuseReasoningEffort | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !MUSE_REASONING_EFFORTS.has(value)) {
+    throw new Error("muse.reasoning_effort must be a supported MSP reasoning tier");
+  }
+  return value as MuseReasoningEffort;
+}
+
+function museApprovalMode(value: unknown): "denyUnmatched" {
+  if (value === undefined || value === "denyUnmatched") return "denyUnmatched";
+  throw new Error("Muse unattended sessions require approval mode denyUnmatched");
+}
+
+function museFromConfig(value: unknown, harnessId: HarnessId): MuseRunnerConfig | undefined {
+  if (value === undefined) return undefined;
+  if (harnessId !== "muse") throw new Error("muse configuration is only valid for the Muse adapter");
+  const entry = object(value, "muse");
+  onlyKeys(entry, new Set([
+    "executable", "config_home", "data_home", "workspace", "model", "reasoning_effort", "approval_mode",
+  ]), "muse");
+  const reasoningEffort = museReasoningEffort(entry.reasoning_effort);
+  return {
+    executable: absolutePath(entry.executable, "muse.executable"),
+    configHome: absolutePath(entry.config_home, "muse.config_home"),
+    dataHome: absolutePath(entry.data_home, "muse.data_home"),
+    workspace: absolutePath(entry.workspace, "muse.workspace"),
+    approvalMode: museApprovalMode(entry.approval_mode),
+    ...(entry.model === undefined ? {} : { model: string(entry.model, "muse.model") }),
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+  };
+}
+
+function museFromEnvironment(harnessId: HarnessId): MuseRunnerConfig | undefined {
+  if (harnessId !== "muse") return undefined;
+  const reasoningEffort = museReasoningEffort(process.env.CAUCE_MUSE_REASONING_EFFORT);
+  return {
+    executable: absolutePath(requiredEnvironment("CAUCE_MUSE_EXECUTABLE"), "CAUCE_MUSE_EXECUTABLE"),
+    configHome: absolutePath(requiredEnvironment("CAUCE_MUSE_CONFIG_HOME"), "CAUCE_MUSE_CONFIG_HOME"),
+    dataHome: absolutePath(requiredEnvironment("CAUCE_MUSE_DATA_HOME"), "CAUCE_MUSE_DATA_HOME"),
+    workspace: absolutePath(requiredEnvironment("CAUCE_MUSE_WORKSPACE"), "CAUCE_MUSE_WORKSPACE"),
+    approvalMode: museApprovalMode(process.env.CAUCE_MUSE_APPROVAL_MODE),
+    ...(process.env.CAUCE_MUSE_MODEL === undefined
+      ? {} : { model: string(process.env.CAUCE_MUSE_MODEL, "CAUCE_MUSE_MODEL") }),
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+  };
+}
+
 function mtls(base: string, value: unknown): CliRuntimeConfig["mutualTls"] {
   if (value === undefined) return undefined;
   const entry = object(value, "mtls");
@@ -152,6 +211,7 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
     "dev_headers",
     "harness_command",
     "openclaw",
+    "muse",
   ]), `configuration alias '${alias}'`);
   const base = dirname(absolute);
   const runtimeEnvironment = environment(entry.environment);
@@ -165,6 +225,10 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
   const bearerTokenFile = optionalPath(base, entry.token_file, "token_file");
   const mutualTls = mtls(base, entry.mtls);
   const openClawSettings = openClaw(base, entry.openclaw, harnessId);
+  const museSettings = museFromConfig(entry.muse, harnessId);
+  if (harnessId === "muse" && museSettings === undefined) {
+    throw new Error("Muse adapter requires a muse configuration block");
+  }
   return {
     tenant: string(entry.tenant, "tenant"),
     room: entry.room === undefined ? string(entry.tenant, "tenant") : string(entry.room, "room"),
@@ -184,6 +248,7 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
     developmentIdentity,
     ...(entry.harness_command === undefined ? {} : { harnessCommand: string(entry.harness_command, "harness_command") }),
     ...(openClawSettings === undefined ? {} : { openClaw: openClawSettings }),
+    ...(museSettings === undefined ? {} : { muse: museSettings }),
   };
 }
 
@@ -267,6 +332,7 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
     && (openClawConfig.apiUrl === undefined || openClawConfig.tokenFile === undefined)) {
     throw new Error("OpenClaw API transport requires CAUCE_OPENCLAW_API_URL and CAUCE_OPENCLAW_TOKEN_FILE");
   }
+  const museConfig = museFromEnvironment(harnessId);
   return {
     tenant: requiredEnvironment("CAUCE_TENANT"),
     room: requiredEnvironment("CAUCE_ROOM"),
@@ -283,6 +349,7 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
     ...(process.env.CAUCE_HARNESS_COMMAND === undefined ? {} : { harnessCommand: process.env.CAUCE_HARNESS_COMMAND }),
     ...bridgeEnvironment(harnessId),
     ...(openClawConfig === undefined ? {} : { openClaw: openClawConfig }),
+    ...(museConfig === undefined ? {} : { muse: museConfig }),
   };
 }
 

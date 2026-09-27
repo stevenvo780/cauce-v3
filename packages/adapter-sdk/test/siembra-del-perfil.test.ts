@@ -92,6 +92,7 @@ test("el directorio y las rutas del gateway salen de la MISMA tabla del protocol
     ["claude", { HOME: "/home/dev" }],
     ["codex", { HOME: "/h", CODEX_HOME: "/otro" }],
     ["openclaw", { HOME: "/h", CAUCE_OPENCLAW_WORKSPACE: "/ws" }],
+    ["muse", { HOME: "/h", CAUCE_MUSE_WORKSPACE: "/ws-muse" }],
   ] as const) {
     const directorio = directorioDelArnes(harness, entorno);
     assert.ok(directorio !== undefined, `${harness} no resolvió directorio`);
@@ -103,6 +104,9 @@ test("el directorio y las rutas del gateway salen de la MISMA tabla del protocol
         codexHome: "CODEX_HOME" in entorno ? entorno.CODEX_HOME : undefined,
         openclawWorkspace: "CAUCE_OPENCLAW_WORKSPACE" in entorno
           ? entorno.CAUCE_OPENCLAW_WORKSPACE
+          : undefined,
+        museWorkspace: "CAUCE_MUSE_WORKSPACE" in entorno
+          ? entorno.CAUCE_MUSE_WORKSPACE
           : undefined,
       }),
     );
@@ -130,6 +134,22 @@ test("CONTROL NEGATIVO: un arnés desconocido no tiene directorio, y sin HOME ta
   }), undefined);
   assert.equal(directorioDelArnes("codex", { HOME: "relativo" }), undefined);
   assert.equal(directorioDelArnes("openclaw", { CAUCE_OPENCLAW_WORKSPACE: "../escape" }), undefined);
+  assert.equal(directorioDelArnes("muse", { HOME: "/h" }), undefined);
+  assert.equal(directorioDelArnes("muse", { CAUCE_MUSE_WORKSPACE: "../escape" }), undefined);
+});
+
+test("Muse seeds only the managed block in its measured project AGENTS.md", () => {
+  const path = "/ws-muse/AGENTS.md";
+  const d = disco({ [path]: "# Manual del proyecto\n\nNo usar datos clinicos reales.\n" });
+  const resultado = sembrarPerfilDelArnes("muse", contexto({ purpose: "Desarrollador" }, "teseo"), {
+    habilitado: true,
+    disco: d.puerto,
+    entorno: { HOME: "/home/teseo", CAUCE_MUSE_WORKSPACE: "/ws-muse" },
+  });
+  assert.equal(resultado.estado, "hecho");
+  assert.deepEqual(d.escrituras, [path]);
+  assert.match(d.ficheros.get(path) ?? "", /No usar datos clinicos reales/u);
+  assert.match(d.ficheros.get(path) ?? "", /alias: Steven\/teseo/u);
 });
 
 test("dos alias con HOME compartido y homes de arnés distintos no se contaminan", () => {

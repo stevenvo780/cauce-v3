@@ -159,7 +159,7 @@ export function validateSessionsFile(value: unknown): SessionsFile {
   if (entries.length > 4096) invalidSessionsFile();
   const sessions = Object.create(null) as Record<string, SessionRecord>;
   for (const [key, valueRecord] of entries) {
-    if (!/^(?:hermes|opencode|claude|codex|openclaw|fake):[A-Za-z0-9._:-]{1,500}$/u.test(key)
+    if (!/^(?:hermes|opencode|claude|codex|openclaw|muse|fake):[A-Za-z0-9._:-]{1,500}$/u.test(key)
       || typeof valueRecord !== "object"
       || valueRecord === null
       || Array.isArray(valueRecord)) invalidSessionsFile();

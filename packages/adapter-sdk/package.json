@@ -19,6 +19,7 @@
     "cauce-adapter-opencode": "./dist/src/bin/opencode.js",
     "cauce-adapter-claude": "./dist/src/bin/claude.js",
     "cauce-adapter-codex": "./dist/src/bin/codex.js",
+    "cauce-adapter-muse": "./dist/src/bin/muse.js",
     "cauce-adapter-openclaw": "./dist/src/bin/openclaw.js",
     "cauce-adapter-fake": "./dist/src/bin/fake.js",
     "cauce-fake-harness": "./dist/src/bin/fake-harness.js",
@@ -34,6 +35,7 @@
   },
   "dependencies": {
     "@cauce/protocol": "workspace:*",
+    "@muse-code/sdk": "1.3.0",
     "ws": "^8.18.3"
   },
   "devDependencies": {

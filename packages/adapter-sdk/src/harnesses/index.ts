@@ -5,9 +5,10 @@ import { fakeDefinition } from "./fake.js";
 import { hermesDefinition } from "./hermes.js";
 import { openCodeDefinition } from "./opencode.js";
 import { openClawDefinition } from "./openclaw.js";
+import { museDefinition } from "./muse.js";
 
 export { HarnessAdapter, executionError } from "./shared.js";
-export { claudeDefinition, codexDefinition, fakeDefinition, openClawDefinition, openCodeDefinition };
+export { claudeDefinition, codexDefinition, fakeDefinition, museDefinition, openClawDefinition, openCodeDefinition };
 
 export const HARNESS_DEFINITIONS: Readonly<Record<HarnessId, HarnessDefinition>> = {
   hermes: hermesDefinition,
@@ -15,6 +16,7 @@ export const HARNESS_DEFINITIONS: Readonly<Record<HarnessId, HarnessDefinition>>
   claude: claudeDefinition,
   codex: codexDefinition,
   openclaw: openClawDefinition,
+  muse: museDefinition,
   fake: fakeDefinition,
 };
 

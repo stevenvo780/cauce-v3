@@ -58,6 +58,17 @@ export function parseHermesOutput(stdout: string): ParsedHarnessOutput {
   return sessionResult(parseCandidate(candidate, "Hermes result"), value.session_id);
 }
 
+export function parseMuseOutput(stdout: string): ParsedHarnessOutput {
+  const value = parseJson(stdout.trim(), "Muse Code output");
+  if (!isObject(value)) throw new MalformedOutputError("Muse Code result must be an object");
+  const candidate = value.result;
+  const failure = nativeFailureDetail(value);
+  if (failure !== undefined) {
+    return sessionResult(failedTurnOutput(candidate, "Muse Code result", failure), value.session_id);
+  }
+  return sessionResult(parseCandidate(candidate, "Muse Code result"), value.session_id);
+}
+
 export function parseOpenCodeOutput(stdout: string): ParsedHarnessOutput {
   const events = jsonLines(stdout, "OpenCode");
   let sessionId: unknown;
