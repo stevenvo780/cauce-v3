@@ -18,7 +18,10 @@ import tempfile
 import time
 
 OPS = pathlib.Path(__file__).resolve().parents[1]
-RUNTIME = OPS / "container-runtime" / "cauce-container-runtime.py"
+RUNTIME_DIR = OPS / "container-runtime"
+RUNTIME = RUNTIME_DIR / "cauce-container-runtime.py"
+# El bucle de espera del supervisor vive en un modulo hermano que el punto de entrada importa.
+REAP_MODULE = "cauce_container_tree.py"
 REAP_CALL = "reap_children(protected=process.pid)"
 ALIAS = "kant"
 CONTAINER_ID = "b" * 64
@@ -98,21 +101,28 @@ def marker_ready(marker: pathlib.Path, expected: int) -> bool:
 
 
 def variant_scripts(root: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
-    """Materialize the shipped script and a baseline with only the reap call removed."""
-    source = RUNTIME.read_text(encoding="utf-8")
-    patched = root / "patched.py"
-    patched.write_text(source, encoding="utf-8")
-    patched.chmod(0o755)
+    """Materialize the shipped runtime and a baseline with only the reap call removed.
 
+    Each variant is a full copy of the runtime's Python modules, so the entry point imports
+    its own sibling modules and never the shipped ones.
+    """
+    variants = []
+    for name in ("baseline", "patched"):
+        directory = root / name
+        directory.mkdir(mode=0o700)
+        for module in sorted(RUNTIME_DIR.glob("*.py")):
+            shutil.copy2(module, directory / module.name)
+        variants.append(directory)
+    baseline_dir, patched_dir = variants
+
+    source = (RUNTIME_DIR / REAP_MODULE).read_text(encoding="utf-8")
     kept = [line for line in source.splitlines(keepends=True) if REAP_CALL not in line]
     removed = len(source.splitlines()) - len(kept)
     if removed != 1:
         raise AssertionError(
             f"expected exactly one '{REAP_CALL}' call in the supervisor wait loop, found {removed}")
-    baseline = root / "baseline.py"
-    baseline.write_text("".join(kept), encoding="utf-8")
-    baseline.chmod(0o755)
-    return baseline, patched
+    (baseline_dir / REAP_MODULE).write_text("".join(kept), encoding="utf-8")
+    return baseline_dir / RUNTIME.name, patched_dir / RUNTIME.name
 
 
 def bundle_digest(bundle: pathlib.Path) -> str:
