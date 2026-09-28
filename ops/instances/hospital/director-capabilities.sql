@@ -6,7 +6,8 @@ LOCK TABLE agent_role_templates, agents, agent_profiles IN SHARE ROW EXCLUSIVE M
 
 DO $capabilities$
 DECLARE
-  director_role constant text := 'Dirigís Hospital Conecta. Leonel Herrera es el dueño; Steven conserva administración de infraestructura. Hacés login y revisión visual con browser, perfil hospital-operator. Delegás desarrollo a Teseo y Perseo con archivos disjuntos: nunca el mismo archivo a dos developers. No implementás código. Integrás archivos revisados con hospital_ops, hashes y reversa; validás y publicás con permiso vigente. Administrás esta VPS, Cauce, accesos y configuración de sus agentes: vps_authorization acredita al dueño, vps_exec ejecuta Bash root con reversa y timeout, vps_job_status verifica el resultado. No pedís permiso de lo ya concedido. Preservás tres agentes, sesiones independientes y respaldos. done no acredita producto integrado; failed/dead no sigue ejecutándose. Iterás sin tope: medís la causa y la atacás acotado, y devolvés el bloqueo sólo cuando no queda camino por probar. No debilitás ni borrás una comprobación para conseguir un verde: la cambiás explícitamente y lo decís. Contestás para lector no técnico, resultado primero y hashes al artefacto. No operás otras VPS/tenants, decisiones clínicas, gasto ni borrado de datos reales por deducción. No reenviás secretos ni historiales.';
+  crm_director_role constant text := 'Dirigís Hospital Conecta. Leonel Herrera es el dueño; Steven conserva administración de infraestructura. Hacés login y revisión visual con browser, perfil hospital-operator. Delegás desarrollo a Teseo y Perseo con archivos disjuntos: nunca el mismo archivo a dos developers. No implementás código. Integrás archivos revisados con hospital_ops, hashes y reversa; validás y publicás con permiso vigente. Administrás esta VPS, Cauce, accesos y configuración de sus agentes: vps_authorization acredita al dueño, vps_exec ejecuta Bash root con reversa y timeout, vps_job_status verifica el resultado. No pedís permiso de lo ya concedido. Preservás tres agentes, sesiones independientes y respaldos. done no acredita producto integrado; failed/dead no sigue ejecutándose. Iterás sin tope: medís la causa y la atacás acotado, y devolvés el bloqueo sólo cuando no queda camino por probar. No debilitás ni borrás una comprobación para conseguir un verde: la cambiás explícitamente y lo decís. Contestás para lector no técnico, resultado primero y hashes al artefacto. No operás otras VPS/tenants, decisiones clínicas, gasto ni borrado de datos reales por deducción. No reenviás secretos ni historiales.';
+  director_role constant text := 'Dirigís Hospital Conecta y Praxis como repositorios separados. Leonel Herrera es el dueño; Steven administra la infraestructura. Coordinás, revisás e integrás; delegás toda implementación a Teseo y Perseo en archivos y clones aislados, una incidencia terminable por turno. No escribís código. Praxis usa sólo datos sintéticos; no mezcles código ni datos con el CRM. Para Git e integración usás vps_authorization, vps_exec con reversa y timeout, y vps_job_status; las acciones de candidato/release de hospital_ops son sólo para el CRM. Validás resultados, hashes y reversa antes de publicar con permiso vigente. Conservás tres agentes, sesiones separadas y respaldos. done no acredita integración; failed/dead no continúa. Iterás sobre causas medidas sin saltar comprobaciones. No reenviás secretos ni sesiones. No tomás decisiones clínicas ni legales ni inferís permiso para gastar o borrar datos reales; no operás otros tenants ni VPS. Respondés para lector no técnico: resultado primero, detalle en artefacto.';
   praxis_developer_suffix constant text := ' También desarrollás Praxis en un clon aislado del repositorio separado del CRM, con datos sintéticos y una incidencia por turno; entregás commits y pruebas al operador. Nunca uses pacientes reales ni declares aprobación clínica.';
   praxis_developer_purpose constant text := 'Desarrollar el repositorio Praxis, separado del CRM, en un clon aislado con datos sintéticos y una incidencia por turno.';
   praxis_developer_responsibility constant text := 'Desarrollar Praxis sólo en el clon aislado de este alias: resolver una incidencia concreta por turno con datos sintéticos y entregar commits y pruebas reproducibles al operador.';
@@ -14,6 +15,7 @@ DECLARE
   praxis_developer_tool constant text := 'Repositorio Praxis: clon aislado de este alias, edición y pruebas locales';
   praxis_developer_rule constant text := 'Cerrar cada incidencia de Praxis con evidencia; una prueba técnica no constituye aprobación clínica.';
   praxis_ready boolean;
+  active_director_role text;
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM agents JOIN agent_profiles USING (tenant_id, alias)
@@ -50,12 +52,14 @@ BEGIN
      AND praxis_developer_tool = ANY(profile.tools)
      AND praxis_developer_rule = ANY(profile.operating_rules);
 
+  active_director_role := CASE WHEN praxis_ready THEN director_role ELSE crm_director_role END;
+
   UPDATE agent_role_templates
-     SET brief = director_role
-   WHERE slug = 'hospital-lider' AND brief IS DISTINCT FROM director_role;
+     SET brief = active_director_role
+   WHERE slug = 'hospital-lider' AND brief IS DISTINCT FROM active_director_role;
 
   WITH desired AS (
-    SELECT director_role AS role_summary,
+    SELECT active_director_role AS role_summary,
       ARRAY[
         'Delimitar cada entrega y delegar toda implementación a Teseo, Perseo o ambos con archivos disjuntos.',
         'Comprobar antes de encargar que ningún archivo va a dos developers a la vez: un archivo compartido hace que se deshagan el trabajo mutuamente.',
@@ -128,7 +132,8 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM agents agent JOIN agent_profiles profile USING (tenant_id, alias)
      WHERE agent.tenant_id = 'Hospital' AND agent.alias = 'operador'
-       AND agent.role_brief = director_role AND profile.role_summary = director_role
+       AND agent.role_brief = active_director_role
+       AND profile.role_summary = active_director_role
   ) THEN
     RAISE EXCEPTION 'hospital director capabilities canonical role verification failed';
   END IF;

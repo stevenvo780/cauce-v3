@@ -9,6 +9,7 @@ DO $praxis$
 DECLARE
   base_developer_brief text;
   praxis_developer_brief text;
+  praxis_director_role constant text := 'Dirigís Hospital Conecta y Praxis como repositorios separados. Leonel Herrera es el dueño; Steven administra la infraestructura. Coordinás, revisás e integrás; delegás toda implementación a Teseo y Perseo en archivos y clones aislados, una incidencia terminable por turno. No escribís código. Praxis usa sólo datos sintéticos; no mezcles código ni datos con el CRM. Para Git e integración usás vps_authorization, vps_exec con reversa y timeout, y vps_job_status; las acciones de candidato/release de hospital_ops son sólo para el CRM. Validás resultados, hashes y reversa antes de publicar con permiso vigente. Conservás tres agentes, sesiones separadas y respaldos. done no acredita integración; failed/dead no continúa. Iterás sobre causas medidas sin saltar comprobaciones. No reenviás secretos ni sesiones. No tomás decisiones clínicas ni legales ni inferís permiso para gastar o borrar datos reales; no operás otros tenants ni VPS. Respondés para lector no técnico: resultado primero, detalle en artefacto.';
   operator_purpose constant text := 'Coordinar Praxis como repositorio separado del CRM con datos sintéticos, integrando cambios revisados de Teseo y Perseo sin implementar código.';
   operator_responsibility constant text := 'Coordinar el desarrollo de Praxis como repositorio separado del CRM: una incidencia terminable por entrega, con Teseo y Perseo trabajando en clones aislados.';
   obsolete_operator_restriction constant text := 'No usar hospital_ops ni el despliegue del CRM para Praxis; no mezclar código o datos de ambos proyectos ni presentar pruebas técnicas como aprobación clínica.';
@@ -66,11 +67,15 @@ BEGIN
      WHERE role_template_slug = 'hospital-praxis-developer'
        AND (tenant_id, alias) NOT IN (('Hospital', 'teseo'), ('Hospital', 'perseo'))
   ) OR EXISTS (
+    SELECT 1 FROM agents
+     WHERE role_template_slug = 'hospital-lider'
+       AND (tenant_id, alias) IS DISTINCT FROM ('Hospital', 'operador')
+  ) OR EXISTS (
     SELECT 1 FROM agent_role_templates
      WHERE slug = 'hospital-praxis-developer'
        AND (brief IS DISTINCT FROM praxis_developer_brief OR NOT enabled)
   ) THEN
-    RAISE EXCEPTION 'Praxis developer template is shared or has drifted';
+    RAISE EXCEPTION 'Praxis role template is shared or has drifted';
   END IF;
 
   IF NOT EXISTS (
@@ -78,6 +83,7 @@ BEGIN
       JOIN agent_role_templates template ON template.slug = agent.role_template_slug
      WHERE agent.tenant_id = 'Hospital' AND agent.alias = 'operador'
        AND agent.enabled AND agent.role_template_slug = 'hospital-lider'
+       AND template.enabled
        AND agent.role_brief = template.brief
        AND profile.role_summary = template.brief
   ) OR EXISTS (
@@ -163,6 +169,10 @@ BEGIN
        OR NOT developer_tool = ANY(tools)
        OR NOT developer_rule = ANY(operating_rules));
 
+  UPDATE agent_role_templates
+     SET brief = praxis_director_role
+   WHERE slug = 'hospital-lider' AND brief IS DISTINCT FROM praxis_director_role;
+
   IF (SELECT count(*)
         FROM agents agent JOIN agent_profiles profile USING (tenant_id, alias)
        WHERE agent.tenant_id = 'Hospital' AND agent.alias IN ('teseo', 'perseo')
@@ -175,14 +185,19 @@ BEGIN
          AND developer_tool = ANY(profile.tools)
          AND developer_rule = ANY(profile.operating_rules)) <> 2
      OR NOT EXISTS (
-       SELECT 1 FROM agent_profiles
-        WHERE tenant_id = 'Hospital' AND alias = 'operador'
-          AND position(operator_purpose in purpose) > 0
-          AND operator_responsibility = ANY(responsibilities)
-          AND operator_restriction = ANY(restrictions)
-          AND NOT obsolete_operator_restriction = ANY(restrictions)
-          AND operator_tool = ANY(tools)
-          AND operator_rule = ANY(operating_rules)
+       SELECT 1 FROM agents agent JOIN agent_profiles profile USING (tenant_id, alias)
+         JOIN agent_role_templates template ON template.slug = agent.role_template_slug
+        WHERE agent.tenant_id = 'Hospital' AND agent.alias = 'operador'
+          AND agent.enabled AND agent.role_template_slug = 'hospital-lider'
+          AND template.brief = praxis_director_role
+          AND agent.role_brief = praxis_director_role
+          AND profile.role_summary = praxis_director_role
+          AND position(operator_purpose in profile.purpose) > 0
+          AND operator_responsibility = ANY(profile.responsibilities)
+          AND operator_restriction = ANY(profile.restrictions)
+          AND NOT obsolete_operator_restriction = ANY(profile.restrictions)
+          AND operator_tool = ANY(profile.tools)
+          AND operator_rule = ANY(profile.operating_rules)
      )
   THEN
     RAISE EXCEPTION 'Praxis profile verification failed';
