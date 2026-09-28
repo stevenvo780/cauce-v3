@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { AdapterClient } from "../sdk/client.js";
+import { BlobClient, configureDefaultBlobClient } from "../sdk/blob-client.js";
 import { DurableStore } from "../sdk/durable-store.js";
 import { ProcessExecutionError } from "../sdk/errors.js";
 import { SpawnCommandRunner } from "../sdk/process-runner.js";
@@ -248,6 +249,15 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     }),
   });
   const emission = new EmissionRuntime(runtime.stateDirectory, runtime.instanceId, emissionGateway(runtime));
+  try {
+    configureDefaultBlobClient(BlobClient.fromRelayUrl(runtime.relayUrl, {
+      ...(runtime.bearerTokenFile === undefined ? {} : { bearerTokenFile: runtime.bearerTokenFile }),
+      ...(runtime.mutualTls === undefined ? {} : { mutualTls: runtime.mutualTls }),
+      ...(runtime.developmentIdentity ? { developmentIdentity: { tenant_id: tenantId, alias: runtime.alias } } : {}),
+    }));
+  } catch (error) {
+    process.stderr.write(`blob client disabled: ${String(error instanceof Error ? error.message : error)}\n`);
+  }
   const client = new AdapterClient({
     emission,
     config: {

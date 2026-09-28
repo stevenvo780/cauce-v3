@@ -128,6 +128,8 @@ export function fakeRepository(overrides: Partial<GatewayRepository> = {}): Gate
       && receipt.delivery_ids[0] === ids.delivery
     )),
     assertPrincipal: vi.fn(async () => undefined),
+    registerBlob: vi.fn(async () => { throw new Error('blob store is not part of this test double'); }),
+    findBlob: vi.fn(async () => undefined),
     assertPermission: vi.fn(async () => undefined),
     principalAccess: vi.fn(async () => ({
       roles: ['operator'], permissions: ['route', 'read', 'control'] as ('route' | 'read' | 'control')[]

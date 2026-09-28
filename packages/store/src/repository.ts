@@ -1,5 +1,6 @@
-import { AgentEmissionRepository } from './repository/agent-emission.js';
 export { parseAgentProgress, type AgentProgressInput } from './repository/agent-emission.js';
+import { BlobsRepository } from './repository/blobs.js';
+export { type BlobRecord, type BlobRegistration } from './repository/blobs.js';
 export {
   PublishIntentExpiredError, PublishIntentReconciliationRequired,
   type PublishOptions, type PublishResult
@@ -44,5 +45,5 @@ export {
   type MessageListRow, type QueueSnapshotItem
 } from './repository/visibility-rows.js';
 
-export class CauceRepository extends AgentEmissionRepository {
+export class CauceRepository extends BlobsRepository {
 }

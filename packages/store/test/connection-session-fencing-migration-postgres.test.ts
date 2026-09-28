@@ -24,6 +24,7 @@ const laterVersions = [
   '039_secret_handoff.sql',
   '040_terminal_control_holds.sql',
   '041_agent_context_revisions.sql',
+  '042_blobs.sql',
 ] as const;
 
 let database: TestDatabase;

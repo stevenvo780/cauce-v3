@@ -10,12 +10,14 @@ import {
 const version = '041_agent_context_revisions.sql';
 const upPath = new URL(`../migrations/${version}`, import.meta.url);
 const downPath = new URL(`../migrations/down/${version}`, import.meta.url);
+const laterDownPath = new URL('../migrations/down/042_blobs.sql', import.meta.url);
 
 let database: TestDatabase;
 let databaseStarted = false;
 let pool: DatabasePool;
 let up: string;
 let down: string;
+let laterDown: string;
 
 async function tableExists(name: string): Promise<boolean> {
   const result = await pool.query<{ exists: boolean }>(
@@ -79,7 +81,9 @@ async function journal(): Promise<JournalRow[]> {
 }
 
 preparePostgresSuite(import.meta.url, async () => {
-  [up, down] = await Promise.all([readFile(upPath, 'utf8'), readFile(downPath, 'utf8')]);
+  [up, down, laterDown] = await Promise.all([
+    readFile(upPath, 'utf8'), readFile(downPath, 'utf8'), readFile(laterDownPath, 'utf8'),
+  ]);
   database = await startTestDatabase();
   databaseStarted = true;
   pool = database.pool;
@@ -202,6 +206,8 @@ describe('migration 041 context journal', () => {
   });
 
   it('refuses down after evidence and round-trips only while the journal is empty', async () => {
+    // 042 sits above 041: it is lowered first so the guard under test is the evidence one.
+    await pool.query(laterDown);
     await insertProfile('prueba que no se tira');
     await expect(pool.query(down)).rejects.toThrow(/context journal evidence/u);
     expect(await tableExists('agent_profile_revisions')).toBe(true);

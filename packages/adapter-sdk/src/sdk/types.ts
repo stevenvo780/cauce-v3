@@ -66,6 +66,7 @@ export interface OutputArtifact {
   readonly uri: string;
   readonly media_type?: string;
   readonly sha256?: string;
+  readonly size?: number;
 }
 
 type StructuredStatus = 'done' | 'failed';

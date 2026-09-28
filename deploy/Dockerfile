@@ -1,7 +1,7 @@
 ARG CAUCE_NODE_BASE=docker.io/library/node@sha256:56a687b4d23e7a6cb49114924f5e257fcfbd33ad1f28f5c67aea9365996f2819
 ARG CAUCE_PYTHON_BASE=docker.io/library/python@sha256:53739acebd52a300f19f52d93f2a6165f63300689bdf6f8af2bff0d63780e5e6
 ARG CAUCE_NGINX_BASE=docker.io/nginxinc/nginx-unprivileged@sha256:28d91bdce70ad09025ea901458fdd149259d8e05982ade79d4ef2c0d9470eb48
-ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH=041_agent_context_revisions.sql
+ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH=042_blobs.sql
 ARG CAUCE_TERMINAL_RELAY_INSTANCE_ID=""
 FROM ${CAUCE_NODE_BASE} AS build
 WORKDIR /app
@@ -74,8 +74,8 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=python-runtime /usr/local /usr/local
 RUN python3 -c 'import asyncio, json; assert asyncio and json' \
-  && mkdir -p /var/lib/cauce-adapter /var/lib/cauce-terminal \
-  && chown node:node /var/lib/cauce-adapter /var/lib/cauce-terminal
+  && mkdir -p /var/lib/cauce-adapter /var/lib/cauce-terminal /var/lib/cauce-v3/blobs \
+  && chown node:node /var/lib/cauce-adapter /var/lib/cauce-terminal /var/lib/cauce-v3/blobs
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --from=production-dependencies --chown=node:node /app/packages ./packages
 COPY --from=production-dependencies --chown=node:node /app/services ./services
