@@ -16,6 +16,8 @@ Per-harness:
               the file; if the space has a Claude settings.json, its effortLevel too
     hermes    no effort knob: shows HERMES_INFERENCE_MODEL and does not touch it
     opencode  no knob known here: the alias is refused by name, never written to
+    muse      no file knob: its bridge (muse-cauce) runs at MUSE_REASONING_EFFORT, default max;
+              the alias shows up without a known file and is refused by name
 
 The alias list, each tenant and each harness come from container-aliases.json, the reconciled fleet
 inventory, read through the ops root's scripts/container_alias_lib.py. Keeping a second copy here is
@@ -77,7 +79,6 @@ CODEX_SHARED = '/datos/agents/shared/.codex/config.toml'
 CLAUDE_SHARED = '/datos/agents/shared/.claude/settings.json'
 OC = '/datos/claw-config/.openclaw/openclaw.json'
 OC_MIGUEL = '/datos/miguel-config/.openclaw/openclaw.json'
-OC_HEGEL = '/datos/agent-v2/tenants/jhon/agents/hegel/oc/.openclaw/openclaw.json'
 
 # Claude settings.json that accompanies an openclaw space (read by its claude-cli runtime)
 OPENCLAW_CLAUDE = {
@@ -88,7 +89,6 @@ OPENCLAW_CLAUDE = {
 # alias -> configuration file on this host; tenant and harness come from the inventory instead
 CONFIG = {
     'atlas': CODEX_SHARED,
-    'hegel': OC_HEGEL,
     'janus': OC_MIGUEL,
     'jarvis': OC,
     'kratos': CLAUDE_SHARED,
