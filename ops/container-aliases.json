@@ -61,26 +61,14 @@
       "membershipRole": "agent"
     },
     "hegel": {
-      "tenant": "Jhon",
-      "room": "grp.jhon",
-      "container": "agv2-jhon-hegel-oc",
+      "tenant": "Miguel",
+      "room": "grp.miguel",
+      "container": "ws-humanizar",
       "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "workspace": "/home/claw/clawd",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/hegel",
-      "harness": "openclaw",
-      "membershipRole": "agent"
-    },
-    "heraclito": {
-      "tenant": "Jhon",
-      "room": "grp.jhon",
-      "container": "agv2-jhon-heraclito-oc",
-      "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/heraclito",
-      "harness": "claude",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/hegel",
+      "harness": "muse",
       "membershipRole": "agent"
     },
     "iza": {
@@ -152,17 +140,6 @@
       "stateDirectory": "/home/dev/.local/state/cauce-v3/socrates",
       "harness": "codex",
       "membershipRole": "agent_notify"
-    },
-    "tales": {
-      "tenant": "Jhon",
-      "room": "grp.jhon",
-      "container": "agv2-jhon-tales-oc",
-      "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/tales",
-      "harness": "codex",
-      "membershipRole": "agent"
     },
     "zeus": {
       "tenant": "Steven",

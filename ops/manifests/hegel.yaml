@@ -3,11 +3,11 @@ kind: AliasRuntime
 metadata:
   name: hegel
 spec:
-  tenant: Jhon
-  room: grp.jhon
+  tenant: Miguel
+  room: grp.miguel
   alias: hegel
-  harness: openclaw
-  profile: {seedOnConnect: true, configScope: alias, workspace: /home/claw/clawd}
+  harness: muse
+  profile: {seedOnConnect: true, configScope: alias}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_HEGEL_RELAY_URL, requiredScheme: wss}
   secretPathEnv:

@@ -107,8 +107,8 @@
     },
     {
       "alias": "hegel",
-      "tenant_id": "Jhon",
-      "room_id": "grp.jhon",
+      "tenant_id": "Miguel",
+      "room_id": "grp.miguel",
       "token_file": "/run/cauce-telegram/hegel.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/hegel.disabled",
       "allowed_user_ids": [
@@ -119,29 +119,8 @@
       ],
       "recipients": [
         {
-          "tenant_id": "Jhon",
+          "tenant_id": "Miguel",
           "alias": "hegel"
-        }
-      ],
-      "poll_timeout_seconds": 25,
-      "poll_lease_ms": 60000
-    },
-    {
-      "alias": "heraclito",
-      "tenant_id": "Jhon",
-      "room_id": "grp.jhon",
-      "token_file": "/run/cauce-telegram/heraclito.token",
-      "v2_shutdown_marker_file": "/run/cauce-telegram/heraclito.disabled",
-      "allowed_user_ids": [
-        "999999999999999999"
-      ],
-      "allowed_chat_ids": [
-        "-999999999999999999"
-      ],
-      "recipients": [
-        {
-          "tenant_id": "Jhon",
-          "alias": "heraclito"
         }
       ],
       "poll_timeout_seconds": 25,
@@ -289,27 +268,6 @@
         {
           "tenant_id": "Steven",
           "alias": "socrates"
-        }
-      ],
-      "poll_timeout_seconds": 25,
-      "poll_lease_ms": 60000
-    },
-    {
-      "alias": "tales",
-      "tenant_id": "Jhon",
-      "room_id": "grp.jhon",
-      "token_file": "/run/cauce-telegram/tales.token",
-      "v2_shutdown_marker_file": "/run/cauce-telegram/tales.disabled",
-      "allowed_user_ids": [
-        "999999999999999999"
-      ],
-      "allowed_chat_ids": [
-        "-999999999999999999"
-      ],
-      "recipients": [
-        {
-          "tenant_id": "Jhon",
-          "alias": "tales"
         }
       ],
       "poll_timeout_seconds": 25,

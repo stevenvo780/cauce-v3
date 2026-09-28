@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 rootless container adapter hegel (agv2-jhon-hegel-oc/openclaw)
+Description=Cauce V3 rootless container adapter hegel (ws-humanizar/muse)
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=%h/.config/cauce-v3/container-aliases/hegel.env

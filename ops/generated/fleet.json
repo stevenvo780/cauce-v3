@@ -51,24 +51,14 @@
       "user": "claw"
     },
     "hegel": {
-      "container": "agv2-jhon-hegel-oc",
+      "container": "ws-humanizar",
       "enabled": true,
-      "harness": "openclaw",
-      "home": "/home/claw",
-      "room": "grp.jhon",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/hegel",
-      "tenant": "Jhon",
-      "user": "claw"
-    },
-    "heraclito": {
-      "container": "agv2-jhon-heraclito-oc",
-      "enabled": true,
-      "harness": "claude",
-      "home": "/home/claw",
-      "room": "grp.jhon",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/heraclito",
-      "tenant": "Jhon",
-      "user": "claw"
+      "harness": "muse",
+      "home": "/home/dev",
+      "room": "grp.miguel",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/hegel",
+      "tenant": "Miguel",
+      "user": "dev"
     },
     "iza": {
       "container": "claw-iza",
@@ -139,16 +129,6 @@
       "stateDirectory": "/home/dev/.local/state/cauce-v3/socrates",
       "tenant": "Steven",
       "user": "dev"
-    },
-    "tales": {
-      "container": "agv2-jhon-tales-oc",
-      "enabled": true,
-      "harness": "codex",
-      "home": "/home/claw",
-      "room": "grp.jhon",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/tales",
-      "tenant": "Jhon",
-      "user": "claw"
     },
     "zeus": {
       "container": "ws-zeus",

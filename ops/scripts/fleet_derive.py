@@ -62,6 +62,13 @@ HARNESS_RULES: dict[str, dict[str, Any]] = {
             "host": HOST_STATE_DIRECTORY,
         },
     },
+    # muse (hegel) va por el puente muse-cauce: mismo estado local que grok.
+    "muse": {
+        "stateDirectory": {
+            "container": _LOCAL_RUNTIME_STATE_DIRECTORY,
+            "host": HOST_STATE_DIRECTORY,
+        },
+    },
 }
 
 _ENV_KINDS = frozenset({

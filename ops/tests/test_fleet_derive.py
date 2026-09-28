@@ -19,7 +19,7 @@ from fleet_derive import (  # noqa: E402
     runtime_state_directory,
 )
 
-HARNESSES = {"claude", "codex", "grok", "hermes", "openclaw", "opencode"}
+HARNESSES = {"claude", "codex", "grok", "hermes", "muse", "openclaw", "opencode"}
 
 
 def fleet_row(harness: str, **overrides: Any) -> dict[str, Any]:
