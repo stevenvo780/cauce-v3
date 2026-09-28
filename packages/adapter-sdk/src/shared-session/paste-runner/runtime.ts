@@ -2,6 +2,8 @@ import { stat } from "node:fs/promises";
 import type { CommandRunResult } from "../../sdk/types.js";
 
 export const DEFAULT_ACQUIRE_TIMEOUT_MS = 20 * 60_000;
+export const DEFAULT_GENERATING_WAIT_MS = 2 * 60 * 60_000;
+export const DEFAULT_BACKGROUND_WAIT_MS = 10 * 60_000;
 export const DEFAULT_POLL_MS = 750;
 export const DEFAULT_CANCEL_DRAIN_TIMEOUT_MS = 30_000;
 export const QUARANTINE_OPERATION_TIMEOUT_MS = 2_000;

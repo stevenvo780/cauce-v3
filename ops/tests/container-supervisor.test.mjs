@@ -52,14 +52,14 @@ const aliasState = {
   argos: "/home/dev/.local/state/cauce-v3/argos",
   atlas: "/home/dev/.local/state/cauce-v3/atlas", iza: "/home/claw/.openclaw/cauce-v3/iza",
   jarvis: "/home/claw/.openclaw/cauce-v3/jarvis", kratos: "/home/dev/.local/state/cauce-v3/kratos",
-  zeus: "/home/dev/.local/state/cauce-v3/zeus",
+  zeus: "/home/dev/.local/state/cauce-v3/zeus", hades: "/home/claw/.local/state/cauce-v3/hades",
 };
 // The real fleet never dedicates a mount to the state dir: the state lives inside a broad
 // persistent bind. Physical co-location does not imply that aliases share the same mapped HOME.
 const aliasMount = {
   argos: "/home/dev/.local", atlas: "/home/dev/.local",
   iza: "/home/claw/.openclaw", jarvis: "/home/claw/.openclaw", kratos: "/home/dev/.local",
-  zeus: "/home/dev/.local",
+  zeus: "/home/dev/.local", hades: "/home/claw",
 };
 let bundleDigest;
 let bundleDigest2;
@@ -133,6 +133,7 @@ async function dockerState(alias, overrides = {}) {
       : alias === "iza" ? "claw-iza"
       : alias === "atlas" || alias === "kratos" ? "ws-humanizar"
       : alias === "zeus" ? "ws-zeus"
+      : alias === "hades" ? "agv2-steven-hades-oc"
       : "ctrl-infra", // argos
     currentId: firstId,
     replacementId: secondId,
@@ -466,7 +467,7 @@ try {
 
   await chmod(configRoot, 0o700);
   await chmod(lockRoot, 0o700);
-  for (const harness of ["codex", "claude", "opencode", "hermes", "openclaw"]) {
+  for (const harness of ["codex", "claude", "opencode", "hermes", "openclaw", "grok"]) {
     await executable(path.join(release, `packages/adapter-sdk/dist/src/bin/${harness}.js`), "#!/usr/bin/env node\n");
   }
   await executable(path.join(release2, "packages/adapter-sdk/dist/src/bin/openclaw.js"),
@@ -476,7 +477,7 @@ try {
   bundleDigest2 = bundleDigestFor(release2);
   await copyFile(fakeDockerSource, path.join(binRoot, "docker"));
   await chmod(path.join(binRoot, "docker"), 0o755);
-  for (const alias of ["atlas", "argos", "iza", "jarvis", "kratos", "zeus"]) {
+  for (const alias of ["atlas", "argos", "iza", "jarvis", "kratos", "zeus", "hades"]) {
     await preparePki(alias, { bearer: alias !== "atlas" });
     await mkdir(path.join(mountSourceRoot, alias), { recursive: true });
   }
@@ -487,6 +488,7 @@ try {
   await writeConfig("iza");
   await writeConfig("kratos");
   await writeConfig("zeus");
+  await writeConfig("hades");
   await writeConfig("jarvis", [
     "OPENCLAW_TRANSPORT=api",
     "OPENCLAW_API_URL=http://127.0.0.1:18789/v1/chat/completions",
@@ -692,6 +694,44 @@ try {
   await writeConfig("iza");
   await writeConfig("atlas");
   process.stdout.write("shared session: switch exported with TERM for claude/codex, rejected elsewhere and for non-1 values\n");
+
+  // grok: the shared TUI needs tmux inside the container. Without it the alias keeps serving the
+  // bus headless and says so (it used to die with 78, never restarted, and Telegram went mute).
+  // SHARED_SESSION_NATIVE_ID names the conversation the adapter seeds with its own release.
+  const hadesId = "01a0cedb-d05a-7e81-b400-1d58836be1cc";
+  const grokShared = ["SHARED_SESSION=1", "SHARED_SESSION_WORKSPACE=/home/claw", `SHARED_SESSION_NATIVE_ID=${hadesId}`];
+  await writeConfig("hades", grokShared);
+  await clearLog();
+  result = runSupervisor("start", "hades", await dockerState("hades"));
+  assert.equal(result.status, 0, `grok shared session must start: ${result.stderr}`);
+  const hadesFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=hades"));
+  assert(hadesFinal?.argv.includes("CAUCE_SHARED_SESSION=1"));
+  assert(hadesFinal?.argv.includes(`CAUCE_SHARED_SESSION_NATIVE_ID=${hadesId}`));
+  assert(hadesFinal?.argv.includes("GROK_HOME=/home/claw/.grok"));
+
+  await clearLog();
+  result = runSupervisor("start", "hades", await dockerState("hades", { tmuxMissing: true }));
+  assert.equal(result.status, 0, `grok without tmux must still serve the bus: ${result.stderr}`);
+  assert.match(result.stderr, /SHARED_SESSION=1 ignored for hades: the container has no tmux/u);
+  const headlessFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=hades"));
+  assert(headlessFinal !== undefined, "the adapter starts");
+  assert(!headlessFinal.argv.some((value) => value.startsWith("CAUCE_SHARED_SESSION")),
+    "without tmux no shared-session variable reaches the adapter");
+
+  for (const [alias, extra, expected] of [
+    ["hades", ["SHARED_SESSION=1", "SHARED_SESSION_NATIVE_ID=../01a0cedb"], /SHARED_SESSION_NATIVE_ID must be a canonical lowercase UUID/u],
+    ["hades", [`SHARED_SESSION_NATIVE_ID=${hadesId}`], /SHARED_SESSION_NATIVE_ID requires SHARED_SESSION=1/u],
+    ["atlas", ["SHARED_SESSION=1", `SHARED_SESSION_NATIVE_ID=${hadesId}`], /config key is not allowed for codex: SHARED_SESSION_NATIVE_ID/u],
+  ]) {
+    await writeConfig(alias, extra);
+    await clearLog();
+    result = runSupervisor("start", alias, await dockerState(alias));
+    assert.notEqual(result.status, 0, `${alias} ${extra.join(" ")} must fail`);
+    assert.match(result.stderr, expected);
+    assert.equal((await records()).length, 0, "it must fail before touching Docker");
+    await writeConfig(alias);
+  }
+  process.stdout.write("grok shared session: native id exported, headless without tmux, native id validated\n");
 
   const nativeProfileContextGatedByValueNotByPresence = [
     ["zeus", "1", true], ["argos", "1", true], ["atlas", "0", true], ["atlas", "1", false],

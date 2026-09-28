@@ -28,6 +28,7 @@
     "cauce-adapter-claude": "./dist/src/bin/claude.js",
     "cauce-adapter-codex": "./dist/src/bin/codex.js",
     "cauce-adapter-openclaw": "./dist/src/bin/openclaw.js",
+    "cauce-adapter-grok": "./dist/src/bin/grok.js",
     "cauce-adapter-fake": "./dist/src/bin/fake.js",
     "cauce-fake-harness": "./dist/src/bin/fake-harness.js",
     "cauce-shared-session": "./dist/src/bin/shared-session.js",

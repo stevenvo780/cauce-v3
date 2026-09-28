@@ -4,6 +4,8 @@ export * from "./tmux.js";
 export * from "./pane.js";
 export * from "./transcript.js";
 export * from "./rollout.js";
+export * from "./grok.js";
+export * from "./tui-profile.js";
 export * from "./session.js";
 export * from "./resume.js";
 export * from "./degradation-log.js";

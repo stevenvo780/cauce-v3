@@ -89,3 +89,34 @@ test("a restarted shared runner rescues a durable MCP deposit without a textual 
   const rescued = JSON.parse(await readFile(join(state, "resultados-tardios", `${correlation}.json`), "utf8")) as { texto: string };
   assert.match(rescued.texto, /deposited result/u);
 });
+
+// A paste that lands while the TUI is still generating is queued by claude as a `queued_command`
+// attachment, never as its own user entry, so the harvest cannot localize the turn and depends on
+// the transcript going quiet. The quiet window used to be measured against the pre-paste baseline:
+// once the in-flight turn wrote anything it never went quiet, and the MCP deposit sat until the 6 h
+// lease cap (zeus f30f2319 and kant 57cb2fe0, 2026-09-23).
+test("a paste merged into an in-flight turn releases its MCP deposit once the transcript goes quiet", async () => {
+  const { state, home, workspace } = await freshState("mcp-merged-queued-command");
+  const nativeId = randomUUID();
+  const file = join(transcriptDirectory(home, workspace), `${nativeId}.jsonl`);
+  const prior = randomUUID();
+  await writeFile(file, `${userEntry(prior, null, "owner turn still running", nativeId)}\n`, { mode: 0o600 });
+  let deposited: StructuredOutput | undefined;
+  const tmux = new FakeTmux();
+  tmux.onSubmit = async (prompt) => {
+    await appendFile(file, `${JSON.stringify({ type: "attachment", sessionId: nativeId,
+      attachment: { type: "queued_command", prompt } })}\n`);
+    await appendFile(file, `${assistantEntry(randomUUID(), prior, "tool call of the owner turn", nativeId)}\n`);
+    deposited = OUTPUT;
+    await appendFile(file, `${assistantEntry(randomUUID(), prior, "done with both", nativeId)}\n`);
+    tmux.paneContent = "❯ ";
+  };
+  const runner = claudeRunner({ alias: "kant", home, workspace, tmux, quietTimeoutMs: 50, sleep: delay });
+  const adapter = await adapterFor(runner, state, "kant", "claude");
+  const started = Date.now();
+  const actual = await adapter.execute({ prompt: "merged task", timeoutMs: 5_000, signal: new AbortController().signal,
+    emissionOutput: () => deposited });
+  assert.equal(actual.reply, OUTPUT.reply);
+  assert.ok(Date.now() - started < 4_000, `held for ${String(Date.now() - started)} ms`);
+  assert.equal(tmux.submittedCount, 1);
+});

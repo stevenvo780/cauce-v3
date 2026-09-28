@@ -1,11 +1,21 @@
 import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { signalAborted } from "../../runtime-state.js";
-import { inspectExactPane, interruptPane, samePaneProcess, type PaneIdentity } from "../tmux.js";
+import {
+  capturePane,
+  inspectExactPane,
+  interruptPane,
+  samePaneProcess,
+  type PaneIdentity,
+} from "../tmux.js";
+import { turnInFlight } from "../pane.js";
+import { tuiProfile } from "../tui-profile.js";
+import type { TurnOutcome } from "../types.js";
 import type { CommittedRunResult, PendingQuarantine } from "./contracts.js";
 import { PasteSessionLivenessRunner } from "./liveness.js";
 import {
   beforeAbort,
   beforeDeadline,
+  DEFAULT_BACKGROUND_WAIT_MS,
   DEFAULT_CANCEL_DRAIN_TIMEOUT_MS,
   DEFAULT_CORRELATION_TIMEOUT_MS,
   DEFAULT_INJECT_TIMEOUT_MS,
@@ -45,12 +55,18 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     // Last time the transcript grew; distinguishes "paste was lost" (nothing writes)
     // from "paste merged with an in-flight turn" (terminal writes the whole time). See DEFAULT_QUIET_MS.
     let lastActivityAt = Date.now();
+    // Sizes seen on the previous poll. `scan.activity` compares against the PRE-paste baseline, so
+    // once anything was written it stays true forever; activity has to be growth since the last poll.
+    const seenSizes = new Map(baseline);
     // Long-conversation transcripts weigh megabytes and a turn may run for an hour;
     // re-reading the whole file every poll would cost more than the turn itself, so we only read on growth.
     let lastSize = -1;
     let probe = 0;
     // Timestamp is fixed by the EVENT, not by the next poll — a slow transcript read
     // cannot start counting the deadline only when it finishes.
+    let lingering: { readonly outcome: TurnOutcome; readonly progress: string } | undefined; // No silence cut then.
+    let lingeringSince = 0;
+    const backgroundWaitMs = Math.max(0, this.options.backgroundWaitMs ?? DEFAULT_BACKGROUND_WAIT_MS);
     let cancelObservedAt = request.signal.aborted ? Date.now() : undefined;
     const observeCancellation = (): void => {
       cancelObservedAt ??= Date.now();
@@ -113,7 +129,11 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           if (scanned.aborted) continue;
           const scan = scanned.value;
           started = started || scan.started;
-          if (scan.activity) lastActivityAt = Date.now();
+          if (scan.activity) {
+            const moved = await beforeAbort(() => this.transcriptMoved(seenSizes), request.signal);
+            if (moved.aborted) continue;
+            if (moved.value) lastActivityAt = Date.now();
+          }
           injected = scan.injected;
           if (injected !== undefined) {
             const noted = await beforeAbort(
@@ -161,27 +181,20 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           if (noted.aborted) continue;
           const outcome = port.findAnswer(slice.entries, injectedTurn.key);
           if (request.signal.aborted) continue;
-          if (outcome?.kind === "failed") {
-            // The turn DID enter the terminal and ended badly. Do not retry on the default path:
-            // it may have run tools before failing.
-            return {
-              result: result({ exitCode: 1, stderr: outcome.detail }),
-              terminalBoundary: true,
-            };
-          }
           if (outcome !== undefined) {
-            return {
-              result: result({
-                exitCode: 0,
-                stdout: port.stdout(outcome.text, outcome.sessionId ?? injectedTurn.sessionId),
-              }),
-              terminalBoundary: true,
-            };
+            return { result: this.settledResult(outcome, injectedTurn.sessionId, request), terminalBoundary: true };
           }
+          const pendingWork = port.lingering?.(slice.entries, injectedTurn.key);
+          if (pendingWork !== undefined && lingering?.progress !== pendingWork.progress) {
+            lingeringSince = Date.now();
+          }
+          lingering = pendingWork;
           // Localized turn but no ancestry arriving: the other way of holding the lock until the
           // full budget waiting for an envelope already written. Scoped to our entry, so
-          // a pre-paste envelope cannot sneak in.
-          const rescue = port.findEnvelope?.(slice.entries, correlationId, injectedTurn.key);
+          // a pre-paste envelope cannot sneak in. Not while background work may still answer.
+          const rescue = lingering === undefined
+            ? port.findEnvelope?.(slice.entries, correlationId, injectedTurn.key)
+            : undefined;
           if (signalAborted(request.signal)) continue;
           if (rescue !== undefined) {
             const harvested = await beforeAbort(
@@ -193,8 +206,23 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           }
         }
 
+        const stillLingering = lingering;
+        if (stillLingering !== undefined && Date.now() - lingeringSince >= backgroundWaitMs) {
+          await this.note({
+            reason: "background_pending",
+            detail: `el turno cerró y su trabajo en segundo plano siguió ${String(Math.round(backgroundWaitMs / 60_000))}`
+              + " min sin avanzar; se entrega lo que había y lo que produzca después queda en la terminal",
+            occurredAt: new Date().toISOString(),
+            fellBack: false,
+          });
+          return {
+            result: this.settledResult(stillLingering.outcome, injected?.sessionId, request),
+            terminalBoundary: true,
+          };
+        }
+
         const deposited = request.emissionOutput?.();
-        if (deposited !== undefined && Date.now() - lastActivityAt >= quietMs) {
+        if (deposited !== undefined && lingering === undefined && Date.now() - lastActivityAt >= quietMs) {
           const idle = await beforeAbort(() => this.paneIsIdle(activeIdentity, request.signal), request.signal);
           if (idle.aborted) continue;
           if (idle.value) return {
@@ -204,7 +232,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
         }
 
         const localized = injected;
-        if (localized !== undefined && Date.now() - lastActivityAt >= quietMs) {
+        if (localized !== undefined && lingering === undefined && Date.now() - lastActivityAt >= quietMs) {
           const idle = await beforeAbort(
             () => this.paneIsIdle(activeIdentity, request.signal),
             request.signal,
@@ -329,6 +357,22 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     }
   }
 
+  /** A `cauce_reply` deposit is the answer even if the turn then ended badly (e.g. the owner cancelled it). */
+  protected settledResult(
+    outcome: TurnOutcome,
+    sessionId: string | undefined,
+    request: CommandRunRequest,
+  ): CommandRunResult {
+    const port = this.options.transcript;
+    if (outcome.kind === "failed") {
+      const deposited = request.emissionOutput?.();
+      return deposited === undefined
+        ? result({ exitCode: 1, stderr: outcome.detail })
+        : result({ exitCode: 0, stdout: port.stdout(JSON.stringify(deposited), sessionId) });
+    }
+    return result({ exitCode: 0, stdout: port.stdout(outcome.text, outcome.sessionId ?? sessionId) });
+  }
+
   /**
    * Cancels an already-committed turn without releasing the queue over a TUI still occupied.
    *
@@ -374,15 +418,43 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
       activeIdentity = inspected.identity;
 
       if (!interruptDelivered) {
-        const interrupted = await interruptPane(
-          this.options.tmux,
-          activeIdentity,
-          this.tmuxControlUntil(deadline),
-        );
-        if (interrupted === "ambiguous") {
-          return this.quarantineCancelled(activeIdentity, pending);
+        const profile = tuiProfile(this.options.harness);
+        let mayInterrupt = true;
+        if (profile.interruptOnlyWhileGenerating) {
+          const located = await beforeDeadline( // The turn on screen may be the owner's: find OURS first.
+            this.cancelledTranscriptBoundary(baseline, correlatedTurn, promptText, correlationId),
+            deadline,
+          );
+          if (!located.completed || located.value === undefined) {
+            return this.quarantineCancelled(activeIdentity, pending);
+          }
+          correlatedTurn = located.value.injected;
+          if (located.value.state === "terminal") {
+            return {
+              result: postEnterCancelled(
+                "el transcript confirmó el límite terminal del turno correlacionado tras la cancelación",
+              ),
+              terminalBoundary: true,
+            };
+          }
+          mayInterrupt = located.value.state === "pending" && correlatedTurn !== undefined
+            && turnInFlight(await capturePane(this.options.tmux, activeIdentity.paneId, {
+              styled: true,
+              control: this.tmuxControlUntil(deadline),
+            }));
         }
-        interruptDelivered = interrupted === "applied";
+        if (mayInterrupt) {
+          const interrupted = await interruptPane(
+            this.options.tmux,
+            activeIdentity,
+            this.tmuxControlUntil(deadline),
+            profile.interruptKey,
+          );
+          if (interrupted === "ambiguous") {
+            return this.quarantineCancelled(activeIdentity, pending);
+          }
+          interruptDelivered = interrupted === "applied";
+        }
       }
 
       const terminal = await beforeDeadline(
@@ -456,7 +528,8 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
         correlated.file,
         baseline.get(correlated.file) ?? 0,
       );
-      const outcome = this.options.transcript.findAnswer(slice.entries, correlated.key)
+      const outcome = this.options.transcript.findAnswer(slice.entries, correlated.key) // Lingering work: still terminal.
+        ?? this.options.transcript.lingering?.(slice.entries, correlated.key)?.outcome
         ?? this.options.transcript.findEnvelope?.(
           slice.entries,
           correlationId,
@@ -500,6 +573,25 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
 
   protected async grew(file: string, lastSize: number): Promise<boolean> {
     return await fileSize(file) > lastSize;
+  }
+
+  /**
+   * Whether any transcript changed size since the previous call, updating `seen` in place.
+   *
+   * A paste merged into an in-flight turn is never recorded as its own user entry (claude stores
+   * it as a `queued_command` attachment), so `injected` stays undefined and the only activity
+   * signal is this one. Measured against the baseline instead, it never went quiet: the MCP
+   * deposit was ready but the delivery was held to the 6 h lease cap (zeus f30f2319, kant 57cb2fe0).
+   */
+  protected async transcriptMoved(seen: Map<string, number>): Promise<boolean> {
+    let moved = false;
+    for (const file of await this.options.transcript.files()) {
+      const size = await fileSize(file);
+      if (size < 0) continue;
+      if (seen.get(file) !== size) moved = true;
+      seen.set(file, size);
+    }
+    return moved;
   }
 
 }

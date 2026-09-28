@@ -55,6 +55,13 @@ HARNESS_RULES: dict[str, dict[str, Any]] = {
             "host": HOST_STATE_DIRECTORY,
         },
     },
+    # Headless single-turn CLI like opencode: no bridge, no workspace key, no model env.
+    "grok": {
+        "stateDirectory": {
+            "container": _LOCAL_RUNTIME_STATE_DIRECTORY,
+            "host": HOST_STATE_DIRECTORY,
+        },
+    },
 }
 
 _ENV_KINDS = frozenset({

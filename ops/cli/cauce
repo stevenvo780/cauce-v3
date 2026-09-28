@@ -403,7 +403,7 @@ for line in sys.stdin:
       printf "    · el agente NO recuerda lo que EL te contesto a vos (lo que vos escribis si lo ve)%s\n\n" "$c_reset"
       exec docker exec -it --user "$cuser" -w "${chome:-/}" "$ctr" openclaw tui --session "$clave_oc"
     fi
-  elif [[ $harness == claude || $harness == codex ]]; then
+  elif [[ $harness == claude || $harness == codex || $harness == grok ]]; then
     printf "  %seste alias no tiene sesion compartida encendida (falta SHARED_SESSION=1 en su .env)%s\n" "$c_dim" "$c_reset"
   else
     printf "  %sel harness %s no tiene sesion compartida%s\n" "$c_dim" "$harness" "$c_reset"
@@ -411,7 +411,7 @@ for line in sys.stdin:
 
   wsa=$(sed -n 's/^SHARED_SESSION_WORKSPACE=//p' "$CONFIG/$a.env" 2>/dev/null | head -1)
   if [[ $ad == active ]]; then
-    printf "  modo: %s%sAPARTE%s — TUI real, pero conversacion nueva: NO comparte con Telegram.\n" "$c_warn" "$c_b" "$c_reset"
+    printf "  modo: %s%sAPARTE%s — %s\n" "$c_warn" "$c_b" "$c_reset" "$([[ $harness == grok ]] && echo 'rama (--fork-session) del DM: lo que escribas NO vuelve a Telegram.' || echo 'TUI real, pero conversacion nueva: NO comparte con Telegram.')"
     printf "  %sel agente sigue respondiendo Telegram y el bus. salir: Ctrl-D%s\n\n" "$c_dim" "$c_reset"
     case "$harness" in
       claude|codex)
@@ -424,13 +424,16 @@ for line in sys.stdin:
                 cd "${chome:-$cli_home}" || return 1
                 exec env "HOME=${chome:-$cli_home}" "${native_environment[@]}" "${launch[@]}"
               fi
-              exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" "${launch[@]}" ;;
+              exec docker exec -it --user "$cuser" -w "${wsa:-${chome:-/}}" "$ctr" "${launch[@]}" ;;
       openclaw)
               printf "  %sopenclaw SI tiene TUI propia, pero no te la abro aca: en modo local%s\n" "$c_dim" "$c_reset"
               printf "  %scomparte el ESTADO con el bus y aun asi el panel es CIEGO (el turno del%s\n" "$c_dim" "$c_reset"
               printf "  %sbus nunca aparece). La conversacion mutaria debajo tuyo sin dejar rastro.%s\n" "$c_dim" "$c_reset"
               printf "  %sTe abro un shell; para la TUI compartida hace falta gateway.%s\n\n" "$c_dim" "$c_reset"
               exec docker exec -it --user "$cuser" -w "${chome:-/}" "$ctr" bash -l ;;
+      grok)   # Sin SHARED_SESSION=1 (que es la MISMA conversacion): una RAMA del DM, sin dos escritores.
+              printf "  %sgrok: te abro una RAMA de la conversacion del DM; para la misma: SHARED_SESSION=1.%s\n\n" "$c_dim" "$c_reset"
+              exec python3 "$BIN/cauce-attach" "$a" --dm --bifurcar ;;
       muse)   # La TUI real de Muse, en conversacion NUEVA (APARTE): la del bus corre por `muse exec`
               # y dos escritores sobre la misma sesion no estan probados. El login vive en ~/.local
               # (montado); el enlace ~/.config/muse se pierde si re-aplanan el contenedor: se repone.
@@ -438,14 +441,14 @@ for line in sys.stdin:
               exec docker exec -it --user "$cuser" -w "${wsa:-${chome:-/}}" "$ctr" bash -lc \
                 'd="$HOME/.local/share/cauce-v3/config/'"$a"'/.config/muse"; if [ ! -e "$HOME/.config/muse" ] && [ -d "$d" ]; then mkdir -p "$HOME/.config" && ln -s "$d" "$HOME/.config/muse"; fi; exec "$HOME/.local/bin/muse" --yolo --trust-workspace --reasoning-effort max' ;;
       *)      printf "  %ssin TUI propia: te abro un shell%s\n\n" "$c_dim" "$c_reset"
-              exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" bash -l ;;
+              exec docker exec -it --user "$cuser" -w "${wsa:-${chome:-/}}" "$ctr" bash -l ;;
     esac
   fi
 
   printf "  modo: %s%sEXCLUSIVA%s — su adaptador esta parado.\n" "$c_err" "$c_b" "$c_reset"
   printf "  %slo que le escriban por Telegram se ENCOLA y entra cuando salgas.%s\n\n" "$c_dim" "$c_reset"
   if [[ -x $BIN/cauce-attach ]]; then exec python3 "$BIN/cauce-attach" "$a"; fi
-  exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" bash -l
+  exec docker exec -it --user "$cuser" -w "${wsa:-${chome:-/}}" "$ctr" bash -l
 }
 
 # ---------- resto ----------
@@ -460,7 +463,7 @@ systemctl_user_o_avisa() {  # $1=verbo(start|stop) $2=unit
 }
 
 # shellcheck disable=SC2016  # corre en otro shell (eval / docker exec): sus $ se expanden alla
-BARRIDO='for p in /proc/[0-9]*; do c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null); set -- $c; case "${1:-}" in *node*|*python*) ;; *) continue;; esac; h=""; e=$(tr "\0" "\n" < "$p/environ" 2>/dev/null | sed -n "s/^CAUCE_ALIAS=//p" | head -1); [ "$e" = "@@A@@" ] && h=1; case "$c" in *cauce-v3-adapter/@@A@@/*) h=1;; esac; [ -n "$h" ] && echo "${p#/proc/}"; done'
+BARRIDO='for p in /proc/[0-9]*; do c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null); set -- $c; case "${1:-}" in *node*|*python*) ;; *) continue;; esac; h=""; e=$(tr "\0" "\n" < "$p/environ" 2>/dev/null | sed -n "s/^CAUCE_ALIAS=//p" | head -1); [ "$e" = "@@A@@" ] && h=1; case "$c" in *cauce-v3-adapter/@@A@@/*/cauce-mcp.js*) ;; *cauce-v3-adapter/@@A@@/*) h=1;; esac; [ -n "$h" ] && echo "${p#/proc/}"; done'  # The shared TUI's MCP bridge (cauce-mcp.js, no CAUCE_ALIAS) is the panel's, not the adapter's.
 
 pids_del_alias() {  # $1=alias -> un PID por linea (vacio = de verdad no hay nada)
   local a=$1 line ctr cuser

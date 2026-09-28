@@ -24,8 +24,10 @@ import { PasteSessionRunner } from "../shared-session/paste-runner.js";
 import { correlationTimeoutFromEnvironment } from "../shared-session/paste-runner/runtime.js";
 import { claudeTranscript } from "../shared-session/transcript.js";
 import { codexTranscript } from "../shared-session/rollout.js";
+import { grokTranscript } from "../shared-session/grok.js";
+import type { PasteSessionOptions } from "../shared-session/paste-runner/contracts.js";
 import { loadSharedSessionConfig, type SharedSessionConfig } from "../shared-session/config.js";
-import { sharedSessionResume } from "../shared-session/resume.js";
+import { exactConversationIsSecure, sharedSessionResume } from "../shared-session/resume.js";
 import { SharedTuiPointerStore } from "../shared-session/native-pointer.js";
 import { NativePointerAttestor } from "../shared-session/native-witness.js";
 import type { CommandRunner } from "../sdk/types.js";
@@ -138,7 +140,7 @@ export async function sharedSessionRunner(
   logger: AdapterLogger,
 ): Promise<CommandRunner> {
   let shared = configured;
-  if (configured.harness === "claude") {
+  if (configured.harness === "claude" || configured.harness === "grok") {
     try {
       shared = { ...configured,
         configDirectory: await realpath(configured.configDirectory),
@@ -150,6 +152,9 @@ export async function sharedSessionRunner(
         "La terminal canónica no pudo acreditarse; el consumidor no aceptará pedidos hasta recuperar su binding",
         false);
     }
+  }
+  if (shared.nativeId !== undefined && (shared.harness === "claude" || shared.harness === "grok")) {
+    await seedCanonicalConversation(shared, shared.harness, shared.nativeId, logger);
   }
   const tmux = new CliTmux();
   const sleep = (ms: number): Promise<void> =>
@@ -183,18 +188,57 @@ export async function sharedSessionRunner(
       logger({ event: "shared_session_resume", alias: shared.alias, error_message: detail });
     },
   };
-  return shared.harness === "claude"
-    ? new PasteSessionRunner({
-      ...comun,
-      transcript: claudeTranscript(shared.configDirectory, shared.workspace),
-      nativePointer: new NativePointerAttestor(new SharedTuiPointerStore(shared.stateDirectory), {
-        alias: shared.alias, harness: "claude",
-        configDirectory: shared.configDirectory, workspace: shared.workspace,
-      }),
-    })
+  switch (shared.harness) {
+    case "claude":
+    case "grok":
+      return pointedRunner(shared, shared.harness, comun);
+    case "codex":
+      return new PasteSessionRunner({ ...comun, transcript: codexTranscript(shared.configDirectory) });
+  }
+}
+
+async function seedCanonicalConversation( // Only while there is no pointer; logs, never stops the adapter.
+  shared: SharedSessionConfig,
+  harness: "claude" | "grok",
+  nativeId: string,
+  logger: AdapterLogger,
+): Promise<void> {
+  const binding = { alias: shared.alias, harness, configDirectory: shared.configDirectory, workspace: shared.workspace };
+  let outcome: string;
+  try {
+    outcome = await exactConversationIsSecure(harness, binding, nativeId)
+      ? await new SharedTuiPointerStore(shared.stateDirectory).seed(binding, nativeId)
+      : "unverified";
+  } catch {
+    outcome = "unverified";
+  }
+  logger({
+    event: "shared_session_resume",
+    alias: shared.alias,
+    error_message: outcome === "written"
+      ? `la conversación canónica ${nativeId} quedó sembrada para la TUI compartida`
+      : outcome === "unchanged"
+        ? `la conversación canónica ${nativeId} ya era la sembrada`
+        : outcome === "conflict"
+          ? `no se sembró ${nativeId}: el puntero ya nombra otra conversación y nunca se reemplaza`
+          : `no se sembró ${nativeId}: esa conversación no existe o no es segura en ${shared.configDirectory}`,
+  });
+}
+
+function pointedRunner(
+  shared: SharedSessionConfig,
+  harness: "claude" | "grok",
+  comun: Omit<PasteSessionOptions<unknown>, "transcript">,
+): CommandRunner {
+  const nativePointer = new NativePointerAttestor(new SharedTuiPointerStore(shared.stateDirectory), {
+    alias: shared.alias, harness, configDirectory: shared.configDirectory, workspace: shared.workspace,
+  });
+  return harness === "grok"
+    ? new PasteSessionRunner({ ...comun, transcript: grokTranscript(shared.configDirectory), nativePointer })
     : new PasteSessionRunner({
       ...comun,
-      transcript: codexTranscript(shared.configDirectory),
+      transcript: claudeTranscript(shared.configDirectory, shared.workspace),
+      nativePointer,
     });
 }
 
@@ -278,7 +322,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
       if (canonicalOpenClawTerminalSession) {
         await store.reconcileCanonicalOpenClawTerminalSession(runtime.alias);
       }
-      if (shared?.harness === "claude") {
+      if (shared?.harness === "claude" || shared?.harness === "grok") {
         try {
           await new SharedTuiPointerStore(shared.stateDirectory).recover();
         } catch {

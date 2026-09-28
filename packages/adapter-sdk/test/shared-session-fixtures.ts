@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { DurableStore } from "../src/sdk/durable-store.js";
 import { ProcessExecutionError } from "../src/sdk/errors.js";
 import { HarnessAdapter } from "../src/harnesses/shared.js";
-import { claudeDefinition, codexDefinition } from "../src/harnesses/index.js";
+import { claudeDefinition, codexDefinition, grokDefinition } from "../src/harnesses/index.js";
 import type { CommandRunner, CommandRunResult } from "../src/sdk/types.js";
 import type { SharedSessionRunner } from "../src/shared-session/types.js";
 import type { TmuxController, TmuxResult, TmuxRunControl } from "../src/shared-session/tmux.js";
@@ -154,10 +154,11 @@ export class FakeTmux implements TmuxController {
   pasted: string | undefined;
   submittedCount = 0;
   interruptedCount = 0;
+  readonly interruptKeys: string[] = [];
   interruptStopsTurn = true;
   onSubmit: ((text: string) => Promise<void> | void) | undefined;
 
-  replaceSession(options?: { alias?: string; harness?: "claude" | "codex" }): string {
+  replaceSession(options?: { alias?: string; harness?: "claude" | "codex" | "grok" }): string {
     this.sessionExists = true;
     this.sessionId = `$${String(this.nextSessionNumber)}`;
     this.nextSessionNumber += 1;
@@ -657,11 +658,12 @@ export class FakeTmux implements TmuxController {
       if (this.onSubmit !== undefined) void this.onSubmit(text);
       return ok(0);
     }
-    if (command === "send-keys" && args.includes("Escape")) {
+    if (command === "send-keys" && (args.includes("Escape") || args.includes("C-c"))) {
       const target = args[args.indexOf("-t") + 1];
       if (!this.targetExists(target)) return ok(1);
       if (this.inputOff) return ok(0);
       this.interruptedCount += 1;
+      this.interruptKeys.push(args.at(-1) ?? "");
       if (this.interruptStopsTurn) this.paneContent = "❯ ";
       return ok(0);
     }
@@ -800,11 +802,11 @@ export async function adapterFor(
   runner: CommandRunner,
   state: string,
   alias: string,
-  harness: "claude" | "codex",
+  harness: "claude" | "codex" | "grok",
 ): Promise<HarnessAdapter> {
   const store = await DurableStore.open(join(state, "store"));
   return new HarnessAdapter({
-    definition: harness === "claude" ? claudeDefinition : codexDefinition,
+    definition: { claude: claudeDefinition, codex: codexDefinition, grok: grokDefinition }[harness],
     runner,
     store,
     sessionNamespace: alias,

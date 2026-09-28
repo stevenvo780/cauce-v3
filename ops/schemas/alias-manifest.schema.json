@@ -22,7 +22,7 @@
         "tenant": { "enum": ["Steven", "Miguel", "Isa", "Jhon"] },
         "room": { "enum": ["grp.steven", "grp.miguel", "grp.isa", "grp.jhon"] },
         "alias": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
-        "harness": { "enum": ["openclaw", "opencode", "claude", "hermes", "codex"] },
+        "harness": { "enum": ["openclaw", "opencode", "claude", "hermes", "codex", "grok"] },
         "profile": {
           "type": "object",
           "additionalProperties": false,

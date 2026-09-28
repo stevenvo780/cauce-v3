@@ -5,7 +5,7 @@
 /** Marks that the claude TUI leaves when the box holds an unsent paste. */
 const PENDING_PASTE_MARKS = ["[Pasted text", "paste again to expand"];
 
-/** Prompt cursor characters supported across TUIs (Claude, Codex). */
+/** Prompt cursor characters supported across TUIs (Claude, Codex, Grok). */
 const PROMPT_MARKS = ["❯", "›", "»", ">"];
 
 /** Input box availability classification. */
@@ -64,10 +64,20 @@ const IN_FLIGHT_MARKS: readonly RegExp[] = [
   /\besc(?:ape)?\s+to\s+interrupt\b/iu,
   /\bctrl\+b\b[^\n]*\bto\s+run\s+in\s+background\b/iu,
   /↓\s*[\d.]+\s*k?\s+tokens\b/iu,
+  // grok 1.0.41 spinner (`⠸ Thinking… 0.7s ⇣2.42k [stop]`); only read when its footer is not on screen.
+  /^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s.*….*\[stop\][\s█▐▌]*$/u,
 ];
 
 function inFlightMark(line: string): boolean {
   return IN_FLIGHT_MARKS.some((mark) => mark.test(line));
+}
+
+/** grok's LAST line (`…Ctrl+x:shortcuts`/`…press again to quit`): on screen it alone decides (`Ctrl+c:cancel`). */
+function grokFooterState(lastLine: string): "in_flight" | "idle" | undefined {
+  const footer = /\bCtrl\+x:shortcuts\b/u.test(lastLine)
+    || /\bCtrl\+c:press again to quit\b/u.test(lastLine);
+  if (!footer) return undefined;
+  return /\bCtrl\+c:cancel\b/u.test(lastLine) ? "in_flight" : "idle";
 }
 
 /** Determines whether the TUI is currently generating a reply. */
@@ -76,6 +86,8 @@ export function turnInFlight(pane: string | undefined): boolean {
   const lines = pane.split(/\r?\n/u).map(stripSgr);
   let end = lines.length;
   while (end > 0 && (lines[end - 1] ?? "").trim() === "") end -= 1;
+  const footer = end > 0 ? grokFooterState(lines[end - 1] ?? "") : undefined;
+  if (footer !== undefined) return footer === "in_flight";
   return lines.slice(Math.max(0, end - IN_FLIGHT_WINDOW), end)
     .some((line) => inFlightMark(line));
 }

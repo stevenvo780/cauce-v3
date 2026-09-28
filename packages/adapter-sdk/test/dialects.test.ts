@@ -7,6 +7,7 @@ import {
   parseClaudeOutput,
   parseCodexOutput,
   parseFinalText,
+  parseGrokOutput,
   parseHermesOutput,
   parseOpenClawOutput,
   parseOpenCodeOutput,
@@ -60,8 +61,9 @@ test("plain final text falls back safely for every native harness dialect", () =
       JSON.stringify({ type: "turn.completed" }),
     ].join("\n")),
     parseOpenClawOutput(JSON.stringify({ payloads: [{ text: "OpenClaw plain" }] })),
+    parseGrokOutput(JSON.stringify({ text: "Grok plain", stopReason: "end_turn", sessionId: "grok" })),
   ];
-  assert.deepEqual(cases.map(({ output }) => output), ["Hermes", "OpenCode", "Claude", "Codex", "OpenClaw"].map((name) => ({
+  assert.deepEqual(cases.map(({ output }) => output), ["Hermes", "OpenCode", "Claude", "Codex", "OpenClaw", "Grok"].map((name) => ({
     reply: `${name} plain`,
     messages: [],
     notify: [],

@@ -323,9 +323,17 @@ class GuardiaDeColisiones(unittest.TestCase):
 
         contextos, hallazgos = guardia.contextos_de_la_flota(inventario, contrato, HARNESS_RULES)
 
-        self.assertEqual(hallazgos, [])
+        sin_contrato = sorted(  # Known gap pinned: grok has no row in the protocol contract yet.
+            a for a, f in inventario["fleet"].items()
+            if f.get("enabled") is True and f.get("harness") not in (contrato.get("arneses") or {})
+        )
+        self.assertEqual(sin_contrato, ["hades"])
+        self.assertEqual(hallazgos, [{
+            "severidad": "alerta", "regla": "alias_no_proyectable", "alias": ["hades"], "ruta": "-",
+            "detalle": "el arnés 'grok' no está en el contrato de gobierno",
+        }])
         activos = [a for a, f in inventario["fleet"].items() if f.get("enabled") is True]
-        self.assertEqual(len(contextos), len(activos))
+        self.assertEqual(len(contextos), len(activos) - len(sin_contrato))
         for contexto in contextos:
             self.assertTrue(contexto.raiz.startswith(contexto.hogar))
             self.assertTrue(contexto.documentos)

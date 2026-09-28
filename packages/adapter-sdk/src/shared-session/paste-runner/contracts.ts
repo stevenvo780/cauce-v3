@@ -24,6 +24,9 @@ export interface PasteSessionOptions<E> {
   readonly sleep: (ms: number) => Promise<void>;
   /** How long to wait for the input box to free up before degrading. */
   readonly acquireTimeoutMs?: number;
+  /** TUIs that queue pastes (grok): how long ANOTHER turn may keep generating (2 h; then retryable). */
+  readonly generatingWaitMs?: number;
+  readonly backgroundWaitMs?: number; // Closed turns wait this long for their background work (grok: 10 min).
   /**
    * Optional trimming of the turn injected below `request.timeoutMs`.
    * If the deadline passes, the execution state is reported as ambiguous without automatic retry.

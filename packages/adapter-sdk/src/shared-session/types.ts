@@ -1,10 +1,13 @@
 import type { CommandRunner, HarnessId } from "../sdk/types.js";
 
 /** Harnesses compatible with the shared session mechanism. */
-export type SharedSessionHarness = Extract<HarnessId, "claude" | "codex">;
+export type SharedSessionHarness = Extract<HarnessId, "claude" | "codex" | "grok">;
+
+/** Every shared harness, so a check over "the other TUIs" cannot silently forget one. */
+export const SHARED_SESSION_HARNESSES: readonly SharedSessionHarness[] = ["claude", "codex", "grok"];
 
 export function isSharedSessionHarness(harness: HarnessId): harness is SharedSessionHarness {
-  return harness === "claude" || harness === "codex";
+  return (SHARED_SESSION_HARNESSES as readonly HarnessId[]).includes(harness);
 }
 
 /**
@@ -25,6 +28,8 @@ type DegradationReason =
   | "workspace_mismatch"
   /** The owner had half-typed text in the box and never let it go within the deadline. */
   | "input_busy"
+  /** A TUI that queues pastes (grok) kept generating ANOTHER turn for the whole wait. */
+  | "tui_generating"
   /** The TUI is blocked waiting for an answer in a modal dialog. */
   | "modal_blocking"
   /** The paste could not be sent or the TUI did not register the turn. */
@@ -33,12 +38,14 @@ type DegradationReason =
   | "context_reset"
   /** There was no prior shared session and a new one was created for this turn. */
   | "session_created"
-  /** The conversation context was deliberately cleared (/clear or /new). */
+  /** The conversation context was deliberately cleared (/clear in claude, /new in codex or grok). */
   | "context_cleared"
   /** The terminal compacted its conversation context. */
   | "context_compacted"
   /** The turn merged with an execution already in progress in the TUI. */
-  | "turn_merged";
+  | "turn_merged"
+  /** Answered while background work its turn started was still running (grok subagents, commands). */
+  | "background_pending";
 
 /**
  * Portion of the transcript with historical and current-turn entries.
@@ -52,7 +59,7 @@ export interface TranscriptSlice<E> {
 
 /** The turn our paste created, already identified inside the log. */
 export interface InjectedTurn {
-  /** What tracks the turn: the entry uuid in claude, the `turn_id` in codex. */
+  /** What tracks the turn: the entry uuid in claude, the `turn_id` in codex, the update event in grok. */
   readonly key: string;
   /** Conversation identity, to detect a clear and for the result's `session_id`. */
   readonly sessionId?: string;
@@ -80,10 +87,19 @@ export interface TranscriptReader<E> {
   files(): Promise<readonly string[]>;
   /** Reads from `offset`; `entries` is what is needed to correlate, `appended` only the new. */
   read(file: string, offset: number): Promise<TranscriptSlice<E>>;
-  /** The entry that created THIS turn, identified by the exact pasted text. */
-  findInjected(file: string, entries: readonly E[], promptText: string): InjectedTurn | undefined;
+  /** The entry that created THIS turn: the exact pasted text (or the runner's `correlationId`). */
+  findInjected(
+    file: string,
+    entries: readonly E[],
+    promptText: string,
+    correlationId?: string,
+  ): InjectedTurn | undefined;
   /** The outcome of that turn, or `undefined` while it is still running. */
   findAnswer(entries: readonly E[], key: string): TurnOutcome | undefined;
+  lingering?( // Turns closed, background work still running (grok): outcome so far + progress token.
+    entries: readonly E[],
+    key: string,
+  ): { readonly outcome: TurnOutcome; readonly progress: string } | undefined;
   /**
    * Searches the transcript entries for a correlated structured envelope.
    */

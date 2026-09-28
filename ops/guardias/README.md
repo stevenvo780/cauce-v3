@@ -14,7 +14,7 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 |---|---|---|
 | `cauce-ai-live` | `kratos:~/.local/bin/` + timer 10min | Cuota REAL por cuenta vía CDP (no estimada) |
 | `cauce-alertas-al-bus.py` | `kratos:~/.local/bin/` + timer 5min | Lleva al bus (zeus+kant) UNA entrega con las alertas `firing` de Prometheus: sin Alertmanager nadie las lee |
-| `cauce-attach` | `kratos:~/.local/bin/`, vía `install-cauce-cli.sh` | Entra a LA sesión real del agente (claude --resume / codex resume) con guardas |
+| `cauce-attach` | `kratos:~/.local/bin/`, vía `install-cauce-cli.sh` | Entra a LA sesión real del agente (claude --resume / codex resume / grok --resume) con guardas; `--bifurcar` abre una rama (claude/grok) sin parar el adaptador. Única fuente: no hay otra copia en `ops/cli/` |
 | `cauce-attach-guard` | `kratos:~/.local/bin/` + timer 2min | Repone adaptadores parados por un attach mal cerrado |
 | `cauce-codex-sync` | `kratos:~/.local/bin/` + path-unit | Propaga auth.json compartido de codex a los agentes sin bind-mount |
 | `cauce-contexto-colisiones.py` | `kratos:~/.local/bin/` | ¿Dos alias comparten los ficheros que los gobiernan? Compara por inodo las rutas de gobierno de toda la flota |

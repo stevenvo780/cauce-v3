@@ -114,6 +114,8 @@ if (command === "/usr/bin/python3" && commandArgs[0] === "-c"
 if ((command === "sh" || command === "bash") && commandArgs[0] === "-c"
   && commandArgs.some((value) => value.includes("hermes_cli.oneshot"))
   && state.hermesRuntimeOk === false) process.exit(1);
+if ((command === "sh" || command === "bash") && commandArgs[0] === "-c"
+  && commandArgs[1] === "command -v tmux" && state.tmuxMissing === true) process.exit(1);
 if (command === "test") {
   if (commandArgs[0] === "-x") process.exit(state.controlExists === false ? 1 : 0);
   if (commandArgs[0] === "-e") process.exit(state.stateExists === false ? 1 : 0);
