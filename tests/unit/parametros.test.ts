@@ -69,7 +69,7 @@ describe('tabla única de parámetros', () => {
           for (const match of line.matchAll(SYMBOL)) {
             const symbol = match[1] ?? '';
             if (symbol !== '' && !table.includes(symbol) && !ALLOWLIST.has(symbol)) {
-              missing.push(`${symbol} @ ${file.slice(repository.length + 1)}:${index + 1}`);
+              missing.push(`${symbol} @ ${file.slice(repository.length + 1)}:${String(index + 1)}`);
             }
           }
         });

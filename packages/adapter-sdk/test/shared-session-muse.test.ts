@@ -195,8 +195,8 @@ test("muse: SHARED_SESSION=1 usa un XDG_DATA_HOME propio del alias, esfuerzo max
   });
   const dataHome = "/home/dev/.local/share/cauce-v3/config/hegel/.local/share";
   assert.equal(config?.configDirectory, `${dataHome}/muse`);
-  assert.deepEqual(config?.paneEnvironment, { XDG_DATA_HOME: dataHome });
-  assert.deepEqual(config?.harnessArguments, ["--yolo", "--trust-workspace", "--reasoning-effort", "max"]);
+  assert.deepEqual(config.paneEnvironment, { XDG_DATA_HOME: dataHome });
+  assert.deepEqual(config.harnessArguments, ["--yolo", "--trust-workspace", "--reasoning-effort", "max"]);
   assert.equal(museReasoningEffort({ MUSE_REASONING_EFFORT: "xhigh" }), "xhigh");
   assert.throws(() => museReasoningEffort({ MUSE_REASONING_EFFORT: "turbo" }));
   assert.equal(harnessConfigDirectory("muse", "/home/dev", { CAUCE_MUSE_DATA_HOME: "/datos/muse" }, "hegel"),
@@ -230,8 +230,8 @@ test("muse: localiza el pedido por su miembro de correlación y cosecha el ÚLTI
   const done = entries([...lines, log.terminal("i-bus")]);
   const outcome = reader.findAnswer(done, "i-bus");
   assert.equal(outcome?.kind, "answer");
-  assert.match(outcome?.kind === "answer" ? outcome.text : "", /hecho desde muse/u);
-  assert.equal(outcome?.kind === "answer" ? outcome.sessionId : undefined, log.sessionId);
+  assert.match(outcome.text, /hecho desde muse/u);
+  assert.equal(outcome.sessionId, log.sessionId);
   const envelope = reader.findEnvelope?.(done, correlation, "i-bus");
   assert.equal(envelope?.kind, "answer");
 });
@@ -313,7 +313,7 @@ test("muse: reanuda EXACTO por el puntero y sin puntero con historia se bloquea"
   const binding = { alias: "hegel", stateDirectory: state };
   const blocked = await resolveMuseLaunch(museData, "/workspace", binding);
   assert.equal(blocked.state, "blocked");
-  assert.match(blocked.state === "blocked" ? blocked.detail : "", /SHARED_SESSION_NATIVE_ID/u);
+  assert.match(blocked.detail, /SHARED_SESSION_NATIVE_ID/u);
   const pointer = { alias: "hegel", harness: "muse" as const, configDirectory: museData, workspace: "/workspace" };
   assert.equal(await new SharedTuiPointerStore(state).seed(pointer, log.sessionId), "written");
   assert.deepEqual(await resolveMuseLaunch(museData, "/workspace", binding),

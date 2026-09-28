@@ -48,7 +48,7 @@ describe('blobs repository', () => {
     expect(found?.name).toBe('demo.mp4');
     expect(found?.tenant_id).toBe('Steven');
     expect(found?.created_by).toBe('zeus');
-    expect(Date.now() - found!.last_used_at.getTime()).toBeLessThan(60_000);
+    expect(Date.now() - (found?.last_used_at.getTime() ?? 0)).toBeLessThan(60_000);
   });
 
   it('answers nothing for a digest nobody registered', async () => {

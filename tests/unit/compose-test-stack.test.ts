@@ -24,7 +24,7 @@ describe('test stack fleet seed', () => {
 
   test('harness retry wait covers the attempt-1 stale backoff', async () => {
     const stack = await readFile(testStackUrl, 'utf8');
-    const match = stack.match(/CAUCE_RETRY_TIMEOUT_MS:\s*"(\d+)"/);
+    const match = /CAUCE_RETRY_TIMEOUT_MS:\s*"(\d+)"/.exec(stack);
     expect(match).not.toBeNull();
     const waitMs = Number(match?.[1]);
     expect(waitMs).toBeGreaterThan(timeoutRetryBackoffSeconds(1) * 1000);

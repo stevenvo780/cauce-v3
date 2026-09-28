@@ -180,7 +180,7 @@ function lastJsonObject(stdout: string): JsonObject | undefined {
   const lines = stdout.split("\n");
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index]?.trim();
-    if (line === undefined || !line.startsWith("{")) continue;
+    if (!line?.startsWith("{")) continue;
     try {
       const parsed: unknown = JSON.parse(line);
       if (isObject(parsed)) return parsed;

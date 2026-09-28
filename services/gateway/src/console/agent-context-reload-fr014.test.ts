@@ -33,7 +33,7 @@ interface AuditCapture {
 /** Empty durable state that still records every audit row the reload writes. */
 function scriptedPool(audits: AuditCapture[]): DatabasePool {
   const query = vi.fn(async (sql: string, params: unknown[]) => {
-    const text = String(sql);
+    const text = sql;
     if (text.includes('INSERT INTO audit_events')) {
       const [tenant_id, actor_alias, action, decision, _trace, metadata] = params as [
         string, string, string, string, unknown, string,

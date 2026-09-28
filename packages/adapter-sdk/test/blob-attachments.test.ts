@@ -60,7 +60,7 @@ test("una referencia de artefacto de otro agente (artifacts_v1 con uri cauce-blo
   assert.ok(result);
   assert.equal(result.attachments.length, 1);
   assert.equal(result.attachments[0]?.sha256, SHA);
-  assert.ok((await readFile(result.attachments[0]?.path ?? "")).equals(PAYLOAD));
+  assert.ok((await readFile(result.attachments[0].path)).equals(PAYLOAD));
   await result.cleanup();
 });
 
@@ -75,16 +75,16 @@ test("los bytes inline y las referencias comparten el mismo tope de adjuntos por
 test("sin cliente de blobs configurado, una referencia es un adjunto que no se puede materializar", async () => {
   configureDefaultBlobClient(undefined);
   await assert.rejects(materializeAttachments({ attachments_v1: [blobEntry()] }), (error: unknown) =>
-    error instanceof Error && (error as { code?: string }).code === "INVALID_ATTACHMENT" && /blob/u.test(error.message));
+    error instanceof Error && (error as { code?: string }).code === "INVALID_ATTACHMENT" && error.message.includes('blob'));
 });
 
 test("un blob que el almacén no tiene, o cuyos bytes no cuadran, no cuesta silencio: falla el adjunto con su causa", async () => {
   const missing = blobEntry({ blob: blobLocator("e".repeat(64)) });
   await assert.rejects(materializeAttachments({ attachments_v1: [missing] }, fetcher()), (error: unknown) =>
-    error instanceof Error && (error as { code?: string }).code === "INVALID_ATTACHMENT" && /unknown/u.test(error.message));
+    error instanceof Error && (error as { code?: string }).code === "INVALID_ATTACHMENT" && error.message.includes('unknown'));
   const liar: BlobFetcher = {
     async download() { throw new BlobClientError("DIGEST_MISMATCH", "blob bytes do not match their digest"); },
   };
   await assert.rejects(materializeAttachments({ attachments_v1: [blobEntry()] }, liar), (error: unknown) =>
-    error instanceof Error && /digest/u.test(error.message));
+    error instanceof Error && error.message.includes('digest'));
 });

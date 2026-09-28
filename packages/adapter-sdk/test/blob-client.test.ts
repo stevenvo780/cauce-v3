@@ -63,7 +63,7 @@ before(async () => {
 });
 
 after(async () => {
-  await new Promise<void>((resolve, reject) => server.close((error?: Error) => (error ? reject(error) : resolve())));
+  await new Promise<void>((resolve, reject) => server.close((error?: Error) => { if (error) reject(error); else resolve(); }));
 });
 
 function client(): BlobClient {
@@ -87,9 +87,9 @@ test("uploads a file from disk with its name and type, and answers the digest th
   assert.equal(receipt.uri, `cauce-blob:sha256:${sha(bytes)}`);
   const put = requests.find((entry) => entry.method === "PUT");
   assert.equal(put?.headers["x-cauce-blob-name"], "subida.bin");
-  assert.equal(put?.headers["content-type"], "application/octet-stream");
-  assert.equal(put?.headers["content-length"], String(bytes.length));
-  assert.equal(put?.headers["x-cauce-blob-sha256"], sha(bytes));
+  assert.equal(put.headers["content-type"], "application/octet-stream");
+  assert.equal(put.headers["content-length"], String(bytes.length));
+  assert.equal(put.headers["x-cauce-blob-sha256"], sha(bytes));
 });
 
 test("downloads a blob to a path and verifies the digest and size on the way", async () => {
