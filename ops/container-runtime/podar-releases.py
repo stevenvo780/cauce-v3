@@ -5,9 +5,15 @@ tenga como cwd/exe, toda release que nombre una configuración de arnés (MCP) y
 desde el staging del host en cada arranque, así que una release podada no se pierde: se recrea.
 Uso: podar_releases.py <dir releases> <release activa> <keep> [--seco]
 """
-import os, shutil, sys
+import glob
+import os
+import shutil
+import sys
 
-root = os.path.realpath(sys.argv[1]); current = sys.argv[2]; keep = int(sys.argv[3]); seco = "--seco" in sys.argv
+root = os.path.realpath(sys.argv[1])
+current = sys.argv[2]
+keep = int(sys.argv[3])
+seco = "--seco" in sys.argv
 names = sorted(n for n in os.listdir(root)
                if os.path.isdir(os.path.join(root, n)) and not os.path.islink(os.path.join(root, n)))
 live = set()
@@ -26,7 +32,6 @@ for pid in filter(str.isdigit, os.listdir("/proc")):
         live.update(n for n in names if t == f"{root}/{n}" or t.startswith(f"{root}/{n}/"))
 # Configuraciones de arnés que nombran un binario de una release (MCP `cauce`, puentes): esa release
 # puede no estar corriendo ahora y hace falta la próxima vez que el arnés levante el servidor.
-import glob
 REFS = ["/home/*/.claude.json", "/home/*/.claude/.claude.json", "/home/*/.claude/settings*.json", "/root/.claude.json",
         "/home/*/.codex/config.toml", "/root/.codex/config.toml", "/home/*/.openclaw/openclaw.json",
         "/home/*/.openclaw/agents/*/agent/codex-home/config.toml", "/home/*/.grok/config.toml",
@@ -55,12 +60,14 @@ def tam(p):
                 pass
     return total
 
-liberado = 0; borradas = 0
+liberado = 0
+borradas = 0
 for n in names:
     if n in conservar:
         continue
     p = os.path.join(root, n)
-    liberado += tam(p); borradas += 1
+    liberado += tam(p)
+    borradas += 1
     if not seco:
         shutil.rmtree(p)
 print(f"{'SECO ' if seco else ''}poda {root}: {borradas} de {len(names)} borradas, {liberado/1e9:.2f} GB; "
