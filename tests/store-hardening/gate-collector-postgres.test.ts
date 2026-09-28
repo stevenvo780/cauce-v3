@@ -152,7 +152,7 @@ preparePostgresSuite(import.meta.url, async () => {
   inventory = join(temporary, 'inventory.json');
   await writeFile(inventory, `${JSON.stringify({
     schemaVersion: 2,
-    aliases: { kant: { tenant: 'Steven', room: 'grp.steven' } },
+    fleet: { kant: { tenant: 'Steven', room: 'grp.steven' } },
   })}\n`);
 }, 180_000);
 
