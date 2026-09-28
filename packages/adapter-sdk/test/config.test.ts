@@ -8,6 +8,38 @@ import { testStateRoot } from "./test-state.js";
 
 const root = testStateRoot("cli-config");
 
+test("Muse YOLO requires allowAll in the environment", async () => {
+  const names = [
+    "CAUCE_TENANT", "CAUCE_ROOM", "CAUCE_ALIAS", "CAUCE_INSTANCE_ID", "CAUCE_STATE_DIR",
+    "CAUCE_RELAY_URL", "CAUCE_ENVIRONMENT", "CAUCE_MUSE_EXECUTABLE", "CAUCE_MUSE_CONFIG_HOME",
+    "CAUCE_MUSE_DATA_HOME", "CAUCE_MUSE_WORKSPACE", "CAUCE_MUSE_APPROVAL_MODE", "CAUCE_MUSE_YOLO",
+  ] as const;
+  const previous = new Map(names.map((name) => [name, process.env[name]]));
+  try {
+    Object.assign(process.env, {
+      CAUCE_TENANT: "Hospital", CAUCE_ROOM: "grp.hospital", CAUCE_ALIAS: "teseo",
+      CAUCE_INSTANCE_ID: "adapter-teseo", CAUCE_STATE_DIR: resolve(root, "state-teseo"),
+      CAUCE_RELAY_URL: "ws://127.0.0.1:8080/v3/ws", CAUCE_ENVIRONMENT: "test",
+      CAUCE_MUSE_EXECUTABLE: "/opt/muse-code/muse", CAUCE_MUSE_CONFIG_HOME: "/home/node/.muse/config",
+      CAUCE_MUSE_DATA_HOME: "/home/node/.muse/data", CAUCE_MUSE_WORKSPACE: "/home/node/clawd",
+      CAUCE_MUSE_APPROVAL_MODE: "allowAll", CAUCE_MUSE_YOLO: "1",
+    });
+    const config = await loadCliRuntimeConfig("muse", []);
+    assert.equal(config.muse?.approvalMode, "allowAll");
+    assert.equal(config.muse?.yolo, true);
+    delete process.env.CAUCE_MUSE_YOLO;
+    await assert.rejects(loadCliRuntimeConfig("muse", []), /configured together/u);
+    process.env.CAUCE_MUSE_YOLO = "1";
+    process.env.CAUCE_MUSE_APPROVAL_MODE = "onRequest";
+    await assert.rejects(loadCliRuntimeConfig("muse", []), /configured together/u);
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
 test.beforeEach(async () => {
   await rm(root, { recursive: true, force: true });
   await mkdir(root, { recursive: true });

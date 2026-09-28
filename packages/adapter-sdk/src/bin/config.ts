@@ -113,10 +113,11 @@ function museReasoningEffort(value: unknown): MuseReasoningEffort | undefined {
   return value as MuseReasoningEffort;
 }
 
-function museApprovalMode(value: unknown): "denyUnmatched" | "onRequest" {
+function museApprovalMode(value: unknown): MuseRunnerConfig["approvalMode"] {
   if (value === undefined || value === "denyUnmatched") return "denyUnmatched";
   if (value === "onRequest") return "onRequest";
-  throw new Error("Muse unattended sessions require approval mode denyUnmatched or onRequest");
+  if (value === "allowAll") return "allowAll";
+  throw new Error("Muse approval mode must be denyUnmatched, onRequest or allowAll");
 }
 
 function museFromConfig(value: unknown, harnessId: HarnessId): MuseRunnerConfig | undefined {
@@ -124,15 +125,21 @@ function museFromConfig(value: unknown, harnessId: HarnessId): MuseRunnerConfig 
   if (harnessId !== "muse") throw new Error("muse configuration is only valid for the Muse adapter");
   const entry = object(value, "muse");
   onlyKeys(entry, new Set([
-    "executable", "config_home", "data_home", "workspace", "model", "reasoning_effort", "approval_mode",
+    "executable", "config_home", "data_home", "workspace", "model", "reasoning_effort", "approval_mode", "yolo",
   ]), "muse");
   const reasoningEffort = museReasoningEffort(entry.reasoning_effort);
+  const approvalMode = museApprovalMode(entry.approval_mode);
+  if (entry.yolo !== undefined && typeof entry.yolo !== "boolean") throw new Error("muse.yolo must be a boolean");
+  if ((approvalMode === "allowAll") !== (entry.yolo === true)) {
+    throw new Error("muse.yolo and allowAll must be configured together");
+  }
   return {
     executable: absolutePath(entry.executable, "muse.executable"),
     configHome: absolutePath(entry.config_home, "muse.config_home"),
     dataHome: absolutePath(entry.data_home, "muse.data_home"),
     workspace: absolutePath(entry.workspace, "muse.workspace"),
-    approvalMode: museApprovalMode(entry.approval_mode),
+    approvalMode,
+    ...(entry.yolo === true ? { yolo: true } : {}),
     ...(entry.model === undefined ? {} : { model: string(entry.model, "muse.model") }),
     ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
   };
@@ -141,12 +148,19 @@ function museFromConfig(value: unknown, harnessId: HarnessId): MuseRunnerConfig 
 function museFromEnvironment(harnessId: HarnessId): MuseRunnerConfig | undefined {
   if (harnessId !== "muse") return undefined;
   const reasoningEffort = museReasoningEffort(process.env.CAUCE_MUSE_REASONING_EFFORT);
+  const approvalMode = museApprovalMode(process.env.CAUCE_MUSE_APPROVAL_MODE);
+  const yolo = process.env.CAUCE_MUSE_YOLO;
+  if (yolo !== undefined && yolo !== "1") throw new Error("CAUCE_MUSE_YOLO must be 1 when set");
+  if ((approvalMode === "allowAll") !== (yolo === "1")) {
+    throw new Error("CAUCE_MUSE_YOLO and allowAll must be configured together");
+  }
   return {
     executable: absolutePath(requiredEnvironment("CAUCE_MUSE_EXECUTABLE"), "CAUCE_MUSE_EXECUTABLE"),
     configHome: absolutePath(requiredEnvironment("CAUCE_MUSE_CONFIG_HOME"), "CAUCE_MUSE_CONFIG_HOME"),
     dataHome: absolutePath(requiredEnvironment("CAUCE_MUSE_DATA_HOME"), "CAUCE_MUSE_DATA_HOME"),
     workspace: absolutePath(requiredEnvironment("CAUCE_MUSE_WORKSPACE"), "CAUCE_MUSE_WORKSPACE"),
-    approvalMode: museApprovalMode(process.env.CAUCE_MUSE_APPROVAL_MODE),
+    approvalMode,
+    ...(yolo === "1" ? { yolo: true } : {}),
     ...(process.env.CAUCE_MUSE_MODEL === undefined
       ? {} : { model: string(process.env.CAUCE_MUSE_MODEL, "CAUCE_MUSE_MODEL") }),
     ...(reasoningEffort === undefined ? {} : { reasoningEffort }),

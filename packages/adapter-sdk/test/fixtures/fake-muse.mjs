@@ -3,7 +3,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
-if (process.argv[2] !== "serve" || process.argv[3] !== "--trust-workspace") process.exit(2);
+const launchArgs = process.argv.slice(2);
+if (launchArgs[0] !== "serve" || launchArgs.at(-1) !== "--trust-workspace"
+  || (launchArgs.length !== 2 && !(launchArgs.length === 3 && launchArgs[1] === "--disable-sandbox"))) process.exit(2);
 
 const home = process.env.HOME;
 const configHome = process.env.XDG_CONFIG_HOME;
@@ -15,7 +17,7 @@ const state = (() => {
   try { return JSON.parse(readFileSync(statePath, "utf8")); }
   catch { return { sessions: {}, turns: [], hostEnv: [] }; }
 })();
-state.hostEnv.push({ home, configHome, dataHome, codexHome: process.env.CODEX_HOME ?? null });
+state.hostEnv.push({ home, configHome, dataHome, codexHome: process.env.CODEX_HOME ?? null, args: launchArgs });
 
 function persist() { writeFileSync(statePath, JSON.stringify(state)); }
 function response(id, result) { process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`); }

@@ -21,7 +21,8 @@ export interface MuseRunnerConfig {
   readonly configHome: string;
   readonly dataHome: string;
   readonly workspace: string;
-  readonly approvalMode: "denyUnmatched" | "onRequest";
+  readonly approvalMode: "denyUnmatched" | "onRequest" | "allowAll";
+  readonly yolo?: boolean;
   readonly model?: string;
   readonly reasoningEffort?: MuseReasoningEffort;
 }
@@ -157,6 +158,9 @@ export class MuseMspRunner {
   private readonly config: MuseRunnerConfig;
 
   constructor(config: MuseRunnerConfig) {
+    if ((config.approvalMode === "allowAll") !== (config.yolo === true)) {
+      throw new Error("Muse allowAll approval mode and disabled sandbox must be configured together");
+    }
     this.config = config;
   }
 
@@ -176,7 +180,7 @@ export class MuseMspRunner {
       await bounded(validateWorkspace(this.config), deadline, request.signal);
       handshake = spawnMspConnection({
         command: this.config.executable,
-        args: ["serve", "--trust-workspace"],
+        args: ["serve", ...(this.config.yolo === true ? ["--disable-sandbox"] : []), "--trust-workspace"],
         cwd: this.config.workspace,
         env: hostEnvironment(this.config),
         shutdownTimeoutMs: 2_000,

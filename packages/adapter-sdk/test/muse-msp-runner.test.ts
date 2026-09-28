@@ -108,6 +108,25 @@ test("Muse MSP onRequest confirms the mode before a headless turn", async () => 
   assert.equal(state.sessions[sessionId]?.approvalMode, "onRequest");
 });
 
+test("Muse YOLO requires allowAll and disables the sandbox at host startup", async () => {
+  const { config } = await fixture("yolo", "allowAll");
+  const yolo = { ...config, yolo: true };
+  assert.throws(() => new MuseMspRunner(config), /configured together/u);
+  assert.throws(() => new MuseMspRunner({ ...config, approvalMode: "onRequest", yolo: true }), /configured together/u);
+  const sessionId = mintId();
+  const run = await new MuseMspRunner(yolo).run({
+    harness: "muse", command: fakeMuse, args: ["serve"], stdin: "Synthetic task",
+    sessionId, timeoutMs: 5_000, signal: new AbortController().signal,
+  });
+  assert.equal(parseMuseOutput(run.stdout).output.status, "done");
+  const state = JSON.parse(await readFile(resolve(config.dataHome, "fake-muse-state.json"), "utf8")) as {
+    sessions: Record<string, { approvalMode: string }>;
+    hostEnv: { args: string[] }[];
+  };
+  assert.equal(state.sessions[sessionId]?.approvalMode, "allowAll");
+  assert.deepEqual(state.hostEnv[0]?.args, ["serve", "--disable-sandbox", "--trust-workspace"]);
+});
+
 test("Muse MSP timeout is marked ambiguous and does not submit a second turn", async () => {
   const { config } = await fixture("timeout");
   await writeFile(resolve(config.workspace, "fake-muse-scenario.json"), JSON.stringify({ hang: true }));
