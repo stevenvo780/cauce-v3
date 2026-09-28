@@ -2,13 +2,7 @@ import { parseMuseOutput } from "../sdk/output-parser.js";
 import type { HarnessDefinition } from "../sdk/types.js";
 import { capabilities } from "./shared.js";
 
-/**
- * Muse Code (Meta), headless mode. `--json` emits JSONL records while the turn progresses. The command is the
- * `muse-cauce` bridge (ops/container-runtime/muse-cauce): `--prompt-file` rejects a pipe ("is not a regular
- * file") and the adapter writes the prompt on stdin, so the bridge copies it to a file. `--yolo` because the
- * adapter runs inside an isolated container, like the other harnesses; `--trust-workspace` so the alias's
- * AGENTS.md is loaded.
- */
+/** Muse Code (Meta), headless mode: `--json` emits JSONL as the turn progresses, via the `muse-cauce` bridge (copies the prompt from stdin to a file, since `--prompt-file` rejects a pipe); `--yolo` runs unattended in the isolated container, `--trust-workspace` loads the alias's AGENTS.md. */
 export const museDefinition: HarnessDefinition = {
   id: "muse",
   command: "muse-cauce",

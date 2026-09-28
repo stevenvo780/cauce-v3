@@ -5,7 +5,7 @@ import { museDefinition } from "../src/harnesses/muse.js";
 import { validateSessionsFile } from "../src/sdk/durable-store/session-file.js";
 import { parseMuseOutput } from "../src/sdk/output-parser.js";
 
-// Records trimmed from a real `muse exec --json` run (Muse Code 1.4.0, 2026-09-27): the session record, the
+// Records trimmed from a real `muse exec --json` run (Muse Code 1.4.0): the session record, the
 // output deltas and the terminal record. The run answered "HOLA".
 const RUN = [
   "{\"schema_version\":1,\"id\":\"018f0000-0000-7000-8000-00000000c350\",\"stream\":{\"kind\":\"session\",\"id\":\"01a0e53f-1799-71d0-8531-21ed64d15827\"},\"sequence\":1,\"recorded_at\":1780531400000000,\"record_type\":\"reconciliation\",\"durability\":\"durable\",\"causation_id\":\"e4d2761d-26c6-41f9-a190-370fdcd2fa92\",\"payload_type\":\"runtime.command.accepted\",\"payload_schema_version\":1,\"payload\":{\"client_id\":null,\"command_id\":\"e4d2761d-26c6-41f9-a190-370fdcd2fa92\",\"command_kind\":\"turn.submit\",\"kind\":\"command_accepted\"}}",
@@ -34,11 +34,11 @@ test("muse: deltas are the fallback when the terminal carries no text", () => {
 test("muse: prompt through the muse-cauce bridge and resume by --session-id", () => {
   assert.equal(museDefinition.command, "muse-cauce");
   assert.deepEqual(museDefinition.baseArgs, ["exec", "--json", "--yolo", "--trust-workspace"]);
-  assert.deepEqual(museDefinition.sessionArgs({ sessionId: "s-1", resume: true } as never), ["--session-id", "s-1"]);
+  assert.deepEqual(museDefinition.sessionArgs({ sessionId: "s-1", resume: true }), ["--session-id", "s-1"]);
   assert.deepEqual(museDefinition.sessionArgs({ sessionId: undefined, resume: false } as never), []);
 });
 
-// The clio incident (2026-09-28): the sessions.json regex did not know "muse", so the first persisted session
+// The clio incident: the sessions.json regex did not know "muse", so the first persisted session
 // failed "secure validation" and every delivery died as INTERNAL. Every registered harness must be able to
 // store its session.
 test("sessions.json accepts the session of every registered harness", () => {

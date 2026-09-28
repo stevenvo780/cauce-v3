@@ -52,10 +52,7 @@ function commandOverride(
   };
 }
 
-/**
- * Verifies that the bridge script contains the start marker before enabling `stderr-marker`.
- * If the bridge does not contain the marker or cannot be read, disables the start witness.
- */
+/** Verifies the bridge has the start marker before enabling `stderr-marker`; disables the start witness if it lacks the marker or cannot be read. */
 function definitionWithVerifiedBridge(
   definition: HarnessDefinition,
   override: HarnessCommandOverride | undefined,

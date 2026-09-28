@@ -94,7 +94,7 @@ test("a restarted shared runner rescues a durable MCP deposit without a textual 
 // attachment, never as its own user entry, so the harvest cannot localize the turn and depends on
 // the transcript going quiet. The quiet window used to be measured against the pre-paste baseline:
 // once the in-flight turn wrote anything it never went quiet, and the MCP deposit sat until the 6 h
-// lease cap (zeus f30f2319 and kant 57cb2fe0, 2026-09-23).
+// lease cap (zeus f30f2319 and kant 57cb2fe0).
 test("a paste merged into an in-flight turn releases its MCP deposit once the transcript goes quiet", async () => {
   const { state, home, workspace } = await freshState("mcp-merged-queued-command");
   const nativeId = randomUUID();

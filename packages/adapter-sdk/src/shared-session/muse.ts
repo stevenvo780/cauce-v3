@@ -354,7 +354,7 @@ function findMuseOutcome(entries: readonly MuseLogLine[], key: string): TurnOutc
 /**
  * The run already committed its envelope but has not closed: Muse's "Double checking" phase.
  *
- * Measured on hegel (2026-09-28): after the final message Muse runs its verify reminder for ~9 s
+ * Measured on hegel: after the final message Muse runs its verify reminder for ~9 s
  * (`◇ Double checking … esc to interrupt`) and only then writes `terminal`. Without this the runner
  * saw an envelope with no close and rescued it as a MERGED turn, telling the sender a falsehood.
  * Only an envelope-shaped last message with no tool call after it counts: an interim message

@@ -95,12 +95,7 @@ export function parseOpenCodeOutput(stdout: string): ParsedHarnessOutput {
   return sessionResult(parseCandidate(candidate, "OpenCode result"), sessionId);
 }
 
-/**
- * Muse Code (Meta) `muse exec --json`: JSONL records whose `stream.kind === "session"` carries the session id.
- * The turn ends with `payload.kind === "run_terminal"`; `terminal === "completed"` brings the final text in
- * `payload.text`, and any other terminal is a failure. `run_output_delta` fragments are the fallback when the
- * terminal record carries no text.
- */
+/** Muse Code (Meta) `muse exec --json`: JSONL records where `stream.kind === "session"` carries the session id; `payload.kind === "run_terminal"` ends the turn (text in `payload.text` if completed, else failure), with `run_output_delta` fragments as the fallback text. */
 export function parseMuseOutput(stdout: string): ParsedHarnessOutput {
   const events = jsonLines(stdout, "Muse Code");
   let sessionId: unknown;
@@ -168,8 +163,7 @@ export function parseCodexOutput(stdout: string): ParsedHarnessOutput {
       failureIndex = index;
     }
   }
-// Failure wins only if it is the LAST thing the turn said: an `error` followed by an
-    // `agent_message` is an internal retry that succeeded, and that one did complete.
+// Failure wins only if it is the LAST thing the turn said: an `error` followed by a completed `agent_message` is an internal retry, not a failure.
   if (failure !== undefined && failureIndex > candidateIndex) {
     return sessionResult(failedTurnOutput(candidate, "Codex agent message", failure), sessionId);
   }
@@ -193,8 +187,7 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
     /** Last openclaw notice when NO payload carried a real answer. */
     let avisoDeCola: string | undefined;
 
-    // BEFORE looking at payloads or visible text: a run the native runtime declared failed still
-    // leaves text behind, and that text was being treated as the turn's successful result.
+    // BEFORE payloads or visible text: a run the native runtime declared failed still leaves text behind, which was wrongly treated as the turn's successful result.
     const failure = nativeFailureDetail(current);
     if (failure !== undefined) {
       const spoken = Array.isArray(current.payloads)

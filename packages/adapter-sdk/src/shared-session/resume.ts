@@ -13,9 +13,7 @@ import type {
   SharedSessionHarness,
 } from "./types.js";
 
-/**
- * Detection and configuration of previous conversation session resumption in the TUI.
- */
+/** Detection and configuration of previous conversation session resumption in the TUI. */
 
 /** Cap on rollouts to inspect when checking for resumable conversations. */
 const MAX_ROLLOUTS_INSPECTED = 200;
@@ -52,11 +50,7 @@ export function sharedSessionResume(
   }
 }
 
-/**
- * muse resumes by EXACT id (`muse resume <id>`; root flags may go on either side of `resume`);
- * unpointed history blocks, like grok. Muse has no flag to choose the id of a NEW conversation:
- * with no history it starts bare and the native witness names it after its first turn.
- */
+/** muse resumes by EXACT id (`muse resume <id>`; root flags may go on either side of `resume`); unpointed history blocks, like grok. Muse has no flag to choose the id of a NEW conversation: with no history it starts bare and the native witness names it after its first turn. */
 export async function resolveMuseLaunch(
   museData: string,
   workspace: string,

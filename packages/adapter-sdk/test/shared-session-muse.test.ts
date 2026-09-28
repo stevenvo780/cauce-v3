@@ -33,7 +33,7 @@ import {
   freshState,
 } from "./shared-session-fixtures.js";
 
-// Muse Code 1.4.0 measured in ws-humanizar on 2026-09-28 (tmux 130x40): a bracketed paste plus a
+// Muse Code 1.4.0 measured in ws-humanizar (tmux 130x40): a bracketed paste plus a
 // SEPARATE Enter submits; `session.jsonl` records the prompt verbatim in
 // `runtime.user_intent.accepted`, the answer in `assistant_message_committed` and the close in
 // `terminal`, all tied by `run_id` (= the intent id on an idle TUI).
@@ -186,7 +186,7 @@ test("muse: la línea de trabajo cuenta como turno en vuelo y la caja vacía com
   assert.equal(turnInFlight(WORKING_PANE), true);
   assert.equal(turnInFlight(IDLE_PANE), false);
   assert.equal(inputBoxState(IDLE_PANE).kind, "free");
-  assert.equal(inputBoxState(IDLE_PANE.replace(/❯\n(─+)\n  muse/u, "❯ texto a medio escribir\n$1\n  muse")).kind, "busy");
+  assert.equal(inputBoxState(IDLE_PANE.replace(/❯\n(─+)\n {2}muse/u, "❯ texto a medio escribir\n$1\n  muse")).kind, "busy");
 });
 
 test("muse: SHARED_SESSION=1 usa un XDG_DATA_HOME propio del alias, esfuerzo max y las flags del puente", () => {

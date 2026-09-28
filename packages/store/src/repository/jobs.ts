@@ -90,8 +90,8 @@ export abstract class JobsRepository extends ObservabilityRepository {
       /*
        * The dispatcher calls this every DISPATCHER_POLL_MS (250 ms by default), so with an EMPTY
        * queue the loop above breaks on its first turn and the streak comes out exactly as it went
-       * in. Writing it back anyway cost a new tuple version and its WAL on every tick: measured on
-       * 2026-09-12 with production idle, 9.97 UPDATEs per second against a table that holds ONE
+       * in. Writing it back anyway cost a new tuple version and its WAL on every tick: measured
+       * at 9.97 UPDATEs per second with production idle, against a table that holds ONE
        * row -- about 860k row versions a day for a system that dispatched nothing. Nobody reads
        * `updated_at` here (the only three statements that touch this table are in this function),
        * so skipping the write when the value did not change loses no information.

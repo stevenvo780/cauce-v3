@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 # Vigila cada 24 h las URLs del catalogo Mouseion y avisa al dueno cuando alguna deja de dar 200.
-#
-#
-#   --dry-run   valida destino y permiso contra el gateway SIN escribirle a nadie
-#   --list      imprime lo que vigilaria y sale
+#   --dry-run valida destino y permiso contra el gateway SIN escribirle a nadie; --list imprime lo que vigilaria y sale
 # Sale 1 si hay alguna caida (para que systemd la marque), 0 si todas responden.
 set -uo pipefail
 
@@ -40,12 +37,10 @@ TOTAL=0
 while IFS=$'\t' read -r url marca; do
   TOTAL=$((TOTAL + 1))
   cuerpo="$(mktemp)"
-  # -L: cuenta la respuesta FINAL, que es la que ve una persona. 000 (DNS/TLS/timeout) es caida.
-  # UNA sola muestra no distingue una caida de un pico de latencia. Medido 2026-09-10:
-  # aletheia.humanizar.tech oscila entre 0,7 s y 10,2 s y ese dia paso de los 20 s de $ESPERA una
-  # vez; entro en el conjunto de rotas, disparo el aviso, y a los minutos volvia a responder 200 con
-  # sus 43 KB de siempre. Un servicio REALMENTE caido falla las dos muestras, asi que el reintento
-  # quita el falso positivo sin tapar ninguna caida.
+  # -L: cuenta la respuesta FINAL, que es la que ve una persona; 000 (DNS/TLS/timeout) es caida.
+  # UNA sola muestra no distingue una caida real de un pico de latencia pasajero: un sitio lento
+  # puede superar $ESPERA una vez y responder 200 de nuevo a los pocos minutos; el reintento evita
+  # marcar eso como caida sin tapar una caida real, que falla las dos muestras.
   sondear() {
     curl -sL -o "$cuerpo" --max-time "$ESPERA" \
          -w '%{http_code} %{size_download} %{url_effective}' "$1" 2>/dev/null
@@ -60,8 +55,7 @@ while IFS=$'\t' read -r url marca; do
     [ -n "$codigo" ] || { codigo=000; peso=0; final="$url"; }
   fi
 
-  # Un 200 no prueba que sea LA pagina: un aparcado y el catch-all de una SPA tambien contestan
-  # 200 a cualquier ruta. Se exige ademas peso y, si la lista lo declara, su marcador.
+  # Un 200 no basta (un aparcado o el catch-all de una SPA tambien responde 200): se exige ademas el peso minimo y, si la lista lo declara, el marcador.
   veredicto=""
   if   [ "$codigo" != "200" ];                                   then veredicto="$codigo"
   elif [ "${peso:-0}" -lt "$MINIMO" ];                           then veredicto="VACIA($peso)"
@@ -100,10 +94,9 @@ print(json.dumps({"destination": os.environ["DEST"], "kind": "alert",
   esac
 }
 
-# El egreso directo exige el permiso `notify` en el principal mTLS, que hoy el certificado
-# `CN=agent-zeus` NO tiene (el gateway responde 403). El bus SI le abre: publicar una entrega para
-# un agente si esta permitido. Un guion no puede hablarle a una persona, pero puede despertar a
-# quien si puede, y ese agente emite el notify en su turno.
+# El egreso directo exige el permiso `notify` en el principal mTLS, que hoy `CN=agent-zeus` no
+# tiene (el gateway responde 403). El bus si deja publicar una entrega para un agente si esta
+# permitido: un guion no le habla a una persona, pero despierta a quien si puede avisarle.
 por_el_bus() {
   local texto="$1" clave="$2"
   local cert="$PKI/$ALIAS/client.crt" key="$PKI/$ALIAS/client.key" ca="$PKI/$ALIAS/ca.crt"
@@ -133,17 +126,14 @@ fi
 
 [ ${#ROTAS[@]} -eq 0 ] && exit 0
 
-# Avisa SOLO si hay alguna rota que no estuviera en el aviso anterior: que el conjunto se ENCOJA
-# no es noticia, y repetir un subconjunto es ruido con forma de alarma.
+# Avisa solo si hay alguna rota nueva respecto del aviso anterior: que el conjunto se encoja no es noticia, y repetir un subconjunto ya avisado es ruido con forma de alarma.
 NUEVAS="$(printf '%s\n' "${ROTAS[@]}" | awk '{print $NF}' | sort \
           | comm -23 - <(sort "$ESTADO" 2>/dev/null || true))"
 if [ -z "$NUEVAS" ]; then
   echo "sin novedades respecto del aviso anterior: no aviso"
-  # PERO hay que PODAR las que se recuperaron. El estado solo se reescribia al avisar, asi que una
-  # URL que entraba por un pico se quedaba apuntada para siempre y su caida REAL posterior ya no
-  # contaba como nueva: aviso mudo. Es el mismo fallo que el comentario de abajo describe, entrando
-  # por la otra puerta. Aqui NUEVAS esta vacio, o sea el conjunto actual es un subconjunto del
-  # guardado: escribir el actual es exactamente la interseccion, nunca agrega nada sin aviso.
+  # PERO hay que PODAR las que se recuperaron: el estado solo se reescribia al avisar, asi que una
+  # URL que entraba por un pico quedaba apuntada para siempre y su caida real posterior ya no
+  # contaba como nueva (mismo fallo que el comentario de abajo, por la otra puerta): aviso mudo.
   printf '%s\n' "${ROTAS[@]}" | awk '{print $NF}' | sort > "$ESTADO" \
     || echo "no pude podar el estado en $ESTADO" >&2
   exit 1
@@ -152,8 +142,7 @@ fi
 HUELLA="$(printf '%s\n' "${ROTAS[@]}" | sort | sha256sum | cut -c1-12)"
 CUERPO="$(printf 'Catalogo Mouseion: %d de %d productos NO responden.\n\n%s\n\nMedido %s. Detalle e historico en %s del VPS.' \
   "${#ROTAS[@]}" "$TOTAL" "$(printf '%s\n' "${ROTAS[@]}" | head -6 | sed 's/^/  /')" "$SELLO" "$INFORME")"
-# El estado se apunta SOLO si el aviso salio: apuntarlo antes convierte un aviso fallido en una
-# caida muda para siempre, que es justo el fallo que este vigia existe para evitar.
+# El estado se apunta SOLO si el aviso salio: apuntarlo antes convierte un aviso fallido en una caida muda para siempre, que es justo el fallo que este vigia existe para evitar.
 if avisar "$CUERPO" "catalogo-health:$(date -u +%Y-%m-%d):$HUELLA" \
    || por_el_bus "$CUERPO" "catalogo-health-bus:$(date -u +%Y-%m-%d):$HUELLA"; then
   printf '%s\n' "${ROTAS[@]}" | awk '{print $NF}' | sort > "$ESTADO" \

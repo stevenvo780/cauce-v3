@@ -29,9 +29,7 @@ import {
 } from "./runtime.js";
 
 export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessRunner<E> {
-  /**
-   * Extracts the envelope from the harness's structured transcript.
-   */
+  /** Extracts the envelope from the harness's structured transcript. */
   protected async harvest(
     request: CommandRunRequest,
     baseline: ReadonlyMap<string, number>,
@@ -52,18 +50,14 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     const quietMs = this.options.quietTimeoutMs ?? DEFAULT_QUIET_MS;
     let injected: { file: string; key: string; sessionId?: string } | undefined;
     let started = false;
-    // Last time the transcript grew; distinguishes "paste was lost" (nothing writes)
-    // from "paste merged with an in-flight turn" (terminal writes the whole time). See DEFAULT_QUIET_MS.
+    // Last time the transcript grew; distinguishes "paste was lost" (nothing writes) from "paste merged with an in-flight turn" (terminal writes the whole time). See DEFAULT_QUIET_MS.
     let lastActivityAt = Date.now();
-    // Sizes seen on the previous poll. `scan.activity` compares against the PRE-paste baseline, so
-    // once anything was written it stays true forever; activity has to be growth since the last poll.
+    // Sizes seen on the previous poll: `scan.activity` compares against the PRE-paste baseline, so activity has to be growth since the last poll, or it would stay true forever once anything wrote.
     const seenSizes = new Map(baseline);
-    // Long-conversation transcripts weigh megabytes and a turn may run for an hour;
-    // re-reading the whole file every poll would cost more than the turn itself, so we only read on growth.
+    // Long-conversation transcripts weigh megabytes and a turn may run for an hour, so we only re-read the whole file on growth — re-reading every poll would cost more than the turn itself.
     let lastSize = -1;
     let probe = 0;
-    // Timestamp is fixed by the EVENT, not by the next poll — a slow transcript read
-    // cannot start counting the deadline only when it finishes.
+    // Timestamp is fixed by the EVENT, not by the next poll, so a slow transcript read cannot start counting the deadline only when it finishes.
     let lingering: { readonly outcome: TurnOutcome; readonly progress: string } | undefined; // No silence cut then.
     let lingeringSince = 0;
     const backgroundWaitMs = Math.max(0, this.options.backgroundWaitMs ?? DEFAULT_BACKGROUND_WAIT_MS);
@@ -115,8 +109,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
               terminalBoundary: true,
             };
           }
-          // A rename does not replace the conversation nor the process; the next preflight will
-          // re-demand the canonical names before injecting a new turn.
+          // A rename does not replace the conversation nor the process; the next preflight will re-demand the canonical names before injecting a new turn.
           activeIdentity = observed.identity;
         }
         probe += 1;
@@ -189,9 +182,8 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
             lingeringSince = Date.now();
           }
           lingering = pendingWork;
-          // Localized turn but no ancestry arriving: the other way of holding the lock until the
-          // full budget waiting for an envelope already written. Scoped to our entry, so
-          // a pre-paste envelope cannot sneak in. Not while background work may still answer.
+          // Localized turn but no ancestry arriving: the other way of holding the lock until the full
+          // budget waiting for an envelope already written, scoped to our entry so a pre-paste envelope cannot sneak in, and not while background work may still answer.
           const rescue = lingering === undefined
             ? port.findEnvelope?.(slice.entries, correlationId, injectedTurn.key)
             : undefined;
@@ -277,12 +269,10 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           };
         }
 
-        // Safety net for harnesses that cannot declare `startedTurn` (claude): the paste never
-        // appeared in the transcript. No degrade — that would execute twice — the delivery
-        // ends AMBIGUOUS and the generation is quarantined so the queue only progresses via
-        // the isolated transport or on a new generation.
-        // Requires SILENCE from the PANE too, not just from the file: a growing transcript or a
-        // pane still generating is an in-flight turn. See `paneStillGenerating`; bounded by `deadline`.
+        // Safety net for harnesses that cannot declare `startedTurn` (claude): the paste never appeared
+        // in the transcript. No degrade (that would execute twice) — the delivery ends AMBIGUOUS and
+        // the generation is quarantined so the queue only progresses via the isolated transport or a
+        // new generation. Also requires SILENCE from the PANE, not just the file (growing transcript or pane still generating is an in-flight turn; see `paneStillGenerating`, bounded by `deadline`).
         if (injected === undefined && !started && Date.now() >= correlationDeadline
           && Date.now() - lastActivityAt >= quietMs) {
           const alive = await beforeAbort(
@@ -335,8 +325,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
             if (harvested.aborted) continue;
             return { result: harvested.value, terminalBoundary: true };
           }
-          // Already injected: the turn may have run tools and caused external effects.
-          // `timedOut` makes the adapter treat it as AMBIGUOUS and not retry alone.
+          // Already injected: the turn may have run tools and caused external effects; `timedOut` makes the adapter treat it as AMBIGUOUS and not retry alone.
           return {
             result: await this.quarantineTimedOut(
               activeIdentity,
@@ -374,11 +363,9 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
   }
 
   /**
-   * Cancels an already-committed turn without releasing the queue over a TUI still occupied.
-   *
-   * Every wait uses the deadline set by the abort event. A logical rename is followed by
-   * session/pane/PID; a respawn is not. If no terminal boundary appears, the generation is marked
-   * in tmux+disk or killed exactly, so it never ends up blindly reusable.
+   * Cancels an already-committed turn without releasing the queue over a TUI still occupied. Every
+   * wait uses the deadline set by the abort event; a logical rename is followed by session/pane/PID
+   * (a respawn is not), and if no terminal boundary appears the generation is marked in tmux+disk or killed exactly, so it never ends up blindly reusable.
    */
   protected async drainCancelledTurn(
     identity: PaneIdentity,
@@ -576,12 +563,10 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
   }
 
   /**
-   * Whether any transcript changed size since the previous call, updating `seen` in place.
-   *
-   * A paste merged into an in-flight turn is never recorded as its own user entry (claude stores
-   * it as a `queued_command` attachment), so `injected` stays undefined and the only activity
-   * signal is this one. Measured against the baseline instead, it never went quiet: the MCP
-   * deposit was ready but the delivery was held to the 6 h lease cap (zeus f30f2319, kant 57cb2fe0).
+   * Whether any transcript changed size since the previous call, updating `seen` in place. A paste
+   * merged into an in-flight turn is never recorded as its own user entry (claude stores it as a
+   * `queued_command` attachment), so `injected` stays undefined and this is the only activity signal;
+   * measured against the baseline instead, it never went quiet, holding the delivery to the 6 h lease cap.
    */
   protected async transcriptMoved(seen: Map<string, number>): Promise<boolean> {
     let moved = false;

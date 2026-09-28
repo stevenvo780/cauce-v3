@@ -5,19 +5,14 @@ import type { SharedSessionSpec } from "./session.js";
 import { sharedSessionResume } from "./resume.js";
 import { isSharedSessionHarness, type SharedSessionHarness } from "./types.js";
 
-/**
- * Shared session configuration from environment variables.
- */
-
+/** Shared session configuration from environment variables. */
 export interface SharedSessionConfig {
   readonly harness: SharedSessionHarness;
   readonly alias: string;
   readonly workspace: string;
   readonly home: string;
   readonly stateDirectory: string;
-  /**
-   * Where the harness configuration lives and where its registry hangs from.
-   */
+  /** Where the harness configuration lives and where its registry hangs from. */
   readonly configDirectory: string;
   /** What the TUI must see in its environment, whoever creates it. */
   readonly paneEnvironment: Readonly<Record<string, string>>;
@@ -40,7 +35,7 @@ export function claudePermissionArguments(
   }
 }
 
-/** Muse's effort levels (`muse --help`, 1.4.0). The alias runs at max by Steven's decision (2026-09-28). */
+/** Muse's effort levels (`muse --help`, 1.4.0). The alias runs at max by Steven's decision. */
 const MUSE_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 
 export function museReasoningEffort(environment: NodeJS.ProcessEnv): string {
@@ -51,13 +46,10 @@ export function museReasoningEffort(environment: NodeJS.ProcessEnv): string {
 }
 
 /**
- * Muse's data directory for a shared alias: `$XDG_DATA_HOME/muse`, with an XDG_DATA_HOME OF ITS OWN.
- *
- * Muse has no variable for its sessions but XDG_DATA_HOME, and the default one
- * (`~/.local/share/muse`) is shared with every other Muse of the container: in ws-humanizar the
- * owner's own TUI (tmux grav-muse) writes an 80 MB log there. The shared TUI gets the alias's
- * persistent config folder, next to its login: `~/.local/share/cauce-v3/config/<alias>/.local/share`.
- * `CAUCE_MUSE_DATA_HOME` overrides it (absolute).
+ * Muse's data directory for a shared alias: `$XDG_DATA_HOME/muse`, with an XDG_DATA_HOME of its own.
+ * Muse has no variable for its sessions but XDG_DATA_HOME, and the default (`~/.local/share/muse`)
+ * is shared with every Muse in the container (e.g. the owner's own TUI writes an 80 MB log there);
+ * this gives the shared TUI its own folder next to its login. `CAUCE_MUSE_DATA_HOME` overrides it.
  */
 export function museDataHome(home: string, alias: string, environment: NodeJS.ProcessEnv): string {
   const declared = environment.CAUCE_MUSE_DATA_HOME;
@@ -109,9 +101,7 @@ export function harnessConfigDirectory(
   return declared;
 }
 
-/**
- * Generates the minimal environment-variable map for the TUI's tmux pane (always the config dir).
- */
+/** Generates the minimal environment-variable map for the TUI's tmux pane (always the config dir). */
 export function sharedSessionPaneEnvironment(
   harness: SharedSessionHarness,
   home: string,
@@ -123,9 +113,7 @@ export function sharedSessionPaneEnvironment(
   return { [configDirectoryVariable(harness).variable]: directory };
 }
 
-/**
- * Builds the `SharedSessionSpec` for CLI-driven session bootstrap.
- */
+/** Builds the `SharedSessionSpec` for CLI-driven session bootstrap. */
 export function cliSharedSessionSpec(
   harness: SharedSessionHarness,
   alias: string,
@@ -150,9 +138,7 @@ export function cliSharedSessionSpec(
   };
 }
 
-/**
- * Loads and validates the shared session configuration from the environment.
- */
+/** Loads and validates the shared session configuration from the environment. */
 export function loadSharedSessionConfig(
   harnessId: HarnessId,
   alias: string,
