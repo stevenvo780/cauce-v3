@@ -21,7 +21,7 @@ export interface MuseRunnerConfig {
   readonly configHome: string;
   readonly dataHome: string;
   readonly workspace: string;
-  readonly approvalMode: "denyUnmatched";
+  readonly approvalMode: "denyUnmatched" | "onRequest";
   readonly model?: string;
   readonly reasoningEffort?: MuseReasoningEffort;
 }

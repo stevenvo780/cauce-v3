@@ -113,9 +113,10 @@ function museReasoningEffort(value: unknown): MuseReasoningEffort | undefined {
   return value as MuseReasoningEffort;
 }
 
-function museApprovalMode(value: unknown): "denyUnmatched" {
+function museApprovalMode(value: unknown): "denyUnmatched" | "onRequest" {
   if (value === undefined || value === "denyUnmatched") return "denyUnmatched";
-  throw new Error("Muse unattended sessions require approval mode denyUnmatched");
+  if (value === "onRequest") return "onRequest";
+  throw new Error("Muse unattended sessions require approval mode denyUnmatched or onRequest");
 }
 
 function museFromConfig(value: unknown, harnessId: HarnessId): MuseRunnerConfig | undefined {

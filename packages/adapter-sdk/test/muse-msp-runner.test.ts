@@ -13,7 +13,10 @@ import { testStateRoot } from "./test-state.js";
 const fakeMuse = resolve("test/fixtures/fake-muse.mjs");
 const mintId = createUuidV7Mint();
 
-async function fixture(name: string): Promise<{ config: MuseRunnerConfig; stateDirectory: string }> {
+async function fixture(
+  name: string,
+  approvalMode: MuseRunnerConfig["approvalMode"] = "denyUnmatched",
+): Promise<{ config: MuseRunnerConfig; stateDirectory: string }> {
   const root = testStateRoot(`muse-${name}`);
   const home = resolve(root, "alias-home");
   const workspace = resolve(root, "workspace");
@@ -29,7 +32,7 @@ async function fixture(name: string): Promise<{ config: MuseRunnerConfig; stateD
       configHome,
       dataHome,
       workspace,
-      approvalMode: "denyUnmatched",
+      approvalMode,
       model: "muse-spark-1.3",
       reasoningEffort: "high",
     },
@@ -89,6 +92,20 @@ test("Muse MSP maintains one durable UUIDv7 conversation across adapter reconstr
   assert.ok(state.hostEnv.every((env) => env.home === resolve(config.configHome, "..")
     && env.configHome === config.configHome && env.dataHome === config.dataHome
     && env.codexHome === null));
+});
+
+test("Muse MSP onRequest confirms the mode before a headless turn", async () => {
+  const { config } = await fixture("onrequest", "onRequest");
+  const sessionId = mintId();
+  const run = await new MuseMspRunner(config).run({
+    harness: "muse", command: fakeMuse, args: ["serve"], stdin: "Synthetic task",
+    sessionId, timeoutMs: 5_000, signal: new AbortController().signal,
+  });
+  assert.equal(parseMuseOutput(run.stdout).output.status, "done");
+  const state = JSON.parse(await readFile(resolve(config.dataHome, "fake-muse-state.json"), "utf8")) as {
+    sessions: Record<string, { approvalMode: string }>;
+  };
+  assert.equal(state.sessions[sessionId]?.approvalMode, "onRequest");
 });
 
 test("Muse MSP timeout is marked ambiguous and does not submit a second turn", async () => {
