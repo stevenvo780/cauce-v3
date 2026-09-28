@@ -941,11 +941,11 @@ start_adapter() {
     environment+=("CAUCE_HERMES_PYTHON=${CONFIG[HERMES_PYTHON]}")
   fi
   [[ $harness != openclaw ]] || environment+=("CAUCE_OPENCLAW_TRANSPORT=${CONFIG[OPENCLAW_TRANSPORT]:-cli}")
-  for key in \
-    OPENCLAW_WORKSPACE OPENCLAW_API_URL OPENCLAW_TOKEN_FILE OPENCLAW_AGENT_TARGET OPENCLAW_DIST_DIR \
+  for key in OPENCLAW_WORKSPACE OPENCLAW_API_URL OPENCLAW_TOKEN_FILE OPENCLAW_AGENT_TARGET OPENCLAW_DIST_DIR \
     MUSE_EXECUTABLE MUSE_CONFIG_HOME MUSE_DATA_HOME MUSE_WORKSPACE MUSE_APPROVAL_MODE MUSE_MODEL MUSE_REASONING_EFFORT; do
     [[ ! -v "CONFIG[$key]" ]] || environment+=("CAUCE_$key=${CONFIG[$key]}")
   done
+  [[ $harness != openclaw && $harness != muse ]] || environment+=("CAUCE_AGENT_WORKSPACE=$inventory_workspace")
   assert_generation
   # The lifecycle controller runs as root (to own the control plane) and drops the
   # adapter child to the mapped non-root UID/GID. This exec is intentionally unbounded.
