@@ -133,8 +133,7 @@ describe('migration 041 context journal', () => {
       `UPDATE agent_profiles SET role_summary='segunda versión'
         WHERE tenant_id='Steven' AND alias='argos'`,
     );
-    // `applied_revision` advances on every runtime ACK; a journal that anotated each one would be
-    // unreadable, and that advance already has its own audit_events row.
+    // Each ACK already writes audit_events; the journal stays out of that path.
     await pool.query(
       `UPDATE agent_profiles SET applied_revision=2 WHERE tenant_id='Steven' AND alias='argos'`,
     );
