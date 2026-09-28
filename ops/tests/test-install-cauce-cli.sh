@@ -58,6 +58,14 @@ for invocado in "$DEST/cauce" "$WORK/cauce-enlace"; do  # 2b) loads its lib, als
   fi
 done
 rm -f "$WORK/cauce-enlace"
+SIN_LIB="$WORK/sin-lib"; CON_LIB="$WORK/con-lib"; mkdir -p "$SIN_LIB" "$CON_LIB"  # 2c) sin lib se niegan
+cp "$RAIZ/cli/cauce-credenciales.lib.sh" "$CON_LIB/"
+for dir_cli in "$SIN_LIB" "$CON_LIB"; do
+  sed '/^case /,$d' "$DEST/cauce" > "$dir_cli/cauce"
+  bash -c "source '$dir_cli/cauce' 2>/dev/null; lib_credenciales_ok" >/dev/null 2>&1
+  echo "$dir_cli=$?" >> "$WORK/resultado"
+done
+if grep -qx "$SIN_LIB=1" "$WORK/resultado" && grep -qx "$CON_LIB=0" "$WORK/resultado"; then ok "sin la lib, retirar/login/aprovisionar se niegan"; else bad "sin la lib, retirar/login/aprovisionar se niegan ($(tr '\n' ' ' < "$WORK/resultado"))"; fi
 
 # --- 3) it writes NOWHERE else: not in $HOME, not as bytecode inside the repo -----------------
 if [ -z "$(find "$HOGAR" -mindepth 1 -print -quit)" ]; then
