@@ -73,3 +73,12 @@ viven sólo en este checkout. Lo versionado: `.specify/` (plantillas, scripts,
 constitución), `specs/` (artefactos) y `.agents/skills/` (skills). Cada
 checkout/instancia instala su integración con
 `specify integration install <claude|codex|muse> --force`.
+
+## R9. Latencias medidas en la pila (T014b) + propuesta SLO
+
+Corrida e2e limpia 14/14 (exit 0): 11 escenarios <1 s, DLQ ~3 s,
+redelivery ~30 s (backoff deliberado intento 1). Total ~34 s.
+Propuesta SLO (dueño: medir primero, sin fijar aún): interactivo p95 <1 s,
+DLQ <10 s, redelivery <45 s. Hallazgo: dos suites concurrentes contra la
+misma pila interfieren (un FAIL `origin relay` con T030/T040 en paralelo,
+14/14 en solitario) — las validaciones de sistema corren en serie.

@@ -177,17 +177,16 @@ toda mutación deja fila de auditoría consultable.
 - **FR-010**: El sistema MUST validar cada release contra `ops/compose.test.yaml`
   (migración + gateway + dispatcher saludables + arnés e2e verde) antes de
   publicar `main`.
-- **FR-011**: El sistema MUST [NEEDS CLARIFICATION: presupuesto de contexto de
-  claude y hermes — no hay tope medido; el dueño debe fijar número o aceptar
-  sólo el techo nativo].
-- **FR-012**: El sistema MUST [NEEDS CLARIFICATION: retención y poda de
-  grabaciones de TUI — se escriben 0600 con tope por sesión y nadie las borra].
-- **FR-013**: El sistema MUST [NEEDS CLARIFICATION: poda de `secret.granted`
-  y de auditoría sin tope].
-- **FR-014**: El sistema MUST [NEEDS CLARIFICATION: si la recarga de contexto
-  por el propio alias se acepta o es sólo de operador].
-- **FR-015**: El sistema MUST [NEEDS CLARIFICATION: SLO de latencia por
-  escenario esencial — sin número del dueño no hay "cuello de botella" medible].
+- **FR-011**: El sistema MUST aplicar SOLO el techo nativo de 4 MiB a claude y
+  hermes, sin tope inventado (decisión del dueño 2026-09-27).
+- **FR-012**: El sistema MUST podar automáticamente grabaciones de TUI de más
+  de 30 días (decisión del dueño 2026-09-27).
+- **FR-013**: El sistema MUST NO podar `secret.granted` ni auditoría
+  (aceptado sin tope por el dueño 2026-09-27).
+- **FR-014**: El sistema MUST aceptar que un alias re-materialice su propio
+  contexto con su certificado (decisión del dueño 2026-09-27).
+- **FR-015**: El sistema MUST medir latencias por escenario en la pila de
+  pruebas antes de fijar SLO (decisión del dueño 2026-09-27: medir primero).
 
 ### Key Entities
 
