@@ -193,7 +193,9 @@ install -m644 ops/guardias/credential_health.py ~/.local/bin/
 install -m755 ops/guardias/cauce-cred-guard-kratos.py \
   ops/guardias/cauce-alertas-al-bus.py \
   ops/guardias/cauce-contexto-colisiones.py \
-  ops/guardias/cauce-v3-medico-monitor ~/.local/bin/
+  ops/guardias/cauce-v3-medico-monitor \
+  ops/guardias/cauce-v3-medico-monitor-sondas-lib.py \
+  ops/guardias/cauce-v3-medico-monitor-reparacion-lib.py ~/.local/bin/   # el médico carga sus dos libs de su propio directorio
 install -m755 ops/guardias/polidin-guard.sh ~/.local/bin/
 ./ops/scripts/install-cauce-cli.sh   # cauce + panel/huerfanas/reponer + estado/sesiones/attach
 install -m644 ops/guardias/systemd/cauce-cred-guard-kratos.service \
