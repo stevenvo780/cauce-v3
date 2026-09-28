@@ -5,8 +5,7 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const MAX_INPUT_BYTES = 1024 * 1024;
-// Upper bound for one OpenClaw run inside this process. The runtime's own timeout does not always
-// surface as a rejection; without this bound a dead run holds the delivery until its ACK deadline.
+// Upper bound for one run: the runtime's timeout does not always surface as a rejection.
 const DEFAULT_RUN_DEADLINE_MS = 45 * 60 * 1000;
 
 function runDeadlineMs() {
@@ -163,31 +162,22 @@ async function main() {
 
   let returned;
   let empezado = false;
-  // The embedded app-server OpenClaw falls back to keeps its handles open after the run resolves,
-  // so returning from main() never ends the process: the envelope stayed in the pipe and the
-  // delivery lived in `started` until somebody killed the bridge by hand. Every exit path now ends
-  // the process explicitly, and this flag keeps a signal from appending a second envelope after a
-  // real one was already written (that extra line is what turned answers into malformed output).
+  // The embedded app-server keeps handles open: every path exits explicitly, and `emitido` stops a
+  // signal from appending a second envelope after the real one (that corrupted answers).
   let emitido = false;
   const salir = (codigo) => {
-    // A pipe write can still be queued: exit from the flush callback, with a timer as a backstop
-    // in case the callback never fires. Both paths are exits, never a return to the loop.
+    // Backstop in case the flush callback never fires.
     setTimeout(() => { process.exit(codigo); }, 2000);
   };
   try {
     const { agentCliCommand, defaultRuntime } = await loadOpenClaw();
-    // From the next line on the turn MAY have side effects. The marker goes here and not before
-    // or after: before would lie (module discovery can still fail without touching anything) and
-    // after would leave a half-finished turn indistinguishable from one that never started, which
-    // is the expensive error — retrying work already paid for. Goes via stderr because stdout is
-    // the structured contract. See HARNESS_START_MARKER in sdk/types.ts.
+    // From here the turn MAY have side effects: before would lie, after would hide a half-finished
+    // turn and retry work already paid for. Via stderr; stdout is the contract.
     process.stderr.write("<<cauce:harness-started>>\n");
     empezado = true;
     const abandon = (reason) => {
       process.stdout.write = originalWrite;
       process.stderr.write(`openclaw stdin bridge abandoned the run: ${reason}\n`);
-      // A real envelope already went out: appending a failure line would corrupt the contract and
-      // throw away an answer the model had already produced.
       if (emitido) { process.exit(0); return; }
       emitido = true;
       originalWrite(failureEnvelope(reason, nativeSessionKey));
@@ -234,8 +224,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  // Dumps the full error to stderr for diagnosis; the structured response travels via stdout
-  // and stderr does not pollute the contract.
   process.stderr.write(`openclaw stdin bridge failed: ${describeFailure(error)}\n`);
   process.exitCode = 1;
 });

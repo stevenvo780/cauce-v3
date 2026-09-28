@@ -23,7 +23,7 @@ interface RecordedCase {
 
 const grabado = JSON.parse(readFileSync(new URL('./fixtures/jev-grabado.json', import.meta.url), 'utf8')) as { casos: RecordedCase[] };
 
-/** Expected decision per recorded case and per asking alias (default hades: an alias on the stricter fleet policy; argos has its own since 2026-09-24). */
+/** Expected decision per recorded case and per asking alias (default hades, on the stricter fleet policy; argos has its own). */
 const ESPERADO: Record<string, readonly [decision: string, valor: string | null, origen?: 'prefiltro']> = {
   '00-ruteo_alias-zeus': ['rutear', 'zeus'],
   '01-ruteo_alias-kant': ['rutear', 'kant'],

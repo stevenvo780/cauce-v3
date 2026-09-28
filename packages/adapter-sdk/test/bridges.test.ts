@@ -169,9 +169,6 @@ test("OpenClaw bridge declares a failed turn when every model in the chain is ex
 });
 
 test("the OpenClaw bridge exits after emitting its envelope even with a live handle open", () => {
-  // Regression: OpenClaw's embedded fallback leaves the app-server holding the event loop, so
-  // returning from main() never ended the process. The answer sat in the pipe and the delivery
-  // lived in `started` until somebody killed the bridge by hand.
   const result = spawnSync(process.execPath, [sourceOpenClaw, "--session-key", "session-linger"], {
     input: "BRIDGE_LINGER prompt",
     encoding: "utf8",
@@ -185,8 +182,6 @@ test("the OpenClaw bridge exits after emitting its envelope even with a live han
 });
 
 test("OpenClaw output keeps an answer that runtime noise precedes", () => {
-  // Regression: parsing the whole stdout turned a produced answer into malformed output, and the
-  // engine buried the delivery as a non-retryable failure.
   const envelope = JSON.stringify({
     result: { payloads: [{ text: JSON.stringify({ reply: "answer after noise", messages: [],
       status: "done", retryable: false, artifacts: [] }) }] },
