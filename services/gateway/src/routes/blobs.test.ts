@@ -21,7 +21,7 @@ function sha(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-async function gateway(options: { readonly permissions?: readonly ('read' | 'route')[] } = {}) {
+async function gateway(options: { readonly permissions?: readonly ('read' | 'route')[]; readonly disabledInStore?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'cauce-blobs-'));
   directories.push(directory);
   const registered = new Map<string, { bytes: number; media_type: string; name: string }>();
@@ -44,6 +44,10 @@ async function gateway(options: { readonly permissions?: readonly ('read' | 'rou
   const repository = fakeRepository();
   repository.registerBlob = registerBlob;
   repository.findBlob = findBlob;
+  const assertPermission = vi.fn(async (_tenant: string, _alias: string, permission: string) => {
+    if (options.disabledInStore === true) throw new StoreError('forbidden', `principal lacks ${permission} permission`);
+  });
+  repository.assertPermission = assertPermission;
   const app = await buildGateway({
     pool: fakePool(),
     authProvider: DevOnlyAuthProvider.forTests(options.permissions === undefined ? {} : {
@@ -59,7 +63,7 @@ async function gateway(options: { readonly permissions?: readonly ('read' | 'rou
   });
   await app.ready();
   apps.push(app);
-  return { app, directory, registerBlob, findBlob };
+  return { app, directory, registerBlob, findBlob, assertPermission };
 }
 
 afterEach(async () => {
@@ -185,5 +189,21 @@ describe('GET /v3/blobs/:sha256', () => {
     const router = await gateway({ permissions: ['route'] });
     const digest = await upload(router.app, Buffer.from('abc'));
     expect((await router.app.inject({ method: 'GET', url: `/v3/blobs/${digest}`, headers: DEV })).statusCode).toBe(403);
+  });
+});
+
+describe('blob routes and the principal disabled in the database', () => {
+  // The identity file keeps the certificate of an offboarded tenant; the database is the revocation.
+  it('refuses PUT and GET with 403 when the store no longer grants the permission', async () => {
+    const { app, directory, registerBlob, findBlob, assertPermission } = await gateway({ disabledInStore: true });
+    const put = await app.inject({ method: 'PUT', url: '/v3/blobs', payload: Buffer.from('abc'), headers: OCTET });
+    expect(put.statusCode).toBe(403);
+    expect(registerBlob).not.toHaveBeenCalled();
+    expect((await readdir(directory)).filter((entry) => entry !== 'tmp')).toEqual([]);
+    const get = await app.inject({ method: 'GET', url: `/v3/blobs/${'e'.repeat(64)}`, headers: DEV });
+    expect(get.statusCode).toBe(403);
+    expect(findBlob).not.toHaveBeenCalled();
+    expect(assertPermission).toHaveBeenCalledWith('Steven', 'zeus', 'route');
+    expect(assertPermission).toHaveBeenCalledWith('Steven', 'zeus', 'read');
   });
 });

@@ -24,7 +24,7 @@ export interface BlobStoreOptions {
   readonly maxBytes: number;
 }
 
-type BlobRepository = Pick<GatewayRepository, 'registerBlob' | 'findBlob'>;
+type BlobRepository = Pick<GatewayRepository, 'registerBlob' | 'findBlob' | 'assertPermission'>;
 
 const OCTET_STREAM = 'application/octet-stream';
 const HEX_SHA256 = /^[a-f0-9]{64}$/u;
@@ -119,6 +119,8 @@ export function registerBlobRoutes(
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'route');
+      // Revocation lives in the database (membership, tenant, room), not in the identity file.
+      await repository.assertPermission(actor.tenant_id, actor.alias, 'route');
       const declaredLength = Number(headerValue(request, 'content-length') ?? '0');
       if (Number.isSafeInteger(declaredLength) && declaredLength > store.maxBytes) {
         void reply.code(413).send({ error: 'payload_too_large', message: `blob exceeds ${String(store.maxBytes)} bytes` });
@@ -173,6 +175,7 @@ export function registerBlobRoutes(
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'read');
+      await repository.assertPermission(actor.tenant_id, actor.alias, 'read');
       const digest = request.params.sha256;
       if (!HEX_SHA256.test(digest)) throw new StoreError('not_found', 'unknown blob');
       const record = await repository.findBlob(digest);
