@@ -10,7 +10,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 const BASE_PATH = 'scripts/calidad-base.json';
 const MAX = 800;
 const EXTS = /\.(ts|tsx|mjs|py|sh)$/;
-const EXCLUIR = /^(packages\/store\/migrations\/|docs\/|node_modules\/)|\.sql$|\.md$/;
+const EXCLUIR = /^(\.specify\/|packages\/store\/migrations\/|docs\/|node_modules\/)|\.sql$|\.md$/;
 const COMENTARIO = /^\s*(\/\/|#|\*|\/\*)/;
 const FECHA = /\b20\d{2}-\d{2}-\d{2}\b/;
 
