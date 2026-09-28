@@ -8,7 +8,7 @@
 #    the image wipes it and the alias is left without a login. The login lives in MUSE_CONFIG_DIR (under
 #    ~/.local, which is mounted) and the link is recreated here if it went missing.
 set -u
-MUSE_CONFIG_DIR="${MUSE_CONFIG_DIR:-$HOME/.local/share/cauce-v3/config/clio/.config/muse}"
+MUSE_CONFIG_DIR="${MUSE_CONFIG_DIR:-$HOME/.local/share/cauce-v3/config/hegel/.config/muse}"
 if [ ! -e "$HOME/.config/muse" ] && [ -d "$MUSE_CONFIG_DIR" ]; then
   mkdir -p "$HOME/.config" && ln -s "$MUSE_CONFIG_DIR" "$HOME/.config/muse"
 fi
