@@ -397,7 +397,7 @@ PY
     [[ ${CONFIG[MUSE_CONFIG_HOME]:-} == "$container_home/.muse/config" ]] || die 'MUSE_CONFIG_HOME must use the isolated persistent profile'
     [[ ${CONFIG[MUSE_DATA_HOME]:-} == "$container_home/.muse/data" ]] || die 'MUSE_DATA_HOME must use the isolated persistent profile'
     [[ ${CONFIG[MUSE_WORKSPACE]:-} == "$inventory_workspace" ]] || die 'MUSE_WORKSPACE differs from the canonical inventory workspace'
-    [[ ${CONFIG[MUSE_APPROVAL_MODE]:-} == denyUnmatched ]] || die 'MUSE_APPROVAL_MODE must deny unmatched tools'
+    [[ ${CONFIG[MUSE_APPROVAL_MODE]:-} == denyUnmatched || ${CONFIG[MUSE_APPROVAL_MODE]:-} == onRequest ]] || die 'MUSE_APPROVAL_MODE must be denyUnmatched or onRequest'
     [[ ! -v CONFIG[MUSE_MODEL] || ${CONFIG[MUSE_MODEL]} =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die 'MUSE_MODEL is invalid'
     [[ ! -v CONFIG[MUSE_REASONING_EFFORT] || ${CONFIG[MUSE_REASONING_EFFORT]} =~ ^(none|minimal|low|medium|high|xhigh|max|ultra)$ ]] || die 'MUSE_REASONING_EFFORT is invalid'
   fi

@@ -451,8 +451,8 @@ def validate_policy(document: EnvDocument, policy: AliasPolicy, pki_root: pathli
         for key, required_value in expected.items():
             if values.get(key) != required_value:
                 raise ConfigUpdateError(f"{key} no usa la ruta aislada aprobada")
-        if values.get("MUSE_APPROVAL_MODE") != "denyUnmatched":
-            raise ConfigUpdateError("MUSE_APPROVAL_MODE debe ser denyUnmatched")
+        if values.get("MUSE_APPROVAL_MODE") not in {"denyUnmatched", "onRequest"}:
+            raise ConfigUpdateError("MUSE_APPROVAL_MODE debe ser denyUnmatched u onRequest")
         if "MUSE_MODEL" in values and MODEL_RE.fullmatch(values["MUSE_MODEL"]) is None:
             raise ConfigUpdateError("MUSE_MODEL tiene formato invalido")
         if "MUSE_REASONING_EFFORT" in values and values["MUSE_REASONING_EFFORT"] not in {
