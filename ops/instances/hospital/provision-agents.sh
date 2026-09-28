@@ -231,7 +231,7 @@ for alias in "${ALIASES[@]}"; do
       printf 'MUSE_DATA_HOME=/home/node/.muse/data\n'
       printf 'MUSE_WORKSPACE=/home/node/clawd\n'
       printf 'MUSE_MODEL=muse-spark-1.3\n'
-      printf 'MUSE_REASONING_EFFORT=high\n'
+      printf 'MUSE_REASONING_EFFORT=max\n'
       printf 'MUSE_APPROVAL_MODE=denyUnmatched\n'
     fi
     printf 'DEFAULT_TIMEOUT_MS=1800000\n'
