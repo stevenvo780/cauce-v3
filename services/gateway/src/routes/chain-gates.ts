@@ -29,7 +29,8 @@ export function registerChainGateRoutes(
       try {
         const actor = await principal(request, options.authProvider);
         requirePermission(actor, 'read');
-        const limit = Number.parseInt(request.query.limit ?? '', 10);
+        const rawLimit = request.query.limit ?? '';
+        const limit = /^[0-9]+$/u.test(rawLimit) ? Number.parseInt(rawLimit, 10) : NaN;
         return await repository.listChainGates(actor.tenant_id, actor.alias, {
           status: request.query.status === 'all' ? 'all' : 'open',
           ...(Number.isSafeInteger(limit) && limit > 0 ? { limit } : {})
