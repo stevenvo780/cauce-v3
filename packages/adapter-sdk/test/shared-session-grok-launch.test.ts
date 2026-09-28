@@ -76,7 +76,7 @@ test("grok config: GROK_HOME (o ~/.grok) llega al panel y la TUI arranca con --a
     ?.configDirectory, "/datos/grok");
   assert.throws(() => loadSharedSessionConfig("grok", "hades", "/s", { ...environment, GROK_HOME: "rel" }),
     /GROK_HOME debe ser una ruta absoluta/u);
-  assert.throws(() => loadSharedSessionConfig("hermes", "hermes", "/s", environment), /claude, codex y grok/u);
+  assert.throws(() => loadSharedSessionConfig("hermes", "hermes", "/s", environment), /claude, codex, grok y muse/u);
 });
 
 test("grok identidad: el panel acredita grok y rechaza cualquier otro harness compartido", () => {

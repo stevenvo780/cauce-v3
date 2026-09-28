@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "harness": "muse",
+  "adapter_executable": "cauce-adapter-muse",
+  "harness_executable": "muse",
+  "invocation": {
+    "prompt_transport": "stdin",
+    "stdin_source": "the muse-cauce bridge copies fd 0 to a temporary regular file and passes it as --prompt-file (muse exec rejects a pipe)",
+    "output_dialect": "muse-exec-jsonl",
+    "final_event": "payload.kind run_terminal; terminal completed carries the final text, run_output_delta is the fallback",
+    "session_mapping": "observed stream.id of kind session; --session-id id on resume",
+    "session_scope": "authenticated tenant+actor+origin channel/session/conversation",
+    "shared_session": "SHARED_SESSION=1: the real TUI (muse --yolo --trust-workspace --reasoning-effort max resume <id>) in tmux -L cauce, with an XDG_DATA_HOME of its own under ~/.local/share/cauce-v3/config/<alias>/.local/share",
+    "mcp_registration": "none yet: settings.json is shared with every Muse of the container; answers use the JSON envelope text fallback"
+  },
+  "capabilities": {
+    "protocol_version": "3.0",
+    "harness": "muse",
+    "structured_output": true,
+    "stdin_prompt": true,
+    "durable_inbox": true,
+    "durable_outbox": true,
+    "idempotent_delivery": true,
+    "heartbeat": true,
+    "cancellation": "process_group",
+    "fencing_epoch": true,
+    "origin_relay": true,
+    "attempt_scoped_delivery": true,
+    "event_id_correlation": true,
+    "claim_token_correlation": true,
+    "authenticated_session_scope": true,
+    "routing_targets_v1": true,
+    "mcp_emit": true,
+    "renewable_delivery_claims_v1": true,
+    "delegation_feedback_v1": true,
+    "agent_identity_v1": true,
+    "agent_profile_v1": true,
+    "agent_profile_adoption_v1": true,
+    "attachments_v1": true,
+    "persistent_sessions": true
+  }
+}

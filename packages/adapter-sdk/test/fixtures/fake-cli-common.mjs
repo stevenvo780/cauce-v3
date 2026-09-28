@@ -68,6 +68,16 @@ export async function runFakeCli(dialect, readPrompt = readStdinStream) {
         num_turns: 1,
       }, null, 2)}\n`);
       break;
+    case "muse": {
+      // `muse exec --json` (Muse 1.4.0): JSONL records; the session id rides every record's stream.
+      const stream = prompt.includes("SCENARIO:no-session") ? {} : { stream: { kind: "session", id: "muse-native" } };
+      const text = JSON.stringify(output);
+      process.stdout.write(`${JSON.stringify({ ...stream, payload: { kind: "run_output_delta", text } })}\n`);
+      process.stdout.write(`${JSON.stringify({
+        ...stream, payload: { kind: "run_terminal", terminal: "completed", reason: null, text },
+      })}\n`);
+      break;
+    }
     case "fake":
       process.stdout.write(`${JSON.stringify({ output, session_id: "fake-native" })}\n`);
       break;

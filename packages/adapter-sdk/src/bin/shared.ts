@@ -1,6 +1,6 @@
 import { HttpEgressReceiptSource } from "../sdk/egress-receipt-source.js";
 import { readFileSync } from "node:fs";
-import { realpath } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { AdapterClient } from "../sdk/client.js";
 import { DurableStore } from "../sdk/durable-store.js";
@@ -25,6 +25,7 @@ import { correlationTimeoutFromEnvironment } from "../shared-session/paste-runne
 import { claudeTranscript } from "../shared-session/transcript.js";
 import { codexTranscript } from "../shared-session/rollout.js";
 import { grokTranscript } from "../shared-session/grok.js";
+import { ensureMuseLoginLink, museTranscript } from "../shared-session/muse.js";
 import type { PasteSessionOptions } from "../shared-session/paste-runner/contracts.js";
 import { loadSharedSessionConfig, type SharedSessionConfig } from "../shared-session/config.js";
 import { exactConversationIsSecure, sharedSessionResume } from "../shared-session/resume.js";
@@ -140,8 +141,10 @@ export async function sharedSessionRunner(
   logger: AdapterLogger,
 ): Promise<CommandRunner> {
   let shared = configured;
-  if (configured.harness === "claude" || configured.harness === "grok") {
+  if (configured.harness !== "codex") {
     try {
+      // Muse's data dir is the alias's own; on the first start nothing has created it yet.
+      if (configured.harness === "muse") await mkdir(configured.configDirectory, { recursive: true, mode: 0o700 });
       shared = { ...configured,
         configDirectory: await realpath(configured.configDirectory),
         workspace: await realpath(configured.workspace) };
@@ -153,7 +156,11 @@ export async function sharedSessionRunner(
         false);
     }
   }
-  if (shared.nativeId !== undefined && (shared.harness === "claude" || shared.harness === "grok")) {
+  if (shared.harness === "muse" && await ensureMuseLoginLink(shared.home, shared.alias) === "linked") {
+    logger({ event: "shared_session_resume", alias: shared.alias,
+      error_message: "se repuso el enlace ~/.config/muse al login persistente del alias" });
+  }
+  if (shared.nativeId !== undefined && shared.harness !== "codex") {
     await seedCanonicalConversation(shared, shared.harness, shared.nativeId, logger);
   }
   const tmux = new CliTmux();
@@ -191,6 +198,7 @@ export async function sharedSessionRunner(
   switch (shared.harness) {
     case "claude":
     case "grok":
+    case "muse":
       return pointedRunner(shared, shared.harness, comun);
     case "codex":
       return new PasteSessionRunner({ ...comun, transcript: codexTranscript(shared.configDirectory) });
@@ -199,7 +207,7 @@ export async function sharedSessionRunner(
 
 async function seedCanonicalConversation( // Only while there is no pointer; logs, never stops the adapter.
   shared: SharedSessionConfig,
-  harness: "claude" | "grok",
+  harness: "claude" | "grok" | "muse",
   nativeId: string,
   logger: AdapterLogger,
 ): Promise<void> {
@@ -227,12 +235,15 @@ async function seedCanonicalConversation( // Only while there is no pointer; log
 
 function pointedRunner(
   shared: SharedSessionConfig,
-  harness: "claude" | "grok",
+  harness: "claude" | "grok" | "muse",
   comun: Omit<PasteSessionOptions<unknown>, "transcript">,
 ): CommandRunner {
   const nativePointer = new NativePointerAttestor(new SharedTuiPointerStore(shared.stateDirectory), {
     alias: shared.alias, harness, configDirectory: shared.configDirectory, workspace: shared.workspace,
   });
+  if (harness === "muse") {
+    return new PasteSessionRunner({ ...comun, transcript: museTranscript(shared.configDirectory), nativePointer });
+  }
   return harness === "grok"
     ? new PasteSessionRunner({ ...comun, transcript: grokTranscript(shared.configDirectory), nativePointer })
     : new PasteSessionRunner({
@@ -322,7 +333,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
       if (canonicalOpenClawTerminalSession) {
         await store.reconcileCanonicalOpenClawTerminalSession(runtime.alias);
       }
-      if (shared?.harness === "claude" || shared?.harness === "grok") {
+      if (shared !== undefined && shared.harness !== "codex") {
         try {
           await new SharedTuiPointerStore(shared.stateDirectory).recover();
         } catch {

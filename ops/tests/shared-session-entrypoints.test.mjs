@@ -284,6 +284,39 @@ cmd_entrar hades
   }
 }
 
+// muse: the same as grok. With SHARED_SESSION=1 `cauce hegel` attaches to the adapter's tmux TUI;
+// without it, the real Muse TUI in a conversation of its own (APARTE), at max effort.
+for (const shared of [true, false]) {
+  const test = await fixture("muse");
+  try {
+    await writeFile(path.join(test.home, ".config/cauce-v3/container-aliases/hegel.env"),
+      "SHARED_SESSION=1\nBUNDLE_RELEASE=release-test\n");
+    const source = `source <(sed '/^case /,$d' ${JSON.stringify(cli)})
+alias_info() { printf 'Miguel\\tgrp.miguel\\tws-humanizar\\tdev\\t/home/dev\\t/state/hegel\\tmuse\\tlocal\\n'; }
+adaptador_activo() { printf 'active\\n'; }
+compartida_configurada() { return ${shared ? 0 : 1}; }
+avisos() { :; }
+cmd_entrar hegel
+`;
+    const result = spawnSync("bash", ["-c", source], { encoding: "utf8", env: test.environment });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const calls = await readFile(test.log, "utf8");
+    if (shared) {
+      assert.match(result.stdout, /COMPARTIDA/u);
+      const ensure = calls.split("\n").find((line) => line.includes("\tensure\t"));
+      assert.ok(ensure?.includes("\t--harness\tmuse") && ensure.includes("\t--state\t/state/hegel"), calls);
+      assert.match(calls, /DOCKER\texec\t-it\t--user\tdev\tws-humanizar\ttmux\t-L\tcauce\tattach-session\t-t\tcauce-hegel:agente/u);
+    } else {
+      assert.match(result.stdout, /APARTE/u);
+      assert.match(result.stdout, /falta SHARED_SESSION=1/u);
+      assert.match(calls, /--reasoning-effort max/u);
+      assert.ok(!calls.includes("attach-session"), calls);
+    }
+  } finally {
+    await rm(test.directory, { recursive: true, force: true });
+  }
+}
+
 // The alias sweep counts the adapter (by CAUCE_ALIAS or by its release path) but not the MCP bridge
 // the SHARED TUI starts from that same release: tmux strips CAUCE_ALIAS from it, so `off` could never
 // kill it and stopped with "SIGUE VIVO" before tearing the panel down.

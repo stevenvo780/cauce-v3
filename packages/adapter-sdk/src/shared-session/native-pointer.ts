@@ -22,10 +22,10 @@ const PANE_GENERATION = /^\$[0-9]+:@[0-9]+:%[0-9]+:[1-9][0-9]*$/u;
 const O_CLOEXEC = Number((fsConstants as unknown as Record<string, unknown>).O_CLOEXEC ?? 0);
 
 /** Harnesses whose shared TUI is relaunched on an EXACT conversation id kept in this store. */
-export type NativePointerHarness = "claude" | "grok";
+export type NativePointerHarness = "claude" | "grok" | "muse";
 
 function isPointerHarness(value: unknown): value is NativePointerHarness {
-  return value === "claude" || value === "grok";
+  return value === "claude" || value === "grok" || value === "muse";
 }
 
 export interface NativePointerBinding {

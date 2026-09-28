@@ -53,5 +53,15 @@ export function tuiProfile(harness: SharedSessionHarness): TuiProfile {
         pasteOnlyWhenIdle: true,
         clearCommand: "/new",
       };
+    // Muse 1.4.0: `esc to interrupt` on the working line. A paste over a running turn is queued as a
+    // steer ("Queued input") and runs later as its own run, so it waits for idle like grok.
+    // `/clear` starts a fresh session (a NEW id), which the native witness then follows.
+    case "muse":
+      return {
+        interruptKey: "Escape",
+        interruptOnlyWhileGenerating: true,
+        pasteOnlyWhenIdle: true,
+        clearCommand: "/clear",
+      };
   }
 }

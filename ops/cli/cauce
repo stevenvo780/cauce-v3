@@ -403,7 +403,7 @@ for line in sys.stdin:
       printf "    · el agente NO recuerda lo que EL te contesto a vos (lo que vos escribis si lo ve)%s\n\n" "$c_reset"
       exec docker exec -it --user "$cuser" -w "${chome:-/}" "$ctr" openclaw tui --session "$clave_oc"
     fi
-  elif [[ $harness == claude || $harness == codex || $harness == grok ]]; then
+  elif [[ $harness == claude || $harness == codex || $harness == grok || $harness == muse ]]; then
     printf "  %seste alias no tiene sesion compartida encendida (falta SHARED_SESSION=1 en su .env)%s\n" "$c_dim" "$c_reset"
   else
     printf "  %sel harness %s no tiene sesion compartida%s\n" "$c_dim" "$harness" "$c_reset"
@@ -434,8 +434,8 @@ for line in sys.stdin:
       grok)   # Sin SHARED_SESSION=1 (que es la MISMA conversacion): una RAMA del DM, sin dos escritores.
               printf "  %sgrok: te abro una RAMA de la conversacion del DM; para la misma: SHARED_SESSION=1.%s\n\n" "$c_dim" "$c_reset"
               exec python3 "$BIN/cauce-attach" "$a" --dm --bifurcar ;;
-      muse)   # La TUI real de Muse, en conversacion NUEVA (APARTE): la del bus corre por `muse exec`
-              # y dos escritores sobre la misma sesion no estan probados. El login vive en ~/.local
+      muse)   # Sin SHARED_SESSION=1: la TUI real de Muse en conversacion NUEVA (APARTE); la del bus corre
+              # por `muse exec`. Con SHARED_SESSION=1 se entra arriba, a la MISMA. El login vive en ~/.local
               # (montado); el enlace ~/.config/muse se pierde si re-aplanan el contenedor: se repone.
               printf "  %smuse: te abro su TUI real (esfuerzo max), conversacion aparte.%s\n\n" "$c_dim" "$c_reset"
               exec docker exec -it --user "$cuser" -w "${wsa:-${chome:-/}}" "$ctr" bash -lc \

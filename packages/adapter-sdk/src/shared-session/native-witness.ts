@@ -10,6 +10,7 @@ import {
   grokSessionsRoot,
   grokTranscript,
 } from "./grok.js";
+import { museSessionFilesStrict, museSessionIdOf, museSessionsRoot, museTranscript } from "./muse.js";
 import { SharedTuiPointerStore, type NativePointerBinding } from "./native-pointer.js";
 import { transcriptDirectoryIn } from "./session.js";
 import { claudeTranscript } from "./transcript.js";
@@ -54,6 +55,14 @@ const LAYOUTS: Readonly<Record<NativePointerBinding["harness"], WitnessLayout>> 
       .filter((file) => existsSyncSafe(file)),
     nativeIdOf: grokSessionIdOf,
     port: (binding) => grokTranscript(binding.configDirectory),
+    completedTurnAttests: true,
+  },
+  muse: {
+    root: (binding) => museSessionsRoot(binding.configDirectory),
+    files: (binding) => museSessionFilesStrict(binding.configDirectory),
+    nativeIdOf: museSessionIdOf,
+    port: (binding) => museTranscript(binding.configDirectory),
+    // The accepted intent stores the prompt verbatim, correlation member included (measured).
     completedTurnAttests: true,
   },
 };

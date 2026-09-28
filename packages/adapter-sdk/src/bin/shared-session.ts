@@ -4,6 +4,7 @@ import { CliTmux } from "../shared-session/tmux.js";
 import { ensureSharedSession, sharedSessionStatus } from "../shared-session/session.js";
 import { cliSharedSessionSpec, harnessConfigDirectory } from "../shared-session/config.js";
 import { SharedTuiPointerStore } from "../shared-session/native-pointer.js";
+import { ensureMuseLoginLink } from "../shared-session/muse.js";
 import { exactConversationIsSecure } from "../shared-session/resume.js";
 import { readDegradations } from "../shared-session/degradation-log.js";
 import { TUI_WINDOW, isSharedSessionHarness, sessionName } from "../shared-session/types.js";
@@ -24,7 +25,7 @@ interface Options {
 
 function usage(): never {
   process.stderr.write(
-    "uso: shared-session.js <ensure|status|degradations|seed> --alias A --harness claude|codex|grok"
+    "uso: shared-session.js <ensure|status|degradations|seed> --alias A --harness claude|codex|grok|muse"
     + " [--workspace /workspace] [--state DIR] [--native-id ID]\n",
   );
   process.exit(2);
@@ -110,6 +111,7 @@ async function main(): Promise<void> {
   }
 
   if (options.command === "ensure") {
+    if (sessionSpec.harness === "muse") await ensureMuseLoginLink(home, options.alias);
     // Notice goes to stderr, not stdout JSON: invoked by `cauce <alias>` parsing stdout.
     const result = await ensureSharedSession(tmux, sessionSpec, {
       sleep,
@@ -139,7 +141,7 @@ async function seed(options: Options, sessionSpec: SharedSessionSpec, home: stri
   const binding = {
     alias: options.alias,
     harness,
-    configDirectory: harnessConfigDirectory(harness, home, process.env),
+    configDirectory: harnessConfigDirectory(harness, home, process.env, options.alias),
     workspace: options.workspace,
   };
   const secure = await exactConversationIsSecure(harness, binding, options.nativeId);

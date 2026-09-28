@@ -1,10 +1,10 @@
 import type { CommandRunner, HarnessId } from "../sdk/types.js";
 
 /** Harnesses compatible with the shared session mechanism. */
-export type SharedSessionHarness = Extract<HarnessId, "claude" | "codex" | "grok">;
+export type SharedSessionHarness = Extract<HarnessId, "claude" | "codex" | "grok" | "muse">;
 
 /** Every shared harness, so a check over "the other TUIs" cannot silently forget one. */
-export const SHARED_SESSION_HARNESSES: readonly SharedSessionHarness[] = ["claude", "codex", "grok"];
+export const SHARED_SESSION_HARNESSES: readonly SharedSessionHarness[] = ["claude", "codex", "grok", "muse"];
 
 export function isSharedSessionHarness(harness: HarnessId): harness is SharedSessionHarness {
   return (SHARED_SESSION_HARNESSES as readonly HarnessId[]).includes(harness);
@@ -38,7 +38,7 @@ type DegradationReason =
   | "context_reset"
   /** There was no prior shared session and a new one was created for this turn. */
   | "session_created"
-  /** The conversation context was deliberately cleared (/clear in claude, /new in codex or grok). */
+  /** The conversation context was deliberately cleared (/clear in claude or muse, /new in codex or grok). */
   | "context_cleared"
   /** The terminal compacted its conversation context. */
   | "context_compacted"

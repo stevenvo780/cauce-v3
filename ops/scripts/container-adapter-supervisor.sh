@@ -162,12 +162,12 @@ load_config() {
       CAUCE_NATIVE_PROFILE_CONTEXT) [[ $value =~ ^[01]$ ]] || die "CAUCE_NATIVE_PROFILE_CONTEXT must be exactly 0 or 1" ;;
       EXPECTED_CLI_VERSION) [[ $harness == claude ]] || die "config key is not allowed for $harness: $key" ;;
       HERMES_HOME|HERMES_INFERENCE_MODEL|HERMES_PYTHON|HERMES_SOURCE_COMMIT) [[ $harness == hermes ]] || die "config key is not allowed for $harness: $key" ;;
-      # Shared session: the SAME conversation in owner's terminal and Telegram, only for claude/codex/grok
+      # Shared session: the SAME conversation in owner's terminal and Telegram, only for claude/codex/grok/muse
       # (the harnesses with a shareable TUI); elsewhere it would lie about which mode it runs in.
       SHARED_SESSION|SHARED_SESSION_WORKSPACE)
-        [[ $harness == claude || $harness == codex || $harness == grok ]] || die "config key is not allowed for $harness: $key"
+        [[ $harness == claude || $harness == codex || $harness == grok || $harness == muse ]] || die "config key is not allowed for $harness: $key"
         ;;
-      SHARED_SESSION_NATIVE_ID) [[ $harness == claude || $harness == grok ]] || die "config key is not allowed for $harness: $key" ;;  # Seeded by the adapter (exact-resume harnesses).
+      SHARED_SESSION_NATIVE_ID) [[ $harness == claude || $harness == grok || $harness == muse ]] || die "config key is not allowed for $harness: $key" ;;  # Seeded by the adapter (exact-resume harnesses).
       # Per-alias configuration: only for the two harnesses that read a directory governed by a
       # variable. hermes reads stdin and openclaw does not read ~/.codex or ~/.claude; accepting
       # the key there would export a variable nobody reads and claim a separated alias.
@@ -614,6 +614,10 @@ validate_container_identity_and_mount() {
     # ~/.grok holds the login (auth.json), the cauce MCP registration (config.toml) and the
     # per-cwd sessions that --resume reads: losing it on a recreate logs out and forks threads.
     runtime_paths+=("$container_home/.grok")
+  elif [[ $harness == muse ]]; then
+    # The alias's Muse folder holds its login (.config/muse, linked from ~/.config/muse) and, with
+    # SHARED_SESSION, the conversations of its TUI (.local/share, the XDG_DATA_HOME the SDK derives).
+    runtime_paths+=("$container_home/.local/share/cauce-v3/config/$alias_name")
   fi
   if [[ ${CONFIG[CONFIG_POR_ALIAS]:-} == 1 ]]; then
     runtime_path=$(config_por_alias_directorio "$harness" "$container_home" "$alias_name") \
@@ -637,7 +641,7 @@ validate_container_identity_and_mount() {
   if [[ -n $shared_session_workspace ]]; then
     docker_id_exec test -d "$shared_session_workspace" >/dev/null 2>&1 \
       || die "SHARED_SESSION workspace does not exist inside the container: $shared_session_workspace"
-    [[ $harness != grok ]] || docker_id_exec sh -c 'command -v tmux' >/dev/null 2>&1 || { shared_session_disabled=true  # 78 left Telegram mute: headless.
+    [[ $harness != grok && $harness != muse ]] || docker_id_exec sh -c 'command -v tmux' >/dev/null 2>&1 || { shared_session_disabled=true  # 78 left Telegram mute: headless.
       printf 'warning: SHARED_SESSION=1 ignored for %s: the container has no tmux; the adapter starts headless\n' "$alias_name" >&2; }
   fi
   after=$(read_state_signature) || die 'container disappeared during policy validation' 75
