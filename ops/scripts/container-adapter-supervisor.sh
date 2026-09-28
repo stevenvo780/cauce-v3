@@ -175,7 +175,7 @@ load_config() {
       OPENCLAW_TRANSPORT|OPENCLAW_API_URL|OPENCLAW_TOKEN_FILE|OPENCLAW_AGENT_TARGET|OPENCLAW_DIST_DIR|OPENCLAW_WORKSPACE)
         [[ $harness == openclaw ]] || die "config key is not allowed for $harness: $key"
         ;;
-      MUSE_EXECUTABLE|MUSE_CONFIG_HOME|MUSE_DATA_HOME|MUSE_WORKSPACE|MUSE_MODEL|MUSE_REASONING_EFFORT|MUSE_APPROVAL_MODE) [[ $harness == muse ]] || die "config key is not allowed for $harness: $key" ;;
+      MUSE_EXECUTABLE|MUSE_CONFIG_HOME|MUSE_DATA_HOME|MUSE_WORKSPACE|MUSE_MODEL|MUSE_REASONING_EFFORT|MUSE_APPROVAL_MODE|MUSE_YOLO) [[ $harness == muse ]] || die "config key is not allowed for $harness: $key" ;;
       CLAUDE_PERMISSION_MODE) [[ $harness == claude ]] || die "config key is not allowed for $harness: $key" ;;
       CREDENTIAL_HOME)
         [[ $harness == claude || $harness == codex ]] || die "config key is not allowed for $harness: $key"
@@ -397,12 +397,12 @@ PY
     [[ ${CONFIG[MUSE_CONFIG_HOME]:-} == "$container_home/.muse/config" ]] || die 'MUSE_CONFIG_HOME must use the isolated persistent profile'
     [[ ${CONFIG[MUSE_DATA_HOME]:-} == "$container_home/.muse/data" ]] || die 'MUSE_DATA_HOME must use the isolated persistent profile'
     [[ ${CONFIG[MUSE_WORKSPACE]:-} == "$inventory_workspace" ]] || die 'MUSE_WORKSPACE differs from the canonical inventory workspace'
-    [[ ${CONFIG[MUSE_APPROVAL_MODE]:-} == denyUnmatched || ${CONFIG[MUSE_APPROVAL_MODE]:-} == onRequest ]] || die 'MUSE_APPROVAL_MODE must be denyUnmatched or onRequest'
+    [[ ${CONFIG[MUSE_APPROVAL_MODE]:-} =~ ^(denyUnmatched|onRequest|allowAll)$ ]] || die 'MUSE_APPROVAL_MODE is invalid'
+    [[ ( ${CONFIG[MUSE_APPROVAL_MODE]} == allowAll && ${CONFIG[MUSE_YOLO]:-} == 1 ) || ( ${CONFIG[MUSE_APPROVAL_MODE]} != allowAll && ! -v CONFIG[MUSE_YOLO] ) ]] || die 'Muse YOLO and allowAll must be configured together'
     [[ ! -v CONFIG[MUSE_MODEL] || ${CONFIG[MUSE_MODEL]} =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die 'MUSE_MODEL is invalid'
     [[ ! -v CONFIG[MUSE_REASONING_EFFORT] || ${CONFIG[MUSE_REASONING_EFFORT]} =~ ^(none|minimal|low|medium|high|xhigh|max|ultra)$ ]] || die 'MUSE_REASONING_EFFORT is invalid'
   fi
 }
-
 bundle_source=''
 bundle_release=''
 bundle_digest=''
@@ -942,7 +942,7 @@ start_adapter() {
   fi
   [[ $harness != openclaw ]] || environment+=("CAUCE_OPENCLAW_TRANSPORT=${CONFIG[OPENCLAW_TRANSPORT]:-cli}")
   for key in OPENCLAW_WORKSPACE OPENCLAW_API_URL OPENCLAW_TOKEN_FILE OPENCLAW_AGENT_TARGET OPENCLAW_DIST_DIR \
-    MUSE_EXECUTABLE MUSE_CONFIG_HOME MUSE_DATA_HOME MUSE_WORKSPACE MUSE_APPROVAL_MODE MUSE_MODEL MUSE_REASONING_EFFORT; do
+    MUSE_EXECUTABLE MUSE_CONFIG_HOME MUSE_DATA_HOME MUSE_WORKSPACE MUSE_APPROVAL_MODE MUSE_MODEL MUSE_REASONING_EFFORT MUSE_YOLO; do
     [[ ! -v "CONFIG[$key]" ]] || environment+=("CAUCE_$key=${CONFIG[$key]}")
   done
   [[ $harness != openclaw && $harness != muse ]] || environment+=("CAUCE_AGENT_WORKSPACE=$inventory_workspace")

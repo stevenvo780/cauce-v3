@@ -232,7 +232,8 @@ for alias in "${ALIASES[@]}"; do
       printf 'MUSE_WORKSPACE=/home/node/clawd\n'
       printf 'MUSE_MODEL=muse-spark-1.3\n'
       printf 'MUSE_REASONING_EFFORT=max\n'
-      printf 'MUSE_APPROVAL_MODE=onRequest\n'
+      printf 'MUSE_APPROVAL_MODE=allowAll\n'
+      printf 'MUSE_YOLO=1\n'
     fi
     printf 'DEFAULT_TIMEOUT_MS=1800000\n'
   } >"$temporary_config"

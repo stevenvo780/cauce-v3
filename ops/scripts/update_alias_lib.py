@@ -115,7 +115,7 @@ HARNESS_ALLOWED: dict[str, frozenset[str]] = {
         {
             "MUSE_EXECUTABLE", "MUSE_CONFIG_HOME", "MUSE_DATA_HOME",
             "MUSE_WORKSPACE", "MUSE_MODEL", "MUSE_REASONING_EFFORT",
-            "MUSE_APPROVAL_MODE",
+            "MUSE_APPROVAL_MODE", "MUSE_YOLO",
         }
     ),
 }
@@ -451,8 +451,13 @@ def validate_policy(document: EnvDocument, policy: AliasPolicy, pki_root: pathli
         for key, required_value in expected.items():
             if values.get(key) != required_value:
                 raise ConfigUpdateError(f"{key} no usa la ruta aislada aprobada")
-        if values.get("MUSE_APPROVAL_MODE") not in {"denyUnmatched", "onRequest"}:
-            raise ConfigUpdateError("MUSE_APPROVAL_MODE debe ser denyUnmatched u onRequest")
+        mode = values.get("MUSE_APPROVAL_MODE")
+        if mode not in {"denyUnmatched", "onRequest", "allowAll"}:
+            raise ConfigUpdateError("MUSE_APPROVAL_MODE es invalido")
+        if (mode == "allowAll") != (values.get("MUSE_YOLO") == "1") or (
+            "MUSE_YOLO" in values and values["MUSE_YOLO"] != "1"
+        ):
+            raise ConfigUpdateError("MUSE_YOLO y allowAll deben configurarse juntos")
         if "MUSE_MODEL" in values and MODEL_RE.fullmatch(values["MUSE_MODEL"]) is None:
             raise ConfigUpdateError("MUSE_MODEL tiene formato invalido")
         if "MUSE_REASONING_EFFORT" in values and values["MUSE_REASONING_EFFORT"] not in {
