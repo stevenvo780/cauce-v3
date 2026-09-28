@@ -103,8 +103,9 @@ CMD ["node", "services/gateway/dist/main.js"]
 
 FROM runtime AS qa-runtime
 USER root
-COPY --chown=node:node ops/harness/runner.mjs ./ops/harness/runner.mjs
-RUN ln -s ../packages/adapter-sdk/node_modules/ws node_modules/ws
+COPY --chown=node:node ops/harness/ ./ops/harness/
+RUN ln -s ../packages/adapter-sdk/node_modules/ws node_modules/ws \
+  && ln -s ../packages/store/node_modules/pg node_modules/pg
 USER node
 CMD ["node", "ops/harness/runner.mjs", "--live"]
 

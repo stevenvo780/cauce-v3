@@ -55,7 +55,7 @@ TUI, poda de `secret.granted`/auditoría, recarga por el propio alias, SLO por
 escenario. El plan NO inventa números: donde falta medida hay task de medición
 o pregunta registrada.
 
-## R7. Bloqueador e2e: `qa-runtime` no copia el arnés completo
+## R7. Bloqueador e2e RESUELTO: arnés incompleto + flota sin sembrar + timeout corto
 
 El contenedor e2e muere con `ERR_MODULE_NOT_FOUND:
 '/app/ops/harness/adapter-roundtrip.mjs'`. Causa raíz: `deploy/Dockerfile`

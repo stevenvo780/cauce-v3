@@ -68,11 +68,12 @@ o pregunta abierta (SC-003).
   documentada + test (`services/dispatcher/`)
 - [ ] T023 [US1] [sdk] re-verificar bajo carga el rojo de `adapter-sdk`
   (689 tests; arreglo en árbol pendiente de reconfirmación)
-- [ ] T024 [US1] [qa] corrida e2e completa contra la pila + evidencia pegada
-  — BLOQUEADA por R7 hasta T025
-- [ ] T025 [US1] [despliegue, con dueño] copiar `ops/harness/` completo en la
-  etapa `qa-runtime` de `deploy/Dockerfile` (hoy sólo `runner.mjs` →
-  `ERR_MODULE_NOT_FOUND`); reconstruir `cauce-v3-test-qa:local` y re-correr T024
+- [x] T024 [US1] [qa] corrida e2e completa contra la pila + evidencia pegada
+  — VERDE 14/14, exit 0 (2026-09-27)
+- [x] T025 [US1] [despliegue, con dueño] copiar `ops/harness/` completo en la
+  etapa `qa-runtime` de `deploy/Dockerfile`; sumar servicio `seed` con la
+  topología (12 agentes) y subir `CAUCE_RETRY_TIMEOUT_MS` a 45000 para cubrir
+  el backoff deliberado de 30s del intento 1; reconstruir y re-correr T024
 
 **Checkpoint**: US1 funciona y se demuestra (SC-001).
 

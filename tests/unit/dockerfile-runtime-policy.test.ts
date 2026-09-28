@@ -1,3 +1,4 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,5 +37,30 @@ describe('Dockerfile runtime policy', () => {
     const dockerfile = await readFile(join(repository, 'deploy/Dockerfile'), 'utf8');
     const mutado = dockerfile.replace(/(^COPY\b)/mu, 'COPY --chmod=0644 $1');
     expect(mutado).toMatch(/^\s*COPY\b.*--chmod=/mu);
+  });
+
+  test('qa-runtime ships the whole e2e harness directory, not just runner.mjs', async () => {
+    const dockerfile = await readFile(join(repository, 'deploy/Dockerfile'), 'utf8');
+    const qaStage = dockerfile.slice(dockerfile.indexOf('FROM runtime AS qa-runtime'));
+    expect(qaStage).toContain('COPY --chown=node:node ops/harness/ ./ops/harness/');
+    expect(qaStage).not.toContain('ops/harness/runner.mjs ./ops/harness/runner.mjs');
+  });
+
+  test('every relative import inside ops/harness resolves to a shipped file', () => {
+    const harnessDir = join(repository, 'ops/harness');
+    const files = readdirSync(harnessDir).filter((file) => file.endsWith('.mjs'));
+    const missing: string[] = [];
+    for (const file of files) {
+      const body = readFileSync(join(harnessDir, file), 'utf8');
+      for (const match of body.matchAll(/from\s+['"]\.\/([^'"]+)['"]/g)) {
+        const target = match[1];
+        if (target === undefined) {
+          missing.push(`${file} -> unparseable import`);
+        } else if (!existsSync(join(harnessDir, target))) {
+          missing.push(`${file} -> ${target}`);
+        }
+      }
+    }
+    expect(missing).toEqual([]);
   });
 });
