@@ -236,6 +236,22 @@ test("muse: localiza el pedido por su miembro de correlación y cosecha el ÚLTI
   assert.equal(envelope?.kind, "answer");
 });
 
+test("muse: con el sobre escrito y sin terminal el turno está verificando, no fundido", async () => {
+  const { log } = await museWorkspace("muse-verifica");
+  const reader = museTranscript("/no-importa");
+  const correlation = "b".repeat(64);
+  const verifying = [log.intent("i-v", "pedido"), log.started("i-v", "pedido"),
+    log.message("i-v", envelopeText("respuesta final", correlation))];
+  const lingering = reader.lingering?.(entries(verifying), "i-v");
+  assert.equal(lingering?.outcome.kind, "answer", "Double checking: ya respondió, falta el cierre");
+  assert.equal(reader.lingering?.(entries([...verifying, log.tools("i-v")]), "i-v"), undefined,
+    "si después del mensaje siguió trabajando, no es una respuesta");
+  assert.equal(reader.lingering?.(entries([log.intent("i-w", "p"), log.message("i-w", "Voy a revisar.")]), "i-w"),
+    undefined, "un mensaje intermedio que no es sobre nunca es respuesta");
+  assert.equal(reader.lingering?.(entries([...verifying, log.terminal("i-v")]), "i-v"), undefined,
+    "con terminal el turno ya cerró: lo resuelve findAnswer");
+});
+
 test("muse: un terminal distinto de completed es un turno fallido, no una respuesta", async () => {
   const { log } = await museWorkspace("muse-fallido");
   const reader = museTranscript("/no-importa");
@@ -332,8 +348,9 @@ test("muse: el turno del bus entra por la caja de la TUI y la respuesta sale de 
       log.message("i-bus", "Reviso el estado."),
       log.tools("i-bus"),
       log.message("i-bus", envelopeText("hola desde la TUI de muse", correlation)),
-      log.terminal("i-bus"),
     );
+    // Muse writes the close ~9 s after the envelope ("Double checking"): the runner must wait for it.
+    setTimeout(() => { void log.append(log.terminal("i-bus")); }, 60);
   };
   const runner = new PasteSessionRunner({
     alias: "hegel",

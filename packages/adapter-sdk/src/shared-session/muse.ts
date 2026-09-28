@@ -1,7 +1,7 @@
 import { constants as fsConstants, type Dirent } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, symlink } from "node:fs/promises";
 import { basename, dirname, join, normalize } from "node:path";
-import { envelopeHasCorrelation, stripJsonFence } from "./envelope.js";
+import { envelopeHasCorrelation, isEnvelopeText, stripJsonFence } from "./envelope.js";
 import { readJsonlSince } from "./rollout.js";
 import type { CompactionNotice, InjectedTurn, TranscriptReader, TurnOutcome } from "./types.js";
 
@@ -351,6 +351,39 @@ function findMuseOutcome(entries: readonly MuseLogLine[], key: string): TurnOutc
   return undefined;
 }
 
+/**
+ * The run already committed its envelope but has not closed: Muse's "Double checking" phase.
+ *
+ * Measured on hegel (2026-09-28): after the final message Muse runs its verify reminder for ~9 s
+ * (`◇ Double checking … esc to interrupt`) and only then writes `terminal`. Without this the runner
+ * saw an envelope with no close and rescued it as a MERGED turn, telling the sender a falsehood.
+ * Only an envelope-shaped last message with no tool call after it counts: an interim message
+ * followed by more work is still a running turn, never an answer.
+ */
+function findMuseLingering(
+  entries: readonly MuseLogLine[],
+  key: string,
+): { readonly outcome: TurnOutcome; readonly progress: string } | undefined {
+  let last: string | undefined;
+  let sessionId: string | undefined;
+  let records = 0;
+  for (const record of recordsOf(entries)) {
+    const event = runEvent(record);
+    if (event?.runId !== key) continue;
+    records += 1;
+    sessionId ??= event.sessionId;
+    if (event.kind === "terminal") return undefined;
+    if (event.kind === "assistant_tool_calls_committed") last = undefined;
+    if (event.kind === "assistant_message_committed" && typeof event.event.text === "string"
+      && event.event.text.trim().length > 0) last = event.event.text;
+  }
+  if (last === undefined || !isEnvelopeText(stripJsonFence(last))) return undefined;
+  const outcome: TurnOutcome = sessionId === undefined
+    ? { kind: "answer", text: last }
+    : { kind: "answer", text: last, sessionId };
+  return { outcome, progress: String(records) };
+}
+
 /** A correlated envelope among the committed assistant messages, newest first. */
 function findMuseEnvelope(
   entries: readonly MuseLogLine[],
@@ -420,6 +453,7 @@ export function museTranscript(museData: string): TranscriptReader<MuseLogLine> 
     read: (file, offset) => readJsonlSince<MuseLogLine>(file, offset),
     findInjected: findInjectedMuseTurn,
     findAnswer: findMuseOutcome,
+    lingering: findMuseLingering,
     findEnvelope: findMuseEnvelope,
     compactions: museCompactions,
     startedTurn: museStartedTurn,
