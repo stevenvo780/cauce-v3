@@ -161,6 +161,7 @@ load_config() {
     [[ ! -v "CONFIG[$key]" ]] || die "container alias config key is duplicated: $key"
     case "$key" in
       BUNDLE_RELEASE|BUNDLE_SHA256|PKI_DIR|RELAY_URL|EXPECTED_IMAGE_ID|EXPECTED_LABEL_KEY|EXPECTED_LABEL_VALUE|MOUNT_TYPE|MOUNT_SOURCE|MOUNT_NAME|MOUNT_DESTINATION|MOUNT_RW|DEFAULT_TIMEOUT_MS|CAUCE_SEMBRAR_PERFIL) ;;
+      DECISIONES_URL) [[ $value =~ ^https://([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(:[0-9]{1,5})?$ ]] || die 'DECISIONES_URL must be a bare https origin' ;;
       CAUCE_NATIVE_PROFILE_CONTEXT) [[ $value =~ ^[01]$ ]] || die "CAUCE_NATIVE_PROFILE_CONTEXT must be exactly 0 or 1" ;;
       EXPECTED_CLI_VERSION) [[ $harness == claude ]] || die "config key is not allowed for $harness: $key" ;;
       HERMES_HOME|HERMES_INFERENCE_MODEL|HERMES_PYTHON|HERMES_SOURCE_COMMIT) [[ $harness == hermes ]] || die "config key is not allowed for $harness: $key" ;;
@@ -579,6 +580,21 @@ deploy_bundle() {
   [[ $active == "$bundle_digest" ]] || die 'copied active bundle digest differs' 78
   adapter_in_container="$release/packages/adapter-sdk/dist/src/bin/$harness.js"
   active_bundle_in_container=$release
+  prune_bundle_cache
+}
+
+# La caché de releases del contenedor crecía una por despliegue (13 GB en vps-tn). Cada arranque recopia
+# la release del staging del host, así que podar no pierde la reversa. Conserva la activa, las que usa un
+# proceso vivo o nombra una config de arnés (MCP) y las CAUCE_BUNDLE_CACHE_KEEP (2) más recientes.
+prune_bundle_cache() {
+  local script="$ROOT/container-runtime/podar-releases.py" out
+  [[ -f $script && ! -L $script ]] || return 0
+  if out=$(docker_id_mutate --user 0 /usr/bin/python3 -c "$(cat "$script")" \
+      "$instance_root/releases" "$bundle_release" "${CAUCE_BUNDLE_CACHE_KEEP:-2}" 2>&1); then
+    printf '%s\n' "$out" >&2
+  else
+    printf 'warning: la poda de la cache de releases fallo y no bloquea el arranque: %s\n' "$out" >&2
+  fi
 }
 
 deploy_pki() {
@@ -645,6 +661,7 @@ start_adapter() {
     "CAUCE_TLS_CERT_FILE=$secret_directory/client.crt" "CAUCE_TLS_KEY_FILE=$secret_directory/client.key" "CAUCE_TLS_CA_FILE=$secret_directory/ca.crt"
   )
   environment+=("CAUCE_SEMBRAR_PERFIL=${CONFIG[CAUCE_SEMBRAR_PERFIL]}")
+  [[ ! -v CONFIG[DECISIONES_URL] ]] || environment+=("CAUCE_DECISIONES_URL=${CONFIG[DECISIONES_URL]}")
   [[ ! -v CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT] ]] || environment+=("CAUCE_NATIVE_PROFILE_CONTEXT=${CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT]}")
   if [[ -v CONFIG[CREDENTIAL_HOME] ]]; then
     valid_absolute_path "${CONFIG[CREDENTIAL_HOME]}" || die "CREDENTIAL_HOME must be a canonical absolute path"
