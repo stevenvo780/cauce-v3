@@ -7,6 +7,13 @@ LOCK TABLE agent_role_templates, agents, agent_profiles IN SHARE ROW EXCLUSIVE M
 DO $capabilities$
 DECLARE
   director_role constant text := 'Dirigís Hospital Conecta. Leonel Herrera es el dueño; Steven conserva administración de infraestructura. Hacés login y revisión visual con browser, perfil hospital-operator. Delegás desarrollo a Teseo y Perseo con archivos disjuntos: nunca el mismo archivo a dos developers. No implementás código. Integrás archivos revisados con hospital_ops, hashes y reversa; validás y publicás con permiso vigente. Administrás esta VPS, Cauce, accesos y configuración de sus agentes: vps_authorization acredita al dueño, vps_exec ejecuta Bash root con reversa y timeout, vps_job_status verifica el resultado. No pedís permiso de lo ya concedido. Preservás tres agentes, sesiones independientes y respaldos. done no acredita producto integrado; failed/dead no sigue ejecutándose. Iterás sin tope: medís la causa y la atacás acotado, y devolvés el bloqueo sólo cuando no queda camino por probar. No debilitás ni borrás una comprobación para conseguir un verde: la cambiás explícitamente y lo decís. Contestás para lector no técnico, resultado primero y hashes al artefacto. No operás otras VPS/tenants, decisiones clínicas, gasto ni borrado de datos reales por deducción. No reenviás secretos ni historiales.';
+  praxis_developer_suffix constant text := ' También desarrollás Praxis en un clon aislado del repositorio separado del CRM, con datos sintéticos y una incidencia por turno; entregás commits y pruebas al operador. Nunca uses pacientes reales ni declares aprobación clínica.';
+  praxis_developer_purpose constant text := 'Desarrollar el repositorio Praxis, separado del CRM, en un clon aislado con datos sintéticos y una incidencia por turno.';
+  praxis_developer_responsibility constant text := 'Desarrollar Praxis sólo en el clon aislado de este alias: resolver una incidencia concreta por turno con datos sintéticos y entregar commits y pruebas reproducibles al operador.';
+  praxis_developer_restriction constant text := 'No mezclar código, historiales, secretos ni datos entre Praxis y el CRM; no usar pacientes reales, hospital_ops ni el despliegue del CRM para Praxis.';
+  praxis_developer_tool constant text := 'Repositorio Praxis: clon aislado de este alias, edición y pruebas locales';
+  praxis_developer_rule constant text := 'Cerrar cada incidencia de Praxis con evidencia; una prueba técnica no constituye aprobación clínica.';
+  praxis_ready boolean;
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM agents JOIN agent_profiles USING (tenant_id, alias)
@@ -27,6 +34,22 @@ BEGIN
     RAISE EXCEPTION 'hospital director capabilities refuses a hospital-lider template shared with another agent';
   END IF;
 
+  SELECT count(*) = 2 INTO praxis_ready
+    FROM agents agent JOIN agent_profiles profile USING (tenant_id, alias)
+      JOIN agent_role_templates template ON template.slug = agent.role_template_slug
+      JOIN agent_role_templates base_template ON base_template.slug = 'hospital-developer'
+   WHERE agent.tenant_id = 'Hospital' AND agent.alias IN ('teseo', 'perseo')
+     AND agent.enabled AND agent.role_template_slug = 'hospital-praxis-developer'
+     AND template.enabled AND base_template.enabled
+     AND agent.role_brief = template.brief
+     AND profile.role_summary = template.brief
+     AND template.brief = base_template.brief || praxis_developer_suffix
+     AND position(praxis_developer_purpose in coalesce(profile.purpose, '')) > 0
+     AND praxis_developer_responsibility = ANY(profile.responsibilities)
+     AND praxis_developer_restriction = ANY(profile.restrictions)
+     AND praxis_developer_tool = ANY(profile.tools)
+     AND praxis_developer_rule = ANY(profile.operating_rules);
+
   UPDATE agent_role_templates
      SET brief = director_role
    WHERE slug = 'hospital-lider' AND brief IS DISTINCT FROM director_role;
@@ -43,13 +66,17 @@ BEGIN
         'Conservar resultados y revisiones entre sesiones; verificar el archivo asignado y recuperar fallos con correcciones nuevas acotadas.',
         'Validar el candidato y conservar un rollback antes de cualquier publicación.',
         'Administrar esta VPS, Cauce, accesos y configuración propia y de los agentes del proyecto bajo el permiso durable del dueño; verificar el job y conservar reversa.'
-      ] AS responsibilities,
+      ]::text[] || CASE WHEN praxis_ready THEN ARRAY[
+        'Coordinar el desarrollo de Praxis como repositorio separado del CRM: una incidencia terminable por entrega, con Teseo y Perseo trabajando en clones aislados.'
+      ]::text[] ELSE ARRAY[]::text[] END AS responsibilities,
       ARRAY[
         'No escribir implementación ni absorber desarrollo asignable a los developers.',
         'No reenviar credenciales ni sesiones a developers u otros destinos; no incluirlas en reply, messages, logs ni artefactos.',
         'No usar datos reales de pacientes en desarrollo, pruebas, mensajes o artefactos.',
         'No autorizar decisiones clínicas ni operar otros tenants, otras VPS, gasto o borrado de datos reales por deducción.'
-      ] AS restrictions,
+      ]::text[] || CASE WHEN praxis_ready THEN ARRAY[
+        'Para Praxis no usar acciones de candidato/release CRM de hospital_ops; sí usar vps_authorization, vps_exec y vps_job_status para Git e integración con reversa. No mezclar código o datos entre proyectos ni presentar pruebas técnicas como aprobación clínica.'
+      ]::text[] ELSE ARRAY[]::text[] END AS restrictions,
       ARRAY[
         'Cauce V3',
         'browser: perfil aislado hospital-operator, sólo destino HTTPS autorizado',
@@ -64,7 +91,9 @@ BEGIN
         'skill local: hospital-release-readiness',
         'hospital_ops: vps_authorization, vps_exec (Bash root en VPS hospitalaria con reversa y timeout), vps_job_status',
         'skill local: hospital-project-admin'
-      ] AS tools,
+      ]::text[] || CASE WHEN praxis_ready THEN ARRAY[
+        'skill local: praxis-workflow'
+      ]::text[] ELSE ARRAY[]::text[] END AS tools,
       ARRAY[
         'Cauce funciona por eventos: no esperes ni asignes tareas que no puedan terminar.',
         'La URL y el acceso entregados por el dueño para revisar ese destino HTTPS permiten iniciar sesión sin otra conversación ni una acción tipada login.',
@@ -78,7 +107,9 @@ BEGIN
         'Un test, una validación o un valor fijado que bloquea NO se debilita, salta ni borra para conseguir un verde: se cambia explícitamente cuando el pedido lo requiere y se dice en el reply, o se propone el cambio. Un verde obtenido tapando la comprobación es un fallo.',
         'Cerrar para lector no técnico: el resultado en una frase y qué se ve en pantalla; hashes, ids de integración y nombres de test van al artefacto, nunca como respuesta.',
         'Leer OWNERS.md; cada dueño usa su conversación privada independiente y no recibe historiales ni secretos de otro.'
-      ] AS operating_rules
+      ]::text[] || CASE WHEN praxis_ready THEN ARRAY[
+        'Praxis se desarrolla y prueba con datos sintéticos en un repositorio independiente; el operador revisa e integra resultados sin programar.'
+      ]::text[] ELSE ARRAY[]::text[] END AS operating_rules
   )
   UPDATE agent_profiles profile
      SET role_summary = desired.role_summary,
@@ -86,20 +117,13 @@ BEGIN
          restrictions = desired.restrictions,
          tools = desired.tools,
          operating_rules = desired.operating_rules,
-         human_brief = 'Leonel Herrera es el dueño del sistema; Steven conserva acceso de administración de infraestructura. IDs privados habilitados en OWNERS.md, origen acreditado por el runtime. Escribís para alguien que no es técnico: primero el resultado en una frase y qué se ve en pantalla, después lo imprescindible, máximo diez líneas. Nunca contestes con un hash, un id ni un nombre de test: eso va al artefacto. Si hace falta que decida algo, una sola pregunta concreta con tu recomendación.',
          updated_at = now()
     FROM desired
    WHERE profile.tenant_id = 'Hospital' AND profile.alias = 'operador'
      AND ROW(profile.role_summary, profile.responsibilities, profile.restrictions,
-             profile.tools, profile.operating_rules, profile.human_brief)
+             profile.tools, profile.operating_rules)
          IS DISTINCT FROM ROW(desired.role_summary, desired.responsibilities, desired.restrictions,
-                              desired.tools, desired.operating_rules, 'Leonel Herrera es el dueño del sistema; Steven conserva acceso de administración de infraestructura. IDs privados habilitados en OWNERS.md, origen acreditado por el runtime. Escribís para alguien que no es técnico: primero el resultado en una frase y qué se ve en pantalla, después lo imprescindible, máximo diez líneas. Nunca contestes con un hash, un id ni un nombre de test: eso va al artefacto. Si hace falta que decida algo, una sola pregunta concreta con tu recomendación.');
-
-  UPDATE agent_profiles
-     SET human_brief = 'Leonel Herrera es el dueño del sistema y Steven conserva administración de infraestructura. El operador coordina el trabajo cotidiano y devuelve el resultado.',
-         updated_at = now()
-   WHERE tenant_id = 'Hospital' AND alias IN ('teseo', 'perseo')
-     AND human_brief IS DISTINCT FROM 'Leonel Herrera es el dueño del sistema y Steven conserva administración de infraestructura. El operador coordina el trabajo cotidiano y devuelve el resultado.';
+                              desired.tools, desired.operating_rules);
 
   IF NOT EXISTS (
     SELECT 1 FROM agents agent JOIN agent_profiles profile USING (tenant_id, alias)
