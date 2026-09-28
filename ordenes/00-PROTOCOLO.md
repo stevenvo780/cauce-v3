@@ -30,6 +30,7 @@ Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3` en 
 | `packages/adapter-sdk/**`, `ops/schemas/**` | Codex | Claude |
 | `services/dispatcher/**`, `ops/runbooks/**` | Gemini | Claude |
 | `scripts/**` (tooling: calidad, grafo, test-all), `ops/{systemd,generated,manifests,observability,config,guardias,container-runtime,openclaw-gateway,cli,patches,private,telegram-runtime}/**` | Claude (+dueño donde toque flota) | dueño |
+| `.specify/**`, `.agents/**`, `specs/**` (SDD con spec-kit: constitución, plantillas, skills y especificaciones) | Claude + dueño | dueño |
 | `ordenes/`, `ordenes-locales/`, documentación (README/CLAUDE.md/AGENTS.md), integración de merges, despliegue/flota/BD | Claude + dueño | dueño |
 | `packages/store/migrations/**`, `deploy/**`, `/etc/cauce-v3`, `/opt`, contenedores, systemd, base de datos | NADIE sin el dueño presente | — |
 
