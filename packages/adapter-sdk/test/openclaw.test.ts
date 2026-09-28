@@ -272,6 +272,37 @@ test('OpenClaw upstream 429 after a side effect remains ambiguous and is not rep
   assert.equal(api.requests.length, 1);
 });
 
+test("OpenClaw HTTP 200 incomplete turn after a tool action fails without replay", async (t) => {
+  const notice = "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying.";
+  const methods: string[] = [];
+  let sideEffects = 0;
+  const api = await setupServer((response) => {
+    methods.push(response.req.method ?? "");
+    sideEffects += 1;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ choices: [{ message: { content: notice } }] }));
+  });
+  t.after(api.close);
+  const adapter = new HarnessAdapter({
+    definition: openClawDefinition,
+    runner: new OpenClawApiRunner({ endpoint: api.endpoint, tokenFile: await tokenFile("api-token") }),
+    store: await DurableStore.open(resolve(root, "incomplete-turn")),
+  });
+
+  const output = await adapter.execute({
+    prompt: "perform one tool action",
+    timeoutMs: 1_000,
+    signal: new AbortController().signal,
+  });
+  assert.equal(output.status, "failed");
+  assert.equal(output.retryable, false);
+  assert.match(output.reply ?? "", /non_deliverable_terminal_turn/u);
+  assert.deepEqual(output.messages, []);
+  assert.deepEqual(methods, ["POST"]);
+  assert.equal(sideEffects, 1);
+  assert.equal(api.requests.length, 1);
+});
+
 test("OpenClaw native sessions are isolated by stable alias namespace", async () => {
   const api = await setupServer();
   const token = await tokenFile("api-token");
