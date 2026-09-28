@@ -1,32 +1,80 @@
 #!/usr/bin/env python3
-"""cauce-estado <alias> — is this agent working or dead?
+"""cauce-estado [alias] — estado observado de la flota canónica.
 
-A single screen crossing the four sources that answer that question:
+Cruza systemd y el proceso del adaptador en su ubicación real con el latido,
+la cola y los ACK de Cauce. La CPU acumulada es informativa: un adaptador
+ocioso puede estar sano. Sin acceso remoto se informa la medición ausente.
 
-  * systemd: the adapter's unit (active, since when, restart count)
-  * the container: the adapter process and its CPU TIME. An active unit proves nothing; an
-                   inert agent is betrayed by accumulating CPU seconds over hours.
-  * the attach marker: if someone is on the console, the agent is INTENTIONALLY mute.
-  * the gateway (mTLS): presence/heartbeat, delivery queue and ACK timeline. From the control
-                   host there is no Postgres (no psql, 5432 closed, no ssh to the storage
-                   host); the gateway is the only window into the database and it is enough.
-
-    cauce-estado <alias>     one screen
-    cauce-estado             whole fleet, one line per agent
-    cauce-estado --json      same in JSON
+    cauce-estado <alias>     una pantalla
+    cauce-estado             flota completa, una línea por agente
+    cauce-estado <alias> --json
 """
 import datetime
 import importlib.machinery
 import importlib.util
 import json
 import os
+import pwd
 import shlex
+import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 
-MARKERS = os.path.expanduser('~/.local/state/cauce-attach')
-HOST_NATIVE = {'kant': 'cauce-v3-host-kant'}
+OWNER_HOME = Path('/home/stev')
+OPS = OWNER_HOME / '.local/share/cauce-v3/ops'
+MARKERS = str(OWNER_HOME / '.local/state/cauce-attach')
+sys.path.insert(0, str(OPS / 'scripts'))
+from fleet_derive import load_fleet_assignments  # noqa: E402  (tras el shim de sys.path)
+
+FLEET = load_fleet_assignments(OPS)
+ERRORS = {}
+HOST_ADDRESSES = {'server': '100.64.0.11', 'server2': '100.64.0.13'}
+
+
+def info_of(alias):
+    if alias not in FLEET:
+        die('alias desconocido: ' + alias)
+    return dict(FLEET[alias])
+
+
+def is_native(alias):
+    return info_of(alias)['container'].startswith(('host:', 'vm:'))
+
+
+def location(alias):
+    entry = info_of(alias)
+    container = entry['container']
+    host = container.split(':', 1)[1] if is_native(alias) else entry.get('dockerHost', 'local')
+    host = 'server' if host == 'local' else host
+    destination = alias if container.startswith('vm:') else HOST_ADDRESSES.get(host, host)
+    return host, entry['systemdUser'], destination
+
+
+def at_host(alias, arguments, timeout=30, body=None):
+    host, manager, destination = location(alias)
+    try:
+        if host == socket.gethostname().split('.')[0]:
+            account = pwd.getpwnam(manager)
+            command = ['env', 'XDG_RUNTIME_DIR=/run/user/' + str(account.pw_uid), *arguments]
+            if os.getuid() != account.pw_uid:
+                if os.geteuid() != 0:
+                    raise PermissionError('manager account is not available to this user')
+                command = ['runuser', '-u', manager, '--', *command]
+            result = subprocess.run(command, input=body if body is not None else '', capture_output=True, text=True,
+                                    cwd=account.pw_dir, timeout=timeout)
+        else:
+            script = 'export XDG_RUNTIME_DIR=/run/user/$(id -u); exec ' + shlex.join(arguments)
+            command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', '-l', manager,
+                       destination, 'bash -lc ' + shlex.quote(script)]
+            result = subprocess.run(command, input=body if body is not None else '', capture_output=True, text=True, timeout=timeout)
+        if result.returncode == 0:
+            return result.stdout.strip()
+        ERRORS.setdefault(alias, set()).add(f'{host}: consulta rechazada (salida {result.returncode})')
+    except (OSError, KeyError, subprocess.SubprocessError) as error:
+        ERRORS.setdefault(alias, set()).add(f'{host}: medición no disponible ({type(error).__name__})')
+    return ''
 
 
 def die(msg):
@@ -42,51 +90,54 @@ def sh(args, timeout=60):
 
 
 def sesiones_mod():
-    ruta = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'cauce-sesiones')
+    ruta = str(OWNER_HOME / '.local/bin/cauce-sesiones')
     if not os.path.exists(ruta):
         die(f'falta {ruta} (se instala junto a cauce-estado)')
     sys.dont_write_bytecode = True
     cargador = importlib.machinery.SourceFileLoader('cauce_sesiones', ruta)
     modulo = importlib.util.module_from_spec(importlib.util.spec_from_loader('cauce_sesiones', cargador))
     cargador.exec_module(modulo)
+    modulo.OPS = str(OPS)
+    modulo.MAP = str(OPS / 'container-aliases.json')
+    modulo.PKI = str(OWNER_HOME / '.config/cauce-v3/container-pki')
+    modulo.alias_info = info_of
+    original_gateway = modulo.gateway
+    observation_identity = next((alias for alias in FLEET if modulo.pki_de(alias)), None)
+
+    def gateway(alias, ruta, cuerpo=None, timeout=20):
+        identity = alias if modulo.pki_de(alias) else observation_identity
+        if identity is None:
+            return None, 'no hay identidad local para observar el gateway'
+        if cuerpo is not None:
+            return None, 'este observador sólo admite lecturas'
+        return original_gateway(identity, ruta, timeout=timeout)
+
+    def sonda(alias, info):
+        arguments = ['python3', '-', info['stateDirectory'], info['home'], info['harness'], '']
+        if not is_native(alias):
+            arguments = ['docker', 'exec', '-i', '--user', info['user'], info['container'], *arguments]
+        raw = at_host(alias, arguments, timeout=60, body=modulo.SONDA)
+        try:
+            value = json.loads(raw.splitlines()[-1])
+            if isinstance(value, dict):
+                return value
+        except (ValueError, IndexError):
+            pass
+        return {'error': 'sesiones no medidas', 'sesiones': [], 'otros': {}}
+
+    modulo.gateway = gateway
+    modulo._sonda = sonda
     return modulo
 
 
 def unit_of(alias):
-    return HOST_NATIVE.get(alias, f'cauce-v3-container-{alias}')
+    kind = 'host' if is_native(alias) else 'container'
+    return f'cauce-v3-{kind}-{alias}.service'
 
 
-# VPS aliases run their units on the VPS itself, under the VPS user; asking `systemctl --user`
-# locally would correctly report `inactive` for them and mis-publish that as "DOWN".
-# kant and salva ARE supervised by this host, so those two keep being measured locally.
-LOCALES = {'kant', 'salva'}
-VPS_SSH = "vps-tn"
-
-
-def alias_de_unit(unit):
-    """`cauce-v3-container-argos` / `cauce-v3-host-kant` -> `argos` / `kant`."""
-    for prefijo in ('cauce-v3-container-', 'cauce-v3-host-'):
-        if unit.startswith(prefijo):
-            return unit[len(prefijo):].replace('.service', '')
-    return unit
-
-
-def propiedades(unit, claves):
-    alias = alias_de_unit(unit)
-    pedido = ['systemctl', '--user', 'show', unit] + ['-p' + k for k in claves]
-    if alias in LOCALES:
-        crudo = sh(pedido)
-    else:
-        remoto = ('U=$(id -u stev); sudo -u stev XDG_RUNTIME_DIR=/run/user/$U '
-                  + ' '.join(pedido))
-        crudo = sh(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
-                    VPS_SSH, remoto])
-    salida = {}
-    for linea in crudo.splitlines():
-        if '=' in linea:
-            clave, valor = linea.split('=', 1)
-            salida[clave] = valor
-    return salida
+def propiedades(alias, claves):
+    raw = at_host(alias, ['systemctl', '--user', 'show', unit_of(alias), *('-p' + key for key in claves)])
+    return dict(line.split('=', 1) for line in raw.splitlines() if '=' in line)
 
 
 def segundos_cpu(texto):
@@ -107,42 +158,22 @@ def segundos_cpu(texto):
     return total + int(float(dias or 0)) * 86400
 
 
-_PS_CACHE = []
+_PS_CACHE = {}
 
 
-def procesos_host():
-    """One snapshot of the control host's process table plus the VPS's, joined.
-
-    Container aliases' adapters migrated to the VPS, so a single local `ps` would declare
-    "NO ADAPTER" for the whole fleet. Joining both snapshots keeps local cases (kant, salva)
-    working and lets one SSH read the remote ones.
-    """
-    if not _PS_CACHE:
-        local = sh(['ps', '-eo', 'pid,etime,time,pcpu,args', '--no-headers'])
-        remoto = sh(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', VPS_SSH,
-                     'ps -eo pid,etime,time,pcpu,args --no-headers'], timeout=90)
-        _PS_CACHE.append((local or '') + '\n' + (remoto or ''))
-    filas = []
-    for linea in _PS_CACHE[0].splitlines():
-        partes = linea.split(None, 4)
-        if len(partes) == 5:
-            filas.append(partes)
-    return filas
+def procesos_host(alias):
+    target = location(alias)
+    if target not in _PS_CACHE:
+        _PS_CACHE[target] = at_host(alias, ['ps', '-eo', 'pid,etime,time,pcpu,args', '--no-headers'])
+    return [parts for line in _PS_CACHE[target].splitlines()
+            if len(parts := line.split(None, 4)) == 5]
 
 
 def proceso_adaptador(alias, host_native, unidad):
-    """The adapter process for THIS alias and its accumulated CPU. An active unit proves nothing:
-    an inert agent is betrayed by not consuming CPU (seconds over hours).
-
-    Two distinct cases must be respected:
-      * container alias: the unit spawns a `docker exec` (MainPID, CPU always 0) that in turn
-        runs `cauce-container-runtime.py run --alias X`. The one doing the work is THAT, not
-        the MainPID.
-      * kant (host-native): everything runs under the unit, so the cgroup's CPUUsageNSec is exact.
-    """
+    """Mide el Node del alias Docker o el MainPID/cgroup de la unidad nativa."""
     if host_native:
         principal = str(unidad.get('MainPID') or '')
-        fila = next((f for f in procesos_host() if f[0] == principal), None)
+        fila = next((f for f in procesos_host(alias) if f[0] == principal), None)
         try:
             cpu_s = int(unidad.get('CPUUsageNSec')) / 1e9
         except (TypeError, ValueError):
@@ -153,14 +184,15 @@ def proceso_adaptador(alias, host_native, unidad):
                 'cpu': reloj(cpu_s), 'pcpu': fila[3] if fila else '?',
                 'cpu_s': cpu_s, 'edad_s': segundos_cpu(fila[1]) if fila else None,
                 'fuente': 'cgroup de la unit'}
-    for pid, edad, cpu, pcpu, args in procesos_host():
-        if args.startswith('docker ') or 'cauce-container-runtime.py' not in args:
+    for pid, edad, cpu, pcpu, args in procesos_host(alias):
+        if Path(args.split()[0]).name not in {'node', 'nodejs'}:
             continue
-        if f'--alias {alias} ' not in args + ' ':
+        expected = '/dist/src/bin/' + info_of(alias)['harness'] + '.js'
+        if not any(value.endswith(expected) and f'/{alias}/' in value for value in args.split()[1:4]):
             continue
         return {'pid': pid, 'edad': edad, 'cpu': cpu, 'pcpu': pcpu,
                 'cpu_s': segundos_cpu(cpu), 'edad_s': segundos_cpu(edad),
-                'fuente': 'cauce-container-runtime'}
+                'fuente': 'proceso Node del adaptador'}
     return None
 
 
@@ -172,16 +204,13 @@ def reloj(segundos):
 
 
 def harness_vivo(info, alias):
-    """The harness process inside the container (the one running dist/src/bin/<harness>.js).
-    It is the only thing owned by Cauce inside; other fleets' processes share the containers
-    and must not be confused with it."""
-    cmd = ("ps -eo args --no-headers 2>/dev/null | grep -F 'adapter-sdk/dist/src/bin/' "
-           f"| grep -F '/{alias}/' | grep -v grep | head -1")
-    if info.get('alias') in LOCALES or info['container'] in ('ws-isa',):
-        return bool(sh(['docker', 'exec', info['container'], 'sh', '-lc', cmd], timeout=30))
-    return bool(sh(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', VPS_SSH,
-                    f'docker exec {info["container"]} sh -lc {shlex.quote(cmd)}'],
-                   timeout=60))
+    raw = at_host(alias, ['docker', 'exec', info['container'], 'ps', '-eo', 'args', '--no-headers'])
+    if not raw:
+        return None
+    expected = '/dist/src/bin/' + info['harness'] + '.js'
+    return any(Path(line.split()[0]).name in {'node', 'nodejs'}
+               and any(value.endswith(expected) and f'/{alias}/' in value for value in line.split()[1:4])
+               for line in raw.splitlines() if line.split())
 
 
 def marcador(alias):
@@ -251,6 +280,11 @@ def veredicto(datos, mod):
     if datos['marcador'] and not datos['marcador'].get('vivo'):
         return ('MARCADOR HUÉRFANO', 'el attach murió sin restaurar. cauce-attach-guard lo levanta '
                 f'en ≤2 min; si no, systemctl --user start {datos["unit"]}')
+    if not datos['unidad'].get('ActiveState'):
+        presente = datos.get('presencia')
+        if presente and presente.get('online'):
+            return ('ONLINE · SIN MEDIR', 'Cauce acredita el latido; la medición de systemd no está disponible.')
+        return ('NO MEDIDO', 'No hay medición de systemd ni un latido acreditado; consulta los errores.')
     if datos['unidad'].get('ActiveState') != 'active':
         return ('CAÍDO', f'la unit {datos["unit"]} está {datos["unidad"].get("ActiveState")} '
                 'y nadie la paró desde la consola.')
@@ -264,10 +298,6 @@ def veredicto(datos, mod):
     if presente is not None and not presente.get('online'):
         return ('SIN LATIDO', 'el adaptador corre pero el gateway no lo ve online '
                 f'(último latido {presente.get("last_heartbeat_at") or "?"}).')
-    cpu, edad = datos['proceso'].get('cpu_s'), datos['proceso'].get('edad_s')
-    if cpu is not None and edad and edad > 3600 and (cpu / edad) < 0.0005:
-        return ('INERTE', f'lleva {datos["proceso"]["edad"]} vivo y sólo {int(cpu)}s de CPU: '
-                'está prendido pero no procesa nada.')
     atascado = mod.veredicto_cola(datos['cola'])
     if atascado is not None:
         return atascado
@@ -295,8 +325,8 @@ def desde(stamp):
 
 
 def reunir(mod, alias, con_sesiones=True, ligero=False, bus=None):
-    info = mod.alias_info(alias)
-    host_native = alias in HOST_NATIVE
+    info = info_of(alias)
+    host_native = is_native(alias)
     unit = unit_of(alias)
     if bus is None:
         presente, estado_bus = presencia(mod, alias)
@@ -305,9 +335,9 @@ def reunir(mod, alias, con_sesiones=True, ligero=False, bus=None):
         presente = next((p for p in (bus.get('presence') or []) if p.get('alias') == alias), None)
     datos = {
         'alias': alias, 'unit': unit, 'info': info,
-        'unidad': propiedades(unit, ['ActiveState', 'SubState', 'ActiveEnterTimestamp',
+        'unidad': propiedades(alias, ['ActiveState', 'SubState', 'ActiveEnterTimestamp',
                                      'NRestarts', 'MainPID', 'CPUUsageNSec']),
-        'marcador': marcador(alias),
+        'marcador': marcador(alias) if location(alias)[0] == socket.gethostname().split('.')[0] else None,
         'presencia': presente,
         'bus': estado_bus,
         'cola': mod.cola(alias),
@@ -324,6 +354,7 @@ def reunir(mod, alias, con_sesiones=True, ligero=False, bus=None):
             'reciente': (inventario['reciente'] or {}).get('abrev'),
             'partidas': sum(len(v) for v in inventario['duplicadas'].values()),
         }
+    datos['errores_medicion'] = sorted(ERRORS.get(alias, set()))
     datos['veredicto'] = veredicto(datos, mod)
     return datos
 
@@ -335,6 +366,8 @@ def pantalla(datos):
     print('=' * 78)
     print(f'  {titulo:<18} {explicacion}')
     print('')
+    for error in datos.get('errores_medicion', []):
+        print('  medición    ' + error)
     unidad = datos['unidad']
     print(f'  adaptador   unit {datos["unit"]}: {unidad.get("ActiveState", "?")}/{unidad.get("SubState", "?")}'
           f' desde {unidad.get("ActiveEnterTimestamp") or "?"} · {unidad.get("NRestarts", "?")} reinicios')
@@ -399,7 +432,7 @@ def datos_cola(datos):
 
 def resumen_flota(mod):
     try:
-        aliases = sorted(json.load(open(mod.MAP))['aliases'])
+        aliases = sorted(FLEET)
     except (OSError, ValueError, KeyError):
         die(f'no puedo leer {mod.MAP}')
     bus = None
