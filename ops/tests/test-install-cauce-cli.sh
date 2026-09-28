@@ -16,7 +16,7 @@ WORK=$(mktemp -d)
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
-ESPERADOS=(cauce cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach)
+ESPERADOS=(cauce cauce-credenciales.lib.sh cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach)
 
 # py_compile writes `<dir>/__pycache__/<name>.pyc` a level deeper, so the probe reaches depth 2.
 MARCA="$WORK/marca"
@@ -47,6 +47,19 @@ if [ "$n_instalados" = "${#ESPERADOS[@]}" ]; then
 else
   bad "publica exactamente ${#ESPERADOS[@]} ficheros (encontrados $n_instalados)"
 fi
+
+# --- 2b) the installed CLI loads its sibling lib, also when invoked through a symlink -------
+# aprovisionar, login and retirar live in cauce-credenciales.lib.sh: without it they are "command not found".
+ln -s "$DEST/cauce" "$WORK/cauce-enlace"
+for invocado in "$DEST/cauce" "$WORK/cauce-enlace"; do
+  salida=$(HOME="$HOGAR" timeout 20 bash "$invocado" --help 2>&1)
+  if printf '%s' "$salida" | grep -q 'cauce-credenciales.lib.sh'; then
+    bad "el CLI instalado carga su lib ($invocado): $(printf '%s' "$salida" | head -1)"
+  else
+    ok "el CLI instalado carga su lib ($invocado)"
+  fi
+done
+rm -f "$WORK/cauce-enlace"
 
 # --- 3) it writes NOWHERE else: not in $HOME, not as bytecode inside the repo -----------------
 if [ -z "$(find "$HOGAR" -mindepth 1 -print -quit)" ]; then

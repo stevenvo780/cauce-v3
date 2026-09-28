@@ -649,9 +649,9 @@ remoto_cauce() {  # $1=ruta $2=alias, resto=argumentos tal cual
 }
 
 # Alta y renovacion de credenciales en lib hermana (poda T060-D): mismo codigo, cargado aqui para que entrypoint, ayuda y dispatcher queden intactos.
-CLI_DIR=$(dirname "${BASH_SOURCE[0]}")
+CLI_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 # shellcheck disable=SC1091
-source "$CLI_DIR/cauce-credenciales.lib.sh"
+source "$CLI_DIR/cauce-credenciales.lib.sh" || { printf 'cauce: falta %s/cauce-credenciales.lib.sh (reinstalar con install-cauce-cli.sh)\n' "$CLI_DIR" >&2; exit 1; }
 
 cmd_retirar() {  # $1=alias
   local a=$1
