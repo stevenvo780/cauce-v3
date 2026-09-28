@@ -1,0 +1,18 @@
+#!/bin/bash
+# Bridge between the Cauce adapter and Muse Code (harness "muse"). Installed in the container as
+# ~/.local/bin/muse-cauce.
+#
+# 1. `muse exec --prompt-file` only accepts a regular file ("is not a regular file" with /dev/stdin under a
+#    pipe), and the adapter delivers the prompt on stdin: it is copied to a temporary file.
+# 2. Muse keeps its login in ~/.config/muse, which is NOT a mounted volume in the ws-* containers: re-flattening
+#    the image wipes it and the alias is left without a login. The login lives in MUSE_CONFIG_DIR (under
+#    ~/.local, which is mounted) and the link is recreated here if it went missing.
+set -u
+MUSE_CONFIG_DIR="${MUSE_CONFIG_DIR:-$HOME/.local/share/cauce-v3/config/clio/.config/muse}"
+if [ ! -e "$HOME/.config/muse" ] && [ -d "$MUSE_CONFIG_DIR" ]; then
+  mkdir -p "$HOME/.config" && ln -s "$MUSE_CONFIG_DIR" "$HOME/.config/muse"
+fi
+tmp=$(mktemp "${TMPDIR:-/tmp}/muse-prompt.XXXXXX") || exit 70
+trap 'rm -f "$tmp"' EXIT
+cat > "$tmp"
+"$HOME/.local/bin/muse" "$@" --prompt-file "$tmp"

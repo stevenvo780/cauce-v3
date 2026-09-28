@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { HARNESS_DEFINITIONS } from "../src/harnesses/index.js";
 import { museDefinition } from "../src/harnesses/muse.js";
+import { validateSessionsFile } from "../src/sdk/durable-store/session-file.js";
 import { parseMuseOutput } from "../src/sdk/output-parser.js";
 
 // Records trimmed from a real `muse exec --json` run (Muse Code 1.4.0, 2026-09-27): the session record, the
@@ -29,8 +31,19 @@ test("muse: deltas are the fallback when the terminal carries no text", () => {
   assert.match(parsed, /HOLA/);
 });
 
-test("muse: prompt on stdin and resume by --session-id", () => {
-  assert.deepEqual(museDefinition.baseArgs, ["exec", "--json", "--yolo", "--trust-workspace", "--prompt-file", "/dev/stdin"]);
+test("muse: prompt through the muse-cauce bridge and resume by --session-id", () => {
+  assert.equal(museDefinition.command, "muse-cauce");
+  assert.deepEqual(museDefinition.baseArgs, ["exec", "--json", "--yolo", "--trust-workspace"]);
   assert.deepEqual(museDefinition.sessionArgs({ sessionId: "s-1", resume: true } as never), ["--session-id", "s-1"]);
   assert.deepEqual(museDefinition.sessionArgs({ sessionId: undefined, resume: false } as never), []);
+});
+
+// The clio incident (2026-09-28): the sessions.json regex did not know "muse", so the first persisted session
+// failed "secure validation" and every delivery died as INTERNAL. Every registered harness must be able to
+// store its session.
+test("sessions.json accepts the session of every registered harness", () => {
+  for (const id of Object.keys(HARNESS_DEFINITIONS)) {
+    const file = { version: 1, sessions: { [`${id}:scope-1`]: { native_id: "n-1", initialized: true } } };
+    assert.doesNotThrow(() => validateSessionsFile(file), id);
+  }
 });
