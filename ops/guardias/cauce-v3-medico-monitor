@@ -482,7 +482,7 @@ _VOLATIL = [
 def _cargar_lib(nombre):
     """Source a sibling -lib file into this module's namespace (like bash `source`)."""
     ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), nombre)
-    with open(ruta, "r", encoding="utf-8") as fh:
+    with open(ruta, encoding="utf-8") as fh:
         codigo = compile(fh.read(), ruta, "exec")
     exec(codigo, globals())  # noqa: B102
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 # --- constraints mirrored verbatim from services/telegram-bridge/src/config.ts ---
 ALIAS_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")         # config.ts text(..., 64) for alias / recipient.alias
 TENANT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")  # @cauce/protocol TenantSchema

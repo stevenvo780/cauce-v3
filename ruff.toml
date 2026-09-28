@@ -17,3 +17,7 @@ extend-include = [
 [lint]
 select = ["E", "W", "F", "I", "B", "UP"]
 ignore = ["E501"]  # longitud: la vigila el trinquete humano, no el linter (1.737 falsos ruidos)
+
+[lint.per-file-ignores]
+# El médico carga sus -lib hermanas con exec() en su propio espacio de nombres: ruff no ve esos nombres.
+"ops/guardias/cauce-v3-medico-monitor" = ["F821"]
