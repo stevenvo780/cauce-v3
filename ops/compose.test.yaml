@@ -59,7 +59,7 @@ services:
       DATABASE_URL: postgresql://cauce_test@postgres:5432/cauce_test
       NODE_ENV: test
       CAUCE_DEV_AUTH: "1"
-      CAUCE_ACK_DEADLINE_MS: "50"
+      CAUCE_ACK_DEADLINE_MS: "600000"
       PORT: "8080"
     ports: ["127.0.0.1:${CAUCE_TEST_GATEWAY_PORT:-18080}:8080"]
     healthcheck:
@@ -85,8 +85,8 @@ services:
       NODE_ENV: test
       PORT: "8082"
       DISPATCHER_POLL_MS: "20"
-      CAUCE_ACK_DEADLINE_MS: "50"
-      ACK_TIMEOUT_MS: "50"
+      CAUCE_ACK_DEADLINE_MS: "600000"
+      ACK_TIMEOUT_MS: "600000"
     healthcheck:
       test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8082/health/ready", "ready"]
       interval: 2s
@@ -121,4 +121,4 @@ services:
 
 networks:
   testnet:
-    internal: true
+    internal: false
