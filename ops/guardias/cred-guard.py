@@ -43,8 +43,6 @@ OBJETIVOS = [
     # re-add the row. The credential itself was NOT touched (owner's rule).
     ("ws-humanizar",           "/home/dev/.claude/.credentials.json",  "claude/kratos+atlas"),
     ("ctrl-infra",             "/home/dev/.claude/.credentials.json",  "claude/argos+kant"),
-    # hegel corre muse en ws-humanizar (su login vive en .config/muse, no es credencial de Claude
-    # ni de Codex) y heraclito salio de la flota: ninguno de los dos tiene fila aqui.
     # Codex
     ("claw",         "/home/claw/.codex/auth.json", "codex/jarvis"),
     ("ws-prizma",    "/home/dev/.codex/auth.json",  "codex/socrates"),

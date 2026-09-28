@@ -100,7 +100,6 @@ HARNESS_ALLOWED: dict[str, frozenset[str]] = {
     ),
     "codex": frozenset({"SHARED_SESSION", "SHARED_SESSION_WORKSPACE", "CONFIG_POR_ALIAS"}),
     "grok": frozenset({"SHARED_SESSION", "SHARED_SESSION_WORKSPACE", "SHARED_SESSION_NATIVE_ID"}),
-    # muse (hegel) acepta las mismas claves de sesion compartida que grok: el supervisor lo exige asi.
     "muse": frozenset({"SHARED_SESSION", "SHARED_SESSION_WORKSPACE", "SHARED_SESSION_NATIVE_ID"}),
     "hermes": frozenset(
         {"HERMES_HOME", "HERMES_INFERENCE_MODEL", "HERMES_PYTHON", "HERMES_SOURCE_COMMIT"}

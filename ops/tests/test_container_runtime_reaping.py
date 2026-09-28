@@ -20,7 +20,6 @@ import time
 OPS = pathlib.Path(__file__).resolve().parents[1]
 RUNTIME_DIR = OPS / "container-runtime"
 RUNTIME = RUNTIME_DIR / "cauce-container-runtime.py"
-# El bucle de espera del supervisor vive en un modulo hermano que el punto de entrada importa.
 REAP_MODULE = "cauce_container_tree.py"
 REAP_CALL = "reap_children(protected=process.pid)"
 ALIAS = "kant"
