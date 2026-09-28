@@ -6,9 +6,11 @@ no la ejecución.
 
 ## Alcance pendiente (T070)
 
-- `main..dev`: **244 commits, 1118 ficheros (+91.372/−22.871)**.
-- Por área: packages 321, services 214, console 212, ops 194, tests 86,
-  docs 23, .specify 22, .agents 10, scripts 9, deploy 8.
+- `main..dev`: **266 commits, 1194 ficheros (+110.543/−35.631)** (incluye
+  merge `feat/blobs-1gb` 61ee3534 con migración 042 + poda T060 + SDD 001).
+- Por área: packages 344, services 231, console 215, ops 214, tests 94,
+  docs 25, .specify 22, scripts 10, .agents 10, specs 9, deploy 8,
+  vitest.config.ts 1.
 - Última fila de `deploy/HISTORIAL.md`: `20260908T083631Z` (`60788e41`).
 - Decisión del dueño: ventana única de HEAD o cortes intermedios. Si corta,
   cada corte escribe su fila en HISTORIAL con sus digests.
@@ -39,6 +41,9 @@ está levantado; si el perfil no está, ausencia documentada (no rojo fantasma).
 
 ## T072 — evidencia de cierre
 
-Pegar en HISTORIAL: digests runtime+console, salida `smoke.sh`, e2e 14/14,
-`pnpm test`, `validate.sh`, conteo de fences previos preservados y TLS.
+Pegar en HISTORIAL: digests runtime+console, salida `smoke.sh`, e2e 14/14
+(verificado sobre merge 61ee3534, serie, `e2e Exited (0)`), suites T030/T040
+exit 0, unit 1774/1778 (4 rojos ambientales preexistentes), `pnpm test`,
+`validate.sh`, conteo de fences previos preservados y TLS. Migración 042
+(`blobs`) entra en este corte: verificar `CAUCE_BLOB_DIR` y purga.
 Deuda a cero = toda fila pendiente registrada o recortada por el dueño.

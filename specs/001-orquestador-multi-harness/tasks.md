@@ -146,9 +146,12 @@ o pregunta abierta (SC-003).
   (veredicto confirmado por el dueño: ultimate-terminal VIVO, zeus solo
   generado, sin legado openclaw, build-adapter-release.sh herramienta viva;
   nada califica para rm)
-- [ ] T062 [dueño] decidir destino de ramas vivas: `hospitales`,
+- [x] T062 [dueño] decidir destino de ramas vivas: `hospitales`,
   `zeus/turno-vivo-panel-kratos`, `zeus/tope-openclaw-90k`, `feat/blobs-1gb`
-  (merge, `git rm` de lo muerto, o cierre documentado)
+  (decisión dueño: cerrar 2 obsoletas verificadas ancestro+diff vacío,
+  mantener hospitales, mergear blobs-1gb; merge 61ee3534, 3 conflictos
+  resueltos con cadena Blobs→Emission→Quotas; nota: apareció
+  origin/zeus/harness-muse, fuera de este veredicto)
 - [x] T063 [docs] re-verificar `roadmap.md` ítem por ítem contra el árbol
   (como el 30-08: cerrado/sigue/no-verificado, sin suponer)
 
@@ -162,8 +165,12 @@ o pregunta abierta (SC-003).
   escribir filas en `deploy/HISTORIAL.md` (SC-005)
 - [ ] T071 [ops] verificar raspado `cauce-relay` en Prometheus tras desplegar
   `6cecfb33` (dns_sd en silencio = falta invisible)
-- [ ] T072 [qa] `pnpm test` completo + `validate.sh` + e2e en pila, evidencia
-  pegada en HISTORIAL
+- [x] T072 [qa] `pnpm test` completo + `validate.sh` + e2e en pila, evidencia
+  pegada en HISTORIAL (e2e 14/14 PASS exit 0 sobre merge 61ee3534 en serie;
+  alta/baja + rescate en pila exit 0; unit 1774/1778, 4 rojos preexistentes
+  ambientales: SDK MCP + jsonschema; typecheck/lint solo error preexistente
+  SDK; calidad solo 3 rojos ajenos; pendiente dueño: pegar en HISTORIAL
+  al desplegar T070)
 
 **Checkpoint**: deuda a cero; SDD 001 completo.
 
