@@ -1,9 +1,14 @@
 import process from "node:process";
 
-export async function runFakeCli(dialect) {
+async function readStdinStream() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
-  const prompt = Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/** `readPrompt` lets a dialect read the prompt the way its real CLI does (e.g. by path). */
+export async function runFakeCli(dialect, readPrompt = readStdinStream) {
+  const prompt = await readPrompt();
   if (prompt.includes("SCENARIO:timeout")) {
     await new Promise((resolve) => setTimeout(resolve, 60_000));
     return;
@@ -53,6 +58,26 @@ export async function runFakeCli(dialect) {
     case "openclaw":
       process.stdout.write(`${JSON.stringify({ payloads: [{ text: JSON.stringify(output) }] })}\n`);
       break;
+    case "grok":
+      // Grok prints ONE indented JSON object when the turn ends (measured on grok 1.0.41).
+      process.stdout.write(`${JSON.stringify({
+        text: JSON.stringify(output),
+        stopReason: "end_turn",
+        ...(prompt.includes("SCENARIO:no-session") ? {} : { sessionId: "grok-native" }),
+        requestId: "grok-request",
+        num_turns: 1,
+      }, null, 2)}\n`);
+      break;
+    case "muse": {
+      // `muse exec --json` (Muse 1.4.0): JSONL records; the session id rides every record's stream.
+      const stream = prompt.includes("SCENARIO:no-session") ? {} : { stream: { kind: "session", id: "muse-native" } };
+      const text = JSON.stringify(output);
+      process.stdout.write(`${JSON.stringify({ ...stream, payload: { kind: "run_output_delta", text } })}\n`);
+      process.stdout.write(`${JSON.stringify({
+        ...stream, payload: { kind: "run_terminal", terminal: "completed", reason: null, text },
+      })}\n`);
+      break;
+    }
     case "fake":
       process.stdout.write(`${JSON.stringify({ output, session_id: "fake-native" })}\n`);
       break;

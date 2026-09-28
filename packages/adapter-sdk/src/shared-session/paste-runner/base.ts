@@ -10,6 +10,7 @@ import { envelopeHasCorrelation, stripJsonFence } from "../envelope.js";
 import { inputBoxState, turnInFlight } from "../pane.js";
 import type { EnsureFailure } from "../session.js";
 import { TUI_WINDOW } from "../types.js";
+import { tuiProfile } from "../tui-profile.js";
 import type { SharedSessionDegradation, TranscriptReader, TurnOutcome } from "../types.js";
 import {
   announceDegradation,
@@ -36,11 +37,18 @@ import {
   beforeDeadline,
   ACQUIRE_MODAL_TIMEOUT_MS,
   DEFAULT_ACQUIRE_TIMEOUT_MS,
+  DEFAULT_GENERATING_WAIT_MS,
   DEFAULT_POLL_MS,
   fileSize,
   QUARANTINE_OPERATION_TIMEOUT_MS,
   result,
 } from "./runtime.js";
+
+/** Deadlines of one delivery's wait for the box, shared by every attempt (see `acquireWait`). */
+export interface AcquireWait {
+  freeSince: number; // The owner's box deadlines count from when the TUI stopped generating.
+  readonly generatingDeadline: number;
+}
 
 export abstract class PasteSessionRunnerBase<E> {
   protected pending: SharedSessionDegradation | undefined;
@@ -458,20 +466,31 @@ export abstract class PasteSessionRunnerBase<E> {
     this.lastPanePid = pid;
   }
 
+  protected acquireWait(requestTimeoutMs: number): AcquireWait {
+    const now = Date.now();
+    const generatingMs = Math.min(
+      Math.max(1, requestTimeoutMs),
+      Math.max(
+        this.options.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS,
+        this.options.generatingWaitMs ?? DEFAULT_GENERATING_WAIT_MS,
+      ),
+    );
+    return { freeSince: now, generatingDeadline: now + generatingMs };
+  }
+
   protected async acquireInputBox(
     target: string,
     identity: PaneIdentity,
     signal: AbortSignal,
+    wait: AcquireWait = this.acquireWait(Number.MAX_SAFE_INTEGER),
   ): Promise<
     { ok: true; pane: string | undefined }
-    | { ok: false; reason: "input_busy" | "modal_blocking"; detail: string }
+    | { ok: false; reason: "input_busy" | "modal_blocking" | "tui_generating"; detail: string }
     | { ok: false; cancelled: true }
     | { ok: false; replaced: true }
   > {
-    const deadline = Date.now() + (this.options.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS);
-    const modalDeadline = Date.now() + ACQUIRE_MODAL_TIMEOUT_MS;
-    let evidence = "la caja de entrada nunca quedó libre";
-    let modal = false;
+    const acquireMs = this.options.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS;
+    const queuesPaste = tuiProfile(this.options.harness).pasteOnlyWhenIdle;
     for (;;) {
       if (signal.aborted) return { ok: false, cancelled: true };
       const pane = await capturePane(this.options.tmux, target, {
@@ -486,15 +505,29 @@ export abstract class PasteSessionRunnerBase<E> {
       }
       if (signalAborted(signal)) return { ok: false, cancelled: true };
       const state = inputBoxState(pane);
+      // grok queues a paste made while it generates and runs it later as its own turn: the box
+      // is only "free" for it when no turn is in flight. See `tuiProfile`.
+      const generating = queuesPaste && turnInFlight(pane);
       // The pane we decided to paste into is the one to inspect for merged turn: recapturing later
       // would be a different moment.
-      if (!state.occupied) return { ok: true, pane };
-      evidence = state.evidence;
-      modal = state.kind === "modal";
-      if (Date.now() >= (modal ? Math.min(deadline, modalDeadline) : deadline)) {
-        return modal
-          ? { ok: false, reason: "modal_blocking", detail: evidence }
-          : { ok: false, reason: "input_busy", detail: evidence };
+      if (!state.occupied && !generating) return { ok: true, pane };
+      const now = Date.now();
+      if (generating) {
+        wait.freeSince = now; // Another turn, not the owner's text: own deadline and own reason.
+        if (now >= wait.generatingDeadline) {
+          return {
+            ok: false,
+            reason: "tui_generating",
+            detail: "la terminal está generando un turno y encolaría el pedido detrás de él",
+          };
+        }
+      } else {
+        const modal = state.kind === "modal";
+        if (now >= wait.freeSince + (modal ? Math.min(acquireMs, ACQUIRE_MODAL_TIMEOUT_MS) : acquireMs)) {
+          return modal
+            ? { ok: false, reason: "modal_blocking", detail: state.evidence }
+            : { ok: false, reason: "input_busy", detail: state.evidence };
+        }
       }
       await this.options.sleep(this.options.pollMs ?? DEFAULT_POLL_MS);
       if (signalAborted(signal)) return { ok: false, cancelled: true };
@@ -530,7 +563,8 @@ export abstract class PasteSessionRunnerBase<E> {
       await this.note({
         reason: "context_cleared",
         detail: `la conversación de la terminal pasó de ${this.lastSessionId} a ${sessionId}`
-          + " sin que el proceso se reiniciara (/clear en claude, /new en codex)",
+          + ` sin que el proceso se reiniciara (${tuiProfile(this.options.harness).clearCommand}`
+          + ` en ${this.options.harness})`,
         occurredAt: new Date().toISOString(),
         fellBack: false,
       });
@@ -586,7 +620,7 @@ export abstract class PasteSessionRunnerBase<E> {
       if (port.startedTurn?.(slice.appended) === true) started = true;
       // Only `appended`: what was written BEFORE the paste cannot be this turn's reply.
       envelope = port.findEnvelope?.(slice.appended, correlationId) ?? envelope;
-      const found = port.findInjected(file, slice.entries, promptText);
+      const found = port.findInjected(file, slice.entries, promptText, correlationId);
       if (found === undefined) continue;
       return {
         injected: found.sessionId === undefined
@@ -667,6 +701,7 @@ export abstract class PasteSessionRunnerBase<E> {
     reason: EnsureFailure
       | "input_busy"
       | "modal_blocking"
+      | "tui_generating"
       | "handshake_failed",
     detail: string,
     request: CommandRunRequest,

@@ -28,7 +28,7 @@ if self_link.is_symlink():
 for entry in root.rglob('*'):
     if entry.is_symlink() and not entry.resolve().is_relative_to(root):
         raise SystemExit(f'bundle link escapes release: {entry.relative_to(root)}')
-for harness in ('claude', 'codex', 'openclaw'):
+for harness in ('claude', 'codex', 'openclaw', 'grok'):
     entry = package / f'dist/src/bin/{harness}.js'
     if not entry.is_file() or not entry.stat().st_mode & 0o111:
         raise SystemExit(f'missing executable: {harness}')

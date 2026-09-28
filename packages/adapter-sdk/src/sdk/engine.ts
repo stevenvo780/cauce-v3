@@ -1,3 +1,4 @@
+import { noticeHistoryFor } from "./notify-history-context.js";
 import { randomUUID } from "node:crypto";
 import {
   isAgentToAgentBody, isAmbiguousAckErrorCode, MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs,
@@ -55,6 +56,7 @@ export type {
 export { profileAdoptionFor } from "./engine/contracts.js";
 
 export class AdapterEngine {
+  private readonly egressReceipts: AdapterEngineOptions["egressReceipts"];
   private readonly emission: EmissionRuntime | undefined;
   private readonly store: DurableStore;
   private readonly harness: HarnessAdapter;
@@ -80,6 +82,7 @@ export class AdapterEngine {
   private readonly renewalDeps: ClaimRenewalDeps;
 
   constructor(options: AdapterEngineOptions) {
+    this.egressReceipts = options.egressReceipts;
     this.emission = options.emission;
     this.store = options.store;
     this.harness = options.harness;
@@ -439,7 +442,10 @@ export class AdapterEngine {
           delivery, context: requestContext, signal: controller.signal,
           isCurrent: () => delivery.epoch === this.store.epoch && !this.fenced.has(delivery.delivery_id),
         });
+        const noticeHistory = await noticeHistoryFor(delivery, this.store, this.egressReceipts,
+          this.ownTenantId, controller.signal, this.clock.now().getTime());
         output = await this.harness.execute({
+          ...(noticeHistory === undefined ? {} : { noticeHistory }),
           prompt,
           ...(attachments === undefined ? {} : { attachments: attachments.attachments }),
           context: requestContext,

@@ -85,6 +85,27 @@
       "poll_lease_ms": 60000
     },
     {
+      "alias": "hades",
+      "tenant_id": "Steven",
+      "room_id": "grp.steven",
+      "token_file": "/run/cauce-telegram/hades.token",
+      "v2_shutdown_marker_file": "/run/cauce-telegram/hades.disabled",
+      "allowed_user_ids": [
+        "999999999999999999"
+      ],
+      "allowed_chat_ids": [
+        "-999999999999999999"
+      ],
+      "recipients": [
+        {
+          "tenant_id": "Steven",
+          "alias": "hades"
+        }
+      ],
+      "poll_timeout_seconds": 25,
+      "poll_lease_ms": 60000
+    },
+    {
       "alias": "hegel",
       "tenant_id": "Jhon",
       "room_id": "grp.jhon",

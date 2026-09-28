@@ -210,6 +210,44 @@ export async function escenariosA(ctx) {
   await writeConfig("atlas");
   process.stdout.write("shared session: switch exported with TERM for claude/codex, rejected elsewhere and for non-1 values\n");
 
+  // grok: the shared TUI needs tmux inside the container. Without it the alias keeps serving the
+  // bus headless and says so (it used to die with 78, never restarted, and Telegram went mute).
+  // SHARED_SESSION_NATIVE_ID names the conversation the adapter seeds with its own release.
+  const hadesId = "01a0cedb-d05a-7e81-b400-1d58836be1cc";
+  const grokShared = ["SHARED_SESSION=1", "SHARED_SESSION_WORKSPACE=/home/claw", `SHARED_SESSION_NATIVE_ID=${hadesId}`];
+  await writeConfig("hades", grokShared);
+  await clearLog();
+  result = runSupervisor("start", "hades", await dockerState("hades"));
+  assert.equal(result.status, 0, `grok shared session must start: ${result.stderr}`);
+  const hadesFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=hades"));
+  assert(hadesFinal?.argv.includes("CAUCE_SHARED_SESSION=1"));
+  assert(hadesFinal?.argv.includes(`CAUCE_SHARED_SESSION_NATIVE_ID=${hadesId}`));
+  assert(hadesFinal?.argv.includes("GROK_HOME=/home/claw/.grok"));
+
+  await clearLog();
+  result = runSupervisor("start", "hades", await dockerState("hades", { tmuxMissing: true }));
+  assert.equal(result.status, 0, `grok without tmux must still serve the bus: ${result.stderr}`);
+  assert.match(result.stderr, /SHARED_SESSION=1 ignored for hades: the container has no tmux/u);
+  const headlessFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=hades"));
+  assert(headlessFinal !== undefined, "the adapter starts");
+  assert(!headlessFinal.argv.some((value) => value.startsWith("CAUCE_SHARED_SESSION")),
+    "without tmux no shared-session variable reaches the adapter");
+
+  for (const [alias, extra, expected] of [
+    ["hades", ["SHARED_SESSION=1", "SHARED_SESSION_NATIVE_ID=../01a0cedb"], /SHARED_SESSION_NATIVE_ID must be a canonical lowercase UUID/u],
+    ["hades", [`SHARED_SESSION_NATIVE_ID=${hadesId}`], /SHARED_SESSION_NATIVE_ID requires SHARED_SESSION=1/u],
+    ["atlas", ["SHARED_SESSION=1", `SHARED_SESSION_NATIVE_ID=${hadesId}`], /config key is not allowed for codex: SHARED_SESSION_NATIVE_ID/u],
+  ]) {
+    await writeConfig(alias, extra);
+    await clearLog();
+    result = runSupervisor("start", alias, await dockerState(alias));
+    assert.notEqual(result.status, 0, `${alias} ${extra.join(" ")} must fail`);
+    assert.match(result.stderr, expected);
+    assert.equal((await records()).length, 0, "it must fail before touching Docker");
+    await writeConfig(alias);
+  }
+  process.stdout.write("grok shared session: native id exported, headless without tmux, native id validated\n");
+
   const nativeProfileContextGatedByValueNotByPresence = [
     ["zeus", "1", true], ["argos", "1", true], ["atlas", "0", true], ["atlas", "1", false],
   ];

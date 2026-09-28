@@ -13,6 +13,7 @@ export function esDiagnosticoDeArranque(detalle: string | undefined): boolean {
     /no rollout found/i,
     /session id[^\n]*already in use/i,
     /no conversation found with session id/i,
+    /failed to restore session from remote/i, // grok: restoring (404 or network) happens before the model
     // Missing binary or invalid arguments
     /\bcommand not found\b/i,
     /spawn[^\n]*\bENOENT\b/i,
@@ -34,6 +35,7 @@ export function esSesionNativaInexistente(detalle: string | undefined): boolean 
   return [
     /no conversation found with session id/i,
     /no rollout found/i,
+    /failed to restore session from remote[^\n]*\b404\b/i, // grok: only the 404, never a network failure
   ].some((patron) => patron.test(detalle));
 }
 

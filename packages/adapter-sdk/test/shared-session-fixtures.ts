@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { DurableStore } from "../src/sdk/durable-store.js";
 import { ProcessExecutionError } from "../src/sdk/errors.js";
 import { HarnessAdapter } from "../src/harnesses/shared.js";
-import { claudeDefinition, codexDefinition } from "../src/harnesses/index.js";
+import { claudeDefinition, codexDefinition, grokDefinition, museDefinition } from "../src/harnesses/index.js";
 import type { CommandRunner, CommandRunResult } from "../src/sdk/types.js";
 import type { SharedSessionRunner } from "../src/shared-session/types.js";
 import type { TmuxController, TmuxResult, TmuxRunControl } from "../src/shared-session/tmux.js";
@@ -180,11 +180,11 @@ export async function adapterFor(
   runner: CommandRunner,
   state: string,
   alias: string,
-  harness: "claude" | "codex",
+  harness: "claude" | "codex" | "grok" | "muse",
 ): Promise<HarnessAdapter> {
   const store = await DurableStore.open(join(state, "store"));
   return new HarnessAdapter({
-    definition: harness === "claude" ? claudeDefinition : codexDefinition,
+    definition: { claude: claudeDefinition, codex: codexDefinition, grok: grokDefinition, muse: museDefinition }[harness],
     runner,
     store,
     sessionNamespace: alias,

@@ -8,9 +8,106 @@ Conecta un agente CLI real a Cauce: consumidor durable + ejecución sobre la ses
 
 **Ejecución:** entregar significa **pegar el texto en la sesión tmux viva** del harness (`paste-runner.ts`, `tmux.ts`: cuarentena de panel, barrera de input) y esperar el turno del modelo. Es la parte cara e inherentemente frágil del diseño: el error típico de producción es del turno del harness (timeouts de ACK, deadline excedido), no del bus.
 
-**Ejecutables (`src/bin/`):** `openclaw`, `claude`, `codex` — los que usa la flota real. `hermes`, `opencode` y `fake` no tienen ningún usuario en producción (candidatos a retiro con `git rm` — git es el archivo; `fake` lo usan los tests).
+**Ejecutables (`src/bin/`):** `openclaw`, `claude`, `codex` — los que usa la flota real. `hermes`, `opencode` y `fake` no tienen ningún usuario en producción (candidatos a retiro con `git rm` — git es el archivo; `fake` lo usan los tests). `grok` es nuevo y todavía no tiene alias (ver abajo).
 
 **Despliegue:** la versión activa de cada adaptador se acredita contra la flota viva; no se infiere desde este README.
+
+## Arnés `grok` (Grok CLI, `@xai-official/grok`, medido en 1.0.41)
+
+Headless de un turno, como `opencode`: `grok --prompt-file /dev/stdin --output-format json
+--always-approve --verbatim [--resume <sessionId>]`, ejecutable `cauce-adapter-grok`.
+`--always-approve` porque en headless nadie aprueba una tool (el turno se bloquearía);
+`--verbatim` para que una línea de la petición que empieza por `/` o `@` sea texto y no un comando
+o una mención de fichero de Grok.
+
+- **Prompt:** sigue entrando SOLO por fd 0, pero Grok no lee el stream de stdin: únicamente acepta
+  el prompt como ruta (`--prompt-file`) o en argv (`-p`, prohibido por el runner). El pipe por
+  defecto de libuv es un socketpair y `open("/dev/stdin")` sobre él falla con ENXIO (medido:
+  `Error: Failed to read '/dev/stdin': No such device or address (os error 6)`, exit 1). Por eso la
+  definición declara `stdinSource: "file"`: el runner respalda fd 0 con un fichero regular 0600 ya
+  desenlazado antes de arrancar el proceso.
+- **Salida:** un único objeto JSON al terminar (`text`, `stopReason`, `sessionId`, …). `text`
+  concatena todo el texto del turno sin separador; `thought` nunca llega a la respuesta. Un
+  `stopReason` distinto de `end_turn` o un objeto `{"type":"error"}` es un turno `failed` con el
+  mensaje crudo de Grok. Sin testigo de arranque: nada sale por stdout antes del final.
+- **Sesiones:** `observed` (`sessionId` → `--resume`). Grok las guarda por directorio de trabajo:
+  el alias necesita un `CAUCE_AGENT_WORKSPACE` estable. Una sesión que ni el disco ni el registro
+  de xAI conocen sale con exit 1 y `Failed to restore session from remote … 404`: el adaptador la
+  olvida y reintenta (`PROCESS_EXIT_PREFLIGHT`). Un fallo de red al restaurar reintenta sin olvidar.
+- **Emisión MCP:** Grok no tiene flag de MCP por invocación, así que, como en claude/codex/openclaw,
+  el servidor `cauce` se registra en la configuración nativa al desplegar, con scope de usuario
+  (el de proyecto exige carpeta "trusted", imposible en headless):
+  `grok mcp add cauce --scope user -- node <release>/packages/adapter-sdk/dist/src/bin/cauce-mcp.js <estado-del-alias>/mcp-emission.sock`
+  (queda en `~/.grok/config.toml`, verificable con `grok mcp list`). Grok expone las tools a través
+  de `search_tool`/`use_tool` como `cauce__cauce_reply`. Sin ese registro, o si el modelo no llama a
+  la tool, el turno sigue funcionando por el sobre JSON de respaldo (`emission_result=text_fallback`).
+- **Aislamiento:** por defecto Grok también importa de `~/.claude` y `~/.claude.json` los MCP, las
+  instrucciones (`CLAUDE.md`), las reglas y los hooks. En un HOME compartido con un alias claude,
+  eso le daría a Grok la identidad del vecino y su `cauce` MCP, que apunta al socket de otro alias.
+  En el `~/.grok/config.toml` del alias grok hay que poner `mcps`, `agents`, `rules`, `hooks` y
+  `skills = false` bajo `[compat.claude]` y `[compat.cursor]`. Dos alias grok no deben compartir
+  `~/.grok`.
+
+### Sesión compartida de grok (`SHARED_SESSION=1`)
+
+Igual que claude/codex: UNA sola conversación viva, la TUI real de grok en `tmux -L cauce`
+(`cauce-<alias>:agente`), donde el bus pega los pedidos y el dueño entra con `cauce <alias>`.
+Sin sesión compartida grok es headless por turno y `cauce <alias>` abre una RAMA (`--fork-session`).
+
+- **Arranque exacto:** `grok --always-approve --resume <id>` con `GROK_HOME` exportado en el panel.
+  El id sale del puntero `shared-tui-session.json` del alias (el mismo almacén que claude); sin
+  puntero y sin historia arranca `--session-id <uuidv7>`; con historia y sin puntero se BLOQUEA
+  (nunca elige sola entre DM, delegaciones o ramas). La conversación canónica se nombra con
+  `SHARED_SESSION_NATIVE_ID=<id>` en el `.env` del alias: el adaptador la siembra él mismo al
+  arrancar, con la release que corre (sólo si no hay puntero; nunca lo pisa). `shared-session.js
+  seed` sigue existiendo, pero sólo sirve desde una release que ya esté en el contenedor. Tras cada
+  turno cerrado el testigo mueve el puntero con CAS (así un `/new` en la TUI se sigue).
+- **Transcript:** `$GROK_HOME/sessions/<cwd>/<id>/updates.jsonl` de TODOS los cwd (`--resume`
+  reabre la conversación en la carpeta donde nació), sin las sesiones de subagentes
+  (`summary.json` `session_kind: "subagent"`, una carpeta por subagente que nadie poda) y acotado a
+  las `MAX_GROK_SESSIONS` escritas más recientemente (nunca a una lista vacía). El prompt se
+  reconoce por texto (también envuelto en `<user_query>`) o por el `cauce_correlation_id` que generó
+  el ejecutor (nunca por uno escrito dentro del pedido).
+- **Fin de la entrega = fin del TRABAJO, no del primer turno.** En la TUI los subagentes y los
+  comandos en segundo plano sobreviven al turno y lo despiertan (`will_wake`) con un turno nuevo;
+  escribir mientras el turno espera en `get_command_or_subagent_output` lo CANCELA. La entrega sigue
+  lo que su turno lanzó (`subagent_spawned.parent_prompt_id`, `task_backgrounded` → `tool_call`) y
+  los turnos de despertar que eso causa, y cierra cuando todo terminó: la respuesta es la del último
+  turno de esa cadena (texto tras su última herramienta) o, si lo hubo, el depósito `cauce_reply`,
+  que un cancelled posterior ya no tira. Si el trabajo en segundo plano no avanza en
+  `backgroundWaitMs` (10 min, el mismo tope que el headless de grok) se entrega lo que había con el
+  aviso `background_pending`. Mientras la entrega sigue abierta, `cauce_reply` de un despertar se
+  acepta. No medido: la forma exacta del prompt de un despertar (se asume sin línea de usuario; si la
+  tuviera, la entrega espera hasta ese tope y entrega el depósito).
+- **Panel:** turno en curso = pie `Ctrl+c:cancel`. Con el pie de grok a la vista, SÓLO el pie
+  decide (una respuesta que cita un spinner o «esc to interrupt» no bloquea el bus); el spinner
+  `… [stop]` cuenta sólo si el pie no se ve. grok ENCOLA lo que se pega mientras genera, así que el
+  bus sólo toma la caja con la TUI ociosa: espera hasta `generatingWaitMs` (2 h) a que termine el
+  turno ajeno —un turno que empieza bajo la barrera devuelve el pedido a esa misma espera— y, si no,
+  falla REINTENTABLE con `tui_generating` (nunca culpa al dueño de «texto a medio escribir»).
+  Cancelar es `C-c` y sólo si el turno correlacionado está localizado y abierto (nunca el del dueño);
+  en ociosa `C-c` arma la salida y Escape no cancela.
+- **Pegado:** el cuerpo de una entrega es texto libre de otro alias: ESC, los demás C0 (menos tab y
+  salto de línea), DEL y C1 se vuelven sus símbolos visibles (`pasteSafeText`) antes de
+  `load-buffer`, así un `ESC[201~` no cierra el pegado entre corchetes ni convierte el resto en teclas.
+- **Operación:** tmux dentro del contenedor y un workspace en el que grok confíe sin diálogo:
+  `SHARED_SESSION_WORKSPACE=$HOME` (el cwd del headless) está permitido aunque `$HOME` no sea un
+  montaje persistente, porque la conversación vive en `~/.grok`. Sin tmux el supervisor arranca el
+  adaptador headless y lo dice (antes moría con 78 y Telegram quedaba mudo). `cauce-attach` (única
+  fuente: `ops/guardias/cauce-attach`) se niega a abrir un segundo grok sobre un alias compartido.
+- **Orden de despliegue seguro** (el supervisor y `update_alias_lib.py` vivos rechazan
+  `SHARED_SESSION` para grok con `die` 2, que systemd no reintenta):
+  1. Desplegar primero el árbol `ops` de esta rama (ya fusionada con `main`, con el alta de hades)
+     e instalar el CLI con `ops/scripts/install-cauce-cli.sh`.
+  2. tmux en la imagen: construir una imagen NUEVA (no re-etiquetar `claw:latest`, que fija por ID
+     a otros siete alias) y poner su ID en `EXPECTED_IMAGE_ID` de `hades.env` ANTES de recrear el
+     contenedor; si no, el supervisor lo rechaza (`container image ID is not allowlisted`).
+  3. En una sola edición de `hades.env`: `BUNDLE_RELEASE`/`BUNDLE_SHA256` nuevos, `SHARED_SESSION=1`,
+     `SHARED_SESSION_WORKSPACE=/home/claw` y `SHARED_SESSION_NATIVE_ID=<id del DM>`; un solo
+     reinicio. El adaptador siembra el puntero con su propia release.
+  4. Recién con la release nueva dentro del contenedor, re-registrar el MCP `cauce` con su ruta
+     (`grok mcp add cauce --scope user -- node <release>/…/cauce-mcp.js …`): antes apuntaría a un
+     fichero que no existe.
 
 **Probar:** `pnpm --filter @cauce/adapter-sdk test` (`node:test`).
 

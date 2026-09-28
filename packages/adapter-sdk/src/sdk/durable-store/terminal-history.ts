@@ -219,6 +219,10 @@ export class TerminalHistory {
     return history;
   }
 
+  notices(): readonly InboxRecord[] {
+    return [...this.records.values()].filter(record => (record.output?.notify.length ?? 0) > 0);
+  }
+
   get(deliveryId: string): InboxRecord | undefined {
     return this.records.get(deliveryId);
   }

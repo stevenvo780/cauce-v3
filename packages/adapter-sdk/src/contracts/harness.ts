@@ -1,3 +1,4 @@
+import type { NoticeSelection } from "../sdk/notify-history.js";
 import type { ProfileRuntimeContract } from "@cauce/protocol";
 import type { DurableStore, SessionOrigin } from "../sdk/durable-store.js";
 import type {
@@ -91,6 +92,7 @@ export interface HarnessAdapterOptions {
 export type SessionLane = "human" | "agent";
 
 export interface HarnessExecuteRequest {
+  readonly noticeHistory?: NoticeSelection;
   readonly emissionOutput?: () => StructuredOutput | undefined;
   readonly onEmissionReady?: (correlationId?: string) => void;
   readonly prompt: string;

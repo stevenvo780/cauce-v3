@@ -1,3 +1,5 @@
+import { renderNoticeHistory } from "../../sdk/notify-history-prompt.js";
+import type { NoticeSelection } from "../../sdk/notify-history.js";
 import { PROTOCOL_VERSION } from "../../sdk/types.js";
 import type { AdapterCapabilities, HarnessId, RelayOrigin } from "../../sdk/types.js";
 import { elFicheroYaLoDice, renglonDeContextoFijo } from "../contexto-fijo.js";
@@ -224,6 +226,7 @@ export function protocolPrompt(
   prompt: string,
   origin: RelayOrigin | undefined,
   context: HarnessRequestContext | undefined,
+  noticeHistory?: NoticeSelection,
 ): string {
   const native = context?.native_profile_context === true;
   const fijo = native ? textoNativoDelSobre(context) : textoFijoDelSobre(context);
@@ -258,6 +261,7 @@ export function protocolPrompt(
     "--- BEGIN TRUSTED ORIGIN CONTEXT ---",
     JSON.stringify(origin ?? null),
     "--- END TRUSTED ORIGIN CONTEXT ---",
+    ...(noticeHistory === undefined ? [] : [renderNoticeHistory(noticeHistory, 4094)]),
     "--- BEGIN REQUEST ---",
     prompt,
     "--- END REQUEST ---",

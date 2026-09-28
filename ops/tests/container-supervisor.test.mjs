@@ -54,14 +54,14 @@ const aliasState = {
   argos: "/home/dev/.local/state/cauce-v3/argos",
   atlas: "/home/dev/.local/state/cauce-v3/atlas", iza: "/home/claw/.openclaw/cauce-v3/iza",
   jarvis: "/home/claw/.openclaw/cauce-v3/jarvis", kratos: "/home/dev/.local/state/cauce-v3/kratos",
-  zeus: "/home/dev/.local/state/cauce-v3/zeus",
+  zeus: "/home/dev/.local/state/cauce-v3/zeus", hades: "/home/claw/.local/state/cauce-v3/hades",
 };
 // The real fleet never dedicates a mount to the state dir: the state lives inside a broad
 // persistent bind. Physical co-location does not imply that aliases share the same mapped HOME.
 const aliasMount = {
   argos: "/home/dev/.local", atlas: "/home/dev/.local",
   iza: "/home/claw/.openclaw", jarvis: "/home/claw/.openclaw", kratos: "/home/dev/.local",
-  zeus: "/home/dev/.local",
+  zeus: "/home/dev/.local", hades: "/home/claw",
 };
 let bundleDigest;
 let bundleDigest2;
@@ -135,6 +135,7 @@ async function dockerState(alias, overrides = {}) {
       : alias === "iza" ? "claw-iza"
       : alias === "atlas" || alias === "kratos" ? "ws-humanizar"
       : alias === "zeus" ? "ws-zeus"
+      : alias === "hades" ? "agv2-steven-hades-oc"
       : "ctrl-infra", // argos
     currentId: firstId,
     replacementId: secondId,
@@ -468,7 +469,7 @@ try {
 
   await chmod(configRoot, 0o700);
   await chmod(lockRoot, 0o700);
-  for (const harness of ["codex", "claude", "opencode", "hermes", "openclaw"]) {
+  for (const harness of ["codex", "claude", "opencode", "hermes", "openclaw", "grok"]) {
     await executable(path.join(release, `packages/adapter-sdk/dist/src/bin/${harness}.js`), "#!/usr/bin/env node\n");
   }
   await executable(path.join(release2, "packages/adapter-sdk/dist/src/bin/openclaw.js"),
@@ -478,7 +479,7 @@ try {
   bundleDigest2 = bundleDigestFor(release2);
   await copyFile(fakeDockerSource, path.join(binRoot, "docker"));
   await chmod(path.join(binRoot, "docker"), 0o755);
-  for (const alias of ["atlas", "argos", "iza", "jarvis", "kratos", "zeus"]) {
+  for (const alias of ["atlas", "argos", "iza", "jarvis", "kratos", "zeus", "hades"]) {
     await preparePki(alias, { bearer: alias !== "atlas" });
     await mkdir(path.join(mountSourceRoot, alias), { recursive: true });
   }
@@ -489,6 +490,7 @@ try {
   await writeConfig("iza");
   await writeConfig("kratos");
   await writeConfig("zeus");
+  await writeConfig("hades");
   await writeConfig("jarvis", [
     "OPENCLAW_TRANSPORT=api",
     "OPENCLAW_API_URL=http://127.0.0.1:18789/v1/chat/completions",

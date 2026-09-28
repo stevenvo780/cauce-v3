@@ -32,7 +32,7 @@ export const EMISSION_TOOLS: Tool[] = [
   tool("cauce_retry", "Replay a dead delegation originally sent by this alias. The gateway checks ownership.", { delivery_id: string }, ["delivery_id"]),
 ];
 
-export type EmissionGateway = (method: "GET" | "POST", path: string, body?: unknown) => Promise<unknown>;
+export type EmissionGateway = (method: "GET" | "POST", path: string, body?: unknown, options?: { readonly signal?: AbortSignal; readonly timeoutMs?: number }) => Promise<unknown>;
 interface EmissionState { readonly output: StructuredOutput; readonly replied: boolean }
 export interface EmissionTurnOptions {
   readonly delivery: Delivery;

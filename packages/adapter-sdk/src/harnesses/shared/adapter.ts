@@ -362,7 +362,7 @@ export class HarnessAdapter {
       ...invocation,
       ...workspaceCwd(),
       ...(Object.keys(credentialEnv).length === 0 ? {} : { env: credentialEnv }),
-      stdin: protocolPrompt(effectivePrompt, request.origin, invocationContext),
+      stdin: protocolPrompt(effectivePrompt, request.origin, invocationContext, request.noticeHistory),
       timeoutMs: request.timeoutMs,
       signal: request.signal,
       ...(request.emissionOutput === undefined ? {} : { emissionOutput: request.emissionOutput }),
@@ -374,6 +374,10 @@ export class HarnessAdapter {
       ...(this.definition.startWitness === undefined
         ? {}
         : { startWitness: this.definition.startWitness }),
+      // Only the harness knows how its CLI reads the prompt; only the transport can back fd 0.
+      ...(this.definition.stdinSource === undefined
+        ? {}
+        : { stdinSource: this.definition.stdinSource }),
       ...(request.onHarnessStart === undefined ? {} : { onHarnessStart: request.onHarnessStart }),
     }).finally(() => {
       degradation = isSharedSessionRunner(this.runner) ? this.runner.takeDegradation() : undefined;
@@ -388,7 +392,8 @@ export class HarnessAdapter {
       }
       throw new ProcessExecutionError("SHARED_TUI_UNAVAILABLE",
         shared === undefined ? "The canonical terminal is unavailable; no model received this turn"
-          : degradationNotice(shared.alias, shared.harness, degradation), false);
+          : degradationNotice(shared.alias, shared.harness, degradation),
+        degradation.reason === "tui_generating"); // Busy with ANOTHER turn: transient, nothing ran.
     }
 
     if (result.timedOut) {

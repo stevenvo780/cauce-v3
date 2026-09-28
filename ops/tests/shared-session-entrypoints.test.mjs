@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -241,6 +241,107 @@ cmd_entrar native
         await rm(test.directory, { recursive: true, force: true });
       }
     }
+  }
+}
+
+// grok: with SHARED_SESSION=1 `cauce <alias>` attaches to the adapter's tmux TUI (the SAME
+// conversation as Telegram); only without it does it fall back to a branch of the DM.
+for (const shared of [true, false]) {
+  const test = await fixture("grok");
+  try {
+    await writeFile(path.join(test.home, ".config/cauce-v3/container-aliases/hades.env"),
+      "SHARED_SESSION=1\nBUNDLE_RELEASE=release-test\nSHARED_SESSION_WORKSPACE=/home/claw\n");
+    await executable(path.join(test.home, ".local/bin/cauce-attach"), `#!/usr/bin/env python3
+import os, sys
+with open(os.environ["CAUCE_TEST_LOG"], "a") as log:
+    log.write("ATTACH\\t" + "\\t".join(sys.argv[1:]) + "\\n")
+`);
+    const source = `source <(sed '/^case /,$d' ${JSON.stringify(cli)})
+alias_info() { printf 'Steven\\tgrp.steven\\tagv2-steven-hades-oc\\tclaw\\t/home/claw\\t/state/hades\\tgrok\\tlocal\\n'; }
+adaptador_activo() { printf 'active\\n'; }
+compartida_configurada() { return ${shared ? 0 : 1}; }
+avisos() { :; }
+cmd_entrar hades
+`;
+    const result = spawnSync("bash", ["-c", source], { encoding: "utf8", env: test.environment });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const calls = await readFile(test.log, "utf8");
+    if (shared) {
+      assert.match(result.stdout, /COMPARTIDA/u);
+      const ensure = calls.split("\n").find((line) => line.includes("\tensure\t"));
+      assert.ok(ensure?.includes("\t--harness\tgrok"), calls);
+      assert.ok(ensure.includes("\t--state\t/state/hades") && ensure.includes("\t--workspace\t/home/claw"), calls);
+      assert.match(calls, /DOCKER\texec\t-it\t--user\tclaw\tagv2-steven-hades-oc\ttmux\t-L\tcauce\tattach-session\t-t\tcauce-hades:agente/u);
+      assert.ok(!calls.includes("ATTACH"), "la compartida no abre un segundo grok");
+    } else {
+      assert.match(result.stdout, /APARTE.*rama \(--fork-session\) del DM/u);
+      assert.match(result.stdout, /falta SHARED_SESSION=1/u);
+      assert.match(calls, /ATTACH\thades\t--dm\t--bifurcar/u);
+      assert.ok(!calls.includes("attach-session"), calls);
+    }
+  } finally {
+    await rm(test.directory, { recursive: true, force: true });
+  }
+}
+
+// muse: the same as grok. With SHARED_SESSION=1 `cauce hegel` attaches to the adapter's tmux TUI;
+// without it, the real Muse TUI in a conversation of its own (APARTE), at max effort.
+for (const shared of [true, false]) {
+  const test = await fixture("muse");
+  try {
+    await writeFile(path.join(test.home, ".config/cauce-v3/container-aliases/hegel.env"),
+      "SHARED_SESSION=1\nBUNDLE_RELEASE=release-test\n");
+    const source = `source <(sed '/^case /,$d' ${JSON.stringify(cli)})
+alias_info() { printf 'Miguel\\tgrp.miguel\\tws-humanizar\\tdev\\t/home/dev\\t/state/hegel\\tmuse\\tlocal\\n'; }
+adaptador_activo() { printf 'active\\n'; }
+compartida_configurada() { return ${shared ? 0 : 1}; }
+avisos() { :; }
+cmd_entrar hegel
+`;
+    const result = spawnSync("bash", ["-c", source], { encoding: "utf8", env: test.environment });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const calls = await readFile(test.log, "utf8");
+    if (shared) {
+      assert.match(result.stdout, /COMPARTIDA/u);
+      const ensure = calls.split("\n").find((line) => line.includes("\tensure\t"));
+      assert.ok(ensure?.includes("\t--harness\tmuse") && ensure.includes("\t--state\t/state/hegel"), calls);
+      assert.match(calls, /DOCKER\texec\t-it\t--user\tdev\tws-humanizar\ttmux\t-L\tcauce\tattach-session\t-t\tcauce-hegel:agente/u);
+    } else {
+      assert.match(result.stdout, /APARTE/u);
+      assert.match(result.stdout, /falta SHARED_SESSION=1/u);
+      assert.match(calls, /--reasoning-effort max/u);
+      assert.ok(!calls.includes("attach-session"), calls);
+    }
+  } finally {
+    await rm(test.directory, { recursive: true, force: true });
+  }
+}
+
+// The alias sweep counts the adapter (by CAUCE_ALIAS or by its release path) but not the MCP bridge
+// the SHARED TUI starts from that same release: tmux strips CAUCE_ALIAS from it, so `off` could never
+// kill it and stopped with "SIGUE VIVO" before tearing the panel down.
+{
+  const alias = `barrido${process.pid}`;
+  const release = `/opt/cauce-v3-adapter/${alias}/releases/r1/packages/adapter-sdk/dist/src/bin`;
+  const spawnProbe = (script, environment) => spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", `${release}/${script}`], {
+    env: environment, stdio: "ignore", detached: false,
+  });
+  const clean = { PATH: process.env.PATH ?? "/usr/bin:/bin" };
+  const tuiBridge = spawnProbe("cauce-mcp.js", clean);
+  const headlessBridge = spawnProbe("cauce-mcp.js", { ...clean, CAUCE_ALIAS: alias });
+  const adapter = spawnProbe("grok.js", clean);
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const sweep = /^BARRIDO='(.*)'(?:\s+#.*)?$/mu.exec(await readFile(cli, "utf8"))?.[1];
+    assert.ok(sweep !== undefined, "cauce defines BARRIDO");
+    assert.equal(/^BARRIDO='(.*)'$/mu.exec(await readFile(guard, "utf8"))?.[1], sweep, "the panel guard sweeps the same way");
+    const found = spawnSync("sh", ["-c", sweep.replaceAll("@@A@@", alias)], { encoding: "utf8" })
+      .stdout.split("\n").filter((line) => line !== "");
+    assert.ok(found.includes(String(adapter.pid)), `the adapter counts: ${found.join(" ")}`);
+    assert.ok(found.includes(String(headlessBridge.pid)), `a bridge with CAUCE_ALIAS counts: ${found.join(" ")}`);
+    assert.ok(!found.includes(String(tuiBridge.pid)), `the shared TUI's bridge does not: ${found.join(" ")}`);
+  } finally {
+    for (const child of [tuiBridge, headlessBridge, adapter]) child.kill("SIGKILL");
   }
 }
 

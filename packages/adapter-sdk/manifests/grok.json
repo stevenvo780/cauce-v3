@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "harness": "grok",
+  "adapter_executable": "cauce-adapter-grok",
+  "harness_executable": "grok",
+  "invocation": {
+    "prompt_transport": "stdin",
+    "stdin_source": "unlinked regular file on fd 0, read by the CLI through --prompt-file /dev/stdin",
+    "output_dialect": "grok-json",
+    "final_event": "single JSON object at turn end; text concatenates every assistant text of the turn",
+    "session_mapping": "observed sessionId; --resume id on resume; sessions are stored per working directory",
+    "session_scope": "authenticated tenant+actor+origin channel/session/conversation",
+    "mcp_registration": "~/.grok/config.toml [mcp_servers.cauce] at user scope (grok mcp add cauce --scope user -- node cauce-mcp.js <socket>); no per-invocation flag exists"
+  },
+  "capabilities": {
+    "mcp_emit": true,
+    "protocol_version": "3.0",
+    "harness": "grok",
+    "structured_output": true,
+    "stdin_prompt": true,
+    "durable_inbox": true,
+    "durable_outbox": true,
+    "idempotent_delivery": true,
+    "heartbeat": true,
+    "cancellation": "process_group",
+    "fencing_epoch": true,
+    "origin_relay": true,
+    "attempt_scoped_delivery": true,
+    "event_id_correlation": true,
+    "claim_token_correlation": true,
+    "authenticated_session_scope": true,
+    "routing_targets_v1": true,
+    "renewable_delivery_claims_v1": true,
+    "delegation_feedback_v1": true,
+    "agent_identity_v1": true,
+    "agent_profile_v1": true,
+    "agent_profile_adoption_v1": true,
+    "attachments_v1": true,
+    "persistent_sessions": true
+  }
+}

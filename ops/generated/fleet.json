@@ -40,6 +40,16 @@
       "tenant": "Miguel",
       "user": "claw"
     },
+    "hades": {
+      "container": "agv2-steven-hades-oc",
+      "enabled": true,
+      "harness": "grok",
+      "home": "/home/claw",
+      "room": "grp.steven",
+      "stateDirectory": "/home/claw/.local/state/cauce-v3/hades",
+      "tenant": "Steven",
+      "user": "claw"
+    },
     "hegel": {
       "container": "agv2-jhon-hegel-oc",
       "enabled": true,

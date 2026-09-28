@@ -1,6 +1,11 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
+import { closeSync } from "node:fs";
+import type { Readable, Writable } from "node:stream";
 import { ProcessExecutionError } from "./errors.js";
+import { promptFileDescriptor } from "./prompt-stdin.js";
 import type { CommandRunRequest, CommandRunResult, SafeRunnerLogger } from "./types.js";
+
+type HarnessChild = ChildProcessByStdio<Writable | null, Readable, Readable>; // stdin is null when a file backs fd 0
 
 interface ProcessRunnerOptions {
   readonly killGraceMs?: number;
@@ -44,11 +49,28 @@ function childEnvironment(additions: Readonly<Record<string, string>> | undefine
   return environment;
 }
 
+function spawnHarness(request: CommandRunRequest, stdinDescriptor: number | undefined): HarnessChild {
+  const options = {
+    ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+    env: childEnvironment(request.env),
+    shell: false,
+    detached: process.platform !== "win32",
+    windowsHide: true,
+  };
+  if (stdinDescriptor === undefined) {
+    return spawn(request.command, [...request.args], { ...options, stdio: ["pipe", "pipe", "pipe"] });
+  }
+  return spawn(request.command, [...request.args], {
+    ...options,
+    stdio: [stdinDescriptor, "pipe", "pipe"], // fd 1 and fd 2 stay pipes: both readables exist
+  }) as ChildProcessByStdio<null, Readable, Readable>;
+}
+
 /**
  * Sends the signal to the process group to ensure descendant subprocesses terminate.
  */
 function signalProcessGroup(
-  child: ChildProcessWithoutNullStreams,
+  child: ChildProcess,
   pid: number | undefined,
   signal: NodeJS.Signals,
 ): void {
@@ -108,16 +130,11 @@ export class SpawnCommandRunner {
     }
 
     return new Promise<CommandRunResult>((resolve, reject) => {
-      let child: ChildProcessWithoutNullStreams;
+      let child: HarnessChild;
+      let stdinDescriptor: number | undefined;
       try {
-        child = spawn(request.command, [...request.args], {
-          cwd: request.cwd,
-          env: childEnvironment(request.env),
-          shell: false,
-          detached: process.platform !== "win32",
-          windowsHide: true,
-          stdio: ["pipe", "pipe", "pipe"],
-        });
+        if (request.stdinSource === "file") stdinDescriptor = promptFileDescriptor(request.stdin);
+        child = spawnHarness(request, stdinDescriptor);
       } catch (error) {
         if (error instanceof ProcessExecutionError) {
           reject(error);
@@ -129,6 +146,12 @@ export class SpawnCommandRunner {
           true,
         ));
         return;
+      } finally {
+        if (stdinDescriptor !== undefined) { // the child holds its own copy of fd 0
+          try {
+            closeSync(stdinDescriptor);
+          } catch { /* an already closed descriptor does not alter the outcome */ }
+        }
       }
 
       this.logger({ event: "spawn", harness: request.harness });
@@ -202,6 +225,7 @@ export class SpawnCommandRunner {
         this.logger({ event: "orphaned_pipes", harness: request.harness, exitCode, timedOut, cancelled });
         signalProcessGroup(child, pid, "SIGKILL");
         for (const stream of [child.stdout, child.stderr, child.stdin]) {
+          if (stream === null) continue;
           try {
             stream.destroy();
           } catch {
@@ -272,8 +296,10 @@ export class SpawnCommandRunner {
       });
 
       if (request.signal.aborted) terminate("cancel");
-      child.stdin.on("error", () => undefined);
-      child.stdin.end(request.stdin, "utf8");
+      if (child.stdin !== null) { // null with stdinSource "file": the prompt already backs fd 0
+        child.stdin.on("error", () => undefined);
+        child.stdin.end(request.stdin, "utf8");
+      }
     });
   }
 }

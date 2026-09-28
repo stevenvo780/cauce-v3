@@ -9,6 +9,7 @@ import {
 } from "../tmux.js";
 import {
   LEGACY_DEGRADED_WINDOW,
+  SHARED_SESSION_HARNESSES,
   TUI_WINDOW,
   type ResumeSpec,
   type SharedSessionHarness,
@@ -186,13 +187,13 @@ async function existingHarnessPane(
  * Narrow inference for sessions predating the markers.
  *
  * Either the canonical harness binary or the explicitly configured `command` for that harness
- * is accepted. A runnable opposite harness makes the evidence ambiguous and fails closed. The
+ * is accepted. Any OTHER runnable shared harness makes the evidence ambiguous and fails closed. The
  * observed command is never included in errors: it may contain private arguments.
  */
 export function paneCommandMatches(spec: SharedSessionSpec, command: string): boolean {
   const expected = executableName(spec.command ?? spec.harness);
-  const opposite = spec.harness === "claude" ? "codex" : "claude";
-  if (mentionsExecutable(command, opposite)) return false;
+  const others = SHARED_SESSION_HARNESSES.filter((harness) => harness !== spec.harness);
+  if (others.some((other) => mentionsExecutable(command, other))) return false;
   return mentionsExecutable(command, spec.harness)
     || (expected !== spec.harness && mentionsExecutable(command, expected));
 }

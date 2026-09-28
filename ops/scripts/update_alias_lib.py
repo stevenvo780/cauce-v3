@@ -86,17 +86,20 @@ COMMON_REQUIRED = frozenset(
         "CAUCE_SEMBRAR_PERFIL",
     }
 )
+CANONICAL_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 HARNESS_ALLOWED: dict[str, frozenset[str]] = {
     "claude": frozenset(
         {
             "EXPECTED_CLI_VERSION",
             "SHARED_SESSION",
             "SHARED_SESSION_WORKSPACE",
+            "SHARED_SESSION_NATIVE_ID",
             "CONFIG_POR_ALIAS",
             "CAUCE_NATIVE_PROFILE_CONTEXT",
         }
     ),
     "codex": frozenset({"SHARED_SESSION", "SHARED_SESSION_WORKSPACE", "CONFIG_POR_ALIAS"}),
+    "grok": frozenset({"SHARED_SESSION", "SHARED_SESSION_WORKSPACE", "SHARED_SESSION_NATIVE_ID"}),
     "hermes": frozenset(
         {"HERMES_HOME", "HERMES_INFERENCE_MODEL", "HERMES_PYTHON", "HERMES_SOURCE_COMMIT"}
     ),
@@ -115,6 +118,7 @@ HARNESS_ALLOWED: dict[str, frozenset[str]] = {
 HARNESS_REQUIRED: dict[str, frozenset[str]] = {
     "claude": frozenset({"EXPECTED_CLI_VERSION"}),
     "codex": frozenset(),
+    "grok": frozenset(),
     "hermes": frozenset(
         {"HERMES_HOME", "HERMES_INFERENCE_MODEL", "HERMES_PYTHON", "HERMES_SOURCE_COMMIT"}
     ),
@@ -398,6 +402,11 @@ def validate_policy(document: EnvDocument, policy: AliasPolicy, pki_root: pathli
         raise ConfigUpdateError("CAUCE_NATIVE_PROFILE_CONTEXT debe ser 0 o 1")
     if values.get("CAUCE_NATIVE_PROFILE_CONTEXT") == "1" and "SHARED_SESSION" in values:
         raise ConfigUpdateError("CAUCE_NATIVE_PROFILE_CONTEXT es incompatible con SHARED_SESSION")
+    if "SHARED_SESSION_NATIVE_ID" in values:
+        if values.get("SHARED_SESSION") != "1":
+            raise ConfigUpdateError("SHARED_SESSION_NATIVE_ID requiere SHARED_SESSION=1")
+        if not CANONICAL_UUID.fullmatch(values["SHARED_SESSION_NATIVE_ID"]):
+            raise ConfigUpdateError("SHARED_SESSION_NATIVE_ID debe ser un UUID canonico en minusculas")
     if "SHARED_SESSION_WORKSPACE" in values:
         if values.get("SHARED_SESSION") != "1":
             raise ConfigUpdateError("SHARED_SESSION_WORKSPACE requiere SHARED_SESSION=1")

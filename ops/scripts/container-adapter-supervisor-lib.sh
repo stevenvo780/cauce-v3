@@ -66,6 +66,8 @@ validate_config_values() {
     [[ -v CONFIG[SHARED_SESSION] ]] || die 'SHARED_SESSION_WORKSPACE requires SHARED_SESSION=1'
     valid_absolute_path "${CONFIG[SHARED_SESSION_WORKSPACE]}" || die 'SHARED_SESSION_WORKSPACE must be a canonical absolute path'
   fi
+  [[ ! -v CONFIG[SHARED_SESSION_NATIVE_ID] || -v CONFIG[SHARED_SESSION] ]] || die 'SHARED_SESSION_NATIVE_ID requires SHARED_SESSION=1'
+  [[ ! -v CONFIG[SHARED_SESSION_NATIVE_ID] || ${CONFIG[SHARED_SESSION_NATIVE_ID]} =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || die 'SHARED_SESSION_NATIVE_ID must be a canonical lowercase UUID'
   # Both rewrite the same harness config directory live, racing the seeded profile against the owner.
   if [[ -v CONFIG[SHARED_SESSION] && ${CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT]:-0} == 1 ]]; then
     die 'CAUCE_NATIVE_PROFILE_CONTEXT is incompatible with SHARED_SESSION'

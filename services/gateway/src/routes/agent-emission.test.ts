@@ -12,6 +12,7 @@ function gateway(provider: AuthProvider = DevOnlyAuthProvider.forTests()) {
     agentQueue: vi.fn(async () => ({ deliveries: [], total: 0 })),
     recordAgentProgress: vi.fn(async () => ({ delivery_id: id, recorded: true, duplicate: false })),
     retryOwnDelivery: vi.fn(async () => ({ replayed: true })),
+    listAgentEgress: vi.fn(async (_tenant: string, _alias: string, ids: readonly string[]) => ({ requested: ids, items: [] })),
   };
   registerAgentEmissionRoutes(app, provider, calls);
   apps.push(app);
@@ -61,5 +62,36 @@ describe('agent emission HTTP authority', () => {
     expect(retry.statusCode).toBe(200);
     expect(calls.recordAgentProgress).toHaveBeenCalledWith(id, 'Steven', 'socrates', payload);
     expect(calls.retryOwnDelivery).toHaveBeenCalledWith(id, 'Steven', 'socrates');
+  });
+});
+
+describe('agent egress receipts HTTP authority', () => {
+  const other = '10000000-0000-4000-8000-000000000002';
+  it('scopes receipts to the authenticated identity and ignores nothing silently', async () => {
+    const { app, calls } = gateway();
+    const response = await app.inject({ method: 'GET', url: `/v3/agent/egress?delivery_ids=${id},${other},${id}`, headers });
+    expect(response.statusCode).toBe(200);
+    expect(calls.listAgentEgress).toHaveBeenCalledWith('Steven', 'socrates', [id, other]);
+    expect(response.json()).toEqual({ requested: [id, other], items: [] });
+  });
+  it('rejects authority overrides in the query before touching the store', async () => {
+    const { app, calls } = gateway();
+    const response = await app.inject({ method: 'GET', url: `/v3/agent/egress?delivery_ids=${id}&alias=argos`, headers });
+    expect(response.statusCode).toBe(422);
+    expect(calls.listAgentEgress).not.toHaveBeenCalled();
+  });
+  it('rejects empty, malformed and oversized id lists', async () => {
+    const { app, calls } = gateway();
+    expect((await app.inject({ method: 'GET', url: '/v3/agent/egress', headers })).statusCode).toBe(422);
+    expect((await app.inject({ method: 'GET', url: '/v3/agent/egress?delivery_ids=not-a-uuid', headers })).statusCode).toBe(422);
+    const many = Array.from({ length: 21 }, (_, index) => `10000000-0000-4000-8000-0000000000${String(10 + index)}`).join(',');
+    expect((await app.inject({ method: 'GET', url: `/v3/agent/egress?delivery_ids=${many}`, headers })).statusCode).toBe(422);
+    expect(calls.listAgentEgress).not.toHaveBeenCalled();
+  });
+  it('does not accept a console operator for receipts', async () => {
+    const { app, calls } = gateway(DevOnlyAuthProvider.forTests({ roles: ['operator'] }));
+    const response = await app.inject({ method: 'GET', url: `/v3/agent/egress?delivery_ids=${id}`, headers });
+    expect(response.statusCode).toBe(403);
+    expect(calls.listAgentEgress).not.toHaveBeenCalled();
   });
 });

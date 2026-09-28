@@ -63,7 +63,7 @@ type StoreDerivedRepository = Pick<CauceRepository,
   | 'cancelDelivery' | 'confirmConsolePublishIntent' | 'enqueueJob' | 'enqueueNotification'
   | 'fleetActivity' | 'getAgent' | 'getAgentByIdentity' | 'getConfiguration' | 'getMessage'
   | 'listAdapters' | 'listAgents' | 'listAudit' | 'listChainGates' | 'listJobs' | 'listMessages'
-  | 'listNotifications' | 'listOperationalDlq' | 'listOriginRelays' | 'liveDeliveryClaims'
+  | 'listAgentEgress' | 'listNotifications' | 'listOperationalDlq' | 'listOriginRelays' | 'liveDeliveryClaims'
   | 'principalAccess' | 'queueSnapshot' | 'quotaSnapshot' | 'readProfileRuntimeAdoption'
   | 'reconcileAgentContextRuntime' | 'recordProfileRuntimeExpectation' | 'recordQuotaSample'
   | 'renewWakeOutbox' | 'replayDelivery' | 'retryOwnDelivery' | 'agentQueue' | 'recordAgentProgress'

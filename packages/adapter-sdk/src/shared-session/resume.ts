@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { constants as fsConstants, createReadStream } from "node:fs";
 import { open, readdir, realpath, stat } from "node:fs/promises";
 import { join, normalize } from "node:path";
+import { grokConversationHistoryState, grokSessionIsSecure, newGrokSessionId } from "./grok.js";
+import { museConversationHistoryState, museSessionIsSecure } from "./muse.js";
 import { rolloutDirectory } from "./rollout.js";
 import { SharedTuiPointerStore } from "./native-pointer.js";
 import { transcriptDirectoryIn } from "./session.js";
@@ -35,18 +37,89 @@ export function sharedSessionResume(
   workspace: string,
   binding?: SharedSessionResumeBinding,
 ): ResumeSpec {
-  return harness === "codex"
-    ? {
-      args: ["resume", "--last"],
-      hasPreviousConversation: () => codexHasPreviousConversation(configDirectory, workspace),
+  switch (harness) {
+    case "codex":
+      return {
+        args: ["resume", "--last"],
+        hasPreviousConversation: () => codexHasPreviousConversation(configDirectory, workspace),
+      };
+    case "claude":
+      return { resolveLaunch: () => resolveClaudeLaunch(configDirectory, workspace, binding) };
+    case "grok":
+      return { resolveLaunch: () => resolveGrokLaunch(configDirectory, workspace, binding) };
+    case "muse":
+      return { resolveLaunch: () => resolveMuseLaunch(configDirectory, workspace, binding) };
+  }
+}
+
+/**
+ * muse resumes by EXACT id (`muse resume <id>`; root flags may go on either side of `resume`);
+ * unpointed history blocks, like grok. Muse has no flag to choose the id of a NEW conversation:
+ * with no history it starts bare and the native witness names it after its first turn.
+ */
+export async function resolveMuseLaunch(
+  museData: string,
+  workspace: string,
+  binding: SharedSessionResumeBinding | undefined,
+): Promise<ResumeLaunchPlan> {
+  if (binding === undefined) return { state: "blocked", detail: "Muse exact resume requires alias state" };
+  try {
+    const pointer = await new SharedTuiPointerStore(binding.stateDirectory).read({
+      alias: binding.alias, harness: "muse", configDirectory: museData, workspace,
+    });
+    if (pointer.state === "invalid") return { state: "blocked", detail: "Muse shared TUI pointer is invalid" };
+    if (pointer.state === "valid") {
+      return await museSessionIsSecure(pointer.binding.configDirectory, pointer.nativeId)
+        ? { state: "launch", args: ["resume", pointer.nativeId], resumed: true }
+        : { state: "blocked", detail: "Muse exact session could not be accredited" };
     }
-    : {
-      resolveLaunch: () => resolveClaudeLaunch(
-        configDirectory,
-        workspace,
-        binding,
-      ),
-    };
+    const history = await museConversationHistoryState(museData);
+    if (history === "present") {
+      return {
+        state: "blocked",
+        detail: "Muse has conversations but no shared TUI pointer; name the canonical one with"
+          + " SHARED_SESSION_NATIVE_ID=<id> in the alias config (the adapter seeds it on start)"
+          + " or shared-session.js seed --native-id <id>",
+      };
+    }
+    if (history === "unreadable") return { state: "blocked", detail: "Muse history could not be inspected" };
+    return { state: "launch", args: [], resumed: false };
+  } catch {
+    return { state: "blocked", detail: "Muse exact resume state could not be inspected" };
+  }
+}
+
+/** grok resumes by EXACT id (bare `--resume` = latest of the cwd); unpointed history blocks. */
+export async function resolveGrokLaunch(
+  grokHome: string,
+  workspace: string,
+  binding: SharedSessionResumeBinding | undefined,
+): Promise<ResumeLaunchPlan> {
+  if (binding === undefined) return { state: "blocked", detail: "Grok exact resume requires alias state" };
+  try {
+    const pointer = await new SharedTuiPointerStore(binding.stateDirectory).read({
+      alias: binding.alias, harness: "grok", configDirectory: grokHome, workspace,
+    });
+    if (pointer.state === "invalid") return { state: "blocked", detail: "Grok shared TUI pointer is invalid" };
+    if (pointer.state === "valid") {
+      return await grokSessionIsSecure(pointer.binding.configDirectory, pointer.nativeId)
+        ? { state: "launch", args: ["--resume", pointer.nativeId], resumed: true }
+        : { state: "blocked", detail: "Grok exact session could not be accredited" };
+    }
+    const history = await grokConversationHistoryState(grokHome);
+    if (history === "present") {
+      return {
+        state: "blocked",
+        detail: "Grok has conversations but no shared TUI pointer; name the canonical one with"
+          + " SHARED_SESSION_NATIVE_ID=<id> in the alias config (the adapter seeds it on start)"
+          + " or shared-session.js seed --native-id <id>",
+      };
+    }
+    if (history === "unreadable") return { state: "blocked", detail: "Grok history could not be inspected" };
+    return { state: "launch", args: ["--session-id", newGrokSessionId()], resumed: false };
+  } catch {
+    return { state: "blocked", detail: "Grok exact resume state could not be inspected" };
+  }
 }
 
 export async function resolveClaudeLaunch(
@@ -92,6 +165,16 @@ export async function resolveClaudeLaunch(
   } catch {
     return { state: "blocked", detail: "Claude exact resume state could not be inspected" };
   }
+}
+
+export async function exactConversationIsSecure(
+  harness: "claude" | "grok" | "muse",
+  binding: { readonly configDirectory: string; readonly workspace: string },
+  nativeId: string,
+): Promise<boolean> {
+  if (harness === "grok") return grokSessionIsSecure(binding.configDirectory, nativeId);
+  if (harness === "muse") return museSessionIsSecure(binding.configDirectory, nativeId);
+  return CLAUDE_SESSION_ID.test(nativeId) && exactClaudeTranscriptIsSecure(binding, nativeId);
 }
 
 async function exactClaudeTranscriptIsSecure(

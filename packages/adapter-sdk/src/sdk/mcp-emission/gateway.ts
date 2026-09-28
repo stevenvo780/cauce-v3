@@ -7,7 +7,7 @@ import type { EmissionGateway } from "./tools.js";
 export function emissionGateway(runtime: Awaited<ReturnType<typeof loadCliRuntimeConfig>>): EmissionGateway {
   const base = new URL(runtime.relayUrl);
   base.protocol = base.protocol === "wss:" ? "https:" : "http:";
-  return async (method, path, body) => {
+  return async (method, path, body, options) => {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (runtime.bearerTokenFile !== undefined) headers.authorization = `Bearer ${await readBearerTokenFile(runtime.bearerTokenFile)}`;
     if (runtime.environment !== "production" && runtime.developmentIdentity) {
@@ -24,7 +24,7 @@ export function emissionGateway(runtime: Awaited<ReturnType<typeof loadCliRuntim
     const url = new URL(path, base);
     const send = url.protocol === "https:" ? httpsRequest : httpRequest;
     return new Promise((resolve, reject) => {
-      const outgoing = send(url, { method, headers, ...material }, (response) => {
+      const outgoing = send(url, { method, headers, ...material, ...(options?.signal === undefined ? {} : { signal: options.signal }) }, (response) => {
         let result = "";
         response.setEncoding("utf8");
         response.on("data", (chunk: string) => {
@@ -44,7 +44,7 @@ export function emissionGateway(runtime: Awaited<ReturnType<typeof loadCliRuntim
           } catch (error) { reject(error instanceof Error ? error : new Error("Invalid gateway response")); }
         });
       });
-      outgoing.setTimeout(20_000, () => { outgoing.destroy(new Error("Gateway request timed out")); });
+      outgoing.setTimeout(options?.timeoutMs ?? 20_000, () => { outgoing.destroy(new Error("Gateway request timed out")); });
       outgoing.on("error", reject);
       outgoing.end(body === undefined ? undefined : JSON.stringify(body));
     });

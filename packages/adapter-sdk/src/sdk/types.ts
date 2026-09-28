@@ -14,7 +14,7 @@ import type {
 import { PROTOCOL_VERSION } from '@cauce/protocol';
 
 export { PROTOCOL_VERSION };
-export type HarnessId = 'hermes' | 'opencode' | 'claude' | 'codex' | 'openclaw' | 'fake';
+export type HarnessId = 'hermes' | 'opencode' | 'claude' | 'codex' | 'openclaw' | 'grok' | 'muse' | 'fake';
 
 /** Runtime inventory; only traits with runtime or operational consumers reach the V3 hello. */
 export interface AdapterCapabilities {
@@ -251,6 +251,8 @@ type HarnessStartWitness =
   | { readonly kind: 'stdout-first-byte' }
   | { readonly kind: 'stderr-marker'; readonly marker: string };
 
+export type HarnessStdinSource = 'pipe' | 'file'; // what backs fd 0; 'file' for CLIs that reopen /dev/stdin (prompt-stdin.ts)
+
 export interface CommandRunRequest extends CommandInvocation {
   readonly emissionOutput?: () => StructuredOutput | undefined;
   readonly onEmissionReady?: (correlationId?: string) => void;
@@ -261,6 +263,7 @@ export interface CommandRunRequest extends CommandInvocation {
   readonly sessionId?: string;
   /** Witness declared by the harness. Absent = the transport attests nothing. */
   readonly startWitness?: HarnessStartWitness;
+  readonly stdinSource?: HarnessStdinSource; // absent = 'pipe'; a runner without a process ignores it
   /**
    * Optional observer invoked once when the witness fires. Not a durability barrier: the engine
    * fsyncs its intent before invoking the harness.
@@ -401,6 +404,7 @@ export interface HarnessDefinition {
   readonly sessionStrategy: SessionStrategy;
   /** Witness for attesting that the process has started execution. */
   readonly startWitness?: HarnessStartWitness;
+  readonly stdinSource?: HarnessStdinSource; // absent = 'pipe'
   sessionArgs(context: HarnessExecutionContext): readonly string[];
   parse(stdout: string): ParsedHarnessOutput;
 }

@@ -49,6 +49,17 @@
       "harness": "openclaw",
       "membershipRole": "agent"
     },
+    "hades": {
+      "tenant": "Steven",
+      "room": "grp.steven",
+      "container": "agv2-steven-hades-oc",
+      "systemdUser": "stev",
+      "user": "claw",
+      "home": "/home/claw",
+      "stateDirectory": "/home/claw/.local/state/cauce-v3/hades",
+      "harness": "grok",
+      "membershipRole": "agent"
+    },
     "hegel": {
       "tenant": "Jhon",
       "room": "grp.jhon",

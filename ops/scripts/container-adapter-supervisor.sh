@@ -146,6 +146,7 @@ inventory_workspace=${inventory_policy[1]}
 
 config_file="$CONFIG_ROOT/$alias_name.env"
 declare -A CONFIG=()
+shared_session_disabled=false  # Set by validation when SHARED_SESSION cannot hold (grok without tmux).
 
 load_config() {
   local line key value
@@ -163,11 +164,12 @@ load_config() {
       CAUCE_NATIVE_PROFILE_CONTEXT) [[ $value =~ ^[01]$ ]] || die "CAUCE_NATIVE_PROFILE_CONTEXT must be exactly 0 or 1" ;;
       EXPECTED_CLI_VERSION) [[ $harness == claude ]] || die "config key is not allowed for $harness: $key" ;;
       HERMES_HOME|HERMES_INFERENCE_MODEL|HERMES_PYTHON|HERMES_SOURCE_COMMIT) [[ $harness == hermes ]] || die "config key is not allowed for $harness: $key" ;;
-      # Shared session: the SAME conversation in owner's terminal and Telegram, only for claude/codex
-      # (the two harnesses with a shareable TUI); elsewhere it would lie about which mode it runs in.
+      # Shared session: the SAME conversation in owner's terminal and Telegram, only for claude/codex/grok/muse
+      # (the harnesses with a shareable TUI); elsewhere it would lie about which mode it runs in.
       SHARED_SESSION|SHARED_SESSION_WORKSPACE)
-        [[ $harness == claude || $harness == codex ]] || die "config key is not allowed for $harness: $key"
+        [[ $harness == claude || $harness == codex || $harness == grok || $harness == muse ]] || die "config key is not allowed for $harness: $key"
         ;;
+      SHARED_SESSION_NATIVE_ID) [[ $harness == claude || $harness == grok || $harness == muse ]] || die "config key is not allowed for $harness: $key" ;;  # Seeded by the adapter (exact-resume harnesses).
       # Per-alias configuration: only for the two harnesses that read a directory governed by a
       # variable. hermes reads stdin and openclaw does not read ~/.codex or ~/.claude; accepting
       # the key there would export a variable nobody reads and claim a separated alias.
@@ -356,6 +358,14 @@ validate_container_identity_and_mount() {
     runtime_paths+=("${CONFIG[HERMES_HOME]}")
   elif [[ $harness == openclaw ]]; then
     runtime_paths+=("${CONFIG[OPENCLAW_WORKSPACE]}")
+  elif [[ $harness == grok ]]; then
+    # ~/.grok holds the login (auth.json), the cauce MCP registration (config.toml) and the
+    # per-cwd sessions that --resume reads: losing it on a recreate logs out and forks threads.
+    runtime_paths+=("$container_home/.grok")
+  elif [[ $harness == muse ]]; then
+    # The alias's Muse folder holds its login (.config/muse, linked from ~/.config/muse) and, with
+    # SHARED_SESSION, the conversations of its TUI (.local/share, the XDG_DATA_HOME the SDK derives).
+    runtime_paths+=("$container_home/.local/share/cauce-v3/config/$alias_name")
   fi
   if [[ ${CONFIG[CONFIG_POR_ALIAS]:-} == 1 ]]; then
     runtime_path=$(config_por_alias_directorio "$harness" "$container_home" "$alias_name") \
@@ -365,7 +375,8 @@ validate_container_identity_and_mount() {
   # SHARED_SESSION always pins a workspace: undeclared gets the SDK's own default (config.ts).
   if [[ -v CONFIG[SHARED_SESSION] ]]; then
     shared_session_workspace=${CONFIG[SHARED_SESSION_WORKSPACE]:-/workspace}
-    runtime_paths+=("$shared_session_workspace")
+    # grok in $HOME = its headless cwd: the conversation lives in ~/.grok (required above), not in the cwd.
+    [[ $harness == grok && $shared_session_workspace == "$container_home" ]] || runtime_paths+=("$shared_session_workspace")
   fi
   for runtime_path in "${runtime_paths[@]}"; do
     runtime_mount=$(PYTHONDONTWRITEBYTECODE=1 python3 "$MOUNT_VALIDATOR" "$mount_json" "$runtime_path") \
@@ -378,6 +389,8 @@ validate_container_identity_and_mount() {
   if [[ -n $shared_session_workspace ]]; then
     docker_id_exec test -d "$shared_session_workspace" >/dev/null 2>&1 \
       || die "SHARED_SESSION workspace does not exist inside the container: $shared_session_workspace"
+    [[ $harness != grok && $harness != muse ]] || docker_id_exec sh -c 'command -v tmux' >/dev/null 2>&1 || { shared_session_disabled=true  # 78 left Telegram mute: headless.
+      printf 'warning: SHARED_SESSION=1 ignored for %s: the container has no tmux; the adapter starts headless\n' "$alias_name" >&2; }
   fi
   after=$(read_state_signature) || die 'container disappeared during policy validation' 75
   [[ $after == "$before" ]] || die 'container generation changed during policy validation' 75
@@ -648,13 +661,14 @@ start_adapter() {
     environment+=("CAUCE_CLAUDE_PERMISSION_MODE=${CONFIG[CLAUDE_PERMISSION_MODE]}")
   fi
   if [[ $bearer_token_present == true ]]; then environment+=("CAUCE_TOKEN_FILE=$secret_directory/token"); fi
-  if [[ -v CONFIG[SHARED_SESSION] ]]; then
+  if [[ -v CONFIG[SHARED_SESSION] && $shared_session_disabled != true ]]; then
     environment+=("CAUCE_SHARED_SESSION=${CONFIG[SHARED_SESSION]}")
     [[ -v CONFIG[SHARED_SESSION_WORKSPACE] ]] \
       && environment+=("CAUCE_SHARED_SESSION_WORKSPACE=${CONFIG[SHARED_SESSION_WORKSPACE]}")
+    [[ -v CONFIG[SHARED_SESSION_NATIVE_ID] ]] && environment+=("CAUCE_SHARED_SESSION_NATIVE_ID=${CONFIG[SHARED_SESSION_NATIVE_ID]}")
     # tmux creates the session with this TERM. Without it the server is born with an unknown terminal
     # and the TUI renders broken for the owner, who is the one who joins afterwards.
-    environment+=('TERM=xterm-256color')
+    environment+=('TERM=xterm-256color'); [[ $harness != grok ]] || environment+=("GROK_HOME=$container_home/.grok")
   fi
   # Per-alias config is exported here, after the shared-session block: the TUI panel inherits this env,
   # so adapter and owner terminal resolve the SAME dir. OFF BY DEFAULT: over an empty dir it strips identity.

@@ -5,6 +5,21 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const MAX_INPUT_BYTES = 1024 * 1024;
+// Upper bound for one run: the runtime's timeout does not always surface as a rejection.
+const DEFAULT_RUN_DEADLINE_MS = 45 * 60 * 1000;
+
+function runDeadlineMs() {
+  const raw = process.env.CAUCE_OPENCLAW_RUN_DEADLINE_MS;
+  const parsed = raw === undefined ? Number.NaN : Number.parseInt(raw, 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : DEFAULT_RUN_DEADLINE_MS;
+}
+
+function failureEnvelope(message, nativeSessionKey) {
+  return `${JSON.stringify({
+    result: { ok: false, error: message },
+    ...(nativeSessionKey === undefined ? {} : { session_id: nativeSessionKey }),
+  })}\n`;
+}
 
 async function existsDirectory(path) {
   return stat(path).then((entry) => entry.isDirectory(), () => false);
@@ -149,19 +164,30 @@ async function main() {
   let empezado = false;
   try {
     const { agentCliCommand, defaultRuntime } = await loadOpenClaw();
-    // From the next line on the turn MAY have side effects. The marker goes here and not before
-    // or after: before would lie (module discovery can still fail without touching anything) and
-    // after would leave a half-finished turn indistinguishable from one that never started, which
-    // is the expensive error — retrying work already paid for. Goes via stderr because stdout is
-    // the structured contract. See HARNESS_START_MARKER in sdk/types.ts.
+    // From here the turn MAY have side effects: before would lie, after would hide a half-finished
+    // turn and retry work already paid for. Via stderr; stdout is the contract.
     process.stderr.write("<<cauce:harness-started>>\n");
     empezado = true;
-    returned = await agentCliCommand({
-      message,
-      sessionKey: nativeSessionKey,
-      json: true,
-      deliver: false,
-    }, defaultRuntime);
+    const abandon = (reason) => {
+      process.stdout.write = originalWrite;
+      originalWrite(failureEnvelope(reason, nativeSessionKey));
+      process.stderr.write(`openclaw stdin bridge abandoned the run: ${reason}\n`);
+      process.exit(1);
+    };
+    const deadline = runDeadlineMs();
+    const timer = setTimeout(() => { abandon(`OpenClaw run exceeded ${String(deadline)} ms without a final result`); }, deadline);
+    timer.unref();
+    for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { abandon(`terminated by ${signal} before a final result`); });
+    try {
+      returned = await agentCliCommand({
+        message,
+        sessionKey: nativeSessionKey,
+        json: true,
+        deliver: false,
+      }, defaultRuntime);
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (error) {
     if (!empezado) throw error;
     process.stdout.write = originalWrite;
