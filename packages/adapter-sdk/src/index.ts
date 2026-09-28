@@ -11,6 +11,9 @@ export * from "./sdk/openclaw-api-runner.js";
 export * from "./sdk/engine.js";
 export * from "./sdk/client.js";
 export * from "./sdk/websocket-transport.js";
+export { EmissionRuntime } from "./sdk/mcp-emission/runtime.js";
+export * from "./sdk/mcp-emission/decisiones.js";
+export { createDecisionesMcpServer } from "./sdk/mcp-emission/decisiones-server.js";
 export * from "./context/perfil-a-contexto.js";
 // The seeder is the ONLY writer of the profile on the container's disk. Exported so
 // integration tests can measure it without going through the socket.

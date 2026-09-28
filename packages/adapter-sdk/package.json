@@ -33,7 +33,8 @@
     "cauce-adapter-fake": "./dist/src/bin/fake.js",
     "cauce-fake-harness": "./dist/src/bin/fake-harness.js",
     "cauce-shared-session": "./dist/src/bin/shared-session.js",
-    "cauce-mcp": "./dist/src/bin/cauce-mcp.js"
+    "cauce-mcp": "./dist/src/bin/cauce-mcp.js",
+    "cauce-decisiones-mcp": "./dist/src/bin/cauce-decisiones-mcp.js"
   },
   "scripts": {
     "clean": "node --eval \"import('node:fs/promises').then(fs => Promise.all(['dist'].map(path => fs.rm(path,{recursive:true,force:true,maxRetries:5,retryDelay:50}))))\"",

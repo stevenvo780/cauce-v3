@@ -16,7 +16,8 @@ const SUITES_RAPIDAS = [
   'services/dispatcher/test',
   'services/gateway/src',
   'services/telegram-bridge/test',
-  'services/terminal-relay/src'
+  'services/terminal-relay/src',
+  'services/decisiones/test'
 ];
 
 const DIRECTORIOS_DE_DATOS = [

@@ -35,6 +35,7 @@ import { NativePointerAttestor } from "../shared-session/native-witness.js";
 import type { CommandRunner } from "../sdk/types.js";
 import { EmissionRuntime } from "../sdk/mcp-emission/runtime.js";
 import { emissionGateway } from "../sdk/mcp-emission/gateway.js";
+import { decisionesForwarder } from "../sdk/mcp-emission/decisiones.js";
 
 function commandOverride(
   harnessId: HarnessId,
@@ -301,7 +302,10 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
       },
     }),
   });
-  const emission = new EmissionRuntime(runtime.stateDirectory, runtime.instanceId, emissionGateway(runtime));
+  const emission = new EmissionRuntime(
+    runtime.stateDirectory, runtime.instanceId, emissionGateway(runtime),
+    decisionesForwarder(runtime.decisionesUrl, runtime.mutualTls),
+  );
   try {
     configureDefaultBlobClient(BlobClient.fromRelayUrl(runtime.relayUrl, {
       ...(runtime.bearerTokenFile === undefined ? {} : { bearerTokenFile: runtime.bearerTokenFile }),

@@ -1,0 +1,178 @@
+{
+  "id": "cabe_en_un_turno",
+  "version": "1.1.0",
+  "nombre": "¿La tarea es imposible de terminar en un turno?",
+  "cuando_usar": "Al recibir un pedido, antes de arrancar: detectar si pide esperar, vigilar o repetir algo. En Cauce la entrega muere a los ~30 min (deadline de ACK) y un Workflow en background muere con el turno: esas tareas hay que acusarlas corto, programarlas en un proceso desacoplado (cron, monitor) y cerrar el turno.",
+  "state": {
+    "pedido": "texto del pedido",
+    "contexto": "opcional: hilo o hechos relevantes, recortados"
+  },
+  "state_requerido": [
+    "pedido"
+  ],
+  "questions": {
+    "espera_evento": {
+      "type": "noul",
+      "instructions": "¿`pedido` exige esperar a que ocurra algo en el futuro antes de poder terminar, como que termine un despliegue, que responda otra persona o que llegue una fecha?"
+    },
+    "vigilancia": {
+      "type": "noul",
+      "instructions": "¿`pedido` pide vigilar o monitorear algo durante un período de tiempo?"
+    },
+    "recurrente": {
+      "type": "noul",
+      "instructions": "¿`pedido` pide repetir una acción cada cierto tiempo o de forma periódica?"
+    },
+    "depende_de_persona": {
+      "type": "noul",
+      "instructions": "¿Para poder terminar `pedido` hace falta que antes una persona haga algo, como iniciar sesión, aprobar o entregar un dato que falta?",
+      "criteria": {
+        "true": {
+          "que": "El trabajo queda frenado hasta que una persona actúe",
+          "ejemplos": [
+            "necesito que inicies sesión en codex",
+            "decime qué cuenta usar"
+          ]
+        },
+        "false": {
+          "que": "El agente puede terminar solo; a la persona sólo hay que avisarle o entregarle el resultado",
+          "ejemplos": [
+            "avisame cuando termine",
+            "mandame el resumen"
+          ]
+        }
+      }
+    },
+    "tamano": {
+      "type": "score",
+      "instructions": "¿Cuánto trabajo pide `pedido`?",
+      "criteria": [
+        "Una respuesta, una consulta o un cambio puntual en un solo lugar",
+        "Una tarea de varios pasos en un solo sistema o repositorio",
+        "Una tarea que toca varios sistemas o repositorios y necesita pruebas",
+        "Un proyecto de varias partes que normalmente lleva varias sesiones de trabajo"
+      ]
+    }
+  },
+  "indicadores": {
+    "largo_plazo": {
+      "max": [
+        "espera_evento",
+        "vigilancia",
+        "recurrente"
+      ]
+    }
+  },
+  "reglas": [
+    {
+      "si": {
+        "p": "recurrente",
+        ">=": 0.6
+      },
+      "entonces": {
+        "decision": "no_cabe",
+        "motivo": "Pide repetir algo: acuse corto, programá un cron desacoplado y cerrá la entrega.",
+        "valor": "cron"
+      }
+    },
+    {
+      "si": {
+        "p": "vigilancia",
+        ">=": 0.6
+      },
+      "entonces": {
+        "decision": "no_cabe",
+        "motivo": "Pide vigilar: acuse corto, programá un monitor con condición de salida y cerrá la entrega.",
+        "valor": "monitor"
+      }
+    },
+    {
+      "si": {
+        "p": "espera_evento",
+        ">=": 0.6
+      },
+      "entonces": {
+        "decision": "no_cabe",
+        "motivo": "Pide esperar un evento: acuse corto, programá un disparador y cerrá la entrega.",
+        "valor": "disparador"
+      }
+    },
+    {
+      "si": {
+        "p": "depende_de_persona",
+        ">=": 0.6
+      },
+      "entonces": {
+        "decision": "pedir_a_persona",
+        "motivo": "Hace falta que una persona actúe: pedíselo y cerrá el turno sin esperarla."
+      }
+    },
+    {
+      "si": {
+        "todas": [
+          {
+            "puntaje": "tamano",
+            ">=": 2.5
+          },
+          {
+            "confianza": "tamano",
+            ">=": 0.6
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "partir",
+        "motivo": "Es un proyecto: partilo en tareas o delegalo a un proceso desacoplado."
+      }
+    },
+    {
+      "si": {
+        "todas": [
+          {
+            "indicador": "largo_plazo",
+            "<=": 0.3
+          },
+          {
+            "puntaje": "tamano",
+            "<": 2
+          },
+          {
+            "confianza": "tamano",
+            ">=": 0.6
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "cabe",
+        "motivo": "Cabe en un turno: trabajá normal."
+      }
+    }
+  ],
+  "sino": {
+    "decision": "llm",
+    "motivo": "Franja intermedia: decidí vos si cabe en el turno.",
+    "llm": true
+  },
+  "si_falla": {
+    "decision": "llm",
+    "motivo": "Jev no respondió: juzgalo vos, como hoy.",
+    "llm": true
+  },
+  "notas": {
+    "antes_de_llamar": [
+      "Si el pedido trae una hora o un intervalo explícito, el cálculo de cuándo lo hace el código, no Jev."
+    ],
+    "lectura": "Son tres Nouls separados y no uno ('¿es larga?') porque cada uno lleva a una acción distinta en código y la doc pide una condición por Noul.",
+    "confianza": "Un score decide solo con su confidence: cuando la distribución no es firme la regla no dispara y la decisión cae al LLM, como pide la regla global del catálogo ('más confianza cuanto más cara es la acción')."
+  },
+  "evidencia": {
+    "fecha": "2026-09-23",
+    "modelo": "jev-1.13.0",
+    "casos": [
+      "vigilar el deploy de esta noche -> vigilancia 0.98, espera_evento 0.96 -> no cabe (monitor)",
+      "cambiar un timeout en la config -> todo <= 0.05, tamano 0.00 -> cabe",
+      "cada lunes mandame el resumen -> recurrente 0.99 -> no cabe (cron)",
+      "depende_de_persona v1 daba 0.65 en 'avisame si...'; la v2 con criteria da 0.10, y 0.95 ante 'pasame el código de verificación'"
+    ]
+  }
+}

@@ -1,0 +1,257 @@
+{
+  "id": "clasificar_fallo",
+  "version": "1.0.0",
+  "nombre": "Clasificar una entrega fallida",
+  "cuando_usar": "Una entrega termina en dead-letter o un adaptador reporta un error: decidir la clase de fallo antes de reintentar o escalar. Sólo para lo que el mapa determinista de códigos no resolvió.",
+  "state": {
+    "alias": "alias afectado",
+    "harness": "claude | codex | openclaw | hermes | grok",
+    "codigo_cauce": "código de error de Cauce si lo hay (PROCESS_EXIT_AMBIGUOUS, EXECUTION_TIMEOUT_AMBIGUOUS, ...) o 'ninguno'",
+    "error_crudo": "líneas relevantes del error, recortadas y enmascaradas"
+  },
+  "state_requerido": [
+    "error_crudo"
+  ],
+  "questions": {
+    "causa": {
+      "type": "choice",
+      "instructions": {
+        "pregunta": "¿Cuál es la causa del fallo descrito en `error_crudo` y `codigo_cauce`?",
+        "foco": "Buscá la causa de fondo, no el síntoma final: un timeout provocado por una credencial vencida es credencial."
+      },
+      "criteria": {
+        "credencial_vencida": {
+          "que": "La sesión o el token del proveedor (Claude, Codex, Gemini, MiniMax, GitHub) venció, fue revocado o es inválido",
+          "senales": [
+            "401",
+            "invalid_grant",
+            "token expired",
+            "please log in",
+            "refresh token"
+          ],
+          "no_es": "Falta de saldo o límite de uso"
+        },
+        "cuota_agotada": {
+          "que": "Se agotó el límite de uso, el saldo o la tasa del proveedor",
+          "senales": [
+            "429",
+            "usage limit reached",
+            "rate limit",
+            "quota exceeded",
+            "insufficient credit"
+          ],
+          "no_es": "Una credencial inválida"
+        },
+        "harness_caido": {
+          "que": "El CLI o el proceso del agente no arranca, se cuelga o termina sin respuesta, sin señales de credencial, cuota o red",
+          "senales": [
+            "PROCESS_EXIT_AMBIGUOUS",
+            "SPAWN_FAILED",
+            "EXECUTION_TIMEOUT_AMBIGUOUS",
+            "turno sin evento terminal",
+            "Segmentation fault"
+          ],
+          "no_es": "Un error que nombra credencial, cuota o conexión"
+        },
+        "red": {
+          "que": "No se pudo conectar a un servicio: DNS, conexión rechazada, TLS o red caída",
+          "senales": [
+            "ECONNREFUSED",
+            "ENOTFOUND",
+            "ETIMEDOUT",
+            "certificate verify failed",
+            "no route to host"
+          ],
+          "no_es": "Una respuesta HTTP del servidor con un error de negocio"
+        },
+        "sandbox_permisos": {
+          "que": "El sistema operativo o el contenedor negó permisos: sandbox, namespaces, archivos sin escritura o un mount perdido",
+          "senales": [
+            "bwrap: No permissions to create a new namespace",
+            "EACCES",
+            "EPERM",
+            "Read-only file system",
+            "seccomp"
+          ],
+          "no_es": "Un 401 o 403 de una API remota"
+        },
+        "codigo": {
+          "que": "Un error del propio código o de los datos: excepción, validación, SQL inválido o un bug en un script",
+          "senales": [
+            "TypeError",
+            "SyntaxError",
+            "violates foreign key constraint",
+            "traza de pila del repositorio"
+          ],
+          "no_es": "Un fallo del proveedor de IA o de la red"
+        },
+        "bus_cauce": {
+          "que": "Un fallo del bus Cauce: membresía, ACL, gateway, lease o entrega vencida sin error del agente",
+          "senales": [
+            "FRAME_BEFORE_HELLO",
+            "CONNECTION_LEASE_EXPIRED",
+            "HEARTBEAT_ACK_TIMEOUT",
+            "dead_letter por deadline"
+          ],
+          "no_es": "Un error dentro del CLI del agente"
+        },
+        "otro": {
+          "que": "Ninguna de las anteriores, o el texto no alcanza para decidir",
+          "senales": [],
+          "no_es": "Cualquier caso que encaje en una opción anterior"
+        }
+      }
+    },
+    "transitorio": {
+      "type": "noul",
+      "instructions": "¿`error_crudo` describe una condición pasajera que suele resolverse sola al reintentar, como un timeout aislado, una sobrecarga o un 529?"
+    },
+    "requiere_login_humano": {
+      "type": "noul",
+      "instructions": "¿`error_crudo` indica que una persona tiene que iniciar sesión o autorizar algo de forma interactiva para que vuelva a funcionar?"
+    }
+  },
+  "prefiltros": [
+    {
+      "campos": [
+        "codigo_cauce",
+        "error_crudo"
+      ],
+      "patron": "AUTH_EXPIRED|invalid_grant|refresh[ _]token[^\\n]{0,40}(already used|expired|revoked)",
+      "flags": "i",
+      "entonces": {
+        "decision": "clase_firme",
+        "motivo": "Resuelto por el mapa determinista de códigos, sin Jev.",
+        "valor": "credencial_vencida"
+      }
+    },
+    {
+      "campos": [
+        "codigo_cauce",
+        "error_crudo"
+      ],
+      "patron": "QUOTA_EXHAUSTED|usage limit reached|insufficient_quota",
+      "flags": "i",
+      "entonces": {
+        "decision": "clase_firme",
+        "motivo": "Resuelto por el mapa determinista de códigos, sin Jev.",
+        "valor": "cuota_agotada"
+      }
+    },
+    {
+      "campos": [
+        "codigo_cauce",
+        "error_crudo"
+      ],
+      "patron": "\\b(ECONNREFUSED|ENOTFOUND|ETIMEDOUT)\\b",
+      "flags": "i",
+      "entonces": {
+        "decision": "clase_firme",
+        "motivo": "Resuelto por el mapa determinista de códigos, sin Jev.",
+        "valor": "red"
+      }
+    },
+    {
+      "campos": [
+        "codigo_cauce",
+        "error_crudo"
+      ],
+      "patron": "bwrap: No permissions to create a new namespace|\\buserns\\b|\\bseccomp\\b",
+      "flags": "i",
+      "entonces": {
+        "decision": "clase_firme",
+        "motivo": "Resuelto por el mapa determinista de códigos, sin Jev.",
+        "valor": "sandbox_permisos"
+      }
+    },
+    {
+      "campos": [
+        "codigo_cauce",
+        "error_crudo"
+      ],
+      "patron": "FRAME_BEFORE_HELLO|CONNECTION_LEASE_EXPIRED",
+      "flags": "i",
+      "entonces": {
+        "decision": "clase_firme",
+        "motivo": "Resuelto por el mapa determinista de códigos, sin Jev.",
+        "valor": "bus_cauce"
+      }
+    }
+  ],
+  "reglas": [
+    {
+      "si": {
+        "todas": [
+          {
+            "confianza": "causa",
+            ">=": 0.6
+          },
+          {
+            "eleccion": "causa",
+            "no_es": "otro"
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "clase_firme",
+        "motivo": "La causa supera confianza 0.6.",
+        "valor": "{eleccion:causa}"
+      }
+    },
+    {
+      "si": {
+        "todas": [
+          {
+            "confianza": "causa",
+            ">=": 0.35
+          },
+          {
+            "eleccion": "causa",
+            "no_es": "otro"
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "clase_probable",
+        "motivo": "Clase probable: usala, pero escalá con senales.causa.top.",
+        "valor": "{eleccion:causa}"
+      }
+    }
+  ],
+  "sino": {
+    "decision": "escalar_zeus",
+    "motivo": "Causa incierta: diagnóstico por LLM (zeus) con el error crudo.",
+    "llm": true
+  },
+  "si_falla": {
+    "decision": "escalar_zeus",
+    "motivo": "Jev no respondió: mandá el error crudo a zeus.",
+    "llm": true
+  },
+  "marcas": {
+    "requiere_login_humano": {
+      "p": "requiere_login_humano",
+      ">=": 0.7
+    },
+    "transitorio": {
+      "p": "transitorio",
+      ">=": 0.7
+    }
+  },
+  "notas": {
+    "antes_de_llamar": [
+      "Mapa exacto primero, sin Jev: AUTH_EXPIRED | 401 del proveedor | invalid_grant -> credencial_vencida; QUOTA_EXHAUSTED | 429 del proveedor -> cuota_agotada; ECONNREFUSED | ENOTFOUND | ETIMEDOUT -> red; 'bwrap: No permissions to create a new namespace' | userns | seccomp -> sandbox_permisos; FRAME_BEFORE_HELLO | CONNECTION_LEASE_EXPIRED -> bus_cauce.",
+      "Recortar error_crudo a las líneas con el error (la doc: el estado grande con ruido baja la precisión). Nunca incluir tokens: pasar el texto por el enmascarador antes."
+    ]
+  },
+  "evidencia": {
+    "fecha": "2026-09-23",
+    "modelo": "jev-1.13.0",
+    "casos": [
+      "refresh token already used (codex) -> credencial_vencida conf=1.00, requiere_login_humano 0.94",
+      "Claude usage limit reached -> cuota_agotada conf=1.00",
+      "TypeError en harvest.ts -> codigo conf=1.00",
+      "EXECUTION_TIMEOUT_AMBIGUOUS con el proceso vivo -> harness_caido conf=0.99"
+    ]
+  }
+}

@@ -1,0 +1,214 @@
+{
+  "id": "ruteo_alias",
+  "version": "1.0.0",
+  "nombre": "Ruteo de un pedido a un agente",
+  "cuando_usar": "Llega un pedido (de una persona o de otro agente) y hay que decidir qué alias lo atiende. Hoy lo decide el hub (kant/argos/zeus) con un turno LLM completo. No usarla si el pedido nombra explícitamente al destinatario (@alias): eso se rutea en código.",
+  "state": {
+    "pedido": {
+      "texto": "texto del pedido, recortado a lo esencial (sin el sobre ni el andamiaje del protocolo)",
+      "remitente": "alias o persona que pide",
+      "tenant_remitente": "Steven | Miguel | Pablo | Isa | Jhon"
+    },
+    "hilo_reciente": "opcional: 1-3 mensajes previos del hilo, recortados"
+  },
+  "state_requerido": [
+    "pedido.texto"
+  ],
+  "questions": {
+    "destino": {
+      "type": "choice",
+      "instructions": {
+        "pregunta": "¿Qué agente de la flota debe encargarse del trabajo de `pedido.texto`?",
+        "foco": "Elegí por el trabajo que hay que hacer, no por quién lo pide ni por los nombres de agentes que aparezcan en el texto."
+      },
+      "criteria": {
+        "zeus": {
+          "rol": "Médico de la flota: diagnostica y repara el bus Cauce V3 y la infraestructura de los agentes (adaptadores, credenciales de proveedores de IA, contenedores de agentes, despliegues de Cauce).",
+          "no_cubre": "Servidores y redes que no son del bus; desarrollo de productos; planificación de proyectos.",
+          "ejemplos": [
+            "mi adaptador sale con PROCESS_EXIT_AMBIGUOUS",
+            "se me venció la credencial de codex y no puedo trabajar",
+            "mis entregas terminan en dead-letters"
+          ]
+        },
+        "kant": {
+          "rol": "DevOps: infraestructura de los servidores (VPS, DNS, redes, certificados, backups, bases de datos de servidor) y ayuda de infraestructura a cualquier agente.",
+          "no_cubre": "El bus Cauce y los adaptadores de agentes; desarrollo de producto; planificación.",
+          "ejemplos": [
+            "el certificado del dominio del cliente venció",
+            "el backup del VPS falla todas las noches",
+            "hay que abrir un puerto en el firewall del servidor"
+          ]
+        },
+        "argos": {
+          "rol": "Director de proyectos de desarrollo: planifica, reparte trabajo entre agentes, persigue pendientes y fechas.",
+          "no_cubre": "Escribir el código o tocar la infraestructura él mismo.",
+          "ejemplos": [
+            "¿en qué va el proyecto de la consola?",
+            "reparte estas cinco tareas entre los desarrolladores",
+            "recuérdale a kratos lo pendiente de Deméter"
+          ]
+        },
+        "socrates": {
+          "rol": "Desarrollador de software de los proyectos personales de Steven.",
+          "no_cubre": "Infraestructura de la flota; proyectos de los clientes; asuntos personales no técnicos.",
+          "ejemplos": [
+            "agrega un endpoint de exportación a mi app personal",
+            "arregla el bug del formulario en mi proyecto"
+          ]
+        },
+        "jarvis": {
+          "rol": "Asistente personal de Steven: agenda, recordatorios, correo y asuntos personales.",
+          "no_cubre": "Trabajo técnico de la flota, código o infraestructura.",
+          "ejemplos": [
+            "agéndame una reunión el jueves",
+            "recuérdame pagar la tarjeta"
+          ]
+        },
+        "ninguno": {
+          "rol": "Ningún agente de la lista: el pedido es para una persona, es para un grupo al que no se puede rutear, o no es un trabajo.",
+          "no_cubre": "Cualquier trabajo que sí encaje en el rol de algún agente de la lista.",
+          "ejemplos": [
+            "gracias, quedó perfecto",
+            "Steven, ¿me aprobás el gasto?"
+          ]
+        }
+      }
+    },
+    "es_para_persona": {
+      "type": "noul",
+      "instructions": "¿`pedido.texto` le pide algo a una persona (aprobar, pagar, decidir, firmar) en vez de pedir un trabajo que pueda hacer un agente?"
+    }
+  },
+  "expansiones": [
+    {
+      "por_opcion": "destino",
+      "excepto": [
+        "ninguno"
+      ],
+      "id": "encaja::{opcion}",
+      "pregunta": {
+        "type": "noul",
+        "instructions": {
+          "candidato": {
+            "alias": "{opcion}",
+            "rol": "{criterio.rol}"
+          },
+          "pregunta": "¿El trabajo que pide `pedido.texto` cae dentro del rol de `candidato`?"
+        }
+      }
+    }
+  ],
+  "restricciones": {
+    "destino": {
+      "fijas": [
+        "ninguno"
+      ],
+      "minimo": 2
+    }
+  },
+  "reglas": [
+    {
+      "si": {
+        "p": "es_para_persona",
+        ">=": 0.7
+      },
+      "entonces": {
+        "decision": "avisar_humano",
+        "motivo": "El pedido es para una persona (aprobar, pagar, decidir): avisá al humano dueño con notify, no lo rutees a un agente."
+      }
+    },
+    {
+      "si": {
+        "todas": [
+          {
+            "eleccion": "destino",
+            "es": "ninguno"
+          },
+          {
+            "prob_elegida": "destino",
+            ">=": 0.6
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "no_rutear",
+        "motivo": "Ningún agente de la lista cubre el pedido: respondé al remitente."
+      }
+    },
+    {
+      "si": {
+        "todas": [
+          {
+            "prob_elegida": "destino",
+            ">=": 0.6
+          },
+          {
+            "confianza": "destino",
+            ">=": 0.5
+          },
+          {
+            "p": "encaja::{eleccion:destino}",
+            ">=": 0.5
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "rutear",
+        "motivo": "El ganador de la Choice cubre de verdad el trabajo (encaja >= 0.5).",
+        "valor": "{eleccion:destino}"
+      }
+    },
+    {
+      "si": {
+        "todas": [
+          {
+            "max": "encaja::*",
+            "<": 0.3
+          },
+          {
+            "prob": "destino",
+            "opcion": "ninguno",
+            ">=": 0.4
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "no_rutear",
+        "motivo": "Ningún candidato encaja de verdad y destino respalda 'ninguno'."
+      }
+    }
+  ],
+  "sino": {
+    "decision": "llm",
+    "motivo": "Ruteo dudoso: decidí con el LLM del hub usando senales.destino.top como pista.",
+    "llm": true
+  },
+  "si_falla": {
+    "decision": "llm",
+    "motivo": "Jev no respondió: ruteá como hoy, con tu propio razonamiento.",
+    "llm": true
+  },
+  "notas": {
+    "antes_de_llamar": [
+      "Candidatos = routing_targets de la entrega con online=true, intersectados con la ACL (entre clientes no hay canal: nunca ofrecer alias de otro tenant).",
+      "Si queda un solo candidato, no se llama a Jev.",
+      "Cada opción se arma desde el rol de grupos.json más un 'no_cubre' y 'ejemplos' curados; un alias sin rol descrito NO se ofrece (Jev sólo compara texto).",
+      "Siempre incluir la opción 'ninguno'."
+    ],
+    "lectura": "La Choice es relativa (qué candidato gana entre los ofrecidos) y el Noul encaja:: es absoluto (si el ganador de verdad cubre el trabajo). La doc lo recomienda así en el cookbook de skill suggestion: la Choice elige, los Nouls deciden si decir algo. No compares el número de la Choice con el del Noul: miden cosas distintas.",
+    "restringir": "Pasá opciones.restringir.destino con los alias en línea (routing_targets ∩ ACL); 'ninguno' se conserva siempre. Un alias sin rol descrito aquí no se ofrece: agregalo a criteria con rol, no_cubre y ejemplos.",
+    "calibracion": "LLM del hub (el comportamiento actual) con el top-3 como pista. Calibrar con el historial de entregas: quién terminó atendiendo cada pedido es la etiqueta verdadera."
+  },
+  "evidencia": {
+    "fecha": "2026-09-23",
+    "modelo": "jev-1.13.0",
+    "casos": [
+      "adaptador codex con PROCESS_EXIT_AMBIGUOUS -> zeus p=1.00 conf=1.00, encaja::zeus 0.88",
+      "certificado TLS a renovar en el VPS -> kant p=1.00, encaja::kant 0.97",
+      "agendar dentista -> jarvis p=0.97, encaja::jarvis 0.97",
+      "¿me aprobás gastar 20 USD? -> ninguno p=0.88, es_para_persona 0.96",
+      "¿en qué va el proyecto? -> argos p=1.00, encaja::argos 0.94 (encaja::socrates 0.69: los Nouls absolutos se derraman; por eso sólo cuentan para el ganador)"
+    ]
+  }
+}

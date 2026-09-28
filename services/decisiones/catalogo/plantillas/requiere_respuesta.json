@@ -1,0 +1,85 @@
+{
+  "id": "requiere_respuesta",
+  "version": "1.0.0",
+  "nombre": "¿El mensaje merece un turno? (anti-loop)",
+  "cuando_usar": "En el adaptador, ANTES de despertar al LLM: la topología prohíbe responder a saludos, acuses y cortesías sin pedido accionable, pero hoy cada mensaje así cuesta un turno entero para decidir no responder. Es probablemente el ahorro más grande del catálogo.",
+  "state": {
+    "mensaje": "texto del mensaje entre agentes",
+    "remitente": "alias"
+  },
+  "state_requerido": [
+    "mensaje"
+  ],
+  "questions": {
+    "solo_cortesia": {
+      "type": "noul",
+      "instructions": "¿`mensaje` es sólo un saludo, un agradecimiento, un acuse de recibo o una despedida, sin ningún pedido ni pregunta?",
+      "criteria": {
+        "true": {
+          "que": "Cortesía o acuse sin nada que hacer",
+          "ejemplos": [
+            "gracias, recibido",
+            "perfecto, quedo atento",
+            "de nada"
+          ]
+        },
+        "false": {
+          "que": "Trae un pedido, una pregunta o información nueva que cambia algo",
+          "ejemplos": [
+            "gracias, ahora revisá el log de ayer",
+            "recibido: el deploy falló otra vez"
+          ]
+        }
+      }
+    },
+    "contiene_pedido": {
+      "type": "noul",
+      "instructions": "¿`mensaje` pide hacer algo o hace una pregunta que espera respuesta?"
+    }
+  },
+  "reglas": [
+    {
+      "si": {
+        "todas": [
+          {
+            "p": "solo_cortesia",
+            ">=": 0.8
+          },
+          {
+            "p": "contiene_pedido",
+            "<=": 0.2
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "no_despertar",
+        "motivo": "Sólo cortesía o acuse: cerrá la entrega con un sobre mínimo sin messages."
+      }
+    }
+  ],
+  "sino": {
+    "decision": "turno_normal",
+    "motivo": "Trae algo accionable: turno normal.",
+    "llm": true
+  },
+  "si_falla": {
+    "decision": "turno_normal",
+    "motivo": "Jev no respondió: turno normal.",
+    "llm": true
+  },
+  "notas": {
+    "antes_de_llamar": [
+      "Las menciones explícitas (@alias) y el destinatario del sobre se resuelven en código.",
+      "Nunca aplicar a mensajes de una persona por canal directo: ahí siempre se contesta."
+    ],
+    "lectura": "Umbrales altos a propósito: perder un pedido real es mucho más caro que gastar un turno de más."
+  },
+  "evidencia": {
+    "fecha": "2026-09-23",
+    "modelo": "jev-1.13.0",
+    "casos": [
+      "'¡Gracias zeus! Recibido, quedo atento.' -> solo_cortesia 0.95-0.96 en 11 corridas, contiene_pedido 0.05-0.06 -> no despertar al LLM",
+      "'Gracias. Ahora revisá por qué hegel no responde' -> solo_cortesia 0.02, contiene_pedido 0.94 -> turno normal"
+    ]
+  }
+}

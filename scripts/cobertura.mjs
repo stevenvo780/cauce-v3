@@ -30,6 +30,7 @@ const SUITES_RAIZ = [
   'tests/store-hardening', 'tests/terminal-pty', 'packages/mcp-fleet-monitor',
   'packages/protocol/test', 'packages/store/test', 'services/dispatcher/test',
   'services/gateway/src', 'services/telegram-bridge/test', 'services/terminal-relay/src',
+  'services/decisiones/test',
 ];
 
 const INCLUIR_RAIZ = ['packages/*/src/**/*.ts', 'services/*/src/**/*.ts'];
@@ -43,7 +44,7 @@ const SALIDAS_COMPILADAS = [
 export const PAQUETES_RAIZ = [
   'packages/protocol/src', 'packages/store/src', 'packages/mcp-fleet-monitor/src',
   'services/dispatcher/src', 'services/gateway/src', 'services/telegram-bridge/src',
-  'services/terminal-relay/src',
+  'services/terminal-relay/src', 'services/decisiones/src',
 ];
 export const PAQUETE_CONSOLA = 'console/src';
 export const PAQUETE_ADAPTER = 'packages/adapter-sdk';

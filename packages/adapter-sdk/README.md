@@ -127,6 +127,13 @@ Registrar ese servidor en la configuración nativa del harness y recargar su ses
 drenado, es parte del despliegue. Cambiar el bundle del adaptador por sí solo no registra herramientas
 en una CLI que ya estaba abierta. Los argumentos deben resolver dentro del contenedor del alias.
 
+`cauce-decisiones-mcp` es un segundo servidor, separado, con los mismos dos argumentos. Expone
+`listar_plantillas`, `decidir_plantilla` y `decidir`, y usa la ruta `POST /decisiones` del mismo
+socket. Esa ruta no necesita turno y no pasa por la cola de emisión. El adaptador la reenvía al
+servicio de decisiones (`CAUCE_DECISIONES_URL`, un origen https) con el certificado mTLS del alias. Sin
+esa variable responde `decisiones_no_configurado`. Registrarlo no activa `cauce_*` en un alias que no
+los tenga. El contrato está en `services/decisiones/README.md`.
+
 `cauce_send`, `cauce_notify` y `cauce_artifact_add` preparan salidas. `cauce_reply` deposita una sola
 respuesta: un segundo intento se rechaza; el error de una entrada inválida no cambia el depósito y
 permite corregirla. No se admiten identidad, epoch ni claim como argumentos. El engine mantiene

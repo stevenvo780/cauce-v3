@@ -1,0 +1,45 @@
+{
+  "catalogo": "decisiones-jev-flota-cauce",
+  "version": "1.1.0",
+  "modelo_calibrado": "jev-1.13.0",
+  "api": {
+    "endpoint": "POST https://api.typesafe.ai/v1/systemone",
+    "limites": {
+      "choice_opciones_max": 255,
+      "score_niveles": "2 a 10",
+      "contexto_total_tokens": 64000,
+      "contexto_state_mas_pregunta_mas_larga_tokens": 32000,
+      "tasa": "1200 req/min y 250000 tokens/s (dinámicos; 429 si se supera)",
+      "bytes_locales": "state <= 64 KiB, cada pregunta <= 16 KiB, state + questions <= 96 KiB (unos 32k tokens a los ~3 bytes por token medidos): se rechaza gratis antes de llamar; un texto que tokenice mucho peor todavía puede recibir un 422 de Jev."
+    },
+    "precio": "USD 0.042 por millón de tokens de entrada; la salida es gratis",
+    "errores": {
+      "401": "clave inválida: no reintentar",
+      "422": "cuerpo inválido: no reintentar, es bug del catálogo",
+      "429": "límite de tasa: backoff exponencial respetando retry-after",
+      "529": "sobrecarga: backoff exponencial",
+      "5xx": "reintentar con backoff (el SDK reintenta 408, 429 y 500-599); medido un 520 de borde, no documentado"
+    }
+  },
+  "reglas_globales": [
+    "Una llamada por state: todas las preguntas de una plantilla van juntas (fan-out especulativo); las que no aplican se ignoran en código.",
+    "Aritmética, fechas, conteos y umbrales viven en código; a Jev entran como texto ya resuelto.",
+    "Todo state se recorta a lo que la pregunta necesita y se enmascara antes de salir de la flota (nunca tokens ni claves).",
+    "Ante error o timeout de Jev: las plantillas de seguridad fallan cerradas (aprobacion_humana, guardia_privacidad_jarvis); el resto cae al LLM, que es el comportamiento de hoy.",
+    "Noul no trae confidence: su certeza es la distancia a 0.5; se lee con dos umbrales (sí / no) y una franja intermedia que va al LLM.",
+    "Choice y Score traen confidence (forma de la distribución): se exige más confianza cuanto más cara es la acción.",
+    "Los umbrales de un Noul no se trasladan a una Choice ni al revés (la doc lo advierte).",
+    "Latencia: timeout de 15 s por intento y presupuesto total de 30 s por decisión (lo medido tuvo colas de 5 a 28 s); si un intento tarda más de 3 s sale una segunda solicitud idéntica (hedge, como máximo 2 en vuelo) y gana la primera; hasta 3 rondas. 429, 529, 408 y 5xx (incluido 520) se reintentan con backoff exponencial respetando retry-after; 401 y 422 no se reintentan y cortan también la copia del hedge en vuelo. Los valores viven en config.ts y el compose.",
+    "Cada decisión se registra: plantilla, versión de plantilla, response.model, x-typesafe-request-id, señales, decisión y si cayó al LLM. Ese registro es el set de calibración.",
+    "La política por alias (qué exige aprobación, quién es zeus) se toma de la identidad del certificado mTLS, nunca de un parámetro del pedido."
+  ],
+  "medicion": {
+    "fecha": "2026-09-23",
+    "desde": "vpstn, clave de /etc/cauce-v3/secrets/typesafe-jev.key (leída en memoria, nunca impresa)",
+    "llamadas": 90,
+    "validez": "ningún 422 en ninguna corrida; el catálogo final se re-envió entero: 33 x 200 y 1 x 529 system_overloaded (documentado, reintentable). Modelo que respondió: jev-1.13.0.",
+    "costo": "29.765 tokens de entrada en las 34 llamadas del catálogo = USD 0,00125 (unos 875 tokens y USD 0,00004 por decisión); toda la validación (90 llamadas) gastó unos 69.600 tokens de entrada = USD 0,003",
+    "latencia": "bimodal: la mitad rápida en 146-650 ms (p50 264 ms en la corrida de 34), la cola en 5-28 s; 13/34 en paralelo y 6/10 secuenciales tardaron más de 8 s; 1 timeout a 40 s y 1 HTTP 520 no documentado. Media hora después, la corrida final dio p50 3,2 s y máximo 8,0 s. La doc promete ~100 ms.",
+    "estabilidad": "misma entrada repetida: desvío <= 0.01 en cada Noul (11 corridas del caso de cortesía, 4 del caso libre)."
+  }
+}

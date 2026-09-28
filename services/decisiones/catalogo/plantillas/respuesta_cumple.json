@@ -1,0 +1,155 @@
+{
+  "id": "respuesta_cumple",
+  "version": "1.1.0",
+  "nombre": "¿La respuesta del agente cumple lo pedido?",
+  "cuando_usar": "Al cerrar una delegación o para argos (PMO): decidir si la respuesta de un agente cierra el pedido o hay que devolverla. Un Noul por requisito (el patrón de la doc: iterar en código y contar en código).",
+  "state": {
+    "pedido": "texto del pedido original",
+    "requisitos": [
+      "requisito 1",
+      "requisito 2",
+      "..."
+    ],
+    "respuesta": "texto de la respuesta del agente, recortado"
+  },
+  "state_requerido": [
+    "pedido",
+    "respuesta"
+  ],
+  "questions": {
+    "cobertura": {
+      "type": "score",
+      "instructions": "¿Cuánto de `pedido` resuelve `respuesta`?",
+      "criteria": [
+        "No aborda el pedido",
+        "Sólo acusa recibo o promete hacerlo después",
+        "Resuelve una parte y omite partes pedidas de forma explícita",
+        "Resuelve todo lo pedido pero sin evidencia de que se hizo o se probó",
+        "Resuelve todo lo pedido y muestra evidencia verificable: salidas de comandos, commits, enlaces o mediciones"
+      ]
+    },
+    "afirma_sin_evidencia": {
+      "type": "noul",
+      "instructions": "¿`respuesta` afirma que algo quedó hecho, desplegado o funcionando sin mostrar una prueba concreta como una salida de comando, un commit, un enlace o una medición?"
+    },
+    "declara_no_probado": {
+      "type": "noul",
+      "instructions": "¿`respuesta` dice explícitamente que algo no se probó o no se verificó?"
+    },
+    "deja_pendiente": {
+      "type": "noul",
+      "instructions": "¿`respuesta` deja trabajo pendiente o le pide algo a otra persona para poder terminar?"
+    }
+  },
+  "expansiones": [
+    {
+      "por_elemento": "requisitos",
+      "minimo": 1,
+      "maximo": 20,
+      "id": "cumple_req::{i}",
+      "pregunta": {
+        "type": "noul",
+        "instructions": "¿`respuesta` muestra que se cumplió `requisitos[{i}]`?"
+      }
+    }
+  ],
+  "reglas": [
+    {
+      "si": {
+        "todas": [
+          {
+            "min": "cumple_req::*",
+            ">=": 0.6
+          },
+          {
+            "puntaje": "cobertura",
+            ">=": 3
+          },
+          {
+            "confianza": "cobertura",
+            ">=": 0.7
+          },
+          {
+            "p": "afirma_sin_evidencia",
+            "<": 0.5
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "cumple",
+        "motivo": "Todos los requisitos cumplidos, con evidencia."
+      }
+    },
+    {
+      "si": {
+        "alguna": [
+          {
+            "min": "cumple_req::*",
+            "<=": 0.3
+          },
+          {
+            "todas": [
+              {
+                "puntaje": "cobertura",
+                "<": 1.5
+              },
+              {
+                "confianza": "cobertura",
+                ">=": 0.6
+              }
+            ]
+          }
+        ]
+      },
+      "entonces": {
+        "decision": "incompleta",
+        "motivo": "Falta al menos un requisito: devolvé nombrando los cumple_req::i <= 0.3 de senales."
+      }
+    },
+    {
+      "si": {
+        "p": "afirma_sin_evidencia",
+        ">=": 0.7
+      },
+      "entonces": {
+        "decision": "sin_evidencia",
+        "motivo": "Afirma sin mostrar prueba: pedí la salida, el commit o el enlace."
+      }
+    }
+  ],
+  "sino": {
+    "decision": "llm",
+    "motivo": "Franja intermedia: verificador LLM (o argos) con las señales por requisito.",
+    "llm": true
+  },
+  "si_falla": {
+    "decision": "llm",
+    "motivo": "Jev no respondió: verificá vos.",
+    "llm": true
+  },
+  "marcas": {
+    "hecho_sin_probar": {
+      "p": "declara_no_probado",
+      ">=": 0.7
+    },
+    "deja_pendiente": {
+      "p": "deja_pendiente",
+      ">=": 0.7
+    }
+  },
+  "notas": {
+    "antes_de_llamar": [
+      "Los requisitos se listan antes: los escribe quien encarga, o los extrae un LLM una sola vez al crear la tarea.",
+      "Jev juzga lo que el TEXTO de la respuesta afirma y muestra; la verificación dura (el commit existe, la URL responde) la hace el código."
+    ],
+    "confianza": "Un score decide solo con su confidence: cuando la distribución no es firme la regla no dispara y la decisión cae al LLM, como pide la regla global del catálogo ('más confianza cuanto más cara es la acción'). 'cumple' (declarar terminado, el sentido caro) pide 0.7."
+  },
+  "evidencia": {
+    "fecha": "2026-09-23",
+    "modelo": "jev-1.13.0",
+    "casos": [
+      "healthcheck hecho y probado pero no desplegado -> cumple_req 0.93 / 0.02, deja_pendiente 0.96, cobertura 2.01 -> INCOMPLETA nombrando 'desplegar'",
+      "'Hecho, todo funcionando.' -> afirma_sin_evidencia 0.98, cobertura 2.91 (nivel 'sin evidencia' 0.96) -> SIN EVIDENCIA"
+    ]
+  }
+}

@@ -12,7 +12,8 @@ fi
 shell_sources=()
 for candidate in "$ROOT"/scripts/*.sh "$ROOT"/cli/*.sh "$ROOT"/guardias/*.sh "$ROOT"/guardias/contenedor/*.sh \
   "$ROOT"/openclaw-gateway/*.sh "$ROOT"/patches/*.sh "$ROOT"/pty-agent/*.sh "$ROOT"/tests/*.sh \
-  "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh "$PROJECT"/scripts/*.sh \
+  "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh "$PROJECT"/deploy/decisiones/*.sh \
+  "$PROJECT"/scripts/*.sh \
   "${shebang_sh[@]/#/"$PROJECT"/}"; do
   if [ -f "$candidate" ]; then shell_sources+=("$candidate"); fi
 done

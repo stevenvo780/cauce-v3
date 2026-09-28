@@ -19,6 +19,8 @@ interface CliRuntimeConfig {
   readonly bearerTokenFile?: string;
   readonly mutualTls?: { readonly certFile: string; readonly keyFile: string; readonly caFile: string };
   readonly developmentIdentity: boolean;
+  /** Origin of the decisions service; reached with this alias's mTLS identity. */
+  readonly decisionesUrl?: string;
   readonly harnessCommand?: string;
   readonly harnessBridge?: string;
   readonly hermesPython?: string;
@@ -89,6 +91,19 @@ function rejectInlineSecrets(value: unknown): void {
   }
 }
 
+/** An https origin and nothing else: no credentials, path, query or fragment can ride in it. */
+function decisionesOrigin(value: unknown, context: string): string | undefined {
+  if (value === undefined) return undefined;
+  const raw = string(value, context);
+  let url: URL;
+  try { url = new URL(raw); } catch { throw new Error(`${context} must be an https origin`); }
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== ""
+    || (url.pathname !== "/" && url.pathname !== "")) {
+    throw new Error(`${context} must be an https origin`);
+  }
+  return url.origin;
+}
+
 function optionalPath(base: string, value: unknown, context: string): string | undefined {
   return value === undefined ? undefined : resolve(base, string(value, context));
 }
@@ -152,6 +167,7 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
     "dev_headers",
     "harness_command",
     "openclaw",
+    "decisiones_url",
   ]), `configuration alias '${alias}'`);
   const base = dirname(absolute);
   const runtimeEnvironment = environment(entry.environment);
@@ -165,6 +181,7 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
   const bearerTokenFile = optionalPath(base, entry.token_file, "token_file");
   const mutualTls = mtls(base, entry.mtls);
   const openClawSettings = openClaw(base, entry.openclaw, harnessId);
+  const decisionesUrl = decisionesOrigin(entry.decisiones_url, "decisiones_url");
   return {
     tenant: string(entry.tenant, "tenant"),
     room: entry.room === undefined ? string(entry.tenant, "tenant") : string(entry.room, "room"),
@@ -182,6 +199,7 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
     ...(bearerTokenFile === undefined ? {} : { bearerTokenFile }),
     ...(mutualTls === undefined ? {} : { mutualTls }),
     developmentIdentity,
+    ...(decisionesUrl === undefined ? {} : { decisionesUrl }),
     ...(entry.harness_command === undefined ? {} : { harnessCommand: string(entry.harness_command, "harness_command") }),
     ...(openClawSettings === undefined ? {} : { openClaw: openClawSettings }),
   };
@@ -267,6 +285,7 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
     && (openClawConfig.apiUrl === undefined || openClawConfig.tokenFile === undefined)) {
     throw new Error("OpenClaw API transport requires CAUCE_OPENCLAW_API_URL and CAUCE_OPENCLAW_TOKEN_FILE");
   }
+  const decisionesUrl = decisionesOrigin(process.env.CAUCE_DECISIONES_URL, "CAUCE_DECISIONES_URL");
   return {
     tenant: requiredEnvironment("CAUCE_TENANT"),
     room: requiredEnvironment("CAUCE_ROOM"),
@@ -280,6 +299,7 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
     ...(process.env.CAUCE_TOKEN_FILE === undefined ? {} : { bearerTokenFile: resolve(process.env.CAUCE_TOKEN_FILE) }),
     ...(mutualTls === undefined ? {} : { mutualTls }),
     developmentIdentity,
+    ...(decisionesUrl === undefined ? {} : { decisionesUrl }),
     ...(process.env.CAUCE_HARNESS_COMMAND === undefined ? {} : { harnessCommand: process.env.CAUCE_HARNESS_COMMAND }),
     ...bridgeEnvironment(harnessId),
     ...(openClawConfig === undefined ? {} : { openClaw: openClawConfig }),
