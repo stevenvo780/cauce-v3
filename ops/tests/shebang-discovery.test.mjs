@@ -15,6 +15,7 @@ const SHELL_ESPERADOS = [
   "ops/cli/cauce-huerfanas",
   "ops/cli/cauce-panel",
   "ops/cli/cauce-reponer",
+  "ops/container-runtime/muse-cauce",
   "ops/guardias/cauce-codex-sync",
   "ops/guardias/cauce-destrabar-telegram",
   "ops/guardias/cauce-directo",
