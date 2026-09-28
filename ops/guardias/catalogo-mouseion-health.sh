@@ -124,7 +124,7 @@ if [ "$PRUEBA" = 1 ]; then
   exit 0
 fi
 
-[ ${#ROTAS[@]} -eq 0 ] && exit 0
+if [ ${#ROTAS[@]} -eq 0 ]; then : > "$ESTADO" 2>/dev/null || true; exit 0; fi  # todo sano: vaciar, o un pico avisado tapa la caida real
 
 # Avisa solo si hay alguna rota nueva respecto del aviso anterior: que el conjunto se encoja no es noticia, y repetir un subconjunto ya avisado es ruido con forma de alarma.
 NUEVAS="$(printf '%s\n' "${ROTAS[@]}" | awk '{print $NF}' | sort \
