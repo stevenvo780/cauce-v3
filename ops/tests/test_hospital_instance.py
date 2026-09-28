@@ -49,7 +49,7 @@ class HospitalInstanceTests(unittest.TestCase):
                     "profile_count": 3,
                     "membership_count": 4,
                     "acl_edge_count": 0,
-                    "agent_topology": "operador:hospital-lider:operator,perseo:hospital-developer:agent,teseo:hospital-developer:agent",
+                    "agent_topology": "operador:hospital-lider:operator,perseo:hospital-praxis-developer:agent,teseo:hospital-praxis-developer:agent",
                     "public_table_count": 30,
                     "isolated": True,
                     "network": "none",
@@ -366,13 +366,18 @@ class HospitalInstanceTests(unittest.TestCase):
             document = json.loads(status.read_text(encoding="utf-8"))
             evidence = pathlib.Path(document["restore_evidence_file"])
             evidence_document = json.loads(evidence.read_text(encoding="utf-8"))
-            evidence_document["acl_edge_count"] = 1
-            evidence.write_text(
-                json.dumps(evidence_document, sort_keys=True, separators=(",", ":")) + "\n",
-                encoding="utf-8",
-            )
-            evidence.chmod(0o600)
-            self.assertNotEqual(self.run_monitor(status).returncode, 0)
+            for field, value in (
+                ("acl_edge_count", 1),
+                ("agent_topology", "operador:hospital-lider:operator,perseo:hospital-developer:agent,teseo:hospital-developer:agent"),
+                ("agent_topology", "operador:hospital-lider:operator,perseo:hospital-praxis-developer:agent,teseo:hospital-developer:agent"),
+            ):
+                altered = {**evidence_document, field: value}
+                evidence.write_text(
+                    json.dumps(altered, sort_keys=True, separators=(",", ":")) + "\n",
+                    encoding="utf-8",
+                )
+                evidence.chmod(0o600)
+                self.assertNotEqual(self.run_monitor(status).returncode, 0)
 
     def test_backup_monitor_rejects_a_dump_outside_its_instance(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

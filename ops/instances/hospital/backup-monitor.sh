@@ -128,7 +128,7 @@ try:
         or evidence.get("profile_count") != 3
         or evidence.get("membership_count") != 4
         or evidence.get("acl_edge_count") != 0
-        or evidence.get("agent_topology") != "operador:hospital-lider:operator,perseo:hospital-developer:agent,teseo:hospital-developer:agent"
+        or evidence.get("agent_topology") != "operador:hospital-lider:operator,perseo:hospital-praxis-developer:agent,teseo:hospital-praxis-developer:agent"
         or not isinstance(evidence.get("migration_count"), int)
         or evidence["migration_count"] < 1
     ):

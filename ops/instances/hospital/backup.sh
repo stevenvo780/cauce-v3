@@ -136,7 +136,7 @@ IFS=$'\t' read -r migrations tenants rooms agents profiles memberships acl_edges
 if ! [[ "$migrations" =~ ^[1-9][0-9]*$ ]] \
    || [ "$tenants" != 1 ] || [ "$rooms" != 1 ] || [ "$agents" != 3 ] \
    || [ "$profiles" != 3 ] || [ "$memberships" != 4 ] || [ "$acl_edges" != 0 ] \
-   || [ "$topology" != 'operador:hospital-lider:operator,perseo:hospital-developer:agent,teseo:hospital-developer:agent' ] \
+   || [ "$topology" != 'operador:hospital-lider:operator,perseo:hospital-praxis-developer:agent,teseo:hospital-praxis-developer:agent' ] \
    || ! [[ "$core_tables" =~ ^[1-9][0-9]*$ ]]; then
   echo "La restauración aislada no conserva la topología Hospital" >&2
   exit 1
