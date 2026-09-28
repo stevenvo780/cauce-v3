@@ -413,7 +413,7 @@ export class AdapterEngine {
           {
             ...(processedReplies.length === 0 ? {} : { processedReplies }),
             ...(this.ownTenantId === 'Hospital' && delivery.recipient_alias === 'operador'
-              ? { omitCoveredDiagnostics: true } : {}),
+              ? { humanFacingReceipt: true } : {}),
           },
         ), {
           messageType,

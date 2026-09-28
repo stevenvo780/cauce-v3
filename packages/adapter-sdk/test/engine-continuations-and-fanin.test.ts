@@ -495,6 +495,106 @@ test("every harness runtime bypasses providers and native sessions for agent fan
   }
 });
 
+test("Hospital director fan-in sends a short human reply without raw branch reports", async () => {
+  const context = await setup("engine-hospital-director-fanin", new ControlledRunner(), {
+    ownTenantId: "Hospital",
+  });
+  const input: Delivery = {
+    ...delivery("hospital-director-fanin"),
+    tenant_id: "Hospital",
+    room_id: "grp.hospital",
+    actor_alias: "cauce",
+    recipient_alias: "operador",
+    body: {
+      type: "agent.fanin",
+      fanin_data_v1: {
+        schema: "cauce.agent_fanin_data.v1",
+        expected: 2,
+        completed: 2,
+        responses: [
+          { tenant_id: "Hospital", alias: "teseo", untrusted_text: "raw backend implementation" },
+          { tenant_id: "Hospital", alias: "perseo", untrusted_text: "raw frontend implementation" },
+        ],
+      },
+    },
+  };
+
+  await context.engine.handleDelivery(input);
+
+  const reply = context.events.at(-1)?.output?.reply ?? "";
+  assert.equal(context.runner.calls, 0);
+  assert.match(reply, /Falta un resumen verificado del director/u);
+  assert.doesNotMatch(reply, /raw backend|raw frontend|teseo|perseo|branch response/u);
+  assert.ok(Buffer.byteLength(reply, "utf8") < 200);
+});
+
+test("Hospital director fan-in preserves a clear local conclusion without raw branch diagnostics", async () => {
+  const runner = new ControlledRunner();
+  runner.stdout = JSON.stringify({
+    reply: null,
+    messages: [{ to: "teseo", body: "check the backend" }],
+    status: "done", retryable: false, artifacts: [],
+  });
+  const context = await setup("engine-hospital-director-conclusion", runner, {
+    ownTenantId: "Hospital",
+  });
+  const rootDelivery: Delivery = {
+    ...delivery("hospital-conclusion-root"),
+    tenant_id: "Hospital", room_id: "grp.hospital",
+    recipient_alias: "operador",
+    routing_targets: [{ tenant_id: "Hospital", alias: "teseo", online: true }],
+  };
+  await context.engine.handleDelivery(rootDelivery);
+
+  runner.stdout = JSON.stringify({
+    reply: "El backend avanzó, pero todavía falta comprobar el acceso entre clínicas.",
+    messages: [], status: "done", retryable: false, artifacts: [],
+  });
+  const response: Delivery = {
+    ...delivery("hospital-conclusion-response"),
+    tenant_id: "Hospital", room_id: "grp.hospital",
+    actor_alias: "teseo", recipient_alias: "operador",
+    trace_id: rootDelivery.trace_id,
+    body: {
+      type: "agent.response", text: "raw backend sha256 1234567890123456789012345678901234567890",
+      correlation: {
+        root_message_id: rootDelivery.message_id,
+        root_delivery_id: rootDelivery.delivery_id,
+        response_to_delivery_id: rootDelivery.delivery_id,
+      },
+    },
+  };
+  await context.engine.handleDelivery(response);
+
+  const fanin: Delivery = {
+    ...delivery("hospital-conclusion-fanin"),
+    tenant_id: "Hospital", room_id: "grp.hospital",
+    actor_alias: "cauce", recipient_alias: "operador",
+    trace_id: rootDelivery.trace_id,
+    body: {
+      type: "agent.fanin",
+      correlation: {
+        root_message_id: rootDelivery.message_id,
+        root_delivery_id: rootDelivery.delivery_id,
+      },
+      fanin_data_v1: {
+        schema: "cauce.agent_fanin_data.v1", expected: 1, completed: 1,
+        responses: [{
+          tenant_id: "Hospital", alias: "teseo",
+          delivery_id: response.delivery_id,
+          untrusted_text: "raw backend sha256 1234567890123456789012345678901234567890",
+        }],
+      },
+    },
+  };
+  await context.engine.handleDelivery(fanin);
+
+  const reply = context.events.at(-1)?.output?.reply ?? "";
+  assert.equal(reply, "El cierre sigue pendiente de verificación. Avance confirmado por el director: El backend avanzó, pero todavía falta comprobar el acceso entre clínicas.");
+  assert.doesNotMatch(reply, /raw backend|sha256|locally synthesized/u);
+  assert.equal(runner.calls, 2);
+});
+
 test("agent fan-in rejects legacy generated text without fanin_data_v1 before harness dispatch", async () => {
   const context = await setup("engine-fanin-missing-data");
   const input: Delivery = {

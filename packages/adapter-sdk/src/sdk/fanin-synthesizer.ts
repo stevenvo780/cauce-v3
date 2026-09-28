@@ -6,6 +6,9 @@ import type { StructuredOutput } from "./types.js";
 const FANIN_SCHEMA = "cauce.agent_fanin_data.v1";
 const TRUNCATION_NOTICE = "\n[fan-in synthesis truncated]";
 const ENTRY_TRUNCATION_NOTICE = " [entry truncated]";
+const HUMAN_SUMMARY_MAX_BYTES = 1000;
+const HUMAN_SUMMARY_TRUNCATION_NOTICE = "…";
+const TECHNICAL_REPLY_PATTERN = /```|\\n|\/(?:opt|workspace|home)\/|\b(?:sha256|commit|git|HTTP [45]\d\d)\b|\b[a-f0-9]{40,64}\b|^[A-Za-z][A-Za-z0-9_-]*\/[a-z][a-z0-9_-]*:/imu;
 
 interface AttributedText {
   readonly tenantId: string;
@@ -15,7 +18,7 @@ interface AttributedText {
 }
 
 export interface FaninSynthesisOptions {
-  readonly omitCoveredDiagnostics?: boolean;
+  readonly humanFacingReceipt?: boolean;
   /**
    * Validated terminal replies produced by this same local adapter while
    * processing correlated child responses. They never come from
@@ -198,13 +201,15 @@ export function synthesizeFaninOutput(
       right.updatedAt.localeCompare(left.updatedAt) || left.order - right.order);
   if (processedReplies.length === 0) {
     return {
-      reply: renderAttributedSection(
-        heading,
-        responses,
-        MAX_FINAL_TEXT_BYTES,
-        "No branch responses were available.",
-        "raw branch",
-      ),
+      reply: options.humanFacingReceipt === true
+        ? "Falta un resumen verificado del director. No puedo confirmar que este trabajo esté terminado."
+        : renderAttributedSection(
+          heading,
+          responses,
+          MAX_FINAL_TEXT_BYTES,
+          "No branch responses were available.",
+          "raw branch",
+        ),
       messages: [],
       notify: [],
       status: "done",
@@ -237,6 +242,28 @@ export function synthesizeFaninOutput(
     .filter((value): value is string => value !== undefined));
   const uncovered = responses.filter((response) =>
     response.deliveryId === undefined || !covered.has(response.deliveryId));
+  if (options.humanFacingReceipt === true) {
+    const truncation = objectRecord(data.truncation);
+    const omittedResponses = typeof truncation?.omitted_responses === "number"
+      && Number.isSafeInteger(truncation.omitted_responses)
+      && truncation.omitted_responses > 0;
+    const reviewUnconfirmed = uncovered.length > 0
+      || (others.length > 0 && !carriedByPrimary)
+      || omittedResponses
+      || (expected !== undefined && expected > responses.length)
+      || (expected !== undefined && completed < expected);
+    const summary = TECHNICAL_REPLY_PATTERN.test(primary.text)
+      ? undefined
+      : boundedUtf8(primary.text.trim(), HUMAN_SUMMARY_MAX_BYTES, HUMAN_SUMMARY_TRUNCATION_NOTICE);
+    return {
+      reply: reviewUnconfirmed
+        ? summary === undefined
+          ? "No hay un cierre verificado del director. Los informes del equipo quedaron registrados, pero no puedo confirmar que este trabajo esté terminado."
+          : `El cierre sigue pendiente de verificación. Avance confirmado por el director: ${summary}`
+        : summary ?? "El director todavía no dio un resumen claro del resultado. No puedo dar el trabajo por terminado.",
+      messages: [], notify: [], status: "done", retryable: false, artifacts: [],
+    };
+  }
   const sections: {
     readonly heading: string;
     readonly entries: readonly AttributedText[];
@@ -268,12 +295,6 @@ export function synthesizeFaninOutput(
     + `${processedReplies.length === 1 ? "reply" : "replies"}; `
     + `${String(responses.length)} branch ${responses.length === 1 ? "response" : "responses"} `
     + `in this chain; ${String(uncovered.length)} without local synthesis]`;
-  if (options.omitCoveredDiagnostics === true && sections.length === 0) {
-    return {
-      reply: boundedUtf8(primary.text, MAX_FINAL_TEXT_BYTES),
-      messages: [], notify: [], status: 'done', retryable: false, artifacts: [],
-    };
-  }
   const separator = "\n\n";
   const separatorBytes = Buffer.byteLength(separator, "utf8");
   const availableBytes = MAX_FINAL_TEXT_BYTES

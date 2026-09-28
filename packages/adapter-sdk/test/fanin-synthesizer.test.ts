@@ -4,7 +4,7 @@ import { AdapterError } from "../src/sdk/errors.js";
 import { synthesizeFaninOutput } from "../src/sdk/fanin-synthesizer.js";
 import { MAX_FINAL_TEXT_BYTES } from "../src/sdk/output-parser.js";
 
-function synthesizedFixture(uncoveredBranch: boolean, omitCoveredDiagnostics = false): string {
+function synthesizedFixture(uncoveredBranch: boolean, humanFacingReceipt = false): string {
   const uncovered = {
     tenant_id: "Steven",
     alias: "socrates",
@@ -28,7 +28,7 @@ function synthesizedFixture(uncoveredBranch: boolean, omitCoveredDiagnostics = f
       ],
     },
   }, {
-    omitCoveredDiagnostics,
+    humanFacingReceipt,
     processedReplies: [{
       tenantId: "Steven",
       alias: "seneca",
@@ -83,10 +83,88 @@ test("a lead turn that covers every branch still carries the counting footer", (
   );
 });
 
-test('human presentation omits covered diagnostics without hiding an uncovered branch', () => {
+test('human presentation is concise and reports review gaps without raw branches', () => {
   assert.equal(synthesizedFixture(false, true), 'Locally synthesized.');
-  assert.match(synthesizedFixture(true, true), /unsynthesized branch/u);
-  assert.match(synthesizedFixture(true, true), /1 without local synthesis/u);
+  const reply = synthesizedFixture(true, true);
+  assert.match(reply, /^El cierre sigue pendiente de verificación\. Avance confirmado por el director: Locally synthesized\.$/u);
+  assert.doesNotMatch(reply, /unsynthesized branch|without local synthesis|Steven\/socrates|\\n/u);
+  assert.ok(Buffer.byteLength(reply, "utf8") < 250);
+});
+
+test('human presentation does not publish a technical local reply even if fully covered', () => {
+  const reply = synthesizeFaninOutput({
+    fanin_data_v1: {
+      schema: 'cauce.agent_fanin_data.v1', expected: 1, completed: 1,
+      responses: [{
+        tenant_id: 'Hospital', alias: 'teseo',
+        delivery_id: '40000000-0000-4000-8000-000000000001',
+        untrusted_text: 'raw backend report',
+      }],
+    },
+  }, {
+    humanFacingReceipt: true,
+    processedReplies: [{
+      tenantId: 'Hospital', alias: 'teseo',
+      reply: 'Hospital/teseo: raw backend report sha256 123',
+      childDeliveryId: '40000000-0000-4000-8000-000000000001',
+    }],
+  }).reply ?? '';
+  assert.equal(reply, 'El director todavía no dio un resumen claro del resultado. No puedo dar el trabajo por terminado.');
+});
+
+test('human presentation with no local director review never publishes branch text', () => {
+  const reply = synthesizeFaninOutput({
+    fanin_data_v1: {
+      schema: 'cauce.agent_fanin_data.v1', expected: 1, completed: 1,
+      responses: [{ tenant_id: 'Hospital', alias: 'teseo', untrusted_text: 'private raw details' }],
+    },
+  }, { humanFacingReceipt: true }).reply ?? '';
+  assert.match(reply, /Falta un resumen verificado del director/u);
+  assert.doesNotMatch(reply, /private raw details|teseo/u);
+});
+
+test('human presentation requires proof for older reviews and omitted branches', () => {
+  const body = {
+    fanin_data_v1: {
+      schema: 'cauce.agent_fanin_data.v1', expected: 2, completed: 2,
+      responses: [{
+        tenant_id: 'Hospital', alias: 'perseo',
+        delivery_id: '40000000-0000-4000-8000-000000000001',
+        untrusted_text: 'private frontend report',
+      }],
+      truncation: { omitted_responses: 1 },
+    },
+  };
+  const reply = synthesizeFaninOutput(body, {
+    humanFacingReceipt: true,
+    processedReplies: [
+      { tenantId: 'Hospital', alias: 'perseo', reply: 'frontend done', childDeliveryId: '40000000-0000-4000-8000-000000000001' },
+      { tenantId: 'Hospital', alias: 'teseo', reply: 'backend done' },
+    ],
+  }).reply ?? '';
+  assert.match(reply, /^El cierre sigue pendiente de verificación\. Avance confirmado por el director: frontend done$/u);
+  assert.doesNotMatch(reply, /backend done|private frontend report/u);
+});
+
+test('human presentation does not silently discard an uncarried local review', () => {
+  const reply = synthesizeFaninOutput({
+    fanin_data_v1: {
+      schema: 'cauce.agent_fanin_data.v1', expected: 1, completed: 1,
+      responses: [{
+        tenant_id: 'Hospital', alias: 'perseo',
+        delivery_id: '40000000-0000-4000-8000-000000000001',
+        untrusted_text: 'private raw report',
+      }],
+    },
+  }, {
+    humanFacingReceipt: true,
+    processedReplies: [
+      { tenantId: 'Hospital', alias: 'perseo', reply: 'latest frontend details', childDeliveryId: '40000000-0000-4000-8000-000000000001' },
+      { tenantId: 'Hospital', alias: 'teseo', reply: 'older backend details' },
+    ],
+  }).reply ?? '';
+  assert.match(reply, /^El cierre sigue pendiente de verificación\. Avance confirmado por el director: latest frontend details$/u);
+  assert.doesNotMatch(reply, /backend details|private raw report/u);
 });
 
 test("fan-in footer reports processed, total and uncovered branch counts", () => {
