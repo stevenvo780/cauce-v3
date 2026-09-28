@@ -27,6 +27,8 @@ BUNDLE_ROOT=${CAUCE_CONTAINER_BUNDLE_ROOT:-$default_bundle_root}
 PKI_ROOT=${CAUCE_CONTAINER_PKI_ROOT:-$default_pki_root}
 LOCK_ROOT=${CAUCE_CONTAINER_LOCK_ROOT:-$default_lock_root}
 RUNTIME_HELPER_SOURCE="$ROOT/container-runtime/cauce-container-runtime.py"
+# The helper imports these siblings from its own directory: the container copy must carry all of them.
+RUNTIME_HELPER_MODULES=(cauce_container_base.py cauce_container_proc.py cauce_container_tree.py)
 MOUNT_VALIDATOR="$ROOT/scripts/validate-container-mount.py"
 ALIAS_LOCK_EXEC="$ROOT/scripts/alias-lock-exec.py"
 HERMES_RUNTIME_VERIFIER="$ROOT/scripts/verify-hermes-runtime.py"
@@ -418,6 +420,12 @@ copy_control_helper() {
   docker_id_cp "$RUNTIME_HELPER_SOURCE" "$control_helper"
   docker_id_exec --user 0 chown 0:0 "$control_helper"
   docker_id_exec --user 0 chmod 0555 "$control_helper"
+  local module
+  for module in "${RUNTIME_HELPER_MODULES[@]}"; do
+    docker_id_cp "$ROOT/container-runtime/$module" "$instance_root/$module"
+    docker_id_exec --user 0 chown 0:0 "$instance_root/$module"
+    docker_id_exec --user 0 chmod 0444 "$instance_root/$module"
+  done
 }
 
 prepare_control_securely() {
