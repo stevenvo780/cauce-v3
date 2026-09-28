@@ -35,8 +35,8 @@ function bounded<T>(promise: Promise<T>, deadline: number, signal: AbortSignal):
   const remaining = deadline - Date.now();
   if (remaining <= 0) return Promise.reject(new MuseDeadlineError());
   return new Promise<T>((resolveResult, rejectResult) => {
-    const timer = setTimeout(() => rejectResult(new MuseDeadlineError()), remaining);
-    const onAbort = (): void => rejectResult(new MuseAbortError());
+    const timer = setTimeout(() => { rejectResult(new MuseDeadlineError()); }, remaining);
+    const onAbort = (): void => { rejectResult(new MuseAbortError()); };
     signal.addEventListener("abort", onAbort, { once: true });
     promise.then(resolveResult, rejectResult).finally(() => {
       clearTimeout(timer);
@@ -251,7 +251,7 @@ export class MuseMspRunner {
         if (denial === undefined) throw new Error("Muse approval request offered no denying choice");
         return { choiceId: denial.choiceId };
       });
-      session.onApprovalError(() => approvalError(new Error("Muse approval could not be denied")));
+      session.onApprovalError(() => { approvalError(new Error("Muse approval could not be denied")); });
       let finalText = "";
       turnAttempted = true;
       const turn = await bounded(session.sendUserTurn({

@@ -25,8 +25,9 @@ test("Muse YOLO requires allowAll in the environment", async () => {
       CAUCE_MUSE_APPROVAL_MODE: "allowAll", CAUCE_MUSE_YOLO: "1",
     });
     const config = await loadCliRuntimeConfig("muse", []);
-    assert.equal(config.muse?.approvalMode, "allowAll");
-    assert.equal(config.muse?.yolo, true);
+    assert.ok(config.muse);
+    assert.equal(config.muse.approvalMode, "allowAll");
+    assert.equal(config.muse.yolo, true);
     delete process.env.CAUCE_MUSE_YOLO;
     await assert.rejects(loadCliRuntimeConfig("muse", []), /configured together/u);
     process.env.CAUCE_MUSE_YOLO = "1";
