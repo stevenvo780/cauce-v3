@@ -1,0 +1,10 @@
+[Unit]
+Description=Comprueba cada seis horas el backup Cauce Hospital
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:50:00 UTC
+Persistent=true
+RandomizedDelaySec=3m
+
+[Install]
+WantedBy=timers.target

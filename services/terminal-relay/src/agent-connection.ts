@@ -95,6 +95,8 @@ export class AgentConnection {
         ? {} : { claude_config_dir: this.hello.claude_config_dir }),
       ...(this.hello.openclaw_workspace === undefined
         ? {} : { openclaw_workspace: this.hello.openclaw_workspace }),
+      ...(this.hello.muse_workspace === undefined
+        ? {} : { muse_workspace: this.hello.muse_workspace }),
       ...(this.hello.cwd === undefined ? {} : { cwd: this.hello.cwd }),
       ...(this.hello.workspace_root === undefined
         ? {} : { workspace_root: this.hello.workspace_root }),

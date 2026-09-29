@@ -281,9 +281,9 @@ turno. Lo que este punto **no** puede hacer está en Consecuencias.
   en `agents` y no se inventa: un destino que no puede con los bytes degrada igual que un artifact
   fuera de cupo.
 - **Materialización de credenciales por alias.** Qué credencial recibe cada agente, y cuándo, es
-  decisión del dueño; aquí sólo está el canal.
+  una decisión de operación; aquí sólo está el canal.
 - **Rotación de identidades en `ops/`.** El gateway ya admite dos registros vivos del mismo
   principal; el bloqueo make-before-break está en los scripts de aprovisionamiento.
-- **`client_max_body_size` en los nginx de la consola.** Hoy no está declarado en ninguno de los
-  dos ficheros, así que rige el defecto de nginx, muy por debajo del tope de publicación del
-  protocolo.
+- **`client_max_body_size` en los nginx de la consola.** No está declarado ni en
+  `console/nginx.conf` ni en `deploy/console/nginx-console-tls.conf`, así que rige el defecto de
+  nginx, muy por debajo del tope de publicación del protocolo.

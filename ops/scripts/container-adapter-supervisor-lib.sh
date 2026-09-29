@@ -12,7 +12,7 @@ validate_relay_url() {
 }
 
 validate_config_values() {
-  local expected_pki="$PKI_ROOT/$alias_name" api_authority api_port default_timeout_ms
+  local expected_pki="$PKI_ROOT/$alias_name" api_authority api_port default_timeout_ms key
   local expected_hermes_home="$container_home/.local/share/cauce-v3/hermes/$alias_name"
   local expected_hermes_python approved_hermes_commit approved_hermes_line extra
   local approved_hermes_root approved_hermes_runtime_id
@@ -205,6 +205,21 @@ PY
       valid_absolute_path "${CONFIG[OPENCLAW_DIST_DIR]}" || die 'OPENCLAW_DIST_DIR path is invalid'
     fi
   fi
+  if [[ $harness == muse && -z $inventory_workspace ]]; then
+    # The muse-cauce bridge (no inventory workspace) reads none of the workspace-agent keys.
+    for key in MUSE_EXECUTABLE MUSE_CONFIG_HOME MUSE_DATA_HOME MUSE_WORKSPACE MUSE_MODEL MUSE_REASONING_EFFORT MUSE_APPROVAL_MODE MUSE_YOLO; do
+      [[ ! -v "CONFIG[$key]" ]] || die "$key requires a muse workspace in the inventory"
+    done
+  elif [[ $harness == muse ]]; then
+    [[ ${CONFIG[MUSE_EXECUTABLE]:-} == /opt/muse-code/muse ]] || die 'MUSE_EXECUTABLE must use the pinned Muse mount'
+    [[ ${CONFIG[MUSE_CONFIG_HOME]:-} == "$container_home/.muse/config" ]] || die 'MUSE_CONFIG_HOME must use the isolated persistent profile'
+    [[ ${CONFIG[MUSE_DATA_HOME]:-} == "$container_home/.muse/data" ]] || die 'MUSE_DATA_HOME must use the isolated persistent profile'
+    [[ ${CONFIG[MUSE_WORKSPACE]:-} == "$inventory_workspace" ]] || die 'MUSE_WORKSPACE differs from the canonical inventory workspace'
+    [[ ${CONFIG[MUSE_APPROVAL_MODE]:-} =~ ^(denyUnmatched|onRequest|allowAll)$ ]] || die 'MUSE_APPROVAL_MODE is invalid'
+    [[ ( ${CONFIG[MUSE_APPROVAL_MODE]} == allowAll && ${CONFIG[MUSE_YOLO]:-} == 1 ) || ( ${CONFIG[MUSE_APPROVAL_MODE]} != allowAll && ! -v CONFIG[MUSE_YOLO] ) ]] || die 'Muse YOLO and allowAll must be configured together'
+    [[ ! -v CONFIG[MUSE_MODEL] || ${CONFIG[MUSE_MODEL]} =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die 'MUSE_MODEL is invalid'
+    [[ ! -v CONFIG[MUSE_REASONING_EFFORT] || ${CONFIG[MUSE_REASONING_EFFORT]} =~ ^(none|minimal|low|medium|high|xhigh|max|ultra)$ ]] || die 'MUSE_REASONING_EFFORT is invalid'
+  fi
 }
 
 validate_bundle() {
@@ -239,13 +254,14 @@ validate_bundle() {
 validate_pki() {
   local pki=${CONFIG[PKI_DIR]} path name expected_openclaw=0
   assert_secure_directory "$pki" 'alias PKI directory'
-  [[ ${CONFIG[OPENCLAW_TRANSPORT]:-cli} == api ]] && expected_openclaw=1
+  [[ $harness == openclaw && ${CONFIG[OPENCLAW_TRANSPORT]:-cli} == api ]] && expected_openclaw=1
   shopt -s nullglob dotglob
   for path in "$pki"/*; do
     name=${path##*/}
     case "$name" in
       token|client.crt|client.key|ca.crt) ;;
-      openclaw-token) (( expected_openclaw == 1 )) || die 'unexpected OpenClaw token file in PKI directory' ;;
+      # A muse alias migrated from openclaw may keep the old token; deploy_pki never copies it.
+      openclaw-token) (( expected_openclaw == 1 )) || [[ $harness == muse ]] || die 'unexpected OpenClaw token file in PKI directory' ;;
       *) die 'alias PKI directory contains a non-allowlisted entry' ;;
     esac
     assert_secure_file "$path" 600 'alias PKI file'

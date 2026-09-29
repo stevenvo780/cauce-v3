@@ -8,7 +8,7 @@ Conecta un agente CLI real a Cauce: consumidor durable + ejecución sobre la ses
 
 **Ejecución:** entregar significa **pegar el texto en la sesión tmux viva** del harness (`paste-runner.ts`, `tmux.ts`: cuarentena de panel, barrera de input) y esperar el turno del modelo. Es la parte cara e inherentemente frágil del diseño: el error típico de producción es del turno del harness (timeouts de ACK, deadline excedido), no del bus.
 
-**Ejecutables (`src/bin/`):** `openclaw`, `claude`, `codex` — los que usa la flota real. `hermes`, `opencode` y `fake` no tienen ningún usuario en producción (candidatos a retiro con `git rm` — git es el archivo; `fake` lo usan los tests). `grok` es nuevo y todavía no tiene alias (ver abajo).
+**Ejecutables (`src/bin/`):** `openclaw`, `claude`, `codex` — los que usa la flota real. `hermes`, `opencode` y `fake` no tienen ningún usuario en producción (candidatos a retiro con `git rm` — git es el archivo; `fake` y `fake-harness` los usan los tests). `grok` es nuevo y todavía no tiene alias (ver abajo). `muse` tiene dos transportes (ver «Arnés `muse`»).
 
 **Despliegue:** la versión activa de cada adaptador se acredita contra la flota viva; no se infiere desde este README.
 
@@ -160,3 +160,27 @@ no declara la entrega completada sin haber observado ese cierre. En sesiones com
 es interno y queda unido a un recibo local. Al recuperar una cuarentena de la misma generación con
 el panel ocioso, rescata ese recibo en `resultados-tardios/` aunque la CLI nunca imprimiera un sobre.
 Un depósito local no autoriza por sí solo a reproducir trabajo ni a emitir un ACK para otro claim.
+
+## Arnés `muse` (Muse Code): dos transportes
+
+**Por defecto — `muse exec` (el que corre en producción, alias `hegel`).** El comando es el puente
+`muse-cauce exec --json --yolo --trust-workspace`: copia el prompt de stdin a un fichero regular
+(`--prompt-file` rechaza un pipe) y el parser lee el JSONL (`run_terminal`, con `run_output_delta`
+como respaldo). La sesión se observa en el stream y se reanuda con `--session-id`. Con
+`SHARED_SESSION=1` la entrega va a la TUI real en tmux (`--reasoning-effort max`), con un
+`XDG_DATA_HOME` propio del alias; «Double checking» no cuenta como turno fundido.
+
+**Opcional — MSP (`muse serve`, Hospital).** Se activa sólo con configuración explícita:
+`CAUCE_MUSE_EXECUTABLE` en el entorno o un bloque `muse` en el fichero de configuración. Sin eso,
+un alias `muse` sigue exactamente por el camino anterior. `cauce-adapter-muse` carga entonces
+`@muse-code/sdk` (sólo en ese modo) para hablar con `muse serve --trust-workspace` por MSP. Cauce guarda un UUIDv7 por ámbito de conversación y reanuda la sesión nativa en cada entrega. El consumidor conserva su barrera durable anterior a la invocación; si el turno queda sin terminal acreditado, lo marca ambiguo y no reenvía el prompt automáticamente.
+
+En modo MSP el arranque por entorno exige `CAUCE_MUSE_EXECUTABLE`, `CAUCE_MUSE_CONFIG_HOME`, `CAUCE_MUSE_DATA_HOME` y `CAUCE_MUSE_WORKSPACE` como rutas absolutas. Los dos directorios XDG deben ser hermanos bajo el HOME persistente del alias. `CAUCE_MUSE_MODEL` y `CAUCE_MUSE_REASONING_EFFORT` son opcionales. `CAUCE_MUSE_APPROVAL_MODE` acepta `denyUnmatched` (valor por defecto), `onRequest` y `allowAll`. `CAUCE_MUSE_YOLO=1` exige `allowAll` y arranca `muse serve` con `--disable-sandbox`; ambos valores se rechazan si aparecen separados. Hospital usa esa combinación solo para Teseo y Perseo, dentro de contenedores con estado y workspace aislados. Para Hospital el workspace debe ser exactamente `/home/node/clawd` y resolver a sí mismo (un alias `muse` de Hospital sin MSP no arranca); el host no arranca si allí o en el HOME aislado aparecen directorios personales `.claude` o `.codex`.
+
+Salvaguardas de la convivencia: una variable exclusiva de MSP (`CAUCE_MUSE_CONFIG_HOME`,
+`CAUCE_MUSE_APPROVAL_MODE`, `CAUCE_MUSE_YOLO`, `CAUCE_MUSE_MODEL`, `CAUCE_MUSE_REASONING_EFFORT`) sin
+`CAUCE_MUSE_EXECUTABLE` detiene el adaptador en vez de caer a `exec --yolo`; MSP y `SHARED_SESSION=1`
+son excluyentes. `CAUCE_MUSE_DATA_HOME` y `CAUCE_MUSE_WORKSPACE` no seleccionan transporte: la TUI
+compartida y la medición de contexto también los leen.
+
+Con `CAUCE_MUSE_WORKSPACE` el adaptador siembra el bloque gestionado en `AGENTS.md` del workspace medido, conservando las instrucciones manuales. Muse necesita un login propio en su XDG config; el paquete nunca copia credenciales de otro arnés. El binario y la cuenta reales se prueban en el host de despliegue, mientras la suite local usa un host MSP sintético sin credenciales (`test/fixtures/fake-muse-msp.mjs`).

@@ -1,0 +1,10 @@
+[Unit]
+Description=Backup nocturno de Cauce Hospital
+
+[Timer]
+OnCalendar=*-*-* 03:40:00 UTC
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

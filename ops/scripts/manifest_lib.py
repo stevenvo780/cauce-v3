@@ -67,13 +67,14 @@ def validate_manifest(
     if (spec["tenant"], spec["room"], spec["harness"]) != (tenant, room, harness):
         raise ManifestError(f"{source}: tenant/room/harness differs from the fleet assignment")
     profile = require_mapping(spec["profile"], f"{source}.spec.profile")
-    profile_keys = {"seedOnConnect", "configScope", "workspace"} if harness == "openclaw" \
+    has_workspace = harness == "openclaw" or (harness == "muse" and assignment.get("workspace") is not None)
+    profile_keys = {"seedOnConnect", "configScope", "workspace"} if has_workspace \
         else {"seedOnConnect", "configScope"}
     exact_keys(profile, profile_keys, f"{source}.spec.profile")
     if profile["seedOnConnect"] is not True or profile["configScope"] != "alias":
         raise ManifestError(f"{source}: runtime profile seeding must be enabled and alias-scoped")
-    if harness == "openclaw" and profile["workspace"] != assignment.get("workspace"):
-        raise ManifestError(f"{source}: OpenClaw workspace differs from the fleet assignment")
+    if has_workspace and profile["workspace"] != assignment.get("workspace"):
+        raise ManifestError(f"{source}: harness workspace differs from the fleet assignment")
     origin = require_mapping(spec["origin"], f"{source}.spec.origin")
     exact_keys(origin, {"transport"}, f"{source}.spec.origin")
     if origin["transport"] != "telegram":

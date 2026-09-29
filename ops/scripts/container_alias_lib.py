@@ -159,10 +159,10 @@ def load_container_aliases(
         if not isinstance(docker_host, str) or not NAME_RE.fullmatch(docker_host):
             raise ContainerAliasError(f"{alias}.dockerHost is invalid")
         workspace = entry.get("workspace")
-        if entry["harness"] == "openclaw":
+        if entry["harness"] == "openclaw" or (entry["harness"] == "muse" and workspace is not None):
             _absolute_path(workspace, f"{alias}.workspace")
         elif workspace is not None:
-            raise ContainerAliasError(f"{alias}.workspace is only valid for openclaw")
+            raise ContainerAliasError(f"{alias}.workspace is only valid for openclaw or muse")
         # The persistent mount that backs the state directory is no longer pinned here:
         # every real container keeps the alias state inside a broad persistent bind, so the
         # supervisor discovers the containing bind/volume from `docker inspect` at runtime.
@@ -204,5 +204,4 @@ def load_system_principals(root: pathlib.Path) -> dict[str, dict[str, str]]:
             f"system principals overlap fleet aliases: {sorted(overlap)}"
         )
     return validated
-
 

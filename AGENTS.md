@@ -1,6 +1,6 @@
 # Contexto del repositorio para agentes
 
-Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenClaw) de 4 tenants (Steven, Miguel, Jhon, Isa), con consola web de operador y puente Telegram. PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull* — el adapter de cada agente reclama sus entregas con fencing (`claim_token`+`epoch`). El `dispatcher` no reparte nada: es el segador de reintentos.
+Cauce V3: bus de mensajería durable y multi-tenant entre agentes de IA en CLI (Claude Code, Codex, OpenClaw), con consola web de operador y puente Telegram. PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull* — el adapter de cada agente reclama sus entregas con fencing (`claim_token`+`epoch`). El `dispatcher` no reparte nada: es el segador de reintentos.
 
 **El árbol de este repo ES material de producción.** Prometheus, OTel y postgres montan ficheros directamente desde aquí. `main` es la línea publicada, el último commit desplegado se consulta en `deploy/HISTORIAL.md` y `dev` es el carril de integración. No es un entorno de desarrollo aislado.
 
@@ -13,6 +13,7 @@ Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Co
 | `docs/operacion.md` | cómo desplegar, dar de alta/baja un agente, diagnosticar, hacer backup |
 | `docs/roadmap.md` | qué falta, priorizado |
 | `docs/flota-y-participantes.md` | máquinas, humanos, los 15 agentes, los 5 escenarios esenciales |
+| `ops/flota.json` (+ `docs/arquitectura.md` §4) | la flota como datos: el snapshot canónico del que se generan alias, contenedores y manifests |
 | `ordenes/00-PROTOCOLO.md` | cómo conviven varias instancias en `dev` sin pisarse — LÉELO antes de tocar nada |
 
 Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threat-model.md` (amenazas y controles), `docs/grafo.md` (mapa de dependencias, generado con `pnpm grafo`), `docs/consola.md` (consola web del operador), `docs/telegram.md` (puente Telegram), `docs/adapter-sdk.md` (SDK del consumidor durable), `docs/calidad-y-gates.md` (sistema de calidad y gates).
@@ -24,7 +25,7 @@ Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threa
 ## Reglas duras del dueño (detalle y porqué: `docs/doctrina-del-dueno.md`)
 
 - **Efecto demostrado.** Nada está "hecho" sin pegar la salida del gate; un despliegue no está hecho sin mostrar el efecto real contra el sistema vivo.
-- **Revisor ≠ autor.** Todo sector tiene un dueño de escritura y un revisor distinto (tabla abajo); ninguna instancia se autoaprueba.
+- **Revisor ≠ autor.** Todo sector tiene un dueño de escritura por ronda y un revisor que no es su autor; ninguna instancia se autoaprueba.
 - **Trabajo en `dev`, publicación de `main` por el dueño.** Prohibido crear ramas de tarea. Convivencia por sector + `git add` solo de rutas propias + commit siempre con pathspec, nunca `-a` ni `add -A`. Cambiar o publicar `main` requiere autorización explícita del dueño.
 - **Usuarios de ejecución.** Cada alias conserva el usuario de `ops/flota.json`: `dev`, `claw`, `ubuntu` o `server` según el entorno. Los supervisores usan `placement.systemdUser` o el valor predeterminado `stev`. No cambiar propietarios de perfiles o sesiones para acomodar un gate. El CI de root usa un worktree desechable; los builds del workspace usan su propietario. `pnpm qa:runtime-packaging` exige usuario normal.
 - **GitHub Actions prohibido.** El gate completo corre en el propio host (`cauce-v3-ci-local.timer`), no en un servicio pagado.
@@ -33,9 +34,9 @@ Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threa
 - **Migraciones que contaminan se borran enteras**, con su `down` y su suite — no se parchean.
 - **Credenciales jamás se tocan fuera del dueño.** `ops/private/credentials/` está ignorada por git a propósito; ninguna instancia ni subagente borra, mueve o reescribe nada ahí dentro.
 
-## Sectores (tabla completa, con revisor y reglas de convivencia: `ordenes/00-PROTOCOLO.md`)
+## Sectores (zonas de escritura completas y reglas de convivencia: `ordenes/00-PROTOCOLO.md`)
 
-Cada directorio tiene UN dueño de escritura por ronda; tocar algo fuera del sector propio se pide al integrador, nunca "de paso". Zonas y quién escribe hoy: `console/**` y `services/{terminal-relay,telegram-bridge}/**`; `packages/store/src/**` + `services/gateway/src/**` + release de `ops/scripts/`; `docs/`, higiene de disco, verificaciones mecánicas; `ops/pty-agent/**` + `tests/**`; `packages/{protocol,mcp-fleet-monitor}/**` + utilidades vivas de `ops/scripts|tests|harness`; `packages/adapter-sdk/**` + `ops/schemas/**`; `services/dispatcher/**` + `ops/runbooks/**`; `scripts/**` + el resto de `ops/` (systemd, generated, manifests, observability, config, guardias, container-runtime, cli, patches, private); `ordenes/`, documentación raíz, integración de merges y despliegue/flota/BD (con el dueño). Claude revisa todos los sectores.
+Cada directorio tiene UN dueño de escritura por ronda; tocar algo fuera del sector propio se pide al integrador, nunca "de paso". Zonas de escritura: `console/**` y `services/{terminal-relay,telegram-bridge}/**`; `packages/store/src/**` + `services/gateway/src/**` + release de `ops/scripts/`; `docs/`, higiene de disco, verificaciones mecánicas; `ops/pty-agent/**` + `tests/**`; `packages/{protocol,mcp-fleet-monitor}/**` + utilidades vivas de `ops/scripts|tests|harness`; `packages/adapter-sdk/**` + `ops/schemas/**`; `services/dispatcher/**` + `ops/runbooks/**`; `scripts/**` + el resto de `ops/` (systemd, generated, manifests, observability, config, guardias, container-runtime, cli, patches, private); `ordenes/`, documentación raíz, integración de merges y despliegue/flota/BD (con el dueño). El revisor de un sector es siempre otra instancia, nunca la que escribió.
 
 ## Gates
 

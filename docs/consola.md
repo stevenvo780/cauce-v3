@@ -143,17 +143,16 @@ juego de arneses soportado y la consola no ofrece una edición ficticia para él
 
 - **Ubicación medida frente a declarada.** El pie de la directiva ya no presenta
   `agents.container_name` ni `agents.home_directory` como la ubicación del alias: son columnas
-  declaradas y `docs/directiva-ficheros-del-agente.md` §3 documenta las dos como mentirosas
-  (para `iza` dicen `ws-humanizar` y `/home/dev` cuando corre en `claw-iza` con `HOME=/home/claw`).
-  El `$HOME` y el arnés salen de la medición del contenedor, y sólo cuando el mapa de ficheros
+  declaradas, y `docs/directiva-ficheros-del-agente.md` §3 explica por qué el resolutor no se fía de
+  ellas. El `$HOME` y el arnés salen de la medición del contenedor, y sólo cuando el mapa de ficheros
   llega con `facts_source: measured`; con `registry` o `database` las rutas están deducidas de esas
   mismas columnas y no cuentan como medición. Cuando lo declarado y lo medido difieren se muestran
   los dos, «declarado X · medido Y», porque esa discrepancia es justo el diagnóstico que hace falta
   para no editar el fichero equivocado. Si no hay hecho medido dice «desconocido» con esa palabra y
-  no rellena con un valor plausible: `/home/dev` encaja en casi todos los alias y por eso engaña
+  no rellena con un valor plausible: un `$HOME` que encaja en casi todos los alias es el que engaña
   precisamente en el que rompe la regla. Ninguna ruta publica el nombre medido del contenedor (la
-  directiva trae un identificador hexadecimal de Docker, que no sirve para contrastarlo con un
-  `ws-humanizar`), así que se muestra rotulado como declarado y con la medición desconocida. El mapa
+  directiva trae un identificador hexadecimal de Docker, que no sirve para contrastarlo con el nombre
+  declarado), así que se muestra rotulado como declarado y con la medición desconocida. El mapa
   de ficheros sólo se pide al desplegar el pliegue: abrir el modal no dispara esa lectura ni deja
   filas de auditoría de denegación.
 - **Motivo tecleado.** Guardar el perfil, guardar un fichero de gobierno y recargar el contexto

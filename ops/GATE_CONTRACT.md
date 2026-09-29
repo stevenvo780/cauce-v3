@@ -34,14 +34,17 @@ por defecto).
 La identidad es exclusivamente un principal mTLS:
 
 ```json
-{"tenant_id":"Steven","alias":"gate-probe","session_id":"gate-probe","channel":"gate","roles":["agent"],"permissions":["route","read"]}
+{"tenant_id":"<tenant>","alias":"gate-probe","session_id":"gate-probe","channel":"gate","roles":["agent"],"permissions":["route","read"]}
 ```
 
 No lleva `origin`. `gate-probe` no es alias de flota, agent row, membership, lease ni destino. El
-gateway exige provider `mtls`, principal y payload exactos. La fila durable usa `Steven:kant` como
-actor FK ya declarado y conserva `auth_session_id=gate-probe` / `auth_channel=gate` como prueba de
-autoridad. El SDK reconoce el tipo antes de reservar sesión: ACK `accepted` y `done` del claim real,
-sin prompt, harness, modelo, reply, messages, notify ni egress. La request se elimina del inbox
+gateway exige provider `mtls`, principal y payload exactos —incluidos el tenant y la sala de origen
+que fija `services/gateway/src/routes/core/publish.ts`, más `lane` `interactive`, `priority` `-100`
+y una `idempotency_key` `gate:<tenant>:<alias>:<nonce>`—. Como `gate-probe` no tiene agent row, la
+fila durable reutiliza como actor FK un alias de agente ya declarado (el mismo fichero fija cuál) y
+conserva `auth_session_id=gate-probe` / `auth_channel=gate` como prueba de autoridad. El SDK
+reconoce el tipo antes de reservar sesión: ACK `accepted` y `done` del claim real, sin prompt,
+harness, modelo, reply, messages, notify ni egress. La request se elimina del inbox
 durable al terminalizar; queda sólo el resultado mínimo del ACK y el audit de transporte.
 
 El probe usa HTTPS con CA/cert/key por paths, timeouts acotados y evidencia efímera 0600. Canary y
@@ -72,18 +75,24 @@ aplican además los umbrales `CAUCE_MAX_{WAKE,OUTBOX,RELAY}_PENDING`.
 
 ## Gates de release y flota
 
-El snapshot de flota usa `schemaVersion: 3`: agents, memberships, rolePolicies y leases. La paridad
-exige 15 agentes habilitados, un principal de sistema (`quota-collector`), tres históricos
-deshabilitados y permisos exactos de `agent_notify` (`route/read/notify=true`, `control=false`). Ni
-`quota-collector` ni `gate-probe` aparecen en `routing_targets` o destinos ordinarios.
+El snapshot de flota es `ops/flota.json` (`schemaVersion: 1`), exportado de PostgreSQL por
+`export-fleet-snapshot.py`: los alias habilitados van en `fleet`, los deshabilitados en `retired`,
+la colocación física en `placement` y los principales de sistema en `systemPrincipals`.
+
+La paridad no se expresa en números, sino como igualdad de conjuntos: se vuelve a exportar el
+snapshot y **cualquier** diferencia contra el versionado es un diff que bloquea, y `validate.sh`
+compara byte a byte los derivados (`container-aliases.json`, `manifests/*.yaml`, units generadas)
+contra lo que se regenera desde ese snapshot — un alta, baja o cambio de tenant/room/harness
+aplicado en una sola capa no pasa. La fila `agent_notify` de `role_policies` conserva además su
+contrato exacto (`route`/`read`/`notify` en true, `control` en false;
+`packages/store/migrations/027_rol_agent_notify.sql`).
+
+Los principales técnicos cerrados —`gate-probe` y `quota-collector`, la constante
+`SYSTEM_PRINCIPAL_ALIASES` de `packages/protocol/src/schemas/messages.ts`— no son alias de flota:
+nunca son destino ni aparecen en `routing_targets`.
 
 `physical-fleet-gate.py` enumera sólo nombres Docker y exige que todo container físico declarado
 exista antes del gate de migración. No exige que las units por alias estén activas.
-
-La única excepción de salud es `maintenance-zeus`: requiere `CAUCE_CHANGE_ID` no secreto y
-`CAUCE_MAINTENANCE_CONFIRM=offline:Steven:zeus:<cambio>`, y además prueba que Zeus está realmente
-offline. Nunca relaja el modo `final`; tras mantenimiento sigue siendo obligatorio un gate final
-estricto.
 
 ## Límite de integridad histórica
 

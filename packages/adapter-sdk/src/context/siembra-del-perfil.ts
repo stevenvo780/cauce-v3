@@ -436,6 +436,7 @@ export function directorioDelArnes(
     claudeConfigDir: entorno.CLAUDE_CONFIG_DIR,
     codexHome: entorno.CODEX_HOME,
     openclawWorkspace: entorno.CAUCE_OPENCLAW_WORKSPACE,
+    museWorkspace: entorno.CAUCE_MUSE_WORKSPACE,
   });
 }
 
@@ -512,7 +513,7 @@ export function sembrarPerfilDelArnes(
   try {
     const nombreCanonico = harness === "claude"
       ? "CLAUDE.md"
-      : harness === "openclaw" ? "AGENTS.md" : undefined;
+      : harness === "openclaw" || harness === "muse" ? "AGENTS.md" : undefined;
     const textoCanonico = nombreCanonico === undefined ? undefined : existentes.get(nombreCanonico);
     revisionNativa = !textoCanonico?.includes(PREFIJO_REVISION_PERFIL)
       ? undefined

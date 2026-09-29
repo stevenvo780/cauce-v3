@@ -1,9 +1,8 @@
 # Entorno de desarrollo con base de datos real
 
-- **Fecha:** 2026-08-29
-- **Para qué:** dejar de trabajar contra mocks. Varios agentes estaban parados porque las suites de
-  Postgres y el gateway no podían arrancar sin base.
-- **Dónde aplica:** el contenedor de workspace (`ws-*`). **Nada de esto toca producción.**
+- **Para qué:** dejar de trabajar contra mocks. Sin base, las suites de Postgres y las del gateway
+  no arrancan.
+- **Dónde aplica:** un contenedor de workspace de desarrollo. **Nada de esto toca producción.**
 
 ## Qué hay montado ahora
 
@@ -12,7 +11,7 @@
 | Servidor | PostgreSQL 16.15 local, clúster `16/main`, puerto 5432 |
 | Autenticación | `trust` para `127.0.0.1` y `::1`; **sin contraseña en ninguna URL** |
 | Rol | `cauce` (superusuario del clúster local) |
-| Base de desarrollo | `cauce_dev` — esquema real (62 tablas, 33 de las 35 migraciones del árbol) + flota sembrada |
+| Base de desarrollo | `cauce_dev` — esquema real (37 migraciones en el árbol, que declaran 64 tablas) más una flota sembrada; lo aplicado se lee en `schema_migrations`, no se da por completo |
 | Base de pruebas | `cauce_test` — el servidor del que cada suite talla su propia base efímera |
 
 La contraseña se evita a propósito: una URL con credencial dentro acaba copiada en un fichero y el
@@ -29,9 +28,10 @@ pg_isready -h 127.0.0.1 -p 5432        # -> accepting connections
 
 ## Correr las suites que necesitan Postgres
 
-Son **68 ficheros** que antes no se podían ejecutar en este workspace (50 de `packages/store/test`,
-los 9 de `tests/store-hardening`, 5 de `tests/gateway-hardening` y los 4 de `tests/integration`,
-de los que 2 piden Postgres y 2 sólo Docker):
+Son las suites que exigen Postgres y que sin base no se podían ejecutar en este workspace:
+`packages/store/test`, `tests/store-hardening`, los 6 ficheros de `tests/gateway-hardening` que pasan
+por `dockerTestRequirement` —los cinco `-postgres` más `publish-redaction-two-phase.test.ts`, que no
+lleva ese sufijo— y `tests/integration` (unos piden Postgres y otros sólo Docker):
 
 ```bash
 CAUCE_TEST_DATABASE_URL="postgresql://cauce@127.0.0.1:5432/cauce_test" \
@@ -51,16 +51,18 @@ CAUCE_TEST_DATABASE_URL="postgresql://cauce@127.0.0.1:5432/cauce_test" \
 > El arreglo está en `tests/helpers/postgres.ts`, en la rama de base externa.
 
 La guardia de nombre sigue en pie: `CAUCE_TEST_DATABASE_URL` sólo acepta bases cuyo nombre empiece
-por `cauce_test`, porque las suites **TRUNCAN 30 tablas**. Apuntarla a otra base se rechaza antes de
-abrir la conexión.
+por `cauce_test`, porque `resetTestDatabase()` **TRUNCA en cascada una lista explícita y cerrada de
+36 tablas** (`tests/helpers/postgres.ts:588-600`), más las de catálogo que `restaurarCatalogo` vuelve
+a sembrar. No son todas las del esquema —el árbol declara 64—: la lista se mantiene a mano, porque
+hay tablas que CASCADE no alcanza. Apuntarla a otra base se rechaza antes de abrir la conexión.
 
 ## Plantilla de migraciones
 
-Cada fichero de pruebas se tallaba su base efímera **vacía** y le aplicaba las **35 migraciones del
-árbol** (`packages/store/migrations/`, hoy hasta `039`).
-Con los **50 ficheros** de `packages/store/test` que pasan por `preparePostgresSuite` (48 llevan
-`postgres` en el nombre), eso son **1750 aplicaciones** de migración por corrida para obtener 50
-veces exactamente el mismo esquema.
+Cada fichero de pruebas se tallaba su base efímera **vacía** y le aplicaba TODAS las migraciones del
+árbol (`packages/store/migrations/`). Con los ficheros de `packages/store/test` que pasan por
+`preparePostgresSuite` —casi todos, los que llevan `postgres` en el nombre— eso es el producto
+«migraciones × ficheros» de aplicaciones por corrida, todas para obtener exactamente el mismo
+esquema una y otra vez.
 
 Ahora ese esquema se construye **una sola vez** en la base `cauce_test_plantilla` y cada base
 efímera nace como `CREATE DATABASE <efímera> TEMPLATE cauce_test_plantilla`. Medido en esta
@@ -143,22 +145,20 @@ imprime nada, porque sí comprobó algo.
 ### Qué ficheros la pueden emitir
 
 La emite `dockerTestRequirement`, en `tests/helpers/postgres.ts`, y sólo la emite quien pasa por
-ella. Hoy son **77 ficheros**, por dos vías:
+ella. Son dos vías:
 
-- **59 vía `preparePostgresSuite`** (50 en `packages/store/test` y 9 en `tests/store-hardening`): el
-  helper le declara al contador el nombre del fichero.
-- **18 que llaman a `dockerTestRequirement` directamente**: los 4 de `tests/integration/` y 2 de los
-  3 de `tests/e2e/`, 5 de los 24 de `tests/gateway-hardening/`
-  (`wake-outbox`, `publish-receipt-restart`, `hello-agent-disabled`, `foreign-identity-live-claim` y
-  `terminal-ack-replay`, todos `-postgres.test.ts`),
-  `services/dispatcher/test/{index,metrics}.test.ts`,
+- **Vía `preparePostgresSuite`**: los ficheros de `packages/store/test` y de
+  `tests/store-hardening`. El helper le declara al contador el nombre del fichero.
+- **Los que llaman a `dockerTestRequirement` directamente**: los de `tests/integration/`, dos de
+  `tests/e2e/`, los `-postgres.test.ts` de `tests/gateway-hardening/` más
+  `publish-redaction-two-phase.test.ts`, `services/dispatcher/test/{index,metrics}.test.ts`,
   `services/telegram-bridge/test/{ingress-postgres,postgres}.test.ts` y
   `services/gateway/src/{health-progress,health-schema037.pg,secret-handoff.plugin}.test.ts`. No
   declaran nada: el fichero se deduce de `expect.getState().testPath`, así que la línea sale **sin
   tocar ninguno de ellos**.
 
-Lo que se imprime es el nombre del fichero a secas, sin ruta. Comprobado: entre esos 77 no hay dos
-nombres repetidos, así que la línea identifica un único fichero.
+Lo que se imprime es el nombre del fichero a secas, sin ruta. Comprobado: entre los emisores no hay
+dos nombres de fichero repetidos, así que la línea identifica un único fichero.
 
 Hay un llamador directo más que no cuenta: `tests/unit/base-de-pruebas-guarda.test.ts` prueba el
 propio helper con una sonda doblada y ejerce sus dos ramas, así que registra una ejecución y **no
@@ -183,17 +183,11 @@ no es un fallo del mecanismo, está fuera de él. Es una señal para leer, no un
 ## La base de desarrollo y su flota
 
 `cauce_dev` tiene el esquema real y una flota pequeña pero completa. Las migraciones ya siembran los
-**cinco tenants y salas reales** (Steven como hub, más Isa, Jhon, Miguel y Pablo); el sembrador
-añade lo que el esquema deja vacío:
-
-| Grupo | Agentes | Arnés |
-|---|---|---|
-| `Steven` (hub, `grp.steven`) | `zeus`, `kant` | claude |
-| `Miguel` (`grp.miguel`) | `kratos` | codex |
-
-Con sus perfiles (`role_summary` tomado de `grupos.json`), sus membresías, la arista cruzada
-Miguel↔Steven y tráfico real publicado por el propio repositorio: mensajes, entregas y un lease de
-consumidor con una entrega reclamada.
+tenants y sus salas; el sembrador (`packages/store/src/seed-dev-cli.ts`, que es el inventario
+autoritativo) añade lo que el esquema deja vacío: unos agentes con su arnés declarado, sus perfiles
+(`role_summary` tomado de `grupos.json`), sus membresías, una arista ACL cruzada entre dos tenants
+—la única forma cross-tenant que hay que poder ejercitar— y tráfico real publicado por el propio
+repositorio: mensajes, entregas y un lease de consumidor con una entrega reclamada.
 
 ```bash
 DATABASE_URL="postgresql://cauce@127.0.0.1:5432/cauce_dev" npx tsx packages/store/src/seed-dev-cli.ts
@@ -237,14 +231,9 @@ CAUCE_TEST_DATABASE_URL="postgresql://cauce@127.0.0.1:5432/cauce_test" \
   pnpm --no-bail --filter @cauce/gateway --filter @cauce/telegram-bridge run test
 ```
 
-| Paquete | Antes | Ahora |
-|---|---|---|
-| `@cauce/gateway` | 31 ficheros / 472 tests, 2 en rojo | **32 / 474, EXIT=0** |
-| `@cauce/telegram-bridge` | 19 / 256 + 3 saltados, 2 en rojo | **19 / 259, EXIT=0** |
-
-Fijate en el gateway: sube de 31 a 32 ficheros. **No es que ahora pasen los que fallaban, es que
-antes ni siquiera se ejecutaban.** El verde anterior estaba inflado por dos ficheros que nunca
-llegaban a correr.
+Lo que hay que leer de ese cambio: sin base, el gateway ejecutaba **menos ficheros** de los que
+tiene. **No es que ahora pasen los que fallaban, es que antes ni siquiera se ejecutaban**, y el verde
+anterior estaba inflado por los que nunca llegaban a correr.
 
 ## Leer bien el error cuando algo falla
 
@@ -252,54 +241,43 @@ llegaban a correr.
 que esa suite quería un contenedor propio. Es un mensaje que invita a instalar lo que no era: la
 distinción que desatasca es **base externa vs testcontainers**, no la presencia de la base.
 
-## Docker: sí hay, y por qué es un `socat`
+## Docker: puede ser un relé, no un montaje
 
-`/var/run/docker.sock` **existe** y responde (`Server Version 29.6.2`). No es un bind mount: es un
-relé montado desde dentro,
+`/var/run/docker.sock` puede existir y responder sin ser un bind mount del socket del host: puede ser
+un relé levantado desde dentro del contenedor —un `socat` que escucha en esa ruta y reenvía cada
+conexión por SSH al demonio del host—. Ventaja: se aplica **sin recrear el contenedor**, así que no
+mata ninguna sesión. Precio: **es un proceso, no un montaje**. Si muere, o si el contenedor
+reinicia, el acceso se va y hay que volver a levantarlo. El arreglo duradero —montar el socket y el
+`group_add`— sólo entra el día que se recree el contenedor.
 
-```
-socat UNIX-LISTEN:/var/run/docker.sock,fork,mode=0660,user=1000,group=1000 \
-      EXEC:ssh -T -F /workspace/.docker-host-ssh/config docker-host
-```
+Las claves de ese canal viven con permisos `0600` y **fuera del repositorio**: no aparecen en
+`git status`.
 
-que reenvía cada conexión por SSH al demonio del host. Ventaja: se aplicó **sin recrear el
-contenedor**, así que no mató ninguna sesión. Precio: **es un proceso, no un montaje**. Si muere o el
-contenedor reinicia, el acceso se va; se vuelve a levantar con
-`/workspace/.docker-host-ssh/start-relay.sh`. El arreglo duradero —montar el socket y el `group_add`—
-está preparado en el compose del host y entra solo el día que se recree el contenedor.
-
-Las claves del canal viven en `/workspace/.docker-host-ssh/` con permisos `0600`, **fuera del
-repositorio**. Comprobado: no hay nada de eso en `git status`.
-
-### Trampa: este demonio NO publica puertos
+### Trampa: un demonio así NO publica puertos
 
 `docker run -p 5432 …` deja `{"5432/tcp": null}`. Por eso `testcontainers` moría con
 `Timed out after 10000ms while waiting for container ports to be bound to the host` **sobre un
 contenedor que ya estaba sano**. La vía es la dirección del contenedor en la red compartida, no el
-puerto publicado: hay que exportar `CAUCE_TEST_DOCKER_NETWORK` con una red del propio contenedor
-(hoy `net-claw-ws`), y `tests/helpers/postgres.ts` deja de publicar puertos cuando esa variable está.
+puerto publicado: hay que exportar `CAUCE_TEST_DOCKER_NETWORK` con una red a la que el propio
+contenedor esté conectado, y `tests/helpers/postgres.ts` deja de publicar puertos cuando esa variable
+está.
 
 ```bash
-env -u CAUCE_TEST_DATABASE_URL CAUCE_TEST_DOCKER_NETWORK=net-claw-ws pnpm test
+env -u CAUCE_TEST_DATABASE_URL CAUCE_TEST_DOCKER_NETWORK=<red-compartida> pnpm test
 ```
 
-## El gate completo, medido
+## Los rojos que no son de entorno
 
-Por la vía Docker, `pnpm test` da **5 de 8 suites en verde** en 765 s:
-
-```
-PASS test:unit  ·  PASS test:terminal-pty  ·  PASS test:pty
-PASS test:services            ·  PASS test:store-hardening
-FAIL test:gateway-hardening   ·  FAIL test:integration   ·  FAIL test:e2e
-```
-
-**Los rojos que quedan ya no son de entorno.** Son cuatro tests, y ninguno pide contenedor ni base:
+**Medido con el entorno montado**, los rojos que quedaban en el gate completo por la vía Docker ya no
+eran de entorno: ninguno de los cuatro pide contenedor ni base.
 
 | Test | Qué pasa |
 |---|---|
-| `console-api-contract` | el extractor no saca la ruta de unas llamadas de `client.ts` |
-| `mcp-fleet-monitor-tools` | lee de vuelta las filas y recibe `[]` (5 de 6 casos pasan) |
-| `console-login` (e2e) | pide `/v3/console/agents/kant` y da 404: **el test no siembra ningún agente** y una base recién migrada tiene `agents` vacía |
-| `real-qa` (e2e) | `ops/harness/runner.mjs` sale con código 1; entre sus fallos, uno revienta con `Cannot read properties of undefined (reading 'room')` |
+| `console-api-contract` (`tests/gateway-hardening/`) | el extractor no saca la ruta de unas llamadas de `client.ts` |
+| `mcp-fleet-monitor-tools` (`tests/integration/`) | lee de vuelta las filas y recibe `[]` (5 de 6 casos pasan) |
+| `console-login` (`tests/e2e/`) | pide `/v3/console/agents/<alias>` y da 404: **el test no siembra ningún agente** y una base recién migrada tiene `agents` vacía |
+| `real-qa` (`tests/e2e/`) | `ops/harness/runner.mjs` sale con código 1; entre sus fallos, uno revienta con `Cannot read properties of undefined (reading 'room')` |
 
-Eso es lo que valía tener el entorno: antes no se podía ni saber que existían.
+Eso es lo que valía tener el entorno: sin base no se podía ni saber que esos cuatro existían. El
+número de suites del gate no se cita aquí porque lo declara `scripts/test-all.mjs` (`SUITES`), que es
+la única fuente que no se desfasa.

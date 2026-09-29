@@ -20,11 +20,11 @@ BUNDLE_KEYS = (
     "alias_key_hex", "client_cert_pem", "client_key_pem", "ca_pem", "agent_version",
 )
 RUNTIME_FACT_KEYS = frozenset((
-    "codex_home", "claude_config_dir", "openclaw_workspace", "cwd", "workspace_root",
+    "codex_home", "claude_config_dir", "openclaw_workspace", "muse_workspace", "cwd", "workspace_root",
     "project_root", "project_doc_max_bytes", "project_doc_fallback_filenames",
 ))
 RUNTIME_PATH_FACT_KEYS = frozenset((
-    "codex_home", "claude_config_dir", "openclaw_workspace", "cwd", "workspace_root",
+    "codex_home", "claude_config_dir", "openclaw_workspace", "muse_workspace", "cwd", "workspace_root",
     "project_root",
 ))
 
@@ -123,8 +123,9 @@ def _runtime_facts_config(value: Any, harness: str, home: str) -> dict[str, Any]
         "codex": "codex_home",
         "claude": "claude_config_dir",
         "openclaw": "openclaw_workspace",
+        "muse": "muse_workspace",
     }.get(harness)
-    profile_keys = {"codex_home", "claude_config_dir", "openclaw_workspace"}
+    profile_keys = {"codex_home", "claude_config_dir", "openclaw_workspace", "muse_workspace"}
     if any(key in profile_keys and key != expected for key in value):
         return {}
     validated: dict[str, Any] = {}

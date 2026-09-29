@@ -22,12 +22,13 @@ del contenedor salvo el propio paquete): `cauce-pty-launcher.sh` (lanzamiento),
 `rollout-pty.py` + `rollout_pty_lib.py` (despliegue y drop-ins), `derive-alias-key.py` y
 `publish-alias-key.sh` (material de ticket por alias), `install-pty-agent.sh`, `systemd/`
 (plantillas de unidad) y `tests/`
-(unittest, sin socket real). El rollout obtiene los managers de los placements Docker: `local`
-corresponde a `server`; cada remoto usa su nombre declarado. El reaper se ejecuta dentro del
-contenedor desde stdin y no queda instalado allí. `container-aliases.json` contiene únicamente
-contenedores; los agentes `host:` y `vm:` permanecen en `flota.json` y sus manifiestos, y usan
-el launcher nativo descrito abajo. El controlador exige un destino por manager, comprueba
-duplicados y placement y conserva la reversión por transacción.
+(unittest, sin socket real). Launcher y rollout corren en el host manager —el que tiene el demonio
+Docker de los contenedores y el systemd de usuario que supervisa las unidades—. El rollout obtiene
+los managers de los placements Docker: `local` corresponde a `server`; cada remoto usa su nombre
+declarado. El reaper se ejecuta dentro del contenedor desde stdin y no queda instalado allí.
+`container-aliases.json` contiene únicamente contenedores; los agentes `host:` y `vm:` permanecen en
+`flota.json` y sus manifiestos, y usan el launcher nativo descrito abajo. El controlador exige un
+destino por manager, comprueba duplicados y placement y conserva la reversión por transacción.
 
 **Hace:** abre PTYs bajo demanda (`shell`, o `harness` = TUI real vía `tmux attach` de solo lectura o TUI de OpenClaw) y sirve lectura/escritura de ficheros de gobierno (tags 0x50–0x5E: READ/LIST/WRITE/WRITE_BATCH con CAS y rollback; paths validados con realpath + lista NEVER_SERVE).
 

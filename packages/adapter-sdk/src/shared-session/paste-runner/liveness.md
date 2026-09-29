@@ -32,8 +32,8 @@ Lifts the quarantine of a generation that is STILL alive and proves it is health
 
 Until now a quarantine only lifted when the pane generation CHANGED (`stale`), i.e. when a person
 respawned the TUI. Inside one live generation it was permanent, so every delivery after it came out
-as `session_identity_unverified` and the shared conversation stopped receiving anything. That is
-what stranded heraclito for hours.
+as `session_identity_unverified` and the shared conversation stopped receiving anything until
+someone respawned the pane by hand.
 
 The evidence demanded is direct and current: the SAME generation is still there, it is not painting
 its "generating" band, and its input box is a free, empty prompt. Together they say no turn is in

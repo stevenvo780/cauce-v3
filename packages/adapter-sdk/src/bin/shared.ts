@@ -43,9 +43,10 @@ function commandOverride(
   runtime: Awaited<ReturnType<typeof loadCliRuntimeConfig>>,
 ): HarnessCommandOverride | undefined {
   const command = runtime.harnessCommand
+    ?? (harnessId === "muse" ? runtime.muse?.executable : undefined)
     ?? (harnessId === "hermes" ? runtime.hermesPython : undefined)
     ?? definition.command;
-  if (runtime.harnessCommand === undefined && runtime.hermesPython === undefined
+  if (runtime.harnessCommand === undefined && runtime.muse === undefined && runtime.hermesPython === undefined
     && runtime.harnessBridge === undefined) return undefined;
   return {
     command,
@@ -255,9 +256,19 @@ function pointedRunner(
 export async function runCli(harnessId: HarnessId): Promise<void> {
   const runtime = await loadCliRuntimeConfig(harnessId);
   const tenantId = TenantSchema.parse(runtime.tenant);
+  if (harnessId === "muse" && tenantId === "Hospital"
+    && runtime.muse?.workspace !== "/home/node/clawd") {
+    throw new Error("Hospital Muse workspace must be exactly /home/node/clawd");
+  }
+  // Muse: default `muse-cauce exec` (hegel); MSP (Hospital) only with explicit config, loaded lazily.
+  const museMsp = harnessId === "muse" && runtime.muse !== undefined;
+  if (museMsp && runtime.harnessCommand !== undefined
+    && runtime.harnessCommand !== runtime.muse.executable) {
+    throw new Error("CAUCE_HARNESS_COMMAND conflicts with CAUCE_MUSE_EXECUTABLE");
+  }
   const definition = runtimeHarnessDefinition(
     harnessId,
-    harnessDefinition(harnessId),
+    museMsp ? (await import("../harnesses/muse-msp.js")).museMspDefinition : harnessDefinition(harnessId),
     runtime.openClaw?.transport,
   );
   const canonicalOpenClawTerminalSession = harnessId === "openclaw";
@@ -278,11 +289,18 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
       tokenFile,
       ...(runtime.openClaw.agentTarget === undefined ? {} : { agentTarget: runtime.openClaw.agentTarget }),
     });
+  } else if (museMsp) {
+    const { MuseMspRunner } = await import("../sdk/muse-msp-runner.js");
+    baseRunner = new MuseMspRunner(runtime.muse);
   } else {
     baseRunner = new SpawnCommandRunner();
   }
   const logger = operationalLogger(runtime.alias);
   const shared = loadSharedSessionConfig(harnessId, runtime.alias, runtime.stateDirectory);
+  if (museMsp && shared !== undefined) {
+    // The shared TUI replaces the runner: MSP would be configured and silently never used.
+    throw new Error("Muse MSP (CAUCE_MUSE_EXECUTABLE) and SHARED_SESSION=1 are mutually exclusive");
+  }
   const runner = shared === undefined
     ? baseRunner
     : await sharedSessionRunner(shared, logger);
@@ -292,7 +310,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     runner,
     store,
     sessionNamespace: runtime.alias,
-    ...(harnessId === "openclaw" ? { fallbackSessionKey: "alias-default" } : {}),
+    ...(harnessId === "openclaw" || museMsp ? { fallbackSessionKey: "alias-default" } : {}),
     ...(override === undefined ? {} : { commandOverride: override }),
     ...(shared === undefined ? {} : {
       sharedSession: {

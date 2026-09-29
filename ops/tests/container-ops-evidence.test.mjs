@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -188,6 +188,92 @@ try {
   }
 } finally {
   await rm(regeneratedRootless, { recursive: true, force: true });
+}
+
+for (const [alias, entry] of Object.entries(JSON.parse(await readFile(path.join(ops, "container-aliases.json"), "utf8")).aliases)) {
+  if (entry.harness !== "muse" || entry.workspace) continue;
+  const bridgeExample = await readFile(path.join(rootless, `configs/${alias}.env.example`), "utf8");
+  assert.doesNotMatch(bridgeExample, /^MUSE_/mu, `${alias} runs the muse bridge and takes no workspace-agent keys`);
+}
+
+const isolatedOpsRoot = await mkdtemp(path.join(os.tmpdir(), "cauce-isolated-ops-"));
+const isolatedOutput = await mkdtemp(path.join(os.tmpdir(), "cauce-isolated-units-"));
+const isolatedInventory = {
+  schemaVersion: 2,
+  systemPrincipals: {},
+  historicalAliases: [],
+  aliases: {
+    "hospital-leader": {
+      tenant: "Hospital",
+      room: "grp.hospital",
+      container: "hospital-leader",
+      user: "claw",
+      home: "/home/claw",
+      stateDirectory: "/home/claw/.openclaw",
+      harness: "openclaw",
+      membershipRole: "agent_notify",
+      systemdUser: "root",
+      workspace: "/home/claw/.openclaw/workspace-hospital-leader",
+    },
+  },
+};
+try {
+  await writeFile(path.join(isolatedOpsRoot, "container-aliases.json"),
+    `${JSON.stringify(isolatedInventory)}\n`);
+  const generated = spawnSync("python3", [path.join(ops, "scripts/generate-container-units.py"),
+    "--ops-root", isolatedOpsRoot,
+    "--output", isolatedOutput,
+    "--install-prefix", "/srv/hospital-cauce",
+    "--config-root", "/etc/hospital-cauce/container-aliases",
+    "--pki-root", "/etc/hospital-cauce/container-pki",
+    "--bundle-root", "/srv/hospital-cauce-adapter",
+    "--lock-root", "/run/lock/hospital-cauce"], { encoding: "utf8" });
+  assert.equal(generated.status, 0, generated.stderr);
+  const unitText = await readFile(
+    path.join(isolatedOutput, "cauce-v3-container-hospital-leader.service"), "utf8",
+  );
+  assert.match(unitText,
+    /^ConditionPathExists=\/etc\/hospital-cauce\/container-aliases\/hospital-leader\.env$/mu);
+  assert.match(unitText, /^Environment=CAUCE_CONTAINER_OPS_ROOT=\/srv\/hospital-cauce\/ops$/mu);
+  assert.match(unitText,
+    /^Environment=CAUCE_CONTAINER_CONFIG_ROOT=\/etc\/hospital-cauce\/container-aliases$/mu);
+  assert.match(unitText,
+    /^Environment=CAUCE_CONTAINER_PKI_ROOT=\/etc\/hospital-cauce\/container-pki$/mu);
+  assert.match(unitText,
+    /^Environment=CAUCE_CONTAINER_BUNDLE_ROOT=\/srv\/hospital-cauce-adapter$/mu);
+  assert.match(unitText,
+    /^Environment=CAUCE_CONTAINER_LOCK_ROOT=\/run\/lock\/hospital-cauce$/mu);
+  assert.match(unitText,
+    /^ExecStart=\/srv\/hospital-cauce\/ops\/scripts\/container-adapter-supervisor\.sh start hospital-leader$/mu);
+  assert.match(unitText,
+    /^ReadOnlyPaths=\/etc\/hospital-cauce\/container-aliases \/etc\/hospital-cauce\/container-pki \/srv\/hospital-cauce \/srv\/hospital-cauce-adapter$/mu);
+  assert.doesNotMatch(unitText, /\/etc\/cauce-v3|\/opt\/cauce-v3/u);
+
+  const museInventory = structuredClone(isolatedInventory);
+  museInventory.aliases["hospital-leader"] = {
+    ...museInventory.aliases["hospital-leader"], harness: "muse",
+    stateDirectory: "/home/claw/.muse/cauce-v3/hospital-leader", workspace: "/home/claw/clawd",
+  };
+  await writeFile(path.join(isolatedOpsRoot, "container-aliases.json"), `${JSON.stringify(museInventory)}\n`);
+  const museGenerated = spawnSync("python3", [path.join(ops, "scripts/generate-container-units.py"),
+    "--ops-root", isolatedOpsRoot, "--output", isolatedOutput], { encoding: "utf8" });
+  assert.equal(museGenerated.status, 0, museGenerated.stderr);
+  const museExample = await readFile(path.join(isolatedOutput, "configs/hospital-leader.env.example"), "utf8");
+  assert.match(museExample, /^MUSE_WORKSPACE=\/home\/claw\/clawd$/mu);
+  assert.match(museExample, /^MUSE_EXECUTABLE=\/opt\/muse-code\/muse$/mu);
+
+  const hermesInventory = structuredClone(isolatedInventory);
+  hermesInventory.aliases["hospital-leader"].harness = "hermes";
+  delete hermesInventory.aliases["hospital-leader"].workspace;
+  await writeFile(path.join(isolatedOpsRoot, "container-aliases.json"),
+    `${JSON.stringify(hermesInventory)}\n`);
+  const missingHermesPin = spawnSync("python3", [path.join(ops, "scripts/generate-container-units.py"),
+    "--ops-root", isolatedOpsRoot, "--output", isolatedOutput], { encoding: "utf8" });
+  assert.notEqual(missingHermesPin.status, 0);
+  assert.match(missingHermesPin.stderr, /hermes-runtime\.json/u);
+} finally {
+  await rm(isolatedOpsRoot, { recursive: true, force: true });
+  await rm(isolatedOutput, { recursive: true, force: true });
 }
 
 process.stdout.write("container operational digest tests passed\n");

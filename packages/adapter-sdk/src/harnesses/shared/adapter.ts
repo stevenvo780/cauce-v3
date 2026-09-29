@@ -280,6 +280,10 @@ export class HarnessAdapter {
         // MEMORY/HEARTBEAT belong to the agent, not an authored facet of the profile.
         if (!esFicheroDelAgente(name)) paths.push(`${workspace}/${name}`);
       }
+    } else if (this.definition.id === "muse") {
+      const workspace = process.env.CAUCE_MUSE_WORKSPACE;
+      if (!workspace?.startsWith("/")) return undefined;
+      paths.push(`${workspace}/AGENTS.md`);
     } else {
       return undefined;
     }
@@ -368,6 +372,8 @@ export class HarnessAdapter {
       ...(request.emissionOutput === undefined ? {} : { emissionOutput: request.emissionOutput }),
       ...(request.onEmissionReady === undefined ? {} : { onEmissionReady: request.onEmissionReady }),
       ...(session.context.sessionId === undefined ? {} : { sessionId: session.context.sessionId }),
+      ...(this.definition.sessionStrategy.kind === "generated" && this.definition.sessionStrategy.forwardResume
+        ? { resumeSession: session.context.resume } : {}),
       // The start witness and its notice travel together to the transport: it is the only thing
       // that sees the harness's bytes, and therefore the only one that can tell when it actually
       // started. A runner that doesn't understand them ignores them and everything continues.
@@ -594,7 +600,7 @@ export class HarnessAdapter {
       };
     }
     if (this.definition.sessionStrategy.kind === "generated") {
-      const nativeId = randomUUID();
+      const nativeId = this.definition.sessionStrategy.mint?.() ?? randomUUID();
       await this.store.setSession(this.sessionStoreKey(sessionKey), {
         native_id: nativeId,
         initialized: false,

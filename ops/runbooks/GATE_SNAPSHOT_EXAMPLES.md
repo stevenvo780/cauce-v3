@@ -5,8 +5,8 @@ Snapshot de drain válido:
 ```json
 {
   "schemaVersion": 2,
-  "tenant": "Steven",
-  "alias": "kant",
+  "tenant": "<tenant>",
+  "alias": "<alias>",
   "capturedAt": "2030-01-01T00:00:00.000Z",
   "v2": {"consumers": 0, "pollers": 0, "leaseOwners": 0},
   "v3": {"consumers": 0, "pollers": 0, "leaseOwners": 0},
@@ -25,8 +25,8 @@ Snapshot post-cutover válido (timestamps abreviados sólo para ilustrar; deben 
 ```json
 {
   "schemaVersion": 2,
-  "tenant": "Steven",
-  "alias": "kant",
+  "tenant": "<tenant>",
+  "alias": "<alias>",
   "capturedAt": "2030-01-01T00:01:00.000Z",
   "v2": {"consumers": 0, "pollers": 0, "leaseOwners": 0},
   "v3": {"consumers": 1, "pollers": 1, "leaseOwners": 1},
@@ -42,7 +42,7 @@ No editar snapshots a mano para aprobar un cambio. El flujo auténtico es:
 ```sh
 export CAUCE_GATE_CAPTURE_PATH=/ruta/release/ops/scripts/gate-collector.mjs
 export CAUCE_GATE_PROBE_PATH=/ruta/release/ops/scripts/gate-roundtrip-probe.mjs
-ops/scripts/canary.sh kant /ruta/privada/baseline-drain.json
+ops/scripts/canary.sh <alias> /ruta/privada/baseline-drain.json
 ```
 
 El canary crea evidencia 0600 temporal, publica `system.gate.probe`, captura el snapshot y valida

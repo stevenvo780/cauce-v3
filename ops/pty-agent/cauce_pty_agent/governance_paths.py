@@ -152,6 +152,9 @@ class GovernancePathsMixin:
         if harness == "openclaw":
             root = facts.get("openclaw_workspace")
             allowed = {"SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md"}
+        elif harness == "muse":
+            root = facts.get("muse_workspace")
+            allowed = {"AGENTS.md"}
         elif harness == "claude":
             root = facts.get("claude_config_dir")
             allowed = {"CLAUDE.md"}

@@ -48,6 +48,7 @@ const adapterBins = [
   'fake-harness',
   'grok',
   'hermes',
+  'muse',
   'openclaw',
   'opencode',
 ];

@@ -43,13 +43,13 @@ case "${1:-}" in
     ;;
 esac
 
-# shellcheck disable=SC2329
+# shellcheck disable=SC2329,SC2317
 json_texto() {
   local crudo=${1//\\/\\\\}
   printf '%s' "${crudo//\"/\\\"}"
 }
 
-# shellcheck disable=SC2329
+# shellcheck disable=SC2329,SC2317
 escribir_resumen() {
   local tmp ultimo coma i
   mkdir -p "$(dirname "$RESUMEN")"
@@ -85,7 +85,7 @@ SEGUNDOS=()
 
 # The summary is written from the trap so an abort (no network, worktree error, SIGTERM of
 # TimeoutStartSec) never leaves yesterday's green JSON in place as today's answer.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2329,SC2317
 al_salir() {
   local codigo=$?
   if [[ -n $WORKTREE ]]; then

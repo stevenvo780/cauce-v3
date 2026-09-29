@@ -17,8 +17,9 @@ export {
   parseCodexOutput,
   parseDirectOutput,
   parseHermesOutput,
-  parseOpenClawOutput,
+  parseMuseMspOutput,
   parseMuseOutput,
+  parseOpenClawOutput,
   parseOpenCodeOutput,
 } from "./output-parser/harnesses.js";
 export { parseGrokOutput } from "./output-parser/grok.js";

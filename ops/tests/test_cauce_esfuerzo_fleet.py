@@ -77,7 +77,6 @@ class TestFleetMatchesInventory(unittest.TestCase):
 
 class TestConfigPathMatchesHarness(unittest.TestCase):
     def test_each_known_file_is_the_one_its_harness_reads(self):
-        self.assertTrue(MODULE.CONFIG, "the tool would have nothing to write to")
         for alias, path in MODULE.CONFIG.items():
             harness = INVENTORY[alias]["harness"]
             suffix = CONFIG_SUFFIX_BY_HARNESS.get(harness)

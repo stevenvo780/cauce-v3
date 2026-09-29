@@ -1,8 +1,9 @@
 import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs } from "@cauce/protocol";
 import { DEFAULT_MESSAGE_TIMEOUT_MS } from "../sdk/message-timeout.js";
 import type { HarnessId } from "../sdk/types.js";
+import type { MuseReasoningEffort, MuseRunnerConfig } from "../sdk/muse-msp-runner.js";
 
 type RuntimeEnvironment = "production" | "development" | "test";
 
@@ -30,6 +31,7 @@ interface CliRuntimeConfig {
     readonly tokenFile?: string;
     readonly agentTarget?: string;
   };
+  readonly muse?: MuseRunnerConfig;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -108,6 +110,96 @@ function optionalPath(base: string, value: unknown, context: string): string | u
   return value === undefined ? undefined : resolve(base, string(value, context));
 }
 
+function absolutePath(value: unknown, context: string): string {
+  const path = string(value, context);
+  if (!isAbsolute(path)) throw new Error(`${context} must be an absolute path`);
+  return resolve(path);
+}
+
+const MUSE_REASONING_EFFORTS = new Set([
+  "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+]);
+
+function museReasoningEffort(value: unknown): MuseReasoningEffort | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !MUSE_REASONING_EFFORTS.has(value)) {
+    throw new Error("muse.reasoning_effort must be a supported MSP reasoning tier");
+  }
+  return value as MuseReasoningEffort;
+}
+
+function museApprovalMode(value: unknown): MuseRunnerConfig["approvalMode"] {
+  if (value === undefined || value === "denyUnmatched") return "denyUnmatched";
+  if (value === "onRequest") return "onRequest";
+  if (value === "allowAll") return "allowAll";
+  throw new Error("Muse approval mode must be denyUnmatched, onRequest or allowAll");
+}
+
+function museFromConfig(value: unknown, harnessId: HarnessId): MuseRunnerConfig | undefined {
+  if (value === undefined) return undefined;
+  if (harnessId !== "muse") throw new Error("muse configuration is only valid for the Muse adapter");
+  const entry = object(value, "muse");
+  onlyKeys(entry, new Set([
+    "executable", "config_home", "data_home", "workspace", "model", "reasoning_effort", "approval_mode", "yolo",
+  ]), "muse");
+  const reasoningEffort = museReasoningEffort(entry.reasoning_effort);
+  const approvalMode = museApprovalMode(entry.approval_mode);
+  if (entry.yolo !== undefined && typeof entry.yolo !== "boolean") throw new Error("muse.yolo must be a boolean");
+  if ((approvalMode === "allowAll") !== (entry.yolo === true)) {
+    throw new Error("muse.yolo and allowAll must be configured together");
+  }
+  return {
+    executable: absolutePath(entry.executable, "muse.executable"),
+    configHome: absolutePath(entry.config_home, "muse.config_home"),
+    dataHome: absolutePath(entry.data_home, "muse.data_home"),
+    workspace: absolutePath(entry.workspace, "muse.workspace"),
+    approvalMode,
+    ...(entry.yolo === true ? { yolo: true } : {}),
+    ...(entry.model === undefined ? {} : { model: string(entry.model, "muse.model") }),
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+  };
+}
+
+/** Variables that only mean something to the MSP runner; one of them without the executable is a half-configured MSP alias. */
+const MUSE_MSP_ONLY_ENVIRONMENT = [
+  "CAUCE_MUSE_CONFIG_HOME", "CAUCE_MUSE_APPROVAL_MODE", "CAUCE_MUSE_YOLO",
+  "CAUCE_MUSE_MODEL", "CAUCE_MUSE_REASONING_EFFORT",
+] as const;
+
+/**
+ * Muse over MSP is opt-in: `CAUCE_MUSE_EXECUTABLE` selects it. Without it the muse alias keeps the
+ * production `muse-cauce exec` path (and its shared TUI), exactly as before MSP existed. An
+ * MSP-only variable without the executable fails closed instead of silently falling back to
+ * `exec --yolo` (an alias asking for onRequest approval must never run YOLO). CAUCE_MUSE_DATA_HOME
+ * and CAUCE_MUSE_WORKSPACE are not selectors: the shared TUI and the context measurement read them too.
+ */
+function museFromEnvironment(harnessId: HarnessId): MuseRunnerConfig | undefined {
+  if (harnessId !== "muse") return undefined;
+  if (process.env.CAUCE_MUSE_EXECUTABLE === undefined) {
+    const orphan = MUSE_MSP_ONLY_ENVIRONMENT.find((name) => process.env[name] !== undefined);
+    if (orphan !== undefined) throw new Error(`${orphan} requires CAUCE_MUSE_EXECUTABLE (Muse MSP)`);
+    return undefined;
+  }
+  const reasoningEffort = museReasoningEffort(process.env.CAUCE_MUSE_REASONING_EFFORT);
+  const approvalMode = museApprovalMode(process.env.CAUCE_MUSE_APPROVAL_MODE);
+  const yolo = process.env.CAUCE_MUSE_YOLO;
+  if (yolo !== undefined && yolo !== "1") throw new Error("CAUCE_MUSE_YOLO must be 1 when set");
+  if ((approvalMode === "allowAll") !== (yolo === "1")) {
+    throw new Error("CAUCE_MUSE_YOLO and allowAll must be configured together");
+  }
+  return {
+    executable: absolutePath(requiredEnvironment("CAUCE_MUSE_EXECUTABLE"), "CAUCE_MUSE_EXECUTABLE"),
+    configHome: absolutePath(requiredEnvironment("CAUCE_MUSE_CONFIG_HOME"), "CAUCE_MUSE_CONFIG_HOME"),
+    dataHome: absolutePath(requiredEnvironment("CAUCE_MUSE_DATA_HOME"), "CAUCE_MUSE_DATA_HOME"),
+    workspace: absolutePath(requiredEnvironment("CAUCE_MUSE_WORKSPACE"), "CAUCE_MUSE_WORKSPACE"),
+    approvalMode,
+    ...(yolo === "1" ? { yolo: true } : {}),
+    ...(process.env.CAUCE_MUSE_MODEL === undefined
+      ? {} : { model: string(process.env.CAUCE_MUSE_MODEL, "CAUCE_MUSE_MODEL") }),
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+  };
+}
+
 function mtls(base: string, value: unknown): CliRuntimeConfig["mutualTls"] {
   if (value === undefined) return undefined;
   const entry = object(value, "mtls");
@@ -168,6 +260,7 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
     "harness_command",
     "openclaw",
     "decisiones_url",
+    "muse",
   ]), `configuration alias '${alias}'`);
   const base = dirname(absolute);
   const runtimeEnvironment = environment(entry.environment);
@@ -182,6 +275,8 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
   const mutualTls = mtls(base, entry.mtls);
   const openClawSettings = openClaw(base, entry.openclaw, harnessId);
   const decisionesUrl = decisionesOrigin(entry.decisiones_url, "decisiones_url");
+  // Optional: without a `muse` block a muse alias keeps the `muse exec` path (see museFromEnvironment).
+  const museSettings = museFromConfig(entry.muse, harnessId);
   return {
     tenant: string(entry.tenant, "tenant"),
     room: entry.room === undefined ? string(entry.tenant, "tenant") : string(entry.room, "room"),
@@ -202,6 +297,7 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
     ...(decisionesUrl === undefined ? {} : { decisionesUrl }),
     ...(entry.harness_command === undefined ? {} : { harnessCommand: string(entry.harness_command, "harness_command") }),
     ...(openClawSettings === undefined ? {} : { openClaw: openClawSettings }),
+    ...(museSettings === undefined ? {} : { muse: museSettings }),
   };
 }
 
@@ -286,6 +382,7 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
     throw new Error("OpenClaw API transport requires CAUCE_OPENCLAW_API_URL and CAUCE_OPENCLAW_TOKEN_FILE");
   }
   const decisionesUrl = decisionesOrigin(process.env.CAUCE_DECISIONES_URL, "CAUCE_DECISIONES_URL");
+  const museConfig = museFromEnvironment(harnessId);
   return {
     tenant: requiredEnvironment("CAUCE_TENANT"),
     room: requiredEnvironment("CAUCE_ROOM"),
@@ -303,6 +400,7 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
     ...(process.env.CAUCE_HARNESS_COMMAND === undefined ? {} : { harnessCommand: process.env.CAUCE_HARNESS_COMMAND }),
     ...bridgeEnvironment(harnessId),
     ...(openClawConfig === undefined ? {} : { openClaw: openClawConfig }),
+    ...(museConfig === undefined ? {} : { muse: museConfig }),
   };
 }
 

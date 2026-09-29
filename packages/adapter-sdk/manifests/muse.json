@@ -11,7 +11,30 @@
     "session_mapping": "observed stream.id of kind session; --session-id id on resume",
     "session_scope": "authenticated tenant+actor+origin channel/session/conversation",
     "shared_session": "SHARED_SESSION=1: the real TUI (muse --yolo --trust-workspace --reasoning-effort max resume <id>) in tmux -L cauce, with an XDG_DATA_HOME of its own under ~/.local/share/cauce-v3/config/<alias>/.local/share",
-    "mcp_registration": "none yet: settings.json is shared with every Muse of the container; answers use the JSON envelope text fallback"
+    "mcp_registration": "none yet: settings.json is shared with every Muse of the container; answers use the JSON envelope text fallback",
+    "msp_transport": {
+      "selected_by": "opt-in: CAUCE_MUSE_EXECUTABLE (or a muse block in the config file); absent = the muse-cauce exec path above. Incompatible with SHARED_SESSION=1; an MSP-only variable without CAUCE_MUSE_EXECUTABLE fails closed",
+      "harness_executable": "$CAUCE_MUSE_EXECUTABLE",
+      "fixed_args": [
+        "serve",
+        "--trust-workspace"
+      ],
+      "yolo_args": [
+        "serve",
+        "--disable-sandbox",
+        "--trust-workspace"
+      ],
+      "output_dialect": "msp-session-view",
+      "session_mapping": "generated durable UUIDv7; MSP session/start then session/resume",
+      "approval_mode": "denyUnmatched (default) | onRequest | allowAll; allowAll only together with CAUCE_MUSE_YOLO=1",
+      "workspace_env": "CAUCE_MUSE_WORKSPACE",
+      "config_home_env": "CAUCE_MUSE_CONFIG_HOME",
+      "data_home_env": "CAUCE_MUSE_DATA_HOME",
+      "model_env": "CAUCE_MUSE_MODEL",
+      "reasoning_effort_env": "CAUCE_MUSE_REASONING_EFFORT",
+      "approval_mode_env": "CAUCE_MUSE_APPROVAL_MODE",
+      "yolo_env": "CAUCE_MUSE_YOLO"
+    }
   },
   "capabilities": {
     "protocol_version": "3.0",

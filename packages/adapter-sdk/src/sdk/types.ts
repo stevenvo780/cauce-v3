@@ -51,6 +51,7 @@ export interface AdapterCapabilities {
   readonly agent_profile_v1?: true;
   /** Accepts per-delivery runtime profile contract and emits consumption evidence upon completion. */
   readonly agent_profile_adoption_v1?: true;
+  readonly conversation_work_v1?: true;
 }
 
 export type RelayOrigin = Origin;
@@ -261,6 +262,7 @@ export interface CommandRunRequest extends CommandInvocation {
   readonly signal: AbortSignal;
   /** Internal native session id; never logged or sent as a credential. */
   readonly sessionId?: string;
+  readonly resumeSession?: boolean;
   /** Witness declared by the harness. Absent = the transport attests nothing. */
   readonly startWitness?: HarnessStartWitness;
   readonly stdinSource?: HarnessStdinSource; // absent = 'pipe'; a runner without a process ignores it
@@ -393,7 +395,11 @@ export interface ParsedHarnessOutput {
 
 type SessionStrategy =
   | { readonly kind: 'none' }
-  | { readonly kind: 'generated' }
+  | {
+    readonly kind: 'generated';
+    readonly mint?: () => string; // native id minter (default randomUUID); Muse MSP mints UUIDv7
+    readonly forwardResume?: true; // pass CommandRunRequest.resumeSession to the runner
+  }
   | { readonly kind: 'observed' };
 
 export interface HarnessDefinition {

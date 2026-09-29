@@ -182,6 +182,7 @@ load_config() {
       OPENCLAW_TRANSPORT|OPENCLAW_API_URL|OPENCLAW_TOKEN_FILE|OPENCLAW_AGENT_TARGET|OPENCLAW_DIST_DIR|OPENCLAW_WORKSPACE)
         [[ $harness == openclaw ]] || die "config key is not allowed for $harness: $key"
         ;;
+      MUSE_EXECUTABLE|MUSE_CONFIG_HOME|MUSE_DATA_HOME|MUSE_WORKSPACE|MUSE_MODEL|MUSE_REASONING_EFFORT|MUSE_APPROVAL_MODE|MUSE_YOLO) [[ $harness == muse ]] || die "config key is not allowed for $harness: $key" ;;
       CLAUDE_PERMISSION_MODE) [[ $harness == claude ]] || die "config key is not allowed for $harness: $key" ;;
       CREDENTIAL_HOME)
         [[ $harness == claude || $harness == codex ]] || die "config key is not allowed for $harness: $key"
@@ -365,6 +366,10 @@ validate_container_identity_and_mount() {
     # ~/.grok holds the login (auth.json), the cauce MCP registration (config.toml) and the
     # per-cwd sessions that --resume reads: losing it on a recreate logs out and forks threads.
     runtime_paths+=("$container_home/.grok")
+  elif [[ $harness == muse && -n $inventory_workspace ]]; then
+    # Workspace agent: its isolated profile, data and workspace, plus the pinned executable.
+    runtime_paths+=("${CONFIG[MUSE_CONFIG_HOME]}" "${CONFIG[MUSE_DATA_HOME]}" "${CONFIG[MUSE_WORKSPACE]}")
+    docker_id_exec --user "$container_user" test -x "${CONFIG[MUSE_EXECUTABLE]}" >/dev/null 2>&1 || die 'Muse executable is missing inside the assigned container'
   elif [[ $harness == muse ]]; then
     # The alias's Muse folder holds its login (.config/muse, linked from ~/.config/muse) and, with
     # SHARED_SESSION, the conversations of its TUI (.local/share, the XDG_DATA_HOME the SDK derives).
@@ -609,29 +614,23 @@ deploy_pki() {
   local pki=${CONFIG[PKI_DIR]} stage="/opt/cauce-v3-secrets/.stage-$alias_name-$container_generation-$$" name
   docker_id_mutate --user 0 rm -rf "$stage"
   docker_id_mutate --user 0 mkdir -p "$stage"
-  docker_id_cp "$pki/." "$stage/"
+  if [[ $harness == muse ]]; then
+    for name in token client.crt client.key ca.crt; do [[ ! -f "$pki/$name" ]] || docker_id_cp "$pki/$name" "$stage/$name"; done
+  else
+    docker_id_cp "$pki/." "$stage/"
+  fi
   docker_id_mutate --user 0 chown -R "$container_uid:$container_gid" "$stage"
   docker_id_mutate --user 0 chmod 0700 "$stage"
   for name in client.crt client.key ca.crt; do docker_id_mutate --user 0 chmod 0600 "$stage/$name"; done
   if [[ $bearer_token_present == true ]]; then docker_id_mutate --user 0 chmod 0600 "$stage/token"; fi
-  if [[ ${CONFIG[OPENCLAW_TRANSPORT]:-cli} == api ]]; then docker_id_mutate --user 0 chmod 0600 "$stage/openclaw-token"; fi
+  if [[ $harness == openclaw && ${CONFIG[OPENCLAW_TRANSPORT]:-cli} == api ]]; then docker_id_mutate --user 0 chmod 0600 "$stage/openclaw-token"; fi
   docker_id_mutate --user 0 mkdir -p /opt/cauce-v3-secrets
   docker_id_mutate --user 0 chmod 0711 /opt/cauce-v3-secrets
   docker_id_mutate --user 0 rm -rf "$secret_directory"
   docker_id_mutate --user 0 mv "$stage" "$secret_directory"
 }
 
-start_adapter() {
-  local runtime_path effective_default_timeout_ms
-  command -v docker >/dev/null 2>&1 || die 'docker is unavailable' 127
-  [[ -f $ALIAS_LOCK_EXEC && ! -L $ALIAS_LOCK_EXEC ]] || die 'alias lock helper is unavailable' 73
-  if [[ -z ${CAUCE_ALIAS_LOCK_FD:-} ]]; then
-    exec env CAUCE_CONTAINER_OPS_ROOT="$ROOT" CAUCE_CONTAINER_LOCK_ROOT="$LOCK_ROOT" \
-      python3 "$ALIAS_LOCK_EXEC" run --lock-root "$LOCK_ROOT" --alias "$alias_name" -- \
-      "$0" start "$alias_name"
-  fi
-  python3 "$ALIAS_LOCK_EXEC" verify --lock-root "$LOCK_ROOT" --alias "$alias_name" \
-    || die "another supervisor owns alias $alias_name" 73
+preflight_adapter() {
   load_config
   validate_bundle
   wait_for_container
@@ -641,6 +640,20 @@ start_adapter() {
   ensure_isolated_config
   ensure_claude_binary
   ensure_hermes_runtime
+}
+
+start_adapter() {
+  local runtime_path effective_default_timeout_ms key
+  command -v docker >/dev/null 2>&1 || die 'docker is unavailable' 127
+  [[ -f $ALIAS_LOCK_EXEC && ! -L $ALIAS_LOCK_EXEC ]] || die 'alias lock helper is unavailable' 73
+  if [[ -z ${CAUCE_ALIAS_LOCK_FD:-} ]]; then
+    exec env CAUCE_CONTAINER_OPS_ROOT="$ROOT" CAUCE_CONTAINER_LOCK_ROOT="$LOCK_ROOT" \
+      python3 "$ALIAS_LOCK_EXEC" run --lock-root "$LOCK_ROOT" --alias "$alias_name" -- \
+      "$0" start "$alias_name"
+  fi
+  python3 "$ALIAS_LOCK_EXEC" verify --lock-root "$LOCK_ROOT" --alias "$alias_name" \
+    || die "another supervisor owns alias $alias_name" 73
+  preflight_adapter
   copy_control_helper
   prepare_control_securely
   prepare_state_securely
@@ -713,14 +726,12 @@ start_adapter() {
     environment+=("CAUCE_HERMES_SOURCE_DIR=$hermes_source_dir")
     environment+=("CAUCE_HERMES_PYTHON=${CONFIG[HERMES_PYTHON]}")
   fi
-  if [[ $harness == openclaw ]]; then
-    environment+=("CAUCE_OPENCLAW_WORKSPACE=${CONFIG[OPENCLAW_WORKSPACE]}")
-    environment+=("CAUCE_OPENCLAW_TRANSPORT=${CONFIG[OPENCLAW_TRANSPORT]:-cli}")
-    [[ -v CONFIG[OPENCLAW_API_URL] ]] && environment+=("CAUCE_OPENCLAW_API_URL=${CONFIG[OPENCLAW_API_URL]}")
-    [[ -v CONFIG[OPENCLAW_TOKEN_FILE] ]] && environment+=("CAUCE_OPENCLAW_TOKEN_FILE=${CONFIG[OPENCLAW_TOKEN_FILE]}")
-    [[ -v CONFIG[OPENCLAW_AGENT_TARGET] ]] && environment+=("CAUCE_OPENCLAW_AGENT_TARGET=${CONFIG[OPENCLAW_AGENT_TARGET]}")
-    [[ -v CONFIG[OPENCLAW_DIST_DIR] ]] && environment+=("CAUCE_OPENCLAW_DIST_DIR=${CONFIG[OPENCLAW_DIST_DIR]}")
-  fi
+  [[ $harness != openclaw ]] || environment+=("CAUCE_OPENCLAW_TRANSPORT=${CONFIG[OPENCLAW_TRANSPORT]:-cli}")
+  for key in OPENCLAW_WORKSPACE OPENCLAW_API_URL OPENCLAW_TOKEN_FILE OPENCLAW_AGENT_TARGET OPENCLAW_DIST_DIR \
+    MUSE_EXECUTABLE MUSE_CONFIG_HOME MUSE_DATA_HOME MUSE_WORKSPACE MUSE_APPROVAL_MODE MUSE_MODEL MUSE_REASONING_EFFORT MUSE_YOLO; do
+    [[ ! -v "CONFIG[$key]" ]] || environment+=("CAUCE_$key=${CONFIG[$key]}")
+  done
+  [[ -z $inventory_workspace ]] || environment+=("CAUCE_AGENT_WORKSPACE=$inventory_workspace")
   assert_generation
   # The lifecycle controller runs as root (to own the control plane) and drops the
   # adapter child to the mapped non-root UID/GID. This exec is intentionally unbounded.
@@ -747,15 +758,7 @@ stop_adapter() {
 
 check_adapter() {
   command -v docker >/dev/null 2>&1 || die 'docker is unavailable' 127
-  load_config
-  validate_bundle
-  wait_for_container
-  validate_container_identity_and_mount
-  validate_pki
-  resolve_container_identity
-  ensure_isolated_config
-  ensure_claude_binary
-  ensure_hermes_runtime
+  preflight_adapter
   docker_id_exec test -x "$control_helper" >/dev/null 2>&1 || die 'container lifecycle helper is absent' 78
   docker_id_exec --user 0 /usr/bin/python3 "$control_helper" check \
     --alias "$alias_name" --state "$state_directory" --control-dir "$control_dir" \

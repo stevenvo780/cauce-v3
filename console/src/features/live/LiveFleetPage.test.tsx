@@ -205,16 +205,14 @@ describe('el mapa', () => {
     expect(document.querySelector('.lhg-bot[data-state="unknown"]')).toBeNull();
   });
 
-  it('el recuento de muñecos es EXACTAMENTE el de participantes reportados', async () => {
-    // The invariant in one line. If anyone re-hooks the drawing to a second source, this number
-    // stops matching the same day.
+  it('el recuento de muñecos excluye los dos retiros explícitos sin trabajo', async () => {
     const base = mockActivity();
     conActividad(base);
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
 
     await waitFor(() => {
-      expect(document.querySelectorAll('.lhg-bot').length).toBe((base.agents ?? []).length);
+      expect(document.querySelectorAll('.lhg-bot').length).toBe(13);
     });
   });
 
@@ -228,13 +226,12 @@ describe('el mapa', () => {
    * `agents` and no room declares it — and no test noticed, because the chip that should have
    * counted it was not looking in that direction.
    */
-  it('«Sin sala» cuenta el alias del registro sin una sola membresía habilitada — el caso gaia', async () => {
+  it('los retiros sin membresías no generan una alerta «Sin sala»', async () => {
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
 
-    // One, and it is the case the fixture carried before this fix.
-    expect(await screen.findByTestId('deriva-sin-sala')).toHaveTextContent(/Sin sala\s*1/);
+    expect(screen.queryByTestId('deriva-sin-sala')).toBeNull();
   });
 
   it('dar de alta en el registro y no darle sala sube «Sin sala» el mismo día', async () => {
@@ -248,14 +245,14 @@ describe('el mapa', () => {
         {
           ...primero, alias: 'gaia', tenant_id: 'Miguel', display_name: 'gaia',
           registered: true, agent_enabled: true, rooms: [], flags: [], in_flight: 0, queued: 0,
+          started: 0, in_flight_items: [], work_state: 'idle',
         },
       ],
     });
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
 
-    // Two: the one that was already there, plus the newly added one.
-    expect(await screen.findByTestId('deriva-sin-sala')).toHaveTextContent(/Sin sala\s*2/);
+    expect(await screen.findByTestId('deriva-sin-sala')).toHaveTextContent(/Sin sala\s*1/);
   });
 
   it('«Fuera del registro» cuenta la membresía habilitada sin fila en el registro', async () => {
@@ -277,8 +274,7 @@ describe('el mapa', () => {
     await screen.findByLabelText('Veredicto de la flota');
 
     expect(await screen.findByTestId('deriva-sin-registro')).toHaveTextContent(/Fuera del registro\s*1/);
-    // And the other direction is not contaminated: the other counter stays at one.
-    expect(await screen.findByTestId('deriva-sin-sala')).toHaveTextContent(/Sin sala\s*1/);
+    expect(screen.queryByTestId('deriva-sin-sala')).toBeNull();
   });
 
   it('un alta COMPLETA no produce deriva por ninguno de los dos lados', async () => {

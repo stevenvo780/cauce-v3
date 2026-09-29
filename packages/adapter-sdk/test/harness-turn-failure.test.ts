@@ -6,6 +6,8 @@ import {
   parseHermesOutput,
   parseOpenClawOutput,
   parseOpenCodeOutput,
+  validateDeliveryOutput,
+  validateStructuredOutput,
 } from "../src/sdk/output-parser.js";
 
 /**
@@ -139,6 +141,52 @@ test("OpenClaw: la corrida sana sigue pasando por el camino de siempre", () => {
 
   assert.equal(parsed.output.status, "done");
   assert.equal(parsed.output.reply, "trabajo terminado");
+});
+
+test("OpenClaw incomplete turn after tools is failed without replay", () => {
+  const notice = "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying.";
+  const parsed = parseOpenClawOutput(JSON.stringify({ choices: [{ message: { content: notice } }] }));
+  const salida = validateDeliveryOutput(parsed.output);
+  assert.equal(salida.status, "failed");
+  assert.equal(salida.retryable, false);
+  assert.match(salida.reply ?? "", /verificá los cambios/u);
+  for (const wrapper of ["result", "output"]) {
+    const wrapped = parseOpenClawOutput(JSON.stringify({ [wrapper]: notice }));
+    assert.equal(wrapped.output.status, "failed");
+  }
+
+  const trailing = parseOpenClawOutput(JSON.stringify({
+    payloads: [{ text: JSON.stringify(SUCCESS) }, { text: notice }],
+  }));
+  assert.equal(trailing.output.status, "failed");
+  assert.equal(trailing.output.retryable, false);
+  const visibleWarning = parseOpenClawOutput(JSON.stringify({
+    payloads: [{ text: JSON.stringify(SUCCESS) }], finalAssistantVisibleText: notice,
+  }));
+  assert.equal(visibleWarning.output.status, "failed");
+
+  const recoveredText = JSON.stringify(SUCCESS);
+  const recovered = parseOpenClawOutput(JSON.stringify({
+    payloads: [{ text: notice }], finalAssistantVisibleText: recoveredText,
+  }));
+  assert.equal(recovered.output.status, "done");
+  const nestedRecovered = parseOpenClawOutput(JSON.stringify({
+    result: { payloads: [{ text: notice }], meta: { finalAssistantVisibleText: recoveredText } },
+  }));
+  assert.equal(nestedRecovered.output.status, "done");
+
+  const quotedByOpenClaw = parseOpenClawOutput(JSON.stringify({ ...SUCCESS, reply: notice }));
+  assert.equal(quotedByOpenClaw.output.status, "done");
+
+  const quotedByAnotherHarness = validateDeliveryOutput(validateStructuredOutput({
+    ...SUCCESS, reply: notice,
+  }));
+  assert.equal(quotedByAnotherHarness.status, "done");
+
+  const realReply = `El aviso anterior fue: ${notice} Ahora comprobé el estado y cierro esta respuesta.`;
+  const normal = validateDeliveryOutput(validateStructuredOutput({ ...SUCCESS, reply: realReply }));
+  assert.equal(normal.status, "done");
+  assert.equal(normal.reply, realReply);
 });
 
 test("Hermes: el objeto nativo con ok:false termina fallido", () => {

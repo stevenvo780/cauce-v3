@@ -3,7 +3,7 @@
 ## Cuándo usar
 Configurar, rotar y verificar identidades mTLS, OIDC y token-hashes para el gateway de Cauce V3 asegurando revocación atómica mediante directorio montado.
 
-> **Importante**: `ops/container-aliases.json` y `ops/manifests/*.yaml` son estrictamente GENERADOS a partir de `ops/flota.json` (exportado desde PostgreSQL). La edición manual de estos archivos está estrictamente PROHIBIDA y bloqueada por el gate de validación (`ops/scripts/validate.sh`). Para el alta, baja o aprovisionamiento de credenciales de agentes, consultar [Runbook: Alta y Baja de Agente](file:///datos/workspaces/zeus/cauce-v3/ops/runbooks/alta-y-baja-de-agente.md) y utilizar `cauce <alias> aprovisionar` / `ops/scripts/regenerate-fleet.sh`.
+> **Importante**: `ops/container-aliases.json` y `ops/manifests/*.yaml` son estrictamente GENERADOS a partir de `ops/flota.json` (exportado desde PostgreSQL). La edición manual de estos archivos está estrictamente PROHIBIDA y bloqueada por el gate de validación (`ops/scripts/validate.sh`). Para el alta, baja o aprovisionamiento de credenciales de agentes, consultar [Runbook: Alta y Baja de Agente](alta-y-baja-de-agente.md) y utilizar `cauce <alias> aprovisionar` / `ops/scripts/regenerate-fleet.sh`.
 
 ## Pasos
 1. Crear el directorio de identidades en el host y mover registros:

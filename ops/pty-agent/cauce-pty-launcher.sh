@@ -377,6 +377,7 @@ wire_for_harness = {
     "codex": ("CODEX_HOME", "codex_home"),
     "claude": ("CLAUDE_CONFIG_DIR", "claude_config_dir"),
     "openclaw": ("CAUCE_OPENCLAW_WORKSPACE", "openclaw_workspace"),
+    "muse": ("CAUCE_MUSE_WORKSPACE", "muse_workspace"),
 }.get(harness)
 observed = set()
 for name in os.listdir("/proc"):
@@ -507,7 +508,8 @@ if len(observed) != 1:
 profile, process_cwd, workspace_root = next(iter(observed))
 
 document = {}
-if wire_for_harness is not None:
+# muse without a declared workspace (bridge mode) exports no profile: nothing to measure.
+if wire_for_harness is not None and (profile or harness != "muse"):
     if not safe_directory(profile, below_home=True):
         raise SystemExit(2)
     document[wire_for_harness[1]] = profile

@@ -15,7 +15,7 @@ assert_eq() { # $1=got $2=want $3=msg
 }
 
 WORK=$(mktemp -d)
-# shellcheck disable=SC2329  # invoked indirectly, via the EXIT trap below
+# shellcheck disable=SC2329,SC2317  # invoked indirectly, via the EXIT trap below
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 

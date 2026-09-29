@@ -257,6 +257,8 @@ def run_adapter(args: argparse.Namespace) -> int:
                 })
                 validate_metadata(running_document)
                 verify_adapter(running_document, args.alias, args.state)
+            except ProcessLookupError as error:
+                raise AdapterExitedBeforeIdentity from error
             except (OSError, PermanentError) as error:
                 if not pidfd_running(process_tree.leader_fd):
                     raise AdapterExitedBeforeIdentity from error

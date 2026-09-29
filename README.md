@@ -1,6 +1,6 @@
 # Cauce V3
 
-Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenClaw) de 4 tenants (Steven, Miguel, Jhon, Isa), con consola web de operador y puente Telegram. PostgreSQL es la única fuente durable; la entrega es *pull* por WebSocket con fencing (`claim_token`+`epoch`). Monorepo pnpm (Node 22, TypeScript) + un agente PTY en Python. Corre en producción desde el primer despliegue real (ver `docs/roadmap.md` para el estado actual y lo pendiente).
+Bus de mensajería durable y multi-tenant entre agentes de IA en CLI (Claude Code, Codex, OpenClaw), con consola web de operador y puente Telegram. PostgreSQL es la única fuente durable; la entrega es *pull* por WebSocket con fencing (`claim_token`+`epoch`). Monorepo pnpm (Node 22, TypeScript) + un agente PTY en Python. Qué falta y en qué orden: `docs/roadmap.md`.
 
 **¿Primera vez aquí (humano o IA)?** Empieza por [`AGENTS.md`](AGENTS.md) (contexto y reglas) y [`docs/arquitectura.md`](docs/arquitectura.md) (cómo está construido).
 
@@ -17,7 +17,7 @@ pnpm test                                    # gate completo (scripts/test-all.m
 ops/scripts/validate.sh                      # sintaxis ops/deploy + identidad byte a byte de lo generado
 export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si
 ./deploy/deploy.sh                           # despliegue real — SOLO con el dueño presente (ver docs/operacion.md)
-./deploy/smoke.sh                            # 7 sondas post-despliegue sobre producción viva
+./deploy/smoke.sh                            # sondas post-despliegue contra la pila viva
 ```
 
 ## Componentes
@@ -43,7 +43,6 @@ export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si
 | [`docs/arquitectura.md`](docs/arquitectura.md) | cómo está construido el sistema — guía de lectura central |
 | [`docs/operacion.md`](docs/operacion.md) | desplegar, alta/baja de agente, diagnóstico, backups |
 | [`docs/roadmap.md`](docs/roadmap.md) | qué falta, priorizado |
-| [`docs/flota-y-participantes.md`](docs/flota-y-participantes.md) | máquinas, humanos, agentes, escenarios esenciales |
 | [`docs/adr/`](docs/adr/) | decisiones de diseño aceptadas |
 | [`docs/threat-model.md`](docs/threat-model.md) | amenazas y controles |
 | [`ops/runbooks/`](ops/runbooks/) | procedimientos operativos detallados |

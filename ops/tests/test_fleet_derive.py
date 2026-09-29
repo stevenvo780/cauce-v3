@@ -15,6 +15,7 @@ from fleet_derive import (  # noqa: E402
     SYSTEMD_USER,
     alias_entry,
     env_name,
+    harness_workspace,
     manifest_doc,
     runtime_state_directory,
 )
@@ -174,6 +175,19 @@ class FleetDeriveTests(unittest.TestCase):
                     self.assertEqual(entry["workspace"], "/srv/agent/clawd")
                 else:
                     self.assertNotIn("workspace", entry)
+
+    def test_muse_workspace_agent_is_selected_by_its_declared_state_directory(self) -> None:
+        bridge = fleet_row("muse", home="/srv/agent",
+                           runtimeStateDirectory="/srv/agent/.local/state/cauce-v3/hegel")
+        agent = fleet_row("muse", home="/srv/agent",
+                          runtimeStateDirectory="/srv/agent/.muse/cauce-v3/teseo")
+        self.assertIsNone(harness_workspace("hegel", bridge))
+        self.assertNotIn("workspace", alias_entry("hegel", bridge, {}))
+        self.assertNotIn("workspace", manifest_doc("hegel", bridge)["spec"]["profile"])
+        self.assertIsNone(harness_workspace("perseo", agent))
+        self.assertEqual(harness_workspace("teseo", agent), "/srv/agent/clawd")
+        self.assertEqual(alias_entry("teseo", agent, {})["workspace"], "/srv/agent/clawd")
+        self.assertEqual(manifest_doc("teseo", agent)["spec"]["profile"]["workspace"], "/srv/agent/clawd")
 
     def test_alias_entry_does_not_mutate_inputs(self) -> None:
         row = fleet_row("openclaw")

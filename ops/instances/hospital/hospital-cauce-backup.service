@@ -1,0 +1,12 @@
+[Unit]
+Description=Backup verificado de PostgreSQL para Cauce Hospital
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hospital-cauce-backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=20m

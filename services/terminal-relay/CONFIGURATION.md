@@ -9,17 +9,17 @@ restarting the gateway kills adapters with work in flight, restarting this does 
 
 ## Topology
 
-The core (gateway, dispatcher, console, PostgreSQL) runs on `agora-storage`; the agent
-containers run on `kratos`. The relay lives with the core and the crossing is made **by the
-agents, outbound**:
+The core (gateway, dispatcher, console, PostgreSQL) and the agent containers may sit on
+different hosts. The relay lives with the core and the crossing is made **by the agents,
+outbound**:
 
 - **Browser leg** — WebSocket over TLS on `8446`, compose-internal. The console nginx
   terminates the operator connection and re-dials with a client certificate; the browser never
   reaches this listener. The certificate is verified against `CLIENT_CA` and its CN must be in
   `CONSOLE_CN`.
 - **Agent leg** — raw TLS (not WebSocket) on `8445`, published on the private tailnet address.
-  PTY agents inside containers on `kratos` dial **out** to it. The relay never dials into
-  `kratos`: no such route exists and creating one would be a privilege escalation.
+  PTY agents inside the containers dial **out** to it. The relay never dials into the agent
+  host: no such route exists and creating one would be a privilege escalation.
 - **Gateway client** — HTTPS to `CAUCE_TERMINAL_GATEWAY_URL` with a bearer token read from
   `TOKEN_FILE` on every call, so rotating the token needs no restart. A gateway behind a
   private CA is trusted through `NODE_EXTRA_CA_CERTS`; the relay adds no CA setting of its own.
@@ -72,7 +72,7 @@ deletes it is an owner decision, not a default.
 format, and is scraped by the `cauce-relay` job of `ops/observability/prometheus.yaml`, which
 discovers the relay by DNS: `terminal-relay` is `profiles: [terminal]`, so on a stack without the
 PTY channel the name does not resolve, no target exists, and the `cauce-v3-terminal` rules — none
-of which uses `absent()` — stay silent instead of paging two agents forever. Every
+of which uses `absent()` — stay silent instead of paging forever. Every
 series is aggregate: there is no tenant, alias, operator, container or session label anywhere,
 because the shape of who is being watched must not leak into a scrape target that has no
 authorization of its own. The close-code label is bounded to the codes the relay itself emits;
@@ -105,7 +105,7 @@ future `expires_at`:
 
 ```json
 {"version":1,"agents":[
-  {"fingerprint_sha256":"AA:BB:…","tenant_id":"Steven","alias":"jarvis","expires_at":"2026-10-23T00:00:00Z"}
+  {"fingerprint_sha256":"AA:BB:…","tenant_id":"<tenant>","alias":"<alias>","expires_at":"2026-10-23T00:00:00Z"}
 ]}
 ```
 

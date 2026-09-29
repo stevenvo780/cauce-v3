@@ -21,6 +21,9 @@ export const HARNESS_DEFINITIONS: Readonly<Record<HarnessId, HarnessDefinition>>
   codex: codexDefinition,
   openclaw: openClawDefinition,
   grok: grokDefinition,
+  // The packaged Muse definition is the `muse exec` one (production path). The MSP variant
+  // (`./muse-msp.js`) is not a separate harness id: `runCli` loads it only with an explicit Muse
+  // MSP configuration, so the rest of the fleet never loads `@muse-code/sdk`.
   muse: museDefinition,
   fake: fakeDefinition,
 };

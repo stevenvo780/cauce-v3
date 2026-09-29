@@ -52,13 +52,14 @@ class GovernancePathsParityTest(unittest.TestCase):
         instance.bundle, root = self._bundle_for(harness)
         return instance, root
 
-    def test_contract_declares_the_four_harnesses_with_their_documents(self) -> None:
-        self.assertEqual(sorted(self.harnesses), ["claude", "codex", "hermes", "openclaw"])
+    def test_contract_declares_the_five_harnesses_with_their_documents(self) -> None:
+        self.assertEqual(sorted(self.harnesses), ["claude", "codex", "hermes", "muse", "openclaw"])
         self.assertEqual(
             sorted(self.harnesses["openclaw"]["documentos"]),
             ["AGENTS.md", "HEARTBEAT.md", "IDENTITY.md", "MEMORY.md", "SOUL.md", "TOOLS.md",
              "USER.md"],
         )
+        self.assertEqual(self.harnesses["muse"]["documentos"], ["AGENTS.md"])
 
     def test_writable_profile_paths_match_the_contract_harness_by_harness(self) -> None:
         for harness, declared in sorted(self.harnesses.items()):

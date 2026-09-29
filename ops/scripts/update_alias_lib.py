@@ -86,6 +86,13 @@ COMMON_REQUIRED = frozenset(
         "CAUCE_SEMBRAR_PERFIL",
     }
 )
+MUSE_WORKSPACE_ALLOWED = frozenset({
+    "MUSE_EXECUTABLE", "MUSE_CONFIG_HOME", "MUSE_DATA_HOME", "MUSE_WORKSPACE",
+    "MUSE_MODEL", "MUSE_REASONING_EFFORT", "MUSE_APPROVAL_MODE", "MUSE_YOLO",
+})
+MUSE_WORKSPACE_REQUIRED = frozenset({
+    "MUSE_EXECUTABLE", "MUSE_CONFIG_HOME", "MUSE_DATA_HOME", "MUSE_WORKSPACE", "MUSE_APPROVAL_MODE",
+})
 CANONICAL_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 HARNESS_ALLOWED: dict[str, frozenset[str]] = {
     "claude": frozenset(
@@ -100,7 +107,8 @@ HARNESS_ALLOWED: dict[str, frozenset[str]] = {
     ),
     "codex": frozenset({"SHARED_SESSION", "SHARED_SESSION_WORKSPACE", "CONFIG_POR_ALIAS"}),
     "grok": frozenset({"SHARED_SESSION", "SHARED_SESSION_WORKSPACE", "SHARED_SESSION_NATIVE_ID"}),
-    "muse": frozenset({"SHARED_SESSION", "SHARED_SESSION_WORKSPACE", "SHARED_SESSION_NATIVE_ID"}),
+    "muse": frozenset({"SHARED_SESSION", "SHARED_SESSION_WORKSPACE", "SHARED_SESSION_NATIVE_ID"})
+    | MUSE_WORKSPACE_ALLOWED,
     "hermes": frozenset(
         {"HERMES_HOME", "HERMES_INFERENCE_MODEL", "HERMES_PYTHON", "HERMES_SOURCE_COMMIT"}
     ),
@@ -348,6 +356,8 @@ def load_inventory(
     if requires_isolated:
         required |= frozenset({"CONFIG_POR_ALIAS"})
     workspace = entry.get("workspace")
+    if harness == "muse" and isinstance(workspace, str):
+        required |= MUSE_WORKSPACE_REQUIRED
     approved_hermes = (
         load_approved_hermes_runtime(hermes_runtime_path) if harness == "hermes" else None
     )
@@ -440,6 +450,33 @@ def validate_policy(document: EnvDocument, policy: AliasPolicy, pki_root: pathli
             raise ConfigUpdateError("OPENCLAW_AGENT_TARGET tiene formato invalido")
         if "OPENCLAW_DIST_DIR" in values and not is_absolute_value(values["OPENCLAW_DIST_DIR"]):
             raise ConfigUpdateError("OPENCLAW_DIST_DIR debe ser una ruta absoluta canonica")
+    if policy.harness == "muse" and policy.canonical_workspace is None:
+        if MUSE_WORKSPACE_ALLOWED & values.keys():
+            raise ConfigUpdateError("las claves MUSE_* requieren un workspace en el inventario")
+    elif policy.harness == "muse":
+        if values.get("MUSE_WORKSPACE") != policy.canonical_workspace:
+            raise ConfigUpdateError("MUSE_WORKSPACE no coincide con el inventario")
+        expected = {
+            "MUSE_EXECUTABLE": "/opt/muse-code/muse",
+            "MUSE_CONFIG_HOME": f"{policy.home}/.muse/config",
+            "MUSE_DATA_HOME": f"{policy.home}/.muse/data",
+        }
+        for key, required_value in expected.items():
+            if values.get(key) != required_value:
+                raise ConfigUpdateError(f"{key} no usa la ruta aislada aprobada")
+        mode = values.get("MUSE_APPROVAL_MODE")
+        if mode not in {"denyUnmatched", "onRequest", "allowAll"}:
+            raise ConfigUpdateError("MUSE_APPROVAL_MODE es invalido")
+        if (mode == "allowAll") != (values.get("MUSE_YOLO") == "1") or (
+            "MUSE_YOLO" in values and values["MUSE_YOLO"] != "1"
+        ):
+            raise ConfigUpdateError("MUSE_YOLO y allowAll deben configurarse juntos")
+        if "MUSE_MODEL" in values and MODEL_RE.fullmatch(values["MUSE_MODEL"]) is None:
+            raise ConfigUpdateError("MUSE_MODEL tiene formato invalido")
+        if "MUSE_REASONING_EFFORT" in values and values["MUSE_REASONING_EFFORT"] not in {
+            "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+        }:
+            raise ConfigUpdateError("MUSE_REASONING_EFFORT es invalido")
     for key in ("PKI_DIR", "MOUNT_SOURCE", "MOUNT_DESTINATION", "HERMES_HOME", "HERMES_PYTHON"):
         if key in values and not is_absolute_value(values[key]):
             raise ConfigUpdateError(f"{key} debe ser una ruta absoluta canonica")

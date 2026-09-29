@@ -1,25 +1,23 @@
-# Runbook: Ventana del Primer Despliegue Real (Fase 3)
+# Runbook: Ventana del Primer Despliegue Real
 
-**Autoridad**: Dueño del sistema presente (`CAUCE_FASE3_CON_DUENO=si`).  
-**Duración estimada**: 2 a 3 horas.  
-**Objetivo**: Migrar esquema a 037 en una sola transacción, levantar el compose canónico único desde el repositorio y validar los 5 escenarios esenciales de la flota.
+**Autoridad**: dueño del sistema presente (`CAUCE_FASE3_CON_DUENO=si`).
+**Objetivo**: aplicar las migraciones pendientes en una sola transacción, levantar el compose
+canónico único desde el repositorio y validar el efecto real contra la flota viva.
 
 ---
 
 ## 1. Precondiciones y Criterio de Parada Inicial
 
 Antes de tocar producción, el árbol local en `main` debe cumplir:
-1. `git status` limpio y sincronizado con `origin/main`.
+1. `git status` limpio y sincronizado con `origin/main` (`CAUCE_DEPLOY_EXPECTED_GIT_REF`).
 2. Gate local estricto en verde:
    ```bash
    pnpm typecheck && pnpm lint && pnpm test:unit
    ```
-3. Backup automatizado verificado en el host:
-   ```bash
-   find /var/backups -name "*cauce*" -mmin -1440
-   ```
+3. Backup automatizado verificado y reciente en el host.
 
-**CRITERIO DE PARADA 0**: Si el gate falla o no hay backup reciente (<24h), **ABORTAR**. No se inicia la ventana.
+**CRITERIO DE PARADA 0**: si el gate falla o no hay backup de menos de 24 h, **ABORTAR**. No se
+inicia la ventana.
 
 ---
 
@@ -29,171 +27,188 @@ Ejecutar un snapshot manual completo y consistente antes de cualquier mutación:
 ```bash
 sudo /usr/local/sbin/cauce-v3-host-backup
 ```
-Verificar que el archivo `.dump` se generó y es legible:
+Verificar que el `.dump` se generó y es legible. El script deja el dump en `DB_BACKUP_DIR`
+(`/opt/_archive/cauce-v3-db-backups` por defecto) con su `.sha256` al lado. Esa variable sólo existe
+dentro del script, no en el shell del operador: los comandos de abajo usan la ruta literal. Y
+`pg_restore` puede no existir en el host: se usa el de la propia imagen de PostgreSQL.
 ```bash
-# el script deja el dump en /opt/_archive/cauce-v3-db-backups (NO en /var/backups); pg_restore no existe en el host
 LATEST_BACKUP=$(ls -t /opt/_archive/cauce-v3-db-backups/*.dump | head -n 1)
 (cd "$(dirname "$LATEST_BACKUP")" && sha256sum -c "$(basename "$LATEST_BACKUP").sha256")
-docker run --rm -v "$(dirname "$LATEST_BACKUP"):/b:ro" "$(docker inspect cauce-v3-prod-postgres-1 --format '{{.Config.Image}}')" \
-  pg_restore --list "/b/$(basename "$LATEST_BACKUP")" | grep -c "TABLE DATA"   # debe listar ~60 tablas
+docker run --rm -v "$(dirname "$LATEST_BACKUP"):/b:ro" \
+  "$(docker inspect <contenedor-postgres> --format '{{.Config.Image}}')" \
+  pg_restore --list "/b/$(basename "$LATEST_BACKUP")" | grep -c "TABLE DATA"
 echo "Backup verificado: $LATEST_BACKUP"
 ```
+El conteo de `TABLE DATA` debe coincidir con las tablas que declara el esquema vigente.
 
-**CRITERIO DE PARADA 1**: Si `pg_restore --list` arroja error de integridad, **ABORTAR**.
+**CRITERIO DE PARADA 1**: si `pg_restore --list` arroja error de integridad, **ABORTAR**.
 
 ---
 
-## 3. Paso 2 — Preparación de Datos: B1 (Sesiones Fantasma)
+## 3. Paso 2 — Preparación de Datos: sesiones de terminal sin anclar
 
-La migración 034 exige que no existan sesiones de terminal abiertas sin anclar. En la BD de producción existen 3 sesiones huérfanas de julio que deben revocarse.
+Las migraciones del plano de terminal exigen que no existan sesiones abiertas sin anclar.
 
 1. Identificar las sesiones huérfanas:
    ```bash
-   docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce -c \
+   docker exec -i <contenedor-postgres> psql -U cauce -d cauce -c \
      "SELECT id, tenant_id, alias, issued_at FROM terminal_sessions WHERE closed_at IS NULL AND revoked_at IS NULL;"
    ```
-2. Revocar exactamente esas 3 sesiones:
+2. Revocar exactamente esas sesiones:
    ```bash
-   docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce -c \
+   docker exec -i <contenedor-postgres> psql -U cauce -d cauce -c \
      "UPDATE terminal_sessions SET revoked_at = now() WHERE closed_at IS NULL AND revoked_at IS NULL;"
    ```
-3. Verificar que el resultado sea 0 filas pendientes:
+3. Verificar que no quede ninguna pendiente:
    ```bash
-   docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce -tA -c \
+   docker exec -i <contenedor-postgres> psql -U cauce -d cauce -tA -c \
      "SELECT count(*) FROM terminal_sessions WHERE closed_at IS NULL AND revoked_at IS NULL;"
    ```
 
-**CRITERIO DE PARADA 2**: Si el conteo es distinto de `0`, **ABORTAR** antes de ejecutar migraciones.
+**CRITERIO DE PARADA 2**: si el conteo es distinto de `0`, **ABORTAR** antes de migrar.
 
 ---
 
-## 4. Paso 3 — Ajuste de Configuración en `prod.env` (B2 y B3)
+## 4. Paso 3 — Ajuste del entorno privado
 
-1. Respaldar `/etc/cauce-v3/prod.env`:
-   ```bash
-   sudo cp -a /etc/cauce-v3/prod.env /etc/cauce-v3/prod.env.bak-ventana
-   ```
-2. Calcular el `CAUCE_TERMINAL_RELAY_INSTANCE_ID`: es el sha256 del DER del certificado que el relay presenta **al gateway** (`CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH`, hoy `/etc/cauce-v3/secrets/terminal-gateway-client.crt`, CN=console-client). El relay lo valida al arrancar (`services/terminal-relay/src/config.ts`): con otro valor **no arranca**. Y ese mismo digest es la identidad mTLS del relay en `mtls_identities.json`.
+1. Respaldar el env privado: `sudo cp -a /etc/cauce-v3/prod.env /etc/cauce-v3/prod.env.bak-ventana`.
+2. Calcular `CAUCE_TERMINAL_RELAY_INSTANCE_ID`: es el sha256 del DER del certificado que el relay
+   presenta **al gateway** (`CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH`). El relay lo valida al arrancar
+   (`services/terminal-relay/src/config.ts`: 64 hex minúsculas): con otro valor **no arranca**. Ese
+   mismo digest es la identidad mTLS del relay en `mtls_identities.json`.
    ```bash
    CERT=$(sed -n 's/^CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH=//p' /etc/cauce-v3/prod.env)
    test -r "$CERT" || { echo "PARAR: no existe $CERT"; exit 1; }   # sin este guardia, sha256sum de la nada da e3b0c442… y pasa todos los filtros
    ID=$(openssl x509 -in "$CERT" -outform DER | sha256sum | awk '{print $1}'); echo "$ID"
    ```
-   *(Valor verificado el 28-08: `749f8af81ce316c6e28c3c7ac200640ea1b918ac12b653193864f5d61f4c520b`; si da otra cosa, PARAR.)*
-3. Escribirlo en `prod.env` (`deploy.sh` vuelve a verificar que iguala al DER del cert):
+   Si el valor cambia respecto del que ya está en el env privado sin que se haya rotado el
+   certificado, **PARAR**.
+3. Escribirlo en el env privado (`deploy.sh` vuelve a verificar que iguala al DER del cert):
    ```bash
    sed -i '/^CAUCE_TERMINAL_RELAY_INSTANCE_ID=/d' /etc/cauce-v3/prod.env
    printf 'CAUCE_TERMINAL_RELAY_INSTANCE_ID=%s\n' "$ID" >> /etc/cauce-v3/prod.env
    ```
-4. Enmascarar durante la ventana los timers que escriben en la BD por el gateway (la 034/037 toman locks exclusivos): `systemctl stop cauce-revividor-de-colas.timer cauce-v3-fleet-watchdog.timer` (son ficheros reales en /etc/systemd/system: `mask` no aplica) — y **`systemctl start` de ambos al cerrar**.
-5. Validar renderizado canónico de Docker Compose:
+4. Parar durante la ventana los timers que escriben en la BD por el gateway —watchdog, reconciler y
+   cualquier revividor de colas instalado— porque las migraciones toman locks exclusivos. Si son
+   ficheros reales en `/etc/systemd/system`, `mask` no aplica: `systemctl stop`. **Arrancarlos otra
+   vez al cerrar la ventana.**
+5. Validar el renderizado canónico de Compose:
    ```bash
    docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml config > /dev/null
    ```
 
-**CRITERIO DE PARADA 3**: Si `docker compose config` falla al validar variables o secretos, **ABORTAR**.
+**CRITERIO DE PARADA 3**: si `docker compose config` falla al validar variables o secretos, **ABORTAR**.
 
 ---
 
-## 5. Paso 4 — Ejecución del Despliegue con `deploy/deploy.sh`
+## 5. Paso 4 — Despliegue con `deploy/deploy.sh`
 
-Con la presencia del dueño, exportar la variable requerida y lanzar el despliegue canónico:
+Con el dueño presente, exportar las variables requeridas y lanzar el despliegue canónico:
 ```bash
 export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si   # ya como root; cero interactividad
 ./deploy/deploy.sh
 ```
 
-Realidades medidas en la pre-flight (28-08): el `up` **recrea los 10 contenedores, postgres incluido** (el volumen `cauce_pgdata` se reutiliza por nombre; compose avisa que no lo creó él: esperado). Las imágenes se construyen con `--target` explícito (runtime y console salen de `deploy/Dockerfile`; la consola hornea el instance id). Con `df -h /` < 60 GB libres, `docker builder prune -f` antes. El árbol `/datos/workspaces/zeus/cauce-v3` pasa a ser **material de producción** (prometheus/otel/postgres montan ficheros de ahí): no rebasear ni cambiar de rama con prod arriba.
+Qué hay que tener en cuenta antes del `up`: **recrea todos los contenedores del compose, postgres
+incluido** (el volumen de datos se reutiliza por nombre; compose avisa que no lo creó él, es
+esperado). Las imágenes se construyen con `--target` explícito (runtime y console salen de
+`deploy/Dockerfile`; la consola hornea el instance id). Con poco espacio libre en `/`, correr
+`docker builder prune -f` antes. **El árbol del checkout pasa a ser material de producción**
+(prometheus/otel/postgres montan ficheros desde ahí): no rebasear ni cambiar de rama con producción
+arriba.
 
 El script ejecuta automáticamente:
 1. Verificación de `main` y estado git limpio.
-2. Build y tag de imágenes `cauce-v3-runtime` y `cauce-v3-console` con pin por digest SHA256 en `prod.env`.
-3. Ejecución del contenedor efímero `migrator` aplicando las 10 migraciones (026–028, 030–035, 037) en una sola transacción (~3 segundos).
+2. Build y tag de las imágenes `cauce-v3-runtime` y `cauce-v3-console`, con pin por digest en el env
+   privado.
+3. Contenedor efímero `migrator`: todas las migraciones pendientes en una sola transacción.
 4. `docker compose up -d --wait --remove-orphans`.
 5. Verificación inmediata con `deploy/smoke.sh`.
 
-**CRITERIO DE PARADA 4**: Si `migrator` falla, la transacción revierte automáticamente a 024. Si `up` o `smoke.sh` fallan, proceder al **Plan de Rollback**.
+**CRITERIO DE PARADA 4**: si `migrator` falla, la transacción revierte al esquema previo por sí sola.
+Si `up` o `smoke.sh` fallan, ir al **Plan de Rollback**.
 
 ---
 
-## 6. Paso 5 — Validación de Humo y Efectos Reales (`smoke.sh`)
+## 6. Paso 5 — Validación de humo (`deploy/smoke.sh`)
 
-Verificar que las 7 sondas de `deploy/smoke.sh` pasen:
 ```bash
 ./deploy/smoke.sh
 ```
-Puntos de comprobación evaluados por `smoke.sh`:
-- Gateway `/health/ready` responde OK en puerto interno 8081.
-- Los 5 contenedores core están en estado `healthy` (gateway, dispatcher, terminal-relay, telegram-bridge, console).
-- Esquema de BD en versión `037_*`.
-- Al menos 8 leases de conexión de agentes con latido fresco (<60s).
-- Entregas del bus en estado `done` en las últimas 6h.
-- Terminal Relay sin bucle de reconexión (<30 conexiones de agentes en 2 min).
-- Rutas de gobernanza respondiendo a través del proxy de consola.
+Qué evalúa, con sus umbrales por variable de entorno:
+- gateway `/health/ready` por el probe interno (puerto 8081);
+- un contenedor activo y `healthy` por cada servicio del compose;
+- versión de esquema **igual a la que declara el repo**;
+- flota: agentes habilitados con arriendo vigente y fresco frente a `EXPECTED_AGENTS`;
+- el agente de gobierno declarado (`GOVERNANCE_TENANT`/`GOVERNANCE_ALIAS`) existe y está habilitado;
+- bus: entregas `done` con ACK aplicado o ejecuciones vivas con arriendo, frente a `MIN_ACTIVITY`;
+- relay sin bucle de reconexión, frente a `RELAY_MAX_CONNECTIONS` (o perfil `terminal` inactivo);
+- la ruta de documentos de gobierno responde exigiendo autenticación (401/403) a través del proxy de
+  consola.
+
+El propio script deja una comprobación **manual** al final: editar un fichero de gobierno desde la
+consola y verificarlo dentro del contenedor objetivo.
 
 ---
 
-## 7. Paso 6 — Verificación de los 5 Escenarios Esenciales Post-Deploy
+## 7. Paso 6 — Verificación funcional post-deploy
 
-Ejecutar la validación funcional de los 5 escenarios definidos en `docs/flota-y-participantes.md`:
+Por cada alias que la instalación declare, y como mínimo por cada arnés distinto en uso:
 
-1. **Escenario 1 (Steven → argos por Telegram)**:
-   - Enviar mensaje de prueba al bot de Telegram `@argos`.
-   - Verificar recepción y ACK en logs:
-     ```bash
-     docker logs --tail 30 cauce-v3-prod-telegram-bridge-1
-     HOME=/home/stev ops/cli/cauce argos estado
-     ```
-2. **Escenario 2 (Miguel → janus por Telegram)**:
-   - Verificar polling activo y recepción en `janus`:
-     ```bash
-     HOME=/home/stev ops/cli/cauce janus estado
-     ```
-3. **Escenario 3 (Jhon → hegel por Telegram)**:
-   - Verificar que `hegel` procesa entregas y que las 2 entregas atascadas pre-deploy fueron segadas por el nuevo dispatcher.
-     ```bash
-     HOME=/home/stev ops/cli/cauce hegel estado
-     ```
-4. **Escenario 4 (Steven → jarvis)**:
-   - Verificar si el contenedor `claw` y el adaptador de `jarvis` recuperan conectividad con el nuevo runtime.
-5. **Escenario 5 (Operación TUI/CLI)**:
-   - Ejecutar inspección de flota y attach limpio:
-     ```bash
-     HOME=/home/stev ops/cli/cauce
-     HOME=/home/stev timeout 5 ops/cli/cauce socrates ver
-     ```
+1. **Entrada por Telegram**: enviar un mensaje al bot del alias y verificar recepción y ACK:
+   ```bash
+   docker logs --tail 30 <contenedor-telegram-bridge>
+   ops/cli/cauce <alias> estado
+   ```
+2. **Entrega por el bus**: `ops/cli/cauce probar <alias>` — criterio de éxito: entrega `done` con ACK
+   durable en PostgreSQL.
+3. **Entregas atascadas antes del despliegue**: comprobar que el dispatcher nuevo las segó (no
+   quedan `inflight` vencidos).
+4. **Operación TUI/CLI**: inspección de flota y attach limpio:
+   ```bash
+   ops/cli/cauce
+   timeout 5 ops/cli/cauce <alias> ver
+   ```
+
+De dónde sale la lista de alias y su colocación: `ops/flota.json` y la sección «La flota como datos»
+de `../../docs/arquitectura.md`.
 
 ---
 
-## 8. Plan de Rollback Exacto
+## 8. Plan de Rollback
 
-Si se produce un fallo crítico tras el despliegue o la prueba de humo resulta insatisfactoria:
-
-### Caso A: Fallo en migración (antes de levantar servicios nuevos)
+### Caso A: fallo en la migración (antes de levantar servicios nuevos)
 - La transacción de PostgreSQL revierte automáticamente.
-- La base de datos queda intacta en el esquema 024.
+- La base queda intacta en el esquema previo.
 - No se requiere restaurar dump.
 
-### Caso B: Fallo en arranque de servicios nuevos o smoke rojo
-El orden importa: **nunca `down`** (pararía postgres antes de restaurar) y la vuelta es con el compose VIEJO de `/opt` + sus 4 overrides (el canónico con imágenes legacy sería un tercer estado jamás probado).
+### Caso B: fallo al arrancar los servicios nuevos o smoke rojo
+El orden importa: **nunca `down`** (pararía postgres antes de restaurar), y la vuelta es con el
+compose de la versión anterior más sus overrides tal como corrían antes de la ventana —el compose
+canónico con imágenes viejas sería un tercer estado jamás probado—.
+
 1. Parar todo menos postgres:
    ```bash
    docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml --project-directory deploy \
      stop gateway dispatcher telegram-bridge terminal-relay console outbox-metrics prometheus otel-collector
    ```
-2. Restaurar `prod.env` previo: `cp -a /etc/cauce-v3/prod.env.bak-ventana /etc/cauce-v3/prod.env`.
-3. Solo si el esquema 037 quedó confirmado y hay que volver a 024 (verificar sha256 antes; terminar backends antes de `dropdb`):
+2. Restaurar el env privado previo: `cp -a /etc/cauce-v3/prod.env.bak-ventana /etc/cauce-v3/prod.env`.
+3. Sólo si el esquema nuevo quedó confirmado y hay que volver al anterior (verificar el sha256 del
+   dump antes; terminar backends antes de `dropdb`):
    ```bash
    D=$(ls -t /opt/_archive/cauce-v3-db-backups/*.dump | head -n 1); (cd "$(dirname "$D")" && sha256sum -c "$(basename "$D").sha256")
-   docker exec cauce-v3-prod-postgres-1 psql -U cauce -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='cauce' AND pid<>pg_backend_pid()"
-   docker exec cauce-v3-prod-postgres-1 dropdb -U cauce cauce && docker exec cauce-v3-prod-postgres-1 createdb -U cauce cauce
-   docker exec -i cauce-v3-prod-postgres-1 pg_restore -U cauce -d cauce --no-owner --no-acl < "$D"
+   docker exec <contenedor-postgres> psql -U cauce -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='cauce' AND pid<>pg_backend_pid()"
+   docker exec <contenedor-postgres> dropdb -U cauce cauce && docker exec <contenedor-postgres> createdb -U cauce cauce
+   docker exec -i <contenedor-postgres> pg_restore -U cauce -d cauce --no-owner --no-acl < "$D"
    ```
-4. Levantar la versión previa **con el compose viejo y sus overrides** (los que corrían antes de la ventana):
+4. Levantar la versión previa **con su compose y sus overrides** (los que corrían antes de la
+   ventana, desde la ruta de release anterior y el directorio de overrides del host):
    ```bash
-   docker compose --env-file /etc/cauce-v3/prod.env -f /opt/cauce-v3/deploy/compose.yaml -f /opt/cauce-v3/deploy/compose.postgres.yaml \
-     -f /etc/cauce-v3/compose-overrides/telegram-bridge.active.yaml -f /etc/cauce-v3/compose-overrides/store-fanin.yaml \
-     -f /etc/cauce-v3/compose-overrides/terminal-minrows.yaml -f /etc/cauce-v3/compose-overrides/directiva-20260825.yaml \
-     --project-directory /opt/cauce-v3/deploy up -d --wait --wait-timeout 300
+   docker compose --env-file /etc/cauce-v3/prod.env \
+     -f <release-anterior>/deploy/compose.yaml -f <release-anterior>/deploy/compose.postgres.yaml \
+     -f <dir-overrides>/<override>.yaml ... \
+     --project-directory <release-anterior>/deploy up -d --wait --wait-timeout 300
    ```
-5. Comprobar: `./deploy/smoke.sh` (la sonda del esquema dirá 024 — esperado en rollback) y `systemctl unmask cauce-revividor-de-colas.timer cauce-v3-fleet-watchdog.timer && systemctl start` de ambos.
+5. Comprobar: `./deploy/smoke.sh` (la sonda de esquema señalará la versión anterior — esperado en
+   rollback) y volver a arrancar los timers parados en el paso 4 de la §4 (watchdog, reconciler y
+   revividores de colas).

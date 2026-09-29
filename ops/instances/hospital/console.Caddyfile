@@ -1,0 +1,19 @@
+cauce-hospital.stevenvallejo.com {
+	encode zstd gzip
+	header -Server
+
+	@privateApi {
+		path /v3 /v3/*
+		not path /v3/status /v3/auth/* /v3/console/*
+	}
+	respond @privateApi 404
+
+	reverse_proxy https://172.17.0.1:18444 {
+		header_up Host {hostport}
+		header_up -X-Cauce-Operator
+		transport http {
+			tls_server_name console
+			tls_trust_pool file /etc/caddy/hospital-cauce-ca.crt
+		}
+	}
+}

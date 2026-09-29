@@ -33,6 +33,7 @@ export interface AgentHello {
   readonly codex_home?: string;
   readonly claude_config_dir?: string;
   readonly openclaw_workspace?: string;
+  readonly muse_workspace?: string;
     /** Effective measured context; optional for older agents during rollout. */
   readonly cwd?: string;
   readonly workspace_root?: string;
@@ -231,6 +232,7 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
   const codexHome = rutaMedida(source, 'codex_home');
   const claudeConfigDir = rutaMedida(source, 'claude_config_dir');
   const openclawWorkspace = rutaMedida(source, 'openclaw_workspace');
+  const museWorkspace = rutaMedida(source, 'muse_workspace');
   let cwd = rutaMedida(source, 'cwd');
   let workspaceRoot = rutaMedida(source, 'workspace_root');
   let projectRoot = rutaMedida(source, 'project_root');
@@ -258,6 +260,7 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
     && ((harness === 'codex' && codexHome !== undefined)
       || (harness === 'claude' && claudeConfigDir !== undefined)
       || (harness === 'openclaw' && openclawWorkspace !== undefined)
+      || (harness === 'muse' && museWorkspace !== undefined)
       || (harness === 'hermes' && cwd !== undefined && projectRoot !== undefined));
   return {
     tenant_id: tenantId,
@@ -276,6 +279,7 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
       ...(harness === 'codex' && codexHome !== undefined ? { codex_home: codexHome } : {}),
       ...(harness === 'claude' && claudeConfigDir !== undefined ? { claude_config_dir: claudeConfigDir } : {}),
       ...(harness === 'openclaw' && openclawWorkspace !== undefined ? { openclaw_workspace: openclawWorkspace } : {}),
+      ...(harness === 'muse' && museWorkspace !== undefined ? { muse_workspace: museWorkspace } : {}),
       ...(cwd === undefined ? {} : { cwd }),
       ...(workspaceRoot === undefined ? {} : { workspace_root: workspaceRoot }),
       ...(projectRoot === undefined ? {} : { project_root: projectRoot }),

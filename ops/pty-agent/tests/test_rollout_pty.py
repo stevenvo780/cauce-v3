@@ -271,6 +271,31 @@ class RolloutPtyTest(unittest.TestCase):
         self.assertEqual(rollout.parse_targets(["server=local"], fleet.managers), {"server": "local"})
         rollout.validate_inventories(fleet, {"server": {}})
 
+    def test_status_only_contacts_the_managers_the_catalog_declares(self) -> None:
+        constructed: list[tuple[str, str]] = []
+
+        def transport(manager: str, target: str, _script: pathlib.Path) -> FakeTransport:
+            constructed.append((manager, target))
+            result = FakeTransport()
+            result.call = mock.Mock(return_value={"inventory": {}})
+            return result
+
+        targets = [f"{manager}=ssh:{manager}" for manager in self.fleet.managers]
+        arguments = types.SimpleNamespace(
+            command="status", manager=targets, preflight_only=False, retire_historical=False,
+        )
+        with mock.patch.object(rollout, "ProcessTransport", side_effect=transport):
+            result = rollout.controller(arguments)
+        self.assertEqual(constructed, [(manager, f"ssh:{manager}") for manager in self.fleet.managers])
+        self.assertEqual(set(result["inventory"]), set(self.fleet.managers))
+
+        arguments.manager = targets[:-1]
+        constructed.clear()
+        with mock.patch.object(rollout, "ProcessTransport", side_effect=transport):
+            with self.assertRaisesRegex(rollout.RolloutError, "exactamente"):
+                rollout.controller(arguments)
+        self.assertEqual(constructed, [])
+
     def test_native_hosts_cannot_enter_the_container_catalog(self) -> None:
         for container in ("host:server2", "vm:pc-agente"):
             mapping = json.loads(self.fleet.raw)

@@ -28,7 +28,7 @@ helper_src=$(awk '/^systemctl_user_o_avisa\(\) \{/{p=1} p{print; if (/^}$/) exit
 eval "$helper_src"
 
 WORK=$(mktemp -d)
-# shellcheck disable=SC2329  # invoked indirectly, via the EXIT trap below
+# shellcheck disable=SC2329,SC2317  # invoked indirectly, via the EXIT trap below
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 

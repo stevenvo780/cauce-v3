@@ -24,14 +24,14 @@ el orden operativo anterior es obligatorio.
 ```json
 {
   "aliases": [{
-    "alias": "kant",
-    "tenant_id": "Steven",
-    "room_id": "grp.steven",
-    "token_file": "/run/cauce-telegram/kant.token",
-    "v2_shutdown_marker_file": "/run/cauce-telegram/kant.disabled",
+    "alias": "<alias>",
+    "tenant_id": "<tenant>",
+    "room_id": "<sala>",
+    "token_file": "/run/cauce-telegram/<alias>.token",
+    "v2_shutdown_marker_file": "/run/cauce-telegram/<alias>.disabled",
     "allowed_user_ids": ["123"],
     "allowed_chat_ids": ["123"],
-    "recipients": [{"tenant_id": "Steven", "alias": "kant"}],
+    "recipients": [{"tenant_id": "<tenant>", "alias": "<alias>"}],
     "poll_timeout_seconds": 25,
     "poll_lease_ms": 60000
   }]
@@ -61,8 +61,8 @@ Un fallo de `setMyCommands` no tumba el arranque (queda `group_config_degraded` 
 
 ### Ruteo por menciones en grupos (`chats[]` / `bot_username`)
 
-Estas dos claves son **opcionales y van juntas**. Ninguna existe en la config viva de
-producción hoy, y esa ausencia es una señal semántica, no un descuido:
+Estas dos claves son **opcionales y van juntas**, y su ausencia es una señal semántica, no un
+descuido:
 
 | Estado del alias                    | Comportamiento en TODOS sus grupos |
 |--------------------------------------|-------------------------------------|
@@ -79,10 +79,10 @@ Forma de una entrada `chats[]`:
 
 ```json
 {
-  "chat_id": "-5044661837",
+  "chat_id": "<chat_id>",
   "mode": "mention",
   "allowed_user_ids": ["111", "222"],
-  "default_alias": "kant",
+  "default_alias": "<alias>",
   "session_scope": "user",
   "reply_to_origin": true,
   "threads": [
@@ -131,8 +131,8 @@ primera regla que aplica gana):
 | P10 | ninguna regla anterior aplica | deniega |
 
 La supresión en P3 solo se aplica contra los alias que efectivamente **participan**
-de ese chat (`chatParticipants`, calculado desde el archivo completo), no contra los
-15 alias de la flota: mencionar a un alias ausente del grupo cae a P4/P7-P9 en vez de
+de ese chat (`chatParticipants`, calculado desde el archivo completo), no contra todos los
+alias declarados: mencionar a un alias ausente del grupo cae a P4/P7-P9 en vez de
 silenciar a todos.
 
 Generación y validación de estas claves están centralizadas en
@@ -140,8 +140,8 @@ Generación y validación de estas claves están centralizadas en
 
 ```json
 {
-  "bot_usernames": { "kant": "kant_cauce_bot" },
-  "aliases": { "kant": { "chats": [ { "chat_id": "-5044661837", "mode": "always" } ] } }
+  "bot_usernames": { "<alias>": "<bot_username>" },
+  "aliases": { "<alias>": { "chats": [ { "chat_id": "<chat_id>", "mode": "always" } ] } }
 }
 ```
 

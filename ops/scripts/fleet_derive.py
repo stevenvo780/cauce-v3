@@ -21,6 +21,7 @@ HOST_STATE_DIRECTORY = "/var/lib/cauce-v3/aliases/{alias}"
 
 _LOCAL_RUNTIME_STATE_DIRECTORY = "{home}/.local/state/cauce-v3/{alias}"
 _OPENCLAW_RUNTIME_STATE_DIRECTORY = "{home}/.openclaw/cauce-v3/{alias}"
+_MUSE_RUNTIME_STATE_DIRECTORY = "{home}/.muse/cauce-v3/{alias}"
 
 HARNESS_RULES: dict[str, dict[str, Any]] = {
     "claude": {
@@ -62,11 +63,16 @@ HARNESS_RULES: dict[str, dict[str, Any]] = {
             "host": HOST_STATE_DIRECTORY,
         },
     },
-    # muse (hegel) va por el puente muse-cauce: mismo estado local que grok.
+    # muse (hegel) va por el puente muse-cauce: mismo estado local que grok. Una instancia aislada
+    # lo corre como agente de workspace: su fila declara el estado en ~/.muse y eso activa el workspace.
     "muse": {
         "stateDirectory": {
             "container": _LOCAL_RUNTIME_STATE_DIRECTORY,
             "host": HOST_STATE_DIRECTORY,
+        },
+        "workspaceWhenState": {
+            "stateDirectory": _MUSE_RUNTIME_STATE_DIRECTORY,
+            "workspace": "{home}/clawd",
         },
     },
 }
@@ -93,6 +99,17 @@ def _render(template: str, alias: str, row: Mapping[str, Any]) -> str:
     return template.format(alias=alias, home=row["home"])
 
 
+def harness_workspace(alias: str, row: Mapping[str, Any]) -> str | None:
+    """Derive the durable workspace a harness promises, or None when it has none."""
+    rule = _harness_rule(row)
+    template = rule.get("workspace")
+    conditional = rule.get("workspaceWhenState")
+    if template is None and conditional is not None \
+            and row.get("runtimeStateDirectory") == _render(conditional["stateDirectory"], alias, row):
+        template = conditional["workspace"]
+    return None if template is None else _render(template, alias, row)
+
+
 def runtime_state_directory(alias: str, row: Mapping[str, Any]) -> str:
     """Derive the adapter state path in its container or host namespace."""
     rule = _harness_rule(row)
@@ -115,7 +132,6 @@ def alias_entry(
     placement: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Project one snapshot row and its physical overlay into schema v2."""
-    rule = _harness_rule(row)
     entry: dict[str, Any] = {
         "tenant": row["tenant"],
         "room": row["room"],
@@ -130,9 +146,9 @@ def alias_entry(
         "user": row["user"],
         "home": row["home"],
     })
-    workspace = rule.get("workspace")
+    workspace = harness_workspace(alias, row)
     if workspace is not None:
-        entry["workspace"] = _render(workspace, alias, row)
+        entry["workspace"] = workspace
     entry.update({
         "stateDirectory": row["runtimeStateDirectory"],
         "harness": row["harness"],
@@ -148,9 +164,9 @@ def manifest_doc(alias: str, row: Mapping[str, Any]) -> dict[str, Any]:
         "seedOnConnect": True,
         "configScope": "alias",
     }
-    workspace = rule.get("workspace")
+    workspace = harness_workspace(alias, row)
     if workspace is not None:
-        profile["workspace"] = _render(workspace, alias, row)
+        profile["workspace"] = workspace
 
     process = {"executablePathEnv": env_name(alias, "EXEC_PATH")}
     operational_model_env = rule.get("operationalModelEnv")

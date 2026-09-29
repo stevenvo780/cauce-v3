@@ -6,6 +6,7 @@ import { agentContextReconcileLockKey } from '../agent-context-lock.js';
 import { StoreError } from '../errors.js';
 import { MessagesRepository } from '../messages.js';
 import { validConnectionToken } from '../outbox.js';
+import { conversationWorkScopeKey, conversationWorkState } from './conversation-work.js';
 import type { DeliveryRow } from '../observability.js';
 import type {
   ClaimedDeliveryEnvelope,
@@ -271,6 +272,8 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         && capabilities.includes('agent_identity_v1');
       const includeProfileRuntimeContract = Array.isArray(capabilities)
         && capabilities.includes('agent_profile_adoption_v1');
+      const includeConversationWork = Array.isArray(capabilities)
+        && capabilities.includes('conversation_work_v1');
 
       await client.query(
         `INSERT INTO delivery_lane_fairness(tenant_id,alias) VALUES($1,$2)
@@ -456,10 +459,23 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         ? await this.profileRuntimeExpectation(client, tenantId, alias)
         : undefined;
 
+      const workStates = new Map<string, Awaited<ReturnType<typeof conversationWorkState>>>();
+      const conversationStates = new Map<string, Awaited<ReturnType<typeof conversationWorkState>>>();
+      if (includeConversationWork) {
+        for (const row of claimedRows) {
+          const scope = conversationWorkScopeKey(row);
+          if (scope === undefined) continue;
+          if (!conversationStates.has(scope)) {
+            conversationStates.set(scope, await conversationWorkState(client, tenantId, alias, row));
+          }
+          workStates.set(row.id, conversationStates.get(scope));
+        }
+      }
       return claimedRows.map((row) => {
         if (row.claim_token === null || row.ack_deadline_at === null) {
           throw new StoreError('conflict', 'claimed delivery is missing its fencing fields');
         }
+        const workState = workStates.get(row.id);
         return {
           type: 'delivery',
           version: PROTOCOL_VERSION,
@@ -477,6 +493,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
           actor_alias: row.actor_alias,
           recipient_alias: row.recipient_alias,
           body: row.body,
+          ...(workState === undefined ? {} : { conversation_work_state: workState }),
           ...(routingTargets === undefined ? {} : { routing_targets: routingTargets }),
           ...(selfRole === undefined ? {} : { self_role: selfRole }),
           ...(profileRuntimeContract === undefined

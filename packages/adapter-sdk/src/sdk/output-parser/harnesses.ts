@@ -1,5 +1,5 @@
 import { MalformedOutputError } from "../errors.js";
-import type { ParsedHarnessOutput } from "../types.js";
+import type { ParsedHarnessOutput, StructuredOutput } from "../types.js";
 import {
   MAX_OPENCLAW_UNWRAP_DEPTH,
   isObject,
@@ -56,6 +56,17 @@ export function parseHermesOutput(stdout: string): ParsedHarnessOutput {
     return sessionResult(failedTurnOutput(candidate, "Hermes result", failure), value.session_id);
   }
   return sessionResult(parseCandidate(candidate, "Hermes result"), value.session_id);
+}
+
+export function parseMuseMspOutput(stdout: string): ParsedHarnessOutput { // Muse MSP: one { session_id, result } object
+  const value = parseJson(stdout.trim(), "Muse Code output");
+  if (!isObject(value)) throw new MalformedOutputError("Muse Code result must be an object");
+  const candidate = value.result;
+  const failure = nativeFailureDetail(value);
+  if (failure !== undefined) {
+    return sessionResult(failedTurnOutput(candidate, "Muse Code result", failure), value.session_id);
+  }
+  return sessionResult(parseCandidate(candidate, "Muse Code result"), value.session_id);
 }
 
 export function parseOpenCodeOutput(stdout: string): ParsedHarnessOutput {
@@ -184,6 +195,23 @@ function lastJsonObject(stdout: string): JsonObject | undefined {
   return undefined;
 }
 
+const OPENCLAW_INCOMPLETE_TURN_NOTICE = /^⚠️ Agent couldn't generate a response\.(?: Note: some tool actions may have already been executed — please verify before retrying\.| Please try again\.)?$/u;
+
+function isOpenClawIncompleteTurn(value: unknown): boolean {
+  return typeof value === "string" && OPENCLAW_INCOMPLETE_TURN_NOTICE.test(value.trim());
+}
+
+function incompleteOpenClawTurn(): StructuredOutput {
+  return {
+    reply: "OpenClaw cerró el turno sin respuesta final. Algunas herramientas podrían haberse ejecutado; verificá los cambios antes de reintentar. [Cauce] non_deliverable_terminal_turn",
+    messages: [],
+    notify: [],
+    status: "failed",
+    retryable: false,
+    artifacts: [],
+  };
+}
+
 export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
   const value = lastJsonObject(stdout) ?? parseJson(stdout.trim(), "OpenClaw output");
   if (!isObject(value)) throw new MalformedOutputError("OpenClaw result must be an object");
@@ -193,6 +221,7 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
   let sessionId: unknown;
   for (let depth = 0; depth < MAX_OPENCLAW_UNWRAP_DEPTH; depth += 1) {
     if (!isObject(current)) {
+      if (isOpenClawIncompleteTurn(current)) return sessionResult(incompleteOpenClawTurn(), sessionId);
       return sessionResult(parseCandidate(current, "OpenClaw result"), sessionId);
     }
     if (seen.has(current)) throw new MalformedOutputError("OpenClaw result contained a wrapper cycle");
@@ -200,6 +229,7 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
     sessionId ??= current.session_id ?? current.sessionId;
     /** Last openclaw notice when NO payload carried a real answer. */
     let avisoDeCola: string | undefined;
+    let incompleteTurn = false;
 
     // BEFORE payloads or visible text: a run the native runtime declared failed still leaves text behind, which was wrongly treated as the turn's successful result.
     const failure = nativeFailureDetail(current);
@@ -211,28 +241,34 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
       return sessionResult(failedTurnOutput(spoken, "OpenClaw result", failure), sessionId);
     }
 
-    if (Array.isArray(current.payloads)) {
-      const texts = current.payloads
-        .filter(isObject)
-        .map((payload) => payload.text)
-        .filter((text): text is string => typeof text === "string" && text.trim().length > 0);
-      // Discards trailing tool warnings when there are real prior answers.
-      const reales = texts.filter((text) => openclawToolWarningOnly(text) === undefined);
-      const payloadText = reales.at(-1);
-      if (payloadText !== undefined) {
-        return sessionResult(parseCandidate(payloadText, "OpenClaw result"), sessionId);
-      }
-      avisoDeCola = texts.at(-1);
-    }
-
     const visibleText = typeof current.finalAssistantVisibleText === "string"
       ? current.finalAssistantVisibleText
       : isObject(current.meta) && typeof current.meta.finalAssistantVisibleText === "string"
         ? current.meta.finalAssistantVisibleText
         : undefined;
+    if (isOpenClawIncompleteTurn(visibleText)) {
+      return sessionResult(incompleteOpenClawTurn(), sessionId);
+    }
+
+    if (Array.isArray(current.payloads)) {
+      const texts = current.payloads
+        .filter(isObject)
+        .map((payload) => payload.text)
+        .filter((text): text is string => typeof text === "string" && text.trim().length > 0);
+      incompleteTurn = isOpenClawIncompleteTurn(texts.at(-1));
+      // Discards trailing tool warnings when there are real prior answers.
+      const reales = texts.filter((text) => openclawToolWarningOnly(text) === undefined);
+      const payloadText = reales.at(-1);
+      if (payloadText !== undefined && !incompleteTurn) {
+        return sessionResult(parseCandidate(payloadText, "OpenClaw result"), sessionId);
+      }
+      avisoDeCola = texts.at(-1);
+    }
+
     if (visibleText !== undefined && visibleText.trim().length > 0) {
       return sessionResult(parseCandidate(visibleText, "OpenClaw result"), sessionId);
     }
+    if (incompleteTurn) return sessionResult(incompleteOpenClawTurn(), sessionId);
 
     // If only the warning was emitted, return it for degradation in validateDeliveryOutput.
     if (avisoDeCola !== undefined) {
@@ -246,6 +282,9 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
       const choices: readonly unknown[] = current.choices;
       const choice = choices[0];
       if (isObject(choice) && isObject(choice.message) && choice.message.content !== undefined) {
+        if (isOpenClawIncompleteTurn(choice.message.content)) {
+          return sessionResult(incompleteOpenClawTurn(), sessionId);
+        }
         return sessionResult(parseCandidate(choice.message.content, "OpenClaw result"), sessionId);
       }
     }
