@@ -115,6 +115,15 @@ function stopReason(entry: TranscriptEntry): string | undefined {
   return asString((message as { stop_reason?: unknown }).stop_reason);
 }
 
+const PASTED_CONTENT = /^\n{0,2}<pasted_content id="([0-9a-f]{4})">\n([\s\S]*)<\/pasted_content id="\1">\n?$/u;
+
+function matchesInjectedPrompt(text: string | undefined, promptText: string): boolean { // Claude Code >= 2.1.280 pastes in <pasted_content>
+  if (text === undefined) return false;
+  if (text === promptText) return true;
+  const inner = PASTED_CONTENT.exec(text)?.[2];
+  return inner === promptText || inner === `${promptText}\n`;
+}
+
 /** Locates the user entry in the transcript whose text exactly matches the prompt. */
 function findInjectedTurn(
   entries: readonly TranscriptEntry[],
@@ -124,7 +133,7 @@ function findInjectedTurn(
     const entry = entries[index];
     if (entry === undefined) continue;
     if (entry.type !== "user" || entry.isSidechain === true) continue;
-    if (userText(entry) !== promptText) continue;
+    if (!matchesInjectedPrompt(userText(entry), promptText)) continue;
     const uuid = asString(entry.uuid);
     if (uuid === undefined) continue;
     const sessionId = asString(entry.sessionId);
