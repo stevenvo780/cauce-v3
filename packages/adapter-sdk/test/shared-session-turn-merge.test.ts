@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { DurableStore } from "../src/sdk/durable-store.js";
 import { HarnessAdapter } from "../src/harnesses/shared.js";
 import { claudeDefinition } from "../src/harnesses/index.js";
-import type { CommandRunRequest, CommandRunResult, CommandRunner } from "../src/sdk/types.js";
+import type { CommandRunner } from "../src/sdk/types.js";
 import type {
   TmuxController,
   TmuxResult,
@@ -352,16 +352,6 @@ function ok(exitCode: number): TmuxResult {
   return { exitCode, stdout: "", stderr: "" };
 }
 
-class RecordingFallback implements CommandRunner {
-  calls = 0;
-  run(_request: CommandRunRequest): Promise<CommandRunResult> {
-    this.calls += 1;
-    return Promise.resolve({
-      stdout: "{}", stderr: "", exitCode: 0, signal: null, timedOut: false, cancelled: false,
-    });
-  }
-}
-
 const delay = (ms: number): Promise<void> => new Promise((resolve_) => setTimeout(resolve_, ms));
 
 function claudeRunner(options: {
@@ -369,7 +359,6 @@ function claudeRunner(options: {
   home: string;
   workspace: string;
   tmux: FakeTmux;
-  fallback: CommandRunner;
   correlationTimeoutMs?: number;
   quietTimeoutMs?: number;
   turnTimeoutMs?: number;
@@ -381,7 +370,6 @@ function claudeRunner(options: {
     workspace: options.workspace,
     transcript: claudeTranscript(join(options.home, ".claude"), options.workspace),
     tmux: options.tmux,
-    fallback: options.fallback,
     sleep: options.sleep ?? (() => Promise.resolve()),
     acquireTimeoutMs: 30,
     turnTimeoutMs: options.turnTimeoutMs ?? 2_000,
@@ -440,7 +428,6 @@ test("una entrega cuyo pegado se fundió con el turno en curso se cosecha del so
   const tmux = new FakeTmux();
   // The status line of a TUI that is GENERATING. The box is empty and the arbiter sees it as free.
   tmux.paneContent = "✻ Herding… (esc to interrupt · ctrl+t to hide todos)\n❯ ";
-  const fallback = new RecordingFallback();
   tmux.onSubmit = async (text) => {
     // The merge, exactly as is: NO user entry is written with the text we pasted. The owner's
     // turn keeps going and ends up replying to both things at once, with its own envelope.
@@ -455,7 +442,7 @@ test("una entrega cuyo pegado se fundió con el turno en curso se cosecha del so
     );
   };
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos");
   const output = await execute(adapter);
 
@@ -465,7 +452,6 @@ test("una entrega cuyo pegado se fundió con el turno en curso se cosecha del so
   assert.ok((output.reply ?? "").includes("el entregable"), output.reply ?? "(null)");
   assert.equal("cauce_correlation_id" in output, false, "el nonce no sale como StructuredOutput");
   // The turn went through the terminal: it didn't fall back to the usual path and wasn't run twice.
-  assert.equal(fallback.calls, 0);
   assert.equal(tmux.submittedCount, 1);
   // And it IS REPORTED as a merged turn: the reply may be answering two requests at once.
   assert.ok((output.reply ?? "").includes(MERGED_MARK), output.reply ?? "(null)");
@@ -485,14 +471,12 @@ test("el sobre que llega pasado el plazo de correlación cierra la entrega igual
 
   const tmux = new FakeTmux();
   tmux.paneContent = "✻ Herding… (esc to interrupt)\n❯ ";
-  const fallback = new RecordingFallback();
 
   const runner = claudeRunner({
     alias: "kratos",
     home,
     workspace,
     tmux,
-    fallback,
     // The correlation deadline expires immediately — like the 300 s of the real delivery facing a
     // turn that took longer — but the terminal KEEPS writing, so there is nothing to give up on.
     correlationTimeoutMs: 50,
@@ -531,7 +515,6 @@ test("el sobre que llega pasado el plazo de correlación cierra la entrega igual
 
   assert.equal(output.status, "done");
   assert.ok((output.reply ?? "").includes("tarde pero entero"), output.reply ?? "(null)");
-  assert.equal(fallback.calls, 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -548,14 +531,12 @@ test("un turno fundido que sigue generando espera al presupuesto, no a un techo 
 
   const tmux = new FakeTmux();
   tmux.paneContent = "✻ Herding… (esc to interrupt)\n❯ ";
-  const fallback = new RecordingFallback();
 
   const runner = claudeRunner({
     alias: "kratos",
     home,
     workspace,
     tmux,
-    fallback,
     // The correlation deadline expires at once; only the turn budget may cap the wait.
     correlationTimeoutMs: 20,
     quietTimeoutMs: 60_000, // Never silent: the merged turn writes the whole time.
@@ -591,7 +572,6 @@ test("un turno fundido que sigue generando espera al presupuesto, no a un techo 
   // Continuous activity must never be cut short before the budget.
   assert.equal(output.status, "done");
   assert.ok((output.reply ?? "").includes("entregable largo"), output.reply ?? "(null)");
-  assert.equal(fallback.calls, 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -607,7 +587,6 @@ test("el turno que sí abre turno propio se cosecha por ascendencia y sin aviso"
   await appendFile(file, `${userEntry(head, null, "hola de la terminal", sessionId)}\n`);
 
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback();
   tmux.onSubmit = async (text) => {
     const userUuid = randomUUID();
     await appendFile(file, `${userEntry(userUuid, head, text, sessionId)}\n`);
@@ -622,13 +601,12 @@ test("el turno que sí abre turno propio se cosecha por ascendencia y sin aviso"
     );
   };
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos");
   const output = await execute(adapter);
 
   assert.equal(output.status, "done");
   assert.equal(output.reply, "desde la TUI");
-  assert.equal(fallback.calls, 0);
   // No notices: the correlation worked as usual.
   assert.ok(!output.reply.includes(MERGED_MARK));
 });
@@ -649,7 +627,6 @@ test("claude ignora el sobre headless de otro fichero y rescata sólo su nonce",
 
   const tmux = new FakeTmux();
   tmux.paneContent = "✻ Working… (esc to interrupt)\n❯ ";
-  const fallback = new RecordingFallback();
   tmux.onSubmit = async (text) => {
     // A concurrent `claude --print` finishes first with a perfectly valid envelope, but does not know
     // the nonce of this injection. Before, it was harvested just for having grown another `.jsonl`.
@@ -673,14 +650,13 @@ test("claude ignora el sobre headless de otro fichero y rescata sólo su nonce",
     );
   };
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos");
   const output = await execute(adapter);
 
   assert.equal(output.status, "done");
   assert.ok((output.reply ?? "").includes("RESPUESTA TUI"));
   assert.ok(!(output.reply ?? "").includes("RESPUESTA HEADLESS"));
-  assert.equal(fallback.calls, 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -695,7 +671,6 @@ test("el pegado perdido sin ninguna actividad sigue soltando la sesión como amb
   await appendFile(file, `${userEntry(randomUUID(), null, "algo viejo", sessionId)}\n`);
 
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback();
   // The paste was lost: the TUI does not write anything at all.
   tmux.onSubmit = () => undefined;
 
@@ -704,7 +679,6 @@ test("el pegado perdido sin ninguna actividad sigue soltando la sesión como amb
     home,
     workspace,
     tmux,
-    fallback,
     correlationTimeoutMs: 20,
     quietTimeoutMs: 20,
     // Very long budget on purpose: what has to release the session is the network, not the deadline.
@@ -720,7 +694,6 @@ test("el pegado perdido sin ninguna actividad sigue soltando la sesión como amb
   );
   // And fast: the network cannot have stayed waiting the entire budget.
   assert.ok(Date.now() - empezo < 30_000, `tardó ${String(Date.now() - empezo)} ms`);
-  assert.equal(fallback.calls, 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -736,7 +709,6 @@ test("un turno fundido que jamás entrega sobre se suelta EN el presupuesto del 
   await appendFile(file, `${userEntry(duenio, null, "seguí", sessionId)}\n`);
 
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback();
   let escribiendo = true;
   tmux.onSubmit = () => {
     // Never quiet, never an envelope: indistinguishable from a genuinely long turn.
@@ -756,7 +728,6 @@ test("un turno fundido que jamás entrega sobre se suelta EN el presupuesto del 
     home,
     workspace,
     tmux,
-    fallback,
     correlationTimeoutMs: 20,
     quietTimeoutMs: 60_000,
     // Short budget standing in for the alias's real (e.g. 24h) budget: it is what caps the wait.

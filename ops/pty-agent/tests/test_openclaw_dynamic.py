@@ -79,7 +79,7 @@ class DynamicOpenClawSessionTests(unittest.TestCase):
         instance.bundle = self.bundle
         self.assertEqual(instance._advertised_modes(), ["shell"])
         self._write("conversation-safe")
-        self.assertEqual(instance._advertised_modes(), ["shell", "harness"])
+        self.assertEqual(instance._advertised_modes(), ["shell", "harness", "harness_rw"])
         self._write("conversation-not-ready", initialized=False)
         self.assertEqual(instance._advertised_modes(), ["shell"])
 
@@ -97,7 +97,7 @@ class DynamicOpenClawSessionTests(unittest.TestCase):
         self._write("conversation-safe")
         instance = agent.PtyAgent.__new__(agent.PtyAgent)
         instance.bundle = self.bundle
-        instance.modes = ["shell", "harness"]
+        instance.modes = ["shell", "harness", "harness_rw"]
         instance.sessions = {}
         instance.tombstones = {}
         instance.acknowledged = True

@@ -1,24 +1,4 @@
 #!/usr/bin/env node
-/**
- * Planner for per-alias configuration separation.
- *
- * WHAT IS BEING TESTED, AND WHY `.claude.json` MATTERS SO MUCH
- * ==============================================================
- *
- * `CLAUDE_CONFIG_DIR` does not move only the `CLAUDE.md`: it ALSO moves the `.claude.json`, and
- * with it the alias's entire MCP server list. If the plan points that variable at a new
- * directory without carrying that file, the alias loses ALL its tools **without a single
- * error**: it does not fail, does not warn, boots anyway and ends up mute of capabilities.
- *
- * That is why it is not enough here for the plan to "work": the test EXPLICITLY requires that
- * `.claude.json` be among the operations and that it carries a written reason. It links to the
- * authorised source instead of copying its possible secrets. A test that only looked at the
- * directory would pass with the failure hidden inside.
- *
- * And the DELETIONS list must always be empty: the source is the rollback. While the original
- * directory is still there, reverting is removing an environment variable; if the plan deletes
- * it, reverting is restoring from a backup that nobody took.
- */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -43,10 +23,6 @@ function copiaDe(plan, destino) {
   return plan.copias.find((copia) => copia.destino === destino);
 }
 
-// ---------------------------------------------------------------------------
-// The destination: derived, never hand-written.
-// ---------------------------------------------------------------------------
-
 test("el destino vive bajo el árbol persistente .local/share, derivado del alias", () => {
   assert.equal(directorioDeAlias("/home/dev", "kratos", "codex"), "/home/dev/.local/share/cauce-v3/config/kratos/.codex");
   assert.equal(directorioDeAlias("/home/dev", "atlas", "codex"), "/home/dev/.local/share/cauce-v3/config/atlas/.codex");
@@ -64,10 +40,6 @@ test("kratos y atlas, mismo home y mismo contenedor, salen a destinos DISTINTOS"
   assert.equal(atlas.directorioDestino, "/home/dev/.local/share/cauce-v3/config/atlas/.codex");
 });
 
-// ---------------------------------------------------------------------------
-// THE MEASURED TRAP: the .claude.json.
-// ---------------------------------------------------------------------------
-
 test("EXIGENCIA: .claude.json está entre las copias, y con el motivo escrito", () => {
   const plan = planificarSeparacion(ZEUS);
   const copia = copiaDe(plan, "/home/dev/.local/share/cauce-v3/config/zeus/.claude/.claude.json");
@@ -76,7 +48,8 @@ test("EXIGENCIA: .claude.json está entre las copias, y con el motivo escrito", 
     "sin .claude.json en el destino el alias pierde TODOS sus MCP sin un solo error de arranque",
   );
   assert.equal(copia.origen, "/home/dev/.claude.json");
-  assert.equal(copia.tipo, "enlace", "los MCP pueden contener secretos y no se duplican");
+  assert.equal(copia.tipo, "fichero", "el servidor MCP usa el socket exclusivo del alias");
+  assert.equal(copia.modo, "0600", "la configuración del alias debe permanecer privada");
   assert.equal(copia.obligatorio, true, "no es opcional: su ausencia es silenciosa");
   assert.match(
     copia.motivo,
@@ -119,10 +92,6 @@ test("si el alias ya tiene CODEX_HOME puesto, el origen es ese y no ~/.codex", (
   assert.equal(plan.copias[0].origen, "/home/dev/.codex/cuenta-b/AGENTS.md");
 });
 
-// ---------------------------------------------------------------------------
-// NEGATIVE CONTROL of this test: the deletions.
-// ---------------------------------------------------------------------------
-
 test("CONTROL NEGATIVO: la lista de borrados está VACÍA — el origen ES la reversa", () => {
   for (const entrada of [KRATOS, ZEUS]) {
     const plan = planificarSeparacion(entrada);
@@ -160,10 +129,6 @@ test("CONTROL NEGATIVO: el destino no puede caer dentro del origen ni al revés"
   );
 });
 
-// ---------------------------------------------------------------------------
-// The new environment.
-// ---------------------------------------------------------------------------
-
 test("el entorno nuevo declara exactamente UNA variable, la del arnés", () => {
   assert.deepEqual(planificarSeparacion(KRATOS).entorno, { CODEX_HOME: "/home/dev/.local/share/cauce-v3/config/kratos/.codex" });
   assert.deepEqual(planificarSeparacion(ZEUS).entorno, { CLAUDE_CONFIG_DIR: "/home/dev/.local/share/cauce-v3/config/zeus/.claude" });
@@ -183,18 +148,10 @@ test("el entorno apunta al MISMO sitio que el destino de las copias", () => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// The witness: which file the executor checks by EFFECT.
-// ---------------------------------------------------------------------------
-
 test("el plan nombra el fichero testigo cuyo inodo tiene que dejar de coincidir", () => {
   assert.equal(planificarSeparacion(KRATOS).testigo, "AGENTS.md");
   assert.equal(planificarSeparacion(ZEUS).testigo, "CLAUDE.md");
 });
-
-// ---------------------------------------------------------------------------
-// Warnings: what the plan does NOT solve and must be said out loud.
-// ---------------------------------------------------------------------------
 
 test("el plan conserva una sola fuente de credencial y lo advierte", () => {
   // Splitting the directory cannot duplicate `auth.json` / `.credentials.json`: if two aliases
@@ -207,17 +164,21 @@ test("el plan conserva una sola fuente de credencial y lo advierte", () => {
   assert.ok(claude.advertencias.some((aviso) => /\.credentials\.json/u.test(aviso)));
 });
 
-test("CONTROL DE SECRETOS: identidad se copia; credenciales/config se enlazan y sesiones no viajan", () => {
+test("la configuración MCP se aísla, las credenciales siguen enlazadas y las sesiones no se copian", () => {
   for (const entrada of [KRATOS, ZEUS]) {
     const plan = planificarSeparacion(entrada);
     assert.ok(!plan.copias.some((operacion) => operacion.tipo === "directorio"));
     const testigo = plan.copias.find((operacion) => operacion.destino.endsWith(`/${plan.testigo}`));
-    assert.equal(testigo?.tipo, "fichero", "sólo la identidad recibe un inodo propio");
+    assert.equal(testigo?.tipo, "fichero", "la identidad recibe un inodo propio");
 
-    for (const nombre of ["auth.json", ".credentials.json", ".claude.json", "config.toml"]) {
+    for (const nombre of ["auth.json", ".credentials.json"]) {
       const operacion = plan.copias.find((copia) => copia.destino.endsWith(`/${nombre}`));
       if (operacion) assert.equal(operacion.tipo, "enlace", `${nombre} no puede copiar bytes`);
     }
+    const configuracion = plan.copias.find((operacion) =>
+      /\/(?:\.claude\.json|config\.toml)$/u.test(operacion.destino));
+    assert.equal(configuracion?.tipo, "fichero");
+    assert.equal(configuracion?.modo, "0600");
     assert.ok(
       !plan.copias.some((operacion) => /(?:^|\/)(?:sessions?|history(?:\.jsonl)?)(?:\/|$)/iu.test(operacion.origen)),
       "historiales y sesiones no se copian ni enlazan",
@@ -230,10 +191,6 @@ test("el plan lleva escrita la reversa exacta", () => {
   assert.match(plan.reversa, /\/home\/dev\/\.local\/share\/cauce-v3\/config\/kratos\/\.codex/u, "dice QUÉ borrar");
   assert.match(plan.reversa, /CODEX_HOME/u, "dice QUÉ variable quitar");
 });
-
-// ---------------------------------------------------------------------------
-// Fail closed.
-// ---------------------------------------------------------------------------
 
 test("un arnés sin directorio de configuración se rechaza, no se planifica a ojo", () => {
   for (const arnes of ["hermes", "openclaw", "opencode", "", "CODEX"]) {
@@ -264,10 +221,6 @@ test("una variable de entorno actual con ruta relativa se rechaza", () => {
     ErrorDePlan,
   );
 });
-
-// ---------------------------------------------------------------------------
-// Command-line interface: what the executor consumes.
-// ---------------------------------------------------------------------------
 
 test("el guion imprime el plan en JSON y sale con 0", () => {
   const resultado = spawnSync(process.execPath, [guion, "--alias", "kratos", "--home", "/home/dev", "--arnes", "codex"], { encoding: "utf8" });

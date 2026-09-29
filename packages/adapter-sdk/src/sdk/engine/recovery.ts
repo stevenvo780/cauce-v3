@@ -20,3 +20,22 @@ export function interruptedStartedError(record: InboxRecord): AdapterError {
         false,
       );
 }
+
+export function entregaVencidaAlRecuperar(
+  request: { readonly ack_deadline_at?: string },
+  ahora: Date,
+): boolean {
+  const limite = Date.parse(request.ack_deadline_at ?? "");
+  if (!Number.isFinite(limite)) return false;
+  return limite <= ahora.getTime();
+}
+
+export function vencidaAlRecuperarError(record: InboxRecord): AdapterError {
+  return new AdapterError(
+    "STALE_ON_RECOVERY",
+    `Recovered delivery ${record.delivery_id} was already past its ACK deadline when the adapter`
+      + " restarted: it is terminal on the bus and re-executing it would only waste a turn and"
+      + " produce an envelope nobody can correlate",
+    false,
+  );
+}

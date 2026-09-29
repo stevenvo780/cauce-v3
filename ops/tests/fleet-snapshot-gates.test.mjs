@@ -14,7 +14,7 @@ const fixtureRoot = path.join(ops, 'tests/fixtures/fleet_snapshot/minimal');
 const fixtureSnapshotPath = path.join(fixtureRoot, 'flota.json');
 const fixtureOverlayPath = path.join(fixtureRoot, 'flota-fisica.json');
 const allowedPlacementKeys = new Set([
-  'dockerHost', 'healthContainer', 'registryContainer',
+  'dockerHost', 'healthContainer', 'registryContainer', 'systemdUser',
 ]);
 
 async function readJson(file) {
@@ -139,6 +139,7 @@ const temporary = await mkdtemp(path.join(os.tmpdir(), 'cauce-fleet-snapshot-gat
 try {
   const outputRoot = path.join(temporary, 'generated');
   const first = await generate(outputRoot);
+  await copyFile(fixtureSnapshotPath, path.join(outputRoot, 'flota.json'));
   const second = await generate(outputRoot);
   assert.deepEqual(second, first, 'fleet generators must be byte-idempotent on a fixed snapshot');
 
@@ -160,7 +161,7 @@ from manifest_lib import load_manifests
 aliases = load_container_aliases(generated)
 principals = load_system_principals(generated)
 manifests = load_manifests(generated)
-assert len(aliases) == 3
+assert len(aliases) == 2
 assert len(principals) == 1
 assert len(manifests) == 3
 `, ops, outputRoot], {

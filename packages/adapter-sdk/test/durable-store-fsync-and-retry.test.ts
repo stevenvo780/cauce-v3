@@ -3,22 +3,20 @@ import {readFile, stat} from 'node:fs/promises';
 import { resolve } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import {CANONICAL_OPEN_CODE_SESSION_FILE, DurableStore, MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS} from '../src/sdk/durable-store.js';
+import {DurableStore, MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS} from '../src/sdk/durable-store.js';
 import type { Delivery, DeliveryEvent, StructuredOutput } from "../src/sdk/types.js";
 import {completedOutput, delegatedOutput, delivery, freshStore, scopeA} from './durable-store-fixtures.js';
-test("sessions EIO rollback preserves both durable mapping and active pointer", async () => {
+test("sessions EIO rollback preserves the durable mapping and in-memory session", async () => {
   const { directory, store } = await freshStore("sessions-fsync-failure");
-  await store.reconcileCanonicalOpenCodeSession();
-  await store.setCanonicalOpenCodeSession(scopeA, "ses_sessions_previous");
+  const key = `opencode:sample:${scopeA}`;
+  const previous = { native_id: "ses_sessions_previous", initialized: true };
+  await store.setSession(key, previous);
   const sessionsPath = resolve(directory, "sessions.json");
-  const pointerPath = resolve(directory, CANONICAL_OPEN_CODE_SESSION_FILE);
   const sessionsBefore = await readFile(sessionsPath, "utf8");
-  const pointerBefore = await readFile(pointerPath, "utf8");
 
   let injectFailure = false;
   let calls = 0;
   const reopened = await DurableStore.open(directory, {
-    deferSessions: true,
     directoryFsync: async (handle) => {
       calls += 1;
       if (injectFailure && calls === 2) {
@@ -27,21 +25,18 @@ test("sessions EIO rollback preserves both durable mapping and active pointer", 
       await handle.sync();
     },
   });
-  await reopened.reconcileCanonicalOpenCodeSession();
   calls = 0;
   injectFailure = true;
   await assert.rejects(
-    reopened.setCanonicalOpenCodeSession(scopeA, "ses_sessions_uncommitted"),
+    reopened.setSession(key, { native_id: "ses_sessions_uncommitted", initialized: true }),
     (error: unknown) => error instanceof Error && "code" in error && error.code === "EIO",
   );
+  assert.equal(calls, 3, "rollback directory fsync was not attempted");
   assert.equal(await readFile(sessionsPath, "utf8"), sessionsBefore);
-  assert.equal(await readFile(pointerPath, "utf8"), pointerBefore);
+  assert.deepEqual(reopened.getSession(key), previous);
   assert.equal((await stat(sessionsPath)).nlink, 1);
-
-  const verified = await DurableStore.open(directory, { deferSessions: true });
-  const pointerAfterRestart = await verified.reconcileCanonicalOpenCodeSession();
-  assert.equal(pointerAfterRestart.state, "active");
-  assert.equal(pointerAfterRestart.session_id, "ses_sessions_previous");
+  const verified = await DurableStore.open(directory);
+  assert.deepEqual(verified.getSession(key), previous);
 });
 
 test("fanin transition fsync failure preserves the previous inbox in memory and on disk", async () => {

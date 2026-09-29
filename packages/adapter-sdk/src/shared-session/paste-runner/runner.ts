@@ -122,7 +122,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
 
     const correlationId = randomBytes(32).toString("hex");
-    const promptText = correlateEnvelopePrompt(request.stdin, correlationId);
+    const promptText = correlateEnvelopePrompt(request.stdin, correlationId, request.emissionOutput !== undefined);
     const armed = await this.armPendingQuarantine(identity, correlationId);
     if (!armed.ok) {
       if (signalAborted(request.signal)) {
@@ -223,6 +223,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     // alternative transport; see `harvest`.
     // Clearing the notice is observability, not part of the commit. If abort arrives while tmux
     // responds, leave that read in the background and ENTER the bounded drain now.
+    request.onEmissionReady?.(correlationId);
     await clearDegradation(
       this.options.tmux,
       ready.sessionId,
@@ -244,6 +245,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       const published = await this.options.nativePointer?.publish(
         nativeSnapshot, correlationId, promptText, paneGenerationKey(identity),
         () => paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(request.signal)),
+        request.emissionOutput?.() !== undefined,
       );
       if (published === "conflict" || published === "unverified") {
         try {

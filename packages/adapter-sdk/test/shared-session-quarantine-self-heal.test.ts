@@ -26,7 +26,7 @@ import type { TranscriptEntry } from "../src/shared-session/transcript.js";
 import { transcriptDirectory } from "../src/shared-session/session.js";
 import {
   FakeTmux,
-  RecordingFallback,
+  assertExecutionPrevented,
   assistantEntry,
   claudeRunner,
   correlationIdFromPrompt,
@@ -71,7 +71,6 @@ test("la cuarentena de la generación VIVA se levanta sola cuando el panel vuelv
   await appendFile(file, `${userEntry(head, null, "turno previo", sessionId)}\n`);
 
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   losePaste(tmux);
 
   const runner = claudeRunner({
@@ -79,7 +78,6 @@ test("la cuarentena de la generación VIVA se levanta sola cuando el panel vuelv
     home,
     workspace,
     tmux,
-    fallback,
     quarantineFile,
     correlationTimeoutMs: 20,
     quietTimeoutMs: 20,
@@ -110,7 +108,6 @@ test("la cuarentena de la generación VIVA se levanta sola cuando el panel vuelv
 
   // Before this fix the quarantine was permanent within the generation: this went to the isolated
   // transport and the shared conversation never saw the delivery again.
-  assert.equal(fallback.calls, 0, "no debió degradar al transporte aislado");
   assert.equal(tmux.submittedCount, 2, "la segunda entrega sí entró por el panel");
   assert.equal(second.timedOut, false);
   assert.equal(second.exitCode, 0, second.stderr);
@@ -130,7 +127,6 @@ test("un pending de la MISMA generación que este proceso no armó NO se autocur
   await appendFile(file, `${userEntry(randomUUID(), null, "turno previo", sessionId)}\n`);
 
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   losePaste(tmux);
 
   const primero = claudeRunner({
@@ -138,7 +134,6 @@ test("un pending de la MISMA generación que este proceso no armó NO se autocur
     home,
     workspace,
     tmux,
-    fallback,
     quarantineFile,
     correlationTimeoutMs: 20,
     quietTimeoutMs: 20,
@@ -156,13 +151,13 @@ test("un pending de la MISMA generación que este proceso no armó NO se autocur
   assert.equal(tmux.paneContent, "❯ ");
   tmux.onSubmit = () => undefined;
   const reiniciado = claudeRunner({
-    alias: "kratos", home, workspace, tmux, fallback, quarantineFile,
+    alias: "kratos", home, workspace, tmux, quarantineFile,
   });
   const second = await runOnce(reiniciado, "tras el reinicio");
 
-  assert.equal(fallback.calls, 1, "debió degradar: la cuarentena ajena no se levanta sola");
   assert.equal(tmux.submittedCount, 1, "no se pegó nada en el panel");
   assert.equal(second.cancelled, false);
+  assertExecutionPrevented(reiniciado, second, "session_identity_unverified");
   // And nothing was half-cleared: the three marks survive intact.
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
   assert.match(await readFile(quarantineFile, "utf8"), /^\$0:@0:%0:4242\n$/u);
@@ -179,7 +174,6 @@ test("el sobre que llega tarde levanta la cuarentena aunque el panel siga genera
   await appendFile(file, `${userEntry(head, null, "turno previo", sessionId)}\n`);
 
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   let perdido: string | undefined;
   tmux.onSubmit = (text) => {
     perdido = correlationIdFromPrompt(text);
@@ -190,7 +184,6 @@ test("el sobre que llega tarde levanta la cuarentena aunque el panel siga genera
     home,
     workspace,
     tmux,
-    fallback,
     quarantineFile,
     correlationTimeoutMs: 20,
     quietTimeoutMs: 20,
@@ -227,7 +220,6 @@ test("el sobre que llega tarde levanta la cuarentena aunque el panel siga genera
   // Before this fix the durable marks WERE cleaned by `reconcileTerminalPending` and the delivery
   // degraded anyway: the in-memory latch answered "current" with no evidence left behind it, and
   // only restarting the adapter or respawning the pane cleared it.
-  assert.equal(fallback.calls, 0, "no debió degradar al transporte aislado");
   assert.equal(tmux.submittedCount, 2);
   assert.equal(second.exitCode, 0, second.stderr);
   assert.match(second.stdout, /la siguiente sí/u);
@@ -244,7 +236,6 @@ test("el panel OCUPADO no levanta la cuarentena: ni generando ni con un pegado s
   await appendFile(file, `${userEntry(randomUUID(), null, "turno previo", sessionId)}\n`);
 
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   losePaste(tmux);
 
   const runner = claudeRunner({
@@ -252,7 +243,6 @@ test("el panel OCUPADO no levanta la cuarentena: ni generando ni con un pegado s
     home,
     workspace,
     tmux,
-    fallback,
     quarantineFile,
     correlationTimeoutMs: 20,
     quietTimeoutMs: 20,
@@ -265,15 +255,15 @@ test("el panel OCUPADO no levanta la cuarentena: ni generando ni con un pegado s
   // Still generating: the turn that swallowed the paste may be alive, so nothing is released.
   tmux.paneContent = "✻ Herding… (esc to interrupt)\n❯ ";
   const conTurnoEnCurso = await runOnce(runner, "mientras genera");
-  assert.equal(fallback.calls, 1, "generando NO es sano");
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
   assert.match(await readFile(quarantineFile, "utf8"), /^\$0:@0:%0:4242\n$/u);
   assert.equal(conTurnoEnCurso.cancelled, false);
+  assertExecutionPrevented(runner, conTurnoEnCurso, "session_identity_unverified");
 
   // Idle band, but the owner has something typed in the box: pasting would concatenate onto it.
   tmux.paneContent = "❯ estoy escribiendo yo";
-  await runOnce(runner, "mientras el dueño escribe");
-  assert.equal(fallback.calls, 2, "una caja ocupada NO es sana");
+  const inputOcupado = await runOnce(runner, "mientras el dueño escribe");
+  assertExecutionPrevented(runner, inputOcupado, "session_identity_unverified");
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
   assert.equal(tmux.submittedCount, 1);
 });

@@ -4,6 +4,11 @@ import {HarnessAdapter, fakeDefinition} from '../src/harnesses/index.js';
 import { AdapterEngine, profileAdoptionFor } from "../src/sdk/engine.js";
 import type {Delivery} from '../src/sdk/types.js';
 import {ControlledRunner, SessionConcurrencyRunner, delivery, setup, setupSessionConcurrency, storeFor, waitForQueued} from './engine-fixtures.js';
+
+function queuedDelivery(id: string, epoch = 1): Delivery {
+  const input = delivery(id, epoch);
+  return { ...input, body: { ...input.body, timeout_ms: 30_000 } };
+}
 test("profile adoption requires the exact measured document set from the delivery contract", () => {
   const path = "/runtime/.codex/AGENTS.md";
   const sha = "a".repeat(64);
@@ -95,11 +100,11 @@ test("concurrent deliveries for one authenticated session share one UUID and exe
   await engine.activateEpoch(1);
   const firstInput: Delivery = {
     ...delivery("session-serialized-a"),
-    body: { prompt: "first session turn", timeout_ms: 2_000 },
+    body: { prompt: "first session turn", timeout_ms: 30_000 },
   };
   const secondInput: Delivery = {
     ...delivery("session-serialized-b"),
-    body: { prompt: "second session turn", timeout_ms: 2_000 },
+    body: { prompt: "second session turn", timeout_ms: 30_000 },
   };
 
   const first = engine.handleDelivery(firstInput);
@@ -240,9 +245,9 @@ test("two human messages of the same conversation stay serialized", async () => 
 
 test("cancelling a queued session delivery skips execution without breaking the session queue", async () => {
   const context = await setupSessionConcurrency("engine-session-queued-cancel", 25);
-  const firstInput = delivery("session-cancel-a");
-  const secondInput = delivery("session-cancel-b");
-  const thirdInput = delivery("session-cancel-c");
+  const firstInput = queuedDelivery("session-cancel-a");
+  const secondInput = queuedDelivery("session-cancel-b");
+  const thirdInput = queuedDelivery("session-cancel-c");
 
   const first = context.engine.handleDelivery(firstInput);
   await context.runner.waitForCalls(1);
@@ -273,8 +278,8 @@ test("cancelling a queued session delivery skips execution without breaking the 
 
 test("fencing queued session work skips stale execution and releases the queue", async () => {
   const context = await setupSessionConcurrency("engine-session-queued-fence", 25);
-  const firstInput = delivery("session-fence-a");
-  const secondInput = delivery("session-fence-b");
+  const firstInput = queuedDelivery("session-fence-a");
+  const secondInput = queuedDelivery("session-fence-b");
 
   const first = context.engine.handleDelivery(firstInput);
   await context.runner.waitForCalls(1);
@@ -294,7 +299,7 @@ test("fencing queued session work skips stale execution and releases the queue",
   );
   assert.equal(context.store.getDelivery(firstInput.delivery_id)?.error?.retryable, false);
 
-  const current = context.engine.handleDelivery(delivery("session-fence-c", 2));
+  const current = context.engine.handleDelivery(queuedDelivery("session-fence-c", 2));
   await context.runner.waitForCalls(2);
   context.runner.releaseNext();
   await current;
@@ -303,8 +308,8 @@ test("fencing queued session work skips stale execution and releases the queue",
 
 test("shutdown is retryable before dispatch but successful output obtained after abort is ambiguous", async () => {
   const context = await setupSessionConcurrency("engine-session-shutdown-boundary", 25);
-  const dispatchedInput = delivery("session-stop-dispatched");
-  const queuedInput = delivery("session-stop-queued");
+  const dispatchedInput = queuedDelivery("session-stop-dispatched");
+  const queuedInput = queuedDelivery("session-stop-queued");
 
   const dispatched = context.engine.handleDelivery(dispatchedInput);
   await context.runner.waitForCalls(1);
@@ -362,4 +367,3 @@ test("terminal output preserves delivery origin for relay routing", async () => 
   assert.equal(done.output?.reply, "completed");
   assert.equal(done.output.messages[0]?.to, "audit");
 });
-

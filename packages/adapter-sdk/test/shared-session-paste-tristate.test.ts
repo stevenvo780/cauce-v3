@@ -10,8 +10,8 @@ import { fileQuarantinePersistence } from "../src/shared-session/paste-runner.js
 import type { QuarantinePersistence } from "../src/shared-session/paste-runner.js";
 import {
   FakeTmux,
-  RecordingFallback,
   ambiguousTmuxResult,
+  assertExecutionPrevented,
   assistantEntry,
   claudeRunner,
   controlledDelayedTmuxMutation,
@@ -45,10 +45,9 @@ for (const mutationResult of [
   { name: "exit null", kind: "null" },
   { name: "excepción de transporte", kind: "throw" },
 ] as const) {
-  test(`paste triestado: ${mutationResult.name} decide fallback sin adivinar`, async () => {
+  test(`paste triestado: ${mutationResult.name} falla cerrado sin adivinar`, async () => {
     const { home, workspace } = await freshState(`paste-tristate-${mutationResult.kind}`);
     const tmux = new FakeTmux();
-    const fallback = new RecordingFallback("{}");
     const originalRun = tmux.run.bind(tmux);
     tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
       if (args[0] === "if-shell"
@@ -62,7 +61,7 @@ for (const mutationResult of [
       }
       return originalRun(args, stdin, control);
     };
-    const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+    const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
     const outcome = await runner.run({
       command: "claude",
@@ -74,11 +73,13 @@ for (const mutationResult of [
     });
 
     if (mutationResult.kind === "not_applied") {
-      assert.equal(fallback.calls, 1, "sólo el wait-for exacto acredita que paste no ocurrió");
-      assert.equal(outcome.exitCode, 0);
+      assert.equal(outcome.exitCode, 1);
+      assert.equal(outcome.harnessStarted, false);
+      const degradation = runner.takeDegradation();
+      assert.equal(degradation?.executionPrevented, true);
+      assert.equal(degradation.fellBack, false);
       assert.equal(tmux.sessionExists, true);
     } else {
-      assert.equal(fallback.calls, 0);
       assert.equal(outcome.exitCode, 1);
       assert.equal(outcome.harnessStarted, undefined);
       assert.match(outcome.stderr, /resultado.*pegaba.*ambiguo/u);
@@ -92,7 +93,6 @@ for (const mutationResult of [
 test("paste demorado se reapea y no puede concatenarse con input humano posterior", async () => {
   const { home, workspace } = await freshState("paste-demorado-reap");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const originalRun = tmux.run.bind(tmux);
   let pasteClientReaped = false;
   let killClientReaped = false;
@@ -120,7 +120,6 @@ test("paste demorado se reapea y no puede concatenarse con input humano posterio
     home,
     workspace,
     tmux,
-    fallback,
     quarantineOperationTimeoutMs: 20,
   });
 
@@ -138,7 +137,6 @@ test("paste demorado se reapea y no puede concatenarse con input humano posterio
   assert.match(outcome.stderr, /resultado.*pegaba.*ambiguo/u);
   assert.equal(pasteClientReaped, true);
   assert.equal(killClientReaped, true);
-  assert.equal(fallback.calls, 0);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
 
   tmux.inputContent = "TEXTO HUMANO POSTERIOR AL REAP";
@@ -151,7 +149,6 @@ test("paste demorado se reapea y no puede concatenarse con input humano posterio
 test("load-buffer demorado queda ambiguo, reapeado y con barrera durable", async () => {
   const { home, workspace } = await freshState("load-demorado-reap");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const originalRun = tmux.run.bind(tmux);
   let loadClientReaped = false;
   let lateLoadApplied = false;
@@ -175,7 +172,6 @@ test("load-buffer demorado queda ambiguo, reapeado y con barrera durable", async
     home,
     workspace,
     tmux,
-    fallback,
     quarantineOperationTimeoutMs: 20,
   });
 
@@ -191,7 +187,6 @@ test("load-buffer demorado queda ambiguo, reapeado y con barrera durable", async
   assert.equal(outcome.exitCode, 1);
   assert.equal(outcome.harnessStarted, undefined);
   assert.equal(loadClientReaped, true);
-  assert.equal(fallback.calls, 0);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
   tmux.inputContent = "INPUT HUMANO POSTERIOR AL LOAD REAPEADO";
   await new Promise((resolveWait) => setTimeout(resolveWait, 100));
@@ -203,7 +198,6 @@ test("load-buffer demorado queda ambiguo, reapeado y con barrera durable", async
 test("probe demorado queda ambiguo, reapeado y no inicia load ni paste", async () => {
   const { home, workspace } = await freshState("inspect-demorado-reap");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const originalRun = tmux.run.bind(tmux);
   let inspectClientReaped = false;
   let lateInspectApplied = false;
@@ -228,7 +222,6 @@ test("probe demorado queda ambiguo, reapeado y no inicia load ni paste", async (
     home,
     workspace,
     tmux,
-    fallback,
     quarantineOperationTimeoutMs: 20,
   });
 
@@ -244,7 +237,6 @@ test("probe demorado queda ambiguo, reapeado y no inicia load ni paste", async (
   assert.equal(outcome.exitCode, 1);
   assert.equal(outcome.harnessStarted, undefined);
   assert.equal(inspectClientReaped, true);
-  assert.equal(fallback.calls, 0);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
   await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   assert.equal(lateInspectApplied, false);
@@ -255,7 +247,6 @@ test("probe demorado queda ambiguo, reapeado y no inicia load ni paste", async (
 test("delete-buffer demorado se reapea y el scrub posterior queda acreditado", async () => {
   const { home, workspace } = await freshState("delete-demorado-reap");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const originalRun = tmux.run.bind(tmux);
   let deleteAttempts = 0;
@@ -280,7 +271,6 @@ test("delete-buffer demorado se reapea y el scrub posterior queda acreditado", a
     home,
     workspace,
     tmux,
-    fallback,
     quarantineOperationTimeoutMs: 20,
   });
 
@@ -296,7 +286,6 @@ test("delete-buffer demorado se reapea y el scrub posterior queda acreditado", a
   assert.equal(outcome.cancelled, true);
   assert.equal(outcome.harnessStarted, false);
   assert.equal(deleteClientReaped, true);
-  assert.equal(fallback.calls, 0);
   await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   assert.equal(lateDeleteApplied, false);
   assert.equal(tmux.buffers.size, 0);
@@ -305,7 +294,6 @@ test("delete-buffer demorado se reapea y el scrub posterior queda acreditado", a
 test("overwrite demorado se reapea y conserva la cuarentena durable", async () => {
   const { home, workspace } = await freshState("overwrite-demorado-reap");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const originalRun = tmux.run.bind(tmux);
   let overwriteClientReaped = false;
@@ -329,7 +317,6 @@ test("overwrite demorado se reapea y conserva la cuarentena durable", async () =
     home,
     workspace,
     tmux,
-    fallback,
     quarantineOperationTimeoutMs: 20,
   });
 
@@ -346,7 +333,6 @@ test("overwrite demorado se reapea y conserva la cuarentena durable", async () =
   assert.equal(outcome.harnessStarted, undefined);
   assert.match(outcome.stderr, /scrub.*ambiguo.*cuarentena/u);
   assert.equal(overwriteClientReaped, true);
-  assert.equal(fallback.calls, 0);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
   await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   assert.equal(lateOverwriteApplied, false);
@@ -355,7 +341,6 @@ test("overwrite demorado se reapea y conserva la cuarentena durable", async () =
 test("cancelar durante load-buffer impide incluso el paste-buffer posterior", async () => {
   const { home, workspace } = await freshState("abort-entre-load-paste");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin): Promise<TmuxResult> => {
@@ -363,7 +348,7 @@ test("cancelar durante load-buffer impide incluso el paste-buffer posterior", as
     if (args[0] === "load-buffer") controller.abort();
     return response;
   };
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const outcome = await runner.run({
     command: "claude",
@@ -381,14 +366,12 @@ test("cancelar durante load-buffer impide incluso el paste-buffer posterior", as
   assert.equal(tmux.calls.some((call) => call[0] === "delete-buffer"), true);
   assert.equal(tmux.calls.some((call) => call.includes("Enter")), false);
   assert.equal(tmux.calls.some((call) => call.includes("C-u")), false);
-  assert.equal(fallback.calls, 0);
 });
 
 test("input humano tras fsync de arming se revalida antes de load-buffer y no se concatena", async () => {
   const { state, home, workspace } = await freshState("input-durante-pending-fsync");
   const quarantineFile = join(state, "quarantine");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const persistence: QuarantinePersistence = {
     ...fileQuarantinePersistence,
     persist: async (path, identity) => {
@@ -402,7 +385,6 @@ test("input humano tras fsync de arming se revalida antes de load-buffer y no se
     home,
     workspace,
     tmux,
-    fallback,
     quarantineFile,
     quarantinePersistence: persistence,
   });
@@ -417,7 +399,7 @@ test("input humano tras fsync de arming se revalida antes de load-buffer y no se
   });
 
   assert.equal(outcome.cancelled, false);
-  assert.equal(fallback.calls, 1);
+  assertExecutionPrevented(runner, outcome, "input_busy");
   assert.equal(tmux.inputContent, "TEXTO HUMANO DURANTE FSYNC");
   assert.equal(tmux.used("load-buffer"), false);
   assert.equal(tmux.used("paste-buffer"), false);
@@ -457,13 +439,11 @@ test("persist pre-paste vencido sólo publica arming y su cleanup exacto no bloq
       return fileQuarantinePersistence.persist(path, currentIdentity);
     },
   };
-  const fallback = new RecordingFallback("{}");
   const firstRunner = claudeRunner({
     alias: "kratos",
     home,
     workspace,
     tmux,
-    fallback,
     quarantineFile,
     quarantinePersistence: persistence,
     quarantineOperationTimeoutMs: 20,
@@ -478,7 +458,7 @@ test("persist pre-paste vencido sólo publica arming y su cleanup exacto no bloq
     signal: new AbortController().signal,
   });
   assert.equal(first.cancelled, false);
-  assert.equal(fallback.calls, 1);
+  assertExecutionPrevented(firstRunner, first, "handshake_failed");
   assert.equal(tmux.submittedCount, 0);
   assert.equal(
     (await readdir(state)).some((name) => name.endsWith(".pending")),
@@ -513,7 +493,6 @@ test("persist pre-paste vencido sólo publica arming y su cleanup exacto no bloq
     home,
     workspace,
     tmux,
-    fallback,
     quarantineFile,
     quarantinePersistence: persistence,
     // The 20 ms deadline above exists only to force the first arming timeout. The restart is the
@@ -531,7 +510,6 @@ test("persist pre-paste vencido sólo publica arming y su cleanup exacto no bloq
 
   assert.equal(second.exitCode, 0);
   assert.equal(tmux.submittedCount, 1);
-  assert.equal(fallback.calls, 1);
   assert.equal(await readFile(foreignArming, "utf8"), foreignBytes);
   assert.equal((await readdir(state)).some((name) => name.endsWith(".pending")), false);
 });

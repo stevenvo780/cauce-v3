@@ -38,12 +38,16 @@ import {
 } from "./engine/delivery-context.js";
 import type { ClaimMonitor, ClaimRenewalDeps } from "./engine/claim-renewal.js";
 import { startClaimRenewal } from "./engine/claim-renewal.js";
-import { interruptedStartedError } from "./engine/recovery.js";
+import {
+  entregaVencidaAlRecuperar, interruptedStartedError, vencidaAlRecuperarError,
+} from "./engine/recovery.js";
 import { inlineWithoutSecrets } from "./engine/secret-guard.js";
 import type { SealedSecretGateway, TurnInput, TurnInputDeps } from "./engine/turn-cleanup.js";
 import { materializeTurnInput, releaseTurn } from "./engine/turn-cleanup.js";
 import { runSystemGateProbe } from "./engine/system-gate-probe.js";
 import { DEFAULT_MESSAGE_TIMEOUT_MS } from "./message-timeout.js";
+import type { EmissionRuntime } from "./mcp-emission/runtime.js";
+import type { EmissionTurn } from "./mcp-emission/tools.js";
 
 export type {
   EventPublisher,
@@ -51,6 +55,7 @@ export type {
 export { profileAdoptionFor } from "./engine/contracts.js";
 
 export class AdapterEngine {
+  private readonly emission: EmissionRuntime | undefined;
   private readonly store: DurableStore;
   private readonly harness: HarnessAdapter;
   private readonly publishEvent: EventPublisher;
@@ -75,6 +80,7 @@ export class AdapterEngine {
   private readonly renewalDeps: ClaimRenewalDeps;
 
   constructor(options: AdapterEngineOptions) {
+    this.emission = options.emission;
     this.store = options.store;
     this.harness = options.harness;
     this.publishEvent = options.publish;
@@ -263,6 +269,10 @@ export class AdapterEngine {
         await this.replayPending(recovered);
         await this.finishError(recovered, interruptedStartedError(recovered));
       } else if (record.request !== undefined) {
+        if (entregaVencidaAlRecuperar(record.request, this.clock.now())) {
+          await this.finishError(record, vencidaAlRecuperarError(record));
+          continue;
+        }
         await this.handleDelivery(record.request);
       }
     }
@@ -351,6 +361,7 @@ export class AdapterEngine {
       ? delivery.body.type
       : "request";
     const rawRequestContext: HarnessRequestContext = {
+      ...(this.emission === undefined ? {} : { mcp_emit: true }),
       self_alias: delivery.recipient_alias,
       sender_alias: delivery.actor_alias,
       tenant_id: this.ownTenantId ?? delivery.tenant_id,
@@ -402,6 +413,7 @@ export class AdapterEngine {
     let consumedProfile: RuntimeProfileMeasurement | undefined;
     let executionFailure: unknown;
     let turnInput: TurnInput | undefined;
+    let emissionTurn: EmissionTurn | undefined;
     try {
       const trustedOrigin = delivery.authenticated_context?.origin ?? delivery.origin;
       const processedReplies = messageType === "agent.fanin"
@@ -427,6 +439,10 @@ export class AdapterEngine {
         const attachments = turnInput.attachments;
         const prompt = turnInput.prompt;
         if (reservation !== undefined) await reservation.wait(controller.signal);
+        emissionTurn = this.emission?.begin({
+          delivery, context: requestContext, signal: controller.signal,
+          isCurrent: () => delivery.epoch === this.store.epoch && !this.fenced.has(delivery.delivery_id),
+        });
         output = await this.harness.execute({
           prompt,
           ...(attachments === undefined ? {} : { attachments: attachments.attachments }),
@@ -436,6 +452,10 @@ export class AdapterEngine {
           ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
           timeoutMs: executionBudget.harnessTimeoutMs,
           signal: controller.signal,
+          ...(emissionTurn === undefined ? {} : {
+            emissionOutput: () => emissionTurn?.output,
+            onEmissionReady: (correlationId?: string) => { emissionTurn?.activate(correlationId); },
+          }),
           beforeHarnessInvoke: async () => {
             // The adapter calls this after another disk preflight, then revalidates once more
             // before its runner. This operation proves ownership and marks the point of no return.
@@ -466,6 +486,8 @@ export class AdapterEngine {
           },
           onRuntimeProfileConsumed: (profile) => { consumedProfile = profile; },
         });
+        this.logger({ event: "emission_result", delivery_id: delivery.delivery_id,
+          attempt: delivery.attempt, reason: emissionTurn?.output === undefined ? "text_fallback" : "mcp_deposit" });
       }
       if (controller.signal.aborted) {
         throw controller.signal.reason instanceof Error
@@ -475,6 +497,7 @@ export class AdapterEngine {
     } catch (error) {
       executionFailure = error;
     } finally {
+      if (emissionTurn !== undefined) this.emission?.end(emissionTurn);
       await stopClaimRenewal();
     }
 

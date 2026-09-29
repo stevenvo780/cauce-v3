@@ -74,7 +74,6 @@ if _scripts_dir not in sys.path:
 from container_alias_lib import load_container_aliases  # noqa: E402  (sys.path shim above must run first)
 
 CODEX_SHARED = '/datos/agents/shared/.codex/config.toml'
-CODEX_HOST = f'{HOME}/.codex/config.toml'
 CLAUDE_SHARED = '/datos/agents/shared/.claude/settings.json'
 OC = '/datos/claw-config/.openclaw/openclaw.json'
 OC_MIGUEL = '/datos/miguel-config/.openclaw/openclaw.json'
@@ -92,7 +91,6 @@ CONFIG = {
     'hegel': OC_HEGEL,
     'janus': OC_MIGUEL,
     'jarvis': OC,
-    'kant': CODEX_HOST,
     'kratos': CLAUDE_SHARED,
     'socrates': CODEX_SHARED,
     'zeus': CLAUDE_SHARED,

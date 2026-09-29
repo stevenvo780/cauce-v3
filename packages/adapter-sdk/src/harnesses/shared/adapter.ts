@@ -9,12 +9,7 @@ import {
 } from "../../context/native-profile-context.js";
 import { AdapterError, ProcessExecutionError } from "../../sdk/errors.js";
 import { signalAborted } from "../../runtime-state.js";
-import {
-  isCanonicalOpenCodeSessionId,
-  isCanonicalOpenCodeScopeKey,
-  type DurableStore,
-  type SessionOrigin,
-} from "../../sdk/durable-store.js";
+import type { DurableStore, SessionOrigin } from "../../sdk/durable-store.js";
 import type {
   CommandRunner,
   HarnessCommandOverride,
@@ -80,7 +75,6 @@ export class HarnessAdapter {
   private readonly commandOverride: HarnessCommandOverride | undefined;
   private readonly sessionNamespace: string | undefined;
   private readonly fallbackSessionKey: string | undefined;
-  private readonly canonicalOpenCodeSession: boolean;
   private readonly resolveCredentialEnv: (() => Promise<Readonly<Record<string, string>>>) | undefined;
   private readonly sharedSession: HarnessAdapterOptions["sharedSession"];
   private readonly nativeProfileContext: NativeProfileContext | undefined;
@@ -93,7 +87,6 @@ export class HarnessAdapter {
     this.commandOverride = options.commandOverride;
     this.sessionNamespace = options.sessionNamespace;
     this.fallbackSessionKey = options.fallbackSessionKey;
-    this.canonicalOpenCodeSession = options.canonicalOpenCodeSession === true;
     this.resolveCredentialEnv = options.resolveCredentialEnv;
     const environment = options.environment ?? process.env;
     let nativeEnabled = nativeProfileContextEnabled(environment.CAUCE_NATIVE_PROFILE_CONTEXT);
@@ -110,10 +103,6 @@ export class HarnessAdapter {
     this.nativeProfileContext = nativeEnabled
       ? new NativeProfileContext(this.definition.id, this.sharedSession !== undefined, environment)
       : undefined;
-    if (this.canonicalOpenCodeSession
-      && (this.definition.id !== "opencode" || this.sessionNamespace !== "kant")) {
-      throw new Error("Canonical OpenCode session publication is restricted to alias 'kant'");
-    }
   }
 
   prepareContext(context: HarnessRequestContext): HarnessRequestContext;
@@ -373,6 +362,8 @@ export class HarnessAdapter {
     const measuredProfileAtStart = invocationContext?.native_profile_measurement
       ?? invocationContext?.runtime_profile
       ?? (request.context === undefined ? undefined : this.perfilVivoDelRuntime(request.context));
+    let degradation: SharedSessionDegradation | undefined;
+    if (!isSharedSessionRunner(this.runner)) request.onEmissionReady?.();
     const result = await this.runner.run({
       ...invocation,
       ...workspaceCwd(),
@@ -380,6 +371,8 @@ export class HarnessAdapter {
       stdin: protocolPrompt(effectivePrompt, request.origin, invocationContext),
       timeoutMs: request.timeoutMs,
       signal: request.signal,
+      ...(request.emissionOutput === undefined ? {} : { emissionOutput: request.emissionOutput }),
+      ...(request.onEmissionReady === undefined ? {} : { onEmissionReady: request.onEmissionReady }),
       ...(session.context.sessionId === undefined ? {} : { sessionId: session.context.sessionId }),
       ...(this.definition.id === "muse" ? { resumeSession: session.context.resume } : {}),
       // The start witness and its notice travel together to the transport: it is the only thing
@@ -389,12 +382,21 @@ export class HarnessAdapter {
         ? {}
         : { startWitness: this.definition.startWitness }),
       ...(request.onHarnessStart === undefined ? {} : { onHarnessStart: request.onHarnessStart }),
+    }).finally(() => {
+      degradation = isSharedSessionRunner(this.runner) ? this.runner.takeDegradation() : undefined;
     });
-    // Consumed RIGHT NEXT to execution, not later: if the turn fails and an exception is thrown,
-    // the notice cannot stay stored and contaminate the next turn, which might have actually shared.
-    const degradation = isSharedSessionRunner(this.runner)
-      ? this.runner.takeDegradation()
-      : undefined;
+
+    if (degradation?.executionPrevented === true) {
+      const shared = this.sharedSession;
+      if (shared !== undefined) {
+        await recordDegradation(shared.stateDirectory, {
+          ...degradation, alias: shared.alias, harness: shared.harness,
+        });
+      }
+      throw new ProcessExecutionError("SHARED_TUI_UNAVAILABLE",
+        shared === undefined ? "The canonical terminal is unavailable; no model received this turn"
+          : degradationNotice(shared.alias, shared.harness, degradation), false);
+    }
 
     if (result.timedOut) {
       throw new ProcessExecutionError(
@@ -421,7 +423,14 @@ export class HarnessAdapter {
 
     let parsed;
     try {
-      parsed = this.definition.parse(result.stdout);
+      const deposited = request.emissionOutput?.();
+      if (deposited === undefined) parsed = this.definition.parse(result.stdout);
+      else {
+        // Session metadata is still useful; damaged final text cannot replace the MCP result.
+        let nativeSessionId: string | undefined;
+        try { nativeSessionId = this.definition.parse(result.stdout).nativeSessionId; } catch { /* MCP owns the output. */ }
+        parsed = { output: deposited, ...(nativeSessionId === undefined ? {} : { nativeSessionId }) };
+      }
     } catch (error) {
       if (result.exitCode !== 0) {
         // Extract real cause from stderr, sanitized to avoid leaking secrets
@@ -505,19 +514,11 @@ export class HarnessAdapter {
         }
       }
       if (this.definition.sessionStrategy.kind === "observed" && parsed.nativeSessionId !== undefined) {
-        if (this.canonicalOpenCodeSession) {
-          if (result.exitCode === 0
-            && isCanonicalOpenCodeScopeKey(effectiveSessionKey)
-            && isCanonicalOpenCodeSessionId(parsed.nativeSessionId)) {
-            await this.store.setCanonicalOpenCodeSession(effectiveSessionKey, parsed.nativeSessionId);
-          }
-        } else {
-          await this.store.setSession(this.sessionStoreKey(effectiveSessionKey), {
-            native_id: parsed.nativeSessionId,
-            initialized: true,
-            ...origin,
-          });
-        }
+        await this.store.setSession(this.sessionStoreKey(effectiveSessionKey), {
+          native_id: parsed.nativeSessionId,
+          initialized: true,
+          ...origin,
+        });
       }
     }
 
@@ -589,11 +590,6 @@ export class HarnessAdapter {
     }
     const existing = this.store.getSession(this.sessionStoreKey(sessionKey));
     if (existing !== undefined) {
-      if (this.canonicalOpenCodeSession
-        && (!isCanonicalOpenCodeScopeKey(sessionKey)
-          || !isCanonicalOpenCodeSessionId(existing.native_id))) {
-        return { context: { resume: false } };
-      }
       return {
         context: { sessionId: existing.native_id, resume: existing.initialized },
         nativeId: existing.native_id,

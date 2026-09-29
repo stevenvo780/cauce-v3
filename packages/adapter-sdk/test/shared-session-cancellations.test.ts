@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { readDegradations } from "../src/shared-session/degradation-log.js";
 import {
   CliTmux,
   acquirePaneInputBarrier,
@@ -12,10 +13,11 @@ import {
 } from "../src/shared-session/tmux.js";
 import {
   FakeTmux,
-  RecordingFallback,
   TmuxResult,
+  adapterFor,
   claudeRunner,
   exactTmuxPaneState,
+  expectSharedTuiUnavailable,
   freshState,
   randomUUID,
 } from "./shared-session-fixtures.js";
@@ -24,7 +26,6 @@ test("cancelar durante acquire se observa tras capture y preserva la caja humana
   const { home, workspace } = await freshState("abort-acquire");
   const tmux = new FakeTmux();
   tmux.paneContent = "❯ borrador humano";
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin): Promise<TmuxResult> => {
@@ -32,7 +33,7 @@ test("cancelar durante acquire se observa tras capture y preserva la caja humana
     if (args[0] === "capture-pane") controller.abort();
     return response;
   };
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const outcome = await runner.run({
     command: "claude",
@@ -44,16 +45,48 @@ test("cancelar durante acquire se observa tras capture y preserva la caja humana
   });
 
   assert.equal(outcome.cancelled, true);
-  assert.equal(fallback.calls, 0);
   assert.equal(tmux.used("load-buffer"), false);
   assert.equal(tmux.calls.some((call) => call.includes("C-u")), false);
   assert.equal(tmux.paneContent, "❯ borrador humano");
 });
 
+test("cancelar durante el aviso conserva el fallo canónico no retryable", async () => {
+  const { state, home, workspace } = await freshState("abort-durante-aviso");
+  const tmux = new FakeTmux();
+  tmux.paneContent = "❯ borrador humano";
+  const controller = new AbortController();
+  const originalRun = tmux.run.bind(tmux);
+  let announced = false;
+  tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
+    const response = await originalRun(args, stdin, control);
+    if (args[0] === "display-message" && args[1] !== "-p") {
+      announced = true;
+      controller.abort(new Error("adapter shutdown"));
+    }
+    return response;
+  };
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
+  const adapter = await adapterFor(runner, state, "kratos", "claude");
+
+  const error = await expectSharedTuiUnavailable(adapter.execute({
+    prompt: "no ejecutar",
+    sessionKey: "auth-v2:prueba",
+    timeoutMs: 10_000,
+    signal: controller.signal,
+  }));
+
+  assert.equal(announced, true);
+  assert.match(error.message, /input_busy/u);
+  assert.equal(tmux.pasted, undefined);
+  assert.equal(tmux.submittedCount, 0);
+  const records = await readDegradations(state);
+  assert.equal(records[0]?.executionPrevented, true);
+  assert.equal(records[0].fellBack, false);
+});
+
 test("cancelar después del paste compromete Enter y nunca deja un prompt ejecutable", async () => {
   const { home, workspace } = await freshState("abort-tras-paste");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const submitted: string[] = [];
   tmux.onSubmit = (text) => {
@@ -72,7 +105,6 @@ test("cancelar después del paste compromete Enter y nunca deja un prompt ejecut
     home,
     workspace,
     tmux,
-    fallback,
     cancelDrainTimeoutMs: 20,
   });
 
@@ -100,19 +132,16 @@ test("cancelar después del paste compromete Enter y nunca deja un prompt ejecut
   // A later human Enter finds an empty box: it cannot revive the cancelled delivery.
   await tmux.run(["send-keys", "-t", tmux.paneId, "Enter"]);
   assert.equal(submitted.length, 1);
-  assert.equal(fallback.calls, 0);
 });
 
 test("un settle colgado tras paste termina la generación antes de liberar", async () => {
   const { home, workspace } = await freshState("settle-colgado-post-paste");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const runner = claudeRunner({
     alias: "kratos",
     home,
     workspace,
     tmux,
-    fallback,
     settleMs: 50,
     quarantineOperationTimeoutMs: 20,
     sleep: (ms) => ms === 50 ? new Promise<void>(() => undefined) : Promise.resolve(),
@@ -132,7 +161,6 @@ test("un settle colgado tras paste termina la generación antes de liberar", asy
   assert.match(outcome.stderr, /wait between paste and Enter.*ambig/u);
   assert.equal(tmux.sessionExists, false, "la caja pegada no puede quedar reutilizable");
   assert.equal(tmux.calls.some((call) => call.includes("Enter") || call.includes("C-u")), false);
-  assert.equal(fallback.calls, 0);
 });
 
 test(

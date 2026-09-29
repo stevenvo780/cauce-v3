@@ -29,8 +29,6 @@ export class DurableStoreBase {
   protected sessions: SessionsFile = clone(EMPTY_SESSIONS);
   protected fencing: FencingFile = clone(EMPTY_FENCING);
   protected tail: Promise<void> = Promise.resolve();
-  protected canonicalOpenCodeScopeKey: string | undefined;
-  protected canonicalOpenCodeReconciled = false;
   protected delegationContextPruneTimer: ReturnType<typeof setTimeout> | undefined;
   protected recoveryRequired = false;
 

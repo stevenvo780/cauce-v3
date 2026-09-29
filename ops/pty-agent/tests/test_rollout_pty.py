@@ -107,11 +107,18 @@ class RolloutPtyTest(unittest.TestCase):
         cls.current_bundle = rollout.ReleaseBundle.from_ops_root(OPS_ROOT)
         cls.fixture = tempfile.TemporaryDirectory()
         fixture_root = pathlib.Path(cls.fixture.name)
+        fixture_catalog = json.loads(FLEET_FIXTURE.read_bytes())
+        fixture_catalog["aliases"].pop("kant", None)
+        fixture_catalog["aliases"].pop("astra", None)
+        for entry in fixture_catalog["aliases"].values():
+            if entry.get("dockerHost") == "kratos":
+                entry["dockerHost"] = "server2"
+        cls.fixture_mapping_raw = json.dumps(fixture_catalog, sort_keys=True).encode()
         for relative in rollout.RELEASE_FILES:
-            source = FLEET_FIXTURE if relative == "container-aliases.json" else OPS_ROOT / relative
             destination = fixture_root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(source.read_bytes())
+            destination.write_bytes(cls.fixture_mapping_raw if relative == "container-aliases.json"
+                                    else (OPS_ROOT / relative).read_bytes())
         cls.bundle = rollout.ReleaseBundle.from_ops_root(fixture_root)
         cls.fleet = rollout.Fleet.load(cls.bundle.files["container-aliases.json"])
 
@@ -134,7 +141,7 @@ class RolloutPtyTest(unittest.TestCase):
             return result
 
         arguments = types.SimpleNamespace(
-            command="status", manager=["server=local"], migrate_kant=False,
+            command="status", manager=["server=local"],
             preflight_only=False, retire_historical=False,
         )
         with mock.patch.object(rollout, "ProcessTransport", side_effect=transport):
@@ -145,7 +152,7 @@ class RolloutPtyTest(unittest.TestCase):
         arguments.manager = ["server=local", "kratos=ssh:kratos"]
         constructed.clear()
         with mock.patch.object(rollout, "ProcessTransport", side_effect=transport):
-            with self.assertRaisesRegex(rollout.RolloutError, "exactamente"):
+            with self.assertRaisesRegex(rollout.RolloutError, "invalido"):
                 rollout.controller(arguments)
         self.assertEqual(constructed, [])
 
@@ -162,10 +169,11 @@ class RolloutPtyTest(unittest.TestCase):
             worker = TestWorker(manager, home=home, runner=runner, sleep=lambda _: None)
         return temporary, worker, runner
 
-    def test_mapping_assigns_exactly_two_managers_and_recalculates_source_hashes(self) -> None:
-        self.assertEqual(set(self.fleet.placements.values()), {"server", "kratos"})
-        self.assertEqual(self.fleet.placements["kant"], "kratos")
-        self.assertEqual(self.fleet.placements["salva"], "kratos")
+    def test_mapping_derives_managers_and_recalculates_source_hashes(self) -> None:
+        self.assertEqual(set(self.fleet.placements.values()), {"server", "server2"})
+        self.assertNotIn("kant", self.fleet.aliases)
+        self.assertNotIn("astra", self.fleet.aliases)
+        self.assertEqual(self.fleet.placements["salva"], "server2")
         self.assertEqual(
             self.bundle.digests["pty-agent/cauce-pty-launcher.sh"],
             rollout.sha256((AGENT_ROOT / "cauce-pty-launcher.sh").read_bytes()),
@@ -180,7 +188,7 @@ class RolloutPtyTest(unittest.TestCase):
         )
         self.assertEqual(
             self.bundle.mapping_sha,
-            rollout.sha256(FLEET_FIXTURE.read_bytes()),
+            rollout.sha256(self.fixture_mapping_raw),
         )
 
     def test_sudo_ssh_transport_enters_the_real_user_bus_without_inheriting_root_home(self) -> None:
@@ -250,23 +258,23 @@ class RolloutPtyTest(unittest.TestCase):
                 )
 
     def test_both_physical_managers_must_be_declared_once(self) -> None:
-        with self.assertRaisesRegex(rollout.RolloutError, "todos los managers"):
-            rollout.parse_targets([])
-        with self.assertRaisesRegex(rollout.RolloutError, "todos los managers"):
-            rollout.parse_targets(["server=local"])
+        with self.assertRaisesRegex(rollout.RolloutError, "exactamente"):
+            rollout.parse_targets([], self.fleet.managers)
+        with self.assertRaisesRegex(rollout.RolloutError, "exactamente"):
+            rollout.parse_targets(["server=local"], self.fleet.managers)
         with self.assertRaisesRegex(rollout.RolloutError, "invalido"):
-            rollout.parse_targets(["server=local", "server=ssh:vpstn", "kratos=ssh:kratos"])
+            rollout.parse_targets(["server=local", "server=ssh:vpstn", "server2=ssh:server2"], self.fleet.managers)
         self.assertEqual(
             rollout.parse_targets([
-                "server=sudo-ssh:vpstn:stev", "kratos=ssh:kratos",
-            ]),
-            {"server": "sudo-ssh:vpstn:stev", "kratos": "ssh:kratos"},
+                "server=sudo-ssh:vpstn:stev", "server2=ssh:server2",
+            ], self.fleet.managers),
+            {"server": "sudo-ssh:vpstn:stev", "server2": "ssh:server2"},
         )
         self.assertEqual(
             rollout.parse_targets(["server=local"], ("server",)),
             {"server": "local"},
         )
-        with self.assertRaisesRegex(rollout.RolloutError, "exactamente"):
+        with self.assertRaisesRegex(rollout.RolloutError, "invalido"):
             rollout.parse_targets(["server=local", "kratos=ssh:kratos"], ("server",))
 
     def test_duplicate_json_keys_are_rejected_before_a_mapping_can_be_used(self) -> None:
@@ -274,41 +282,57 @@ class RolloutPtyTest(unittest.TestCase):
             rollout.duplicate_safe_json(b'{"aliases":{},"aliases":{}}', "fixture")
 
     def test_inventory_rejects_retired_unknown_duplicate_and_placement_drift(self) -> None:
-        empty = {"server": {}, "kratos": {}}
-        rollout.validate_inventories(self.fleet, empty, migrate_kant=False)
+        empty = {"server": {}, "server2": {}}
+        rollout.validate_inventories(self.fleet, empty)
         cases = (
-            {"server": {"ficticio": rollout.UnitPresence(selector=True)}, "kratos": {}},
-            {"server": {"fantasma": rollout.UnitPresence(active=True)}, "kratos": {}},
+            {"server": {"ficticio": rollout.UnitPresence(selector=True)}, "server2": {}},
+            {"server": {"fantasma": rollout.UnitPresence(active=True)}, "server2": {}},
             {
                 "server": {"janus": rollout.UnitPresence(active=True)},
-                "kratos": {"janus": rollout.UnitPresence(selector=True)},
+                "server2": {"janus": rollout.UnitPresence(selector=True)},
             },
-            {"server": {"midas": rollout.UnitPresence(enabled=True)}, "kratos": {}},
+            {"server": {"midas": rollout.UnitPresence(enabled=True)}, "server2": {}},
         )
         for inventories in cases:
             with self.subTest(inventories=inventories), self.assertRaises(rollout.RolloutError):
-                rollout.validate_inventories(self.fleet, inventories, migrate_kant=False)
+                rollout.validate_inventories(self.fleet, inventories)
 
     def test_unknown_alias_units_block_fail_closed(self) -> None:
         measured = {
             "server": {"espectro": rollout.UnitPresence(enabled=True)},
-            "kratos": {"sombra": rollout.UnitPresence(active=True)},
+            "server2": {"sombra": rollout.UnitPresence(active=True)},
         }
         with self.assertRaisesRegex(rollout.RolloutError, "desconocido"):
-            rollout.validate_inventories(self.fleet, measured, migrate_kant=False)
+            rollout.validate_inventories(self.fleet, measured)
 
-    def test_kant_lives_on_kratos_and_never_accepts_double_presence(self) -> None:
-        current = {"server": {}, "kratos": {"kant": rollout.UnitPresence(active=True)}}
-        rollout.validate_inventories(self.fleet, current, migrate_kant=False)
-        drifted = {"server": {"kant": rollout.UnitPresence(active=True)}, "kratos": {}}
-        with self.assertRaisesRegex(rollout.RolloutError, "placement drift de kant"):
-            rollout.validate_inventories(self.fleet, drifted, migrate_kant=False)
+    def test_salva_lives_on_server2_and_never_accepts_double_presence(self) -> None:
+        current = {"server": {}, "server2": {"salva": rollout.UnitPresence(active=True)}}
+        rollout.validate_inventories(self.fleet, current)
+        drifted = {"server": {"salva": rollout.UnitPresence(active=True)}, "server2": {}}
+        with self.assertRaisesRegex(rollout.RolloutError, "placement drift de salva"):
+            rollout.validate_inventories(self.fleet, drifted)
         duplicate = {
-            "server": {"kant": rollout.UnitPresence(selector=True)},
-            "kratos": {"kant": rollout.UnitPresence(active=True)},
+            "server": {"salva": rollout.UnitPresence(selector=True)},
+            "server2": {"salva": rollout.UnitPresence(active=True)},
         }
         with self.assertRaisesRegex(rollout.RolloutError, "duplicados"):
-            rollout.validate_inventories(self.fleet, duplicate, migrate_kant=True)
+            rollout.validate_inventories(self.fleet, duplicate)
+
+    def test_single_manager_catalog_and_targets_are_supported(self) -> None:
+        mapping = json.loads(self.fleet.raw)
+        mapping["aliases"] = {alias: entry for alias, entry in mapping["aliases"].items()
+                              if entry.get("dockerHost", "local") == "local"}
+        fleet = rollout.Fleet.load(json.dumps(mapping).encode())
+        self.assertEqual(fleet.managers, ("server",))
+        self.assertEqual(rollout.parse_targets(["server=local"], fleet.managers), {"server": "local"})
+        rollout.validate_inventories(fleet, {"server": {}})
+
+    def test_native_hosts_cannot_enter_the_container_catalog(self) -> None:
+        for container in ("host:server2", "vm:pc-agente"):
+            mapping = json.loads(self.fleet.raw)
+            mapping["aliases"]["salva"]["container"] = container
+            with self.subTest(container=container), self.assertRaisesRegex(rollout.RolloutError, "Docker"):
+                rollout.Fleet.load(json.dumps(mapping).encode())
 
     def test_publish_is_immutable_idempotent_and_preserves_older_releases(self) -> None:
         temporary, worker, _ = self.worker()
@@ -412,7 +436,7 @@ class RolloutPtyTest(unittest.TestCase):
         self.assertEqual(len(recovered), 1, "el selector fallido se conserva en el backup")
 
     def test_retired_alias_deactivation_is_explicit_transactional_and_recoverable(self) -> None:
-        temporary, worker, runner = self.worker("kratos")
+        temporary, worker, runner = self.worker("server2")
         self.addCleanup(temporary.cleanup)
         with self.assertRaisesRegex(rollout.RolloutError, "historico"):
             worker.deactivate_retired("hegel", self.bundle)
@@ -478,9 +502,9 @@ class RolloutPtyTest(unittest.TestCase):
 
     def test_fleet_compensation_rolls_back_only_current_updates_in_reverse_order(self) -> None:
         server = FakeTransport()
-        kratos = FakeTransport()
+        server2 = FakeTransport()
         failures = rollout.rollback_applied_results(
-            {"server": server, "kratos": kratos},
+            {"server": server, "server2": server2},
             self.fleet,
             [
                 {"status": "updated", "alias": "janus", "transaction": "txn-1"},
@@ -489,9 +513,9 @@ class RolloutPtyTest(unittest.TestCase):
             ],
         )
         self.assertEqual(failures, [])
-        self.assertEqual(kratos.calls[0][1]["alias"], "salva")
+        self.assertEqual(server2.calls[0][1]["alias"], "salva")
         self.assertEqual(server.calls[0][1]["alias"], "janus")
-        self.assertEqual(len(server.calls) + len(kratos.calls), 2)
+        self.assertEqual(len(server.calls) + len(server2.calls), 2)
 
     def test_selector_never_mentions_or_controls_the_zeus_adapter(self) -> None:
         temporary, worker, _ = self.worker("server")

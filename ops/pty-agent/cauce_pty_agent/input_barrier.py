@@ -1,23 +1,7 @@
-"""Live, fail-closed probes of the shared tmux pane behind a writable TUI.
+"""Block input during governance writes and, on tmux, during pane pastes or prefix commands.
 
-Three independent local sources can hold the keyboard of a `harness_rw` session, and the relay is
-none of them:
-
-  1. the adapter's paste, which fences the pane with the `@cauce_input_barrier` option for the
-     duration of the paste (`acquirePaneInputBarrier` / `releasePaneInputBarrier` in
-     packages/adapter-sdk/src/shared-session/tmux/mutation.ts). It is read here and never
-     written: its lifetime belongs to the writer that took it.
-  2. this agent's own governance write transactions, which are rewriting the very files the
-     harness reads to answer the turn.
-  3. the tmux prefix itself. A `harness_rw` attach is a full tmux client, so the prefix reaches
-     the tmux command prompt, from where `run-shell` executes as the runtime user and
-     `set-option -pu` would clear the very barrier of point 1. The burst carrying it is refused
-     here so the console cannot dismantle its own governance.
-
-While any of them holds it the burst is DROPPED. It is never queued: a stored burst would drain
-into somebody else's turn the moment the holder let go, which is exactly the accident the barrier
-exists to prevent. Both tmux probes fail CLOSED -- a pane that cannot be read is a held pane -- and
-the geometry probe answers `None` instead of a guess.
+Native OpenClaw uses the gateway control hold and the session's durable conversation fence.
+Refused input is discarded, never queued for a later turn.
 """
 from __future__ import annotations
 
@@ -169,6 +153,8 @@ class InputBarrier:
         """Which holder owns the keyboard, if any. Governance goes first: it costs no fork."""
         if governance_in_flight:
             return REFUSED_BY_GOVERNANCE
+        if self.bundle.get("openclaw_tui") is not None and self.bundle.get("tmux_tui") is None:
+            return None
         if any(byte in data for byte in self.prefix_bytes()):
             return REFUSED_BY_TMUX_PREFIX
         return REFUSED_BY_PANE if self.pane_held(now) else None

@@ -345,14 +345,19 @@ export function registerAgentContextReconcileRoutes(
               'runtime_ack_incomplete', 'runtime did not acknowledge the exact document batch',
             );
           }
-          const verification = appliedRuntimeVerification(
+          const appliedVerification = appliedRuntimeVerification(
             current.prepared.verification, acknowledgements, { requireExactBytes: true },
           );
-          if (verification.documents.some((document) => !document.current)) {
+          if (appliedVerification.documents.some((document) => !document.current)) {
             throw new ContextReconcileError(
               'runtime_ack_incomplete', 'runtime read-back differs from the durable projection',
             );
           }
+          const verification = {
+            ...appliedVerification,
+            documents: appliedVerification.documents.filter((document) =>
+              current.documents.some((before) => before.name === document.name)),
+          };
           const ackByName = new Map(acknowledgements.map((ack) => [ack.name, ack]));
           const documents = current.documents.map((before) => {
             const acknowledgement = ackByName.get(before.name);

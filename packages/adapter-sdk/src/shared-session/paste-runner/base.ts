@@ -1,11 +1,13 @@
+import { rescatarResultadoTardio } from "./resultado-tardio.js";
 import { randomBytes } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { signalAborted } from "../../runtime-state.js";
 import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js";
 import { validateStructuredOutput } from "../../sdk/output-parser.js";
+import { correlatedEmission } from "../../sdk/mcp-emission/recovery.js";
 import { envelopeHasCorrelation, stripJsonFence } from "../envelope.js";
-import { inputBoxState } from "../pane.js";
+import { inputBoxState, turnInFlight } from "../pane.js";
 import type { EnsureFailure } from "../session.js";
 import { TUI_WINDOW } from "../types.js";
 import type { SharedSessionDegradation, TranscriptReader, TurnOutcome } from "../types.js";
@@ -115,13 +117,31 @@ export abstract class PasteSessionRunnerBase<E> {
       );
       if (!markerRead.completed || markerRead.value?.state !== "present") continue;
       if (markerRead.value.value !== paneGenerationKey(identity)) continue;
-      if (!await this.hasValidTerminalEnvelope(candidate.correlationId, findEnvelope)) continue;
+      let sobreTardio = await this.hasValidTerminalEnvelope(candidate.correlationId, findEnvelope);
+      if (sobreTardio === undefined) {
+        const pane = await this.capturedPane(identity);
+        if (pane !== undefined && !turnInFlight(pane) && !inputBoxState(pane).occupied) {
+          sobreTardio = await correlatedEmission(quarantineFile, candidate.correlationId);
+        }
+      }
+      if (sobreTardio === undefined) continue;
       const cleared = await beforeDeadline(
         this.quarantinePersistence().clear(candidate.file),
         this.quarantineDeadline(),
       );
       if (cleared.completed && cleared.value === true) {
         clearedCurrent = true;
+        const rescatado = await rescatarResultadoTardio({
+          quarantineFile,
+          correlationId: candidate.correlationId,
+          texto: sobreTardio,
+        });
+        if (rescatado !== undefined) {
+          this.options.onNotice?.(
+            "un turno terminó DESPUÉS de que su entrega muriera y su respuesta se habría perdido:"
+              + ` rescatada en ${rescatado.ruta} (correlación ${candidate.correlationId})`,
+          );
+        }
         this.heldQuarantines.delete(candidate.correlationId);
       }
     }
@@ -181,12 +201,12 @@ export abstract class PasteSessionRunnerBase<E> {
   protected async hasValidTerminalEnvelope(
     correlationId: string,
     findEnvelope: NonNullable<TranscriptReader<E>["findEnvelope"]>,
-  ): Promise<boolean> {
+  ): Promise<string | undefined> {
     const filesRead = await beforeDeadline(
       this.options.transcript.files(),
       this.quarantineDeadline(),
     );
-    if (!filesRead.completed || filesRead.value === undefined) return false;
+    if (!filesRead.completed || filesRead.value === undefined) return undefined;
     // Latest transcript/rollout files sort last. Finding the active one first avoids re-reading
     // years of history during exceptional recovery.
     for (const file of [...filesRead.value].reverse()) {
@@ -194,19 +214,19 @@ export abstract class PasteSessionRunnerBase<E> {
         this.options.transcript.read(file, 0),
         this.quarantineDeadline(),
       );
-      if (!sliceRead.completed || sliceRead.value === undefined) return false;
+      if (!sliceRead.completed || sliceRead.value === undefined) return undefined;
       const outcome = findEnvelope(sliceRead.value.entries, correlationId);
       if (outcome === undefined) continue;
       if (outcome.kind !== "answer"
-        || !envelopeHasCorrelation(outcome.text, correlationId)) return false;
+        || !envelopeHasCorrelation(outcome.text, correlationId)) return undefined;
       try {
         validateStructuredOutput(JSON.parse(stripJsonFence(outcome.text)) as unknown);
-        return true;
+        return outcome.text;
       } catch {
-        return false;
+        return undefined;
       }
     }
-    return false;
+    return undefined;
   }
 
   /**
@@ -642,11 +662,7 @@ export abstract class PasteSessionRunnerBase<E> {
     });
   }
 
-  /**
-   * Falls back SAYING SO, on three surfaces at once.
-   *
-   * Silent degradation is indistinguishable from success, so it cannot exist.
-   */
+  /** An unavailable canonical terminal must never dispatch to another conversation. */
   protected async degrade(
     reason: EnsureFailure
       | "input_busy"
@@ -660,7 +676,8 @@ export abstract class PasteSessionRunnerBase<E> {
       reason,
       detail,
       occurredAt: new Date().toISOString(),
-      fellBack: true,
+      fellBack: false,
+      executionPrevented: true,
     };
     this.record(degradation);
     if (this.exactSessionId !== undefined) {
@@ -672,25 +689,25 @@ export abstract class PasteSessionRunnerBase<E> {
       );
     }
     if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
-    return this.options.fallback.run(request);
+    return result({ exitCode: 1, harnessStarted: false, stderr: `${reason}: ${detail}` });
   }
 
   /**
    * Accumulates notices within the same turn without losing any.
    *
-   * There can be two: TUI restarted (`context_reset`) and the turn also ended up on the fallback
-   * path. Keeping only the last would drop the first, so details are concatenated and the
-   * degrading one wins, being the more severe.
+   * Failure to execute takes precedence over context notices, without discarding their details.
    */
   protected record(degradation: SharedSessionDegradation): void {
     const previous = this.pending;
     this.pending = previous === undefined
       ? degradation
       : {
-        reason: degradation.fellBack ? degradation.reason : previous.reason,
+        reason: degradation.executionPrevented === true ? degradation.reason : previous.reason,
         detail: `${previous.detail}; ${degradation.detail}`,
         occurredAt: degradation.occurredAt,
         fellBack: previous.fellBack || degradation.fellBack,
+        ...(previous.executionPrevented === true || degradation.executionPrevented === true
+          ? { executionPrevented: true as const } : {}),
       };
     this.options.onDegradation?.(degradation);
   }

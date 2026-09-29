@@ -27,7 +27,6 @@ import { TerminalHistory } from "./durable-store/terminal-history.js";
 
 export {
   ATOMIC_STATE_FILES,
-  CANONICAL_OPEN_CODE_SESSION_FILE,
   MAX_INLINE_TERMINAL_RECORDS,
   MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS,
   MAX_SESSIONS_FILE_BYTES,
@@ -36,7 +35,6 @@ export {
   UNSUPPORTED_DIRECTORY_FSYNC_CODES,
 } from "./durable-store/contracts.js";
 export type {
-  CanonicalOpenCodeSessionPointer,
   DelegationBranchIdentity,
   DelegationBranchProgress,
   DeliveryAcceptance,
@@ -53,8 +51,6 @@ export type {
   SessionRecord,
 } from "./durable-store/contracts.js";
 export {
-  isCanonicalOpenCodeScopeKey,
-  isCanonicalOpenCodeSessionId,
   sanitizeSessionOrigin,
 } from "./durable-store/session-file.js";
 export { ConsumerLease } from "./durable-store/consumer-lease.js";

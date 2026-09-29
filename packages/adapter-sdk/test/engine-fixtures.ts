@@ -164,8 +164,12 @@ export class SessionConcurrencyRunner implements CommandRunner {
   }
 
   async waitForCalls(count: number): Promise<void> {
+    const deadline = Date.now() + 30_000;
     while (this.requests.length < count) {
-      await new Promise<void>((resolveWait) => setImmediate(resolveWait));
+      if (Date.now() >= deadline) {
+        throw new Error(`Expected ${String(count)} harness calls; observed ${String(this.requests.length)}`);
+      }
+      await new Promise<void>((resolveWait) => setTimeout(resolveWait, 5));
     }
   }
 }
@@ -284,7 +288,12 @@ export async function waitForQueued(store: DurableStore, deliveryId: string): Pr
       && event.phase === "accepted"
       && event.claim_renewal === true
     ));
+  const deadline = Date.now() + 30_000;
   while (!parked()) {
-    await new Promise<void>((resolveWait) => setImmediate(resolveWait));
+    const state = store.getDelivery(deliveryId);
+    if (state?.state === "failed" || Date.now() >= deadline) {
+      throw new Error(`Delivery ${deliveryId} did not park: ${state?.error?.code ?? state?.state ?? "missing"}`);
+    }
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 5));
   }
 }

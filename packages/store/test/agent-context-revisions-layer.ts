@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import type { DatabasePool } from '../src/index.js';
+import { removeBlobsLayer, restoreBlobsLayer } from './blobs-layer.js';
 
 const version = '041_agent_context_revisions.sql';
 const upPath = new URL(`../migrations/${version}`, import.meta.url);
@@ -24,12 +25,13 @@ async function isApplied(pool: DatabasePool): Promise<boolean> {
 }
 
 /**
- * Sibling of `terminal-control-holds-layer.ts`; 041 is the OUTERMOST layer, so a suite peeling
+ * Sibling of `terminal-control-holds-layer.ts`; 041 sits right under 042 (peeled here first), so a suite peeling
  * downwards calls this FIRST, and after deleting any `999_future.sql` marker (it sorts above
  * `041_`, so a stray one makes this refuse naming 041 for an unrelated cause). The TRUNCATE
  * disarms the "evidence recorded" gate: admissible only because a scratch journal is scaffolding,
  * so a suite asserting on journal rows must peel the layer before seeding them. */
 export async function removeAgentContextRevisionsLayer(pool: DatabasePool): Promise<void> {
+  await removeBlobsLayer(pool);
   if (!await isApplied(pool)) return;
   await pool.query('TRUNCATE TABLE agent_profile_revisions, agent_document_revisions');
   await pool.query(await readDown());
@@ -50,4 +52,5 @@ export async function restoreAgentContextRevisionsLayer(pool: DatabasePool): Pro
        source_origin=EXCLUDED.source_origin`,
     [version, createHash('sha256').update(source).digest('hex')],
   );
+  await restoreBlobsLayer(pool);
 }

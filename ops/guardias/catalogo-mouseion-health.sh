@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
 # Vigila cada 24 h las URLs del catalogo Mouseion y avisa al dueno cuando alguna deja de dar 200.
-#
-#
-#   --dry-run   valida destino y permiso contra el gateway SIN escribirle a nadie
-#   --list      imprime lo que vigilaria y sale
-# Sale 1 si hay alguna caida (para que systemd la marque), 0 si todas responden.
 set -uo pipefail
 
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,6 +15,8 @@ TENANT_AVISO="${CAUCE_TENANT_AVISO:-Steven}"
 ESPERA="${CATALOGO_TIMEOUT:-20}"
 # Cuerpo mas chico que esto = dominio aparcado o error generico. El sano mas chico pesa 1777 B.
 MINIMO="${CATALOGO_MINIMO:-1024}"
+# Segundos de espera antes de la segunda muestra cuando la primera no da 200.
+REINTENTO="${CATALOGO_REINTENTO:-5}"
 
 PRUEBA=0
 case "${1:-}" in
@@ -39,10 +36,20 @@ while IFS=$'\t' read -r url marca; do
   TOTAL=$((TOTAL + 1))
   cuerpo="$(mktemp)"
   # -L: cuenta la respuesta FINAL, que es la que ve una persona. 000 (DNS/TLS/timeout) es caida.
-  linea="$(curl -sL -o "$cuerpo" --max-time "$ESPERA" \
-             -w '%{http_code} %{size_download} %{url_effective}' "$url" 2>/dev/null)"
+  # La segunda muestra evita avisos por un pico de latencia.
+  sondear() {
+    curl -sL -o "$cuerpo" --max-time "$ESPERA" \
+         -w '%{http_code} %{size_download} %{url_effective}' "$1" 2>/dev/null
+  }
+  linea="$(sondear "$url")"
   codigo="${linea%% *}"; resto="${linea#* }"; peso="${resto%% *}"; final="${resto#* }"
   [ -n "$codigo" ] || { codigo=000; peso=0; final="$url"; }
+  if [ "$codigo" != "200" ]; then
+    sleep "$REINTENTO"
+    linea="$(sondear "$url")"
+    codigo="${linea%% *}"; resto="${linea#* }"; peso="${resto%% *}"; final="${resto#* }"
+    [ -n "$codigo" ] || { codigo=000; peso=0; final="$url"; }
+  fi
 
   # Un 200 no prueba que sea LA pagina: un aparcado y el catch-all de una SPA tambien contestan
   # 200 a cualquier ruta. Se exige ademas peso y, si la lista lo declara, su marcador.
@@ -123,6 +130,9 @@ NUEVAS="$(printf '%s\n' "${ROTAS[@]}" | awk '{print $NF}' | sort \
           | comm -23 - <(sort "$ESTADO" 2>/dev/null || true))"
 if [ -z "$NUEVAS" ]; then
   echo "sin novedades respecto del aviso anterior: no aviso"
+  # Se poda el estado recuperado para detectar una nueva caída posterior.
+  printf '%s\n' "${ROTAS[@]}" | awk '{print $NF}' | sort > "$ESTADO" \
+    || echo "no pude podar el estado en $ESTADO" >&2
   exit 1
 fi
 

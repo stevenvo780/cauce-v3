@@ -95,6 +95,13 @@ primera compactación no es seguro volver a una versión del SDK que desconozca
 `terminal-history/`, porque esa versión vería solo el inbox inline; cualquier rollback debe
 conservar un binario compatible con este formato.
 
+Conservar la conversación no equivale a recuperar una entrega interrumpida. Si el consumidor
+reinicia con una entrega `started` y recibo de intención de ejecución, la recuperación termina
+en `INTERRUPTED_AMBIGUOUS`, sin reintento: no vuelve a recoger su sobre ni a ejecutar el pedido.
+Sólo el caso `preinvoke-v1` sin recibo remoto admite un nuevo intento seguro. Para actualizar
+trabajo iniciado hay que impedir nuevas reclamaciones y dejar que el mismo proceso alcance
+el ACK terminal y vacíe su WAL antes del corte; no basta con conservar la TUI o su cuarentena.
+
 ## Reanudación exacta de la TUI Claude
 
 `shared-tui-session.json` pertenece al directorio de estado del alias, no al directorio de
@@ -118,7 +125,7 @@ El lector verifica tipo, propietario, enlaces, modo, inode, timestamps y prefijo
 archivo anterior. La generación de terminal se vuelve a comprobar dentro de la sección
 serializada antes de publicar. La lectura se limita a 1000 archivos, 128 MiB por archivo y
 256 MiB por fase. Un fallo de acreditación o persistencia genera aviso, pero no convierte un
-trabajo ya terminado en un reintento. El fallback aislado nunca publica este pointer.
+trabajo ya terminado en un reintento. Sólo la terminal canónica publica este pointer.
 
 Adaptador, CLI y guardias usan el mismo binding; los entrypoints pasan `--state` explícitamente.
 Con pointer válido y transcript exacto seguro se usa `--resume UUID`. Sin pointer ni historial
@@ -126,8 +133,16 @@ se crea un UUID nuevo con `--session-id`, que no se acredita hasta observar su p
 Estos argumentos corresponden a la [referencia oficial de Claude Code](https://code.claude.com/docs/en/cli-usage).
 Historial heredado sin pointer, corrupción o reanudación fallida no autorizan `--continue` ni
 rehacer la conversación en blanco. Los artefactos y la TUI existente se conservan sin modificar;
-el bus puede usar el fallback aislado, que no hereda ese contexto.
+el bus no ejecuta el pedido en una conversación alternativa.
 Una TUI existente puede seguir trabajando y acreditar el pointer con su siguiente sobre.
+
+Con sesión compartida habilitada, Claude y Codex no disponen de ejecutor alternativo. Si la
+terminal no admite input seguro, el pedido termina con `SHARED_TUI_UNAVAILABLE`, sin reintento
+automático y con evidencia de que el modelo no recibió el turno. El intento sí fue reclamado y
+puede tener intención durable confirmada: no se conserva pendiente ni se devuelve su presupuesto.
+Hay que recuperar la terminal y reenviar el pedido explícitamente. Si el binding de rutas Claude
+no puede resolverse al arrancar, el consumidor falla antes de conectar y no reclama entregas.
+Estos fallos se distinguen de una ejecución ambigua después de Enter, que nunca se repite sola.
 
 Este registro identifica la última sesión acreditada por el bus: no recupera retroactivamente
 una conversación humana desconocida ni demuestra la adopción de un perfil por el modelo.

@@ -203,3 +203,58 @@ describe('poda de adjuntos del cuerpo (CRED-02)', () => {
     expect(() => configuredDispatcher(environment)).toThrow(/non-negative integer/u);
   });
 });
+
+describe('dispatcher tick interval (DISPATCHER_POLL_MS)', () => {
+  it('defaults to 250 and honors an environment override', () => {
+    expect(configuredDispatcher({}).pollMs).toBe(250);
+    expect(configuredDispatcher({ DISPATCHER_POLL_MS: '1000' }).pollMs).toBe(1_000);
+  });
+
+  it.each(['0', '-1', '1.5', 'invalid'])('fails closed for DISPATCHER_POLL_MS=%j', (value) => {
+    expect(() => configuredDispatcher({ DISPATCHER_POLL_MS: value })).toThrow(
+      /DISPATCHER_POLL_MS must be a positive integer/u,
+    );
+  });
+});
+
+describe('dispatcher health staleness (CAUCE_DISPATCHER_STALE_MS)', () => {
+  it('defaults to max(5000, pollMs*20), tracking the tick interval', () => {
+    expect(configuredDispatcher({}).healthStaleMs).toBe(5_000);
+    expect(configuredDispatcher({ DISPATCHER_POLL_MS: '100' }).healthStaleMs).toBe(5_000);
+    expect(configuredDispatcher({ DISPATCHER_POLL_MS: '1000' }).healthStaleMs).toBe(20_000);
+  });
+
+  it('honors an explicit override over the derived default', () => {
+    expect(configuredDispatcher({
+      DISPATCHER_POLL_MS: '1000',
+      CAUCE_DISPATCHER_STALE_MS: '7000',
+    }).healthStaleMs).toBe(7_000);
+  });
+
+  it.each(['0', '-1', '1.5', 'invalid'])(
+    'fails closed for CAUCE_DISPATCHER_STALE_MS=%j',
+    (value) => {
+      expect(() => configuredDispatcher({ CAUCE_DISPATCHER_STALE_MS: value })).toThrow(
+        /CAUCE_DISPATCHER_STALE_MS must be a positive integer/u,
+      );
+    },
+  );
+});
+
+describe('retry-started lever (CAUCE_RETRY_STARTED_DELIVERIES)', () => {
+  it('defaults to false and enables only on the literal 1', () => {
+    expect(configuredDispatcher({}).retryStartedDeliveries).toBe(false);
+    expect(
+      configuredDispatcher({ CAUCE_RETRY_STARTED_DELIVERIES: '1' }).retryStartedDeliveries,
+    ).toBe(true);
+  });
+
+  it.each(['0', 'true', 'yes', ''])(
+    'treats CAUCE_RETRY_STARTED_DELIVERIES=%j as disabled',
+    (value) => {
+      expect(
+        configuredDispatcher({ CAUCE_RETRY_STARTED_DELIVERIES: value }).retryStartedDeliveries,
+      ).toBe(false);
+    },
+  );
+});

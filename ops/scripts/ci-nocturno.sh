@@ -90,7 +90,6 @@ al_salir() {
   local codigo=$?
   if [[ -n $WORKTREE ]]; then
     git -C "$ROOT" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || rm -rf "$WORKTREE"
-    git -C "$ROOT" worktree prune >/dev/null 2>&1 || true
   fi
   if [[ $ESTADO != completo ]]; then
     SALIDA=2
@@ -108,6 +107,7 @@ git fetch --prune origin
 COMMIT=$(git rev-parse "origin/$CAUCE_CI_RAMA")
 
 WORKTREE=$(mktemp -d /var/tmp/cauce-v3-ci-XXXXXX)
+chmod 0755 "$WORKTREE"
 git worktree add --detach "$WORKTREE" "origin/$CAUCE_CI_RAMA"
 
 printf 'CI nocturno sobre origin/%s (%s) en %s\n' "$CAUCE_CI_RAMA" "$COMMIT" "$WORKTREE"

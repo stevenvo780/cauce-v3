@@ -163,7 +163,7 @@ esperados=0
 vivos=0
 flota_valida=0
 for ((intento = 1; intento <= MAX_ATTEMPTS; intento += 1)); do
-  if censo="$(pg_query "SELECT count(*), count(*) FILTER (WHERE l.lease_until > now() AND l.last_heartbeat_at > now() - make_interval(secs => $LEASE_FRESH_SECONDS) AND l.last_heartbeat_at > l.connected_at AND l.capabilities ? 'heartbeat' AND l.instance_id IN ('systemd-'||a.alias,'systemd-container-'||a.alias)) FROM agents a LEFT JOIN connection_leases l ON l.tenant_id=a.tenant_id AND l.alias=a.alias WHERE a.enabled")" \
+  if censo="$(pg_query "SELECT count(*), count(*) FILTER (WHERE l.lease_until > now() AND l.last_heartbeat_at > now() - make_interval(secs => $LEASE_FRESH_SECONDS) AND l.last_heartbeat_at > l.connected_at AND l.capabilities ? 'heartbeat') FROM agents a LEFT JOIN connection_leases l ON l.tenant_id=a.tenant_id AND l.alias=a.alias WHERE a.enabled")" \
     && [[ "$censo" =~ ^([0-9]+)\|([0-9]+)$ ]]; then
     esperados=${BASH_REMATCH[1]}
     vivos=${BASH_REMATCH[2]}

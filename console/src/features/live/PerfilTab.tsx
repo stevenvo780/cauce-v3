@@ -118,7 +118,7 @@ export function PerfilTab({
   const enCuarentena = contaminacion?.contaminated === true;
   const reconciliable = enCuarentena && contaminacion.findings.length > 0
     && contaminacion.findings.every((finding) => finding.reason === 'expectation_sha_mismatch')
-    && (perfil.data?.harness === 'claude' || perfil.data?.harness === 'codex');
+    && ['claude', 'codex', 'openclaw'].includes(perfil.data?.harness ?? '');
   const recargable = perfil.data?.runtime_state === 'pending_session_refresh'
     || perfil.data?.runtime_state === 'drifted';
 
@@ -450,7 +450,8 @@ export function PerfilTab({
           <ContextReconciliation
             key={`${tenantId}/${alias}/${String(perfil.data.revision)}`}
             tenantId={tenantId} alias={alias} revision={perfil.data.revision}
-            documents={ficheros.map((document) => document.nombre)}
+            documents={ficheros.filter((document) => document.politica === 'bloque-gestionado')
+              .map((document) => document.nombre)}
             permitida={!soloLectura} bloqueada={busy || sucio || blockedByManualDraft}
             onVeredicto={setVeredicto} onWriteInFlightChange={onWriteInFlightChange}
             onSettled={() => { void perfil.reload(); onMutationSettled?.(); }}

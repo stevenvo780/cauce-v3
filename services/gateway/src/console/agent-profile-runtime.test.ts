@@ -314,10 +314,10 @@ describe('prepareAgentProfileRuntime', () => {
     await expect(prepareAgentProfileRuntime(
       probe({ harness: 'openclaw', home: '/home/claw', openclawWorkspace: workspace }, new Map(), batch),
       'Steven', 'kant',
-      { ...enorme, perfil: { ...enorme.perfil, purpose: 'x'.repeat(60_001) } },
+      { ...enorme, perfil: { ...enorme.perfil, purpose: 'x'.repeat(90_001) } },
     )).rejects.toMatchObject({
       name: 'ProfileRuntimeError', code: 'too_large',
-      message: 'SOUL.md mide 60174 unidades UTF-16 y el tope por fichero es 60000 (tope por defecto del arnés)',
+      message: 'SOUL.md mide 90174 unidades UTF-16 y el tope por fichero es 90000 (tope por defecto del arnés)',
     });
     expect(batch).not.toHaveBeenCalled();
   });

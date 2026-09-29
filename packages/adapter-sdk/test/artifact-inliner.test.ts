@@ -729,3 +729,37 @@ test("un data: ya hecho pesa lo que el frame carga, no lo que el decodificador m
       "13 MB de relleno gastan 13 MB del presupuesto agregado, no 3 bytes");
   }
 });
+
+test("un artefacto local mayor que el tope inline sube al almacén de blobs y viaja por referencia", async () => {
+  const { configureDefaultBlobClient } = await import("../src/sdk/blob-client.js");
+  const { blobArtifactUri, blobLocator } = await import("@cauce/protocol");
+  const directory = await mkdtemp(join(tmpdir(), "cauce-blob-inline-"));
+  const path = join(directory, "enorme.bin");
+  const bytes = Buffer.alloc(MAX_INLINED_ARTIFACT_BYTES + 1, 3);
+  await writeFile(path, bytes);
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const uploads: { path: string; name: string; mediaType: string }[] = [];
+  const uploader = {
+    async upload(file: string, options: { name: string; mediaType: string; sha256?: string }) {
+      uploads.push({ path: file, name: options.name, mediaType: options.mediaType });
+      return { sha256: digest, bytes: bytes.length, mediaType: options.mediaType, name: options.name, uri: blobArtifactUri(digest), blob: blobLocator(digest) };
+    },
+  };
+  const output: StructuredOutput = {
+    reply: "va por referencia", messages: [], notify: [], status: "done", retryable: false,
+    artifacts: [{ name: "enorme.bin", uri: pathToFileURL(path).href }],
+  };
+  try {
+    const inlined = await inlineLocalArtifacts(output, { blobs: uploader });
+    assert.deepEqual(inlined.artifacts, [{
+      name: "enorme.bin", uri: blobArtifactUri(digest), media_type: "application/octet-stream", sha256: digest, size: bytes.length,
+    }]);
+    assert.deepEqual(uploads, [{ path, name: "enorme.bin", mediaType: "application/octet-stream" }]);
+
+    configureDefaultBlobClient(undefined);
+    const untouched = await inlineLocalArtifacts(output);
+    assert.equal(untouched.artifacts[0]?.uri, pathToFileURL(path).href);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

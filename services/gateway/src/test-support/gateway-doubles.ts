@@ -128,6 +128,8 @@ export function fakeRepository(overrides: Partial<GatewayRepository> = {}): Gate
       && receipt.delivery_ids[0] === ids.delivery
     )),
     assertPrincipal: vi.fn(async () => undefined),
+    registerBlob: vi.fn(async () => { throw new Error('blob store is not part of this test double'); }),
+    findBlob: vi.fn(async () => undefined),
     assertPermission: vi.fn(async () => undefined),
     principalAccess: vi.fn(async () => ({
       roles: ['operator'], permissions: ['route', 'read', 'control'] as ('route' | 'read' | 'control')[]
@@ -164,6 +166,12 @@ export function fakeRepository(overrides: Partial<GatewayRepository> = {}): Gate
       replayed_from_delivery_id: deliveryId,
       state: 'pending',
       replayed: true
+    })),
+    agentQueue: vi.fn(async () => ({ deliveries: [], total: 0 })),
+    recordAgentProgress: vi.fn(async (deliveryId: string) => ({ delivery_id: deliveryId, recorded: true, duplicate: false })),
+    retryOwnDelivery: vi.fn(async (deliveryId: string) => ({
+      delivery_id: ids.deliveryTwo, replayed_from_delivery_id: deliveryId, state: 'pending',
+      replayed: true, already_replayed: false,
     })),
     cancelDelivery: vi.fn(async (deliveryId: string) => ({
       delivery_id: deliveryId,

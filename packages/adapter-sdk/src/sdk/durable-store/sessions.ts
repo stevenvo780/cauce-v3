@@ -1,21 +1,12 @@
 import {
-  AtomicRecoveryError,
   clone,
   recoverAtomicArtifacts,
 } from "./atomic-state.js"; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
-import {
-  CANONICAL_OPEN_CODE_SESSION_FILE,
-  type CanonicalOpenCodeSessionPointer,
-  type SessionRecord,
-} from "./contracts.js";
+import type { SessionRecord } from "./contracts.js";
 import { DurableStoreDeliveries } from "./deliveries.js";
 import {
-  activeCanonicalOpenCodeSession,
   canonicalOpenClawTerminalKey,
-  isCanonicalOpenCodeScopeKey,
-  isCanonicalOpenCodeSessionId,
   readSessionsSecure,
-  unavailableCanonicalOpenCodeSession,
   validateSessionsFile,
 } from "./session-file.js";
 
@@ -143,122 +134,4 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
     });
   }
 
-  /**
-   * Rebuild the non-sensitive Kant/OpenCode pointer from durable mappings.
-   * This is deliberately opt-in so no other alias or harness publishes it.
-   */
-  async reconcileCanonicalOpenCodeSession(): Promise<CanonicalOpenCodeSessionPointer> {
-    return this.serialized(async () => {
-      try {
-        // Runtime calls this only from AdapterClient.onLeaseAcquired, replacing
-        // the pre-lease snapshot and removing the load/reconcile TOCTOU.
-        await recoverAtomicArtifacts(
-          this.directory,
-          ["sessions.json", CANONICAL_OPEN_CODE_SESSION_FILE],
-          this.directoryFsync,
-        );
-        this.sessions = await readSessionsSecure(this.path("sessions.json"));
-      } catch (error) {
-        this.canonicalOpenCodeScopeKey = undefined;
-        this.canonicalOpenCodeReconciled = false;
-        if (error instanceof AtomicRecoveryError
-          && error.target === CANONICAL_OPEN_CODE_SESSION_FILE) throw error;
-        await this.atomicWrite(
-          CANONICAL_OPEN_CODE_SESSION_FILE,
-          unavailableCanonicalOpenCodeSession("invalid"),
-        );
-        throw error;
-      }
-      const mappings = this.canonicalOpenCodeMappings();
-      this.canonicalOpenCodeScopeKey = undefined;
-      let pointer: CanonicalOpenCodeSessionPointer;
-      if (mappings.length === 0) {
-        pointer = unavailableCanonicalOpenCodeSession("missing");
-      } else if (mappings.length > 1) {
-        pointer = unavailableCanonicalOpenCodeSession("ambiguous");
-      } else {
-        const mapping = mappings[0];
-        if (mapping === undefined
-          || !isCanonicalOpenCodeScopeKey(mapping.scopeKey)
-          || !isCanonicalOpenCodeSessionId(mapping.sessionId)) {
-          pointer = unavailableCanonicalOpenCodeSession("invalid");
-        } else {
-          this.canonicalOpenCodeScopeKey = mapping.scopeKey;
-          pointer = activeCanonicalOpenCodeSession(mapping.scopeKey, mapping.sessionId);
-        }
-      }
-      await this.atomicWrite(CANONICAL_OPEN_CODE_SESSION_FILE, pointer);
-      this.canonicalOpenCodeReconciled = true;
-      return clone(pointer);
-    });
-  }
-
-  /** Persist the mapping first, then atomically publish/refresh the sticky pointer. */
-  async setCanonicalOpenCodeSession(scopeKey: string, sessionId: string): Promise<boolean> {
-    if (!isCanonicalOpenCodeScopeKey(scopeKey) || !isCanonicalOpenCodeSessionId(sessionId)) return false;
-    return this.serialized(async () => {
-      if (!this.canonicalOpenCodeReconciled) {
-        throw new Error("Canonical OpenCode session must be reconciled before publication");
-      }
-      const key = `opencode:kant:${scopeKey}`;
-      this.sessions = {
-        version: 1,
-        sessions: {
-          ...this.sessions.sessions,
-          [key]: { native_id: sessionId, initialized: true },
-        },
-      };
-      // This fsync+rename completes before the pointer can name the session.
-      await this.atomicWrite("sessions.json", this.sessions);
-
-      if (this.canonicalOpenCodeScopeKey === undefined) {
-        const mappings = this.canonicalOpenCodeMappings();
-        if (mappings.length !== 1) {
-          const reason = mappings.length > 1 ? "ambiguous" : "invalid";
-          await this.atomicWrite(
-            CANONICAL_OPEN_CODE_SESSION_FILE,
-            unavailableCanonicalOpenCodeSession(reason),
-          );
-          return false;
-        }
-        const mapping = mappings[0];
-        if (mapping?.scopeKey !== scopeKey
-          || !isCanonicalOpenCodeScopeKey(mapping.scopeKey)
-          || !isCanonicalOpenCodeSessionId(mapping.sessionId)) {
-          await this.atomicWrite(
-            CANONICAL_OPEN_CODE_SESSION_FILE,
-            unavailableCanonicalOpenCodeSession("invalid"),
-          );
-          return false;
-        }
-        this.canonicalOpenCodeScopeKey = scopeKey;
-      }
-
-      if (this.canonicalOpenCodeScopeKey !== scopeKey) return false;
-      await this.atomicWrite(
-        CANONICAL_OPEN_CODE_SESSION_FILE,
-        activeCanonicalOpenCodeSession(scopeKey, sessionId),
-      );
-      return true;
-    });
-  }
-
-  private canonicalOpenCodeMappings(): { scopeKey: string; sessionId: string }[] {
-    const prefix = "opencode:kant:";
-    const mappings: { scopeKey: string; sessionId: string }[] = [];
-    for (const [key, record] of Object.entries(this.sessions.sessions)) {
-      const candidate = record as unknown;
-      if (!key.startsWith(prefix)
-        || typeof candidate !== "object"
-        || candidate === null
-        || Array.isArray(candidate)) continue;
-      const fields = candidate as Record<string, unknown>;
-      if (fields.initialized !== true) continue;
-      mappings.push({
-        scopeKey: key.slice(prefix.length),
-        sessionId: typeof fields.native_id === "string" ? fields.native_id : "",
-      });
-    }
-    return mappings;
-  }
 }

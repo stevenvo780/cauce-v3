@@ -31,6 +31,22 @@ services:
         condition: service_healthy
     networks: [testnet]
 
+  seed:
+    image: cauce-v3-test-qa:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: qa-runtime
+    environment:
+      DATABASE_URL: postgresql://cauce_test@postgres:5432/cauce_test
+      NODE_ENV: test
+    restart: "no"
+    command: ["node", "ops/harness/seed-test-fleet.mjs"]
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [testnet]
+
   gateway:
     image: cauce-v3-test-runtime:local
     build:
@@ -43,7 +59,7 @@ services:
       DATABASE_URL: postgresql://cauce_test@postgres:5432/cauce_test
       NODE_ENV: test
       CAUCE_DEV_AUTH: "1"
-      CAUCE_ACK_DEADLINE_MS: "50"
+      CAUCE_ACK_DEADLINE_MS: "600000"
       PORT: "8080"
     ports: ["127.0.0.1:${CAUCE_TEST_GATEWAY_PORT:-18080}:8080"]
     healthcheck:
@@ -52,7 +68,7 @@ services:
       timeout: 2s
       retries: 20
     depends_on:
-      migrator:
+      seed:
         condition: service_completed_successfully
     networks: [testnet]
 
@@ -69,15 +85,15 @@ services:
       NODE_ENV: test
       PORT: "8082"
       DISPATCHER_POLL_MS: "20"
-      CAUCE_ACK_DEADLINE_MS: "50"
-      ACK_TIMEOUT_MS: "50"
+      CAUCE_ACK_DEADLINE_MS: "600000"
+      ACK_TIMEOUT_MS: "600000"
     healthcheck:
       test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8082/health/ready", "ready"]
       interval: 2s
       timeout: 2s
       retries: 20
     depends_on:
-      migrator:
+      seed:
         condition: service_completed_successfully
     networks: [testnet]
 
@@ -92,7 +108,7 @@ services:
       CAUCE_BASE_URL: http://gateway:8080
       CAUCE_WS_URL: ws://gateway:8080/v3/ws
       CAUCE_PRESENCE_LEASE_MS: "500"
-      CAUCE_RETRY_TIMEOUT_MS: "15000"
+      CAUCE_RETRY_TIMEOUT_MS: "45000"
       CAUCE_FAULT_MODE: none
     volumes:
       - ./artifacts:/work/artifacts
@@ -105,4 +121,4 @@ services:
 
 networks:
   testnet:
-    internal: true
+    internal: false

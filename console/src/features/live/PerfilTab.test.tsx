@@ -68,14 +68,37 @@ function Vista({ configWritePermission = 'allowed' }: {
   );
 }
 
-it.each(['codex', 'claude'])('ofrece reconciliación sólo para un arnés soportado: %s', async (harness) => {
+it.each(['codex', 'claude', 'openclaw'])('ofrece reconciliación sólo para un arnés soportado: %s', async (harness) => {
   mismatch(harness);
   renderWithApi(<Vista />);
   expect(await screen.findByRole('region', { name: 'Reconciliar huellas del contexto' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Recargar contexto' })).toBeDisabled();
 });
 
-it.each(['openclaw', 'hermes', null])('no ofrece una reconciliación imposible para %s', async (harness) => {
+it('revisa los cinco documentos escritos por Cauce cuando OpenClaw expone siete ficheros', async () => {
+  const authored = ['SOUL.md', 'IDENTITY.md', 'USER.md', 'AGENTS.md', 'TOOLS.md'];
+  server.use(http.get(RUTA, () => HttpResponse.json({
+    ...respuesta(true, { runtime_state: 'drifted', harness: 'openclaw' }),
+    ficheros: [...authored, 'MEMORY.md', 'HEARTBEAT.md'].map((nombre) => ({
+      nombre, politica: authored.includes(nombre) ? 'bloque-gestionado' : 'solo-si-falta', texto: '', unidades: 0,
+    })),
+    contaminacion: { contaminated: true, findings: [{
+      reason: 'expectation_sha_mismatch', document: 'TOOLS.md', path: '/home/kant/clawd/TOOLS.md',
+    }] },
+  })));
+  server.use(http.post(RUTA.replace('/perfil', '/context/reconcile/preview'), () => HttpResponse.json({
+    ok: true, tenant_id: 'Steven', alias: 'kant', expected_revision: 4,
+    expected_runtime_generation: 'gen-4', preserve_external: true,
+    documents: authored.map((name) => ({ name, observed_sha: SHA, exterior_sha: SHA })),
+  })));
+  const user = userEvent.setup();
+  renderWithApi(<Vista />);
+  await user.type(await screen.findByLabelText('Motivo de la reconciliación'), 'Conservar notas locales revisadas');
+  await user.click(screen.getByRole('button', { name: 'Medir antes de reconciliar' }));
+  expect(await screen.findByRole('checkbox', { name: /Autorizo conservar sin cambios/ })).toBeEnabled();
+});
+
+it.each(['hermes', null])('no ofrece una reconciliación imposible para %s', async (harness) => {
   mismatch(harness);
   renderWithApi(<Vista />);
   await screen.findByText(/huella distinta de la esperada/i);

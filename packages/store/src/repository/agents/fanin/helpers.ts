@@ -15,7 +15,7 @@ export const maxAgentResponseTextBytes = 4 * 1_024;
 export const progressRelayCappedText =
   'La cadena sigue en curso; dejo de enviar avances y aviso cuando termine.';
 
-export type AgentChainProgressStage = 'delegated' | 'returned' | 'denied' | 'capped';
+export type AgentChainProgressStage = 'delegated' | 'returned' | 'denied' | 'capped' | 'progress';
 
 export function chainNode(tenant: Tenant, alias: string): string {
   return `${tenant}/${alias}`;

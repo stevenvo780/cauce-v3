@@ -18,7 +18,10 @@ import tempfile
 import time
 
 OPS = pathlib.Path(__file__).resolve().parents[1]
-RUNTIME = OPS / "container-runtime" / "cauce-container-runtime.py"
+RUNTIME_DIRECTORY = OPS / "container-runtime"
+RUNTIME = RUNTIME_DIRECTORY / "cauce-container-runtime.py"
+TREE = RUNTIME_DIRECTORY / "cauce_container_tree.py"
+RUNTIME_MODULES = ("cauce_container_base.py", "cauce_container_proc.py", "cauce_container_tree.py")
 REAP_CALL = "reap_children(protected=process.pid)"
 ALIAS = "kant"
 CONTAINER_ID = "b" * 64
@@ -98,20 +101,25 @@ def marker_ready(marker: pathlib.Path, expected: int) -> bool:
 
 
 def variant_scripts(root: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
-    """Materialize the shipped script and a baseline with only the reap call removed."""
-    source = RUNTIME.read_text(encoding="utf-8")
-    patched = root / "patched.py"
-    patched.write_text(source, encoding="utf-8")
-    patched.chmod(0o755)
-
+    """Materialize both module sets and remove only the tree reaping call in the baseline."""
+    source = TREE.read_text(encoding="utf-8")
     kept = [line for line in source.splitlines(keepends=True) if REAP_CALL not in line]
     removed = len(source.splitlines()) - len(kept)
     if removed != 1:
         raise AssertionError(
             f"expected exactly one '{REAP_CALL}' call in the supervisor wait loop, found {removed}")
-    baseline = root / "baseline.py"
-    baseline.write_text("".join(kept), encoding="utf-8")
-    baseline.chmod(0o755)
+    variants = {}
+    for name in ("baseline", "patched"):
+        directory = root / name
+        directory.mkdir()
+        script = directory / RUNTIME.name
+        shutil.copy2(RUNTIME, script)
+        for module in RUNTIME_MODULES:
+            shutil.copy2(RUNTIME_DIRECTORY / module, directory / module)
+        variants[name] = script
+    (variants["baseline"].parent / TREE.name).write_text("".join(kept), encoding="utf-8")
+    baseline = variants["baseline"]
+    patched = variants["patched"]
     return baseline, patched
 
 

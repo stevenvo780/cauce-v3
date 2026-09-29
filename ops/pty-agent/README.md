@@ -1,6 +1,6 @@
 # Agente PTY (`ops/pty-agent`)
 
-El paquete `cauce_pty_agent/` (Python stdlib, sin dependencias) corre **dentro del contenedor de cada alias** y marca SALIENTE por TLS mutuo hacia el terminal-relay — nunca escucha en un puerto. Un módulo por responsabilidad:
+El paquete `cauce_pty_agent/` (Python stdlib, sin dependencias) corre junto al runtime de cada alias, dentro de Docker o en su host nativo y marca SALIENTE por TLS mutuo hacia el terminal-relay — nunca escucha en un puerto. Un módulo por responsabilidad:
 
 | Módulo | Qué contiene |
 |---|---|
@@ -22,9 +22,13 @@ del contenedor salvo el propio paquete): `cauce-pty-launcher.sh` (lanzamiento),
 `rollout-pty.py` + `rollout_pty_lib.py` (despliegue y drop-ins), `derive-alias-key.py` y
 `publish-alias-key.sh` (material de ticket por alias), `install-pty-agent.sh`, `systemd/`
 (plantillas de unidad) y `tests/`
-(unittest, sin socket real). Launcher y rollout corren en el host manager —el que tiene el demonio
-Docker de los contenedores y el systemd de usuario que supervisa las unidades—; el reaper se ejecuta
-dentro del contenedor desde stdin y no queda instalado allí.
+(unittest, sin socket real). El launcher y el rollout corren en el host manager que tiene Docker y
+el systemd de usuario. El rollout obtiene los managers de los placements Docker: `local`
+corresponde a `server`; cada remoto usa su nombre declarado. El reaper se ejecuta dentro del
+contenedor desde stdin y no queda instalado allí. `container-aliases.json` contiene únicamente
+contenedores; los agentes `host:` y `vm:` permanecen en `flota.json` y sus manifiestos, y usan
+el launcher nativo descrito abajo. El controlador exige un destino por manager, comprueba
+duplicados y placement y conserva la reversión por transacción.
 
 **Hace:** abre PTYs bajo demanda (`shell`, o `harness` = TUI real vía `tmux attach` de solo lectura o TUI de OpenClaw) y sirve lectura/escritura de ficheros de gobierno (tags 0x50–0x5E: READ/LIST/WRITE/WRITE_BATCH con CAS y rollback; paths validados con realpath + lista NEVER_SERVE).
 
@@ -36,17 +40,21 @@ exactamente `{harness}` — el vector `modes` de `tests/terminal-pty/vectors.jso
 respuesta DA/DSR del emulador: escrito como «lo que no es de solo lectura», una TUI escribible se
 quedaba sin el canal técnico que necesita para pintarse.
 
-**La escritura es gobernada, no libre.** `harness_rw` sólo se resuelve por la vía tmux, la única con
-barrera de panel: `HARNESS_COMMAND` se escribe a mano en el `.env` del alias y la TUI nativa de
-OpenClaw no tiene equivalente de `-r`, así que las dos rechazan el modo con `OPEN_ERR`
-`writable_tui_unavailable` (el `detail` nombra la vía) en vez de abrir un teclado que nadie puede
-frenar. Sobre la vía tmux el ataque es el mismo comando `if-shell` de siempre —mismas seis
-condiciones de identidad, misma rama falsa `exit 77`— y lo único que cambia es que el attach pierde
-`-r` y `-f ignore-size`, para que la ventana compartida siga al navegador mientras el operador tenga
-el control.
+**Control sobre la conversación actual.** `harness_rw` abre la misma TUI de tmux o la
+conversación nativa de OpenClaw. El gateway exige una sesión atribuida, concesión nominal,
+grabación y toma de control. Si hay entregas en curso, la toma normal devuelve `agent_busy`;
+la consola permite intervenir explícitamente con `allow_busy`, registrado en auditoría.
+Tomar el control pausa entregas nuevas; el turno actual sólo se detiene desde su propia TUI.
+Los comandos estáticos `HARNESS_COMMAND` siguen sin escritura porque no resuelven una
+conversación verificable. En OpenClaw cada ráfaga comprueba que el puntero durable sigue
+identificando la conversación abierta; una rotación cierra la sesión sin enviar esos bytes.
+El launcher publica el descriptor del binario aunque todavía no exista conversación, y el
+agente anuncia los modos únicamente cuando puede resolverla.
 
 Con el teclado abierto, cada ráfaga de STDIN se consulta contra tres fuentes locales e
-independientes, las tres a prueba de fallos (lo que no se puede leer cuenta como retenido):
+independientes, las tres a prueba de fallos (lo que no se puede leer cuenta como retenido).
+Las sondas de panel y prefijo se aplican a tmux; OpenClaw conserva el bloqueo de escritura
+de gobierno, con el control de entregas y el puntero de conversación descritos arriba:
 
 | Motivo de `INPUT_REFUSED` (0x26) | Quién retiene el teclado |
 |---|---|
@@ -73,17 +81,6 @@ mismo `INPUT_BARRIER_TTL` que la sonda de panel: arrastrar el borde de la ventan
 por cada columna que cambia, y cada medida es un fork bloqueante dentro del `select` monohilo que
 además sirve STDOUT y PING de todas las sesiones.
 
-> **Despliegue acoplado (no es opcional).** El agente anuncia `harness_rw` en el hello en cuanto la
-> vía tmux resuelve, y emite `INPUT_REFUSED` (0x26) y `GEOMETRY` (0x27) —esta última también en el
-> modo visor, tras el `OPEN_OK`—. Hoy el relay rompe por los dos lados:
-> `services/terminal-relay/src/agent-hello.ts` estrecha `modes` a `shell|harness` y **una entrada
-> fuera de ese par invalida el hello entero**, y `services/terminal-relay/src/framing.ts` no tiene
-> 0x26 ni 0x27 en `FRAME_TAGS`, donde **un tag desconocido tira la pata multiplexada completa del
-> alias**, no una sesión. Ampliar sólo `modes` deja el segundo fallo en pie y el primer OPEN de
-> `harness` se lleva por delante todas las terminales del alias. Este paquete no se publica hasta
-> que el relay conozca **los dos tags Y `harness_rw`** (W3B-06): relay y pty-agent se despliegan
-> juntos, siempre.
-
 **Lanzamiento:** `cauce-pty-launcher.sh` borra y recrea `/var/tmp/cauce-pty-agent-<alias>/` (raíz compartida por todos los releases: un módulo retirado, o cualquier `.py` que el usuario runtime hubiera dejado ahí, no puede sobrevivir en el `PYTHONPATH`), hace `docker cp` del paquete y lo deja root y no escribible; luego `docker exec ... -e PYTHONPATH=<raíz> python3 -m cauce_pty_agent`, supervisado por unidades user `cauce-v3-pty@<alias>` (drop-ins escritos por `rollout-pty.py`). Cada módulo nuevo del paquete tiene que entrar además en `RELEASE_FILES` de `rollout_pty_lib.py`: publicar el paquete a medias arranca con `ModuleNotFoundError` y salida 1, que la unidad reintenta para siempre.
 
 **Siega previa al exec:** el launcher publica y valida primero el paquete y el bundle, vuelve a
@@ -107,3 +104,39 @@ o tags. El contrato de `tests/terminal-pty/vectors.json` debe cubrir cada tag; l
 
 **Probar:** `python3 -m unittest discover -s ops/pty-agent` (unit, sin socket real); un fichero
 suelto, p. ej. `python3 ops/pty-agent/tests/test_vectors_contract.py`.
+
+## Hosts nativos con Claude o Codex
+
+`cauce-pty-host-launcher.sh` ejecuta el mismo agente Python como el usuario del adaptador.
+Acredita `MainPID` de la unidad configurada, tenant, alias, arnés, HOME, perfil y workspace del
+proceso; exige el panel `cauce-<alias>:agente` vivo con sus marcadores y directorio exactos.
+Anuncia `host:<hostname>` y una generación ligada al arranque del host. Sus modos son
+`shell`, `harness` y `harness_rw`, con los mismos controles del gateway y barreras tmux.
+
+Crear `~/.config/cauce-v3/pty-host/<alias>.env` como el usuario runtime, modo 0600 y directorio
+0700. El contenido usa valores literales, sin comillas ni expansión de variables:
+
+```ini
+TENANT_ID=Steven
+ADAPTER_UNIT=cauce-v3-host-astra.service
+RELAY_HOST=100.64.0.6
+RELAY_PORT=8445
+PKI_DIR=/home/ubuntu/.config/cauce-v3/pty-pki/astra
+ALIAS_KEY_FILE=/home/ubuntu/.config/cauce-v3/pty-pki/astra/alias-key.hex
+```
+
+El endpoint y nombre TLS deben coincidir con el relay de ese despliegue. `PKI_DIR` contiene
+`client.crt`, `client.key` y `ca.crt` en 0600, y la clave derivada **de ese alias** en
+`alias-key.hex` 0400; todos pertenecen al usuario runtime y el directorio tiene modo 0700.
+El launcher crea un bundle temporal privado que el agente consume y elimina inmediatamente.
+
+Publicar la release PTY inmutable, instalar `cauce-v3-pty-host@.service` en el directorio de
+unidades del usuario y fijar `CAUCE_PTY_RELEASE_ROOT` a esa release mediante un drop-in de la
+instancia. `--preflight-only <alias>` verifica configuración y proceso sin abrir un canal.
+Después se puede iniciar `cauce-v3-pty-host@<alias>.service` y verificar los tres modos en el
+registro del relay. La unidad acompaña los reinicios de `cauce-v3-host-<alias>.service`; si el
+adaptador usa otro nombre, ajustar también `After` y `PartOf` en su drop-in.
+
+El adaptador y su TUI deben estar listos antes de iniciar esta unidad. La publicación de la
+release y el preflight no cambian el historial del arnés. Reiniciar sólo el PTY cierra sus
+conexiones web y clientes tmux adjuntos; conserva el panel nativo del agente.

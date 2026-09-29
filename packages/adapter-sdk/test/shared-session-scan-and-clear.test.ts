@@ -5,12 +5,11 @@ import { readDegradations } from "../src/shared-session/degradation-log.js";
 import { PasteSessionRunner } from "../src/shared-session/paste-runner.js";
 import { claudeTranscript, type TranscriptEntry } from "../src/shared-session/transcript.js";
 import type { TranscriptReader } from "../src/shared-session/types.js";
-import {FakeTmux, RecordingFallback, TmuxResult, adapterFor, claudeRunner, controlledDelayedTmuxMutation, controlledTmuxHang, envelopeText, execute, freshState} from './shared-session-fixtures.js';
+import {FakeTmux, TmuxResult, adapterFor, assertExecutionPrevented, claudeRunner, controlledDelayedTmuxMutation, controlledTmuxHang, execute, expectSharedTuiUnavailable, freshState} from './shared-session-fixtures.js';
 
 test("un scan de transcript colgado no retrasa el plazo post-cancelación", async () => {
   const { home, workspace } = await freshState("abort-hung-transcript-scan");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const baseTranscript = claudeTranscript(join(home, ".claude"), workspace);
   let fileScans = 0;
@@ -35,7 +34,6 @@ test("un scan de transcript colgado no retrasa el plazo post-cancelación", asyn
     workspace,
     transcript,
     tmux,
-    fallback,
     sleep: (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, Math.max(ms, 1))),
     acquireTimeoutMs: 30,
     turnTimeoutMs: 2_000,
@@ -64,7 +62,6 @@ test("un scan de transcript colgado no retrasa el plazo post-cancelación", asyn
 test("un clearDegradation colgado después de Enter tampoco bloquea la cancelación", async () => {
   const { home, workspace } = await freshState("abort-hung-clear-degradation");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const originalRun = tmux.run.bind(tmux);
   tmux.interruptStopsTurn = false;
@@ -83,7 +80,6 @@ test("un clearDegradation colgado después de Enter tampoco bloquea la cancelaci
     home,
     workspace,
     tmux,
-    fallback,
     cancelDrainTimeoutMs: 15,
     sleep: (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, Math.max(ms, 1))),
   });
@@ -109,8 +105,7 @@ test("Enter ambiguo nunca intenta C-u y deja cuarentena sin ejecutar fallback", 
   const tmux = new FakeTmux();
   tmux.failEnter = true;
   tmux.failKillPane = true;
-  const fallback = new RecordingFallback("{}");
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const outcome = await runner.run({
     command: "claude",
@@ -129,9 +124,8 @@ test("Enter ambiguo nunca intenta C-u y deja cuarentena sin ejecutar fallback", 
   assert.equal(tmux.submittedCount, 0);
   assert.match(tmux.inputContent, /no duplicar/u);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
-  assert.equal(fallback.calls, 0);
 
-  await runner.run({
+  const second = await runner.run({
     command: "claude",
     args: [],
     harness: "claude",
@@ -139,7 +133,7 @@ test("Enter ambiguo nunca intenta C-u y deja cuarentena sin ejecutar fallback", 
     timeoutMs: 10_000,
     signal: new AbortController().signal,
   });
-  assert.equal(fallback.calls, 1);
+  assertExecutionPrevented(runner, second, "session_identity_unverified");
   assert.equal(tmux.submittedCount, 0);
 });
 
@@ -149,8 +143,7 @@ test("ni siquiera un C-u potencialmente exitoso se envía después de Enter ambi
   tmux.failEnter = true;
   tmux.failKillPane = true;
   tmux.clearInputNoop = true;
-  const fallback = new RecordingFallback("{}");
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const first = await runner.run({
     command: "claude",
@@ -167,10 +160,9 @@ test("ni siquiera un C-u potencialmente exitoso se envía después de Enter ambi
   assert.equal(tmux.calls.some((call) => call.includes("C-u")), false);
   assert.match(tmux.inputContent, /caja sigue armada/u);
   assert.equal(tmux.submittedCount, 0);
-  assert.equal(fallback.calls, 0);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
 
-  await runner.run({
+  const second = await runner.run({
     command: "claude",
     args: [],
     harness: "claude",
@@ -178,7 +170,7 @@ test("ni siquiera un C-u potencialmente exitoso se envía después de Enter ambi
     timeoutMs: 10_000,
     signal: new AbortController().signal,
   });
-  assert.equal(fallback.calls, 1);
+  assertExecutionPrevented(runner, second, "session_identity_unverified");
   assert.equal(tmux.submittedCount, 0);
   assert.match(tmux.inputContent, /caja sigue armada/u);
 });
@@ -186,7 +178,6 @@ test("ni siquiera un C-u potencialmente exitoso se envía después de Enter ambi
 test("Enter demorado se reapea sin mutar ni borrar input humano posterior", async () => {
   const { home, workspace } = await freshState("tmux-cuelga-post-paste");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   let postPaste = false;
   let enterClientReaped = false;
   let killClientReaped = false;
@@ -218,7 +209,6 @@ test("Enter demorado se reapea sin mutar ni borrar input humano posterior", asyn
     home,
     workspace,
     tmux,
-    fallback,
     quarantineOperationTimeoutMs: 20,
   });
 
@@ -240,7 +230,6 @@ test("Enter demorado se reapea sin mutar ni borrar input humano posterior", asyn
   assert.equal(killClientReaped, true);
   assert.equal(tmux.calls.some((call) => call.includes("C-u")), false);
   assert.match(tmux.inputContent, /socket deja de responder/u);
-  assert.equal(fallback.calls, 0);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
 
   tmux.inputContent += " TEXTO HUMANO POSTERIOR";
@@ -249,7 +238,7 @@ test("Enter demorado se reapea sin mutar ni borrar input humano posterior", asyn
   assert.equal(tmux.submittedCount, 0, "el Enter demorado no puede revivir después del reap");
 
   postPaste = false;
-  await runner.run({
+  const second = await runner.run({
     command: "claude",
     args: [],
     harness: "claude",
@@ -257,14 +246,13 @@ test("Enter demorado se reapea sin mutar ni borrar input humano posterior", asyn
     timeoutMs: 10_000,
     signal: new AbortController().signal,
   });
-  assert.equal(fallback.calls, 1);
+  assertExecutionPrevented(runner, second, "session_identity_unverified");
   assert.equal(tmux.submittedCount, 0);
 });
 
 test("un rename post-paste compromete Enter y jamás intenta C-u", async () => {
   const { home, workspace } = await freshState("rename-clear-falla");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin): Promise<TmuxResult> => {
     const response = await originalRun(args, stdin);
@@ -274,7 +262,7 @@ test("un rename post-paste compromete Enter y jamás intenta C-u", async () => {
     return response;
   };
   const runner = claudeRunner({
-    alias: "kratos", home, workspace, tmux, fallback, turnTimeoutMs: 20,
+    alias: "kratos", home, workspace, tmux, turnTimeoutMs: 20,
   });
 
   const outcome = await runner.run({
@@ -294,13 +282,11 @@ test("un rename post-paste compromete Enter y jamás intenta C-u", async () => {
   assert.equal(tmux.calls.some((call) => call[0] === "send-keys" && call.includes("Enter")), true);
   assert.equal(tmux.calls.some((call) => call.includes("C-u")), false);
   assert.equal(tmux.submittedCount, 1);
-  assert.equal(fallback.calls, 0);
 });
 
 test("respawn-pane entre paste y Enter se detecta por PID aunque conserve pane_id", async () => {
   const { home, workspace } = await freshState("respawn-entre-paste-enter");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const originalPaneId = tmux.paneId;
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin): Promise<TmuxResult> => {
@@ -308,7 +294,7 @@ test("respawn-pane entre paste y Enter se detecta por PID aunque conserve pane_i
     if (args[0] === "paste-buffer" && response.exitCode === 0) tmux.respawnPane();
     return response;
   };
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const outcome = await runner.run({
     command: "claude",
@@ -326,13 +312,11 @@ test("respawn-pane entre paste y Enter se detecta por PID aunque conserve pane_i
   assert.equal(tmux.submittedCount, 0);
   assert.equal(tmux.inputContent, "", "el proceso nuevo no heredó la caja del anterior");
   assert.equal(tmux.calls.some((call) => call[0] === "send-keys" && call.includes("Enter")), false);
-  assert.equal(fallback.calls, 0);
 });
 
 test("un rename tras paste envía el prompt una vez y no usa C-u", async () => {
   const { home, workspace } = await freshState("rename-entre-paste-enter");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin): Promise<TmuxResult> => {
     const response = await originalRun(args, stdin);
@@ -342,7 +326,7 @@ test("un rename tras paste envía el prompt una vez y no usa C-u", async () => {
     return response;
   };
   const runner = claudeRunner({
-    alias: "kratos", home, workspace, tmux, fallback, turnTimeoutMs: 20,
+    alias: "kratos", home, workspace, tmux, turnTimeoutMs: 20,
   });
 
   const outcome = await runner.run({
@@ -362,13 +346,11 @@ test("un rename tras paste envía el prompt una vez y no usa C-u", async () => {
   assert.equal(tmux.calls.some((call) => call.includes("C-u")), false);
   await tmux.run(["send-keys", "-t", tmux.paneId, "Enter"]);
   assert.equal(tmux.submittedCount, 1);
-  assert.equal(fallback.calls, 0);
 });
 
 test("reemplazar el mismo nombre después del paste falla cerrado antes de Enter", async () => {
   const { home, workspace } = await freshState("replacement-antes-enter");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const originalId = tmux.sessionId;
   let replacementId: string | undefined;
   const originalRun = tmux.run.bind(tmux);
@@ -379,7 +361,7 @@ test("reemplazar el mismo nombre después del paste falla cerrado antes de Enter
     }
     return response;
   };
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const outcome = await runner.run({
     command: "claude",
@@ -398,7 +380,6 @@ test("reemplazar el mismo nombre después del paste falla cerrado antes de Enter
   assert.equal(tmux.sessionExists, true);
   assert.equal(tmux.calls.some((call) => call.includes("Enter")), false);
   assert.equal(tmux.used("kill-session"), false);
-  assert.equal(fallback.calls, 0);
 });
 
 test("una sesion viva sin panel de TUI se reporta como tui_absent, no como ausente", async () => {
@@ -414,15 +395,15 @@ test("una sesion viva sin panel de TUI se reporta como tui_absent, no como ausen
     if (args[0] === "display-message" && args[1] === "-p") return { exitCode: 1, stdout: "", stderr: "" };
     return originalRun(args, stdin);
   };
-  const fallback = new RecordingFallback(JSON.stringify({ result: envelopeText("clasico") }));
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
-  const output = await execute(adapter);
+  const error = await expectSharedTuiUnavailable(execute(adapter));
 
-  assert.ok((output.reply ?? "").includes("tui_absent"));
+  assert.match(error.message, /tui_absent/u);
   const records = await readDegradations(state);
   assert.equal(records[0]?.reason, "tui_absent");
+  assert.equal(records[0].executionPrevented, true);
 });
 
 test("la ventana de la TUI que no existe NO se confunde con otra ventana de la sesión", async () => {
@@ -442,14 +423,12 @@ test("la ventana de la TUI que no existe NO se confunde con otra ventana de la s
     }
     return originalRun(args, stdin);
   };
-  const fallback = new RecordingFallback(JSON.stringify({ result: envelopeText("clasico") }));
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
-  const output = await execute(adapter);
+  const error = await expectSharedTuiUnavailable(execute(adapter));
 
   // It fell through to the usual path and said so, instead of believing the borrowed PID.
-  assert.equal(fallback.calls, 1);
-  assert.ok((output.reply ?? "").includes("tui_absent"));
+  assert.match(error.message, /tui_absent/u);
   assert.equal((await readDegradations(state))[0]?.reason, "tui_absent");
 });

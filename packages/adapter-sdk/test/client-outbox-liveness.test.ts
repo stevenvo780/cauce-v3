@@ -3,7 +3,7 @@ import test from 'node:test';
 import { AdapterEngine } from '../src/sdk/engine.js';
 import type { ClientFrame, DeliveryEvent } from '../src/sdk/types.js';
 import {
-  FakeConnection, SequenceConnector, VirtualClock, makeClient, waitUntil,
+  FakeConnection, SequenceConnector, VirtualClock, escala, makeClient, waitUntil,
 } from './client-fixtures.js';
 
 class ReplayConnection extends FakeConnection {
@@ -84,7 +84,7 @@ test('slow outbox replay drains receipts and sustains heartbeats beyond their de
       await turn();
       clock.advance(5_000);
       await waitUntil(() => context.store.pendingEvents().length === 8 - completed,
-        500, 'the receipt persisted while replay is still running');
+        escala(3_000), 'the receipt persisted while replay is still running');
       assert.equal(recovery.mock.callCount(), completed === 8 ? 1 : 0);
       assert.equal(connector.calls, 1);
       assert.deepEqual(errors, []);

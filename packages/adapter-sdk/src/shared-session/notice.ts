@@ -69,7 +69,7 @@ export function degradationNotice(
   degradation: SharedSessionDegradation,
 ): string {
   const mecanismo = `tmux + registro de ${harness}`;
-  if (!degradation.fellBack) {
+  if (!degradation.fellBack && degradation.executionPrevented !== true) {
     const context = CONTEXT_NOTICE[degradation.reason] ?? CONTEXT_RESET_NOTICE;
     return [
       context.mark,
@@ -92,8 +92,11 @@ export function degradationNotice(
     DEGRADED_MARK,
     `Este turno NO pasó por la terminal de ${alias}: ${REASON_TEXT[degradation.reason]}`
       + ` (${degradation.reason}). Detalle: ${degradation.detail}`,
-    "Se respondió por el camino de siempre, así que este intercambio NO aparece en el panel"
-      + " del dueño y el agente no lo verá en la conversación de la terminal.",
+    degradation.executionPrevented === true
+      ? "El modelo no recibió este pedido y no se usó ningún ejecutor ni conversación alternativa."
+        + " Restablecé la terminal canónica antes de volver a enviarlo."
+      : "Se respondió por el camino de siempre, así que este intercambio NO aparece en el panel"
+        + " del dueño y el agente no lo verá en la conversación de la terminal.",
     remedio,
   ].join("\n");
 }

@@ -99,9 +99,7 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
         openclaw_ready = self.bundle.get("openclaw_tui") is not None \
             and resolve_openclaw_tui_command(self.bundle) is not None
         modes = ["shell"] + (["harness"] if static_or_tmux or openclaw_ready else [])
-        # The writable TUI is announced only where it can actually be served: the tmux route is
-        # the only one with a pane barrier, so it is the only one whose keyboard can be governed.
-        if resolve_tmux_tui_command(self.bundle, mode="harness_rw") is not None:
+        if openclaw_ready or resolve_tmux_tui_command(self.bundle, mode="harness_rw") is not None:
             modes.append("harness_rw")
         return modes
 

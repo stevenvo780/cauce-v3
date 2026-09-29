@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  configuredAckDeadlineMs, configuredDeliveryAdmission, configuredLeaseTtlMs, DEFAULT_ACK_DEADLINE_MS,
+  configuredAckDeadlineMs, configuredBlobApi, configuredDeliveryAdmission, configuredLeaseTtlMs, DEFAULT_ACK_DEADLINE_MS,
   DEFAULT_HUMAN_RESERVED_DELIVERIES, DEFAULT_LEASE_TTL_MS, DEFAULT_MAX_INFLIGHT_DELIVERIES, MIN_LEASE_TTL_MS
 } from './config.js';
 
@@ -84,4 +84,47 @@ describe('gateway delivery admission configuration', () => {
       );
     },
   );
+});
+
+describe('gateway blob store configuration', () => {
+  it('does not expose blob routes by default or from a directory alone in production', () => {
+    expect(configuredBlobApi({})).toBeUndefined();
+    expect(configuredBlobApi({ NODE_ENV: 'production', CAUCE_BLOB_DIR: '/srv/blobs' })).toBeUndefined();
+    expect(configuredBlobApi({ CAUCE_BLOB_API_ENABLED: '0', CAUCE_BLOB_DIR: '/srv/blobs' })).toBeUndefined();
+  });
+
+  it('requires an explicit opt-in and validates the active store', () => {
+    expect(configuredBlobApi({ CAUCE_BLOB_API_ENABLED: '1', CAUCE_BLOB_DIR: '/srv/blobs', CAUCE_BLOB_MAX_BYTES: '1024' }))
+      .toEqual({ directory: '/srv/blobs', maxBytes: 1_024 });
+    expect(() => configuredBlobApi({ CAUCE_BLOB_API_ENABLED: '1', CAUCE_BLOB_DIR: 'blobs' }))
+      .toThrow(/CAUCE_BLOB_DIR/u);
+  });
+
+  it.each(['', 'true', 'false', 'yes', '2', ' 1 '])('rejects ambiguous CAUCE_BLOB_API_ENABLED=%j', (value) => {
+    expect(() => configuredBlobApi({ CAUCE_BLOB_API_ENABLED: value }))
+      .toThrow('CAUCE_BLOB_API_ENABLED must be 0 or 1');
+  });
+
+  it('defaults to the production directory and the protocol default cap', async () => {
+    const { configuredBlobStore, DEFAULT_BLOB_DIRECTORY } = await import('./config.js');
+    const { DEFAULT_BLOB_MAX_BYTES } = await import('@cauce/protocol');
+    expect(configuredBlobStore({})).toEqual({ directory: DEFAULT_BLOB_DIRECTORY, maxBytes: DEFAULT_BLOB_MAX_BYTES });
+    expect(DEFAULT_BLOB_DIRECTORY).toBe('/var/lib/cauce-v3/blobs');
+  });
+
+  it('honors an absolute directory and an integer cap from the environment', async () => {
+    const { configuredBlobStore } = await import('./config.js');
+    expect(configuredBlobStore({ CAUCE_BLOB_DIR: '/srv/blobs', CAUCE_BLOB_MAX_BYTES: '3221225472' }))
+      .toEqual({ directory: '/srv/blobs', maxBytes: 3_221_225_472 });
+  });
+
+  it.each(['0', '-1', '1.5', 'x', String(32 * 1024 ** 3)])('fails closed for CAUCE_BLOB_MAX_BYTES=%j', async (value) => {
+    const { configuredBlobStore } = await import('./config.js');
+    expect(() => configuredBlobStore({ CAUCE_BLOB_MAX_BYTES: value })).toThrow(/CAUCE_BLOB_MAX_BYTES/u);
+  });
+
+  it('fails closed for a relative CAUCE_BLOB_DIR', async () => {
+    const { configuredBlobStore } = await import('./config.js');
+    expect(() => configuredBlobStore({ CAUCE_BLOB_DIR: 'blobs' })).toThrow(/CAUCE_BLOB_DIR/u);
+  });
 });

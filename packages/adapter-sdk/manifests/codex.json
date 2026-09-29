@@ -11,6 +11,7 @@
     "session_scope": "authenticated tenant+actor+origin channel/session/conversation"
   },
   "capabilities": {
+    "mcp_emit": true,
     "protocol_version": "3.0",
     "harness": "codex",
     "structured_output": true,

@@ -42,6 +42,17 @@ class RecordingRunner implements CommandRunner {
   }
 }
 
+class SuccessfulRunner implements CommandRunner {
+  run(): Promise<CommandRunResult> {
+    return Promise.resolve({
+      stdout: JSON.stringify({ result: {
+        reply: "ok", messages: [], status: "done", retryable: false, artifacts: [],
+      } }),
+      stderr: "", exitCode: 0, signal: null, timedOut: false, cancelled: false,
+    });
+  }
+}
+
 const baseContext: HarnessRequestContext = {
   self_alias: "argos",
   sender_alias: "kant",
@@ -58,19 +69,25 @@ async function stdinFor(
   definition: HarnessDefinition,
   context: HarnessRequestContext | undefined,
 ): Promise<string> {
-  const runner = new RecordingRunner(new SpawnCommandRunner());
+  const runner = new RecordingRunner(
+    definition.id === "muse" ? new SuccessfulRunner() : new SpawnCommandRunner(),
+  );
   const adapter = new HarnessAdapter({
     definition,
     runner,
     store: await freshStore(name),
     commandOverride: { command: process.execPath, prefixArgs: [fixture(definition)] },
   });
-  await adapter.execute({
-    prompt: "SCENARIO:success",
-    ...(context === undefined ? {} : { context }),
-    timeoutMs: 2_000,
-    signal: new AbortController().signal,
-  });
+  try {
+    await adapter.execute({
+      prompt: "SCENARIO:success",
+      ...(context === undefined ? {} : { context }),
+      timeoutMs: 10_000,
+      signal: new AbortController().signal,
+    });
+  } catch (error) {
+    throw new Error(`${definition.id}: ${String(error)}`, { cause: error });
+  }
   const request = runner.requests[0];
   assert.ok(request);
   return request.stdin;

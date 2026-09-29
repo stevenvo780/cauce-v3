@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { AdapterClient } from "../sdk/client.js";
+import { BlobClient, configureDefaultBlobClient } from "../sdk/blob-client.js";
 import { DurableStore } from "../sdk/durable-store.js";
+import { ProcessExecutionError } from "../sdk/errors.js";
 import { SpawnCommandRunner } from "../sdk/process-runner.js";
 import { WebSocketConsumerConnector } from "../sdk/websocket-transport.js";
 import { OpenClawApiRunner } from "../sdk/openclaw-api-runner.js";
@@ -28,6 +30,8 @@ import { sharedSessionResume } from "../shared-session/resume.js";
 import { SharedTuiPointerStore } from "../shared-session/native-pointer.js";
 import { NativePointerAttestor } from "../shared-session/native-witness.js";
 import type { CommandRunner } from "../sdk/types.js";
+import { EmissionRuntime } from "../sdk/mcp-emission/runtime.js";
+import { emissionGateway } from "../sdk/mcp-emission/gateway.js";
 
 function commandOverride(
   harnessId: HarnessId,
@@ -129,11 +133,10 @@ function operationalLogger(alias: string): AdapterLogger {
 }
 
 /**
- * Wraps the base runner with the shared-session runner when configured.
+ * Creates the canonical terminal runner without an alternative executor.
  */
-async function sharedSessionRunner(
+export async function sharedSessionRunner(
   configured: SharedSessionConfig,
-  fallback: CommandRunner,
   logger: AdapterLogger,
 ): Promise<CommandRunner> {
   let shared = configured;
@@ -145,7 +148,9 @@ async function sharedSessionRunner(
     } catch {
       logger({ event: "shared_session_degraded", alias: configured.alias,
         reason: "session_identity_unverified", error_message: "el binding de la TUI no está disponible" });
-      return fallback;
+      throw new ProcessExecutionError("SHARED_TUI_UNAVAILABLE",
+        "La terminal canónica no pudo acreditarse; el consumidor no aceptará pedidos hasta recuperar su binding",
+        false);
     }
   }
   const tmux = new CliTmux();
@@ -172,7 +177,6 @@ async function sharedSessionRunner(
       alias: shared.alias, stateDirectory: shared.stateDirectory,
     }),
     tmux,
-    fallback,
     sleep,
     quarantineFile: join(shared.stateDirectory, ".shared-session-quarantine"),
     correlationTimeoutMs: correlationTimeoutFromEnvironment(process.env),
@@ -212,11 +216,10 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     harnessDefinition(harnessId),
     runtime.openClaw?.transport,
   );
-  const canonicalOpenCodeSession = harnessId === "opencode" && runtime.alias === "kant";
   const canonicalOpenClawTerminalSession = harnessId === "openclaw";
   const store = await DurableStore.open(
     runtime.stateDirectory,
-    canonicalOpenCodeSession || canonicalOpenClawTerminalSession
+    canonicalOpenClawTerminalSession
       ? { deferSessions: true }
       : {},
   );
@@ -241,14 +244,13 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   const shared = loadSharedSessionConfig(harnessId, runtime.alias, runtime.stateDirectory);
   const runner = shared === undefined
     ? baseRunner
-    : await sharedSessionRunner(shared, baseRunner, logger);
+    : await sharedSessionRunner(shared, logger);
   const override = commandOverride(harnessId, definition, runtime);
   const harness = new HarnessAdapter({
     definition: definitionWithVerifiedBridge(definition, override, logger),
     runner,
     store,
     sessionNamespace: runtime.alias,
-    ...(canonicalOpenCodeSession ? { canonicalOpenCodeSession: true } : {}),
     ...(harnessId === "openclaw" || harnessId === "muse" ? { fallbackSessionKey: "alias-default" } : {}),
     ...(override === undefined ? {} : { commandOverride: override }),
     ...(shared === undefined ? {} : {
@@ -259,7 +261,20 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
       },
     }),
   });
+  const emission = definition.capabilities.mcp_emit === true
+    ? new EmissionRuntime(runtime.stateDirectory, runtime.instanceId, emissionGateway(runtime))
+    : undefined;
+  try {
+    configureDefaultBlobClient(BlobClient.fromRelayUrl(runtime.relayUrl, {
+      ...(runtime.bearerTokenFile === undefined ? {} : { bearerTokenFile: runtime.bearerTokenFile }),
+      ...(runtime.mutualTls === undefined ? {} : { mutualTls: runtime.mutualTls }),
+      ...(runtime.developmentIdentity ? { developmentIdentity: { tenant_id: tenantId, alias: runtime.alias } } : {}),
+    }));
+  } catch (error) {
+    process.stderr.write(`blob client disabled: ${String(error instanceof Error ? error.message : error)}\n`);
+  }
   const client = new AdapterClient({
+    ...(emission === undefined ? {} : { emission }),
     config: {
       tenantId,
       alias: runtime.alias,
@@ -281,26 +296,20 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     }),
     store,
     harness,
-    ...(canonicalOpenCodeSession || canonicalOpenClawTerminalSession || shared?.harness === "claude"
-      ? {
-          onLeaseAcquired: async () => {
-            if (canonicalOpenCodeSession) {
-              await store.reconcileCanonicalOpenCodeSession();
-            }
-            if (canonicalOpenClawTerminalSession) {
-              await store.reconcileCanonicalOpenClawTerminalSession(runtime.alias);
-            }
-            if (shared?.harness === "claude") {
-              try {
-                await new SharedTuiPointerStore(shared.stateDirectory).recover();
-              } catch {
-                logger({ event: "shared_session_resume", alias: shared.alias,
-                  error_message: "la recuperación del pointer TUI es ambigua; se conserva el estado" });
-              }
-            }
-          },
+    onLeaseAcquired: async () => {
+      await emission?.listen();
+      if (canonicalOpenClawTerminalSession) {
+        await store.reconcileCanonicalOpenClawTerminalSession(runtime.alias);
+      }
+      if (shared?.harness === "claude") {
+        try {
+          await new SharedTuiPointerStore(shared.stateDirectory).recover();
+        } catch {
+          logger({ event: "shared_session_resume", alias: shared.alias,
+            error_message: "la recuperación del pointer TUI es ambigua; se conserva el estado" });
         }
-      : {}),
+      }
+    },
     onError: (code) => process.stderr.write(`${code}: adapter retry\n`),
     logger,
   });
@@ -314,6 +323,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
+    await emission?.close();
   }
 }
 

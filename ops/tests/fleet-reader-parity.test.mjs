@@ -113,11 +113,12 @@ print(json.dumps(result, sort_keys=True))
 }
 
 async function assertParity(root) {
-  const inventory = path.join(root, 'container-aliases.json');
+  const inventory = path.join(root, 'flota.json');
   const canonical = canonicalFor(root);
   const updatePolicies = updatePoliciesFor(root);
 
-  for (const [alias, entry] of Object.entries(canonical)) {
+  const fleet = JSON.parse(await readFile(inventory, 'utf8')).fleet;
+  for (const [alias, entry] of Object.entries(fleet)) {
     assert.deepEqual(
       await javascriptReader('gate-collector.mjs', 'regularJsonFile', alias, inventory),
       { tenant: entry.tenant, alias },
@@ -129,6 +130,9 @@ async function assertParity(root) {
       `gate-roundtrip-probe.mjs diverged from container_alias_lib for ${alias}`,
     );
 
+  }
+
+  for (const [alias, entry] of Object.entries(canonical)) {
     const physicalCount = Object.values(canonical).filter((candidate) => (
       candidate.container === entry.container && candidate.dockerHost === entry.dockerHost
     )).length;
@@ -156,6 +160,7 @@ try {
     env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
   });
   checked(generated, 'synthetic reader inventory generation');
+  await copyFile(fixtureSnapshot, path.join(temporary, 'flota.json'));
   await copyFile(path.join(ops, 'hermes-runtime.json'), path.join(temporary, 'hermes-runtime.json'));
   await assertParity(temporary);
 

@@ -123,10 +123,11 @@ test("an unconfirmed execution intent times out before invoking the harness", as
 test("a receipt cannot release the harness while its transport send never settles", async () => {
   const connection = new HangingExecutionIntentConnection();
   const runner = new CountingRunner();
+  const clock = new VirtualClock();
   const context = await makeClient(
     "execution-intent-hanging-send",
     new ScriptedConnector(connection),
-    { runner, claimWatchdogMs: escala(500) },
+    { runner, clock, claimWatchdogMs: 500 },
   );
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
@@ -138,6 +139,9 @@ test("a receipt cannot release the harness while its transport send never settle
       claimDeadline(),
     );
     connection.push(input);
+    await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true),
+      "the hanging execution-intent send");
+    clock.advance(250);
     await waitUntil(
       () => context.store.getDelivery(input.delivery_id)?.state === "failed",
       escala(3_000),

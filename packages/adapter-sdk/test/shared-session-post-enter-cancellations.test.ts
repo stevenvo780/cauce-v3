@@ -12,7 +12,7 @@ import { transcriptDirectory } from "../src/shared-session/session.js";
 import {
   ENVELOPE,
   FakeTmux,
-  RecordingFallback,
+  assertExecutionPrevented,
   assistantEntry,
   claudeRunner,
   controlledTmuxHang,
@@ -31,7 +31,6 @@ test("cancelar después de Enter drena la TUI antes de liberar la cola", async (
   const head = randomUUID();
   await appendFile(file, `${userEntry(head, null, "turno previo", sessionId)}\n`);
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   tmux.interruptStopsTurn = false;
   let submittedPrompt: string | undefined;
@@ -63,7 +62,6 @@ test("cancelar después de Enter drena la TUI antes de liberar la cola", async (
     home,
     workspace,
     tmux,
-    fallback,
     sleep: (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, Math.max(ms, 1))),
   });
 
@@ -86,7 +84,6 @@ test("cancelar después de Enter drena la TUI antes de liberar la cola", async (
   const outcome = await pending;
   assert.equal(outcome.cancelled, true);
   assert.equal(outcome.harnessStarted, undefined);
-  assert.equal(fallback.calls, 0);
   assert.equal(tmux.submittedCount, 1);
   assert.equal(tmux.interruptedCount, 1);
   assert.match(outcome.stderr, /transcript confirmó/u);
@@ -96,7 +93,6 @@ test("cancelar después de Enter drena la TUI antes de liberar la cola", async (
 test("cancelación post-Enter acotada pone en cuarentena el pane exacto y la cola no se bloquea", async () => {
   const { home, workspace } = await freshState("abort-post-enter-quarantine");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   tmux.interruptStopsTurn = false;
   tmux.onSubmit = () => {
@@ -113,7 +109,6 @@ test("cancelación post-Enter acotada pone en cuarentena el pane exacto y la col
     home,
     workspace,
     tmux,
-    fallback,
     cancelDrainTimeoutMs: 15,
     sleep: (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, Math.max(ms, 1))),
   });
@@ -143,14 +138,13 @@ test("cancelación post-Enter acotada pone en cuarentena el pane exacto y la col
   });
 
   assert.equal(second.cancelled, false);
-  assert.equal(fallback.calls, 1, "la siguiente entrega progresa por el transporte aislado");
+  assertExecutionPrevented(runner, second, "session_identity_unverified");
   assert.equal(tmux.submittedCount, 1, "la generación en cuarentena no recibe otro prompt");
 });
 
 test("una pantalla ociosa tras Escape no acredita cierre y la misma generación queda en cuarentena", async () => {
   const { home, workspace } = await freshState("abort-idle-no-es-terminal");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const originalRun = tmux.run.bind(tmux);
   tmux.onSubmit = () => {
@@ -166,7 +160,6 @@ test("una pantalla ociosa tras Escape no acredita cierre y la misma generación 
     home,
     workspace,
     tmux,
-    fallback,
     cancelDrainTimeoutMs: 15,
     sleep: (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, Math.max(ms, 1))),
   });
@@ -187,7 +180,6 @@ test("una pantalla ociosa tras Escape no acredita cierre y la misma generación 
   assert.equal(tmux.panePid, pid, "la generación exacta sigue viva");
   assert.match(outcome.stderr, /no alcanzó un límite terminal.*cuarentena/u);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
-  assert.equal(fallback.calls, 0);
 });
 
 test("la cuarentena en disco sobrevive a otro runner si tmux no pudo guardar su opción", async () => {
@@ -199,7 +191,6 @@ test("la cuarentena en disco sobrevive a otro runner si tmux no pudo guardar su 
   tmux.onSubmit = () => {
     tmux.paneContent = "✻ Working… (esc to interrupt)\n❯ ";
   };
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin): Promise<TmuxResult> => {
@@ -212,7 +203,6 @@ test("la cuarentena en disco sobrevive a otro runner si tmux no pudo guardar su 
     home,
     workspace,
     tmux,
-    fallback,
     quarantineFile,
     cancelDrainTimeoutMs: 15,
     sleep: (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, Math.max(ms, 1))),
@@ -232,7 +222,7 @@ test("la cuarentena en disco sobrevive a otro runner si tmux no pudo guardar su 
 
   // New instance: does not keep `locallyQuarantined`; only the durable evidence can block it.
   const restartedRunner = claudeRunner({
-    alias: "kratos", home, workspace, tmux, fallback, quarantineFile,
+    alias: "kratos", home, workspace, tmux, quarantineFile,
   });
   const second = await restartedRunner.run({
     command: "claude",
@@ -243,7 +233,7 @@ test("la cuarentena en disco sobrevive a otro runner si tmux no pudo guardar su 
     signal: new AbortController().signal,
   });
   assert.equal(second.cancelled, false);
-  assert.equal(fallback.calls, 1);
+  assertExecutionPrevented(restartedRunner, second, "session_identity_unverified");
   assert.equal(tmux.submittedCount, 1);
 });
 
@@ -251,7 +241,6 @@ test("quarantine-pending sobrevive restart si disco, tmux y kill se cuelgan post
   const { state, home, workspace } = await freshState("quarantine-pending-operaciones-colgadas");
   const quarantineFile = join(state, "quarantine");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   let postPaste = false;
   let diskPromotionHung = false;
   let tmuxPromotionHung = false;
@@ -287,7 +276,6 @@ test("quarantine-pending sobrevive restart si disco, tmux y kill se cuelgan post
     home,
     workspace,
     tmux,
-    fallback,
     quarantineFile,
     quarantinePersistence: persistence,
     quarantineOperationTimeoutMs: 100,
@@ -310,7 +298,6 @@ test("quarantine-pending sobrevive restart si disco, tmux y kill se cuelgan post
   assert.equal(diskPromotionHung, true);
   assert.equal(tmuxPromotionHung, true);
   assert.equal(killHung, true);
-  assert.equal(fallback.calls, 0);
   assert.equal(tmux.submittedCount, 1);
   await assert.rejects(readFile(quarantineFile, "utf8"), { code: "ENOENT" });
   const pendingFiles = (await readdir(state)).filter((name) => name.startsWith("quarantine.")
@@ -330,7 +317,6 @@ test("quarantine-pending sobrevive restart si disco, tmux y kill se cuelgan post
     home,
     workspace,
     tmux,
-    fallback,
     quarantineFile,
     quarantineOperationTimeoutMs: 100,
   });
@@ -343,7 +329,7 @@ test("quarantine-pending sobrevive restart si disco, tmux y kill se cuelgan post
     signal: new AbortController().signal,
   });
   assert.equal(second.cancelled, false);
-  assert.equal(fallback.calls, 1);
+  assertExecutionPrevented(restartedRunner, second, "session_identity_unverified");
   assert.equal(tmux.submittedCount, 1);
 });
 
@@ -383,9 +369,8 @@ test("restart reconcilia pending sólo con sobre terminal válido del mismo nonc
       )}\n`,
     );
   };
-  const fallback = new RecordingFallback("{}");
   const restarted = claudeRunner({
-    alias: "kratos", home, workspace, tmux, fallback, quarantineFile,
+    alias: "kratos", home, workspace, tmux, quarantineFile,
   });
 
   const outcome = await restarted.run({
@@ -399,7 +384,6 @@ test("restart reconcilia pending sólo con sobre terminal válido del mismo nonc
 
   assert.equal(outcome.exitCode, 0);
   assert.match(outcome.stdout, /turno posterior/u);
-  assert.equal(fallback.calls, 0);
   assert.equal(tmux.submittedCount, 1);
   await assert.rejects(readFile(pending, "utf8"), { code: "ENOENT" });
   assert.equal(tmux.sessionOptions.has("@cauce_quarantined_pane"), false);
@@ -439,12 +423,11 @@ for (const falseTerminal of [
         transcriptSession,
       )}\n`,
     );
-    const fallback = new RecordingFallback("{}");
     const restarted = claudeRunner({
-      alias: "kratos", home, workspace, tmux, fallback, quarantineFile,
+      alias: "kratos", home, workspace, tmux, quarantineFile,
     });
 
-    await restarted.run({
+    const outcome = await restarted.run({
       command: "claude",
       args: [],
       harness: "claude",
@@ -453,7 +436,7 @@ for (const falseTerminal of [
       signal: new AbortController().signal,
     });
 
-    assert.equal(fallback.calls, 1);
+    assertExecutionPrevented(restarted, outcome, "session_identity_unverified");
     assert.equal(tmux.submittedCount, 0);
     assert.equal(await readFile(pending, "utf8"), "$0:@0:%0:4242\n");
     assert.equal(tmux.sessionOptions.get("@cauce_quarantined_pane"), "$0:@0:%0:4242");
@@ -469,9 +452,8 @@ for (const incomplete of [
     const quarantineFile = join(state, "quarantine");
     await appendFile(join(state, incomplete.file), incomplete.body);
     const tmux = new FakeTmux();
-    const fallback = new RecordingFallback("{}");
     const runner = claudeRunner({
-      alias: "kratos", home, workspace, tmux, fallback, quarantineFile,
+      alias: "kratos", home, workspace, tmux, quarantineFile,
     });
 
     const outcome = await runner.run({
@@ -484,7 +466,7 @@ for (const incomplete of [
     });
 
     assert.equal(outcome.cancelled, false);
-    assert.equal(fallback.calls, 1);
+    assertExecutionPrevented(runner, outcome, "session_identity_unverified");
     assert.equal(tmux.used("load-buffer"), false);
     assert.equal(tmux.submittedCount, 0);
   });
@@ -494,8 +476,7 @@ test("un fallo al leer la cuarentena falla cerrado antes de pegar", async () => 
   const { home, workspace } = await freshState("quarantine-unreadable");
   const tmux = new FakeTmux();
   tmux.failQuarantineRead = true;
-  const fallback = new RecordingFallback("{}");
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const outcome = await runner.run({
     command: "claude",
@@ -507,7 +488,7 @@ test("un fallo al leer la cuarentena falla cerrado antes de pegar", async () => 
   });
 
   assert.equal(outcome.cancelled, false);
-  assert.equal(fallback.calls, 1);
+  assertExecutionPrevented(runner, outcome, "session_identity_unverified");
   assert.equal(tmux.used("load-buffer"), false);
 });
 
@@ -515,7 +496,6 @@ test("la limpieza CAS no borra una cuarentena concurrente de la generación actu
   const { home, workspace } = await freshState("quarantine-clear-cas");
   const tmux = new FakeTmux();
   tmux.sessionOptions.set("@cauce_quarantined_pane", "$0:@0:%0:1111");
-  const fallback = new RecordingFallback("{}");
   const originalRun = tmux.run.bind(tmux);
   let raced = false;
   tmux.run = async (args, stdin, _control): Promise<TmuxResult> => {
@@ -526,9 +506,9 @@ test("la limpieza CAS no borra una cuarentena concurrente de la generación actu
     }
     return originalRun(args, stdin);
   };
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
-  await runner.run({
+  const outcome = await runner.run({
     command: "claude",
     args: [],
     harness: "claude",
@@ -537,15 +517,14 @@ test("la limpieza CAS no borra una cuarentena concurrente de la generación actu
     signal: new AbortController().signal,
   });
 
+  assertExecutionPrevented(runner, outcome, "session_identity_unverified");
   assert.equal(tmux.sessionOptions.get("@cauce_quarantined_pane"), "$0:@0:%0:4242");
   assert.equal(tmux.used("load-buffer"), false);
-  assert.equal(fallback.calls, 1);
 });
 
 test("cancelar tras Enter sigue un rename lógico e interrumpe el mismo proceso", async () => {
   const { home, workspace } = await freshState("abort-post-enter-rename");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin): Promise<TmuxResult> => {
@@ -557,7 +536,7 @@ test("cancelar tras Enter sigue un rename lógico e interrumpe el mismo proceso"
     return response;
   };
   const runner = claudeRunner({
-    alias: "kratos", home, workspace, tmux, fallback, cancelDrainTimeoutMs: 20,
+    alias: "kratos", home, workspace, tmux, cancelDrainTimeoutMs: 20,
   });
 
   const outcome = await runner.run({
@@ -572,5 +551,4 @@ test("cancelar tras Enter sigue un rename lógico e interrumpe el mismo proceso"
   assert.equal(outcome.cancelled, true);
   assert.equal(outcome.harnessStarted, undefined);
   assert.equal(tmux.interruptedCount, 1);
-  assert.equal(fallback.calls, 0);
 });

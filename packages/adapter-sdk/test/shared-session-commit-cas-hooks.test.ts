@@ -14,7 +14,7 @@ import {
 import { fileQuarantinePersistence } from "../src/shared-session/paste-runner.js";
 import {
   FakeTmux,
-  RecordingFallback,
+  assertExecutionPrevented,
   claudeRunner,
   exactTmuxPaneState,
   freshState,
@@ -56,7 +56,6 @@ test("commitPrepared hace CAS de nombre y jamás reemplaza el pending de otro in
 test("input humano después de load-buffer se revalida justo antes de paste", async () => {
   const { home, workspace } = await freshState("input-entre-load-y-paste");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
     const response = await originalRun(args, stdin, control);
@@ -66,7 +65,7 @@ test("input humano después de load-buffer se revalida justo antes de paste", as
     }
     return response;
   };
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const outcome = await runner.run({
     command: "claude",
@@ -78,7 +77,7 @@ test("input humano después de load-buffer se revalida justo antes de paste", as
   });
 
   assert.equal(outcome.cancelled, false);
-  assert.equal(fallback.calls, 1);
+  assertExecutionPrevented(runner, outcome, "input_busy");
   assert.equal(tmux.inputContent, "TEXTO HUMANO DESPUÉS DEL LOAD");
   assert.equal(tmux.used("load-buffer"), true);
   assert.equal(tmux.used("paste-buffer"), false);
@@ -89,7 +88,6 @@ test("input humano después de load-buffer se revalida justo antes de paste", as
 test("input humano entre la revalidación de identidad y el paste se preserva", async () => {
   const { home, workspace } = await freshState("input-entre-identidad-y-paste");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const originalRun = tmux.run.bind(tmux);
   let injectedRace = false;
   tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
@@ -102,7 +100,7 @@ test("input humano entre la revalidación de identidad y el paste se preserva", 
     }
     return response;
   };
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const outcome = await runner.run({
     command: "claude",
@@ -115,7 +113,7 @@ test("input humano entre la revalidación de identidad y el paste se preserva", 
 
   assert.equal(injectedRace, true);
   assert.equal(outcome.cancelled, false);
-  assert.equal(fallback.calls, 1);
+  assertExecutionPrevented(runner, outcome, "input_busy");
   assert.equal(tmux.inputContent, "TEXTO HUMANO EN LA ÚLTIMA REVALIDACIÓN");
   assert.equal(tmux.used("paste-buffer"), false);
   assert.equal(tmux.submittedCount, 0);
@@ -125,7 +123,6 @@ test("input humano entre la revalidación de identidad y el paste se preserva", 
 test("la barrera descarta input humano después de la última captura y antes del if-shell", async () => {
   const { home, workspace } = await freshState("input-race-despues-ultima-captura");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   const submitted: string[] = [];
   tmux.onSubmit = (text) => {
     submitted.push(text);
@@ -149,7 +146,6 @@ test("la barrera descarta input humano después de la última captura y antes de
     home,
     workspace,
     tmux,
-    fallback,
     turnTimeoutMs: 15,
     sleep: (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, Math.max(ms, 1))),
   });
@@ -166,7 +162,6 @@ test("la barrera descarta input humano después de la última captura y antes de
   assert.equal(raceAttempted, true);
   assert.equal(humanAccepted, false, "pane_input_off debe descartar el byte del cliente humano");
   assert.equal(outcome.timedOut, true);
-  assert.equal(fallback.calls, 0);
   assert.equal(submitted.length, 1);
   assert.match(submitted[0] ?? "", /CAUCE_PROMPT/u);
   assert.doesNotMatch(submitted[0] ?? "", /HUMAN_RACE/u);
@@ -190,10 +185,9 @@ test("todo hook tmux efectivo rechaza la barrera antes de tocar la caja", async 
     const { home, workspace } = await freshState(`input-hook-inseguro-${String(index)}`);
     const tmux = new FakeTmux();
     tmux.configuredInputHooks.add(hook);
-    const fallback = new RecordingFallback("{}");
-    const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+    const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
-    await runner.run({
+    const outcome = await runner.run({
       command: "claude",
       args: [],
       harness: "claude",
@@ -202,7 +196,7 @@ test("todo hook tmux efectivo rechaza la barrera antes de tocar la caja", async 
       signal: new AbortController().signal,
     });
 
-    assert.equal(fallback.calls, 1, hook);
+    assertExecutionPrevented(runner, outcome, "handshake_failed");
     assert.equal(tmux.used("load-buffer"), false, hook);
     assert.equal(tmux.used("paste-buffer"), false, hook);
     assert.equal(tmux.inputOff, false, hook);
@@ -329,7 +323,6 @@ test("delete-buffer fallido se recupera sobrescribiendo y acreditando un conteni
   const { home, workspace } = await freshState("abort-load-delete-falla-scrub-ok");
   const tmux = new FakeTmux();
   tmux.failDeleteBuffer = true;
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin): Promise<TmuxResult> => {
@@ -337,7 +330,7 @@ test("delete-buffer fallido se recupera sobrescribiendo y acreditando un conteni
     if (args[0] === "load-buffer" && stdin !== "CAUCE_BUFFER_SCRUBBED") controller.abort();
     return response;
   };
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const outcome = await runner.run({
     command: "claude",
@@ -352,7 +345,6 @@ test("delete-buffer fallido se recupera sobrescribiendo y acreditando un conteni
   assert.equal(outcome.harnessStarted, false);
   assert.deepEqual([...tmux.buffers.values()], ["CAUCE_BUFFER_SCRUBBED"]);
   assert.equal(tmux.used("paste-buffer"), false);
-  assert.equal(fallback.calls, 0);
 });
 
 test("si delete y scrub no se acreditan el aborto falla cerrado y pone la generación en cuarentena", async () => {
@@ -360,7 +352,6 @@ test("si delete y scrub no se acreditan el aborto falla cerrado y pone la genera
   const tmux = new FakeTmux();
   tmux.failDeleteBuffer = true;
   tmux.failBufferScrub = true;
-  const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin): Promise<TmuxResult> => {
@@ -368,7 +359,7 @@ test("si delete y scrub no se acreditan el aborto falla cerrado y pone la genera
     if (args[0] === "load-buffer" && stdin !== "CAUCE_BUFFER_SCRUBBED") controller.abort();
     return response;
   };
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const outcome = await runner.run({
     command: "claude",
@@ -385,7 +376,6 @@ test("si delete y scrub no se acreditan el aborto falla cerrado y pone la genera
   assert.doesNotMatch(outcome.stderr, /contenido que jamás/u);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
   assert.equal(tmux.used("paste-buffer"), false);
-  assert.equal(fallback.calls, 0);
 });
 
 test(

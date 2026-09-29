@@ -30,6 +30,7 @@ Todas las instancias comparten un único checkout del repo en `dev`. Las reglas 
 | `packages/adapter-sdk/**`, `ops/schemas/**` | `<instancia>` | `<otra-instancia>` |
 | `services/dispatcher/**`, `ops/runbooks/**` | `<instancia>` | `<otra-instancia>` |
 | `scripts/**` (tooling: calidad, grafo, test-all), `ops/{systemd,generated,manifests,observability,config,guardias,container-runtime,openclaw-gateway,cli,instances,patches,private,telegram-runtime}/**` | `<instancia>` (+dueño donde toque flota) | dueño |
+| `.agents/skills/**`, `.specify/**`, `specs/**` (plantillas, skills y especificaciones) | `<instancia>` + dueño | `<otra-instancia>` |
 | `ordenes/`, `ordenes-locales/`, documentación (README/CLAUDE.md/AGENTS.md), integración de merges, despliegue/flota/BD | `<instancia>` + dueño | dueño |
 | `packages/store/migrations/**`, `deploy/**`, `/etc/cauce-v3`, `/opt`, contenedores, systemd, base de datos | NADIE sin el dueño presente | — |
 

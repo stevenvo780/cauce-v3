@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Simple Cauce V3 deploy (PHASE 3). Replaces retired machinery (history in git).
 # Contract: build -> pin by digest -> migrate -> up -> smoke -> record. All or rollback.
 # Owner MUST be present: requires CAUCE_FASE3_CON_DUENO=si.
 set -euo pipefail
@@ -65,10 +64,44 @@ LAST_MIGRATION="$(find "$REPO/packages/store/migrations" -maxdepth 1 -type f -na
 
 echo "== Cauce V3 deploy: commit $REV ($STAMP) =="
 
+BLOB_API_ENABLED="$(env_value CAUCE_BLOB_API_ENABLED)"
+case "$BLOB_API_ENABLED" in
+  ''|0) BLOB_API_ENABLED=0 ;;
+  1) ;;
+  *) die "CAUCE_BLOB_API_ENABLED debe ser 0 o 1" ;;
+esac
+if [ "${CAUCE_BLOB_API_ENABLED+x}" = x ] \
+   && [ "$CAUCE_BLOB_API_ENABLED" != "$BLOB_API_ENABLED" ]; then
+  die "CAUCE_BLOB_API_ENABLED del entorno contradice el archivo de la instancia"
+fi
+export CAUCE_BLOB_API_ENABLED="$BLOB_API_ENABLED"
 if ! STATUS_FILE="$BACKUP_STATUS_FILE" MAX_AGE_HOURS="$BACKUP_MAX_AGE_HOURS" \
+  REQUIRE_BLOB_VOLUME="$BLOB_API_ENABLED" \
   "$BACKUP_MONITOR" >/dev/null; then
+  [ "$BLOB_API_ENABLED" = 0 ] \
+    || die "la API de blobs exige un backup verificado; no se admite omitir este control"
   echo "AVISO: el estado de backup no acredita una copia sana de <${BACKUP_MAX_AGE_HOURS}h en $BACKUP_STATUS_FILE."
   confirmar "¿Continuar igual?" || die "abortado por falta de backup fresco"
+fi
+if [ "$BLOB_API_ENABLED" = 1 ]; then
+  python3 - "$BACKUP_STATUS_FILE" <<'PY' \
+    || die "la API de blobs exige una restauración posterior a la migración con tabla y volumen verificados"
+import json
+import pathlib
+import sys
+
+status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+evidence = json.loads(pathlib.Path(status["restore_evidence_file"]).read_text(encoding="utf-8"))
+if not (
+    status.get("schema_version") == 2
+    and status.get("overall") == "ok"
+    and evidence.get("schema_version") == 2
+    and evidence.get("full_restore") is True
+    and evidence.get("blob_table_present") is True
+    and evidence.get("blob_volume_present") is True
+):
+    raise SystemExit(1)
+PY
 fi
 
 # Both images come from deploy/Dockerfile: `runtime` is NOT the last stage (console is), so the

@@ -5,7 +5,7 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { transcriptDirectory } from "../src/shared-session/session.js";
 import {
-  FakeTmux, RecordingFallback, adapterFor, claudeRunner, execute, freshState, userEntry,
+  FakeTmux, adapterFor, claudeRunner, execute, freshState, userEntry,
 } from "./shared-session-fixtures.js";
 
 const delay = (ms: number): Promise<void> => new Promise((resolve_) => setTimeout(resolve_, ms));
@@ -25,7 +25,6 @@ test("un turno correlacionado que termina sin sobre se suelta cuando el panel vu
 
   const tmux = new FakeTmux();
   tmux.paneContent = "❯ ";
-  const fallback = new RecordingFallback("no debería usarse");
   tmux.onSubmit = (text: string): void => {
     void appendFile(file, `${userEntry(randomUUID(), duenio, text, sessionId)}\n`);
   };
@@ -35,7 +34,6 @@ test("un turno correlacionado que termina sin sobre se suelta cuando el panel vu
     home,
     workspace,
     tmux,
-    fallback,
     correlationTimeoutMs: 20,
     quietTimeoutMs: 60,
     turnTimeoutMs: 600_000,
@@ -49,5 +47,4 @@ test("un turno correlacionado que termina sin sobre se suelta cuando el panel vu
     (error: Error) => /execution deadline/iu.test(error.message),
   );
   assert.ok(Date.now() - empezo < 30_000, `tardó ${String(Date.now() - empezo)} ms`);
-  assert.equal(fallback.calls, 0);
 });

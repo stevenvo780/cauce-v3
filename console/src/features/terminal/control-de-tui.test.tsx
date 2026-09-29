@@ -1,23 +1,4 @@
-/**
- * TAKING AND GIVING BACK THE KEYBOARD OF A WRITABLE TUI.
- *
- * The four rules this suite exists to protect are the feature, not decoration:
- *
- *  1. the reason is TYPED BY A HUMAN — no default, no generated phrase. `liveTuiReason` is the
- *     sentence the console writes on its own for a read-only observation and it must never reach
- *     a write, so the take is checked against the literal text the operator typed;
- *  2. the button exists only when the GATEWAY says the action is possible: `writable_modes` of
- *     `/targets`, never the mode list. The negative control publishes `harness_rw` among the
- *     modes with an empty `writable_modes` and requires the button to be absent;
- *  3. while the control is held the screen says, in Spanish, that the bus is not delivering to
- *     that alias and that the messages are queueing;
- *  4. giving it back is always reachable and is also fired when the panel goes away: a hold that
- *     outlives the tab is what mutes an alias.
- *
- * The mirror of case 4 of `live-tui.test.tsx` lives here too: there, `harness` sends ZERO input
- * frames; here, while the control is held, the keystrokes DO reach the socket. Neither assertion
- * proves anything without the other.
- */
+/** Keyboard ownership, explicit takeover, session fencing and release over the PTY channel. */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -233,6 +214,23 @@ afterEach(async () => {
 });
 
 describe('el botón sólo existe si el gateway publica un modo con escritura', () => {
+  it('un turno activo requiere una segunda toma explícita y nunca se cancela al mirar', async () => {
+    const user = userEvent.setup();
+    const { controles } = escenario();
+    servirControl(controles, { status: 409, reason: 'agent_busy' });
+    await abrirZeus(user);
+    engancharLaTui();
+    expect(controles).toHaveLength(0);
+    await tomarElControl(user, controles);
+    expect(await screen.findByText('El agente tiene un turno en curso')).toBeInTheDocument();
+    expect(controles[0]?.body.allow_busy).toBeUndefined();
+    servirControl(controles);
+    await user.click(screen.getByRole('button', { name: 'Tomar control durante el turno' }));
+    await waitFor(() => { expect(controles).toHaveLength(2); });
+    expect(controles[1]?.body).toMatchObject({ action: 'take', reason: MOTIVO, allow_busy: true });
+    expect(await screen.findByText(/Tenés el teclado/)).toBeInTheDocument();
+  });
+
   it('CONTROL NEGATIVO: con harness_rw entre los modos pero sin modo escribible publicado, no hay botón', async () => {
     const user = userEvent.setup();
     // The ONE thing that changes versus the case below: `writable_modes` comes back empty.

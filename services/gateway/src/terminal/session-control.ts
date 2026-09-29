@@ -68,6 +68,7 @@ export interface DeleteSessionBody {
 export type ExtendSessionBody = DeleteSessionBody;
 
 export interface ControlRequestBody extends DeleteSessionBody {
+  readonly allow_busy?: boolean;
   action: 'take' | 'release';
   reason?: string;
 }

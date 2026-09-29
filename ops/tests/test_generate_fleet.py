@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -55,7 +56,7 @@ class FleetGeneratorTests(unittest.TestCase):
             )
             document = json.loads(aliases.read_text(encoding="utf-8"))
             expected = {"fixture-codex", "fixture-hermes", "fixture-openclaw"}
-            self.assertEqual(set(document["aliases"]), expected)
+            self.assertEqual(set(document["aliases"]), expected - {"fixture-codex"})
             self.assertEqual(
                 document["historicalAliases"],
                 {"fixture-retired": {"expectedEnabled": False}},
@@ -70,7 +71,7 @@ class FleetGeneratorTests(unittest.TestCase):
             self.assertNotIn("fixture-retired", runtime_document["aliases"])
             self.assertEqual(
                 runtime_document["aliases"]["fixture-codex"]["container"],
-                "fixture-health",
+                "host:fixture-host",
             )
             for entry in runtime_document["aliases"].values():
                 self.assertEqual(
@@ -87,6 +88,36 @@ class FleetGeneratorTests(unittest.TestCase):
                     },
                 )
                 self.assertIs(entry["enabled"], True)
+
+    def test_global_reader_preserves_the_declared_remote_placement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            document = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+            document["placement"]["fixture-hermes"] = {"dockerHost": "server2", "systemdUser": "server"}
+            (root / "flota.json").write_text(json.dumps(document), encoding="utf-8")
+            sys.path.insert(0, str(SCRIPTS))
+            try:
+                load = runpy.run_path(str(SCRIPTS / "fleet_derive.py"))["load_fleet_assignments"]
+                entry = load(root)["fixture-hermes"]
+            finally:
+                sys.path.pop(0)
+            self.assertEqual(entry["dockerHost"], "server2")
+            self.assertEqual(entry["systemdUser"], "server")
+
+    def test_vm_identity_survives_runtime_generation_without_a_docker_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary)
+            document = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+            document["fleet"]["fixture-codex"]["container"] = "vm:fixture-machine"
+            source = output / "flota.json"
+            source.write_text(json.dumps(document), encoding="utf-8")
+            run_script("generate-container-aliases.py", "--snapshot", str(source),
+                       "--output", str(output / "container-aliases.json"))
+            run_script("generate-runtime-fleet.py", "--snapshot", str(source),
+                       "--output", str(output / "fleet.json"))
+            self.assertNotIn("fixture-codex", json.loads((output / "container-aliases.json").read_text())["aliases"])
+            self.assertEqual(json.loads((output / "fleet.json").read_text())["aliases"]["fixture-codex"]["container"],
+                             "vm:fixture-machine")
 
     def test_manifest_generation_unlinks_orphans(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

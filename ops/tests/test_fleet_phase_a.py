@@ -13,11 +13,6 @@ OPS_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = OPS_ROOT / "scripts"
 FLEET = OPS_ROOT / "flota.json"
 EXPECTED_BY_HARNESS = {
-    "claude": {"heraclito", "kratos", "salva", "zeus"},
-    "codex": {"atlas", "kant", "socrates", "tales"},
-    "openclaw": {"argos", "gaia", "hegel", "iza", "janus", "jarvis"},
-}
-HOSPITAL_EXPECTED_BY_HARNESS = {
     "openclaw": {"operador"},
     "muse": {"perseo", "teseo"},
 }
@@ -36,15 +31,24 @@ def run_script(name: str, *arguments: str) -> None:
 class FleetPhaseATests(unittest.TestCase):
     def test_current_fleet_reproduces_committed_artifacts_byte_for_byte(self) -> None:
         snapshot = json.loads(FLEET.read_text(encoding="utf-8"))
-        tenants = {row["tenant"] for row in snapshot["fleet"].values()}
-        expected_by_harness = (
-            HOSPITAL_EXPECTED_BY_HARNESS
-            if tenants == {"Hospital"}
-            else EXPECTED_BY_HARNESS
-        )
-        expected_aliases = set().union(*expected_by_harness.values())
+        expected_aliases = set().union(*EXPECTED_BY_HARNESS.values())
         self.assertEqual(set(snapshot["fleet"]), expected_aliases)
-        for harness, aliases in expected_by_harness.items():
+        self.assertEqual(snapshot["placement"], {})
+        self.assertEqual(set(snapshot["systemPrincipals"]), {"console-proxy"})
+        self.assertEqual({row["tenant"] for row in snapshot["fleet"].values()}, {"Hospital"})
+        self.assertEqual({row["room"] for row in snapshot["fleet"].values()}, {"grp.hospital"})
+        self.assertEqual(snapshot["fleet"]["operador"]["role"], "operator")
+        self.assertEqual(snapshot["fleet"]["teseo"]["role"], "agent")
+        self.assertEqual(snapshot["fleet"]["perseo"]["role"], "agent")
+        self.assertEqual(
+            len({row["container"] for row in snapshot["fleet"].values()}),
+            len(expected_aliases),
+        )
+        self.assertEqual(
+            len({row["runtimeStateDirectory"] for row in snapshot["fleet"].values()}),
+            len(expected_aliases),
+        )
+        for harness, aliases in EXPECTED_BY_HARNESS.items():
             self.assertEqual(
                 {alias for alias, row in snapshot["fleet"].items() if row["harness"] == harness},
                 aliases,
@@ -52,7 +56,7 @@ class FleetPhaseATests(unittest.TestCase):
             )
         self.assertEqual(
             {row["harness"] for row in snapshot["fleet"].values()},
-            set(expected_by_harness),
+            set(EXPECTED_BY_HARNESS),
             "un arnés nuevo exige una expectativa explícita",
         )
 

@@ -5,6 +5,7 @@ import {
 import type { HarnessAdapter, RuntimeProfileMeasurement } from "../../contracts/harness.js";
 import type { DurableStore } from "../durable-store.js";
 import type { AdapterLogger, Clock, Delivery, DeliveryEvent } from "../types.js";
+import type { EmissionRuntime } from "../mcp-emission/runtime.js";
 
 export type EventPublisher = (event: DeliveryEvent) => Promise<void>;
 export type ExecutionIntentPublisher = (
@@ -20,6 +21,7 @@ export type ExecutionIntentPublisher = (
 export const DEFAULT_QUEUE_WAIT_TIMEOUT_MS = 6 * 60 * 60_000;
 
 interface AdapterEngineBaseOptions {
+  readonly emission?: EmissionRuntime;
   readonly store: DurableStore;
   readonly harness: HarnessAdapter;
   readonly publish: EventPublisher;

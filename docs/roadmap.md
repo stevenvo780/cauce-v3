@@ -1,6 +1,6 @@
 # Roadmap — qué falta
 
-Este documento no describe cómo funciona el sistema (eso es [arquitectura.md](arquitectura.md)) sino lo que le falta al **producto**, priorizado. Aquí no se afirma el estado de ninguna instalación: eso se acredita con las sondas y los censos de [operacion.md](operacion.md), nunca leyéndolo de un `.md`.
+Este documento no describe cómo funciona el sistema (eso es [arquitectura.md](arquitectura.md)) sino lo que le falta al **producto**, priorizado. Aquí no se afirma el estado de ninguna instalación: eso se acredita con las sondas y los censos de [operacion.md](operacion.md), nunca leyéndolo de un `.md`. La instancia Hospital tiene tres agentes funcionales propios; los quince alias de la flota central son otro censo.
 
 ## 1. Contextos nativos por harness
 
@@ -9,7 +9,7 @@ El defecto que hay que matar: Cauce reinyecta el contexto completo en cada entre
 **Lo que ya está en el árbol.**
 
 - **Una sola tabla de presupuestos, con la unidad de cada arnés.** `PRESUPUESTOS_DE_CONTEXTO` (`packages/protocol/src/ficheros-del-arnes.ts:296-302`) es la casa única de esos hechos; el tope dejó de ser una constante de un arnés incrustada en el generador.
-  - **openclaw**: `TOPES_OPENCLAW`, 60.000 por fichero y 150.000 en total, medidos en unidades UTF-16 (`:277`). Sigue exportado porque el adaptador lo aplica DENTRO del contenedor, donde no hay base de datos que consultar.
+  - **openclaw**: `TOPES_OPENCLAW`, 90.000 por fichero y 200.000 en total, medidos en unidades UTF-16 (`:276`). Sigue exportado porque el adaptador lo aplica DENTRO del contenedor, donde no hay base de datos que consultar.
   - **codex**: defecto de 32 KiB **en bytes UTF-8** (`TOPE_CODEX_POR_DEFECTO_BYTES`, `:292`) que el hecho MEDIDO por alias (`project_doc_max_bytes`, leído del `config.toml` de cada contenedor) sobrescribe siempre, nunca al revés (`:318-328`). Ese número no se siembra en ninguna tabla SQL: duplicaría un hecho medido por alias y divergiría en cuanto alguien editase un `config.toml`.
   - **claude**: entrada presente y sin cifra — sólo rige el techo nativo de 4 MiB de `MAX_CLAUDE_DOCUMENT_BYTES` (`packages/adapter-sdk/src/context/native-profile-context.ts:38`) hasta que haya un número medido. Es pregunta abierta, no invención.
 
@@ -50,11 +50,11 @@ Estado de cada punto de [doctrina-del-dueno.md](doctrina-del-dueno.md) §La visi
 
 | Punto | Estado |
 |---|---|
-| Flota como datos (alta/baja de agentes trivial) | **Hecho** — alta y baja tocando solo BD+CLI; todo lo demás derivado (manifests, units, config de Telegram, aprovisionamiento mTLS). Ver `arquitectura.md` §4 |
+| Flota como datos (alta/baja de agentes trivial) | **En curso** — el snapshot y sus derivados ya existen; el CLI aún imprime el INSERT del alta para ejecución atribuida. Ver [arquitectura.md](arquitectura.md) §4 |
 | Contextos nativos por harness | **Pendiente** — flag apagado, bloqueantes en §1 |
 | Rotación de credenciales fácil / cuotas inteligentes | **Pendiente** — el recolector de cuotas se queda como referencia hasta que el CLI integral (abajo) lo absorba; no se rehace todavía |
 | Permisos dinámicos | **Pendiente** — sin ronda dedicada |
-| Terminal/TUI web desde cualquier dispositivo | **En curso** — el CLI ya opera TUIs vía `ops/guardias/cauce-attach`; falta el acceso web (parte del CLI integral) |
+| Terminal/TUI web desde cualquier dispositivo | **En curso** — la consola ya abre terminal y controla la TUI; faltan convergencia de despliegue, acceso y comprobación por efecto en cada instalación |
 | UI clara multi-socio | **En curso** — consola operativa (`/live`, `/observability`, `/messages`); pendiente el mega-refactor (§4) |
 | Logs de auditoría de comportamiento | **Pendiente** — no existen hoy; objetivo es detectar contaminación de contextos entre instancias |
 
@@ -79,8 +79,8 @@ Estado de cada punto de [doctrina-del-dueno.md](doctrina-del-dueno.md) §La visi
 ## 5. Deuda anotada
 
 - **La poda de `attachments_v1` en `messages.body` no tiene índice para su predicado.** El único índice sobre `messages(created_at)` es parcial sobre `origin IS NOT NULL`, así que en estado estacionario cada ejecución es un recorrido secuencial. Falta la migración con el índice parcial `created_at WHERE body ? 'attachments_v1'`. **Por qué no es un cambio suelto:** toda migración nueva obliga además a enseñarle su versión a `packages/store/test/secret-handoff-layer.ts` — los `down/` de 031 en adelante se niegan a correr mientras haya una migración posterior registrada, así que las suites que revierten la suya tienen que despegar antes las capas de encima. Es tolerable mientras tanto porque el barrido tiene cadencia y cota propias (ver [threat-model.md](threat-model.md)).
-- **`container-aliases.json` y `manifests/` sin fusionar en el snapshot único.** Más de treinta ficheros de `ops/` los parsean por su cuenta (`generate-container-aliases.py`, `rollout_pty_lib.py`, `update-alias-config.py`, `gate-collector.mjs`, `container_ops_digest.py`, `generate-telegram-config.py`, `validate.sh`, …), así que un cambio de forma se paga en todos ellos.
-- **El CLI no hace el INSERT del alta.** No existe subcomando `alta`: el despachador sólo expone `aprovisionar` y `retirar` (`ops/cli/cauce:1439-1440`), y `aprovisionar` cubre las credenciales. El alta en base de datos la sigue **imprimiendo como instrucción** al operador desde dentro de `cmd_aprovisionar` — un INSERT en `agents`+`memberships` y luego regenerar `ops/flota.json` (`ops/cli/cauce:1092`).
+- **`container-aliases.json` y `manifests/` sin fusionar en el snapshot único.** Numerosos ficheros de `ops/` los parsean por su cuenta (`generate-container-aliases.py`, `rollout_pty_lib.py`, `update-alias-config.py`, `gate-collector.mjs`, `container_ops_digest.py`, `generate-telegram-config.py`, `validate.sh`, …), así que un cambio de forma se paga en todos ellos.
+- **El CLI no hace el INSERT del alta.** `aprovisionar` cubre las credenciales, pero sigue **imprimiendo como instrucción** el alta en `agents`+`memberships` y la regeneración del snapshot; comprobar el contrato vigente de `ops/cli/cauce` antes de automatizarlo.
 - **`ops/tests/gate-collector.test.mjs` y su gemelo `ops/tests/fake-gate-collector.mjs`** siguen siendo la única cobertura de lo suyo, igual que el resto de los tests de `ops/` que un censo llamó huérfanos: la nota de «no los limpies» sigue vigente.
 - **`fleet_source.py` y su watchdog no están versionados**: viven instalados fuera del árbol, así que ningún gate del repo los ve.
 
@@ -99,3 +99,9 @@ Cada una tiene un diseño propuesto y ninguna se aplica a ciegas.
 9. **Sesión nativa inexistente = crear una nueva.** Cualquier renovación de TUI o limpieza deja mapeos fantasma en el `sessions.json` del arnés; hoy el adaptador muere tres veces antes de que alguien lo limpie a mano.
 10. **Re-medición en caliente de los hechos del runtime.** El `runtime_facts` del bundle del pty-agent se carga UNA vez al arrancar (`ops/pty-agent/cauce_pty_agent/runtime_facts.py`) y viaja en el HELLO (`ops/pty-agent/cauce_pty_agent/agent.py`), así que cualquier reinicio del adaptador deja la medición obsoleta y la consola responde 503 al escribir un perfil («el runtime no publicó hechos medidos del alias»). El resto del pipeline relay→gateway ya refresca presencia periódicamente: el único eslabón congelado es éste. Diseño: portar la medición del launcher a una función del agente, añadir `state_directory` al bundle, re-medir antes del HELLO y comprobar en el bucle de mantenimiento forzando reconexión SÓLO si cambian los hechos Y no hay sesiones abiertas; **preservar la invariante de generación** (nunca adoptar una nueva) y no inventar panel tmux. Mientras no exista, la regla operativa es la de [operacion.md](operacion.md): tras reiniciar un adaptador, reiniciar su PTY.
 11. **Modelos del arnés que no resuelven.** Un alias cuya configuración de compactación apunta a un modelo que el registro del arnés no declara pierde el turno entero ya computado. El parche propio de `ops/patches/` degrada la compactación a warning, no la arregla: hay que declarar los modelos en el registro del arnés o retirar los alias no resolubles de sus defaults. Y el parche sólo protege donde está aplicado — aplicarlo a medias es el escenario contra el que advierte `ops/patches/README.md`.
+
+## 7. Ficheros grandes por referencia
+
+La migración 042, el almacén `blobs_data`, `PUT/GET /v3/blobs` y la materialización del adaptador ya están en `dev`; [ficheros-por-referencia.md](ficheros-por-referencia.md) fija el contrato. Falta verificar el bundle activo de cada alias antes de entregarle una referencia nueva y programar la poda de blobs con retención por instancia. Un adaptador viejo rechaza una entrada `blob:`.
+
+El envío de ficheros de alrededor de 1 GB por Telegram sigue pendiente: requiere Local Bot API Server, adaptar ingreso y egreso del bridge a `cauce-blob:` y acreditar ida y vuelta con el mismo sha256. El Bot API público conserva sus topes de 20 MB para descarga y 50 MB para envío. Esta capacidad no se deduce de que el gateway ya almacene blobs.

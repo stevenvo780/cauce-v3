@@ -23,8 +23,8 @@ DEFAULT_OUT = OPS_DIR / "flota.json"
 DEFAULT_PLACEMENT = OPS_DIR / "flota-fisica.json"
 PRIVATE_POSTGRES = pathlib.Path(__file__).with_name("private-postgres-command.py")
 CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
-PLACEMENT_KEYS = frozenset({"dockerHost", "registryContainer", "healthContainer"})
-DOCKER_HOSTS = frozenset({"local", "kratos"})
+PLACEMENT_KEYS = frozenset({"dockerHost", "registryContainer", "healthContainer", "systemdUser"})
+PLACEMENT_NAME = re.compile(r"^[a-z][a-z0-9.-]*$")
 READ_ONLY_OPTIONS = "-c default_transaction_read_only=on"
 
 AGENT_FIELDS = frozenset(
@@ -123,9 +123,9 @@ def validate_placement(value: Any) -> dict[str, dict[str, str]]:
         if unknown:
             raise SnapshotError(f"placement.{alias} has unsupported keys: {unknown}")
         normalized_entry = {key: _text(value, f"placement.{alias}.{key}") for key, value in entry.items()}
-        docker_host = normalized_entry.get("dockerHost")
-        if docker_host is not None and docker_host not in DOCKER_HOSTS:
-            raise SnapshotError(f"placement.{alias}.dockerHost must be one of {sorted(DOCKER_HOSTS)}")
+        for key in ("dockerHost", "systemdUser"):
+            if key in normalized_entry and PLACEMENT_NAME.fullmatch(normalized_entry[key]) is None:
+                raise SnapshotError(f"placement.{alias}.{key} must be a safe name")
         normalized[alias] = normalized_entry
     return normalized
 

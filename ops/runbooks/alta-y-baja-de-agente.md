@@ -156,7 +156,7 @@ El aprovisionamiento emite y publica de forma atómica (sin imprimir secretos en
    - Creación del directorio `/etc/cauce-v3/container-pki/<alias>/` con certificados y token de acceso.
    - Creación y configuración de `/etc/cauce-v3/container-aliases/<alias>.env` con las rutas `CAUCE_<ALIAS>_*_PATH` e identificadores del arnés.
 
-5. **Token de Bot de Telegram**:
+5. **Token de Bot de Telegram** (ÚNICA credencial humana del alta):
    - Solicitud interactiva/configuración del bot token generado en BotFather.
    - Registro en `/etc/cauce-v3/telegram-runtime/config.json`.
    - Verificación de permisos `0600`, propiedad correcta y contenido no vacío.

@@ -11,6 +11,7 @@ Si una instalación conserva un release anterior fuera del árbol (con su propio
 **Precondiciones que `deploy/deploy.sh` verifica y aborta si fallan:**
 - `git status` limpio y `HEAD == origin/main` (`CAUCE_DEPLOY_EXPECTED_GIT_REF`).
 - Backup <24h acreditado por `ops/scripts/host-backup-monitor.sh` (o confirmación explícita si no lo hay).
+- Con `CAUCE_BLOB_API_ENABLED=1`, el backup debe acreditar tabla y volumen de blobs posteriores a la migración 042 y una restauración aislada; este control no admite omisión. Desplegar primero con `0`, respaldar el volumen nuevo y sólo entonces activar la API.
 - `CAUCE_TERMINAL_RELAY_INSTANCE_ID` en `prod.env` = sha256 del DER del certificado cliente del relay (el relay no arranca si no coincide).
 - `docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml config` renderiza sin error.
 - Si la migración 034 sigue pendiente: 0 filas en `terminal_sessions WHERE closed_at IS NULL AND revoked_at IS NULL`. Si ya está aplicada, las terminales abiertas son normales; no revocarlas para superar este control.
@@ -79,6 +80,19 @@ systemctl --user daemon-reload && systemctl --user enable --now cauce-v3-contain
 **Aviso de orden**: `enabled=false` en BD saca al agente del enrutado de entregas, pero el `hello`/lease del gateway se autoriza además por certificado mTLS — un agente dado de baja en BD puede seguir conectándose hasta que `retirar` revoca su credencial. No dar el UPDATE por baja completa sin correr `retirar`.
 
 ## 3. Diagnóstico y recuperación de un adaptador caído
+
+`cauce <alias>` resuelve primero `~/.config/cauce-v3/alias-host.tsv` del usuario real de la
+cuenta. Cada alias presente debe tener un único registro de dos campos: alias y `local`, `vps` o
+`ssh:usuario@host`. El destino SSH ejecuta el CLI instalado en el home real de esa cuenta;
+no busca el alias en el inventario local ni abre otra conversación como alternativa. Una
+ruta presente desconocida o duplicada, o un mapa existente ilegible, aborta el comando. Por
+compatibilidad, un mapa inexistente o un alias ausente se resuelve como local. El mapa de
+acceso no sustituye el inventario del bus: verificar el destino y la respuesta del modelo.
+
+Si el alias tiene sesión compartida habilitada y no puede abrirse, `cauce <alias>` termina con
+error: no abre una terminal «APARTE». El consumidor tampoco ejecuta por otra conversación.
+Recuperar la TUI canónica exige acreditar su contexto; no elegir el último historial ni crear
+uno vacío para sustituir una conversación desconocida. Ver [contrato de recuperación](adapter-sdk.md#reanudación-exacta-de-la-tui-claude).
 
 ```bash
 ops/cli/cauce <alias> estado          # columna ADAPTADOR: activo/failed/inactive

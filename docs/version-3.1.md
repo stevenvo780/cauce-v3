@@ -6,6 +6,11 @@ cambia para quien opera, despliega o revisa. El detalle de cada cambio vive en l
 y en los ADR 007, 008 y 009. Lo que queda después del cierre —decisiones fuera del árbol, recortes
 del plan, notas de las reseñas y lo no probado— está en `docs/v3.1-pendientes.md`.
 
+Este es el contrato de la versión 3.1, compartido por las instalaciones. El historial central no
+acredita un despliegue de Hospital: esa instancia tiene exactamente tres agentes funcionales
+(`operador`, `teseo`, `perseo`) y su propio smoke. Los blobs por referencia de la migración 042 son
+una ampliación posterior documentada en [ficheros-por-referencia.md](ficheros-por-referencia.md).
+
 ## Qué cambia, por capacidad
 
 **Agentes que se pasan ficheros de cualquier tipo.** El borde de delegación transporta
@@ -81,8 +86,9 @@ versión posterior aplicada: las capas por migración son lo que permite bajar u
 | `CAUCE_REDACT_PUBLISH` | gateway | encendida | redacción en dos fases al publicar; sólo se apaga a propósito |
 | `CAUCE_AGENT_WORKSPACE` | adaptadores | workspace declarado del alias | raíz de adjuntos y del modo aparte del CLI |
 
-La grabación de una TUI contiene lo que el agente tenía en pantalla: material sensible. No hay
-poda: cuánto se guarda y quién lo borra es una decisión de operación todavía abierta (abajo).
+La grabación de una TUI contiene lo que el agente tenía en pantalla: material sensible. El árbol
+ya incluye `sweepOldRecordings` con retención de 30 días para ficheros `.cast`, pero no hay un
+llamador de producción verificado; activar y comprobar esa poda sigue pendiente (abajo).
 
 ## Cómo se despliega
 
@@ -109,15 +115,17 @@ sobre él, y sólo eso:
 6. Dejar `CAUCE_TERMINAL_RW_ENABLED=0` y `CAUCE_NATIVE_PROFILE_CONTEXT` apagado; encender el
    modo escribible alias a alias en `grants.json` (sin `"*"`) sólo tras fijar
    `CAUCE_TERMINAL_RECORDING_DIR` y la retención de grabaciones. Una instalación puede acabar con el
-   interruptor en `1` y un directorio de grabaciones configurado. Esto no acredita concesiones por alias ni
-   retención: esa decisión sigue abierta abajo.
+   interruptor en `1` y un directorio de grabaciones configurado.
+   Esto no acredita concesiones por alias ni retención: esa decisión sigue abierta.
 7. Escribir la fila de `deploy/HISTORIAL.md`.
 
-`deploy/deploy.sh` exige árbol limpio y `HEAD` igual a `origin/main`, y escribe siempre «smoke OK»:
+`deploy/deploy.sh` exige árbol limpio y `HEAD` igual a `CAUCE_DEPLOY_EXPECTED_GIT_REF` (por defecto
+`origin/main`), y escribe siempre «smoke OK»:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
-registra la fila, y ese commit es también el que actualiza estos documentos. La última fila
-registrada es la de `f96382d7`; lo que queda por comprobar por efecto después de una ventana de
-despliegue está en `docs/v3.1-pendientes.md` §1, «Deuda de despliegue».
+registra la fila, y ese commit es también el que actualiza estos documentos. La última fila del
+historial central al integrar este texto es `60788e41` (8 de septiembre, smoke OK); lo que queda por
+comprobar por efecto después de una ventana de despliegue está en `docs/v3.1-pendientes.md` §1,
+«Deuda de despliegue». Hospital registra y verifica su despliegue por separado.
 
 ## Cómo se verifica
 
@@ -132,8 +140,9 @@ pnpm qa:layout                                    # maquetado 1080p
 
 ## Preguntas abiertas
 
-- **Retención de grabaciones de TUI.** Se escriben 0600 con tope por sesión y nadie las borra.
-  ¿Cuánto tiempo, en qué volumen, quién poda?
+- **Retención de grabaciones de TUI.** El código fija 30 días para `.cast` regulares de primer nivel
+  y evita symlinks; falta cablear el barrido, verificar su ejecución en cada instalación y definir
+  el destino de cualquier grabación fuera de ese alcance.
 - **Inventario.** Un contenedor que no esté en `ops/flota.json` es invisible para la guardia de
   colisiones: no puede ver dos contenedores que monten el mismo directorio de configuración del
   arnés. Añadirlo al inventario es la única forma de que lo vea (D8: sin tablas a mano).

@@ -99,6 +99,7 @@ MAX_EDAD_MIN = 60
 try:
     with open(REMOTO, encoding="utf-8") as fh:
         doc = json.load(fh)
+    remote_host = doc.get("host", "kratos")
     edad = (ahora - datetime.datetime.fromisoformat(doc["ts"])).total_seconds() / 60
     for f in doc.get("filas", []):
         estado, detalle = f.get("estado", "?"), f.get("detalle", "")
@@ -110,15 +111,15 @@ try:
             problemas += 1
         h = f.get("huella")
         if h and h not in ("-", "?", "SIN-RT"):
-            credential_locations.append((h, f["etiqueta"], f["contenedor"] + "@kratos"))
-        filas.append((h or "SIN-RT", f["etiqueta"], f["contenedor"] + "@kratos", estado, detalle))
+            credential_locations.append((h, f["etiqueta"], f["contenedor"] + "@" + remote_host))
+        filas.append((h or "SIN-RT", f["etiqueta"], f["contenedor"] + "@" + remote_host, estado, detalle))
 except FileNotFoundError:
     problemas += 1
-    filas.append(("?", "claude/salva", "ws-isa@kratos", "SIN DATOS",
-                  f"kratos nunca empujo {REMOTO}: salva esta SIN VIGILANCIA"))
+    filas.append(("?", "claude/salva", "ws-isa@remoto", "SIN DATOS",
+                  f"el host remoto no publico {REMOTO}: salva esta SIN VIGILANCIA"))
 except Exception as e:
     problemas += 1
-    filas.append(("?", "claude/salva", "ws-isa@kratos", "ILEGIBLE",
+    filas.append(("?", "claude/salva", "ws-isa@remoto", "ILEGIBLE",
                   f"{type(e).__name__}: {str(e)[:60]}"))
 
 print(f"== credenciales de la flota == {ahora.strftime('%Y-%m-%d %H:%M')} UTC")

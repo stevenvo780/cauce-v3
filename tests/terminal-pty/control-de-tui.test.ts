@@ -28,7 +28,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 
 import { createSelfSignedCert, type SelfSignedCert } from './certs.mjs';
-import { startFakeGateway, type FakeGatewayHandle } from './fake-gateway.mjs';
+import { startFakeGateway, type FakeGatewayAuditEntry, type FakeGatewayHandle } from './fake-gateway.mjs';
 import { startFakeAgent, type FakeAgentHandle, type FakeAgentOptions } from './fake-pty-agent.mjs';
 import {
   CLOSE_CODE, deriveAliasKey, mintTicket, ticketPayload as protocolTicketPayload,
@@ -268,6 +268,16 @@ async function spooledReport(file: string, sessionId: string, timeoutMs = 30_000
     const found = readSpool(file).get(sessionId);
     if (found !== undefined) return found;
     if (Date.now() > deadline) throw new Error(`no close report was spooled for ${sessionId}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+async function receivedReport(gateway: FakeGatewayHandle, sessionId: string): Promise<FakeGatewayAuditEntry> {
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const found = gateway.auditOf('terminal.session.close').find((row) => row.session_id === sessionId);
+    if (found !== undefined) return found;
+    if (Date.now() > deadline) throw new Error(`no close report was received for ${sessionId}`);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
@@ -562,7 +572,7 @@ describe.skipIf(relay === null)('taking control of a TUI, with a recording direc
     // The double treats TERMINAL_RESPONSE as an unexpected tag and drops its socket, so the session
     // dies as `agent_offline` — never as the 4400 the mode gate would have produced on its own.
     expect((await writableClosed).code).toBe(CLOSE_CODE.agent_offline);
-    const forwarded = await spooledReport(circuit.spoolFile, writable.sid);
+    const forwarded = await receivedReport(circuit.gateway, writable.sid);
     expect(forwarded.reason).not.toBe('terminal_response_forbidden');
     expect(forwarded.bytes_in).toBe(Buffer.byteLength(PRIMARY_DA));
 
@@ -574,7 +584,7 @@ describe.skipIf(relay === null)('taking control of a TUI, with a recording direc
     const shellClosed = closedWith(second.socket);
     second.socket.send(JSON.stringify({ type: 'terminal_response', data: PRIMARY_DA }));
     expect((await shellClosed).code).toBe(CLOSE_CODE.protocol_error);
-    const refused = await spooledReport(circuit.spoolFile, shell.sid);
+    const refused = await receivedReport(circuit.gateway, shell.sid);
     expect(refused.reason).toBe('terminal_response_forbidden');
     expect(refused.bytes_in).toBe(0);
   });
@@ -589,7 +599,7 @@ describe.skipIf(relay === null)('taking control of a TUI, with a recording direc
     socket.send(JSON.stringify({ type: 'input', data: 'x' }));
     expect(await stream.nextControl()).toMatchObject({ type: 'closed', reason: 'input_forbidden' });
     expect((await closed).code).toBe(CLOSE_CODE.protocol_error);
-    const report = await spooledReport(circuit.spoolFile, payload.sid);
+    const report = await receivedReport(circuit.gateway, payload.sid);
     expect(report.reason).toBe('input_forbidden');
     // A mode with no keyboard is never recorded, so the refusal leaves no file behind.
     expect(report.recording_sha256).toBeUndefined();
@@ -641,7 +651,7 @@ describe.skipIf(relay === null)('taking control of a TUI, with a recording direc
     const end = await closed;
     expect(end.code).toBe(CLOSE_CODE.control_released);
     expect(end.reason).toBe('control_released');
-    const report = await spooledReport(circuit.spoolFile, payload.sid);
+    const report = await receivedReport(circuit.gateway, payload.sid);
     circuit.gateway.restore();
 
     expect(report.reason).toBe('control_released');
@@ -685,7 +695,7 @@ describe.skipIf(relay === null)('taking control of a TUI with no recording direc
     const end = await closed;
     expect(end.code).toBe(CLOSE_CODE.internal_error);
     expect(end.reason).toBe('recording_unavailable');
-    expect((await spooledReport(circuit.spoolFile, payload.sid)).reason).toBe('recording_unavailable');
+    expect((await receivedReport(circuit.gateway, payload.sid)).reason).toBe('recording_unavailable');
     expect(existsSync(circuit.recordingDir)).toBe(false);
 
     // Failing closed is about the writable TUI, not about the relay: a plain shell is untouched.

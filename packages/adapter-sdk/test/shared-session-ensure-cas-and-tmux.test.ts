@@ -3,7 +3,6 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
-import type { CommandRunner } from "../src/sdk/types.js";
 import { PasteSessionRunner } from "../src/shared-session/paste-runner.js";
 import { codexTranscript, type RolloutLine } from "../src/shared-session/rollout.js";
 import { ensureSharedSession } from "../src/shared-session/session.js";
@@ -17,14 +16,13 @@ import {
 import type { ResumeSpec } from "../src/shared-session/types.js";
 import {
   FakeTmux,
-  RecordingFallback,
   TmuxController,
   TmuxResult,
   adapterFor,
-  envelopeText,
   exactTmuxPaneState,
   exactTmuxPaneStateViaList,
   execute,
+  expectSharedTuiUnavailable,
   freshState,
 } from "./shared-session-fixtures.js";
 
@@ -55,7 +53,7 @@ async function codexWorkspace(name: string): Promise<{
 }
 
 function codexRunner(
-  options: { alias: string; codexHome: string; tmux: FakeTmux; fallback: CommandRunner },
+  options: { alias: string; codexHome: string; tmux: FakeTmux },
 ): PasteSessionRunner<RolloutLine> {
   options.tmux.sessionName = `cauce-${options.alias}`;
   if (options.tmux.sessionOptions.size === 0) options.tmux.paneStartCommand = "exec codex";
@@ -65,7 +63,6 @@ function codexRunner(
     workspace: "/workspace",
     transcript: codexTranscript(options.codexHome),
     tmux: options.tmux,
-    fallback: options.fallback,
     sleep: immediate,
     acquireTimeoutMs: 30,
     turnTimeoutMs: 2_000,
@@ -99,21 +96,13 @@ test("el adaptador degrada con razon explicita ante harness incompatible", async
   const tmux = new FakeTmux();
   tmux.sessionOptions.set("@cauce_alias", "socrates");
   tmux.sessionOptions.set("@cauce_harness", "claude");
-  const fallback = new RecordingFallback([
-    JSON.stringify({ type: "thread.started", thread_id: "fallback" }),
-    JSON.stringify({
-      type: "item.completed",
-      item: { type: "agent_message", text: envelopeText("camino seguro") },
-    }),
-  ].join("\n"));
-  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux });
   const adapter = await adapterFor(runner, state, "socrates", "codex");
 
-  const result = await execute(adapter);
+  const error = await expectSharedTuiUnavailable(execute(adapter));
 
-  assert.equal(fallback.calls, 1);
-  assert.match(result.reply ?? "", /session_harness_mismatch/u);
-  assert.match(result.reply ?? "", /conservó intacta/u);
+  assert.match(error.message, /session_harness_mismatch/u);
+  assert.match(error.message, /conservó intacta/u);
   assert.equal(tmux.sessionExists, true);
   assert.equal(tmux.used("kill-session"), false);
 });

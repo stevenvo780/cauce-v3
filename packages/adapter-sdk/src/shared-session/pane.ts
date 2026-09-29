@@ -60,8 +60,15 @@ export function inputBoxState(pane: string | undefined): InputBoxState {
   };
 }
 
-/** Pattern that indicates the TUI is actively generating. */
-const IN_FLIGHT_MARK = /\besc(?:ape)?\s+to\s+interrupt\b/iu;
+const IN_FLIGHT_MARKS: readonly RegExp[] = [
+  /\besc(?:ape)?\s+to\s+interrupt\b/iu,
+  /\bctrl\+b\b[^\n]*\bto\s+run\s+in\s+background\b/iu,
+  /↓\s*[\d.]+\s*k?\s+tokens\b/iu,
+];
+
+function inFlightMark(line: string): boolean {
+  return IN_FLIGHT_MARKS.some((mark) => mark.test(line));
+}
 
 /** Determines whether the TUI is currently generating a reply. */
 export function turnInFlight(pane: string | undefined): boolean {
@@ -70,11 +77,10 @@ export function turnInFlight(pane: string | undefined): boolean {
   let end = lines.length;
   while (end > 0 && (lines[end - 1] ?? "").trim() === "") end -= 1;
   return lines.slice(Math.max(0, end - IN_FLIGHT_WINDOW), end)
-    .some((line) => IN_FLIGHT_MARK.test(line));
+    .some((line) => inFlightMark(line));
 }
 
-/** How many lines around the input box count as the "status band". */
-const IN_FLIGHT_WINDOW = 6;
+const IN_FLIGHT_WINDOW = 12;
 
 /**
  * The contents of the last prompt line, with the cursor and box borders removed.

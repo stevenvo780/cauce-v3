@@ -60,7 +60,8 @@ export abstract class JobsRepository extends ObservabilityRepository {
       const fairness = await client.query<{ interactive_streak: number }>(
         `SELECT interactive_streak FROM job_lane_fairness WHERE scope=$1 FOR UPDATE`, [scope]
       );
-      let interactiveStreak = fairness.rows[0]?.interactive_streak ?? 0;
+      const rachaInicial = fairness.rows[0]?.interactive_streak ?? 0;
+      let interactiveStreak = rachaInicial;
       const jobs: JobClaim[] = [];
       for (let index = 0; index < Math.min(limit, 100); index += 1) {
         const availability = await client.query<{ interactive: boolean; batch: boolean }>(
@@ -86,10 +87,13 @@ export abstract class JobsRepository extends ObservabilityRepository {
         jobs.push(job);
         interactiveStreak = lane === 'interactive' ? interactiveStreak + 1 : 0;
       }
-      await client.query(
-        `UPDATE job_lane_fairness SET interactive_streak=$2,updated_at=now() WHERE scope=$1`,
-        [scope, interactiveStreak]
-      );
+      // Avoid writing the unchanged streak on each empty dispatcher poll.
+      if (interactiveStreak !== rachaInicial) {
+        await client.query(
+          `UPDATE job_lane_fairness SET interactive_streak=$2,updated_at=now() WHERE scope=$1`,
+          [scope, interactiveStreak]
+        );
+      }
       return jobs;
     });
   }

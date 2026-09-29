@@ -12,6 +12,7 @@
     "session_scope": "not applicable (stateless harness)"
   },
   "capabilities": {
+    "mcp_emit": true,
     "protocol_version": "3.0",
     "harness": "hermes",
     "structured_output": true,

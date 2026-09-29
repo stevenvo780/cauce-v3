@@ -1,6 +1,6 @@
 # Contexto del repositorio para agentes
 
-Cauce V3: bus de mensajería durable y multi-tenant entre agentes de IA en CLI (Claude Code, Codex, OpenClaw), con consola web de operador y puente Telegram. PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull* — el adapter de cada agente reclama sus entregas con fencing (`claim_token`+`epoch`). El `dispatcher` no reparte nada: es el segador de reintentos.
+Cauce V3: bus de mensajería durable y multi-tenant entre agentes de IA en CLI (Claude Code, Codex, OpenClaw, Muse y otros arneses integrados), con consola web de operador y puente Telegram. PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull* — el adapter de cada agente reclama sus entregas con fencing (`claim_token`+`epoch`). El `dispatcher` no reparte nada: es el segador de reintentos.
 
 **El árbol de este repo ES material de producción.** Prometheus, OTel y postgres montan ficheros directamente desde aquí. `main` es la línea publicada, el último commit desplegado se consulta en `deploy/HISTORIAL.md` y `dev` es el carril de integración. No es un entorno de desarrollo aislado.
 
@@ -13,9 +13,12 @@ Cauce V3: bus de mensajería durable y multi-tenant entre agentes de IA en CLI (
 | `docs/operacion.md` | cómo desplegar, dar de alta/baja un agente, diagnosticar, hacer backup |
 | `docs/roadmap.md` | qué falta, priorizado |
 | `ops/flota.json` (+ `docs/arquitectura.md` §4) | la flota como datos: el snapshot canónico del que se generan alias, contenedores y manifests |
+| `docs/flota-y-participantes.md` | separación Hospital/central y los cinco recorridos esenciales del producto |
 | `ordenes/00-PROTOCOLO.md` | cómo conviven varias instancias en `dev` sin pisarse — LÉELO antes de tocar nada |
 
-Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threat-model.md` (amenazas y controles), `docs/grafo.md` (mapa de dependencias, generado con `pnpm grafo`), `docs/consola.md` (consola web del operador), `docs/telegram.md` (puente Telegram), `docs/adapter-sdk.md` (SDK del consumidor durable), `docs/calidad-y-gates.md` (sistema de calidad y gates).
+Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threat-model.md` (amenazas y controles), `docs/grafo.md` (mapa de dependencias, generado con `pnpm grafo`), `docs/consola.md` (consola web del operador), `docs/telegram.md` (puente Telegram), `docs/adapter-sdk.md` (SDK del consumidor durable), `docs/ficheros-por-referencia.md` (blobs), `docs/parametros.md` (parámetros del orquestador) y `docs/calidad-y-gates.md` (gates).
+
+El snapshot `ops/flota.json` de este checkout pertenece a **Hospital**: exactamente tres agentes funcionales, `operador` (director, no desarrolla), `teseo` (backend) y `perseo` (frontend). El director delimita, delega desarrollo, revisa e integra, y responde al humano. Teseo y Perseo también desarrollan Praxis en clones separados del CRM, con datos sintéticos y una incidencia por turno; el operador sólo revisa e integra sus entregas. Cada agente conserva estado, workspace, contexto, credenciales y sesión independientes. Los contenedores de infraestructura no cuentan como agentes. La flota central de Steven se opera como otra instancia; sus quince alias no sustituyen este snapshot ni son la cardinalidad del smoke de Hospital.
 
 ## Regla 0
 
@@ -26,7 +29,7 @@ Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threa
 - **Efecto demostrado.** Nada está "hecho" sin pegar la salida del gate; un despliegue no está hecho sin mostrar el efecto real contra el sistema vivo.
 - **Revisor ≠ autor.** Todo sector tiene un dueño de escritura por ronda y un revisor que no es su autor; ninguna instancia se autoaprueba.
 - **Trabajo en `dev`, publicación de `main` por el dueño.** Prohibido crear ramas de tarea. Convivencia por sector + `git add` solo de rutas propias + commit siempre con pathspec, nunca `-a` ni `add -A`. Cambiar o publicar `main` requiere autorización explícita del dueño.
-- **La flota corre como root.** Es el entorno real del host de la flota: no se cablean guardias anti-root ni se chownea para "corregirlo"; el gate y el CI nocturno también corren como root. Única excepción: `pnpm qa:runtime-packaging` valida ownership y exige usuario normal.
+- **Usuarios de ejecución por alias.** Cada alias conserva el `user` de `ops/flota.json` y su estado nativo. El despliegue central puede ejecutar tareas de root, pero los builds del workspace usan su propietario y `pnpm qa:runtime-packaging` exige usuario normal. No se cambia el propietario de perfiles o sesiones para acomodar un gate.
 - **GitHub Actions prohibido.** El gate completo corre en el propio host (`cauce-v3-ci-local.timer`), no en un servicio pagado.
 - **Idioma: `.md` en español, código en inglés.** Identificadores y comentarios exportados en inglés; toda la documentación de proyecto en español.
 - **Comentarios sin narrativa, sin fechas, sin nombres.** Solo restricciones que el código no puede expresar por sí solo. Lo que se poda: funciones sin propósito claro, sin nombre que describa qué hacen, repetidas en vez de reutilizadas, sin patrón de organización consistente, sobre-ingeniería innecesaria.

@@ -273,8 +273,7 @@ export function verifyManagedContextEdit(
  * `openclaw` are agent-managed and are not overwritten if they exist.
  */
 
-/** Per-file and total size caps for openclaw, measured in UTF-16 units. */
-export const TOPES_OPENCLAW = { porFichero: 60_000, total: 150_000 } as const;
+export const TOPES_OPENCLAW = { porFichero: 90_000, total: 200_000 } as const;
 
 export type UnidadDeTope = "utf16_strictest" | "utf8_bytes";
 

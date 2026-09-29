@@ -5,7 +5,6 @@ import { resolve } from "node:path";
 import test from "node:test";
 import {
   ATOMIC_STATE_FILES,
-  CANONICAL_OPEN_CODE_SESSION_FILE,
   DurableStore,
   SHARED_TUI_POINTER_FILE,
 } from '../src/sdk/durable-store.js';
@@ -126,7 +125,7 @@ test("SIGKILL recovery is deterministic at every atomic artifact window", async 
       `${JSON.stringify({
         version: 1,
         sessions: {
-          [`opencode:kant:${scopeA}`]: {
+          [`opencode:sample:${scopeA}`]: {
             native_id: "ses_after_committed_window",
             initialized: true,
           },
@@ -136,25 +135,6 @@ test("SIGKILL recovery is deterministic at every atomic artifact window", async 
     "fencing.json": [
       `${JSON.stringify({ version: 1, epoch: 1 })}\n`,
       `${JSON.stringify({ version: 1, epoch: 2 })}\n`,
-    ],
-    [CANONICAL_OPEN_CODE_SESSION_FILE]: [
-      `${JSON.stringify({
-        version: 1,
-        state: "unavailable",
-        alias: "kant",
-        harness: "opencode",
-        scope_key: null,
-        session_id: null,
-        reason: "missing",
-      })}\n`,
-      `${JSON.stringify({
-        version: 1,
-        state: "active",
-        alias: "kant",
-        harness: "opencode",
-        scope_key: scopeA,
-        session_id: "ses_after_commit",
-      })}\n`,
     ],
   };
   const windows: readonly AtomicCrashWindow[] = ["tmp", "backup-tmp", "backup", "committed"];

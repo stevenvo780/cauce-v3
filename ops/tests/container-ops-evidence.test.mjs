@@ -130,13 +130,11 @@ assert.match(ignoredBackupCheck.stdout, /ignored-backup-excluded-new-and-tracked
 const rootlessList = spawnSync("python3", [digestScript, "--rootless", "--list"], { encoding: "utf8" });
 assert.equal(rootlessList.status, 0, rootlessList.stderr);
 const rootlessCovered = new Set(rootlessList.stdout.trim().split("\n"));
-const aliasInventory = JSON.parse(await readFile(path.join(ops, "container-aliases.json"), "utf8")).aliases;
-const representativeAlias = Object.hasOwn(aliasInventory, "operador")
-  ? "operador"
-  : Object.keys(aliasInventory).sort()[0];
-assert(representativeAlias, "container alias inventory must not be empty");
-assert(rootlessCovered.has(`generated/container-systemd/rootless/cauce-v3-container-${representativeAlias}.service`));
-assert(rootlessCovered.has(`generated/container-systemd/rootless/configs/${representativeAlias}.env.example`));
+const containerAliases = Object.keys(JSON.parse(await readFile(path.join(ops, "container-aliases.json"), "utf8")).aliases);
+for (const alias of containerAliases) {
+  assert(rootlessCovered.has(`generated/container-systemd/rootless/cauce-v3-container-${alias}.service`));
+  assert(rootlessCovered.has(`generated/container-systemd/rootless/configs/${alias}.env.example`));
+}
 assert(rootlessCovered.has("scripts/pin-container-release.py"));
 const rootlessCheck = spawnSync("python3", [digestScript, "--rootless", "--check"], { encoding: "utf8" });
 assert.equal(rootlessCheck.status, 0, `${rootlessCheck.stdout} ${rootlessCheck.stderr}`);
@@ -150,9 +148,7 @@ const rootless = path.join(ops, "generated/container-systemd/rootless");
  * Tied to the registry, the test keeps catching what matters —a missing unit— and stops asking
  * to be edited every time the fleet grows.
  */
-const aliasRegistrados = Object.keys(
-  aliasInventory,
-).length;
+const aliasRegistrados = containerAliases.length;
 assert.equal(
   (await readdir(rootless)).filter((name) => /^cauce-v3-container-.*\.service$/u.test(name)).length,
   aliasRegistrados,
@@ -163,17 +159,20 @@ assert.equal(
   aliasRegistrados,
   "hay un alias registrado sin config de ejemplo rootless",
 );
-const rootlessUnit = await readFile(path.join(rootless, `cauce-v3-container-${representativeAlias}.service`), "utf8");
-assert(!/^User=/mu.test(rootlessUnit), "systemd user unit must not set User=");
-assert.match(rootlessUnit, /^WantedBy=default\.target$/mu);
-assert.match(rootlessUnit, new RegExp(`^ExecStart=%h/\\.local/share/cauce-v3/ops/scripts/container-adapter-supervisor\\.sh start ${representativeAlias}$`, "mu"));
-assert.match(rootlessUnit, /^Environment=CAUCE_CONTAINER_LOCK_ROOT=%t\/cauce-v3$/mu);
-assert.match(rootlessUnit, /^RestartPreventExitStatus=2 73 78$/mu);
-assert.match(rootlessUnit, /^RestartForceExitStatus=70$/mu);
-const rootlessConfig = await readFile(path.join(rootless, `configs/${representativeAlias}.env.example`), "utf8");
-assert.match(rootlessConfig, /^BUNDLE_RELEASE=REPLACE_WITH_IMMUTABLE_RELEASE_NAME$/mu);
-assert.doesNotMatch(rootlessConfig, /^BUNDLE_CURRENT=/mu);
-assert.match(rootlessConfig, new RegExp(`^PKI_DIR=/home/dev/\\.config/cauce-v3/container-pki/${representativeAlias}$`, "mu"));
+for (const alias of containerAliases) {
+  const rootlessUnit = await readFile(path.join(rootless, `cauce-v3-container-${alias}.service`), "utf8");
+  assert(!/^User=/mu.test(rootlessUnit), "systemd user unit must not set User=");
+  assert.match(rootlessUnit, /^WantedBy=default\.target$/mu);
+  assert(rootlessUnit.split("\n").includes(`ExecStart=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh start ${alias}`));
+  assert.match(rootlessUnit, /^Environment=CAUCE_CONTAINER_LOCK_ROOT=%t\/cauce-v3$/mu);
+  assert.match(rootlessUnit, /^RestartPreventExitStatus=2 73 78$/mu);
+  assert.match(rootlessUnit, /^RestartForceExitStatus=70$/mu);
+  const rootlessConfig = await readFile(path.join(rootless, `configs/${alias}.env.example`), "utf8");
+  assert.match(rootlessConfig, /^BUNDLE_RELEASE=REPLACE_WITH_IMMUTABLE_RELEASE_NAME$/mu);
+  assert.doesNotMatch(rootlessConfig, /^BUNDLE_CURRENT=/mu);
+  assert(rootlessConfig.split("\n").includes(`PKI_DIR=/home/dev/.config/cauce-v3/container-pki/${alias}`));
+}
+
 const regeneratedRootless = await mkdtemp(path.join(os.tmpdir(), "cauce-rootless-units-"));
 try {
   const generated = spawnSync("python3", [path.join(ops, "scripts/generate-container-units.py"),
@@ -222,7 +221,8 @@ try {
     "--config-root", "/etc/hospital-cauce/container-aliases",
     "--pki-root", "/etc/hospital-cauce/container-pki",
     "--bundle-root", "/srv/hospital-cauce-adapter",
-    "--lock-root", "/run/lock/hospital-cauce"], { encoding: "utf8" });
+    "--lock-root", "/run/lock/hospital-cauce",
+    "--no-profile-expectation"], { encoding: "utf8" });
   assert.equal(generated.status, 0, generated.stderr);
   const unitText = await readFile(
     path.join(isolatedOutput, "cauce-v3-container-hospital-leader.service"), "utf8",
@@ -243,6 +243,8 @@ try {
   assert.match(unitText,
     /^ReadOnlyPaths=\/etc\/hospital-cauce\/container-aliases \/etc\/hospital-cauce\/container-pki \/srv\/hospital-cauce \/srv\/hospital-cauce-adapter$/mu);
   assert.doesNotMatch(unitText, /\/etc\/cauce-v3|\/opt\/cauce-v3/u);
+  assert.doesNotMatch(unitText, /^ExecStartPost=/mu);
+  assert.equal((await readdir(isolatedOutput)).includes("cauce-v3-profile-expectation@.service"), false);
 
   const hermesInventory = structuredClone(isolatedInventory);
   hermesInventory.aliases["hospital-leader"].harness = "hermes";

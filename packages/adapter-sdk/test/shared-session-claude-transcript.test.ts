@@ -8,13 +8,13 @@ import { readDegradations } from "../src/shared-session/degradation-log.js";
 import { transcriptDirectory } from "../src/shared-session/session.js";
 import {
   FakeTmux,
-  RecordingFallback,
   TmuxResult,
   adapterFor,
   assistantEntry,
   claudeRunner,
   envelopeText,
   execute,
+  expectSharedTuiUnavailable,
   freshState,
   userEntry,
 } from "./shared-session-fixtures.js";
@@ -32,7 +32,6 @@ test("el turno del bus produce el sobre completo cosechado del transcript", asyn
   await appendFile(file, `${userEntry(head, null, "hola de la terminal", sessionId)}\n`);
 
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
     const userUuid = randomUUID();
     await appendFile(file, `${userEntry(userUuid, head, text, sessionId)}\n`);
@@ -43,7 +42,7 @@ test("el turno del bus produce el sobre completo cosechado del transcript", asyn
     );
   };
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   const output = await execute(adapter);
 
@@ -51,7 +50,6 @@ test("el turno del bus produce el sobre completo cosechado del transcript", asyn
   assert.equal(output.status, "done");
   assert.deepEqual(output.messages, []);
   // The envelope came out of the shared session, not the usual path.
-  assert.equal(fallback.calls, 0);
   assert.equal(tmux.submittedCount, 1);
   for (const call of tmux.calls.filter((entry) =>
     entry[0] === "capture-pane" || entry[0] === "paste-buffer"
@@ -82,20 +80,18 @@ test("los turnos en prosa del dueño conviven con el sobre del bus", async () =>
   head = proseAnswer;
 
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
     const userUuid = randomUUID();
     await appendFile(file, `${userEntry(userUuid, head, text, sessionId)}\n`);
     await appendFile(file, `${assistantEntry(randomUUID(), userUuid, envelopeText("respuesta del bus"), sessionId)}\n`);
   };
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   const output = await execute(adapter);
 
   // The owner's prose broke nothing and did not sneak in as a bus result.
   assert.equal(output.reply, "respuesta del bus");
-  assert.equal(fallback.calls, 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -112,7 +108,6 @@ test("no se cosecha una respuesta de una rama hermana", async () => {
   await appendFile(file, `${userEntry(shared, null, "cabeza comun", sessionId)}\n`);
 
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
     // SIBLING branch: hangs from the same parent as our turn, exactly as happened with
     // `--print --resume` running in parallel to the TUI. It must never be harvested.
@@ -125,7 +120,7 @@ test("no se cosecha una respuesta de una rama hermana", async () => {
     await appendFile(file, `${assistantEntry(randomUUID(), mine, envelopeText("MI RAMA"), sessionId)}\n`);
   };
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   const output = await execute(adapter);
 
@@ -153,8 +148,7 @@ test("el turno del bus cuelga de la cabeza viva de la TUI, no de la raiz", async
   };
 
   const runner = claudeRunner({
-    alias: "kratos", home, workspace, tmux, fallback: new RecordingFallback("{}"),
-  });
+    alias: "kratos", home, workspace, tmux,   });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   await execute(adapter);
   assert.equal(injectedParent, head);
@@ -191,8 +185,7 @@ test("con la caja ocupada el bus espera y no pega nada", async () => {
   };
 
   const runner = claudeRunner({
-    alias: "kratos", home, workspace, tmux, fallback: new RecordingFallback("{}"),
-  });
+    alias: "kratos", home, workspace, tmux,   });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   const output = await execute(adapter);
 
@@ -204,50 +197,45 @@ test("una caja que nunca se libera degrada con aviso y sin inyectar", async () =
   const { state, home, workspace } = await freshState("nunca-libre");
   const tmux = new FakeTmux();
   tmux.paneContent = "❯ el dueno dejo esto a medias";
-  const fallback = new RecordingFallback(JSON.stringify({ result: envelopeText("por el camino viejo") }));
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
-  const output = await execute(adapter);
+  const error = await expectSharedTuiUnavailable(execute(adapter));
 
   // The owner's box was never touched.
   assert.equal(tmux.pasted, undefined);
   assert.equal(tmux.submittedCount, 0);
-  // It did respond, but SAYING SO.
-  assert.equal(fallback.calls, 1);
-  assert.ok((output.reply ?? "").includes(DEGRADED_MARK));
-  assert.ok((output.reply ?? "").includes("input_busy"));
-  assert.ok((output.reply ?? "").includes("por el camino viejo"));
+  assert.match(error.message, new RegExp(DEGRADED_MARK, "u"));
+  assert.match(error.message, /input_busy/u);
+  const degradation = (await readDegradations(state))[0];
+  assert.equal(degradation?.executionPrevented, true);
+  assert.equal(degradation.fellBack, false);
 });
 
 // ---------------------------------------------------------------------------
 // 5. The broken mechanism IS REPORTED. That is where the previous attempt died.
 // ---------------------------------------------------------------------------
 
-test("sin sesion compartida se responde igual pero el aviso viaja en el reply", async () => {
+test("sin sesion compartida falla cerrado y el aviso queda durable", async () => {
   const { state, home, workspace } = await freshState("caido");
   const tmux = new FakeTmux();
   tmux.sessionExists = false;
   tmux.newSessionFails = true;
-  const fallback = new RecordingFallback(JSON.stringify({ result: envelopeText("respuesta clasica") }));
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
-  const output = await execute(adapter);
-
-  assert.equal(fallback.calls, 1);
-  const reply = output.reply ?? "";
-  assert.ok(reply.includes(DEGRADED_MARK), "el aviso tiene que llegar por Telegram");
-  assert.ok(reply.includes("session_absent"));
-  assert.ok(reply.includes("cauce kratos"), "tiene que decir como restablecerlo");
-  assert.ok(reply.includes("respuesta clasica"), "la respuesta real no se pierde");
+  const error = await expectSharedTuiUnavailable(execute(adapter));
+  assert.match(error.message, new RegExp(DEGRADED_MARK, "u"));
+  assert.match(error.message, /session_absent/u);
+  assert.match(error.message, /cauce kratos/u);
 
   // And it stays recorded durably, which is what `cauce <alias>` shows on entry.
   const records = await readDegradations(state);
   assert.equal(records.length, 1);
   assert.equal(records[0]?.reason, "session_absent");
   assert.equal(records[0].alias, "kratos");
-  assert.equal(records[0].fellBack, true);
+  assert.equal(records[0].fellBack, false);
+  assert.equal(records[0].executionPrevented, true);
 
   // There is no credited `$N` to notify. Pointing by name here would open a race: a homonymous
   // session created after the preflight would receive a notice that does not belong to it.
@@ -265,14 +253,13 @@ test("una TUI reiniciada avisa aunque el turno si pase por la terminal", async (
   const file = join(directory, `${sessionId}.jsonl`);
 
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
     const userUuid = randomUUID();
     await appendFile(file, `${userEntry(userUuid, null, text, sessionId)}\n`);
     await appendFile(file, `${assistantEntry(randomUUID(), userUuid, envelopeText("sigo aca"), sessionId)}\n`);
   };
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   await execute(adapter);
 
@@ -284,5 +271,4 @@ test("una TUI reiniciada avisa aunque el turno si pase por la terminal", async (
   assert.ok(reply.includes(RESET_MARK), "el reinicio se tiene que ver");
   assert.ok(reply.includes("context_reset"));
   assert.ok(reply.includes("sigo aca"), "el turno si paso por la terminal");
-  assert.equal(fallback.calls, 0, "un reinicio NO es motivo para caer al camino viejo");
 });

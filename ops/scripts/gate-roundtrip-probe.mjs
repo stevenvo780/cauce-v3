@@ -33,11 +33,11 @@ async function regularFile(file, label, privateFile = false) {
 }
 
 async function targetFromInventory() {
-  const inventoryFile = process.env.CAUCE_GATE_INVENTORY_FILE ?? path.resolve(here, '..', 'container-aliases.json');
+  const inventoryFile = process.env.CAUCE_GATE_INVENTORY_FILE ?? path.resolve(here, '..', 'flota.json');
   const raw = await regularFile(inventoryFile, 'gate inventory');
   let decoded;
   try { decoded = JSON.parse(raw.toString('utf8')); } catch { throw new Error('gate inventory is not valid JSON'); }
-  const entry = decoded?.aliases?.[alias];
+  const entry = decoded?.fleet?.[alias];
   if (!entry || typeof entry.tenant !== 'string') {
     throw new Error('alias is not declared in the gate inventory');
   }

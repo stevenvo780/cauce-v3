@@ -12,11 +12,7 @@ import {
   parseOpenCodeOutput,
 } from "../src/sdk/output-parser.js";
 import { codexDefinition } from "../src/harnesses/codex.js";
-import {
-  OPEN_CODE_KANT_ATTACH_URL,
-  OPEN_CODE_KANT_WORKING_DIRECTORY,
-  openCodeDefinition,
-} from "../src/harnesses/opencode.js";
+import { openCodeDefinition } from "../src/harnesses/opencode.js";
 
 test("OpenCode 1.17.7 captured JSONL accumulates part.text and observes sessionID", async () => {
   const capture = await readFile(resolve("test/fixtures/dialects/opencode-1.17.7.jsonl"), "utf8");
@@ -30,14 +26,8 @@ test("OpenCode 1.17.7 captured JSONL accumulates part.text and observes sessionI
       "run",
       "--format",
       "json",
-      "--attach",
-      "http://127.0.0.1:4097",
-      "--dir",
-      "/workspace/kant",
     ],
   );
-  assert.equal(OPEN_CODE_KANT_ATTACH_URL, "http://127.0.0.1:4097");
-  assert.equal(OPEN_CODE_KANT_WORKING_DIRECTORY, "/workspace/kant");
   assert.deepEqual(
     openCodeDefinition.sessionArgs({ sessionId: "stale-generated-id", resume: false }),
     [],

@@ -14,6 +14,7 @@ python3 "$SCRIPTS/generate-manifests.py" \
   --output "$PREFLIGHT/manifests"
 python3 "$SCRIPTS/generate-runtime-fleet.py" \
   --output "$PREFLIGHT/fleet.json"
+cp "$ROOT/flota.json" "$PREFLIGHT/flota.json"
 mkdir -p "$PREFLIGHT/schemas"
 cp "$ROOT/schemas/alias-manifest.schema.json" "$PREFLIGHT/schemas/alias-manifest.schema.json"
 python3 - "$ROOT" "$PREFLIGHT" <<'PY'

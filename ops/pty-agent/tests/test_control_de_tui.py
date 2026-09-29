@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""The writable TUI mode: who may type into the shared pane, and who holds the keyboard.
-
-`harness` stays a viewer (test_read_only_harness.py proves it). `harness_rw` is the mode that
-types, and it is only sound on the tmux route, the only one with a pane barrier. Three local
-sources can hold its keyboard -- the adapter's paste, which fences the pane with
-`@cauce_input_barrier`; this agent's own governance write transactions; and the tmux prefix
-byte, which would otherwise carry the browser to the tmux command prompt -- and while any of
-them holds it the burst is DROPPED and answered with one INPUT_REFUSED frame.
-"""
+"""Writable tmux and OpenClaw sessions preserve viewer, governance and conversation fences."""
 from __future__ import annotations
 
 import base64
@@ -239,7 +231,7 @@ class TerminalResponsesFollowTheTuiSet(unittest.TestCase):
         self.assertEqual(agent.MODES, ("shell", "harness", "harness_rw"))
 
 
-class AWritableTuiOnlyExistsOnTheTmuxRoute(unittest.TestCase):
+class WritableTuiCommandResolution(unittest.TestCase):
     def _open(self, mode: str, **overrides: object) -> list[tuple[int, dict]]:
         instance = agent.PtyAgent(_bundle(**overrides))
         with mock.patch.object(instance, "_spawn") as spawn:
@@ -255,14 +247,37 @@ class AWritableTuiOnlyExistsOnTheTmuxRoute(unittest.TestCase):
         self.assertEqual(document["reason"], "writable_tui_unavailable")
         self.assertEqual(document["detail"], "harness_command")
 
-    def test_the_openclaw_route_refuses_to_become_writable(self) -> None:
-        [(tag, document)] = self._open(
-            "harness_rw", tmux_tui=None, harness="openclaw",
-            openclaw_tui={"node": "/usr/bin/node", "entry": "/opt/openclaw/entry.js",
-                          "state_directory": "/home/claw/.openclaw", "history_limit": 100})
-        self.assertEqual(tag, agent.TAG_OPEN_ERR)
-        self.assertEqual(document["reason"], "writable_tui_unavailable")
-        self.assertEqual(document["detail"], "openclaw_tui")
+    def test_the_openclaw_route_opens_the_resolved_native_conversation(self) -> None:
+        command = ["/usr/bin/node", "/opt/openclaw/entry.js", "tui", "--session", "native"]
+        with mock.patch.object(agent, "resolve_openclaw_tui_command", return_value=command):
+            [(tag, document)] = self._open(
+                "harness_rw", tmux_tui=None, harness="openclaw",
+                openclaw_tui={"node": "/usr/bin/node", "entry": "/opt/openclaw/entry.js",
+                              "state_directory": "/home/claw/.openclaw", "history_limit": 100})
+        self.assertEqual(tag, agent.TAG_OPEN_OK)
+        self.assertEqual(document["mode"], "harness_rw")
+
+    def test_native_keyboard_needs_the_same_conversation_and_no_governance_write(self) -> None:
+        command = ["/usr/bin/node", "/opt/openclaw/entry.js", "tui", "--session", "native"]
+        instance = agent.PtyAgent(_bundle(
+            tmux_tui=None, harness="openclaw",
+            openclaw_tui={"state_directory": "/unavailable/cauce-native-test"}))
+        session = agent.PtySession(SESSION_ID, 0, -1, "harness_rw", command)
+        instance.sessions[SESSION_ID] = session
+        with mock.patch.object(agent, "resolve_openclaw_tui_command", return_value=command), \
+                mock.patch.object(instance, "_enqueue_session_input") as write:
+            instance._on_stdin(SESSION_ID, KEYSTROKES)
+            write.assert_called_once_with(session, KEYSTROKES)
+            instance.pending_writes["pending"] = object()
+            instance._on_stdin(SESSION_ID, KEYSTROKES)
+            self.assertEqual(write.call_count, 1)
+            self.assertEqual(_refusals(instance)[0]["reason"], "governance_write_in_flight")
+        with mock.patch.object(agent, "resolve_openclaw_tui_command", return_value=None), \
+                mock.patch.object(instance, "_hangup") as close, \
+                mock.patch.object(instance, "_enqueue_session_input") as write:
+            instance._on_stdin(SESSION_ID, KEYSTROKES)
+            write.assert_not_called()
+            close.assert_called_once_with(session, "native_session_changed")
 
     def test_control_negativo_those_routes_still_serve_the_viewer_mode(self) -> None:
         [(tag, document)] = self._open(

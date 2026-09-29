@@ -18,6 +18,7 @@ export type HarnessId = 'hermes' | 'opencode' | 'claude' | 'codex' | 'openclaw' 
 
 /** Runtime inventory; only traits with runtime or operational consumers reach the V3 hello. */
 export interface AdapterCapabilities {
+  readonly mcp_emit?: true;
   readonly protocol_version: typeof PROTOCOL_VERSION;
   readonly harness: HarnessId;
   readonly structured_output: true;
@@ -66,6 +67,7 @@ export interface OutputArtifact {
   readonly uri: string;
   readonly media_type?: string;
   readonly sha256?: string;
+  readonly size?: number;
 }
 
 type StructuredStatus = 'done' | 'failed';
@@ -251,6 +253,8 @@ type HarnessStartWitness =
   | { readonly kind: 'stderr-marker'; readonly marker: string };
 
 export interface CommandRunRequest extends CommandInvocation {
+  readonly emissionOutput?: () => StructuredOutput | undefined;
+  readonly onEmissionReady?: (correlationId?: string) => void;
   readonly stdin: string;
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
@@ -336,6 +340,7 @@ export interface FrameValidationIssue {
 export interface AdapterLog {
   event:
     | 'delivery_start'
+    | 'emission_result'
     | 'delivery_state'
     | 'delivery_end'
     | 'claim_renewal_start'

@@ -62,6 +62,7 @@ const DELETE_SESSION_KEYS = ['owner_generation', 'owner_token', 'request_id'] as
 const SESSION_REQUEST_WITH_INITIATOR_KEYS = [...SESSION_REQUEST_KEYS, 'initiator'].sort();
 const CONTROL_KEYS = ['action', 'owner_generation', 'owner_token', 'request_id'] as const;
 const CONTROL_WITH_REASON_KEYS = [...CONTROL_KEYS, 'reason'].sort();
+const CONTROL_WITH_BUSY_KEYS = [...CONTROL_WITH_REASON_KEYS, 'allow_busy'].sort();
 
 interface TerminalControlPlaneOptions {
   readonly pool: DatabasePool;
@@ -200,11 +201,15 @@ export function parseControlRequest(value: unknown): ControlRequestBody {
     throw new Error('terminal control request must be an object');
   }
   const body = value as Record<string, unknown>;
-  if (!exactObjectKeys(body, CONTROL_KEYS) && !exactObjectKeys(body, CONTROL_WITH_REASON_KEYS)) {
+  if (!exactObjectKeys(body, CONTROL_KEYS) && !exactObjectKeys(body, CONTROL_WITH_REASON_KEYS)
+      && !exactObjectKeys(body, CONTROL_WITH_BUSY_KEYS)) {
     throw new Error('terminal control request has unexpected or missing fields');
   }
   if (body.action !== 'take' && body.action !== 'release') {
     throw new Error("action must be 'take' or 'release'");
+  }
+  if (body.allow_busy !== undefined && (typeof body.allow_busy !== 'boolean' || body.action !== 'take')) {
+    throw new Error('allow_busy is only valid as a boolean when taking control');
   }
   const reason = body.reason === undefined && body.action === 'release'
     ? undefined : operatorReason(body.reason);
@@ -215,6 +220,7 @@ export function parseControlRequest(value: unknown): ControlRequestBody {
   }, 'terminal control request');
   return {
     action: body.action,
+    ...(body.allow_busy === undefined ? {} : { allow_busy: body.allow_busy }),
     ...(reason === undefined ? {} : { reason }),
     request_id,
     owner_generation,

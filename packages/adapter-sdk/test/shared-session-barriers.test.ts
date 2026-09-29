@@ -16,7 +16,6 @@ import {
 import type { TmuxController, TmuxResult } from "../src/shared-session/tmux.js";
 import {
   FakeTmux,
-  RecordingFallback,
   ambiguousTmuxResult,
   claudeRunner,
   exactTmuxPaneState,
@@ -106,8 +105,7 @@ test("copy-mode en el runner degrada sin liberar barrera inexistente ni terminar
   const { home, workspace } = await freshState("copy-mode-runner");
   const tmux = new FakeTmux();
   tmux.paneInMode = true;
-  const fallback = new RecordingFallback("fallback copy-mode");
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const outcome = await runner.run({
     command: "claude",
@@ -118,8 +116,14 @@ test("copy-mode en el runner degrada sin liberar barrera inexistente ni terminar
     signal: new AbortController().signal,
   });
 
-  assert.equal(outcome.exitCode, 0);
-  assert.equal(fallback.calls, 1);
+  assert.equal(outcome.exitCode, 1);
+  assert.equal(outcome.harnessStarted, false);
+  assert.match(outcome.stderr, /input_busy/u);
+  const degradation = runner.takeDegradation();
+  assert.equal(degradation?.reason, "input_busy");
+  assert.match(degradation.occurredAt, /^\d{4}-\d{2}-\d{2}T/u);
+  assert.equal(degradation.fellBack, false);
+  assert.equal(degradation.executionPrevented, true);
   assert.equal(tmux.sessionExists, true);
   assert.equal(tmux.paneInMode, true);
   assert.equal(tmux.inputOff, false);
@@ -132,7 +136,6 @@ test("copy-mode en el runner degrada sin liberar barrera inexistente ni terminar
 test("adquisición no acreditada conserva pending sin release ni terminación", async () => {
   const { home, workspace } = await freshState("input-barrier-no-acreditada");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("no debe ejecutarse");
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
     if (args[0] === "if-shell"
@@ -140,7 +143,7 @@ test("adquisición no acreditada conserva pending sin release ni terminación", 
         && argument.includes("select-pane -d"))) return ok(1);
     return originalRun(args, stdin, control);
   };
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
 
   const outcome = await runner.run({
     command: "claude",
@@ -154,7 +157,6 @@ test("adquisición no acreditada conserva pending sin release ni terminación", 
   assert.equal(outcome.exitCode, 1);
   assert.equal(outcome.harnessStarted, undefined);
   assert.match(outcome.stderr, /no se acreditó ownership.*no se intentó liberarla ni terminar/u);
-  assert.equal(fallback.calls, 0);
   assert.equal(tmux.sessionExists, true);
   assert.equal(tmux.inputOff, false);
   assert.equal(tmux.paneOptions.has("@cauce_input_barrier"), false);

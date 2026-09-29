@@ -13,12 +13,12 @@ import {
 } from "../src/shared-session/transcript.js";
 import {
   FakeTmux,
-  RecordingFallback,
   adapterFor,
   assistantEntry,
   claudeRunner,
   envelopeText,
   execute,
+  expectSharedTuiUnavailable,
   freshState,
   randomUUID,
   userEntry,
@@ -97,7 +97,6 @@ test("una compactación durante el turno se cosecha Y se avisa con sus cifras", 
   await appendFile(file, `${userEntry(head, null, "hola de la terminal", sessionId)}\n`);
 
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
     const injected = randomUUID();
     const leaf = randomUUID();
@@ -113,14 +112,12 @@ test("una compactación durante el turno se cosecha Y se avisa con sus cifras", 
     );
   };
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   const output = await execute(adapter);
-
   const reply = output.reply ?? "";
   // 1. The delivery is NOT lost.
   assert.ok(reply.includes("respondido tras compactar"));
-  assert.equal(fallback.calls, 0, "compactar no es motivo para caer al camino viejo");
   // 2. And the sender learns that memory is no longer what they think, with the event's figures.
   assert.ok(reply.includes(CONTEXT_MARK));
   assert.ok(reply.includes("context_compacted"));
@@ -152,7 +149,6 @@ test("un /clear del dueño se dice en la respuesta en vez de mentir", async () =
   let sessionId = primera;
 
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
     const file = join(directory, `${sessionId}.jsonl`);
     const userUuid = randomUUID();
@@ -160,7 +156,7 @@ test("un /clear del dueño se dice en la respuesta en vez de mentir", async () =
     await appendFile(file, `${assistantEntry(randomUUID(), userUuid, envelopeText("respondido"), sessionId)}\n`);
   };
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   const first = await execute(adapter);
   assert.ok(!(first.reply ?? "").includes(CONTEXT_MARK), "el primer turno no puede avisar de nada");
@@ -173,7 +169,6 @@ test("un /clear del dueño se dice en la respuesta en vez de mentir", async () =
   assert.ok(reply.includes(CONTEXT_MARK));
   assert.ok(reply.includes("context_cleared"));
   assert.ok(reply.includes("respondido"), "el turno SÍ pasó por la terminal: no se degrada");
-  assert.equal(fallback.calls, 0);
   assert.equal(tmux.panePid, "4242", "sin reinicio de proceso: el PID no delata nada");
   const records = await readDegradations(state);
   assert.equal(records[0]?.reason, "context_cleared");
@@ -192,20 +187,18 @@ test("resucitar la sesión no puede parecer una sesión compartida de siempre", 
   const tmux = new FakeTmux();
   tmux.sessionExists = false;
   tmux.windows = [];
-  const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
     const userUuid = randomUUID();
     await appendFile(file, `${userEntry(userUuid, null, text, sessionId)}\n`);
     await appendFile(file, `${assistantEntry(randomUUID(), userUuid, envelopeText("desde una TUI nueva"), sessionId)}\n`);
   };
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   const output = await execute(adapter);
 
   const reply = output.reply ?? "";
   assert.ok(reply.includes("desde una TUI nueva"), "el turno sí se sirvió");
-  assert.equal(fallback.calls, 0, "crear la sesión NO es caer al camino viejo");
   assert.ok(reply.includes(RESET_MARK));
   assert.ok(reply.includes("session_created"));
   assert.equal((await readDegradations(state))[0]?.reason, "session_created");
@@ -216,18 +209,17 @@ test("un diálogo abierto no se confunde con una línea a medio escribir", async
   const tmux = new FakeTmux();
   // The real folder-trust dialog, exactly as claude 2.1.220 renders it.
   tmux.paneContent = "Quick safety check\n❯ 1. Yes, I trust this folder";
-  const fallback = new RecordingFallback(JSON.stringify({ result: envelopeText("por el camino viejo") }));
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
-  const output = await execute(adapter);
-
-  const reply = output.reply ?? "";
+  const error = await expectSharedTuiUnavailable(execute(adapter));
   assert.equal(tmux.pasted, undefined, "no se pega NADA dentro de un diálogo");
-  assert.ok(reply.includes("modal_blocking"));
-  assert.ok(reply.includes("contestá el diálogo"), "la salida es contestar, no borrar");
-  assert.ok(!reply.includes("input_busy"));
-  assert.equal((await readDegradations(state))[0]?.reason, "modal_blocking");
+  assert.match(error.message, /modal_blocking/u);
+  assert.match(error.message, /contestá el diálogo/u);
+  assert.doesNotMatch(error.message, /input_busy/u);
+  const degradation = (await readDegradations(state))[0];
+  assert.equal(degradation?.reason, "modal_blocking");
+  assert.equal(degradation.executionPrevented, true);
 });
 
 test("una degradación NO deja la sesión enclavada para siempre", async () => {
@@ -242,24 +234,22 @@ test("una degradación NO deja la sesión enclavada para siempre", async () => {
 
   const tmux = new FakeTmux();
   tmux.paneContent = "❯ el dueno esta escribiendo";
-  const fallback = new RecordingFallback(JSON.stringify({ result: envelopeText("clasico") }));
   tmux.onSubmit = async (text) => {
     const userUuid = randomUUID();
     await appendFile(file, `${userEntry(userUuid, null, text, sessionId)}\n`);
     await appendFile(file, `${assistantEntry(randomUUID(), userUuid, envelopeText("de vuelta en la terminal"), sessionId)}\n`);
   };
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
-  const degraded = await execute(adapter);
-  assert.ok((degraded.reply ?? "").includes(DEGRADED_MARK));
+  const degraded = await expectSharedTuiUnavailable(execute(adapter));
+  assert.match(degraded.message, new RegExp(DEGRADED_MARK, "u"));
   assert.deepEqual(tmux.windows, ["agente"], "la ventana conserva su identidad");
 
   // The owner releases the box: the next turn has to come back to the terminal.
   tmux.paneContent = "❯ ";
   const recovered = await execute(adapter, "segundo");
   assert.ok((recovered.reply ?? "").includes("de vuelta en la terminal"));
-  assert.equal(fallback.calls, 1, "sólo degradó el primero");
 });
 
 test("una sesión ya enclavada por el build viejo se repara sola", async () => {
@@ -271,18 +261,16 @@ test("una sesión ya enclavada por el build viejo se repara sola", async () => {
   const tmux = new FakeTmux();
   // What the sessions that already degraded with the renaming version look like today.
   tmux.windows = ["⚠ CAUCE-DEGRADADO"];
-  const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
     const userUuid = randomUUID();
     await appendFile(file, `${userEntry(userUuid, null, text, sessionId)}\n`);
     await appendFile(file, `${assistantEntry(randomUUID(), userUuid, envelopeText("resucitada"), sessionId)}\n`);
   };
 
-  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   const output = await execute(adapter);
 
   assert.ok((output.reply ?? "").includes("resucitada"));
   assert.deepEqual(tmux.windows, ["agente"]);
-  assert.equal(fallback.calls, 0);
 });

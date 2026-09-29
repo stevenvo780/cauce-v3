@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import { StoreError } from '@cauce/store';
 import { buildGateway } from '../app.js';
-import { DevOnlyAuthProvider } from '../auth.js';
+import { DevOnlyAuthProvider, type AuthProvider } from '../auth.js';
 import { fakePool, fakeRepository } from '../test-support/gateway-doubles.js';
 
 interface RouteKey {
@@ -29,23 +30,34 @@ const NEIGHBOR_ROUTES: readonly RouteKey[] = [
 
 const apps: FastifyInstance[] = [];
 
-async function gateway(options: { readonly routePermission?: boolean } = {}) {
-  const listChainGates = vi.fn(async () => ({ items: [{ gate_id: 'gate-1' }] }));
-  const answerChainGate = vi.fn(async (gateId: string, answer: string) => ({
-    gate_id: gateId, answer, state: 'answered',
-  }));
-  const cancelChainGate = vi.fn(async (gateId: string) => ({
-    gate_id: gateId, state: 'cancelled',
-  }));
+async function gateway(options: {
+  readonly routePermission?: boolean;
+  readonly authProvider?: AuthProvider;
+  readonly listChainGates?: (actorTenant: string, actorAlias: string, options?: { status?: 'all' | 'open'; limit?: number }) => Promise<Record<string, unknown>>;
+  readonly answerChainGate?: (gateId: string, answer: string, actorTenant: string, actorAlias: string) => Promise<Record<string, unknown>>;
+  readonly cancelChainGate?: (gateId: string, actorTenant: string, actorAlias: string) => Promise<Record<string, unknown>>;
+} = {}) {
+  const listChainGates = vi.fn(options.listChainGates
+    ?? (async () => ({ items: [{ gate_id: 'gate-1' }] })));
+  const answerChainGate = vi.fn(options.answerChainGate
+    ?? (async (gateId: string, answer: string) => ({
+      gate_id: gateId, answer, state: 'answered',
+    })));
+  const cancelChainGate = vi.fn(options.cancelChainGate
+    ?? (async (gateId: string) => ({
+      gate_id: gateId, state: 'cancelled',
+    })));
   const repository = fakeRepository();
   repository.listChainGates = listChainGates;
   repository.answerChainGate = answerChainGate;
   repository.cancelChainGate = cancelChainGate;
   const app = await buildGateway({
     pool: fakePool(),
-    authProvider: DevOnlyAuthProvider.forTests(options.routePermission === false ? {
-      roles: ['operator'], permissions: ['read'],
-    } : {}),
+    authProvider: options.authProvider ?? DevOnlyAuthProvider.forTests(
+      options.routePermission === false ? {
+        roles: ['operator'], permissions: ['read'],
+      } : {},
+    ),
     repository,
     deliveryWakeSubscriber: async () => async () => undefined,
     exposeHealthRoutes: false,
@@ -131,5 +143,146 @@ describe('chain-gate routes', () => {
 
     expect(response.statusCode).toBe(403);
     expect(answerChainGate).not.toHaveBeenCalled();
+  });
+});
+
+describe('chain-gate list validation', () => {
+  it('ignores a limit that is not an exact positive integer instead of truncating it', async () => {
+    const { app, listChainGates } = await gateway();
+    for (const limit of ['7abc', '7.9', ' 7', '0x10']) {
+      listChainGates.mockClear();
+      const response = await app.inject({
+        method: 'GET',
+        url: `/v3/console/chain-gates?limit=${encodeURIComponent(limit)}`,
+        headers: {
+          'x-cauce-tenant': 'Steven',
+          'x-cauce-alias': 'kant',
+          origin: 'http://localhost',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(listChainGates).toHaveBeenCalledWith('Steven', 'kant', { status: 'open' });
+    }
+  });
+
+  it('defaults to open gates with no limit when the query is absent or unusable', async () => {
+    const { app, listChainGates } = await gateway();
+    for (const query of ['', '?status=abiertas', '?limit=0', '?limit=-3', '?limit=no-es-numero']) {
+      listChainGates.mockClear();
+      const response = await app.inject({
+        method: 'GET',
+        url: `/v3/console/chain-gates${query}`,
+        headers: {
+          'x-cauce-tenant': 'Steven',
+          'x-cauce-alias': 'kant',
+          origin: 'http://localhost',
+        },
+      });
+
+      expect(response.statusCode, query).toBe(200);
+      expect(listChainGates).toHaveBeenCalledWith('Steven', 'kant', { status: 'open' });
+    }
+  });
+
+  it('keeps an exact positive limit and never invents one', async () => {
+    const { app, listChainGates } = await gateway();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v3/console/chain-gates?status=open&limit=25',
+      headers: {
+        'x-cauce-tenant': 'Steven',
+        'x-cauce-alias': 'kant',
+        origin: 'http://localhost',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(listChainGates).toHaveBeenCalledWith('Steven', 'kant', { status: 'open', limit: 25 });
+  });
+
+  it('requires read on the list and touches nothing without it', async () => {
+    const { app, listChainGates } = await gateway({
+      authProvider: DevOnlyAuthProvider.forTests({ roles: ['agent'], permissions: [] }),
+    });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v3/console/chain-gates',
+      headers: {
+        'x-cauce-tenant': 'Steven',
+        'x-cauce-alias': 'argos',
+        origin: 'http://localhost',
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(listChainGates).not.toHaveBeenCalled();
+  });
+
+  it('requires route on the cancel and touches nothing without it', async () => {
+    const { app, cancelChainGate } = await gateway({ routePermission: false });
+    const response = await app.inject({
+      method: 'POST', url: '/v3/console/chain-gates/gate-8/cancel',
+      headers: {
+        'x-cauce-tenant': 'Steven', 'x-cauce-alias': 'kant', origin: 'http://localhost',
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(cancelChainGate).not.toHaveBeenCalled();
+  });
+
+  it('forwards a missing or non-text answer untouched: the store owns the refusal', async () => {
+    const { app, answerChainGate } = await gateway();
+    const headers = {
+      'x-cauce-tenant': 'Steven',
+      'x-cauce-alias': 'kant',
+      origin: 'http://localhost',
+    };
+
+    for (const payload of [undefined, { answer: 42 }, { respuesta: 'aprobar' }]) {
+      answerChainGate.mockClear();
+      const response = await app.inject({
+        method: 'POST', url: '/v3/console/chain-gates/gate-7/answer', headers,
+        ...(payload === undefined ? {} : { payload }),
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(answerChainGate).toHaveBeenCalledWith('gate-7', '', 'Steven', 'kant');
+    }
+  });
+
+  it('propagates store failures with their exact status instead of a 2xx', async () => {
+    const failing = new StoreError('invalid_input', 'gate answer must be non-empty text');
+    const { app } = await gateway({
+      answerChainGate: async () => { throw failing; },
+    });
+    const answer = await app.inject({
+      method: 'POST', url: '/v3/console/chain-gates/gate-7/answer',
+      headers: {
+        'x-cauce-tenant': 'Steven', 'x-cauce-alias': 'kant', origin: 'http://localhost',
+      },
+      payload: { answer: '' },
+    });
+
+    expect(answer.statusCode).toBe(422);
+    expect(answer.json()).toEqual({
+      error: 'invalid_input', message: 'gate answer must be non-empty text',
+    });
+  });
+
+  it('answers a gate outside the caller scope with not_found, never forbidden', async () => {
+    const { app } = await gateway({
+      cancelChainGate: async () => { throw new StoreError('not_found', 'chain gate not found'); },
+    });
+    const response = await app.inject({
+      method: 'POST', url: '/v3/console/chain-gates/gate-8/cancel',
+      headers: {
+        'x-cauce-tenant': 'Steven', 'x-cauce-alias': 'kant', origin: 'http://localhost',
+      },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: 'not_found', message: 'chain gate not found' });
   });
 });
