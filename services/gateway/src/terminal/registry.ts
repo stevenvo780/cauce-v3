@@ -257,6 +257,7 @@ export function parseAgentPresence(value: unknown): AgentPresence {
   const codexHome = measuredPath(record, 'codex_home');
   const claudeConfigDir = measuredPath(record, 'claude_config_dir');
   const openclawWorkspace = measuredPath(record, 'openclaw_workspace');
+  const museWorkspace = measuredPath(record, 'muse_workspace');
   let cwd = measuredPath(record, 'cwd');
   let workspaceRoot = measuredPath(record, 'workspace_root');
   let projectRoot = measuredPath(record, 'project_root');
@@ -282,6 +283,7 @@ export function parseAgentPresence(value: unknown): AgentPresence {
     && ((harness === 'codex' && codexHome !== undefined)
       || (harness === 'claude' && claudeConfigDir !== undefined)
       || (harness === 'openclaw' && openclawWorkspace !== undefined)
+      || (harness === 'muse' && museWorkspace !== undefined)
       || (harness === 'hermes' && cwd !== undefined && projectRoot !== undefined));
   return {
     tenant_id: stringField(record.tenant_id, 'tenant_id', 64),
@@ -299,6 +301,7 @@ export function parseAgentPresence(value: unknown): AgentPresence {
       ...(harness === 'codex' ? { codex_home: stringField(codexHome, 'codex_home', 4096) } : {}),
       ...(harness === 'claude' ? { claude_config_dir: stringField(claudeConfigDir, 'claude_config_dir', 4096) } : {}),
       ...(harness === 'openclaw' ? { openclaw_workspace: stringField(openclawWorkspace, 'openclaw_workspace', 4096) } : {}),
+      ...(harness === 'muse' ? { muse_workspace: stringField(museWorkspace, 'muse_workspace', 4096) } : {}),
       ...(cwd === undefined ? {} : { cwd }),
       ...(workspaceRoot === undefined ? {} : { workspace_root: workspaceRoot }),
       ...(projectRoot === undefined ? {} : { project_root: projectRoot }),

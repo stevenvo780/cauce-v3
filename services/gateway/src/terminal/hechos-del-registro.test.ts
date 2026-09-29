@@ -69,6 +69,10 @@ describe('los hechos salen de lo que el agente publica', () => {
       harness: 'openclaw', extra: { openclaw_workspace: '/home/claw/workspace' },
       camel: 'openclawWorkspace', path: '/home/claw/workspace/SOUL.md', home: '/home/claw',
     },
+    {
+      harness: 'muse', extra: { muse_workspace: '/workspace' },
+      camel: 'museWorkspace', path: '/workspace/AGENTS.md',
+    },
   ])(
     'E2E relay→parser→registry→facts→paths conserva $camel',
     async ({ harness, extra, camel, path, home = '/home/dev' }) => {
