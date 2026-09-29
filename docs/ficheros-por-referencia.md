@@ -20,13 +20,18 @@ gateway, direccionados por su sha256, y el mensaje sólo lleva el digest.
   409 si no cuadra). Se escribe en streaming a `CAUCE_BLOB_DIR/tmp/<uuid>` calculando el sha256 al
   vuelo y se renombra a `CAUCE_BLOB_DIR/<sha256>`. Un `Content-Length` por encima del tope se
   rechaza antes de leer (413); un cuerpo chunked se corta en el tope sin dejar fichero parcial.
-  Permiso `route`. Responde 201 `{ sha256, bytes, media_type, name, blob, uri }`.
+  Permiso `route` vigente en la base de datos. Responde 201 `{ sha256, bytes, media_type, name,
+  blob, uri }`. Una repetición idéntica dentro del mismo tenant conserva los metadatos del primer
+  upload; si otro tenant intenta subir el mismo digest, recibe 409 sin metadatos del propietario.
 - `GET /v3/blobs/<sha256>` — streaming del blob entero o de un rango (`Range: bytes=a-b` → 206 con
   `Content-Range`), con `Content-Type`, `Content-Length`, `Content-Disposition` y `Accept-Ranges`.
-  Permiso `read`. Cada lectura toca `blobs.last_used_at`. Un digest es una capacidad: quien lo
-  nombra (llegó en un mensaje que ya cruzó la arista) puede leerlo, sea del tenant que sea.
+  Permiso `read` vigente en la base de datos y coincidencia entre el `tenant_id` autenticado y el
+  del blob. Los demás tenants reciben 404, sin bytes ni metadatos. Solo una lectura autorizada toca
+  `blobs.last_used_at`. El digest identifica bytes; no concede acceso por sí mismo. Las referencias
+  que crucen tenants no son descargables hasta que exista un mecanismo explícito de concesiones.
 - Tabla `blobs` (migración 042): `sha256, bytes, media_type, name, tenant_id, created_by,
-  created_at, last_used_at`. Idempotente por digest; otro tamaño bajo el mismo digest es `conflict`.
+  created_at, last_used_at`. Idempotente por digest dentro del tenant; otro tamaño o un tenant
+  distinto bajo el mismo digest produce `conflict`.
 - Volumen `blobs_data` montado en `/var/lib/cauce-v3/blobs` (la imagen crea la ruta como uid 1000
   porque el runtime es `read_only`).
 
@@ -47,10 +52,10 @@ gateway, direccionados por su sha256, y el mensaje sólo lleva el digest.
 ## Retención
 
 `ops/scripts/purgar_blobs.py --dir /var/lib/cauce-v3/blobs --dias 30 --psql '<orden psql -tA>'`
-informa; con `--aplicar` borra filas y ficheros no leídos en N días, ficheros huérfanos con N días
-sin tocar, y temporales de más de 24 h. Sin cron todavía: hay que programarlo en el host
-(el volumen se alcanza con `docker run --rm -v cauce-v3-prod_blobs_data:/blobs …` o desde el
-contenedor del gateway).
+sirve para auditoría de solo lectura. La purga con `--aplicar` queda deshabilitada hasta coordinar
+de forma segura las lecturas, escrituras y eliminaciones concurrentes; no hay borrado automático
+ni cron de purga. El volumen se alcanza desde el contenedor del gateway o con un montaje de solo
+lectura.
 
 ## Paso 5, pendiente: Telegram por encima de 20 MB
 

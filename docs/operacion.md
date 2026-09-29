@@ -11,6 +11,7 @@ Si una instalación conserva un release anterior fuera del árbol (con su propio
 **Precondiciones que `deploy/deploy.sh` verifica y aborta si fallan:**
 - `git status` limpio y `HEAD == origin/main` (`CAUCE_DEPLOY_EXPECTED_GIT_REF`).
 - Backup <24h acreditado por `ops/scripts/host-backup-monitor.sh` (o confirmación explícita si no lo hay).
+- `CAUCE_BLOB_API_ENABLED` acepta solo `0` o `1` en el archivo de instancia, por defecto `0`; un valor exportado distinto aborta antes del build. Con `1`, el monitor de la instancia debe acreditar restauración aislada posterior a la migración 042 de la tabla `blobs` y del volumen `blobs_data`. La confirmación general no omite este control.
 - `CAUCE_TERMINAL_RELAY_INSTANCE_ID` en `prod.env` = sha256 del DER del certificado cliente del relay (el relay no arranca si no coincide).
 - `docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml config` renderiza sin error.
 - Si la migración 034 sigue pendiente: 0 filas en `terminal_sessions WHERE closed_at IS NULL AND revoked_at IS NULL`. Si ya está aplicada, las terminales abiertas son normales; no revocarlas para superar este control.
@@ -18,6 +19,13 @@ Si una instalación conserva un release anterior fuera del árbol (con su propio
 **Precondición que el operador verifica a mano, `deploy.sh` NO la comprueba:** gate en verde
 (`pnpm typecheck && pnpm lint && pnpm test:unit`). El script no ejecuta ni un solo comando `pnpm`;
 confía en que quien despliega ya corrió el gate.
+
+Para activar blobs en Hospital: desplegar primero con `CAUCE_BLOB_API_ENABLED=0` para aplicar la
+migración 042 y crear el volumen, ejecutar `ops/instances/hospital/backup.sh`, comprobar con
+`REQUIRE_BLOB_VOLUME=1 ops/instances/hospital/backup-monitor.sh`, cambiar el archivo de instancia
+a `CAUCE_BLOB_API_ENABLED=1` y desplegar de nuevo. El monitor central actual no acredita el
+volumen de blobs; esa instancia permanece en `0` hasta incorporar una prueba equivalente. Para
+desactivar la API, restaurar `0` y recrear el gateway; el volumen y la tabla permanecen intactos.
 
 **Comando** (dueño presente, root, `df -h /` con holgura para dos imágenes nuevas o `docker builder prune -f` antes):
 ```bash

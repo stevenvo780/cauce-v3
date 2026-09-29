@@ -78,6 +78,15 @@ export interface BlobStoreConfig {
   readonly maxBytes: number;
 }
 
+export function configuredBlobApi(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): BlobStoreConfig | undefined {
+  const enabled = env.CAUCE_BLOB_API_ENABLED;
+  if (enabled === undefined || enabled === '0') return undefined;
+  if (enabled !== '1') throw new Error('CAUCE_BLOB_API_ENABLED must be 0 or 1');
+  return configuredBlobStore(env);
+}
+
 export function configuredBlobStore(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): BlobStoreConfig {

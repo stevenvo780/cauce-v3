@@ -14,10 +14,8 @@ import { requirePermission, type AuthProvider } from '../auth.js';
 import type { GatewayRepository } from '../app.js';
 import { principal, replyError } from './shared.js';
 
-/* Files too large to ride inline. The bytes are streamed to disk under their sha256 while the
-   digest is computed in flight; nothing is buffered and nothing is base64. A digest is a
-   capability: the message that carried it already crossed the delegation edge, so any principal
-   with `read` who names it may fetch it, and every fetch touches `last_used_at` for the purge. */
+/* Files too large to ride inline are streamed to disk under their sha256. Tenant ownership is
+   checked in the repository before metadata or bytes are returned. */
 
 export interface BlobStoreOptions {
   readonly directory: string;
@@ -161,6 +159,7 @@ export function registerBlobRoutes(
       const record = await repository.registerBlob({
         sha256: digest, bytes, mediaType, name, tenantId: actor.tenant_id, createdBy: actor.alias,
       });
+      if (record.tenant_id !== actor.tenant_id) throw new StoreError('conflict', 'blob digest is unavailable');
       void reply.code(201).send({
         sha256: record.sha256, bytes: record.bytes, media_type: record.media_type, name: record.name,
         blob: blobLocator(record.sha256), uri: blobArtifactUri(record.sha256),
@@ -178,8 +177,8 @@ export function registerBlobRoutes(
       await repository.assertPermission(actor.tenant_id, actor.alias, 'read');
       const digest = request.params.sha256;
       if (!HEX_SHA256.test(digest)) throw new StoreError('not_found', 'unknown blob');
-      const record = await repository.findBlob(digest);
-      if (record === undefined) throw new StoreError('not_found', 'unknown blob');
+      const record = await repository.findBlob(digest, actor.tenant_id);
+      if (record?.tenant_id !== actor.tenant_id) throw new StoreError('not_found', 'unknown blob');
       const path = join(store.directory, digest);
       const file = await stat(path).catch(() => undefined);
       if (file?.isFile() !== true) throw new StoreError('not_found', 'blob bytes are not on disk');

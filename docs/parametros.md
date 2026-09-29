@@ -95,7 +95,8 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | `MAX_JOURNAL_PAGE` / `MAX_JOURNAL_PATH` / `MAX_JOURNAL_ID` | filas/chars/int | 200 / 4_096 / int64 máx | fijo | — |
 | Ticket ≤4_096 chars, resume 80–1_024, reason 8–280 | chars | — | fijo | — |
 | `CAUCE_TERMINAL_RECORDING_DIR` + `RECORDING_RETENTION_MS` (`recording-retention.ts`) | ruta/ms | dir + 30 días (2_592_000_000) | env + fijo (FR-012) | unit sweeper |
-| `CAUCE_BLOB_DIR` (`config.ts:configuredBlobStore`, defecto `DEFAULT_BLOB_DIRECTORY`) | ruta absoluta | `/var/lib/cauce-v3/blobs` (activa rutas blob; en prod siempre) | env + fijo | unit blobs + pg |
+| `CAUCE_BLOB_API_ENABLED` (`config.ts:configuredBlobApi`) | flag | `0` por defecto; solo `1` registra PUT/GET de blobs | env | unit blobs + gate de despliegue |
+| `CAUCE_BLOB_DIR` (`config.ts:configuredBlobStore`, defecto `DEFAULT_BLOB_DIRECTORY`) | ruta absoluta | `/var/lib/cauce-v3/blobs`; por sí sola no activa rutas | env + fijo | unit blobs + pg |
 | `CAUCE_BLOB_MAX_BYTES` (`config.ts`, tope `MAX_BLOB_BYTES` 16 GiB) | bytes | 2 GiB (`DEFAULT_BLOB_MAX_BYTES`), entero 1–16 GiB | env + fijo | unit blobs |
 
 ## 6. Auth, consola y secretos

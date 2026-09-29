@@ -1,9 +1,7 @@
 import { AgentEmissionRepository } from './agent-emission.js';
 import { StoreError } from './errors.js';
 
-/* The index of the gateway's blob store (migration 042). A digest is a capability: whoever names
-   it may read it, tenant or not, because the message that carried it already crossed that edge.
-   `last_used_at` moves on every read so a purge can tell abandoned bytes from live ones. */
+/* A digest identifies bytes but does not authorize access across tenants. */
 
 export interface BlobRecord {
   readonly sha256: string;
@@ -43,7 +41,7 @@ function record(row: BlobRow): BlobRecord {
 }
 
 export class BlobsRepository extends AgentEmissionRepository {
-  /** Idempotent for the same digest and size; the first uploader keeps the authorship. */
+  /** Idempotent within a tenant; the first uploader keeps the authorship. */
   async registerBlob(input: BlobRegistration): Promise<BlobRecord> {
     if (!HEX_SHA256.test(input.sha256)) throw new StoreError('invalid_input', 'blob digest must be sha256 hex');
     if (!Number.isSafeInteger(input.bytes) || input.bytes <= 0) {
@@ -53,23 +51,21 @@ export class BlobsRepository extends AgentEmissionRepository {
       `INSERT INTO blobs(sha256,bytes,media_type,name,tenant_id,created_by)
        VALUES ($1,$2,$3,$4,$5,$6)
        ON CONFLICT (sha256) DO UPDATE SET last_used_at=now()
+         WHERE blobs.tenant_id=EXCLUDED.tenant_id AND blobs.bytes=EXCLUDED.bytes
        RETURNING sha256,bytes,media_type,name,tenant_id,created_by,created_at,last_used_at`,
       [input.sha256, input.bytes, input.mediaType, input.name, input.tenantId, input.createdBy],
     );
     const row = result.rows[0];
-    if (row === undefined) throw new Error('blob registration returned no row');
-    if (Number(row.bytes) !== input.bytes) {
-      throw new StoreError('conflict', 'a blob with this digest already exists with another size');
-    }
+    if (row === undefined) throw new StoreError('conflict', 'blob digest is unavailable');
     return record(row);
   }
 
-  async findBlob(sha256: string): Promise<BlobRecord | undefined> {
+  async findBlob(sha256: string, tenantId: string): Promise<BlobRecord | undefined> {
     if (!HEX_SHA256.test(sha256)) return undefined;
     const result = await this.pool.query<BlobRow>(
-      `UPDATE blobs SET last_used_at=now() WHERE sha256=$1
+      `UPDATE blobs SET last_used_at=now() WHERE sha256=$1 AND tenant_id=$2
        RETURNING sha256,bytes,media_type,name,tenant_id,created_by,created_at,last_used_at`,
-      [sha256],
+      [sha256, tenantId],
     );
     const row = result.rows[0];
     return row === undefined ? undefined : record(row);

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createPool, type DatabasePool } from '@cauce/store';
 import { buildGateway } from './app.js';
 import {
-  configuredAckDeadlineMs, configuredDeliveryAdmission, configuredDeliveryLeaseCap, configuredBlobStore } from './config.js';
+  configuredAckDeadlineMs, configuredDeliveryAdmission, configuredDeliveryLeaseCap, configuredBlobApi } from './config.js';
 import {
   DevOnlyAuthProvider, HashedMtlsIdentityFileProvider, HashedTokenFileAuthProvider,
   JwksJwtAuthProvider, MtlsAuthProvider, type AuthProvider
@@ -209,6 +209,7 @@ const terminal = await loadTerminalConfig();
 const terminalRegistry = terminal === undefined ? undefined : new AgentRegistry();
 const wakePumpTelemetry = new WakePumpTelemetry();
 const consolePublishTelemetry = new ConsolePublishTelemetry();
+const blobs = configuredBlobApi(process.env);
 const app = await buildGateway({
   pool,
   authProvider,
@@ -228,8 +229,7 @@ const app = await buildGateway({
     operatorResolution: { operatorHeader: terminal.operatorHeader, operators: terminal.operators },
   }),
   ...(https === undefined ? {} : { https }),
-  ...(process.env.CAUCE_BLOB_DIR !== undefined || process.env.NODE_ENV === 'production'
-    ? { blobs: configuredBlobStore(process.env) } : {}),
+  ...(blobs === undefined ? {} : { blobs }),
 });
 // The routes live in a plugin registered after buildGateway so they inherit the console
 // security hook, the Origin allowlist and the websocket support app.ts already installed.

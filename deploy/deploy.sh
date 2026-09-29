@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Simple Cauce V3 deploy (PHASE 3). Replaces retired machinery (history in git).
 # Contract: build -> pin by digest -> migrate -> up -> smoke -> record. All or rollback.
-# Owner MUST be present: requires CAUCE_FASE3_CON_DUENO=si.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -48,6 +47,26 @@ if ! [[ "$BACKUP_MAX_AGE_HOURS" =~ ^[0-9]+$ ]] \
 fi
 [ -d "$(dirname "$HISTORY_FILE")" ] || die "no existe el directorio de historial $(dirname "$HISTORY_FILE")"
 [ ! -L "$HISTORY_FILE" ] || die "CAUCE_DEPLOY_HISTORY_FILE no puede ser un symlink"
+BLOB_DECLARATIONS="$(grep -c '^CAUCE_BLOB_API_ENABLED=' "$ENV_FILE" || true)"
+[ "$BLOB_DECLARATIONS" -le 1 ] || die "CAUCE_BLOB_API_ENABLED esta duplicado en $ENV_FILE"
+if [ "$BLOB_DECLARATIONS" -eq 0 ]; then
+  BLOB_API_ENABLED=0
+else
+  BLOB_API_ENABLED="$(env_value CAUCE_BLOB_API_ENABLED)"
+  case "$BLOB_API_ENABLED" in
+    0|1) ;;
+    *) die "CAUCE_BLOB_API_ENABLED debe ser 0 o 1 en $ENV_FILE" ;;
+  esac
+fi
+if [ "${CAUCE_BLOB_API_ENABLED+x}" = x ] \
+   && [ "$CAUCE_BLOB_API_ENABLED" != "$BLOB_API_ENABLED" ]; then
+  die "CAUCE_BLOB_API_ENABLED del entorno contradice el archivo de la instancia"
+fi
+export CAUCE_BLOB_API_ENABLED="$BLOB_API_ENABLED"
+if [ "$BLOB_API_ENABLED" = 1 ]; then
+  [ "$BACKUP_MAX_AGE_HOURS" -le 24 ] \
+    || die "CAUCE_BLOB_API_ENABLED=1 exige backup verificado de 24 horas o menos"
+fi
 cd "$REPO"
 [ -z "$(git status --porcelain)" ] || die "el arbol no esta limpio; commitea o descarta antes de desplegar"
 git fetch -q origin || die "no pude hacer fetch de origin"
@@ -66,9 +85,32 @@ LAST_MIGRATION="$(find "$REPO/packages/store/migrations" -maxdepth 1 -type f -na
 echo "== Cauce V3 deploy: commit $REV ($STAMP) =="
 
 if ! STATUS_FILE="$BACKUP_STATUS_FILE" MAX_AGE_HOURS="$BACKUP_MAX_AGE_HOURS" \
+  REQUIRE_BLOB_VOLUME="$BLOB_API_ENABLED" \
   "$BACKUP_MONITOR" >/dev/null; then
+  [ "$BLOB_API_ENABLED" = 0 ] \
+    || die "la API de blobs exige un backup verificado; no se admite omitir este control"
   echo "AVISO: el estado de backup no acredita una copia sana de <${BACKUP_MAX_AGE_HOURS}h en $BACKUP_STATUS_FILE."
   confirmar "¿Continuar igual?" || die "abortado por falta de backup fresco"
+fi
+if [ "$BLOB_API_ENABLED" = 1 ]; then
+  python3 - "$BACKUP_STATUS_FILE" <<'PY' \
+    || die "la API de blobs exige restauracion de tabla y volumen posterior a la migracion 042"
+import json
+import pathlib
+import sys
+
+status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+evidence = json.loads(pathlib.Path(status["restore_evidence_file"]).read_text(encoding="utf-8"))
+if not (
+    status.get("schema_version") == 2
+    and status.get("overall") == "ok"
+    and evidence.get("schema_version") == 2
+    and evidence.get("full_restore") is True
+    and evidence.get("blob_table_present") is True
+    and evidence.get("blob_volume_present") is True
+):
+    raise SystemExit(1)
+PY
 fi
 
 # Both images come from deploy/Dockerfile: `runtime` is NOT the last stage (console is), so the

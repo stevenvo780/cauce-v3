@@ -43,7 +43,7 @@ describe('blobs repository', () => {
     expect(registered.sha256).toBe(SHA);
     expect(registered.bytes).toBe(1_500_000_000);
     await pool.query(`UPDATE blobs SET last_used_at=now()-interval '2 days' WHERE sha256=$1`, [SHA]);
-    const found = await repository.findBlob(SHA);
+    const found = await repository.findBlob(SHA, 'Steven');
     expect(found?.media_type).toBe('video/mp4');
     expect(found?.name).toBe('demo.mp4');
     expect(found?.tenant_id).toBe('Steven');
@@ -52,7 +52,7 @@ describe('blobs repository', () => {
   });
 
   it('answers nothing for a digest nobody registered', async () => {
-    expect(await repository.findBlob(OTHER)).toBeUndefined();
+    expect(await repository.findBlob(OTHER, 'Steven')).toBeUndefined();
   });
 
   it('is idempotent for the same bytes and refuses a different size under the same digest', async () => {
@@ -64,6 +64,37 @@ describe('blobs repository', () => {
     await expect(repository.registerBlob(blob({ bytes: 7 }))).rejects.toBeInstanceOf(StoreError);
   });
 
+  it('does not reveal or touch another tenant\'s blob when reading by digest', async () => {
+    await repository.registerBlob(blob());
+    await pool.query(`UPDATE blobs SET last_used_at=now()-interval '2 days' WHERE sha256=$1`, [SHA]);
+    const before = await pool.query<{ last_used_at: Date }>('SELECT last_used_at FROM blobs WHERE sha256=$1', [SHA]);
+
+    expect(await repository.findBlob(SHA, 'Miguel')).toBeUndefined();
+
+    const after = await pool.query<{ last_used_at: Date }>('SELECT last_used_at FROM blobs WHERE sha256=$1', [SHA]);
+    expect(after.rows[0]?.last_used_at).toEqual(before.rows[0]?.last_used_at);
+    expect(await repository.findBlob(SHA, 'Steven')).toMatchObject({ tenant_id: 'Steven' });
+  });
+
+  it('rejects the same digest from another tenant without exposing or changing owner metadata', async () => {
+    const first = await repository.registerBlob(blob());
+    const before = await pool.query<{ last_used_at: Date }>('SELECT last_used_at FROM blobs WHERE sha256=$1', [SHA]);
+    const foreign = blob({ tenantId: 'Miguel', createdBy: 'atlas', name: 'foreign.mp4' });
+
+    await expect(repository.registerBlob(foreign)).rejects.toMatchObject({
+      code: 'conflict', message: 'blob digest is unavailable',
+    });
+    await expect(repository.registerBlob({ ...foreign, bytes: 7 })).rejects.toMatchObject({
+      code: 'conflict', message: 'blob digest is unavailable',
+    });
+
+    const after = await pool.query<{ last_used_at: Date }>('SELECT last_used_at FROM blobs WHERE sha256=$1', [SHA]);
+    expect(after.rows[0]?.last_used_at).toEqual(before.rows[0]?.last_used_at);
+    expect(await repository.findBlob(SHA, 'Steven')).toMatchObject({
+      tenant_id: first.tenant_id, created_by: first.created_by, name: first.name, bytes: first.bytes,
+    });
+  });
+
   it('lists blobs unused since a cutoff, oldest first, and forgets one', async () => {
     await repository.registerBlob(blob());
     await repository.registerBlob(blob({ sha256: OTHER, name: 'otro.bin', mediaType: 'application/octet-stream' }));
@@ -72,7 +103,7 @@ describe('blobs repository', () => {
     expect(stale.map((entry) => entry.sha256)).toEqual([SHA]);
     expect(await repository.forgetBlob(SHA)).toBe(true);
     expect(await repository.forgetBlob(SHA)).toBe(false);
-    expect(await repository.findBlob(OTHER)).toBeDefined();
+    expect(await repository.findBlob(OTHER, 'Steven')).toBeDefined();
   });
 
   it('has a down migration that removes the table and an up that recreates it', async () => {
