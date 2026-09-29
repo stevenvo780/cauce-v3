@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'; /* eslint @typescript-eslint/prefer-optional-chain: "error", @typescript-eslint/no-unnecessary-condition: "error" */
-import { deterministicUuidFromSha256, isAlias, type DeliveryState, type Tenant } from '@cauce/protocol';
+import {
+  deterministicUuidFromSha256, isAlias, isTenant, type DeliveryState, type Tenant
+} from '@cauce/protocol';
 import type { DeliveryRow } from '../../observability.js';
 import { textualReply, visibleText } from '../../outbox.js';
 
@@ -32,7 +34,9 @@ function humanAddressedAlias(origin: DeliveryRow['origin']): string | undefined 
 export function isDelegatedSubAgentTurn(row: DeliveryRow): boolean {
   const addressed = humanAddressedAlias(row.origin);
   if (addressed === undefined) return false;
-  return addressed !== row.recipient_alias;
+  const bridgeTenant = row.origin?.metadata.bridge_tenant;
+  return addressed !== row.recipient_alias
+    || (isTenant(bridgeTenant) && bridgeTenant !== row.recipient_tenant);
 }
 
 export function opaqueNodeId(deliveryId: string): string {

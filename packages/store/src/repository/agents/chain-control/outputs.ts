@@ -1,6 +1,7 @@
-import { isRfcUuid, type Ack } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
+import { isRfcUuid, isTenant, type Ack, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { DatabaseClient } from '../../../db.js';
 import { rejectionText, type RejectionNotice } from '../../../delegation-guard.js';
+import { tenantReadableSql } from '../../acl-edges.js';
 import type { OpenChainGate } from '../../deliveries.js';
 import {
   originRelayTenant, truncateUtf8, type DeliveryRow
@@ -47,16 +48,27 @@ export async function continuationBranchMaterialization(
   return parent.rows[0];
 }
 
+export const withheldGateQuestion =
+  'la pregunta la hizo un agente de otro tenant y no es visible desde el tuyo';
+
+export const withheldGateRelayText =
+  'Un agente de otro tenant de esta cadena pidió una respuesta humana que no puede mostrarse en este canal.'
+  + ' La cadena sigue sin esa respuesta.';
+
 /** The open gate of a root, if any. `FOR SHARE` is the interlock against `answerChainGate`. */
 export async function openChainGateFor(
   client: DatabaseClient,
-  rootMessageId: string | undefined
+  rootMessageId: string | undefined,
+  readerTenant: Tenant
 ): Promise<OpenChainGate | undefined> {
   if (rootMessageId === undefined) return undefined;
   const gate = await client.query<{ id: string; question: string }>(
-    `SELECT id,question FROM agent_chain_gates
-       WHERE root_message_id=$1 AND status='open' LIMIT 1 FOR SHARE`,
-    [rootMessageId]
+    `SELECT gate.id,
+            CASE WHEN ${tenantReadableSql('$2::text', 'gate.tenant_id')}
+              THEN gate.question ELSE $3 END AS question
+       FROM agent_chain_gates gate
+       WHERE gate.root_message_id=$1 AND gate.status='open' LIMIT 1 FOR SHARE OF gate`,
+    [rootMessageId, readerTenant, withheldGateQuestion]
   );
   return gate.rows[0];
 }
@@ -81,25 +93,33 @@ export async function openHumanGate(
   input: { rootMessageId: string; question: string; correlation: Record<string, unknown> }
 ): Promise<OpenChainGate | undefined> {
   const question = truncateUtf8(input.question, maxChainGateQuestionBytes).value;
+  const bridgeTenant = row.origin?.metadata.bridge_tenant;
+  const visible = !row.origin || (await client.query<{ visible: boolean }>(
+    `SELECT ${tenantReadableSql(
+      'COALESCE($1::text,(SELECT tenant_id FROM messages WHERE id=$3::uuid))', '$2::text'
+    )} AS visible`,
+    [isTenant(bridgeTenant) ? bridgeTenant : null, row.recipient_tenant, input.rootMessageId]
+  )).rows[0]?.visible === true;
   const inserted = await client.query<{ id: string }>(
     `INSERT INTO agent_chain_gates(
          root_message_id,tenant_id,asked_by_alias,source_delivery_id,source_attempt,output_index,
-         trace_id,question,correlation,origin
-       ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb)
+         trace_id,question,correlation,origin,status
+       ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11)
        ON CONFLICT DO NOTHING RETURNING id`,
     [
       input.rootMessageId, row.recipient_tenant, row.recipient_alias, row.id, ack.attempt,
       outputIndex, row.trace_id, question, JSON.stringify(input.correlation),
-      row.origin ? JSON.stringify(row.origin) : null
+      row.origin ? JSON.stringify(row.origin) : null, visible ? 'open' : 'cancelled'
     ]
   );
   const gateId = inserted.rows[0]?.id;
   if (gateId === undefined) {
     // Lost the race (another open gate from the same root) or it is a repeated ACK for the
     // same output. In both cases the current gate is what rules.
-    const current = await openChainGateFor(client, input.rootMessageId);
+    const current = await openChainGateFor(client, input.rootMessageId, row.recipient_tenant);
     return current;
   }
+  if (!visible) return withholdHumanGate(client, row, ack, outputIndex, input.rootMessageId, gateId);
   await client.query(
     `INSERT INTO audit_events(
          tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
@@ -152,6 +172,65 @@ export async function openHumanGate(
     );
   }
   return { id: gateId, question };
+}
+
+async function withholdHumanGate(
+  client: DatabaseClient,
+  row: DeliveryRow,
+  ack: Ack,
+  outputIndex: number,
+  rootMessageId: string,
+  gateId: string
+): Promise<OpenChainGate> {
+  await client.query(
+    `INSERT INTO audit_events(
+         tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+       ) VALUES($1,$2,'agent_chain.gate_withheld','deny',$3,$4,$5,$6,$7::jsonb)`,
+    [
+      row.recipient_tenant, row.recipient_alias, row.request_id, row.message_id, row.id,
+      row.trace_id,
+      JSON.stringify({
+        gate_id: gateId,
+        root_message_id: rootMessageId,
+        source_attempt: ack.attempt,
+        output_index: outputIndex,
+        reason: 'origin_tenant_cannot_read_asker'
+      })
+    ]
+  );
+  if (row.origin) {
+    await client.query(
+      `INSERT INTO adapter_outbox(
+           tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload
+         ) VALUES($1,$2,'origin_relay',$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
+         ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
+      [
+        originRelayTenant(row), row.origin.adapter, `chain-gate-withheld:${rootMessageId}`,
+        row.request_id, row.message_id, row.id, row.trace_id, JSON.stringify(row.origin),
+        JSON.stringify({
+          relay_kind: 'ack',
+          terminal: false,
+          outcome: 'ack',
+          result: {
+            output: {
+              reply: withheldGateRelayText,
+              messages: [],
+              status: 'done',
+              retryable: false,
+              artifacts: []
+            }
+          },
+          correlation: {
+            request_id: row.request_id,
+            message_id: row.message_id,
+            trace_id: row.trace_id,
+            root_message_id: rootMessageId
+          }
+        })
+      ]
+    );
+  }
+  return { id: gateId, question: withheldGateQuestion, withheld: true };
 }
 
 /**

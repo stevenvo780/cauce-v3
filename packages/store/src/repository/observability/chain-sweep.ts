@@ -4,6 +4,7 @@ import { withTransaction } from '../../db.js';
 import type {
   ChainSilenceClosureReason, ChainSilenceSweepOptions, ChainSilenceSweepResult
 } from './contracts.js';
+import { tenantReadableSql } from '../acl-edges.js';
 import { originRelayTenant, truncateUtf8 } from './helpers.js';
 import { ObservabilityMaintenanceRepository } from './maintenance.js';
 
@@ -290,7 +291,10 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
     }
 
     // 2. Closure with aggregated notice.
-    const detail = await this.chainSilenceDetail(client, candidate.root_message_id);
+    const detail = await this.chainSilenceDetail(
+      client, candidate.root_message_id,
+      originRelayTenant({ tenant_id: candidate.tenant_id, origin: candidate.origin })
+    );
     const reason: ChainSilenceClosureReason = candidate.open_work === 0
       ? 'settled_without_fanin'
       : 'idle_timeout';
@@ -445,7 +449,8 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
    */
   private async chainSilenceDetail(
     client: DatabaseClient,
-    rootMessageId: string
+    rootMessageId: string,
+    readerTenant: Tenant
   ): Promise<{ answered: number; cause?: string; causeCount: number }> {
     const answered = await client.query<{ answered: number | string }>(
       `SELECT count(*) FILTER (
@@ -469,10 +474,12 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
        WHERE materialization.status='materialized'
          AND materialization.correlation->>'root_message_id'=$1
          AND child.status IN ('dead','failed')
+         -- last_error lo escribe el agente: sólo cuenta como causa la rama que el humano puede leer.
+         AND ${tenantReadableSql('$2::text', 'materialization.target_tenant')}
        GROUP BY 1
        ORDER BY total DESC,cause
        LIMIT 1`,
-      [rootMessageId]
+      [rootMessageId, readerTenant]
     );
     const dominant = cause.rows[0];
     return {

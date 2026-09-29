@@ -86,6 +86,7 @@ export interface RejectionContext {
   /** Question of the open gate, so the rejection says what the chain is waiting on. */
   question?: string;
   gateId?: string;
+  humanGateWithheld?: boolean;
 }
 
 export interface RejectionNotice {
@@ -170,6 +171,15 @@ export function describeDelegationRejection(
           + ' es, preguntá en vez de adivinar.'
       };
     case 'unroutable_alias':
+      if (context.humanGateWithheld === true) {
+        return {
+          code,
+          reason: 'La persona de esta cadena es de otro tenant y no puede ver tu pregunta:'
+            + ' no se abrió ningún gate humano.',
+          guidance: 'No vuelvas a preguntar con @human en esta cadena. Resolvelo con lo que tenés'
+            + ' o devolvé el resultado parcial hacia arriba diciendo qué falta.'
+        };
+      }
       return {
         code,
         reason: `No hay ruta hacia «${target}» desde este alias (no existe, está deshabilitado,`
