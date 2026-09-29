@@ -1,0 +1,19 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: operador
+spec:
+  tenant: Hospital
+  room: grp.hospital
+  alias: operador
+  harness: openclaw
+  profile: {seedOnConnect: true, configScope: alias, workspace: /home/node/clawd}
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_OPERADOR_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_OPERADOR_TOKEN_PATH
+    clientCertificate: CAUCE_OPERADOR_CERT_PATH
+    clientKey: CAUCE_OPERADOR_KEY_PATH
+    certificateAuthority: CAUCE_OPERADOR_CA_PATH
+  process: {executablePathEnv: CAUCE_OPERADOR_EXEC_PATH}
+  stateDirectory: /var/lib/cauce-v3/aliases/operador
