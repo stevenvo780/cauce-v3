@@ -151,7 +151,7 @@ describe('blob references follow only authorized deliveries', () => {
     expect(await repository.findBlob(otherSha, 'Steven', 'kant')).toBeUndefined();
   });
 
-  it('grants only a retained nested branch artifact to the root coordinator at fan-in', async () => {
+  it('does not grant the root a nested branch artifact its intermediate did not forward', async () => {
     const argos = await consumer('Steven', 'argos');
     const socrates = await consumer('Steven', 'socrates');
     const seneca = await consumer('Pablo', 'seneca');
@@ -184,8 +184,11 @@ describe('blob references follow only authorized deliveries', () => {
     await applyTerminalAck(repository, argos, toRoot, { messages: [], reply: 'revisado' });
     const fanin = await next(argos, 'agent.fanin');
     const data = fanin.body.fanin_data_v1 as { responses: { alias: string; artifacts?: { uri?: string }[] }[] };
-    expect(data.responses.find((entry) => entry.alias === 'seneca')?.artifacts).toMatchObject([{ uri: URI }]);
-    expect(await repository.findBlob(SHA, 'Steven', 'argos')).toBeDefined();
+    // The fan-in carries only argos's direct children: seneca answered socrates, and socrates
+    // chose not to forward the file, so the root gets neither the raw branch nor its blob.
+    expect(data.responses.map((entry) => entry.alias)).toEqual(['socrates']);
+    expect(JSON.stringify(fanin.body)).not.toContain(URI);
+    expect(await repository.findBlob(SHA, 'Steven', 'argos')).toBeUndefined();
     expect(await repository.findBlob(SHA, 'Steven', 'kant')).toBeUndefined();
   });
 
@@ -220,13 +223,11 @@ describe('blob references follow only authorized deliveries', () => {
     await applyTerminalAck(repository, atlas, toRoot, { messages: [], reply: 'revisado' });
     const fanin = await next(atlas, 'agent.fanin');
     const data = fanin.body.fanin_data_v1 as { responses: { alias: string; artifacts?: { uri?: string }[] }[] };
-    expect(data.responses.find((entry) => entry.alias === 'seneca')?.artifacts ?? []).toEqual([]);
+    // A Pablo grandchild never reaches a Miguel root through the fan-in: not its text, not its ref.
+    expect(data.responses.map((entry) => entry.alias)).toEqual(['kant']);
+    expect(JSON.stringify(fanin.body)).not.toContain('archivo listo');
+    expect(JSON.stringify(fanin.body)).not.toContain(URI);
     expect(await repository.findBlob(SHA, 'Miguel', 'atlas')).toBeUndefined();
-    const audit = await pool.query<{ count: string }>(`
-      SELECT count(*)::text AS count FROM audit_events
-      WHERE action='agent_output.fanin' AND metadata->>'withheld_blob_refs'='1'
-    `);
-    expect(audit.rows[0]?.count).toBe('1');
   });
 
   it('keeps both branch references when distinct aliases return the same digest', async () => {
