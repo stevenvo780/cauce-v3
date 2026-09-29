@@ -337,6 +337,15 @@ export function artifactRefs(artifacts: unknown): ArtifactRef[] {
   return refs;
 }
 
+export function rejectedBlobArtifactCount(artifacts: unknown): number {
+  if (!Array.isArray(artifacts)) return 0;
+  return artifacts.filter((entry: unknown) =>
+    isCarriedBlobCandidate(entry, 'artifacts_v1')
+    && (parseCarriedBlobReference(entry, 'artifacts_v1') === undefined
+      || redactedBasename(objectRecord(entry)?.name) === undefined)
+  ).length;
+}
+
 export interface DeclaredArtifacts {
   readonly bytes: number;
   /** Artifacts that WOULD have travelled: what a withheld count may honestly claim. */

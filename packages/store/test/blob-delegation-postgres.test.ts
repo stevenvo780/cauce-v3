@@ -297,6 +297,26 @@ describe('blob references follow only authorized deliveries', () => {
     expect(state.rows[0]).toEqual({ grants: '0', children: '1' });
   });
 
+  it('drops a BOM prefixed owned URI with a false digest without poisoning the receiver', async () => {
+    await register('Steven', 'argos');
+    const argos = await consumer('Steven', 'argos');
+    const seneca = await consumer('Pablo', 'seneca');
+    await repository.publish(command());
+    const root = await next(argos);
+    const ack = await applyTerminalAck(repository, argos, root, {
+      messages: [{ to: 'seneca', body: 'texto intacto', artifacts: [{
+        name: 'falso.bin', uri: `\uFEFF${URI}`, sha256: 'f'.repeat(64),
+      }] }],
+      reply: 'delegado',
+    });
+    expect(ack.applied).toBe(true);
+    const child = await next(seneca, 'agent.message');
+    expect(child.body.text).toBe('texto intacto');
+    expect(child.body.artifacts_v1).toBeUndefined();
+    expect(child.body.attachments_note).toMatch(/no viajaron/u);
+    expect((await pool.query('SELECT 1 FROM blob_delivery_grants')).rowCount).toBe(0);
+  });
+
   it('drops a forged result artifact without poisoning the child ACK', async () => {
     const argos = await consumer('Steven', 'argos');
     const seneca = await consumer('Pablo', 'seneca');
@@ -317,6 +337,59 @@ describe('blob references follow only authorized deliveries', () => {
     const response = await next(argos, 'agent.response');
     expect(response.body.artifacts_v1).toBeUndefined();
     expect(response.body.text).toMatch(/referencia\(s\) blob no viajaron: emisor sin acceso/u);
+    expect((await pool.query('SELECT 1 FROM blob_delivery_grants')).rowCount).toBe(0);
+  });
+
+  it('reports a malformed owned result blob without poisoning the return delivery', async () => {
+    await register('Pablo', 'seneca');
+    const argos = await consumer('Steven', 'argos');
+    const seneca = await consumer('Pablo', 'seneca');
+    await repository.publish(command());
+    const root = await next(argos);
+    await applyTerminalAck(repository, argos, root, {
+      messages: [{ to: 'seneca', body: 'responde' }], reply: 'delegado',
+    });
+    const child = await next(seneca, 'agent.message');
+    const ack = await repository.ackDelivery(
+      child.delivery_id, seneca.tenant, seneca.alias,
+      ackEnvelope(child, seneca, { output: {
+        messages: [], reply: 'respuesta conservada', status: 'done', retryable: false,
+        artifacts: [
+          { name: 'falso.bin', uri: `\uFEFF${URI}`, sha256: 'f'.repeat(64) },
+          { name: '../fuera.bin', uri: URI },
+        ],
+      } }),
+    );
+    expect(ack.applied).toBe(true);
+    const response = await next(argos, 'agent.response');
+    expect(response.body.text).toMatch(/^\[2 referencia\(s\) blob no viajaron: URI, digest o nombre inválido\]/u);
+    expect(response.body.text).toContain('respuesta conservada');
+    expect(response.body.artifacts_v1).toBeUndefined();
+    expect((await pool.query('SELECT 1 FROM blob_delivery_grants')).rowCount).toBe(0);
+  });
+
+  it('preserves the full result and the discard note when a blob ref is refused', async () => {
+    const argos = await consumer('Steven', 'argos');
+    const seneca = await consumer('Pablo', 'seneca');
+    await repository.publish(command());
+    const root = await next(argos);
+    await applyTerminalAck(repository, argos, root, {
+      messages: [{ to: 'seneca', body: 'responde' }], reply: 'delegado',
+    });
+    const child = await next(seneca, 'agent.message');
+    const longReply = `${'contenido legítimo '.repeat(320)}FIN_DEL_RESULTADO`;
+    const ack = await repository.ackDelivery(
+      child.delivery_id, seneca.tenant, seneca.alias,
+      ackEnvelope(child, seneca, { output: {
+        messages: [], reply: longReply, status: 'done', retryable: false,
+        artifacts: [{ name: 'ajeno.txt', uri: UNKNOWN_URI }],
+      } }),
+    );
+    expect(ack.applied).toBe(true);
+    const response = await next(argos, 'agent.response');
+    expect(response.body.text).toContain(longReply);
+    expect(response.body.text).toMatch(/^\[1 referencia\(s\) blob no viajaron: emisor sin acceso\]/u);
+    expect(response.body.artifacts_v1).toBeUndefined();
     expect((await pool.query('SELECT 1 FROM blob_delivery_grants')).rowCount).toBe(0);
   });
 });

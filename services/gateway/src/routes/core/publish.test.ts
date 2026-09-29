@@ -118,6 +118,22 @@ describe('POST /v3/messages validation', () => {
     expect(calls).toEqual([]);
   });
 
+  it('rejects a whitespace or BOM prefixed blob URI before the store sees it', async () => {
+    const { app, calls } = await gateway();
+    for (const prefix of [' ', '\uFEFF', ' \uFEFF\t']) {
+      const response = await app.inject({
+        method: 'POST', url: '/v3/messages', headers: HEADERS,
+        payload: payload({ body: { artifacts_v1: [{
+          name: 'poison.txt', uri: `${prefix}${blobArtifactUri('a'.repeat(64))}`,
+          sha256: 'b'.repeat(64),
+        }] } }),
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json<{ error: string }>().error).toBe('invalid_request');
+    }
+    expect(calls).toEqual([]);
+  });
+
   it('requires the route permission and touches nothing without it', async () => {
     const { app, calls } = await gateway({ routePermission: false });
     const response = await app.inject({

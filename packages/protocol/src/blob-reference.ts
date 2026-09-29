@@ -42,7 +42,7 @@ export function isCarriedBlobCandidate(entry: unknown, field: CarriedBlobField):
   const record = entry as Record<string, unknown>;
   if (field === 'attachments_v1') return Object.hasOwn(record, 'blob') || Object.hasOwn(record, 'uri');
   return Object.hasOwn(record, 'blob')
-    || (typeof record.uri === 'string' && record.uri.startsWith(BLOB_URI_PREFIX));
+    || (typeof record.uri === 'string' && record.uri.trimStart().startsWith(BLOB_URI_PREFIX));
 }
 
 export function parseCarriedBlobReference(entry: unknown, field: CarriedBlobField): string | undefined {

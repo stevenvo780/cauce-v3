@@ -75,6 +75,19 @@ test("un artifacts_v1 ambiguo no descarga el uri ajeno aunque blob apunte a un d
   assert.deepEqual(blobs.calls, []);
 });
 
+test("un artifacts_v1 con espacio o BOM antes del blob no se ignora ni descarga", async () => {
+  for (const prefix of [" ", "\uFEFF", " \uFEFF\t"]) {
+    const blobs = fetcher();
+    await assert.rejects(materializeAttachments({
+      artifacts_v1: [{
+        name: "poison.txt", uri: `${prefix}${blobArtifactUri(SHA)}`,
+        sha256: "b".repeat(64), media_type: "text/plain", size: PAYLOAD.length,
+      }],
+    }, blobs), { code: "INVALID_ATTACHMENT" });
+    assert.deepEqual(blobs.calls, []);
+  }
+});
+
 test("los bytes inline y las referencias comparten el mismo tope de adjuntos por mensaje", async () => {
   const inline = Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE }, (_, index) => inlineEntry(`n${String(index)}.txt`));
   await assert.rejects(

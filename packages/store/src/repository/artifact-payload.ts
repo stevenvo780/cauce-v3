@@ -1,9 +1,12 @@
-import { isDeliverableArtifactUri, MAX_ARTIFACTS_CONSIDERED, objectRecord } from '@cauce/protocol';
+import {
+  isCarriedBlobCandidate, isDeliverableArtifactUri, MAX_ARTIFACTS_CONSIDERED, objectRecord,
+  parseCarriedBlobReference
+} from '@cauce/protocol';
 import { artifactRefs, type ArtifactRef } from './agents/delegated-attachments.js';
 
 /* Artifacts of an agent result: which count as an answer, and which bytes stay out of the durable
-   copies nobody serves. Deliverability is not re-decided here -- `isDeliverableArtifactUri` is the
-   one predicate, shared with the SDK and never stricter than the egress decoder -- so a `file:`,
+   copies nobody serves. Deliverability uses `isDeliverableArtifactUri` and requires blob
+   candidates to pass the shared parser before any URI trimming. A `file:`,
    an `http:` (plaintext fetch on the agent's word, the shape an SSRF borrows) and an undecodable
    `data:` never close a delivery as `done`; the fan-in branch of `ackDelivery` asks it again for
    ACKs outside the SDK. Pruning keeps the identity and drops the bytes, leaving a result with
@@ -28,6 +31,10 @@ function artifactEntries(result: Record<string, unknown> | undefined): readonly 
    walks the WHOLE list: bytes past the prefix are stored by nobody's decision but the agent's. */
 export function hasDeliverableArtifact(result: Record<string, unknown> | undefined): boolean {
   return artifactEntries(result).slice(0, MAX_ARTIFACTS_CONSIDERED).some((entry) => {
+    if (isCarriedBlobCandidate(entry, 'artifacts_v1')) {
+      return parseCarriedBlobReference(entry, 'artifacts_v1') !== undefined
+        && artifactRefs([entry]).length > 0;
+    }
     const uri = objectRecord(entry)?.uri;
     return typeof uri === 'string' && isDeliverableArtifactUri(uri.trim());
   });

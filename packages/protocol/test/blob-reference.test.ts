@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AttachmentsV1Schema, blobArtifactUri, blobLocator, DEFAULT_BLOB_MAX_BYTES, isBlobAttachmentEntry,
-  isDeliverableArtifactUri, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_TOTAL_BYTES, MAX_BLOB_BYTES,
+  isCarriedBlobCandidate, isDeliverableArtifactUri, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_TOTAL_BYTES, MAX_BLOB_BYTES,
   MessageBodySchema, parseBlobArtifactUri, parseBlobLocator,
   parseCarriedBlobReference,
 } from '../src/index.js';
@@ -82,6 +82,15 @@ describe('carried blob references', () => {
       name: 'valid.txt', uri: blobArtifactUri(SHA), declared_sha256: SHA,
     }] }).success).toBe(true);
   });
+
+  it.each([' ', '\uFEFF', ' \uFEFF\t'])(
+    'treats a blob URI with leading %j as invalid rather than an opaque artifact', (prefix) => {
+      const entry = { name: 'poison.txt', uri: `${prefix}${blobArtifactUri(SHA)}`, sha256: OTHER };
+      expect(isCarriedBlobCandidate(entry, 'artifacts_v1')).toBe(true);
+      expect(parseCarriedBlobReference(entry, 'artifacts_v1')).toBeUndefined();
+      expect(MessageBodySchema.safeParse({ artifacts_v1: [entry] }).success).toBe(false);
+    },
+  );
 });
 
 describe('attachments_v1 with blob entries', () => {

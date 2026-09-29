@@ -4,10 +4,10 @@ import {
   base64CharacterBudget, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, objectRecord
 } from '@cauce/protocol';
 import {
-  artifactRefs, attachmentsFromArtifacts, declaredArtifactBudget,
+  artifactRefs, attachmentsFromArtifacts, declaredArtifactBudget, rejectedBlobArtifactCount,
   MAX_ARTIFACT_PAYLOAD_CHARACTERS, MAX_ARTIFACT_URI_CHARACTERS
 } from '../src/repository/agents/delegated-attachments.js';
-import { withoutInlineArtifactBytes } from '../src/repository/artifact-payload.js';
+import { hasDeliverableArtifact, withoutInlineArtifactBytes } from '../src/repository/artifact-payload.js';
 
 /**
  * Referencias de artefactos entre agentes: lo que se lee de un `data:` y lo que sobrevive de él
@@ -273,5 +273,24 @@ describe('a file that travels by reference to the blob store', () => {
     expect(artifactRefs([forged])).toEqual([]);
     expect(attachmentsFromArtifacts([{ name: 'falso.bin', uri: BLOB_URI, sha256: 'a'.repeat(64) }]).refs)
       .toEqual([]);
+  });
+
+  it('drops whitespace and BOM prefixed blob URIs before normalizing the locator', () => {
+    for (const prefix of [' ', '\uFEFF']) {
+      const forged = { name: 'falso.bin', uri: `${prefix}${BLOB_URI}`, sha256: 'a'.repeat(64) };
+      const carried = attachmentsFromArtifacts([forged]);
+      expect(carried.refs).toEqual([]);
+      expect(carried.note).toMatch(/no viajaron/u);
+      expect(artifactRefs([forged])).toEqual([]);
+      expect(rejectedBlobArtifactCount([forged])).toBe(1);
+      expect(hasDeliverableArtifact({ output: { artifacts: [forged] } })).toBe(false);
+    }
+  });
+
+  it('does not count a blob with an invalid name as a delivered final answer', () => {
+    const malformed = { name: '../fuera.bin', uri: BLOB_URI };
+    expect(artifactRefs([malformed])).toEqual([]);
+    expect(rejectedBlobArtifactCount([malformed])).toBe(1);
+    expect(hasDeliverableArtifact({ output: { artifacts: [malformed] } })).toBe(false);
   });
 });
