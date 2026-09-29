@@ -59,7 +59,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
     // silently resume an existing chain awaiting its answer. Only the explicit, audited
     // cancelChainGate operation releases it without an answer.
     const openGate = policy.humanGateAvailable
-      ? await openChainGateFor(client, rootMessageId)
+      ? await openChainGateFor(client, rootMessageId, row.recipient_tenant)
       : undefined;
 
     const expandedOutputs = await expandAgentOutputs(
@@ -160,6 +160,10 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         const gate = await openHumanGate(client, row, ack, output.index, {
           rootMessageId, question: candidateBody, correlation
         });
+        if (gate?.withheld === true) {
+          await reject('unroutable_alias');
+          continue;
+        }
         if (gate !== undefined) {
           activeGate = gate;
           suspended = true;

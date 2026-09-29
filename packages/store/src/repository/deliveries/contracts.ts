@@ -100,6 +100,7 @@ export interface AgentOutputOutcome {
 export interface OpenChainGate {
   id: string;
   question: string;
+  withheld?: true;
 }
 export interface ClaimedDeliveryEnvelope extends DeliveryEnvelope {
   event_id: string;

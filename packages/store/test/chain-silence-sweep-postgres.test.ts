@@ -317,6 +317,45 @@ describe('anti-spam: cien muertes en una raíz son un aviso', () => {
     });
   });
 
+  it('no lleva al chat de Isa el last_error de una rama de Miguel', async () => {
+    const salva = await consumer('Isa', 'salva');
+    const jarvis = await consumer('Steven', 'jarvis');
+    const kratos = await consumer('Miguel', 'kratos');
+    await repository.publish(telegramCommand('chat-isa', {
+      tenant_id: 'Isa', room_id: 'grp.isa', actor_alias: 'salva',
+      recipients: [{ tenant_id: 'Isa', alias: 'salva' }],
+      authenticated_context: {
+        session_id: 'telegram-chat-isa',
+        channel: 'telegram',
+        origin: {
+          adapter: 'telegram', channel: 'telegram', conversation_id: 'chat-isa',
+          external_message_id: 'chat-isa', relay: [],
+          metadata: { bridge_alias: 'salva', bridge_tenant: 'Isa' }
+        }
+      }
+    }));
+    await ackWith(salva, await nextDelivery(salva), [{ to: 'jarvis', body: 'ayudame' }]);
+    await ackWith(jarvis, await nextDelivery(jarvis), [{ to: 'kratos', body: 'rama kratos' }]);
+    const leaf = await nextDelivery(kratos);
+    await ackWith(kratos, leaf, [], 'no pude', 'failed');
+    await pool.query(
+      `UPDATE deliveries SET status='dead',last_error='SECRETO-MIGUEL /srv/miguel/contrato.pdf' WHERE id=$1`,
+      [leaf.delivery_id]
+    );
+    await killOpenDeliveries('jarvis');
+    await killOpenDeliveries('salva');
+    await ageChain('7 hours');
+
+    await repository.sweepSilentChains();
+
+    const notices = await closureNotices();
+    expect(notices.map((notice) => notice.tenant_id)).toEqual(['Isa']);
+    expect(JSON.stringify(notices)).not.toContain('SECRETO-MIGUEL');
+    expect(JSON.stringify((await pool.query(
+      `SELECT dominant_cause FROM agent_chain_closures`
+    )).rows)).not.toContain('SECRETO-MIGUEL');
+  });
+
   it('nunca supera el techo de avisos por barrido', async () => {
     const argos = await consumer('Steven', 'argos');
     for (const conversation of ['chat-a', 'chat-b', 'chat-c']) {
