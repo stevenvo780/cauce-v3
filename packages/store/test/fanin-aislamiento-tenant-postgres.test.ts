@@ -45,7 +45,10 @@ async function ackWithSecret(target: Consumer, delivery: DeliveryEnvelope): Prom
 }
 
 // Los coordinadores intermedios cierran cada turno sin repetir nada de lo que recibieron, así
-// que cualquier rastro del secreto en el fan-in sólo puede venir de la materialización.
+// que cualquier rastro del secreto en el fan-in sólo puede venir de la materialización. Cada
+// cierre lleva un número propio, para saber cuál fue la ÚLTIMA palabra de cada alias.
+const lastReply = new Map<string, string>();
+let replyCounter = 0;
 async function drainUntilFanin(root: Consumer, coordinators: Consumer[]): Promise<DeliveryEnvelope> {
   for (let round = 0; round < 12; round += 1) {
     for (const target of [...coordinators, root]) {
@@ -54,7 +57,10 @@ async function drainUntilFanin(root: Consumer, coordinators: Consumer[]): Promis
       );
       for (const delivery of claimed) {
         if (target === root && delivery.body.type === 'agent.fanin') return delivery;
-        await ackWith(repository, target, delivery, { reply: `${target.alias} cerró su turno` });
+        replyCounter += 1;
+        const reply = `${target.alias} cerró su turno ${String(replyCounter)}`;
+        lastReply.set(target.alias, reply);
+        await ackWith(repository, target, delivery, { reply });
       }
     }
   }
@@ -129,6 +135,8 @@ describe('T9: el fan-in no cruza texto entre tenants cliente', () => {
     const rendered = JSON.stringify(fanin.body);
     expect(responsesOf(fanin).map((branch) => `${branch.tenant_id}/${branch.alias}`))
       .toEqual(['Steven/jarvis']);
+    // jarvis cerró dos continuaciones (kratos y janus): el fan-in lleva la última, no la primera.
+    expect(responsesOf(fanin)[0]?.untrusted_text).toBe(lastReply.get('jarvis'));
     expect(rendered).not.toContain(secreto);
     expect(rendered).not.toContain('kratos-privado.pdf');
     expect(rendered).not.toContain('janus-privado.pdf');
