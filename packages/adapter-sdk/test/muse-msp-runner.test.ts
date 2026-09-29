@@ -184,3 +184,24 @@ test("Muse refuses foreign project context before starting the host", async () =
       && error.code === "MUSE_PREFLIGHT_FAILED" && !error.retryable,
   );
 });
+
+test("Muse turn that keeps producing items outlives its no-progress window", async () => {
+  const { config } = await fixture("sin-progreso-vivo");
+  await writeFile(resolve(config.workspace, "fake-muse-scenario.json"), JSON.stringify({ slowSteps: 8, stepMs: 80 }));
+  const run = await new MuseMspRunner(config).run({
+    harness: "muse", command: fakeMuse, args: ["serve"], stdin: "Synthetic long task",
+    sessionId: mintId(), timeoutMs: 250, timeoutKind: "no-progress", signal: new AbortController().signal,
+  });
+  assert.equal(run.timedOut, false, "a live turn is never cut by its duration, only by silence");
+  assert.match(run.stdout, /Muse responde/u);
+});
+
+test("Muse turn that goes silent dies once its no-progress window passes", async () => {
+  const { config } = await fixture("sin-progreso-colgado");
+  await writeFile(resolve(config.workspace, "fake-muse-scenario.json"), JSON.stringify({ hang: true }));
+  const run = await new MuseMspRunner(config).run({
+    harness: "muse", command: fakeMuse, args: ["serve"], stdin: "Synthetic hung task",
+    sessionId: mintId(), timeoutMs: 300, timeoutKind: "no-progress", signal: new AbortController().signal,
+  });
+  assert.equal(run.timedOut, true);
+});

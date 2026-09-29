@@ -12,6 +12,7 @@ import type { SessionOrigin } from "../durable-store.js";
 import { DurableStore, sanitizeSessionOrigin } from "../durable-store.js";
 import { AdapterError } from "../errors.js";
 import type { Delivery } from "../types.js";
+import type { HarnessTimeoutKind } from "../message-timeout.js";
 
 const MAX_ACK_COMPLETION_MARGIN_MS = 30_000;
 const MIN_ACK_COMPLETION_MARGIN_MS = 1_000;
@@ -331,6 +332,10 @@ export function sessionFromDelivery(
   };
 }
 
+export function timeoutKindFromBody(body: Record<string, unknown>): HarnessTimeoutKind {
+  return messageTimeoutMs(body) === undefined ? "no-progress" : "hard";
+}
+
 export function timeoutFromBody(body: Record<string, unknown>, fallback: number): number {
   const parsed = messageTimeoutMs(body);
   if (parsed !== undefined) return parsed;
@@ -344,6 +349,7 @@ export function timeoutFromBody(body: Record<string, unknown>, fallback: number)
 
 export interface ExecutionBudget {
   readonly harnessTimeoutMs: number;
+  readonly harnessTimeoutKind: HarnessTimeoutKind;
   readonly claimRenewalMs: number;
   readonly claimWatchdogMs: number;
 }
@@ -357,6 +363,7 @@ export function executionBudgetFor(
   delivery: Delivery,
   requestedTimeoutMs: number,
   now: Date,
+  harnessTimeoutKind: HarnessTimeoutKind = "hard",
 ): ExecutionBudget {
   const deadlineMs = Date.parse(delivery.ack_deadline_at);
   const nowMs = now.getTime();
@@ -389,6 +396,7 @@ export function executionBudgetFor(
 
   return {
     harnessTimeoutMs: requestedTimeoutMs,
+    harnessTimeoutKind,
     claimRenewalMs: Math.max(100, Math.min(60_000, Math.floor(claimBudgetMs / 3))),
     claimWatchdogMs: claimBudgetMs,
   };

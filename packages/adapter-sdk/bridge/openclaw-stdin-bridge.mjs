@@ -1,17 +1,148 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { realpath, readdir, stat } from "node:fs/promises";
+import { createConnection } from "node:net";
 import { delimiter, dirname, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const MAX_INPUT_BYTES = 1024 * 1024;
-// Upper bound for one run: the runtime's timeout does not always surface as a rejection.
-const DEFAULT_RUN_DEADLINE_MS = 45 * 60 * 1000;
+const PROGRESS_MARKER = "<<cauce:progress>>";
+const PROGRESS_POLL_MS = Number.parseInt(process.env.CAUCE_OPENCLAW_PROGRESS_POLL_MS ?? "", 10) || 15_000;
 
 function runDeadlineMs() {
   const raw = process.env.CAUCE_OPENCLAW_RUN_DEADLINE_MS;
   const parsed = raw === undefined ? Number.NaN : Number.parseInt(raw, 10);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : DEFAULT_RUN_DEADLINE_MS;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+async function listNames(directory) {
+  return readdir(directory).catch(() => []);
+}
+
+async function codexRollout(codexHome, threadId, cache) {
+  if (cache.has(threadId)) return cache.get(threadId);
+  const root = join(codexHome, "sessions");
+  for (const year of (await listNames(root)).sort().reverse()) {
+    for (const month of (await listNames(join(root, year))).sort().reverse()) {
+      for (const day of (await listNames(join(root, year, month))).sort().reverse()) {
+        const hit = (await listNames(join(root, year, month, day))).find((name) => name.includes(threadId));
+        if (hit !== undefined) { cache.set(threadId, join(root, year, month, day, hit)); return cache.get(threadId); }
+      }
+    }
+  }
+  return undefined;
+}
+
+async function claudeTranscripts(home, claudeSessionId) {
+  const projects = join(home, ".claude", "projects");
+  const files = [];
+  for (const project of await listNames(projects)) {
+    const names = await listNames(join(projects, project));
+    if (names.includes(`${claudeSessionId}.jsonl`)) files.push(join(projects, project, `${claudeSessionId}.jsonl`));
+    if (names.includes(claudeSessionId)) {
+      for (const name of await listNames(join(projects, project, claudeSessionId, "subagents"))) {
+        files.push(join(projects, project, claudeSessionId, "subagents", name));
+      }
+    }
+  }
+  return files;
+}
+
+async function runFiles(home, sessionKey, cache) {
+  if (sessionKey === undefined) return [];
+  const files = [];
+  const agents = join(home, ".openclaw", "agents");
+  for (const agent of await listNames(agents)) {
+    let store;
+    try { store = JSON.parse(readFileSync(join(agents, agent, "sessions", "sessions.json"), "utf8")); } catch { continue; }
+    const entry = store[sessionKey] ?? store[`agent:${agent}:${sessionKey}`];
+    if (entry === undefined) continue;
+    const transcript = entry.sessionFile ?? join(agents, agent, "sessions", `${String(entry.sessionId)}.jsonl`);
+    files.push(transcript, transcript.replace(/\.jsonl$/u, ".trajectory.jsonl"));
+    try {
+      const { threadId } = JSON.parse(readFileSync(`${transcript}.codex-app-server.json`, "utf8"));
+      const rollout = typeof threadId === "string"
+        ? await codexRollout(join(agents, agent, "agent", "codex-home"), threadId, cache) : undefined;
+      if (rollout !== undefined) files.push(rollout);
+    } catch { /* not a codex-runtime session */ }
+    const claude = entry.claudeCliSessionId ?? entry.cliSessionIds?.["claude-cli"];
+    if (typeof claude === "string") files.push(...await claudeTranscripts(home, claude));
+  }
+  return files;
+}
+
+// Progress is growth of THIS run's own files: other sessions and crons must not keep a hung run alive.
+function watchProgress(home, sessionKey, emit) {
+  const sizes = new Map();
+  const cache = new Map();
+  let busy = false;
+  const poll = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      let grew = false;
+      for (const file of await runFiles(home, sessionKey, cache)) {
+        const size = (await stat(file).catch(() => undefined))?.size;
+        if (size === undefined) continue;
+        if (sizes.has(file) && sizes.get(file) !== size) grew = true;
+        sizes.set(file, size);
+      }
+      if (grew) emit();
+    } finally { busy = false; }
+  };
+  void poll();
+  const timer = setInterval(() => { void poll(); }, PROGRESS_POLL_MS);
+  timer.unref();
+  return () => { clearInterval(timer); };
+}
+
+function gatewayPort() {
+  const path = process.env.OPENCLAW_CONFIG_PATH ?? join(process.env.HOME ?? "", ".openclaw", "openclaw.json");
+  try {
+    const port = JSON.parse(readFileSync(path, "utf8"))?.gateway?.port;
+    return Number.isSafeInteger(port) && port > 0 ? port : 18789;
+  } catch { return 18789; }
+}
+
+function gatewayListening(port) {
+  return new Promise((done) => {
+    const socket = createConnection({ host: "127.0.0.1", port });
+    const finish = (alive) => { socket.destroy(); done(alive); };
+    socket.setTimeout(2_000, () => { finish(true); });
+    socket.once("connect", () => { finish(true); });
+    socket.once("error", (error) => { finish(error?.code === "ECONNREFUSED" ? false : true); });
+  });
+}
+
+class EmbeddedFallbackIntercepted extends Error {
+  constructor(line) {
+    super(line.split("\n")[0]);
+    this.byTimeout = /timed out/u.test(line);
+  }
+}
+
+// OpenClaw re-runs the turn embedded without checking whether the gateway run is still alive.
+function interceptingRuntime(runtime) {
+  return new Proxy(runtime, {
+    get(target, property, receiver) {
+      if (property !== "error") return Reflect.get(target, property, receiver);
+      return (...args) => {
+        const line = args.map(String).join(" ");
+        if (line.startsWith("EMBEDDED FALLBACK:")) throw new EmbeddedFallbackIntercepted(line);
+        return target.error?.(...args);
+      };
+    },
+  });
+}
+
+async function embeddedFallbackRefusal(intercepted) {
+  if ((process.env.CAUCE_OPENCLAW_EMBEDDED_FALLBACK ?? "gateway-down") === "never") {
+    return "embedded fallback disabled (CAUCE_OPENCLAW_EMBEDDED_FALLBACK=never)";
+  }
+  if (intercepted.byTimeout) return "the gateway client gave up; not re-running the turn embedded";
+  if (await gatewayListening(gatewayPort())) return "the gateway is still alive; not re-running the turn embedded in parallel";
+  return undefined;
 }
 
 function failureEnvelope(message, nativeSessionKey) {
@@ -184,18 +315,27 @@ async function main() {
       process.exit(1);
     };
     const deadline = runDeadlineMs();
-    const timer = setTimeout(() => { abandon(`OpenClaw run exceeded ${String(deadline)} ms without a final result`); }, deadline);
-    timer.unref();
+    const timer = deadline === undefined ? undefined
+      : setTimeout(() => { abandon(`OpenClaw run exceeded ${String(deadline)} ms without a final result`); }, deadline);
+    timer?.unref();
+    const stopWatching = watchProgress(process.env.HOME ?? "", nativeSessionKey, () => { process.stderr.write(`${PROGRESS_MARKER}\n`); });
     for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { abandon(`terminated by ${signal} before a final result`); });
     try {
-      returned = await agentCliCommand({
-        message,
-        sessionKey: nativeSessionKey,
-        json: true,
-        deliver: false,
-      }, defaultRuntime);
+      const hardMs = process.env.CAUCE_HARNESS_TIMEOUT_KIND === "hard" ? Number(process.env.CAUCE_HARNESS_TIMEOUT_MS) : Number.NaN;
+      const timeout = Number.isSafeInteger(hardMs) && hardMs > 0 ? String(Math.ceil(hardMs / 1000)) : "0";
+      const request = { message, sessionKey: nativeSessionKey, json: true, deliver: false, timeout };
+      try {
+        returned = await agentCliCommand(request, interceptingRuntime(defaultRuntime));
+      } catch (error) {
+        if (!(error instanceof EmbeddedFallbackIntercepted)) throw error;
+        const refusal = await embeddedFallbackRefusal(error);
+        if (refusal !== undefined) throw new Error(`${refusal}: ${error.message}`);
+        process.stderr.write(`openclaw stdin bridge: gateway is down, running the turn embedded: ${error.message}\n`);
+        returned = await agentCliCommand({ ...request, local: true }, defaultRuntime);
+      }
     } finally {
       clearTimeout(timer);
+      stopWatching();
     }
   } catch (error) {
     if (!empezado) throw error;

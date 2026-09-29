@@ -36,6 +36,7 @@ import {
   selfRoleFromDelivery,
   sessionFromDelivery,
   timeoutFromBody,
+  timeoutKindFromBody,
 } from "./engine/delivery-context.js";
 import type { ClaimMonitor, ClaimRenewalDeps } from "./engine/claim-renewal.js";
 import { startClaimRenewal } from "./engine/claim-renewal.js";
@@ -46,7 +47,7 @@ import { inlineWithoutSecrets } from "./engine/secret-guard.js";
 import type { SealedSecretGateway, TurnInput, TurnInputDeps } from "./engine/turn-cleanup.js";
 import { materializeTurnInput, releaseTurn } from "./engine/turn-cleanup.js";
 import { runSystemGateProbe } from "./engine/system-gate-probe.js";
-import { DEFAULT_MESSAGE_TIMEOUT_MS } from "./message-timeout.js";
+import { DEFAULT_NO_PROGRESS_TIMEOUT_MS } from "./message-timeout.js";
 import type { EmissionRuntime } from "./mcp-emission/runtime.js";
 import type { EmissionTurn } from "./mcp-emission/tools.js";
 
@@ -94,7 +95,7 @@ export class AdapterEngine {
     this.logger = options.logger ?? (() => undefined);
     this.ownTenantId = options.ownTenantId;
     this.ownRoom = options.ownRoom;
-    this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_MESSAGE_TIMEOUT_MS;
+    this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_NO_PROGRESS_TIMEOUT_MS;
     if (messageTimeoutMs({ timeout_ms: this.defaultTimeoutMs }) === undefined) {
       throw new RangeError(
         `defaultTimeoutMs must be between 1 and ${String(MAX_MESSAGE_TIMEOUT_MS)}`,
@@ -340,6 +341,7 @@ export class AdapterEngine {
         delivery,
         timeoutFromBody(delivery.body, this.defaultTimeoutMs),
         this.clock.now(),
+        timeoutKindFromBody(delivery.body),
       );
     } catch (error) {
       await this.finishError(accepted.record, asAdapterError(error));
@@ -457,6 +459,7 @@ export class AdapterEngine {
           ...(reservation === undefined ? {} : { sessionReservation: reservation }),
           ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
           timeoutMs: executionBudget.harnessTimeoutMs,
+          timeoutKind: executionBudget.harnessTimeoutKind,
           signal: controller.signal,
           ...(emissionTurn === undefined ? {} : {
             emissionOutput: () => emissionTurn?.output,
@@ -578,8 +581,9 @@ export class AdapterEngine {
       controller,
       "accepted",
     );
-    const queueBudgetMs = this.queueWaitTimeoutMs
-      ?? Math.min(budget.harnessTimeoutMs, DEFAULT_QUEUE_WAIT_TIMEOUT_MS);
+    const queueBudgetMs = this.queueWaitTimeoutMs ?? (budget.harnessTimeoutKind === "hard"
+      ? Math.min(budget.harnessTimeoutMs, DEFAULT_QUEUE_WAIT_TIMEOUT_MS)
+      : DEFAULT_QUEUE_WAIT_TIMEOUT_MS);
     const queueTimer = this.clock.setTimer(() => {
       controller.abort(new AdapterError(
         "SESSION_QUEUE_TIMEOUT",

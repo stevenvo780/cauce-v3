@@ -45,6 +45,26 @@ function bounded<T>(promise: Promise<T>, deadline: number, signal: AbortSignal):
   });
 }
 
+/** Waits for `promise` while the turn keeps producing items; rejects once it goes quiet for `windowMs`. */
+function untilStalled<T>(promise: Promise<T>, lastProgressAt: () => number, windowMs: number, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new MuseAbortError());
+  return new Promise<T>((resolveResult, rejectResult) => {
+    const stop = (): void => {
+      clearInterval(check);
+      signal.removeEventListener("abort", onAbort);
+    };
+    const check = setInterval(() => {
+      if (Date.now() - lastProgressAt() < windowMs) return;
+      stop();
+      rejectResult(new MuseDeadlineError());
+    }, Math.max(10, Math.min(windowMs / 4, 30_000)));
+    check.unref();
+    const onAbort = (): void => { stop(); rejectResult(new MuseAbortError()); };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolveResult, rejectResult).finally(stop).catch(() => undefined);
+  });
+}
+
 function result(
   stdout: string,
   options: {
@@ -262,15 +282,20 @@ export class MuseMspRunner {
       }), deadline, request.signal);
       turnAdmitted = true;
       request.onHarnessStart?.();
+      let lastItemAt = Date.now();
       const collect = (async (): Promise<void> => {
         for await (const item of turn.items()) {
+          lastItemAt = Date.now();
           if (item.kind === "agentMessage" && item.status !== "inProgress") {
             finalText = item.text ?? "";
           }
         }
       })();
-      const outcome = await bounded(Promise.race([turn.completed, approvalFailed]), deadline, request.signal);
-      await bounded(collect, deadline, request.signal);
+      const waitTurn = <T>(promise: Promise<T>): Promise<T> => (request.timeoutKind === "no-progress"
+        ? untilStalled(promise, () => lastItemAt, request.timeoutMs, request.signal)
+        : bounded(promise, deadline, request.signal));
+      const outcome = await waitTurn(Promise.race([turn.completed, approvalFailed]));
+      await waitTurn(collect);
       return terminalResult(session.sessionId, finalText, outcome);
     } catch (error) {
       if (error instanceof MuseDeadlineError) {

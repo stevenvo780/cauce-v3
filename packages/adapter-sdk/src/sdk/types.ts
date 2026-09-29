@@ -1,4 +1,5 @@
 import type { NotifyKind } from '@cauce/protocol';
+import type { HarnessTimeoutKind } from './message-timeout.js';
 import type {
   Ack,
   ChainGateNotice,
@@ -242,6 +243,7 @@ interface CommandInvocation {
  * Lets us witness the harness began running without contaminating stdout.
  */
 export const HARNESS_START_MARKER = '<<cauce:harness-started>>';
+export const HARNESS_PROGRESS_MARKER = '<<cauce:progress>>';
 
 /**
  * Strategy for determining whether the harness process started execution:
@@ -259,6 +261,7 @@ export interface CommandRunRequest extends CommandInvocation {
   readonly onEmissionReady?: (correlationId?: string) => void;
   readonly stdin: string;
   readonly timeoutMs: number;
+  readonly timeoutKind?: HarnessTimeoutKind;
   readonly signal: AbortSignal;
   /** Internal native session id; never logged or sent as a credential. */
   readonly sessionId?: string;

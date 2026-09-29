@@ -114,6 +114,20 @@ lines.on("line", (line) => {
           viewCursor: "3", sourceRange: {},
         });
         if (scenario.hang) return;
+        const steps = scenario.slowSteps ?? 0;
+        for (let step = 0; step < steps; step += 1) {
+          setTimeout(() => {
+            notify("item/completed", {
+              sessionId: p.sessionId, viewCursor: "4", sourceRange: {},
+              item: {
+                itemId: `0198f0aa-1111-7000-8000-${String(step).padStart(12, "0")}`, turnId: p.commandId,
+                kind: "agentMessage", status: "completed", revision: 1, text: `paso ${String(step)}`,
+                sourceRange: {},
+              },
+            });
+          }, (step + 1) * (scenario.stepMs ?? 50));
+        }
+        const finish = () => {
         const answer = scenario.answer ?? JSON.stringify({
           reply: "Muse responde", messages: [], notify: [], status: "done", retryable: false, artifacts: [],
         });
@@ -133,6 +147,8 @@ lines.on("line", (line) => {
             : {}),
           viewCursor: "5", sourceRange: {},
         });
+        };
+        if (steps === 0) finish(); else setTimeout(finish, (steps + 1) * (scenario.stepMs ?? 50));
       });
       break;
     }
