@@ -8,6 +8,7 @@ import os
 import pathlib
 import re
 import subprocess
+import tarfile
 import tempfile
 import time
 import unittest
@@ -23,7 +24,23 @@ INSTANCE = ROOT / "ops" / "instances" / "hospital"
 
 
 class HospitalInstanceTests(unittest.TestCase):
-    def backup_fixture(self, directory: pathlib.Path) -> pathlib.Path:
+    def write_blob_archive(self, path: pathlib.Path, blobs: dict[str, bytes]) -> None:
+        with tarfile.open(path, "w") as archive:
+            root = tarfile.TarInfo(".")
+            root.type = tarfile.DIRTYPE
+            archive.addfile(root)
+            for digest, content in sorted(blobs.items()):
+                member = tarfile.TarInfo(f"./{digest}")
+                member.size = len(content)
+                archive.addfile(member, io.BytesIO(content))
+        path.chmod(0o600)
+
+    def backup_fixture(
+        self, directory: pathlib.Path, blobs: dict[str, bytes] | None = None
+    ) -> pathlib.Path:
+        if blobs is None:
+            payload = b"verified-blob"
+            blobs = {hashlib.sha256(payload).hexdigest(): payload}
         dump_root = directory / "dumps"
         dump_root.mkdir(mode=0o700)
         dump = dump_root / "cauce-hospital-fixture.dump"
@@ -33,14 +50,41 @@ class HospitalInstanceTests(unittest.TestCase):
         sidecar = pathlib.Path(f"{dump}.sha256")
         sidecar.write_text(f"{digest}  {dump.name}\n", encoding="ascii")
         sidecar.chmod(0o600)
+        archive = pathlib.Path(f"{dump}.blobs.tar")
+        self.write_blob_archive(archive, blobs)
+        archive_digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        archive_sidecar = pathlib.Path(f"{archive}.sha256")
+        archive_sidecar.write_text(f"{archive_digest}  {archive.name}\n", encoding="ascii")
+        archive_sidecar.chmod(0o600)
+        manifest = pathlib.Path(f"{dump}.blobs.tsv")
+        manifest.write_text(
+            "".join(f"{name}\t{len(content)}\n" for name, content in sorted(blobs.items())),
+            encoding="ascii",
+        )
+        manifest.chmod(0o600)
+        manifest_digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
         evidence = pathlib.Path(f"{dump}.restore.json")
         evidence.write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "suite": "hospital-cauce-backup-restore",
                     "dump_file": dump.name,
                     "dump_sha256": digest,
+                    "blob_archive_file": archive.name,
+                    "blob_archive_sha256": archive_digest,
+                    "blob_manifest_file": manifest.name,
+                    "blob_manifest_sha256": manifest_digest,
+                    "blob_row_count": len(blobs),
+                    "blob_row_bytes": sum(map(len, blobs.values())),
+                    "archived_blob_count": len(blobs),
+                    "blob_table_present": True,
+                    "blob_volume_present": True,
+                    "blob_volume": "hospital-cauce_blobs_data",
+                    "blob_restore_verified": True,
+                    "blob_restore_uid": 1000,
+                    "blob_restore_network": "none",
+                    "blob_restore_row_count": len(blobs),
                     "database_image_digest": "sha256:" + "a" * 64,
                     "migration_count": 41,
                     "tenant_count": 1,
@@ -67,13 +111,17 @@ class HospitalInstanceTests(unittest.TestCase):
         status.write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "overall": "ok",
                     "run_started_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "run_finished_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "dump_file": str(dump),
                     "dump_sha256": digest,
                     "restore_evidence_file": str(evidence),
+                    "blob_archive_file": str(archive),
+                    "blob_archive_sha256": archive_digest,
+                    "blob_manifest_file": str(manifest),
+                    "blob_manifest_sha256": manifest_digest,
                     "offsite": False,
                 },
                 sort_keys=True,
@@ -85,14 +133,37 @@ class HospitalInstanceTests(unittest.TestCase):
         status.chmod(0o600)
         return status
 
-    def run_monitor(self, status: pathlib.Path) -> subprocess.CompletedProcess[str]:
+    def run_monitor(
+        self, status: pathlib.Path, require_blob_volume: bool = False
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [str(INSTANCE / "backup-monitor.sh")],
-            env={**os.environ, "STATUS_FILE": str(status), "MAX_AGE_HOURS": "24"},
+            env=dict(
+                os.environ,
+                STATUS_FILE=str(status),
+                MAX_AGE_HOURS="24",
+                REQUIRE_BLOB_VOLUME="1" if require_blob_volume else "0",
+            ),
             text=True,
             capture_output=True,
             check=False,
         )
+
+    def reseal_blob_archive(self, status: pathlib.Path) -> None:
+        document = json.loads(status.read_text(encoding="utf-8"))
+        archive = pathlib.Path(document["blob_archive_file"])
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        document["blob_archive_sha256"] = digest
+        status.write_text(json.dumps(document) + "\n", encoding="utf-8")
+        status.chmod(0o600)
+        sidecar = pathlib.Path(f"{archive}.sha256")
+        sidecar.write_text(f"{digest}  {archive.name}\n", encoding="ascii")
+        sidecar.chmod(0o600)
+        evidence = pathlib.Path(document["restore_evidence_file"])
+        proof = json.loads(evidence.read_text(encoding="utf-8"))
+        proof["blob_archive_sha256"] = digest
+        evidence.write_text(json.dumps(proof) + "\n", encoding="utf-8")
+        evidence.chmod(0o600)
 
     def test_telegram_activation_uses_a_fresh_one_time_challenge(self) -> None:
         script = (INSTANCE / "activate-telegram.sh").read_text(encoding="utf-8")
@@ -241,6 +312,12 @@ class HospitalInstanceTests(unittest.TestCase):
         self.assertNotIn("ADD CONSTRAINT tenants_known", sql)
         self.assertIn("requires a fresh migrated database", sql)
         self.assertIn("hospital topology verification failed", sql)
+        self.assertIn("perseo:hospital-agent-muse-frontend-1:hospital-developer", sql)
+        self.assertIn("teseo:hospital-agent-muse-backend-1:hospital-developer", sql)
+        self.assertNotIn("perseo:hospital-agent-openclaw-frontend-gateway-1", sql)
+        script = (INSTANCE / "bootstrap-core.sh").read_text(encoding="utf-8")
+        self.assertLess(script.index('bootstrap.sql"'), script.index('enable-praxis.sql"'))
+        self.assertLess(script.index('enable-praxis.sql"'), script.index('export-fleet-snapshot.py"'))
 
         rename = (INSTANCE / "rename-developers.sql").read_text(encoding="utf-8")
         restore = (INSTANCE / "restore-developer-aliases.sql").read_text(encoding="utf-8")
@@ -358,6 +435,106 @@ class HospitalInstanceTests(unittest.TestCase):
             failure = self.run_monitor(status)
             self.assertNotEqual(failure.returncode, 0)
             self.assertIn("digest del dump no coincide", failure.stderr)
+
+    def test_backup_monitor_requires_blob_archive_and_restored_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            status = self.backup_fixture(root)
+            archive = root / "dumps" / "cauce-hospital-fixture.dump.blobs.tar"
+            archive.unlink()
+            self.assertNotEqual(self.run_monitor(status).returncode, 0)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            status = self.backup_fixture(root)
+            archive = root / "dumps" / "cauce-hospital-fixture.dump.blobs.tar"
+            self.write_blob_archive(archive, {})
+            self.reseal_blob_archive(status)
+            failure = self.run_monitor(status)
+            self.assertNotEqual(failure.returncode, 0)
+            self.assertIn("faltan blobs de la base restaurada", failure.stderr)
+
+    def test_backup_monitor_rejects_blob_bytes_even_with_resealed_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            status = self.backup_fixture(root)
+            archive = root / "dumps" / "cauce-hospital-fixture.dump.blobs.tar"
+            digest = (root / "dumps" / "cauce-hospital-fixture.dump.blobs.tsv").read_text().split("\t")[0]
+            self.write_blob_archive(archive, {digest: b"tampered-blob"})
+            self.reseal_blob_archive(status)
+            failure = self.run_monitor(status)
+            self.assertNotEqual(failure.returncode, 0)
+            self.assertIn("blob archivado no coincide", failure.stderr)
+
+    def test_backup_monitor_rejects_tampered_blob_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            status = self.backup_fixture(root)
+            evidence = root / "dumps" / "cauce-hospital-fixture.dump.restore.json"
+            proof = json.loads(evidence.read_text(encoding="utf-8"))
+            proof["blob_row_count"] = 0
+            evidence.write_text(json.dumps(proof) + "\n", encoding="utf-8")
+            evidence.chmod(0o600)
+            self.assertIn("evidencia de restauración incompleta", self.run_monitor(status).stderr)
+
+    def test_backup_monitor_accepts_empty_blob_volume_and_table(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            status = self.backup_fixture(pathlib.Path(temporary), blobs={})
+            result = self.run_monitor(status)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("0 blobs verificados", result.stdout)
+
+    def test_backup_monitor_accepts_legacy_checkpoint_without_blob_table_or_volume(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            status = self.backup_fixture(pathlib.Path(temporary), blobs={})
+            document = json.loads(status.read_text(encoding="utf-8"))
+            evidence = pathlib.Path(document["restore_evidence_file"])
+            proof = json.loads(evidence.read_text(encoding="utf-8"))
+            proof["blob_table_present"] = False
+            proof["blob_volume_present"] = False
+            evidence.write_text(json.dumps(proof) + "\n", encoding="utf-8")
+            evidence.chmod(0o600)
+            self.assertEqual(self.run_monitor(status).returncode, 0)
+            strict = self.run_monitor(status, require_blob_volume=True)
+            self.assertNotEqual(strict.returncode, 0)
+            self.assertIn("falta backup verificado de tabla y volumen", strict.stderr)
+
+    def test_backup_monitor_strict_mode_accepts_empty_post_migration_volume(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            status = self.backup_fixture(pathlib.Path(temporary), blobs={})
+            result = self.run_monitor(status, require_blob_volume=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_backup_monitor_rejects_unproven_blob_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            status = self.backup_fixture(pathlib.Path(temporary))
+            document = json.loads(status.read_text(encoding="utf-8"))
+            evidence = pathlib.Path(document["restore_evidence_file"])
+            proof = json.loads(evidence.read_text(encoding="utf-8"))
+            proof["blob_restore_verified"] = False
+            evidence.write_text(json.dumps(proof) + "\n", encoding="utf-8")
+            evidence.chmod(0o600)
+            failure = self.run_monitor(status, require_blob_volume=True)
+            self.assertNotEqual(failure.returncode, 0)
+            self.assertIn("evidencia de restauración incompleta", failure.stderr)
+
+    def test_backup_restores_only_into_a_generated_temporary_volume(self) -> None:
+        script = (INSTANCE / "backup.sh").read_text(encoding="utf-8")
+        validation = script.index("blob_counts=$(python3")
+        create = script.index("docker volume create --label cauce.hospital.backup-verify=true")
+        restore = script.index('"$database_image" tar -C /blobs -xf - <"$blob_partial"')
+        readback = script.index('"$database_image" tar -C /blobs -cf - . >/dev/null')
+        checksum = script.index('actual=$(sha256sum "$file")')
+        remove = script.index('docker volume rm "$restore_blob_volume" >/dev/null\nrestore_blob_volume=')
+        publish = script.index("publishing=1")
+        self.assertLess(validation, create)
+        self.assertLess(create, restore)
+        self.assertLess(restore, readback)
+        self.assertLess(readback, checksum)
+        self.assertLess(checksum, remove)
+        self.assertLess(remove, publish)
+        self.assertIn('[[ "$restore_blob_volume" =~ ^[a-f0-9]{64}$ ]]', script)
+        self.assertNotIn('docker volume rm "$BLOB_VOLUME"', script)
 
     def test_backup_monitor_rejects_non_exact_topology(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

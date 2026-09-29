@@ -312,6 +312,8 @@ CAUCE_DEPLOY_CONFIRMADO=si \
 
 docker exec -i "$PG_CONTAINER" psql -X -v ON_ERROR_STOP=1 \
   -U cauce_hospital -d cauce_hospital <"$REPO/ops/instances/hospital/bootstrap.sql"
+docker exec -i "$PG_CONTAINER" psql -X -v ON_ERROR_STOP=1 \
+  -U cauce_hospital -d cauce_hospital <"$REPO/ops/instances/hospital/enable-praxis.sql"
 
 python3 "$REPO/ops/scripts/export-fleet-snapshot.py" \
   --postgres-container "$PG_CONTAINER" \

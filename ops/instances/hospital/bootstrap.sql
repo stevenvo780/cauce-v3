@@ -223,8 +223,8 @@ BEGIN
      OR (SELECT array_agg(alias || ':' || container_name || ':' || role_template_slug ORDER BY alias)
            FROM agents WHERE tenant_id = 'Hospital' AND enabled) IS DISTINCT FROM ARRAY[
          'operador:hospital-agent-openclaw-operator-gateway-1:hospital-lider',
-         'perseo:hospital-agent-openclaw-frontend-gateway-1:hospital-developer',
-         'teseo:hospital-agent-openclaw-backend-gateway-1:hospital-developer'
+         'perseo:hospital-agent-muse-frontend-1:hospital-developer',
+         'teseo:hospital-agent-muse-backend-1:hospital-developer'
        ]::text[]
      OR (SELECT count(*) FROM agent_profiles p JOIN agents a USING (tenant_id, alias)
           WHERE p.tenant_id = 'Hospital' AND a.enabled) <> 3

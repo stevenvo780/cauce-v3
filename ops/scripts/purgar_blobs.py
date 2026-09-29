@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Purga del almacén de blobs del gateway (migración 042, PUT/GET /v3/blobs).
+"""Auditoría del almacén de blobs del gateway (migración 042, PUT/GET /v3/blobs).
 
-Un blob que nadie leyó en N días sobra: se borra su fichero y su fila. Un fichero sin fila (huérfano)
-se borra cuando lleva N días sin tocarse. Una fila sin fichero se informa, nunca se inventa.
+Un blob que nadie leyó en N días se informa como candidato. Un fichero sin fila se informa como
+huérfano y una fila sin fichero también se informa. No se borra mientras GET y PUT puedan competir.
 Las filas llegan por `psql` (--psql) o por stdin (--desde-stdin) como `sha256<TAB>last_used_at`.
 """
 
@@ -17,7 +17,6 @@ import subprocess
 import sys
 
 HEX_SHA256 = re.compile(r"^[a-f0-9]{64}$")
-DIRECTORIO_TEMPORAL = "tmp"
 
 
 def analizar_filas(texto: str) -> dict[str, dt.datetime]:
@@ -60,47 +59,11 @@ def planificar(
     return {"caducados": caducados, "huerfanos": huerfanos, "sin_fichero": sin_fichero}
 
 
-def borrar_ficheros(directorio: pathlib.Path, digests: list[str]) -> int:
-    borrados = 0
-    for sha in digests:
-        if not HEX_SHA256.match(sha):
-            continue
-        try:
-            (directorio / sha).unlink()
-            borrados += 1
-        except FileNotFoundError:
-            continue
-    return borrados
-
-
-def barrer_temporales(directorio: pathlib.Path, ahora: dt.datetime, horas: int = 24) -> int:
-    temporal = directorio / DIRECTORIO_TEMPORAL
-    if not temporal.is_dir():
-        return 0
-    corte = ahora - dt.timedelta(hours=horas)
-    barridos = 0
-    for entrada in temporal.iterdir():
-        if entrada.is_file() and dt.datetime.fromtimestamp(entrada.stat().st_mtime, tz=dt.timezone.utc) < corte:
-            entrada.unlink()
-            barridos += 1
-    return barridos
-
-
 def sql_filas(psql: str) -> str:
     consulta = "SELECT sha256, last_used_at FROM blobs"
     return subprocess.run(
         [*shlex.split(psql), "-c", consulta], check=True, capture_output=True, text=True
     ).stdout
-
-
-def sql_borrar(psql: str, digests: list[str]) -> None:
-    if not digests:
-        return
-    lista = ",".join(f"'{sha}'" for sha in digests if HEX_SHA256.match(sha))
-    subprocess.run(
-        [*shlex.split(psql), "-c", f"DELETE FROM blobs WHERE sha256 IN ({lista})"],
-        check=True, capture_output=True, text=True,
-    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -109,8 +72,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dias", type=int, default=30)
     parser.add_argument("--psql", help="orden psql en modo -tA; p. ej. 'docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce -tA'")
     parser.add_argument("--desde-stdin", action="store_true", help="leer sha256<TAB>last_used_at de stdin en vez de psql")
-    parser.add_argument("--aplicar", action="store_true", help="sin esta bandera sólo se informa")
+    parser.add_argument("--aplicar", action="store_true", help="reservado hasta coordinar la purga con GET y PUT")
     args = parser.parse_args(argv)
+    if args.aplicar:
+        print("purga deshabilitada: falta coordinación segura con GET y PUT", file=sys.stderr)
+        return 2
     if not args.dir.is_dir():
         print(f"no existe el directorio {args.dir}", file=sys.stderr)
         return 2
@@ -125,14 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     plan = planificar(filas, ficheros_en_disco(args.dir), ahora, args.dias)
     for clave in ("caducados", "huerfanos", "sin_fichero"):
         print(f"{clave}: {len(plan[clave])}")
-    if not args.aplicar:
-        print("(sin --aplicar: nada borrado)")
-        return 0
-    borrados = borrar_ficheros(args.dir, plan["caducados"] + plan["huerfanos"])
-    if args.psql:
-        sql_borrar(args.psql, plan["caducados"])
-    barridos = barrer_temporales(args.dir, ahora)
-    print(f"ficheros borrados: {borrados}; temporales barridos: {barridos}")
+    print("auditoría solamente: nada borrado")
     return 0
 
 

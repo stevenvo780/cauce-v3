@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""La purga del almacén de blobs borra lo caducado y lo huérfano, informa lo que falta y no toca lo vivo."""
+"""La auditoría de blobs informa lo caducado sin borrar archivos ni filas."""
 
 from __future__ import annotations
 
@@ -51,22 +51,7 @@ class PurgaDeBlobs(unittest.TestCase):
             self.assertEqual(plan, {"caducados": [CADUCADO], "huerfanos": [HUERFANO], "sin_fichero": [SIN_FICHERO]})
             self.assertTrue((directorio / CADUCADO).exists())
 
-    def test_borra_solo_lo_planificado_y_barre_temporales_viejos(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            directorio = pathlib.Path(raw)
-            (directorio / "tmp").mkdir()
-            for nombre, dias in ((VIVO, 1), (CADUCADO, 45), (HUERFANO, 60)):
-                _tocar(directorio, nombre, dias)
-            _tocar(directorio / "tmp", "parcial-viejo", 3)
-            _tocar(directorio / "tmp", "parcial-nuevo", 0)
-            borrados = purgar_blobs.borrar_ficheros(directorio, [CADUCADO, HUERFANO, "no-es-un-digest", SIN_FICHERO])
-            self.assertEqual(borrados, 2)
-            self.assertTrue((directorio / VIVO).exists())
-            self.assertFalse((directorio / CADUCADO).exists())
-            self.assertEqual(purgar_blobs.barrer_temporales(directorio, AHORA), 1)
-            self.assertTrue((directorio / "tmp" / "parcial-nuevo").exists())
-
-    def test_la_cli_informa_por_defecto_y_solo_borra_con_aplicar(self) -> None:
+    def test_la_cli_informa_y_rechaza_aplicar_sin_borrar(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directorio = pathlib.Path(raw)
             _tocar(directorio, CADUCADO, 45)
@@ -81,9 +66,11 @@ class PurgaDeBlobs(unittest.TestCase):
             self.assertIn("caducados: 1", salida.getvalue())
             self.assertTrue((directorio / CADUCADO).exists())
             sys.stdin = io.StringIO(entrada)
-            with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(purgar_blobs.main(["--dir", str(directorio), "--desde-stdin", "--aplicar"]), 0)
-            self.assertFalse((directorio / CADUCADO).exists())
+            error = io.StringIO()
+            with contextlib.redirect_stderr(error):
+                self.assertEqual(purgar_blobs.main(["--dir", str(directorio), "--desde-stdin", "--aplicar"]), 2)
+            self.assertIn("purga deshabilitada", error.getvalue())
+            self.assertTrue((directorio / CADUCADO).exists())
 
 
 if __name__ == "__main__":

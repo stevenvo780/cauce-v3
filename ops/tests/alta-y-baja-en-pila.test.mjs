@@ -53,14 +53,18 @@ function psql(script, label) {
 async function ensureStack() {
   checked(compose(['up', '-d', 'postgres'], { timeoutMs: 120_000 }), 'compose up postgres');
   const deadline = Date.now() + READY_TIMEOUT_MS;
+  let tables = [];
   for (;;) {
-    const probe = compose(['exec', '-T', 'postgres', 'pg_isready',
-      '-U', 'cauce_test', '-d', 'cauce_test']);
-    if (probe.status === 0) break;
+    const probe = compose(['exec', '-T', 'postgres', 'psql', '-U', 'cauce_test',
+      '-d', 'cauce_test', '-v', 'ON_ERROR_STOP=1', '-At', '-F|', '-c',
+      "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'agents';"]);
+    if (probe.status === 0) {
+      tables = probe.stdout.split('\n').filter(line => line !== '');
+      break;
+    }
     assert.ok(Date.now() < deadline, `postgres de pruebas no levantó:\n${probe.stderr}`);
     await sleep(1000);
   }
-  const tables = psql("SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'agents';", 'sondear tabla agents');
   if (tables.length === 0) {
     checked(compose(['up', 'migrator'], { timeoutMs: MIGRATOR_TIMEOUT_MS }), 'compose up migrator');
     const retry = psql("SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'agents';", 're-sondear tabla agents');

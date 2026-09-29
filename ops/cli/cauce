@@ -597,9 +597,10 @@ sitio() {
   fi
   [ -n "$route_record" ] || { echo local; return; }
   IFS=$'\t' read -r match_count invalid_fields route <<<"$route_record"
-  [ "$match_count" -eq 1 ] && [ "$invalid_fields" -eq 0 ] || {
-    printf 'ruta remota invalida para %s: el registro no es unico con dos campos\n' "$alias_name" >&2; return 2;
-  }
+  if [ "$match_count" -ne 1 ] || [ "$invalid_fields" -ne 0 ]; then
+    printf 'ruta remota invalida para %s: el registro no es unico con dos campos\n' "$alias_name" >&2
+    return 2
+  fi
   case "$route" in
     local|vps) ;;
     ssh:*)
