@@ -34,7 +34,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -subj "/CN=test-ca" -days 2 \
 REG="$WORK/reg.json"
 
 corre_dry() (
-  # shellcheck disable=SC2329
+  # shellcheck disable=SC2329,SC2317
   getent() { printf 'test:x:1000:1000::%s:/bin/bash\n' "$HOME"; }
   export -f getent
   HOME="$H" XDG_CONFIG_HOME="$H/.config" \

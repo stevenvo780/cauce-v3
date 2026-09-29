@@ -285,6 +285,13 @@ if ! command -v shellcheck >/dev/null 2>&1; then
   printf 'static validation failed: shellcheck unavailable\n' >&2
   exit 127
 fi
-shellcheck "${shell_sources[@]}"
+shell_entrypoints=()
+for file in "${shell_sources[@]}"; do
+  case "$file" in
+    "$ROOT/scripts/container-adapter-supervisor-lib.sh"|"$ROOT/cli/cauce-credenciales.lib.sh") continue ;;
+  esac
+  shell_entrypoints+=("$file")
+done
+shellcheck --check-sourced --external-sources --source-path=SCRIPTDIR "${shell_entrypoints[@]}"
 node "$PROJECT/ops/scripts/validate-console-browser-storage.mjs" "$PROJECT/console/src"
 printf 'static validation passed\n'

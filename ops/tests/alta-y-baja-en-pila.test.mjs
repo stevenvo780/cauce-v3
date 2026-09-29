@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// cauce:requiere docker
+// cauce:requiere docker-compose
 // T030: ida-y-vuelta de alta/baja de agente contra la pila de pruebas.
 // Solo usa ops/compose.test.yaml (red interna testnet, BD cauce_test efímera).
 // Verifica el invariante del runbook ops/runbooks/alta-y-baja-de-agente.md:

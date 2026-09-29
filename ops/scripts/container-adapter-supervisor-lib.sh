@@ -1,4 +1,4 @@
-# Sourced by container-adapter-supervisor.sh: config, bundle and PKI validation.
+# shellcheck shell=bash
 # Not standalone: it runs in the supervisor shell and uses its state (die, CONFIG, paths).
 
 validate_relay_url() {

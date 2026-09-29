@@ -33,7 +33,7 @@ async function plantTree(files) {
   const probes = path.join(root, 'docker-probes');
   await writeFile(
     path.join(root, 'bin/docker'),
-    `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >>"${probes}"\nexit "\${CAUCE_FAKE_DOCKER_EXIT:-1}"\n`,
+    `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >>"${probes}"\nif [ "\${1:-}" = compose ]; then exit "\${CAUCE_FAKE_COMPOSE_EXIT:-1}"; fi\nexit "\${CAUCE_FAKE_DOCKER_EXIT:-1}"\n`,
     { encoding: 'utf8', mode: 0o755 },
   );
   for (const [name, body] of Object.entries(files)) await writeFile(path.join(tests, name), body, 'utf8');
@@ -76,6 +76,7 @@ const gates = await plantTree({
   'test_late.py': `${'# padding\n'.repeat(24)}# cauce:requiere root\nprint('late')\n`,
   'docker-one.test.mjs': "// cauce:requiere docker\nprocess.stdout.write('one\\n');\n",
   'docker-two.test.mjs': "// cauce:requiere docker\nprocess.stdout.write('two\\n');\n",
+  'compose.test.mjs': "// cauce:requiere docker-compose\nprocess.stdout.write('compose\\n');\n",
   'container-supervisor.test.mjs': 'process.exit(1);\n',
 });
 
@@ -103,6 +104,14 @@ const withDaemon = run(gates, { CAUCE_FAKE_DOCKER_EXIT: '0' });
 assert.equal(withDaemon.verdicts.get('docker-one.test.mjs').verdict, 'PASS');
 assert.equal(withDaemon.verdicts.get('docker-two.test.mjs').verdict, 'PASS');
 assert.equal(withDaemon.status, 0);
+assert.equal(withDaemon.verdicts.get('compose.test.mjs').verdict, 'SKIP');
+assert.match(withDaemon.verdicts.get('compose.test.mjs').detail, /Compose v2 is unavailable/u);
+const missingComposeStrict = run(gates, { CAUCE_FAKE_DOCKER_EXIT: '0', CAUCE_RELEASE_VALIDATION: '1' });
+assert.equal(missingComposeStrict.verdicts.get('compose.test.mjs').verdict, 'FAIL');
+assert.equal(missingComposeStrict.status, 1);
+const withCompose = run(gates, { CAUCE_FAKE_DOCKER_EXIT: '0', CAUCE_FAKE_COMPOSE_EXIT: '0' });
+assert.equal(withCompose.verdicts.get('compose.test.mjs').verdict, 'PASS');
+assert.equal(withCompose.status, 0);
 
 const rejections = await plantTree({
   'test_unknown.py': "# cauce:requiere marciano\nprint('unknown')\n",

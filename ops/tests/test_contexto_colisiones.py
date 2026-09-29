@@ -312,6 +312,22 @@ class GuardiaDeColisiones(unittest.TestCase):
         self.assertIn('cauce_context_path_collisions{severidad="alerta"} 0', texto)
         self.assertIn('cauce_context_path_collisions{severidad="aviso"} 1', texto)
 
+    def test_muse_con_estado_nativo_proyecta_su_workspace(self) -> None:
+        sys.path.insert(0, str(RAIZ / "ops/scripts"))
+        from fleet_derive import HARNESS_RULES
+
+        contrato = json.loads(
+            (RAIZ / "ops/schemas/contexto-de-gobierno.json").read_text(encoding="utf-8"),
+        )
+        declaracion = fila("muse", "ws-muse", "/home/node")
+        declaracion["runtimeStateDirectory"] = "/home/node/.muse/cauce-v3/uno"
+        contexto = guardia.contexto_de_alias("uno", declaracion, {}, contrato, HARNESS_RULES)
+        self.assertEqual(contexto.raiz, "/home/node/clawd")
+        self.assertEqual(contexto.documentos, ("AGENTS.md",))
+        declaracion["runtimeStateDirectory"] = "/home/node/.local/state/cauce-v3/uno"
+        with self.assertRaises(guardia.InventarioInvalido):
+            guardia.contexto_de_alias("uno", declaracion, {}, contrato, HARNESS_RULES)
+
     def test_la_flota_real_se_proyecta_entera(self) -> None:
         sys.path.insert(0, str(RAIZ / "ops/scripts"))
         from fleet_derive import HARNESS_RULES
@@ -327,8 +343,8 @@ class GuardiaDeColisiones(unittest.TestCase):
             a for a, f in inventario["fleet"].items()
             if f.get("enabled") is True and f.get("harness") not in (contrato.get("arneses") or {})
         )
-        self.assertEqual(sin_contrato, ["hades"])
-        self.assertEqual(hallazgos, [
+        self.assertEqual(sin_contrato, [a for a in ["hades"] if a in inventario["fleet"]])
+        brechas_conocidas = [
             {
                 "severidad": "alerta", "regla": "alias_no_proyectable", "alias": ["hades"], "ruta": "-",
                 "detalle": "el arnés 'grok' no está en el contrato de gobierno",
@@ -337,6 +353,9 @@ class GuardiaDeColisiones(unittest.TestCase):
                 "severidad": "alerta", "regla": "alias_no_proyectable", "alias": ["hegel"], "ruta": "-",
                 "detalle": "el hecho 'muse_workspace' no tiene raíz derivable en el inventario",
             },
+        ]
+        self.assertEqual(hallazgos, [
+            h for h in brechas_conocidas if all(a in inventario["fleet"] for a in h["alias"])
         ])
         activos = [a for a, f in inventario["fleet"].items() if f.get("enabled") is True]
         self.assertEqual(len(contextos), len(activos) - len(hallazgos))

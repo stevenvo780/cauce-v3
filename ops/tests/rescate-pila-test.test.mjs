@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// cauce:requiere docker-compose
 // T040 (US4/FR-006): rescate por CLI en la pila de pruebas.
 // Ciclo: atascar a proposito -> ver atascada -> destrabar con ops/cli/cauce
 // `pila-test` -> verificar el cambio de estado en BD -> cerrar el clon.

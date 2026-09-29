@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source-path=SCRIPTDIR
 set -euo pipefail
 umask 077
 
@@ -33,6 +34,7 @@ MOUNT_VALIDATOR="$ROOT/scripts/validate-container-mount.py"
 ALIAS_LOCK_EXEC="$ROOT/scripts/alias-lock-exec.py"
 HERMES_RUNTIME_VERIFIER="$ROOT/scripts/verify-hermes-runtime.py"
 SUPERVISOR_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/container-adapter-supervisor-lib.sh"
+# shellcheck source=container-adapter-supervisor-lib.sh
 source "$SUPERVISOR_LIB"
 CONTROL_ROOT=/run/cauce-v3-supervisor
 WAIT_SECONDS=60

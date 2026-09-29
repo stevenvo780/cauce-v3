@@ -1,4 +1,4 @@
-# Alta y renovacion de credenciales de ops/cli/cauce: se carga con source desde el CLI (sin entrypoint propio).
+# shellcheck shell=bash
 codex_home_de() {  # $1=alias $2=home-del-usuario
   local h
   h=$(sed -n 's/^CREDENTIAL_HOME=//p' "$CONFIG/$1.env" 2>/dev/null | head -1)
@@ -247,7 +247,7 @@ cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orde
   cchome=$(claude_home_de "$a" "$uhome" "$harness")
 
   local solo_ver=0 opt o3; shift
-  # --forzar se sigue aceptando por compatibilidad: desde 2026-09-29 el login ya no pregunta.
+  # Keep --forzar accepted for backward compatibility.
   for opt in "$@"; do case "$opt" in --ver) solo_ver=1 ;; --forzar|-f) : ;; claude|codex) arg=$opt ;; *) printf "  no entiendo '%s'. Usa: cauce %s login [claude|codex] [--ver] [--forzar]\n" "$opt" "$a"; return 2 ;; esac; done
 
   printf "\n  %s%s%s  %s·  contenedor %s  ·  arnes %s%s\n" \
@@ -310,8 +310,6 @@ cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orde
   if turno_en_vuelo "$a"; then
     printf "\n  %s%s TIENE UN TURNO EN VUELO ahora mismo%s — si seguis, ese turno muere; la entrega vuelve a la cola o se repone por consola.\n" "$c_err" "$a" "$c_reset"
     for o3 in "${objetivos[@]}"; do [ "$o3" = claude ] && [[ $(huella_claude "$a" "$ctr" "$cuser" "$cchome") == VACIA* ]] && printf "  %scon la credencial de claude VACIA ese turno ya no puede autenticar: no hay nada que salvar.%s\n" "$c_warn" "$c_reset"; done
-    # El login tiene PRIORIDAD sobre el turno (Steven, 2026-09-29): sin credencial ese turno no
-    # llega a buen puerto de todas formas, y preguntar aca dejaba el login bloqueado. Se avisa y se sigue.
     printf "  %sel login tiene prioridad: sigo.%s\n" "$c_warn" "$c_reset"
   fi
 

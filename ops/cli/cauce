@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source-path=SCRIPTDIR
 # Shared terminals use the same native session as their adapter.
 set -uo pipefail
 cli_home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)
@@ -463,9 +464,7 @@ systemctl_user_o_avisa() {  # $1=verbo(start|stop) $2=unit
 }
 
 # shellcheck disable=SC2016  # corre en otro shell (eval / docker exec): sus $ se expanden alla
-BARRIDO='for p in /proc/[0-9]*; do case "$(sed -n "s/^.*) \(.\).*/\1/p" "$p/stat" 2>/dev/null)" in Z|X) continue;; esac; c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null); set -- $c; case "${1:-}" in *node*|*python*) ;; *) continue;; esac; h=""; e=$(tr "\0" "\n" < "$p/environ" 2>/dev/null | sed -n "s/^CAUCE_ALIAS=//p" | head -1); [ "$e" = "@@A@@" ] && h=1; case "$c" in *cauce-v3-adapter/@@A@@/*-mcp.js*) ;; *cauce-v3-adapter/@@A@@/*) h=1;; esac; [ -n "$h" ] && echo "${p#/proc/}"; done'  # MCP bridges without CAUCE_ALIAS (cauce-mcp.js, cauce-decisiones-mcp.js, …) belong to the panel/OpenClaw gateway, not the adapter.
-# 2026-09-29: only cauce-mcp.js was excluded; the decisiones bundle added cauce-decisiones-mcp.js, children of argos's
-# OpenClaw gateway, so `off` counted them as adapter, could not kill them and `login` aborted with «SIGUE VIVO».
+BARRIDO='for p in /proc/[0-9]*; do case "$(sed -n "s/^.*) \(.\).*/\1/p" "$p/stat" 2>/dev/null)" in Z|X) continue;; esac; c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null); set -- $c; case "${1:-}" in *node*|*python*) ;; *) continue;; esac; h=""; e=$(tr "\0" "\n" < "$p/environ" 2>/dev/null | sed -n "s/^CAUCE_ALIAS=//p" | head -1); [ "$e" = "@@A@@" ] && h=1; case "$c" in *cauce-v3-adapter/@@A@@/*-mcp.js*) ;; *cauce-v3-adapter/@@A@@/*) h=1;; esac; [ -n "$h" ] && echo "${p#/proc/}"; done'  # Unowned MCP bridges belong to the panel or gateway; headless bridges inherit CAUCE_ALIAS.
 
 pids_del_alias() {  # $1=alias -> un PID por linea (vacio = de verdad no hay nada)
   local a=$1 line ctr cuser
@@ -561,10 +560,6 @@ esperar_sin_pids() {  # $1=alias $2=segundos -> 0 si ya no queda nada del alias
   return 0
 }
 
-# Lo que sobrevive a `systemctl stop`: SIGTERM, esperar la CONDICION con techo y, si no cede, SIGKILL.
-# Medido 2026-09-29 (argos, login desde la portatil): con SIGTERM + `sleep 2` fijo el adaptador
-# todavia estaba drenando, el login aborto con «SIGUE VIVO» y los PIDs murieron solos segundos
-# despues — dejando al alias APAGADO y sin login. "off" quiere decir off.
 apagar_restos() {  # $1=alias
   local a=$1
   senalar_alias "$a" TERM
@@ -681,11 +676,10 @@ remoto_cauce() {  # $1=ruta $2=alias, resto=argumentos tal cual
   ssh "${tty[@]}" "$destination" "$REPLY"
 }
 
-# Alta y renovacion de credenciales en lib hermana (poda T060-D): mismo codigo, cargado aqui para que entrypoint, ayuda y dispatcher queden intactos.
 CLI_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 [[ -f $CLI_DIR/cauce-credenciales.lib.sh ]] || CLI_DIR=$OPS/cli  # cargado por source <(...) o copia vieja
 CRED_LIB_OK=0
-# shellcheck disable=SC1091
+# shellcheck source=cauce-credenciales.lib.sh
 source "$CLI_DIR/cauce-credenciales.lib.sh" && CRED_LIB_OK=1 \
   || printf 'cauce: falta cauce-credenciales.lib.sh: login, aprovisionar y retirar no funcionan (reinstalar con install-cauce-cli.sh)\n' >&2
 lib_credenciales_ok() { [[ $CRED_LIB_OK == 1 ]] || { echo 'cauce: falta cauce-credenciales.lib.sh; no hago nada' >&2; return 1; }; }

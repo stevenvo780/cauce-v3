@@ -16,7 +16,7 @@ const releaseValidation = process.env.CAUCE_RELEASE_VALIDATION === '1';
 const declarationPattern = /^\s*(?:#|\/\/)\s*cauce:requiere\s+(\S+)\s*$/u;
 const declarationHeaderLines = 20;
 const defaultRequirement = 'none';
-const knownRequirements = new Set(['root', 'non-root', 'docker', defaultRequirement]);
+const knownRequirements = new Set(['root', 'non-root', 'docker', 'docker-compose', defaultRequirement]);
 const requirementDeclaredOutsideTheFile = new Map([
   ['test_container_runtime_reaping.py', 'non-root'],
 ]);
@@ -52,18 +52,29 @@ async function requirementFor(name) {
 }
 
 let dockerDaemonReachable;
+let dockerComposeReachable;
 
 function dockerDaemonAvailable() {
   dockerDaemonReachable ??= spawnSync('docker', ['info'], { stdio: 'ignore', timeout: 30_000 }).status === 0;
   return dockerDaemonReachable;
 }
 
+function dockerComposeAvailable() {
+  dockerComposeReachable ??= spawnSync('docker', ['compose', 'version'], {
+    stdio: 'ignore', timeout: 30_000,
+  }).status === 0;
+  return dockerComposeReachable;
+}
+
 function gateFor(requirement) {
   if (requirement === 'root' && process.getuid?.() !== 0) {
     return { allowed: false, reason: 'requires root: the runner is not uid 0' };
   }
-  if (requirement === 'docker' && !dockerDaemonAvailable()) {
+  if ((requirement === 'docker' || requirement === 'docker-compose') && !dockerDaemonAvailable()) {
     return { allowed: false, reason: 'requires docker: no daemon answers' };
+  }
+  if (requirement === 'docker-compose' && !dockerComposeAvailable()) {
+    return { allowed: false, reason: 'requires docker-compose: Compose v2 is unavailable' };
   }
   return { allowed: true, reason: '' };
 }

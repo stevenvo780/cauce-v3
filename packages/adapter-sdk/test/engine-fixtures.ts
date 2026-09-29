@@ -164,9 +164,7 @@ export class SessionConcurrencyRunner implements CommandRunner {
   }
 
   async waitForCalls(count: number): Promise<void> {
-    while (this.requests.length < count) {
-      await new Promise<void>((resolveWait) => setImmediate(resolveWait));
-    }
+    await waitFor(() => this.requests.length >= count, `${String(count)} harness calls`);
   }
 }
 
@@ -241,7 +239,7 @@ export function originless(
   return { ...rest, authenticated_context: { session_id: sessionId, channel } };
 }
 
-export async function setupSessionConcurrency(name: string, claimRenewalMs?: number): Promise<{
+export async function setupSessionConcurrency(name: string, claimRenewalMs = 25): Promise<{
   store: DurableStore;
   runner: SessionConcurrencyRunner;
   events: DeliveryEvent[];
@@ -257,34 +255,38 @@ export async function setupSessionConcurrency(name: string, claimRenewalMs?: num
     harness,
     publish: async (event) => {
       events.push(event);
+      if (event.claim_renewal === true) {
+        engine.confirmClaim(event.delivery_id, event.attempt, event.claim_token);
+      }
     },
-    ...(claimRenewalMs === undefined ? {} : { claimRenewalMs }),
+    claimRenewalMs,
+    queueWaitTimeoutMs: 10_000,
   });
   await engine.activateEpoch(1);
   return { store, runner, events, engine };
 }
 
-/**
- * Waits for a delivery to be PARKED at the session lock.
- *
- * Previously this waited for the queued delivery to reach the "started" state. That was exactly
- * the bug: the engine declared execution before taking the lock, so a delivery just queued
- * looked the same as one working and renewed its claim forever. Now the queued delivery stays
- * in "accepted" and idles in that same phase, so the correct signal for "it's already queued"
- * is its durable 'accepted' ACK.
- */
+export async function waitFor(check: () => boolean, description: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${description}`);
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 5));
+  }
+}
+
+// Only a durable queue heartbeat proves the abort controller was registered after acceptance.
 export async function waitForQueued(store: DurableStore, deliveryId: string): Promise<void> {
-  // The queue heartbeat is the only signal that proves the delivery IS already parked at the
-  // lock: it's emitted from `awaitSessionTurn`, after the engine registers its AbortController.
-  // Waiting only for the "accepted" state would be a race — that state is reached earlier, and
-  // a `cancel()`/`stop()` triggered in that window would find nothing to abort.
-  const parked = (): boolean => store.getDelivery(deliveryId)?.state === "accepted"
-    && store.pendingEvents().some((event) => (
+  await waitFor(() => {
+    const record = store.getDelivery(deliveryId);
+    if (record !== undefined && record.state !== "accepted") {
+      throw new Error(`Delivery ${deliveryId} left the queue: ${record.state} (${record.error?.code ?? "no error"})`);
+    }
+    return record !== undefined && store.pendingEvents().some((event) => (
       event.delivery_id === deliveryId
+      && event.attempt === record.attempt
+      && event.claim_token === record.claim_token
       && event.phase === "accepted"
       && event.claim_renewal === true
     ));
-  while (!parked()) {
-    await new Promise<void>((resolveWait) => setImmediate(resolveWait));
-  }
+  }, `delivery ${deliveryId} to emit a durable accepted queue heartbeat`);
 }

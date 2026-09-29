@@ -317,9 +317,7 @@ cmd_entrar hegel
   }
 }
 
-// The alias sweep counts the adapter (by CAUCE_ALIAS or by its release path) but not the MCP bridge
-// the SHARED TUI starts from that same release: tmux strips CAUCE_ALIAS from it, so `off` could never
-// kill it and stopped with "SIGUE VIVO" before tearing the panel down.
+// Shared TUI and gateway bridges lack the adapter's CAUCE_ALIAS and must survive its shutdown.
 {
   const alias = `barrido${process.pid}`;
   const release = `/opt/cauce-v3-adapter/${alias}/releases/r1/packages/adapter-sdk/dist/src/bin`;
@@ -327,8 +325,11 @@ cmd_entrar hegel
     env: environment, stdio: "ignore", detached: false,
   });
   const clean = { PATH: process.env.PATH ?? "/usr/bin:/bin" };
-  const tuiBridge = spawnProbe("cauce-mcp.js", clean);
-  const headlessBridge = spawnProbe("cauce-mcp.js", { ...clean, CAUCE_ALIAS: alias });
+  const bridges = ["cauce-mcp.js", "cauce-decisiones-mcp.js"].map((script) => ({
+    script,
+    unowned: spawnProbe(script, clean),
+    owned: spawnProbe(script, { ...clean, CAUCE_ALIAS: alias }),
+  }));
   const adapter = spawnProbe("grok.js", clean);
   try {
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -338,10 +339,12 @@ cmd_entrar hegel
     const found = spawnSync("sh", ["-c", sweep.replaceAll("@@A@@", alias)], { encoding: "utf8" })
       .stdout.split("\n").filter((line) => line !== "");
     assert.ok(found.includes(String(adapter.pid)), `the adapter counts: ${found.join(" ")}`);
-    assert.ok(found.includes(String(headlessBridge.pid)), `a bridge with CAUCE_ALIAS counts: ${found.join(" ")}`);
-    assert.ok(!found.includes(String(tuiBridge.pid)), `the shared TUI's bridge does not: ${found.join(" ")}`);
+    for (const { script, owned, unowned } of bridges) {
+      assert.ok(found.includes(String(owned.pid)), `${script} with CAUCE_ALIAS counts: ${found.join(" ")}`);
+      assert.ok(!found.includes(String(unowned.pid)), `${script} without CAUCE_ALIAS does not: ${found.join(" ")}`);
+    }
   } finally {
-    for (const child of [tuiBridge, headlessBridge, adapter]) child.kill("SIGKILL");
+    for (const child of [...bridges.flatMap(({ owned, unowned }) => [owned, unowned]), adapter]) child.kill("SIGKILL");
   }
 }
 

@@ -3,7 +3,7 @@ import test from "node:test";
 import {HarnessAdapter, fakeDefinition} from '../src/harnesses/index.js';
 import { AdapterEngine, profileAdoptionFor } from "../src/sdk/engine.js";
 import type {Delivery} from '../src/sdk/types.js';
-import {ControlledRunner, SessionConcurrencyRunner, delivery, setup, setupSessionConcurrency, storeFor, waitForQueued} from './engine-fixtures.js';
+import {ControlledRunner, SessionConcurrencyRunner, delivery, setup, setupSessionConcurrency, storeFor, waitFor, waitForQueued} from './engine-fixtures.js';
 test("profile adoption requires the exact measured document set from the delivery contract", () => {
   const path = "/runtime/.codex/AGENTS.md";
   const sha = "a".repeat(64);
@@ -69,11 +69,8 @@ test("accepted is durable and published before started and execution", async () 
 test("concurrent deliveries for one authenticated session share one UUID and execute in order", async () => {
   const store = await storeFor("engine-session-serialized");
   const runner = new SessionConcurrencyRunner();
-  let markFirstAccepted!: () => void;
+  let firstAccepted = false;
   let releaseFirstAccepted!: () => void;
-  const firstAccepted = new Promise<void>((resolveAccepted) => {
-    markFirstAccepted = resolveAccepted;
-  });
   const acceptedBarrier = new Promise<void>((resolveBarrier) => {
     releaseFirstAccepted = resolveBarrier;
   });
@@ -83,14 +80,18 @@ test("concurrent deliveries for one authenticated session share one UUID and exe
     executionIntentMode: "local-test-only",
     harness,
     publish: async (event) => {
+      if (event.claim_renewal === true) {
+        engine.confirmClaim(event.delivery_id, event.attempt, event.claim_token);
+      }
       if (event.delivery_id === "session-serialized-a"
         && event.phase === "accepted"
         && event.claim_renewal !== true) {
-        markFirstAccepted();
+        firstAccepted = true;
         await acceptedBarrier;
       }
     },
     claimRenewalMs: 25,
+    queueWaitTimeoutMs: 10_000,
   });
   await engine.activateEpoch(1);
   const firstInput: Delivery = {
@@ -103,11 +104,14 @@ test("concurrent deliveries for one authenticated session share one UUID and exe
   };
 
   const first = engine.handleDelivery(firstInput);
-  await firstAccepted;
+  await waitFor(() => firstAccepted, "first delivery acceptance publication");
   const second = engine.handleDelivery(secondInput);
   await waitForQueued(store, secondInput.delivery_id);
 
   assert.equal(runner.requests.length, 0);
+  assert.equal(store.getDelivery(firstInput.delivery_id)?.state, "accepted");
+  assert.equal(store.getDelivery(secondInput.delivery_id)?.state, "accepted");
+  assert.equal(store.pendingEvents().some((event) => event.phase === "started"), false);
   releaseFirstAccepted();
   await runner.waitForCalls(1);
   assert.match(runner.requests[0]?.stdin ?? "", /first session turn/u);
@@ -122,6 +126,8 @@ test("concurrent deliveries for one authenticated session share one UUID and exe
   runner.releaseNext();
   await Promise.all([first, second]);
   assert.equal(runner.maxActive, 1);
+  assert.equal(store.getDelivery(firstInput.delivery_id)?.state, "done");
+  assert.equal(store.getDelivery(secondInput.delivery_id)?.state, "done");
 });
 
 test("concurrent deliveries for different authenticated sessions execute in parallel", async () => {
@@ -362,4 +368,3 @@ test("terminal output preserves delivery origin for relay routing", async () => 
   assert.equal(done.output?.reply, "completed");
   assert.equal(done.output.messages[0]?.to, "audit");
 });
-
