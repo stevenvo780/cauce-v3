@@ -110,7 +110,7 @@ describe('configuredDeliveryLeaseCap', () => {
     const cap = configuredDeliveryLeaseCap({});
     expect(cap.leaseCapMs).toBeGreaterThanOrEqual(DEFAULT_ACK_DEADLINE_MS);
     expect(cap.leaseCapGraceMs).toBeGreaterThan(0);
-    expect(cap.leaseCapMs).toBe(12 * 60 * 60_000);
+    expect(cap.leaseCapMs).toBe(7 * 24 * 60 * 60_000);
     expect(cap.leaseCapGraceMs).toBe(30 * 60_000);
   });
 

@@ -18,6 +18,7 @@ let pool: DatabasePool;
 let repository: CauceRepository;
 
 const ACK_DEADLINE_MS = 60_000;
+const PAST_DEFAULT_CAP_MS = DEFAULT_DELIVERY_LEASE_CAP_MS + DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS + 60 * 60_000; // only the cap can kill it
 
 function command(body: Record<string, unknown>): PublishMessage {
   return {
@@ -128,8 +129,8 @@ describe('techo de vida total de una entrega', () => {
     await repository.publish(command({ text: 'harness colgado que sigue latiendo' }));
     const claimed = await claimAndStart(requireValue(lease.epoch, 'lease.epoch'));
 
-    // 17.36 h was what was measured in production for janus's delivery. The default cap is 12 h.
-    await ageExecutionStart(claimed.delivery_id, 17 * 60 * 60_000);
+    // janus's delivery measured 17.36 h in production; the age here is past whatever the default cap is.
+    await ageExecutionStart(claimed.delivery_id, PAST_DEFAULT_CAP_MS);
     await pool.query(
       `UPDATE deliveries SET ack_deadline_at=now()+interval '1 hour',
                             claim_expires_at=now()+interval '1 hour' WHERE id=$1`,
@@ -170,7 +171,7 @@ describe('techo de vida total de una entrega', () => {
     await repository.publish(command({ text: 'turno legítimo de once horas' }));
     const claimed = await claimAndStart(requireValue(lease.epoch, 'lease.epoch'));
 
-    // Eleven hours: long, but below the 12 h default. It must not die.
+    // Eleven hours: long, but below the default cap. It must not die.
     await ageExecutionStart(claimed.delivery_id, 11 * 60 * 60_000);
     await pool.query(
       `UPDATE deliveries SET ack_deadline_at=now()+interval '1 hour',
@@ -227,7 +228,7 @@ describe('techo de vida total de una entrega', () => {
     await repository.publish(command({ text: 'la palanca no desactiva el techo' }));
     const claimed = await claimAndStart(requireValue(lease.epoch, 'lease.epoch'));
 
-    await ageExecutionStart(claimed.delivery_id, 17 * 60 * 60_000);
+    await ageExecutionStart(claimed.delivery_id, PAST_DEFAULT_CAP_MS);
     await pool.query(
       `UPDATE deliveries SET ack_deadline_at=now()+interval '1 hour' WHERE id=$1`,
       [claimed.delivery_id]
@@ -306,9 +307,9 @@ describe('timeout_ms por mensaje', () => {
       `UPDATE messages SET body=jsonb_set(body,'{timeout_ms}','"pronto"'::jsonb)
         WHERE id=(SELECT message_id FROM deliveries WHERE id=$1)`, [claimed.delivery_id]
     );
-    await ageExecutionStart(claimed.delivery_id, 17 * 60 * 60_000);
+    await ageExecutionStart(claimed.delivery_id, PAST_DEFAULT_CAP_MS);
 
-    // It falls back to the 12 h default and dies by cap, without a conversion error.
+    // It falls back to the default cap and dies by it, without a conversion error.
     expect(await repository.retryStaleDeliveries(24 * 60 * 60_000)).toEqual({ retried: 0, dead: 1, parked: 0 });
     expect((await deliveryRow(claimed.delivery_id)).last_error).toContain('Lease cap exhausted');
   });
