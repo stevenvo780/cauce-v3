@@ -469,10 +469,7 @@ export class AdapterEngine {
               await this.commitExecutionIntent(
                 started.record,
                 controller.signal,
-                Math.max(100, Math.min(
-                  30_000,
-                  Math.floor((this.claimWatchdogMs ?? executionBudget.claimWatchdogMs) / 2),
-                )),
+                this.claimWatchdogMs ?? executionBudget.claimWatchdogMs,
               );
             } catch (error) {
               throw error instanceof AdapterError
@@ -645,7 +642,7 @@ export class AdapterEngine {
   private async commitExecutionIntent(
     record: InboxRecord,
     signal: AbortSignal,
-    timeoutMs: number,
+    watchdogMs: number,
   ): Promise<void> {
     let event: DeliveryEvent;
     try {
@@ -661,7 +658,23 @@ export class AdapterEngine {
       await this.publishEvent(event).catch(() => undefined);
       return;
     }
-    await this.publishExecutionIntent(event, signal, timeoutMs);
+    const monitor = this.claimMonitors.get(record.delivery_id);
+    const ownershipLeftMs = monitor?.attempt === record.attempt && monitor.claimToken === record.claim_token
+      ? monitor.expiresAt() - this.clock.now().getTime()
+      : Number.POSITIVE_INFINITY;
+    const beforeWatchdogFencesMs = ownershipLeftMs - Math.ceil(watchdogMs / 10);
+    const budgetMs = Math.min(
+      Math.max(100, Math.min(30_000, Math.floor(watchdogMs / 2))),
+      beforeWatchdogFencesMs,
+    );
+    if (budgetMs <= 0) {
+      throw new AdapterError(
+        "EXECUTION_INTENT_CONFIRMATION_FAILED",
+        "Persisting the execution intent consumed the ownership left before the claim watchdog",
+        true,
+      );
+    }
+    await this.publishExecutionIntent(event, signal, budgetMs);
   }
 
   private async persistClaimRenewal(

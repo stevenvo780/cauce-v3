@@ -6,6 +6,7 @@ export interface ClaimMonitor {
   readonly attempt: number;
   readonly claimToken: string;
   readonly confirm: () => void;
+  readonly expiresAt: () => number;
 }
 
 export interface ClaimRenewalDeps {
@@ -51,10 +52,12 @@ export function startClaimRenewal(
       true,
     ));
   };
+  let expiresAt = deps.clock.now().getTime() + watchdogMs;
   let watchdog = deps.clock.setTimer(abortForUnconfirmedClaim, watchdogMs);
   const confirm = (): void => {
     if (stopped) return;
     deps.clock.clearTimer(watchdog);
+    expiresAt = deps.clock.now().getTime() + watchdogMs;
     watchdog = deps.clock.setTimer(abortForUnconfirmedClaim, watchdogMs);
   };
   timer = deps.clock.setRepeating(() => {
@@ -80,6 +83,7 @@ export function startClaimRenewal(
     attempt: record.attempt,
     claimToken: record.claim_token,
     confirm,
+    expiresAt: () => expiresAt,
   });
   return async () => {
     stopped = true;

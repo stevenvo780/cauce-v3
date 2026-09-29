@@ -120,6 +120,53 @@ test("an unconfirmed execution intent times out before invoking the harness", as
   }
 });
 
+test("a slow intent persist shrinks the barrier so it fails before the claim watchdog fences", async () => {
+  const connection = new FakeConnection(1, undefined, false);
+  const runner = new CountingRunner();
+  const clock = new VirtualClock();
+  const context = await makeClient(
+    "execution-intent-slow-persist",
+    new ScriptedConnector(connection),
+    { runner, clock, claimWatchdogMs: 500 },
+  );
+  const enqueue = context.store.enqueue.bind(context.store);
+  Object.defineProperty(context.store, "enqueue", {
+    configurable: true,
+    value: async (...args: Parameters<DurableStore["enqueue"]>) => {
+      await enqueue(...args);
+      if (args[0].execution_started === true) clock.advance(300);
+    },
+  });
+  const stop = new AbortController();
+  const running = context.client.run(stop.signal);
+  try {
+    await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"), "the HELLO frame on the wire");
+    const input = renewableDelivery(
+      "execution-intent-slow-persist",
+      "000000000091",
+      clock.now().getTime() + 30_000,
+    );
+    connection.push(input);
+    await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true),
+      "the execution-intent ACK on the wire");
+    clock.advance(150);
+    await waitUntil(() => connection.sent.some((frame) => (
+      frame.type === "ack" && frame.delivery_id === input.delivery_id && frame.status === "failed"
+    )), escala(3_000), "the failed ACK for the unconfirmed execution intent");
+    const failed = connection.sent.find((frame) => (
+      frame.type === "ack" && frame.delivery_id === input.delivery_id && frame.status === "failed"
+    ));
+    assert.equal(runner.calls, 0);
+    assert.ok(failed, "expected an ACK frame");
+    if (failed.type !== "ack") throw new Error("frame type is not ack");
+    assert.equal(failed.error_code, "EXECUTION_INTENT_CONFIRMATION_FAILED");
+    assert.equal(failed.retryable, true);
+  } finally {
+    stop.abort();
+    await running;
+  }
+});
+
 test("a receipt cannot release the harness while its transport send never settles", async () => {
   const connection = new HangingExecutionIntentConnection();
   const runner = new CountingRunner();
