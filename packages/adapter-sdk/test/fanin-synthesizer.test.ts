@@ -91,6 +91,42 @@ test('human presentation is concise and reports review gaps without raw branches
   assert.ok(Buffer.byteLength(reply, "utf8") < 250);
 });
 
+test('Hospital fan-in only succeeds when every branch has a clear local director review', () => {
+  const body = {
+    fanin_data_v1: {
+      schema: 'cauce.agent_fanin_data.v1', expected: 2, completed: 2,
+      responses: [
+        { tenant_id: 'Hospital', alias: 'teseo', delivery_id: '40000000-0000-4000-8000-000000000001', untrusted_text: 'backend report' },
+        { tenant_id: 'Hospital', alias: 'perseo', delivery_id: '40000000-0000-4000-8000-000000000002', untrusted_text: 'frontend report' },
+      ],
+    },
+  };
+  const reviewed = {
+    tenantId: 'Hospital', alias: 'teseo', reply: 'El backend quedó revisado.',
+    childDeliveryId: '40000000-0000-4000-8000-000000000001',
+    sourceDeliveryId: '40000000-0000-4000-8000-000000000003',
+    updatedAt: '2026-09-28T23:59:00Z',
+  };
+  const absent = synthesizeFaninOutput(body, { humanFacingReceipt: true });
+  const partial = synthesizeFaninOutput(body, { humanFacingReceipt: true, processedReplies: [reviewed] });
+  const complete = synthesizeFaninOutput(body, {
+    humanFacingReceipt: true,
+    processedReplies: [reviewed, {
+      tenantId: 'Hospital', alias: 'perseo', reply: 'El frontend quedó revisado.',
+      childDeliveryId: '40000000-0000-4000-8000-000000000002',
+      sourceDeliveryId: '40000000-0000-4000-8000-000000000003',
+      updatedAt: '2026-09-29T00:00:00Z',
+    }],
+  });
+  assert.equal(absent.status, 'failed');
+  assert.equal(partial.status, 'failed');
+  assert.equal(absent.retryable, false);
+  assert.equal(partial.retryable, false);
+  assert.doesNotMatch(absent.reply ?? '', /backend report|frontend report/u);
+  assert.doesNotMatch(partial.reply ?? '', /frontend report/u);
+  assert.equal(complete.status, 'done');
+});
+
 test('human presentation does not publish a technical local reply even if fully covered', () => {
   const reply = synthesizeFaninOutput({
     fanin_data_v1: {
