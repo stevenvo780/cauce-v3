@@ -4,8 +4,9 @@ set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="${CAUCE_ENV_FILE:-}"
-if [ -z "$ENV_FILE" ]; then
-  exec "$REPO_DIR/deploy/smoke-central.sh"
+central_project() { [ -r "$1" ] && [ "$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$1" | tail -1 | tr -d '\r')" = cauce-v3-prod ]; }
+if [ -z "$ENV_FILE" ] || central_project "$ENV_FILE"; then
+  exec "$REPO_DIR/deploy/smoke-central.sh"  # la flota central (deploy.sh con prod.env) usa su propio censo
 fi
 DOCKER_BIN="${CAUCE_SMOKE_DOCKER_BIN:-docker}"
 CURL_BIN="${CAUCE_SMOKE_CURL_BIN:-curl}"

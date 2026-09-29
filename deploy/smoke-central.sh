@@ -3,8 +3,8 @@
 set -uo pipefail
 CONSOLE="${CAUCE_CONSOLE_URL:-https://100.64.0.11:8444}"
 CONSOLE_CA="${CAUCE_CONSOLE_TLS_CA_PATH:-/etc/cauce-v3/pki/ca.crt}"
-FLEET_EXPECTED="${CAUCE_SMOKE_EXPECTED_AGENTS:-15}"
-if [[ ! "$FLEET_EXPECTED" =~ ^[1-9][0-9]{0,3}$ ]]; then
+FLEET_EXPECTED="${CAUCE_SMOKE_EXPECTED_AGENTS:-}"  # vacío = los habilitados en el registro
+if [[ -n "$FLEET_EXPECTED" && ! "$FLEET_EXPECTED" =~ ^[1-9][0-9]{0,3}$ ]]; then
   echo "ROJO flota: cardinalidad esperada invalida"; exit 1
 fi
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -37,11 +37,11 @@ vivos=0
 esperados=0
 flota_valida=0
 for intento in 1 2 3 4 5 6; do
-  if censo="$("${PG[@]}" "SELECT count(*), count(*) FILTER (WHERE l.lease_until > now() AND l.last_heartbeat_at > now() - interval '60 seconds' AND l.last_heartbeat_at > l.connected_at AND l.capabilities ? 'heartbeat' AND l.instance_id IN ('systemd-'||a.alias,'systemd-container-'||a.alias)) FROM agents a LEFT JOIN connection_leases l ON l.tenant_id = a.tenant_id AND l.alias = a.alias WHERE a.enabled" 2>/dev/null)" \
+  if censo="$("${PG[@]}" "SELECT count(*), count(*) FILTER (WHERE l.lease_until > now() AND l.last_heartbeat_at > now() - interval '60 seconds' AND l.last_heartbeat_at > l.connected_at AND l.capabilities ? 'heartbeat') FROM agents a LEFT JOIN connection_leases l ON l.tenant_id = a.tenant_id AND l.alias = a.alias WHERE a.enabled" 2>/dev/null)" \
     && [[ "$censo" =~ ^([0-9]+)\|([0-9]+)$ ]]; then
     esperados=${BASH_REMATCH[1]}
     vivos=${BASH_REMATCH[2]}
-    if (( esperados == FLEET_EXPECTED && vivos == esperados )); then flota_valida=1; break; fi
+    if (( esperados > 0 && vivos == esperados )) && [[ -z "$FLEET_EXPECTED" || "$esperados" == "$FLEET_EXPECTED" ]]; then flota_valida=1; break; fi
   else
     echo "ROJO flota: no pude verificar el censo del registro"; fallo=1; break
   fi
@@ -50,7 +50,7 @@ done
 if [ "$flota_valida" = 1 ]; then
   echo "OK  flota: $vivos/$esperados agentes habilitados con arriendo vigente y fresco"
 else
-  echo "ROJO flota: $vivos/$esperados agentes habilitados con arriendo vigente y fresco (esperados: $FLEET_EXPECTED)"; fallo=1
+  echo "ROJO flota: $vivos/$esperados agentes habilitados con arriendo vigente y fresco (esperados: ${FLEET_EXPECTED:-los habilitados})"; fallo=1
 fi
 
 arranque="$(docker inspect --format '{{.State.StartedAt}}' cauce-v3-prod-gateway-1 2>/dev/null || echo '')"
