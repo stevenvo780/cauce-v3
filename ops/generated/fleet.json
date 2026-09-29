@@ -1,144 +1,34 @@
 {
   "aliases": {
-    "argos": {
-      "container": "ctrl-infra",
+    "operador": {
+      "container": "hospital-agent-openclaw-operator-gateway-1",
       "enabled": true,
       "harness": "openclaw",
-      "home": "/home/dev",
-      "room": "grp.steven",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/argos",
-      "tenant": "Steven",
-      "user": "dev"
+      "home": "/home/node",
+      "room": "grp.hospital",
+      "stateDirectory": "/home/node/.openclaw/cauce-v3/operador",
+      "tenant": "Hospital",
+      "user": "node"
     },
-    "astra": {
-      "container": "vm:pc-agente",
-      "enabled": true,
-      "harness": "codex",
-      "home": "/home/ubuntu/astra",
-      "room": "grp.steven",
-      "stateDirectory": "/home/ubuntu/.local/state/cauce-v3/astra",
-      "tenant": "Steven",
-      "user": "ubuntu"
-    },
-    "atlas": {
-      "container": "ws-humanizar",
-      "enabled": true,
-      "harness": "codex",
-      "home": "/home/dev",
-      "room": "grp.miguel",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/atlas",
-      "tenant": "Miguel",
-      "user": "dev"
-    },
-    "gaia": {
-      "container": "agv2-miguel-finca-oc",
-      "enabled": true,
-      "harness": "openclaw",
-      "home": "/home/claw",
-      "room": "grp.miguel",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/gaia",
-      "tenant": "Miguel",
-      "user": "claw"
-    },
-    "hades": {
-      "container": "agv2-steven-hades-oc",
-      "enabled": true,
-      "harness": "grok",
-      "home": "/home/claw",
-      "room": "grp.steven",
-      "stateDirectory": "/home/claw/.local/state/cauce-v3/hades",
-      "tenant": "Steven",
-      "user": "claw"
-    },
-    "hegel": {
-      "container": "ws-humanizar",
+    "perseo": {
+      "container": "hospital-agent-muse-frontend-1",
       "enabled": true,
       "harness": "muse",
-      "home": "/home/dev",
-      "room": "grp.miguel",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/hegel",
-      "tenant": "Miguel",
-      "user": "dev"
+      "home": "/home/node",
+      "room": "grp.hospital",
+      "stateDirectory": "/home/node/.muse/cauce-v3/perseo",
+      "tenant": "Hospital",
+      "user": "node"
     },
-    "iza": {
-      "container": "claw-iza",
+    "teseo": {
+      "container": "hospital-agent-muse-backend-1",
       "enabled": true,
-      "harness": "openclaw",
-      "home": "/home/claw",
-      "room": "grp.miguel",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/iza",
-      "tenant": "Miguel",
-      "user": "claw"
-    },
-    "janus": {
-      "container": "claw-miguel",
-      "enabled": true,
-      "harness": "openclaw",
-      "home": "/home/claw",
-      "room": "grp.miguel",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/janus",
-      "tenant": "Miguel",
-      "user": "claw"
-    },
-    "jarvis": {
-      "container": "claw",
-      "enabled": true,
-      "harness": "openclaw",
-      "home": "/home/claw",
-      "room": "grp.steven",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/jarvis",
-      "tenant": "Steven",
-      "user": "claw"
-    },
-    "kant": {
-      "container": "host:server2",
-      "enabled": true,
-      "harness": "claude",
-      "home": "/home/server/red-servidores",
-      "room": "grp.steven",
-      "stateDirectory": "/home/server/estado/cauce-v3/kant",
-      "tenant": "Steven",
-      "user": "server"
-    },
-    "kratos": {
-      "container": "ws-humanizar",
-      "enabled": true,
-      "harness": "claude",
-      "home": "/home/dev",
-      "room": "grp.miguel",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/kratos",
-      "tenant": "Miguel",
-      "user": "dev"
-    },
-    "salva": {
-      "container": "ws-isa",
-      "enabled": true,
-      "harness": "claude",
-      "home": "/home/dev",
-      "room": "grp.isa",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/salva",
-      "tenant": "Isa",
-      "user": "dev"
-    },
-    "socrates": {
-      "container": "ws-prizma",
-      "enabled": true,
-      "harness": "codex",
-      "home": "/home/dev",
-      "room": "grp.steven",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/socrates",
-      "tenant": "Steven",
-      "user": "dev"
-    },
-    "zeus": {
-      "container": "ws-zeus",
-      "enabled": true,
-      "harness": "claude",
-      "home": "/home/dev",
-      "room": "grp.steven",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/zeus",
-      "tenant": "Steven",
-      "user": "dev"
+      "harness": "muse",
+      "home": "/home/node",
+      "room": "grp.hospital",
+      "stateDirectory": "/home/node/.muse/cauce-v3/teseo",
+      "tenant": "Hospital",
+      "user": "node"
     }
   },
   "schemaVersion": 1
