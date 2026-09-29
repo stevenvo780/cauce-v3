@@ -51,6 +51,19 @@ class PurgaDeBlobs(unittest.TestCase):
             self.assertEqual(plan, {"caducados": [CADUCADO], "huerfanos": [HUERFANO], "sin_fichero": [SIN_FICHERO]})
             self.assertTrue((directorio / CADUCADO).exists())
 
+    def test_un_digest_compartido_usa_la_lectura_mas_reciente(self) -> None:
+        viejo = (AHORA - dt.timedelta(days=45)).isoformat()
+        reciente = (AHORA - dt.timedelta(days=1)).isoformat()
+        for entrada in (f"{VIVO}\t{viejo}\n{VIVO}\t{reciente}\n",
+                        f"{VIVO}\t{reciente}\n{VIVO}\t{viejo}\n"):
+            with self.subTest(entrada=entrada):
+                filas = purgar_blobs.analizar_filas(entrada)
+                self.assertEqual(filas[VIVO], AHORA - dt.timedelta(days=1))
+                self.assertEqual(
+                    purgar_blobs.planificar(filas, {VIVO: AHORA}, AHORA, 30)["caducados"],
+                    [],
+                )
+
     def test_la_cli_informa_y_rechaza_aplicar_sin_borrar(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directorio = pathlib.Path(raw)

@@ -13,8 +13,15 @@ Ejecutar respaldos regulares u off-site de PostgreSQL (y opcionalmente SQLite de
 2. Ejecutar respaldo automatizado en host y sincronización off-host:
    ```sh
    # [no ejecutable en verificación]
+   install -m 0755 ops/scripts/host-backup.sh /usr/local/sbin/cauce-v3-host-backup
+   install -m 0755 ops/scripts/host-backup-monitor.sh /usr/local/sbin/cauce-v3-host-backup-monitor
    sudo /usr/local/sbin/cauce-v3-host-backup
    ```
+   Con blobs habilitados, el backup guarda el dump, `<dump>.blobs.tsv` y
+   `<dump>.blobs.tar`; verifica una restauración de base y volumen aislados antes
+   de publicar evidencia. Esos tres artefactos son una unidad: conservarlos
+   juntos en la copia externa. El tar contiene cada digest físico una vez aunque
+   varias filas de tenants o grants lo referencien.
 3. Ejecutar ensayo de restauración (drill) en base de datos aislada:
    - Crear base vacía y marcar el entorno:
      ```sql
@@ -39,7 +46,18 @@ Ejecutar respaldos regulares u off-site de PostgreSQL (y opcionalmente SQLite de
    # [no ejecutable en verificación]
    cat /var/log/cauce-v3-backup/status.json
    ```
+   Si `CAUCE_BLOB_API_ENABLED=1`, exigir el volumen nombrado exacto y evidencia
+   posterior a la tabla de blobs antes de cualquier despliegue:
+   ```sh
+   # [no ejecutable en verificación]
+   REQUIRE_BLOB_VOLUME=1 BLOB_VOLUME=cauce-v3-prod_blobs_data \
+     /usr/local/sbin/cauce-v3-host-backup-monitor
+   ```
 3. Verificar tablas y migraciones aplicadas en la base restaurada.
+   Para restaurar bytes, extraer `<dump>.blobs.tar` **en un volumen nuevo**, no
+   encima de `blobs_data` en uso; comparar su manifiesto, SHA y tamaño con las
+   filas de la base restaurada y probar lectura como UID 1000 antes de conmutar.
+   Si la verificación falla, conservar intactos la base y el volumen anteriores.
 4. Monitorear salud del servicio y timers:
    ```sh
    # [no ejecutable en verificación]

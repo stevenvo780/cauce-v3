@@ -37,6 +37,9 @@ umask 077
 
 restore_container=""
 verify_data_dir=""
+restore_blob_volume=""
+blob_partial=""
+manifest_partial=""
 cleanup() {
   if [ -n "$restore_container" ]; then
     docker rm -f "$restore_container" >/dev/null 2>&1 || true
@@ -46,6 +49,12 @@ cleanup() {
     rm -rf "$verify_data_dir" 2>/dev/null || true
     verify_data_dir=""
   fi
+  if printf '%s\n' "$restore_blob_volume" | grep -Eq '^[a-f0-9]{64}$'; then
+    docker volume rm "$restore_blob_volume" >/dev/null 2>&1 || true
+    restore_blob_volume=""
+  fi
+  [ -z "$blob_partial" ] || rm -f "$blob_partial" 2>/dev/null || true
+  [ -z "$manifest_partial" ] || rm -f "$manifest_partial" 2>/dev/null || true
 }
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
@@ -69,12 +78,15 @@ CAUCE_DB_CONTAINER=${CAUCE_DB_CONTAINER:-cauce-v3-prod-postgres-1}
 CAUCE_DB_USER=${CAUCE_DB_USER:-cauce}
 CAUCE_DB_NAME=${CAUCE_DB_NAME:-cauce}
 DB_BACKUP_DIR=${DB_BACKUP_DIR:-/opt/_archive/cauce-v3-db-backups}
+BLOB_VOLUME=${BLOB_VOLUME:-cauce-v3-prod_blobs_data}
 DB_RETENTION_DAYS=${DB_RETENTION_DAYS:-14}
 CAUCE_BACKUP_SKIP_RETENTION=${CAUCE_BACKUP_SKIP_RETENTION:-0}
 case "$DB_RETENTION_DAYS" in
   ''|*[!0-9]*) err "DB_RETENTION_DAYS must be a positive integer"; exit 2 ;;
 esac
 [ "$DB_RETENTION_DAYS" -ge 1 ] || { err "DB_RETENTION_DAYS must be a positive integer"; exit 2; }
+printf '%s\n' "$BLOB_VOLUME" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9_.-]*$' \
+  || { err "BLOB_VOLUME must be a Docker volume name"; exit 2; }
 case "$CAUCE_BACKUP_SKIP_RETENTION" in
   0|1) ;;
   *) err "CAUCE_BACKUP_SKIP_RETENTION must be 0 or 1"; exit 2 ;;
@@ -108,11 +120,132 @@ OFFSITE_UT_PATH=${OFFSITE_UT_PATH:-/ut-nexus/}
 db_status=skipped; db_file=""; db_detail=""
 restore_status=skipped; restore_detail=""
 restore_evidence_file=""
+blob_archive_file=""; blob_archive_sha256=""
+blob_manifest_file=""; blob_manifest_sha256=""
+blob_table_present=false; blob_volume_present=false
+blob_rows=0; blob_bytes=0; archived_blobs=0
 retention_status=not-run
 ut_status=disabled; ut_detail=""
 offsite_db_status=skipped; offsite_db_detail=""
 offsite_ut_status=disabled; offsite_ut_detail=""
 overall_rc=0
+
+verify_blob_snapshot() {
+  blob_partial="$final.blobs.tar.partial"
+  manifest_partial="$final.blobs.tsv.partial"
+  table_state=$(docker exec "$restore_container" psql -XAtq -v ON_ERROR_STOP=1 \
+    -U postgres -d cauce_restore -c "SELECT to_regclass('public.blobs') IS NOT NULL" 2>>"$tmperr") \
+    || { restore_detail="could not inspect restored blobs table"; return 1; }
+  if [ "$table_state" = t ]; then
+      blob_table_present=true
+      inconsistent=$(docker exec "$restore_container" psql -XAtq -v ON_ERROR_STOP=1 \
+        -U postgres -d cauce_restore -c \
+        'SELECT count(*) FROM (SELECT sha256 FROM blobs GROUP BY sha256 HAVING min(bytes)<>max(bytes)) conflicting' 2>>"$tmperr") \
+        || { restore_detail="could not check restored blob sizes"; return 1; }
+      [ "$inconsistent" = 0 ] || { restore_detail="restored blob rows disagree on physical digest size"; return 1; }
+      docker exec "$restore_container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d cauce_restore \
+        -c 'COPY (SELECT sha256, max(bytes) FROM blobs GROUP BY sha256 ORDER BY sha256) TO STDOUT' \
+        >"$manifest_partial" 2>>"$tmperr" \
+        || { restore_detail="could not export restored blob manifest"; return 1; }
+  elif [ "$table_state" = f ]; then
+    blob_table_present=false
+    : >"$manifest_partial"
+  else
+    restore_detail="restored blobs table state is invalid"
+    return 1
+  fi
+  [ "$(wc -c <"$manifest_partial")" -le 268435456 ] \
+    || { restore_detail="restored blob manifest exceeds monitor limit"; return 1; }
+  if docker volume inspect "$BLOB_VOLUME" >/dev/null 2>>"$tmperr"; then
+    blob_volume_present=true
+    docker run --rm --network none --read-only --user 1000:1000 \
+      --mount "type=volume,src=$BLOB_VOLUME,dst=/blobs,readonly" \
+      "$restore_image" tar -C /blobs --exclude=./tmp -cf - . \
+      >"$blob_partial" 2>>"$tmperr" \
+      || { restore_detail="could not archive named blobs volume"; return 1; }
+  else
+    [ "$blob_table_present" = false ] \
+      || { restore_detail="blobs table exists but named volume is missing"; return 1; }
+    blob_volume_present=false
+    tar -cf "$blob_partial" --files-from /dev/null 2>>"$tmperr" \
+      || { restore_detail="could not create empty blob archive"; return 1; }
+  fi
+  [ -s "$blob_partial" ] || { restore_detail="blob archive is empty"; return 1; }
+  counts=$(python3 - "$manifest_partial" "$blob_partial" <<'PY'
+import hashlib
+from pathlib import Path
+import re
+import sys
+import tarfile
+
+manifest = Path(sys.argv[1]).read_text(encoding="ascii")
+if manifest and not manifest.endswith("\n"):
+    raise SystemExit("blob manifest is incomplete")
+rows = {}
+for line in manifest.splitlines():
+    match = re.fullmatch(r"([a-f0-9]{64})\t([1-9][0-9]*)", line)
+    if match is None or match.group(1) in rows:
+        raise SystemExit("blob manifest is invalid")
+    rows[match.group(1)] = int(match.group(2))
+found = set()
+with tarfile.open(sys.argv[2], "r|") as archive:
+    for member in archive:
+        if member.isdir() and member.name in {".", "./"}:
+            continue
+        match = re.fullmatch(r"\./([a-f0-9]{64})", member.name)
+        if not member.isfile() or match is None or match.group(1) in found:
+            raise SystemExit("blob archive contains an unsafe entry")
+        stream = archive.extractfile(member)
+        if stream is None:
+            raise SystemExit("blob archive entry cannot be read")
+        digest = hashlib.sha256()
+        size = 0
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+            size += len(chunk)
+        if digest.hexdigest() != match.group(1) or size < 1 or (
+            match.group(1) in rows and size != rows[match.group(1)]
+        ):
+            raise SystemExit("blob archive digest or restored row size differs")
+        found.add(match.group(1))
+if not rows.keys() <= found:
+    raise SystemExit("blob archive lacks a restored database row")
+print(len(rows), sum(rows.values()), len(found))
+PY
+  ) || { restore_detail="blob archive does not match restored database"; return 1; }
+  read -r blob_rows blob_bytes archived_blobs <<EOF
+$counts
+EOF
+  restore_blob_volume=$(docker volume create --label cauce.v3.backup-verify=true 2>>"$tmperr") \
+    || { restore_detail="could not create isolated blob restore volume"; return 1; }
+  printf '%s\n' "$restore_blob_volume" | grep -Eq '^[a-f0-9]{64}$' \
+    || { restore_detail="isolated blob restore volume has invalid identity"; return 1; }
+  docker run --rm -i --network none --read-only --user 0:0 \
+    --mount "type=volume,src=$restore_blob_volume,dst=/blobs" \
+    "$restore_image" tar -C /blobs -xf - <"$blob_partial" 2>>"$tmperr" \
+    || { restore_detail="could not restore isolated blob volume"; return 1; }
+  docker run --rm --network none --read-only --user 1000:1000 \
+    --mount "type=volume,src=$restore_blob_volume,dst=/blobs,readonly" \
+    "$restore_image" tar -C /blobs -cf - . >/dev/null 2>>"$tmperr" \
+    || { restore_detail="UID 1000 cannot read restored blob volume"; return 1; }
+  docker run --rm -i --network none --read-only --user 1000:1000 \
+    --mount "type=volume,src=$restore_blob_volume,dst=/blobs,readonly" \
+    "$restore_image" sh -eu -c '
+      tab=$(printf "\t")
+      while IFS="$tab" read -r digest expected_bytes; do
+        file="/blobs/$digest"
+        [ -f "$file" ] && [ ! -L "$file" ] || exit 1
+        [ "$(stat -c %s "$file")" = "$expected_bytes" ] || exit 1
+        actual=$(sha256sum "$file")
+        [ "${actual%% *}" = "$digest" ] || exit 1
+      done
+    ' <"$manifest_partial" 2>>"$tmperr" \
+    || { restore_detail="isolated blob restore disagrees with restored database"; return 1; }
+  docker volume rm "$restore_blob_volume" >/dev/null 2>>"$tmperr" \
+    || { restore_detail="could not remove isolated blob restore volume"; return 1; }
+  restore_blob_volume=""
+  return 0
+}
 
 log "=== starting (db retention=${DB_RETENTION_DAYS}d, ut-nexus enabled=${UT_NEXUS_ENABLED}) ==="
 
@@ -171,17 +304,41 @@ if [ "$(docker inspect -f '{{.State.Running}}' "$CAUCE_DB_CONTAINER" 2>/dev/null
          && restored_migrations=$(docker exec "$restore_container" psql -X -U postgres -d cauce_restore -Atqc \
               'SELECT count(*) FROM schema_migrations' 2>>"$tmperr") \
          && [ "$restored_tables" = 8 ] \
-         && [ "${restored_migrations:-0}" -gt 0 ] 2>/dev/null
+         && [ "${restored_migrations:-0}" -gt 0 ] 2>/dev/null \
+         && verify_blob_snapshot
       then
         restore_status=ok
-        restore_detail="isolated networkless full restore passed"
+        restore_detail="isolated networkless database and blob restore passed"
       else
         restore_status=failed
-        restore_detail="isolated full restore or catalog invariants failed"
+        [ -n "$restore_detail" ] || restore_detail="isolated full restore or catalog invariants failed"
       fi
     else
       restore_status=failed
       restore_detail="could not start isolated restore verifier from the running database image"
+    fi
+    if [ "$restore_status" = ok ]; then
+      if mv "$blob_partial" "$final.blobs.tar" \
+         && mv "$manifest_partial" "$final.blobs.tsv"; then
+        blob_archive_file="$final.blobs.tar"
+        blob_manifest_file="$final.blobs.tsv"
+        if blob_archive_sha256=$(sha256sum "$blob_archive_file" | cut -d' ' -f1) \
+           && blob_manifest_sha256=$(sha256sum "$blob_manifest_file" | cut -d' ' -f1) \
+           && printf '%s  %s\n' "$blob_archive_sha256" "$(basename "$blob_archive_file")" \
+             >"$blob_archive_file.sha256"; then
+          blob_partial=""
+          manifest_partial=""
+        else
+          restore_status=failed
+          restore_detail="could not checksum verified blob archive and manifest"
+        fi
+      else
+        restore_status=failed
+        restore_detail="could not publish verified blob archive and manifest"
+      fi
+      if [ "$restore_status" = failed ]; then
+        rm -f "$final.blobs.tar" "$final.blobs.tar.sha256" "$final.blobs.tsv"
+      fi
     fi
     cleanup
 
@@ -191,7 +348,7 @@ if [ "$(docker inspect -f '{{.State.Running}}' "$CAUCE_DB_CONTAINER" 2>/dev/null
     if [ "$restore_status" = ok ]; then
       cat >"$restore_evidence_file" <<JSON
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "suite": "cauce-v3-host-backup-restore",
   "verified_at_utc": "$(ts)",
   "dump_file": "$(basename "$final")",
@@ -201,13 +358,27 @@ if [ "$(docker inspect -f '{{.State.Running}}' "$CAUCE_DB_CONTAINER" 2>/dev/null
   "network": "none",
   "full_restore": true,
   "core_table_count": $restored_tables,
-  "applied_migration_count": $restored_migrations
+  "applied_migration_count": $restored_migrations,
+  "blob_archive_file": "$(basename "$blob_archive_file")",
+  "blob_archive_sha256": "$blob_archive_sha256",
+  "blob_manifest_file": "$(basename "$blob_manifest_file")",
+  "blob_manifest_sha256": "$blob_manifest_sha256",
+  "blob_volume": "$BLOB_VOLUME",
+  "blob_table_present": $blob_table_present,
+  "blob_volume_present": $blob_volume_present,
+  "blob_row_count": $blob_rows,
+  "blob_row_bytes": $blob_bytes,
+  "archived_blob_count": $archived_blobs,
+  "blob_restore_verified": true,
+  "blob_restore_uid": 1000,
+  "blob_restore_network": "none",
+  "blob_restore_row_count": $blob_rows
 }
 JSON
       chmod 0600 "$restore_evidence_file"
       db_status=ok
       db_file=$final
-      log "[db] OK -> $final ($(wc -c <"$final" | tr -d ' ') bytes, isolated restore verified)"
+      log "[db] OK -> $final ($(wc -c <"$final" | tr -d ' ') bytes, isolated restore and $blob_rows blobs verified)"
     else
       cat >"$restore_evidence_file" <<JSON
 {
@@ -298,7 +469,9 @@ if [ -r "$OFFSITE_KEY" ]; then
         log "[db] local retention deliberately skipped for release snapshot"
       else
         pruned=$(find "$DB_BACKUP_DIR" -maxdepth 1 -type f \
-          \( -name 'cauce-*.dump' -o -name 'cauce-*.dump.sha256' -o -name 'cauce-*.dump.restore.json' \) \
+          \( -name 'cauce-*.dump' -o -name 'cauce-*.dump.sha256' -o -name 'cauce-*.dump.restore.json' \
+             -o -name 'cauce-*.dump.blobs.tar' -o -name 'cauce-*.dump.blobs.tar.sha256' \
+             -o -name 'cauce-*.dump.blobs.tsv' \) \
           -mtime "+$DB_RETENTION_DAYS" -print -delete)
         retention_status=local-pruned-after-offsite
         [ -n "$pruned" ] && log "[db] local retention pruned after offsite verification: $(printf '%s' "$pruned" | tr '\n' ' ')"
@@ -357,6 +530,7 @@ cat >"$STATUS_FILE" <<JSON
   "host": "$(hostname)",
   "db": {"status": "$db_status", "file": "$(json_escape "$db_file")", "detail": "$(json_escape "$db_detail")"},
   "restore": {"status": "$restore_status", "detail": "$(json_escape "$restore_detail")", "evidence_file": "$(json_escape "$restore_evidence_file")", "isolated": true, "network": "none"},
+  "blobs": {"archive_file": "$(json_escape "$blob_archive_file")", "archive_sha256": "$blob_archive_sha256", "manifest_file": "$(json_escape "$blob_manifest_file")", "manifest_sha256": "$blob_manifest_sha256", "volume": "$BLOB_VOLUME", "table_present": $blob_table_present, "volume_present": $blob_volume_present},
   "retention": {"skip_requested": $skip_retention_json, "status": "$retention_status", "days": $DB_RETENTION_DAYS},
   "ut_nexus": {"enabled": $ut_enabled_json, "status": "$ut_status", "detail": "$(json_escape "$ut_detail")"},
   "offsite": {

@@ -32,7 +32,9 @@ def analizar_filas(texto: str) -> dict[str, dt.datetime]:
             continue
         if momento.tzinfo is None:
             momento = momento.replace(tzinfo=dt.timezone.utc)
-        filas[partes[0]] = momento
+        anterior = filas.get(partes[0])
+        if anterior is None or momento > anterior:
+            filas[partes[0]] = momento
     return filas
 
 
@@ -60,7 +62,7 @@ def planificar(
 
 
 def sql_filas(psql: str) -> str:
-    consulta = "SELECT sha256, last_used_at FROM blobs"
+    consulta = "SELECT sha256, MAX(last_used_at) FROM blobs GROUP BY sha256"
     return subprocess.run(
         [*shlex.split(psql), "-c", consulta], check=True, capture_output=True, text=True
     ).stdout

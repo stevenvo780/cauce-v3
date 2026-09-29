@@ -23,9 +23,24 @@ confía en que quien despliega ya corrió el gate.
 Para activar blobs en Hospital: desplegar primero con `CAUCE_BLOB_API_ENABLED=0` para aplicar la
 migración 042 y crear el volumen, ejecutar `ops/instances/hospital/backup.sh`, comprobar con
 `REQUIRE_BLOB_VOLUME=1 ops/instances/hospital/backup-monitor.sh`, cambiar el archivo de instancia
-a `CAUCE_BLOB_API_ENABLED=1` y desplegar de nuevo. El monitor central actual no acredita el
-volumen de blobs; esa instancia permanece en `0` hasta incorporar una prueba equivalente. Para
+a `CAUCE_BLOB_API_ENABLED=1` y desplegar de nuevo. En la instancia central, instalar primero las
+versiones actuales de `ops/scripts/host-backup.sh` y `host-backup-monitor.sh` en
+`/usr/local/sbin/cauce-v3-host-backup` y `/usr/local/sbin/cauce-v3-host-backup-monitor`.
+Ejecutar un respaldo nuevo y comprobar `REQUIRE_BLOB_VOLUME=1` con el monitor instalado: éste
+exige dump y volumen restaurados en aislamiento, hashes y tamaños de cada blob, y evidencia
+ligada a ese dump. Con la API ya activa, no saltar la compuerta usando Compose directo;
+si hay una migración pendiente, respaldar antes y repetir el respaldo tras aplicarla. Para
 desactivar la API, restaurar `0` y recrear el gateway; el volumen y la tabla permanecen intactos.
+
+La migración 043 cambia la clave de `blobs`; el gateway anterior no puede escribir con ese
+esquema. En una instalación existente con API activa, planificar una ventana de blobs: fijar
+`CAUCE_BLOB_API_ENABLED=0` en el archivo de instancia y recrear solo el gateway anterior para
+cerrar PUT/GET, tomar un respaldo estricto nuevo, desplegar 043 con el procedimiento oficial y
+la API todavía apagada, tomar otro respaldo verificado y recién entonces reactivar la API con
+el runtime nuevo. El deploy rechaza 043 pendiente con API activa y exige el respaldo estricto
+aunque se haya puesto en `0` para migrar. Si falla después de confirmar 043, mantener la API
+apagada: restaurar **base y volumen juntos** desde el respaldo previo antes de volver al runtime
+anterior, o corregir hacia adelante. Restaurar solo pines antiguos bajo 043 dejaría PUT roto.
 
 **Comando** (dueño presente, root, `df -h /` con holgura para dos imágenes nuevas o `docker builder prune -f` antes):
 ```bash

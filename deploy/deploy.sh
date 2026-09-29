@@ -63,10 +63,8 @@ if [ "${CAUCE_BLOB_API_ENABLED+x}" = x ] \
   die "CAUCE_BLOB_API_ENABLED del entorno contradice el archivo de la instancia"
 fi
 export CAUCE_BLOB_API_ENABLED="$BLOB_API_ENABLED"
-if [ "$BLOB_API_ENABLED" = 1 ]; then
-  [ "$BACKUP_MAX_AGE_HOURS" -le 24 ] \
-    || die "CAUCE_BLOB_API_ENABLED=1 exige backup verificado de 24 horas o menos"
-fi
+BACKUP_BLOB_VOLUME="$(env_value COMPOSE_PROJECT_NAME)"
+BACKUP_BLOB_VOLUME="${BACKUP_BLOB_VOLUME:-cauce-v3-prod}_blobs_data"
 cd "$REPO"
 [ -z "$(git status --porcelain)" ] || die "el arbol no esta limpio; commitea o descarta antes de desplegar"
 git fetch -q origin || die "no pude hacer fetch de origin"
@@ -81,34 +79,134 @@ RUNTIME_TAG="$REGISTRY/cauce-v3-runtime:$REV"
 CONSOLE_TAG="$REGISTRY/cauce-v3-console:$REV"
 LAST_MIGRATION="$(find "$REPO/packages/store/migrations" -maxdepth 1 -type f -name '[0-9][0-9][0-9]_*.sql' -printf '%f\n' | sort -V | tail -1)" # never hardcode this: derive from what is actually bundled
 [ -n "$LAST_MIGRATION" ] || die "no encuentro migraciones en packages/store/migrations"
+PROJECT_NAME="$(env_value COMPOSE_PROJECT_NAME)"
+PROJECT_NAME="${PROJECT_NAME:-cauce-v3-prod}"
+[[ "$PROJECT_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || die "COMPOSE_PROJECT_NAME invalido"
+PG_CONTAINER="$PROJECT_NAME-postgres-1"
+GATEWAY_CONTAINER="$PROJECT_NAME-gateway-1"
+PG_USER="$(env_value POSTGRES_USER)"
+PG_DB="$(env_value POSTGRES_DB)"
+if [ -z "$PG_USER" ] || [ -z "$PG_DB" ]; then
+  die "POSTGRES_USER y POSTGRES_DB deben estar definidos"
+fi
+
+check_blob_migration_window() {
+  BLOB_MIGRATION_PENDING=0
+  [ -f "$REPO/packages/store/migrations/043_blob_tenant_entitlements.sql" ] || return 0
+  local containers volumes pg_running applied gateway_running gateway_blob_flag gateway_image compatible_through
+  containers="$(docker ps -a --format '{{.Names}}')" \
+    || die "no pude enumerar contenedores para comprobar la migracion 043"
+  if ! printf '%s\n' "$containers" | grep -Fxq "$PG_CONTAINER"; then
+    volumes="$(docker volume ls --format '{{.Name}}')" \
+      || die "no pude enumerar volumenes para comprobar la migracion 043"
+    if printf '%s\n' "$volumes" | grep -Fxq "${PROJECT_NAME}_cauce_pgdata" \
+       || printf '%s\n' "$containers" | grep -Fxq "$GATEWAY_CONTAINER"; then
+      die "hay datos o gateway de una instalacion existente sin PostgreSQL inspeccionable; estado de 043 indeterminado"
+    fi
+    return 0
+  fi
+  pg_running="$(docker inspect -f '{{.State.Running}}' "$PG_CONTAINER")" \
+    || die "no pude inspeccionar PostgreSQL existente antes de la migracion 043"
+  [ "$pg_running" = true ] || die "PostgreSQL existente no esta activo; estado de la migracion 043 indeterminado"
+  applied="$(docker exec "$PG_CONTAINER" psql -XAtq -v ON_ERROR_STOP=1 -U "$PG_USER" -d "$PG_DB" \
+    -c "SELECT count(*) FROM schema_migrations WHERE version='043_blob_tenant_entitlements.sql'")" \
+    || die "no pude consultar schema_migrations para la migracion 043"
+  if [ "$applied" = 0 ]; then
+    BLOB_MIGRATION_PENDING=1
+  elif [ "$applied" != 1 ]; then
+    die "estado ambiguo de la migracion 043: $applied"
+  fi
+  if [ "$BLOB_MIGRATION_PENDING" = 1 ]; then
+    [ "$BLOB_API_ENABLED" = 0 ] \
+      || die "la migracion 043 pendiente exige CAUCE_BLOB_API_ENABLED=0 antes del build; desactiva la API en el gateway anterior"
+  fi
+  if printf '%s\n' "$containers" | grep -Fxq "$GATEWAY_CONTAINER"; then
+    gateway_running="$(docker inspect -f '{{.State.Running}}' "$GATEWAY_CONTAINER")" \
+      || die "no pude inspeccionar el gateway anterior antes de la migracion 043"
+    if [ "$gateway_running" = true ]; then
+      gateway_blob_flag="$(docker exec "$GATEWAY_CONTAINER" printenv CAUCE_BLOB_API_ENABLED)" \
+        || die "no pude leer el flag de blobs del gateway anterior"
+      if [ "$BLOB_MIGRATION_PENDING" = 1 ]; then
+        [ "$gateway_blob_flag" = 0 ] \
+          || die "el gateway anterior sigue con API de blobs activa o indeterminada; reinicialo con CAUCE_BLOB_API_ENABLED=0 antes de migrar 043"
+      elif [ "$gateway_blob_flag" = 1 ]; then
+        gateway_image="$(docker inspect -f '{{.Image}}' "$GATEWAY_CONTAINER")" \
+          || die "no pude identificar la imagen del gateway vivo con 043 aplicada"
+        [[ "$gateway_image" =~ ^sha256:[a-f0-9]{64}$ ]] \
+          || die "la imagen del gateway vivo tiene identidad indeterminada con 043 aplicada"
+        compatible_through="$(docker image inspect --format '{{index .Config.Labels "io.cauce.schema.compatible-through"}}' "$gateway_image")" \
+          || die "no pude inspeccionar la compatibilidad de esquema de la imagen del gateway vivo"
+        if [ "$compatible_through" != 043_blob_tenant_entitlements.sql ]; then
+          if [[ "$compatible_through" =~ ^([0-9]{3})_[a-z0-9_-]+\.sql$ ]]; then
+            (( 10#${BASH_REMATCH[1]} > 43 )) \
+              || die "gateway vivo con API de blobs=1 incompatible con 043 aplicada: $compatible_through"
+          else
+            die "gateway vivo con API de blobs=1 sin label de compatibilidad valido para 043"
+          fi
+        fi
+      elif [ "$gateway_blob_flag" != 0 ]; then
+        die "flag de blobs del gateway vivo indeterminado con 043 aplicada"
+      fi
+    elif [ "$gateway_running" != false ]; then
+      die "estado del gateway anterior indeterminado antes de la migracion 043"
+    fi
+  fi
+}
+check_blob_migration_window
+REQUIRE_BLOB_BACKUP="$BLOB_API_ENABLED"
+[ "$BLOB_MIGRATION_PENDING" = 0 ] || REQUIRE_BLOB_BACKUP=1
+if [ "$REQUIRE_BLOB_BACKUP" = 1 ]; then
+  [ "$BACKUP_MAX_AGE_HOURS" -le 24 ] \
+    || die "la API de blobs o migracion 043 exige backup verificado de 24 horas o menos"
+fi
 
 echo "== Cauce V3 deploy: commit $REV ($STAMP) =="
 
 if ! STATUS_FILE="$BACKUP_STATUS_FILE" MAX_AGE_HOURS="$BACKUP_MAX_AGE_HOURS" \
-  REQUIRE_BLOB_VOLUME="$BLOB_API_ENABLED" \
+  REQUIRE_BLOB_VOLUME="$REQUIRE_BLOB_BACKUP" \
+  BLOB_VOLUME="$BACKUP_BLOB_VOLUME" \
   "$BACKUP_MONITOR" >/dev/null; then
-  [ "$BLOB_API_ENABLED" = 0 ] \
-    || die "la API de blobs exige un backup verificado; no se admite omitir este control"
+  [ "$REQUIRE_BLOB_BACKUP" = 0 ] \
+    || die "la API de blobs o migracion 043 exige un backup verificado; no se admite omitir este control"
   echo "AVISO: el estado de backup no acredita una copia sana de <${BACKUP_MAX_AGE_HOURS}h en $BACKUP_STATUS_FILE."
   confirmar "¿Continuar igual?" || die "abortado por falta de backup fresco"
 fi
-if [ "$BLOB_API_ENABLED" = 1 ]; then
-  python3 - "$BACKUP_STATUS_FILE" <<'PY' \
-    || die "la API de blobs exige restauracion de tabla y volumen posterior a la migracion 042"
+if [ "$REQUIRE_BLOB_BACKUP" = 1 ]; then
+  python3 - "$BACKUP_STATUS_FILE" "$BACKUP_BLOB_VOLUME" <<'PY' \
+    || die "la API de blobs o migracion 043 exige restauracion de tabla y volumen posterior a la migracion 042"
 import json
 import pathlib
 import sys
 
-status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-evidence = json.loads(pathlib.Path(status["restore_evidence_file"]).read_text(encoding="utf-8"))
-if not (
-    status.get("schema_version") == 2
-    and status.get("overall") == "ok"
-    and evidence.get("schema_version") == 2
-    and evidence.get("full_restore") is True
-    and evidence.get("blob_table_present") is True
-    and evidence.get("blob_volume_present") is True
-):
+try:
+    status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if status.get("schema_version") == 2:
+        dump = pathlib.Path(status["dump_file"])
+        evidence_path = status["restore_evidence_file"]
+        suite = "hospital-cauce-backup-restore"
+    elif status.get("schema_version") == 4:
+        dump = pathlib.Path(status["db"]["file"])
+        evidence_path = status["restore"]["evidence_file"]
+        suite = "cauce-v3-host-backup-restore"
+        if status["blobs"]["volume"] != sys.argv[2]:
+            raise ValueError("wrong central blob volume")
+    else:
+        raise ValueError("unknown backup status schema")
+    evidence = json.loads(pathlib.Path(evidence_path).read_text(encoding="utf-8"))
+    verified = (
+        status.get("overall") == "ok"
+        and evidence_path == f"{dump}.restore.json"
+        and evidence.get("schema_version") == 2
+        and evidence.get("suite") == suite
+        and evidence.get("dump_file") == dump.name
+        and evidence.get("full_restore") is True
+        and evidence.get("blob_table_present") is True
+        and evidence.get("blob_volume_present") is True
+        and evidence.get("blob_restore_verified") is True
+    )
+except (OSError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError):
+    verified = False
+if not verified:
     raise SystemExit(1)
 PY
 fi
@@ -156,10 +254,11 @@ sed -i "s|^CAUCE_CONSOLE_IMAGE=.*|CAUCE_CONSOLE_IMAGE=$CONSOLE_DIGEST|" "$ENV_FI
 "${COMPOSE[@]}" config >/dev/null || die "el compose canonico no renderiza con $ENV_FILE"
 
 confirmar "¿Migrar hasta $LAST_MIGRATION (bundle de packages/store/migrations, una transaccion) y desplegar $REV?" || die "abortado por el dueño"
+check_blob_migration_window
+[ "$BLOB_MIGRATION_PENDING" = 0 ] || [ "$REQUIRE_BLOB_BACKUP" = 1 ] \
+  || die "043 paso a pendiente despues del backup; repite el deploy con evidencia de tabla y volumen"
 
 # B1 re-checked at the last instant, only while schema 034 is still pending: once applied, open TUIs are normal.
-PG_CONTAINER="$(env_value COMPOSE_PROJECT_NAME)-postgres-1"
-PG_USER="$(env_value POSTGRES_USER)"; PG_DB="$(env_value POSTGRES_DB)"
 if docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
   aplicada_034="$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAc "SELECT count(*) FROM schema_migrations WHERE version LIKE '034_%'" 2>/dev/null || echo 0)"
   if [ "$aplicada_034" = "0" ]; then
@@ -169,12 +268,12 @@ if docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
 else
   echo "PostgreSQL nuevo: la comprobacion de sesiones previas no aplica antes del primer migrator."
 fi
-"${COMPOSE[@]}" run --rm -T migrator || die "migracion fallida (rollback automatico en BD, sigue en la version previa); pero $ENV_FILE YA apunta a los digests nuevos (runtime=$RUNTIME_DIGEST console=$CONSOLE_DIGEST) y no se levanto ningun contenedor con ellos. Restaura antes de reintentar: cp -a $ENV_FILE.pre-deploy-$STAMP $ENV_FILE"
-"${COMPOSE[@]}" up -d --wait --wait-timeout 300 --remove-orphans || die "up fallo; para volver: restaurar $ENV_FILE.pre-deploy-$STAMP y repetir up"
+"${COMPOSE[@]}" run --rm -T migrator || die "migracion fallida; $ENV_FILE apunta a los digests nuevos (runtime=$RUNTIME_DIGEST console=$CONSOLE_DIGEST). Comprueba el esquema antes de restaurar pins anteriores: con 043 aplicada, el gateway viejo con API de blobs=1 es incompatible. Snapshot previo: $ENV_FILE.pre-deploy-$STAMP"
+"${COMPOSE[@]}" up -d --wait --wait-timeout 300 --remove-orphans || die "up fallo; no levantes el gateway anterior con API de blobs=1 si 043 esta aplicada. Para revertir, restaura juntos BD y volumen del snapshot previo a 043, verifica esquema anterior y despues los pins de $ENV_FILE.pre-deploy-$STAMP"
 CAUCE_ENV_FILE="$ENV_FILE" "$REPO/deploy/refresh-observability.sh" \
   || die "no se pudieron refrescar los bind mounts de observabilidad"
 CAUCE_ENV_FILE="$ENV_FILE" "$REPO/deploy/smoke.sh" \
-  || die "SMOKE ROJO: evalua rollback (restaurar $ENV_FILE.pre-deploy-$STAMP + up -d --wait). La BD ya esta en $LAST_MIGRATION."
+  || die "SMOKE ROJO: la BD puede estar en $LAST_MIGRATION. No levantes gateway viejo con API de blobs=1 sobre 043; para revertir, restaura juntos BD y volumen previos a 043, verifica esquema y despues los pins de $ENV_FILE.pre-deploy-$STAMP"
 
 echo "| $STAMP | $REV | $RUNTIME_DIGEST | $CONSOLE_DIGEST | smoke OK |" >> "$HISTORY_FILE"
 echo "== deploy $REV COMPLETO. Registra el resultado en $HISTORY_FILE. =="

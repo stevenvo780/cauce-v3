@@ -16,6 +16,8 @@ set -u
 STATUS_FILE=${STATUS_FILE:-/var/log/cauce-v3-backup/status.json}
 MAX_AGE_HOURS=${MAX_AGE_HOURS:-30}
 REQUIRE_RETENTION_PRESERVED=${REQUIRE_RETENTION_PRESERVED:-0}
+REQUIRE_BLOB_VOLUME=${REQUIRE_BLOB_VOLUME:-0}
+BLOB_VOLUME=${BLOB_VOLUME:-cauce-v3-prod_blobs_data}
 
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -23,8 +25,12 @@ case "$REQUIRE_RETENTION_PRESERVED" in
   0|1) ;;
   *) printf '%s [backup-monitor] ALERT REQUIRE_RETENTION_PRESERVED must be 0 or 1\n' "$(ts)" >&2; exit 2 ;;
 esac
+[ "$REQUIRE_BLOB_VOLUME" = 0 ] || [ "$REQUIRE_BLOB_VOLUME" = 1 ] \
+  || { printf '%s [backup-monitor] ALERT REQUIRE_BLOB_VOLUME must be 0 or 1\n' "$(ts)" >&2; exit 2; }
+printf '%s\n' "$BLOB_VOLUME" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9_.-]*$' \
+  || { printf '%s [backup-monitor] ALERT BLOB_VOLUME is invalid\n' "$(ts)" >&2; exit 2; }
 
-python3 - "$STATUS_FILE" "$MAX_AGE_HOURS" "$REQUIRE_RETENTION_PRESERVED" <<'PY'
+python3 - "$STATUS_FILE" "$MAX_AGE_HOURS" "$REQUIRE_RETENTION_PRESERVED" "$REQUIRE_BLOB_VOLUME" "$BLOB_VOLUME" <<'PY'
 import datetime
 import hashlib
 import json
@@ -34,6 +40,7 @@ import pathlib
 import re
 import stat
 import sys
+import tarfile
 
 path = sys.argv[1]
 try:
@@ -45,9 +52,11 @@ if not math.isfinite(max_age_hours) or max_age_hours <= 0:
     print("ALERT backup monitor MAX_AGE_HOURS must be a finite positive number", file=sys.stderr)
     raise SystemExit(2)
 require_retention_preserved = sys.argv[3] == "1"
+require_blob_volume = sys.argv[4] == "1"
+expected_blob_volume = sys.argv[5]
 
 
-def private_open(name, label, *, maximum=None):
+def private_open(name, label, *, maximum=None, minimum=1):
     target = pathlib.Path(name)
     if not target.is_absolute():
         raise ValueError(f"{label} path is not absolute")
@@ -82,7 +91,7 @@ def private_open(name, label, *, maximum=None):
                 or not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
                 or opened.st_uid not in {0, os.geteuid()}
                 or stat.S_IMODE(opened.st_mode) not in {0o400, 0o600}
-                or opened.st_size < 1 or (maximum is not None and opened.st_size > maximum)):
+                or opened.st_size < minimum or (maximum is not None and opened.st_size > maximum)):
             os.close(descriptor)
             raise ValueError(f"{label} is not an owned private single-link regular file")
     except BaseException:
@@ -98,8 +107,8 @@ def stable_file(metadata):
     )
 
 
-def private_bytes(name, label, *, maximum):
-    basename, directory, descriptor, opened = private_open(name, label, maximum=maximum)
+def private_bytes(name, label, *, maximum, minimum=1):
+    basename, directory, descriptor, opened = private_open(name, label, maximum=maximum, minimum=minimum)
     try:
         chunks = []
         remaining = opened.st_size
@@ -142,6 +151,100 @@ def private_sha256(name, label):
         os.close(descriptor)
         os.close(directory)
     return digest.hexdigest(), pathlib.Path(name)
+
+
+def verified_blobs(archive_path, manifest_bytes):
+    if manifest_bytes and not manifest_bytes.endswith(b"\n"):
+        raise ValueError("blob manifest is incomplete")
+    rows = {}
+    for line in manifest_bytes.decode("ascii").splitlines():
+        match = re.fullmatch(r"([a-f0-9]{64})\t([1-9][0-9]*)", line)
+        if match is None or match.group(1) in rows:
+            raise ValueError("blob manifest is invalid")
+        rows[match.group(1)] = int(match.group(2))
+    found = set()
+    basename, directory, descriptor, opened = private_open(archive_path, "blob archive")
+    try:
+        with os.fdopen(descriptor, "rb") as source:
+            with tarfile.open(fileobj=source, mode="r|") as archive:
+                for member in archive:
+                    if member.isdir() and member.name in {".", "./"}:
+                        continue
+                    match = re.fullmatch(r"\./([a-f0-9]{64})", member.name)
+                    if not member.isfile() or match is None or match.group(1) in found:
+                        raise ValueError("blob archive contains an unsafe entry")
+                    stream = archive.extractfile(member)
+                    if stream is None:
+                        raise ValueError("blob archive entry cannot be read")
+                    digest = hashlib.sha256()
+                    size = 0
+                    while block := stream.read(1024 * 1024):
+                        digest.update(block)
+                        size += len(block)
+                    if digest.hexdigest() != match.group(1) or size < 1 or (
+                        match.group(1) in rows and size != rows[match.group(1)]
+                    ):
+                        raise ValueError("blob archive digest or restored row size differs")
+                    found.add(match.group(1))
+            final_opened = os.fstat(source.fileno())
+            final_named = os.stat(basename, dir_fd=directory, follow_symlinks=False)
+            if stable_file(final_opened) != stable_file(opened) or stable_file(final_named) != stable_file(opened):
+                raise ValueError("blob archive changed while reading")
+    finally:
+        os.close(directory)
+    if not rows.keys() <= found:
+        raise ValueError("blob archive lacks a restored database row")
+    return len(rows), sum(rows.values()), len(found)
+
+
+def verify_blob_evidence(status, evidence, dump_path):
+    blob = status.get("blobs")
+    if not isinstance(blob, dict):
+        raise ValueError("blob status is missing")
+    archive_path = f"{dump_path}.blobs.tar"
+    manifest_path = f"{dump_path}.blobs.tsv"
+    if blob.get("archive_file") != archive_path or blob.get("manifest_file") != manifest_path:
+        raise ValueError("blob artifacts are not bound to the database dump")
+    if blob.get("volume") != expected_blob_volume:
+        raise ValueError("blob volume does not match the expected instance")
+    archive_digest, archive_target = private_sha256(archive_path, "blob archive")
+    if blob.get("archive_sha256") != archive_digest:
+        raise ValueError("blob archive digest does not match status")
+    archive_sidecar = private_bytes(f"{archive_path}.sha256", "blob archive checksum", maximum=1024).decode("ascii")
+    if archive_sidecar != f"{archive_digest}  {archive_target.name}\n":
+        raise ValueError("blob archive checksum sidecar mismatch")
+    manifest_bytes = private_bytes(manifest_path, "blob manifest", maximum=268_435_456, minimum=0)
+    manifest_digest = hashlib.sha256(manifest_bytes).hexdigest()
+    if blob.get("manifest_sha256") != manifest_digest:
+        raise ValueError("blob manifest digest does not match status")
+    blob_rows, blob_bytes, archived_blobs = verified_blobs(archive_path, manifest_bytes)
+    if (
+        evidence.get("blob_archive_file") != archive_target.name
+        or evidence.get("blob_archive_sha256") != archive_digest
+        or evidence.get("blob_manifest_file") != pathlib.Path(manifest_path).name
+        or evidence.get("blob_manifest_sha256") != manifest_digest
+        or evidence.get("blob_volume") != expected_blob_volume
+        or type(evidence.get("blob_table_present")) is not bool
+        or type(evidence.get("blob_volume_present")) is not bool
+        or blob.get("table_present") is not evidence["blob_table_present"]
+        or blob.get("volume_present") is not evidence["blob_volume_present"]
+        or evidence["blob_table_present"] and not evidence["blob_volume_present"]
+        or not evidence["blob_table_present"] and blob_rows != 0
+        or not evidence["blob_volume_present"] and archived_blobs != 0
+        or type(evidence.get("blob_row_count")) is not int
+        or evidence["blob_row_count"] != blob_rows
+        or type(evidence.get("blob_row_bytes")) is not int
+        or evidence["blob_row_bytes"] != blob_bytes
+        or type(evidence.get("archived_blob_count")) is not int
+        or evidence["archived_blob_count"] != archived_blobs
+        or evidence.get("blob_restore_verified") is not True
+        or evidence.get("blob_restore_uid") != 1000
+        or evidence.get("blob_restore_network") != "none"
+        or evidence.get("blob_restore_row_count") != blob_rows
+    ):
+        raise ValueError("blob restore evidence contract mismatch")
+    if require_blob_volume and not (evidence["blob_table_present"] and evidence["blob_volume_present"]):
+        raise ValueError("blob API requires verified table and named volume")
 
 
 try:
@@ -205,7 +308,7 @@ else:
             raise ValueError("restore evidence path is not bound to the database dump")
         evidence = private_json(evidence_path, "restore evidence")
         dump_file = dump_target.name
-        if (evidence.get("schema_version") != 1
+        if (evidence.get("schema_version") not in {1, 2}
                 or evidence.get("suite") != "cauce-v3-host-backup-restore"
                 or evidence.get("dump_file") != dump_file
                 or evidence.get("dump_sha256") != dump_sha256
@@ -217,6 +320,10 @@ else:
                 or not isinstance(evidence.get("applied_migration_count"), int)
                 or evidence.get("applied_migration_count") < 1):
             raise ValueError("restore evidence contract mismatch")
+        if evidence["schema_version"] == 2:
+            verify_blob_evidence(status, evidence, dump_path)
+        elif require_blob_volume:
+            raise ValueError("blob API requires schema 2 restore evidence")
         if started is None or finished is None:
             raise ValueError("backup run timestamps are invalid")
         verified = datetime.datetime.strptime(
@@ -224,7 +331,7 @@ else:
         ).replace(tzinfo=datetime.timezone.utc)
         if not started <= verified <= finished:
             raise ValueError("restore evidence timestamp is outside the backup run")
-    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+    except (OSError, ValueError, TypeError, UnicodeError, json.JSONDecodeError, tarfile.TarError) as error:
         problems.append(f"restore evidence invalid: {error}")
 
 retention = status.get("retention", {})

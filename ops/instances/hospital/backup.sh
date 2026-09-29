@@ -148,7 +148,7 @@ case "$blob_table_present" in
   t)
     blob_table_present=true
     docker exec "$restore_container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d cauce_restore \
-      -c "COPY (SELECT sha256, bytes FROM blobs ORDER BY sha256) TO STDOUT" \
+      -c "COPY (SELECT DISTINCT sha256, bytes FROM blobs ORDER BY sha256, bytes) TO STDOUT" \
       >"$manifest_partial" 2>>"$error_log"
     ;;
   f)
