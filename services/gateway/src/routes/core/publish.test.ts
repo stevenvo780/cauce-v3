@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildPublishReceipt, type PublishMessage } from '@cauce/protocol';
+import { blobArtifactUri, blobLocator, buildPublishReceipt, type PublishMessage } from '@cauce/protocol';
 import type { buildGateway } from '../../app.js';
 import { DevOnlyAuthProvider } from '../../auth.js';
 import { ConsolePublishTelemetry } from '../../console-publish-telemetry.js';
@@ -102,6 +102,19 @@ describe('POST /v3/messages validation', () => {
       expect(response.statusCode).toBe(400);
       expect(response.json<{ error: string }>().error).toBe('invalid_request');
     }
+    expect(calls).toEqual([]);
+  });
+
+  it('rejects an artifacts_v1 blob/uri split before persisting or granting it', async () => {
+    const { app, calls } = await gateway();
+    const response = await app.inject({
+      method: 'POST', url: '/v3/messages', headers: HEADERS,
+      payload: payload({ body: { artifacts_v1: [{
+        name: 'foreign.txt', blob: blobLocator('a'.repeat(64)), uri: blobArtifactUri('b'.repeat(64)),
+      }] } }),
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toBe('invalid_request');
     expect(calls).toEqual([]);
   });
 

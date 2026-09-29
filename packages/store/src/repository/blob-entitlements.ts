@@ -11,6 +11,24 @@ export interface BlobDeliveryGrantInput {
   readonly deliveryId: string;
 }
 
+export async function sourceCanReadBlob(
+  client: DatabaseClient, tenant: string, alias: string, sha256: string,
+): Promise<boolean> {
+  if (!HEX_SHA256.test(sha256) || !tenant || !alias) return false;
+  const owned = await client.query(
+    `SELECT 1 FROM blobs WHERE tenant_id=$1 AND sha256=$2 LIMIT 1 FOR KEY SHARE`,
+    [tenant, sha256],
+  );
+  if (owned.rowCount === 1) return true;
+  const granted = await client.query(
+    `SELECT 1 FROM blob_delivery_grants
+     WHERE target_tenant_id=$1 AND target_alias=$2 AND sha256=$3
+     LIMIT 1 FOR SHARE`,
+    [tenant, alias, sha256],
+  );
+  return granted.rowCount === 1;
+}
+
 export async function grantBlobForDelivery(
   client: DatabaseClient,
   input: BlobDeliveryGrantInput,

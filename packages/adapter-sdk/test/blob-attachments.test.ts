@@ -64,6 +64,17 @@ test("una referencia de artefacto de otro agente (artifacts_v1 con uri cauce-blo
   await result.cleanup();
 });
 
+test("un artifacts_v1 ambiguo no descarga el uri ajeno aunque blob apunte a un digest propio", async () => {
+  const blobs = fetcher();
+  await assert.rejects(materializeAttachments({
+    artifacts_v1: [{
+      name: "ajeno.txt", blob: blobLocator(SHA), uri: blobArtifactUri("b".repeat(64)),
+      media_type: "text/plain", size: PAYLOAD.length,
+    }],
+  }, blobs), { code: "INVALID_ATTACHMENT" });
+  assert.deepEqual(blobs.calls, []);
+});
+
 test("los bytes inline y las referencias comparten el mismo tope de adjuntos por mensaje", async () => {
   const inline = Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE }, (_, index) => inlineEntry(`n${String(index)}.txt`));
   await assert.rejects(

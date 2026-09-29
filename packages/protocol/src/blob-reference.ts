@@ -35,6 +35,30 @@ export function parseBlobArtifactUri(uri: unknown): string | undefined {
   return digestAfter(BLOB_URI_PREFIX, uri);
 }
 
+export type CarriedBlobField = 'attachments_v1' | 'artifacts_v1';
+
+export function isCarriedBlobCandidate(entry: unknown, field: CarriedBlobField): boolean {
+  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return false;
+  const record = entry as Record<string, unknown>;
+  if (field === 'attachments_v1') return Object.hasOwn(record, 'blob') || Object.hasOwn(record, 'uri');
+  return Object.hasOwn(record, 'blob')
+    || (typeof record.uri === 'string' && record.uri.startsWith(BLOB_URI_PREFIX));
+}
+
+export function parseCarriedBlobReference(entry: unknown, field: CarriedBlobField): string | undefined {
+  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return undefined;
+  const record = entry as Record<string, unknown>;
+  if (Object.hasOwn(record, 'blob') && Object.hasOwn(record, 'uri')) return undefined;
+  const digest = field === 'attachments_v1'
+    ? parseBlobLocator(record.blob)
+    : parseBlobArtifactUri(record.uri);
+  if (digest === undefined) return undefined;
+  for (const claim of ['sha256', 'declared_sha256'] as const) {
+    if (Object.hasOwn(record, claim) && record[claim] !== digest) return undefined;
+  }
+  return digest;
+}
+
 export function isBlobArtifactUri(uri: unknown): boolean {
   return parseBlobArtifactUri(uri) !== undefined;
 }

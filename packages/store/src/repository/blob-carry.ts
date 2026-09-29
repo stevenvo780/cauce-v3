@@ -1,4 +1,4 @@
-import { parseBlobArtifactUri, parseBlobLocator } from '@cauce/protocol';
+import { parseCarriedBlobReference } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 import { grantBlobForDelivery } from './blob-entitlements.js';
 import { StoreError } from './errors.js';
@@ -19,7 +19,7 @@ export function referencedBlobDigests(body: unknown): string[] {
     for (const candidate of entries) {
       const entry = record(candidate);
       if (entry === undefined) continue;
-      const digest = parseBlobLocator(entry.blob) ?? parseBlobArtifactUri(entry.uri);
+      const digest = parseCarriedBlobReference(entry, field);
       if (digest !== undefined) digests.add(digest);
     }
   }

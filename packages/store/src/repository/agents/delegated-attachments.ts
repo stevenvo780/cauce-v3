@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import {
   AttachmentsV1Schema, base64CharacterBudget, dataUriByteLength, decodeCanonicalBase64,
-  isDeliverableArtifactUri, isSafeBasename, isValidMediaType, MAX_ARTIFACT_LOCATOR_CHARACTERS,
+  isCarriedBlobCandidate, isDeliverableArtifactUri, isSafeBasename, isValidMediaType,
+  MAX_ARTIFACT_LOCATOR_CHARACTERS,
   MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_MEDIA_TYPE_LENGTH, MAX_ATTACHMENTS_PER_MESSAGE,
-  MAX_ATTACHMENTS_TOTAL_BYTES, MAX_BLOB_BYTES, objectRecord, parseBlobArtifactUri, parseDataUri,
+  MAX_ATTACHMENTS_TOTAL_BYTES, MAX_BLOB_BYTES, objectRecord, parseBlobArtifactUri,
+  parseCarriedBlobReference, parseDataUri,
   redactAttachmentName, redactSecrets, redactSecretsDeep
 } from '@cauce/protocol';
 
@@ -222,6 +224,11 @@ export function attachmentsFromArtifacts(
       drop('undecodable');
       continue;
     }
+    if (isCarriedBlobCandidate(entry, 'artifacts_v1')
+      && parseCarriedBlobReference(entry, 'artifacts_v1') === undefined) {
+      drop('scheme');
+      continue;
+    }
     const name = redactedBasename(entry.name);
     if (name === undefined) {
       drop('name');
@@ -301,6 +308,8 @@ export function artifactRefs(artifacts: unknown): ArtifactRef[] {
     const entry = objectRecord(value);
     const name = redactedBasename(entry?.name);
     if (entry === undefined || name === undefined) continue;
+    if (isCarriedBlobCandidate(entry, 'artifacts_v1')
+      && parseCarriedBlobReference(entry, 'artifacts_v1') === undefined) continue;
     const inline = inlinePayload(entry.uri);
     const bytes = inline === undefined
       ? undefined

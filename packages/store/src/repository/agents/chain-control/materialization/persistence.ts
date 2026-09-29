@@ -4,6 +4,7 @@ import { grantCarriedBlobs } from '../../../blob-carry.js';
 import {
   attachmentsFromArtifacts, carriedBodyHash, delegatedMessageBody
 } from '../../delegated-attachments.js';
+import { filterOwnedBlobArtifactRefs } from '../../owned-blob-artifacts.js';
 import { insertDelivery, insertMessage } from '../../../messages/_insert.js';
 import type { DeliveryRow } from '../../../observability.js';
 import type { ResolvedAgentOutputEntry } from '../policy.js';
@@ -32,7 +33,17 @@ export async function persistAgentOutput(
     visitedPathAvailable: boolean;
   }
 ): Promise<PersistedAgentOutput> {
-  const carried = attachmentsFromArtifacts(input.output.artifacts, input.output.artifactsWithheld);
+  const proposed = attachmentsFromArtifacts(input.output.artifacts, input.output.artifactsWithheld);
+  const filtered = await filterOwnedBlobArtifactRefs(
+    client, proposed.refs, input.row.recipient_tenant, input.row.recipient_alias,
+  );
+  const carried = filtered.dropped === 0 ? proposed : {
+    ...proposed,
+    refs: filtered.refs,
+    dropped: proposed.dropped + filtered.dropped,
+    note: [proposed.note, `${String(filtered.dropped)} referencia(s) blob no viajaron: emisor sin acceso`]
+      .filter((part): part is string => part !== undefined).join('; '),
+  };
   const body = delegatedMessageBody({
     type: 'agent.message',
     text: input.body,
@@ -117,7 +128,8 @@ export async function persistAgentOutput(
         hop_budget: input.hopBudget,
         ...(carried.rejectedNames > 0
           ? { rejected_attachment_names: carried.rejectedNames }
-          : {})
+          : {}),
+        ...(filtered.dropped > 0 ? { rejected_blob_refs: filtered.dropped } : {})
       })
     ]
   );

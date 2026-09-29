@@ -275,18 +275,47 @@ describe('blob references follow only authorized deliveries', () => {
     expect(grants.rows[0]?.count).toBe('1');
   });
 
-  it('rejects a forged reference without persisting a child or grant', async () => {
+  it('drops a forged delegated reference while delivering the text and terminal ACK', async () => {
     const argos = await consumer('Steven', 'argos');
+    const seneca = await consumer('Pablo', 'seneca');
     await repository.publish(command());
     const root = await next(argos);
-    await expect(applyTerminalAck(repository, argos, root, {
+    const ack = await applyTerminalAck(repository, argos, root, {
       messages: [{ to: 'seneca', body: 'ref ajena', artifacts: [{ name: 'ajeno.txt', uri: UNKNOWN_URI }] }],
       reply: 'delegado',
-    })).rejects.toMatchObject({ code: 'forbidden' });
+    });
+    expect(ack.applied).toBe(true);
+    const child = await next(seneca, 'agent.message');
+    expect(child.body.text).toBe('ref ajena');
+    expect(child.body.artifacts_v1).toBeUndefined();
+    expect(child.body.attachments_note).toMatch(/blob no viajaron: emisor sin acceso/u);
     const state = await pool.query<{ grants: string; children: string }>(`
       SELECT (SELECT count(*)::text FROM blob_delivery_grants) AS grants,
              (SELECT count(*)::text FROM messages WHERE body->>'type'='agent.message') AS children
     `);
-    expect(state.rows[0]).toEqual({ grants: '0', children: '0' });
+    expect(state.rows[0]).toEqual({ grants: '0', children: '1' });
+  });
+
+  it('drops a forged result artifact without poisoning the child ACK', async () => {
+    const argos = await consumer('Steven', 'argos');
+    const seneca = await consumer('Pablo', 'seneca');
+    await repository.publish(command());
+    const root = await next(argos);
+    await applyTerminalAck(repository, argos, root, {
+      messages: [{ to: 'seneca', body: 'responde' }], reply: 'delegado',
+    });
+    const child = await next(seneca, 'agent.message');
+    const ack = await repository.ackDelivery(
+      child.delivery_id, seneca.tenant, seneca.alias,
+      ackEnvelope(child, seneca, { output: {
+        messages: [], reply: 'resultado válido', status: 'done', retryable: false,
+        artifacts: [{ name: 'ajeno.txt', uri: UNKNOWN_URI }],
+      } }),
+    );
+    expect(ack.applied).toBe(true);
+    const response = await next(argos, 'agent.response');
+    expect(response.body.artifacts_v1).toBeUndefined();
+    expect(response.body.text).toMatch(/referencia\(s\) blob no viajaron: emisor sin acceso/u);
+    expect((await pool.query('SELECT 1 FROM blob_delivery_grants')).rowCount).toBe(0);
   });
 });

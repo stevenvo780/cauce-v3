@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   AttachmentsV1Schema, blobArtifactUri, blobLocator, DEFAULT_BLOB_MAX_BYTES, isBlobAttachmentEntry,
   isDeliverableArtifactUri, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_TOTAL_BYTES, MAX_BLOB_BYTES,
-  parseBlobArtifactUri, parseBlobLocator,
+  MessageBodySchema, parseBlobArtifactUri, parseBlobLocator,
+  parseCarriedBlobReference,
 } from '../src/index.js';
 
 const SHA = 'a'.repeat(64);
@@ -44,6 +45,42 @@ describe('blob references', () => {
   it('counts a blob artifact uri as deliverable, like data: and https:', () => {
     expect(isDeliverableArtifactUri(blobArtifactUri(SHA))).toBe(true);
     expect(isDeliverableArtifactUri(`cauce-blob:sha256:${'a'.repeat(63)}`)).toBe(false);
+  });
+});
+
+describe('carried blob references', () => {
+  const OTHER = 'b'.repeat(64);
+
+  it('reads only the field that the recipient adapter downloads', () => {
+    expect(parseCarriedBlobReference({ blob: blobLocator(SHA) }, 'attachments_v1')).toBe(SHA);
+    expect(parseCarriedBlobReference({ uri: blobArtifactUri(SHA) }, 'artifacts_v1')).toBe(SHA);
+    expect(parseCarriedBlobReference({ uri: blobArtifactUri(SHA) }, 'attachments_v1')).toBeUndefined();
+    expect(parseCarriedBlobReference({ blob: blobLocator(SHA) }, 'artifacts_v1')).toBeUndefined();
+  });
+
+  it('refuses a blob and a uri in the same entry, even when they agree', () => {
+    for (const uri of [blobArtifactUri(SHA), blobArtifactUri(OTHER)]) {
+      expect(parseCarriedBlobReference({ blob: blobLocator(SHA), uri }, 'attachments_v1')).toBeUndefined();
+      expect(parseCarriedBlobReference({ blob: blobLocator(SHA), uri }, 'artifacts_v1')).toBeUndefined();
+    }
+  });
+
+  it('refuses declared digests that disagree with the downloaded reference', () => {
+    expect(parseCarriedBlobReference({ blob: blobLocator(SHA), sha256: OTHER }, 'attachments_v1')).toBeUndefined();
+    expect(parseCarriedBlobReference({ uri: blobArtifactUri(SHA), sha256: OTHER }, 'artifacts_v1')).toBeUndefined();
+    expect(parseCarriedBlobReference({ uri: blobArtifactUri(SHA), declared_sha256: OTHER }, 'artifacts_v1')).toBeUndefined();
+  });
+
+  it('rejects ambiguous artifacts in a published body but keeps opaque non-blob artifacts', () => {
+    expect(MessageBodySchema.safeParse({ artifacts_v1: [{
+      name: 'ambiguous.txt', blob: blobLocator(SHA), uri: blobArtifactUri(OTHER),
+    }] }).success).toBe(false);
+    expect(MessageBodySchema.safeParse({ artifacts_v1: [{
+      name: 'remote.txt', uri: 'https://example.invalid/document.txt', sha256: OTHER,
+    }] }).success).toBe(true);
+    expect(MessageBodySchema.safeParse({ artifacts_v1: [{
+      name: 'valid.txt', uri: blobArtifactUri(SHA), declared_sha256: SHA,
+    }] }).success).toBe(true);
   });
 });
 

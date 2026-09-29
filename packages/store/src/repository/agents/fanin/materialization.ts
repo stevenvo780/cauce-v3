@@ -173,7 +173,29 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
                       || COALESCE(response_audit.metadata->>'reason','authorization_unavailable')
                   ELSE response.body->>'text'
                 END AS response_text,
-                response.body->'artifacts_v1' AS response_artifacts
+                CASE WHEN response_audit.decision='allow'
+                       AND response_audit.tenant_id=materialization.target_tenant
+                       AND response_audit.actor_alias=materialization.target_alias
+                       AND response_audit.metadata->>'source_delivery_id'
+                           =materialization.source_delivery_id::text
+                       AND response.tenant_id=materialization.target_tenant
+                       AND response.actor_alias=materialization.target_alias
+                       AND response.body->>'type'='agent.response'
+                       AND response.body->>'from_alias'=materialization.target_alias
+                       AND response.body->'correlation'->>'child_delivery_id'=child.id::text
+                       AND response.body->'correlation'->>'response_to_delivery_id'
+                           =materialization.source_delivery_id::text
+                       AND response.body->'correlation'->>'parent_delivery_id'
+                           =COALESCE(response_audit.metadata->>'continuation_delivery_id',child.id::text)
+                       AND EXISTS (
+                         SELECT 1 FROM deliveries response_delivery
+                         WHERE response_delivery.id=response_audit.delivery_id
+                           AND response_delivery.message_id=response.id
+                           AND response_delivery.recipient_tenant=materialization.source_tenant
+                           AND response_delivery.recipient_alias=materialization.source_alias
+                       )
+                     THEN response.body->'artifacts_v1'
+                     ELSE NULL END AS response_artifacts
          FROM audit_events response_audit
          LEFT JOIN messages response ON response.id=response_audit.message_id
          WHERE response_audit.action='agent_output.response'

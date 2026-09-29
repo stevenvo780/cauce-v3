@@ -28,4 +28,17 @@ describe('blob references carried by a delivery', () => {
       attachments_v1: 'not an array',
     })).toEqual([]);
   });
+
+  it('does not grant Pablo a Steven blob when artifacts_v1 combines Pablo blob with Steven uri', () => {
+    expect(referencedBlobDigests({ artifacts_v1: [{
+      name: 'foreign.txt', blob: `sha256:${SHA}`, uri: `cauce-blob:sha256:${OTHER}`,
+    }] })).toEqual([]);
+  });
+
+  it('refuses ambiguous attachment refs and mismatched declared digests', () => {
+    expect(referencedBlobDigests({
+      attachments_v1: [{ blob: `sha256:${SHA}`, uri: `cauce-blob:sha256:${OTHER}` }],
+      artifacts_v1: [{ uri: `cauce-blob:sha256:${SHA}`, declared_sha256: OTHER }],
+    })).toEqual([]);
+  });
 });

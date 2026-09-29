@@ -261,4 +261,17 @@ describe('a file that travels by reference to the blob store', () => {
     const [ref] = artifactRefs([{ name: 'x.bin', uri: 'https://example.test/x.bin', size: BIG }]);
     expect(ref?.size).toBeUndefined();
   });
+
+  it('drops an artifact that claims an owned blob but points its URI at another digest', () => {
+    const forged = {
+      name: 'falso.bin', blob: `sha256:${'a'.repeat(64)}`, uri: BLOB_URI,
+      media_type: 'application/octet-stream',
+    };
+    const carried = attachmentsFromArtifacts([forged]);
+    expect(carried.refs).toEqual([]);
+    expect(carried.dropped).toBe(1);
+    expect(artifactRefs([forged])).toEqual([]);
+    expect(attachmentsFromArtifacts([{ name: 'falso.bin', uri: BLOB_URI, sha256: 'a'.repeat(64) }]).refs)
+      .toEqual([]);
+  });
 });

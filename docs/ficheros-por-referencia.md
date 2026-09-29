@@ -33,8 +33,9 @@ gateway, direccionados por su sha256, y el mensaje sólo lleva el digest.
   el adaptador conserva el nombre visible que viajó en la referencia.
 - `blobs` se creó en 042; la migración 043 cambia su clave a `(tenant_id, sha256)` y añade
   `blob_delivery_grants`. La concesión se escribe en la misma transacción que una entrega ya
-  autorizada, solo si el emisor posee la fila o una concesión previa. Un digest inventado aborta
-  ese envío sin crear entrega ni grant. La descarga concedida corresponde al alias receptor,
+  autorizada, solo si el emisor posee la fila o una concesión previa. En publicación directa, un
+  digest inventado aborta sin mensaje, entrega ni grant; en un resultado de agente se descarta
+  solo la referencia y se conserva el texto y su ACK. La descarga concedida corresponde al alias receptor,
   no a todos los agentes de su tenant; el archivo físico sigue deduplicado por sha256.
 - Volumen `blobs_data` montado en `/var/lib/cauce-v3/blobs` (la imagen crea la ruta como uid 1000
   porque el runtime es `read_only`).
@@ -44,7 +45,9 @@ gateway, direccionados por su sha256, y el mensaje sólo lleva el digest.
 - Al recibir: `materializeAttachments` descarga cada entrada `blob:` de `attachments_v1` y cada ref
   `cauce-blob:` de `artifacts_v1` al directorio del turno (streaming a disco, digest y tamaño
   verificados) y las presenta al arnés como cualquier adjunto (`local_path`). Comparten el tope de
-  4 adjuntos por mensaje; los bytes inline siguen limitados a 10 MB agregados.
+  4 adjuntos por mensaje; los bytes inline siguen limitados a 10 MB agregados. El parser común de
+  protocolo rechaza un artefacto que mezcle `blob` y `uri` o declare un digest distinto; el bus y
+  el adaptador leen exactamente el campo que corresponde a esa forma antes de conceder o descargar.
 - Al responder: `inlineLocalArtifacts` sube un `file://` mayor que 10 MB (y ≤ techo) con
   `BlobClient.upload` y publica `{ name, uri: cauce-blob:…, media_type, sha256, size }`. Sin cliente
   configurado, el artefacto queda como estaba (hoy: no viaja).
@@ -53,6 +56,8 @@ gateway, direccionados por su sha256, y el mensaje sólo lleva el digest.
 - En el salto entre agentes (`delegated-attachments.ts`) una ref `cauce-blob:` conserva su tamaño
   (hasta el techo de blob) y su digest. Al delegar o devolver un resultado entre tenants, el bus
   concede la lectura al destinatario exacto después de validar la ruta; no publica una ref ajena.
+  El fan-in toma artefactos solo de respuestas `agent.response` autorizadas y atribuibles a la
+  rama; una continuación denegada conserva su diagnóstico, sin conceder sus blobs.
 
 ## Retención
 

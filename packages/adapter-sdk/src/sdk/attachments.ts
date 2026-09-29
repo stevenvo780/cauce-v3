@@ -12,8 +12,8 @@ import {
   MAX_ATTACHMENTS_TOTAL_BYTES,
   MAX_BLOB_BYTES,
   objectRecord,
-  parseBlobArtifactUri,
-  parseBlobLocator,
+  isCarriedBlobCandidate,
+  parseCarriedBlobReference,
 } from "@cauce/protocol";
 import { BlobClientError, defaultBlobClient, type BlobFetcher } from "./blob-client.js";
 import { AdapterError } from "./errors.js";
@@ -134,8 +134,13 @@ interface BlobReference {
 
 function blobReference(item: Record<string, unknown> | undefined, fromArtifact: boolean): BlobReference | undefined {
   if (item === undefined) return undefined;
-  const sha256 = fromArtifact ? parseBlobArtifactUri(item.uri) : parseBlobLocator(item.blob);
-  if (sha256 === undefined) return undefined;
+  const sha256 = parseCarriedBlobReference(item, fromArtifact ? "artifacts_v1" : "attachments_v1");
+  if (sha256 === undefined) {
+    if (fromArtifact || Object.hasOwn(item, "blob") || Object.hasOwn(item, "uri")) {
+      throw attachmentError("Delivery contains an ambiguous or malformed blob reference");
+    }
+    return undefined;
+  }
   const name = safeName(item.name);
   const mime = fromArtifact ? item.media_type ?? "application/octet-stream" : item.mime_type;
   const rawSize = fromArtifact ? item.size : item.file_size;
@@ -164,9 +169,17 @@ async function fetchBlob(
 
 function artifactBlobRefs(body: Record<string, unknown>): Record<string, unknown>[] {
   if (!Array.isArray(body.artifacts_v1)) return [];
-  return body.artifacts_v1
-    .map((entry) => objectRecord(entry))
-    .filter((entry): entry is Record<string, unknown> => entry !== undefined && parseBlobArtifactUri(entry.uri) !== undefined);
+  const refs: Record<string, unknown>[] = [];
+  for (const candidate of body.artifacts_v1) {
+    const entry = objectRecord(candidate);
+    if (entry === undefined) continue;
+    if (!isCarriedBlobCandidate(entry, "artifacts_v1")) continue;
+    if (parseCarriedBlobReference(entry, "artifacts_v1") === undefined) {
+      throw attachmentError("Delivery contains an ambiguous or malformed blob reference");
+    }
+    refs.push(entry);
+  }
+  return refs;
 }
 
 export async function materializeAttachments(

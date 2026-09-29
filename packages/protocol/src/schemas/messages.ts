@@ -15,7 +15,9 @@ import {
   base64CharacterBudget, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_MEDIA_TYPE_LENGTH,
   MAX_ATTACHMENTS_PER_MESSAGE, MAX_ATTACHMENTS_TOTAL_BYTES,
 } from '../attachment-limits.js';
-import { MAX_BLOB_BYTES, parseBlobLocator } from '../blob-reference.js';
+import {
+  isCarriedBlobCandidate, MAX_BLOB_BYTES, parseBlobLocator, parseCarriedBlobReference,
+} from '../blob-reference.js';
 import { isSafeBasename } from '../content-safety.js';
 import { isValidMediaType } from './media-types.js';
 
@@ -57,7 +59,7 @@ export const AttachmentBlobReferenceSchema = z.object({
   if (attachment.kind === 'image' && !attachment.mime_type.toLowerCase().startsWith('image/')) {
     context.addIssue({ code: 'custom', message: 'attachment kind and MIME do not agree' });
   }
-  if (attachment.sha256 !== undefined && attachment.sha256 !== parseBlobLocator(attachment.blob)) {
+  if (parseCarriedBlobReference(attachment, 'attachments_v1') === undefined) {
     context.addIssue({ code: 'custom', path: ['sha256'], message: 'attachment sha256 does not match its blob locator' });
   }
 });
@@ -106,6 +108,17 @@ export const MessageBodySchema = z.record(z.string(), z.unknown()).superRefine((
         path: ['timeout_ms'],
         message: `body.timeout_ms must be an integer between 1 and ${String(MAX_MESSAGE_TIMEOUT_MS)}`
       });
+    }
+  }
+  if (Array.isArray(body.artifacts_v1)) {
+    for (const [index, entry] of body.artifacts_v1.entries()) {
+      if (isCarriedBlobCandidate(entry, 'artifacts_v1')
+          && parseCarriedBlobReference(entry, 'artifacts_v1') === undefined) {
+        context.addIssue({
+          code: 'custom', path: ['artifacts_v1', index],
+          message: 'artifact blob reference is ambiguous or malformed',
+        });
+      }
     }
   }
   if (body.attachments_v1 === undefined) return;

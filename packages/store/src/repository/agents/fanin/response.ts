@@ -11,6 +11,7 @@ import {
 } from '../../observability.js';
 import { objectRecord } from '../../outbox.js';
 import { artifactRefs } from '../delegated-attachments.js';
+import { filterOwnedBlobArtifactRefs } from '../owned-blob-artifacts.js';
 import {
   agentResponseRequestId, agentResponseText, aggregatedFailureText, failureSignature,
   lateResultText, maxAgentResponseTextBytes, type AgentChainProgressStage,
@@ -216,10 +217,20 @@ export abstract class AgentResponseRepository extends AgentsRepository {
       row.recipient_alias,
       late
     );
-    const artifacts = artifactRefs(objectRecord(result?.output)?.artifacts);
+    const proposedArtifacts = artifactRefs(objectRecord(result?.output)?.artifacts);
+    const filtered = await filterOwnedBlobArtifactRefs(
+      client, proposedArtifacts, row.recipient_tenant, row.recipient_alias,
+    );
+    const artifacts = filtered.refs;
+    const visibleResponse = aggregatedFailureText(baseText, row.recipient_alias, reservation);
     const responseBody = {
       type: 'agent.response',
-      text: aggregatedFailureText(baseText, row.recipient_alias, reservation),
+      text: filtered.dropped === 0
+        ? visibleResponse
+        : truncateUtf8(
+          `${visibleResponse}\n[${String(filtered.dropped)} referencia(s) blob no viajaron: emisor sin acceso]`,
+          maxAgentResponseTextBytes,
+        ).value,
       from_alias: row.recipient_alias,
       outcome,
       correlation,
