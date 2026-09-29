@@ -1,5 +1,6 @@
-import { isRfcUuid, type DeliveryState, type Tenant } from '@cauce/protocol';
+import { isRfcUuid, parseBlobArtifactUri, type DeliveryState, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../../db.js';
+import { grantBlobForDelivery } from '../../blob-entitlements.js';
 import { reservedInternalMessageTypes } from '../../config.js';
 import { insertDelivery, insertMessage } from '../../messages/_insert.js';
 import {
@@ -12,6 +13,39 @@ import {
   agentFaninRequestId, agentResponseText
 } from './helpers.js';
 import { AgentResponseRepository } from './response.js';
+
+async function mayCarryBlobToRoot(
+  client: DatabaseClient, sourceTenant: string, targetTenant: string,
+): Promise<boolean> {
+  if (sourceTenant === targetTenant) return true;
+  const result = await client.query(
+    `SELECT 1 FROM acl_edges outbound JOIN acl_edges inbound
+       ON inbound.from_tenant=$2 AND inbound.to_tenant=$1
+     WHERE outbound.from_tenant=$1 AND outbound.to_tenant=$2
+       AND outbound.enabled AND outbound.allow_route
+       AND inbound.enabled AND inbound.allow_read
+     LIMIT 1 FOR SHARE OF outbound,inbound`,
+    [sourceTenant, targetTenant],
+  );
+  return result.rowCount === 1;
+}
+
+async function sourceCanReferenceBlob(
+  client: DatabaseClient, tenant: string, alias: string, sha256: string,
+): Promise<boolean> {
+  const owned = await client.query(
+    `SELECT 1 FROM blobs WHERE tenant_id=$1 AND sha256=$2 LIMIT 1 FOR KEY SHARE`,
+    [tenant, sha256],
+  );
+  if (owned.rowCount === 1) return true;
+  const granted = await client.query(
+    `SELECT 1 FROM blob_delivery_grants
+     WHERE target_tenant_id=$1 AND target_alias=$2 AND sha256=$3
+     LIMIT 1 FOR SHARE`,
+    [tenant, alias, sha256],
+  );
+  return granted.rowCount === 1;
+}
 
 export abstract class AgentFaninMaterializationRepository extends AgentResponseRepository {
   protected override rootMessageId(row: DeliveryRow): string | undefined {
@@ -221,8 +255,8 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
       && Buffer.byteLength(JSON.stringify(faninBody()), 'utf8') > agentFaninMaxAggregateBytes) {
       includedResponses.pop();
     }
-    const faninBodyPayload = faninBody();
-    const faninDataPayload = objectRecord(faninBodyPayload.fanin_data_v1);
+    let faninBodyPayload = faninBody();
+    let faninDataPayload = objectRecord(faninBodyPayload.fanin_data_v1);
     if (Buffer.byteLength(JSON.stringify(faninBodyPayload), 'utf8') > agentFaninMaxAggregateBytes
       || !faninDataPayload) {
       throw new Error('fan-in body exceeds the configured size limit');
@@ -270,6 +304,49 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
     });
     const deliveryId = delivery.rows[0]?.id;
     if (!deliveryId) throw new Error('fan-in delivery insert returned no id');
+    let withheldBlobRefs = 0;
+    const grantedBlobDigests = new Set<string>();
+    for (const [index, response] of includedResponses.entries()) {
+      const artifacts = response.artifacts;
+      if (artifacts === undefined) continue;
+      const canRoute = await mayCarryBlobToRoot(
+        client, response.tenant_id, rootRow.recipient_tenant,
+      );
+      const retained = [];
+      for (const artifact of artifacts) {
+        const sha256 = parseBlobArtifactUri(artifact.uri);
+        if (sha256 === undefined) {
+          retained.push(artifact);
+          continue;
+        }
+        const granted = canRoute && (grantedBlobDigests.has(sha256)
+          ? await sourceCanReferenceBlob(client, response.tenant_id, response.alias, sha256)
+          : await grantBlobForDelivery(client, {
+            sha256,
+            sourceTenant: response.tenant_id,
+            sourceAlias: response.alias,
+            targetTenant: rootRow.recipient_tenant,
+            targetAlias: rootRow.recipient_alias,
+            deliveryId,
+          }));
+        if (granted) {
+          grantedBlobDigests.add(sha256);
+          retained.push(artifact);
+        }
+        else withheldBlobRefs += 1;
+      }
+      if (retained.length !== artifacts.length) {
+        includedResponses[index] = { ...response, artifacts: retained };
+      }
+    }
+    if (withheldBlobRefs > 0) {
+      faninBodyPayload = faninBody();
+      faninDataPayload = objectRecord(faninBodyPayload.fanin_data_v1);
+      if (!faninDataPayload) throw new Error('filtered fan-in body is invalid');
+      await client.query('UPDATE messages SET body=$2::jsonb WHERE id=$1', [
+        messageId, JSON.stringify(faninBodyPayload),
+      ]);
+    }
     await client.query(
       `INSERT INTO adapter_outbox(
          tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload
@@ -306,6 +383,7 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
           included_responses: includedResponses.length,
           truncated_responses: boundedResponses.filter((response) => response.truncated).length,
           omitted_responses: boundedResponses.length - includedResponses.length,
+          withheld_blob_refs: withheldBlobRefs,
           schema: faninDataPayload.schema,
           trust: faninDataPayload.trust
         })

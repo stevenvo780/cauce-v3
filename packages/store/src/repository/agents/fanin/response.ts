@@ -3,6 +3,7 @@ import {
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient } from '../../../db.js';
 import { AgentsRepository } from '../../agents.js';
+import { grantCarriedBlobs } from '../../blob-carry.js';
 import { postgresTextSafe } from '../../deliveries.js';
 import { insertDelivery, insertMessage } from '../../messages/_insert.js';
 import {
@@ -216,20 +217,21 @@ export abstract class AgentResponseRepository extends AgentsRepository {
       late
     );
     const artifacts = artifactRefs(objectRecord(result?.output)?.artifacts);
+    const responseBody = {
+      type: 'agent.response',
+      text: aggregatedFailureText(baseText, row.recipient_alias, reservation),
+      from_alias: row.recipient_alias,
+      outcome,
+      correlation,
+      ...(artifacts.length > 0 ? { artifacts_v1: artifacts } : {})
+    };
     const message = await insertMessage(client, {
       requestId,
       traceId: row.trace_id,
       tenantId: row.recipient_tenant,
       roomId: childRoomId,
       actorAlias: row.recipient_alias,
-      body: {
-          type: 'agent.response',
-          text: aggregatedFailureText(baseText, row.recipient_alias, reservation),
-          from_alias: row.recipient_alias,
-          outcome,
-          correlation,
-          ...(artifacts.length > 0 ? { artifacts_v1: artifacts } : {})
-      },
+      body: responseBody,
       origin: row.origin ?? null,
         // Same criterion as materializeAgentOutputs: the return of a delegation is traffic
         // between agents, not the person's conversation. It goes to the background lane.
@@ -248,6 +250,14 @@ export abstract class AgentResponseRepository extends AgentsRepository {
     });
     const responseDeliveryId = delivery.rows[0]?.id;
     if (!responseDeliveryId) throw new Error('agent response delivery insert returned no id');
+    await grantCarriedBlobs(client, {
+      body: responseBody,
+      sourceTenant: row.recipient_tenant,
+      sourceAlias: row.recipient_alias,
+      targetTenant: relationship.source_tenant,
+      targetAlias: relationship.source_alias,
+      deliveryId: responseDeliveryId,
+    });
     if (reservation) {
       // Emitted and coalesced failures share one ledger.
       await this.bindFailureNoticeEvent(

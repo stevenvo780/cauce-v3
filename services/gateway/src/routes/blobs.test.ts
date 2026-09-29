@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -29,10 +29,12 @@ async function gateway(options: { readonly permissions?: readonly ('read' | 'rou
     sha256: string; bytes: number; media_type: string; name: string; tenant_id: string;
     created_by: string; created_at: Date; last_used_at: Date;
   }>();
+  const granted = new Set<string>();
   const registerBlob = vi.fn(async (input: { sha256: string; bytes: number; mediaType: string; name: string; tenantId: string; createdBy: string }) => {
-    const existing = registered.get(input.sha256);
+    const key = `${input.tenantId}:${input.sha256}`;
+    const existing = registered.get(key);
     if (existing !== undefined) {
-      if (existing.tenant_id !== input.tenantId || existing.bytes !== input.bytes) {
+      if (existing.bytes !== input.bytes) {
         throw new StoreError('conflict', 'blob digest is unavailable');
       }
       existing.last_used_at = new Date();
@@ -43,12 +45,15 @@ async function gateway(options: { readonly permissions?: readonly ('read' | 'rou
       sha256: input.sha256, bytes: input.bytes, media_type: input.mediaType, name: input.name,
       tenant_id: input.tenantId, created_by: input.createdBy, created_at: now, last_used_at: now,
     };
-    registered.set(input.sha256, entry);
+    registered.set(key, entry);
     return entry;
   });
-  const findBlob = vi.fn(async (digest: string, tenantId: string) => {
-    const entry = registered.get(digest);
-    if (entry?.tenant_id !== tenantId) return undefined;
+  const findBlob = vi.fn(async (digest: string, tenantId: string, alias: string) => {
+    const entry = registered.get(`${tenantId}:${digest}`)
+      ?? (granted.has(`${tenantId}:${alias}:${digest}`)
+        ? [...registered.values()].find((candidate) => candidate.sha256 === digest)
+        : undefined);
+    if (entry === undefined) return undefined;
     entry.last_used_at = new Date();
     return entry;
   });
@@ -74,7 +79,12 @@ async function gateway(options: { readonly permissions?: readonly ('read' | 'rou
   });
   await app.ready();
   apps.push(app);
-  return { app, directory, registerBlob, findBlob, assertPermission };
+  return {
+    app, directory, registerBlob, findBlob, assertPermission,
+    grantRead: (tenant: string, alias: string, digest: string) => {
+      granted.add(`${tenant}:${alias}:${digest}`);
+    },
+  };
 }
 
 afterEach(async () => {
@@ -145,7 +155,7 @@ describe('PUT /v3/blobs', () => {
     expect(registerBlob).not.toHaveBeenCalled();
   });
 
-  it('keeps repeated uploads idempotent within a tenant and rejects another tenant without metadata', async () => {
+  it('keeps repeated uploads idempotent within a tenant and isolates another tenant metadata', async () => {
     const { app, directory } = await gateway();
     const bytes = Buffer.from('shared digest');
     const first = await app.inject({ method: 'PUT', url: '/v3/blobs', payload: bytes, headers: OCTET });
@@ -162,9 +172,20 @@ describe('PUT /v3/blobs', () => {
       method: 'PUT', url: '/v3/blobs', payload: bytes,
       headers: { ...OCTET, ...OTHER_TENANT, 'x-cauce-blob-name': 'foreign.bin' },
     });
-    expect(foreign.statusCode).toBe(409);
-    expect(foreign.json()).toEqual({ error: 'conflict', message: 'blob digest is unavailable' });
+    expect(foreign.statusCode).toBe(201);
+    expect(foreign.json()).toMatchObject({ name: 'foreign.bin', sha256: sha(bytes) });
     expect(await readFile(join(directory, sha(bytes)))).toEqual(bytes);
+  });
+
+  it('does not replace an existing digest file with different size', async () => {
+    const { app, directory, registerBlob } = await gateway();
+    const bytes = Buffer.from('shared digest');
+    const incompatible = Buffer.from('short');
+    await writeFile(join(directory, sha(bytes)), incompatible);
+    const response = await app.inject({ method: 'PUT', url: '/v3/blobs', payload: bytes, headers: OCTET });
+    expect(response.statusCode).toBe(409);
+    expect(await readFile(join(directory, sha(bytes)))).toEqual(incompatible);
+    expect(registerBlob).not.toHaveBeenCalled();
   });
 
   it('demands authentication and the route permission', async () => {
@@ -199,7 +220,7 @@ describe('GET /v3/blobs/:sha256', () => {
     expect(response.headers['content-length']).toBe('10');
     expect(response.headers['accept-ranges']).toBe('bytes');
     expect(response.headers['content-disposition']).toContain('demo.bin');
-    expect(findBlob).toHaveBeenCalledWith(digest, 'Steven');
+    expect(findBlob).toHaveBeenCalledWith(digest, 'Steven', 'zeus');
   });
 
   it('returns 404 without bytes or owner metadata for another tenant', async () => {
@@ -213,7 +234,39 @@ describe('GET /v3/blobs/:sha256', () => {
     expect(response.json()).toEqual({ error: 'not_found', message: 'unknown blob' });
     expect(response.headers['content-disposition']).toBeUndefined();
     expect(response.rawPayload).not.toEqual(bytes);
-    expect(findBlob).toHaveBeenCalledWith(digest, 'Miguel');
+    expect(findBlob).toHaveBeenCalledWith(digest, 'Miguel', 'atlas');
+  });
+
+  it('serves a granted blob only to the receiving alias', async () => {
+    const { app, grantRead } = await gateway();
+    const bytes = Buffer.from('delegated blob');
+    const privateName = 'private-board-notes.pdf';
+    const put = await app.inject({
+      method: 'PUT', url: '/v3/blobs', payload: bytes,
+      headers: {
+        ...OCTET, 'x-cauce-blob-name': privateName,
+        'x-cauce-blob-media-type': 'application/pdf',
+      },
+    });
+    expect(put.statusCode).toBe(201);
+    const digest = sha(bytes);
+    grantRead('Miguel', 'atlas', digest);
+    const recipient = await app.inject({
+      method: 'GET', url: `/v3/blobs/${digest}`, headers: OTHER_TENANT,
+    });
+    expect(recipient.statusCode).toBe(200);
+    expect(recipient.rawPayload).toEqual(bytes);
+    expect(recipient.headers['content-type']).toBe('application/octet-stream');
+    expect(recipient.headers['content-disposition']).toContain(`blob-${digest.slice(0, 12)}.bin`);
+    expect(recipient.headers['content-disposition']).not.toContain(privateName);
+    const owner = await app.inject({ method: 'GET', url: `/v3/blobs/${digest}`, headers: DEV });
+    expect(owner.headers['content-type']).toBe('application/pdf');
+    expect(owner.headers['content-disposition']).toContain(privateName);
+    const sibling = await app.inject({
+      method: 'GET', url: `/v3/blobs/${digest}`,
+      headers: { 'x-cauce-tenant': 'Miguel', 'x-cauce-alias': 'janus' },
+    });
+    expect(sibling.statusCode).toBe(404);
   });
 
   it('serves a byte range as 206 with Content-Range', async () => {

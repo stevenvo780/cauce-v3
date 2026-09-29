@@ -1,5 +1,6 @@
 import { clampAgentPriority, type Ack, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../../../db.js';
+import { grantCarriedBlobs } from '../../../blob-carry.js';
 import {
   attachmentsFromArtifacts, carriedBodyHash, delegatedMessageBody
 } from '../../delegated-attachments.js';
@@ -32,18 +33,19 @@ export async function persistAgentOutput(
   }
 ): Promise<PersistedAgentOutput> {
   const carried = attachmentsFromArtifacts(input.output.artifacts, input.output.artifactsWithheld);
+  const body = delegatedMessageBody({
+    type: 'agent.message',
+    text: input.body,
+    from_alias: input.row.recipient_alias,
+    correlation: input.correlation
+  }, carried);
   const message = await insertMessage(client, {
     requestId: input.requestId,
     traceId: input.row.trace_id,
     tenantId: input.row.recipient_tenant,
     roomId: input.sourceRoomId,
     actorAlias: input.row.recipient_alias,
-    body: delegatedMessageBody({
-      type: 'agent.message',
-      text: input.body,
-      from_alias: input.row.recipient_alias,
-      correlation: input.correlation
-    }, carried),
+    body,
     origin: input.row.origin ?? null,
     lane: 'batch',
     priority: clampAgentPriority(input.row.priority),
@@ -60,6 +62,14 @@ export async function persistAgentOutput(
   });
   const producedDeliveryId = delivery.rows[0]?.id;
   if (!producedDeliveryId) throw new Error('agent output delivery insert returned no id');
+  await grantCarriedBlobs(client, {
+    body,
+    sourceTenant: input.row.recipient_tenant,
+    sourceAlias: input.row.recipient_alias,
+    targetTenant: input.targetTenant,
+    targetAlias: input.targetAlias,
+    deliveryId: producedDeliveryId,
+  });
   await client.query(
     `INSERT INTO adapter_outbox(
        tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload

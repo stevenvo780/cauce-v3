@@ -25,6 +25,7 @@ const laterVersions = [
   '040_terminal_control_holds.sql',
   '041_agent_context_revisions.sql',
   '042_blobs.sql',
+  '043_blob_tenant_entitlements.sql',
 ] as const;
 
 let database: TestDatabase;

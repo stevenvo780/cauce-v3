@@ -22,16 +22,20 @@ gateway, direccionados por su sha256, y el mensaje sólo lleva el digest.
   rechaza antes de leer (413); un cuerpo chunked se corta en el tope sin dejar fichero parcial.
   Permiso `route` vigente en la base de datos. Responde 201 `{ sha256, bytes, media_type, name,
   blob, uri }`. Una repetición idéntica dentro del mismo tenant conserva los metadatos del primer
-  upload; si otro tenant intenta subir el mismo digest, recibe 409 sin metadatos del propietario.
+  upload; otro tenant puede subir esos mismos bytes y obtiene su propia fila y metadatos con 201.
+  Un fichero físico existente con tamaño incompatible nunca se reemplaza.
 - `GET /v3/blobs/<sha256>` — streaming del blob entero o de un rango (`Range: bytes=a-b` → 206 con
   `Content-Range`), con `Content-Type`, `Content-Length`, `Content-Disposition` y `Accept-Ranges`.
-  Permiso `read` vigente en la base de datos y coincidencia entre el `tenant_id` autenticado y el
-  del blob. Los demás tenants reciben 404, sin bytes ni metadatos. Solo una lectura autorizada toca
-  `blobs.last_used_at`. El digest identifica bytes; no concede acceso por sí mismo. Las referencias
-  que crucen tenants no son descargables hasta que exista un mecanismo explícito de concesiones.
-- Tabla `blobs` (migración 042): `sha256, bytes, media_type, name, tenant_id, created_by,
-  created_at, last_used_at`. Idempotente por digest dentro del tenant; otro tamaño o un tenant
-  distinto bajo el mismo digest produce `conflict`.
+  Permiso `read` vigente en la base de datos y fila propia del tenant o concesión vinculada a la
+  entrega y al alias autenticado. Los demás reciben 404, sin bytes ni metadatos. Solo una lectura
+  autorizada toca `blobs.last_used_at`. Conocer el digest no concede acceso. Una descarga concedida
+  usa nombre y MIME neutros en HTTP para no revelar los metadatos privados del primer uploader;
+  el adaptador conserva el nombre visible que viajó en la referencia.
+- `blobs` se creó en 042; la migración 043 cambia su clave a `(tenant_id, sha256)` y añade
+  `blob_delivery_grants`. La concesión se escribe en la misma transacción que una entrega ya
+  autorizada, solo si el emisor posee la fila o una concesión previa. Un digest inventado aborta
+  ese envío sin crear entrega ni grant. La descarga concedida corresponde al alias receptor,
+  no a todos los agentes de su tenant; el archivo físico sigue deduplicado por sha256.
 - Volumen `blobs_data` montado en `/var/lib/cauce-v3/blobs` (la imagen crea la ruta como uid 1000
   porque el runtime es `read_only`).
 
@@ -47,7 +51,8 @@ gateway, direccionados por su sha256, y el mensaje sólo lleva el digest.
 - `BlobClient.fromRelayUrl(CAUCE_RELAY_URL, { mutualTls, bearerTokenFile })` deriva `https://host:puerto`
   del `wss://` del relay y usa las mismas credenciales que el WebSocket. Lo configura `bin/shared.ts`.
 - En el salto entre agentes (`delegated-attachments.ts`) una ref `cauce-blob:` conserva su tamaño
-  (hasta el techo de blob) y su digest.
+  (hasta el techo de blob) y su digest. Al delegar o devolver un resultado entre tenants, el bus
+  concede la lectura al destinatario exacto después de validar la ruta; no publica una ref ajena.
 
 ## Retención
 
@@ -55,7 +60,8 @@ gateway, direccionados por su sha256, y el mensaje sólo lleva el digest.
 sirve para auditoría de solo lectura. La purga con `--aplicar` queda deshabilitada hasta coordinar
 de forma segura las lecturas, escrituras y eliminaciones concurrentes; no hay borrado automático
 ni cron de purga. El volumen se alcanza desde el contenedor del gateway o con un montaje de solo
-lectura.
+lectura. La auditoría agrega `MAX(last_used_at)` por digest físico cuando varios tenants lo usan;
+una fila con grants no se borra mediante `forgetBlob`.
 
 ## Paso 5, pendiente: Telegram por encima de 20 MB
 
@@ -77,7 +83,10 @@ API Server** (`telegram-bot-api`, imagen `aiogram/telegram-bot-api`) en modo `--
 
 ## Despliegue
 
-Pila (`deploy/deploy.sh`): migración 042, volumen nuevo, env nuevo del gateway. Bundle nuevo del
+Pila (`deploy/deploy.sh`): migración 042 y luego 043, volumen y env del gateway. Con la API activa,
+el respaldo de la instancia debe acreditar tabla, volumen y restauración aislada antes del deploy.
+Bundle nuevo del
 adaptador para toda la flota (`bus-v3-<fecha>-blobs`) rodado alias por alias: un adaptador viejo
 que reciba una entrada `blob:` la rechaza como adjunto malformado. Reversión: los mensajes inline
-siguen válidos; `down/042_blobs.sql` retira la tabla.
+siguen válidos; conservar tabla y volumen para los blobs ya publicados. `down/043` se niega si hay
+grants o un digest usado por varios tenants; restaurar desde respaldo para una reversa de esquema.

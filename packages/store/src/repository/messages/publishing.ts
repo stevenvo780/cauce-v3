@@ -22,6 +22,7 @@ import {
   validConsoleOperatorScope,
 } from '../config.js';
 import { StoreError } from '../errors.js';
+import { grantCarriedBlobs } from '../blob-carry.js';
 import { insertDelivery, insertMessage } from './_insert.js';
 import {
   PublishIntentExpiredError,
@@ -242,6 +243,14 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
         });
         const deliveryId = delivery.rows[0]?.id;
         if (!deliveryId) throw new Error('delivery insert returned no id');
+        await grantCarriedBlobs(client, {
+          body: input.body,
+          sourceTenant: input.tenant_id,
+          sourceAlias: input.actor_alias,
+          targetTenant: recipient.tenant_id,
+          targetAlias: recipient.alias,
+          deliveryId,
+        });
         deliveryIds.push(deliveryId);
         await client.query(
           `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload)

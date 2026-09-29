@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, rename, stat, unlink } from 'node:fs/promises';
+import { link, lstat, mkdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { finished } from 'node:stream/promises';
@@ -153,9 +153,16 @@ export function registerBlobRoutes(
         return;
       }
       const final = join(store.directory, digest);
-      const existing = await stat(final).catch(() => undefined);
-      if (existing?.isFile() === true && existing.size === bytes) await unlink(temporary);
-      else await rename(temporary, final);
+      try {
+        await link(temporary, final);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        const existing = await lstat(final).catch(() => undefined);
+        if (existing?.isFile() !== true || existing.size !== bytes) {
+          throw new StoreError('conflict', 'blob bytes on disk conflict with digest');
+        }
+      }
+      await unlink(temporary);
       const record = await repository.registerBlob({
         sha256: digest, bytes, mediaType, name, tenantId: actor.tenant_id, createdBy: actor.alias,
       });
@@ -177,12 +184,19 @@ export function registerBlobRoutes(
       await repository.assertPermission(actor.tenant_id, actor.alias, 'read');
       const digest = request.params.sha256;
       if (!HEX_SHA256.test(digest)) throw new StoreError('not_found', 'unknown blob');
-      const record = await repository.findBlob(digest, actor.tenant_id);
-      if (record?.tenant_id !== actor.tenant_id) throw new StoreError('not_found', 'unknown blob');
+      const record = await repository.findBlob(digest, actor.tenant_id, actor.alias);
+      if (record === undefined) throw new StoreError('not_found', 'unknown blob');
       const path = join(store.directory, digest);
       const file = await stat(path).catch(() => undefined);
-      if (file?.isFile() !== true) throw new StoreError('not_found', 'blob bytes are not on disk');
-      await sendBlob(reply, request, path, file.size, record.media_type, record.name);
+      if (file?.isFile() !== true || file.size !== record.bytes) {
+        throw new StoreError('not_found', 'blob bytes are not on disk');
+      }
+      const foreignGrant = record.tenant_id !== actor.tenant_id;
+      await sendBlob(
+        reply, request, path, file.size,
+        foreignGrant ? OCTET_STREAM : record.media_type,
+        foreignGrant ? `blob-${digest.slice(0, 12)}.bin` : record.name,
+      );
     } catch (error) { replyError(reply, error); }
   });
 }
