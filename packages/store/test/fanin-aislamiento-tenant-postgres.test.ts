@@ -162,6 +162,40 @@ describe('T9: el fan-in no cruza texto entre tenants cliente', () => {
     expect(rendered).not.toContain('seneca-privado.pdf');
   });
 
+  it('una continuación denegada del hijo directo no arrastra los adjuntos del nieto de otro cliente', async () => {
+    const salva = await consumer('Isa', 'salva');
+    const jarvis = await consumer('Steven', 'jarvis');
+    const kratos = await consumer('Miguel', 'kratos');
+    await repository.publish(command({
+      tenant_id: 'Isa', room_id: 'grp.isa', actor_alias: 'salva',
+      recipients: [{ tenant_id: 'Isa', alias: 'salva' }],
+      body: { text: 'pedido de Isa' }
+    }));
+    const root = await nextDelivery(repository, salva);
+    await ackWith(repository, salva, root, { messages: [{ to: 'jarvis', body: 'ayudame' }], reply: null });
+    await ackWith(repository, jarvis, await nextDelivery(repository, jarvis), {
+      messages: [{ to: 'kratos', body: 'rama kratos' }], reply: 'jarvis delegó en kratos'
+    });
+    await ackWithSecret(kratos, await nextDelivery(repository, kratos));
+    const continuation = await nextDelivery(
+      repository, jarvis, (delivery) => delivery.body.type === 'agent.response'
+    );
+    // La auditoría 'deny' de esta continuación apunta al mensaje de kratos, que trae sus adjuntos.
+    await pool.query(
+      `UPDATE acl_edges SET allow_route=false WHERE from_tenant='Steven' AND to_tenant='Isa'`
+    );
+    await ackWith(repository, jarvis, continuation, { reply: 'jarvis revisó lo de kratos' });
+
+    const fanin = await drainUntilFanin(salva, [jarvis]);
+    const [branch] = responsesOf(fanin);
+    expect(responsesOf(fanin)).toHaveLength(1);
+    expect(branch?.untrusted_text).toContain('Agent response denied: reverse_acl_unavailable');
+    expect(branch).not.toHaveProperty('artifacts');
+    const rendered = JSON.stringify(fanin.body);
+    expect(rendered).not.toContain(secreto);
+    expect(rendered).not.toContain('kratos-privado.pdf');
+  });
+
   it('un hijo directo del mismo tenant conserva su texto y sus adjuntos', async () => {
     const argos = await consumer('Steven', 'argos');
     const socrates = await consumer('Steven', 'socrates');
