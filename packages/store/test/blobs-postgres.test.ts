@@ -175,6 +175,22 @@ describe('blobs repository', () => {
     expect(audits.rows[0]?.count).toBe('2');
   });
 
+  it('does not let a hub alias forward one client blob to another client', async () => {
+    await repository.registerBlob(blob({ tenantId: 'Isa', createdBy: 'salva', name: 'isa.pdf' }));
+    const toKant = await delivery('Steven', 'kant');
+    expect(await grant({
+      sha256: SHA, sourceTenant: 'Isa', sourceAlias: 'salva',
+      targetTenant: 'Steven', targetAlias: 'kant', deliveryId: toKant,
+    })).toBe(true);
+    const toKratos = await delivery('Miguel', 'kratos');
+    expect(await grant({
+      sha256: SHA, sourceTenant: 'Steven', sourceAlias: 'kant',
+      targetTenant: 'Miguel', targetAlias: 'kratos', deliveryId: toKratos,
+    })).toBe(false);
+    expect(await repository.findBlob(SHA, 'Miguel', 'kratos')).toBeUndefined();
+    expect(await repository.findBlob(SHA, 'Steven', 'kant')).toMatchObject({ sha256: SHA });
+  });
+
   it('rolls back grant and audit with the publishing transaction', async () => {
     await repository.registerBlob(blob());
     const deliveryId = await delivery('Miguel', 'kratos');

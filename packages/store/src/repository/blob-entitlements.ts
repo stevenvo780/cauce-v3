@@ -1,4 +1,5 @@
 import type { DatabaseClient } from '../db.js';
+import { tenantReadableSql } from './acl-edges.js';
 
 const HEX_SHA256 = /^[a-f0-9]{64}$/u;
 
@@ -64,6 +65,7 @@ export async function grantBlobForDelivery(
        FROM owner
        JOIN deliveries delivery ON delivery.id=$6::uuid
          AND delivery.recipient_tenant=$4 AND delivery.recipient_alias=$5
+       WHERE ${tenantReadableSql('$4::text', 'owner.owner_tenant_id')}
        ON CONFLICT (delivery_id,sha256) DO NOTHING
        RETURNING owner_tenant_id
      )
