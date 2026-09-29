@@ -9,7 +9,7 @@ import { objectRecord, visibleText } from '../../outbox.js';
 import { artifactRefs } from '../delegated-attachments.js';
 import {
   agentFaninInstruction, agentFaninMaxAggregateBytes, agentFaninMaxResponseBytes,
-  agentFaninRequestId, agentResponseText
+  agentFaninRequestId, agentFaninWithheldText, agentResponseText
 } from './helpers.js';
 import { AgentResponseRepository } from './response.js';
 
@@ -124,12 +124,29 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
       last_error: string | null;
       response_text: string | null;
       response_artifacts: unknown;
+      tenant_visible: boolean;
     }>(
       `SELECT materialization.output_index,materialization.target_tenant,
               materialization.target_alias AS alias,
               child.id AS child_delivery_id,child.status AS outcome,
               child.result,child.last_error,returned.response_text,
-              returned.response_artifacts
+              returned.response_artifacts,
+              (materialization.target_tenant=$3 OR (
+                EXISTS (
+                  SELECT 1 FROM acl_edges read_edge
+                  JOIN tenants reader ON reader.id=read_edge.from_tenant
+                  JOIN tenants owner ON owner.id=read_edge.to_tenant
+                  WHERE read_edge.from_tenant=$3 AND read_edge.to_tenant=materialization.target_tenant
+                    AND read_edge.enabled AND read_edge.allow_read AND (reader.is_hub OR owner.is_hub)
+                )
+                AND EXISTS (
+                  SELECT 1 FROM acl_edges route_edge
+                  JOIN tenants sender ON sender.id=route_edge.from_tenant
+                  JOIN tenants receiver ON receiver.id=route_edge.to_tenant
+                  WHERE route_edge.from_tenant=materialization.target_tenant AND route_edge.to_tenant=$3
+                    AND route_edge.enabled AND route_edge.allow_route AND (sender.is_hub OR receiver.is_hub)
+                )
+              )) AS tenant_visible
        FROM agent_output_materializations materialization
        JOIN deliveries child ON child.id=materialization.produced_delivery_id
        LEFT JOIN LATERAL (
@@ -160,12 +177,30 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
        ) returned ON true
        WHERE materialization.status='materialized'
          AND materialization.correlation->>'root_message_id'=$1
+         -- Sólo los hijos directos del root. Las ramas de saltos más hondos ya le respondieron a
+         -- su propio coordinador, que decidió qué contar hacia arriba; volcarlas aquí saltaba la
+         -- frontera de tenant: el root de un cliente leía texto de otro cliente, dos saltos abajo.
+         AND materialization.source_message_id=$1::uuid
+         AND materialization.source_delivery_id=$2::uuid
        ORDER BY materialization.hop_count,materialization.source_message_id,
                 materialization.output_index,materialization.target_tenant,
                 materialization.target_alias,child.id`,
-      [rootMessageId]
+      [rootMessageId, rootRow.id, rootRow.recipient_tenant]
     );
     const boundedResponses = branchRows.rows.map((branch) => {
+      // Defensa en profundidad: aunque sea hijo directo, una rama de un tenant sin arista de
+      // lectura y de ruta con el del root no aporta ni texto ni adjuntos, sólo que existió.
+      if (!branch.tenant_visible) {
+        return {
+          output_index: branch.output_index,
+          tenant_id: branch.target_tenant,
+          alias: branch.alias,
+          delivery_id: branch.child_delivery_id,
+          outcome: branch.outcome,
+          untrusted_text: agentFaninWithheldText,
+          truncated: false
+        };
+      }
       const sourceText = visibleText(branch.response_text)
         || agentResponseText(
           branch.alias,
