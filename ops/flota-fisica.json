@@ -1,15 +1,4 @@
 {
-  "placement": {
-    "astra": {
-      "systemdUser": "ubuntu"
-    },
-    "kant": {
-      "systemdUser": "server"
-    },
-    "salva": {
-      "dockerHost": "server2",
-      "systemdUser": "server"
-    }
-  },
+  "placement": {},
   "schemaVersion": 1
 }
