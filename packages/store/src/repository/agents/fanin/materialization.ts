@@ -10,7 +10,7 @@ import { objectRecord, visibleText } from '../../outbox.js';
 import { artifactRefs } from '../delegated-attachments.js';
 import {
   agentFaninInstruction, agentFaninMaxAggregateBytes, agentFaninMaxResponseBytes,
-  agentFaninRequestId, agentResponseText
+  agentFaninRequestId, agentFaninWithheldText, agentResponseText
 } from './helpers.js';
 import { AgentResponseRepository } from './response.js';
 
@@ -158,13 +158,33 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
       last_error: string | null;
       response_text: string | null;
       response_artifacts: unknown;
+      response_denied: boolean;
+      tenant_visible: boolean;
     }>(
       `SELECT materialization.output_index,materialization.target_tenant,
               materialization.target_alias AS alias,
               child.id AS child_delivery_id,child.status AS outcome,
               child.result,child.last_error,returned.response_text,
-              returned.response_artifacts
+              returned.response_artifacts,COALESCE(returned.response_denied,false) AS response_denied,
+              (materialization.target_tenant=$2 OR (
+                EXISTS (
+                  SELECT 1 FROM acl_edges read_edge
+                  JOIN tenants reader ON reader.id=read_edge.from_tenant
+                  JOIN tenants owner ON owner.id=read_edge.to_tenant
+                  WHERE read_edge.from_tenant=$2 AND read_edge.to_tenant=materialization.target_tenant
+                    AND read_edge.enabled AND read_edge.allow_read AND (reader.is_hub OR owner.is_hub)
+                )
+                AND EXISTS (
+                  SELECT 1 FROM acl_edges route_edge
+                  JOIN tenants sender ON sender.id=route_edge.from_tenant
+                  JOIN tenants receiver ON receiver.id=route_edge.to_tenant
+                  WHERE route_edge.from_tenant=materialization.target_tenant AND route_edge.to_tenant=$2
+                    AND route_edge.enabled AND route_edge.allow_route AND (sender.is_hub OR receiver.is_hub)
+                )
+              )) AS tenant_visible
        FROM agent_output_materializations materialization
+       JOIN deliveries source ON source.id=materialization.source_delivery_id
+         AND source.recipient_tenant=$2 AND source.recipient_alias=$3
        JOIN deliveries child ON child.id=materialization.produced_delivery_id
        LEFT JOIN LATERAL (
          SELECT CASE
@@ -173,6 +193,7 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
                       || COALESCE(response_audit.metadata->>'reason','authorization_unavailable')
                   ELSE response.body->>'text'
                 END AS response_text,
+                response_audit.decision='deny' AS response_denied,
                 CASE WHEN response_audit.decision='allow'
                        AND response_audit.tenant_id=materialization.target_tenant
                        AND response_audit.actor_alias=materialization.target_alias
@@ -211,7 +232,7 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
              response_audit.decision='deny'
              OR response.body->>'type'='agent.response'
            )
-         ORDER BY response_audit.id
+         ORDER BY response_audit.id DESC
          LIMIT 1
        ) returned ON true
        WHERE materialization.status='materialized'
@@ -219,9 +240,24 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
        ORDER BY materialization.hop_count,materialization.source_message_id,
                 materialization.output_index,materialization.target_tenant,
                 materialization.target_alias,child.id`,
-      [rootMessageId]
+      [rootMessageId, rootRow.recipient_tenant, rootRow.recipient_alias]
     );
+    const branchExpected = branchRows.rows.length;
+    const branchCompleted = branchRows.rows.filter(
+      (branch) => ['done', 'failed', 'dead'].includes(branch.outcome)
+    ).length;
     const boundedResponses = branchRows.rows.map((branch) => {
+      if (!branch.tenant_visible && !branch.response_denied) {
+        return {
+          output_index: branch.output_index,
+          tenant_id: branch.target_tenant,
+          alias: branch.alias,
+          delivery_id: branch.child_delivery_id,
+          outcome: branch.outcome,
+          untrusted_text: agentFaninWithheldText,
+          truncated: false
+        };
+      }
       const sourceText = visibleText(branch.response_text)
         || agentResponseText(
           branch.alias,
@@ -250,8 +286,8 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
       root_request_id: rootRow.request_id,
       root_message_id: rootMessageId,
       root_delivery_id: rootRow.id,
-      expected,
-      completed,
+      expected: branchExpected,
+      completed: branchCompleted,
       included_responses: includedResponses.length,
       responses: includedResponses,
       truncation: {
@@ -264,8 +300,8 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
     const faninBody = (): Record<string, unknown> => ({
       type: 'agent.fanin',
       text: agentFaninInstruction,
-      expected,
-      completed,
+      expected: branchExpected,
+      completed: branchCompleted,
       correlation: {
         root_request_id: rootRow.request_id,
         root_message_id: rootMessageId,
@@ -400,8 +436,8 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
           root_request_id: rootRow.request_id,
           root_message_id: rootMessageId,
           root_delivery_id: rootRow.id,
-          expected,
-          completed,
+          expected: branchExpected,
+          completed: branchCompleted,
           included_responses: includedResponses.length,
           truncated_responses: boundedResponses.filter((response) => response.truncated).length,
           omitted_responses: boundedResponses.length - includedResponses.length,

@@ -145,11 +145,20 @@ describe('transactional StructuredOutput.messages materialization', () => {
       terminalAck(rootResponse, 'nested-argos', root.epoch, [])
     );
     const fanin = await claimFanin('Steven', 'argos', 'nested-argos', root.epoch);
+    // Only the direct child enters the fan-in, carrying its LAST word: the nested result arrives
+    // through kant's continuation, never as a raw grandchild branch.
     expect(fanin.body).toMatchObject({
       type: 'agent.fanin',
-      expected: 2,
-      completed: 2,
-      correlation: { root_message_id: root.delivery.message_id }
+      expected: 1,
+      completed: 1,
+      correlation: { root_message_id: root.delivery.message_id },
+      fanin_data_v1: {
+        responses: [{
+          alias: 'kant',
+          delivery_id: kantRequest.delivery_id,
+          untrusted_text: 'Kant reviewed the Socrates result'
+        }]
+      }
     });
     await repository.ackDelivery(
       fanin.delivery_id,
@@ -310,29 +319,23 @@ describe('transactional StructuredOutput.messages materialization', () => {
     const faninData = fanin.body.fanin_data_v1 as {
       responses: { alias: string; delivery_id: string; untrusted_text: string }[];
     };
+    // The fan-in carries only argos's direct children: the nested socrates branch answered its
+    // own coordinator, and kant's last word is the server's denial diagnostic.
     expect(fanin.body).toMatchObject({
       type: 'agent.fanin',
-      expected: 2,
-      completed: 2,
+      expected: 1,
+      completed: 1,
       correlation: { root_message_id: root.delivery.message_id }
     });
-    const kantFaninResponse = faninData.responses.find(
-      (response) => response.alias === 'kant'
-    );
-    const socratesFaninResponse = faninData.responses.find(
-      (response) => response.alias === 'socrates'
-    );
-    expect(kantFaninResponse).toMatchObject({
+    expect(faninData.responses).toHaveLength(1);
+    expect(faninData.responses[0]).toMatchObject({
       alias: 'kant',
       delivery_id: kantRequest.delivery_id
     });
-    expect(kantFaninResponse?.untrusted_text)
+    expect(faninData.responses[0]?.untrusted_text)
       .toContain('Agent response denied: reverse_acl_unavailable');
-    expect(socratesFaninResponse).toMatchObject({
-      alias: 'socrates',
-      delivery_id: leaf.delivery_id,
-      untrusted_text: 'Socrates completed the nested work'
-    });
+    expect(JSON.stringify(fanin.body)).not.toContain('Socrates completed the nested work');
+    expect(faninData.responses.map((response) => response.delivery_id)).not.toContain(leaf.delivery_id);
     expect((await pool.query<{ idempotency_key: string }>(
       `SELECT idempotency_key FROM adapter_outbox
        WHERE kind='origin_relay' AND trace_id=$1`,
