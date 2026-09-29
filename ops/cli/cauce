@@ -463,7 +463,9 @@ systemctl_user_o_avisa() {  # $1=verbo(start|stop) $2=unit
 }
 
 # shellcheck disable=SC2016  # corre en otro shell (eval / docker exec): sus $ se expanden alla
-BARRIDO='for p in /proc/[0-9]*; do c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null); set -- $c; case "${1:-}" in *node*|*python*) ;; *) continue;; esac; h=""; e=$(tr "\0" "\n" < "$p/environ" 2>/dev/null | sed -n "s/^CAUCE_ALIAS=//p" | head -1); [ "$e" = "@@A@@" ] && h=1; case "$c" in *cauce-v3-adapter/@@A@@/*/cauce-mcp.js*) ;; *cauce-v3-adapter/@@A@@/*) h=1;; esac; [ -n "$h" ] && echo "${p#/proc/}"; done'  # The shared TUI's MCP bridge (cauce-mcp.js, no CAUCE_ALIAS) is the panel's, not the adapter's.
+BARRIDO='for p in /proc/[0-9]*; do case "$(sed -n "s/^.*) \(.\).*/\1/p" "$p/stat" 2>/dev/null)" in Z|X) continue;; esac; c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null); set -- $c; case "${1:-}" in *node*|*python*) ;; *) continue;; esac; h=""; e=$(tr "\0" "\n" < "$p/environ" 2>/dev/null | sed -n "s/^CAUCE_ALIAS=//p" | head -1); [ "$e" = "@@A@@" ] && h=1; case "$c" in *cauce-v3-adapter/@@A@@/*-mcp.js*) ;; *cauce-v3-adapter/@@A@@/*) h=1;; esac; [ -n "$h" ] && echo "${p#/proc/}"; done'  # MCP bridges without CAUCE_ALIAS (cauce-mcp.js, cauce-decisiones-mcp.js, …) belong to the panel/OpenClaw gateway, not the adapter.
+# 2026-09-29: only cauce-mcp.js was excluded; the decisiones bundle added cauce-decisiones-mcp.js, children of argos's
+# OpenClaw gateway, so `off` counted them as adapter, could not kill them and `login` aborted with «SIGUE VIVO».
 
 pids_del_alias() {  # $1=alias -> un PID por linea (vacio = de verdad no hay nada)
   local a=$1 line ctr cuser
@@ -531,32 +533,62 @@ cmd_on() {
   printf "  %sentrar: cauce %s%s\n" "$c_dim" "$a" "$c_reset"
 }
 
+# Senala lo que el barrido reconoce AHORA como del alias. Se re-barre justo antes de senalar (los
+# PIDs se reciclan) y con el MISMO criterio que pids_del_alias: antes se reconfirmaba solo por
+# CAUCE_ALIAS en environ, asi que un hijo reconocido por su cmdline (.../cauce-v3-adapter/<alias>/)
+# sin esa variable nunca recibia la senal y el `off` abortaba con «SIGUE VIVO».
+senalar_alias() {  # $1=alias $2=senal (TERM|KILL)
+  local a=$1 sig=$2 pids line ctr
+  pids=$(pids_del_alias "$a" | tr '\n' ' ')
+  [ -n "${pids// /}" ] || return 0
+  if es_host_native "$a"; then
+    # shellcheck disable=SC2086  # un PID por palabra, a proposito
+    kill "-$sig" $pids 2>/dev/null
+  else
+    line=$(alias_info "$a") && IFS=$'\t' read -r _ _ ctr _ _ _ _ <<<"$line"
+    # shellcheck disable=SC2086
+    [ -n "$ctr" ] && docker exec "$ctr" kill "-$sig" $pids 2>/dev/null
+  fi
+  return 0
+}
+
+esperar_sin_pids() {  # $1=alias $2=segundos -> 0 si ya no queda nada del alias
+  local a=$1 techo=$2 t=0
+  while [ -n "$(pids_del_alias "$a")" ]; do
+    (( t >= techo )) && return 1
+    sleep 1; t=$((t + 1))
+  done
+  return 0
+}
+
+# Lo que sobrevive a `systemctl stop`: SIGTERM, esperar la CONDICION con techo y, si no cede, SIGKILL.
+# Medido 2026-09-29 (argos, login desde la portatil): con SIGTERM + `sleep 2` fijo el adaptador
+# todavia estaba drenando, el login aborto con «SIGUE VIVO» y los PIDs murieron solos segundos
+# despues — dejando al alias APAGADO y sin login. "off" quiere decir off.
+apagar_restos() {  # $1=alias
+  local a=$1
+  senalar_alias "$a" TERM
+  esperar_sin_pids "$a" "${CAUCE_OFF_GRACIA:-15}" && return 0
+  printf "  %s%s no cedio a SIGTERM en %ss: SIGKILL%s\n" "$c_warn" "$a" "${CAUCE_OFF_GRACIA:-15}" "$c_reset"
+  senalar_alias "$a" KILL
+  esperar_sin_pids "$a" 5
+}
+
 cmd_off() {
   local a=$1 u; u=$(unit_del_alias "$a")
   systemctl_user_o_avisa stop "$u"
   sleep 3
   # No alcanza con parar la unit: hay un caso medido donde el alias siguio contestando el bus con
   # la unit en "inactive". Si sobrevivio algo, matarlo — "off" quiere decir off.
-  local pids p vivo
+  local pids
   pids=$(pids_del_alias "$a")
   if [ -n "$pids" ]; then
     printf "  %s%s sobrevivio a systemd%s (PID %s) — lo mato\n" "$c_warn" "$a" "$c_reset" "$(echo "$pids" | tr '\n' ' ')"
-    for p in $pids; do
-      # Reconfirmar la identidad JUSTO antes de senalar: los PIDs se reciclan.
-      if es_host_native "$a"; then
-        vivo=$(tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null | sed -n 's/^CAUCE_ALIAS=//p' | head -1)
-        [ "$vivo" = "$a" ] && kill "$p" 2>/dev/null
-      else
-        local line ctr; line=$(alias_info "$a") && IFS=$'\t' read -r _ _ ctr _ _ _ _ <<<"$line"
-        vivo=$(docker exec "$ctr" sh -c "tr '\0' '\n' < /proc/$p/environ 2>/dev/null | sed -n 's/^CAUCE_ALIAS=//p' | head -1" 2>/dev/null)
-        [ "$vivo" = "$a" ] && docker exec "$ctr" kill "$p" 2>/dev/null
-      fi
-    done
-    sleep 2
+    apagar_restos "$a"
     pids=$(pids_del_alias "$a")
   fi
   if [ -n "$pids" ]; then
-    printf "  %s%s SIGUE VIVO%s (PID %s). No se murio solo: mirar a mano.\n" "$c_err" "$a" "$c_reset" "$(echo "$pids" | tr '\n' ' ')"
+    printf "  %s%s SIGUE VIVO%s (PID %s) ni con SIGKILL. Mirar a mano: ps -o pid,stat,args -p <pid>.\n" "$c_err" "$a" "$c_reset" "$(echo "$pids" | tr '\n' ' ')"
     return 1
   fi
   # Su servidor tmux arrastra la generacion del adaptador: si queda en pie, el proximo arranque

@@ -246,8 +246,9 @@ cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orde
   chome=$(codex_home_de "$a" "$uhome")
   cchome=$(claude_home_de "$a" "$uhome" "$harness")
 
-  local solo_ver=0 forzar=0 opt o3 qv; shift
-  for opt in "$@"; do case "$opt" in --ver) solo_ver=1 ;; --forzar|-f) forzar=1 ;; claude|codex) arg=$opt ;; *) printf "  no entiendo '%s'. Usa: cauce %s login [claude|codex] [--ver] [--forzar]\n" "$opt" "$a"; return 2 ;; esac; done
+  local solo_ver=0 opt o3; shift
+  # --forzar se sigue aceptando por compatibilidad: desde 2026-09-29 el login ya no pregunta.
+  for opt in "$@"; do case "$opt" in --ver) solo_ver=1 ;; --forzar|-f) : ;; claude|codex) arg=$opt ;; *) printf "  no entiendo '%s'. Usa: cauce %s login [claude|codex] [--ver] [--forzar]\n" "$opt" "$a"; return 2 ;; esac; done
 
   printf "\n  %s%s%s  %s·  contenedor %s  ·  arnes %s%s\n" \
     "$c_b" "$a" "$c_reset" "$c_dim" "${ctr:-(host-native)}" "$harness" "$c_reset"
@@ -309,7 +310,9 @@ cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orde
   if turno_en_vuelo "$a"; then
     printf "\n  %s%s TIENE UN TURNO EN VUELO ahora mismo%s — si seguis, ese turno muere; la entrega vuelve a la cola o se repone por consola.\n" "$c_err" "$a" "$c_reset"
     for o3 in "${objetivos[@]}"; do [ "$o3" = claude ] && [[ $(huella_claude "$a" "$ctr" "$cuser" "$cchome") == VACIA* ]] && printf "  %scon la credencial de claude VACIA ese turno ya no puede autenticar: no hay nada que salvar.%s\n" "$c_warn" "$c_reset"; done
-    if [ "$forzar" != 1 ]; then read -r -p "  seguir igual? [s/N]: " qv; [[ $qv == [sS] ]] || { printf "  no toco nada. (o pasa --forzar)\n"; return 1; }; fi
+    # El login tiene PRIORIDAD sobre el turno (Steven, 2026-09-29): sin credencial ese turno no
+    # llega a buen puerto de todas formas, y preguntar aca dejaba el login bloqueado. Se avisa y se sigue.
+    printf "  %sel login tiene prioridad: sigo.%s\n" "$c_warn" "$c_reset"
   fi
 
   # El aviso va ANTES de la pregunta: quien confirma tiene que saber que desde ese "si" el alias
@@ -342,7 +345,9 @@ cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orde
   else antes=$(huella_codex "$a" "$ctr" "$cuser" "$chome"); fi
 
   printf "\n  %s-- apagando el adaptador de %s --%s\n" "$c_dim" "$a" "$c_reset"
-  cmd_off "$a" || { printf "  %sno lo pude apagar: no sigo%s\n" "$c_err" "$c_reset"; return 1; }
+  # Si algo del adaptador sobrevivio hasta a SIGKILL (proceso en D, casi imposible), el login igual
+  # sigue: tiene prioridad, y abortar aca dejaba al alias APAGADO y sin credencial nueva.
+  cmd_off "$a" || printf "  %sno quedo apagado del todo; el login tiene prioridad: sigo igual%s\n" "$c_warn" "$c_reset"
 
   if [ "$que" = claude ]; then login_claude "$a" "$ctr" "$cuser" "$cchome"
   else login_codex "$a" "$ctr" "$cuser" "$chome"; fi
