@@ -1,4 +1,4 @@
-import { isRfcUuid, type Ack, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
+import { isRfcUuid, isTenant, type Ack, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { DatabaseClient } from '../../../db.js';
 import { rejectionText, type RejectionNotice } from '../../../delegation-guard.js';
 import { tenantReadableSql } from '../../acl-edges.js';
@@ -93,10 +93,12 @@ export async function openHumanGate(
   input: { rootMessageId: string; question: string; correlation: Record<string, unknown> }
 ): Promise<OpenChainGate | undefined> {
   const question = truncateUtf8(input.question, maxChainGateQuestionBytes).value;
-  const relayTenant = row.origin ? originRelayTenant(row) : undefined;
-  const visible = relayTenant === undefined || (await client.query<{ visible: boolean }>(
-    `SELECT ${tenantReadableSql('$1::text', '$2::text')} AS visible`,
-    [relayTenant, row.recipient_tenant]
+  const bridgeTenant = row.origin?.metadata.bridge_tenant;
+  const visible = !row.origin || (await client.query<{ visible: boolean }>(
+    `SELECT ${tenantReadableSql(
+      'COALESCE($1::text,(SELECT tenant_id FROM messages WHERE id=$3::uuid))', '$2::text'
+    )} AS visible`,
+    [isTenant(bridgeTenant) ? bridgeTenant : null, row.recipient_tenant, input.rootMessageId]
   )).rows[0]?.visible === true;
   const inserted = await client.query<{ id: string }>(
     `INSERT INTO agent_chain_gates(
@@ -203,8 +205,8 @@ async function withholdHumanGate(
          ) VALUES($1,$2,'origin_relay',$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
          ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
       [
-        originRelayTenant(row), row.origin.adapter, `chain-gate:${gateId}`, row.request_id,
-        row.message_id, row.id, row.trace_id, JSON.stringify(row.origin),
+        originRelayTenant(row), row.origin.adapter, `chain-gate-withheld:${rootMessageId}`,
+        row.request_id, row.message_id, row.id, row.trace_id, JSON.stringify(row.origin),
         JSON.stringify({
           relay_kind: 'ack',
           terminal: false,

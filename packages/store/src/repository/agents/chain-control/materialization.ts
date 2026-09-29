@@ -124,7 +124,9 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
        */
       const reject = async (
         code: AgentOutputRejectionCode,
-        extra: { target?: string; cap?: number; question?: string; gateId?: string } = {}
+        extra: {
+          target?: string; cap?: number; question?: string; gateId?: string; humanGateWithheld?: boolean;
+        } = {}
       ): Promise<void> => {
         // Trimmed ONCE, and the same value goes both to the text and the field: `reason` embeds
         // the destination, so leaving the raw value in the text and trimming only the field would
@@ -161,7 +163,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
           rootMessageId, question: candidateBody, correlation
         });
         if (gate?.withheld === true) {
-          await reject('unroutable_alias');
+          await reject('unroutable_alias', { humanGateWithheld: true });
           continue;
         }
         if (gate !== undefined) {

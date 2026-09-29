@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isRfcUuid, type Origin, type Tenant } from '@cauce/protocol';
 import { type DatabaseClient, withTransaction } from '../../db.js';
-import { hubEdgeExistsSql } from '../acl-edges.js';
+import { hubEdgeExistsSql, tenantReadableSql } from '../acl-edges.js';
 import { postgresTextSafe } from '../deliveries.js';
 import { StoreError } from '../errors.js';
 import { insertDelivery, insertMessage } from '../messages/_insert.js';
@@ -12,7 +12,23 @@ import { maxChainGateQuestionBytes } from './chain-control/policy.js';
 
 export type { AgentOutputRejectionCode } from './chain-control/policy.js';
 
+const gateOriginTenantSql = `COALESCE(NULLIF(gate.origin->'metadata'->>'bridge_tenant',''),
+  (SELECT root_message.tenant_id FROM messages root_message WHERE root_message.id=gate.root_message_id))`;
+
 export abstract class AgentChainControlRepository extends AgentChainMaterializationRepository {
+  private async assertChainGateOriginReadable(
+    client: DatabaseClient,
+    actorTenant: Tenant,
+    gateId: string
+  ): Promise<void> {
+    const readable = await client.query<{ readable: boolean }>(
+      `SELECT ${tenantReadableSql('$2::text', gateOriginTenantSql)} AS readable
+       FROM agent_chain_gates gate WHERE gate.id=$1`,
+      [gateId, actorTenant]
+    );
+    if (readable.rows[0]?.readable !== true) throw new StoreError('not_found', 'chain gate not found');
+  }
+
   /**
    * A gate is addressed by id alone: the row's tenant decides scope, never the actor's, and
    * crossing needs a hub-anchored enabled edge with `allow_control`. Denial stays `not_found`
@@ -64,6 +80,7 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
            WHERE edge.from_tenant=$1 AND edge.to_tenant=gate.tenant_id
              AND edge.enabled AND edge.allow_read
          ))
+         AND ${tenantReadableSql('$1::text', gateOriginTenantSql)}
          AND EXISTS (
            SELECT 1 FROM memberships membership
            WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
@@ -117,6 +134,7 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
       const row = gate.rows[0];
       if (!row) throw new StoreError('not_found', 'chain gate not found');
       await this.assertChainGateScope(client, actorTenant, row.tenant_id);
+      await this.assertChainGateOriginReadable(client, actorTenant, row.id);
       if (row.status !== 'open') {
         throw new StoreError('conflict', `chain gate is already ${row.status}`);
       }
@@ -254,6 +272,7 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
       const row = gate.rows[0];
       if (!row) throw new StoreError('not_found', 'chain gate not found');
       await this.assertChainGateScope(client, actorTenant, row.tenant_id);
+      await this.assertChainGateOriginReadable(client, actorTenant, row.id);
       if (row.status !== 'open') {
         throw new StoreError('conflict', 'chain gate is not open');
       }

@@ -46,7 +46,7 @@ async function publishIsaRoot(salva: Consumer): Promise<DeliveryEnvelope> {
 async function gateRelays(traceId: string): Promise<{ tenant_id: string; reply: string }[]> {
   return (await pool.query<{ tenant_id: string; reply: string }>(
     `SELECT tenant_id,payload#>>'{result,output,reply}' AS reply FROM adapter_outbox
-     WHERE kind='origin_relay' AND idempotency_key LIKE 'chain-gate:%' AND trace_id=$1`,
+     WHERE kind='origin_relay' AND idempotency_key LIKE 'chain-gate%' AND trace_id=$1`,
     [traceId]
   )).rows;
 }
@@ -61,25 +61,34 @@ describe('el gate humano no cruza la pregunta entre tenants cliente', () => {
     const salva = await consumer('Isa', 'salva');
     const jarvis = await consumer('Steven', 'jarvis');
     const kratos = await consumer('Miguel', 'kratos');
+    const janus = await consumer('Miguel', 'janus');
     const root = await publishIsaRoot(salva);
     await ackWith(repository, salva, root, { messages: [{ to: 'jarvis', body: 'ayudame' }], reply: null });
     await ackWith(repository, jarvis, await nextDelivery(repository, jarvis), {
-      messages: [{ to: 'kratos', body: 'rama kratos' }], reply: null
+      messages: [{ to: 'kratos', body: 'rama kratos' }, { to: 'janus', body: 'rama janus' }], reply: null
     });
     const leaf = await nextDelivery(repository, kratos);
     const result = await ackWith(repository, kratos, leaf, {
       messages: [{ to: '@human', body: preguntaMiguel }], reply: null
     });
+    await ackWith(repository, janus, await nextDelivery(repository, janus), {
+      messages: [{ to: '@human', body: preguntaMiguel }], reply: null
+    });
 
+    // Dos preguntas retenidas en la misma raíz: la persona recibe UN marcador, no uno por pregunta.
     expect(await gateRelays(root.trace_id)).toEqual([{ tenant_id: 'Isa', reply: withheldGateRelayText }]);
     expect((await pool.query(
-      `SELECT tenant_id,status FROM agent_chain_gates WHERE root_message_id=$1`, [root.message_id]
-    )).rows).toEqual([{ tenant_id: 'Miguel', status: 'cancelled' }]);
+      `SELECT tenant_id,status FROM agent_chain_gates WHERE root_message_id=$1 ORDER BY asked_by_alias`,
+      [root.message_id]
+    )).rows).toEqual([
+      { tenant_id: 'Miguel', status: 'cancelled' }, { tenant_id: 'Miguel', status: 'cancelled' }
+    ]);
     // Nadie queda esperando a una persona que nunca va a ver la pregunta.
     expect(result.chain_gate).toBeUndefined();
     expect(result.delegation_rejections).toEqual([
       expect.objectContaining({ code: 'unroutable_alias', target: '@human' })
     ]);
+    expect(result.delegation_rejections?.[0]?.guidance).toContain('No vuelvas a preguntar');
     const isaOutbox = await pool.query<{ payload: unknown }>(
       `SELECT payload FROM adapter_outbox WHERE tenant_id='Isa'`
     );
@@ -130,6 +139,35 @@ describe('el gate humano no cruza la pregunta entre tenants cliente', () => {
       `SELECT metadata FROM audit_events WHERE tenant_id='Miguel' AND action='agent_output.materialize'`
     );
     expect(JSON.stringify(audited.rows)).not.toContain(preguntaIsa);
+  });
+
+  it('el gate del hub en la cadena de Isa no lo lista, contesta ni cancela un tercero cliente', async () => {
+    const salva = await consumer('Isa', 'salva');
+    const jarvis = await consumer('Steven', 'jarvis');
+    const socrates = await consumer('Steven', 'socrates');
+    const root = await publishIsaRoot(salva);
+    await ackWith(repository, salva, root, { messages: [{ to: 'jarvis', body: 'ayudame' }], reply: null });
+    await ackWith(repository, jarvis, await nextDelivery(repository, jarvis), {
+      messages: [{ to: 'socrates', body: 'rama socrates' }], reply: null
+    });
+    const opened = await ackWith(repository, socrates, await nextDelivery(repository, socrates), {
+      messages: [{ to: '@human', body: 'pregunta del hub sobre el caso de Isa' }], reply: null
+    });
+    const gateId = opened.chain_gate?.gate_id ?? '';
+    const listed = async (tenant: Tenant, alias: string): Promise<string[]> =>
+      ((await repository.listChainGates(tenant, alias, { status: 'all' })).items as { id: string }[])
+        .map((item) => item.id);
+
+    expect(await listed('Isa', 'salva')).toEqual([gateId]);
+    expect(await listed('Steven', 'kant')).toEqual([gateId]);
+    expect(await listed('Miguel', 'kratos')).toEqual([]);
+    await expect(repository.answerChainGate(gateId, 'respuesta de Miguel', 'Miguel', 'kratos'))
+      .rejects.toMatchObject({ code: 'not_found' });
+    await expect(repository.cancelChainGate(gateId, 'Miguel', 'kratos'))
+      .rejects.toMatchObject({ code: 'not_found' });
+    expect((await pool.query(
+      `SELECT status FROM agent_chain_gates WHERE id=$1`, [gateId]
+    )).rows).toEqual([{ status: 'open' }]);
   });
 
   it('un salto hondo del hub sí relaya su pregunta al root cliente y suspende la rama', async () => {
