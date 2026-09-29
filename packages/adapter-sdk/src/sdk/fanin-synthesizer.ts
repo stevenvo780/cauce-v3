@@ -212,7 +212,7 @@ export function synthesizeFaninOutput(
         ),
       messages: [],
       notify: [],
-      status: "done",
+      status: options.humanFacingReceipt === true ? "failed" : "done",
       retryable: false,
       artifacts: [],
     };
@@ -255,13 +255,14 @@ export function synthesizeFaninOutput(
     const summary = TECHNICAL_REPLY_PATTERN.test(primary.text)
       ? undefined
       : boundedUtf8(primary.text.trim(), HUMAN_SUMMARY_MAX_BYTES, HUMAN_SUMMARY_TRUNCATION_NOTICE);
+    const verified = !reviewUnconfirmed && summary !== undefined;
     return {
       reply: reviewUnconfirmed
         ? summary === undefined
           ? "No hay un cierre verificado del director. Los informes del equipo quedaron registrados, pero no puedo confirmar que este trabajo esté terminado."
           : `El cierre sigue pendiente de verificación. Avance confirmado por el director: ${summary}`
         : summary ?? "El director todavía no dio un resumen claro del resultado. No puedo dar el trabajo por terminado.",
-      messages: [], notify: [], status: "done", retryable: false, artifacts: [],
+      messages: [], notify: [], status: verified ? "done" : "failed", retryable: false, artifacts: [],
     };
   }
   const sections: {
