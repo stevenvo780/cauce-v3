@@ -33,4 +33,8 @@ describe('delivery timing configuration', () => {
     })).toThrow('CAUCE_DELIVERY_LEASE_CAP_MS must be equal to or greater than CAUCE_ACK_DEADLINE_MS');
     expect(configuredDeliveryLeaseCap({ CAUCE_DELIVERY_LEASE_CAP_MS: '60000' }).leaseCapMs).toBe(60_000);
   });
+
+  it('puts no duration cap below the protocol maximum on a turn without a declared budget', () => {
+    expect(configuredDeliveryLeaseCap({}).leaseCapMs).toBe(7 * 24 * 60 * 60_000);
+  });
 });
