@@ -410,6 +410,18 @@ export abstract class AgentResponseRepository extends AgentsRepository {
     );
     if (claimed.rowCount !== 1) return undefined;
 
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify(['cauce:failure-notice', root, // One bucket, one decision at a time.
+      relationship.source_tenant, relationship.source_alias, row.recipient_tenant, row.recipient_alias, signature])]);
+    const standing = await client.query<{ unread: boolean }>( // Fold only into a notice NO adapter took (claimed: a rewritten body collides in its durable inbox; handled: silence, hospital perseo). Park refunds attempt and clears claimed_at but keeps last_error.
+      `SELECT (d.status='pending' AND d.attempt=0 AND d.last_error IS NULL) AS unread
+       FROM agent_failure_notices n JOIN deliveries d ON d.id=n.last_notice_delivery_id
+       WHERE n.root_message_id=$1 AND n.parent_tenant=$2 AND n.parent_alias=$3 AND n.child_tenant=$4
+         AND n.child_alias=$5 AND n.failure_signature=$6
+       FOR UPDATE OF d`,
+      [root, relationship.source_tenant, relationship.source_alias, row.recipient_tenant, row.recipient_alias, signature]
+    );
+    const unread = standing.rows[0]?.unread === true;
+
     const reserved = await client.query<{
       id: string;
       total_failures: number;
@@ -427,17 +439,17 @@ export abstract class AgentResponseRepository extends AgentsRepository {
        ON CONFLICT ON CONSTRAINT agent_failure_notices_key DO UPDATE SET
          total_failures=agent_failure_notices.total_failures+1,
          notices_emitted=agent_failure_notices.notices_emitted
-           +CASE WHEN agent_failure_notices.window_expires_at<=now() THEN 1 ELSE 0 END,
-         window_started_at=CASE WHEN agent_failure_notices.window_expires_at<=now()
+           +CASE WHEN agent_failure_notices.window_expires_at<=now() OR NOT $8 THEN 1 ELSE 0 END,
+         window_started_at=CASE WHEN agent_failure_notices.window_expires_at<=now() OR NOT $8
            THEN now() ELSE agent_failure_notices.window_started_at END,
-         window_expires_at=CASE WHEN agent_failure_notices.window_expires_at<=now()
+         window_expires_at=CASE WHEN agent_failure_notices.window_expires_at<=now() OR NOT $8
            THEN now()+$7*interval '1 second' ELSE agent_failure_notices.window_expires_at END,
-         last_failure_emitted=(agent_failure_notices.window_expires_at<=now()),
+         last_failure_emitted=(agent_failure_notices.window_expires_at<=now() OR NOT $8),
          updated_at=now()
        RETURNING id::text,total_failures,notices_emitted,window_started_at,last_failure_emitted,
                  last_notice_message_id::text,last_notice_delivery_id::text,last_notice_base_text`,
       [root, relationship.source_tenant, relationship.source_alias, row.recipient_tenant,
-        row.recipient_alias, signature, policy.failureCoalesceWindowSeconds]
+        row.recipient_alias, signature, policy.failureCoalesceWindowSeconds, unread]
     );
     const bucket = reserved.rows[0];
     if (!bucket) return undefined;
