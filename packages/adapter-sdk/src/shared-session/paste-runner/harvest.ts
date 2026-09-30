@@ -28,7 +28,16 @@ import {
   turnBudgetMs,
 } from "./runtime.js";
 
+export type WakeCommit =
+  | { readonly state: "entered" | "not_pasted" }
+  | { readonly state: "ambiguous" | "barrier_ambiguous"; readonly detail: string; readonly forceTerminate: boolean };
+
 export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessRunner<E> {
+  /** Wakes pasted for the delivery being harvested; codex only logs one once its turn starts. */
+  protected wakesSentThisDelivery = 0;
+  /** Pastes `text` as a new turn of the SAME conversation (codex: wake a root that closed silent after delegating). */
+  protected abstract wakeTurn(identity: PaneIdentity, text: string, signal: AbortSignal): Promise<WakeCommit>;
+
   /** Extracts the envelope from the harness's structured transcript. */
   protected async harvest(
     request: CommandRunRequest,
@@ -61,6 +70,11 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     let probe = 0;
     // Timestamp is fixed by the EVENT, not by the next poll, so a slow transcript read cannot start counting the deadline only when it finishes.
     let lingering: { readonly outcome: TurnOutcome; readonly progress: string } | undefined; // No silence cut then.
+    let pendingWake: string | undefined;
+    let wakeOutcome: TurnOutcome | undefined; // What the chain says if it cannot be woken.
+    let wakesSent = 0;
+    this.wakesSentThisDelivery = 0;
+    let wakeBlockedNoted = false;
     let lingeringSince = 0;
     const backgroundWaitMs = Math.max(0, this.options.backgroundWaitMs ?? DEFAULT_BACKGROUND_WAIT_MS);
     let cancelObservedAt = request.signal.aborted ? Date.now() : undefined;
@@ -184,9 +198,13 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
             lingeringSince = Date.now();
           }
           lingering = pendingWork;
+          const wake = lingering === undefined ? port.wakePrompt?.(slice.entries, injectedTurn.key) : undefined;
+          pendingWake = wake !== undefined && wake.wakes === wakesSent ? wake.text : undefined;
+          wakeOutcome = wake?.outcome;
+          if (request.emissionOutput?.() !== undefined) pendingWake = wakeOutcome = undefined; // A `cauce_reply` deposit IS the answer.
           // Localized turn but no ancestry arriving: the other way of holding the lock until the full
           // budget waiting for an envelope already written, scoped to our entry so a pre-paste envelope cannot sneak in, and not while background work may still answer.
-          const rescue = lingering === undefined
+          const rescue = lingering === undefined && wakeOutcome === undefined // Not an early placeholder while waking.
             ? port.findEnvelope?.(slice.entries, correlationId, injectedTurn.key)
             : undefined;
           if (signalAborted(request.signal)) continue;
@@ -215,8 +233,50 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           };
         }
 
+        const wakeText = pendingWake;
+        if (wakeText !== undefined && injected !== undefined && !request.signal.aborted) {
+          const moved = await this.otherConversationMoved(baseline, injected.file);
+          if (moved && wakeOutcome !== undefined) { // The owner went to another conversation: never paste into it.
+            return {
+              result: result({ exitCode: 1, stderr: `${wakeOutcome.kind === "failed" ? wakeOutcome.detail : "sin respuesta final"};`
+                + " no se despertó al agente porque la terminal pasó a otra conversación" }),
+              terminalBoundary: true,
+            };
+          }
+          const idle = await beforeAbort(() => this.paneIsIdle(activeIdentity, request.signal), request.signal);
+          if (idle.aborted) continue;
+          if (!idle.value && !wakeBlockedNoted) {
+            wakeBlockedNoted = true;
+            try {
+              this.options.onNotice?.("el agente cerró sin respuesta tras delegar y hay que despertarlo, pero la caja de la terminal no está libre");
+            } catch { /* A notice cannot change the delivery. */ }
+          }
+          if (idle.value) {
+            // Not under beforeAbort: a paste+Enter must finish or never start, never run beside the drain.
+            const woke = await this.wakeTurn(activeIdentity, wakeText, request.signal);
+            if (woke.state === "entered") {
+              wakesSent += 1;
+              this.wakesSentThisDelivery = wakesSent;
+              pendingWake = undefined;
+              lastActivityAt = lastTranscriptGrowthAt = Date.now();
+            } else if (woke.state === "barrier_ambiguous") {
+              return {
+                result: this.ambiguousBarrierAcquisitionState(activeIdentity, woke.detail, request.signal.aborted, pending),
+                terminalBoundary: false,
+              };
+            } else if (woke.state === "ambiguous") {
+              return {
+                result: await this.ambiguousCommittedState(activeIdentity, woke.detail, request.signal.aborted, pending,
+                  woke.forceTerminate),
+                terminalBoundary: false,
+              };
+            }
+          }
+        }
+
         const deposited = request.emissionOutput?.();
-        if (deposited !== undefined && lingering === undefined && Date.now() - lastActivityAt >= quietMs) {
+        if (deposited !== undefined && lingering === undefined && pendingWake === undefined
+          && Date.now() - lastActivityAt >= quietMs) {
           const idle = await beforeAbort(() => this.paneIsIdle(activeIdentity, request.signal), request.signal);
           if (idle.aborted) continue;
           if (idle.value) return {
@@ -226,7 +286,8 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
         }
 
         const localized = injected;
-        if (localized !== undefined && lingering === undefined && Date.now() - lastActivityAt >= quietMs) {
+        if (localized !== undefined && lingering === undefined && pendingWake === undefined
+          && Date.now() - lastActivityAt >= quietMs) {
           const idle = await beforeAbort(
             () => this.paneIsIdle(activeIdentity, request.signal),
             request.signal,
@@ -312,6 +373,10 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
         }
 
         if (Date.now() >= (noProgress ? lastTranscriptGrowthAt + budget : deadline)) {
+          // A codex chain waiting to wake a closed root: say what happened, do not quarantine.
+          if (wakeOutcome !== undefined) {
+            return { result: this.settledResult(wakeOutcome, injected?.sessionId, request), terminalBoundary: true };
+          }
           // Final sweep before declaring it dead: if the envelope arrived, the delivery does not die.
           const rescued = await beforeAbort(
             () => this.lastEnvelope(baseline, injected, correlationId),
@@ -497,6 +562,12 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     }
   }
 
+  /** The chain's outcome while waiting to wake the root, unless a wake we pasted has not shown up yet. */
+  private wokenOutcome(entries: readonly E[], key: string): TurnOutcome | undefined {
+    const wake = this.options.transcript.wakePrompt?.(entries, key);
+    return wake !== undefined && wake.wakes >= this.wakesSentThisDelivery ? wake.outcome : undefined;
+  }
+
   /** Only an outcome tied to this delivery's prompt/nonce makes the generation reusable. */
   protected async cancelledTranscriptBoundary(
     baseline: ReadonlyMap<string, number>,
@@ -521,6 +592,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
       );
       const outcome = this.options.transcript.findAnswer(slice.entries, correlated.key) // Lingering work: still terminal.
         ?? this.options.transcript.lingering?.(slice.entries, correlated.key)?.outcome
+        ?? this.wokenOutcome(slice.entries, correlated.key) // Root idle, waiting to be woken.
         ?? this.options.transcript.findEnvelope?.(
           slice.entries,
           correlationId,
@@ -572,6 +644,19 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
    * `queued_command` attachment), so `injected` stays undefined and this is the only activity signal;
    * measured against the baseline instead, it never went quiet, holding the delivery to the 6 h lease cap.
    */
+  /** Whether a TUI conversation other than the delivery's grew or appeared since the paste. */
+  protected async otherConversationMoved(baseline: ReadonlyMap<string, number>, own: string): Promise<boolean> {
+    const port = this.options.transcript;
+    if (port.otherConversationActive === undefined) return false;
+    const changed: string[] = [];
+    for (const file of await port.files()) {
+      if (file === own) continue;
+      const size = await fileSize(file);
+      if (size >= 0 && size !== baseline.get(file)) changed.push(file);
+    }
+    return changed.length > 0 && await port.otherConversationActive(changed, own);
+  }
+
   protected async transcriptMoved(seen: Map<string, number>): Promise<boolean> {
     let moved = false;
     for (const file of await this.options.transcript.files()) {

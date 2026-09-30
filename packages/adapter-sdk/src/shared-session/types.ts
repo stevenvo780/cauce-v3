@@ -100,6 +100,11 @@ export interface TranscriptReader<E> {
     entries: readonly E[],
     key: string,
   ): { readonly outcome: TurnOutcome; readonly progress: string } | undefined;
+  wakePrompt?( // codex: delegations answered, no final reply yet; paste this to wake the root
+    entries: readonly E[],
+    key: string,
+  ): { readonly text: string; readonly wakes: number; readonly outcome: TurnOutcome } | undefined;
+  otherConversationActive?(changed: readonly string[], own: string): Promise<boolean>; // codex: another TUI conversation active (/new)
   /**
    * Searches the transcript entries for a correlated structured envelope.
    */

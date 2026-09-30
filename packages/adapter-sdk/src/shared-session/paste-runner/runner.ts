@@ -22,7 +22,7 @@ import {
   type PastePromptResult,
 } from "../tmux.js";
 import type { PasteSessionOptions, PendingQuarantine } from "./contracts.js";
-import { PasteSessionHarvestRunner } from "./harvest.js";
+import { PasteSessionHarvestRunner, type WakeCommit } from "./harvest.js";
 import { beforeDeadline, replacedBeforeSubmission, result, SETTLE_MS, turnBudgetMs } from "./runtime.js";
 
 type PromptCommitOutcome =
@@ -285,6 +285,20 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
    * restored and checked exactly the flag/token of this generation. If it cannot, the output is
    * overwritten as ambiguous and the caller quarantines it or terminates it exactly.
    */
+  protected async wakeTurn(identity: PaneIdentity, text: string, signal: AbortSignal): Promise<WakeCommit> {
+    const token = randomBytes(32).toString("hex");
+    const acquired = await acquirePaneInputBarrier(this.options.tmux, identity, token, this.tmuxControl()); // no signal: a cancel mid-acquire would be ambiguous
+    if (acquired.state === "ambiguous") {
+      return { state: "barrier_ambiguous", detail: "tmux perdió el resultado al adquirir la exclusión de input para despertar al agente", forceTerminate: false };
+    }
+    if (acquired.state !== "acquired") return { state: "not_pasted" }; // Owner typing or another barrier: retry later.
+    const committed = await this.commitUnderInputBarrier(acquired.barrier, `cauce-${this.options.alias}-${token}`,
+      pasteSafeText(text), signal);
+    return committed.state === "ambiguous"
+      ? { state: "ambiguous", detail: committed.detail, forceTerminate: committed.forceTerminate }
+      : { state: committed.state === "entered" ? "entered" : "not_pasted" };
+  }
+
   private async commitUnderInputBarrier(
     barrier: PaneInputBarrier,
     buffer: string,
