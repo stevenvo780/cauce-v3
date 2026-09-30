@@ -110,6 +110,68 @@ test("Muse MSP onRequest confirms the mode before a headless turn", async () => 
   assert.equal(state.sessions[sessionId]?.approvalMode, "onRequest");
 });
 
+for (const resumeSession of [false, true]) {
+  test(`Muse ${resumeSession ? "resume" : "start"} admits one turn after a slow bounded opening`, async (t) => {
+    const { config } = await fixture(`slow-opening-${String(resumeSession)}`);
+    const sessionId = mintId();
+    if (resumeSession) {
+      await writeFile(resolve(config.dataHome, "fake-muse-state.json"), JSON.stringify({
+        sessions: { [sessionId]: { workspaceRoot: config.workspace, approvalMode: config.approvalMode,
+          modelId: config.model, turnCount: 0 } },
+        turns: [], hostEnv: [], events: [], reads: 0, pages: 0,
+      }));
+    }
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+    let advanced = false;
+    const telemetry: MuseMspTelemetry[] = [];
+    const run = await new MuseMspRunner({ ...config, onTelemetry: (event) => {
+      telemetry.push(event);
+      if (event.event !== "muse_preflight_started"
+        || event.phase !== (resumeSession ? "session/resume" : "session/start")) return;
+      advanced = true;
+      t.mock.timers.tick(6_000);
+    } }).run({
+      harness: "muse", command: fakeMuse, args: ["serve"], stdin: "Synthetic task",
+      sessionId, resumeSession, timeoutMs: 30_000, signal: new AbortController().signal,
+    });
+    assert.equal(advanced, true);
+    assert.equal(parseMuseMspOutput(run.stdout).output.status, "done");
+    assert.equal((await stateOf(config)).turns.length, 1);
+    assert.equal(telemetry.filter((event) => event.event === "muse_turn_admitted").length, 1);
+    assert.equal(telemetry.some((event) => event.event === "muse_preflight_finished"
+      && event.phase === (resumeSession ? "session/resume" : "session/start")
+      && event.outcome === "completed" && event.elapsed_ms === 6_000), true);
+  });
+}
+
+for (const interruptedBy of ["deadline", "abort", "read-budget"] as const) {
+  test(`Muse preserves ${interruptedBy} while bounding preflight phases`, async (t) => {
+    const { config } = await fixture(`opening-interruption-${interruptedBy}`);
+    const controller = new AbortController();
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+    const target = interruptedBy === "read-budget" ? "session/read" : "session/start";
+    const pending = new MuseMspRunner({ ...config, onTelemetry: (event) => {
+      if (event.event !== "muse_preflight_started" || event.phase !== target) return;
+      if (interruptedBy === "abort") controller.abort();
+      else t.mock.timers.tick(interruptedBy === "deadline" ? 1_001 : 5_001);
+    } }).run({
+      harness: "muse", command: fakeMuse, args: ["serve"], stdin: "Synthetic task must remain unsubmitted",
+      sessionId: mintId(), timeoutMs: interruptedBy === "deadline" ? 1_000 : 30_000,
+      signal: controller.signal,
+    });
+    if (interruptedBy === "abort") {
+      const run = await pending;
+      assert.equal(run.cancelled, true);
+      assert.notEqual(run.harnessStarted, true);
+    } else {
+      await assert.rejects(pending, (error: unknown) => error instanceof ProcessExecutionError
+        && error.code === "MUSE_PREFLIGHT_TIMEOUT" && error.retryable
+        && error.message.endsWith(`at ${target}`));
+    }
+    assert.equal((await stateOf(config)).turns.length, 0);
+  });
+}
+
 test("Muse YOLO requires allowAll and disables the sandbox at host startup", async () => {
   const { config } = await fixture("yolo", "allowAll");
   const yolo = { ...config, yolo: true };
