@@ -45,7 +45,6 @@ const AGENT_ROOT_AUDIT = `audit.trace_id=m.trace_id AND audit.message_id=m.id
 const OPEN_STATES = `('pending','retry','leased','accepted','started')`;
 const UUID_TEXT = `'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'`;
 const CHAIN_TYPES = [...RESERVED_INTERNAL_MESSAGE_TYPES];
-const CONTINUATION_TYPES = ['agent.fanin', 'agent.response'];
 // Only store-written internal messages can name a root: a client body carrying `correlation` never holds a slot.
 const CHAIN_ROOT_OF_OPEN = `CASE WHEN om.body->>'type'=ANY($3::text[])
   AND (om.body->'correlation'->>'root_message_id') ~ ${UUID_TEXT}
@@ -104,8 +103,8 @@ export interface SenderView {
 }
 
 /**
- * What the sender asked for: whether the chain still runs and, per root delivery, the reply of the
- * recipient's last closed continuation (fan-in or response) or, without one, of the root hop.
+ * What the sender asked for: whether the chain still runs and, per root delivery, its branch's
+ * fan-in reply (only it, even when it failed), else the branch's newest response, else the root hop.
  * An agent reads only roots it published as an agent; an operator only the rest; gate probes never.
  */
 export async function senderView(
@@ -126,15 +125,26 @@ export async function senderView(
   const row = head.rows[0];
   if (row === undefined || row.probe || row.agent_root !== (reader === 'agent')) return undefined;
   const replies = await pool.query<{ delivery_id: string; reply: string | null }>(
-    `SELECT d.id AS delivery_id,COALESCE((
-       SELECT c.result->'output'->>'reply' FROM messages cm JOIN deliveries c ON c.message_id=cm.id
-       WHERE cm.body->'correlation'->>'root_message_id'=$3 AND cm.body->>'type'=ANY($2::text[])
+    `SELECT d.id AS delivery_id,CASE WHEN fanin.id IS NOT NULL
+       THEN CASE WHEN fanin.status='done' THEN fanin.result->'output'->>'reply' END
+       ELSE COALESCE((
+         SELECT c.result->'output'->>'reply' FROM messages cm JOIN deliveries c ON c.message_id=cm.id
+         WHERE cm.body->'correlation'->>'root_message_id'=$2 AND cm.body->>'type'='agent.response'
+           AND cm.body->'correlation'->>'root_delivery_id'=d.id::text
+           AND c.recipient_tenant=d.recipient_tenant AND c.recipient_alias=d.recipient_alias
+           AND c.status='done' AND c.result->'output'->>'reply' IS NOT NULL
+         ORDER BY c.terminal_at DESC NULLS LAST,c.created_at DESC LIMIT 1
+       ),d.result->'output'->>'reply') END AS reply
+     FROM deliveries d
+     LEFT JOIN LATERAL ( -- The fan-in is this branch's consolidated answer: when it exists nothing else speaks for it.
+       SELECT c.id,c.status,c.result FROM messages cm JOIN deliveries c ON c.message_id=cm.id
+       WHERE cm.body->'correlation'->>'root_message_id'=$2 AND cm.body->>'type'='agent.fanin'
+         AND cm.body->'correlation'->>'root_delivery_id'=d.id::text
          AND c.recipient_tenant=d.recipient_tenant AND c.recipient_alias=d.recipient_alias
-         AND c.status='done' AND c.result->'output'->>'reply' IS NOT NULL
-       ORDER BY c.terminal_at DESC NULLS LAST,c.created_at DESC LIMIT 1
-     ),d.result->'output'->>'reply') AS reply
-     FROM deliveries d WHERE d.message_id=$1::uuid`,
-    [messageId, CONTINUATION_TYPES, messageId.toLowerCase()],
+       ORDER BY c.created_at DESC,c.id DESC LIMIT 1
+     ) fanin ON true
+     WHERE d.message_id=$1::uuid`,
+    [messageId, messageId.toLowerCase()],
   );
   return {
     chainOpen: row.chain_open,

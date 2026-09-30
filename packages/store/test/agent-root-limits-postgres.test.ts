@@ -308,6 +308,59 @@ describe('lectura del resultado por quien publicó', () => {
     expect(await replyOf(id, 'socrates', 'agent')).toBeUndefined();
   }, 120_000);
 
+  it('cada destinatario muestra la respuesta de su rama, no la de una rama ajena que lo usó', async () => {
+    const [argos, socrates, jarvis] = await Promise.all(
+      ['argos', 'socrates', 'jarvis'].map((alias) => consumer('Steven', alias))
+    ) as [Consumer, Consumer, Consumer];
+    const root = await agentRoot(command({
+      recipients: [{ tenant_id: 'Steven', alias: 'argos' }, { tenant_id: 'Steven', alias: 'socrates' }]
+    }));
+    await applyTerminalAck(repository, argos, await claimNext(repository, argos), { reply: 'respuesta propia de argos' });
+    await applyTerminalAck(repository, socrates, await claimNext(repository, socrates), {
+      messages: [{ to: 'argos', body: 'ayudame con esto' }], reply: 'le pedí a argos'
+    });
+    await applyTerminalAck(repository, argos,
+      await claimNext(repository, argos, (item) => item.body.type === 'agent.message'),
+      { messages: [{ to: 'jarvis', body: 'averiguá' }], reply: 'le pedí a jarvis' });
+    await applyTerminalAck(repository, jarvis,
+      await claimNext(repository, jarvis, (item) => item.body.type === 'agent.message'), { reply: 'dato de jarvis' });
+    await applyTerminalAck(repository, argos,
+      await claimNext(repository, argos, (item) => item.body.type === 'agent.response'), { reply: 'rama de socrates' });
+    const view = await repository.getMessage(root.message_id, 'Steven', 'kant', 'agent');
+    expect((view.deliveries as { alias: string; reply?: unknown }[]).find((item) => item.alias === 'argos')?.reply)
+      .toBe('respuesta propia de argos');
+  }, 180_000);
+
+  async function throughFanin(faninStatus: 'done' | 'failed'): Promise<string> {
+    const [socrates, jarvis] = await Promise.all(
+      ['socrates', 'jarvis'].map((alias) => consumer('Steven', alias))
+    ) as [Consumer, Consumer];
+    const root = await agentRoot(command({ recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }] }));
+    await applyTerminalAck(repository, jarvis, await claimNext(repository, jarvis), {
+      messages: [{ to: 'socrates', body: 'averiguá' }], reply: 'provisional'
+    });
+    await applyTerminalAck(repository, socrates,
+      await claimNext(repository, socrates, (item) => item.body.type === 'agent.message'), { reply: 'dato' });
+    const response = await claimNext(repository, jarvis, (item) => item.body.type === 'agent.response');
+    await applyTerminalAck(repository, jarvis, response, { reply: 'respuesta de un subagente' });
+    await applyTerminalAck(repository, jarvis,
+      await claimNext(repository, jarvis, (item) => item.body.type === 'agent.fanin'),
+      faninStatus === 'done' ? { reply: 'consolidado' } : { reply: 'no pude', status: 'failed' });
+    // The sub-agent's response lands after the fan-in closed: by time it is the newest word of the branch.
+    await pool.query(`UPDATE deliveries SET terminal_at=now()+interval '1 minute' WHERE id=$1`, [response.delivery_id]);
+    return root.message_id;
+  }
+
+  it('una respuesta tardía de un subagente no reemplaza la del fan-in', async () => {
+    const view = await repository.getMessage(await throughFanin('done'), 'Steven', 'kant', 'agent');
+    expect(view.deliveries).toEqual([expect.objectContaining({ alias: 'jarvis', reply: 'consolidado' })]);
+  }, 180_000);
+
+  it('un fan-in fallido no se tapa con la respuesta de un subagente', async () => {
+    const view = await repository.getMessage(await throughFanin('failed'), 'Steven', 'kant', 'agent');
+    expect(view.deliveries).toEqual([expect.objectContaining({ alias: 'jarvis', reply: null })]);
+  }, 180_000);
+
   it('el operador ve la respuesta de lo que publicó como operador; su certificado de agente no', async () => {
     const id = await answered(() => repository.publish(command()));
     expect(await replyOf(id, 'kant', 'operator')).toBe('hecho y verificado');
