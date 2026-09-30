@@ -344,7 +344,7 @@ export class AdapterEngine {
         timeoutKindFromBody(delivery.body),
       );
     } catch (error) {
-      await this.finishError(accepted.record, asAdapterError(error));
+      await this.finishError(accepted.record, this.adapterError(error, accepted.record));
       return;
     }
 
@@ -389,7 +389,7 @@ export class AdapterEngine {
       try {
         requestContext = this.harness.prepareContext(rawRequestContext);
       } catch (error) {
-        await this.finishError(accepted.record, asAdapterError(error));
+        await this.finishError(accepted.record, this.adapterError(error, accepted.record));
         return;
       }
     }
@@ -509,7 +509,7 @@ export class AdapterEngine {
 
     try {
       if (executionFailure !== undefined) {
-        const executionError = asAdapterError(executionFailure);
+        const executionError = this.adapterError(executionFailure, started.record);
         const preserveAmbiguousExecution = !executionError.retryable
           && isAmbiguousAckErrorCode(executionError.code);
         const normalized = this.fenced.has(delivery.delivery_id) && !preserveAmbiguousExecution
@@ -607,7 +607,7 @@ export class AdapterEngine {
     // lying the other way: it would send to dead-letters "held for manual replay" a delivery
     // the harness never saw. The normalization to FENCED is the same the execution path applies,
     // and it always holds here since there is never an ambiguous execution to preserve.
-    const queueError = asAdapterError(failure);
+    const queueError = this.adapterError(failure, record);
     const normalized = this.fenced.has(record.delivery_id)
       ? new AdapterError("FENCED", "Execution lost its fencing epoch", true)
       : isAmbiguousAckErrorCode(queueError.code)
@@ -708,6 +708,17 @@ export class AdapterEngine {
     // A renewal must reach stable local storage before it can be treated as recoverable work.
     await this.store.enqueue(event);
     return event;
+  }
+
+  private adapterError(error: unknown, record: InboxRecord): AdapterError { // INTERNAL hides the cause: log it
+    if (!(error instanceof AdapterError)) {
+      const cause = error instanceof Error
+        ? `${error.name}: ${error.message} @ ${error.stack?.split("\n").slice(1, 4).map((line) => line.trim()).join(" < ") ?? "?"}`
+        : `non-Error thrown: ${typeof error}`;
+      this.logger({ event: "internal_error", delivery_id: record.delivery_id, attempt: record.attempt,
+        timestamp: this.clock.now().toISOString(), error_message: cause.slice(0, 800) });
+    }
+    return asAdapterError(error);
   }
 
   private async finishError(

@@ -364,7 +364,8 @@ export interface AdapterLog {
     | 'shared_session_resume'
     /** Start witness disabled because the configured bridge does not emit the mark. */
     | 'harness_start_witness_disabled'
-    | 'connection_degraded'; /** Transport is up but something else is not. */
+    | 'connection_degraded' /** Transport is up but something else is not. */
+    | 'internal_error'; // real cause of an INTERNAL
   timestamp?: string; // ISO8601, optional for convenience
   delivery_id?: string;
   phase?: DeliveryPhase;
