@@ -268,7 +268,7 @@ test("the OpenClaw bridge refuses the embedded re-run when the gateway client ti
   assert.equal(result.status, 1);
   assert.equal(envelope.result?.ok, false,
     "an embedded re-run in a fresh session duplicated a live gateway turn on 29-09 and was killed at 45 min");
-  assert.match(envelope.result?.error ?? "", /gave up; not re-running the turn embedded/u);
+  assert.match(envelope.result.error ?? "", /gave up; not re-running the turn embedded/u);
   assert.doesNotMatch(result.stdout, /embedded duplicate ran|embedded local run/u);
 });
 
@@ -277,7 +277,7 @@ test("the OpenClaw bridge refuses the embedded re-run while the gateway still an
   try {
     const { envelope, result } = runBridge("OPENCLAW_GATEWAY_TRANSPORT_FALLBACK", { OPENCLAW_CONFIG_PATH: gateway.path });
     assert.equal(envelope.result?.ok, false, "a dropped socket is not a dead gateway: its run is still going");
-    assert.match(envelope.result?.error ?? "", /gateway is still alive/u);
+    assert.match(envelope.result.error ?? "", /gateway is still alive/u);
     assert.doesNotMatch(result.stdout, /embedded duplicate ran|embedded local run/u);
   } finally {
     await gateway.close();
@@ -295,7 +295,7 @@ test("the OpenClaw bridge still answers embedded when the gateway is really down
 test("the OpenClaw bridge honours CAUCE_OPENCLAW_EMBEDDED_FALLBACK=never", () => {
   const { envelope } = runBridge("OPENCLAW_GATEWAY_TRANSPORT_FALLBACK", { CAUCE_OPENCLAW_EMBEDDED_FALLBACK: "never" });
   assert.equal(envelope.result?.ok, false);
-  assert.match(envelope.result?.error ?? "", /disabled/u);
+  assert.match(envelope.result.error ?? "", /disabled/u);
 });
 
 test("external timeout terminates an OpenClaw bridge invocation", async () => {

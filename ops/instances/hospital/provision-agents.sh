@@ -24,6 +24,8 @@ for command in docker openssl python3 systemctl flock git; do
 done
 [ -r "$ENV_FILE" ] || { echo "Falta $ENV_FILE" >&2; exit 1; }
 [ -r "$HOSPITAL_ENV" ] || { echo "Falta $HOSPITAL_ENV" >&2; exit 1; }
+[ -x /opt/hospital-agent/runtime/muse-code-bin/muse-bin-1.4.1-R4503.1 ] \
+  || { echo "Instalá Muse 1.4.1-R4503.1 antes de aprovisionar Hospital" >&2; exit 1; }
 
 # El bundle se empaqueta desde este checkout: sin este guard sale verde con codigo viejo.
 EXPECTED_REF=${CAUCE_HOSPITAL_EXPECTED_GIT_REF:-origin/hospitales}
@@ -53,6 +55,8 @@ registered=$(docker exec hospital-cauce-postgres-1 psql -XAtq -U cauce_hospital 
   -c "SELECT string_agg(alias || ':' || harness_id || ':' || container_name, ',' ORDER BY alias) FROM agents WHERE tenant_id='Hospital' AND enabled")
 [ "$registered" = 'operador:openclaw:hospital-agent-openclaw-operator-gateway-1,perseo:muse:hospital-agent-muse-frontend-1,teseo:muse:hospital-agent-muse-backend-1' ] \
   || { echo "El registro Hospital todavía no coincide con la topología Muse; abortando antes de cambiar configs" >&2; exit 1; }
+install -o 1000 -g 1000 -m 0755 "$REPO/ops/instances/hospital/muse-pinned-launcher.sh" \
+  /opt/hospital-agent/runtime/muse-code-bin/muse
 install -d -m 0700 "$BUNDLE_ROOT" "$BUNDLE_ROOT/releases" "$CONFIG_ROOT" "$PKI_ROOT" "$LOCK_ROOT"
 temporary=
 image_container=
@@ -235,7 +239,11 @@ for alias in "${ALIASES[@]}"; do
       printf 'MUSE_APPROVAL_MODE=allowAll\n'
       printf 'MUSE_YOLO=1\n'
     fi
-    printf 'DEFAULT_TIMEOUT_MS=1800000\n'
+    if [ "$alias" = operador ]; then
+      printf 'DEFAULT_TIMEOUT_MS=3600000\n'
+    else
+      printf 'DEFAULT_TIMEOUT_MS=1800000\n'
+    fi
   } >"$temporary_config"
   chmod 0600 "$temporary_config"
   mv "$temporary_config" "$config"
