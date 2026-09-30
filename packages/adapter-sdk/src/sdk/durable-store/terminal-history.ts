@@ -220,7 +220,7 @@ export class TerminalHistory {
   }
 
   notices(): readonly InboxRecord[] {
-    return [...this.records.values()].filter(record => (record.output?.notify.length ?? 0) > 0);
+    return [...this.records.values()].filter(record => Array.isArray(record.output?.notify) && record.output.notify.length > 0);
   }
 
   get(deliveryId: string): InboxRecord | undefined {

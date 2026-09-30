@@ -198,3 +198,18 @@ test("el corte de correlacion se puede fijar por alias con CAUCE_SHARED_SESSION_
       /CAUCE_SHARED_SESSION_CORRELATION_TIMEOUT_MS/u, `rechaza ${bad}`);
   }
 });
+
+test("el aviso «keep waiting» de codex es un turno en vuelo, no un diálogo que bloquee (socrates 2026-09-29)", () => {
+  const pane = [
+    "  Giving this request a little extra thought",
+    "› 1. Dismiss and keep waiting",
+    "  2. Learn more",
+    "  No action is required. Codex will keep waiting, and this menu will close when the response is ready.",
+  ].join("\n");
+  const state = inputBoxState(pane);
+  assert.equal(state.kind, "busy");
+  assert.equal(state.thinking, true);
+  assert.equal(inputBoxState("› 1. New chat\n  2. Resume").kind, "modal", "un diálogo de verdad sigue siendo modal");
+  assert.equal(inputBoxState("• le dije a Steven: keep waiting. No action is required\n› 1. Yes, proceed (y)\n  2. No").kind, "modal",
+    "las palabras del aviso en el historial no convierten un diálogo real en espera");
+});

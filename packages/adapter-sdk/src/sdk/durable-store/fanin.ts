@@ -275,7 +275,8 @@ export class DurableStoreFanin extends DurableStoreBase {
   notificationHistory(): readonly InboxRecord[] {
     const records = new Map(this.terminalHistory.notices().map(record => [record.delivery_id, record]));
     for (const record of Object.values(this.inbox.deliveries)) records.set(record.delivery_id, record);
-    return [...records.values()].filter(record => (record.output?.notify.length ?? 0) > 0).map(clone);
+    return [...records.values()] // July records predate `notify`: they sent nothing, not an error
+      .filter(record => Array.isArray(record.output?.notify) && record.output.notify.length > 0).map(clone);
   }
 
   pendingDeliveries(): readonly InboxRecord[] {

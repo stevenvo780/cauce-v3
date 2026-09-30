@@ -77,7 +77,7 @@ async function codexWorkspace(name: string): Promise<{
 }
 
 function codexRunner(
-  options: { alias: string; codexHome: string; tmux: FakeTmux },
+  options: { alias: string; codexHome: string; tmux: FakeTmux; sleep?: (ms: number) => Promise<void> },
 ): PasteSessionRunner<RolloutLine> {
   options.tmux.sessionName = `cauce-${options.alias}`;
   if (options.tmux.sessionOptions.size === 0) options.tmux.paneStartCommand = "exec codex";
@@ -87,7 +87,7 @@ function codexRunner(
     workspace: "/workspace",
     transcript: codexTranscript(options.codexHome),
     tmux: options.tmux,
-    sleep: immediate,
+    sleep: options.sleep ?? immediate,
     acquireTimeoutMs: 30,
     turnTimeoutMs: 2_000,
     injectTimeoutMs: 20,
@@ -347,4 +347,26 @@ test("cancelar durante el preflight corta después del await y no ejecuta ningú
   assert.equal(outcome.harnessStarted, false);
   assert.equal(tmux.used("load-buffer"), false);
   assert.equal(tmux.calls.some((call) => call.includes("Enter")), false);
+});
+
+test("codex pensando («Dismiss and keep waiting») se espera y el turno del bus entra cuando se cierra el aviso", async () => {
+  const { state, codexHome, rollout } = await codexWorkspace("codex-pensando");
+  const tmux = new FakeTmux();
+  tmux.paneContent = [
+    "  Giving this request a little extra thought",
+    "› 1. Dismiss and keep waiting",
+    "  2. Learn more",
+    "  No action is required. Codex will keep waiting, and this menu will close when the response is ready.",
+  ].join("\n");
+  setTimeout(() => { tmux.paneContent = "› "; }, 200); // ~7× the 30 ms the box would otherwise get
+  const turnId = "019fb910-ddd9-7d80-af14-8cb69357d918";
+  tmux.onSubmit = async (text) => {
+    await appendFile(rollout, `${[codexStarted(turnId), codexUser(text, turnId),
+      codexComplete(turnId, envelopeText("tras pensar"))].join("\n")}\n`);
+  };
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux,
+    sleep: () => new Promise((done) => { setTimeout(done, 5); }) });
+  const output = await execute(await adapterFor(runner, state, "socrates", "codex"));
+  assert.equal(output.reply, "tras pensar");
+  assert.equal(tmux.submittedCount, 1);
 });

@@ -12,8 +12,9 @@ export async function noticeHistoryFor(
     || delivery.body.type === "agent.message" || delivery.body.type === "agent.response"
     || delivery.body.type === "agent.fanin") return undefined;
   const reply = objectRecord(origin.metadata.reply_to);
-  const records = store.notificationHistory();
-  try {
+  let records: ReturnType<DurableStore["notificationHistory"]> = [];
+  try { // The history is context, not the turn: nothing in it may cost the delivery.
+    records = store.notificationHistory();
     const scope = { tenant_id: tenant, alias: delivery.recipient_alias, adapter: origin.adapter,
       channel: origin.channel, conversation_id: origin.conversation_id,
       ...(typeof reply?.message_id === "string" ? { reply_to_message_id: reply.message_id } : {}),
@@ -23,6 +24,6 @@ export async function noticeHistoryFor(
     return pertinentNotices(records, scope, receipts, now);
   } catch {
     return { source: "unavailable", selection: "recent", records: [],
-      unclassified: records.reduce((count, record) => count + (record.output?.notify.length ?? 0), 0) };
+      unclassified: records.reduce((count, record) => count + (Array.isArray(record.output?.notify) ? record.output.notify.length : 0), 0) };
   }
 }
