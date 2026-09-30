@@ -525,7 +525,7 @@ test("Hospital director fan-in sends a short human reply without raw branch repo
   assert.equal(context.runner.calls, 0);
   assert.equal(context.events.at(-1)?.phase, "failed");
   assert.equal(context.events.at(-1)?.output?.status, "failed");
-  assert.match(reply, /Falta un resumen verificado del director/u);
+  assert.match(reply, /Todavía no tengo un resumen propio y verificado/u);
   assert.doesNotMatch(reply, /raw backend|raw frontend|teseo|perseo|branch response/u);
   assert.ok(Buffer.byteLength(reply, "utf8") < 200);
 });
@@ -592,7 +592,7 @@ test("Hospital director fan-in preserves a clear local conclusion without raw br
   await context.engine.handleDelivery(fanin);
 
   const reply = context.events.at(-1)?.output?.reply ?? "";
-  assert.equal(reply, "El cierre sigue pendiente de verificación. Avance confirmado por el director: El backend avanzó, pero todavía falta comprobar el acceso entre clínicas.");
+  assert.equal(reply, "Todavía no lo doy por cerrado: me falta revisar parte de lo que entregó el equipo. Lo que ya está: El backend avanzó, pero todavía falta comprobar el acceso entre clínicas.");
   assert.equal(context.events.at(-1)?.phase, "failed");
   assert.equal(context.events.at(-1)?.output?.status, "failed");
   assert.doesNotMatch(reply, /raw backend|sha256|locally synthesized/u);

@@ -202,7 +202,7 @@ export function synthesizeFaninOutput(
   if (processedReplies.length === 0) {
     return {
       reply: options.humanFacingReceipt === true
-        ? "Falta un resumen verificado del director. No puedo confirmar que este trabajo esté terminado."
+        ? "Todavía no tengo un resumen propio y verificado de este trabajo, así que no lo doy por terminado."
         : renderAttributedSection(
           heading,
           responses,
@@ -259,9 +259,9 @@ export function synthesizeFaninOutput(
     return {
       reply: reviewUnconfirmed
         ? summary === undefined
-          ? "No hay un cierre verificado del director. Los informes del equipo quedaron registrados, pero no puedo confirmar que este trabajo esté terminado."
-          : `El cierre sigue pendiente de verificación. Avance confirmado por el director: ${summary}`
-        : summary ?? "El director todavía no dio un resumen claro del resultado. No puedo dar el trabajo por terminado.",
+          ? "Los informes del equipo quedaron registrados, pero todavía no los revisé todos, así que no doy este trabajo por terminado."
+          : `Todavía no lo doy por cerrado: me falta revisar parte de lo que entregó el equipo. Lo que ya está: ${summary}`
+        : summary ?? "Todavía no tengo un resumen claro del resultado, así que no doy el trabajo por terminado.",
       messages: [], notify: [], status: verified ? "done" : "failed", retryable: false, artifacts: [],
     };
   }

@@ -86,8 +86,9 @@ test("a lead turn that covers every branch still carries the counting footer", (
 test('human presentation is concise and reports review gaps without raw branches', () => {
   assert.equal(synthesizedFixture(false, true), 'Locally synthesized.');
   const reply = synthesizedFixture(true, true);
-  assert.match(reply, /^El cierre sigue pendiente de verificación\. Avance confirmado por el director: Locally synthesized\.$/u);
+  assert.match(reply, /^Todavía no lo doy por cerrado: me falta revisar parte de lo que entregó el equipo\. Lo que ya está: Locally synthesized\.$/u);
   assert.doesNotMatch(reply, /unsynthesized branch|without local synthesis|Steven\/socrates|\\n/u);
+  assert.doesNotMatch(reply, /director/iu);
   assert.ok(Buffer.byteLength(reply, "utf8") < 250);
 });
 
@@ -145,7 +146,7 @@ test('human presentation does not publish a technical local reply even if fully 
       childDeliveryId: '40000000-0000-4000-8000-000000000001',
     }],
   }).reply ?? '';
-  assert.equal(reply, 'El director todavía no dio un resumen claro del resultado. No puedo dar el trabajo por terminado.');
+  assert.equal(reply, 'Todavía no tengo un resumen claro del resultado, así que no doy el trabajo por terminado.');
 });
 
 test('human presentation with no local director review never publishes branch text', () => {
@@ -155,7 +156,7 @@ test('human presentation with no local director review never publishes branch te
       responses: [{ tenant_id: 'Hospital', alias: 'teseo', untrusted_text: 'private raw details' }],
     },
   }, { humanFacingReceipt: true }).reply ?? '';
-  assert.match(reply, /Falta un resumen verificado del director/u);
+  assert.match(reply, /Todavía no tengo un resumen propio y verificado/u);
   assert.doesNotMatch(reply, /private raw details|teseo/u);
 });
 
@@ -178,7 +179,7 @@ test('human presentation requires proof for older reviews and omitted branches',
       { tenantId: 'Hospital', alias: 'teseo', reply: 'backend done' },
     ],
   }).reply ?? '';
-  assert.match(reply, /^El cierre sigue pendiente de verificación\. Avance confirmado por el director: frontend done$/u);
+  assert.match(reply, /^Todavía no lo doy por cerrado: me falta revisar parte de lo que entregó el equipo\. Lo que ya está: frontend done$/u);
   assert.doesNotMatch(reply, /backend done|private frontend report/u);
 });
 
@@ -199,7 +200,7 @@ test('human presentation does not silently discard an uncarried local review', (
       { tenantId: 'Hospital', alias: 'teseo', reply: 'older backend details' },
     ],
   }).reply ?? '';
-  assert.match(reply, /^El cierre sigue pendiente de verificación\. Avance confirmado por el director: latest frontend details$/u);
+  assert.match(reply, /^Todavía no lo doy por cerrado: me falta revisar parte de lo que entregó el equipo\. Lo que ya está: latest frontend details$/u);
   assert.doesNotMatch(reply, /backend details|private raw report/u);
 });
 
