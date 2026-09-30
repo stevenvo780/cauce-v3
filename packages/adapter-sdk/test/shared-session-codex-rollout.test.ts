@@ -140,7 +140,7 @@ test("codex ignora un rollout headless ajeno y rescata sólo el sobre con su non
     `${rolloutLine("session_meta", { session_id: headlessSessionId })}\n`,
   );
   const tmux = new FakeTmux();
-  tmux.paneContent = "› \nEsc to interrupt\n";
+  tmux.paneContent = "› \n"; // idle: codex only takes the box between turns (the merge can still race in)
   tmux.onSubmit = async (text) => {
     await appendFile(
       headless,
@@ -369,4 +369,23 @@ test("codex pensando («Dismiss and keep waiting») se espera y el turno del bus
   const output = await execute(await adapterFor(runner, state, "socrates", "codex"));
   assert.equal(output.reply, "tras pensar");
   assert.equal(tmux.submittedCount, 1);
+});
+
+test("codex no pega sobre un turno en vuelo del dueño: lo espera (socrates 2026-09-30, el canario cerró su turno)", async () => {
+  const { state, codexHome, rollout } = await codexWorkspace("codex-turno-del-duenno");
+  const tmux = new FakeTmux();
+  tmux.paneContent = "◦ Working (1h 19m 21s • esc to interrupt)\n» Ask Codex to do anything\n";
+  let submittedWhileWorking = false;
+  setTimeout(() => { tmux.paneContent = "› "; }, 200);
+  const turnId = "019fb910-ddd9-7d80-af14-8cb69357d919";
+  tmux.onSubmit = async (text) => {
+    submittedWhileWorking = tmux.paneContent.includes("esc to interrupt");
+    await appendFile(rollout, `${[codexStarted(turnId), codexUser(text, turnId),
+      codexComplete(turnId, envelopeText("después del dueño"))].join("\n")}\n`);
+  };
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux,
+    sleep: () => new Promise((done) => { setTimeout(done, 5); }) });
+  const output = await execute(await adapterFor(runner, state, "socrates", "codex"));
+  assert.equal(submittedWhileWorking, false, "pegó dentro del turno del dueño");
+  assert.equal(output.reply, "después del dueño");
 });

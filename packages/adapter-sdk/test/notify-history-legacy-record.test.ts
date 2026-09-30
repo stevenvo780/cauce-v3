@@ -12,7 +12,7 @@ import { ControlledRunner, delivery, originless } from "./engine-fixtures.js";
 import { scope } from "./notify-history-fixtures.js";
 
 /**
- * socrates 2026-09-29: 177 inbox records from July predate `output.notify`. Reading the notice
+ * socrates: 177 inbox records from July predate `output.notify`. Reading the notice
  * history hit `record.output.notify.length` on them and every human-channel delivery died in
  * 0.35 s as INTERNAL, while agent deliveries (no origin, no history) went through.
  */
