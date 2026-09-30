@@ -6,6 +6,7 @@ import {
   EmissionTurn, toolArguments, type EmissionGateway, type EmissionTurnOptions,
 } from "./tools.js";
 import { answerDecisiones, type DecisionesForwarder } from "./decisiones.js";
+import { readResult, sendOutsideDelivery, type EmissionIdentity } from "./outside-delivery.js";
 
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 export interface EmissionToolResult {
@@ -23,13 +24,17 @@ export class EmissionRuntime {
   private server: Server | undefined;
   private readonly turns = new Set<EmissionTurn>();
   private tail: Promise<unknown> = Promise.resolve();
+  private deliveriesInFlight: (() => number) | undefined; // Unset means unknown: never publish a root blind.
 
   constructor(
     readonly stateDirectory: string,
     readonly instanceId: string,
     readonly gateway: EmissionGateway,
     readonly decisiones?: DecisionesForwarder,
+    readonly identity?: EmissionIdentity,
   ) { this.socketPath = join(stateDirectory, "mcp-emission.sock"); }
+
+  trackDeliveries(count: () => number): void { this.deliveriesInFlight = count; }
 
   begin(options: Omit<EmissionTurnOptions, "persist" | "gateway" | "instanceId">): EmissionTurn {
     const turn = new EmissionTurn({ ...options, gateway: this.gateway, instanceId: this.instanceId,
@@ -63,12 +68,17 @@ export class EmissionRuntime {
   call(name: string, args: unknown, scope?: EmissionCallScope): Promise<EmissionToolResult> {
     // Capture the scope before queueing: an old request must never mutate a later turn.
     const turn = scope === undefined ? this.currentTurn() : scope.turn;
+    // A root is published only when nothing at all is in flight: no turn (not even an inactive one), no call scoped to a turn, no delivery in the engine.
+    const outsideDelivery = this.turns.size === 0 && (scope?.token ?? null) === null && this.deliveriesInFlight?.() === 0;
     const operation = this.tail.then(async (): Promise<EmissionToolResult> => {
       try {
         const parsed = toolArguments(name, args);
         let value: unknown;
         if (name === "cauce_queue") value = await this.gateway("GET", "/v3/agent/queue");
-        else {
+        else if (name === "cauce_result") value = await readResult(this.gateway, parsed);
+        else if (name === "cauce_send" && turn === undefined && outsideDelivery && this.identity !== undefined) {
+          value = await sendOutsideDelivery(this.gateway, this.identity, parsed);
+        } else {
           if (turn === undefined) throw new Error("No unique active turn; wait for a Cauce delivery");
           if (scope !== undefined && scope.token !== turn.token) throw new Error("The MCP call belongs to a different turn; nothing was deposited");
           value = await turn.call(name, parsed);

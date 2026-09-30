@@ -34,6 +34,9 @@ export const DEFAULT_DELEGATION_CAPS: DelegationCaps = {
   maxDelegationsPerRoot: 64
 };
 
+export const AGENT_ROOT_DELEGATIONS = 16; // Fuel of a root published by an agent principal, below any higher policy cap.
+export const AGENT_ROOT_OPEN_LIMIT = 8; // Open roots per agent principal; a slot frees when all of a root's deliveries are terminal.
+
 export const DISABLED_DELEGATION_CAPS: DelegationCaps = {
   ...DEFAULT_DELEGATION_CAPS,
   enabled: false

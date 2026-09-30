@@ -7,7 +7,7 @@ import {
 } from '@cauce/protocol';
 import { PublishIntentExpiredError, StoreError } from '@cauce/store';
 import {
-  AuthorizationError, requireOperatorPermission, requirePermission, type AuthProvider,
+  AuthorizationError, isAgentPrincipal, requireOperatorPermission, requirePermission, type AuthProvider,
 } from '../../auth.js';
 import type { ConsolePublishTelemetry } from '../../console-publish-telemetry.js';
 import type { GatewayRepository } from '../../app.js';
@@ -87,6 +87,7 @@ export function registerCorePublishRoutes(
       const receipt = validatedPublishReceipt(
         await repository.publish(trustedCommand, {
           requirePreparedConsoleIntent: consolePublish,
+          ...(!consolePublish && !systemGateProbe && isAgentPrincipal(actor) ? { agentRoot: true } : {}),
           ...(consolePublish
             ? { consoleIntentOperatorScope: consolePublishOperatorScope(actor) }
             : {}),

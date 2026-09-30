@@ -49,7 +49,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
     }
     const {
       internalAgentDelivery, hopBudget, hopCount, rootRequestId, rootMessageId,
-      rootDeliveryId, visitedPath
+      rootDeliveryId, visitedPath, agentRoot
     } = await deriveMaterializationLineage(client, row, policy);
 
     // An open human gate suspends the root. FOR SHARE interlocks with answering it, so no
@@ -226,7 +226,8 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         policy,
         rootMessageId,
         chainNode(row.recipient_tenant, row.recipient_alias),
-        targetNode
+        targetNode,
+        agentRoot
       );
       if (capacityRejection !== undefined) {
         await reject(capacityRejection.code, {

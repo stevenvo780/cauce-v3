@@ -85,6 +85,7 @@ export class AdapterEngine {
   constructor(options: AdapterEngineOptions) {
     this.egressReceipts = options.egressReceipts;
     this.emission = options.emission;
+    this.emission?.trackDeliveries(() => this.tasks.size);
     this.store = options.store;
     this.harness = options.harness;
     this.publishEvent = options.publish;

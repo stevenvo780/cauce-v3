@@ -2,7 +2,7 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { readBearerTokenFile, readOwnerOnlyFile } from "../secure-files.js";
 import type { loadCliRuntimeConfig } from "../../bin/config.js";
-import type { EmissionGateway } from "./tools.js";
+import { EmissionGatewayError, type EmissionGateway } from "./tools.js";
 
 export function emissionGateway(runtime: Awaited<ReturnType<typeof loadCliRuntimeConfig>>): EmissionGateway {
   const base = new URL(runtime.relayUrl);
@@ -38,7 +38,7 @@ export function emissionGateway(runtime: Awaited<ReturnType<typeof loadCliRuntim
             if (response.statusCode === undefined || response.statusCode >= 300) {
               const message = typeof parsed === "object" && parsed !== null && "error" in parsed
                 ? String(parsed.error) : "request rejected";
-              throw new Error(`Gateway HTTP ${String(response.statusCode)}: ${message}`);
+              throw new EmissionGatewayError(`Gateway HTTP ${String(response.statusCode)}: ${message}`, response.statusCode ?? 0, parsed);
             }
             resolve(parsed);
           } catch (error) { reject(error instanceof Error ? error : new Error("Invalid gateway response")); }

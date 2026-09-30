@@ -30,6 +30,7 @@ import {
   type PublishResult,
 } from './contracts.js';
 import { reconstructPublishReceipt } from './receipts.js';
+import { assertAgentRootSlot, lockAgentRootActor } from './agent-roots.js';
 import type { MessageDetailRow } from '../visibility-rows.js';
 
 // The BUS writes this, not the agent: first person made it a lie through an 8 h outage.
@@ -166,6 +167,8 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
         }
       }
 
+      const agentRoot = options.agentRoot === true;
+      if (agentRoot) await lockAgentRootActor(client, input.tenant_id, input.actor_alias);
       const hash = publishRequestHash(input);
       const insertedKey = await client.query(
         `INSERT INTO idempotency_keys(
@@ -218,6 +221,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
         );
         return { ...repaired, duplicate: true };
       }
+      if (agentRoot) await assertAgentRootSlot(client, input.tenant_id, input.actor_alias);
 
       const authenticated = input.authenticated_context;
       const persistedOrigin = authenticated?.origin ?? input.origin;
@@ -363,7 +367,8 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
            JSON.stringify({
              recipients: uniqueRecipients,
              authenticated_session_id: authenticated?.session_id ?? input.session_id,
-             authenticated_channel: authenticated?.channel ?? input.channel
+             authenticated_channel: authenticated?.channel ?? input.channel,
+             ...(agentRoot ? { agent_root: true } : {})
            })]
       );
       return response;
@@ -386,7 +391,9 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
               COALESCE(jsonb_agg(jsonb_build_object(
          'delivery_id',d.id,'tenant_id',d.recipient_tenant,'alias',d.recipient_alias,
          'status',d.status,'attempt',d.attempt,'terminal_at',d.terminal_at
-       ) ORDER BY d.created_at) FILTER (WHERE d.id IS NOT NULL), '[]'::jsonb) AS deliveries
+       ) || CASE WHEN m.tenant_id=$2 AND m.actor_alias=$3 -- only the sender reads what it asked for
+            THEN jsonb_build_object('reply',d.result->'output'->>'reply') ELSE '{}'::jsonb END
+       ORDER BY d.created_at) FILTER (WHERE d.id IS NOT NULL), '[]'::jsonb) AS deliveries
        FROM messages m LEFT JOIN deliveries d ON d.message_id=m.id AND (
          EXISTS (SELECT 1 FROM memberships source_member
                  WHERE source_member.tenant_id=$2 AND source_member.room_id=m.room_id

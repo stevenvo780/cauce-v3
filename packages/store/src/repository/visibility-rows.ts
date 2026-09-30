@@ -34,6 +34,7 @@ export type MessageDetailDeliveryRow = {
   status: string;
   attempt: number;
   terminal_at: string | null;
+  reply?: string | null;
 };
 
 export type MessageDetailRow = {
