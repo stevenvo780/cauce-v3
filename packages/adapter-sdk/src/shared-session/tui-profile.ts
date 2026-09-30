@@ -21,11 +21,12 @@ export function tuiProfile(harness: SharedSessionHarness): TuiProfile {
         pasteOnlyWhenIdle: false,
         clearCommand: "/clear",
       };
+    // codex 0.159 STEERS a paste into the running turn: socrates answered a bus canary inside the owner's 1 h 28 m turn and closed it without the owner's summary.
     case "codex":
       return {
         interruptKey: "Escape",
         interruptOnlyWhileGenerating: false,
-        pasteOnlyWhenIdle: false,
+        pasteOnlyWhenIdle: true,
         clearCommand: "/new",
       };
     case "grok":

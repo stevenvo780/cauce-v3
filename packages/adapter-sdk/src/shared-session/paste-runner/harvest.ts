@@ -43,6 +43,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     let activeIdentity = identity;
     const budget = turnBudgetMs(request.timeoutMs, this.options.turnTimeoutMs);
     const deadline = Date.now() + budget;
+    const noProgress = request.timeoutKind === "no-progress";
     const injectTimeoutMs = this.options.injectTimeoutMs ?? DEFAULT_INJECT_TIMEOUT_MS;
     const injectDeadline = Date.now() + injectTimeoutMs;
     const correlationDeadline = Date.now()
@@ -52,6 +53,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     let started = false;
     // Last time the transcript grew; distinguishes "paste was lost" (nothing writes) from "paste merged with an in-flight turn" (terminal writes the whole time). See DEFAULT_QUIET_MS.
     let lastActivityAt = Date.now();
+    let lastTranscriptGrowthAt = lastActivityAt; // the pane's spinner is not progress: a frozen TUI keeps painting it
     // Sizes seen on the previous poll: `scan.activity` compares against the PRE-paste baseline, so activity has to be growth since the last poll, or it would stay true forever once anything wrote.
     const seenSizes = new Map(baseline);
     // Long-conversation transcripts weigh megabytes and a turn may run for an hour, so we only re-read the whole file on growth — re-reading every poll would cost more than the turn itself.
@@ -125,7 +127,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           if (scan.activity) {
             const moved = await beforeAbort(() => this.transcriptMoved(seenSizes), request.signal);
             if (moved.aborted) continue;
-            if (moved.value) lastActivityAt = Date.now();
+            if (moved.value) lastActivityAt = lastTranscriptGrowthAt = Date.now();
           }
           injected = scan.injected;
           if (injected !== undefined) {
@@ -160,7 +162,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           const measured = await beforeAbort(() => fileSize(injectedTurn.file), request.signal);
           if (measured.aborted) continue;
           lastSize = measured.value;
-          lastActivityAt = Date.now();
+          lastActivityAt = lastTranscriptGrowthAt = Date.now();
           const read = await beforeAbort(
             () => port.read(injectedTurn.file, baseline.get(injectedTurn.file) ?? 0),
             request.signal,
@@ -309,7 +311,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           }
         }
 
-        if (Date.now() >= deadline) {
+        if (Date.now() >= (noProgress ? lastTranscriptGrowthAt + budget : deadline)) {
           // Final sweep before declaring it dead: if the envelope arrived, the delivery does not die.
           const rescued = await beforeAbort(
             () => this.lastEnvelope(baseline, injected, correlationId),
@@ -329,7 +331,9 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           return {
             result: await this.quarantineTimedOut(
               activeIdentity,
-              "budget ended with no correlated outcome for the already-injected turn",
+              noProgress
+                ? `the transcript did not advance for ${String(Math.round(budget / 60_000))} min; the turn is declared hung`
+                : "budget ended with no correlated outcome for the already-injected turn",
               pending,
             ),
             terminalBoundary: false,

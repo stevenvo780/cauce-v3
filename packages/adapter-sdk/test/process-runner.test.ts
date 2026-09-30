@@ -152,3 +152,52 @@ test("output limit after spawn is explicitly ambiguous and non-retryable", async
       && !error.retryable,
   );
 });
+
+const progressingChild = `
+  const until = Date.now() + 1_500;
+  const tick = setInterval(() => {
+    process.stderr.write("<<cauce:progress>>\\n");
+    if (Date.now() >= until) { clearInterval(tick); process.stdout.write("done"); }
+  }, 100);
+`;
+
+test("a turn that keeps advancing outlives its no-progress window as many times as it needs", async () => {
+  const result = await new SpawnCommandRunner({ killGraceMs: 15 }).run({
+    command: process.execPath,
+    args: ["--eval", progressingChild],
+    harness: "fake",
+    stdin: "",
+    timeoutMs: 300,
+    timeoutKind: "no-progress",
+    signal: new AbortController().signal,
+  });
+  assert.equal(result.timedOut, false,
+    "a live turn is never cut by its duration: the 45-min and 30-min caps killed turns that were still working (29-09)");
+  assert.equal(result.stdout, "done");
+  assert.doesNotMatch(result.stderr, /<<cauce:progress>>/u, "progress marks are transport, not harness output");
+});
+
+test("a silent turn dies once its no-progress window passes", async () => {
+  const result = await new SpawnCommandRunner({ killGraceMs: 15 }).run({
+    command: process.execPath,
+    args: ["--eval", "setTimeout(() => {}, 60_000)"],
+    harness: "fake",
+    stdin: "",
+    timeoutMs: 300,
+    timeoutKind: "no-progress",
+    signal: new AbortController().signal,
+  });
+  assert.equal(result.timedOut, true, "a hung harness does not raise an error; it goes quiet");
+});
+
+test("a sender-requested hard timeout still caps a chatty turn", async () => {
+  const result = await new SpawnCommandRunner({ killGraceMs: 15 }).run({
+    command: process.execPath,
+    args: ["--eval", progressingChild],
+    harness: "fake",
+    stdin: "",
+    timeoutMs: 300,
+    signal: new AbortController().signal,
+  });
+  assert.equal(result.timedOut, true, "body.timeout_ms is the sender's explicit cap and keeps wall-clock semantics");
+});

@@ -1,8 +1,8 @@
 import { exponentialBackoff, MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs } from '@cauce/protocol';
 import { StoreError } from '../errors.js';
 
-/** Total lifetime ceiling of a delivery attempt when the message does not declare `body.timeout_ms`. */
-export const DEFAULT_DELIVERY_LEASE_CAP_MS = 12 * 60 * 60_000;
+/** No clock without `body.timeout_ms` (protocol max): the ACK deadline catches the dead, the adapter the hung. */
+export const DEFAULT_DELIVERY_LEASE_CAP_MS = MAX_MESSAGE_TIMEOUT_MS;
 
 /** Additional margin over `body.timeout_ms` to cover session waits and ACK delivery. */
 export const DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS = 30 * 60_000;

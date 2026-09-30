@@ -112,7 +112,8 @@ test("CLI selects an alias configuration containing credential paths only", asyn
   assert.equal(config.bearerTokenFile, resolve(root, "credentials/cauce.token"));
   assert.equal(config.mutualTls?.keyFile, resolve(root, "credentials/client.key"));
   assert.equal(config.openClaw?.tokenFile, resolve(root, "credentials/openclaw.token"));
-  assert.equal(config.defaultTimeoutMs, 86_400_000);
+  assert.equal(config.defaultTimeoutMs, 3 * 60 * 60_000,
+    "without timeout_ms the default is a no-progress window, not a duration cap");
 });
 
 test("CLI configuration rejects inline secrets and production dev headers", async () => {

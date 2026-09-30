@@ -466,8 +466,10 @@ export abstract class PasteSessionRunnerBase<E> {
     this.lastPanePid = pid;
   }
 
-  protected acquireWait(requestTimeoutMs: number): AcquireWait {
+  protected acquireWait(requestTimeoutMs: number, noProgress = false): AcquireWait {
     const now = Date.now();
+    // Without a clock (no-progress budget) another turn visibly in flight is waited for, never timed out.
+    if (noProgress) return { freeSince: now, generatingDeadline: Number.POSITIVE_INFINITY };
     const generatingMs = Math.min(
       Math.max(1, requestTimeoutMs),
       Math.max(
@@ -507,7 +509,7 @@ export abstract class PasteSessionRunnerBase<E> {
       const state = inputBoxState(pane);
       // grok queues a paste made while it generates and runs it later as its own turn: the box
       // is only "free" for it when no turn is in flight. See `tuiProfile`.
-      const generating = queuesPaste && turnInFlight(pane);
+      const generating = (queuesPaste && turnInFlight(pane)) || state.thinking === true;
       // The pane we decided to paste into is the one to inspect for merged turn: recapturing later
       // would be a different moment.
       if (!state.occupied && !generating) return { ok: true, pane };

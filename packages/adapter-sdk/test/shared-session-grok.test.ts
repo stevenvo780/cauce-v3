@@ -303,3 +303,19 @@ test("grok: el lector sólo lista updates.jsonl de carpetas de sesión, de todos
     `/sessions/%2Fhome%2Fclaw/${log.sessionId}/updates.jsonl`,
   ]);
 });
+
+test("grok: sin reloj (no-progress) un turno ajeno en vuelo se espera, no se rinde con tui_generating", async () => {
+  const { grokHome } = await grokWorkspace("grok-generando-sin-reloj");
+  const tmux = new GrokTmux();
+  tmux.paneContent = grokFrame({ footer: "tool", spinner: THINKING });
+  const runner = grokRunner({ grokHome, tmux, sleep: () => new Promise((done) => { setTimeout(done, 5); }) });
+  const controller = new AbortController();
+  setTimeout(() => { controller.abort(); }, 400); // 10× the 40 ms `generatingWaitMs` of the fixture
+  const outcome = await runner.run({
+    command: "grok", args: [], harness: "grok", stdin: "pedido", timeoutMs: 2_000, timeoutKind: "no-progress",
+    signal: controller.signal,
+  });
+  assert.equal(outcome.cancelled, true, "se rindió en vez de esperar su turno");
+  assert.equal(runner.takeDegradation(), undefined);
+  assert.equal(tmux.submittedCount, 0);
+});

@@ -13,7 +13,10 @@ import {
 import {
   FakeTmux,
   assertExecutionPrevented,
+  assistantEntry,
   claudeRunner,
+  correlationIdFromPrompt,
+  envelopeText,
   freshState,
   userEntry,
 } from "./shared-session-fixtures.js";
@@ -154,6 +157,88 @@ test("el timeout general con turno correlacionado bloquea la generación hasta u
   });
   assertExecutionPrevented(runner, second, "session_identity_unverified");
   assert.equal(tmux.submittedCount, 1);
+});
+
+test("un turno que sigue escribiendo su registro sobrevive a su ventana sin progreso tantas veces como haga falta", async () => {
+  const { home, workspace } = await freshState("sin-progreso-vivo");
+  const directory = transcriptDirectory(home, workspace);
+  const sessionId = randomUUID();
+  const file = join(directory, `${sessionId}.jsonl`);
+  const head = randomUUID();
+  await appendFile(file, `${userEntry(head, null, "turno previo", sessionId)}\n`);
+  const tmux = new FakeTmux();
+  tmux.onSubmit = async (text) => {
+    const user = randomUUID();
+    await appendFile(file, `${userEntry(user, head, text, sessionId)}\n`);
+    tmux.paneContent = "✻ Working… (esc to interrupt)\n❯ ";
+    let parent = user;
+    void (async () => {
+      for (let step = 0; step < 12; step += 1) {
+        await new Promise((done) => setTimeout(done, 40));
+        const uuid = randomUUID();
+        await appendFile(file, `${assistantEntry(uuid, parent, `paso ${String(step)}`, sessionId, "tool_use")}\n`);
+        parent = uuid;
+      }
+      await appendFile(file, `${assistantEntry(randomUUID(), parent, envelopeText("turno largo terminado", correlationIdFromPrompt(text)), sessionId)}\n`);
+    })();
+  };
+  const runner = claudeRunner({
+    alias: "kratos", home, workspace, tmux,
+    sleep: (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, Math.max(ms, 1))),
+  });
+  const outcome = await runner.run({
+    command: "claude", args: [], harness: "claude", stdin: "turno largo con avance",
+    timeoutMs: 150, timeoutKind: "no-progress", signal: new AbortController().signal,
+  });
+  assert.equal(outcome.timedOut, false,
+    "un turno vivo no muere por su duración: el techo de reloj mataba turnos que seguían trabajando (29-09)");
+  assert.match(outcome.stdout, /turno largo terminado/u);
+});
+
+test("un panel congelado con el spinner pintado y el registro quieto también muere por falta de progreso", async () => {
+  const { home, workspace } = await freshState("sin-progreso-spinner");
+  const tmux = new FakeTmux();
+  tmux.sessionName = "cauce-zeus";
+  tmux.onSubmit = async () => {
+    tmux.paneContent = "✻ Working… (esc to interrupt)\n❯ ";
+  };
+  const runner = new PasteSessionRunner({
+    alias: "zeus", harness: "claude", workspace,
+    transcript: claudeTranscript(join(home, ".claude"), workspace),
+    tmux, sleep: (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, Math.max(ms, 1))),
+    acquireTimeoutMs: 30, settleMs: 0, pollMs: 1, readyTimeoutMs: 30,
+    correlationTimeoutMs: 20, quietTimeoutMs: 20,
+  });
+  const outcome = await runner.run({
+    command: "claude", args: [], harness: "claude", stdin: "pegado que se funde con un panel congelado",
+    timeoutMs: 300, timeoutKind: "no-progress", signal: new AbortController().signal,
+  });
+  assert.equal(outcome.timedOut, true,
+    "the spinner keeps painting on a frozen TUI: only transcript growth may restart the hang window");
+});
+
+test("un turno correlacionado que deja de escribir muere al pasar su ventana sin progreso", async () => {
+  const { home, workspace } = await freshState("sin-progreso-colgado");
+  const directory = transcriptDirectory(home, workspace);
+  const sessionId = randomUUID();
+  const file = join(directory, `${sessionId}.jsonl`);
+  const head = randomUUID();
+  await appendFile(file, `${userEntry(head, null, "turno previo", sessionId)}\n`);
+  const tmux = new FakeTmux();
+  tmux.onSubmit = async (text) => {
+    await appendFile(file, `${userEntry(randomUUID(), head, text, sessionId)}\n`);
+    tmux.paneContent = "✻ Working… (esc to interrupt)\n❯ ";
+  };
+  const runner = claudeRunner({
+    alias: "kratos", home, workspace, tmux,
+    sleep: (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, Math.max(ms, 1))),
+  });
+  const outcome = await runner.run({
+    command: "claude", args: [], harness: "claude", stdin: "turno que se cuelga",
+    timeoutMs: 100, timeoutKind: "no-progress", signal: new AbortController().signal,
+  });
+  assert.equal(outcome.timedOut, true, "un colgado no tira error: se queda callado, y eso es lo que se detecta");
+  assert.match(outcome.stderr, /did not advance.*declared hung/u);
 });
 
 // ---------------------------------------------------------------------------

@@ -93,7 +93,8 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
 
     // Paste and Enter must be a single operation from the owner's perspective: between checking
     // the input box is free and submitting it, no extra waits beyond what is strictly required.
-    const wait = this.acquireWait(turnBudgetMs(request.timeoutMs, this.options.turnTimeoutMs)); // One wait for all attempts.
+    const wait = this.acquireWait(turnBudgetMs(request.timeoutMs, this.options.turnTimeoutMs), // One wait for all attempts.
+      request.timeoutKind === "no-progress");
     let attempt: {
       readonly generating: boolean;
       readonly baseline: ReadonlyMap<string, number>;

@@ -16,7 +16,10 @@ interface InputBoxState {
   readonly kind: InputBoxKind;
   /** What was seen, for the notice detail. Already trimmed. */
   readonly evidence: string;
+  readonly thinking?: true; // codex's «extra thought» notice closes itself: a turn in flight
 }
+
+const THINKING_NOTICE = /^\d+\.\s+Dismiss and keep waiting\b/iu; // the menu option itself, not words in scrollback
 
 /** Recognition of numbered options in TUI modal dialogs. */
 const MODAL_OPTION = /^\d+\.\s/u;
@@ -47,6 +50,9 @@ export function inputBoxState(pane: string | undefined): InputBoxState {
   }
   if (promptLine.length === 0) return { occupied: false, kind: "free", evidence: "" };
   if (MODAL_OPTION.test(promptLine)) {
+    if (THINKING_NOTICE.test(promptLine)) {
+      return { occupied: true, kind: "busy", thinking: true, evidence: "la TUI está pensando (aviso de codex que se cierra solo)" };
+    }
     return {
       occupied: true,
       kind: "modal",
