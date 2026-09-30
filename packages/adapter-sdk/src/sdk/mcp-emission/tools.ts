@@ -20,7 +20,7 @@ export const EMISSION_TOOLS: Tool[] = [
     reply: { type: ["string", "null"] }, status: { enum: ["done", "failed"] }, retryable: { type: "boolean" },
   }, ["reply", "status", "retryable"]),
   tool("cauce_send", "Inside a Cauce delivery: stage a delegation to an online routing target; it is sent with this turn's successful final ACK."
-    + " With no delivery in flight (a turn typed in the TUI): publish it now as a new message to ONE alias of your own tenant; at most 8 stay open at once,"
+    + " With no delivery in flight and the last prompt of this TUI typed by a person (never a Cauce request): publish it now as a new message to ONE alias of your own tenant; at most 8 stay open at once,"
     + " their chains have reduced fuel and cannot come back to you, and the reply is not pushed back: read it with cauce_result(message_id).", { to: string, body: string }, ["to", "body"]),
   tool("cauce_notify", "Stage a notification to a configured human destination handle.", {
     to: string, kind: { enum: NOTIFY_KINDS }, body: string,

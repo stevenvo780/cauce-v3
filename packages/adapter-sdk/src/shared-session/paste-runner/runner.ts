@@ -3,6 +3,7 @@ import { signalAborted } from "../../runtime-state.js";
 import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js";
 import { correlateEnvelopePrompt } from "../envelope.js";
 import { turnInFlight } from "../pane.js";
+import { lastPromptOrigin, type PromptOrigin } from "../prompt-origin.js";
 import { ensureSharedSession, type EnsureFailure, type EnsureOptions } from "../session.js";
 import { TUI_WINDOW, sessionName } from "../types.js";
 import { tuiProfile } from "../tui-profile.js";
@@ -43,6 +44,8 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
   constructor(options: PasteSessionOptions<E>) { // eslint-disable-line @typescript-eslint/no-useless-constructor -- The public constructor exposes a constructible API over the protected base constructor.
     super(options);
   }
+
+  lastUserPromptOrigin(): Promise<PromptOrigin | undefined> { return lastPromptOrigin(this.options.transcript); }
 
   async run(request: CommandRunRequest): Promise<CommandRunResult> {
     this.pending = undefined;

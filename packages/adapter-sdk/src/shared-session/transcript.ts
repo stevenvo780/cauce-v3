@@ -21,6 +21,7 @@ export interface TranscriptEntry {
   readonly logicalParentUuid?: unknown;
   readonly compactMetadata?: unknown;
   readonly isSidechain?: unknown;
+  readonly isMeta?: unknown;
   readonly sessionId?: unknown;
   readonly message?: unknown;
 }
@@ -122,6 +123,18 @@ function matchesInjectedPrompt(text: string | undefined, promptText: string): bo
   if (text === promptText) return true;
   const inner = PASTED_CONTENT.exec(text)?.[2];
   return inner === promptText || inner === `${promptText}\n`;
+}
+
+function lastClaudePrompt(entries: readonly TranscriptEntry[]): string | undefined { // Harness-written user entries are nobody's.
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.type !== "user" || entry.isSidechain === true) continue;
+    const text = userText(entry);
+    if (text === undefined) continue; // A tool result, not a prompt.
+    if (entry.isMeta === true || text.startsWith("[Request interrupted")) return undefined;
+    return PASTED_CONTENT.exec(text)?.[2] ?? text;
+  }
+  return undefined;
 }
 
 /** Locates the user entry in the transcript whose text exactly matches the prompt. */
@@ -330,6 +343,7 @@ export function claudeTranscript(
         ? { kind: "answer", text: found.text }
         : { kind: "answer", text: found.text, sessionId: found.sessionId };
     },
+    lastUserPrompt: lastClaudePrompt,
     compactions: (appended) => compactBoundaries(appended).map((event) => {
       const tokens = event.preTokens === undefined || event.postTokens === undefined
         ? ""

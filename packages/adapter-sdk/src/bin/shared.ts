@@ -325,6 +325,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     decisionesForwarder(runtime.decisionesUrl, runtime.mutualTls),
     { tenant: runtime.tenant, room: runtime.room, alias: runtime.alias },
   );
+  if (runner instanceof PasteSessionRunner) emission.trackPromptOrigin(() => runner.lastUserPromptOrigin());
   try {
     configureDefaultBlobClient(BlobClient.fromRelayUrl(runtime.relayUrl, {
       ...(runtime.bearerTokenFile === undefined ? {} : { bearerTokenFile: runtime.bearerTokenFile }),

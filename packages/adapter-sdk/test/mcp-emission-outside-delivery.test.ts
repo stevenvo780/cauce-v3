@@ -12,6 +12,7 @@ import { HarnessAdapter, fakeDefinition } from "../src/harnesses/index.js";
 import { EmissionRuntime } from "../src/sdk/mcp-emission/runtime.js";
 import { EmissionGatewayError, type EmissionGateway } from "../src/sdk/mcp-emission/tools.js";
 import type { CommandRunner, Delivery } from "../src/sdk/types.js";
+import type { PromptOrigin } from "../src/shared-session/prompt-origin.js";
 import { FakeConnection, ScriptedConnector, renewableDelivery, waitUntil } from "./client-fixtures.js";
 
 const MESSAGE_ID = "11111111-1111-4111-8111-111111111111";
@@ -29,10 +30,13 @@ function recordingGateway(answer: (call: GatewayCall) => unknown = () => ({
   } };
 }
 
-async function runtimeWith(gateway: EmissionGateway, inFlight: number | null = 0) {
+async function runtimeWith(
+  gateway: EmissionGateway, inFlight: number | null = 0, origin: PromptOrigin | "unreadable" | null = "human",
+) {
   const directory = await mkdtemp(join(tmpdir(), "cauce-mcp-root-"));
   const runtime = new EmissionRuntime(directory, "instance-root", gateway, undefined, IDENTITY);
   if (inFlight !== null) runtime.trackDeliveries(() => inFlight);
+  if (origin !== null) runtime.trackPromptOrigin(async () => (origin === "unreadable" ? undefined : origin));
   return { runtime, close: async () => { await runtime.close(); await rm(directory, { recursive: true, force: true }); } };
 }
 
@@ -63,23 +67,53 @@ test("with no turn and no delivery, cauce_send publishes exactly one root in the
       room_id: "grp.steven", recipients: [{ tenant_id: "Steven", alias: "zeus" }],
       body: { text: "revisá el disco" }, lane: "interactive", idempotency_key: undefined,
     });
-    assert.match(String(body.idempotency_key), /^tui:[0-9a-f]{64}$/u);
+    assert.match(String(body.idempotency_key), /^tui:[0-9a-f-]{36}$/u);
     assert.match(textOf(result), new RegExp(MESSAGE_ID, "u"));
     assert.match(textOf(result), /cauce_result/u);
   } finally { await f.close(); }
 });
 
-test("the same send twice reuses the idempotency key; another text gets another key", async () => {
+test("sending the same text again is a new message; only a retry of the same MCP call reuses its key", async () => {
   const { calls, gateway } = recordingGateway();
   const f = await runtimeWith(gateway);
   try {
     await f.runtime.call("cauce_send", { to: "zeus", body: "uno" });
     await f.runtime.call("cauce_send", { to: "zeus", body: "uno" });
-    await f.runtime.call("cauce_send", { to: "zeus", body: "dos" });
+    const retried = { turn: undefined, token: null, callId: "shim-1:7" };
+    await f.runtime.call("cauce_send", { to: "zeus", body: "uno" }, retried);
+    await f.runtime.call("cauce_send", { to: "zeus", body: "uno" }, retried);
     const keys = calls.map((call) => (call.body as { idempotency_key: string }).idempotency_key);
-    assert.equal(keys[0], keys[1]);
-    assert.notEqual(keys[0], keys[2]);
+    assert.equal(keys.length, 4);
+    assert.notEqual(keys[0], keys[1]);
+    assert.equal(keys[2], keys[3]);
+    assert.notEqual(keys[2], keys[0]);
   } finally { await f.close(); }
+});
+
+test("a send the gateway reports as duplicate says so instead of claiming a new message", async () => {
+  const { gateway } = recordingGateway(() => ({ message_id: MESSAGE_ID, delivery_ids: [], duplicate: true }));
+  const f = await runtimeWith(gateway);
+  try {
+    const result = await f.runtime.call("cauce_send", { to: "zeus", body: "uno" });
+    assert.match(textOf(result), /ya se había hecho/u);
+    assert.doesNotMatch(textOf(result), /Enviado como mensaje nuevo/u);
+    assert.match(textOf(result), new RegExp(MESSAGE_ID, "u"));
+  } finally { await f.close(); }
+});
+
+test("only a prompt a person typed can send outside a delivery; a bus prompt, an unreadable log or no TUI refuse", async () => {
+  for (const [origin, message] of [
+    ["cauce", /pedido de Cauce/u], ["unreadable", /No pude confirmar/u], [null, /no tiene una terminal compartida/u],
+  ] as const) {
+    const { calls, gateway } = recordingGateway();
+    const f = await runtimeWith(gateway, 0, origin);
+    try {
+      const result = await f.runtime.call("cauce_send", { to: "zeus", body: "hola" });
+      assert.equal(result.isError, true, String(origin));
+      assert.match(textOf(result), message);
+      assert.deepEqual(calls, []);
+    } finally { await f.close(); }
+  }
 });
 
 test("a turn that exists but is not the unique active one never falls through to a root", async () => {
@@ -104,7 +138,12 @@ test("a delivery in flight in the engine, or no engine to ask, blocks the root",
     const { calls, gateway } = recordingGateway();
     const f = await runtimeWith(gateway, inFlight);
     try {
-      assert.equal((await f.runtime.call("cauce_send", { to: "zeus", body: "hola" })).isError, true);
+      const result = await f.runtime.call("cauce_send", { to: "zeus", body: "hola" });
+      assert.equal(result.isError, true);
+      assert.match(textOf(result), inFlight === 1
+        ? /^Hay una entrega de Cauce en curso en este adaptador; no se envió nada\. Reintentá cauce_send cuando termine\.$/u
+        : /no tiene una terminal compartida/u);
+      assert.doesNotMatch(textOf(result), /wait for a Cauce delivery/u);
       assert.deepEqual(calls, []);
     } finally { await f.close(); }
   }
@@ -155,6 +194,18 @@ test("cauce_result reads the message with and without a turn", async () => {
   } finally { await f.close(); }
 });
 
+test("cauce_result keeps a root unfinished while its chain still runs", async () => {
+  const { gateway } = recordingGateway(() => ({
+    id: MESSAGE_ID, chain_open: true, deliveries: [{ alias: "zeus", status: "done", reply: "provisional" }],
+  }));
+  const f = await runtimeWith(gateway);
+  try {
+    const result = JSON.parse(textOf(await f.runtime.call("cauce_result", { message_id: MESSAGE_ID }))) as Record<string, unknown>;
+    assert.equal(result.terminado, false);
+    assert.match(String(result.cadena), /sigue trabajando/u);
+  } finally { await f.close(); }
+});
+
 test("the TUI sees cauce_result and a truthful cauce_send through the MCP shim, and the shim publishes the root", async () => {
   const { calls, gateway } = recordingGateway();
   const f = await runtimeWith(gateway);
@@ -167,9 +218,14 @@ test("the TUI sees cauce_result and a truthful cauce_send through the MCP shim, 
     const tools = (await client.listTools()).tools;
     assert.ok(tools.some((tool) => tool.name === "cauce_result"));
     assert.match(tools.find((tool) => tool.name === "cauce_send")?.description ?? "", /no delivery in flight[\s\S]*cauce_result/u);
-    const result = await client.callTool({ name: "cauce_send", arguments: { to: "zeus", body: "desde la TUI" } });
-    assert.equal(result.isError, undefined, JSON.stringify(result));
-    assert.equal(calls.length, 1);
+    assert.match(tools.find((tool) => tool.name === "cauce_send")?.description ?? "", /typed by a person/u);
+    for (let index = 0; index < 2; index += 1) {
+      const result = await client.callTool({ name: "cauce_send", arguments: { to: "zeus", body: "desde la TUI" } });
+      assert.equal(result.isError, undefined, JSON.stringify(result));
+    }
+    const keys = calls.map((call) => (call.body as { idempotency_key: string }).idempotency_key);
+    assert.equal(keys.length, 2);
+    assert.notEqual(keys[0], keys[1], "two tool calls with the same text are two messages");
   } finally { await client.close(); await f.close(); }
 });
 

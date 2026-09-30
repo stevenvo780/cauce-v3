@@ -3,7 +3,7 @@ import { BlobsRepository } from './repository/blobs.js';
 export { type BlobRecord, type BlobRegistration } from './repository/blobs.js';
 export {
   AgentRootLimitError, PublishIntentExpiredError, PublishIntentReconciliationRequired,
-  type OpenAgentRoot, type OpenAgentRootRecipient, type PublishOptions, type PublishResult
+  type MessageReader, type OpenAgentRoot, type OpenAgentRootRecipient, type PublishOptions, type PublishResult
 } from './repository/messages.js';
 export { type ProfileRuntimeAdoptionAck } from './repository/agents.js';
 export { failureSignature, type AgentChainProgressStage } from './repository/agents/fanin.js';

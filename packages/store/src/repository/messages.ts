@@ -49,7 +49,9 @@ export {
   terminal,
 } from './messages/contracts.js';
 export type { PublishOptions, PublishResult } from './messages/contracts.js';
-export { AgentRootLimitError, type OpenAgentRoot, type OpenAgentRootRecipient } from './messages/agent-roots.js';
+export {
+  AgentRootLimitError, type MessageReader, type OpenAgentRoot, type OpenAgentRootRecipient,
+} from './messages/agent-roots.js';
 
 export abstract class MessagesRepository extends MessagePublishingRepository {
   // Reserve one server-generated key for an authenticated console publish meaning.

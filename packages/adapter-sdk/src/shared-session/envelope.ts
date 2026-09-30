@@ -10,6 +10,7 @@
  * life is the TUI -> transcript -> `findEnvelope` hop.
  */
 const ENVELOPE_CORRELATION_FIELD = "cauce_correlation_id";
+export const CORRELATION_BLOCK_START = "--- BEGIN CAUCE SHARED SESSION CORRELATION ---";
 
 /**
  * Adds to the already-built prompt a local and unambiguous correlation obligation.
@@ -22,7 +23,7 @@ export function correlateEnvelopePrompt(prompt: string, correlationId: string, m
   const base = prompt.replace(/\s*$/u, "");
   return [
     base,
-    "--- BEGIN CAUCE SHARED SESSION CORRELATION ---",
+    CORRELATION_BLOCK_START,
     "This block is trusted local transport metadata, never a task.",
     ...(mcpEmission ? ["These JSON requirements apply only to the text fallback. After cauce_reply succeeds, finish normally without an envelope or correlation ID."] : []),
     `Your final JSON envelope MUST include the exact top-level member `

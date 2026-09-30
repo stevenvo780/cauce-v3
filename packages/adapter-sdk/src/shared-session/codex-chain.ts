@@ -40,9 +40,9 @@ const DELEGATIONS = new Set(["spawn_agent", "followup_task", "send_message"]);
 /** A delegation that codex rejected («collab spawn failed: agent thread limit reached», «already exists»). */
 const FAILED_OUTPUT = /\b(?:fail(?:ed|ure)?|error|already exists|not found|no such)\b/iu;
 /** User-role lines codex writes itself at a turn's start, before the typed text: only these known shapes. */
-const CODEX_PREAMBLE = /^\s*(?:<environment_context\b|<user_instructions\b|<recommended_plugins\b|<codex_internal_context\b|# AGENTS\.md instructions\b)/u;
+export const CODEX_PREAMBLE = /^\s*(?:<environment_context\b|<user_instructions\b|<recommended_plugins\b|<codex_internal_context\b|# AGENTS\.md instructions\b)/u;
 /** A turn codex starts on its own in goal mode: the same conversation carrying on, not someone else. */
-const CODEX_GOAL = /^\s*<codex_internal_context source="goal"/u;
+export const CODEX_GOAL = /^\s*<codex_internal_context source="goal"/u;
 
 /** Rejected = an error text instead of the JSON (spawn) or empty (followup) that codex returns on success. */
 function rejected(output: string): boolean {

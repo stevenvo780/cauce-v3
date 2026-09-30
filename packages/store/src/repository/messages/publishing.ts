@@ -30,7 +30,9 @@ import {
   type PublishResult,
 } from './contracts.js';
 import { reconstructPublishReceipt } from './receipts.js';
-import { assertAgentRootSlot, lockAgentRootActor } from './agent-roots.js';
+import {
+  assertAgentRootSlot, lockAgentRootActor, senderView, type MessageReader,
+} from './agent-roots.js';
 import type { MessageDetailRow } from '../visibility-rows.js';
 
 // The BUS writes this, not the agent: first person made it a lie through an 8 h outage.
@@ -375,7 +377,9 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
     });
   }
 
-  async getMessage(messageId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
+  async getMessage(
+    messageId: string, actorTenant: Tenant, actorAlias: string, reader?: MessageReader,
+  ): Promise<Record<string, unknown>> {
     const result = await this.pool.query<MessageDetailRow & { attachments: unknown }>(
       `SELECT m.id,m.version,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
               m.body-'attachments_v1'::text AS body,
@@ -391,9 +395,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
               COALESCE(jsonb_agg(jsonb_build_object(
          'delivery_id',d.id,'tenant_id',d.recipient_tenant,'alias',d.recipient_alias,
          'status',d.status,'attempt',d.attempt,'terminal_at',d.terminal_at
-       ) || CASE WHEN m.tenant_id=$2 AND m.actor_alias=$3 -- only the sender reads what it asked for
-            THEN jsonb_build_object('reply',d.result->'output'->>'reply') ELSE '{}'::jsonb END
-       ORDER BY d.created_at) FILTER (WHERE d.id IS NOT NULL), '[]'::jsonb) AS deliveries
+       ) ORDER BY d.created_at) FILTER (WHERE d.id IS NOT NULL), '[]'::jsonb) AS deliveries
        FROM messages m LEFT JOIN deliveries d ON d.message_id=m.id AND (
          EXISTS (SELECT 1 FROM memberships source_member
                  WHERE source_member.tenant_id=$2 AND source_member.room_id=m.room_id
@@ -417,7 +419,13 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
     );
     const row = result.rows[0];
     if (!row) throw new StoreError('not_found', 'message not found or not visible');
-    return row;
+    const view = reader === undefined || row.tenant_id !== actorTenant || row.actor_alias !== actorAlias
+      ? undefined : await senderView(this.pool, messageId, reader);
+    if (view === undefined) return row;
+    return {
+      ...row, chain_open: view.chainOpen,
+      deliveries: row.deliveries.map((delivery) => ({ ...delivery, reply: view.replies.get(delivery.delivery_id) ?? null })),
+    };
   }
 
 }

@@ -116,6 +116,8 @@ export interface TranscriptReader<E> {
   compactions(appended: readonly E[]): readonly CompactionNotice[];
   /** Whether the start of any turn was registered in the appended entries. */
   startedTurn?(appended: readonly E[]): boolean;
+  lastUserPrompt?(entries: readonly E[]): string | undefined; // What the last user entry says; undefined if none or not typed by anyone.
+  isConversation?(file: string): Promise<boolean>; // codex: only the TUI's own rollouts, never a sub-agent's.
   /** The output in the harness's native form, to be processed by the standard parser. */
   stdout(text: string, sessionId: string | undefined): string;
 }

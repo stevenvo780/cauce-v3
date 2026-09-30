@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { isAlias } from "@cauce/protocol";
 import { hasNonBlankText } from "../output-parser.js";
 import { EmissionGatewayError, type EmissionGateway } from "./tools.js";
@@ -32,21 +31,20 @@ function openRootsText(body: unknown): string {
   }).join("; ");
 }
 
-/** A root message published now, outside any delivery: one alias of the own tenant, deterministic key. */
+/** A root message published now, outside any delivery: one alias of the own tenant, under the caller's key. */
 export async function sendOutsideDelivery(
-  gateway: EmissionGateway, identity: EmissionIdentity, args: Record<string, unknown>,
+  gateway: EmissionGateway, identity: EmissionIdentity, args: Record<string, unknown>, idempotencyKey: string,
 ): Promise<Record<string, unknown>> {
   const to = visible(args, "to").trim();
   const text = visible(args, "body");
   if (to === "@all" || to === "@human") throw new Error(`Fuera de una entrega no se puede mandar a ${to}; nombrá un solo alias`);
   if (!isAlias(to)) throw new Error("'to' tiene que ser UN alias válido de tu tenant (sin listas)");
   if (to === identity.alias) throw new Error("No podés mandarte un mensaje a vos mismo");
-  const key = `tui:${createHash("sha256").update(`${identity.alias}\0${to}\0${text}`).digest("hex")}`;
   let receipt: Record<string, unknown>;
   try {
     receipt = record(await gateway("POST", "/v3/messages", {
       room_id: identity.room, recipients: [{ tenant_id: identity.tenant, alias: to }],
-      body: { text }, lane: "interactive", idempotency_key: key,
+      body: { text }, lane: "interactive", idempotency_key: idempotencyKey,
     }));
   } catch (error) {
     if (error instanceof EmissionGatewayError && error.status === 409 && record(error.body).error === "agent_root_limit") {
@@ -58,8 +56,11 @@ export async function sendOutsideDelivery(
   }
   return {
     message_id: receipt.message_id, delivery_ids: receipt.delivery_ids, duplicate: receipt.duplicate,
-    nota: "Enviado como mensaje nuevo fuera de una entrega. La respuesta no vuelve sola a esta"
-      + " conversación: consultala con cauce_result(message_id).",
+    nota: receipt.duplicate === true
+      ? "Este mismo envío ya se había hecho (la misma llamada, reintentada): no se mandó de nuevo. Mirá su estado con"
+        + " cauce_result(message_id)."
+      : "Enviado como mensaje nuevo fuera de una entrega. La respuesta no vuelve sola a esta"
+        + " conversación: consultala con cauce_result(message_id).",
   };
 }
 
@@ -73,7 +74,10 @@ export async function readResult(gateway: EmissionGateway, args: Record<string, 
     return { alias: delivery.alias, status: delivery.status, reply: delivery.reply ?? null };
   });
   return {
-    message_id: id, terminado: deliveries.length > 0 && deliveries.every((item) => TERMINAL.has(String(item.status))),
+    message_id: id,
+    terminado: message.chain_open !== true && deliveries.length > 0
+      && deliveries.every((item) => TERMINAL.has(String(item.status))),
+    ...(message.chain_open === true ? { cadena: "sigue trabajando: hay delegaciones o una espera humana abiertas" } : {}),
     entregas: deliveries,
   };
 }

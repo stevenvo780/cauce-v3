@@ -1,4 +1,4 @@
-import type { Tenant } from '@cauce/protocol';
+import { RESERVED_INTERNAL_MESSAGE_TYPES, SYSTEM_GATE_PROBE_MESSAGE_TYPE, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { AGENT_ROOT_OPEN_LIMIT } from '../../delegation-guard.js';
 import { StoreError } from '../errors.js';
@@ -37,27 +37,43 @@ export async function lockAgentRootActor(client: DatabaseClient, tenant: Tenant,
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`cauce:agent-root:${node(tenant, alias)}`]);
 }
 
-// A root counts as an agent root through its own `message.publish` audit row, which retention never
-// deletes; joining on trace_id rides the audit trace index instead of scanning the table.
-const AGENT_ROOT_AUDIT = `audit.trace_id=m.trace_id AND audit.message_id=m.id AND audit.action='message.publish'
+// A root counts as an agent root through its own `message.publish` (or, for a replayed clone,
+// `delivery.replay`) audit row, which retention never deletes; trace_id rides the audit trace index.
+const AGENT_ROOT_AUDIT = `audit.trace_id=m.trace_id AND audit.message_id=m.id
+  AND audit.action IN ('message.publish','delivery.replay')
   AND audit.decision='allow' AND audit.metadata->>'agent_root'='true'`;
+const OPEN_STATES = `('pending','retry','leased','accepted','started')`;
+const UUID_TEXT = `'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'`;
+const CHAIN_TYPES = [...RESERVED_INTERNAL_MESSAGE_TYPES];
+const CONTINUATION_TYPES = ['agent.fanin', 'agent.response'];
+// Only store-written internal messages can name a root: a client body carrying `correlation` never holds a slot.
+const CHAIN_ROOT_OF_OPEN = `CASE WHEN om.body->>'type'=ANY($3::text[])
+  AND (om.body->'correlation'->>'root_message_id') ~ ${UUID_TEXT}
+  THEN (om.body->'correlation'->>'root_message_id')::uuid ELSE om.id END`;
 
-/** Agent roots of the actor with a non-terminal delivery, found from the small set of open deliveries. */
+/**
+ * Agent roots of the actor whose chain is still running: the root's own deliveries, every
+ * internal message of its chain (delegations, responses, fan-in) and any open human gate. The
+ * scan starts from the small set of open deliveries and open gates, never from the actor's history.
+ */
 export async function openAgentRoots(client: DatabaseClient, tenant: Tenant, alias: string): Promise<OpenAgentRoot[]> {
   const result = await client.query<{ message_id: string; created_at: Date; recipients: OpenAgentRootRecipient[] }>(
-    `WITH open_messages AS MATERIALIZED (
-       SELECT DISTINCT open.message_id FROM deliveries open
-       WHERE open.status IN ('pending','retry','leased','accepted','started')
+    `WITH open_roots AS MATERIALIZED (
+       SELECT DISTINCT ${CHAIN_ROOT_OF_OPEN} AS root_id
+       FROM deliveries open JOIN messages om ON om.id=open.message_id
+       WHERE open.status IN ${OPEN_STATES}
+       UNION
+       SELECT gate.root_message_id FROM agent_chain_gates gate WHERE gate.status='open'
      )
      SELECT m.id AS message_id,m.created_at,
             jsonb_agg(jsonb_build_object('tenant_id',d.recipient_tenant,'alias',d.recipient_alias,'status',d.status)
                       ORDER BY d.created_at,d.id) AS recipients
-     FROM open_messages
-     JOIN messages m ON m.id=open_messages.message_id AND m.tenant_id=$1 AND m.actor_alias=$2
+     FROM open_roots
+     JOIN messages m ON m.id=open_roots.root_id AND m.tenant_id=$1 AND m.actor_alias=$2
      JOIN deliveries d ON d.message_id=m.id
      WHERE EXISTS (SELECT 1 FROM audit_events audit WHERE ${AGENT_ROOT_AUDIT})
      GROUP BY m.id,m.created_at ORDER BY m.created_at,m.id`,
-    [tenant, alias],
+    [tenant, alias, CHAIN_TYPES],
   );
   return result.rows.map((row) => ({
     message_id: row.message_id, created_at: row.created_at.toISOString(), recipients: row.recipients,
@@ -77,4 +93,51 @@ export async function agentRootActorNode(client: DatabaseClient, rootMessageId: 
     [rootMessageId],
   );
   return result.rows[0]?.node;
+}
+
+/** Who reads a message: the reply of what it sent is shown only to the same kind of principal. */
+export type MessageReader = 'agent' | 'operator';
+
+export interface SenderView {
+  readonly chainOpen: boolean;
+  readonly replies: ReadonlyMap<string, string | null>;
+}
+
+/**
+ * What the sender asked for: whether the chain still runs and, per root delivery, the reply of the
+ * recipient's last closed continuation (fan-in or response) or, without one, of the root hop.
+ * An agent reads only roots it published as an agent; an operator only the rest; gate probes never.
+ */
+export async function senderView(
+  pool: Pick<DatabaseClient, 'query'>, messageId: string, reader: MessageReader,
+): Promise<SenderView | undefined> {
+  const head = await pool.query<{ probe: boolean; agent_root: boolean; chain_open: boolean }>(
+    `SELECT m.body->>'type' IS NOT DISTINCT FROM $2 AS probe,
+            EXISTS (SELECT 1 FROM audit_events audit WHERE ${AGENT_ROOT_AUDIT}) AS agent_root,
+            (EXISTS (SELECT 1 FROM deliveries own WHERE own.message_id=m.id AND own.status IN ${OPEN_STATES})
+             OR EXISTS (SELECT 1 FROM messages cm JOIN deliveries cd ON cd.message_id=cm.id
+                        WHERE cm.body->'correlation'->>'root_message_id'=m.id::text
+                          AND cm.body->>'type'=ANY($3::text[]) AND cd.status IN ${OPEN_STATES})
+             OR EXISTS (SELECT 1 FROM agent_chain_gates gate
+                        WHERE gate.root_message_id=m.id AND gate.status='open')) AS chain_open
+     FROM messages m WHERE m.id=$1::uuid`,
+    [messageId, SYSTEM_GATE_PROBE_MESSAGE_TYPE, CHAIN_TYPES],
+  );
+  const row = head.rows[0];
+  if (row === undefined || row.probe || row.agent_root !== (reader === 'agent')) return undefined;
+  const replies = await pool.query<{ delivery_id: string; reply: string | null }>(
+    `SELECT d.id AS delivery_id,COALESCE((
+       SELECT c.result->'output'->>'reply' FROM messages cm JOIN deliveries c ON c.message_id=cm.id
+       WHERE cm.body->'correlation'->>'root_message_id'=$3 AND cm.body->>'type'=ANY($2::text[])
+         AND c.recipient_tenant=d.recipient_tenant AND c.recipient_alias=d.recipient_alias
+         AND c.status='done' AND c.result->'output'->>'reply' IS NOT NULL
+       ORDER BY c.terminal_at DESC NULLS LAST,c.created_at DESC LIMIT 1
+     ),d.result->'output'->>'reply') AS reply
+     FROM deliveries d WHERE d.message_id=$1::uuid`,
+    [messageId, CONTINUATION_TYPES, messageId.toLowerCase()],
+  );
+  return {
+    chainOpen: row.chain_open,
+    replies: new Map(replies.rows.map((entry) => [entry.delivery_id, entry.reply])),
+  };
 }

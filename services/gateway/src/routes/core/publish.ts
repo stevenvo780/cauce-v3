@@ -87,7 +87,7 @@ export function registerCorePublishRoutes(
       const receipt = validatedPublishReceipt(
         await repository.publish(trustedCommand, {
           requirePreparedConsoleIntent: consolePublish,
-          ...(!consolePublish && !systemGateProbe && isAgentPrincipal(actor) ? { agentRoot: true } : {}),
+          ...(!systemGateProbe && isAgentPrincipal(actor) ? { agentRoot: true } : {}),
           ...(consolePublish
             ? { consoleIntentOperatorScope: consolePublishOperatorScope(actor) }
             : {}),

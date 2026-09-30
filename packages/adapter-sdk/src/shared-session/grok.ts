@@ -344,6 +344,16 @@ function indexOfKey(entries: readonly GrokUpdateLine[], key: string): number | u
   return undefined;
 }
 
+/** The last user prompt (its contiguous chunks joined); grok's wake turns write no user line. */
+function lastGrokPrompt(entries: readonly GrokUpdateLine[]): string | undefined {
+  let end = entries.length - 1;
+  while (end >= 0 && kind(entries[end]) !== USER) end -= 1;
+  let start = end;
+  while (start > 0 && kind(entries[start - 1]) === USER) start -= 1;
+  const text = entries.slice(Math.max(start, 0), end + 1).map(textOf).join("");
+  return end < 0 || text.length === 0 ? undefined : normalizedPrompt(text);
+}
+
 function findInjectedGrokTurn(
   file: string,
   entries: readonly GrokUpdateLine[],
@@ -667,6 +677,7 @@ export function grokTranscript(grokHome: string): TranscriptReader<GrokUpdateLin
     findAnswer: findGrokOutcome,
     lingering: findGrokLingering,
     findEnvelope: findGrokEnvelope,
+    lastUserPrompt: lastGrokPrompt,
     compactions: grokCompactions,
     // The shape `parseGrokOutput` accepts from `grok --output-format json`.
     stdout: (text, sessionId) => JSON.stringify({

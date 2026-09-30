@@ -1,4 +1,5 @@
 import { createServer, request, type Server } from "node:http";
+import { randomUUID } from "node:crypto";
 import { chmod, lstat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWrite, prepareStateDirectory } from "../durable-store/atomic-state.js";
@@ -7,6 +8,7 @@ import {
 } from "./tools.js";
 import { answerDecisiones, type DecisionesForwarder } from "./decisiones.js";
 import { readResult, sendOutsideDelivery, type EmissionIdentity } from "./outside-delivery.js";
+import type { PromptOrigin } from "../../shared-session/prompt-origin.js";
 
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 export interface EmissionToolResult {
@@ -17,7 +19,9 @@ export interface EmissionToolResult {
 interface EmissionCallScope {
   readonly turn: EmissionTurn | undefined;
   readonly token: unknown;
+  readonly callId?: unknown;
 }
+const MAX_REMEMBERED_CALLS = 256;
 
 export class EmissionRuntime {
   readonly socketPath: string;
@@ -25,6 +29,8 @@ export class EmissionRuntime {
   private readonly turns = new Set<EmissionTurn>();
   private tail: Promise<unknown> = Promise.resolve();
   private deliveriesInFlight: (() => number) | undefined; // Unset means unknown: never publish a root blind.
+  private lastPromptOrigin: (() => Promise<PromptOrigin | undefined>) | undefined; // Unset: no human TUI to speak for.
+  private readonly sendKeys = new Map<string, string>(); // MCP call id -> key, so a transport retry of one call is one message.
 
   constructor(
     readonly stateDirectory: string,
@@ -35,6 +41,38 @@ export class EmissionRuntime {
   ) { this.socketPath = join(stateDirectory, "mcp-emission.sock"); }
 
   trackDeliveries(count: () => number): void { this.deliveriesInFlight = count; }
+  trackPromptOrigin(origin: () => Promise<PromptOrigin | undefined>): void { this.lastPromptOrigin = origin; }
+
+  private sendKey(callId: unknown): string {
+    if (typeof callId !== "string" || callId.length === 0 || callId.length > 200) return `tui:${randomUUID()}`;
+    const known = this.sendKeys.get(callId);
+    if (known !== undefined) return known;
+    const key = `tui:${randomUUID()}`;
+    this.sendKeys.set(callId, key);
+    for (const oldest of this.sendKeys.keys()) {
+      if (this.sendKeys.size <= MAX_REMEMBERED_CALLS) break;
+      this.sendKeys.delete(oldest);
+    }
+    return key;
+  }
+
+  /** cauce_send with no turn of its own: a root only when nothing is in flight and a human typed the last prompt. */
+  private async sendWithoutTurn(args: Record<string, unknown>, scope: EmissionCallScope | undefined, busy: boolean, inFlight: number | undefined): Promise<unknown> {
+    if ((scope?.token ?? null) !== null) throw new Error("El turno de esta llamada ya cerró; no se envió nada.");
+    if (busy) throw new Error("Hay una entrega de Cauce en curso en este adaptador; no se envió nada. Reintentá cauce_send cuando termine.");
+    if (inFlight === undefined || this.identity === undefined || this.lastPromptOrigin === undefined) {
+      throw new Error("Este adaptador no tiene una terminal compartida con un humano: fuera de una entrega no se envía nada.");
+    }
+    const origin = await this.lastPromptOrigin().catch(() => undefined);
+    if (origin === "cauce") {
+      throw new Error("Lo último que entró en esta terminal fue un pedido de Cauce, no de tu humano: fuera de una entrega"
+        + " sólo se envía lo que pide una persona en la TUI. No se envió nada.");
+    }
+    if (origin !== "human") {
+      throw new Error("No pude confirmar en el registro de la terminal que el último pedido lo tecleó una persona; no se envió nada.");
+    }
+    return sendOutsideDelivery(this.gateway, this.identity, args, this.sendKey(scope?.callId));
+  }
 
   begin(options: Omit<EmissionTurnOptions, "persist" | "gateway" | "instanceId">): EmissionTurn {
     const turn = new EmissionTurn({ ...options, gateway: this.gateway, instanceId: this.instanceId,
@@ -68,17 +106,16 @@ export class EmissionRuntime {
   call(name: string, args: unknown, scope?: EmissionCallScope): Promise<EmissionToolResult> {
     // Capture the scope before queueing: an old request must never mutate a later turn.
     const turn = scope === undefined ? this.currentTurn() : scope.turn;
-    // A root is published only when nothing at all is in flight: no turn (not even an inactive one), no call scoped to a turn, no delivery in the engine.
-    const outsideDelivery = this.turns.size === 0 && (scope?.token ?? null) === null && this.deliveriesInFlight?.() === 0;
+    const inFlight = this.deliveriesInFlight?.();
+    const busy = this.turns.size > 0 || (inFlight ?? 0) > 0;
     const operation = this.tail.then(async (): Promise<EmissionToolResult> => {
       try {
         const parsed = toolArguments(name, args);
         let value: unknown;
         if (name === "cauce_queue") value = await this.gateway("GET", "/v3/agent/queue");
         else if (name === "cauce_result") value = await readResult(this.gateway, parsed);
-        else if (name === "cauce_send" && turn === undefined && outsideDelivery && this.identity !== undefined) {
-          value = await sendOutsideDelivery(this.gateway, this.identity, parsed);
-        } else {
+        else if (name === "cauce_send" && turn === undefined) value = await this.sendWithoutTurn(parsed, scope, busy, inFlight);
+        else {
           if (turn === undefined) throw new Error("No unique active turn; wait for a Cauce delivery");
           if (scope !== undefined && scope.token !== turn.token) throw new Error("The MCP call belongs to a different turn; nothing was deposited");
           value = await turn.call(name, parsed);
@@ -125,7 +162,7 @@ export class EmissionRuntime {
           chunks.push(buffer);
         }
         const value = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
-          name?: unknown; arguments?: unknown; turn_token?: unknown; operacion?: unknown; argumentos?: unknown;
+          name?: unknown; arguments?: unknown; turn_token?: unknown; call_id?: unknown; operacion?: unknown; argumentos?: unknown;
         };
         // Decisions need no turn and never wait behind this.tail: a slow Jev must not delay a reply.
         if (route === "/decisiones") {
@@ -134,7 +171,7 @@ export class EmissionRuntime {
           return;
         }
         if (typeof value.name !== "string") throw new Error("Missing tool name");
-        const result = await this.call(value.name, value.arguments ?? {}, { turn, token: value.turn_token });
+        const result = await this.call(value.name, value.arguments ?? {}, { turn, token: value.turn_token, callId: value.call_id });
         response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(result));
       })().catch(() => { if (!response.headersSent) response.writeHead(400); response.end(); });
     });
@@ -160,9 +197,13 @@ export class EmissionRuntime {
   }
 }
 
-export async function forwardEmission(socketPath: string, name: string, args: unknown, turnToken?: string): Promise<EmissionToolResult> {
+export async function forwardEmission(
+  socketPath: string, name: string, args: unknown, turnToken?: string, callId?: string,
+): Promise<EmissionToolResult> {
   const token = turnToken ?? (await socketExchange(socketPath, "/scope", "GET")).turn_token;
-  return await socketExchange(socketPath, "/tool", "POST", { name, arguments: args, turn_token: token }) as EmissionToolResult;
+  return await socketExchange(socketPath, "/tool", "POST", {
+    name, arguments: args, turn_token: token, ...(callId === undefined ? {} : { call_id: callId }),
+  }) as EmissionToolResult;
 }
 
 export function socketExchange(

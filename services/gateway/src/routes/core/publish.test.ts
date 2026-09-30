@@ -257,6 +257,15 @@ describe('POST /v3/messages from an agent principal', () => {
     }
   });
 
+  it('marks an agent certificate publishing through the console route too', async () => {
+    const { app, calls } = await gateway({ roles: ['adapter'] });
+    const response = await app.inject({
+      method: 'POST', url: '/v3/console/messages', headers: AGENT_HEADERS, payload: payload(),
+    });
+    expect(response.statusCode).toBe(202);
+    expect(calls[0]?.options).toMatchObject({ requirePreparedConsoleIntent: true, agentRoot: true });
+  });
+
   it('answers 409 agent_root_limit listing the open roots the actor is waiting on', async () => {
     const openRoots = [{
       message_id: MESSAGE_ID, created_at: '2000-01-01T00:00:00.000Z',

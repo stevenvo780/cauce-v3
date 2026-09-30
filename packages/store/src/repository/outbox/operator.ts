@@ -4,6 +4,7 @@ import { withTransaction } from '../../db.js';
 import { hubEdgeExistsSql } from '../acl-edges.js';
 import { StoreError } from '../errors.js';
 import { insertDelivery, MESSAGE_INSERT_COLUMNS } from '../messages/_insert.js';
+import { agentRootActorNode, assertAgentRootSlot, lockAgentRootActor } from '../messages/agent-roots.js';
 import { OutboxSettlementRepository } from './settlement.js';
 
 export abstract class OutboxOperatorRepository extends OutboxSettlementRepository {
@@ -167,6 +168,11 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
         throw new StoreError('not_found', 'terminal delivery has no open or legacy-replay dead letter');
       }
 
+      const agentRoot = await agentRootActorNode(client, row.message_id) !== undefined; // The clone keeps the root's limits.
+      if (agentRoot) {
+        await lockAgentRootActor(client, row.tenant_id, row.actor_alias);
+        await assertAgentRootSlot(client, row.tenant_id, row.actor_alias);
+      }
       const message = await client.query<{ id: string; request_id: string }>(
         `INSERT INTO messages(${MESSAGE_INSERT_COLUMNS.join(',')})
          SELECT gen_random_uuid(),trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
@@ -220,6 +226,7 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
             replayed_from_message_id: row.message_id,
             legacy_dead_letter_recovery: legacyReplay,
             ...(own ? { initiated_by_agent: true } : {}),
+            ...(agentRoot ? { agent_root: true } : {}),
             recipient_tenant: row.recipient_tenant,
             recipient_alias: row.recipient_alias
           })

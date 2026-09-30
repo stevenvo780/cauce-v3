@@ -3,7 +3,7 @@ import { open as openFile } from "node:fs/promises";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { envelopeHasCorrelation } from "./envelope.js";
-import { CODEX_WAKE_TEXT, codexChain } from "./codex-chain.js";
+import { CODEX_GOAL, CODEX_PREAMBLE, CODEX_WAKE_TEXT, codexChain } from "./codex-chain.js";
 import type {
   CompactionNotice,
   InjectedTurn,
@@ -159,6 +159,17 @@ function findInjectedRolloutTurn(
   return undefined;
 }
 
+function lastCodexPrompt(entries: readonly RolloutLine[]): string | undefined { // Last typed user line; a goal continuation is nobody's.
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const payload = messagePayload(entries[index], "user");
+    const text = payload === undefined ? undefined : messageText(payload);
+    if (text === undefined) continue;
+    if (CODEX_GOAL.test(text)) return undefined; // Goal mode also opens with the preamble tag: check it first.
+    if (!CODEX_PREAMBLE.test(text)) return text;
+  }
+  return undefined;
+}
+
 /**
  * Identifies the turn's outcome in the rollout from its turn_id.
  */
@@ -271,6 +282,8 @@ export function codexTranscript(codexHome: string): TranscriptReader<RolloutLine
       return chain?.state === "wake" ? { text: CODEX_WAKE_TEXT, wakes: chain.wakes, outcome: chain.outcome } : undefined;
     },
     findEnvelope: (entries, correlationId) => findRolloutEnvelope(entries, correlationId),
+    lastUserPrompt: lastCodexPrompt,
+    isConversation: async (file) => await rolloutSource(file) === "cli",
     compactions: rolloutCompactions,
     // `task_started` is the first line of any turn, whether it comes from the bus or the owner.
     // None new proves the injection never reached the box and NOTHING ran.
