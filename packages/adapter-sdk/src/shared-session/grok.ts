@@ -35,7 +35,7 @@ const CORRELATION_MEMBER = /"cauce_correlation_id":"[a-f0-9]{64}"/gu;
 const SUMMARY_FILE = "summary.json";
 const MAX_SUMMARY_BYTES = 256 * 1024;
 /** `summary.json` `session_kind` of folders that are no conversation (one per subagent, never pruned). */
-const CHILD_SESSION_KINDS: ReadonlySet<string> = new Set(["subagent"]);
+const childSessionKind = (kind: string): boolean => kind === "subagent" || kind.startsWith("subagent_"); // 1.0.41 also writes `subagent_fork` (the /goal planner, forked verbatim)
 const childSessionCache = new Map<string, boolean>(); // A folder's kind never changes once written.
 
 /** Root of every conversation of this grok home, whatever cwd created it. */
@@ -67,7 +67,7 @@ async function isChildSession(folder: string): Promise<boolean> {
     const summary = asObject(JSON.parse(await handle.readFile("utf8")) as unknown);
     const sessionKind = asString(summary?.session_kind);
     if (sessionKind === undefined) return false;
-    const child = CHILD_SESSION_KINDS.has(sessionKind);
+    const child = childSessionKind(sessionKind);
     childSessionCache.set(folder, child);
     return child;
   } catch {

@@ -5,13 +5,13 @@ import { join } from "node:path";
 import test from "node:test";
 import { CODEX_WAKE_TEXT } from "../src/shared-session/codex-chain.js";
 import { correlateEnvelopePrompt } from "../src/shared-session/envelope.js";
-import { grokTranscript } from "../src/shared-session/grok.js";
+import { grokTranscript, newGrokSessionId } from "../src/shared-session/grok.js";
 import { museTranscript } from "../src/shared-session/muse.js";
-import { lastPromptOrigin } from "../src/shared-session/prompt-origin.js";
+import { lastPromptOrigin, promptOrigin } from "../src/shared-session/prompt-origin.js";
 import { codexTranscript } from "../src/shared-session/rollout.js";
 import { transcriptDirectory } from "../src/shared-session/session.js";
 import { claudeTranscript } from "../src/shared-session/transcript.js";
-import { grokWorkspace } from "./grok-shared-session-fixtures.js";
+import { GrokTmux, grokRunner, grokWorkspace } from "./grok-shared-session-fixtures.js";
 import { museWorkspace } from "./muse-shared-session-fixtures.js";
 import { FakeTmux, assistantEntry, claudeRunner, freshState, userEntry } from "./shared-session-fixtures.js";
 
@@ -143,4 +143,42 @@ test("muse: the last accepted intent decides, framed or not", async () => {
   await log.append(log.intent("i-humano", HUMAN_PROMPT));
   assert.equal(await lastPromptOrigin(reader), "human");
   assert.equal(await lastPromptOrigin(museTranscript(join(museData, "no-existe"))), undefined);
+});
+
+// Shapes read from hades's real grok 1.0.41 conversation (a /goal running while its owner types).
+const GOAL = "<system-reminder>\nA goal has been set: consigue 20 clientes hoy\n\nYou are working toward this goal.\n</system-reminder>";
+
+test("grok: the goal loop and reminders around typed text are the owner's; a bus prompt stays Cauce's under any wrapper", () => {
+  assert.equal(promptOrigin(GOAL), "human", "the /goal loop was launched by its owner typing it");
+  assert.equal(promptOrigin(`${GOAL}\nhaz ping a jarvis`), "human", "a reminder before the typed text hid it");
+  assert.equal(promptOrigin("<user_query>\nhaz ping a jarvis\n</user_query>"), "human");
+  assert.equal(promptOrigin(`${GOAL}\n${BUS_PROMPT}`), "cauce");
+  assert.equal(promptOrigin(`<user_query>\n${BUS_PROMPT}\n</user_query>`), "cauce");
+  assert.equal(promptOrigin("<system-reminder>\nYou have 3 new messages\n</system-reminder>"), undefined, "a bare reminder is nobody's");
+  assert.equal(promptOrigin("<task-notification>done</task-notification>"), undefined);
+});
+
+test("grok: a /goal planner fork written after the TUI's turn never decides (session_kind subagent_fork)", async () => {
+  const { grokHome, log, sessionLog } = await grokWorkspace("origen-grok-fork");
+  await log.append(log.user(BUS_PROMPT), log.message("p-bus", "ok"), log.completed("p-bus"));
+  const fork = await sessionLog(newGrokSessionId(Date.now() + 5_000));
+  await fork.append(fork.user("You are the Goal Plan Writer for the xAI Grok Build harness."));
+  await writeFile(join(fork.file, "..", "summary.json"), JSON.stringify({ session_kind: "subagent_fork", parent_session_id: log.sessionId }));
+  const later = new Date(Date.now() + 5_000);
+  await utimes(fork.file, later, later);
+  assert.equal(await lastPromptOrigin(grokTranscript(grokHome)), "cauce", "the planner's own prompt was taken as the owner's");
+});
+
+test("grok runner: only the TUI's own cwd group decides; a newer conversation of another cwd is another process", async () => {
+  const { grokHome, sessionLog } = await grokWorkspace("origen-grok-cwd", { history: false });
+  const own = await sessionLog(newGrokSessionId(), "%2Fworkspace"); // grokRunner's workspace
+  await own.append(own.user(BUS_PROMPT), own.message("p-bus", "ok"), own.completed("p-bus"));
+  const other = await sessionLog(newGrokSessionId(Date.now() + 1_000), "%2Fhome%2Fclaw%2Fworkspace%2Fxenia");
+  await other.append(other.user(HUMAN_PROMPT));
+  const later = new Date(Date.now() + 5_000);
+  await utimes(other.file, later, later);
+  const runner = grokRunner({ grokHome, tmux: new GrokTmux() });
+  assert.equal(await runner.lastUserPromptOrigin(), "cauce", "a sibling cwd's typed prompt spoke for this TUI");
+  await own.append(own.user(`${GOAL}\n${HUMAN_PROMPT}`));
+  assert.equal(await runner.lastUserPromptOrigin(), "human");
 });

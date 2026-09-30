@@ -45,7 +45,10 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     super(options);
   }
 
-  lastUserPromptOrigin(): Promise<PromptOrigin | undefined> { return lastPromptOrigin(this.options.transcript); }
+  lastUserPromptOrigin(): Promise<PromptOrigin | undefined> { // grok: only the TUI's own cwd group; other cwds are other processes.
+    const group = `/sessions/${encodeURIComponent(this.options.workspace)}/`;
+    return lastPromptOrigin(this.options.transcript, this.options.harness === "grok" ? (file) => file.includes(group) : undefined);
+  }
 
   async run(request: CommandRunRequest): Promise<CommandRunResult> {
     this.pending = undefined;

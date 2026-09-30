@@ -265,3 +265,15 @@ test("the engine reports its deliveries in flight to the emission runtime", asyn
     release(); stop.abort(); await running; await runtime.close(); await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("a TUI whose transcript is not yet attributable refuses with its own reason, even if a person typed", async () => {
+  const { calls, gateway } = recordingGateway();
+  const f = await runtimeWith(gateway, 0, "human");
+  f.runtime.refuseOutsideDelivery("fuera de una entrega todavía no se envía desde una TUI de claude");
+  try {
+    const result = await f.runtime.call("cauce_send", { to: "zeus", body: "hola" });
+    assert.equal(result.isError, true);
+    assert.match(textOf(result), /todavía no se envía desde una TUI de claude; no se envió nada/u);
+    assert.deepEqual(calls, []);
+  } finally { await f.close(); }
+});

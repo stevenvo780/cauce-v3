@@ -42,6 +42,8 @@ export class EmissionRuntime {
 
   trackDeliveries(count: () => number): void { this.deliveriesInFlight = count; }
   trackPromptOrigin(origin: () => Promise<PromptOrigin | undefined>): void { this.lastPromptOrigin = origin; }
+  refuseOutsideDelivery(reason: string): void { this.outsideRefusal = reason; }
+  private outsideRefusal: string | undefined;
 
   private sendKey(callId: unknown): string {
     if (typeof callId !== "string" || callId.length === 0 || callId.length > 200) return `tui:${randomUUID()}`;
@@ -60,6 +62,7 @@ export class EmissionRuntime {
   private async sendWithoutTurn(args: Record<string, unknown>, scope: EmissionCallScope | undefined, busy: boolean, inFlight: number | undefined): Promise<unknown> {
     if ((scope?.token ?? null) !== null) throw new Error("El turno de esta llamada ya cerró; no se envió nada.");
     if (busy) throw new Error("Hay una entrega de Cauce en curso en este adaptador; no se envió nada. Reintentá cauce_send cuando termine.");
+    if (this.outsideRefusal !== undefined) throw new Error(`${this.outsideRefusal}; no se envió nada.`);
     if (inFlight === undefined || this.identity === undefined || this.lastPromptOrigin === undefined) {
       throw new Error("Este adaptador no tiene una terminal compartida con un humano: fuera de una entrega no se envía nada.");
     }

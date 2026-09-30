@@ -14,8 +14,14 @@ export type PromptOrigin = "human" | "cauce";
 export function promptOrigin(text: string | undefined): PromptOrigin | undefined {
   if (text === undefined) return undefined;
   if (text.includes(CORRELATION_BLOCK_START) || text.trimStart().startsWith(CODEX_WAKE_PREFIX)) return "cauce";
-  return text.trimStart().startsWith("<") ? undefined : "human";
+  const typed = text.replace(HARNESS_REMINDER, "").trim().replace(USER_QUERY, "$1").trim(); // What remains is what was typed.
+  if (typed.length === 0) return GOAL_REMINDER.test(text) ? "human" : undefined;
+  return typed.startsWith("<") ? undefined : "human";
 }
+
+const HARNESS_REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/gu; // Added by the harness around the typed text.
+const USER_QUERY = /^<user_query>\s*([\s\S]*?)\s*<\/user_query>$/u;
+const GOAL_REMINDER = /<system-reminder>\s*A goal has been set:/u; // grok /goal loop: work its owner launched, not bus content.
 
 async function modifiedAt(file: string): Promise<number> {
   try {
@@ -26,10 +32,11 @@ async function modifiedAt(file: string): Promise<number> {
 }
 
 /** The last prompt of the most recently written conversation; anything unreadable is undefined. */
-export async function lastPromptOrigin<E>(reader: TranscriptReader<E>): Promise<PromptOrigin | undefined> {
+export async function lastPromptOrigin<E>(reader: TranscriptReader<E>, own?: (file: string) => boolean): Promise<PromptOrigin | undefined> {
   if (reader.lastUserPrompt === undefined) return undefined;
   try {
-    const dated = await Promise.all((await reader.files()).map(async (file) => ({ file, at: await modifiedAt(file) })));
+    const files = (await reader.files()).filter((file) => own === undefined || own(file));
+    const dated = await Promise.all(files.map(async (file) => ({ file, at: await modifiedAt(file) })));
     dated.sort((left, right) => right.at - left.at);
     for (const { file, at } of dated) {
       if (at < 0) continue;
