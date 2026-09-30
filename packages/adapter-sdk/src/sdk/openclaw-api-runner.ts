@@ -96,11 +96,11 @@ export class OpenClawApiRunner implements CommandRunner {
       controller.abort();
     };
     request.signal.addEventListener("abort", onAbort, { once: true });
-    const timeout = setTimeout(() => {
+    const timeout = request.timeoutKind === "no-progress" ? undefined : setTimeout(() => {
       timedOut = true;
       controller.abort();
     }, request.timeoutMs);
-    timeout.unref();
+    timeout?.unref();
 
     try {
       dispatched = true;

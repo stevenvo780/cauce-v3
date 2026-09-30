@@ -36,6 +36,7 @@ import {
   selfRoleFromDelivery,
   sessionFromDelivery,
   timeoutFromBody,
+  timeoutKindFromBody,
 } from "./engine/delivery-context.js";
 import type { ClaimMonitor, ClaimRenewalDeps } from "./engine/claim-renewal.js";
 import { startClaimRenewal } from "./engine/claim-renewal.js";
@@ -46,7 +47,7 @@ import { inlineWithoutSecrets } from "./engine/secret-guard.js";
 import type { SealedSecretGateway, TurnInput, TurnInputDeps } from "./engine/turn-cleanup.js";
 import { materializeTurnInput, releaseTurn } from "./engine/turn-cleanup.js";
 import { runSystemGateProbe } from "./engine/system-gate-probe.js";
-import { DEFAULT_MESSAGE_TIMEOUT_MS } from "./message-timeout.js";
+import { DEFAULT_NO_PROGRESS_TIMEOUT_MS } from "./message-timeout.js";
 import type { EmissionRuntime } from "./mcp-emission/runtime.js";
 import type { EmissionTurn } from "./mcp-emission/tools.js";
 
@@ -94,7 +95,7 @@ export class AdapterEngine {
     this.logger = options.logger ?? (() => undefined);
     this.ownTenantId = options.ownTenantId;
     this.ownRoom = options.ownRoom;
-    this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_MESSAGE_TIMEOUT_MS;
+    this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_NO_PROGRESS_TIMEOUT_MS;
     if (messageTimeoutMs({ timeout_ms: this.defaultTimeoutMs }) === undefined) {
       throw new RangeError(
         `defaultTimeoutMs must be between 1 and ${String(MAX_MESSAGE_TIMEOUT_MS)}`,
@@ -340,9 +341,10 @@ export class AdapterEngine {
         delivery,
         timeoutFromBody(delivery.body, this.defaultTimeoutMs),
         this.clock.now(),
+        timeoutKindFromBody(delivery.body),
       );
     } catch (error) {
-      await this.finishError(accepted.record, asAdapterError(error));
+      await this.finishError(accepted.record, this.adapterError(error, accepted.record));
       return;
     }
 
@@ -387,7 +389,7 @@ export class AdapterEngine {
       try {
         requestContext = this.harness.prepareContext(rawRequestContext);
       } catch (error) {
-        await this.finishError(accepted.record, asAdapterError(error));
+        await this.finishError(accepted.record, this.adapterError(error, accepted.record));
         return;
       }
     }
@@ -457,6 +459,7 @@ export class AdapterEngine {
           ...(reservation === undefined ? {} : { sessionReservation: reservation }),
           ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
           timeoutMs: executionBudget.harnessTimeoutMs,
+          timeoutKind: executionBudget.harnessTimeoutKind,
           signal: controller.signal,
           ...(emissionTurn === undefined ? {} : {
             emissionOutput: () => emissionTurn?.output,
@@ -506,7 +509,7 @@ export class AdapterEngine {
 
     try {
       if (executionFailure !== undefined) {
-        const executionError = asAdapterError(executionFailure);
+        const executionError = this.adapterError(executionFailure, started.record);
         const preserveAmbiguousExecution = !executionError.retryable
           && isAmbiguousAckErrorCode(executionError.code);
         const normalized = this.fenced.has(delivery.delivery_id) && !preserveAmbiguousExecution
@@ -578,8 +581,9 @@ export class AdapterEngine {
       controller,
       "accepted",
     );
-    const queueBudgetMs = this.queueWaitTimeoutMs
-      ?? Math.min(budget.harnessTimeoutMs, DEFAULT_QUEUE_WAIT_TIMEOUT_MS);
+    const queueBudgetMs = this.queueWaitTimeoutMs ?? (budget.harnessTimeoutKind === "hard"
+      ? Math.min(budget.harnessTimeoutMs, DEFAULT_QUEUE_WAIT_TIMEOUT_MS)
+      : DEFAULT_QUEUE_WAIT_TIMEOUT_MS);
     const queueTimer = this.clock.setTimer(() => {
       controller.abort(new AdapterError(
         "SESSION_QUEUE_TIMEOUT",
@@ -603,7 +607,7 @@ export class AdapterEngine {
     // lying the other way: it would send to dead-letters "held for manual replay" a delivery
     // the harness never saw. The normalization to FENCED is the same the execution path applies,
     // and it always holds here since there is never an ambiguous execution to preserve.
-    const queueError = asAdapterError(failure);
+    const queueError = this.adapterError(failure, record);
     const normalized = this.fenced.has(record.delivery_id)
       ? new AdapterError("FENCED", "Execution lost its fencing epoch", true)
       : isAmbiguousAckErrorCode(queueError.code)
@@ -704,6 +708,17 @@ export class AdapterEngine {
     // A renewal must reach stable local storage before it can be treated as recoverable work.
     await this.store.enqueue(event);
     return event;
+  }
+
+  private adapterError(error: unknown, record: InboxRecord): AdapterError { // INTERNAL hides the cause: log it
+    if (!(error instanceof AdapterError)) {
+      const cause = error instanceof Error
+        ? `${error.name}: ${error.message} @ ${error.stack?.split("\n").slice(1, 4).map((line) => line.trim()).join(" < ") ?? "?"}`
+        : `non-Error thrown: ${typeof error}`;
+      this.logger({ event: "internal_error", delivery_id: record.delivery_id, attempt: record.attempt,
+        timestamp: this.clock.now().toISOString(), error_message: cause.slice(0, 800) });
+    }
+    return asAdapterError(error);
   }
 
   private async finishError(

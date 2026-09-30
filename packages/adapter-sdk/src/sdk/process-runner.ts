@@ -3,7 +3,7 @@ import { closeSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";
 import { ProcessExecutionError } from "./errors.js";
 import { promptFileDescriptor } from "./prompt-stdin.js";
-import type { CommandRunRequest, CommandRunResult, SafeRunnerLogger } from "./types.js";
+import { HARNESS_PROGRESS_MARKER, type CommandRunRequest, type CommandRunResult, type SafeRunnerLogger } from "./types.js";
 
 type HarnessChild = ChildProcessByStdio<Writable | null, Readable, Readable>; // stdin is null when a file backs fd 0
 
@@ -31,6 +31,9 @@ const SAFE_ENVIRONMENT = [
   "CAUCE_HERMES_SOURCE_DIR",
   // Non-secret module discovery path consumed only by the OpenClaw bridge.
   "CAUCE_OPENCLAW_DIST_DIR",
+  "CAUCE_OPENCLAW_EMBEDDED_FALLBACK",
+  "CAUCE_OPENCLAW_RUN_DEADLINE_MS",
+  "OPENCLAW_CONFIG_PATH",
 ];
 const SECRET_ENVIRONMENT = /(?:secret|token|password|passwd|api[_-]?key|auth|credential|cookie|session)/iu;
 
@@ -195,7 +198,7 @@ export class SpawnCommandRunner {
         }
         resolve({
           stdout: stdout.toString("utf8"),
-          stderr: stderr.toString("utf8"),
+          stderr: stderr.toString("utf8").replaceAll(`${HARNESS_PROGRESS_MARKER}\n`, ""),
           exitCode,
           signal: exitSignal,
           timedOut,
@@ -259,18 +262,27 @@ export class SpawnCommandRunner {
         return next;
       };
 
+      let timeout = setTimeout(() => { terminate("timeout"); }, request.timeoutMs);
+      timeout.unref();
+      const noteProgress = (): void => {
+        if (request.timeoutKind !== "no-progress" || settled) return;
+        clearTimeout(timeout);
+        timeout = setTimeout(() => { terminate("timeout"); }, request.timeoutMs);
+        timeout.unref();
+      };
+
       child.stdout.on("data", (chunk: Buffer) => {
+        noteProgress();
         stdout = collect(stdout, chunk);
         if (witness?.kind === "stdout-first-byte" && chunk.byteLength > 0) noteHarnessStart();
       });
       child.stderr.on("data", (chunk: Buffer) => {
+        noteProgress();
         stderr = collect(stderr, chunk);
         // Search the marker over the accumulated stderr in case it arrives split across reads.
         if (witness?.kind === "stderr-marker" && stderr.includes(witness.marker)) noteHarnessStart();
       });
 
-      const timeout = setTimeout(() => { terminate("timeout"); }, request.timeoutMs);
-      timeout.unref();
       const onAbort = (): void => { terminate("cancel"); };
       request.signal.addEventListener("abort", onAbort, { once: true });
 

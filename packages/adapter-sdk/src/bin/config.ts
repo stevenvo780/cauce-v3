@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs } from "@cauce/protocol";
-import { DEFAULT_MESSAGE_TIMEOUT_MS } from "../sdk/message-timeout.js";
+import { DEFAULT_MESSAGE_TIMEOUT_MS, DEFAULT_NO_PROGRESS_TIMEOUT_MS } from "../sdk/message-timeout.js";
 import type { HarnessId } from "../sdk/types.js";
 import type { MuseReasoningEffort, MuseRunnerConfig } from "../sdk/muse-msp-runner.js";
 
@@ -254,6 +254,7 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
     "environment",
     "heartbeat_ms",
     "default_timeout_ms",
+    "no_progress_timeout_ms",
     "token_file",
     "mtls",
     "dev_headers",
@@ -287,9 +288,9 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
     environment: runtimeEnvironment,
     heartbeatMs: positiveInteger(entry.heartbeat_ms, "heartbeat_ms", 15_000),
     defaultTimeoutMs: configuredMessageTimeoutMs(
-      entry.default_timeout_ms,
-      "default_timeout_ms",
-      DEFAULT_MESSAGE_TIMEOUT_MS,
+      entry.no_progress_timeout_ms ?? entry.default_timeout_ms,
+      entry.no_progress_timeout_ms === undefined ? "default_timeout_ms" : "no_progress_timeout_ms",
+      DEFAULT_NO_PROGRESS_TIMEOUT_MS,
     ),
     ...(bearerTokenFile === undefined ? {} : { bearerTokenFile }),
     ...(mutualTls === undefined ? {} : { mutualTls }),
@@ -315,12 +316,12 @@ function environmentInteger(name: string, fallback: number): number {
   return parsed;
 }
 
-function environmentMessageTimeoutMs(name: string): number {
+function environmentMessageTimeoutMs(name: string, fallback = DEFAULT_MESSAGE_TIMEOUT_MS): number {
   const value = process.env[name];
   return configuredMessageTimeoutMs(
     value === undefined ? undefined : Number(value),
     `'${name}'`,
-    DEFAULT_MESSAGE_TIMEOUT_MS,
+    fallback,
   );
 }
 
@@ -392,7 +393,8 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
     relayUrl: requiredEnvironment("CAUCE_RELAY_URL"),
     environment: runtimeEnvironment,
     heartbeatMs: environmentInteger("CAUCE_HEARTBEAT_MS", 15_000),
-    defaultTimeoutMs: environmentMessageTimeoutMs("CAUCE_DEFAULT_TIMEOUT_MS"),
+    // CAUCE_DEFAULT_TIMEOUT_MS (a 24 h duration cap) no longer applies: turns have no duration cap.
+    defaultTimeoutMs: environmentMessageTimeoutMs("CAUCE_NO_PROGRESS_TIMEOUT_MS", DEFAULT_NO_PROGRESS_TIMEOUT_MS),
     ...(process.env.CAUCE_TOKEN_FILE === undefined ? {} : { bearerTokenFile: resolve(process.env.CAUCE_TOKEN_FILE) }),
     ...(mutualTls === undefined ? {} : { mutualTls }),
     developmentIdentity,

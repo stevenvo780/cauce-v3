@@ -1,4 +1,5 @@
 import type { NoticeSelection } from "../sdk/notify-history.js";
+import type { HarnessTimeoutKind } from "../sdk/message-timeout.js";
 import type { ProfileRuntimeContract } from "@cauce/protocol";
 import type { DurableStore, SessionOrigin } from "../sdk/durable-store.js";
 import type {
@@ -109,6 +110,8 @@ export interface HarnessExecuteRequest {
   readonly sessionOrigin?: SessionOrigin;
   readonly sessionReservation?: HarnessSessionReservation;
   readonly timeoutMs: number;
+  /** Absent = `hard`. */
+  readonly timeoutKind?: HarnessTimeoutKind;
   readonly signal: AbortSignal;
   readonly origin?: RelayOrigin;
   readonly beforeHarnessInvoke?: () => Promise<void>;

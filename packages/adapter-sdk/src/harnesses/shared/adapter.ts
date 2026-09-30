@@ -365,9 +365,15 @@ export class HarnessAdapter {
     const result = await this.runner.run({
       ...invocation,
       ...workspaceCwd(),
-      ...(Object.keys(credentialEnv).length === 0 ? {} : { env: credentialEnv }),
+      ...(() => {
+        const env = this.definition.id === "openclaw"
+          ? { ...credentialEnv, CAUCE_HARNESS_TIMEOUT_KIND: request.timeoutKind ?? "hard", CAUCE_HARNESS_TIMEOUT_MS: String(request.timeoutMs) }
+          : credentialEnv;
+        return Object.keys(env).length === 0 ? {} : { env };
+      })(),
       stdin: protocolPrompt(effectivePrompt, request.origin, invocationContext, request.noticeHistory),
       timeoutMs: request.timeoutMs,
+      ...(request.timeoutKind === undefined ? {} : { timeoutKind: request.timeoutKind }),
       signal: request.signal,
       ...(request.emissionOutput === undefined ? {} : { emissionOutput: request.emissionOutput }),
       ...(request.onEmissionReady === undefined ? {} : { onEmissionReady: request.onEmissionReady }),
@@ -405,7 +411,10 @@ export class HarnessAdapter {
     if (result.timedOut) {
       throw new ProcessExecutionError(
         "EXECUTION_TIMEOUT_AMBIGUOUS",
-        "Harness exceeded its execution deadline; completion state is unknown and requires manual replay",
+        request.timeoutKind === "no-progress"
+          ? `Harness timed out: ${String(Math.round(request.timeoutMs / 60_000))} min without progress, or an earlier`
+            + " harness-specific deadline (see the harness log); completion state is unknown and requires manual replay"
+          : "Harness exceeded its execution deadline; completion state is unknown and requires manual replay",
         false,
       );
     }

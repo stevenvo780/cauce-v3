@@ -3,15 +3,15 @@ import { access, lstat, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
 import {
   MspError,
-  MuseClient,
   readSessionDurability,
   spawnMspConnection,
-  type Session,
   type TurnOutcome,
 } from "@muse-code/sdk";
 import { ProcessExecutionError } from "./errors.js";
 import type { CommandRunRequest, CommandRunResult } from "./types.js";
 import { sanitizeProcessOutput } from "../harnesses/shared/errors.js";
+import { MuseMspSession, type MuseMspTelemetry } from "./muse-msp-session.js";
+import { MuseMspFault, museObject, type MuseWait } from "./muse-msp-reconciliation.js";
 
 export type MuseReasoningEffort =
   | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
@@ -25,6 +25,7 @@ export interface MuseRunnerConfig {
   readonly yolo?: boolean;
   readonly model?: string;
   readonly reasoningEffort?: MuseReasoningEffort;
+  readonly onTelemetry?: (event: MuseMspTelemetry) => void;
 }
 
 class MuseDeadlineError extends Error {}
@@ -42,6 +43,26 @@ function bounded<T>(promise: Promise<T>, deadline: number, signal: AbortSignal):
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
     }).catch(() => undefined);
+  });
+}
+
+/** Waits for `promise` while the turn keeps producing items; rejects once it goes quiet for `windowMs`. */
+function untilStalled<T>(promise: Promise<T>, lastProgressAt: () => number, windowMs: number, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new MuseAbortError());
+  return new Promise<T>((resolveResult, rejectResult) => {
+    const stop = (): void => {
+      clearInterval(check);
+      signal.removeEventListener("abort", onAbort);
+    };
+    const check = setInterval(() => {
+      if (Date.now() - lastProgressAt() < windowMs) return;
+      stop();
+      rejectResult(new MuseDeadlineError());
+    }, Math.max(10, Math.min(windowMs / 4, 30_000)));
+    check.unref();
+    const onAbort = (): void => { stop(); rejectResult(new MuseAbortError()); };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolveResult, rejectResult).finally(stop).catch(() => undefined);
   });
 }
 
@@ -164,6 +185,13 @@ export class MuseMspRunner {
     this.config = config;
   }
 
+  private telemetry(event: MuseMspTelemetry): void {
+    try {
+      if (this.config.onTelemetry !== undefined) this.config.onTelemetry(event);
+      else process.stderr.write(`${JSON.stringify(event)}\n`);
+    } catch { /* Telemetry cannot change the execution outcome. */ }
+  }
+
   async run(request: CommandRunRequest): Promise<CommandRunResult> {
     if (request.harness !== "muse") throw new Error("MuseMspRunner only handles Muse");
     if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0) {
@@ -172,7 +200,7 @@ export class MuseMspRunner {
     if (request.signal.aborted) return result("", { cancelled: true, harnessStarted: false });
     const deadline = Date.now() + request.timeoutMs;
     let handshake: ReturnType<typeof spawnMspConnection> | undefined;
-    let client: MuseClient | undefined;
+    let session: MuseMspSession | undefined;
     let turnAttempted = false;
     let turnAdmitted = false;
     let resumeAttempted = false;
@@ -189,91 +217,90 @@ export class MuseMspRunner {
         if (serverRequest.method === "approval/request") return {};
         throw new Error(`Unsupported Muse server request: ${serverRequest.method}`);
       });
-      const connection = await bounded(handshake.initialize({
+      let rejectProtocol!: (fault: MuseMspFault) => void;
+      const protocolFailure = new Promise<never>((_resolve, reject) => { rejectProtocol = reject; });
+      handshake.onProtocolError(() => {
+        rejectProtocol(new MuseMspFault("MUSE_PROTOCOL_FAILED", "Muse protocol framing failed during initialization"));
+      });
+      const connection = await bounded(Promise.race([handshake.initialize({
         clientInfo: { name: "cauce_muse", version: "0.2.0" },
         capabilities: { userInputDialogs: false },
-      }), deadline, request.signal);
+      }), protocolFailure]), Math.min(deadline, Date.now() + 5_000), request.signal);
+      const version = connection.initializeResult.serverInfo.version;
+      const fingerprint = connection.initializeResult.schema.fingerprint;
+      this.telemetry({
+        event: "muse_host_initialized",
+        ...(typeof version === "string" && /^[A-Za-z0-9._-]{1,128}$/u.test(version)
+          ? { server_version: version } : {}),
+        ...(/^sha256:[a-f0-9]{64}$/u.test(fingerprint) ? { schema_fingerprint: fingerprint } : {}),
+        fingerprint_warning: connection.fingerprintWarning !== undefined,
+      });
       const durability = readSessionDurability(connection.initializeResult);
       if (durability.kind !== "durable") {
         throw new Error("Muse serve must provide durable sessions");
       }
-      client = new MuseClient(connection.connection, { durability, host: connection });
-      const sessionId = request.sessionId;
-      let session: Session;
+      const wait: MuseWait = (promise, budgetMs) => bounded(promise,
+        budgetMs === undefined ? deadline : Math.min(deadline, Date.now() + budgetMs), request.signal);
+      if (request.resumeSession && request.sessionId === undefined) {
+        throw new Error("Muse resume requires a durable session id");
+      }
+      const sessionId = request.sessionId ?? connection.connection.mintCommandId();
+      session = new MuseMspSession(connection.connection, sessionId, durability, (event) => { this.telemetry(event); });
+      const activeSession = session;
+      void connection.child.exit.then((exit) => { activeSession.hostExited(exit); }).catch(() => {
+        activeSession.hostExited({ kind: "transportEof" });
+      });
+      let opening: Record<string, unknown>;
       if (request.resumeSession) {
-        if (sessionId === undefined) throw new Error("Muse resume requires a durable session id");
         resumeAttempted = true;
-        session = await bounded(client.resumeSession({ sessionId, excludeItems: true }), deadline, request.signal);
+        opening = await session.preflight(connection.connection.command("session/resume", {
+          sessionId, excludeItems: true,
+        }), wait);
       } else {
         try {
-          session = await bounded(client.startSession({
-            ...(sessionId === undefined ? {} : { sessionId }),
+          opening = await session.preflight(connection.connection.command("session/start", {
+            sessionId,
             workspaceRoot: this.config.workspace,
             approvalMode: this.config.approvalMode,
             ...(this.config.model === undefined ? {} : { modelId: this.config.model }),
-          }), deadline, request.signal);
+          }), wait);
         } catch (error) {
           if (!(error instanceof MspError) || error.kind !== "commandRejected"
-            || error.data.reason !== "session_id_conflict" || sessionId === undefined) throw error;
+            || error.data.reason !== "session_id_conflict") throw error;
           resumeAttempted = true;
-          session = await bounded(client.resumeSession({ sessionId, excludeItems: true }), deadline, request.signal);
+          opening = await session.preflight(connection.connection.command("session/resume", {
+            sessionId, excludeItems: true,
+          }), wait);
         }
       }
-      if (sessionId !== undefined && session.sessionId !== sessionId) {
+      const opened = museObject(opening.session);
+      if (opened.sessionId !== sessionId) {
         throw new Error("Muse returned a different native session id");
       }
-      const opened = session.opening?.result.session;
-      if (opened?.workspaceRoot !== this.config.workspace) {
+      if (opened.workspaceRoot !== this.config.workspace) {
         throw new Error("Muse session workspace differs from the configured alias workspace");
       }
-      const mode = await bounded(connection.connection.command("session/setApprovalMode", {
-        sessionId: session.sessionId,
-        mode: this.config.approvalMode,
-      }), deadline, request.signal);
-      const effective = mode.effectiveMode as { mode?: unknown } | undefined;
-      if (mode.status !== "accepted" || effective?.mode !== this.config.approvalMode) {
-        throw new Error("Muse did not confirm denyUnmatched approval mode");
+      const configured = await session.configure(this.config.model, this.config.reasoningEffort,
+        this.config.approvalMode, wait);
+      if (configured.workspace !== this.config.workspace) {
+        throw new Error("Muse read workspace differs from the configured alias workspace");
       }
-      if (this.config.model !== undefined && opened.modelId !== this.config.model) {
-        const model = await bounded(connection.connection.command("session/setModel", {
-          sessionId: session.sessionId,
-          model: { modelId: this.config.model },
-        }), deadline, request.signal);
-        if (model.status !== "accepted") throw new Error("Muse did not accept the configured model");
-      }
-      let approvalError: (error: Error) => void = () => undefined;
-      const approvalFailed = new Promise<never>((_resolve, rejectApproval) => {
-        approvalError = rejectApproval;
-      });
-      session.onApproval((approval) => {
-        const denial = approval.availableChoices.find((choice) =>
-          choice.scope === "once" && (choice.decision === "denied" || choice.decision === "abort"));
-        if (denial === undefined) throw new Error("Muse approval request offered no denying choice");
-        return { choiceId: denial.choiceId };
-      });
-      session.onApprovalError(() => { approvalError(new Error("Muse approval could not be denied")); });
-      let finalText = "";
       turnAttempted = true;
-      const turn = await bounded(session.sendUserTurn({
-        input: [{ type: "text", text: request.stdin }],
-        ifBusy: "queue",
-        ...(this.config.reasoningEffort === undefined
-          ? {} : { reasoningEffort: this.config.reasoningEffort }),
-      }), deadline, request.signal);
+      await session.submit(request.stdin, this.config.reasoningEffort, wait);
       turnAdmitted = true;
       request.onHarnessStart?.();
-      const collect = (async (): Promise<void> => {
-        for await (const item of turn.items()) {
-          if (item.kind === "agentMessage" && item.status !== "inProgress") {
-            finalText = item.text ?? "";
-          }
-        }
-      })();
-      const outcome = await bounded(Promise.race([turn.completed, approvalFailed]), deadline, request.signal);
-      await bounded(collect, deadline, request.signal);
-      return terminalResult(session.sessionId, finalText, outcome);
+      const waitTurn: MuseWait = (promise) => request.timeoutKind === "no-progress"
+        ? untilStalled(promise, () => activeSession.lastProgressAt, request.timeoutMs, request.signal)
+        : bounded(promise, deadline, request.signal);
+      const waitRecovery: MuseWait = (promise, budgetMs = 5_000) => bounded(promise,
+        Math.min(request.timeoutKind === "no-progress" ? Infinity : deadline, Date.now() + budgetMs), request.signal);
+      const completed = await session.complete(configured.viewCursor, waitTurn, waitRecovery);
+      return terminalResult(sessionId, completed.text, completed.outcome);
     } catch (error) {
       if (error instanceof MuseDeadlineError) {
+        if (!turnAttempted) {
+          throw new ProcessExecutionError("MUSE_PREFLIGHT_TIMEOUT", "Muse preflight exceeded its bounded read budget", true);
+        }
         return result("", { timedOut: true, ...(turnAdmitted ? { harnessStarted: true } : {}) });
       }
       if (error instanceof MuseAbortError) {
@@ -287,6 +314,10 @@ export class MuseMspRunner {
         });
       }
       if (error instanceof ProcessExecutionError) throw error;
+      if (error instanceof MuseMspFault) {
+        throw new ProcessExecutionError(turnAttempted ? "MUSE_EXECUTION_AMBIGUOUS" : error.code,
+          `Muse ${error.code}: ${safeFailure(error)}`, false);
+      }
       throw new ProcessExecutionError(
         turnAttempted ? "MUSE_EXECUTION_AMBIGUOUS" : "MUSE_PREFLIGHT_FAILED",
         turnAttempted
@@ -295,8 +326,8 @@ export class MuseMspRunner {
         !turnAttempted && error instanceof MspError && error.kind === "sessionInUse",
       );
     } finally {
-      if (client !== undefined) await client.close().catch(() => undefined);
-      else if (handshake !== undefined) await handshake.close().catch(() => undefined);
+      session?.close();
+      if (handshake !== undefined) await handshake.close().catch(() => undefined);
     }
   }
 }
