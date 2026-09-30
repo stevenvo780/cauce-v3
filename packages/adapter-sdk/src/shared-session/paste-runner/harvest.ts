@@ -199,7 +199,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           }
           lingering = pendingWork;
           const wake = lingering === undefined ? port.wakePrompt?.(slice.entries, injectedTurn.key) : undefined;
-          pendingWake = wake !== undefined && wake.wakes === wakesSent ? wake.text : undefined;
+          pendingWake = wake?.wakes === wakesSent ? wake.text : undefined;
           wakeOutcome = wake?.outcome;
           if (request.emissionOutput?.() !== undefined) pendingWake = wakeOutcome = undefined; // A `cauce_reply` deposit IS the answer.
           // Localized turn but no ancestry arriving: the other way of holding the lock until the full

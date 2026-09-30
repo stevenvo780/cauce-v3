@@ -131,5 +131,5 @@ test("codex: un spawn exitoso cuyo nombre contiene «error» no se toma por rech
   const spawned = turnWith("t", [call("spawn_agent", { task_name: "fix-error-x" }, "c1"), output("c1", '{"task_name":"/root/fix-error-x"}')], null);
   assert.equal(port.wakePrompt?.(spawned, "t")?.wakes, 0);
   const messaged = turnWith("m", [call("send_message", { target: "w", message: "seguí" }, "c1"), output("c1", "")], null);
-  assert.equal(port.wakePrompt?.(messaged, "m")?.wakes, 0);
+  assert.equal(port.wakePrompt(messaged, "m")?.wakes, 0);
 });
