@@ -242,9 +242,6 @@ export function synthesizeFaninOutput(
     .filter((value): value is string => value !== undefined));
   const uncovered = responses.filter((response) =>
     response.deliveryId === undefined || !covered.has(response.deliveryId));
-  // The human-facing receipt goes out AS the coordinator (the alias the human talks to), so it speaks
-  // in first person and never names «el director»: on 2026-09-30 the hospital director's own bot
-  // told Steven «Avance confirmado por el director», and he suspected a duplicated instance.
   if (options.humanFacingReceipt === true) {
     const truncation = objectRecord(data.truncation);
     const omittedResponses = typeof truncation?.omitted_responses === "number"

@@ -88,7 +88,6 @@ test('human presentation is concise and reports review gaps without raw branches
   const reply = synthesizedFixture(true, true);
   assert.match(reply, /^Todavía no lo doy por cerrado: me falta revisar parte de lo que entregó el equipo\. Lo que ya está: Locally synthesized\.$/u);
   assert.doesNotMatch(reply, /unsynthesized branch|without local synthesis|Steven\/socrates|\\n/u);
-  // The receipt is sent AS the coordinator: it must never talk about «el director» in third person.
   assert.doesNotMatch(reply, /director/iu);
   assert.ok(Buffer.byteLength(reply, "utf8") < 250);
 });
