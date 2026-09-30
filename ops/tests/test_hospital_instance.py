@@ -328,6 +328,83 @@ class HospitalInstanceTests(unittest.TestCase):
         self.assertIn("DELETE FROM agents", restore)
         self.assertIn("ARRAY['backend', 'frontend', 'operador']", restore)
 
+    def test_director_policy_keeps_authorized_goals_active(self) -> None:
+        capabilities = (INSTANCE / "director-capabilities.sql").read_text(encoding="utf-8")
+        praxis = (INSTANCE / "enable-praxis.sql").read_text(encoding="utf-8")
+        bootstrap = (INSTANCE / "bootstrap.sql").read_text(encoding="utf-8")
+
+        def constant(sql: str, name: str) -> str:
+            match = re.search(rf"\b{name} constant text := '([^']+)';", sql)
+            self.assertIsNotNone(match, name)
+            assert match is not None
+            return match.group(1)
+
+        crm_role = constant(capabilities, "crm_director_role")
+        praxis_role = constant(capabilities, "director_role")
+        self.assertEqual(praxis_role, constant(praxis, "praxis_director_role"))
+        self.assertIn(f"'{crm_role}',", bootstrap)
+        for role in (crm_role, praxis_role):
+            self.assertLessEqual(len(role.encode("utf-16-le")) // 2, 1200)
+            self.assertTrue(role.startswith("Soy el director"))
+            for rule in (
+                "Steven define objetivos de software y administración",
+                "Leonel valida lo clínico",
+                "no escribo implementación",
+                "archivos y clones disjuntos",
+                "permiso durable verificado en hospital_ops",
+                "continúo el trabajo independiente",
+                "el GOAL persiste",
+                "done no acredita producto integrado",
+                "sin replay ni duplicados",
+                "no uso pacientes reales, secretos ajenos",
+            ):
+                self.assertIn(rule, role)
+        for sql in (capabilities, praxis, bootstrap):
+            self.assertNotIn("máximo dos", sql)
+            self.assertNotIn("Steven administra la infraestructura", sql)
+            self.assertNotIn("Steven conserva administración de infraestructura", sql)
+            self.assertIn("no reduce ni cancela el objetivo completo", sql)
+            self.assertIn("seguir el trabajo independiente y pedir el criterio una vez", sql)
+            self.assertNotRegex(sql, r"SET\s+revision\s*=")
+
+    def test_director_profile_is_consistent_and_rerunnable(self) -> None:
+        capabilities = (INSTANCE / "director-capabilities.sql").read_text(encoding="utf-8")
+        praxis = (INSTANCE / "enable-praxis.sql").read_text(encoding="utf-8")
+        purpose = re.search(r"operator_purpose constant text := '([^']+)';", praxis)
+        human = re.search(r"operator_human_brief constant text := '([^']+)';", praxis)
+        assert purpose is not None and human is not None
+        self.assertIn(f"THEN '{purpose.group(1)}'", capabilities)
+        self.assertIn(f"'{human.group(1)}' AS human_brief", capabilities)
+
+        profiles = []
+        for sql in (capabilities, praxis):
+            start = sql.index("  WITH desired AS (")
+            end = sql.index("  UPDATE agent_profiles profile", start)
+            profiles.append(re.findall(r"'([^']*)'", sql[start:end]))
+            self.assertLess(sql.index("  UPDATE agent_role_templates"), start)
+            update = sql[end:sql.index(";", end)]
+            for field in ("purpose", "human_brief", "responsibilities", "operating_rules"):
+                self.assertIn(f"{field} = desired.{field}", update)
+                self.assertIn(f"profile.{field}", update)
+                self.assertIn(f"desired.{field}", update)
+            self.assertIn("IS DISTINCT FROM ROW(", update)
+            self.assertNotIn("array_append", update)
+            self.assertNotIn("purpose ||", update)
+        for item in profiles[1]:
+            self.assertIn(item, profiles[0], item)
+
+    def test_bootstrap_preserves_current_roles_and_profiles(self) -> None:
+        sql = (INSTANCE / "bootstrap.sql").read_text(encoding="utf-8")
+        templates = sql[sql.index("INSERT INTO agent_role_templates"):sql.index("INSERT INTO harness_definitions")]
+        self.assertIn("ON CONFLICT (slug) DO NOTHING", templates)
+        agents = sql[sql.index("INSERT INTO agents("):sql.index("INSERT INTO memberships(")]
+        update = agents[agents.index("ON CONFLICT"):]
+        self.assertNotIn("role_brief =", update)
+        self.assertNotIn("role_template_slug =", update)
+        self.assertIn("WHERE agent_profiles.purpose IS NULL", sql)
+        self.assertIn("perseo:hospital-agent-muse-frontend-1:hospital-praxis-developer", sql)
+        self.assertIn("teseo:hospital-agent-muse-backend-1:hospital-praxis-developer", sql)
+
     def test_redeploy_refuses_to_bypass_a_missing_backup(self) -> None:
         script = (INSTANCE / "bootstrap-core.sh").read_text(encoding="utf-8")
 
