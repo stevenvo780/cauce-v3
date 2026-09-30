@@ -332,6 +332,83 @@ describe('coalescencia de avisos de fracaso', () => {
     expect(recorded.rows.filter((row) => row.coalesced === true)).toHaveLength(2);
   });
 
+  async function twoBranchesFirstDies(): Promise<{ kant: Consumer; socrates: Consumer; second: DeliveryEnvelope }> {
+    const kant = await consumer('Steven', 'kant');
+    const socrates = await consumer('Steven', 'socrates');
+    await repository.publish(command());
+    await ackDone(kant, await nextDelivery(kant), [{ to: 'socrates', body: 'rama 0' }, { to: 'socrates', body: 'rama 1' }]);
+    const [first, second] = await claimAll(socrates, 2);
+    await ackFailed(socrates, requireValue(first, 'first'), sameCause[0]?.error ?? '', sameCause[0]?.code ?? '');
+    return { kant, socrates, second: requireValue(second, 'second') };
+  }
+
+  it('un fracaso repetido contra un aviso que el padre YA atendió abre uno nuevo que lo despierta', async () => { // hospital, perseo 02139831
+    await setCoalescing(true);
+    const { kant, socrates, second } = await twoBranchesFirstDies();
+    await ackDone(kant, await nextDelivery(kant), [], 'visto'); // the director handled the first notice
+
+    await ackFailed(socrates, second, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '');
+
+    const notices = await noticesTo('kant');
+    expect(notices).toHaveLength(2);
+    const fresh = requireValue(notices[1], 'second notice');
+    const status = await pool.query<{ status: string }>('SELECT status FROM deliveries WHERE id=$1', [fresh.delivery_id]);
+    expect(status.rows[0]?.status).toBe('pending');
+    expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 2 });
+  });
+
+  it('tampoco pliega en un aviso que el padre ya reclamó: su texto ya no se puede reescribir', async () => {
+    await setCoalescing(true);
+    const { kant, socrates, second } = await twoBranchesFirstDies();
+    await nextDelivery(kant); // claimed, not answered yet: the paste already went out with the old text
+
+    await ackFailed(socrates, second, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '');
+
+    expect(await noticesTo('kant')).toHaveLength(2);
+  });
+
+  it('mientras el aviso sigue pendiente, el fracaso repetido se pliega en él (sin nueva entrega)', async () => {
+    await setCoalescing(true);
+    const { socrates, second } = await twoBranchesFirstDies();
+
+    await ackFailed(socrates, second, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '');
+
+    const notices = await noticesTo('kant');
+    expect(notices).toHaveLength(1);
+    expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 1 });
+  });
+
+  it('dos hermanos que mueren A LA VEZ en un cubo nuevo producen un solo aviso (el primero no se lee como «ya leído»)', async () => {
+    await setCoalescing(true);
+    const kant = await consumer('Steven', 'kant');
+    const socrates = await consumer('Steven', 'socrates');
+    await repository.publish(command());
+    await ackDone(kant, await nextDelivery(kant), Array.from({ length: 6 }, (_, index) => ({ to: 'socrates', body: `rama ${String(index)}` })));
+    const children = await claimAll(socrates, 6);
+    await Promise.all(children.map((child) => ackFailed(socrates, child, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '')));
+
+    expect(await noticesTo('kant')).toHaveLength(1);
+    expect((await buckets())[0]).toMatchObject({ total_failures: 6, notices_emitted: 1 });
+  });
+
+  for (const [state, setup] of [ // Already taken by an adapter: a rewritten body collides in its durable inbox.
+    ['retry', "status='retry',attempt=1,last_error='ack timeout'"],
+    ['aparcado tras un reclamo', "status='pending',attempt=0,last_error='ACK timeout: no adapter connected; parked without spending an attempt'"],
+  ] as const) {
+    it(`un aviso ya reclamado (${state}) no se reescribe: el fracaso repetido abre uno nuevo`, async () => {
+      await setCoalescing(true);
+      const { socrates, second } = await twoBranchesFirstDies();
+      const notice = requireValue((await noticesTo('kant'))[0], 'notice');
+      await pool.query(`UPDATE deliveries SET ${setup} WHERE id=$1`, [notice.delivery_id]);
+
+      await ackFailed(socrates, second, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '');
+
+      const notices = await noticesTo('kant');
+      expect(notices).toHaveLength(2);
+      expect(requireValue(notices[0], 'old').text).toBe(notice.text);
+    });
+  }
+
   it('nunca pliega una respuesta exitosa', async () => {
     await setCoalescing(true);
     const kant = await consumer('Steven', 'kant');
