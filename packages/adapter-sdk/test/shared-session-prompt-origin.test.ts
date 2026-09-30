@@ -182,3 +182,8 @@ test("grok runner: only the TUI's own cwd group decides; a newer conversation of
   await own.append(own.user(`${GOAL}\n${HUMAN_PROMPT}`));
   assert.equal(await runner.lastUserPromptOrigin(), "human");
 });
+
+test("a bus prompt without the correlation block (hades 2026-09-23, headless era) is still Cauce's by its identity preamble", () => {
+  assert.equal(promptOrigin("--- BEGIN IDENTITY ---\nSos \"hades\", un agente de la flota Cauce V3\n--- END IDENTITY ---\nrevisá el disco"), "cauce");
+  assert.equal(promptOrigin("--- BEGIN IDENTITY ---"), "cauce");
+});

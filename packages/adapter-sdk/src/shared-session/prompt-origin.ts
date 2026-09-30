@@ -1,5 +1,6 @@
 import { lstat } from "node:fs/promises";
 import { CODEX_WAKE_PREFIX } from "./codex-chain.js";
+import { IDENTITY_BEGIN } from "../harnesses/shared/prompt.js";
 import { CORRELATION_BLOCK_START } from "./envelope.js";
 import type { TranscriptReader } from "./types.js";
 
@@ -13,7 +14,8 @@ export type PromptOrigin = "human" | "cauce";
  */
 export function promptOrigin(text: string | undefined): PromptOrigin | undefined {
   if (text === undefined) return undefined;
-  if (text.includes(CORRELATION_BLOCK_START) || text.trimStart().startsWith(CODEX_WAKE_PREFIX)) return "cauce";
+  if (text.includes(CORRELATION_BLOCK_START) || text.includes(IDENTITY_BEGIN) // The preamble too: hades logs hold bus prompts older than the block.
+    || text.trimStart().startsWith(CODEX_WAKE_PREFIX)) return "cauce";
   const typed = text.replace(HARNESS_REMINDER, "").trim().replace(USER_QUERY, "$1").trim(); // What remains is what was typed.
   if (typed.length === 0) return GOAL_REMINDER.test(text) ? "human" : undefined;
   return typed.startsWith("<") ? undefined : "human";
