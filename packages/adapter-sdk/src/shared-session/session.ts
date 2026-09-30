@@ -762,7 +762,7 @@ async function waitForTui(
     if (signalAborted(options.signal)) return "cancelled";
     const pane = await capturePane(tmux, target, { styled: true });
     if (signalAborted(options.signal)) return "cancelled";
-    if (!inputBoxState(pane).occupied) return "ready";
+    if (!inputBoxState(pane).occupied || inputBoxState(pane).unfocused === true) return "ready"; // grok without focus is a live TUI.
     // The pane is only asked when the box was NOT free: if it was free there is a live TUI and
     // asking would be redundant. The expensive poll is paid only while the TUI is starting up.
     if (await panePid(tmux, target) === undefined) return "gone";

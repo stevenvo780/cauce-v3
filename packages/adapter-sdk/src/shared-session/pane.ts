@@ -17,6 +17,7 @@ interface InputBoxState {
   /** What was seen, for the notice detail. Already trimmed. */
   readonly evidence: string;
   readonly thinking?: true; // codex's «extra thought» notice closes itself: a turn in flight
+  readonly unfocused?: true; // grok's box without focus: what it shows is not what focus would reveal
 }
 
 const THINKING_NOTICE = /^\d+\.\s+Dismiss and keep waiting\b/iu; // the menu option itself, not words in scrollback
@@ -30,6 +31,9 @@ export function inputBoxState(pane: string | undefined): InputBoxState {
     return { occupied: true, kind: "busy", evidence: "no se pudo capturar el panel" };
   }
   const lines = pane.split(/\r?\n/u);
+  if (grokPromptUnfocused(pane)) {
+    return { occupied: true, kind: "busy", unfocused: true, evidence: "la caja de grok no tiene el foco (Space:prompt)" };
+  }
 
   for (const mark of PENDING_PASTE_MARKS) {
     if (lines.some((line) => line.includes(mark))) {
@@ -78,10 +82,13 @@ function inFlightMark(line: string): boolean {
   return IN_FLIGHT_MARKS.some((mark) => mark.test(line));
 }
 
+const GROK_UNFOCUSED = /(?:^|\s)Space:prompt(?:\s|$)/u; // grok 1.0.41 with the scrollback focused (Tab, a click)
+
 /** grok's LAST line (`…Ctrl+x:shortcuts`/`…press again to quit`): on screen it alone decides (`Ctrl+c:cancel`). */
 function grokFooterState(lastLine: string): "in_flight" | "idle" | undefined {
   const footer = /\bCtrl\+x:shortcuts\b/u.test(lastLine)
-    || /\bCtrl\+c:press again to quit\b/u.test(lastLine);
+    || /\bCtrl\+c:press again to quit\b/u.test(lastLine)
+    || GROK_UNFOCUSED.test(lastLine);
   if (!footer) return undefined;
   return /\bCtrl\+c:cancel\b/u.test(lastLine) ? "in_flight" : "idle";
 }
@@ -99,6 +106,14 @@ export function turnInFlight(pane: string | undefined): boolean {
 }
 
 const IN_FLIGHT_WINDOW = 12;
+
+export function grokPromptUnfocused(pane: string | undefined): boolean { // The box then shows a grey «Build anything» or the owner's text in plain 256 colors (reads as typed); Space focuses without inserting (measured).
+  if (pane === undefined) return false;
+  const lines = pane.split(/\r?\n/u).map(stripSgr);
+  let end = lines.length;
+  while (end > 0 && (lines[end - 1] ?? "").trim() === "") end -= 1;
+  return end > 0 && GROK_UNFOCUSED.test(lines[end - 1] ?? "");
+}
 
 /**
  * The contents of the last prompt line, with the cursor and box borders removed.

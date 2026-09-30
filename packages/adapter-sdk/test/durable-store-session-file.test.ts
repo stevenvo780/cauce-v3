@@ -72,7 +72,9 @@ test("invalid sessions state is rejected without rewriting retired state", async
 
     await assert.rejects(
       DurableStore.open(directory),
-      (error: unknown) => error instanceof Error && "code" in error && error.code === "INVALID_SESSIONS_FILE",
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "INVALID_SESSIONS_FILE"
+        // A hand-edited 0644 file killed hades in a loop with no hint of why: the mode is named.
+        && (scenario.name !== "mode" || error.message.includes("mode 0644, must be 0600")),
     );
     assert.equal(await readFile(retiredPath, "utf8"), retired);
   }

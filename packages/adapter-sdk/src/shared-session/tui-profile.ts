@@ -10,6 +10,8 @@ export interface TuiProfile {
   readonly pasteOnlyWhenIdle: boolean;
   /** The command that clears the conversation in this TUI, for the owner-facing notice. */
   readonly clearCommand: string;
+  /** Key that returns focus to an unfocused box without typing: grok 1.0.41 leaves the scrollback focused (footer `Space:prompt`) and a paste then waits behind a box that looks written. */
+  readonly focusKey: "Space" | undefined;
 }
 
 export function tuiProfile(harness: SharedSessionHarness): TuiProfile {
@@ -20,6 +22,7 @@ export function tuiProfile(harness: SharedSessionHarness): TuiProfile {
         interruptOnlyWhileGenerating: false,
         pasteOnlyWhenIdle: false,
         clearCommand: "/clear",
+        focusKey: undefined,
       };
     // codex 0.159 STEERS a paste into the running turn: socrates answered a bus canary inside the owner's 1 h 28 m turn and closed it without the owner's summary.
     case "codex":
@@ -28,6 +31,7 @@ export function tuiProfile(harness: SharedSessionHarness): TuiProfile {
         interruptOnlyWhileGenerating: false,
         pasteOnlyWhenIdle: true,
         clearCommand: "/new",
+        focusKey: undefined,
       };
     case "grok":
       return {
@@ -35,6 +39,7 @@ export function tuiProfile(harness: SharedSessionHarness): TuiProfile {
         interruptOnlyWhileGenerating: true,
         pasteOnlyWhenIdle: true,
         clearCommand: "/new",
+        focusKey: "Space",
       };
     // Muse 1.4.0: `esc to interrupt` on the working line; a paste over a running turn is queued as a steer ("Queued input") and runs later like grok, and `/clear` starts a fresh session (a NEW id) that the native witness then follows.
     case "muse":
@@ -43,6 +48,7 @@ export function tuiProfile(harness: SharedSessionHarness): TuiProfile {
         interruptOnlyWhileGenerating: true,
         pasteOnlyWhenIdle: true,
         clearCommand: "/clear",
+        focusKey: undefined,
       };
   }
 }

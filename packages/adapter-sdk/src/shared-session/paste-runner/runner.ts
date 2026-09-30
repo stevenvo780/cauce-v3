@@ -25,6 +25,7 @@ import type { PasteSessionOptions, PendingQuarantine } from "./contracts.js";
 import { PasteSessionHarvestRunner, type WakeCommit } from "./harvest.js";
 import { beforeDeadline, replacedBeforeSubmission, result, SETTLE_MS, turnBudgetMs } from "./runtime.js";
 
+
 type PromptCommitOutcome =
   | { readonly state: "entered" }
   | { readonly state: "not_pasted"; readonly paste: PastePromptResult }
@@ -208,6 +209,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         buffer,
         promptText,
         request.signal,
+        wait.focusSpent !== true,
       );
       if (committed.state === "ambiguous") {
         return this.ambiguousCommittedState(
@@ -227,6 +229,11 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         }
         if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
         if (paste.reason === "turn_in_flight") continue; // A turn began before the barrier: wait again.
+        if (paste.reason === "input_unfocused") {
+          wait.focusSpent = true; // ONE Space per delivery: a 2nd over a late redraw or the owner's Tab would type a space.
+          await this.options.sleep(this.options.settleMs ?? SETTLE_MS);
+          continue;
+        }
         if (paste.reason === "input_busy") {
           return this.degrade(
             "input_busy",
@@ -304,8 +311,10 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     buffer: string,
     promptText: string,
     signal: AbortSignal,
+    focus = false,
   ): Promise<PromptCommitOutcome> {
     const identity = barrier.identity;
+    const profile = tuiProfile(this.options.harness);
     let outcome: PromptCommitOutcome | undefined;
     try {
       const paste = await pastePrompt(
@@ -318,7 +327,8 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
           timeoutMs: this.quarantineOperationTimeoutMs(),
           verifyInputEmpty: true,
           inputBarrier: barrier,
-          requireIdle: tuiProfile(this.options.harness).pasteOnlyWhenIdle,
+          requireIdle: profile.pasteOnlyWhenIdle,
+          ...(profile.focusKey === undefined || !focus ? {} : { focusKey: profile.focusKey }),
         },
       );
       if (!paste.bufferScrubbed) {

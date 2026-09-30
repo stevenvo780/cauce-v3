@@ -48,6 +48,7 @@ import {
 export interface AcquireWait {
   freeSince: number; // The owner's box deadlines count from when the TUI stopped generating.
   readonly generatingDeadline: number;
+  focusSpent?: true; // The one focus key of this delivery went out: from then on an unfocused box is occupied.
 }
 
 export abstract class PasteSessionRunnerBase<E> {
@@ -512,7 +513,8 @@ export abstract class PasteSessionRunnerBase<E> {
       const generating = (queuesPaste && turnInFlight(pane)) || state.thinking === true;
       // The pane we decided to paste into is the one to inspect for merged turn: recapturing later
       // would be a different moment.
-      if (!state.occupied && !generating) return { ok: true, pane };
+      const focusable = state.unfocused === true && wait.focusSpent !== true && tuiProfile(this.options.harness).focusKey !== undefined;
+      if ((!state.occupied || focusable) && !generating) return { ok: true, pane }; // Focused and re-read under the barrier.
       const now = Date.now();
       if (generating) {
         wait.freeSince = now; // Another turn, not the owner's text: own deadline and own reason.

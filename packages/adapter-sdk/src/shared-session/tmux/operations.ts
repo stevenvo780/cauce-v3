@@ -211,7 +211,7 @@ export function pasteSafeText(text: string): string { // Visible, inert controls
 export interface PastePromptResult {
   /** `ambiguous` only appears if the transport lost the atomic mutation result. */
   readonly state: "not_pasted" | "pasted" | "ambiguous";
-  readonly reason?: "cancelled" | "identity_changed" | "input_busy" | "turn_in_flight" | "mutation_rejected"; // turn_in_flight: nothing pasted.
+  readonly reason?: "cancelled" | "identity_changed" | "input_busy" | "turn_in_flight" | "input_unfocused" | "mutation_rejected"; // turn_in_flight, input_unfocused: nothing pasted.
   /** Postcondition verified: the buffer no longer exists or contains only the harmless marker. */
   readonly bufferScrubbed: boolean;
 }
@@ -222,6 +222,7 @@ interface PastePromptOptions extends TmuxRunControl {
   /** Already-acquired exclusion; mandatory when verifying the input box. */
   readonly inputBarrier?: PaneInputBarrier;
   readonly requireIdle?: boolean; // Also refuse while a turn is in flight (grok queues the paste).
+  readonly focusKey?: "Space"; // Gives an unfocused box its focus (`tuiProfile`): sent under the barrier, nothing pasted.
 }
 
 const SCRUBBED_BUFFER_CONTENT = "CAUCE_BUFFER_SCRUBBED";
@@ -316,8 +317,13 @@ export async function pastePrompt(
         ? "ready"
         : await pastePrecondition(
           tmux, identity, options.inputBarrier, mutationControl, options.requireIdle === true,
+          options.focusKey !== undefined,
         );
-      if (firstGuard !== "ready") {
+      if (firstGuard === "input_unfocused" && options.focusKey !== undefined && options.inputBarrier !== undefined) {
+        await mutateUnderInputBarrier(tmux, options.inputBarrier, `send-keys -t ${identity.paneId} ${options.focusKey}`,
+          mutationControl, "full"); // Seen unfocused UNDER the barrier: nobody can focus it first, so it cannot land as a character.
+        reason = "input_unfocused";
+      } else if (firstGuard !== "ready") {
         state = firstGuard === "unreadable" ? "ambiguous" : "not_pasted";
         reason = firstGuard === "unreadable" ? undefined : pasteGuardReason(firstGuard);
       } else {
@@ -346,6 +352,7 @@ export async function pastePrompt(
             ? "ready"
             : await pastePrecondition(
               tmux, identity, options.inputBarrier, mutationControl, options.requireIdle === true,
+              options.focusKey !== undefined,
             );
           if (finalGuard !== "ready") {
             state = finalGuard === "unreadable" ? "ambiguous" : "not_pasted";
@@ -385,7 +392,7 @@ export async function pastePrompt(
   };
 }
 
-type PastePrecondition = "ready" | "identity_changed" | "input_busy" | "turn_in_flight" | "unreadable";
+type PastePrecondition = "ready" | "identity_changed" | "input_busy" | "turn_in_flight" | "input_unfocused" | "unreadable";
 
 /**
  * Snapshot immediately before the paste, already under human-keyboard exclusion.
@@ -401,6 +408,7 @@ async function pastePrecondition(
   barrier: PaneInputBarrier | undefined,
   control: TmuxRunControl,
   requireIdle = false,
+  focusable = false,
 ): Promise<PastePrecondition> {
   if (barrier === undefined || !samePaneIdentity(barrier.identity, identity)) return "unreadable";
   // `capture-pane` triggers `after-capture-pane`; all effective configuration must be rejected
@@ -426,14 +434,16 @@ async function pastePrecondition(
   }
   const pane = await capturePane(tmux, identity.paneId, { styled: true, control });
   if (pane === undefined) return "unreadable";
-  if (inputBoxState(pane).occupied) return "input_busy";
+  const box = inputBoxState(pane);
+  if (box.unfocused === true && focusable) return "input_unfocused";
+  if (box.occupied) return "input_busy";
   return requireIdle && turnInFlight(pane) ? "turn_in_flight" : "ready";
 }
 
 function pasteGuardReason(
   guard: Exclude<PastePrecondition, "ready" | "unreadable">,
 ): PastePromptResult["reason"] {
-  return guard === "input_busy" || guard === "turn_in_flight" ? guard : "identity_changed";
+  return guard === "input_busy" || guard === "turn_in_flight" || guard === "input_unfocused" ? guard : "identity_changed";
 }
 
 export async function sendEnter(

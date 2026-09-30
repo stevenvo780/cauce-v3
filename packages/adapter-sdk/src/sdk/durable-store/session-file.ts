@@ -14,14 +14,14 @@ const O_CLOEXEC = Number((fsConstants as unknown as Record<string, unknown>).O_C
 class InvalidSessionsFileError extends Error {
   readonly code = "INVALID_SESSIONS_FILE";
 
-  constructor() {
-    super("sessions.json failed secure validation");
+  constructor(reason?: string) { // The reason names only metadata (mode, owner, links), never contents.
+    super(`sessions.json failed secure validation${reason === undefined ? "" : ` (${reason})`}`);
     this.name = "InvalidSessionsFileError";
   }
 }
 
-function invalidSessionsFile(): never {
-  throw new InvalidSessionsFileError();
+function invalidSessionsFile(reason?: string): never {
+  throw new InvalidSessionsFileError(reason);
 }
 
 function rejectDuplicateJsonKeys(text: string): void {
@@ -197,13 +197,13 @@ export async function readSessionsSecure(path: string): Promise<SessionsFile> {
   try {
     const before = await handle.stat();
     const euid = process.geteuid?.();
-    if (euid === undefined
-      || !before.isFile()
-      || before.uid !== euid
-      || (before.mode & 0o777) !== 0o600
-      || before.nlink !== 1
-      || before.size <= 0
-      || before.size > MAX_SESSIONS_FILE_BYTES) invalidSessionsFile();
+    if (euid === undefined || !before.isFile()) invalidSessionsFile("not a regular file");
+    if (before.uid !== euid) invalidSessionsFile(`owner uid ${String(before.uid)}, must be ${String(euid)}`);
+    if ((before.mode & 0o777) !== 0o600) {
+      invalidSessionsFile(`mode ${(before.mode & 0o777).toString(8).padStart(4, "0")}, must be 0600`);
+    }
+    if (before.nlink !== 1) invalidSessionsFile(`${String(before.nlink)} hard links, must be 1`);
+    if (before.size <= 0 || before.size > MAX_SESSIONS_FILE_BYTES) invalidSessionsFile(`size ${String(before.size)}`);
 
     const buffer = Buffer.alloc(MAX_SESSIONS_FILE_BYTES + 1);
     let length = 0;
