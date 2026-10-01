@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { requireValue } from './helpers.js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
-import { CauceRepository, createPool, type DatabasePool } from '../src/index.js';
+import { CauceRepository, createPool, type DatabaseClient, type DatabasePool } from '../src/index.js';
 import { failureSignature } from '../src/repository.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
@@ -207,18 +207,19 @@ describe('coalescencia de avisos de fracaso', () => {
   );
 
   it.each(['pending', 'retry', 'leased', 'accepted', 'started'])(
-    'mantiene la coalescencia mientras el aviso del mismo padre está %s', async (status) => {
+    'sólo pliega el aviso pendiente que nunca se tomó: estado %s', async (status) => {
       const { socrates, children, notice } = await standingFailure();
       await pool.query('UPDATE deliveries SET status=$2 WHERE id=$1', [notice.delivery_id, status]);
 
       await ackFailed(socrates, requireValue(children[1], 'second child'));
 
-      expect(await noticesTo('kant')).toHaveLength(1);
-      expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 1 });
+      const coalesced = status === 'pending';
+      expect(await noticesTo('kant')).toHaveLength(coalesced ? 1 : 2);
+      expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: coalesced ? 1 : 2 });
       const events = await pool.query<{ coalesced: boolean }>(
         'SELECT coalesced FROM agent_failure_notice_events WHERE ack_delivery_id=$1', [children[1]?.delivery_id]
       );
-      expect(events.rows[0]?.coalesced).toBe(true);
+      expect(events.rows[0]?.coalesced).toBe(coalesced);
     }
   );
 
@@ -293,7 +294,7 @@ describe('coalescencia de avisos de fracaso', () => {
       .toEqual(outbox.rows);
   });
 
-  it('no espera el lock del aviso anterior mientras retiene el bucket', async () => {
+  it('emite otro aviso sin esperar el lock del anterior mientras retiene el bucket', async () => {
     const { socrates, children, notice } = await standingFailure();
     const url = new URL(database.url);
     url.searchParams.set('options', '-c lock_timeout=1s');
@@ -311,11 +312,84 @@ describe('coalescencia de avisos de fracaso', () => {
         })
       );
       expect(result).toMatchObject({ applied: true, status: 'failed' });
-      expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 1 });
+      expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 2 });
+      const notices = await noticesTo('kant');
+      expect(notices).toHaveLength(2);
+      expect(notices[0]?.text).toBe(notice.text);
     } finally {
       await locker.query('ROLLBACK');
       locker.release();
       await boundedPool.end();
+    }
+  });
+
+  it('un claim iniciado antes de la coalescencia entrega el cuerpo actualizado completo', async () => {
+    const { kant, socrates, children, notice } = await standingFailure();
+    const barrier = randomUUID();
+    const gate = await pool.connect();
+    let pendingClaim: Promise<{ delivery?: DeliveryEnvelope; error?: unknown }> | undefined;
+    try {
+      await gate.query('SELECT pg_advisory_lock(hashtextextended($1,0))', [barrier]);
+      const gatePid = requireValue((await gate.query<{ pid: number }>(
+        'SELECT pg_backend_pid() AS pid'
+      )).rows[0], 'barrier pid').pid;
+      const racePool = {
+        connect: async (): Promise<DatabaseClient> => {
+          const client = await pool.connect();
+          const wrappedQuery = (async (queryText: string, values?: unknown[]) => {
+            if (queryText.includes('WITH picked AS (') && values?.[6] === false) {
+              queryText = queryText.replace(
+                'WITH picked AS (',
+                `WITH claim_snapshot_barrier AS MATERIALIZED (
+                   SELECT pg_advisory_xact_lock(hashtextextended($8::text,0))
+                 ), picked AS (`
+              ).replace(
+                'WHERE d.recipient_tenant=$1',
+                'WHERE (SELECT count(*) FROM claim_snapshot_barrier)=1 AND d.recipient_tenant=$1'
+              );
+              values = [...values, barrier];
+            }
+            return values === undefined ? client.query(queryText) : client.query(queryText, values);
+          }) as DatabaseClient['query'];
+          return {
+            query: wrappedQuery, on: client.on.bind(client), off: client.off.bind(client),
+            release: client.release.bind(client)
+          } as DatabaseClient;
+        }
+      } as DatabasePool;
+      pendingClaim = claimNext(new CauceRepository(racePool), kant, () => true, 1).then(
+        (delivery) => ({ delivery }), (error: unknown) => ({ error })
+      );
+      await expect.poll(async () => (await pool.query(
+        `SELECT 1 FROM pg_stat_activity activity
+         WHERE activity.datname=current_database() AND activity.wait_event_type='Lock'
+           AND $1::integer=ANY(pg_blocking_pids(activity.pid))
+           AND activity.query LIKE '%WITH claim_snapshot_barrier AS MATERIALIZED%'`,
+        [gatePid]
+      )).rowCount, { timeout: 5_000, interval: 20 }).toBe(1);
+
+      const second = requireValue(children[1], 'second child');
+      await ackFailed(socrates, second);
+      const stored = requireValue((await pool.query<{ body: Record<string, unknown> }>(
+        'SELECT body FROM messages WHERE id=(SELECT message_id FROM deliveries WHERE id=$1)',
+        [notice.delivery_id]
+      )).rows[0], 'stored notice');
+      expect(stored.body.text).toContain('2 failures with this same cause');
+      expect((await pool.query<{ coalesced: boolean }>(
+        'SELECT coalesced FROM agent_failure_notice_events WHERE ack_delivery_id=$1', [second.delivery_id]
+      )).rows[0]?.coalesced).toBe(true);
+
+      await gate.query('SELECT pg_advisory_unlock(hashtextextended($1,0))', [barrier]);
+      const outcome = await pendingClaim;
+      if (outcome.error !== undefined) throw new Error('claim failed at the snapshot barrier', { cause: outcome.error });
+      const claimed = requireValue(outcome.delivery, 'claimed notice');
+      expect(claimed.delivery_id).toBe(notice.delivery_id);
+      expect(claimed.body).toEqual(stored.body);
+      expect(await noticesTo('kant')).toHaveLength(1);
+    } finally {
+      await gate.query('SELECT pg_advisory_unlock(hashtextextended($1,0))', [barrier]).catch(() => undefined);
+      gate.release();
+      await pendingClaim;
     }
   });
 
@@ -482,6 +556,79 @@ describe('coalescencia de avisos de fracaso', () => {
     expect(new Set(recorded.rows.map((row) => row.child_delivery_id)).size).toBe(3);
     expect(recorded.rows.filter((row) => row.coalesced === true)).toHaveLength(2);
   });
+
+  async function twoBranchesFirstDies(): Promise<{ kant: Consumer; socrates: Consumer; second: DeliveryEnvelope }> {
+    const { kant, socrates, children } = await standingFailure();
+    return { kant, socrates, second: requireValue(children[1], 'second') };
+  }
+
+  it('un fracaso repetido contra un aviso que el padre YA atendió abre uno nuevo que lo despierta', async () => {
+    await setCoalescing(true);
+    const { kant, socrates, second } = await twoBranchesFirstDies();
+    await ackDone(kant, await nextDelivery(kant), [], 'visto');
+
+    await ackFailed(socrates, second, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '');
+
+    const notices = await noticesTo('kant');
+    expect(notices).toHaveLength(2);
+    const fresh = requireValue(notices[1], 'second notice');
+    const status = await pool.query<{ status: string }>('SELECT status FROM deliveries WHERE id=$1', [fresh.delivery_id]);
+    expect(status.rows[0]?.status).toBe('pending');
+    expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 2 });
+  });
+
+  it('tampoco pliega en un aviso que el padre ya reclamó: su texto ya no se puede reescribir', async () => {
+    await setCoalescing(true);
+    const { kant, socrates, second } = await twoBranchesFirstDies();
+    await nextDelivery(kant);
+
+    await ackFailed(socrates, second, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '');
+
+    expect(await noticesTo('kant')).toHaveLength(2);
+  });
+
+  it('mientras el aviso sigue pendiente, el fracaso repetido se pliega en él (sin nueva entrega)', async () => {
+    await setCoalescing(true);
+    const { socrates, second } = await twoBranchesFirstDies();
+
+    await ackFailed(socrates, second, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '');
+
+    const notices = await noticesTo('kant');
+    expect(notices).toHaveLength(1);
+    expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 1 });
+  });
+
+  it('dos hermanos que mueren A LA VEZ en un cubo nuevo producen un solo aviso (el primero no se lee como «ya leído»)', async () => {
+    await setCoalescing(true);
+    const kant = await consumer('Steven', 'kant');
+    const socrates = await consumer('Steven', 'socrates');
+    await repository.publish(command());
+    await ackDone(kant, await nextDelivery(kant), Array.from({ length: 6 }, (_, index) => ({ to: 'socrates', body: `rama ${String(index)}` })));
+    const children = await claimAll(socrates, 6);
+    await Promise.all(children.map((child) => ackFailed(socrates, child, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '')));
+
+    expect(await noticesTo('kant')).toHaveLength(1);
+    expect((await buckets())[0]).toMatchObject({ total_failures: 6, notices_emitted: 1 });
+  });
+
+  for (const [state, setup] of [
+    ['retry', "status='retry',attempt=1,last_error='ack timeout'"],
+    ['pendiente con intento gastado', "status='pending',attempt=1,last_error=NULL"],
+    ['aparcado tras un reclamo', "status='pending',attempt=0,last_error='ACK timeout: no adapter connected; parked without spending an attempt'"],
+  ] as const) {
+    it(`un aviso ya reclamado (${state}) no se reescribe: el fracaso repetido abre uno nuevo`, async () => {
+      await setCoalescing(true);
+      const { socrates, second } = await twoBranchesFirstDies();
+      const notice = requireValue((await noticesTo('kant'))[0], 'notice');
+      await pool.query(`UPDATE deliveries SET ${setup} WHERE id=$1`, [notice.delivery_id]);
+
+      await ackFailed(socrates, second, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '');
+
+      const notices = await noticesTo('kant');
+      expect(notices).toHaveLength(2);
+      expect(requireValue(notices[0], 'old').text).toBe(notice.text);
+    });
+  }
 
   it('nunca pliega una respuesta exitosa', async () => {
     await setCoalescing(true);

@@ -402,7 +402,16 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
            FROM updated u JOIN messages m ON m.id=u.message_id`,
           [tenantId, alias, epoch, instanceId, HUMAN_PRIORITY_FLOOR, ackDeadlineMs, humanOriginated]
         );
-        return claimed.rows[0];
+        const row = claimed.rows[0];
+        if (row?.body.type !== 'agent.response') return row;
+        // The claim snapshot may precede a notice refresh. Its delivery lock now excludes folds.
+        const current = await client.query<Pick<DeliveryRow, 'body'>>(
+          'SELECT body FROM messages WHERE id=$1', [row.message_id]
+        );
+        if (current.rows[0] === undefined) {
+          throw new StoreError('conflict', 'claimed response message is unavailable');
+        }
+        return { ...row, body: current.rows[0].body };
       };
 
       for (let index = 0; index < maxClaims; index += 1) {

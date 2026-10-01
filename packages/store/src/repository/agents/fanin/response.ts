@@ -368,9 +368,9 @@ export abstract class AgentResponseRepository extends AgentsRepository {
   }
 
   /**
-   * The upsert retains the bucket lock until commit, serializing concurrent ACKs.
-   * A following statement sees notices committed while the upsert waited for that lock.
-   * Notice validation uses no delivery lock: its ACK may be waiting for this bucket.
+   * The advisory lock and upsert serialize concurrent ACKs for the same bucket.
+   * Notice validation uses a fresh snapshot and skips locked deliveries to avoid lock cycles.
+   * A locked unread notice stays mutable until commit, excluding a concurrent claim.
    */
   private async reserveFailureNotice(
     client: DatabaseClient,
@@ -407,6 +407,11 @@ export abstract class AgentResponseRepository extends AgentsRepository {
         postgresTextSafe(error) ?? null, postgresTextSafe(errorCode) ?? null]
     );
     if (claimed.rowCount !== 1) return undefined;
+
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([
+      'cauce:failure-notice', root, relationship.source_tenant, relationship.source_alias,
+      row.recipient_tenant, row.recipient_alias, signature
+    ])]);
 
     const reserved = await client.query<{
       id: string;
@@ -449,10 +454,11 @@ export abstract class AgentResponseRepository extends AgentsRepository {
          FROM deliveries delivery JOIN messages message ON message.id=delivery.message_id
          WHERE delivery.id=$1 AND message.id=$2
            AND delivery.recipient_tenant=$3 AND delivery.recipient_alias=$4
-           AND delivery.status IN ('pending','retry','leased','accepted','started')
+           AND delivery.status='pending' AND delivery.attempt=0 AND delivery.last_error IS NULL
            AND message.body->>'type'='agent.response'
            AND message.body#>>'{correlation,response_to_delivery_id}'=$5::text
-           AND message.body#>>'{correlation,response_to_message_id}'=$6::text`,
+           AND message.body#>>'{correlation,response_to_message_id}'=$6::text
+         FOR UPDATE OF delivery SKIP LOCKED`,
         [bucket.last_notice_delivery_id, bucket.last_notice_message_id,
           relationship.source_tenant, relationship.source_alias,
           relationship.source_delivery_id, relationship.source_message_id]
@@ -553,7 +559,8 @@ export abstract class AgentResponseRepository extends AgentsRepository {
     if (!lastNoticeMessageId || !lastNoticeDeliveryId || lastNoticeBaseText === null) return;
     const standing = await client.query<{ status: DeliveryState }>(
       `SELECT status FROM deliveries
-       WHERE id=$1 AND message_id=$2 AND status='pending' FOR UPDATE SKIP LOCKED`,
+       WHERE id=$1 AND message_id=$2 AND status='pending' AND attempt=0 AND last_error IS NULL
+       FOR UPDATE SKIP LOCKED`,
       [lastNoticeDeliveryId, lastNoticeMessageId]
     );
     if (standing.rows[0]?.status !== 'pending') return;
