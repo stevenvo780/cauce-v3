@@ -301,7 +301,7 @@ describe('Telegram update boundaries', () => {
     // proves the update_id is already durably represented the moment it raises this error.
     const repository = new MemoryCursorRepository();
     const ingress = new DurableRecordingIngress();
-    ingress.error = new StoreError('conflict', 'idempotency key reused with a different request');
+    ingress.error = new StoreError('conflict', 'idempotency key reused with a different request', 'idempotency_durable_conflict');
     const metrics: string[] = [];
 
     const count = await poller(

@@ -53,10 +53,71 @@ describe('gateway delivery admission control', () => {
     expect(repository.claimDeliveries).not.toHaveBeenCalled();
   });
 
-  it('closes a consumer whose durable capacity declaration is missing instead of leaving a false-green hello', async () => {
+  it.each([
+    { name: 'missing capacity with original prose', error: new StoreError(
+      'conflict', 'delivery consumer is missing its durable agent capacity', 'consumer_capacity_missing',
+    ), wire: 'consumer_not_declared', message: 'consumer has no durable delivery capacity declaration',
+    status: 4403, close: 'consumer not declared' },
+    { name: 'missing capacity with changed prose', error: new StoreError(
+      'conflict', 'the declaration was removed after hello', 'consumer_capacity_missing',
+    ), wire: 'consumer_not_declared', message: 'consumer has no durable delivery capacity declaration',
+    status: 4403, close: 'consumer not declared' },
+    { name: 'invalid capacity remains unavailable', error: new StoreError(
+      'conflict', 'the declaration is now malformed', 'consumer_capacity_invalid',
+    ), wire: 'delivery_unavailable', message: 'durable delivery admission is unavailable',
+    status: 1011, close: 'delivery unavailable' },
+    { name: 'generic conflict cannot inherit a reason from prose', error: new StoreError(
+      'conflict', 'delivery consumer is missing its durable agent capacity',
+    ), wire: 'delivery_unavailable', message: 'durable delivery admission is unavailable',
+    status: 1011, close: 'delivery unavailable' },
+    { name: 'fencing preserves its exact public result', error: new StoreError('fenced', 'the claim lease changed'),
+      wire: 'fenced', message: 'the claim lease changed', status: 4401, close: 'fenced' },
+  ])('preserves the post-hello drain outcome: $name', async (expected) => {
+    const repository = fakeRepository();
+    vi.mocked(repository.claimDeliveries).mockRejectedValueOnce(expected.error);
+    const app = await buildGateway({
+      pool: fakePool(), repository, authProvider: DevOnlyAuthProvider.forTests(),
+      deliveryWakeSubscriber: noDeliveryWakes, outboxPollMs: 60_000,
+    });
+    apps.push(app);
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const port = (app.server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
+      headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' },
+    });
+    sockets.push(socket);
+    const reader = frameSession(socket);
+    const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+      socket.once('close', (code, reason) => { resolve({ code, reason: reason.toString('utf8') }); });
+    });
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    socket.send(JSON.stringify({
+      type: 'hello', version: '3.0', tenant_id: 'Pablo', alias: 'midas',
+      instance_id: 'post-hello-capacity', capabilities: ['acks.v3', 'renewable_delivery_claims_v1'],
+    }));
+
+    expect(await reader.next()).toMatchObject({ type: 'hello_ack', version: '3.0', epoch: 1 });
+    expect(await reader.next()).toEqual({ type: 'error', code: expected.wire, message: expected.message });
+    await expect(closed).resolves.toEqual({ code: expected.status, reason: expected.close });
+    expect(repository.acquireLease).toHaveBeenCalledOnce();
+    expect(repository.claimDeliveries).toHaveBeenCalledOnce();
+    expect(repository.releaseLease).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { code: 'conflict', reason: 'consumer_capacity_missing', wire: 'consumer_not_declared', close: 'consumer not declared',
+      message: 'consumer has no valid durable delivery capacity declaration' },
+    { code: 'conflict', reason: 'consumer_capacity_invalid', wire: 'consumer_not_declared', close: 'consumer not declared',
+      message: 'consumer has no valid durable delivery capacity declaration' },
+    { code: 'forbidden', reason: 'consumer_disabled', wire: 'consumer_disabled', close: 'consumer disabled',
+      message: 'consumer agent is disabled and cannot establish a delivery lease' },
+  ] as const)('closes an unavailable consumer by reason, independently of prose: $reason', async (expected) => {
     const repository = fakeRepository();
     vi.mocked(repository.acquireLease).mockRejectedValueOnce(new StoreError(
-      'conflict', 'delivery consumer is missing its durable agent capacity',
+      expected.code, 'reworded durable consumer admission failure', expected.reason,
     ));
     const app = await buildGateway({
       pool: fakePool(), repository,
@@ -86,10 +147,9 @@ describe('gateway delivery admission control', () => {
     }));
 
     expect(await reader.next()).toEqual({
-      type: 'error', code: 'consumer_not_declared',
-      message: 'consumer has no valid durable delivery capacity declaration',
+      type: 'error', code: expected.wire, message: expected.message,
     });
-    await expect(closed).resolves.toEqual({ code: 4403, reason: 'consumer not declared' });
+    await expect(closed).resolves.toEqual({ code: 4403, reason: expected.close });
     expect(repository.releaseLease).not.toHaveBeenCalled();
     expect(repository.claimDeliveries).not.toHaveBeenCalled();
   });

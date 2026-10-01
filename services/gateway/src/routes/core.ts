@@ -144,7 +144,7 @@ export function createCoreRoutePhases(
         send(session.socket, { type: 'error', code: 'fenced', message: error.message });
         session.socket.close(4401, 'fenced');
       } else if (error instanceof StoreError && error.code === 'conflict'
-          && error.message === 'delivery consumer is missing its durable agent capacity') {
+          && error.recoveryReason === 'consumer_capacity_missing') {
         send(session.socket, {
           type: 'error', code: 'consumer_not_declared',
           message: 'consumer has no durable delivery capacity declaration',
@@ -368,8 +368,8 @@ export function createCoreRoutePhases(
                 );
               } catch (error) {
                 if (error instanceof StoreError && error.code === 'conflict'
-                    && (error.message === 'delivery consumer is missing its durable agent capacity'
-                      || error.message === 'delivery consumer capacity is invalid')) {
+                    && (error.recoveryReason === 'consumer_capacity_missing'
+                      || error.recoveryReason === 'consumer_capacity_invalid')) {
                   send(socket, {
                     type: 'error', code: 'consumer_not_declared',
                     message: 'consumer has no valid durable delivery capacity declaration',
@@ -378,7 +378,7 @@ export function createCoreRoutePhases(
                   return;
                 }
                 if (error instanceof StoreError && error.code === 'forbidden'
-                    && error.message === 'delivery consumer is disabled') {
+                    && error.recoveryReason === 'consumer_disabled') {
                   send(socket, {
                     type: 'error', code: 'consumer_disabled',
                     message: 'consumer agent is disabled and cannot establish a delivery lease',

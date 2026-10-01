@@ -202,7 +202,10 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
           throw new StoreError('conflict', 'idempotency key reused with a different request');
         }
         if (existing.request_hash !== hash) {
-          throw new StoreError('conflict', 'idempotency key reused with a different request');
+          throw new StoreError(
+            'conflict', 'idempotency key reused with a different request',
+            existing.message_id && existing.response !== null ? 'idempotency_durable_conflict' : undefined,
+          );
         }
         if (!existing.message_id || existing.response === null) {
           throw new StoreError('conflict', 'idempotency request is still in progress');

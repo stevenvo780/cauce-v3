@@ -55,14 +55,14 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         );
         const row = capacity.rows[0];
         if (row === undefined) {
-          throw new StoreError('conflict', 'delivery consumer is missing its durable agent capacity');
+          throw new StoreError('conflict', 'delivery consumer is missing its durable agent capacity', 'consumer_capacity_missing');
         }
         if (options.requireEnabledAgent === true && !row.enabled) {
-          throw new StoreError('forbidden', 'delivery consumer is disabled');
+          throw new StoreError('forbidden', 'delivery consumer is disabled', 'consumer_disabled');
         }
         if (row.cap !== null
             && (!Number.isSafeInteger(row.cap) || row.cap < 1 || row.cap > 100)) {
-          throw new StoreError('conflict', 'delivery consumer capacity is invalid');
+          throw new StoreError('conflict', 'delivery consumer capacity is invalid', 'consumer_capacity_invalid');
         }
       }
       // A missing row cannot be protected by SELECT ... FOR UPDATE. The keyed transaction
@@ -333,7 +333,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       const configuredCapacityRow = configuredCapacity.rows[0];
       const configured = configuredCapacityRow !== undefined;
       if (!configured && admission.requireDeclaredCapacity === true) {
-        throw new StoreError('conflict', 'delivery consumer is missing its durable agent capacity');
+        throw new StoreError('conflict', 'delivery consumer is missing its durable agent capacity', 'consumer_capacity_missing');
       }
       const concurrencyCap = configuredCapacityRow?.cap ?? null;
       const inFlight = Number(capacityRow.in_flight);
@@ -343,7 +343,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         || humanInFlight > inFlight
         || (concurrencyCap !== null
           && (!Number.isSafeInteger(concurrencyCap) || concurrencyCap < 1))) {
-        throw new StoreError('conflict', 'delivery consumer capacity is invalid');
+        throw new StoreError('conflict', 'delivery consumer capacity is invalid', 'consumer_capacity_invalid');
       }
 
 // A person occupies the reservation first. Only the human surplus consumes general capacity.
