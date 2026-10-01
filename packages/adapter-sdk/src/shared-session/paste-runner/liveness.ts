@@ -42,6 +42,8 @@ export abstract class PasteSessionLivenessRunner<E> extends PasteSessionRunnerBa
     identity: PaneIdentity,
     signal?: AbortSignal,
   ): Promise<void> {
+    if (this.options.harness === "grok" && this.options.quarantineFile === undefined
+      && this.heldQuarantines.size === 0) return;
     if (!await this.paneIsIdle(identity, signal)) return;
     if (signal?.aborted === true) return;
     if (!await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(signal))) {

@@ -5,7 +5,7 @@ import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { correlateEnvelopePrompt } from "../envelope.js";
 import type { DispatchMark } from "../grok-dispatch.js";
-import { inputBoxState, pastedChipKb, turnInFlight } from "../pane.js";
+import { turnInFlight } from "../pane.js";
 import { lastPromptOrigin, type PromptOrigin } from "../prompt-origin.js";
 import { ensureSharedSession, type EnsureFailure, type EnsureOptions } from "../session.js";
 import { TUI_WINDOW, sessionName } from "../types.js";
@@ -14,9 +14,7 @@ import type { SharedSessionRunner } from "../types.js";
 import type { NativeTurnSnapshot } from "../native-witness.js";
 import {
   acquirePaneInputBarrier,
-  capturePane,
   clearDegradation,
-  mutateUnderInputBarrier,
   paneGenerationKey,
   paneIdentityStillCurrent,
   pastePrompt,
@@ -362,25 +360,6 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         + " y seguí sus instrucciones al pie de la letra: son el pedido de este turno y su protocolo de respuesta.",
     ].join("\n"), correlationId, mcpEmission));
     return { file, pointer };
-  }
-
-  protected async clearStuckPaste(identity: PaneIdentity, bytes: number): Promise<"cleared" | "untouched" | "ambiguous"> {
-    const control = this.tmuxControl(); // Only a chip the size of OUR paste, under the barrier, verified empty after: never the owner's text.
-    const acquired = await acquirePaneInputBarrier(this.options.tmux, identity, randomBytes(32).toString("hex"), control);
-    if (acquired.state === "ambiguous") return "ambiguous";
-    if (acquired.state !== "acquired") return "untouched";
-    let outcome: "cleared" | "untouched" | "ambiguous" = "untouched";
-    try {
-      const kb = pastedChipKb(await capturePane(this.options.tmux, identity.paneId, { styled: true, control }));
-      if (kb !== undefined && (Math.abs(kb - bytes / 1000) <= 0.6 || Math.abs(kb - bytes / 1024) <= 0.6)) {
-        const sent = await mutateUnderInputBarrier(this.options.tmux, acquired.barrier, `send-keys -t ${identity.paneId} C-u`, control, "full");
-        const after = await capturePane(this.options.tmux, identity.paneId, { styled: true, control });
-        outcome = sent === "applied" && after !== undefined && !inputBoxState(after).occupied ? "cleared" : "ambiguous";
-      }
-    } finally {
-      if (await releasePaneInputBarrier(this.options.tmux, acquired.barrier, control) !== "applied") outcome = "ambiguous";
-    }
-    return outcome;
   }
 
   private async commitUnderInputBarrier(
