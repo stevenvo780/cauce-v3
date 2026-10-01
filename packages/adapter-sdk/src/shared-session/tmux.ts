@@ -25,6 +25,7 @@ export {
   clearCurrentPaneQuarantine,
   clearPaneQuarantine,
   markPaneQuarantined,
+  mutateUnderInputBarrier,
   paneQuarantineState,
   releasePaneInputBarrier,
   sessionOption,

@@ -107,6 +107,11 @@ export function turnInFlight(pane: string | undefined): boolean {
 
 const IN_FLIGHT_WINDOW = 12;
 
+export function pastedChipKb(pane: string | undefined): number | undefined { // KB of a box holding ONLY a paste chip (`[Pasted: 13 KB]`).
+  const chip = /^\[Pasted: ([\d.]+) ?KB\]$/u.exec(pane === undefined ? "" : lastPromptLine(pane.split(/\r?\n/u)) ?? "");
+  return chip?.[1] === undefined ? undefined : Number(chip[1]);
+}
+
 export function grokPromptUnfocused(pane: string | undefined): boolean { // The box then shows a grey «Build anything» or the owner's text in plain 256 colors (reads as typed); Space focuses without inserting (measured).
   if (pane === undefined) return false;
   const lines = pane.split(/\r?\n/u).map(stripSgr);

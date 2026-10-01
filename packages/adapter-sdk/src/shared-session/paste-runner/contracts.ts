@@ -44,6 +44,7 @@ export interface PasteSessionOptions<E> {
   readonly settleMs?: number;
   /** Wait time for the TUI to register the pasted turn. */
   readonly injectTimeoutMs?: number;
+  readonly dispatchGraceMs?: number; // grok: how long a paste may sit enqueued, undrained, pane idle, before it never dispatched.
   /** Deadline for correlating the paste. */
   readonly correlationTimeoutMs?: number;
   /** Idle time to consider a paste lost without correlation. */

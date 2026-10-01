@@ -706,7 +706,8 @@ export abstract class PasteSessionRunnerBase<E> {
       | "input_busy"
       | "modal_blocking"
       | "tui_generating"
-      | "handshake_failed",
+      | "handshake_failed"
+      | "prompt_not_dispatched",
     detail: string,
     request: CommandRunRequest,
   ): Promise<CommandRunResult> {
