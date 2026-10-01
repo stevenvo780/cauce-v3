@@ -9,9 +9,10 @@ import { join } from "node:path";
  */
 export interface DispatchMark {
   readonly file: string;
-  readonly offset: number;
+  offset: number; // Advances as the log is read: each poll scans only what grok wrote since.
   readonly pid: number;
   readonly bytes: number;
+  state: DispatchState;
 }
 
 export type DispatchState = "drained" | "queued" | "unseen";
@@ -28,7 +29,7 @@ export async function grokDispatchMark(grokHome: string, pid: number, bytes: num
   if (!Number.isSafeInteger(pid) || pid <= 1) return undefined;
   const file = grokPromptLog(grokHome);
   try {
-    return { file, offset: (await stat(file)).size, pid, bytes };
+    return { file, offset: (await stat(file)).size, pid, bytes, state: "unseen" };
   } catch {
     return undefined; // No log: the postcondition cannot be measured, so the old wait applies.
   }
@@ -40,18 +41,20 @@ export async function grokDispatchState(mark: DispatchMark): Promise<DispatchSta
     const handle = await open(mark.file, "r");
     try {
       const size = (await handle.stat()).size;
-      if (size <= mark.offset) return "unseen";
+      if (size <= mark.offset) return mark.state; // Nothing new (or rotated: the old wait applies).
       const start = Math.max(mark.offset, size - MAX_READ_BYTES);
       const buffer = Buffer.alloc(size - start);
       await handle.read(buffer, 0, buffer.length, start);
-      text = buffer.toString("utf8");
+      const complete = buffer.lastIndexOf(0x0a) + 1; // Only whole lines; a half-written one is read next time.
+      text = buffer.subarray(0, complete).toString("utf8");
+      mark.offset = start + complete;
     } finally {
       await handle.close();
     }
   } catch {
-    return "unseen";
+    return mark.state;
   }
-  let state: DispatchState = "unseen";
+  let state = mark.state;
   for (const line of text.split("\n")) {
     let event: { pid?: unknown; msg?: unknown; ctx?: { len?: unknown; prompt_len?: unknown } };
     try {
@@ -63,5 +66,6 @@ export async function grokDispatchState(mark: DispatchMark): Promise<DispatchSta
     if (event.msg === "prompt.enqueue" && event.ctx?.len === mark.bytes) state = state === "drained" ? state : "queued";
     if (event.msg === "prompt.drain" && event.ctx?.prompt_len === mark.bytes) state = "drained";
   }
+  mark.state = state;
   return state;
 }

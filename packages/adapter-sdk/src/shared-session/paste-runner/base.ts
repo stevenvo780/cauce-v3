@@ -64,6 +64,7 @@ export abstract class PasteSessionRunnerBase<E> {
   /** In-memory fallback if tmux could not persist the quarantine mark. */
   protected locallyQuarantined: PaneIdentity | undefined;
   protected readonly heldQuarantines = new Map<string, PendingQuarantine>();
+  protected readonly undispatched = new Set<string>(); // Held in the TUI's own queue: only a late envelope or a new generation lifts them.
 
   protected constructor(protected readonly options: PasteSessionOptions<E>) {}
 
