@@ -78,7 +78,7 @@
   /* Content measure. A table and a paragraph do not read at the same width, so one cap cannot
      serve both: prose keeps its measure while the shell grows with the monitor. */
   --measure-prose: 760px;
-  --shell-max: 2040px;
+  --shell-max: 2076px;
 
   /* Stacking order. Every new z-index comes from here; two raw values already tie. */
   --layer-raised: 1;

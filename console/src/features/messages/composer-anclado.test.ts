@@ -65,5 +65,5 @@ it('el riel conserva rótulos en las herramientas y respeta la reducción de mov
   const css = sinComentarios(leerCss('styles.css'));
   expect(css).toContain('.app-shell[data-sidebar="rail"] .sidebar .tools-menu a span { display: block; }');
   const reduced = css.slice(css.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
-  expect(valor(declaraciones(bloqueMedia(reduced, '@media (prefers-reduced-motion: reduce)'), '.agent-avatar[data-working="true"] .agent-avatar-status'), 'animation')).toBe('none');
+  expect(valor(declaraciones(bloqueMedia(reduced, '@media (prefers-reduced-motion: reduce)'), '.chat-avatar[data-working="true"] .chat-avatar-status'), 'animation')).toBe('none');
 });

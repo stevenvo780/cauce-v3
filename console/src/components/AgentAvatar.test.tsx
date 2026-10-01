@@ -3,7 +3,7 @@ import { AgentAvatar } from './AgentAvatar';
 
 it('conserva los grafemas completos y la identidad visual al cambiar de estado', () => {
   const { container, rerender } = render(<AgentAvatar alias="👩🏽‍💻Ágora" tenantId="Equipo" state="unknown" />);
-  const avatar = container.querySelector('.agent-avatar');
+  const avatar = container.querySelector('.chat-avatar');
   expect(avatar).toHaveTextContent('👩🏽‍💻Á');
   expect(avatar).toHaveAttribute('aria-hidden', 'true');
   expect(avatar).not.toHaveAttribute('data-working');

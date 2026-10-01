@@ -169,12 +169,15 @@ function medirEnLaPagina() {
   }
   const principal = document.querySelector('[data-objeto-principal]');
   const cajaPrincipal = caja(principal);
+  const fixedNavigation = cajaBarra && cajaBarra.width >= ancho - 1
+    && getComputedStyle(barra).position === 'fixed';
+  const contentBottom = fixedNavigation ? Math.min(window.innerHeight, cajaBarra.top) : window.innerHeight;
 
   return {
     desborde: Math.round(raiz.scrollWidth - ancho),
-    foldDesaprovechado: Math.max(0, Math.round(window.innerHeight - fondo)),
+    foldDesaprovechado: Math.max(0, Math.round(contentBottom - fondo)),
     objetoPrincipalTop: cajaPrincipal ? Math.round(cajaPrincipal.top) : null,
-    objetoPrincipalBajoElPliegue: cajaPrincipal && cajaPrincipal.top >= window.innerHeight ? 1 : 0,
+    objetoPrincipalBajoElPliegue: cajaPrincipal && cajaPrincipal.top >= contentBottom ? 1 : 0,
     hueco: Math.max(0, hueco),
     recorte,
     recorteSelector,
@@ -351,7 +354,6 @@ const OBJETIVOS = {
 const PENDIENTES = {
   '1440./live.pantallas': 2.66,
   '1440./live#cajon.pantallas': 2.66,
-  '1920./live#cajon.pantallas': 2.29,
   '1440./live#perfil.pantallas': 2.66,
   '1440./accounts.pantallas': 3.66,
   '1920./accounts.pantallas': 3.39,

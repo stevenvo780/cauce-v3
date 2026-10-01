@@ -368,7 +368,8 @@ it.each([true, false])('un envío pendiente sobrevive a salir del hilo y volver;
   const user = userEvent.setup();
   renderWithApi(<App />);
   try {
-    await user.type(await screen.findByRole('textbox', { name: 'Mensaje para argos' }), 'Un único envío pendiente');
+    const input = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
+    await user.type(input, 'Un único envío pendiente');
     await user.click(screen.getByRole('button', { name: 'Enviar' }));
     await waitFor(() => { expect(calls).toBe(1); });
     await openTools();
@@ -429,7 +430,8 @@ it('abre la configuración desde el chat y conserva borrador con Atrás, Adelant
   window.history.pushState({}, '', '/messages/Steven/argos');
   const user = userEvent.setup();
   renderWithApi(<App />);
-  await user.type(await screen.findByRole('textbox', { name: 'Mensaje para argos' }), 'Borrador antes de configurar');
+  const input = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
+  await user.type(input, 'Borrador antes de configurar');
   await user.click(screen.getByRole('link', { name: 'Configurar agente' }));
   expect(window.location.search).toBe('?view=context');
   expect(await screen.findByRole('heading', { name: 'Configuración de argos' })).toHaveFocus();
@@ -449,7 +451,7 @@ it('las identidades del hilo y el indicador de trabajo proceden de datos reales'
   window.history.pushState({}, '', '/messages/Steven/argos');
   renderWithApi(<App />);
   const row = await screen.findByRole('button', { name: /conversación con argos,/i });
-  await waitFor(() => { expect(row.querySelector('.agent-avatar')).toHaveAttribute('data-working', 'true'); });
+  await waitFor(() => { expect(row.querySelector('.chat-avatar')).toHaveAttribute('data-working', 'true'); });
   const conversation = await screen.findByRole('region', { name: 'Conversación con argos' });
   expect(conversation.querySelector('.transcript-direction')).toHaveTextContent(/kant.*hacia.*argos/);
 });

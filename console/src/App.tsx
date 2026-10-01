@@ -289,14 +289,14 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
       </aside>
       <div className="workspace">
         <header className="topbar">
-          <div>{routeId !== 'messages' ? <a className="back-to-chat" href={lastConversation.current} onClick={(event) => { onNavClick(event, lastConversation.current); }}><ArrowLeft size={16} aria-hidden="true" /><span>Volver a la conversación</span></a> : <span className="topbar-rotulo">Tu equipo, en una conversación</span>}</div>
+          <div>{routeId !== 'messages' ? <a className="back-to-chat" aria-label="Volver a la conversación" href={lastConversation.current} onClick={(event) => { onNavClick(event, lastConversation.current); }}><ArrowLeft size={16} aria-hidden="true" /><span>Volver a la conversación</span></a> : <span className="topbar-rotulo">Tu equipo, en una conversación</span>}</div>
           <div className="topbar-meta">
             {import.meta.env.VITE_USE_MOCKS === 'true' ? <span className="mock-flag">MOCK API</span> : null}
             <ThemeControl />
             <SessionBadge state={gate.state} status={gate.status} busy={gate.busy} onLogout={() => void gate.logout()} />
           </div>
         </header>
-        <main id="main-content" ref={mainRef} tabIndex={-1}>
+        <main id="main-content" data-route={routeId} ref={mainRef} tabIndex={-1}>
           {gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}
           {notFoundPath
             ? <RouteNotFound path={notFoundPath} />
