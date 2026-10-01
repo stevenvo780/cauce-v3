@@ -1,9 +1,9 @@
 /**
- * Catalog of fields shown on `/config` that have no effect on the system's execution.
+ * Registry fields that do not configure the running process.
  */
 
 /** What reads next to the column's label. Short: shares a cell with the header. */
-export const MARCA_INERTE = 'sin efecto';
+export const MARCA_INERTE = 'declarativo';
 
 /**
  * Collection → field → why it has no effect, with the citation that proves it.
@@ -18,12 +18,12 @@ export const CAMPOS_INERTES: Record<string, Record<string, string>> = {
       'No decide con qué programa corre el bot. El arnés REAL se deduce del binario en ejecución '
       + '(`harnessFromCommand`, services/gateway/src/console/agent-documents/catalog.ts:494) o de las '
       + 'capacidades del latido (`harnessFromCapabilities`, services/gateway/src/console/agent-documents/catalog.ts:503). Esta columna '
-      + 'sólo se repinta en el registro (packages/store/src/repository/agents.ts:321) y se usa como último '
-      + 'recurso en el inventario de documentos, que la marca NO fiable a la cara '
+      + 'se lee en el contexto declarado (packages/store/src/agent-profile.ts:305), en el registro '
+      + '(packages/store/src/repository/agents.ts:321) y como fallback no medido en el inventario '
       + '(agent-documents.routes.ts:199).',
     home_directory:
-      'No resuelve ninguna ruta. El `HOME` que vale es el del proceso del arnés, medido dentro del '
-      + 'contenedor (`RuntimeFacts`, services/gateway/src/console/agent-documents/catalog.ts:19); esta '
+      'Declara el HOME en el contexto (packages/store/src/agent-profile.ts:305), pero no cambia el '
+      + 'HOME medido del proceso (`RuntimeFacts`, services/gateway/src/console/agent-documents/catalog.ts:19); esta '
       + 'columna sólo entra como pista cuando no hay medición, y esa respuesta viaja con su aviso de '
       + 'que no es de fiar (agent-documents.routes.ts:344).',
     state_directory:

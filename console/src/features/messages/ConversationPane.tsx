@@ -1,12 +1,14 @@
-import { ArrowDownToLine, ChevronDown, CircleOff, DoorClosed, LockKeyhole, RefreshCw, Send, TerminalSquare } from 'lucide-react';
+import { ArrowDownToLine, ArrowLeft, ChevronDown, CircleOff, DoorClosed, LockKeyhole, RefreshCw, Send, Settings2, TerminalSquare } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent, type KeyboardEvent } from 'react';
 import { useApi } from '../../api/context';
 import { ApiError } from '../../api/client';
 import type { JobLane, MessagePage } from '../../api/types';
+import { AgentAvatar } from '../../components/AgentAvatar';
+import { useConversationDraft } from './conversation-drafts';
 import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
 import { compactId, safeJobLane } from '../../lib';
 import { LEASE_LABEL, LEASE_TONE } from '../../vocabulario';
-import { onNavClick } from '../../router';
+import { onNavClick, useRouteSearch } from '../../router';
 import { queueDeliveryPath } from '../deliveries/delivery-links';
 import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada, textoDelCuerpo } from '../terminal/cuerpo-del-mensaje';
@@ -15,18 +17,10 @@ import { transcriptForSession, type OperatorRoute, type OperatorSession, type Tr
 import { TerminalTranscript } from '../terminal/TerminalTranscript';
 import { estaPegadoAlFinal, irAlFinal } from './desplazamiento';
 import { publishDurably } from './durable-publish';
+import { AgentSettingsView } from './AgentSettingsView';
 import { MessageTimeline } from './MessageTimeline';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
-
-/**
- * The name of the CSS variable that reserves, at the foot of the thread, the slot for the fixed composer.
- *
- * It is exported so the test can require the stylesheet and the component to say THE SAME string. A `style.setProperty`
- * with a name no `var()` reads is not an error for anyone —neither for typecheck, nor lint, nor DOM tests— and the
- * symptom would be the end of the thread living under the composer, on the phone, without a line in any console.
- */
-export const VAR_ALTO_COMPOSITOR = '--messenger-composer-alto';
 
 interface ConversationPaneProps {
   agent: AgenteDeMensajeria;
@@ -58,15 +52,26 @@ export function ConversationPane({
   agent, page, loading, error, route, canPublish, publisherSubject, salud, onReload,
 }: ConversationPaneProps) {
   const api = useApi();
-  const [draft, setDraft] = useState('');
-  const [roomElegido, setRoomElegido] = useState<string>();
-  const [enviando, setEnviando] = useState(false);
-  const [aviso, setAviso] = useState<{ tone: 'success' | 'error'; text: string }>();
+  const search = useRouteSearch();
+  const contextOpen = new URLSearchParams(search).get('view') === 'context';
+  const conversationPath = `/messages/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`;
+  const contextTrigger = useRef<HTMLAnchorElement>(null);
+  const wasContextOpen = useRef(contextOpen);
+  useEffect(() => {
+    if (wasContextOpen.current && !contextOpen) contextTrigger.current?.focus({ preventScroll: true });
+    wasContextOpen.current = contextOpen;
+  }, [contextOpen]);
+  const draftKey = JSON.stringify([publisherSubject, agent.id]);
+  const [form, updateForm] = useConversationDraft(draftKey);
+  const { text: draft, roomId: roomElegido, lane, sending: enviando, notice: aviso } = form;
+  const setDraft = (text: string) => { updateForm((current) => ({ ...current, text })); };
+  const setRoomElegido = (roomId: string) => { updateForm((current) => ({ ...current, roomId })); };
+  const setLane = (lane: JobLane) => { updateForm((current) => ({ ...current, lane })); };
+  const setAviso = (notice: typeof aviso) => { updateForm((current) => ({ ...current, notice })); };
   const [mensajeElegido, setMensajeElegido] = useState<string>();
   const [cuerpos, setCuerpos] = useState<Record<string, CuerpoEntero>>({});
   /** The detail is born closed and is opened by the operator or by clicking a bubble. */
   const [detalleAbierto, setDetalleAbierto] = useState(false);
-  const [lane, setLane] = useState<JobLane>('interactive');
 
   const sesion: OperatorSession = useMemo(() => ({
     id: `messenger:${agent.id}`, agent, sourceRoomId: '', openedAt: new Date(0).toISOString(), mode: 'transcript',
@@ -103,30 +108,6 @@ export function ConversationPane({
   const totalVisible = (page?.items ?? []).length;
 
   /*
-   * On a narrow screen the composer is `position: fixed` and therefore LEAVES THE FLOW: without reserving its height
-   * at the foot of the thread, the last bubble and the message detail stay under the bar forever. The height cannot
-   * be written by hand in the stylesheet because it varies —the room selector only appears with more than one room,
-   * and the permission, route and publish notices add rows—, so it is MEASURED. On desktop the variable exists as well
-   * and nobody reads it: the `var()` only lives inside the 760 px breakpoint.
-   */
-  const hiloRef = useRef<HTMLElement | null>(null);
-  const compositorRef = useRef<HTMLFormElement | null>(null);
-  useEffect(() => {
-    const hilo = hiloRef.current;
-    const compositor = compositorRef.current;
-    if (!hilo || !compositor) return;
-    const anotar = () => {
-      hilo.style.setProperty(VAR_ALTO_COMPOSITOR, `${String(Math.ceil(compositor.getBoundingClientRect().height))}px`);
-    };
-    anotar();
-    // jsdom does not bundle `ResizeObserver`, nor do old browsers. Without an observer we are left with the initial measurement, which is better than nothing and never worse than the stylesheet's default value.
-    if (typeof ResizeObserver !== 'function') return;
-    const observador = new ResizeObserver(anotar);
-    observador.observe(compositor);
-    return () => { observador.disconnect(); };
-  }, []);
-
-  /*
    * --------------------------------------------------- THE THREAD STARTS AT THE END
    *
    * A messenger opens at the last thing said. This one used to open at the first: see `desplazamiento.ts`, where
@@ -139,6 +120,7 @@ export function ConversationPane({
    */
   const cajaRef = useRef<HTMLDivElement | null>(null);
   const pegadoRef = useRef(true);
+  const scrollPosition = useRef(0);
   const [pegado, setPegado] = useState(true);
   const [vistosHastaAqui, setVistosHastaAqui] = useState(0);
 
@@ -155,16 +137,18 @@ export function ConversationPane({
   useEffect(() => {
     // On mount (or when changing agent, which remounts by the `key`) and every time a new message arrives, BUT only if
     // the operator was watching the end: dragging them from where they were reading would be the opposite bug.
-    if (!pegadoRef.current) return;
+    if (contextOpen) return;
     const caja = cajaRef.current;
     if (!caja) return;
+    if (!pegadoRef.current) { caja.scrollTop = scrollPosition.current; return; }
     irAlFinal(caja, false);
     setVistosHastaAqui(hilo.length);
-  }, [ultimoId, hilo.length]);
+  }, [contextOpen, ultimoId, hilo.length]);
 
   function alDesplazar() {
     const caja = cajaRef.current;
     if (!caja) return;
+    scrollPosition.current = caja.scrollTop;
     const abajo = estaPegadoAlFinal(caja);
     pegadoRef.current = abajo;
     setPegado(abajo);
@@ -201,8 +185,8 @@ export function ConversationPane({
   async function enviar(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     const texto = draft.trim();
-    if (!puedeEnviar || !texto) return;
-    setEnviando(true);
+    if (!puedeEnviar || !texto || enviando) return;
+    updateForm((current) => ({ ...current, sending: true }));
     setAviso(undefined);
     try {
       const semantics = {
@@ -221,7 +205,7 @@ export function ConversationPane({
         reconcile: onReload,
       });
 
-      setDraft('');
+      updateForm((current) => ({ ...current, text: current.text === draft ? '' : current.text }));
       setAviso({
         tone: 'success',
         text: `${reconciled ? 'Publicación reconciliada desde el journal durable' : 'Aceptado por el control plane'} · ${compactId(resultado.message_id)}. `
@@ -238,7 +222,7 @@ export function ConversationPane({
     } catch (causa) {
       setAviso({ tone: 'error', text: causa instanceof Error ? causa.message : 'No se pudo publicar el mensaje.' });
     } finally {
-      setEnviando(false);
+      updateForm((current) => ({ ...current, sending: false }));
     }
   }
 
@@ -259,18 +243,25 @@ export function ConversationPane({
   const cuerpoEntero = idSeleccionado ? cuerpos[idSeleccionado] : undefined;
   const recorteSeleccionado = previsualizacionRecortada(mensajeSeleccionado?.body_preview);
 
+  if (contextOpen) return <AgentSettingsView tenantId={agent.tenantId} alias={agent.alias} conversationPath={conversationPath} />;
+
   return (
-    <section className="messenger-thread" data-objeto-principal="hilo" ref={hiloRef} aria-label={`Conversación con ${agent.alias}`}>
+    <section className="messenger-thread" data-objeto-principal="hilo" aria-label={`Conversación con ${agent.alias}`}>
       <header className="messenger-thread-head">
         <div className="messenger-thread-identity">
-          <span className={`messenger-avatar ${agent.leaseState}`} aria-hidden="true">{agent.alias.slice(0, 2).toUpperCase()}</span>
+          <a className="chat-back" href="/messages" onClick={(event) => { onNavClick(event, '/messages'); }} aria-label="Volver a los agentes"><ArrowLeft size={20} aria-hidden="true" /></a>
+          <AgentAvatar alias={agent.alias} tenantId={agent.tenantId} state={agent.leaseState} working={(salud?.enCurso ?? 0) > 0} />
           <div>
-            <h2>{agent.alias}</h2>
-            <p className="eyebrow">{agent.tenantId} · epoch {agent.presence?.epoch ?? 'UNKNOWN'} · lease <Time value={agent.presence?.lease_expires_at ?? agent.presence?.lease_until} /></p>
+            <h2 tabIndex={-1}>{agent.alias}</h2>
+            <p className="chat-agent-subtitle">{agent.tenantId}</p>
           </div>
           <Badge tone={LEASE_TONE[agent.leaseState]}>{LEASE_LABEL[agent.leaseState]}</Badge>
         </div>
         <div className="messenger-thread-actions">
+          <a className="button small secondary" ref={contextTrigger} href={`${conversationPath}?view=context`}
+            onClick={(event) => { onNavClick(event, `${conversationPath}?view=context`); }}>
+            <Settings2 size={14} aria-hidden="true" /> Configurar agente
+          </a>
           <a
             className="button small secondary"
             href={rutaDeTui(agent)}
@@ -289,6 +280,9 @@ export function ConversationPane({
         </p>
       ) : null}
 
+      <details className="chat-agent-details">
+        <summary>Estado y detalles del agente{(salud?.muertas ?? 0) > 0 || (salud?.reintentos ?? 0) > 0 ? ' · Hay entregas que necesitan atención' : ''}</summary>
+        <p className="chat-agent-runtime">Epoch {agent.presence?.epoch ?? 'UNKNOWN'} · lease <Time value={agent.presence?.lease_expires_at ?? agent.presence?.lease_until} /></p>
       <dl className="messenger-queue-strip" aria-label={`Cola de ${agent.alias}`}>
         <div><dt>En cola</dt><dd>{textoDeCifra(salud?.pendientes)}</dd></div>
         <div><dt>En curso</dt><dd>{textoDeCifra(salud?.enCurso)}</dd></div>
@@ -298,6 +292,9 @@ export function ConversationPane({
           <dd>{salud?.muertasTruncadas && salud.muertas !== undefined ? '≥ ' : ''}{textoDeCifra(salud?.muertas)}</dd>
         </div>
       </dl>
+      </details>
+
+      {error && page ? <p className="chat-feed-error" role="alert">No se pudo actualizar la conversación: {error.message}. Se muestra el último historial recibido.</p> : null}
 
       {/* Thread filtered over the server's message window. */}
       <div className="messenger-thread-scroll" ref={cajaRef} onScroll={alDesplazar}>
@@ -312,6 +309,7 @@ export function ConversationPane({
           <LoadingState label="Abriendo el feed durable de mensajes…" />
         ) : (
           <TerminalTranscript
+            presentation="chat"
             key={agent.id}
             items={hilo}
             selectedMessageId={elegidoPorElOperador?.message.message_id ?? undefined}
@@ -442,8 +440,10 @@ export function ConversationPane({
         </details>
       ) : null}
 
-      <form className="terminal-composer messenger-composer" ref={compositorRef} onSubmit={(event) => void enviar(event)}>
+      <form className="messenger-composer" onSubmit={(event) => void enviar(event)}>
         <label htmlFor={`messenger-input-${agent.id}`}>Mensaje para {agent.alias}</label>
+        <details className="chat-compose-options" open={route.sourceRoomIds.length > 1 || undefined}>
+          <summary>Opciones de envío · {lane === 'batch' ? 'en segundo plano' : 'conversación'}</summary>
         {route.sourceRoomIds.length > 1 ? (
           <label className="messenger-room-select">Room de origen
             <span className="room-select-wrap">
@@ -471,13 +471,14 @@ export function ConversationPane({
             <ChevronDown size={14} aria-hidden="true" />
           </span>
         </label>
+        </details>
         {avisoDeLease ? <p className="notice parcial" role="note">{avisoDeLease}</p> : null}
         <textarea
           id={`messenger-input-${agent.id}`}
           value={draft}
           onChange={(event) => { setDraft(event.target.value); }}
           onKeyDown={teclaDelCompositor}
-          rows={3}
+          rows={2}
           maxLength={8_000}
           placeholder="Escribí un mensaje…"
           disabled={!puedeEnviar || enviando}

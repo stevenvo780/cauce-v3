@@ -53,7 +53,7 @@ const PERMISOS_PLENOS: readonly ConsolePermission[] = [
  * al menú sin registrarla acá, el primer test lo dice.
  */
 const GOBIERNO_NAV: Record<string, 'config.write' | 'relay' | null> = {
-  '': null,
+  overview: null,
   live: null,
   accounts: null,
   messages: null,
@@ -78,6 +78,7 @@ function servirRelayDisponible() {
 
 async function esperarLaFlota() {
   await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 });
+  await userEvent.click(screen.getByRole('button', { name: 'Herramientas' }));
 }
 
 function barra(): HTMLElement {
@@ -215,7 +216,12 @@ it('ruta /config sin config.write: abre en solo lectura, no 404 ni redirección'
 
   expect(await screen.findByRole('heading', { level: 1, name: /ajustes y altas/i }, { timeout: 10_000 }))
     .toBeInTheDocument();
+  expect(screen.getByRole('list', { name: 'Agentes configurados' })).toBeInTheDocument();
+  expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Administración avanzada' }));
   expect(await screen.findByText(/Solo lectura:/, {}, { timeout: 10_000 })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^Crear$/ })).toBeDisabled();
+  for (const control of screen.getAllByRole('switch')) expect(control).toBeDisabled();
   expect(window.location.pathname).toBe('/config');
   expect(screen.queryByRole('heading', { level: 1, name: /ruta no encontrada/i })).not.toBeInTheDocument();
 });

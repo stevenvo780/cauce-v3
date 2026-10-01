@@ -1,12 +1,13 @@
-import { ArrowDownLeft, ArrowUpRight, CheckCircle2, CircleDashed, Clock3, Scissors } from 'lucide-react';
+import { ArrowRight, CheckCircle2, CircleDashed, Clock3, Scissors } from 'lucide-react';
 import type { DeliveryView } from '../../api/types';
+import { AgentAvatar } from '../../components/AgentAvatar';
 import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
 import { compactId } from '../../lib';
 import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada } from './cuerpo-del-mensaje';
 import type { TranscriptItem } from './session';
 
-function DeliveryProgress({ delivery, onSelect }: { delivery: DeliveryView; onSelect: () => void }) {
+function DeliveryProgress({ delivery, onSelect, compact }: { delivery: DeliveryView; onSelect: () => void; compact?: boolean }) {
   const policy = deliveryPolicy(delivery.status);
   const events = delivery.timeline ?? [];
   const last = events.at(-1);
@@ -21,8 +22,10 @@ function DeliveryProgress({ delivery, onSelect }: { delivery: DeliveryView; onSe
           ? `El servidor mandó un estado que esta consola no conoce: ${delivery.status}`
           : undefined}
       /></Badge>
-      <span className="mono">{compactId(delivery.delivery_id)}</span>
-      <span>{events.length} ACK · intento {delivery.attempt ?? last?.attempt ?? 'sin dato'}</span>
+      {compact ? <span>Ver detalle</span> : <>
+        <span className="mono">{compactId(delivery.delivery_id)}</span>
+        <span>{events.length} ACK · intento {delivery.attempt ?? last?.attempt ?? 'sin dato'}</span>
+      </>}
     </button>
   );
 }
@@ -30,8 +33,9 @@ function DeliveryProgress({ delivery, onSelect }: { delivery: DeliveryView; onSe
 /**
  * Rendering component for the terminal transcript and conversation history.
  */
-export function TerminalTranscript({ items, selectedMessageId, onSelectItem }: {
+export function TerminalTranscript({ items, selectedMessageId, onSelectItem, presentation = 'terminal' }: {
   items: TranscriptItem[];
+  presentation?: 'chat' | 'terminal';
   /** Id of the selected message. `undefined` means NONE; never "all". */
   selectedMessageId?: string;
   onSelectItem: (item: TranscriptItem) => void;
@@ -40,7 +44,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem }: {
     return (
       <div className="terminal-transcript-empty">
         <EmptyState>
-          No hay mensajes de servidor para este agente. Publicá desde Mensajes o esperá el próximo polling.
+          {presentation === 'chat' ? 'Todavía no hay mensajes en esta conversación. Escribile al agente para empezar.' : 'No hay mensajes de servidor para este agente. Publicá desde Mensajes o esperá el próximo polling.'}
         </EmptyState>
       </div>
     );
@@ -64,8 +68,10 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem }: {
             >
               <header>
                 <span className="transcript-direction">
-                  {direction === 'input' ? <ArrowUpRight size={15} aria-hidden="true" /> : <ArrowDownLeft size={15} aria-hidden="true" />}
-                  {direction === 'input' ? 'Operador → agente' : 'Agente → room'}
+                  <AgentAvatar alias={message.actor_alias ?? '?'} tenantId={message.tenant_id ?? ''} />
+                  <span>{message.actor_alias ?? 'Emisor sin dato'}</span>
+                  <ArrowRight size={14} aria-hidden="true" /><span className="sr-only">hacia</span>
+                  <span>{direction === 'input' ? delivery?.recipient_alias ?? 'Destino sin dato' : message.room_id ?? 'Sala sin dato'}</span>
                 </span>
                 <Time value={message.created_at} />
               </header>
@@ -83,12 +89,12 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem }: {
                   </span>
                 </p>
               ) : null}
-              <footer>
+              {presentation === 'terminal' ? <footer>
                 <span className="mono">msg {compactId(message.message_id)}</span>
                 <span className="mono">trace {compactId(message.trace_id)}</span>
-              </footer>
+              </footer> : null}
               {delivery ? (
-                <DeliveryProgress delivery={delivery} onSelect={() => { onSelectItem(item); }} />
+                <DeliveryProgress compact={presentation === 'chat'} delivery={delivery} onSelect={() => { onSelectItem(item); }} />
               ) : (
                 /*
                  * Before this was an inert `<span>`: half the thread —everything the agent wrote—
@@ -99,7 +105,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem }: {
                   className="transcript-output-note"
                   type="button"
                   onClick={() => { onSelectItem(item); }}
-                >Salida observada desde el feed durable del room · ver detalle</button>
+                >{presentation === 'chat' ? 'Ver detalle del mensaje' : 'Salida observada desde el feed durable del room · ver detalle'}</button>
               )}
             </article>
           );

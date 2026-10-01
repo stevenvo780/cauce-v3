@@ -2,7 +2,7 @@ import {
   Activity,
   PanelLeftClose,
   PanelLeftOpen,
-  ShieldCheck,
+  ArrowLeft,
 } from 'lucide-react';
 import {
   lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore,
@@ -11,23 +11,14 @@ import {
 import { ConsoleAccessProvider } from './api/console-access';
 import { BOTTOM_BAR_VIEWPORT, RAIL_VIEWPORT } from './breakpoints';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ConsoleNavigation } from './components/ConsoleNavigation';
+import { ConversationDrafts, ConversationDraftStore } from './features/messages/conversation-drafts';
 import { ThemeControl } from './components/ThemeControl';
 import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/AuthGate';
 import type { AuthGateState } from './features/auth/auth-session';
-import { LandingPage } from './features/landing/LandingPage';
-import { NAV_ENTRIES, useNavAvailability } from './nav';
+import { NAV_ENTRIES } from './nav';
 import { onNavClick, redirect, useRouteSegments } from './router';
 
-/**
- * Every operational view used to be imported into the landing bundle. That made opening the
- * login/landing path download and parse terminal, topology, configuration and observability code
- * before the operator chose a view (the main minified chunk exceeded 1.1 MiB). Keep the landing
- * page immediate and make each route a real code-split boundary.
- *
- * The wrapper is a function component rather than React.lazy stored directly in ROUTE_TABLE: the
- * route invariant checks that every declared destination is callable, and LazyExoticComponent is
- * an object.
- */
 function deferredPage<P extends object>(
   load: () => Promise<{ default: ComponentType<P> }>,
 ): ComponentType<P> {
@@ -47,6 +38,9 @@ interface RoutePageProps {
   params?: readonly string[];
 }
 
+const LandingPage = deferredPage(async () => ({
+  default: (await import('./features/landing/LandingPage')).LandingPage,
+}));
 const LiveFleetPage = deferredPage(async () => ({
   default: (await import('./features/live/LiveFleetPage')).LiveFleetPage,
 }));
@@ -84,7 +78,7 @@ interface Route {
 const DEEP_ROUTE_ARITY: Partial<Record<string, number>> = { messages: 2, terminal: 2 };
 
 const PAGES: Record<string, ComponentType<RoutePageProps>> = {
-  '': LandingPage,
+  overview: LandingPage,
   live: LiveFleetPage,
   accounts: AccountsPage,
   messages: MessagesPage,
@@ -105,6 +99,7 @@ const routes: Route[] = NAV_ENTRIES.map((entry) => ({
 
 /** Redirects of obsolete or consolidated routes to their canonical views. */
 const ROUTE_ALIASES: Partial<Record<string, string>> = {
+  '': 'messages',
   licenses: 'accounts',
   quotas: 'accounts',
   assignments: 'accounts',
@@ -137,7 +132,7 @@ function RouteNotFound({ path }: { path: string }) {
           ocultaría un enlace roto.
         </p>
         <p>
-          <a href="/" onClick={(event) => { onNavClick(event, '/'); }}>Ir a la portada</a>
+          <a href="/messages" onClick={(event) => { onNavClick(event, '/messages'); }}>Abrir conversaciones</a>
           {' · '}
           <a href="/live" onClick={(event) => { onNavClick(event, '/live'); }}>Abrir la flota</a>
         </p>
@@ -171,7 +166,7 @@ function matchRoute(segments: readonly string[]): RouteMatch {
     : { id: requested, params, notFoundPath: `/${segments.join('/')}` };
 }
 
-/** Rail (78px, icons only) or full bar (248px, with labels). */
+/** Rail (78px, icons only) or full bar (212px, with labels). */
 type SidebarState = 'rail' | 'expanded';
 
 const SIDEBAR_SHORTCUT = 'Alt+Shift+B';
@@ -201,11 +196,13 @@ export function App() {
 function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const segments = useRouteSegments();
   const path = segments.join('/');
-  const navAvailability = useNavAvailability();
   const { id: routeId, params, aliasedFrom, notFoundPath } = matchRoute(segments);
   const route = routes.find((candidate) => candidate.id === routeId);
   const bottomBar = useMediaQuery(BOTTOM_BAR_VIEWPORT);
   const narrowViewport = useMediaQuery(RAIL_VIEWPORT);
+  const [drafts] = useState(() => new ConversationDraftStore());
+  const lastConversation = useRef('/messages');
+  if (routeId === 'messages' && !notFoundPath) lastConversation.current = window.location.pathname;
   const [preference, setPreference] = useState<SidebarState>('expanded');
   const mainRef = useRef<HTMLElement>(null);
   const focusedRoute = useRef<string | null>(null);
@@ -234,7 +231,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   }, [collapsible, toggleSidebar]);
 
   useEffect(() => {
-    if (!aliasedFrom) return;
+    if (aliasedFrom === undefined) return;
     const detalle = params.map((param) => encodeURIComponent(param)).join('/');
     redirect(`/${routeId}${detalle ? `/${detalle}` : ''}`);
   }, [aliasedFrom, params, routeId]);
@@ -264,12 +261,13 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   }, [routeId, notFoundPath, terminalTargetAlias]);
 
   return (
-    <div className="app-shell" data-sidebar={rail ? 'rail' : 'expanded'}>
+    <ConversationDrafts.Provider value={drafts}>
+    <div className="app-shell" data-sidebar={rail ? 'rail' : 'expanded'} data-view={routeId === 'messages' ? 'chat' : 'tools'}>
       <a className="skip-link" href="#main-content">Saltar al contenido</a>
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true"><Activity size={22} /></span>
-          <div><strong>Cauce</strong><small>V3 Console</small></div>
+          <div><strong>Cauce</strong><small>Tu equipo de agentes</small></div>
         </div>
         {collapsible ? (
           <button
@@ -286,40 +284,12 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
             <span>{rail ? 'Desplegar barra lateral' : 'Plegar barra lateral'}</span>
           </button>
         ) : null}
-        <nav id={NAV_ID} aria-label="Navegación principal">
-          <ul>
-            {routes.map((item) => {
-              const Icon = item.icon;
-              const disponible = navAvailability(item.id);
-              if (disponible.hidden) return null;
-              return (
-                <li key={item.id}>
-                  <a
-                    href={`/${item.id}`}
-                    onClick={(event) => { onNavClick(event, `/${item.id}`, disponible.reason); }}
-                    aria-current={!notFoundPath && route?.id === item.id ? 'page' : undefined}
-                    aria-disabled={disponible.disabled ? true : undefined}
-                    className={disponible.disabled ? 'nav-inerte' : undefined}
-                    // On the rail, CSS hides the label: without `aria-label` the link is left anonymous.
-                    aria-label={item.label}
-                    title={disponible.reason ?? (rail ? item.label : undefined)}
-                  >
-                    <Icon size={18} aria-hidden={true} />
-                    <span>{item.label}</span>
-                  </a>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
-        <div className="authority-note">
-          <ShieldCheck size={18} aria-hidden="true" />
-          <p><strong>Autoridad: servidor</strong><span>Cookie HttpOnly esperada</span></p>
-        </div>
+        <ConsoleNavigation key={path} id={NAV_ID} rail={rail} routeId={notFoundPath ? '' : routeId} />
+        <div className="sidebar-caption"><span className="live-dot" aria-hidden="true" /><span>Un espacio para trabajar juntos</span></div>
       </aside>
       <div className="workspace">
         <header className="topbar">
-          <div><span className="live-dot" aria-hidden="true" /><span className="topbar-rotulo">Control plane client</span></div>
+          <div>{routeId !== 'messages' ? <a className="back-to-chat" href={lastConversation.current} onClick={(event) => { onNavClick(event, lastConversation.current); }}><ArrowLeft size={16} aria-hidden="true" /><span>Volver a la conversación</span></a> : <span className="topbar-rotulo">Tu equipo, en una conversación</span>}</div>
           <div className="topbar-meta">
             {import.meta.env.VITE_USE_MOCKS === 'true' ? <span className="mock-flag">MOCK API</span> : null}
             <ThemeControl />
@@ -340,5 +310,6 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
         </main>
       </div>
     </div>
+    </ConversationDrafts.Provider>
   );
 }

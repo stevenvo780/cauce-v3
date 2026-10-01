@@ -2,9 +2,7 @@ import { ExternalLink, X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { useApi } from '../../api/context';
 import { useResource, type Resource } from '../../api/use-resource';
-import type {
-  AgentDocumentKind, AgentPerfilCampos, ConfigurationSnapshot, FleetActivityItem,
-} from '../../api/types';
+import type { ConfigurationSnapshot, FleetActivityItem } from '../../api/types';
 import { Badge, EmptyState, Time, Unknown, ViewTabs } from '../../components/ui';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { UNKNOWN, compactId, safeJobLane } from '../../lib';
@@ -12,8 +10,7 @@ import { onNavClick } from '../../router';
 import { queueDeliveryPath } from '../deliveries/delivery-links';
 import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { AgentAvatar } from './AgentAvatar';
-import { ContextoTab } from './ContextoTab';
-import { FicherosTab, type BorradorDeFichero } from './FicherosTab';
+import { AgentContextPanel, AgentDocumentsPanel } from './AgentContextPanel';
 import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
 /**
@@ -52,24 +49,13 @@ interface AgentDrawerProps {
   view: LiveAgentView;
   tab: DrawerTab;
   configuracion: Resource<ConfigurationSnapshot>;
-  /** Two editable drafts —profile and files—; the `role_brief` projection is read-only. */
-  borradorPerfil?: Partial<AgentPerfilCampos>;
-  onBorradorPerfil: (campos: Partial<AgentPerfilCampos> | undefined) => void;
-  borradoresFicheros?: Partial<Record<AgentDocumentKind, BorradorDeFichero>>;
-  onBorradorFichero: (kind: AgentDocumentKind, borrador: BorradorDeFichero | undefined) => void;
-  profileWriteInFlight: boolean;
-  onProfileWriteInFlightChange: (inFlight: boolean) => void;
-  runtimeRefreshRevision: number;
-  onRuntimeRefresh: () => void;
   contextFocusTarget?: ContextFocusTarget;
   onTab: (tab: DrawerTab, contextFocusTarget?: ContextFocusTarget) => void;
   onClose: () => void;
 }
 
 export function AgentDrawer({
-  view, tab, configuracion, borradorPerfil, onBorradorPerfil,
-  borradoresFicheros, onBorradorFichero, profileWriteInFlight,
-  onProfileWriteInFlightChange, runtimeRefreshRevision, onRuntimeRefresh,
+  view, tab, configuracion,
   contextFocusTarget, onTab, onClose,
 }: AgentDrawerProps) {
   const cajon = useRef<HTMLElement>(null);
@@ -155,30 +141,19 @@ export function AgentDrawer({
         {/* `key` por alias evita que las lecturas de un bot sobrevivan al cambio de agente. Los
             borradores editables viven fuera, ya indexados por alias. */}
         {tab === 'rol' ? (
-          <ContextoTab
+          <AgentContextPanel
             key={view.key}
             tenantId={view.tenantId}
             alias={view.alias}
-            configuracion={configuracion}
-            borradorPerfil={borradorPerfil}
-            onBorradorPerfil={onBorradorPerfil}
-            borradoresFicheros={borradoresFicheros}
-            onBorradorFichero={onBorradorFichero}
+            configuration={configuracion}
             focusTarget={contextFocusTarget}
-            profileWriteInFlight={profileWriteInFlight}
-            onProfileWriteInFlightChange={onProfileWriteInFlightChange}
-            runtimeRefreshRevision={runtimeRefreshRevision}
-            onRuntimeRefresh={onRuntimeRefresh}
           />
         ) : null}
         {tab === 'ficheros' ? (
-          <FicherosTab
-            key={`${view.key}/${String(runtimeRefreshRevision)}`}
+          <AgentDocumentsPanel
+            key={view.key}
             tenantId={view.tenantId}
             alias={view.alias}
-            borradores={borradoresFicheros}
-            onBorrador={onBorradorFichero}
-            mode="inventory"
             onOpenContext={() => { onTab('rol', 'manual'); }}
           />
         ) : null}

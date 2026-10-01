@@ -25,10 +25,14 @@ export function useRouteSegments(): readonly string[] {
   return useMemo(() => path.split('/').filter(Boolean).map(decodeSegment), [path]);
 }
 
+export function useRouteSearch(): string {
+  return useSyncExternalStore(subscribeToRoute, () => window.location.search, () => '');
+}
+
 /** Navigates without reloading. `pushState` does not fire `popstate` on its own, so we dispatch it
     by hand so the router —which subscribes to `popstate`— notices the change. */
 export function navigate(path: string): void {
-  if (window.location.pathname === path) return;
+  if (`${window.location.pathname}${window.location.search}` === path) return;
   window.history.pushState({}, '', path);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
@@ -39,7 +43,7 @@ export function navigate(path: string): void {
  * route, which redirects forward again, and the operator would get stuck unable to leave.
  */
 export function redirect(path: string): void {
-  if (window.location.pathname === path) return;
+  if (`${window.location.pathname}${window.location.search}` === path) return;
   window.history.replaceState({}, '', path);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }

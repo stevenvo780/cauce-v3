@@ -92,10 +92,13 @@ interface RecargaDeContextoProps {
   enCuarentena: boolean;
   onVeredicto: (contaminacion: ContaminacionDeContexto) => void;
   onRecargado: () => void;
+  editorBlocked?: boolean;
+  onWriteInFlightChange?: (busy: boolean) => void;
 }
 
 export function RecargaDeContexto({
   tenantId, alias, permitida, enCuarentena, onVeredicto, onRecargado,
+  editorBlocked = false, onWriteInFlightChange,
 }: RecargaDeContextoProps) {
   const api = useApi();
   const idMotivo = useId();
@@ -104,12 +107,14 @@ export function RecargaDeContexto({
   const [resultado, setResultado] = useState<RespuestaDeRecarga>();
   const [fallo, setFallo] = useState<{ titulo: string; detalle: string }>();
   const problemaMotivo = problemaDeMotivo(motivo);
-  const bloqueada = !permitida || enCuarentena || recargando;
+  const bloqueada = !permitida || enCuarentena || recargando || editorBlocked;
 
   async function recargar() {
+    if (bloqueada || problemaMotivo !== undefined) return;
     setFallo(undefined);
     setResultado(undefined);
     setRecargando(true);
+    onWriteInFlightChange?.(true);
     try {
       const respuesta = await api.postContextReload(tenantId, alias, motivo.trim());
       // The verdict is READ before anything else: a 2xx that cannot be read as clean is not clean.
@@ -149,11 +154,13 @@ export function RecargaDeContexto({
         ? explicarFalloDeMotivo(status, codigo, mensaje)
         : undefined;
       setFallo(delMotivo ?? {
-        titulo: 'La recarga no se hizo',
-        detalle: `HTTP ${String(status ?? 'sin dato')}: ${mensaje} Los ficheros quedan como estaban.`,
+        titulo: 'No se pudo acreditar la recarga',
+        detalle: `HTTP ${String(status ?? 'sin dato')}: ${mensaje} El resultado puede ser parcial; volvé a medir antes de reintentar.`,
       });
+      onRecargado();
     } finally {
       setRecargando(false);
+      onWriteInFlightChange?.(false);
     }
   }
 

@@ -5,6 +5,11 @@ import { App } from './App';
 import { renderWithApi } from './test/render';
 import { server } from './mocks/server';
 
+async function openTools() {
+  const button = await screen.findByRole('button', { name: 'Herramientas' });
+  if (button.getAttribute('aria-expanded') !== 'true') await userEvent.click(button);
+}
+
 it('provides basic accessible landmarks and identity guidance', async () => {
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
@@ -15,7 +20,7 @@ it('provides basic accessible landmarks and identity guidance', async () => {
   expect(screen.getByRole('link', { name: /saltar al contenido/i })).toHaveAttribute('href', '#main-content');
   expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.getByRole('main')).not.toHaveFocus();
-  expect(screen.getByText(/Cookie HttpOnly esperada/i)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Herramientas' })).toHaveAttribute('aria-expanded', 'false');
   expect(await screen.findByText('Steven:kant')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /cerrar sesión/i })).toBeInTheDocument();
 });
@@ -93,6 +98,7 @@ it('la barra y las páginas activas comparten una sola consulta de acceso', asyn
   expect(await screen.findByRole('heading', { level: 1, name: 'Cuentas y cuotas' }, { timeout: 10_000 }))
     .toBeInTheDocument();
   await waitFor(() => { expect(accessReads).toBe(1); });
+  await openTools();
   await user.click(screen.getByRole('link', { name: /ajustes y altas/i }));
   expect(await screen.findByRole('heading', { level: 1, name: /ajustes y altas/i }, { timeout: 10_000 }))
     .toBeInTheDocument();
@@ -104,6 +110,7 @@ it('el menú tiene UNA sola entrada para cuentas, cuotas y licencias, no tres qu
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
+  await openTools();
   const entries = within(nav).getAllByRole('link')
     .filter((link) => /cuota|licencia|cuenta/i.test(link.textContent));
   expect(entries.map((link) => link.textContent)).toEqual(['Cuentas y cuotas']);
@@ -187,6 +194,7 @@ it('navega dentro de la aplicación sin recargar la página al hacer clic en el 
   renderWithApi(<App />);
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i }, { timeout: 10_000 });
+  await openTools();
   await user.click(screen.getByRole('link', { name: /^queues & dlq$/i }));
 
   expect(window.location.pathname).toBe('/queues');
@@ -199,6 +207,7 @@ it('conserva el href real que permite abrir una ruta en otra pestaña', async ()
   renderWithApi(<App />);
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i }, { timeout: 10_000 });
+  await openTools();
   expect(screen.getByRole('link', { name: /^queues & dlq$/i })).toHaveAttribute('href', '/queues');
   expect(window.location.pathname).toBe('/accounts');
 });
@@ -208,13 +217,14 @@ it('el menú contiene la portada más ocho entradas consolidadas', async () => {
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i }, { timeout: 10_000 });
+  await openTools();
   const entradas = within(nav).getAllByRole('link').map((link) => link.textContent);
 
   expect(entradas).toEqual([
-    'Portada',
-    'La flota ahora',
+    'Conversaciones',
+    'Agentes',
+    'Resumen',
     'Cuentas y cuotas',
-    'Mensajes',
     'Queues & DLQ',
     'Señales y auditoría',
     'Ajustes y altas',
@@ -276,6 +286,7 @@ it('deja «Ajustes y altas» inerte, y con el motivo escrito, para quien no tien
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
+  await openTools();
   const entrada = await screen.findByRole('link', { name: /ajustes y altas/i }, { timeout: 10_000 });
   await waitFor(() => { expect(entrada).toHaveAttribute('aria-disabled', 'true'); });
   expect(entrada).toHaveAttribute('title', expect.stringContaining('permiso de control'));
@@ -297,15 +308,148 @@ it('deja «Ajustes y altas» navegable para quien SI tiene config.write', async 
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
+  await openTools();
   const entrada = await screen.findByRole('link', { name: /ajustes y altas/i }, { timeout: 10_000 });
   await waitFor(() => { expect(entrada).not.toHaveAttribute('aria-disabled'); });
   await userEvent.click(entrada);
   expect(window.location.pathname).toBe('/config');
 });
 
-it('la raíz "/" abre la portada, no la vista viva', async () => {
+it('la raíz abre las conversaciones', async () => {
   window.history.pushState({}, '', '/');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: 'Mensajes' }, { timeout: 10_000 })).toBeInTheDocument();
+  await waitFor(() => { expect(window.location.pathname).toBe('/messages'); });
+});
+
+it('conserva el borrador y sus opciones al visitar herramientas, aislado por agente', async () => {
+  window.history.pushState({}, '', '/messages/Steven/argos');
+  const user = userEvent.setup();
+  renderWithApi(<App />);
+  const input = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
+  await user.type(input, 'Revisá el trabajo pendiente');
+  await user.click(screen.getByText('Opciones de envío · conversación'));
+  await user.selectOptions(screen.getByLabelText('Carril'), 'batch');
+  await openTools();
+  await user.click(screen.getByRole('link', { name: 'Cuentas y cuotas' }));
+  await screen.findByRole('heading', { name: 'Cuentas y cuotas' });
+  await user.click(screen.getByRole('link', { name: 'Volver a la conversación' }));
+  expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Revisá el trabajo pendiente');
+  expect(screen.getByText('Opciones de envío · en segundo plano')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /conversación con kratos,/i }));
+  expect(await screen.findByRole('textbox', { name: 'Mensaje para kratos' })).toHaveValue('');
+  await user.click(screen.getByRole('button', { name: /conversación con argos,/i }));
+  expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Revisá el trabajo pendiente');
+});
+
+it.each([true, false])('un envío pendiente sobrevive a salir del hilo y volver; éxito=%s', async (success) => {
+  let release: () => void = () => undefined;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  let calls = 0;
+  let settled = false;
+  server.use(http.post('*/v3/console/messages', async ({ request }) => {
+    const input = await request.json() as Record<string, unknown>;
+    calls += 1;
+    await pending;
+    if (!success) { settled = true; return HttpResponse.json({ error: 'invalid_request', message: 'Intento rechazado' }, { status: 400 }); }
+    return HttpResponse.json({
+      message_id: '10000000-0000-4000-8000-000000000001',
+      delivery_ids: ['20000000-0000-4000-8000-000000000001'], duplicate: false,
+      request_id: '30000000-0000-4000-8000-000000000001', trace_id: 'trace-console-test',
+      idempotency_key: input.idempotency_key, tenant_id: 'Steven', actor_alias: 'kant',
+      request_hash: 'a'.repeat(64), causal_hash: 'b'.repeat(64),
+    }, { status: 202 });
+  }), http.post('*/v3/console/publish-intents/confirm', async ({ request }) => {
+    settled = true;
+    return HttpResponse.json({ version: 1, confirmed: true, ...await request.json() as object });
+  }));
+  window.history.pushState({}, '', '/messages/Steven/argos');
+  const user = userEvent.setup();
+  renderWithApi(<App />);
+  try {
+    await user.type(await screen.findByRole('textbox', { name: 'Mensaje para argos' }), 'Un único envío pendiente');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    await waitFor(() => { expect(calls).toBe(1); });
+    await openTools();
+    await user.click(screen.getByRole('link', { name: 'Cuentas y cuotas' }));
+    await screen.findByRole('heading', { name: 'Cuentas y cuotas' });
+    await user.click(screen.getByRole('link', { name: 'Volver a la conversación' }));
+    expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Enviando…' })).toBeDisabled();
+    await openTools();
+    await user.click(screen.getByRole('link', { name: 'Cuentas y cuotas' }));
+    await screen.findByRole('heading', { name: 'Cuentas y cuotas' });
+    release();
+    await waitFor(() => { expect(settled).toBe(true); });
+    await user.click(screen.getByRole('link', { name: 'Volver a la conversación' }));
+    const restored = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
+    await waitFor(() => { expect(restored).not.toBeDisabled(); });
+    expect(restored).toHaveValue(success ? '' : 'Un único envío pendiente');
+    expect(calls).toBe(1);
+    if (!success) expect(await screen.findByRole('alert')).toHaveTextContent('Intento rechazado');
+  } finally { release(); }
+});
+
+it('el foco sigue la selección y vuelve al agente al cerrar la conversación', async () => {
+  window.history.pushState({}, '', '/messages');
+  const user = userEvent.setup();
+  renderWithApi(<App />);
+  const agent = await screen.findByRole('button', { name: /conversación con argos,/i });
+  await user.click(agent);
+  expect(await screen.findByRole('heading', { name: 'argos', level: 2 })).toHaveFocus();
+  await user.click(screen.getByRole('link', { name: 'Volver a los agentes' }));
+  expect(await screen.findByRole('button', { name: /conversación con argos,/i })).toHaveFocus();
+});
+
+it('las herramientas se cierran con Escape y devuelven el foco al control', async () => {
+  window.history.pushState({}, '', '/messages');
+  const user = userEvent.setup();
+  renderWithApi(<App />);
+  await openTools();
+  await user.tab();
+  await user.keyboard('{Escape}');
+  expect(screen.getByRole('button', { name: 'Herramientas' })).toHaveFocus();
+  expect(screen.queryByRole('region', { name: 'Herramientas de Cauce' })).toBeNull();
+});
+
+it('un agente desconocido conserva su aviso, oculta el roster móvil y permite volver', async () => {
+  window.history.pushState({}, '', '/messages/Steven/fantasma');
+  const user = userEvent.setup();
+  renderWithApi(<App />);
+  const missing = await screen.findByText(/El servidor no observa a/);
+  expect(missing.closest('.messenger-empty')).toHaveAttribute('data-state', 'missing');
+  expect(missing.closest('.messenger-shell')).toHaveAttribute('data-conversacion', 'abierta');
+  await user.click(screen.getByRole('link', { name: 'Volver a los agentes' }));
+  expect(window.location.pathname).toBe('/messages');
+  expect(await screen.findByRole('button', { name: /conversación con argos,/i })).toBeInTheDocument();
+});
+
+it('abre la configuración desde el chat y conserva borrador con Atrás, Adelante y Volver', async () => {
+  window.history.pushState({}, '', '/messages/Steven/argos');
+  const user = userEvent.setup();
+  renderWithApi(<App />);
+  await user.type(await screen.findByRole('textbox', { name: 'Mensaje para argos' }), 'Borrador antes de configurar');
+  await user.click(screen.getByRole('link', { name: 'Configurar agente' }));
+  expect(window.location.search).toBe('?view=context');
+  expect(await screen.findByRole('heading', { name: 'Configuración de argos' })).toHaveFocus();
+  window.history.back();
+  await waitFor(() => { expect(window.location.search).toBe(''); });
+  expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Borrador antes de configurar');
+  expect(screen.getByRole('link', { name: 'Configurar agente' })).toHaveFocus();
+  window.history.forward();
+  expect(await screen.findByRole('heading', { name: 'Configuración de argos' })).toBeInTheDocument();
+  expect(window.location.search).toBe('?view=context');
+  await user.click(screen.getByRole('link', { name: 'Volver a la conversación' }));
+  expect(window.location.search).toBe('');
+  expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Borrador antes de configurar');
+});
+
+it('las identidades del hilo y el indicador de trabajo proceden de datos reales', async () => {
+  window.history.pushState({}, '', '/messages/Steven/argos');
+  renderWithApi(<App />);
+  const row = await screen.findByRole('button', { name: /conversación con argos,/i });
+  await waitFor(() => { expect(row.querySelector('.agent-avatar')).toHaveAttribute('data-working', 'true'); });
+  const conversation = await screen.findByRole('region', { name: 'Conversación con argos' });
+  expect(conversation.querySelector('.transcript-direction')).toHaveTextContent(/kant.*hacia.*argos/);
 });
