@@ -17,7 +17,7 @@ interface Destino {
 }
 
 const DESTINOS: Record<string, Destino> = {
-  '': { encabezado: /cauce en una pantalla/i },
+  overview: { encabezado: /cauce en una pantalla/i },
   live: { encabezado: /^la flota ahora$/i },
   accounts: { encabezado: /^cuentas y cuotas$/i },
   messages: { encabezado: /^mensajes$/i },
@@ -145,7 +145,7 @@ describe('every MENU entry resolves to a real view', () => {
       expect(await verDestino(id)).toBeInTheDocument();
       // And it did NOT fall back to the cover: the cover has its own header, and no other view
       // can show it. Without this line, a retired id would pass the test by drawing the cover.
-      if (id !== '') {
+      if (id !== 'overview') {
         expect(screen.queryByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeNull();
       }
       // The address bar does not move: a canonical route is not an alias.

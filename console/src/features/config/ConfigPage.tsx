@@ -18,6 +18,7 @@ import {
 import { AltaDeEspacios } from './AltaDeEspacios';
 import { AREA_POR_DEFECTO, agruparPorArea, type ConfigAreaId } from './areas';
 import { ArnesesPanel } from './ArnesesPanel';
+import { ConfigWorkspace } from './ConfigWorkspace';
 import { CollectionTable, type AccionPendiente, type AvisoDeColeccion } from './CollectionTable';
 import { configCollections } from './collections';
 import { describeConfigError, esNegativaDePermiso, textoRecarga, type EstadoRecarga } from './config-change';
@@ -186,10 +187,14 @@ function Aviso({ aviso, canal }: { aviso?: ConfigMutationNotice; canal: string }
 }
 
 export function ConfigPage() {
-  return <ConsoleAccessBoundary><ConfigPageContent /></ConsoleAccessBoundary>;
+  return <ConfigWorkspace administration={(active) => <ConfigAdministration active={active} />} />;
 }
 
-function ConfigPageContent() {
+export function ConfigAdministration({ active = true }: { active?: boolean }) {
+  return <ConsoleAccessBoundary><ConfigPageContent active={active} /></ConsoleAccessBoundary>;
+}
+
+function ConfigPageContent({ active }: { active: boolean }) {
   const api = useApi();
   const config = useResource('configuration', () => api.getConfiguration());
   const access = useConsoleAccess();
@@ -440,7 +445,7 @@ function ConfigPageContent() {
     <PageHeader
       eyebrow="Topología y permisos"
       title="Ajustes y altas"
-      description="Topología y permisos: el contexto de cada agente se modifica sólo en «La flota ahora» → «Contexto»."
+      description="Administración avanzada: topología, políticas y cambios versionados. El contexto se edita en el panel canónico de cada agente."
       actions={<RefreshButton onClick={config.reload} loading={config.loading} />}
     />
 
@@ -531,7 +536,7 @@ function ConfigPageContent() {
           soloLectura={soloLectura}
           busy={busy}
           control={interruptores}
-          {...(vigente ? { pendiente: pedido } : {})}
+          {...(active && vigente ? { pendiente: pedido } : {})}
           {...(aviso ? { aviso } : {})}
           onPedir={(siguiente) => {
             canalAccion.informar(undefined);

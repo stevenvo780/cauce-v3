@@ -3,14 +3,13 @@ import { useApi } from '../../api/context';
 import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
 import type {
-  AgentDocumentKind, AgentPerfilCampos, FleetActivitySnapshot, TenantNode, TopologySnapshot,
+  FleetActivitySnapshot, TenantNode, TopologySnapshot,
 } from '../../api/types';
 import {
   ErrorState, FloatingTooltip, LoadingState, PageHeader,
 } from '../../components/ui';
 import { FleetActivityTable } from './FleetActivityTable';
 import { AgentDrawer, type ContextFocusTarget, type DrawerTab } from './AgentDrawer';
-import type { BorradorDeFichero } from './FicherosTab';
 import { AgentTooltipCard } from './AgentTooltipCard';
 import { FleetVerdict } from './FleetVerdict';
 import {
@@ -86,15 +85,6 @@ export function LiveFleetPage() {
       escribirQuery(drawer.key, 'rol');
     }
   }, [drawer]);
-
-  const [borradoresPerfil, setBorradoresPerfil] =
-    useState<Record<string, Partial<AgentPerfilCampos>>>({});
-  const [borradoresFicheros, setBorradoresFicheros] =
-    useState<Record<string, Partial<Record<AgentDocumentKind, BorradorDeFichero>>>>({});
-  const [profileWritesInFlight, setProfileWritesInFlight] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const [contextRuntimeRevisions, setContextRuntimeRevisions] = useState<Record<string, number>>({});
 
   const memoryRef = useRef<FleetMemory>({});
   const [pulses, setPulses] = useState<PulseMap>({});
@@ -468,45 +458,7 @@ export function LiveFleetPage() {
           view={detail}
           tab={drawer.tab}
           configuracion={configuracion}
-          borradorPerfil={borradoresPerfil[drawer.key]}
-          onBorradorPerfil={(campos) => { setBorradoresPerfil((actuales) => {
-            if (campos === undefined) {
-              const resto: Record<string, Partial<AgentPerfilCampos>> = {};
-              for (const [k, v] of Object.entries(actuales)) {
-                if (k !== drawer.key) resto[k] = v;
-              }
-              return resto;
-            }
-            return { ...actuales, [drawer.key]: campos };
-          }); }}
-          borradoresFicheros={borradoresFicheros[drawer.key]}
-          profileWriteInFlight={profileWritesInFlight.has(drawer.key)}
-          onProfileWriteInFlightChange={(inFlight) => {
-            const key = drawer.key;
-            setProfileWritesInFlight((current) => {
-              if (inFlight && current.has(key)) return current;
-              if (!inFlight && !current.has(key)) return current;
-              const next = new Set(current);
-              if (inFlight) next.add(key);
-              else next.delete(key);
-              return next;
-            });
-          }}
-          runtimeRefreshRevision={contextRuntimeRevisions[drawer.key] ?? 0}
-          onRuntimeRefresh={() => {
-            const key = drawer.key;
-            setContextRuntimeRevisions((current) => ({
-              ...current, [key]: (current[key] ?? 0) + 1,
-            }));
-          }}
           contextFocusTarget={drawer.contextFocusTarget}
-          onBorradorFichero={(kind, nuevo) => { setBorradoresFicheros((actuales) => {
-            const previos = actuales[drawer.key] ?? {};
-            const delAgente = nuevo === undefined
-              ? Object.fromEntries(Object.entries(previos).filter(([clave]) => clave !== kind))
-              : { ...previos, [kind]: nuevo };
-            return { ...actuales, [drawer.key]: delAgente };
-          }); }}
           onTab={(tab, contextFocusTarget) => {
             setDrawer((current) => (current
               ? { key: current.key, tab, ...(contextFocusTarget === undefined ? {} : { contextFocusTarget }) }

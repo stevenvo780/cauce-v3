@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NAV_ENTRIES } from './nav';
+import { PRIMARY_NAV_IDS } from './nav';
 import { leerCss } from './test/leer-css';
 import {
   bloqueMedia,
@@ -61,9 +61,9 @@ export function defectosDelMenuMovil(global: string): string[] {
   const repeticion = columnas ? /repeat\(\s*(\d+)\s*,/.exec(columnas) : null;
   const cuantas = repeticion ? Number(repeticion[1]) : 0;
   // With the eight entries in `NAV_ENTRIES` and two rows, four columns or more are needed.
-  if (cuantas < Math.ceil(NAV_ENTRIES.length / 2)) {
+  if (cuantas < Math.ceil((PRIMARY_NAV_IDS.length + 1) / 2)) {
     defectos.push(
-      `el menú de móvil declara ${String(cuantas)} columnas y hay ${String(NAV_ENTRIES.length)} entradas: `
+      `el menú de móvil declara ${String(cuantas)} columnas y hay ${String((PRIMARY_NAV_IDS.length + 1))} entradas: `
       + 'no caben en dos filas sin pisarse',
     );
   }
@@ -134,6 +134,6 @@ describe('el menú de móvil de la consola', () => {
     const estrecho = bloqueMedia(GLOBAL, `@media (max-width: ${String(CORTE_ESTRECHO)}px)`);
     const columnas = valor(declaraciones(estrecho, '.sidebar nav ul'), 'grid-template-columns') ?? '';
     const cuantas = Number(/repeat\(\s*(\d+)\s*,/.exec(columnas)?.[1] ?? 0);
-    expect(cuantas * 2).toBeGreaterThanOrEqual(NAV_ENTRIES.length);
+    expect(cuantas * 2).toBeGreaterThanOrEqual((PRIMARY_NAV_IDS.length + 1));
   });
 });

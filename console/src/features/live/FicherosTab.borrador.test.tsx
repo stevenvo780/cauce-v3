@@ -119,7 +119,7 @@ it('inspeccionar otro fichero no se lleva por delante el borrador del manual en 
   expect(await within(cajon).findByLabelText(/Contenido de Identidad/i)).toHaveValue('# identidad\n');
 
   await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
-  await user.click(within(cajon).getByText('CLAUDE.md (manual del sitio)'));
+  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
   expect(await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i))
     .toHaveValue('lo que estaba escribiendo');
 });
