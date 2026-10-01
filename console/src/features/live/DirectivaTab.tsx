@@ -59,7 +59,8 @@ export function DirectivaTab({
         </p>
       ) : lineas.length === 0 ? (
         <p className="directiva-resumen-vacio">
-          El registro lo publica VACÍO: {alias} sale a trabajar sin ninguna línea de identidad.
+          El registro publica la proyección del rol VACÍA. El perfil, los manuales y la memoria
+          se comprueban por separado.
         </p>
       ) : (
         <div className="directiva-resumen-lineas">

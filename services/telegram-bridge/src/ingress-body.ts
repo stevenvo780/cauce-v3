@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { StoreError } from '@cauce/store';
 import {
   AttachmentContentSchema, AttachmentsV1Schema, logEvent, redactionEnabledFromEnv, redactSecretsDeep
 } from '@cauce/protocol';
@@ -314,9 +315,8 @@ export function suppressionMetric(reason: SuppressionReason): BridgeMetric {
   return 'updates_unaddressed';
 }
 
-/** A deterministic-key hash conflict is observable, but never permission to consume the update. */
+/** Only the store's durable idempotency decision can authorize consuming a conflicting update. */
 export function isRequestConflict(error: unknown): boolean {
-  return error instanceof Error && error.name === 'StoreError' &&
-    (error as { code?: unknown }).code === 'conflict' &&
-    error.message.includes('different request');
+  return error instanceof StoreError && error.code === 'conflict'
+    && error.recoveryReason === 'idempotency_durable_conflict';
 }

@@ -39,7 +39,6 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
   protected wakesSentThisDelivery = 0;
   /** Pastes `text` as a new turn of the SAME conversation (codex: wake a root that closed silent after delegating). */
   protected abstract wakeTurn(identity: PaneIdentity, text: string, signal: AbortSignal): Promise<WakeCommit>;
-  protected abstract clearStuckPaste(identity: PaneIdentity, bytes: number): Promise<"cleared" | "untouched" | "ambiguous">;
 
   /** Extracts the envelope from the harness's structured transcript. */
   protected async harvest(
@@ -329,11 +328,10 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           && await port.promptDispatch?.state(dispatch) === "queued" // Queued, never handed to the model, pane idle: never started.
           && !await this.paneStillGenerating(activeIdentity, request.signal) && !signalAborted(request.signal)) {
           this.undispatched.add(pending.correlationId); // May still run from grok's held queue: quarantined, never retried.
-          const box = await this.clearStuckPaste(activeIdentity, dispatch.bytes);
           const quarantined = await this.quarantine(activeIdentity, pending);
           const detail = `la terminal encoló el pedido (${String(dispatch.bytes)} bytes) y no se lo pasó al modelo en`
             + ` ${String(Math.round(dispatchGraceMs / 1000))} s; puede seguir en su cola y correr más tarde; caja: `
-            + `${box === "cleared" ? "vaciada" : box === "untouched" ? "sin tocar (no era sólo nuestro pegado)" : "ambigua"}; ${quarantined}`;
+            + `sin tocar (su contenido no tiene identidad verificable); ${quarantined}`;
           this.record({ reason: "prompt_not_dispatched", detail, occurredAt: new Date().toISOString(), fellBack: false, executionPrevented: true });
           return { result: result({ exitCode: 1, stderr: `prompt_not_dispatched: ${detail}` }), terminalBoundary: false };
         }

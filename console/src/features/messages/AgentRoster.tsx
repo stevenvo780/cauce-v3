@@ -1,5 +1,6 @@
-import { DoorClosed, Filter, Inbox, Search, Wifi, WifiOff } from 'lucide-react';
+import { DoorClosed, Filter, Inbox, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { AgentAvatar } from '../../components/AgentAvatar';
 import { Badge, EmptyState, LoadingState } from '../../components/ui';
 import { LEASE_LABEL } from '../../vocabulario';
 import { filterFleetAgents } from '../terminal/fleet';
@@ -114,7 +115,7 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
       </div>
 
       <p className="messenger-roster-meta">
-        <Inbox size={12} aria-hidden="true" /> {visibles.length} visibles · primero las colas con entregas muertas o en reintento
+        <Inbox size={12} aria-hidden="true" /> {visibles.length} visibles · prioridad a lo que necesita atención
         {sueltos > 0 ? (
           <>
             {' · '}
@@ -128,6 +129,7 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
         ) : null}
       </p>
 
+      {error && agents.length > 0 ? <p className="chat-roster-error" role="alert">No se pudo actualizar toda la lista: {error.message}</p> : null}
       <div className="messenger-agent-list" aria-label="Lista de agentes">
         {loading && agents.length === 0 ? <LoadingState label="Sincronizando la flota del servidor…" />
           : error && agents.length === 0 ? <div role="alert"><EmptyState>No se pudo cargar la flota: {error.message}</EmptyState></div>
@@ -139,23 +141,23 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
               </EmptyState>
             )
               : visibles.map((agent) => {
-                const forma = formaDeLaCola(salud[agent.id]);
+                const health = Object.hasOwn(salud, agent.id) ? salud[agent.id] : undefined;
+                const forma = formaDeLaCola(health);
                 return (
                   <button
                     className="messenger-agent"
                     key={agent.id}
                     type="button"
                     data-state={agent.leaseState}
+                    data-agent-id={agent.id}
                     data-cola={forma}
                     data-active={activeAgentId === agent.id || undefined}
-                    data-attention={colaNecesitaAtencion(salud[agent.id]) || undefined}
+                    data-attention={colaNecesitaAtencion(health) || undefined}
                     onClick={() => { onSelect(agent); }}
                     aria-label={`Conversación con ${agent.alias}, ${agent.tenantId}, lease ${LEASE_LABEL[agent.leaseState]}${fueraDeLaTopologia(agent) ? ', sin sala declarada' : ''}`}
                     aria-current={activeAgentId === agent.id ? 'true' : undefined}
                   >
-                    <span className={`messenger-presence ${agent.leaseState}`} aria-hidden="true">
-                      {agent.leaseState === 'online' ? <Wifi size={15} /> : <WifiOff size={15} />}
-                    </span>
+                    <AgentAvatar alias={agent.alias} tenantId={agent.tenantId} state={agent.leaseState} working={(health?.enCurso ?? 0) > 0} />
                     <span className="messenger-agent-copy">
                       <span className="messenger-agent-name">
                         <strong>{agent.alias}</strong>
@@ -165,9 +167,9 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
                             <DoorClosed size={11} aria-hidden="true" /> sin sala
                           </span>
                         ) : null}
-                        {forma === 'breve' ? <ColaBreve salud={salud[agent.id]} /> : null}
+                        {forma === 'breve' ? <ColaBreve salud={health} /> : null}
                       </span>
-                      {forma === 'breve' ? null : <PildorasDeCola salud={salud[agent.id]} />}
+                      {forma === 'breve' ? null : <PildorasDeCola salud={health} />}
                     </span>
                   </button>
                 );

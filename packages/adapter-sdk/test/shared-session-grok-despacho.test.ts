@@ -8,11 +8,6 @@ import { grokPromptLog } from "../src/shared-session/grok-dispatch.js";
 import { adapterFor, correlationIdFromPrompt, envelopeText, execute } from "./shared-session-fixtures.js";
 import { GrokTmux, grokFrame, grokRunner, grokWorkspace } from "./grok-shared-session-fixtures.js";
 
-// ---------------------------------------------------------------------------------------------
-// hades, grok 1.0.41: prompts were `prompt.enqueue`d and never `prompt.drain`ed while the adapter
-// waited for the turn with no deadline (e2ade6bf, e249d932, b2d661d1, cd54ddb4).
-// ---------------------------------------------------------------------------------------------
-
 async function pagerLog(grokHome: string): Promise<(tmux: GrokTmux, text: string, drained: boolean) => Promise<void>> {
   const file = grokPromptLog(grokHome);
   await mkdir(join(grokHome, "logs"), { recursive: true });
@@ -27,7 +22,7 @@ async function pagerLog(grokHome: string): Promise<(tmux: GrokTmux, text: string
 
 const chipOf = (text: string): string => `[Pasted: ${String(Math.round(Buffer.byteLength(text, "utf8") / 1000))} KB]`;
 
-test("grok: un pedido encolado y nunca entregado al modelo falla PROMPT_NOT_DISPATCHED sin reintento, vacía SU chip y deja la generación en cuarentena", async () => {
+test("grok: un pedido encolado y nunca entregado al modelo falla sin reintento, preserva la caja y deja la generación en cuarentena", async () => {
   const { state, grokHome } = await grokWorkspace("grok-despacho-atascado");
   const pager = await pagerLog(grokHome);
   const tmux = new GrokTmux();
@@ -42,7 +37,8 @@ test("grok: un pedido encolado y nunca entregado al modelo falla PROMPT_NOT_DISP
   assert.equal(error.code, "PROMPT_NOT_DISPATCHED");
   assert.equal(error.retryable, false, "grok may still run it from its queue: a retry would run it twice");
   assert.match(error.message, /puede seguir en su cola/u);
-  assert.equal(tmux.clearedBoxes, 1, "our stuck chip was cleared under the barrier");
+  assert.equal(tmux.clearedBoxes, 0, "a paste chip does not identify its underlying text");
+  assert.match(tmux.paneContent, /\[Pasted:/u);
   assert.equal(tmux.sessionOptions.has("@cauce_quarantined_pane"), true, "the generation stays quarantined: a late run is reconciled, nothing piles up");
 });
 
@@ -61,6 +57,7 @@ test("grok: tras PROMPT_NOT_DISPATCHED la caja vacía NO levanta la cuarentena; 
   const first = await execute(adapter).then(() => undefined, (failure: unknown) => failure);
   assert.ok(first instanceof ProcessExecutionError && first.code === "PROMPT_NOT_DISPATCHED");
   const submits = tmux.submittedCount;
+  tmux.paneContent = grokFrame();
 
   // The box is empty and the pane idle, but grok still holds the prompt: another paste would pile up behind it.
   const second = await execute(adapter).then(() => undefined, (failure: unknown) => failure);
@@ -76,20 +73,44 @@ test("grok: tras PROMPT_NOT_DISPATCHED la caja vacía NO levanta la cuarentena; 
   assert.equal((await execute(adapter)).reply, "de nuevo en línea");
 });
 
-test("grok: si la caja tiene un chip que no es del tamaño de nuestro pegado, no se toca", async () => {
+for (const sameSize of [false, true]) test(`grok: preserva el pegado del dueño de tamaño ${sameSize ? "igual" : "distinto"}`, async () => {
   const { state, grokHome } = await grokWorkspace("grok-despacho-chip-ajeno");
   const pager = await pagerLog(grokHome);
   const tmux = new GrokTmux();
+  let ownerFrame = "";
   tmux.onSubmit = async (text) => {
     await pager(tmux, text, false);
-    tmux.paneContent = grokFrame({ footer: "typed", box: "[Pasted: 87 KB]" }); // the owner's own paste
+    ownerFrame = grokFrame({ footer: "typed", box: sameSize ? chipOf(text) : "[Pasted: 87 KB]" });
+    tmux.paneContent = ownerFrame;
   };
   const error = await execute(await adapterFor(grokRunner({ grokHome, tmux, dispatchGraceMs: 20 }), state, "hades", "grok"))
     .then(() => undefined, (failure: unknown) => failure);
   assert.ok(error instanceof ProcessExecutionError);
   assert.equal(error.code, "PROMPT_NOT_DISPATCHED");
   assert.equal(tmux.clearedBoxes, 0, "the owner's paste was erased");
+  assert.equal(tmux.paneContent, ownerFrame);
   assert.match(error.message, /sin tocar/u);
+});
+
+test("grok: un runner reiniciado sin fichero de cuarentena no libera una entrega retenida al vaciar la caja", async () => {
+  const { state, grokHome } = await grokWorkspace("grok-despacho-reinicio");
+  const pager = await pagerLog(grokHome);
+  const tmux = new GrokTmux();
+  tmux.onSubmit = async (text) => {
+    await pager(tmux, text, false);
+    tmux.paneContent = grokFrame({ footer: "typed", box: chipOf(text) });
+  };
+  const options = { grokHome, tmux, dispatchGraceMs: 20 };
+  const first = await execute(await adapterFor(grokRunner(options), state, "hades", "grok"))
+    .then(() => undefined, (failure: unknown) => failure);
+  assert.ok(first instanceof ProcessExecutionError && first.code === "PROMPT_NOT_DISPATCHED");
+  const submits = tmux.submittedCount;
+  tmux.paneContent = grokFrame();
+  const second = await execute(await adapterFor(grokRunner(options), state, "hades", "grok"))
+    .then(() => undefined, (failure: unknown) => failure);
+  assert.ok(second instanceof ProcessExecutionError);
+  assert.equal(tmux.submittedCount, submits);
+  assert.equal(tmux.sessionOptions.has("@cauce_quarantined_pane"), true);
 });
 
 test("grok: con el registro del pager presente y el pedido entregado, el turno sigue como siempre", async () => {

@@ -12,13 +12,15 @@ import {
 } from './ficheros';
 import { DOCUMENT_REASON_MAX, explicarFalloDeMotivo, problemaDeMotivo } from './ficheros-motivo';
 import { MENSAJES_DE_APLICACION } from './perfil';
+import { useDocumentWrite } from './document-write-state';
 
-/** Editor and viewer for the configuration files that govern an agent. */
 
 export interface BorradorDeFichero {
   texto: string;
   /** SHA of the read it was born from: it is what still travels on save, so CAS keeps working. */
   shaBase: string | null;
+  /** Resolved source of the draft; a changed harness must not redirect an old draft. */
+  pathBase?: string;
 }
 
 interface FicherosTabProps {
@@ -203,9 +205,6 @@ function FilaDeFichero(
         </button>
       ) : <div className="ficheros-cabecera">{cabecera}</div>}
 
-      {/* The reason is shown WHENEVER it exists, whether or not the row is open. A lock without an
-          explanation is exactly what makes someone ask over Telegram to have something unlocked
-          that is locked on purpose. */}
       {reason ? <p className="ficheros-razon">{reason}</p> : null}
 
       {abierto && readable
@@ -331,7 +330,7 @@ function Editor({
     content: servido, failure: fallo, loading: cargando, reload: cargar, setContent: setServido,
     setFailure: setFallo,
   } = useDocumentContent(api, tenantId, alias, item.kind);
-  const [guardando, setGuardando] = useState(false);
+  const [guardando, setGuardando] = useDocumentWrite(api, JSON.stringify([tenantId, alias, item.kind]));
   const [guardado, setGuardado] = useState<string | undefined>(undefined);
   const [motivo, setMotivo] = useState('');
   const idMotivo = useId();
@@ -345,9 +344,11 @@ function Editor({
   }, [cargar]);
 
   const texto = borrador?.texto ?? servido?.content ?? '';
+  const changedTarget = borrador?.pathBase !== undefined && servido?.path !== undefined
+    && borrador.pathBase !== servido.path;
 
   const guardar = useCallback(async () => {
-    if (!servido) return;
+    if (!servido || guardando || changedTarget) return;
     if (mutationBlocked) {
       setFallo({
         titulo: 'Aplicación canónica en curso',
@@ -437,7 +438,7 @@ function Editor({
     }
   }, [
     api, tenantId, alias, item.kind, texto, borrador, servido, canWrite, mutationBlocked,
-    motivo, problemaMotivo, onBorrador, onApplied, setFallo, setServido,
+    motivo, problemaMotivo, onBorrador, onApplied, setFallo, setServido, guardando, setGuardando, changedTarget,
   ]);
 
   if (cargando) return <p className="muted">Leyendo el fichero dentro del contenedor…</p>;
@@ -458,6 +459,7 @@ function Editor({
 
   return (
     <div className="ficheros-editor">
+      {changedTarget ? <p className="ficheros-aviso" role="alert">El destino del manual cambió desde que empezaste el borrador. No se guardará ese texto en otro archivo. Conservá tu texto antes de descartarlo y releer.</p> : null}
       {!servido.exists ? (
         <p className="ficheros-nota">
           Este fichero todavía no existe. Si guardas, se crea. Está vacío porque no está, no
@@ -484,14 +486,15 @@ function Editor({
         value={texto}
         spellCheck={false}
         rows={18}
-        readOnly={!canWrite || !servido.editable || servido.truncated}
-        aria-readonly={!canWrite || !servido.editable || servido.truncated}
+        readOnly={!canWrite || guardando || !servido.editable || servido.truncated}
+        aria-readonly={!canWrite || guardando || !servido.editable || servido.truncated}
         onChange={(event) => {
-          if (!canWrite || mutationBlocked) return;
+          if (!canWrite || guardando || mutationBlocked) return;
           const escrito = preserveSourceLineEndings(servido.content, event.target.value);
           onBorrador(escrito === servido.content
             ? undefined
-            : { texto: escrito, shaBase: borrador ? borrador.shaBase : servido.sha });
+            : { texto: escrito, shaBase: borrador ? borrador.shaBase : servido.sha,
+              pathBase: borrador?.pathBase ?? servido.path });
           setGuardado(undefined);
         }}
       />
@@ -538,7 +541,7 @@ function Editor({
           type="button"
           className="button small"
           onClick={() => void guardar()}
-          disabled={!canWrite || !sucio || guardando || !servido.editable
+          disabled={!canWrite || !sucio || guardando || changedTarget || !servido.editable
             || servido.truncated || problemaMotivo !== undefined}
         >
           <Save size={14} aria-hidden="true" /> {guardando ? 'Guardando…' : 'Guardar'}

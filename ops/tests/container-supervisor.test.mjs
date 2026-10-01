@@ -130,6 +130,8 @@ const bind = (source, destination) => ({ Type: "bind", Source: `${mountSourceRoo
 
 async function dockerState(alias, overrides = {}) {
   const statePath = path.join(temporary, `docker-${alias}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
+  const stateLockRoot = path.join(lockRoot, path.basename(statePath));
+  await mkdir(stateLockRoot, { recursive: true, mode: 0o700 });
   const state = {
     containerName: alias === "jarvis" ? "claw"
       : alias === "iza" ? "claw-iza"
@@ -180,7 +182,7 @@ function environment(statePath) {
     CAUCE_CONTAINER_CONFIG_ROOT: configRoot,
     CAUCE_CONTAINER_BUNDLE_ROOT: bundleRoot,
     CAUCE_CONTAINER_PKI_ROOT: pkiRoot,
-    CAUCE_CONTAINER_LOCK_ROOT: lockRoot,
+    CAUCE_CONTAINER_LOCK_ROOT: path.join(lockRoot, path.basename(statePath)),
     CAUCE_CONTAINER_WAIT_SECONDS: "0",
     FAKE_DOCKER_STATE: statePath,
   };
@@ -188,6 +190,72 @@ function environment(statePath) {
 
 function runSupervisor(action, alias, statePath) {
   return spawnSync(supervisor, [action, alias], { encoding: "utf8", env: environment(statePath) });
+}
+
+function runSupervisorAsync(action, alias, statePath, label) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(supervisor, [action, alias], {
+      detached: process.platform !== "win32",
+      env: environment(statePath),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (child.pid && process.platform !== "win32") cleanupGroups.push(child.pid);
+    const forgetGroup = () => {
+      const index = cleanupGroups.indexOf(child.pid);
+      if (index >= 0) cleanupGroups.splice(index, 1);
+    };
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let escalation;
+    const cleanupTimers = () => {
+      clearTimeout(timeout);
+      clearTimeout(escalation);
+    };
+    const signalGroup = (signal) => {
+      try {
+        if (child.pid && process.platform !== "win32") process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch (error) {
+        if (error.code !== "ESRCH") {
+          cleanupTimers();
+          reject(error);
+          return false;
+        }
+      }
+      return true;
+    };
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      if (!signalGroup("SIGTERM")) return;
+      escalation = setTimeout(() => { signalGroup("SIGKILL"); }, 2000);
+      escalation.unref();
+    }, 30_000);
+    child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+    child.once("error", (error) => {
+      cleanupTimers();
+      reject(error);
+    });
+    child.once("close", (status, signal) => {
+      cleanupTimers();
+      forgetGroup();
+      if (timedOut) {
+        reject(new Error(`${label} exceeded the 30s per-invocation diagnostic timeout; signal=${signal ?? "none"}; stderr=${stderr}`));
+        return;
+      }
+      if (status === null || signal !== null) {
+        reject(new Error(`${label} exited abnormally; status=${status ?? "null"}; signal=${signal ?? "none"}; stderr=${stderr}`));
+        return;
+      }
+      resolve({ status, signal, stdout, stderr });
+    });
+  });
+}
+
+async function recordsForState(statePath) {
+  const { log: stateLog } = JSON.parse(await readFile(statePath, "utf8"));
+  return parseRecords(await readFile(stateLog, "utf8"));
 }
 
 async function clearLog() { await writeFile(log, ""); }
@@ -505,8 +573,9 @@ try {
       aliasMount, aliasState, bundleDigest, bundleDigest2, bundleDigestFor, bundleRoot, cleanupGroups,
       cleanupProcesses, clearLog, configRoot, dockerState, droppedFromRoot, environment, executable, firstId, imageId,
       lifecycleArgs, lifecycleContainerId, lifecycleEnv, lifecycleGeneration, lockName, makeControl, metadataName,
-      mountSourceRoot, pkiRoot, privilegedChildren, privilegedRoots, processAlive, processIdentity, records, release,
-      release2, replacementGeneration, runArgs, runSupervisor, runningAsRoot, runtimeHelper, secondGenerationStartedAt,
+      mountSourceRoot, pkiRoot, privilegedChildren, privilegedRoots, processAlive, processIdentity, records,
+      recordsForState, release,
+      release2, replacementGeneration, runArgs, runSupervisor, runSupervisorAsync, runningAsRoot, runtimeHelper, secondGenerationStartedAt,
       secondId, startManaged, stopManaged, stopManagedAtGate, supervisor, temporary, testIdentity, waitForChildExit,
       waitForCommand, waitForFile, waitForLogOrExit, waitForMetadataPhase, waitProcessGone, writeConfig,
   };

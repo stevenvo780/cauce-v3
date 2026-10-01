@@ -18,7 +18,7 @@ for f in pids_del_alias senalar_alias esperar_sin_pids apagar_restos; do
   src=$(extraer "$f"); [ -n "$src" ] || { echo "FAIL: $f() no esta en $CLI" >&2; exit 1; }
   eval "$src"
 done
-# shellcheck disable=SC2317
+# shellcheck disable=SC2329,SC2317
 es_host_native() { return 0; }
 # shellcheck disable=SC2034
 c_warn='' c_reset=''

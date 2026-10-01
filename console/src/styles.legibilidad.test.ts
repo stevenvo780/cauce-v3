@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { leerCss } from './test/leer-css';
-import { NAV_ENTRIES } from './nav';
+import { PRIMARY_NAV_IDS } from './nav';
 import {
   bloqueMedia,
   declaraciones,
@@ -157,7 +157,7 @@ describe('ninguna reja exige más ancho del que su vista tiene', () => {
   });
 
   it('el hueco sale de la hoja: la barra y el relleno son los que `base.css` declara', () => {
-    expect([anchoDeLaBarra(GLOBAL, 1440), rellenoDelMain(GLOBAL, 1440)]).toEqual([248, 76]);
+    expect([anchoDeLaBarra(GLOBAL, 1440), rellenoDelMain(GLOBAL, 1440)]).toEqual([212, 76]);
     expect([anchoDeLaBarra(GLOBAL, 1100), rellenoDelMain(GLOBAL, 1100)]).toEqual([78, 76]);
     // Al paso compacto el armazón deja de ser una reja: la navegación baja y no ocupa ancho.
     expect([anchoDeLaBarra(GLOBAL, 360), rellenoDelMain(GLOBAL, 360)]).toEqual([0, 30]);
@@ -165,12 +165,12 @@ describe('ninguna reja exige más ancho del que su vista tiene', () => {
 
   it('CONTROL NEGATIVO — ensanchar la barra en la hoja mueve el hueco, no lo deja escrito acá', () => {
     const ancha = GLOBAL.replace(
-      '.app-shell { display: grid; min-height: 100vh; grid-template-columns: 248px minmax(0, 1fr); }',
-      '.app-shell { display: grid; min-height: 100vh; grid-template-columns: 420px minmax(0, 1fr); }',
+      'grid-template-columns: 212px minmax(0, 1fr);',
+      'grid-template-columns: 420px minmax(0, 1fr);',
     );
     expect(ancha).not.toBe(GLOBAL);
     expect(anchoDeLaBarra(ancha, 1440)).toBe(420);
-    expect(presupuestoDe(ancha, 1440)).toBe(presupuestoDe(GLOBAL, 1440) - 172);
+    expect(presupuestoDe(ancha, 1440)).toBe(presupuestoDe(GLOBAL, 1440) - 208);
   });
 
   it('CONTROL NEGATIVO — marca la reja de /terminal de antes: 1018px de mínimo en 941 de hueco', () => {
@@ -246,7 +246,7 @@ function pixeles(expresion: string | undefined, tabla: Record<string, string>, s
    not fit is not cut: it is painted over the page and over the row above it. How many rows there
    are is not written anywhere — it comes out of the entry count divided by the declared columns —
    so the height is DERIVED here instead of being trusted to a comment. */
-export function defectosDelMenuMovil(global: string, entradas = NAV_ENTRIES.length): string[] {
+export function defectosDelMenuMovil(global: string, entradas = (PRIMARY_NAV_IDS.length + 1)): string[] {
   const defectos: string[] = [];
   const estrecho = bloqueMedia(global, '@media (max-width: 760px)');
   if (!estrecho) return ['no hay bloque @media (max-width: 760px) en styles.css'];
@@ -326,15 +326,15 @@ describe('que quepa en la pantalla', () => {
   });
 
   it('CONTROL NEGATIVO — una entrada más de las que caben en dos filas se denuncia', () => {
-    expect(defectosDelMenuMovil(GLOBAL, NAV_ENTRIES.length + 2))
+    expect(defectosDelMenuMovil(GLOBAL, (PRIMARY_NAV_IDS.length + 1) + 2))
       .toContainEqual(expect.stringContaining('filas'));
   });
 
   it('CONTROL NEGATIVO — marca volver a cuatro columnas, que con nueve entradas son tres filas', () => {
-    const roto = GLOBAL.replace('grid-template-columns: repeat(5, minmax(0, 1fr)); grid-auto-rows: 57px;',
-      'grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 57px;');
+    const roto = GLOBAL.replace('grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 64px;',
+      'grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 64px;');
     expect(roto).not.toBe(GLOBAL);
-    expect(defectosDelMenuMovil(roto)).toContainEqual(expect.stringContaining('--nav-inferior-alto reserva 130px'));
+    expect(defectosDelMenuMovil(roto)).toContainEqual(expect.stringContaining('--nav-inferior-alto reserva 72px'));
   });
 
   it('CONTROL NEGATIVO — marca la vuelta a la tira `flex` que se arrastra', () => {

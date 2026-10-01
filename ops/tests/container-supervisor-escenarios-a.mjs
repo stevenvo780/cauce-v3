@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 // Escenarios supervisor-start movidos desde container-supervisor.test.mjs (poda T060-D).
@@ -10,7 +10,7 @@ export async function escenariosA(ctx) {
       temporary, configRoot, bundleRoot, release, release2, pkiRoot, mountSourceRoot, imageId, firstId, secondId,
       secondGenerationStartedAt, aliasState, aliasMount, bundleDigest, bundleDigest2, executable, bundleDigestFor,
       writeConfig, dockerState, environment, runSupervisor, clearLog, records, waitForLogOrExit, waitForChildExit,
-      supervisor, runtimeHelper,
+      runSupervisorAsync, recordsForState, supervisor, runtimeHelper,
   } = ctx;
   let statePath = await dockerState("atlas", { running: false });
   let result = runSupervisor("start", "atlas", statePath);
@@ -609,27 +609,50 @@ export async function escenariosA(ctx) {
   const baseline = await records();
   const mutatingCalls = baseline.filter(({ mutating, applied, target }) => mutating && applied && target === firstId).map(({ call }) => call);
   assert(mutatingCalls.length > 10);
-  for (const raceAt of mutatingCalls) {
-    await clearLog();
-    statePath = await dockerState("atlas", { raceAt });
-    result = runSupervisor("start", "atlas", statePath);
-    assert.notEqual(result.status, 0, `recreate race at Docker call ${raceAt} must abort`);
-    const raced = await records();
-    assert.equal(raced.some(({ mutating, applied, target }) => mutating && applied && target === secondId), false,
-      `race at ${raceAt} touched replacement generation`);
+  for (let offset = 0; offset < mutatingCalls.length; offset += 4) {
+    await Promise.all(mutatingCalls.slice(offset, offset + 4).map(async (raceAt) => {
+      const raceLog = path.join(temporary, `recreate-race-${raceAt}.jsonl`);
+      const raceState = await dockerState("atlas", { raceAt, log: raceLog });
+      const raceResult = await runSupervisorAsync("start", "atlas", raceState, `recreate race at Docker call ${raceAt}`);
+      assert.notEqual(raceResult.status, 0, `recreate race at Docker call ${raceAt} must abort`);
+      const raced = await recordsForState(raceState);
+      const injected = raced.find(({ call }) => call === raceAt);
+      assert(injected, `recreate race at ${raceAt} was not reached`);
+      assert.equal(injected.idBeforeRace, firstId, `recreate race at ${raceAt} did not begin on the original generation`);
+      assert.equal(injected.currentId, secondId, `recreate race at ${raceAt} was not injected`);
+      assert.equal(injected.mutating, true, `recreate race at ${raceAt} did not target a mutation`);
+      assert.equal(injected.applied, false, `recreate race at ${raceAt} applied to the replacement generation`);
+      assert.equal(raced.some(({ mutating, applied, target }) => mutating && applied && target === secondId), false,
+        `race at ${raceAt} touched replacement generation`);
+      assert.equal(JSON.parse(await readFile(raceState, "utf8")).currentId, secondId,
+        `recreate race at ${raceAt} did not change the selected container ID`);
+    }));
   }
   const guardedMutationCalls = baseline
     .filter(({ mutating, applied, target, argv }) => mutating && applied && target === firstId && argv.includes("guard-exec"))
     .map(({ call }) => call);
   assert(guardedMutationCalls.length > 10);
-  for (const restartRaceAt of guardedMutationCalls) {
-    await clearLog();
-    statePath = await dockerState("atlas", { restartRaceAt });
-    result = runSupervisor("start", "atlas", statePath);
-    assert.notEqual(result.status, 0, `same-ID restart race at guarded call ${restartRaceAt} must abort`);
-    const raced = await records();
-    assert.equal(raced.some(({ call, mutating, applied }) => call === restartRaceAt && mutating && applied), false,
-      `same-ID restart at ${restartRaceAt} passed the in-container generation guard`);
+  for (let offset = 0; offset < guardedMutationCalls.length; offset += 4) {
+    await Promise.all(guardedMutationCalls.slice(offset, offset + 4).map(async (restartRaceAt) => {
+      const raceLog = path.join(temporary, `restart-race-${restartRaceAt}.jsonl`);
+      const raceState = await dockerState("atlas", { restartRaceAt, log: raceLog });
+      const raceResult = await runSupervisorAsync("start", "atlas", raceState, `same-ID restart race at Docker call ${restartRaceAt}`);
+      assert.notEqual(raceResult.status, 0,
+        `same-ID restart race at guarded call ${restartRaceAt} must abort`);
+      const raced = await recordsForState(raceState);
+      const injected = raced.find(({ call }) => call === restartRaceAt);
+      assert(injected, `same-ID restart race at ${restartRaceAt} was not reached`);
+      assert.equal(injected.mutating, true, `same-ID restart race at ${restartRaceAt} did not target a guarded mutation`);
+      assert.equal(injected.applied, false, `same-ID restart at ${restartRaceAt} passed the in-container generation guard`);
+      assert.equal(raced.some(({ call, mutating, applied }) => call === restartRaceAt && mutating && applied), false,
+        `same-ID restart at ${restartRaceAt} passed the in-container generation guard`);
+      const restartState = JSON.parse(await readFile(raceState, "utf8"));
+      assert.equal(restartState.startedAt, restartState.replacementStartedAt,
+        `same-ID restart race at ${restartRaceAt} was not injected`);
+      assert.equal(restartState.initStarttime, restartState.replacementInitStarttime,
+        `same-ID restart race at ${restartRaceAt} did not change the init generation`);
+      assert.equal(restartState.restartCount, 1, `same-ID restart race at ${restartRaceAt} did not increment restart count`);
+    }));
   }
 
   // Host flock rejects a duplicate supervisor before its first Docker operation can run.

@@ -28,7 +28,7 @@ const ALIAS_MEDIDO = 'Steven/jarvis';
    with a conversation open, so it is measured through the deep link the roster itself navigates to. */
 const HILO = `/messages/${ALIAS_MEDIDO}`;
 
-const ROUTES = ['/', '/live', '/accounts', '/messages', HILO, '/queues', '/observability', '/config', '/terminal', '/ayuda'];
+const ROUTES = ['/', '/overview', '/live', '/accounts', '/messages', HILO, `${HILO}?view=context`, '/messages/Steven/fantasma', '/queues', '/observability', '/config', '/terminal', '/ayuda'];
 
 /** The narrow widths are the shipped breakpoints; 1440 is the laptop, 1920 and 2560 the desks. */
 const VIEWPORTS = [360, 760, 1100, 1440, 1920, 2560];
@@ -169,12 +169,15 @@ function medirEnLaPagina() {
   }
   const principal = document.querySelector('[data-objeto-principal]');
   const cajaPrincipal = caja(principal);
+  const fixedNavigation = cajaBarra && cajaBarra.width >= ancho - 1
+    && getComputedStyle(barra).position === 'fixed';
+  const contentBottom = fixedNavigation ? Math.min(window.innerHeight, cajaBarra.top) : window.innerHeight;
 
   return {
     desborde: Math.round(raiz.scrollWidth - ancho),
-    foldDesaprovechado: Math.max(0, Math.round(window.innerHeight - fondo)),
+    foldDesaprovechado: Math.max(0, Math.round(contentBottom - fondo)),
     objetoPrincipalTop: cajaPrincipal ? Math.round(cajaPrincipal.top) : null,
-    objetoPrincipalBajoElPliegue: cajaPrincipal && cajaPrincipal.top >= window.innerHeight ? 1 : 0,
+    objetoPrincipalBajoElPliegue: cajaPrincipal && cajaPrincipal.top >= contentBottom ? 1 : 0,
     hueco: Math.max(0, hueco),
     recorte,
     recorteSelector,
@@ -262,6 +265,11 @@ async function medirViewport(navegador, viewport) {
       medidas.push(medida);
       process.stderr.write(`  ${String(viewport)}px ${ruta} ${String(Date.now() - t0)}ms\n`);
       if (ruta === '/live') await medirEstadosDeLive(pagina, viewport, medidas, sinMedir);
+      if (ruta === '/messages') {
+        await pagina.getByRole('button', { name: 'Herramientas', exact: true }).click();
+        medidas.push({ ruta: '/messages#herramientas', viewport, ...await pagina.evaluate(medirEnLaPagina), portadoresBajos: 0 });
+        await pagina.getByRole('button', { name: 'Cerrar herramientas' }).click();
+      }
     }
   } finally {
     await contexto.close();
@@ -346,7 +354,6 @@ const OBJETIVOS = {
 const PENDIENTES = {
   '1440./live.pantallas': 2.66,
   '1440./live#cajon.pantallas': 2.66,
-  '1920./live#cajon.pantallas': 2.29,
   '1440./live#perfil.pantallas': 2.66,
   '1440./accounts.pantallas': 3.66,
   '1920./accounts.pantallas': 3.39,

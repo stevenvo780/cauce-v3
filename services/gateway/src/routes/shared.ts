@@ -61,7 +61,10 @@ export function replyError(reply: FastifyReply, error: unknown): void {
     return;
   }
   if (error instanceof StoreError) {
-    void reply.code(errorStatus(error)).send({ error: error.code, message: error.message });
+    void reply.code(errorStatus(error)).send({
+      error: error.code, message: error.message,
+      ...(error.recoveryReason === undefined ? {} : { reason: error.recoveryReason }),
+    });
     return;
   }
   const message = error instanceof Error ? error.message : 'unknown error';
