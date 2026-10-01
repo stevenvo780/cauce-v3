@@ -19,7 +19,7 @@ export {
   type QuotaSampleIngestResult, type QuotaSamplePausedAccount, type QuotaSampleResumedAccount,
   type QuotaSampleUnboundGroup, type QuotaSeverity, type QuotaThresholds
 } from './repository/quotas.js';
-export { StoreError, type StoreErrorCode } from './repository/errors.js';
+export { StoreError, type StoreErrorCode, type StoreRecoveryReason } from './repository/errors.js';
 export {
   DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, DEFAULT_DELIVERY_LEASE_CAP_MS,
   DEFAULT_NO_CONSUMER_PARK_MAX_AGE_MS, DEFAULT_RETENTION_ACK_MS,

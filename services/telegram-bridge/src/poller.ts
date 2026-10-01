@@ -465,8 +465,8 @@ export class TelegramPoller {
       });
     } catch (error) {
       if (!isRequestConflict(error)) throw error;
-      // idempotency_key is content-free (bot_id+update_id): a conflict proves this update_id is
-      // already durable under a body a non-deterministic transcription retry won't match again.
+      // The typed reason proves this content-free key (bot_id+update_id) already has a durable
+      // message and receipt, even when a non-deterministic transcription changes the retry body.
       this.onMetric('updates_conflict');
       result = { duplicate: true };
     }

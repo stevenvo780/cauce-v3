@@ -77,12 +77,13 @@ describe('Telegram ingress priority', () => {
     expect(repository.published[0]?.priority).toBeGreaterThan(AGENT_PRIORITY_CEILING);
   });
 
-  it('fails closed on a hash conflict instead of treating message JSON as cursor authority', async () => {
-    const conflict = new StoreError('conflict', 'idempotency key reused with a different request');
-    const repository = {
-      async publish(): Promise<PublishResult> { throw conflict; }
-    };
+  it.each([undefined, 'idempotency_durable_conflict'] as const)(
+    'preserves the store recovery decision across the ingress boundary: %s', async (reason) => {
+      const conflict = new StoreError('conflict', 'reworded publication conflict', reason);
+      const repository = {
+        async publish(): Promise<PublishResult> { throw conflict; }
+      };
 
-    await expect(new StoreTelegramIngress(repository).publish(ingressMessage())).rejects.toBe(conflict);
-  });
+      await expect(new StoreTelegramIngress(repository).publish(ingressMessage())).rejects.toBe(conflict);
+    });
 });
