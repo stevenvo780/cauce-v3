@@ -327,16 +327,15 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
         }
         if (dispatch !== undefined && injected === undefined && !started && Date.now() - enteredAt >= dispatchGraceMs
           && await port.promptDispatch?.state(dispatch) === "queued" // Queued, never handed to the model, pane idle: never started.
-          && !await this.paneStillGenerating(activeIdentity, request.signal)) {
-          const box = await this.clearStuckPaste(activeIdentity, dispatch.bytes); // May still run from grok's held queue: quarantined, never retried.
+          && !await this.paneStillGenerating(activeIdentity, request.signal) && !signalAborted(request.signal)) {
+          this.undispatched.add(pending.correlationId); // May still run from grok's held queue: quarantined, never retried.
+          const box = await this.clearStuckPaste(activeIdentity, dispatch.bytes);
           const quarantined = await this.quarantine(activeIdentity, pending);
-          return {
-            result: await this.degrade("prompt_not_dispatched", `la terminal encoló el pedido (${String(dispatch.bytes)} bytes)`
-              + ` y no se lo pasó al modelo en ${String(Math.round(dispatchGraceMs / 1000))} s; puede seguir en su cola y correr`
-              + ` más tarde; caja: ${box === "cleared" ? "vaciada" : box === "untouched" ? "sin tocar (no era sólo nuestro pegado)" : "ambigua"};`
-              + ` ${quarantined}`, request),
-            terminalBoundary: false,
-          };
+          const detail = `la terminal encoló el pedido (${String(dispatch.bytes)} bytes) y no se lo pasó al modelo en`
+            + ` ${String(Math.round(dispatchGraceMs / 1000))} s; puede seguir en su cola y correr más tarde; caja: `
+            + `${box === "cleared" ? "vaciada" : box === "untouched" ? "sin tocar (no era sólo nuestro pegado)" : "ambigua"}; ${quarantined}`;
+          this.record({ reason: "prompt_not_dispatched", detail, occurredAt: new Date().toISOString(), fellBack: false, executionPrevented: true });
+          return { result: result({ exitCode: 1, stderr: `prompt_not_dispatched: ${detail}` }), terminalBoundary: false };
         }
         if (injected === undefined && !started && port.startedTurn !== undefined
           && Date.now() >= injectDeadline) {

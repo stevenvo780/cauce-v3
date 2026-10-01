@@ -46,6 +46,36 @@ test("grok: un pedido encolado y nunca entregado al modelo falla PROMPT_NOT_DISP
   assert.equal(tmux.sessionOptions.has("@cauce_quarantined_pane"), true, "the generation stays quarantined: a late run is reconciled, nothing piles up");
 });
 
+test("grok: tras PROMPT_NOT_DISPATCHED la caja vacía NO levanta la cuarentena; sólo el sobre tardío del pedido retenido la levanta", async () => {
+  const { state, grokHome, log } = await grokWorkspace("grok-despacho-retenido");
+  const pager = await pagerLog(grokHome);
+  const tmux = new GrokTmux();
+  let held = "";
+  tmux.onSubmit = async (text) => {
+    held = text;
+    await pager(tmux, text, false);
+    tmux.paneContent = grokFrame({ footer: "typed", box: chipOf(text) });
+  };
+  const runner = grokRunner({ grokHome, tmux, dispatchGraceMs: 20, quarantineFile: join(state, ".shared-session-quarantine") });
+  const adapter = await adapterFor(runner, state, "hades", "grok");
+  const first = await execute(adapter).then(() => undefined, (failure: unknown) => failure);
+  assert.ok(first instanceof ProcessExecutionError && first.code === "PROMPT_NOT_DISPATCHED");
+  const submits = tmux.submittedCount;
+
+  // The box is empty and the pane idle, but grok still holds the prompt: another paste would pile up behind it.
+  const second = await execute(adapter).then(() => undefined, (failure: unknown) => failure);
+  assert.ok(second instanceof ProcessExecutionError, String(second));
+  assert.equal(tmux.submittedCount, submits, "a second prompt was pasted behind the held one");
+
+  // Someone resumes grok: the held prompt runs late and answers with its own correlation.
+  await log.append(log.user(held), log.message("p-tarde", envelopeText("corrió tarde", correlationIdFromPrompt(held))), log.completed("p-tarde"));
+  tmux.onSubmit = async (text) => {
+    await pager(tmux, text, true);
+    await log.append(log.user(text), log.message("p-ok", envelopeText("de nuevo en línea", correlationIdFromPrompt(text))), log.completed("p-ok"));
+  };
+  assert.equal((await execute(adapter)).reply, "de nuevo en línea");
+});
+
 test("grok: si la caja tiene un chip que no es del tamaño de nuestro pegado, no se toca", async () => {
   const { state, grokHome } = await grokWorkspace("grok-despacho-chip-ajeno");
   const pager = await pagerLog(grokHome);
@@ -117,5 +147,6 @@ test("grok: un pedido que no cabe pegado va entero a un fichero 0600 y se pega u
   assert.ok(seen.content.includes("línea de contexto que hace crecer el pedido"), "the file holds the request");
   const id = correlationIdFromPrompt(seen.pasted);
   assert.ok(seen.content.includes(id), "the file carries the same correlation id as the pointer");
-  assert.deepEqual(await readdir(join(workspace, ".cauce", "pedidos")), [], "the file is removed once the turn ends");
+  assert.deepEqual((await readdir(join(workspace, ".cauce", "pedidos"))).filter((name) => name !== ".gitignore"), [], "the file is removed once the turn ends");
+  assert.equal(await readFile(join(workspace, ".cauce", "pedidos", ".gitignore"), "utf8"), "*\n", "never committed by a git add -A");
 });

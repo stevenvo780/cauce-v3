@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-useless-constructor: "error" */
 import { signalAborted } from "../../runtime-state.js";
 import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { correlateEnvelopePrompt } from "../envelope.js";
 import type { DispatchMark } from "../grok-dispatch.js";
 import { inputBoxState, pastedChipKb, turnInFlight } from "../pane.js";
@@ -159,11 +159,9 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         if (stagedFile !== undefined) await rm(stagedFile, { force: true }).catch(() => undefined);
         stagedFile = undefined;
         const staged = await this.stageLongPrompt(fullPrompt, correlationId, request.emissionOutput !== undefined);
-        if (staged === "unavailable") {
-          return await this.degrade("handshake_failed", "el pedido supera lo que la terminal acepta pegado y no se pudo dejar en un fichero", request);
-        }
-        const promptText = staged?.pointer ?? fullPrompt;
-        const promptFile = staged?.file;
+        const promptText = staged === undefined || staged === "unavailable" ? fullPrompt : staged.pointer; // No safe file: pasted whole, as before.
+        if (staged === "unavailable") this.options.onNotice?.("el pedido largo no se pudo dejar en un fichero seguro del workspace; se pegó entero");
+        const promptFile = staged === undefined || staged === "unavailable" ? undefined : staged.file;
         stagedFile = promptFile;
         const armed = await this.armPendingQuarantine(identity, correlationId);
         if (!armed.ok) {
@@ -238,6 +236,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
           wait.focusSpent !== true,
         );
         if (committed.state === "ambiguous") {
+          stagedFile = undefined; // Ambiguous: the pasted pointer may still be read.
           return await this.ambiguousCommittedState(
             identity,
             committed.detail,
@@ -347,6 +346,11 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     const file = join(directory, `${correlationId}.md`);
     try {
       await mkdir(directory, { recursive: true, mode: 0o700 });
+      for (const dir of [dirname(directory), directory]) { // Real directories of ours that nobody else can write: never a planted link.
+        const info = await lstat(dir);
+        if (!info.isDirectory() || info.uid !== process.geteuid?.() || (info.mode & 0o022) !== 0) return "unavailable";
+      }
+      await writeFile(join(directory, ".gitignore"), "*\n", { mode: 0o600, flag: "wx" }).catch(() => undefined);
       await writeFile(file, fullPrompt, { encoding: "utf8", mode: 0o600, flag: "wx" });
     } catch {
       return "unavailable";
@@ -368,7 +372,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     let outcome: "cleared" | "untouched" | "ambiguous" = "untouched";
     try {
       const kb = pastedChipKb(await capturePane(this.options.tmux, identity.paneId, { styled: true, control }));
-      if (kb !== undefined && (Math.abs(kb - bytes / 1000) < 1.5 || Math.abs(kb - bytes / 1024) < 1.5)) {
+      if (kb !== undefined && (Math.abs(kb - bytes / 1000) <= 0.6 || Math.abs(kb - bytes / 1024) <= 0.6)) {
         const sent = await mutateUnderInputBarrier(this.options.tmux, acquired.barrier, `send-keys -t ${identity.paneId} C-u`, control, "full");
         const after = await capturePane(this.options.tmux, identity.paneId, { styled: true, control });
         outcome = sent === "applied" && after !== undefined && !inputBoxState(after).occupied ? "cleared" : "ambiguous";

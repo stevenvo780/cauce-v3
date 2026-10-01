@@ -53,6 +53,7 @@ export abstract class PasteSessionLivenessRunner<E> extends PasteSessionRunnerBa
       if (!samePaneIdentity(held.identity, identity)) continue;
       mine.add(correlationId);
       if (held.file === undefined) {
+        if (this.undispatched.has(correlationId)) return;
         this.heldQuarantines.delete(correlationId);
         continue;
       }
@@ -63,6 +64,7 @@ export abstract class PasteSessionLivenessRunner<E> extends PasteSessionRunnerBa
       if (!marker.completed || marker.value === undefined) return;
       if (marker.value.state === "unreadable") return;
       if (marker.value.state === "present" && marker.value.value !== generation) continue;
+      if (marker.value.state === "present" && this.undispatched.has(correlationId)) return; // An idle pane proves nothing: it is still queued.
       const cleared = await beforeDeadline(
         this.quarantinePersistence().clear(held.file),
         this.quarantineDeadline(),
