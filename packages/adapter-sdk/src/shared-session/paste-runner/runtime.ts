@@ -9,6 +9,7 @@ export const DEFAULT_CANCEL_DRAIN_TIMEOUT_MS = 30_000;
 export const QUARANTINE_OPERATION_TIMEOUT_MS = 2_000;
 export const SETTLE_MS = 250;
 export const DEFAULT_INJECT_TIMEOUT_MS = 30_000;
+export const DEFAULT_DISPATCH_GRACE_MS = 60_000; // grok drains an accepted paste in milliseconds; a minute idle and still queued is not a turn.
 export const LIVENESS_EVERY = 8;
 /** Un dialogo no se destraba esperando: rendirse pronto es lo que hace seguro el plazo largo. */
 export const ACQUIRE_MODAL_TIMEOUT_MS = 15_000;

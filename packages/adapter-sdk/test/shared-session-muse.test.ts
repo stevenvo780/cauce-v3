@@ -76,6 +76,7 @@ test("muse es un arnés de sesión compartida con su propia fila de comportamien
     pasteOnlyWhenIdle: true,
     clearCommand: "/clear",
     focusKey: undefined,
+    maxPasteBytes: undefined,
   });
 });
 

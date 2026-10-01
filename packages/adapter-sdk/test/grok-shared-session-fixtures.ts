@@ -214,6 +214,8 @@ export function grokRunner(options: {
   generatingWaitMs?: number;
   backgroundWaitMs?: number;
   turnTimeoutMs?: number;
+  workspace?: string;
+  dispatchGraceMs?: number;
 }): PasteSessionRunner<GrokUpdateLine> {
   const alias = options.alias ?? "hades";
   options.tmux.sessionName = `cauce-${alias}`;
@@ -221,8 +223,9 @@ export function grokRunner(options: {
   return new PasteSessionRunner({
     alias,
     harness: "grok",
-    workspace: "/workspace",
+    workspace: options.workspace ?? "/workspace",
     transcript: grokTranscript(options.grokHome),
+    ...(options.dispatchGraceMs === undefined ? {} : { dispatchGraceMs: options.dispatchGraceMs }),
     tmux: options.tmux,
     sleep: options.sleep ?? immediate,
     acquireTimeoutMs: options.acquireTimeoutMs ?? 30,
@@ -252,6 +255,8 @@ export class GrokTmux extends FakeTmux {
   strayFocusKeys = 0;
   /** Spaces sent without the input barrier held: they could race the owner's keys. */
   unbarrieredFocusKeys = 0;
+  /** C-u sent with the input barrier held (the only way the runner may clear grok's box). */
+  clearedBoxes = 0;
   /** Captures that still show the old frame after the Space: grok redrawing late on a busy host. */
   focusRedrawAfterCaptures = 0;
   private pendingFocus: { frame: string; captures: number } | undefined;
@@ -274,6 +279,11 @@ export class GrokTmux extends FakeTmux {
       else if (this.focusedFrame === undefined || this.pendingFocus !== undefined) this.strayFocusKeys += 1;
       else if (this.focusRedrawAfterCaptures > 0) this.pendingFocus = { frame: this.focusedFrame, captures: this.focusRedrawAfterCaptures };
       else this.paneContent = this.focusedFrame;
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "send-keys" && args.at(-1) === "C-u" && !this.inputOff && this.paneOptions.has("@cauce_input_barrier")) {
+      this.clearedBoxes += 1;
+      this.paneContent = grokFrame({ footer: "idle" });
       return { exitCode: 0, stdout: "", stderr: "" };
     }
     const result = await super.run(args, stdin, control);

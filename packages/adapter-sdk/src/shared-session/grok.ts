@@ -3,6 +3,7 @@ import { constants as fsConstants, type Dirent } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, normalize } from "node:path";
 import { envelopeHasCorrelation, stripJsonFence } from "./envelope.js";
+import { grokDispatchMark, grokDispatchState } from "./grok-dispatch.js";
 import { readJsonlSince } from "./rollout.js";
 import type { CompactionNotice, InjectedTurn, TranscriptReader, TurnOutcome } from "./types.js";
 
@@ -678,6 +679,7 @@ export function grokTranscript(grokHome: string): TranscriptReader<GrokUpdateLin
     lingering: findGrokLingering,
     findEnvelope: findGrokEnvelope,
     lastUserPrompt: lastGrokPrompt,
+    promptDispatch: { mark: (pid, bytes) => grokDispatchMark(grokHome, pid, bytes), state: grokDispatchState },
     compactions: grokCompactions,
     // The shape `parseGrokOutput` accepts from `grok --output-format json`.
     stdout: (text, sessionId) => JSON.stringify({

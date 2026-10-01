@@ -7,6 +7,7 @@ import {
   samePaneProcess,
   type PaneIdentity,
 } from "../tmux.js";
+import type { DispatchMark } from "../grok-dispatch.js";
 import { turnInFlight } from "../pane.js";
 import { tuiProfile } from "../tui-profile.js";
 import type { TurnOutcome } from "../types.js";
@@ -18,6 +19,7 @@ import {
   DEFAULT_BACKGROUND_WAIT_MS,
   DEFAULT_CANCEL_DRAIN_TIMEOUT_MS,
   DEFAULT_CORRELATION_TIMEOUT_MS,
+  DEFAULT_DISPATCH_GRACE_MS,
   DEFAULT_INJECT_TIMEOUT_MS,
   DEFAULT_POLL_MS,
   DEFAULT_QUIET_MS,
@@ -37,6 +39,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
   protected wakesSentThisDelivery = 0;
   /** Pastes `text` as a new turn of the SAME conversation (codex: wake a root that closed silent after delegating). */
   protected abstract wakeTurn(identity: PaneIdentity, text: string, signal: AbortSignal): Promise<WakeCommit>;
+  protected abstract clearStuckPaste(identity: PaneIdentity, bytes: number): Promise<"cleared" | "untouched" | "ambiguous">;
 
   /** Extracts the envelope from the harness's structured transcript. */
   protected async harvest(
@@ -47,8 +50,11 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     promptText: string,
     correlationId: string,
     pending: PendingQuarantine,
+    dispatch?: DispatchMark,
   ): Promise<CommittedRunResult> {
     const port = this.options.transcript;
+    const enteredAt = Date.now();
+    const dispatchGraceMs = this.options.dispatchGraceMs ?? DEFAULT_DISPATCH_GRACE_MS;
     let activeIdentity = identity;
     const budget = turnBudgetMs(request.timeoutMs, this.options.turnTimeoutMs);
     const deadline = Date.now() + budget;
@@ -318,6 +324,19 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
               terminalBoundary: false,
             };
           }
+        }
+        if (dispatch !== undefined && injected === undefined && !started && Date.now() - enteredAt >= dispatchGraceMs
+          && await port.promptDispatch?.state(dispatch) === "queued" // Queued, never handed to the model, pane idle: never started.
+          && !await this.paneStillGenerating(activeIdentity, request.signal)) {
+          const box = await this.clearStuckPaste(activeIdentity, dispatch.bytes); // May still run from grok's held queue: quarantined, never retried.
+          const quarantined = await this.quarantine(activeIdentity, pending);
+          return {
+            result: await this.degrade("prompt_not_dispatched", `la terminal encoló el pedido (${String(dispatch.bytes)} bytes)`
+              + ` y no se lo pasó al modelo en ${String(Math.round(dispatchGraceMs / 1000))} s; puede seguir en su cola y correr`
+              + ` más tarde; caja: ${box === "cleared" ? "vaciada" : box === "untouched" ? "sin tocar (no era sólo nuestro pegado)" : "ambigua"};`
+              + ` ${quarantined}`, request),
+            terminalBoundary: false,
+          };
         }
         if (injected === undefined && !started && port.startedTurn !== undefined
           && Date.now() >= injectDeadline) {
