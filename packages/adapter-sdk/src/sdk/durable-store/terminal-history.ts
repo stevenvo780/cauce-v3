@@ -247,8 +247,14 @@ export class TerminalHistory {
         throw new RangeError("Terminal history segment exceeds the secure read limit");
       }
     }
-    const projected = new Map(this.records);
-    for (const record of records) ingestRecord(projected, record);
+    const projected = new Map<string, InboxRecord>();
+    for (const record of records) {
+      if (!projected.has(record.delivery_id)) {
+        const existing = this.records.get(record.delivery_id);
+        if (existing !== undefined) projected.set(record.delivery_id, existing);
+      }
+      ingestRecord(projected, record);
+    }
     for (const encoded of encodedBatches) {
       if (!this.segments.has(encoded.digest)) {
         await atomicWrite(
@@ -259,7 +265,6 @@ export class TerminalHistory {
         this.segments.add(encoded.digest);
       }
     }
-    this.records.clear();
     for (const [deliveryId, record] of projected) this.records.set(deliveryId, record);
   }
 }
