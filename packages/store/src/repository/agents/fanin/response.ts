@@ -368,11 +368,9 @@ export abstract class AgentResponseRepository extends AgentsRepository {
   }
 
   /**
-   * Decide and moves counters in one statement. The ON CONFLICT row lock serializes concurrent
-   * ACKs for the same bucket; SELECT followed by UPDATE would let both emit.
-   * The decision and counter movement cannot be split across statements.
-   * PostgreSQL `now()` is the transaction-start instant, so concurrent deaths in one transaction
-   * window belong to the same newly opened bucket.
+   * The upsert retains the bucket lock until commit, serializing concurrent ACKs.
+   * A following statement sees notices committed while the upsert waited for that lock.
+   * Notice validation uses no delivery lock: its ACK may be waiting for this bucket.
    */
   private async reserveFailureNotice(
     client: DatabaseClient,
@@ -444,9 +442,31 @@ export abstract class AgentResponseRepository extends AgentsRepository {
     const windowStartedAt = bucket.window_started_at instanceof Date
       ? bucket.window_started_at.toISOString()
       : bucket.window_started_at;
-    // Folding against a notice that does not exist would be silence, not coalescing: if for any
-    // reason the bucket has no earlier message to point at, this failure travels.
-    const emit = isLiteralTrue(bucket.last_failure_emitted) || bucket.last_notice_message_id === null;
+    let emit = isLiteralTrue(bucket.last_failure_emitted);
+    if (!emit) {
+      const standing = await client.query(
+        `SELECT 1
+         FROM deliveries delivery JOIN messages message ON message.id=delivery.message_id
+         WHERE delivery.id=$1 AND message.id=$2
+           AND delivery.recipient_tenant=$3 AND delivery.recipient_alias=$4
+           AND delivery.status IN ('pending','retry','leased','accepted','started')
+           AND message.body->>'type'='agent.response'
+           AND message.body#>>'{correlation,response_to_delivery_id}'=$5::text
+           AND message.body#>>'{correlation,response_to_message_id}'=$6::text`,
+        [bucket.last_notice_delivery_id, bucket.last_notice_message_id,
+          relationship.source_tenant, relationship.source_alias,
+          relationship.source_delivery_id, relationship.source_message_id]
+      );
+      if (standing.rowCount !== 1) {
+        await client.query(
+          `UPDATE agent_failure_notices
+           SET notices_emitted=notices_emitted+1,last_failure_emitted=true WHERE id=$1`,
+          [bucket.id]
+        );
+        bucket.notices_emitted += 1;
+        emit = true;
+      }
+    }
     return {
       noticeId: bucket.id,
       emit,
@@ -532,7 +552,9 @@ export abstract class AgentResponseRepository extends AgentsRepository {
     const { lastNoticeMessageId, lastNoticeDeliveryId, lastNoticeBaseText } = reservation;
     if (!lastNoticeMessageId || !lastNoticeDeliveryId || lastNoticeBaseText === null) return;
     const standing = await client.query<{ status: DeliveryState }>(
-      'SELECT status FROM deliveries WHERE id=$1 FOR UPDATE', [lastNoticeDeliveryId]
+      `SELECT status FROM deliveries
+       WHERE id=$1 AND message_id=$2 AND status='pending' FOR UPDATE SKIP LOCKED`,
+      [lastNoticeDeliveryId, lastNoticeMessageId]
     );
     if (standing.rows[0]?.status !== 'pending') return;
     const text = truncateUtf8(

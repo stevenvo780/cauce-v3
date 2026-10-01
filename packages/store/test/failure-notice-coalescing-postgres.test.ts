@@ -9,13 +9,13 @@ import { randomUUID } from 'node:crypto';
 import { requireValue } from './helpers.js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
-import { CauceRepository, type DatabasePool } from '../src/index.js';
+import { CauceRepository, createPool, type DatabasePool } from '../src/index.js';
 import { failureSignature } from '../src/repository.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
 import {
-  ackWith as applyTerminalAck, consumer as leaseConsumer, nextDelivery as claimNext,
+  ackEnvelope, ackWith as applyTerminalAck, consumer as leaseConsumer, nextDelivery as claimNext,
   type Consumer
 } from './helpers/consumer.js';
 
@@ -62,8 +62,9 @@ const ackDone = async (
 
 /** Terminal non-retryable `failed` ACK: exactly what the notice to the parent produces. */
 async function ackFailed(
-  target: Consumer, delivery: DeliveryEnvelope, error: string, errorCode: string
-): Promise<void> {
+  target: Consumer, delivery: DeliveryEnvelope,
+  error = 'harness exited before producing a reply', errorCode = 'PROCESS_EXIT'
+): Promise<Ack> {
   const ack: Ack = {
     version: '3.0',
     event_id: randomUUID(),
@@ -79,6 +80,7 @@ async function ackFailed(
   const result = await repository.ackDelivery(delivery.delivery_id, target.tenant, target.alias, ack);
   expect(result.applied).toBe(true);
   expect(result.status).toBe('failed');
+  return ack;
 }
 
 async function setCoalescing(enabled: boolean, windowSeconds = 900): Promise<void> {
@@ -123,6 +125,17 @@ async function fanoutThatDies(
   branches: number,
   failures: { error: string; code: string }[]
 ): Promise<{ kant: Consumer; socrates: Consumer; rootMessageId: string }> {
+  const { kant, socrates, rootMessageId, children } = await fanout(branches);
+  for (const [index, child] of children.entries()) {
+    const failure = failures[index] ?? requireValue(failures[failures.length - 1], 'failures');
+    await ackFailed(socrates, child, failure.error, failure.code);
+  }
+  return { kant, socrates, rootMessageId };
+}
+
+async function fanout(branches: number): Promise<{
+  kant: Consumer; socrates: Consumer; rootMessageId: string; children: DeliveryEnvelope[];
+}> {
   const kant = await consumer('Steven', 'kant');
   const socrates = await consumer('Steven', 'socrates');
   const published = await repository.publish(command());
@@ -133,11 +146,16 @@ async function fanoutThatDies(
   );
   const children = await claimAll(socrates, branches);
   expect(children).toHaveLength(branches);
-  for (const [index, child] of children.entries()) {
-    const failure = failures[index] ?? requireValue(failures[failures.length - 1], 'failures');
-    await ackFailed(socrates, child, failure.error, failure.code);
-  }
-  return { kant, socrates, rootMessageId: published.message_id };
+  return { kant, socrates, rootMessageId: published.message_id, children };
+}
+
+async function standingFailure(branches = 2): Promise<Awaited<ReturnType<typeof fanout>> & {
+  notice: { text: string; delivery_id: string };
+}> {
+  await setCoalescing(true);
+  const fixture = await fanout(branches);
+  await ackFailed(fixture.socrates, requireValue(fixture.children[0], 'first child'));
+  return { ...fixture, notice: requireValue((await noticesTo('kant'))[0], 'first notice') };
 }
 
 preparePostgresSuite(import.meta.url, async () => {
@@ -167,6 +185,139 @@ afterAll(async () => {
 
 describe('coalescencia de avisos de fracaso', () => {
   const sameCause = [{ error: 'harness exited before producing a reply', code: 'PROCESS_EXIT' }];
+
+  it.each(['done', 'failed', 'dead'])(
+    'emite otro aviso cuando el anterior ya está %s dentro de la ventana', async (status) => {
+      const { socrates, children, notice } = await standingFailure();
+      const window = await pool.query('SELECT window_started_at,window_expires_at FROM agent_failure_notices');
+      await pool.query('UPDATE deliveries SET status=$2,terminal_at=now() WHERE id=$1', [notice.delivery_id, status]);
+
+      await ackFailed(socrates, requireValue(children[1], 'second child'));
+
+      expect(await noticesTo('kant')).toHaveLength(2);
+      expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 2 });
+      const events = await pool.query<{ coalesced: boolean; notice_message_id: string }>(
+        'SELECT coalesced,notice_message_id FROM agent_failure_notice_events ORDER BY created_at'
+      );
+      expect(events.rows.every((event) => !event.coalesced)).toBe(true);
+      expect(new Set(events.rows.map((event) => event.notice_message_id)).size).toBe(2);
+      const unchangedWindow = await pool.query('SELECT window_started_at,window_expires_at FROM agent_failure_notices');
+      expect(unchangedWindow.rows).toEqual(window.rows);
+    }
+  );
+
+  it.each(['pending', 'retry', 'leased', 'accepted', 'started'])(
+    'mantiene la coalescencia mientras el aviso del mismo padre está %s', async (status) => {
+      const { socrates, children, notice } = await standingFailure();
+      await pool.query('UPDATE deliveries SET status=$2 WHERE id=$1', [notice.delivery_id, status]);
+
+      await ackFailed(socrates, requireValue(children[1], 'second child'));
+
+      expect(await noticesTo('kant')).toHaveLength(1);
+      expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 1 });
+      const events = await pool.query<{ coalesced: boolean }>(
+        'SELECT coalesced FROM agent_failure_notice_events WHERE ack_delivery_id=$1', [children[1]?.delivery_id]
+      );
+      expect(events.rows[0]?.coalesced).toBe(true);
+    }
+  );
+
+  it.each(['missing_delivery', 'missing_message', 'other_message', 'other_tenant', 'other_alias', 'other_parent', 'other_parent_message'])(
+    'emite otro aviso si el anterior no corresponde al padre: %s', async (mismatch) => {
+      const { socrates, children, notice, rootMessageId } = await standingFailure();
+      if (mismatch === 'missing_delivery' || mismatch === 'missing_message') {
+        await pool.query(
+          `UPDATE agent_failure_notices SET
+             last_notice_delivery_id=CASE WHEN $1='missing_delivery' THEN $2::uuid ELSE last_notice_delivery_id END,
+             last_notice_message_id=CASE WHEN $1='missing_message' THEN $2::uuid ELSE last_notice_message_id END`,
+          [mismatch, randomUUID()]
+        );
+      } else if (mismatch === 'other_message') {
+        await pool.query('UPDATE agent_failure_notices SET last_notice_message_id=$1', [rootMessageId]);
+      } else if (mismatch === 'other_tenant' || mismatch === 'other_alias') {
+        await pool.query(
+          'UPDATE deliveries SET recipient_tenant=$2,recipient_alias=$3 WHERE id=$1',
+          [notice.delivery_id, mismatch === 'other_tenant' ? 'Miguel' : 'Steven', mismatch === 'other_alias' ? 'argos' : 'kant']
+        );
+      } else {
+        await pool.query(
+          `UPDATE messages SET body=jsonb_set(body,$2::text[],to_jsonb($3::text))
+           WHERE id=(SELECT message_id FROM deliveries WHERE id=$1)`,
+          [notice.delivery_id, ['correlation', mismatch === 'other_parent' ? 'response_to_delivery_id' : 'response_to_message_id'], randomUUID()]
+        );
+      }
+
+      await ackFailed(socrates, requireValue(children[1], 'second child'));
+
+      expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 2 });
+      const event = await pool.query<{ coalesced: boolean }>(
+        'SELECT coalesced FROM agent_failure_notice_events WHERE ack_delivery_id=$1', [children[1]?.delivery_id]
+      );
+      expect(event.rows[0]?.coalesced).toBe(false);
+    }
+  );
+
+  it('una ráfaga concurrente después de un aviso terminado emite uno nuevo y conserva el ledger', async () => {
+    const { socrates, children, notice } = await standingFailure(6);
+    await pool.query("UPDATE deliveries SET status='done',terminal_at=now() WHERE id=$1", [notice.delivery_id]);
+
+    const acks = await Promise.all(children.slice(1).map((child) => ackFailed(socrates, child)));
+
+    expect(await noticesTo('kant')).toHaveLength(2);
+    expect((await buckets())[0]).toMatchObject({ total_failures: 6, notices_emitted: 2 });
+    const before = await pool.query<{ coalesced: boolean; notice_message_id: string }>(
+      'SELECT coalesced,notice_message_id FROM agent_failure_notice_events ORDER BY ack_delivery_id'
+    );
+    expect(before.rows).toHaveLength(6);
+    expect(before.rows.filter((event) => !event.coalesced)).toHaveLength(2);
+    expect(new Set(before.rows.map((event) => event.notice_message_id)).size).toBe(2);
+    const outbox = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM adapter_outbox WHERE idempotency_key LIKE 'agent-response:%'"
+    );
+    expect(outbox.rows[0]?.count).toBe('2');
+
+    const duplicate = await repository.ackDelivery(
+      requireValue(children[1], 'second child').delivery_id, socrates.tenant, socrates.alias,
+      requireValue(acks[0], 'first ack')
+    );
+    expect(duplicate).toMatchObject({ applied: false, receipt: 'duplicate' });
+    expect(await noticesTo('kant')).toHaveLength(2);
+    expect((await buckets())[0]).toMatchObject({ total_failures: 6, notices_emitted: 2 });
+    const after = await pool.query(
+      'SELECT coalesced,notice_message_id FROM agent_failure_notice_events ORDER BY ack_delivery_id'
+    );
+    expect(after.rows).toEqual(before.rows);
+    expect((await pool.query("SELECT count(*)::text AS count FROM audit_events WHERE action='agent_output.response' AND decision='allow'")).rows)
+      .toEqual([{ count: '6' }]);
+    expect((await pool.query("SELECT count(*)::text AS count FROM adapter_outbox WHERE idempotency_key LIKE 'agent-response:%'")).rows)
+      .toEqual(outbox.rows);
+  });
+
+  it('no espera el lock del aviso anterior mientras retiene el bucket', async () => {
+    const { socrates, children, notice } = await standingFailure();
+    const url = new URL(database.url);
+    url.searchParams.set('options', '-c lock_timeout=1s');
+    const boundedPool = createPool(url.toString());
+    const boundedRepository = new CauceRepository(boundedPool);
+    const locker = await pool.connect();
+    try {
+      await locker.query('BEGIN');
+      await locker.query('SELECT 1 FROM deliveries WHERE id=$1 FOR UPDATE', [notice.delivery_id]);
+      const child = requireValue(children[1], 'second child');
+      const result = await boundedRepository.ackDelivery(
+        child.delivery_id, socrates.tenant, socrates.alias,
+        ackEnvelope(child, socrates, {}, {
+          status: 'failed', error: sameCause[0]?.error, error_code: sameCause[0]?.code
+        })
+      );
+      expect(result).toMatchObject({ applied: true, status: 'failed' });
+      expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 1 });
+    } finally {
+      await locker.query('ROLLBACK');
+      locker.release();
+      await boundedPool.end();
+    }
+  });
 
   it('pliega cinco fracasos idénticos en UNA sola entrega hacia el padre', async () => {
     await setCoalescing(true);
