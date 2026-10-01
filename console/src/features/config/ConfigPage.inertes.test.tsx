@@ -1,7 +1,7 @@
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { ConfigPage } from './ConfigPage';
+import { ConfigAdministration as ConfigPage } from './ConfigPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { MARCA_INERTE } from './campos-inertes';
@@ -210,7 +210,7 @@ describe('la tabla de cómo funciona cada arnés de verdad', () => {
  * the same defect this change chases, committed by the fix.
  */
 describe('el aviso de columnas sin efecto', () => {
-  const AVISO = /no las lee ningún camino de ejecución|no la lee ningún camino de ejecución/i;
+  const AVISO = /no configuran por sí solas el runtime/i;
 
   it('sale sobre el registro de agentes, que sí trae columnas marcadas', async () => {
     conHarnessReal();

@@ -20,10 +20,10 @@ const SIN_CONFIG = http.get('http://localhost/v3/console/access', () =>
   }));
 
 /** The menu labels, minus the landing: what MUST NOT appear twice on screen. */
-const ROTULOS = NAV_ENTRIES.filter((entrada) => entrada.id !== '').map((entrada) => entrada.label);
+const ROTULOS = NAV_ENTRIES.filter((entrada) => entrada.id !== 'overview').map((entrada) => entrada.label);
 
 it('la portada NO vuelve a dibujar el menú: el bloque «el resto de la consola» ya no existe', async () => {
-  window.history.pushState({}, '', '/');
+  window.history.pushState({}, '', '/overview');
   renderWithApi(<App />);
 
   await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i });
@@ -47,25 +47,27 @@ it('la portada NO vuelve a dibujar el menú: el bloque «el resto de la consola�
 
 it('la barra lateral SIGUE negando /config a quien no lo puede abrir, con el motivo a la vista', async () => {
   server.use(SIN_CONFIG);
-  window.history.pushState({}, '', '/');
+  window.history.pushState({}, '', '/overview');
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
+  await userEvent.click(within(nav).getByRole('button', { name: 'Herramientas' }));
   const lateral = within(nav).getByRole('link', { name: /ajustes y altas/i });
   await waitFor(() => { expect(lateral).toHaveAttribute('aria-disabled', 'true'); });
   expect(lateral).toHaveAttribute('title', expect.stringContaining('permiso de control'));
 
   await userEvent.click(lateral);
-  expect(window.location.pathname).toBe('/');
+  expect(window.location.pathname).toBe('/overview');
 });
 
 it('control negativo: con el permiso puesto, esa misma entrada sí navega', async () => {
   // Without this, disabling the entry ALWAYS would also pass the test above, and the menu would
   // be broken for the operator who does have the permission.
-  window.history.pushState({}, '', '/');
+  window.history.pushState({}, '', '/overview');
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
+  await userEvent.click(within(nav).getByRole('button', { name: 'Herramientas' }));
   const lateral = within(nav).getByRole('link', { name: /ajustes y altas/i });
   await waitFor(() => { expect(lateral).not.toHaveAttribute('aria-disabled'); });
   await userEvent.click(lateral);
@@ -73,10 +75,11 @@ it('control negativo: con el permiso puesto, esa misma entrada sí navega', asyn
 });
 
 it('la barra sigue teniendo las SIETE entradas, «Terminal de agentes» incluida', async () => {
-  window.history.pushState({}, '', '/');
+  window.history.pushState({}, '', '/overview');
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
+  await userEvent.click(within(nav).getByRole('button', { name: 'Herramientas' }));
   const rotulos = within(nav).getAllByRole('link').map((enlace) => enlace.textContent);
-  expect(rotulos).toEqual(['Portada', ...ROTULOS]);
+  expect(rotulos).toEqual(NAV_ENTRIES.map((entry) => entry.label));
 });

@@ -20,6 +20,7 @@ const HOJAS = [
   'features/accounts/licenses.css',
   'features/auth/auth.css',
   'features/config/config.css',
+  'features/config/settings.css',
   'features/config/toggles.css',
   'features/landing/landing.css',
   'features/audit/audit.css',
@@ -347,23 +348,17 @@ describe('los elementos que el NAVEGADOR encoge por su cuenta tienen suelo propi
   });
 });
 
-describe('la barra de navegación de móvil conserva su excepción medida', () => {
+describe('la navegación móvil usa el suelo tipográfico compartido', () => {
   const global = leer('styles.css');
-
-  it('`.sidebar nav a` sigue a `.6875rem` dentro del corte de móvil', () => {
-    const limpio = sinComentarios(global);
-    const inicio = limpio.indexOf('@media (max-width: 760px)');
-    expect(inicio, 'desapareció el corte de móvil').toBeGreaterThan(-1);
-    const bloque = limpio.slice(inicio, limpio.indexOf('\n}', inicio));
-    expect(bloque).toContain('font-size: .6875rem');
+  const clean = sinComentarios(global);
+  const start = clean.indexOf('@media (max-width: 760px)');
+  const mobile = clean.slice(start, clean.indexOf('\n}', start));
+  it('los rótulos usan el token legible en vez de texto reducido', () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(mobile).toContain('font-size: var(--tipo-apunte)');
+    expect(mobile).not.toContain('font-size: .6875rem');
   });
-
-  /**
-   * The comment is the only place that records why that number does not go up with the rest: without
-   * it the next sweep "fixes" it and the eight labels collide again at 360px.
-   */
-  it('el comentario que explica por qué NO se toca sigue en la hoja', () => {
-    expect(global).toContain('360');
-    expect(global).toMatch(/no se toca|NO sale de la escala|no sube con el resto/i);
+  it('las herramientas secundarias dejan sólo tres entradas en la barra', () => {
+    expect(mobile).toContain('grid-template-columns: repeat(3, minmax(0, 1fr))');
   });
 });

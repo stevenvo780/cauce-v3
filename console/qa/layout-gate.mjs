@@ -28,7 +28,7 @@ const ALIAS_MEDIDO = 'Steven/jarvis';
    with a conversation open, so it is measured through the deep link the roster itself navigates to. */
 const HILO = `/messages/${ALIAS_MEDIDO}`;
 
-const ROUTES = ['/', '/live', '/accounts', '/messages', HILO, '/queues', '/observability', '/config', '/terminal', '/ayuda'];
+const ROUTES = ['/', '/overview', '/live', '/accounts', '/messages', HILO, `${HILO}?view=context`, '/messages/Steven/fantasma', '/queues', '/observability', '/config', '/terminal', '/ayuda'];
 
 /** The narrow widths are the shipped breakpoints; 1440 is the laptop, 1920 and 2560 the desks. */
 const VIEWPORTS = [360, 760, 1100, 1440, 1920, 2560];
@@ -262,6 +262,11 @@ async function medirViewport(navegador, viewport) {
       medidas.push(medida);
       process.stderr.write(`  ${String(viewport)}px ${ruta} ${String(Date.now() - t0)}ms\n`);
       if (ruta === '/live') await medirEstadosDeLive(pagina, viewport, medidas, sinMedir);
+      if (ruta === '/messages') {
+        await pagina.getByRole('button', { name: 'Herramientas', exact: true }).click();
+        medidas.push({ ruta: '/messages#herramientas', viewport, ...await pagina.evaluate(medirEnLaPagina), portadoresBajos: 0 });
+        await pagina.getByRole('button', { name: 'Cerrar herramientas' }).click();
+      }
     }
   } finally {
     await contexto.close();

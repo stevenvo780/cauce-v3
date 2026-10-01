@@ -1,9 +1,9 @@
 import { Save } from 'lucide-react';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
 import { ContextoContaminadoError } from '../../api/client/agent-client';
 import { useApi } from '../../api/context';
-import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
+import type { AgentPerfil } from '../../api/types';
 import { useResource, type RecargaResultado } from '../../api/use-resource';
 import { EmptyState, Unknown, ViewTabs } from '../../components/ui';
 import type { PermissionState } from '../../lib';
@@ -13,9 +13,12 @@ import {
 import { MedidorDeRol } from './MedidorDeRol';
 import { AvisoDeContaminacion, RecargaDeContexto } from './RecargaDeContexto';
 import { ContextReconciliation } from './ContextReconciliation';
+import { ProfileStatus } from './ProfileStatus';
+import { pendingProfileReceipt, profileIsAdopted } from './profile-save-receipt';
+import { draftFields, draftRevisionConflict, editProfileDraft, profileMatchesDraft, type ProfileDraft, type ProfileOutcome, type ProfileSettlement } from './profile-draft';
 import {
   CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, CONTAMINACION_ILEGIBLE, ETIQUETAS, MENSAJES_DE_APLICACION,
-  camposQueNoEntran, camposVigentes, contaminacionDe, contarUnidades,
+  camposQueNoEntran, contaminacionDe, contarUnidades,
   destinosDelArnes, entradasDeLista, esPerfilAplicado, hayCambios, lineasCrudas, listaALineas,
   motivoSinDestino,
   perfilParaGuardar, unidadesDelPerfil, veredictoVigente,
@@ -25,8 +28,6 @@ import {
 /**
  * Editor and preview of the agent profile and directive fields.
  */
-
-type TonoAviso = 'error' | 'parcial' | 'success';
 
 function AyudaDelCampo({ campo, destino }: { campo: CampoDelPerfil; destino: DestinoDelCampo }) {
   return (
@@ -50,8 +51,8 @@ interface PerfilTabProps {
    * drawer unmounts it, and losing there what the operator was drafting —without warning— was
    * already a defect once.
    */
-  borrador?: Partial<AgentPerfilCampos>;
-  onBorrador: (campos: Partial<AgentPerfilCampos> | undefined) => void;
+  borrador?: ProfileDraft;
+  onBorrador: (campos: ProfileDraft | undefined) => void;
   onMutationSettled?: () => void;
   onWriteInFlightChange?: (inFlight: boolean) => void;
   writeInFlight?: boolean;
@@ -59,19 +60,25 @@ interface PerfilTabProps {
   runtimeRefreshRevision?: number;
   restauracion?: number;
   configWritePermission: PermissionState;
+  outcome?: ProfileOutcome;
+  onSettlement?: (settlement: ProfileSettlement) => void;
 }
 
 export function PerfilTab({
   tenantId, alias, borrador, onBorrador, onMutationSettled, onWriteInFlightChange,
   writeInFlight = false, blockedByManualDraft = false, runtimeRefreshRevision = 0,
   restauracion = 0, configWritePermission,
+  outcome, onSettlement,
 }: PerfilTabProps) {
   const api = useApi();
   const perfil = useResource(
     `perfil-${tenantId}-${alias}`, () => api.getAgentPerfil(tenantId, alias),
   );
   const [localBusy, setLocalBusy] = useState(false);
-  const [aviso, setAviso] = useState<{ text: string; tone: TonoAviso }>();
+  const [aviso, setAviso] = useState<ProfileOutcome | undefined>(outcome);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { setAviso(outcome); }, [outcome]);
   const [ficheroAbierto, setFicheroAbierto] = useState<string>();
   const [motivo, setMotivo] = useState('');
   const [veredicto, setVeredicto] = useState<ContaminacionDeContexto>();
@@ -81,7 +88,8 @@ export function PerfilTab({
   const estadoPermiso = configWritePermission;
   // Absence, error or a stale response from the access endpoint never enable a mutation.
   const soloLectura = estadoPermiso !== 'allowed';
-  const campos = camposVigentes(perfil.data, borrador);
+  const campos = draftFields(perfil.data, borrador);
+  const revisionConflict = !localBusy && !writeInFlight && draftRevisionConflict(perfil.data, borrador);
   const sucio = hayCambios(perfil.data, campos);
   const fuera = camposQueNoEntran(campos, perfil.data?.limites);
   const total = unidadesDelPerfil(campos);
@@ -101,15 +109,13 @@ export function PerfilTab({
     || perfil.data?.runtime_state === 'pending_session_refresh'
     || perfil.data?.runtime_state === 'runtime_unverified';
   const runtimeActual = perfil.data?.runtime_state !== 'applied'
-    || (perfil.data.runtime_verification?.state === 'current'
-      && perfil.data.runtime_adoption?.evidence === 'adapter_delivery'
-      && perfil.data.runtime_adoption.revision === perfil.data.revision
-      && perfil.data.runtime_adoption.generation === perfil.data.runtime_verification.generation);
+    || profileIsAdopted(perfil.data);
   const pendiente = perfil.data?.runtime_state === 'pending'
     || perfil.data?.runtime_state === 'drifted';
   const runtimeNoVerificado = perfil.data?.runtime_state === 'runtime_unverified';
   const ficheros = perfil.data?.ficheros ?? [];
   const aplicable = ficheros.length > 0;
+  const arnesConPerfil = ['claude', 'codex', 'openclaw', 'muse'].includes(perfil.data?.harness ?? '');
   const destinos = destinosDelArnes(perfil.data?.harness, ficheros);
   const sinDestino = motivoSinDestino(destinos);
   const busy = localBusy || writeInFlight;
@@ -133,6 +139,12 @@ export function PerfilTab({
     if (runtimeRefreshRevision > 0) void reloadProfile();
   }, [reloadProfile, runtimeRefreshRevision]);
 
+  useEffect(() => {
+    if (borrador && !borrador.base && perfil.data?.publicado) {
+      onBorrador(editProfileDraft(perfil.data, borrador, {}));
+    }
+  }, [borrador, perfil.data, onBorrador]);
+
   if (perfil.loading && !perfil.data) {
     return <p className="muted">Leyendo el perfil del alias y componiendo sus ficheros…</p>;
   }
@@ -149,14 +161,35 @@ export function PerfilTab({
   }
 
   function editarTexto(campo: (typeof CAMPOS_DE_TEXTO)[number], valor: string) {
-    onBorrador({ ...borrador, [campo]: valor });
+    onBorrador(editProfileDraft(perfil.data, borrador, { [campo]: valor }));
   }
 
   function editarLista(campo: (typeof CAMPOS_DE_LISTA)[number], texto: string) {
-    onBorrador({ ...borrador, [campo]: lineasCrudas(texto) });
+    onBorrador(editProfileDraft(perfil.data, borrador, { [campo]: lineasCrudas(texto) }));
+  }
+
+  function settle(outcome: ProfileOutcome, next?: { draft: ProfileDraft | undefined }) {
+    const draft = next ? next.draft : borrador;
+    if (onSettlement) onSettlement({ expectedDraft: borrador, draft, outcome });
+    else onBorrador(draft);
+    if (mounted.current) setAviso(outcome);
+  }
+
+  async function readAfterMutation(): Promise<RecargaResultado<AgentPerfil>> {
+    try {
+      const data = await api.getAgentPerfil(tenantId, alias);
+      if (mounted.current) {
+        const displayed = await perfil.reload();
+        if (displayed.data) return displayed;
+      }
+      return { data };
+    } catch (error) {
+      return { error: error instanceof Error ? error : new Error('No se pudo releer el perfil') };
+    }
   }
 
   async function guardar() {
+    if (busy || revisionConflict) return;
     if (blockedByManualDraft) {
       setAviso({
         tone: 'error',
@@ -216,24 +249,33 @@ export function PerfilTab({
     setLocalBusy(true);
     onWriteInFlightChange?.(true);
     try {
-      const expectedRevision = perfil.data?.exists === true ? (perfil.data.revision ?? null) : null;
+      const expectedRevision = borrador?.base?.revision
+        ?? (borrador?.base ? null : perfil.data?.exists === true ? (perfil.data.revision ?? null) : null);
       const result = await api.putAgentPerfil(
         tenantId, alias, perfilParaGuardar(campos), expectedRevision, motivo.trim(),
       );
       if (result && typeof result === 'object' && 'state' in result
         && result.state === 'pending_session_refresh') {
+        const receipt = pendingProfileReceipt(result, tenantId, alias, ficheros.map((file) => file.nombre));
+        const refreshed = await readAfterMutation();
+        if (receipt === undefined || refreshed.data?.revision !== receipt.revision
+          || refreshed.data.runtime_verification?.state !== 'current'
+          || refreshed.data.runtime_verification.generation !== receipt.generation
+          || !profileMatchesDraft(refreshed.data, campos)) {
+          settle({ tone: 'error', text: 'El servidor no acreditó el guardado completo del perfil pendiente. El borrador se conserva; no se afirma aplicación.' });
+          return;
+        }
         setMotivo('');
-        setAviso({
+        settle({
           tone: 'parcial',
           text: 'Desired y ficheros del runtime quedaron actualizados, pero la sesión compartida '
             + 'todavía no acreditó recibir esa revisión. No se presenta como aplicada.',
-        });
-        await perfil.reload();
+        }, { draft: undefined });
         return;
       }
       const nombres = ficheros.map((fichero) => fichero.nombre);
       if (!esPerfilAplicado(result, { tenantId, alias, nombres })) {
-        setAviso({
+        settle({
           tone: 'error',
           text: 'El servidor devolvió 2xx, pero no acreditó la misma revisión ni un SHA y número '
             + 'de bytes por cada fichero gobernado. El borrador sigue sucio; no se afirma aplicación.',
@@ -242,9 +284,9 @@ export function PerfilTab({
       }
 
       // The ACK proves the runtime; the re-read avoids dropping the draft onto a stale snapshot.
-      const recarga: RecargaResultado<AgentPerfil> = await perfil.reload();
+      const recarga = await readAfterMutation();
       if (recarga.error) {
-        setAviso({
+        settle({
           tone: 'parcial',
           text: `El runtime acreditó la revisión ${String(result.revision)}, pero no pude releer el perfil `
             + `(${recarga.error.message}). Conservo el borrador para no volver a mostrar un snapshot viejo.`,
@@ -252,14 +294,8 @@ export function PerfilTab({
         return;
       }
       if (recarga.data.exists !== true || recarga.data.revision !== result.revision
-        || recarga.data.applied_revision !== result.revision
-        || recarga.data.runtime_state !== 'applied'
-        || recarga.data.runtime_verification?.state !== 'current'
-        || recarga.data.runtime_adoption?.evidence !== 'adapter_delivery'
-        || recarga.data.runtime_adoption.revision !== result.revision
-        || recarga.data.runtime_adoption.generation
-          !== recarga.data.runtime_verification.generation) {
-        setAviso({
+        || !profileIsAdopted(recarga.data)) {
+        settle({
           tone: 'parcial',
           text: `El runtime acreditó la revisión ${String(result.revision)}, pero la relectura ya muestra `
             + `desired ${String(recarga.data.revision ?? 'ausente')} y aplicado ${String(recarga.data.applied_revision ?? 'ninguno')}. `
@@ -267,20 +303,19 @@ export function PerfilTab({
         });
         return;
       }
-      onBorrador(undefined);
       setMotivo('');
-      setAviso({
+      settle({
         tone: 'success',
         text: `Aplicado: desired y runtime acreditan la revisión ${String(result.revision)}; `
           + `${String(result.acknowledgements.length)} ficheros respondieron SHA y bytes.`,
-      });
+      }, { draft: undefined });
     } catch (error) {
       const crudo = error instanceof Error ? error.message : 'el servidor no dijo por qué';
       const status = error instanceof ApiError ? error.status : undefined;
       const codigo = error instanceof ApiError ? error.code : undefined;
       if (error instanceof ContextoContaminadoError) {
         setVeredicto(contaminacionDe(error.cuerpo) ?? CONTAMINACION_ILEGIBLE);
-        setAviso({
+        settle({
           tone: 'error',
           text: `${crudo} No se escribió nada: el borrador y el motivo se conservan.`,
         });
@@ -290,13 +325,15 @@ export function PerfilTab({
         ? explicarFalloDeMotivo(status, codigo, crudo)
         : undefined;
       if (delMotivo !== undefined) {
-        setAviso({ tone: 'error', text: `${delMotivo.titulo}. ${delMotivo.detalle}` });
+        settle({ tone: 'error', text: `${delMotivo.titulo}. ${delMotivo.detalle}` });
         return;
       }
-      const recarga: RecargaResultado<AgentPerfil> = await perfil.reload();
+      const recarga = await readAfterMutation();
       const relectura = recarga.data;
       const quedaPendiente = relectura?.runtime_state === 'pending';
-      setAviso({
+      const preserved = relectura && quedaPendiente && profileMatchesDraft(relectura, campos)
+        ? editProfileDraft(relectura, undefined, campos) : borrador;
+      settle({
         tone: 'error',
         text: recarga.error
           ? `No hubo un 2xx aplicado (HTTP ${String(status ?? 'sin dato')}: ${crudo}) y tampoco pude `
@@ -308,7 +345,7 @@ export function PerfilTab({
             : `No hubo un 2xx aplicado (HTTP ${String(status ?? 'sin dato')}: ${crudo}). Releí desired `
               + `${String(relectura?.revision ?? 'ausente')} / aplicado ${String(relectura?.applied_revision ?? 'ninguno')}; `
               + 'el borrador se conserva.',
-      });
+      }, { draft: preserved });
     } finally {
       setLocalBusy(false);
       onMutationSettled?.();
@@ -320,6 +357,7 @@ export function PerfilTab({
 
   return (
     <div className="perfil-tab">
+      <ProfileStatus profile={perfil.data} />
       <section className="perfil-editor">
         <header className="perfil-cabecera">
           <div>
@@ -361,7 +399,7 @@ export function PerfilTab({
                 value={valor}
                 rows={campo === 'purpose' ? 4 : 3}
                 disabled={soloLectura || busy || !agenteHabilitado
-                  || runtimeNoVerificado || !runtimeActual}
+                  || !arnesConPerfil || runtimeNoVerificado || !runtimeActual}
                 onChange={(event) => { editarTexto(campo, event.target.value); }}
               />
               <span className={`perfil-cuenta${tope !== undefined && medido > tope ? ' perfil-cuenta-fuera' : ''}`}>
@@ -383,7 +421,7 @@ export function PerfilTab({
                 value={listaALineas(items)}
                 rows={4}
                 disabled={soloLectura || busy || !agenteHabilitado
-                  || runtimeNoVerificado || !runtimeActual}
+                  || !arnesConPerfil || runtimeNoVerificado || !runtimeActual}
                 onChange={(event) => { editarLista(campo, event.target.value); }}
               />
               <span className={`perfil-cuenta${entradas > (perfil.data?.limites?.items ?? Infinity) ? ' perfil-cuenta-fuera' : ''}`}>
@@ -405,6 +443,15 @@ export function PerfilTab({
         ) : null}
 
         {aviso ? <p className={`perfil-aviso perfil-aviso-${aviso.tone}`} role="status">{aviso.text}</p> : null}
+        {revisionConflict ? (
+          <div className="perfil-conflict" role="alert">
+            <strong>El perfil cambió mientras editabas.</strong>
+            <p>Tu borrador conserva la revisión {String(borrador?.base?.revision ?? 'ausente')}. La lectura actual es {String(perfil.data?.revision ?? 'ausente')}. No se usa una revisión nueva para sobrescribirlo.</p>
+            <details><summary>Comparar con el perfil guardado</summary>
+              <pre>{JSON.stringify(perfil.data?.perfil, null, 2)}</pre>
+            </details>
+          </div>
+        ) : null}
         {perfil.data?.publicado && !agenteHabilitado ? (
           <p className="perfil-aviso perfil-aviso-error" role="alert">
             Alias apagado o estado de habilitación no acreditado: edición y aplicación bloqueadas.
@@ -438,6 +485,8 @@ export function PerfilTab({
             alias={alias}
             permitida={!soloLectura}
             enCuarentena={enCuarentena}
+            editorBlocked={busy || sucio || blockedByManualDraft}
+            onWriteInFlightChange={onWriteInFlightChange}
             onVeredicto={setVeredicto}
             onRecargado={() => { void perfil.reload(); onMutationSettled?.(); }}
           />
@@ -509,7 +558,7 @@ export function PerfilTab({
         <button
           type="button"
           className="button primary"
-          disabled={soloLectura || busy || !presenciaConocida || !revisionCoherente
+          disabled={soloLectura || busy || revisionConflict || !presenciaConocida || !revisionCoherente
             || !estadoConocido || !runtimeActual || runtimeNoVerificado
             || !agenteHabilitado || !aplicable || enCuarentena || problemaMotivo !== undefined
             || blockedByManualDraft || (!sucio && !pendiente) || fuera.length > 0}
@@ -524,6 +573,16 @@ export function PerfilTab({
                 ? 'Esperando adopción de sesión'
                 : 'Guardar y aplicar perfil'}
         </button>
+        <button
+          type="button" className="button secondary"
+          disabled={busy || blockedByManualDraft || (!borrador && !perfil.error)}
+          onClick={() => {
+            onBorrador(undefined);
+            setMotivo('');
+            setAviso(undefined);
+            void perfil.reload();
+          }}
+        >Descartar borrador de perfil y releer</button>
         {soloLectura ? (
           <p className="muted">
             {estadoPermiso === 'unknown'
@@ -536,6 +595,7 @@ export function PerfilTab({
       <section className="perfil-vista-previa">
         <header>
           <h4>Vista previa del desired</h4>
+          {sucio ? <p className="perfil-aviso perfil-aviso-parcial">Esta composición corresponde al perfil guardado. El borrador aún no se ha guardado ni proyectado.</p> : null}
           <p className="muted perfil-ayuda">
             {perfil.data?.harness
               ? `${perfil.data.base === 'runtime-medido' ? 'Arnés medido' : 'Arnés declarado'}: ${perfil.data.harness}.`

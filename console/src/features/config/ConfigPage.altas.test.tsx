@@ -1,7 +1,7 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';
-import { ConfigPage } from './ConfigPage';
+import { ConfigAdministration as ConfigPage } from './ConfigPage';
 import { renderWithApi } from '../../test/render';
 import { irA, recordChanges, type ChangeRequest } from './ConfigPage.test-helpers';
 

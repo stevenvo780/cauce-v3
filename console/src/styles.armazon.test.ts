@@ -76,8 +76,8 @@ describe('la cabecera de página es una sola en toda la consola', () => {
     expect(valor(roto, 'border-bottom') ?? valor(roto, 'box-shadow')).toBeUndefined();
   });
 
-  it('la barra superior mide 44 px, que es lo que le cede a la vista', () => {
-    expect(valor(cuerposDeSelector(BASE, '.topbar')[0] ?? '', 'min-height')).toBe('44px');
+  it('la barra superior conserva su altura explícita de 56 px', () => {
+    expect(valor(cuerposDeSelector(BASE, '.topbar')[0] ?? '', 'min-height')).toBe('56px');
   });
 
   it('la dibuja `PageHeader`, no cada vista por su cuenta', () => {

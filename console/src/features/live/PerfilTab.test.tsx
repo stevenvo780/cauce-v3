@@ -351,14 +351,20 @@ it('ACK de disco sin adopción de TUI queda pendiente y no dice aplicado', async
   let actual = respuesta(true);
   server.use(
     http.get(RUTA, () => HttpResponse.json(actual)),
-    http.put(RUTA, () => {
+    http.put(RUTA, async ({ request }) => {
+      const body = await request.json() as { profile: typeof actual.perfil };
       actual = {
         ...actual, revision: 5, applied_revision: 4,
         runtime_state: 'pending_session_refresh', runtime_adoption: null,
+        perfil: body.profile,
       };
       return HttpResponse.json({
         ...ackAplicado(5), state: 'pending_session_refresh', applied_revision: 4,
         runtime_adoption: null,
+        runtime_verification: {
+          ...actual.runtime_verification,
+          documents: actual.runtime_verification?.documents.map((document) => ({ ...document, expected_bytes: 18, observed_bytes: 18 })),
+        },
       }, { status: 202 });
     }),
   );
