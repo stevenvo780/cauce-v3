@@ -175,6 +175,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(zod@4.4.3)
+      jose:
+        specifier: 6.2.4
+        version: 6.2.4
       pg:
         specifier: ^8.16.3
         version: 8.22.0
