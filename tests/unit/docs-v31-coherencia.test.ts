@@ -28,7 +28,7 @@ const pendientes = (): string => leer('docs/v3.1-pendientes.md');
 const version = (): string => leer('docs/version-3.1.md');
 const historial = (): string => leer('deploy/HISTORIAL.md');
 
-const ultimaFilaDeHistorial = (): { commit: string; resultado: string } => {
+const ultimaFilaDeHistorial = (): { commit: string; runtimeCommit: string; resultado: string } => {
   const filas = historial()
     .split('\n')
     .map((linea) => linea.trim())
@@ -38,7 +38,9 @@ const ultimaFilaDeHistorial = (): { commit: string; resultado: string } => {
   const columnas = ultima.split('|').map((columna) => columna.trim());
   const commit = columnas[2] ?? '';
   expect(commit, 'la fila de despliegue debe traer un commit').toMatch(/^[0-9a-f]{7,40}$/u);
-  return { commit, resultado: columnas[5] ?? '' };
+  const resultado = columnas[5] ?? '';
+  const runtimeCommit = /Runtime sigue `([0-9a-f]{7,40})`/u.exec(resultado)?.[1] ?? '';
+  return { commit, runtimeCommit, resultado };
 };
 
 const shasCitados = (texto: string): string[] => [
@@ -90,10 +92,10 @@ describe('docs/v3.1-pendientes.md: la deuda de despliegue es la real', () => {
   });
 
   it('sólo cita commits reales y ninguno que HISTORIAL ya diera por desplegado', () => {
-    const { commit } = ultimaFilaDeHistorial();
+    const { commit, runtimeCommit } = ultimaFilaDeHistorial();
     for (const sha of shasCitados(vinetaDeDeuda())) {
       expect(() => git('cat-file', '-e', `${sha}^{commit}`), `${sha} no es un commit`).not.toThrow();
-      if (sha === commit) continue;
+      if (sha === commit || sha === runtimeCommit) continue;
       const yaDesplegado = (() => {
         try {
           git('merge-base', '--is-ancestor', sha, commit);
@@ -147,6 +149,30 @@ describe('docs/version-3.1.md: el despliegue que narra y el que quedó registrad
     const texto = version();
     expect(texto).toContain(commit);
     expect(texto).not.toMatch(/con smoke verde y las\s+correcciones\s+posteriores/u);
+  });
+
+  it('mantiene explícitas las dependencias pendientes de una aceptación parcial', () => {
+    const { commit, resultado } = ultimaFilaDeHistorial();
+    const pendientesActuales = pendientes();
+    const versionActual = version();
+    if (/Astra está habilitada sin latido fresco/iu.test(resultado)) {
+      for (const texto of [pendientesActuales, versionActual]) {
+        expect(texto).toContain(commit);
+        expect(texto).toMatch(/Astra está habilitada sin latido fresco/u);
+      }
+    }
+    if (/SDK staged pero no activo/iu.test(resultado)) {
+      for (const texto of [pendientesActuales, versionActual]) {
+        expect(texto).toContain(commit);
+        expect(texto).toMatch(/SDK está staged pero no activo/u);
+      }
+    }
+    if (/endpoint MCP público diferido/iu.test(resultado)) {
+      for (const texto of [pendientesActuales, versionActual]) {
+        expect(texto).toContain(commit);
+        expect(texto).toMatch(/endpoint MCP público[\s\S]{0,80}diferido/u);
+      }
+    }
   });
 
   it('apunta a la misma fila de HISTORIAL que v3.1-pendientes.md', () => {

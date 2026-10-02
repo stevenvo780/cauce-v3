@@ -117,16 +117,18 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) es `60788e41`, desplegada el
-8 de septiembre. El smoke final pasó con nueve servicios sanos, quince arriendos vigentes
-y una entrega nueva `done` con ACK aplicado. La espera inicial terminó antes de que llegara
-tráfico; el chequeo posterior usó la entrega real y las mismas imágenes.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `0272dc26` y runtime
+`bf2cd6d5`: actualización dirigida de consola del PR #5. La evidencia registra 9/9 servicios
+sanos, los otros ocho con contenedor e imagen preservados, y HTML más tres assets públicos iguales
+a la imagen activa. La aceptación global sigue pendiente: Astra está habilitada sin latido fresco
+(13/14 agentes con latido fresco), el SDK está staged pero no activo y el endpoint MCP público quedó
+diferido por decisión del dueño.
 
-Los quince alias completaron una entrega real al primer intento, y se reiniciaron sus
-adaptadores y sesiones nativas. La shell y el visor web se volvieron a probar en los quince
-tras este despliegue. El teclado pasó en Claude, Codex y OpenClaw, incluido el borrado rápido.
-Iza conservó su encargo pendiente y sus siete archivos; la reconciliación posterior desde
-la web actualizó cinco huellas sin alterar los bytes.
+En la verificación anterior, los quince alias completaron una entrega real al primer intento y se
+reiniciaron sus adaptadores y sesiones nativas. La shell y el visor web se probaron en los quince;
+el teclado pasó en Claude, Codex y OpenClaw, incluido el borrado rápido. Iza conservó su encargo
+pendiente y sus siete archivos; la reconciliación posterior desde la web actualizó cinco huellas sin
+alterar los bytes. Esto es evidencia histórica y no describe el estado actual de latidos de la flota.
 
 Kant, Salva y el acceso público a sus archivos funcionan en server2. El audio de Telegram
 funciona en server1, también probado con el origen de la workstation detenido. Las cuotas
@@ -134,11 +136,10 @@ se publican desde el VPS con identidad y fecha observadas. El inventario refleja
 Docker en doce contenedores, más Astra y Kant nativos; las herramientas de ops instaladas
 conservan sus versiones anteriores para reversión.
 
-Zeus, Atlas, Argos, Astra y Kant ejecutan el SDK MCP simplificado. Sus cinco pruebas posteriores
-al cambio acreditan `mcp_deposit` y ACK final. La cadena Zeus→Argos→Astra completó delegación,
-respuestas y síntesis final, con seis entregas al primer intento y adjunto identificado por
-huella y tamaño. Los otros diez alias conservan la fase de reparación mientras transcurren
-las 48 horas de observación antes de extender MCP. El formato de texto sigue disponible.
+Cinco canaries anteriores acreditaron `mcp_deposit` y ACK final para el SDK MCP simplificado, y la
+cadena Zeus→Argos→Astra completó delegación, respuestas y síntesis final. El SDK está staged pero
+no activo; esos resultados no acreditan su activación actual. El endpoint MCP público está diferido
+por decisión del dueño. El formato de texto sigue disponible.
 El detalle pendiente vive en [v3.1-pendientes](v3.1-pendientes.md); lo que queda por comprobar por
 efecto después de una ventana de despliegue está en `docs/v3.1-pendientes.md` §1, «Deuda de
 despliegue».

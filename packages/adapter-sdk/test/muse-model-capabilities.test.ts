@@ -19,15 +19,22 @@ function assertPreflight(telemetry: readonly MuseMspTelemetry[], phases: readonl
   const events = telemetry.filter((event) => event.event === "muse_preflight_started"
     || event.event === "muse_preflight_finished");
   assert.equal(telemetry.length, events.length + modelSelections(telemetry).length);
+  const expected: (
+    | { event: "muse_preflight_started"; phase: string; budget_ms: number }
+    | { event: "muse_preflight_finished"; phase: string; outcome: "completed" }
+  )[] = [];
+  for (const phase of phases) {
+    expected.push(
+      { event: "muse_preflight_started", phase, budget_ms: 5_000 },
+      { event: "muse_preflight_finished", phase, outcome: "completed" },
+    );
+  }
   assert.deepEqual(events.map(({ elapsed_ms, ...event }) => {
     if (event.event === "muse_preflight_finished") {
       assert.ok(typeof elapsed_ms === "number" && Number.isSafeInteger(elapsed_ms) && elapsed_ms >= 0);
     } else assert.equal(elapsed_ms, undefined);
     return event;
-  }), phases.flatMap((phase) => [
-    { event: "muse_preflight_started", phase, budget_ms: 5_000 },
-    { event: "muse_preflight_finished", phase, outcome: "completed" },
-  ]));
+  }), expected);
 }
 
 function fixture(options: {

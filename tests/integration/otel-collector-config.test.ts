@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { dockerTestRequirement } from '../helpers/postgres.js';
@@ -39,7 +41,15 @@ async function removeContainer(name: string): Promise<void> {
 }
 
 async function copyConfig(name: string): Promise<void> {
-  await docker(['cp', collectorConfigPath, `${name}:/config.yaml`]);
+  const directory = await mkdtemp(join(tmpdir(), 'cauce-otel-config-'));
+  const configPath = join(directory, 'config.yaml');
+  try {
+    await copyFile(collectorConfigPath, configPath);
+    await chmod(configPath, 0o644);
+    await docker(['cp', configPath, `${name}:/config.yaml`]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 async function probe(name: string, url: string): Promise<string> {
