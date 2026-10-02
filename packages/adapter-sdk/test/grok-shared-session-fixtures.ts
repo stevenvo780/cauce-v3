@@ -22,6 +22,8 @@ const FOOTERS = {
     KEY("Ctrl+;", "queue"), KEY("Ctrl+x", "shortcuts")],
   tool: [KEY("Shift+Tab", "mode"), KEY("Ctrl+c", "cancel"), KEY("Ctrl+b", "send to bg"), KEY("Ctrl+x", "shortcuts")],
   quit: [KEY("Ctrl+c", "press again to quit")],
+  // Scrollback focused (Tab on 1.0.41): the box greys out and shows «Build anything» or the owner's text.
+  unfocused: [KEY("Ctrl+e", "expand thinking"), KEY("Space", "prompt"), KEY("Ctrl+x", "shortcuts")],
 } as const;
 
 export type GrokFooter = keyof typeof FOOTERS;
@@ -36,7 +38,8 @@ export interface GrokFrame {
 }
 
 export function grokFrame(frame: GrokFrame = {}): string {
-  const box = frame.box ?? "";
+  const unfocused = frame.footer === "unfocused";
+  const box = frame.box ?? (unfocused ? "Build anything" : "");
   return [
     ...(frame.history ?? [
       "     \u001b[48;5;235m   \u001b[38;5;251m❯ \u001b[38;5;254mrespondé solo: hola                          5:10 PM",
@@ -50,7 +53,9 @@ export function grokFrame(frame: GrokFrame = {}): string {
     "  \u001b[38;5;243mOff by default. Opt-in to allow SpaceXAI to retain coding data.\u001b[39m",
     "",
     `  ${BORDER}╭${"─".repeat(60)}╮${RESET}`,
-    `  ${BORDER}│\u001b[38;5;254m \u001b[38;5;251m❯ \u001b[38;5;254m${box.padEnd(56)}${BORDER}│${RESET}`,
+    unfocused // Colors exactly as captured: plain 256-color grey, no SGR 2, so it is not «dim».
+      ? `  \u001b[38;5;236m│\u001b[38;5;247m \u001b[38;5;238m❯ \u001b[38;5;239m${box.padEnd(56)}\u001b[38;5;236m│${RESET}`
+      : `  ${BORDER}│\u001b[38;5;254m \u001b[38;5;251m❯ \u001b[38;5;254m${box.padEnd(56)}${BORDER}│${RESET}`,
     `  ${BORDER}╰${"─".repeat(20)} \u001b[38;5;244mGrok 4.7 (xhigh)\u001b[38;5;240m · \u001b[38;5;242malways-approve${BORDER} ─╯${RESET}`,
     "",
     `  \u001b[1m${FOOTERS[frame.footer ?? "idle"].join(SEPARATOR)}                    ${RESET}`,
@@ -209,6 +214,8 @@ export function grokRunner(options: {
   generatingWaitMs?: number;
   backgroundWaitMs?: number;
   turnTimeoutMs?: number;
+  workspace?: string;
+  dispatchGraceMs?: number;
 }): PasteSessionRunner<GrokUpdateLine> {
   const alias = options.alias ?? "hades";
   options.tmux.sessionName = `cauce-${alias}`;
@@ -216,8 +223,9 @@ export function grokRunner(options: {
   return new PasteSessionRunner({
     alias,
     harness: "grok",
-    workspace: "/workspace",
+    workspace: options.workspace ?? "/workspace",
     transcript: grokTranscript(options.grokHome),
+    ...(options.dispatchGraceMs === undefined ? {} : { dispatchGraceMs: options.dispatchGraceMs }),
     tmux: options.tmux,
     sleep: options.sleep ?? immediate,
     acquireTimeoutMs: options.acquireTimeoutMs ?? 30,
@@ -240,6 +248,20 @@ export function grokRunner(options: {
 /** FakeTmux whose C-c reaches a grok turn: the test decides what the transcript records. */
 export class GrokTmux extends FakeTmux {
   onInterrupt: ((key: string) => Promise<void> | void) | undefined;
+  /** Frame grok draws once Space gives the box its focus; undefined = the box already had it. */
+  focusedFrame: string | undefined;
+  focusKeys = 0;
+  /** Spaces that reached a box that already had focus: a typed character, never acceptable. */
+  strayFocusKeys = 0;
+  /** Spaces sent without the input barrier held: they could race the owner's keys. */
+  unbarrieredFocusKeys = 0;
+  /** C-u sent with the input barrier held (the only way the runner may clear grok's box). */
+  clearedBoxes = 0;
+  /** Captures that still show the old frame after the Space: grok redrawing late on a busy host. */
+  focusRedrawAfterCaptures = 0;
+  private pendingFocus: { frame: string; captures: number } | undefined;
+  /** `calls.length` when each Space arrived (the barrier's mutation is not itself a recorded call). */
+  readonly focusAt: number[] = [];
 
   constructor() {
     super();
@@ -250,7 +272,25 @@ export class GrokTmux extends FakeTmux {
   private handledInterrupts = 0;
 
   override async run(args: readonly string[], stdin?: string, control?: TmuxRunControl): Promise<TmuxResult> {
+    if (args[0] === "send-keys" && args.at(-1) === "Space" && !this.inputOff) {
+      this.focusKeys += 1;
+      this.focusAt.push(this.calls.length);
+      if (!this.paneOptions.has("@cauce_input_barrier")) this.unbarrieredFocusKeys += 1;
+      else if (this.focusedFrame === undefined || this.pendingFocus !== undefined) this.strayFocusKeys += 1;
+      else if (this.focusRedrawAfterCaptures > 0) this.pendingFocus = { frame: this.focusedFrame, captures: this.focusRedrawAfterCaptures };
+      else this.paneContent = this.focusedFrame;
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "send-keys" && args.at(-1) === "C-u" && !this.inputOff && this.paneOptions.has("@cauce_input_barrier")) {
+      this.clearedBoxes += 1;
+      this.paneContent = grokFrame({ footer: "idle" });
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
     const result = await super.run(args, stdin, control);
+    if (args[0] === "capture-pane" && this.pendingFocus !== undefined && --this.pendingFocus.captures <= 0) {
+      this.paneContent = this.pendingFocus.frame; // Redrawn only now: the screen lagged the focus it already had.
+      this.pendingFocus = undefined;
+    }
     while (this.handledInterrupts < this.interruptKeys.length) {
       const key = this.interruptKeys[this.handledInterrupts] ?? "";
       this.handledInterrupts += 1;

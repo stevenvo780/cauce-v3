@@ -1,4 +1,5 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { App } from './App';
 import { renderWithApi } from './test/render';
@@ -113,21 +114,22 @@ export function textoPorDebajoDelSuelo(raiz: Element, suelo = SUELO): string[] {
  * regression net only — its `.pty-dialog-*`, `.pty-bar-readonly` and `.pty-plazas` chrome needs a
  * live PTY session, so what catches those is `terminal-panel.css` in `styles.tipografia.test.ts`.
  */
-const VISTAS: readonly { ruta: string; titulo: RegExp; minimo: number }[] = [
-  { ruta: '/', titulo: /Cauce en una pantalla/i, minimo: 200 },
+const VISTAS: readonly { ruta: string; titulo: RegExp; minimo: number; configView?: 'agents' | 'administration' }[] = [
+  { ruta: '/overview', titulo: /Cauce en una pantalla/i, minimo: 200 },
   { ruta: '/live', titulo: /La flota ahora/i, minimo: 1200 },
   { ruta: '/accounts', titulo: /Cuentas y cuotas/i, minimo: 700 },
   { ruta: '/messages', titulo: /Mensajes/i, minimo: 200 },
   { ruta: '/queues', titulo: /Colas y DLQ operativo/i, minimo: 120 },
   { ruta: '/observability', titulo: /Señales y auditoría/i, minimo: 100 },
-  { ruta: '/config', titulo: /Ajustes y altas/i, minimo: 500 },
+  { ruta: '/config', titulo: /Ajustes y altas/i, minimo: 150, configView: 'agents' },
+  { ruta: '/config', titulo: /Ajustes y altas/i, minimo: 500, configView: 'administration' },
   { ruta: '/terminal', titulo: /Terminal de agentes/i, minimo: 370 },
   { ruta: '/ayuda', titulo: /Ayuda y documentación/i, minimo: 90 },
 ];
 
 describe('ningún texto de las páginas montadas baja del suelo tipográfico', () => {
-  for (const { ruta, titulo, minimo } of VISTAS) {
-    it(`${ruta} — todo el texto llega a ${String(SUELO)}px`, async () => {
+  for (const { ruta, titulo, minimo, configView } of VISTAS) {
+    it(`${ruta}${configView ? ` (${configView})` : ''} — todo el texto llega a ${String(SUELO)}px`, async () => {
       window.history.pushState({}, '', ruta);
       renderWithApi(<App />);
 
@@ -138,6 +140,14 @@ describe('ningún texto de las páginas montadas baja del suelo tipográfico', (
         const h1 = screen.queryByRole('heading', { level: 1 });
         expect(h1?.textContent).toMatch(titulo);
       }, { timeout: 10_000 });
+      if (configView) {
+        const agents = await screen.findByRole('list', { name: 'Agentes configurados' });
+        expect(within(agents).getAllByRole('listitem').length).toBeGreaterThan(0);
+        if (configView === 'administration') {
+          await userEvent.click(screen.getByRole('button', { name: 'Administración avanzada' }));
+          await screen.findByRole('tablist', { name: 'Áreas de configuración' });
+        }
+      }
       await waitFor(() => { expect(main.querySelectorAll('*').length).toBeGreaterThanOrEqual(minimo); }, { timeout: 10_000 });
 
       const fallos = textoPorDebajoDelSuelo(main);

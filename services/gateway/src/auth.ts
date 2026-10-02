@@ -106,6 +106,16 @@ export function requirePermission(principal: Principal, permission: PrincipalPer
   }
 }
 
+export function isAgentPrincipal(principal: Principal): boolean { // Its roots are capped by the store.
+  return !principal.roles.includes('operator')
+    && principal.roles.some((role) => role === 'agent' || role === 'adapter');
+}
+
+export function messageReader(principal: Principal): 'agent' | 'operator' | undefined { // Whose replies it may read.
+  if (isAgentPrincipal(principal)) return 'agent';
+  return principal.roles.includes('operator') ? 'operator' : undefined;
+}
+
 export function requireOperator(principal: Principal): void {
   if (!principal.roles.includes('operator')) throw new AuthorizationError('operator role is required');
 }

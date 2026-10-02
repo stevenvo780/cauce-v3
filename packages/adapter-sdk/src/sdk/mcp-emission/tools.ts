@@ -19,7 +19,9 @@ export const EMISSION_TOOLS: Tool[] = [
   tool("cauce_reply", "Deposit this turn's answer once. Corrections to rejected input are safe. End the CLI turn after success; delivery is committed by the engine afterwards.", {
     reply: { type: ["string", "null"] }, status: { enum: ["done", "failed"] }, retryable: { type: "boolean" },
   }, ["reply", "status", "retryable"]),
-  tool("cauce_send", "Stage a delegation to an online routing target. It is sent with this turn's successful final ACK.", { to: string, body: string }, ["to", "body"]),
+  tool("cauce_send", "Inside a Cauce delivery: stage a delegation to an online routing target; it is sent with this turn's successful final ACK."
+    + " With no delivery in flight and the last prompt of this TUI typed by a person (never a Cauce request): publish it now as a new message to ONE alias of your own tenant; at most 8 stay open at once,"
+    + " their chains have reduced fuel and cannot come back to you, and the reply is not pushed back: read it with cauce_result(message_id).", { to: string, body: string }, ["to", "body"]),
   tool("cauce_notify", "Stage a notification to a configured human destination handle.", {
     to: string, kind: { enum: NOTIFY_KINDS }, body: string,
   }, ["to", "kind", "body"]),
@@ -29,8 +31,13 @@ export const EMISSION_TOOLS: Tool[] = [
   tool("cauce_progress", "Publish progress (at most 1024 UTF-8 bytes) for this turn using the engine's authenticated claim.", { text: { ...string, maxLength: 1024 } }, ["text"]),
   tool("cauce_status", "Read the current turn and what is staged; staged is not a confirmed delivery."),
   tool("cauce_queue", "Read pending and active deliveries addressed to this alias."),
+  tool("cauce_result", "Read the status and reply of a message this alias sent outside a delivery (the message_id cauce_send returned). Works with or without a turn.", { message_id: string }, ["message_id"]),
   tool("cauce_retry", "Replay a dead delegation originally sent by this alias. The gateway checks ownership.", { delivery_id: string }, ["delivery_id"]),
 ];
+
+export class EmissionGatewayError extends Error {
+  constructor(message: string, readonly status: number, readonly body: unknown) { super(message); this.name = "EmissionGatewayError"; }
+}
 
 export type EmissionGateway = (method: "GET" | "POST", path: string, body?: unknown, options?: { readonly signal?: AbortSignal; readonly timeoutMs?: number }) => Promise<unknown>;
 interface EmissionState { readonly output: StructuredOutput; readonly replied: boolean }

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { blobArtifactUri, blobLocator, buildPublishReceipt, type PublishMessage } from '@cauce/protocol';
+import { AgentRootLimitError, type PublishOptions } from '@cauce/store';
 import type { buildGateway } from '../../app.js';
-import { DevOnlyAuthProvider } from '../../auth.js';
+import { DevOnlyAuthProvider, type PrincipalRole } from '../../auth.js';
 import { ConsolePublishTelemetry } from '../../console-publish-telemetry.js';
 import {
   buildTestGateway, fakePool, fakeRepository,
@@ -25,6 +26,7 @@ afterEach(async () => {
 
 interface PublishCall {
   readonly command: PublishMessage;
+  readonly options?: PublishOptions;
 }
 
 async function gateway(options: {
@@ -32,6 +34,7 @@ async function gateway(options: {
   readonly verify?: (command: PublishMessage, receipt: never) => Promise<boolean>;
   readonly telemetry?: ConsolePublishTelemetry;
   readonly routePermission?: boolean;
+  readonly roles?: readonly PrincipalRole[];
 } = {}): Promise<{
   app: Awaited<ReturnType<typeof buildGateway>>;
   calls: PublishCall[];
@@ -43,11 +46,11 @@ async function gateway(options: {
     pool: fakePool({ ssl: true }),
     authProvider: DevOnlyAuthProvider.forTests(options.routePermission === false
       ? { roles: ['operator'], permissions: ['read'] }
-      : {}),
+      : options.roles === undefined ? {} : { roles: options.roles, permissions: ['route', 'read'] }),
     consolePublishTelemetry: telemetry,
     repository: fakeRepository({
-      publish: (async (input: PublishMessage) => {
-        calls.push({ command: input });
+      publish: (async (input: PublishMessage, publishOptions?: PublishOptions) => {
+        calls.push({ command: input, ...(publishOptions === undefined ? {} : { options: publishOptions }) });
         if (options.publish !== undefined) return options.publish(input);
         return buildPublishReceipt(input, {
           message_id: MESSAGE_ID,
@@ -233,6 +236,50 @@ describe('POST /v3/messages validation', () => {
 
     expect(response.statusCode).toBe(202);
     expect(response.json<{ duplicate: boolean }>().duplicate).toBe(true);
+  });
+});
+
+describe('POST /v3/messages from an agent principal', () => {
+  const AGENT_HEADERS = { ...HEADERS, 'x-cauce-alias': 'hades' };
+
+  it('marks only an agent or adapter certificate without operator authority as an agent root', async () => {
+    const cases: [readonly PrincipalRole[] | undefined, Record<string, string>, boolean][] = [
+      [['adapter'], AGENT_HEADERS, true],
+      [['agent'], AGENT_HEADERS, true],
+      [undefined, HEADERS, false],
+      [['operator', 'adapter'], AGENT_HEADERS, false],
+    ];
+    for (const [roles, headers, expected] of cases) {
+      const { app, calls } = await gateway(roles === undefined ? {} : { roles });
+      const response = await app.inject({ method: 'POST', url: '/v3/messages', headers, payload: payload() });
+      expect(response.statusCode).toBe(202);
+      expect(calls[0]?.options?.agentRoot === true).toBe(expected);
+    }
+  });
+
+  it('marks an agent certificate publishing through the console route too', async () => {
+    const { app, calls } = await gateway({ roles: ['adapter'] });
+    const response = await app.inject({
+      method: 'POST', url: '/v3/console/messages', headers: AGENT_HEADERS, payload: payload(),
+    });
+    expect(response.statusCode).toBe(202);
+    expect(calls[0]?.options).toMatchObject({ requirePreparedConsoleIntent: true, agentRoot: true });
+  });
+
+  it('answers 409 agent_root_limit listing the open roots the actor is waiting on', async () => {
+    const openRoots = [{
+      message_id: MESSAGE_ID, created_at: '2000-01-01T00:00:00.000Z',
+      recipients: [{ tenant_id: 'Steven' as const, alias: 'jarvis', status: 'pending' }],
+    }];
+    const { app } = await gateway({
+      roles: ['adapter'],
+      publish: async () => { throw new AgentRootLimitError(openRoots); },
+    });
+    const response = await app.inject({
+      method: 'POST', url: '/v3/messages', headers: AGENT_HEADERS, payload: payload(),
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: 'agent_root_limit', limit: 8, open_roots: openRoots });
   });
 });
 

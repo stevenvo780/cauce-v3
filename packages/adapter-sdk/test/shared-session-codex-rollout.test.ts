@@ -6,6 +6,7 @@ import { readDegradations } from "../src/shared-session/degradation-log.js";
 import { CONTEXT_MARK } from "../src/shared-session/notice.js";
 import { PasteSessionRunner } from "../src/shared-session/paste-runner.js";
 import { codexTranscript, rolloutSessionId, type RolloutLine } from "../src/shared-session/rollout.js";
+import { CODEX_WAKE_PREFIX } from "../src/shared-session/codex-chain.js";
 import {
   FakeTmux,
   TmuxResult,
@@ -77,7 +78,8 @@ async function codexWorkspace(name: string): Promise<{
 }
 
 function codexRunner(
-  options: { alias: string; codexHome: string; tmux: FakeTmux; sleep?: (ms: number) => Promise<void> },
+  options: { alias: string; codexHome: string; tmux: FakeTmux; sleep?: (ms: number) => Promise<void>; backgroundWaitMs?: number;
+    quietTimeoutMs?: number },
 ): PasteSessionRunner<RolloutLine> {
   options.tmux.sessionName = `cauce-${options.alias}`;
   if (options.tmux.sessionOptions.size === 0) options.tmux.paneStartCommand = "exec codex";
@@ -88,6 +90,8 @@ function codexRunner(
     transcript: codexTranscript(options.codexHome),
     tmux: options.tmux,
     sleep: options.sleep ?? immediate,
+    ...(options.backgroundWaitMs === undefined ? {} : { backgroundWaitMs: options.backgroundWaitMs }),
+    ...(options.quietTimeoutMs === undefined ? {} : { quietTimeoutMs: options.quietTimeoutMs }),
     acquireTimeoutMs: 30,
     turnTimeoutMs: 2_000,
     injectTimeoutMs: 20,
@@ -388,4 +392,115 @@ test("codex no pega sobre un turno en vuelo del dueño: lo espera (socrates 2026
   const output = await execute(await adapterFor(runner, state, "socrates", "codex"));
   assert.equal(submittedWhileWorking, false, "pegó dentro del turno del dueño");
   assert.equal(output.reply, "después del dueño");
+});
+
+function codexDelegates(target: string): string {
+  return rolloutLine("response_item", { type: "function_call", name: "followup_task", call_id: `call_${target}`,
+    arguments: JSON.stringify({ target, message: "<cifrado>" }) });
+}
+function codexWaitAgent(n: number): string {
+  return rolloutLine("response_item", { type: "function_call", name: "wait_agent", call_id: `wait_${String(n)}`,
+    arguments: JSON.stringify({ timeout_ms: 10_000 }) });
+}
+function codexSilentClose(turnId: string): string {
+  return rolloutLine("event_msg", { type: "task_complete", turn_id: turnId, last_agent_message: null });
+}
+const tick = (): Promise<void> => new Promise((done) => { setTimeout(done, 5); });
+
+test("codex que delega y cierra mudo: se lo despierta al instante y la entrega recibe la respuesta del turno despertado", async () => {
+  const { state, codexHome, rollout } = await codexWorkspace("codex-delega");
+  const tmux = new FakeTmux();
+  tmux.paneContent = "› ";
+  const submitted: string[] = [];
+  tmux.onSubmit = async (text) => {
+    submitted.push(text);
+    if (submitted.length === 1) {
+      await appendFile(rollout, `${[codexStarted("t-bus"), codexUser(text, "t-bus"), codexDelegates("worker"),
+        codexSilentClose("t-bus")].join("\n")}\n`);
+      return;
+    }
+    await appendFile(rollout, `${[codexStarted("t-wake"), codexUser(text, "t-wake"),
+      codexComplete("t-wake", envelopeText("con lo del subagente"))].join("\n")}\n`);
+  };
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux, sleep: tick });
+  const output = await execute(await adapterFor(runner, state, "socrates", "codex"));
+  assert.equal(output.reply, "con lo del subagente");
+  assert.equal(submitted.length, 2, "no despertó a la raíz");
+  assert.ok(submitted[1]?.startsWith(CODEX_WAKE_PREFIX));
+});
+
+test("codex sin reloj: el turno despertado que espera a sus subagentes más que backgroundWaitMs no se corta", async () => {
+  const { state, codexHome, rollout } = await codexWorkspace("codex-delega-espera");
+  const tmux = new FakeTmux();
+  tmux.paneContent = "› ";
+  let calls = 0;
+  tmux.onSubmit = async (text) => {
+    calls += 1;
+    if (calls === 1) {
+      await appendFile(rollout, `${[codexStarted("t-bus"), codexUser(text, "t-bus"), codexDelegates("lento"),
+        codexSilentClose("t-bus")].join("\n")}\n`);
+      return;
+    }
+    await appendFile(rollout, `${[codexStarted("t-wake"), codexUser(text, "t-wake")].join("\n")}\n`);
+    for (let n = 1; n <= 4; n += 1) { // wait_agent loops for ~8× backgroundWaitMs, writing as it goes
+      setTimeout(() => { void appendFile(rollout, `${codexWaitAgent(n)}\n`); }, n * 100);
+    }
+    setTimeout(() => { void appendFile(rollout, `${codexComplete("t-wake", envelopeText("esperé al lento"))}\n`); }, 450);
+  };
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux, backgroundWaitMs: 50, sleep: tick });
+  const adapter = await adapterFor(runner, state, "socrates", "codex");
+  const output = await adapter.execute({ prompt: "hola", sessionKey: "auth-v2:prueba", timeoutMs: 10_000,
+    timeoutKind: "no-progress", signal: new AbortController().signal });
+  assert.equal(output.reply, "esperé al lento");
+});
+
+test("codex: si la caja no queda libre para despertarlo, la ventana sin progreso cierra con motivo claro y sin cuarentena", async () => {
+  const { state, codexHome, rollout } = await codexWorkspace("codex-delega-caja-ocupada");
+  const tmux = new FakeTmux();
+  tmux.paneContent = "› ";
+  tmux.onSubmit = async (text) => {
+    await appendFile(rollout, `${[codexStarted("t-bus"), codexUser(text, "t-bus"), codexDelegates("w"),
+      codexSilentClose("t-bus")].join("\n")}\n`);
+    tmux.paneContent = "› borrador del dueño sin enviar"; // the owner is typing: no wake may be pasted
+  };
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux, sleep: tick });
+  const adapter = await adapterFor(runner, state, "socrates", "codex");
+  await assert.rejects(adapter.execute({ prompt: "hola", sessionKey: "auth-v2:prueba", timeoutMs: 400,
+    timeoutKind: "no-progress", signal: new AbortController().signal }), /no se llegó a despertarlo/u);
+  assert.equal(tmux.submittedCount, 1, "pegó encima del borrador del dueño");
+  assert.equal(tmux.used("kill-pane"), false, "no se cuarentena ni se mata un panel ocioso");
+});
+
+test("codex: un depósito cauce_reply es la respuesta y no hace falta despertar a nadie", async () => {
+  const { state, codexHome, rollout } = await codexWorkspace("codex-delega-deposito");
+  const tmux = new FakeTmux();
+  tmux.paneContent = "› ";
+  tmux.onSubmit = async (text) => {
+    await appendFile(rollout, `${[codexStarted("t-bus"), codexUser(text, "t-bus"), codexDelegates("lento"),
+      codexSilentClose("t-bus")].join("\n")}\n`);
+  };
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux, quietTimeoutMs: 50, sleep: tick });
+  const adapter = await adapterFor(runner, state, "socrates", "codex");
+  const deposit = { reply: "depositado", messages: [], notify: [], status: "done" as const, retryable: false, artifacts: [] };
+  const output = await adapter.execute({ prompt: "hola", sessionKey: "auth-v2:prueba", timeoutMs: 5_000,
+    timeoutKind: "no-progress", signal: new AbortController().signal, emissionOutput: () => deposit });
+  assert.equal(output.reply, "depositado");
+  assert.equal(tmux.submittedCount, 1, "no hacía falta despertar a nadie");
+});
+
+test("codex: si el dueño pasó a otra conversación, no se pega el despertar ahí y la entrega falla con motivo claro", async () => {
+  const { state, codexHome, rollout } = await codexWorkspace("codex-delega-otra-conversacion");
+  const tmux = new FakeTmux();
+  tmux.paneContent = "› ";
+  tmux.onSubmit = async (text) => {
+    await appendFile(rollout, `${[codexStarted("t-bus"), codexUser(text, "t-bus"), codexDelegates("w"),
+      codexSilentClose("t-bus")].join("\n")}\n`);
+  };
+  const other = join(codexHome, "sessions", "2026", "07", "31", `rollout-2026-07-31T17-00-00-${randomUUID()}.jsonl`);
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux, sleep: async () => {
+    await appendFile(other, `${rolloutLine("session_meta", { session_id: "otra", source: "cli" })}\n`); // the owner ran /new
+    await new Promise((done) => { setTimeout(done, 5); });
+  } });
+  await assert.rejects(execute(await adapterFor(runner, state, "socrates", "codex")), /la terminal pasó a otra conversación/u);
+  assert.equal(tmux.submittedCount, 1, "pegó el despertar en la conversación nueva del dueño");
 });

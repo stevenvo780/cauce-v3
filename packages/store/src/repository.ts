@@ -2,8 +2,8 @@ export { parseAgentProgress, type AgentProgressInput } from './repository/agent-
 import { BlobsRepository } from './repository/blobs.js';
 export { type BlobRecord, type BlobRegistration } from './repository/blobs.js';
 export {
-  PublishIntentExpiredError, PublishIntentReconciliationRequired,
-  type PublishOptions, type PublishResult
+  AgentRootLimitError, PublishIntentExpiredError, PublishIntentReconciliationRequired,
+  type MessageReader, type OpenAgentRoot, type OpenAgentRootRecipient, type PublishOptions, type PublishResult
 } from './repository/messages.js';
 export { type ProfileRuntimeAdoptionAck } from './repository/agents.js';
 export { failureSignature, type AgentChainProgressStage } from './repository/agents/fanin.js';
@@ -19,7 +19,7 @@ export {
   type QuotaSampleIngestResult, type QuotaSamplePausedAccount, type QuotaSampleResumedAccount,
   type QuotaSampleUnboundGroup, type QuotaSeverity, type QuotaThresholds
 } from './repository/quotas.js';
-export { StoreError, type StoreErrorCode } from './repository/errors.js';
+export { StoreError, type StoreErrorCode, type StoreRecoveryReason } from './repository/errors.js';
 export {
   DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, DEFAULT_DELIVERY_LEASE_CAP_MS,
   DEFAULT_NO_CONSUMER_PARK_MAX_AGE_MS, DEFAULT_RETENTION_ACK_MS,

@@ -10,6 +10,7 @@ import {
   type AgentOutputLineage
 } from '../policy.js';
 import { continuationBranchMaterialization } from '../outputs.js';
+import { agentRootActorNode } from '../../../messages/agent-roots.js';
 
 export interface MaterializationLineage {
   internalAgentDelivery: boolean;
@@ -19,6 +20,7 @@ export interface MaterializationLineage {
   rootMessageId: string | undefined;
   rootDeliveryId: string;
   visitedPath: string[];
+  agentRoot: boolean;
 }
 
 export async function sourceRoomForAgentOutput(
@@ -92,12 +94,16 @@ export async function deriveMaterializationLineage(
   const storedParent = await storedParentLineage(client, row, policy);
   const parent = storedParent
     ?? await continuationBranchMaterialization(client, row, policy.visitedPathAvailable);
-  return materializationLineageFrom(row, parent);
+  const lineage = materializationLineageFrom(row, parent);
+  const rootActor = lineage.rootMessageId === undefined
+    ? undefined : await agentRootActorNode(client, lineage.rootMessageId);
+  return rootActor === undefined ? lineage : materializationLineageFrom(row, parent, rootActor);
 }
 
 export function materializationLineageFrom(
   row: DeliveryRow,
-  parent: AgentOutputLineage | undefined
+  parent: AgentOutputLineage | undefined,
+  rootActorNode?: string
 ): MaterializationLineage {
   const internalAgentDelivery = typeof row.body.type === 'string'
     && reservedInternalMessageTypes.has(row.body.type);
@@ -107,6 +113,9 @@ export function materializationLineageFrom(
   const hopCount = safeHopCount(parent?.hop_count ?? bodyCorrelation?.hop_count, hopBudget) + 1;
   const parentCorrelation = objectRecord(parent?.correlation) ?? bodyCorrelation;
   const inheritedVisitedPath = sanitizedVisitedPath(parent?.visited_path);
+  const ancestors = inheritedVisitedPath.length > 0
+    ? inheritedVisitedPath
+    : sanitizedVisitedPath(bodyCorrelation?.visited_path);
   return {
     internalAgentDelivery,
     hopBudget,
@@ -123,11 +132,12 @@ export function materializationLineageFrom(
       ? parentCorrelation.root_delivery_id
       : row.id,
     visitedPath: sanitizedVisitedPath([
-      ...(inheritedVisitedPath.length > 0
-        ? inheritedVisitedPath
-        : sanitizedVisitedPath(bodyCorrelation?.visited_path)
+      ...(rootActorNode === undefined || ancestors.includes(rootActorNode)
+        ? ancestors
+        : [rootActorNode, ...ancestors]
       ).slice(0, maxVisitedPathEntries - 1),
       chainNode(row.recipient_tenant, row.recipient_alias)
-    ])
+    ]),
+    agentRoot: rootActorNode !== undefined
   };
 }

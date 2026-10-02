@@ -27,11 +27,13 @@ interface NavEntry {
  * Main navigation entries with a visible label. Hidden routes live in `App.tsx`.
  * Each `id` must exist in `PAGES` and cannot be a key of `ROUTE_ALIASES`.
  */
+export const PRIMARY_NAV_IDS: readonly string[] = ['messages', 'live'];
+
 export const NAV_ENTRIES: NavEntry[] = [
-  { id: '', label: 'Portada', icon: LayoutDashboard, que: 'El resumen de conjunto: flota, colas, cuotas y lo que exige atención.' },
-  { id: 'live', label: 'La flota ahora', icon: Sparkles, que: 'Quién está trabajando, quién está trabado y quién le delegó a quién, en vivo.' },
+  { id: 'messages', label: 'Conversaciones', icon: MessageSquareText, que: 'La conversación con cada agente y el estado de cada entrega.' },
+  { id: 'live', label: 'Agentes', icon: Sparkles, que: 'Quién está trabajando, quién está trabado y quién le delegó a quién, en vivo.' },
+  { id: 'overview', label: 'Resumen', icon: LayoutDashboard, que: 'El resumen de conjunto: flota, colas, cuotas y lo que exige atención.' },
   { id: 'accounts', label: 'Cuentas y cuotas', icon: CreditCard, que: 'El registro de cuentas, qué agente usa cada una y cuánto saldo le queda.' },
-  { id: 'messages', label: 'Mensajes', icon: MessageSquareText, que: 'La conversación con cada agente y el estado de cada entrega.' },
   { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, que: 'Cada entrega pendiente, en reintento o muerta, con reinyectar y cancelar.' },
   { id: 'observability', label: 'Señales y auditoría', icon: Gauge, que: 'Las señales del gateway, el egress al origen y quién autorizó cada cosa.' },
   { id: 'config', label: 'Ajustes y altas', icon: Settings2, que: 'Tenants, salas, membresías, roles y altas — con reversión por revisión.' },

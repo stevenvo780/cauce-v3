@@ -42,6 +42,8 @@ export abstract class PasteSessionLivenessRunner<E> extends PasteSessionRunnerBa
     identity: PaneIdentity,
     signal?: AbortSignal,
   ): Promise<void> {
+    if (this.options.harness === "grok" && this.options.quarantineFile === undefined
+      && this.heldQuarantines.size === 0) return;
     if (!await this.paneIsIdle(identity, signal)) return;
     if (signal?.aborted === true) return;
     if (!await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(signal))) {
@@ -53,6 +55,7 @@ export abstract class PasteSessionLivenessRunner<E> extends PasteSessionRunnerBa
       if (!samePaneIdentity(held.identity, identity)) continue;
       mine.add(correlationId);
       if (held.file === undefined) {
+        if (this.undispatched.has(correlationId)) return;
         this.heldQuarantines.delete(correlationId);
         continue;
       }
@@ -63,6 +66,7 @@ export abstract class PasteSessionLivenessRunner<E> extends PasteSessionRunnerBa
       if (!marker.completed || marker.value === undefined) return;
       if (marker.value.state === "unreadable") return;
       if (marker.value.state === "present" && marker.value.value !== generation) continue;
+      if (marker.value.state === "present" && this.undispatched.has(correlationId)) return; // An idle pane proves nothing: it is still queued.
       const cleared = await beforeDeadline(
         this.quarantinePersistence().clear(held.file),
         this.quarantineDeadline(),

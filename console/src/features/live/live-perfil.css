@@ -195,3 +195,25 @@
 .perfil-cuarentena p { margin: 0; }
 .perfil-cuarentena-titulo { display: flex; align-items: center; gap: var(--space-2); color: var(--on-red); font-weight: 600; }
 .perfil-cuarentena-lista { margin: 0; padding-left: var(--space-4); overflow-wrap: anywhere; }
+
+.agent-context-panel { container-type: inline-size; container-name: cajon; min-width: 0; }
+.context-panel-scope { margin: 0 0 var(--space-3); color: var(--muted); font-size: var(--tipo-apunte); }
+.context-draft-notice { padding: var(--space-3); border: 1px solid var(--warning); border-radius: var(--radius-md); background: var(--surface-2); }
+.context-status { grid-column: 1 / -1; min-width: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1, var(--surface-2)); }
+.context-status p { margin: 0 0 var(--space-2); line-height: 1.5; font-size: var(--tipo-apunte); }
+.context-status .context-harness-name { font-size: var(--tipo-cuerpo); font-weight: 650; text-transform: capitalize; }
+.context-status-stages { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; gap: var(--space-3); }
+.context-status-stages div { min-width: 0; border-top: 1px solid var(--border); padding-top: var(--space-2); }
+.context-status-stages dt { font-size: var(--tipo-apunte); color: var(--muted); }
+.context-status-stages dd { margin: var(--space-1) 0 0; font-weight: 600; overflow-wrap: anywhere; }
+.perfil-conflict { border: 1px solid var(--warning); border-radius: var(--radius-md); padding: var(--space-3); }
+.perfil-conflict pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-context-panel .contexto-tab { display: flex; flex-direction: column; height: auto; }
+.agent-context-panel .contexto-tab > .contexto-seccion { overflow: visible; background: var(--surface-2); }
+.agent-context-panel .contexto-campos { order: 1; }
+.agent-context-panel .contexto-manual { order: 2; }
+.agent-context-panel .contexto-efectivo { order: 3; }
+@container cajon (max-width: 560px) {
+  .context-status-stages { grid-template-columns: minmax(0, 1fr); }
+  .perfil-cabecera { flex-direction: column; }
+}

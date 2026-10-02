@@ -323,7 +323,10 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   const emission = new EmissionRuntime(
     runtime.stateDirectory, runtime.instanceId, emissionGateway(runtime),
     decisionesForwarder(runtime.decisionesUrl, runtime.mutualTls),
+    { tenant: runtime.tenant, room: runtime.room, alias: runtime.alias },
   );
+  if (runner instanceof PasteSessionRunner && shared?.harness === "grok") emission.trackPromptOrigin(() => runner.lastUserPromptOrigin()); // Only grok's shapes are measured.
+  else if (shared !== undefined) emission.refuseOutsideDelivery(`fuera de una entrega todavía no se envía desde una TUI de ${shared.harness}`);
   try {
     configureDefaultBlobClient(BlobClient.fromRelayUrl(runtime.relayUrl, {
       ...(runtime.bearerTokenFile === undefined ? {} : { bearerTokenFile: runtime.bearerTokenFile }),

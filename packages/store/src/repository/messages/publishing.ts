@@ -30,6 +30,9 @@ import {
   type PublishResult,
 } from './contracts.js';
 import { reconstructPublishReceipt } from './receipts.js';
+import {
+  assertAgentRootSlot, lockAgentRootActor, senderView, type MessageReader,
+} from './agent-roots.js';
 import type { MessageDetailRow } from '../visibility-rows.js';
 
 // The BUS writes this, not the agent: first person made it a lie through an 8 h outage.
@@ -166,6 +169,8 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
         }
       }
 
+      const agentRoot = options.agentRoot === true;
+      if (agentRoot) await lockAgentRootActor(client, input.tenant_id, input.actor_alias);
       const hash = publishRequestHash(input);
       const insertedKey = await client.query(
         `INSERT INTO idempotency_keys(
@@ -197,7 +202,10 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
           throw new StoreError('conflict', 'idempotency key reused with a different request');
         }
         if (existing.request_hash !== hash) {
-          throw new StoreError('conflict', 'idempotency key reused with a different request');
+          throw new StoreError(
+            'conflict', 'idempotency key reused with a different request',
+            existing.message_id && existing.response !== null ? 'idempotency_durable_conflict' : undefined,
+          );
         }
         if (!existing.message_id || existing.response === null) {
           throw new StoreError('conflict', 'idempotency request is still in progress');
@@ -218,6 +226,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
         );
         return { ...repaired, duplicate: true };
       }
+      if (agentRoot) await assertAgentRootSlot(client, input.tenant_id, input.actor_alias);
 
       const authenticated = input.authenticated_context;
       const persistedOrigin = authenticated?.origin ?? input.origin;
@@ -363,14 +372,17 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
            JSON.stringify({
              recipients: uniqueRecipients,
              authenticated_session_id: authenticated?.session_id ?? input.session_id,
-             authenticated_channel: authenticated?.channel ?? input.channel
+             authenticated_channel: authenticated?.channel ?? input.channel,
+             ...(agentRoot ? { agent_root: true } : {})
            })]
       );
       return response;
     });
   }
 
-  async getMessage(messageId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
+  async getMessage(
+    messageId: string, actorTenant: Tenant, actorAlias: string, reader?: MessageReader,
+  ): Promise<Record<string, unknown>> {
     const result = await this.pool.query<MessageDetailRow & { attachments: unknown }>(
       `SELECT m.id,m.version,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
               m.body-'attachments_v1'::text AS body,
@@ -410,7 +422,13 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
     );
     const row = result.rows[0];
     if (!row) throw new StoreError('not_found', 'message not found or not visible');
-    return row;
+    const view = reader === undefined || row.tenant_id !== actorTenant || row.actor_alias !== actorAlias
+      ? undefined : await senderView(this.pool, messageId, reader);
+    if (view === undefined) return row;
+    return {
+      ...row, chain_open: view.chainOpen,
+      deliveries: row.deliveries.map((delivery) => ({ ...delivery, reply: view.replies.get(delivery.delivery_id) ?? null })),
+    };
   }
 
 }

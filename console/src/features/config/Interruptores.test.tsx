@@ -1,7 +1,7 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { ConfigPage } from './ConfigPage';
+import { ConfigAdministration as ConfigPage } from './ConfigPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 
@@ -58,6 +58,17 @@ function registrarCambios(sink: ChangeRequest[], respuesta?: () => Response) {
 const RUTA = 'Ruta en la arista Steven → Miguel';
 const LECTURA = 'Lectura en la arista Steven → Miguel';
 const CONTROL = 'Control en la arista Steven → Miguel';
+
+function appliedReadReceipt(body: ChangeRequest, revision: number) {
+  return HttpResponse.json({
+    applied: true, dry_run: false, revision, mutation: body.mutation,
+    inverse_mutation: {
+      resource: 'acl_edge', action: 'update', from_tenant: 'Steven', to_tenant: 'Miguel',
+      value: { enabled: true, allow_route: true, allow_read: false, allow_control: false },
+    },
+    rolled_back_revision_id: null, summary: 'permiso actualizado',
+  }, { status: 201 });
+}
 
 // --- What Steven asked for: switches, not buttons --------------------------------------------
 
@@ -242,6 +253,80 @@ it('si el servidor guarda pero la RELECTURA falla, no se afirma que la tabla est
 
   await user.click(await screen.findByRole('switch', { name: LECTURA }));
   expect(await screen.findByText(/la relectura del snapshot NO llegó/i)).toBeInTheDocument();
+});
+
+it.each([2, 4])('un snapshot posterior reemplaza el valor optimista tras un recibo válido de revisión %i y una relectura fallida', async (appliedRevision) => {
+  let current = snapshot(1);
+  let failRead = false;
+  const changes: ChangeRequest[] = [];
+  server.use(
+    http.get('*/v3/console/config', () => failRead
+      ? HttpResponse.json({ error: 'internal', message: 'snapshot unavailable' }, { status: 500 })
+      : HttpResponse.json(current)),
+    http.post('*/v3/console/config/changes', async ({ request }) => {
+      const body = await request.json() as ChangeRequest;
+      changes.push(body);
+      failRead = true;
+      return appliedReadReceipt(body, appliedRevision);
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, PERMISOS);
+  await user.click(screen.getByRole('switch', { name: LECTURA }));
+  const receiptNotice = new RegExp(`el servidor lo aplicó en la revisión ${String(appliedRevision)}`);
+  await screen.findByText(receiptNotice);
+  expect(screen.getByRole('switch', { name: LECTURA })).toBeChecked();
+  expect(screen.getByRole('switch', { name: LECTURA })).not.toHaveAttribute('aria-busy');
+  expect(changes[0]?.expected_revision).toBe(1);
+
+  if (appliedRevision > 2) {
+    current = snapshot(appliedRevision - 1, { allow_route: false, allow_read: false });
+    failRead = false;
+    await user.click(screen.getByRole('button', { name: 'Actualizar' }));
+    await waitFor(() => { expect(screen.getByRole('switch', { name: RUTA })).not.toBeChecked(); });
+    expect(screen.getByRole('switch', { name: LECTURA })).toBeChecked();
+  }
+  current = snapshot(appliedRevision + 1, { allow_read: false });
+  failRead = false;
+  await user.click(screen.getByRole('button', { name: 'Actualizar' }));
+  await waitFor(() => { expect(screen.getByRole('switch', { name: LECTURA })).not.toBeChecked(); });
+  expect(screen.queryByText(receiptNotice)).not.toBeInTheDocument();
+  expect(changes).toHaveLength(1);
+});
+
+it('conserva el valor pedido en vuelo y respeta un snapshot más nuevo al terminar con una relectura fallida', async () => {
+  let current = snapshot(1);
+  let failRead = false;
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  server.use(
+    http.get('*/v3/console/config', () => failRead
+      ? HttpResponse.json({ error: 'internal', message: 'snapshot unavailable' }, { status: 500 })
+      : HttpResponse.json(current)),
+    http.post('*/v3/console/config/changes', async ({ request }) => {
+      const body = await request.json() as ChangeRequest;
+      await pending;
+      failRead = true;
+      return appliedReadReceipt(body, 2);
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, PERMISOS);
+  await user.click(screen.getByRole('switch', { name: LECTURA }));
+  expect(screen.getByRole('switch', { name: LECTURA })).toHaveAttribute('aria-busy', 'true');
+
+  current = snapshot(3, { allow_route: false, allow_read: false });
+  await user.click(screen.getByRole('button', { name: 'Actualizar' }));
+  await waitFor(() => { expect(screen.getByRole('switch', { name: RUTA })).not.toBeChecked(); });
+  expect(screen.getByRole('switch', { name: LECTURA })).toBeChecked();
+  expect(screen.getByRole('switch', { name: LECTURA })).toHaveAttribute('aria-busy', 'true');
+  expect(screen.getByRole('switch', { name: LECTURA })).toBeDisabled();
+
+  await act(async () => { release(); await pending; });
+  await waitFor(() => { expect(screen.getByRole('switch', { name: LECTURA })).not.toHaveAttribute('aria-busy'); });
+  expect(screen.getByRole('switch', { name: LECTURA })).not.toBeChecked();
 });
 
 // --- The only confirmation left -------------------------------------------------------------

@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { DeliveryIdSchema, HeartbeatSchema, HelloSchema, QueryDeliveriesSchema } from '@cauce/protocol';
 import { StoreError } from '@cauce/store';
-import { requirePermission, validatePrincipal } from '../../auth.js';
+import { messageReader, requirePermission, validatePrincipal } from '../../auth.js';
 import { visibleMessage } from '../../facades.js';
 import type { GatewayRepository } from '../../app.js';
 import { principal, replyError } from '../shared.js';
@@ -25,7 +25,7 @@ export function registerCoreRuntimeHttpRoutes(
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'read');
-      const row = visibleMessage(await repository.getMessage(request.params.messageId, actor.tenant_id, actor.alias), actor);
+      const row = visibleMessage(await repository.getMessage(request.params.messageId, actor.tenant_id, actor.alias, messageReader(actor)), actor);
       if (!row) throw new StoreError('not_found', 'message not found or not visible');
       return row;
     } catch (error) {

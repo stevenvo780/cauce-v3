@@ -12,3 +12,4 @@ export * from "./resume.js";
 export * from "./degradation-log.js";
 export * from "./paste-runner.js";
 export * from "./config.js";
+export * from "./prompt-origin.js";

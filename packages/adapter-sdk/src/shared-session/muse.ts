@@ -303,6 +303,15 @@ function isOurPrompt(recorded: string, promptText: string, correlationId?: strin
   return member !== undefined && recorded.includes(member);
 }
 
+function lastMusePrompt(entries: readonly MuseLogLine[]): string | undefined {
+  const records = recordsOf(entries);
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    if (record?.payloadType === "runtime.user_intent.accepted") return intentText(record);
+  }
+  return undefined;
+}
+
 function findInjectedMuseTurn(
   file: string,
   entries: readonly MuseLogLine[],
@@ -455,6 +464,7 @@ export function museTranscript(museData: string): TranscriptReader<MuseLogLine> 
     findAnswer: findMuseOutcome,
     lingering: findMuseLingering,
     findEnvelope: findMuseEnvelope,
+    lastUserPrompt: lastMusePrompt,
     compactions: museCompactions,
     startedTurn: museStartedTurn,
     stdout: museStdout,

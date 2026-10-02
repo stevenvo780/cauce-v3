@@ -49,7 +49,7 @@ function active(runtime: EmissionRuntime, signal = new AbortController().signal)
 test("MCP schema errors preserve the live turn and deposits are durable and a reply cannot be replaced", async () => {
   const f = await fixture();
   try {
-    assert.equal((await f.client.listTools()).tools.length, 8);
+    assert.equal((await f.client.listTools()).tools.length, 9);
     const abort = new AbortController();
     const turn = active(f.runtime, abort.signal);
     const invalid: [string, Record<string, unknown>][] = [

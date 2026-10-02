@@ -70,7 +70,7 @@ async function resolveDockerReachability(): Promise<DockerReachability> {
     return { network, targetHost: details.IPAddress };
   } catch (error) {
     if (requestedNetwork !== undefined) throw error;
-    return { network: 'host', targetHost: 'localhost' };
+    return { network: 'host', targetHost: '127.0.0.1' };
   }
 }
 

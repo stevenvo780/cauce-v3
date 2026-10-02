@@ -48,6 +48,7 @@ import {
 export interface AcquireWait {
   freeSince: number; // The owner's box deadlines count from when the TUI stopped generating.
   readonly generatingDeadline: number;
+  focusSpent?: true; // The one focus key of this delivery went out: from then on an unfocused box is occupied.
 }
 
 export abstract class PasteSessionRunnerBase<E> {
@@ -63,6 +64,7 @@ export abstract class PasteSessionRunnerBase<E> {
   /** In-memory fallback if tmux could not persist the quarantine mark. */
   protected locallyQuarantined: PaneIdentity | undefined;
   protected readonly heldQuarantines = new Map<string, PendingQuarantine>();
+  protected readonly undispatched = new Set<string>(); // Held in the TUI's own queue: only a late envelope or a new generation lifts them.
 
   protected constructor(protected readonly options: PasteSessionOptions<E>) {}
 
@@ -512,7 +514,8 @@ export abstract class PasteSessionRunnerBase<E> {
       const generating = (queuesPaste && turnInFlight(pane)) || state.thinking === true;
       // The pane we decided to paste into is the one to inspect for merged turn: recapturing later
       // would be a different moment.
-      if (!state.occupied && !generating) return { ok: true, pane };
+      const focusable = state.unfocused === true && wait.focusSpent !== true && tuiProfile(this.options.harness).focusKey !== undefined;
+      if ((!state.occupied || focusable) && !generating) return { ok: true, pane }; // Focused and re-read under the barrier.
       const now = Date.now();
       if (generating) {
         wait.freeSince = now; // Another turn, not the owner's text: own deadline and own reason.
@@ -704,7 +707,8 @@ export abstract class PasteSessionRunnerBase<E> {
       | "input_busy"
       | "modal_blocking"
       | "tui_generating"
-      | "handshake_failed",
+      | "handshake_failed"
+      | "prompt_not_dispatched",
     detail: string,
     request: CommandRunRequest,
   ): Promise<CommandRunResult> {

@@ -1,35 +1,28 @@
 import { describe, expect, it } from 'vitest';
+import { StoreError } from '@cauce/store';
 import { TelegramPoller } from '../src/poller.js';
 import type { PollLease, TelegramIngress, TelegramIngressMessage } from '../src/types.js';
 import {
   config, DeduplicatingIngress, FakeTelegram, MemoryCursorRepository, update, noopActivity, noopObserver
 } from './bridge-fixtures.js';
 
-/**
- * Shaped exactly like the store's idempotency-key conflict: same `request_id`
- * (`telegram:{bot_id}:{update_id}`, content-free), different computed body — the case a
- * non-deterministic voice transcription produces on a retried update.
- */
-class StoreConflictError extends Error {
-  readonly code = 'conflict';
-  constructor() {
-    super('idempotency key already used by a different request');
-    this.name = 'StoreError';
-  }
-}
-
 class AlwaysConflictingIngress implements TelegramIngress {
   readonly calls: TelegramIngressMessage[] = [];
+  constructor(private readonly error: Error) {}
+
   async publish(message: TelegramIngressMessage): Promise<{ duplicate: boolean }> {
     this.calls.push(message);
-    throw new StoreConflictError();
+    throw this.error;
   }
 }
 
 describe('poller idempotency-conflict resolution', () => {
-  it('advances the cursor past a conflicting update instead of retrying it forever', async () => {
+  it.each([
+    'idempotency key already used by a different request',
+    'the durable publication already represents this update',
+  ])('advances past a durable conflict independently of its prose: %s', async (message) => {
     const repository = new MemoryCursorRepository();
-    const ingress = new AlwaysConflictingIngress();
+    const ingress = new AlwaysConflictingIngress(new StoreError('conflict', message, 'idempotency_durable_conflict'));
     const api = new FakeTelegram([update(70)]);
     const metrics: string[] = [];
 
@@ -46,6 +39,7 @@ describe('poller idempotency-conflict resolution', () => {
     const firstCycle = await poller.runOnce();
     expect(firstCycle).toBe(1);
     expect(metrics).toContain('updates_conflict');
+    expect(metrics).toContain('updates_duplicate');
     // The idempotency key is telegram:{bot_id}:{update_id} alone: a conflict on it proves the
     // update_id is already durably represented, so the fence resolves by update_id and the
     // cursor moves past it rather than getting stuck waiting for a body match that a
@@ -55,6 +49,27 @@ describe('poller idempotency-conflict resolution', () => {
     const secondCycle = await poller.runOnce();
     expect(secondCycle).toBe(0);
     expect(ingress.calls).toHaveLength(1);
+  });
+
+  it.each([
+    new StoreError('conflict', 'idempotency key reused with a different request'),
+    new StoreError('conflict', 'idempotency request is still in progress'),
+    new StoreError('conflict', 'different request', 'consumer_capacity_invalid'),
+    new StoreError('forbidden', 'different request', 'idempotency_durable_conflict'),
+    Object.assign(new Error('different request'), { name: 'StoreError', code: 'conflict' }),
+  ])('never advances the cursor on a generic or unrelated conflict: %s', async (error) => {
+    const repository = new MemoryCursorRepository();
+    const metrics: string[] = [];
+    const poller = new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(), config: config(), botId: '900001',
+      api: new FakeTelegram([update(70)]), repository, ingress: new AlwaysConflictingIngress(error),
+      onMetric: (metric) => metrics.push(metric),
+    });
+
+    await expect(poller.runOnce()).rejects.toBe(error);
+    expect(repository.next).toBe(0);
+    expect(metrics).not.toContain('updates_duplicate');
+    expect(metrics).not.toContain('updates_conflict');
   });
 
   it('still surfaces a non-conflict publish failure instead of masking it', async () => {

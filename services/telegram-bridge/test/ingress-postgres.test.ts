@@ -82,7 +82,7 @@ class FailFirstAdvanceRepository implements TelegramCursorRepository {
 }
 
 describe('Telegram PostgreSQL ingress boundary', () => {
-  it('replays the same update after publish-before-cursor failure with one durable effect', async () => {
+  const replayAfterCursorFailure = async (changeBody: boolean) => {
     const botId = `pg-${randomUUID()}`;
     const text = `telegram-pg-${randomUUID()}`;
     const config: TelegramAliasConfig = {
@@ -102,19 +102,20 @@ describe('Telegram PostgreSQL ingress boundary', () => {
     const cursor = new FailFirstAdvanceRepository(durableCursor);
     await cursor.initializeCursor(botId, 'Steven', 'kant');
     const metrics: string[] = [];
+    const update = {
+      update_id: 1,
+      message: {
+        message_id: 701,
+        from: { id: 101 },
+        chat: { id: 201, type: 'private' },
+        text
+      }
+    } satisfies TelegramUpdate;
     const worker = new TelegramPoller({
       activity: noopActivity(), observer: noopObserver(),
       config,
       botId,
-      api: new OneUpdateTelegram({
-        update_id: 1,
-        message: {
-          message_id: 701,
-          from: { id: 101 },
-          chat: { id: 201, type: 'private' },
-          text
-        }
-      }),
+      api: new OneUpdateTelegram(update),
       repository: cursor,
       ingress: new StoreTelegramIngress(new CauceRepository(pool)),
       ownerId: `telegram-pg-${randomUUID()}`,
@@ -126,6 +127,7 @@ describe('Telegram PostgreSQL ingress boundary', () => {
       `SELECT next_update_id::text AS cursor FROM channel_bridge_cursors WHERE bot_id=$1`, [botId]
     )).rows[0]?.cursor).toBe('0');
 
+    if (changeBody) update.message.text = `${text}-changed`;
     await worker.runOnce();
 
     const effect = (await pool.query<{
@@ -147,5 +149,12 @@ describe('Telegram PostgreSQL ingress boundary', () => {
     expect(effect).toEqual({ messages: '1', deliveries: '1', cursor: '2' });
     expect(metrics).toContain('updates_allowed');
     expect(metrics).toContain('updates_duplicate');
-  });
+    if (changeBody) expect(metrics).toContain('updates_conflict');
+    else expect(metrics).not.toContain('updates_conflict');
+  };
+
+  it.each([false, true])(
+    'replays the same update after publish-before-cursor failure with one durable effect (changed body: %s)',
+    replayAfterCursorFailure
+  );
 });

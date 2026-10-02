@@ -91,6 +91,7 @@ const REPARTO_OPENCLAW: Record<CampoDelPerfil, string> = {
 function ficheroDelCampo(harness: string, campo: CampoDelPerfil): string | undefined {
   if (harness === 'claude') return 'CLAUDE.md';
   if (harness === 'codex') return 'AGENTS.md';
+  if (harness === 'muse') return 'AGENTS.md';
   if (harness === 'openclaw') return REPARTO_OPENCLAW[campo];
   return undefined;
 }
@@ -132,8 +133,8 @@ function ausenciaDeDestino(
   if (nombre === undefined) {
     return {
       ausente: 'no-aplica',
-      motivo: `Cauce no sabe qué fichero de contexto lee el arnés «${arnes}». Los que sabe `
-        + 'escribir son claude, codex y openclaw.',
+      motivo: `El arnés «${arnes}» no publica una proyección canónica editable en este gateway. `
+        + 'Esto no significa que no pueda ejecutar tareas o conversar.',
     };
   }
   return {

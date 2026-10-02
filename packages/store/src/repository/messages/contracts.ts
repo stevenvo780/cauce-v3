@@ -34,6 +34,7 @@ export interface PublishOptions {
   /** Console-only gate. Machine endpoints deliberately leave it disabled. */
   readonly requirePreparedConsoleIntent?: boolean;
   readonly consoleIntentOperatorScope?: string;
+  readonly agentRoot?: boolean; // Server-derived from the principal's roles, never from the request body.
 }
 
 export function terminal(status: string): boolean {

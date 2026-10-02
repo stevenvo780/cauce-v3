@@ -4,7 +4,7 @@ import {
   type Tenant,
 } from '@cauce/protocol';
 import { AgentContextRevisionsStore, AgentProfileRepository, StoreError } from '@cauce/store';
-import { requireOperatorPermission, requirePermission } from '../auth.js';
+import { messageReader, requireOperatorPermission, requirePermission } from '../auth.js';
 import { registerAgentContextHistoryRoutes } from '../console/agent-context-history.routes.js';
 import {
   DELIVERY_IN_FLIGHT_LISTED, medirContextoDeGobierno, registerAgentContextReloadRoutes,
@@ -110,7 +110,7 @@ function registerConsoleAgentRoutes(
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'read');
-      const row = visibleMessage(await repository.getMessage(request.params.messageId, actor.tenant_id, actor.alias), actor);
+      const row = visibleMessage(await repository.getMessage(request.params.messageId, actor.tenant_id, actor.alias, messageReader(actor)), actor);
       // `not_found`, never `forbidden`: it does not confirm that an invisible message exists.
       if (!row) throw new StoreError('not_found', 'message not found or not visible');
       return row;

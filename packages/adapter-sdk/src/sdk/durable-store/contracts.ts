@@ -187,6 +187,13 @@ export interface DeliveryTransitionDetails {
   readonly executionIntentProtocol?: "preinvoke-v1";
 }
 
+export interface GuardedDeliveryTransitionDetails extends DeliveryTransitionDetails {
+  readonly attempt: number;
+  readonly claimToken: string;
+  readonly expectedEpoch: number;
+  readonly isCurrent: () => boolean;
+}
+
 export interface LifecycleAcceptance {
   readonly acceptance: DeliveryAcceptance;
   readonly record: InboxRecord;

@@ -1,7 +1,9 @@
 import { createReadStream } from "node:fs";
+import { open as openFile } from "node:fs/promises";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { envelopeHasCorrelation } from "./envelope.js";
+import { CODEX_GOAL, CODEX_PREAMBLE, CODEX_WAKE_TEXT, codexChain } from "./codex-chain.js";
 import type {
   CompactionNotice,
   InjectedTurn,
@@ -157,6 +159,17 @@ function findInjectedRolloutTurn(
   return undefined;
 }
 
+function lastCodexPrompt(entries: readonly RolloutLine[]): string | undefined { // Last typed user line; a goal continuation is nobody's.
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const payload = messagePayload(entries[index], "user");
+    const text = payload === undefined ? undefined : messageText(payload);
+    if (text === undefined) continue;
+    if (CODEX_GOAL.test(text)) return undefined; // Goal mode also opens with the preamble tag: check it first.
+    if (!CODEX_PREAMBLE.test(text)) return text;
+  }
+  return undefined;
+}
+
 /**
  * Identifies the turn's outcome in the rollout from its turn_id.
  */
@@ -164,6 +177,8 @@ function findRolloutOutcome(
   entries: readonly RolloutLine[],
   key: string,
 ): TurnOutcome | undefined {
+  const chain = codexChain(entries, key);
+  if (chain !== undefined) return chain.state === "settled" ? chain.outcome : undefined;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const payload = eventPayload(entries[index]);
     if (payload?.turn_id !== key) continue;
@@ -231,6 +246,21 @@ function rolloutCompactions(appended: readonly RolloutLine[]): readonly Compacti
   return events;
 }
 
+async function rolloutSource(file: string): Promise<unknown> { // session_meta.source: "cli" = TUI conversation, sub-agents an object
+  let handle: Awaited<ReturnType<typeof openFile>> | undefined;
+  try {
+    handle = await openFile(file, "r");
+    const buffer = Buffer.alloc(64 * 1024);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const first = buffer.subarray(0, bytesRead).toString("utf8").split("\n")[0] ?? "";
+    return asObject(asObject(JSON.parse(first))?.payload)?.source;
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close();
+  }
+}
+
 /**
  * Creates a `TranscriptReader` for processing Codex rollouts.
  */
@@ -241,7 +271,19 @@ export function codexTranscript(codexHome: string): TranscriptReader<RolloutLine
     read: (file, offset) => readJsonlSince<RolloutLine>(file, offset),
     findInjected: findInjectedRolloutTurn,
     findAnswer: findRolloutOutcome,
+    otherConversationActive: async (changed, own) => {
+      for (const file of changed) {
+        if (file !== own && await rolloutSource(file) === "cli") return true;
+      }
+      return false;
+    },
+    wakePrompt: (entries, key) => {
+      const chain = codexChain(entries, key);
+      return chain?.state === "wake" ? { text: CODEX_WAKE_TEXT, wakes: chain.wakes, outcome: chain.outcome } : undefined;
+    },
     findEnvelope: (entries, correlationId) => findRolloutEnvelope(entries, correlationId),
+    lastUserPrompt: lastCodexPrompt,
+    isConversation: async (file) => await rolloutSource(file) === "cli",
     compactions: rolloutCompactions,
     // `task_started` is the first line of any turn, whether it comes from the bus or the owner.
     // None new proves the injection never reached the box and NOTHING ran.

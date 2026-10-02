@@ -1,28 +1,21 @@
-import { MessagesSquare, ShieldCheck } from 'lucide-react';
+import { MessagesSquare, Sparkles } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
 import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
-import { EmptyState, PageHeader, PermissionBadge, RefreshButton } from '../../components/ui';
+import { EmptyState, LoadingState, PageHeader, RefreshButton } from '../../components/ui';
 import { permissionState } from '../../lib';
-import { navigate } from '../../router';
+import { navigate, onNavClick } from '../../router';
 import { fleetAgentId, type FleetAgent } from '../terminal/fleet';
 import { operatorRouteForAgent } from '../terminal/session';
+import { AgentAvatar } from '../../components/AgentAvatar';
 import { AgentRoster } from './AgentRoster';
 import { ConversationPane } from './ConversationPane';
 import './messages.css';
 import { saludDeColaPorAgente } from './queue-health';
 import { construirRosterDeMensajeria } from './roster';
 
-/**
- * The name of the CSS variable holding the top of the messenger block within the document.
- *
- * Exported for the same reason as `VAR_ALTO_COMPOSITOR`: the stylesheet READS it and the
- * component WRITES it, and if the two strings drift there is no typecheck, lint or DOM-test
- * failure — the symptom would be the composer falling off-screen again on desktop, which is
- * the defect this exists to close. `messenger-css.test.ts` requires them to be the same.
- */
 export const VAR_TOPE_MENSAJERIA = '--messenger-tope';
 
 interface MessagesPageProps {
@@ -84,7 +77,7 @@ function MessagesPageContent({ params }: MessagesPageProps) {
     || (topology.loading && !topology.data)
     || (activity.loading && !activity.data)
     || (messages.loading && !messages.data);
-  const flotaError = status.error ?? topology.error;
+  const flotaError = status.error ?? topology.error ?? activity.error ?? messages.error;
 
   /*
    * -------------------------------------------------- THE COMPOSER, ALSO ON DESKTOP
@@ -118,6 +111,22 @@ function MessagesPageContent({ params }: MessagesPageProps) {
     return () => { window.removeEventListener('resize', medirElTope); };
   }, [medirElTope]);
 
+  const lastSelected = useRef<string | undefined>(undefined);
+  const requestedId = pedido ? fleetAgentId(pedido.tenantId, pedido.alias) : undefined;
+  useEffect(() => {
+    const root = envolturaRef.current;
+    if (seleccionado && lastSelected.current !== seleccionado.id) {
+      lastSelected.current = seleccionado.id;
+      root?.querySelector<HTMLElement>('.messenger-thread h2')?.focus({ preventScroll: true });
+    } else if (!requestedId && lastSelected.current) {
+      const previous = lastSelected.current;
+      lastSelected.current = undefined;
+      const button = Array.from(root?.querySelectorAll<HTMLButtonElement>('[data-agent-id]') ?? [])
+        .find((candidate) => candidate.dataset.agentId === previous);
+      button?.focus({ preventScroll: true });
+    }
+  }, [seleccionado, requestedId]);
+
   function abrir(agent: FleetAgent) {
     navigate(`/messages/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`);
   }
@@ -133,13 +142,12 @@ function MessagesPageContent({ params }: MessagesPageProps) {
 
   return (
     <>
-      <PageHeader
-        eyebrow="Mensajería durable"
+      <div className="chat-page-heading"><PageHeader
+        eyebrow="Tu espacio"
         title="Mensajes"
         description="Una conversación por agente, con el estado de su cola al lado del nombre y un salto directo a su terminal. El actor, el tenant de origen y el canal siguen siendo autoridad del servidor."
-        notes={<PermissionBadge access={accesoVerificado} permission="message.publish" />}
         actions={<RefreshButton onClick={sincronizar} loading={messages.loading && !messages.data} />}
-      />
+      /></div>
 
       {/*
         `data-conversacion` es para la hoja de estilo, no para la lógica: en pantalla estrecha el
@@ -147,7 +155,7 @@ function MessagesPageContent({ params }: MessagesPageProps) {
         que el hilo y su compositor anclado no arranquen a dos pantallas del borde. Ver el bloque
         de 760 px de `messages.css`, que explica por qué el anclaje es a 66 px y no a 0.
       */}
-      <div className="messenger-shell" ref={envolturaRef} data-conversacion={seleccionado ? 'abierta' : undefined}>
+      <div className="messenger-shell" ref={envolturaRef} data-conversacion={seleccionado || pedido ? 'abierta' : undefined}>
         <AgentRoster
           agents={agents}
           salud={salud}
@@ -164,7 +172,7 @@ function MessagesPageContent({ params }: MessagesPageProps) {
               for zeus would stay in kant's box — and the effect that opens the thread at the
               bottom does not run again, because the component is not remounted.
             */
-            key={seleccionado.id}
+            key={`${accesoVerificado?.subject ?? ''}:${seleccionado.id}`}
             agent={seleccionado}
             page={messages.data}
             loading={messages.loading}
@@ -176,29 +184,34 @@ function MessagesPageContent({ params }: MessagesPageProps) {
             onReload={messages.reload}
           />
         ) : (
-          <section className="messenger-empty" aria-label="Sin conversación abierta">
-            <span aria-hidden="true"><MessagesSquare size={30} /></span>
-            <h2>Elegí un agente</h2>
-            {pedido && !flotaCargando ? (
+          <section className="messenger-empty" data-state={pedido ? 'missing' : 'welcome'} aria-label="Sin conversación abierta">
+            <span className="chat-welcome-mark" aria-hidden="true"><MessagesSquare size={32} /></span>
+            <h2>{pedido ? 'Abrí otra conversación' : '¿Con quién trabajamos hoy?'}</h2>
+            {pedido && flotaCargando ? <LoadingState label="Buscando la conversación…" /> : pedido && flotaError ? (
+              <EmptyState>No se pudo comprobar este agente: {flotaError.message}</EmptyState>
+            ) : pedido ? (
               <EmptyState>
                 El servidor no observa a <strong>{pedido.tenantId}:{pedido.alias}</strong>: ni en topología, ni en
                 presencia, ni en el registro de agentes, ni como emisor o destinatario de un mensaje de la ventana.
                 Cauce no inventa un agente que no existe.
               </EmptyState>
             ) : (
-              <p>
-                Cada conversación muestra el historial durable con ese agente, cómo va su cola y el botón para abrir
-                su terminal. El room de origen lo deriva tu topología: no hay que escribirlo.
-              </p>
+              <>
+                <p>Elegí un agente para retomar una conversación, compartir una idea o darle una tarea.</p>
+                <div className="chat-agent-suggestions" aria-label="Empezar una conversación">
+                  {agents.slice(0, 4).map((agent) => <button key={agent.id} type="button" onClick={() => { abrir(agent); }}>
+                    <AgentAvatar alias={agent.alias} tenantId={agent.tenantId} state={agent.leaseState} />
+                    <strong>{agent.alias}</strong><small>{agent.tenantId}</small>
+                  </button>)}
+                </div>
+                <p className="chat-welcome-hint"><Sparkles size={15} aria-hidden="true" /> Tus agentes y sus conversaciones, en un solo lugar</p>
+              </>
             )}
+            {pedido ? <a className="button secondary" href="/messages" onClick={(event) => { onNavClick(event, '/messages'); }}>Volver a los agentes</a> : null}
           </section>
         )}
       </div>
 
-      <p className="trust-callout">
-        <ShieldCheck size={17} aria-hidden="true" />
-        <span>Sin header Authorization escrito a mano, sin almacenamiento persistente y sin campos de identidad del cliente.</span>
-      </p>
     </>
   );
 }

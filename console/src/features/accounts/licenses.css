@@ -1,3 +1,8 @@
+[data-route="accounts"] .panel { padding: var(--space-3); margin-bottom: var(--space-3); }
+[data-route="accounts"] .panel-header { gap: var(--space-3); margin-bottom: var(--space-3); }
+[data-route="accounts"] .metric { padding-block: var(--space-3); }
+[data-route="accounts"] th, [data-route="accounts"] td { padding-block: var(--space-2); }
+
 /* Banner de advertencia */
 .banner {
   display: flex;

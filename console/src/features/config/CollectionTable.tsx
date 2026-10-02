@@ -62,7 +62,7 @@ export function CollectionTable({
   const avisoDeInterruptor = control.avisoDe(key);
   const confirmandoAqui = control.confirmacion?.interruptor.coleccion === key;
 
-  return <Panel title={title} subtitle="Datos efectivos del servidor">
+  return <Panel title={title} subtitle="Configuración guardada en la última lectura">
     {/* Clave ausente y lista vacía NO son lo mismo: un gateway anterior a una migración no publica
         su tabla, y decir «sin registros» ahí sería mentir. */}
     {!rows ? <EmptyState>UNKNOWN: este gateway no publica esta colección ({key}).</EmptyState>
@@ -83,11 +83,8 @@ export function CollectionTable({
               operador hasta acá. No se esconden las columnas: el servidor las publica, y esconder
               un dato que existe es la otra forma de mentir sobre lo que hay configurado. */}
           {inertesPresentes.length ? <p className="notice config-inertes" role="note">
-            {inertesPresentes.length === 1 ? 'Una columna de esta tabla se guarda' : `${String(inertesPresentes.length)} columnas de esta tabla se guardan`},
-            {inertesPresentes.length === 1 ? ' se audita y se puede deshacer' : ' se auditan y se pueden deshacer'}, pero
-            <strong> no {inertesPresentes.length === 1 ? 'la lee' : 'las lee'} ningún camino de ejecución</strong>:
-            {inertesPresentes.length === 1 ? ' va marcada' : ' van marcadas'} «sin efecto» y cada una dice de dónde sale
-            el valor que sí manda.
+            Las columnas marcadas «declarativo» no configuran por sí solas el runtime.
+            Cada una indica sus lectores y de dónde sale el valor en ejecución.
           </p> : null}
 
           <Desplazable etiqueta={title}><table><thead><tr>

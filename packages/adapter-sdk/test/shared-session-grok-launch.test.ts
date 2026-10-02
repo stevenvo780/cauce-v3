@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, realpath, rename } from "node:fs/promises";
+import { chmod, realpath, rename, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -228,4 +228,29 @@ test("grok semilla por CLI: escribe una vez, repite sin cambios y rechaza una co
   assert.equal(missing.status, 1);
   assert.match(String(missing.stdout), /"result":"unverified"/u);
   assert.equal(run(log.sessionId, "codex").status, 3);
+});
+
+test("grok /new del dueño con la caja sin foco (hades 2026-09-30): el primer pedido entra y re-asienta el puntero en 0600", async () => {
+  const { state, grokHome, log, sessionLog } = await grokWorkspace("grok-new-sin-foco");
+  const binding = { alias: "hades", harness: "grok" as const, configDirectory: await realpath(grokHome), workspace: await realpath("/workspace") };
+  const store = new SharedTuiPointerStore(state);
+  assert.equal(await store.seed(binding, log.sessionId), "written");
+  // The owner typed `/new` and talked in the new conversation, then left the scrollback focused.
+  const fresh = await sessionLog(newGrokSessionId(Date.now() + 1_000));
+  await fresh.append(fresh.user("hola, conversación nueva"), fresh.message("p-dueno", "hola"), fresh.completed("p-dueno"));
+  const tmux = new GrokTmux();
+  tmux.paneContent = grokFrame({ footer: "unfocused" });
+  tmux.focusedFrame = grokFrame({ footer: "idle" });
+  tmux.onSubmit = async (text) => {
+    await fresh.append(fresh.user(text), fresh.message("p-bus", envelopeText("ok", correlationIdFromPrompt(text))), fresh.completed("p-bus"));
+  };
+  const runner = grokRunner({ grokHome, tmux, nativePointer: new NativePointerAttestor(store, binding),
+    resume: sharedSessionResume("grok", grokHome, "/workspace", { alias: "hades", stateDirectory: state }) });
+
+  assert.equal((await runner.run(request("pedido tras /new"))).exitCode, 0);
+  assert.deepEqual(await store.read(binding), { state: "valid", binding, nativeId: fresh.sessionId });
+  const pointer = await stat(`${state}/shared-tui-session.json`);
+  assert.equal(pointer.mode & 0o777, 0o600);
+  assert.deepEqual(await resolveGrokLaunch(grokHome, "/workspace", { alias: "hades", stateDirectory: state }),
+    { state: "launch", args: ["--resume", fresh.sessionId], resumed: true }, "si la TUI renace, vuelve a la conversación nueva");
 });

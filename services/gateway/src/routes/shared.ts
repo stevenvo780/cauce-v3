@@ -6,7 +6,9 @@ import {
   type ConsolePublishIntentCommand, type ConsolePublishIntentPrepare,
   type PublishMessage,
 } from '@cauce/protocol';
-import { StoreError, type PublishResult, type StoreErrorCode } from '@cauce/store';
+import {
+  AgentRootLimitError, StoreError, type PublishResult, type StoreErrorCode,
+} from '@cauce/store';
 import {
   AuthError, AuthorizationError, validatePrincipal,
   type AuthProvider, type Principal,
@@ -52,8 +54,17 @@ export function replyError(reply: FastifyReply, error: unknown): void {
     void reply.code(403).send({ error: error.code, message: error.message });
     return;
   }
+  if (error instanceof AgentRootLimitError) {
+    void reply.code(409).send({
+      error: error.reason, message: error.message, limit: error.limit, open_roots: error.openRoots,
+    });
+    return;
+  }
   if (error instanceof StoreError) {
-    void reply.code(errorStatus(error)).send({ error: error.code, message: error.message });
+    void reply.code(errorStatus(error)).send({
+      error: error.code, message: error.message,
+      ...(error.recoveryReason === undefined ? {} : { reason: error.recoveryReason }),
+    });
     return;
   }
   const message = error instanceof Error ? error.message : 'unknown error';

@@ -1,7 +1,7 @@
 import { isAlias, MAX_DELEGATION_FEEDBACK_ITEMS, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../../../db.js';
 import { declaredArtifactBudget } from '../../delegated-attachments.js';
-import { HUMAN_GATE_TARGET } from '../../../../delegation-guard.js';
+import { AGENT_ROOT_DELEGATIONS, HUMAN_GATE_TARGET } from '../../../../delegation-guard.js';
 import {
   maxAgentOutputMessages, type AgentOutputEntry, type OpenChainGate, type RoutingTarget
 } from '../../../deliveries.js';
@@ -137,19 +137,16 @@ export async function reserveDelegationCapacity(
   policy: ChainPolicy,
   rootMessageId: string | undefined,
   sourceNode: string,
-  targetNode: string
+  targetNode: string,
+  agentRoot = false
 ): Promise<PlannedRejection | undefined> {
   if (!policy.delegationCaps.enabled || !policy.delegationCapsAvailable
     || rootMessageId === undefined) return undefined;
-  const rootReserved = await reserveRootDelegation(
-    client, rootMessageId, policy.delegationCaps.maxDelegationsPerRoot
-  );
-  if (!rootReserved) {
-    return {
-      code: 'root_budget_exhausted',
-      cap: policy.delegationCaps.maxDelegationsPerRoot
-    };
-  }
+  const rootCap = agentRoot
+    ? Math.min(policy.delegationCaps.maxDelegationsPerRoot, AGENT_ROOT_DELEGATIONS)
+    : policy.delegationCaps.maxDelegationsPerRoot;
+  const rootReserved = await reserveRootDelegation(client, rootMessageId, rootCap);
+  if (!rootReserved) return { code: 'root_budget_exhausted', cap: rootCap };
   const edgeReserved = await reserveChainEdge(
     client,
     rootMessageId,

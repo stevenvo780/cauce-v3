@@ -51,6 +51,20 @@ afterEach(async () => {
   while (apps.length > 0) await apps.pop()?.close();
 });
 
+describe('GET /v3/messages/:messageId', () => {
+  it('tells the store which kind of principal reads, so replies stay with the kind that sent them', async () => {
+    const { app, getMessage } = await gateway();
+    for (const [alias, reader] of [['argos', 'agent'], ['kant', 'operator']] as const) {
+      const response = await app.inject({
+        method: 'GET', url: `/v3/messages/${MENSAJE.id}`,
+        headers: { 'x-cauce-tenant': 'Steven', 'x-cauce-alias': alias },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(getMessage).toHaveBeenLastCalledWith(MENSAJE.id, 'Steven', alias, reader);
+    }
+  });
+});
+
 describe('GET /v3/console/messages/:messageId', () => {
   it('devuelve el cuerpo ENTERO, que es lo que la lista recorta a 240', async () => {
     const { app, getMessage } = await gateway();
@@ -61,7 +75,7 @@ describe('GET /v3/console/messages/:messageId', () => {
     expect(cuerpo.body?.text).toBe(MENSAJE.body.text);
     expect(cuerpo.body?.text?.length).toBeGreaterThan(240);
     // The id and the actor come straight from the store: the route does not invent identity.
-    expect(getMessage).toHaveBeenCalledWith(MENSAJE.id, 'Steven', 'kant');
+    expect(getMessage).toHaveBeenCalledWith(MENSAJE.id, 'Steven', 'kant', 'operator');
   });
 
   /**

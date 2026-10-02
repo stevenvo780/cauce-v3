@@ -47,6 +47,7 @@ import { inlineWithoutSecrets } from "./engine/secret-guard.js";
 import type { SealedSecretGateway, TurnInput, TurnInputDeps } from "./engine/turn-cleanup.js";
 import { materializeTurnInput, releaseTurn } from "./engine/turn-cleanup.js";
 import { runSystemGateProbe } from "./engine/system-gate-probe.js";
+import { isConversationStatusRequest, runConversationStatus } from "./engine/conversation-status.js";
 import { DEFAULT_NO_PROGRESS_TIMEOUT_MS } from "./message-timeout.js";
 import type { EmissionRuntime } from "./mcp-emission/runtime.js";
 import type { EmissionTurn } from "./mcp-emission/tools.js";
@@ -85,6 +86,7 @@ export class AdapterEngine {
   constructor(options: AdapterEngineOptions) {
     this.egressReceipts = options.egressReceipts;
     this.emission = options.emission;
+    this.emission?.trackDeliveries(() => this.tasks.size);
     this.store = options.store;
     this.harness = options.harness;
     this.publishEvent = options.publish;
@@ -153,11 +155,19 @@ export class AdapterEngine {
       }
       return Promise.resolve();
     }
-    if (delivery.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE) {
-      const execution = this.runSystemGateProbe(delivery);
+    const statusRequest = isConversationStatusRequest(delivery, this.ownTenantId, this.ownRoom);
+    if (delivery.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE || statusRequest) {
+      const controller = new AbortController();
+      this.controllers.set(delivery.delivery_id, controller);
+      const execution = statusRequest ? runConversationStatus(delivery, {
+        store: this.store, clock: this.clock, publishEvent: this.publishEvent,
+        isCurrent: () => delivery.epoch === this.store.epoch
+          && !this.fenced.has(delivery.delivery_id) && !controller.signal.aborted,
+      }) : this.runSystemGateProbe(delivery);
       const task = execution.finally(() => {
         if (this.tasks.get(delivery.delivery_id)?.promise === task) {
           this.tasks.delete(delivery.delivery_id);
+          this.controllers.delete(delivery.delivery_id);
           this.fenced.delete(delivery.delivery_id);
         }
       });

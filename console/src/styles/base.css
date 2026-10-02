@@ -62,7 +62,7 @@
   --radius-md: 12px;
   --radius-pill: 999px;
   /* Alto de barra de navegación inferior en viewport móvil. */
-  --nav-inferior-alto: 130px;
+  --nav-inferior-alto: 72px;
 
   /* THE SPACING SCALE. It rules the whole console, not only new rules: every padding, margin and
      gap of every sheet comes from here, and `styles.espaciado.test.ts` fails on a raw px that is
@@ -78,7 +78,7 @@
   /* Content measure. A table and a paragraph do not read at the same width, so one cap cannot
      serve both: prose keeps its measure while the shell grows with the monitor. */
   --measure-prose: 760px;
-  --shell-max: 2040px;
+  --shell-max: 2076px;
 
   /* Stacking order. Every new z-index comes from here; two raw values already tie. */
   --layer-raised: 1;
@@ -229,45 +229,27 @@ a { color: inherit; }
    The announcement is the feedback; the ring belongs to elements the keyboard traverses. */
 main:focus, main:focus-visible { outline: none; }
 
-.app-shell { display: grid; min-height: 100vh; grid-template-columns: 248px minmax(0, 1fr); }
+.app-shell { display: grid; min-height: 100vh; grid-template-columns: 212px minmax(0, 1fr); background: var(--surface); }
 
-.sidebar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  padding: var(--space-5) var(--space-4);
-  border-right: 1px solid var(--border);
-  background: rgb(8 13 23 / 88%);
-  backdrop-filter: blur(18px);
-}
+.sidebar { position: sticky; top: 0; z-index: var(--layer-nav); display: flex; flex-direction: column; height: 100vh; padding: var(--space-5) var(--space-3); border-right: 1px solid var(--border); background: var(--surface-2); backdrop-filter: none; }
 
-.sidebar-toggle { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: var(--tipo-rotulo); font-weight: 600; text-align: left; cursor: pointer; transition: .18s ease; }
+.sidebar-toggle { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: var(--tipo-apunte); font-weight: 600; text-align: left; cursor: pointer; transition: .18s ease; }
 .sidebar-toggle:hover { border-color: var(--border-strong); background: var(--surface-2); color: var(--text); }
 
-.brand { display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-2) var(--space-5); }
-.brand-mark { display: grid; width: 40px; height: 40px; place-items: center; border: 1px solid #2f6b61; border-radius: var(--radius-md); background: linear-gradient(145deg, #163d37, #112338); color: var(--mint); box-shadow: 0 8px 25px rgb(31 168 130 / 14%); }
+.brand { display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-2) var(--space-5); padding-bottom: var(--space-6); }
+.brand-mark { display: grid; width: 40px; height: 40px; place-items: center; border: 0; border-radius: 50%; background: var(--mint-dim); color: var(--on-mint); box-shadow: none; }
 .brand strong, .brand small { display: block; }
-.brand strong { letter-spacing: .04em; }
-.brand small { margin-top: var(--space-1); color: var(--muted); font-size: var(--tipo-rotulo); text-transform: uppercase; letter-spacing: .13em; }
+.brand strong { letter-spacing: -.03em; font-size: var(--tipo-panel); }
+.brand small { margin-top: var(--space-1); color: var(--muted); font-size: var(--tipo-apunte); text-transform: none; letter-spacing: 0; }
 
 .sidebar nav ul { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
-.sidebar nav a { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--muted); font-size: var(--tipo-cuerpo); font-weight: 600; text-decoration: none; transition: .18s ease; }
+.sidebar nav a { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-md); color: var(--muted); font-size: var(--tipo-cuerpo); font-weight: 500; text-decoration: none; transition: .18s ease; min-height: 44px; }
 .sidebar nav a:hover { background: var(--surface-2); color: var(--text); }
-.sidebar nav a[aria-current="page"] { border-color: #28584f; background: linear-gradient(90deg, #153a35, #101d2c); color: #b7f7e4; box-shadow: inset 3px 0 var(--mint); }
+.sidebar nav a[aria-current="page"] { border-color: #28584f; background: var(--surface); color: var(--text); box-shadow: 0 1px 4px rgb(0 0 0 / 5%); font-weight: 650; }
 
-.authority-note { display: flex; gap: var(--space-2); margin-top: auto; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--mint); }
-.authority-note p { margin: 0; }
-.authority-note strong, .authority-note span { display: block; }
-.authority-note strong { color: var(--text); font-size: var(--tipo-rotulo); }
-.authority-note span { margin-top: var(--space-1); color: var(--muted); font-size: var(--tipo-apunte); }
 
 .workspace { min-width: 0; }
-/* 44px and not 58: the bar carries a label, the mock flag and the session badge, none of which is
-   taller than a 40px control. The 14 it gives back are 14 of the first screen on every route. */
-.topbar { display: flex; min-height: 44px; align-items: center; justify-content: space-between; padding: 0 var(--space-6); border-bottom: 1px solid var(--border); color: var(--muted); font-size: var(--tipo-rotulo); }
+.topbar { display: flex; min-height: 56px; align-items: center; justify-content: space-between; padding: 0 var(--space-6); border-bottom: 1px solid var(--border); color: var(--muted); font-size: var(--tipo-rotulo); padding-inline: var(--space-5); background: var(--surface); }
 .topbar > div { display: flex; align-items: center; gap: var(--space-2); }
 .topbar-meta { gap: var(--space-4) !important; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 5px rgb(99 222 185 / 10%), 0 0 14px var(--mint); }

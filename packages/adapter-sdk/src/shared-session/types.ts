@@ -1,3 +1,4 @@
+import type { DispatchMark, DispatchState } from "./grok-dispatch.js";
 import type { CommandRunner, HarnessId } from "../sdk/types.js";
 
 /** Harnesses compatible with the shared session mechanism. */
@@ -34,6 +35,7 @@ type DegradationReason =
   | "modal_blocking"
   /** The paste could not be sent or the TUI did not register the turn. */
   | "handshake_failed"
+  | "prompt_not_dispatched" // The TUI queued the pasted prompt and never handed it to the model: nothing ran.
   /** The TUI restarted between turns and the conversation started blank. */
   | "context_reset"
   /** There was no prior shared session and a new one was created for this turn. */
@@ -100,6 +102,11 @@ export interface TranscriptReader<E> {
     entries: readonly E[],
     key: string,
   ): { readonly outcome: TurnOutcome; readonly progress: string } | undefined;
+  wakePrompt?( // codex: delegations answered, no final reply yet; paste this to wake the root
+    entries: readonly E[],
+    key: string,
+  ): { readonly text: string; readonly wakes: number; readonly outcome: TurnOutcome } | undefined;
+  otherConversationActive?(changed: readonly string[], own: string): Promise<boolean>; // codex: another TUI conversation active (/new)
   /**
    * Searches the transcript entries for a correlated structured envelope.
    */
@@ -111,6 +118,12 @@ export interface TranscriptReader<E> {
   compactions(appended: readonly E[]): readonly CompactionNotice[];
   /** Whether the start of any turn was registered in the appended entries. */
   startedTurn?(appended: readonly E[]): boolean;
+  lastUserPrompt?(entries: readonly E[]): string | undefined; // What the last user entry says; undefined if none or not typed by anyone.
+  isConversation?(file: string): Promise<boolean>; // codex: only the TUI's own rollouts, never a sub-agent's.
+  promptDispatch?: { // Whether the TUI handed the paste to the model (grok: pager log); absent = not measurable.
+    mark(pid: number, bytes: number): Promise<DispatchMark | undefined>;
+    state(mark: DispatchMark): Promise<DispatchState>;
+  };
   /** The output in the harness's native form, to be processed by the standard parser. */
   stdout(text: string, sessionId: string | undefined): string;
 }
