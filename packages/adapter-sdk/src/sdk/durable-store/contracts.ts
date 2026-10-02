@@ -103,6 +103,7 @@ export interface ProcessedFaninReply {
   readonly sourceDeliveryId?: string; // fan-out turn this branch continues; siblings share it
   readonly outputIndex?: number;
   readonly targetTenant?: string;
+  readonly blockedDelegationCodes?: readonly DelegationRejectionNotice["code"][];
 }
 
 export interface DelegationBranchIdentity {

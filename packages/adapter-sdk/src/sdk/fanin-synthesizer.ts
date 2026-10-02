@@ -1,4 +1,4 @@
-import { ALIAS_PATTERN, objectRecord, TENANT_PATTERN } from "@cauce/protocol";
+import { ALIAS_PATTERN, DELEGATION_REJECTION_CODES, objectRecord, TENANT_PATTERN, type DelegationRejectionNotice } from "@cauce/protocol";
 import { AdapterError } from "./errors.js";
 import { hasNonBlankText, MAX_FINAL_TEXT_BYTES } from "./output-parser.js";
 import type { StructuredOutput } from "./types.js";
@@ -32,6 +32,7 @@ export interface FaninSynthesisOptions {
     readonly updatedAt?: string;
     readonly childDeliveryId?: string;
     readonly sourceDeliveryId?: string;
+    readonly blockedDelegationCodes?: readonly DelegationRejectionNotice["code"][];
   }[];
 }
 
@@ -190,6 +191,8 @@ export function synthesizeFaninOutput(
       text: candidate.reply.trim(),
       updatedAt: candidate.updatedAt ?? "",
       order,
+      blockedDelegationCodes: (candidate.blockedDelegationCodes ?? [])
+        .filter((code) => DELEGATION_REJECTION_CODES.includes(code)),
       ...(typeof candidate.childDeliveryId === "string" && candidate.childDeliveryId.length > 0
         ? { childDeliveryId: candidate.childDeliveryId }
         : {}),
@@ -222,6 +225,17 @@ export function synthesizeFaninOutput(
   // last completed turn, and quoting it would collapse a multi-paragraph reply into one line.
   const primary = processedReplies[0];
   if (primary === undefined) throw new Error("Fan-in synthesis has no primary reply");
+  const blockedCodes = new Set(processedReplies.flatMap((reply) => reply.blockedDelegationCodes));
+  if (blockedCodes.size > 0) {
+    const budgetBlocked = blockedCodes.has("hop_budget_exhausted")
+      || blockedCodes.has("edge_repeat_exceeded") || blockedCodes.has("root_budget_exhausted");
+    return {
+      reply: budgetBlocked
+        ? "La siguiente asignación no se creó porque se agotó el límite de pasos de esta cadena. Las respuestas del equipo quedaron registradas; el objetivo sigue pendiente."
+        : "Cauce rechazó la siguiente asignación y no la envió. Las respuestas del equipo quedaron registradas; el objetivo sigue pendiente.",
+      messages: [], notify: [], status: "failed", retryable: false, artifacts: [],
+    };
+  }
   const others = processedReplies.slice(1);
   // Older siblings are dropped only when the lead turn was provably handed them: they continue
   // the same fan-out turn, whose branch_progress.already_returned carries the replies this
