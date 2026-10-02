@@ -114,17 +114,12 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
       {recurso === 'room' || recurso === 'membership'
         ? <label>Room<input {...inerte} aria-label="Room" value={borrador.roomId} onChange={(event) => { editar({ roomId: event.target.value }); }} /></label>
         : null}
-      {recurso === 'membership' ? <>
-        <label>Alias<input {...inerte} aria-label="Alias" value={borrador.alias} onChange={(event) => { editar({ alias: event.target.value }); }} /></label>
-        <label>Rol de permisos <span className="label-hint">route/read/control salen de role_policies; no cambia el contexto</span>
-          <input {...inerte} aria-label="Rol de permisos" value={borrador.role} onChange={(event) => { editar({ role: event.target.value }); }} /></label>
-      </> : null}
+      {recurso === 'membership'
+        ? <label>Alias<input {...inerte} aria-label="Alias" value={borrador.alias} onChange={(event) => { editar({ alias: event.target.value }); }} /></label>
+        : null}
       {recurso === 'tenant' || recurso === 'room'
         ? <label>Nombre <span className="label-hint">opcional, null si queda vacío</span>
           <input {...inerte} aria-label="Nombre" value={borrador.nombre} onChange={(event) => { editar({ nombre: event.target.value }); }} /></label>
-        : null}
-      {recurso === 'tenant'
-        ? <label className="casilla"><input {...inerte} type="checkbox" aria-label="Es hub" checked={borrador.esHub} onChange={(event) => { editar({ esHub: event.target.checked }); }} /> Es hub</label>
         : null}
       {recurso === 'acl_edge' ? <>
         <label>Desde el tenant<input {...inerte} aria-label="Desde el tenant" value={borrador.desde} onChange={(event) => { editar({ desde: event.target.value }); }} /></label>
@@ -135,8 +130,24 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
         <label className="casilla"><input {...inerte} type="checkbox" aria-label="Lectura" checked={borrador.allowRead} onChange={(event) => { editar({ allowRead: event.target.checked }); }} /> Lectura <span className="label-hint">allow_read: dejar que lea su actividad</span></label>
         <label className="casilla"><input {...inerte} type="checkbox" aria-label="Control" checked={borrador.allowControl} onChange={(event) => { editar({ allowControl: event.target.checked }); }} /> Control <span className="label-hint">allow_control: dejar que le escriba la configuración</span></label>
       </> : null}
-      <label className="casilla"><input {...inerte} type="checkbox" aria-label="Habilitado" checked={borrador.habilitado} onChange={(event) => { editar({ habilitado: event.target.checked }); }} /> Habilitado</label>
     </div>
+
+    <details className="config-detalle">
+      <summary>Opciones de alta: {borrador.habilitado ? 'habilitado' : 'deshabilitado'}
+        {recurso === 'membership' ? ` · rol ${borrador.role.trim() || 'sin definir'}` : ''}
+        {recurso === 'tenant' ? ` · ${borrador.esHub ? 'es hub' : 'no es hub'}` : ''}
+      </summary>
+      <div className="config-form">
+        {recurso === 'membership'
+          ? <label>Rol de permisos <span className="label-hint">route/read/control salen de role_policies; no cambia el contexto</span>
+            <input {...inerte} aria-label="Rol de permisos" value={borrador.role} onChange={(event) => { editar({ role: event.target.value }); }} /></label>
+          : null}
+        {recurso === 'tenant'
+          ? <label className="casilla"><input {...inerte} type="checkbox" aria-label="Es hub" checked={borrador.esHub} onChange={(event) => { editar({ esHub: event.target.checked }); }} /> Es hub</label>
+          : null}
+        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Habilitado" checked={borrador.habilitado} onChange={(event) => { editar({ habilitado: event.target.checked }); }} /> Habilitado</label>
+      </div>
+    </details>
 
     {/* What is about to be sent, one click from view.
         It was open by default and occupied eleven lines of raw JSON between the form and its

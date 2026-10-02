@@ -18,8 +18,8 @@ import type { Interruptor } from './interruptores';
  *  - if the server responds OK AND the reread arrived, drop the optimistic value: the fresh
  *    snapshot rules — that is what the database actually holds (and may differ from what was
  *    requested if another operator wrote in the meantime);
- *  - if the server responds OK but the reread did NOT arrive, keep what was requested and state
- *    plainly that the table may be stale;
+ *  - if the server responds OK but the reread did NOT arrive, keep what was requested until the
+ *    snapshot reaches the accepted revision, and state plainly that the table may be stale;
  *  - if the server REJECTS, drop the optimistic value — i.e. the switch returns on its own to what
  *    the snapshot says — and show the reason **from the server**, not one invented here, with a
  *    button to retry exactly the same mutation.
@@ -84,7 +84,7 @@ export function useInterruptores(
   escribir: (mutation: ConfigMutation) => Promise<ConfigChangeOutcome>,
   revisionActual: number | undefined,
 ): ControlDeInterruptores {
-  const [optimista, setOptimista] = useState<Record<string, boolean>>({});
+  const [optimista, setOptimista] = useState<Record<string, { value: boolean; appliedRevision?: number }>>({});
   const [volando, setVolando] = useState<Record<string, true>>({});
   const [fallos, setFallos] = useState<Record<string, FalloDeInterruptor>>({});
   const [confirmacion, setConfirmacion] = useState<ConfirmacionDeInterruptor>();
@@ -100,7 +100,7 @@ export function useInterruptores(
     const pedido = !interruptor.valor;
     setFallos((actual) => sinClave(actual, clave));
     setAviso(undefined);
-    setOptimista((actual) => ({ ...actual, [clave]: pedido }));
+    setOptimista((actual) => ({ ...actual, [clave]: { value: pedido } }));
     setVolando((actual) => ({ ...actual, [clave]: true }));
     let desenlace: ConfigChangeOutcome;
     try {
@@ -131,6 +131,9 @@ export function useInterruptores(
     if (desenlace.recarga && !desenlace.recarga.releido) {
       // It was saved, but could not be verified by rereading. What was requested is kept — the server
       // said it applied it — and a notice warns that the rest of the table may be stale.
+      setOptimista((actual) => ({
+        ...actual, [clave]: { value: pedido, appliedRevision: desenlace.result.revision ?? undefined },
+      }));
       setAviso({
         coleccion: interruptor.coleccion, tone: 'parcial', revision,
         text: `${interruptor.descripcion}: el servidor lo aplicó en la revisión `
@@ -149,9 +152,14 @@ export function useInterruptores(
   }
 
   return {
-    valorPintado: (interruptor) => (Object.hasOwn(optimista, interruptor.clave)
-      ? optimista[interruptor.clave]
-      : interruptor.valor),
+    valorPintado: (interruptor) => {
+      const pending = Object.hasOwn(optimista, interruptor.clave) ? optimista[interruptor.clave] : undefined;
+      const observed = pending?.appliedRevision !== undefined && revisionActual !== undefined
+        && revisionActual >= pending.appliedRevision;
+      return pending && (Object.hasOwn(volando, interruptor.clave) || !observed)
+        ? pending.value
+        : interruptor.valor;
+    },
     enVuelo: (clave) => Object.hasOwn(volando, clave),
     // A banner belongs to the state that produced it: if the snapshot shifted underneath — another
     // operator, "Refresh", another write — it stops being shown instead of continuing to assert
