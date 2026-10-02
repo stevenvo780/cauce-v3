@@ -368,11 +368,9 @@ export abstract class AgentResponseRepository extends AgentsRepository {
   }
 
   /**
-   * Decide and moves counters in one statement. The ON CONFLICT row lock serializes concurrent
-   * ACKs for the same bucket; SELECT followed by UPDATE would let both emit.
-   * The decision and counter movement cannot be split across statements.
-   * PostgreSQL `now()` is the transaction-start instant, so concurrent deaths in one transaction
-   * window belong to the same newly opened bucket.
+   * The advisory lock and upsert serialize concurrent ACKs for the same bucket.
+   * Notice validation uses a fresh snapshot and skips locked deliveries to avoid lock cycles.
+   * A locked unread notice stays mutable until commit, excluding a concurrent claim.
    */
   private async reserveFailureNotice(
     client: DatabaseClient,
@@ -410,17 +408,10 @@ export abstract class AgentResponseRepository extends AgentsRepository {
     );
     if (claimed.rowCount !== 1) return undefined;
 
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify(['cauce:failure-notice', root, // One bucket, one decision at a time.
-      relationship.source_tenant, relationship.source_alias, row.recipient_tenant, row.recipient_alias, signature])]);
-    const standing = await client.query<{ unread: boolean }>( // Fold only into a notice NO adapter took (claimed: a rewritten body collides in its durable inbox; handled: silence, hospital perseo). Park refunds attempt and clears claimed_at but keeps last_error.
-      `SELECT (d.status='pending' AND d.attempt=0 AND d.last_error IS NULL) AS unread
-       FROM agent_failure_notices n JOIN deliveries d ON d.id=n.last_notice_delivery_id
-       WHERE n.root_message_id=$1 AND n.parent_tenant=$2 AND n.parent_alias=$3 AND n.child_tenant=$4
-         AND n.child_alias=$5 AND n.failure_signature=$6
-       FOR UPDATE OF d`,
-      [root, relationship.source_tenant, relationship.source_alias, row.recipient_tenant, row.recipient_alias, signature]
-    );
-    const unread = standing.rows[0]?.unread === true;
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([
+      'cauce:failure-notice', root, relationship.source_tenant, relationship.source_alias,
+      row.recipient_tenant, row.recipient_alias, signature
+    ])]);
 
     const reserved = await client.query<{
       id: string;
@@ -439,26 +430,49 @@ export abstract class AgentResponseRepository extends AgentsRepository {
        ON CONFLICT ON CONSTRAINT agent_failure_notices_key DO UPDATE SET
          total_failures=agent_failure_notices.total_failures+1,
          notices_emitted=agent_failure_notices.notices_emitted
-           +CASE WHEN agent_failure_notices.window_expires_at<=now() OR NOT $8 THEN 1 ELSE 0 END,
-         window_started_at=CASE WHEN agent_failure_notices.window_expires_at<=now() OR NOT $8
+           +CASE WHEN agent_failure_notices.window_expires_at<=now() THEN 1 ELSE 0 END,
+         window_started_at=CASE WHEN agent_failure_notices.window_expires_at<=now()
            THEN now() ELSE agent_failure_notices.window_started_at END,
-         window_expires_at=CASE WHEN agent_failure_notices.window_expires_at<=now() OR NOT $8
+         window_expires_at=CASE WHEN agent_failure_notices.window_expires_at<=now()
            THEN now()+$7*interval '1 second' ELSE agent_failure_notices.window_expires_at END,
-         last_failure_emitted=(agent_failure_notices.window_expires_at<=now() OR NOT $8),
+         last_failure_emitted=(agent_failure_notices.window_expires_at<=now()),
          updated_at=now()
        RETURNING id::text,total_failures,notices_emitted,window_started_at,last_failure_emitted,
                  last_notice_message_id::text,last_notice_delivery_id::text,last_notice_base_text`,
       [root, relationship.source_tenant, relationship.source_alias, row.recipient_tenant,
-        row.recipient_alias, signature, policy.failureCoalesceWindowSeconds, unread]
+        row.recipient_alias, signature, policy.failureCoalesceWindowSeconds]
     );
     const bucket = reserved.rows[0];
     if (!bucket) return undefined;
     const windowStartedAt = bucket.window_started_at instanceof Date
       ? bucket.window_started_at.toISOString()
       : bucket.window_started_at;
-    // Folding against a notice that does not exist would be silence, not coalescing: if for any
-    // reason the bucket has no earlier message to point at, this failure travels.
-    const emit = isLiteralTrue(bucket.last_failure_emitted) || bucket.last_notice_message_id === null;
+    let emit = isLiteralTrue(bucket.last_failure_emitted);
+    if (!emit) {
+      const standing = await client.query(
+        `SELECT 1
+         FROM deliveries delivery JOIN messages message ON message.id=delivery.message_id
+         WHERE delivery.id=$1 AND message.id=$2
+           AND delivery.recipient_tenant=$3 AND delivery.recipient_alias=$4
+           AND delivery.status='pending' AND delivery.attempt=0 AND delivery.last_error IS NULL
+           AND message.body->>'type'='agent.response'
+           AND message.body#>>'{correlation,response_to_delivery_id}'=$5::text
+           AND message.body#>>'{correlation,response_to_message_id}'=$6::text
+         FOR UPDATE OF delivery SKIP LOCKED`,
+        [bucket.last_notice_delivery_id, bucket.last_notice_message_id,
+          relationship.source_tenant, relationship.source_alias,
+          relationship.source_delivery_id, relationship.source_message_id]
+      );
+      if (standing.rowCount !== 1) {
+        await client.query(
+          `UPDATE agent_failure_notices
+           SET notices_emitted=notices_emitted+1,last_failure_emitted=true WHERE id=$1`,
+          [bucket.id]
+        );
+        bucket.notices_emitted += 1;
+        emit = true;
+      }
+    }
     return {
       noticeId: bucket.id,
       emit,
@@ -544,7 +558,10 @@ export abstract class AgentResponseRepository extends AgentsRepository {
     const { lastNoticeMessageId, lastNoticeDeliveryId, lastNoticeBaseText } = reservation;
     if (!lastNoticeMessageId || !lastNoticeDeliveryId || lastNoticeBaseText === null) return;
     const standing = await client.query<{ status: DeliveryState }>(
-      'SELECT status FROM deliveries WHERE id=$1 FOR UPDATE', [lastNoticeDeliveryId]
+      `SELECT status FROM deliveries
+       WHERE id=$1 AND message_id=$2 AND status='pending' AND attempt=0 AND last_error IS NULL
+       FOR UPDATE SKIP LOCKED`,
+      [lastNoticeDeliveryId, lastNoticeMessageId]
     );
     if (standing.rows[0]?.status !== 'pending') return;
     const text = truncateUtf8(

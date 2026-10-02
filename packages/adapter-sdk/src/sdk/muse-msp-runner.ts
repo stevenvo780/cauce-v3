@@ -16,6 +16,8 @@ import { MuseMspFault, museObject, type MuseWait } from "./muse-msp-reconciliati
 export type MuseReasoningEffort =
   | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 
+const SESSION_OPEN_BUDGET_MS = 15_000;
+
 export interface MuseRunnerConfig {
   readonly executable: string;
   readonly configHome: string;
@@ -204,6 +206,7 @@ export class MuseMspRunner {
     let turnAttempted = false;
     let turnAdmitted = false;
     let resumeAttempted = false;
+    let preflightPhase = "workspace";
     try {
       await bounded(validateWorkspace(this.config), deadline, request.signal);
       handshake = spawnMspConnection({
@@ -222,6 +225,7 @@ export class MuseMspRunner {
       handshake.onProtocolError(() => {
         rejectProtocol(new MuseMspFault("MUSE_PROTOCOL_FAILED", "Muse protocol framing failed during initialization"));
       });
+      preflightPhase = "initialize";
       const connection = await bounded(Promise.race([handshake.initialize({
         clientInfo: { name: "cauce_muse", version: "0.2.0" },
         capabilities: { userInputDialogs: false },
@@ -255,7 +259,7 @@ export class MuseMspRunner {
         resumeAttempted = true;
         opening = await session.preflight(connection.connection.command("session/resume", {
           sessionId, excludeItems: true,
-        }), wait);
+        }), wait, "session/resume", SESSION_OPEN_BUDGET_MS);
       } else {
         try {
           opening = await session.preflight(connection.connection.command("session/start", {
@@ -263,14 +267,14 @@ export class MuseMspRunner {
             workspaceRoot: this.config.workspace,
             approvalMode: this.config.approvalMode,
             ...(this.config.model === undefined ? {} : { modelId: this.config.model }),
-          }), wait);
+          }), wait, "session/start", SESSION_OPEN_BUDGET_MS);
         } catch (error) {
           if (!(error instanceof MspError) || error.kind !== "commandRejected"
             || error.data.reason !== "session_id_conflict") throw error;
           resumeAttempted = true;
           opening = await session.preflight(connection.connection.command("session/resume", {
             sessionId, excludeItems: true,
-          }), wait);
+          }), wait, "session/resume", SESSION_OPEN_BUDGET_MS);
         }
       }
       const opened = museObject(opening.session);
@@ -299,7 +303,8 @@ export class MuseMspRunner {
     } catch (error) {
       if (error instanceof MuseDeadlineError) {
         if (!turnAttempted) {
-          throw new ProcessExecutionError("MUSE_PREFLIGHT_TIMEOUT", "Muse preflight exceeded its bounded read budget", true);
+          throw new ProcessExecutionError("MUSE_PREFLIGHT_TIMEOUT",
+            `Muse preflight exceeded its bounded read budget at ${session?.lastPreflightPhase ?? preflightPhase}`, true);
         }
         return result("", { timedOut: true, ...(turnAdmitted ? { harnessStarted: true } : {}) });
       }

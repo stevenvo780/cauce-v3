@@ -9,7 +9,12 @@ import {
 import type { MuseReasoningEffort } from "./muse-msp-runner.js";
 
 export interface MuseMspTelemetry {
-  readonly event: "muse_host_initialized" | "muse_model_selection" | "muse_turn_admitted" | "muse_turn_reconciled";
+  readonly event: "muse_host_initialized" | "muse_model_selection" | "muse_turn_admitted" | "muse_turn_reconciled"
+    | "muse_preflight_started" | "muse_preflight_finished";
+  readonly phase?: string;
+  readonly budget_ms?: number;
+  readonly elapsed_ms?: number;
+  readonly outcome?: "completed" | "failed";
   readonly server_version?: string;
   readonly schema_fingerprint?: string;
   readonly fingerprint_warning?: boolean;
@@ -82,6 +87,7 @@ export class MuseMspSession {
   private progressAt = 0;
   private readonly progressCursors = new Set<string>();
   private progressCursorBytes = 0;
+  private preflightPhase: string | undefined;
 
   constructor(
     private readonly connection: Connection,
@@ -183,19 +189,30 @@ export class MuseMspSession {
   }
 
   get lastProgressAt(): number { return this.progressAt; }
+  get lastPreflightPhase(): string | undefined { return this.preflightPhase; }
 
   private throwIfFaulted(): void {
     if (this.fault !== undefined) throw this.fault;
   }
 
-  async preflight<T>(promise: Promise<T>, wait: MuseWait): Promise<T> {
+  async preflight<T>(promise: Promise<T>, wait: MuseWait, phase: string, budgetMs = 5_000): Promise<T> {
     this.throwIfFaulted();
-    const value = await wait(Promise.race([
+    this.preflightPhase = phase;
+    const started = Date.now();
+    const pending = wait(Promise.race([
       promise,
       this.faultObserved.then((fault) => Promise.reject(fault)),
-    ]), 5_000);
-    this.throwIfFaulted();
-    return value;
+    ]), budgetMs);
+    this.telemetry({ event: "muse_preflight_started", phase, budget_ms: budgetMs });
+    try {
+      const value = await pending;
+      this.throwIfFaulted();
+      this.telemetry({ event: "muse_preflight_finished", phase, elapsed_ms: Date.now() - started, outcome: "completed" });
+      return value;
+    } catch (error) {
+      this.telemetry({ event: "muse_preflight_finished", phase, elapsed_ms: Date.now() - started, outcome: "failed" });
+      throw error;
+    }
   }
 
   async configure(
@@ -204,8 +221,8 @@ export class MuseMspSession {
     approvalMode: "allowAll" | "onRequest" | "denyUnmatched",
     wait: MuseWait,
   ): Promise<{ viewCursor: string; workspace: unknown }> {
-    const view = await this.preflight(readMuseView(this.connection, this.sessionId, wait), wait);
-    const catalog = await this.preflight(this.connection.request("model/list", { sessionId: this.sessionId }), wait);
+    const view = await this.preflight(readMuseView(this.connection, this.sessionId, wait), wait, "session/read");
+    const catalog = await this.preflight(this.connection.request("model/list", { sessionId: this.sessionId }), wait, "model/list");
     if (!Array.isArray(catalog.models)) {
       throw new MuseMspFault("MUSE_CATALOG_INVALID", "Muse returned an invalid model catalog");
     }
@@ -242,13 +259,13 @@ export class MuseMspSession {
     }
     const changed = await this.preflight(this.connection.command("session/setModel", {
       sessionId: this.sessionId, model: selection,
-    }), wait);
+    }), wait, "session/setModel");
     if (changed.status !== "accepted") {
       throw new MuseMspFault("MUSE_MODEL_UNVERIFIED", "Muse did not accept the catalog model route");
     }
     const mode = await this.preflight(this.connection.command("session/setApprovalMode", {
       sessionId: this.sessionId, mode: approvalMode,
-    }), wait);
+    }), wait, "session/setApprovalMode");
     if (mode.status !== "accepted" || museObject(mode.effectiveMode).mode !== approvalMode) {
       throw new MuseMspFault("MUSE_APPROVAL_UNVERIFIED", "Muse did not confirm the requested approval mode");
     }

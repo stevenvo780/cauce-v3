@@ -12,6 +12,24 @@ const selected = {
   variants: ["high", "max"], defaultReasoningEffort: "high",
 };
 
+const modelSelections = (telemetry: readonly MuseMspTelemetry[]) =>
+  telemetry.filter((event) => event.event === "muse_model_selection");
+
+function assertPreflight(telemetry: readonly MuseMspTelemetry[], phases: readonly string[]): void {
+  const events = telemetry.filter((event) => event.event === "muse_preflight_started"
+    || event.event === "muse_preflight_finished");
+  assert.equal(telemetry.length, events.length + modelSelections(telemetry).length);
+  assert.deepEqual(events.map(({ elapsed_ms, ...event }) => {
+    if (event.event === "muse_preflight_finished") {
+      assert.ok(typeof elapsed_ms === "number" && Number.isSafeInteger(elapsed_ms) && elapsed_ms >= 0);
+    } else assert.equal(elapsed_ms, undefined);
+    return event;
+  }), phases.flatMap((phase) => [
+    { event: "muse_preflight_started", phase, budget_ms: 5_000 },
+    { event: "muse_preflight_finished", phase, outcome: "completed" },
+  ]));
+}
+
 function fixture(options: {
   catalog?: Record<string, unknown>;
   currentModel?: string;
@@ -37,7 +55,9 @@ function fixture(options: {
       return options.catalog ?? { models: [selected], source: "providerCatalog" };
     },
     command: async (method: string, params: Record<string, unknown>) => {
-      assert.deepEqual(telemetry, []);
+      assert.deepEqual(modelSelections(telemetry), []);
+      assertPreflight(telemetry, ["session/read", "model/list",
+        ...(method === "session/setApprovalMode" ? ["session/setModel"] : [])]);
       commands.push({ method, params });
       order.push(method);
       if (method === "session/setModel") return options.modelAck ?? { status: "accepted" };
@@ -62,10 +82,11 @@ test("Muse reports the exact catalog route only after model and approval command
     } },
     { method: "session/setApprovalMode", params: { sessionId, mode: "denyUnmatched" } },
   ]);
-  assert.deepEqual(order, [
-    "session/read", "model/list", "session/setModel", "session/setApprovalMode", "muse_model_selection",
-  ]);
-  assert.deepEqual(telemetry, [{
+  assert.deepEqual(order, ["session/read", "model/list", "session/setModel", "session/setApprovalMode"]
+    .flatMap((method) => [method, "muse_preflight_started", "muse_preflight_finished"])
+    .concat("muse_model_selection"));
+  assertPreflight(telemetry, ["session/read", "model/list", "session/setModel", "session/setApprovalMode"]);
+  assert.deepEqual(modelSelections(telemetry), [{
     event: "muse_model_selection", model: modelId, provider: "meta", catalog_source: "providerCatalog",
     requested_effort: "max", supported_efforts: ["high", "max"],
   }]);
@@ -89,7 +110,8 @@ test("Muse uses the session model when none is requested without inventing verif
     method: "session/setModel", params: { sessionId, model: { modelId, providerId: "meta" } },
   });
   assert.equal(commands.length, 2);
-  assert.deepEqual(telemetry, [{
+  assertPreflight(telemetry, ["session/read", "model/list", "session/setModel", "session/setApprovalMode"]);
+  assert.deepEqual(modelSelections(telemetry), [{
     event: "muse_model_selection", model: modelId, provider: "meta", catalog_source: "bundledCatalog",
   }]);
 });
@@ -115,7 +137,8 @@ for (const [name, catalog, code] of [
     await assert.rejects(session.configure(modelId, "high", "denyUnmatched", wait),
       (error: unknown) => error instanceof MuseMspFault && error.code === code);
     assert.deepEqual(commands, []);
-    assert.deepEqual(telemetry, []);
+    assertPreflight(telemetry, ["session/read", "model/list"]);
+    assert.deepEqual(modelSelections(telemetry), []);
   });
 }
 
@@ -125,7 +148,8 @@ test("Muse does not change approval mode or report selection after a rejected mo
   await assert.rejects(session.configure(modelId, "high", "denyUnmatched", wait),
     (error: unknown) => error instanceof MuseMspFault && error.code === "MUSE_MODEL_UNVERIFIED");
   assert.deepEqual(commands.map(({ method }) => method), ["session/setModel"]);
-  assert.deepEqual(telemetry, []);
+  assertPreflight(telemetry, ["session/read", "model/list", "session/setModel"]);
+  assert.deepEqual(modelSelections(telemetry), []);
 });
 
 for (const [name, approvalAck] of [
@@ -138,6 +162,7 @@ for (const [name, approvalAck] of [
     await assert.rejects(session.configure(modelId, "high", "denyUnmatched", wait),
       (error: unknown) => error instanceof MuseMspFault && error.code === "MUSE_APPROVAL_UNVERIFIED");
     assert.deepEqual(commands.map(({ method }) => method), ["session/setModel", "session/setApprovalMode"]);
-    assert.deepEqual(telemetry, []);
+    assertPreflight(telemetry, ["session/read", "model/list", "session/setModel", "session/setApprovalMode"]);
+    assert.deepEqual(modelSelections(telemetry), []);
   });
 }

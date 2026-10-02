@@ -2,6 +2,7 @@ import { hasVisibleText, objectRecord } from "@cauce/protocol";
 import type { Delivery } from "../types.js";
 import { clone } from "./atomic-state.js";
 import { DurableStoreBase } from "./base.js";
+import { terminalDelegationRejections } from "./fanin-outcomes.js";
 import type {
   DelegationBranchIdentity,
   DelegationBranchProgress,
@@ -249,8 +250,8 @@ export class DurableStoreFanin extends DurableStoreBase {
           && responseCorrelation?.root_message_id === rootMessageId
           && responseCorrelation?.root_delivery_id === rootDeliveryId
           && this.continuationBelongsToRoot(request, rootDeliveryId)
-          && record.output?.messages.length === 0
-          && hasVisibleText(record.output.reply);
+          && terminalDelegationRejections(record) !== undefined
+          && hasVisibleText(record.output?.reply);
       })
       // Newest first: the coordinator's last completed turn is its actual synthesis, and
       // tenant/alias/delivery ordering says nothing about which reply that is.
@@ -260,8 +261,11 @@ export class DurableStoreFanin extends DurableStoreBase {
         const correlation = objectRecord(request.body.correlation);
         const childDeliveryId = correlation?.child_delivery_id;
         const sourceDeliveryId = correlation?.response_to_delivery_id;
+        const blockedDelegationCodes = terminalDelegationRejections(record);
         return {
           ...reply,
+          ...(blockedDelegationCodes === undefined || blockedDelegationCodes.length === 0
+            ? {} : { blockedDelegationCodes }),
           ...(typeof childDeliveryId === "string" && childDeliveryId.length > 0
             ? { childDeliveryId }
             : {}),

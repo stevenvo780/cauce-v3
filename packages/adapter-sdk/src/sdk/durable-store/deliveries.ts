@@ -6,6 +6,7 @@ import type {
   DeliveryTransitionDetails,
   EventCorrelation,
   EventDeliveryFeedback,
+  GuardedDeliveryTransitionDetails,
   InboxFile,
   InboxRecord,
   InboxState,
@@ -21,6 +22,8 @@ import {
   withLifecycleEvent,
 } from "./delivery-helpers.js";
 import { DurableStoreFanin } from "./fanin.js";
+
+class RejectedDeliveryTransitionError extends Error {}
 
 export class DurableStoreDeliveries extends DurableStoreFanin {
   async accept(
@@ -176,16 +179,39 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
     return { record: result.record, event: result.event };
   }
 
+  async transitionAndEnqueueIfCurrent(
+    deliveryId: string,
+    state: InboxState,
+    occurredAt: string,
+    details: GuardedDeliveryTransitionDetails,
+  ): Promise<LifecycleTransition | undefined> {
+    try {
+      const result = await this.transitionInternal(deliveryId, state, occurredAt, details, true, details);
+      if (result.event === undefined) throw new Error("Lifecycle transition did not create an event");
+      return { record: result.record, event: result.event };
+    } catch (error) {
+      if (error instanceof RejectedDeliveryTransitionError) return undefined;
+      throw error;
+    }
+  }
+
   private async transitionInternal(
     deliveryId: string,
     state: InboxState,
     occurredAt: string,
     details: DeliveryTransitionDetails,
     enqueueLifecycle: boolean,
+    fence?: GuardedDeliveryTransitionDetails,
   ): Promise<{ readonly record: InboxRecord; readonly event?: DeliveryEvent }> {
     return this.serialized(async () => {
       const existing = this.inbox.deliveries[deliveryId];
       if (existing === undefined) throw new Error(`Unknown delivery ${deliveryId}`);
+      const assertCurrent = fence === undefined ? undefined : () => {
+        if (fence.expectedEpoch !== this.fencing.epoch || existing.epoch !== fence.expectedEpoch
+          || existing.attempt !== fence.attempt || existing.claim_token !== fence.claimToken
+          || !fence.isCurrent()) throw new RejectedDeliveryTransitionError();
+      };
+      assertCurrent?.();
       if (details.attempt !== undefined && details.attempt !== existing.attempt) {
         throw new Error(`Stale attempt ${String(details.attempt)} for delivery ${deliveryId}`);
       }
@@ -256,7 +282,7 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
       await this.commitDeliveryState(nextInbox, nextOutbox, {
         inbox: true,
         outbox: event !== undefined,
-      });
+      }, assertCurrent);
       this.scheduleDelegationContextPrune();
       return {
         record: clone(committedNext),

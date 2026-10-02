@@ -33,7 +33,7 @@ export function capabilities(
     agent_identity_v1: true,
     agent_profile_v1: true,
     agent_profile_adoption_v1: true,
-    ...(harness === 'openclaw' ? { conversation_work_v1: true } : {}),
+    ...(harness === 'openclaw' || harness === 'grok' ? { conversation_work_v1: true } : {}),
     attachments_v1: true,
     ...(harness === "codex" ? { native_image_input_v1: true } : {}),
     persistent_sessions: persistentSessions,

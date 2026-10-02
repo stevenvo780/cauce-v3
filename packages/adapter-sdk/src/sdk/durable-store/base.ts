@@ -59,6 +59,7 @@ export class DurableStoreBase {
     inbox: InboxFile,
     outbox: OutboxFile,
     targets: { readonly inbox: boolean; readonly outbox: boolean },
+    beforePersist?: () => void,
   ): Promise<number> {
     const compacted = await this.withCompactedTerminalHistory(inbox, outbox);
     const committedInboxCandidate = compacted.inbox;
@@ -96,6 +97,7 @@ export class DurableStoreBase {
       ...(inboxDeletes.length === 0 ? {} : { inbox_deletes: inboxDeletes }),
       ...(targets.outbox ? { outbox_pending: outbox.pending } : {}),
     };
+    beforePersist?.();
     await this.atomicWrite("delivery-transaction.json", transaction);
     try {
       const committedInbox: InboxFile = writeInbox

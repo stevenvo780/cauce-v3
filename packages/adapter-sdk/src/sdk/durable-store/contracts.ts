@@ -103,6 +103,7 @@ export interface ProcessedFaninReply {
   readonly sourceDeliveryId?: string; // fan-out turn this branch continues; siblings share it
   readonly outputIndex?: number;
   readonly targetTenant?: string;
+  readonly blockedDelegationCodes?: readonly DelegationRejectionNotice["code"][];
 }
 
 export interface DelegationBranchIdentity {
@@ -184,6 +185,13 @@ export interface DeliveryTransitionDetails {
   readonly attempt?: number;
   readonly claimToken?: string;
   readonly executionIntentProtocol?: "preinvoke-v1";
+}
+
+export interface GuardedDeliveryTransitionDetails extends DeliveryTransitionDetails {
+  readonly attempt: number;
+  readonly claimToken: string;
+  readonly expectedEpoch: number;
+  readonly isCurrent: () => boolean;
 }
 
 export interface LifecycleAcceptance {
