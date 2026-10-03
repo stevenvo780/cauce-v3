@@ -20,7 +20,7 @@ export function ConversationNotices({ health, queueError, feedError, leaseWarnin
   const focusInside = useRef(false);
   const lastFocused = useRef<HTMLElement | null>(null);
   const hasQueueAttention = (health?.reintentos ?? 0) > 0 || (health?.muertas ?? 0) > 0;
-  const hasNotices = Boolean(hasQueueAttention || queueError || feedError || leaseWarning || topologyWarning);
+  const hasNotices = hasQueueAttention || Boolean(queueError) || Boolean(feedError) || Boolean(leaseWarning) || Boolean(topologyWarning);
   useEffect(() => {
     if (hasNotices) return;
     setOpen(false);
@@ -60,8 +60,8 @@ export function ConversationNotices({ health, queueError, feedError, leaseWarnin
   if (!hasNotices) return null;
   const labels: { text: string; role: 'status' | 'alert' | 'note' }[] = [];
   if (hasQueueAttention) labels.push({ role: 'status', text:
-    `${health?.reintentos ? `${String(health.reintentos)} reintento(s). ` : ''}`
-      + `${health?.muertas ? `${health.muertasTruncadas ? '≥ ' : ''}${String(health.muertas)} muerta(s).` : ''}` });
+    (health?.reintentos ? `${String(health.reintentos)} reintento(s). ` : '')
+      + (health?.muertas ? `${health.muertasTruncadas ? '≥ ' : ''}${String(health.muertas)} muerta(s).` : '') });
   if (queueError) labels.push({ role: 'alert', text: 'Cola sin verificar' });
   if (feedError) labels.push({ role: 'alert', text: 'Historial anterior: sin actualizar' });
   if (leaseWarning) labels.push({ role: 'note', text: leaseExpired ? 'Lease vencido · envío en cola' : 'Lease sin dato · envío en cola' });
