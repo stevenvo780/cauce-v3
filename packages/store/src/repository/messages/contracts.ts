@@ -4,6 +4,7 @@ import type {
   PublishResult as ProtocolPublishResult,
 } from '@cauce/protocol';
 import { StoreError } from '../errors.js';
+import type { ConsoleMessageAuthor } from './author.js';
 
 export class PublishIntentReconciliationRequired extends StoreError {
   constructor(readonly reconciliation: ConsolePublishIntentReconciliation) {
@@ -34,6 +35,7 @@ export interface PublishOptions {
   /** Console-only gate. Machine endpoints deliberately leave it disabled. */
   readonly requirePreparedConsoleIntent?: boolean;
   readonly consoleIntentOperatorScope?: string;
+  readonly consoleAuthor?: ConsoleMessageAuthor;
   readonly agentRoot?: boolean; // Server-derived from the principal's roles, never from the request body.
 }
 

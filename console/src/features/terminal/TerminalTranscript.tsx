@@ -6,6 +6,7 @@ import { compactId } from '../../lib';
 import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada } from './cuerpo-del-mensaje';
 import type { TranscriptItem } from './session';
+import { humanAuthor } from './message-author';
 
 function DeliveryProgress({ delivery, onSelect, compact, disabled }: { delivery: DeliveryView; onSelect: () => void; compact?: boolean; disabled?: boolean }) {
   const policy = deliveryPolicy(delivery.status);
@@ -60,6 +61,8 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, pre
         {items.map((item, index) => {
           const { message, direction, delivery } = item;
           const recortado = previsualizacionRecortada(message.body_preview);
+          const author = humanAuthor(message);
+          const authorLabel = author?.display_name ?? (author ? 'Persona autenticada' : message.actor_alias ?? 'Emisor sin dato');
           return (
             <article
               className={`transcript-entry ${direction}`}
@@ -68,8 +71,8 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, pre
             >
               <header>
                 <span className="transcript-direction">
-                  <AgentAvatar alias={message.actor_alias ?? '?'} tenantId={message.tenant_id ?? ''} />
-                  <span>{message.actor_alias ?? 'Emisor sin dato'}</span>
+                  <AgentAvatar alias={authorLabel} tenantId={message.tenant_id ?? ''} />
+                  <span title={author ? `Persona autenticada · identidad técnica: ${message.actor_alias ?? 'sin dato'}` : 'Identidad técnica; autor humano no registrado'}>{authorLabel}</span>
                   <ArrowRight size={14} aria-hidden="true" /><span className="sr-only">hacia</span>
                   <span>{direction === 'input' ? delivery?.recipient_alias ?? 'Destino sin dato' : message.room_id ?? 'Sala sin dato'}</span>
                 </span>

@@ -28,7 +28,14 @@ export interface DeliveryView {
   timeline?: TimelineEvent[] | null;
 }
 
+export interface MessageAuthor {
+  kind: 'human';
+  subject_id: string;
+  display_name: string | null;
+}
+
 export interface MessageView {
+  author?: MessageAuthor | null;
   message_id?: string | null;
   request_id?: string | null;
   trace_id?: string | null;
@@ -47,6 +54,7 @@ export interface MessageView {
  * unknown-shape case, in `features/terminal/cuerpo-del-mensaje.ts`.
  */
 export interface MessageDetail {
+  author?: MessageAuthor | null;
   id?: string | null;
   message_id?: string | null;
   trace_id?: string | null;

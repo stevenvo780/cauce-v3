@@ -567,6 +567,8 @@ describe('login por contraseña de la consola', () => {
         headers: { cookie, 'x-cauce-operator': 'steven' }
       } as unknown as FastifyRequest);
       expect(principal.operator_id).toBe('steven@elenxos.com');
+      const account = await test.users.findByEmail('steven@elenxos.com');
+      expect(principal.operator_profile).toEqual({ id: `console:${account?.id ?? ''}`, display_name: 'Steven' });
       expect(principal.channel).toBe('console');
     } finally {
       await test.app.close();

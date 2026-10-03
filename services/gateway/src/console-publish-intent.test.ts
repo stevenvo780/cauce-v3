@@ -222,7 +222,7 @@ describe('console publish-intent endpoints', () => {
     });
     expect(published.statusCode).toBe(202);
     expect(publishes[0]?.command.priority).toBe(HUMAN_CHAT_PRIORITY);
-    expect(publishes[0]?.options).toEqual({
+    expect(publishes[0]?.options).toMatchObject({
       requirePreparedConsoleIntent: true,
       consoleIntentOperatorScope: prepareScopes[0],
     });

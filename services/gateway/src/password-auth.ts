@@ -273,6 +273,7 @@ export class PasswordAuthProvider implements AuthProvider {
       permissions: authority.permissions,
       // Identifier of the authenticated operator, derived from the console account.
       operator_id: user.email,
+      operator_profile: { id: `console:${user.id}`, display_name: user.display_name },
       /*
        * A web session is not a return transport. The human identity is tracked through
        * operator_id and session_id without registering as a durable delivery route.
