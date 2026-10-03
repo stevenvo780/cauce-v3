@@ -57,7 +57,7 @@ describe('compositor dentro del hilo acotado', () => {
   });
   it('el compositor expandido tiene un techo y puede desplazarse', () => {
     expect(mobile(CSS, '.messenger-composer', 'max-height')).toBe('55%');
-    expect(mobile(CSS, '.messenger-delivery-detail[open]', 'overflow-y')).toBe('auto');
+    expect(mobile(CSS, '.messenger-delivery-detail', 'overflow-y')).toBe('auto');
   });
 });
 

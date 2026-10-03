@@ -1,4 +1,4 @@
-import { ArrowDownToLine, ArrowLeft, ChevronDown, CircleOff, DoorClosed, LockKeyhole, RefreshCw, Send, Settings2, TerminalSquare } from 'lucide-react';
+import { ArrowDownToLine, ArrowLeft, ChevronDown, CircleOff, DoorClosed, LockKeyhole, RefreshCw, Send, Settings2, TerminalSquare, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent, type KeyboardEvent } from 'react';
 import { useApi } from '../../api/context';
 import { ApiError } from '../../api/client';
@@ -17,6 +17,7 @@ import { transcriptForSession, type OperatorRoute, type OperatorSession, type Tr
 import { TerminalTranscript } from '../terminal/TerminalTranscript';
 import { estaPegadoAlFinal, irAlFinal } from './desplazamiento';
 import { publishDurably } from './durable-publish';
+import { ConversationMenu } from './ConversationMenu';
 import { AgentSettingsView } from './AgentSettingsView';
 import { MessageTimeline } from './MessageTimeline';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
@@ -31,6 +32,8 @@ interface ConversationPaneProps {
   canPublish: boolean;
   publisherSubject?: string | null;
   salud?: SaludDeCola;
+  queueError?: Error;
+  onQueueReload: () => void;
   onReload: () => void;
 }
 
@@ -49,16 +52,18 @@ type CuerpoEntero =
  * Conversation panel with an agent: history, delivery state and message composer.
  */
 export function ConversationPane({
-  agent, page, loading, error, route, canPublish, publisherSubject, salud, onReload,
+  agent, page, loading, error, route, canPublish, publisherSubject, salud, queueError, onQueueReload, onReload,
 }: ConversationPaneProps) {
   const api = useApi();
   const search = useRouteSearch();
   const contextOpen = new URLSearchParams(search).get('view') === 'context';
   const conversationPath = `/messages/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`;
-  const contextTrigger = useRef<HTMLAnchorElement>(null);
+  const moreTrigger = useRef<HTMLButtonElement>(null);
+  const detailTrigger = useRef<HTMLElement | null>(null);
+  const detailHeading = useRef<HTMLHeadingElement>(null);
   const wasContextOpen = useRef(contextOpen);
   useEffect(() => {
-    if (wasContextOpen.current && !contextOpen) contextTrigger.current?.focus({ preventScroll: true });
+    if (wasContextOpen.current && !contextOpen) moreTrigger.current?.focus({ preventScroll: true });
     wasContextOpen.current = contextOpen;
   }, [contextOpen]);
   const draftKey = JSON.stringify([publisherSubject, agent.id]);
@@ -69,6 +74,7 @@ export function ConversationPane({
   const setLane = (lane: JobLane) => { updateForm((current) => ({ ...current, lane })); };
   const setAviso = (notice: typeof aviso) => { updateForm((current) => ({ ...current, notice })); };
   const [mensajeElegido, setMensajeElegido] = useState<string>();
+  const [selectedSnapshot, setSelectedSnapshot] = useState<TranscriptItem>();
   const [cuerpos, setCuerpos] = useState<Record<string, CuerpoEntero>>({});
   /** The detail is born closed and is opened by the operator or by clicking a bubble. */
   const [detalleAbierto, setDetalleAbierto] = useState(false);
@@ -78,10 +84,10 @@ export function ConversationPane({
   }), [agent]);
   const hilo = useMemo(() => transcriptForSession(page, sesion), [page, sesion]);
 
-  const roomOrigen = roomElegido && route.sourceRoomIds.includes(roomElegido)
-    ? roomElegido
-    : route.sourceRoomIds[0] ?? '';
-  const puedeEnviar = canPublish && route.allowed && Boolean(roomOrigen);
+  const roomUnavailable = Boolean(roomElegido && !route.sourceRoomIds.includes(roomElegido));
+  const roomOrigen = roomElegido ?? (route.sourceRoomIds.length === 1 ? route.sourceRoomIds[0] : '');
+  const needsRoomChoice = route.sourceRoomIds.length > 1 || roomUnavailable;
+  const puedeEnviar = canPublish && route.allowed && Boolean(roomOrigen) && !roomUnavailable;
   /*
    * The lease warning is a WARNING, not a hint about what to write. It lived in the textarea's
    * `placeholder`, so it erased itself at the first keystroke —exactly when it starts to matter—
@@ -93,9 +99,14 @@ export function ConversationPane({
       ? `El lease de ${agent.alias} está vencido: Cauce encola el mensaje igual y se lo entrega cuando el agente vuelva a reclamar.`
       : `El servidor no informa el lease de ${agent.alias} (sin dato, que no es lo mismo que vencido): Cauce encola el mensaje igual.`;
   // The ITEM is selected, not the loose delivery: the detail has to be able to say the room, the lane, the actor and the trace of the MESSAGE, and those fields do not live in the delivery.
-  const elegidoPorElOperador = hilo.find((item) => (
+  const selectedInWindow = hilo.find((item) => (
     mensajeElegido != null && item.message.message_id === mensajeElegido
   ));
+  useEffect(() => {
+    // Retain the latest observed delivery and timeline when polling moves this message out of the window.
+    if (selectedInWindow) setSelectedSnapshot(selectedInWindow);
+  }, [selectedInWindow]);
+  const elegidoPorElOperador = selectedInWindow ?? selectedSnapshot;
   const itemSeleccionado = elegidoPorElOperador ?? hilo.at(-1);
   const seleccionada = itemSeleccionado?.delivery;
   const rutaDeEntregaSeleccionada = queueDeliveryPath(seleccionada?.delivery_id);
@@ -170,13 +181,8 @@ export function ConversationPane({
           : { estado: 'listo', texto },
       }));
     } catch (causa) {
-      /*
-       * A 404 here does not mean "the message does not exist": it means that the deployed gateway does not yet
-       * publish this route. It is said with those words instead of blaming the data, which is the mistake this
-       * console makes when something is missing: blaming what is visible.
-       */
       const motivo = causa instanceof ApiError && (causa.status === 404 || causa.status === 501)
-        ? 'El gateway desplegado no publica todavía GET /v3/console/messages/:id, así que el cuerpo entero no se puede pedir desde acá.'
+        ? `No se pudo obtener el cuerpo completo (HTTP ${String(causa.status)}). El servidor no devolvió el contenido; la vista previa sigue disponible.`
         : causa instanceof Error ? causa.message : 'No se pudo leer el cuerpo del mensaje.';
       setCuerpos((previo) => ({ ...previo, [messageId]: { estado: 'fallo', motivo } }));
     }
@@ -207,7 +213,7 @@ export function ConversationPane({
 
       updateForm((current) => ({ ...current, text: current.text === draft ? '' : current.text }));
       setAviso({
-        tone: 'success',
+        tone: journalStatus === 'confirmed' ? 'success' : 'parcial',
         text: `${reconciled ? 'Publicación reconciliada desde el journal durable' : 'Aceptado por el control plane'} · ${compactId(resultado.message_id)}. `
           + `${journalStatus === 'confirmed'
             ? 'Intención confirmada'
@@ -234,10 +240,24 @@ export function ConversationPane({
 
   function elegir(item: TranscriptItem) {
     if (!item.message.message_id) return;
+    detailTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setMensajeElegido(item.message.message_id);
+    setSelectedSnapshot(item);
     // Clicking a bubble IS asking for its detail: opening it here is not "auto-opening".
     setDetalleAbierto(true);
+    detailHeading.current?.focus({ preventScroll: true });
   }
+
+  function closeDetail() {
+    setDetalleAbierto(false);
+    const trigger = detailTrigger.current;
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    else moreTrigger.current?.focus({ preventScroll: true });
+  }
+
+  useEffect(() => {
+    if (detalleAbierto) detailHeading.current?.focus({ preventScroll: true });
+  }, [detalleAbierto, mensajeElegido]);
 
   const idSeleccionado = mensajeSeleccionado?.message_id ?? undefined;
   const cuerpoEntero = idSeleccionado ? cuerpos[idSeleccionado] : undefined;
@@ -257,8 +277,8 @@ export function ConversationPane({
           </div>
           <Badge tone={LEASE_TONE[agent.leaseState]}>{LEASE_LABEL[agent.leaseState]}</Badge>
         </div>
-        <div className="messenger-thread-actions">
-          <a className="button small secondary" ref={contextTrigger} href={`${conversationPath}?view=context`}
+        <ConversationMenu triggerRef={moreTrigger}>
+          <a className="button small secondary" href={`${conversationPath}?view=context`}
             onClick={(event) => { onNavClick(event, `${conversationPath}?view=context`); }}>
             <Settings2 size={14} aria-hidden="true" /> Configurar agente
           </a>
@@ -271,7 +291,33 @@ export function ConversationPane({
           <button className="button small secondary" type="button" onClick={onReload} disabled={loading}>
             <RefreshCw size={13} aria-hidden="true" /> Sincronizar
           </button>
-        </div>
+          {itemSeleccionado ? <button className="button small secondary" type="button"
+            disabled={!hilo.at(-1)?.message.message_id} onClick={() => { const last = hilo.at(-1); if (last) elegir(last); }}>
+            Ver detalle del último mensaje
+          </button> : null}
+          <p className="messenger-room-fixed">Room de origen: <span className="mono">{roomOrigen || 'UNKNOWN'}</span> · derivado de tu topología, no escrito a mano.</p>
+          <label className="messenger-lane-select" htmlFor={`messenger-lane-${agent.id}`}>Carril
+            <select id={`messenger-lane-${agent.id}`} value={lane} disabled={enviando}
+              onChange={(event) => { setLane(event.target.value === 'batch' ? 'batch' : 'interactive'); }}>
+              <option value="interactive">interactive · prioridad 10</option>
+              <option value="batch">batch · prioridad 0</option>
+            </select>
+          </label>
+          <details className="chat-agent-details">
+            <summary>Estado y detalles del agente{(salud?.muertas ?? 0) > 0 || (salud?.reintentos ?? 0) > 0 ? ' · Hay entregas que necesitan atención' : ''}</summary>
+            <p className="chat-agent-runtime">Epoch {agent.presence?.epoch ?? 'UNKNOWN'} · lease <Time value={agent.presence?.lease_expires_at ?? agent.presence?.lease_until} /></p>
+            <dl className="messenger-queue-strip" aria-label={`Cola de ${agent.alias}`}>
+              <div><dt>En cola</dt><dd>{textoDeCifra(salud?.pendientes)}</dd></div>
+              <div><dt>En curso</dt><dd>{textoDeCifra(salud?.enCurso)}</dd></div>
+              <div><dt>Reintentos</dt><dd>{textoDeCifra(salud?.reintentos)}</dd></div>
+              <div data-alarm={(salud?.muertas ?? 0) > 0 || undefined}>
+                <dt>Muertas</dt>
+                <dd>{salud?.muertasTruncadas && salud.muertas !== undefined ? '≥ ' : ''}{textoDeCifra(salud?.muertas)}</dd>
+              </div>
+            </dl>
+            <p className="messenger-window-note">Hilo filtrado sobre los {totalVisible} mensajes que el servidor publica para tu identidad (tope {LIMITE_MENSAJES}, sin filtro por par).</p>
+          </details>
+        </ConversationMenu>
       </header>
 
       {fueraDeLaTopologia(agent) ? (
@@ -280,29 +326,23 @@ export function ConversationPane({
         </p>
       ) : null}
 
-      <details className="chat-agent-details">
-        <summary>Estado y detalles del agente{(salud?.muertas ?? 0) > 0 || (salud?.reintentos ?? 0) > 0 ? ' · Hay entregas que necesitan atención' : ''}</summary>
-        <p className="chat-agent-runtime">Epoch {agent.presence?.epoch ?? 'UNKNOWN'} · lease <Time value={agent.presence?.lease_expires_at ?? agent.presence?.lease_until} /></p>
-      <dl className="messenger-queue-strip" aria-label={`Cola de ${agent.alias}`}>
-        <div><dt>En cola</dt><dd>{textoDeCifra(salud?.pendientes)}</dd></div>
-        <div><dt>En curso</dt><dd>{textoDeCifra(salud?.enCurso)}</dd></div>
-        <div><dt>Reintentos</dt><dd>{textoDeCifra(salud?.reintentos)}</dd></div>
-        <div data-alarm={(salud?.muertas ?? 0) > 0 || undefined}>
-          <dt>Muertas</dt>
-          <dd>{salud?.muertasTruncadas && salud.muertas !== undefined ? '≥ ' : ''}{textoDeCifra(salud?.muertas)}</dd>
-        </div>
-      </dl>
-      </details>
+      {(salud?.reintentos ?? 0) > 0 || (salud?.muertas ?? 0) > 0 ? <p className="chat-queue-warning" role="status">
+        {salud?.reintentos ? `${String(salud.reintentos)} reintento(s). ` : ''}
+        {salud?.muertas ? `${salud.muertasTruncadas ? '≥ ' : ''}${String(salud.muertas)} muerta(s). ` : ''}
+        <a href="/queues" onClick={(event) => { onNavClick(event, '/queues'); }}>Revisar en Colas</a>
+      </p> : null}
+      {queueError ? <p className="chat-queue-warning" role="alert">
+        No se pudo actualizar la cola: {queueError.message}. Estado sin verificar.
+        <button className="button small secondary" type="button" onClick={onQueueReload}>Reintentar cola</button>
+      </p> : null}
 
       {error && page ? <p className="chat-feed-error" role="alert">No se pudo actualizar la conversación: {error.message}. Se muestra el último historial recibido.</p> : null}
 
       {/* Thread filtered over the server's message window. */}
       <div className="messenger-thread-scroll" ref={cajaRef} onScroll={alDesplazar}>
-        <p className="messenger-window-note" data-truncated={totalVisible >= LIMITE_MENSAJES || undefined}>
-          {totalVisible >= LIMITE_MENSAJES
-            ? `Ventana llena: el servidor devuelve como máximo ${String(LIMITE_MENSAJES)} mensajes de TODA la flota y este hilo se filtra sobre ellos. Puede haber historia anterior que no entra.`
-            : `Hilo filtrado sobre los ${String(totalVisible)} mensajes que el servidor publica para tu identidad (tope ${String(LIMITE_MENSAJES)}, sin filtro por par).`}
-        </p>
+        {totalVisible >= LIMITE_MENSAJES ? <p className="messenger-window-note" data-truncated role="note">
+          Ventana llena: el servidor devuelve como máximo {LIMITE_MENSAJES} mensajes de TODA la flota y este hilo se filtra sobre ellos. Puede haber historia anterior que no entra.
+        </p> : null}
         {error && !page ? (
           <div role="alert"><EmptyState>No se pudo leer el feed de mensajes: {error.message}</EmptyState></div>
         ) : loading && !page ? (
@@ -331,22 +371,15 @@ export function ConversationPane({
         </div>
       ) : null}
 
-      {mensajeSeleccionado ? (
-        <details
-          className="messenger-delivery-detail"
-          role="group"
-          aria-label="Detalle del mensaje seleccionado"
-          open={detalleAbierto}
-          onToggle={(evento) => { setDetalleAbierto(evento.currentTarget.open); }}
-        >
-          <summary className="messenger-detalle-origen">
-            {elegidoPorElOperador
-              ? <>Mensaje que elegiste · <span className="mono">{compactId(mensajeSeleccionado.message_id)}</span></>
-              /* It names the control that DOES select —the delivery row, or the "ver detalle" of a
-                 bubble without one—: clicking the text of a bubble selects nothing, and the
-                 previous wording ("clicá una burbuja") promised exactly that. */
-              : <>Último mensaje del hilo · <span className="mono">{compactId(mensajeSeleccionado.message_id)}</span> · clicá la entrega de una burbuja, o su «ver detalle», para ver la suya</>}
-          </summary>
+      {detalleAbierto && mensajeSeleccionado ? (
+        <section className="messenger-delivery-detail" role="group" aria-label="Detalle del mensaje seleccionado"
+          onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); closeDetail(); } }}>
+          <header className="chat-inspector-head">
+            <h3 ref={detailHeading} tabIndex={-1}>{elegidoPorElOperador ? 'Mensaje que elegiste' : 'Último mensaje del hilo'}</h3>
+            <button className="button small secondary" type="button" onClick={closeDetail} aria-label="Cerrar detalle"><X size={16} aria-hidden="true" /></button>
+          </header>
+          {mensajeElegido && !hilo.some((item) => item.message.message_id === mensajeElegido)
+            ? <p className="messenger-window-note" role="note">Mensaje fuera de la ventana actual; se muestra el último detalle recibido.</p> : null}
           <p className="eyebrow">
             {seleccionada
               ? <>
@@ -407,8 +440,8 @@ export function ConversationPane({
             <p className="eyebrow">Fan-out del publish</p>
             {hermanas.length === 0 ? (
               <p className="messenger-fanout-none">
-                Este publish sólo tiene la entrega de este hilo. No es lo mismo que «no se sabe»: el servidor
-                devolvió {(mensajeSeleccionado.deliveries ?? []).length} entrega(s) para el mensaje.
+                {mensajeSeleccionado.deliveries == null ? 'El servidor no incluyó las entregas de este mensaje.'
+                  : `El servidor devolvió ${String(mensajeSeleccionado.deliveries.length)} entrega(s) para el mensaje; ninguna otra entrega fuera de este hilo.`}
               </p>
             ) : (
               <ul className="messenger-fanout-list">
@@ -437,48 +470,34 @@ export function ConversationPane({
               </ul>
             )}
           </section>
-        </details>
+        </section>
       ) : null}
 
       <form className="messenger-composer" onSubmit={(event) => void enviar(event)}>
-        <label htmlFor={`messenger-input-${agent.id}`}>Mensaje para {agent.alias}</label>
-        <details className="chat-compose-options" open={route.sourceRoomIds.length > 1 || undefined}>
-          <summary>Opciones de envío · {lane === 'batch' ? 'en segundo plano' : 'conversación'}</summary>
-        {route.sourceRoomIds.length > 1 ? (
+        <label className="sr-only" htmlFor={`messenger-input-${agent.id}`}>Mensaje para {agent.alias}</label>
+        {needsRoomChoice ? (
           <label className="messenger-room-select">Room de origen
             <span className="room-select-wrap">
-              <select value={roomOrigen} onChange={(event) => { setRoomElegido(event.target.value); }}>
+              <select value={roomOrigen} disabled={enviando} onChange={(event) => { setRoomElegido(event.target.value); }}>
+                <option value="" disabled>Elegí la sala de origen</option>
+                {roomUnavailable ? <option value={roomElegido} disabled>{roomElegido} · no disponible</option> : null}
                 {route.sourceRoomIds.map((room) => <option key={room} value={room}>{room}</option>)}
               </select>
               <ChevronDown size={14} aria-hidden="true" />
             </span>
           </label>
-        ) : (
-          <p className="messenger-room-fixed">Room de origen: <span className="mono">{roomOrigen || 'UNKNOWN'}</span> · derivado de tu topología, no escrito a mano.</p>
-        )}
-        <label className="messenger-lane-select" htmlFor={`messenger-lane-${agent.id}`}>Carril
-          <span className="room-select-wrap">
-            <select
-              id={`messenger-lane-${agent.id}`}
-              value={lane}
-              onChange={(event) => { setLane(event.target.value === 'batch' ? 'batch' : 'interactive'); }}
-            >
-              {/* El rótulo es castellano; el VALOR se escribe como lo publica el protocolo, que es
-                  lo que el operador va a cruzar contra `lane=` en el log del servidor. */}
-              <option value="interactive">interactive · prioridad 10</option>
-              <option value="batch">batch · prioridad 0</option>
-            </select>
-            <ChevronDown size={14} aria-hidden="true" />
-          </span>
-        </label>
-        </details>
+        ) : null}
+        {roomUnavailable ? <p className="composer-blocked" role="alert">La sala elegida ya no está disponible. Elegí otra sala antes de enviar; el borrador se conserva.</p>
+          : route.allowed && !roomOrigen ? <p className="composer-blocked" role="note">Elegí una sala de origen antes de enviar.</p> : null}
+        {lane === 'batch' ? <p className="messenger-room-fixed">Envío en segundo plano · cambiá el carril en Más.</p> : null}
         {avisoDeLease ? <p className="notice parcial" role="note">{avisoDeLease}</p> : null}
+        <div className="composer-input-row">
         <textarea
           id={`messenger-input-${agent.id}`}
           value={draft}
           onChange={(event) => { setDraft(event.target.value); }}
           onKeyDown={teclaDelCompositor}
-          rows={2}
+          rows={1}
           maxLength={8_000}
           placeholder="Escribí un mensaje…"
           disabled={!puedeEnviar || enviando}
@@ -486,8 +505,9 @@ export function ConversationPane({
         <div className="composer-footer">
           <span><kbd>Enter</kbd> enviar · <kbd>Shift</kbd> + <kbd>Enter</kbd> nueva línea</span>
           <button className="button primary" type="submit" disabled={!puedeEnviar || enviando || !draft.trim()}>
-            <Send size={15} aria-hidden="true" /> {enviando ? 'Enviando…' : 'Enviar'}
+            <Send size={15} aria-hidden="true" /><span>{enviando ? 'Enviando…' : 'Enviar'}</span>
           </button>
+        </div>
         </div>
         {!canPublish ? <p className="composer-blocked"><LockKeyhole size={14} aria-hidden="true" /> Requiere el permiso message.publish.</p> : null}
         {!route.allowed ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> {route.reason}</p> : null}

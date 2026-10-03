@@ -7,12 +7,12 @@ import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada } from './cuerpo-del-mensaje';
 import type { TranscriptItem } from './session';
 
-function DeliveryProgress({ delivery, onSelect, compact }: { delivery: DeliveryView; onSelect: () => void; compact?: boolean }) {
+function DeliveryProgress({ delivery, onSelect, compact, disabled }: { delivery: DeliveryView; onSelect: () => void; compact?: boolean; disabled?: boolean }) {
   const policy = deliveryPolicy(delivery.status);
   const events = delivery.timeline ?? [];
   const last = events.at(-1);
   return (
-    <button className="transcript-delivery" type="button" data-delivery-id={delivery.delivery_id ?? undefined} onClick={onSelect}>
+    <button className="transcript-delivery" type="button" disabled={disabled} data-delivery-id={delivery.delivery_id ?? undefined} onClick={onSelect}>
       <span className="delivery-state-icon" aria-hidden="true">
         {policy.state === 'done' ? <CheckCircle2 size={14} /> : policy.known ? <CircleDashed size={14} /> : <Clock3 size={14} />}
       </span>
@@ -22,7 +22,7 @@ function DeliveryProgress({ delivery, onSelect, compact }: { delivery: DeliveryV
           ? `El servidor mandó un estado que esta consola no conoce: ${delivery.status}`
           : undefined}
       /></Badge>
-      {compact ? <span>Ver detalle</span> : <>
+      {compact ? <span>{disabled ? 'Detalle no disponible: mensaje sin identificador' : 'Ver detalle'}</span> : <>
         <span className="mono">{compactId(delivery.delivery_id)}</span>
         <span>{events.length} ACK · intento {delivery.attempt ?? last?.attempt ?? 'sin dato'}</span>
       </>}
@@ -44,7 +44,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, pre
     return (
       <div className="terminal-transcript-empty">
         <EmptyState>
-          {presentation === 'chat' ? 'Todavía no hay mensajes en esta conversación. Escribile al agente para empezar.' : 'No hay mensajes de servidor para este agente. Publicá desde Mensajes o esperá el próximo polling.'}
+          {presentation === 'chat' ? 'No hay mensajes de este agente en la ventana recibida. Podés escribirle para iniciar o retomar la conversación.' : 'No hay mensajes de servidor para este agente. Publicá desde Mensajes o esperá el próximo polling.'}
         </EmptyState>
       </div>
     );
@@ -94,7 +94,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, pre
                 <span className="mono">trace {compactId(message.trace_id)}</span>
               </footer> : null}
               {delivery ? (
-                <DeliveryProgress compact={presentation === 'chat'} delivery={delivery} onSelect={() => { onSelectItem(item); }} />
+                <DeliveryProgress compact={presentation === 'chat'} disabled={presentation === 'chat' && !message.message_id} delivery={delivery} onSelect={() => { onSelectItem(item); }} />
               ) : (
                 /*
                  * Before this was an inert `<span>`: half the thread —everything the agent wrote—
@@ -104,8 +104,9 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, pre
                 <button
                   className="transcript-output-note"
                   type="button"
+                  disabled={presentation === 'chat' && !message.message_id}
                   onClick={() => { onSelectItem(item); }}
-                >{presentation === 'chat' ? 'Ver detalle del mensaje' : 'Salida observada desde el feed durable del room · ver detalle'}</button>
+                >{presentation === 'chat' ? message.message_id ? 'Ver detalle del mensaje' : 'Detalle no disponible: mensaje sin identificador' : 'Salida observada desde el feed durable del room · ver detalle'}</button>
               )}
             </article>
           );

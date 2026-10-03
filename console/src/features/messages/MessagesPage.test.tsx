@@ -128,7 +128,8 @@ it('emite el mensaje al agente elegido derivando el room, sin pedirlo escrito a 
   // There is no field where to write the recipient or the room: that is part of the fix.
   expect(within(hilo).queryByLabelText(/^room$/i)).not.toBeInTheDocument();
   expect(within(hilo).queryByLabelText(/destinatario/i)).not.toBeInTheDocument();
-  expect(within(hilo).getByText(/derivado de tu topología/i)).toBeInTheDocument();
+  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
+  expect(within(hilo).getByText(/derivado de tu topología/i)).toBeVisible();
 
   await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'revisá la cola');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
@@ -347,6 +348,7 @@ it('ofrece el salto a la terminal del agente, apuntando a su detalle real', asyn
   renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
+  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
   expect(within(hilo).getByRole('link', { name: /abrir tui/i })).toHaveAttribute('href', '/terminal/Steven/argos');
 }, 20_000);
 
@@ -363,7 +365,18 @@ it('declara el techo de 100 mensajes del servidor en vez de presentar el hilo co
   renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
-  expect(within(hilo).getByText(/sin filtro por par/i)).toBeInTheDocument();
+  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
+  await user.click(within(hilo).getByText(/Estado y detalles del agente/));
+  expect(within(hilo).getByText(/sin filtro por par/i)).toBeVisible();
+  const page = mockMessages();
+  server.use(http.get('*/v3/console/messages', () => HttpResponse.json({ ...page,
+    items: Array.from({ length: 100 }, (_, index) => ({ ...page.items?.[0], message_id: `window-${String(index)}` })),
+  })));
+  await user.click(within(hilo).getByRole('button', { name: 'Sincronizar' }));
+  await user.keyboard('{Escape}');
+  const warning = await within(hilo).findByText(/Ventana llena/);
+  expect(warning).toBeVisible();
+  expect(warning.closest('.chat-more-panel')).toBeNull();
 }, 20_000);
 
 // ---------------------------------------------------------------------------------------------
@@ -481,6 +494,8 @@ it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del p
   renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
+  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
+  await user.click(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' }));
   const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
 
   const campo = (etiqueta: string) => {
@@ -532,6 +547,8 @@ it('la entrega hermana se lista en el detalle pero NO se convierte en una burbuj
   renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
+  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
+  await user.click(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' }));
   await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
   const burbujas = within(historial(hilo)).getAllByText('Verificar estado del adapter Hermes');
   expect(burbujas).toHaveLength(1);
@@ -545,6 +562,7 @@ it('vuelve a poder publicar en el lane batch, con la prioridad de ese carril', a
   renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
+  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
   await user.selectOptions(within(hilo).getByLabelText(/^carril$/i), 'batch');
   await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'indexá el informe');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));

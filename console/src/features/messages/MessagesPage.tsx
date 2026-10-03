@@ -12,6 +12,7 @@ import { operatorRouteForAgent } from '../terminal/session';
 import { AgentRoster } from './AgentRoster';
 import { ConversationPane } from './ConversationPane';
 import './messages.css';
+import { useConversationViewport } from './use-conversation-viewport';
 import { saludDeColaPorAgente } from './queue-health';
 import { construirRosterDeMensajeria } from './roster';
 
@@ -110,6 +111,8 @@ function MessagesPageContent({ params }: MessagesPageProps) {
     return () => { window.removeEventListener('resize', medirElTope); };
   }, [medirElTope]);
 
+  useConversationViewport(envolturaRef);
+
   const lastSelected = useRef<string | undefined>(undefined);
   const requestedId = pedido ? fleetAgentId(pedido.tenantId, pedido.alias) : undefined;
   useEffect(() => {
@@ -182,6 +185,8 @@ function MessagesPageContent({ params }: MessagesPageProps) {
             canPublish={canPublish}
             publisherSubject={accesoVerificado?.subject}
             salud={salud[seleccionado.id]}
+            queueError={queues.error ?? activity.error}
+            onQueueReload={() => { void queues.reload(); void activity.reload(); }}
             onReload={messages.reload}
           />
         ) : (
