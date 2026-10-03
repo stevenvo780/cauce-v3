@@ -65,11 +65,14 @@ async function writeSuite(
   await writeFile(join(directory, 'SHA256SUMS'), `${sha(report)}  report.json\n${sha(junit)}  junit.xml\n`);
 }
 
-async function fixture(): Promise<string> {
+async function fixture(
+  suite: 'real' | 'restarts' = 'real',
+  overrides: Record<string, unknown> = {},
+): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'cauce-testcontainers-evidence-'));
   scratch.push(directory);
-  await writeSuite(directory, 'real');
-  await writeSuite(directory, 'restarts');
+  await writeSuite(directory, 'real', suite === 'real' ? overrides : {});
+  await writeSuite(directory, 'restarts', suite === 'restarts' ? overrides : {});
   return directory;
 }
 
@@ -86,6 +89,53 @@ afterEach(async () => {
 });
 
 describe('Testcontainers release evidence', () => {
+  describe.each(['real', 'restarts'] as const)('%s summary', (suite) => {
+    const tests = Array.from({ length: 15 }, (_, index) => ({
+      name: `proof ${String(index)}`, status: 'passed', evidence: 'real',
+      ...(index === 14 ? { evidenceClass: 'protocol-double' } : {}),
+    }));
+    const summary = { tests: 15, passed: 15, failed: 0, skipped: 0, criticalSkipped: 0, real: 14, mocked: 0 };
+
+    test('accepts 15 passing tests with 14 real proofs and one protocol double', async () => {
+      const result = run(await fixture(suite, { tests, summary }));
+      expect(result.status, result.stderr).toBe(0);
+    });
+
+    test('counts unclassified and explicitly real evidence without a protocol double', async () => {
+      const realTests = tests.map((proof, index) =>
+        index === 14 ? { ...proof, evidenceClass: 'source-execution' } : proof);
+      const result = run(await fixture(suite, { tests: realTests, summary: { ...summary, real: 15 } }));
+      expect(result.status, result.stderr).toBe(0);
+    });
+
+    test.each([1, 13, 15, 16])('rejects an incorrect real count of %i', async (real) => {
+      const result = run(await fixture(suite, { tests, summary: { ...summary, real } }));
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`${suite} summary.real is not the exact real evidence count`);
+    });
+
+    test.each(['tests', 'passed'] as const)('rejects an incorrect %s count', async (field) => {
+      const result = run(await fixture(suite, { tests, summary: { ...summary, [field]: 16 } }));
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`${suite} summary is not the exact all-passing test set`);
+    });
+
+    test.each([
+      { summary: { ...summary, mocked: 1 } },
+      { summary: { ...summary, failed: 1 } },
+      { summary: { ...summary, skipped: 1 } },
+      { summary: { ...summary, criticalSkipped: 1 } },
+      { tests: [{ name: 'mock proof', status: 'passed', evidence: 'mocked' }] },
+      { tests: [{ name: 'failed proof', status: 'failed', evidence: 'real' }] },
+      { tests: [{ name: 'skipped proof', status: 'skipped', evidence: 'real' }] },
+      { evidenceClass: 'protocol-double' },
+    ])('preserves schema rejection for %j', async (overrides) => {
+      const result = run(await fixture(suite, { tests, summary, ...overrides }));
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`${suite} report schema failed`);
+    });
+  });
+
   test('accepts only source/harness-bound all-passing reports with one actual immutable DB image', async () => {
     const directory = await fixture();
     const result = run(directory);
