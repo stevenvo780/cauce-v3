@@ -10,6 +10,11 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  createTestComposeStack,
+  teardownTestComposeStack,
+  withTestComposeStack,
+} from './test-compose-stack.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ops = path.resolve(here, '..');
@@ -18,15 +23,25 @@ const cli = path.join(ops, 'cli', 'cauce');
 const SENDER = { tenant: 'Steven', alias: 'kant', room: 'grp.steven' };
 const RECIPIENT = { tenant: 'Steven', alias: 'argos' };
 const ATTEMPT_TIMEOUT_MS = 45_000;
+const stack = await createTestComposeStack();
 
 function runCompose(args, { input = undefined, timeout = 60_000 } = {}) {
-  const result = spawnSync(compose, ['test', ...args], { encoding: 'utf8', input, timeout });
+  const result = spawnSync(compose, ['test', '-f', stack.overrideFile, ...args], {
+    encoding: 'utf8',
+    env: stack.environment,
+    input,
+    timeout,
+  });
   if (result.error) throw new Error(`compose.sh test ${args.join(' ')}: ${result.error.message}`);
   return result;
 }
 
 function runCli(args) {
-  const result = spawnSync(cli, ['pila-test', ...args], { encoding: 'utf8', timeout: 60_000 });
+  const result = spawnSync(cli, ['pila-test', ...args], {
+    encoding: 'utf8',
+    env: stack.environment,
+    timeout: 60_000,
+  });
   if (result.error) throw new Error(`cauce pila-test ${args.join(' ')}: ${result.error.message}`);
   return result;
 }
@@ -171,54 +186,65 @@ function waitReady(deadlineMs = 180_000) {
   }
 }
 
-const up = runCompose(['up', '-d', 'gateway', 'dispatcher'], { timeout: 240_000 });
-assert.equal(up.status, 0, `compose up de la pila de pruebas: ${up.stderr.trim().slice(0, 300)}`);
-waitReady();
+process.stdout.write(`compose test project=${stack.projectName} started_at=${stack.startedAt} published_ports=none\n`);
+await withTestComposeStack(stack, async () => {
+  const up = runCompose(['up', '-d', 'gateway', 'dispatcher'], { timeout: 240_000 });
+  assert.equal(up.status, 0, `compose up de la pila de pruebas: ${up.stderr.trim().slice(0, 300)}`);
+  waitReady();
 
-// 1) Atasco deliberado: 3 ACK failed/retryable -> dead (mismo camino que el
-// arnes e2e `retry backoff exhausts into DLQ`, sin atajos en BD).
-const atasco = runInner('atascar');
-assert.deepEqual(atasco.statuses, ['retry', 'retry', 'dead']);
-assert.match(atasco.delivery_id, /^[0-9a-f-]{36}$/);
-process.stdout.write(`atascada: delivery=${atasco.delivery_id} estados=${atasco.statuses.join(',')}\n`);
+  // 1) Atasco deliberado: 3 ACK failed/retryable -> dead (mismo camino que el
+  // arnes e2e `retry backoff exhausts into DLQ`, sin atajos en BD).
+  const atasco = runInner('atascar');
+  assert.deepEqual(atasco.statuses, ['retry', 'retry', 'dead']);
+  assert.match(atasco.delivery_id, /^[0-9a-f-]{36}$/);
+  process.stdout.write(`atascada: delivery=${atasco.delivery_id} estados=${atasco.statuses.join(',')}\n`);
 
-// 2) Visible como atascada por el CLI antes del rescate.
-const antes = runCli(['estado', atasco.delivery_id]);
-assert.equal(antes.status, 0, antes.stderr.trim().slice(0, 300));
-assert.match(antes.stdout, /status=dead/);
-assert.match(antes.stdout, /dead_letter_resolved_at=NULL/);
-const colas = runCli(['colas']);
-assert.equal(colas.status, 0, colas.stderr.trim().slice(0, 300));
-assert.ok(colas.stdout.includes(`${atasco.delivery_id} dead`), `colas no muestra la atascada:\n${colas.stdout}`);
+  // 2) Visible como atascada por el CLI antes del rescate.
+  const antes = runCli(['estado', atasco.delivery_id]);
+  assert.equal(antes.status, 0, antes.stderr.trim().slice(0, 300));
+  assert.match(antes.stdout, /status=dead/);
+  assert.match(antes.stdout, /dead_letter_resolved_at=NULL/);
+  const colas = runCli(['colas']);
+  assert.equal(colas.status, 0, colas.stderr.trim().slice(0, 300));
+  assert.ok(colas.stdout.includes(`${atasco.delivery_id} dead`), `colas no muestra la atascada:\n${colas.stdout}`);
 
-// 3) Destrabe por CLI: replay -> clon pending + auditoria.
-const rescate = runCli(['rescatar', atasco.delivery_id]);
-assert.equal(rescate.status, 0, rescate.stderr.trim().slice(0, 300));
-const clon = /delivery_id=([0-9a-f-]{36})/.exec(rescate.stdout)?.[1];
-assert.ok(clon && clon !== atasco.delivery_id, `recibo sin clon: ${rescate.stdout}`);
-assert.match(rescate.stdout, /state=pending/);
-process.stdout.write(`rescatada: original=${atasco.delivery_id} clon=${clon}\n`);
+  // 3) Destrabe por CLI: replay -> clon pending + auditoria.
+  const rescate = runCli(['rescatar', atasco.delivery_id]);
+  assert.equal(rescate.status, 0, rescate.stderr.trim().slice(0, 300));
+  const clon = /delivery_id=([0-9a-f-]{36})/.exec(rescate.stdout)?.[1];
+  assert.ok(clon && clon !== atasco.delivery_id, `recibo sin clon: ${rescate.stdout}`);
+  assert.match(rescate.stdout, /state=pending/);
+  process.stdout.write(`rescatada: original=${atasco.delivery_id} clon=${clon}\n`);
 
-// 4) Verificacion en BD: clon pending, dead letter resuelta, auditoria allow.
-assert.deepEqual(queryTestDb(`SELECT status FROM deliveries WHERE id='${clon}'::uuid`), ['pending']);
-assert.deepEqual(
-  queryTestDb(`SELECT resolved_at IS NOT NULL FROM dead_letters WHERE delivery_id='${atasco.delivery_id}'::uuid`),
-  ['t'],
-);
-assert.deepEqual(
-  queryTestDb(`SELECT count(*) FROM audit_events WHERE action='delivery.replay' AND decision='allow'`
-    + ` AND delivery_id='${clon}'::uuid AND metadata->>'replayed_from_delivery_id'='${atasco.delivery_id}'`),
-  ['1'],
-);
-const clonMessage = queryTestDb(`SELECT message_id FROM deliveries WHERE id='${clon}'::uuid`);
-assert.equal(clonMessage.length, 1);
+  // 4) Verificacion en BD: clon pending, dead letter resuelta, auditoria allow.
+  assert.deepEqual(queryTestDb(`SELECT status FROM deliveries WHERE id='${clon}'::uuid`), ['pending']);
+  assert.deepEqual(
+    queryTestDb(`SELECT resolved_at IS NOT NULL FROM dead_letters WHERE delivery_id='${atasco.delivery_id}'::uuid`),
+    ['t'],
+  );
+  assert.deepEqual(
+    queryTestDb(`SELECT count(*) FROM audit_events WHERE action='delivery.replay' AND decision='allow'`
+      + ` AND delivery_id='${clon}'::uuid AND metadata->>'replayed_from_delivery_id'='${atasco.delivery_id}'`),
+    ['1'],
+  );
+  const clonMessage = queryTestDb(`SELECT message_id FROM deliveries WHERE id='${clon}'::uuid`);
+  assert.equal(clonMessage.length, 1);
 
-// 5) La cola vuelve a fluir: el clon se reclama y se cierra done.
-const cierre = runInner('cerrar', { CAUCE_RESCATE_MESSAGE_ID: clonMessage[0] });
-assert.equal(cierre.delivery_id, clon);
-assert.equal(cierre.status, 'done');
-const despues = runCli(['estado', clon]);
-assert.equal(despues.status, 0, despues.stderr.trim().slice(0, 300));
-assert.match(despues.stdout, /status=done/);
+  // 5) La cola vuelve a fluir: el clon se reclama y se cierra done.
+  const cierre = runInner('cerrar', { CAUCE_RESCATE_MESSAGE_ID: clonMessage[0] });
+  assert.equal(cierre.delivery_id, clon);
+  assert.equal(cierre.status, 'done');
+  const despues = runCli(['estado', clon]);
+  assert.equal(despues.status, 0, despues.stderr.trim().slice(0, 300));
+  assert.match(despues.stdout, /status=done/);
 
-process.stdout.write(`rescate por CLI ok: atascada=${atasco.delivery_id} clon=${clon} clon_final=done auditoria=delivery.replay/allow\n`);
+  process.stdout.write(`rescate por CLI ok: atascada=${atasco.delivery_id} clon=${clon} clon_final=done auditoria=delivery.replay/allow\n`);
+}, async () => {
+  const resources = await teardownTestComposeStack(stack, {
+    compose: (args, { timeoutMs }) => runCompose(args, { timeout: timeoutMs }),
+    docker: (args, { timeoutMs }) => spawnSync('docker', args, {
+      encoding: 'utf8', env: stack.environment, timeout: timeoutMs,
+    }),
+  });
+  process.stdout.write(`compose cleanup project=${stack.projectName} finished_at=${new Date().toISOString()} resources=${JSON.stringify(resources)}\n`);
+});
