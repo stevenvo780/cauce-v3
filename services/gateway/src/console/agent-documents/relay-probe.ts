@@ -8,6 +8,7 @@ import type {
   GovernanceDocumentContent,
   GovernanceReadError,
   GovernanceWritePrecondition,
+  GovernanceWriteTarget,
   MemoryDirectoryListing
 } from '../agent-documents.routes.js';
 import {
@@ -86,6 +87,15 @@ export interface GovernanceRelayClient {
     content: string,
     precondition: GovernanceWritePrecondition,
   ): Promise<RelayFileWrite | GovernanceWriteError>;
+  /** Must fail closed when the measured target is missing or no longer connected. */
+  writeFileFenced?(
+    tenantId: string,
+    alias: string,
+    path: string,
+    content: string,
+    precondition: GovernanceWritePrecondition,
+    expectedTarget: GovernanceWriteTarget | undefined,
+  ): Promise<RelayFileWrite | GovernanceWriteError>;
   writeFiles?(
     tenantId: string,
     alias: string,
@@ -98,9 +108,6 @@ export interface MeasuredFactsSource {
   factsFor(tenantId: string, alias: string): Promise<{ facts: RuntimeFacts; source: FactsSource } | undefined>;
 }
 
-/**
- * AgentFactsProbe backed by terminal-relay and pty-agent.
- */
 export class TerminalRelayFactsProbe implements AgentFactsProbe {
   private readonly facts: MeasuredFactsSource;
   private readonly relay: GovernanceRelayClient;
@@ -176,6 +183,38 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
     tenantId: string,
     alias: string,
   ): Promise<{ sha: string; bytes: number } | GovernanceWriteError> {
+    return this.writeDocument(path, contenido, precondition, facts, tenantId, alias);
+  }
+
+  async writeGovernanceDocumentFenced(
+    path: string,
+    contenido: string,
+    precondition: GovernanceWritePrecondition,
+    facts: RuntimeFacts,
+    tenantId: string,
+    alias: string,
+    expectedTarget: GovernanceWriteTarget | undefined,
+  ): Promise<{ sha: string; bytes: number } | GovernanceWriteError> {
+    if (!expectedTarget?.generation || !expectedTarget.containerId
+      || expectedTarget.generation !== facts.generation || expectedTarget.containerId !== facts.containerId
+      || expectedTarget.path !== path) {
+      return { error: 'conflict', reason: 'el destino medido de la escritura cambió o está incompleto' };
+    }
+    if (this.relay.writeFileFenced === undefined) {
+      return { error: 'unavailable', reason: 'el cliente del relay no publica escritura cercada' };
+    }
+    return this.writeDocument(path, contenido, precondition, facts, tenantId, alias, expectedTarget);
+  }
+
+  private async writeDocument(
+    path: string,
+    contenido: string,
+    precondition: GovernanceWritePrecondition,
+    facts: RuntimeFacts,
+    tenantId: string,
+    alias: string,
+    expectedTarget?: GovernanceWriteTarget,
+  ): Promise<{ sha: string; bytes: number } | GovernanceWriteError> {
     const kind = documentForPathKind(facts, path);
     if (kind === undefined) {
       return { error: 'invalid_path', reason: 'la ruta no pertenece al juego cerrado de documentos' };
@@ -191,13 +230,23 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
     if (precondition.state === 'present' && !/^[0-9a-f]{64}$/.test(precondition.sha256)) {
       return { error: 'invalid_path', reason: 'la precondición de reemplazo no es un SHA-256 válido' };
     }
-    if (this.relay.writeFile === undefined) {
+    if (expectedTarget === undefined && this.relay.writeFile === undefined) {
       return { error: 'unavailable', reason: 'el cliente del terminal-relay no publica escritura gobernada' };
     }
 
     let answer: RelayFileWrite | GovernanceWriteError;
     try {
-      answer = await this.relay.writeFile(tenantId, alias, path, contenido, precondition);
+      if (expectedTarget !== undefined) {
+        if (this.relay.writeFileFenced === undefined) {
+          return { error: 'unavailable', reason: 'el relay no publica escritura cercada' };
+        }
+        answer = await this.relay.writeFileFenced(tenantId, alias, path, contenido, precondition, expectedTarget);
+      } else {
+        if (this.relay.writeFile === undefined) {
+          return { error: 'unavailable', reason: 'el relay no publica escritura gobernada' };
+        }
+        answer = await this.relay.writeFile(tenantId, alias, path, contenido, precondition);
+      }
     } catch (error) {
       return { error: 'unknown', reason: `la escritura falló: ${error instanceof Error ? error.message : 'sin detalle'}` };
     }

@@ -1,6 +1,7 @@
 import { ChevronUp, LogOut, UserRound, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
+import { HumanProfileEditor } from './HumanProfileEditor';
 import { humanProfileName } from './account-identity';
 import { ThemeControl } from '../../components/ThemeControl';
 import { Time } from '../../components/ui';
@@ -74,6 +75,8 @@ function AccountPopover({ gate, routeKey }: { gate: AuthGateState; routeKey: str
       {status === 'in' && state ? <div className="account-identity">
         <p className="account-section-label">Perfil humano actual</p>
         <strong>{name}</strong>
+        {open && state.login_mode === 'password' ? <HumanProfileEditor
+          key={`${routeKey}:${state.subject ?? ''}:${state.csrf_token ?? ''}`} name={name} disabled={busy} /> : null}
         {state.subject ? <p><span>Cuenta: </span><span>{state.subject}</span></p> : null}
         <p>Este es tu perfil de sesión. La autoría de cada mensaje conserva su propia evidencia.</p>
         <p className="account-expiry">{state.expires_at ? <>La sesión vence <Time value={state.expires_at} /></> : 'Vencimiento no informado por el servidor.'}</p>

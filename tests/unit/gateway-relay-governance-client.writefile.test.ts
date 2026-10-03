@@ -109,3 +109,43 @@ describe('writeFile: camino feliz y shape', () => {
     });
   });
 });
+
+describe('writeFileFenced exige identidad explícita', () => {
+  beforeEach(() => { httpsRequest.mockReset(); setHttpsRequestMock(httpsRequest); });
+
+  it('transporta el cercado al mismo canal sin cambiar CAS ni bytes', async () => {
+    prepararRespuesta({ statusCode: 200, body: JSON.stringify({ path: RUTA, operation: 'create', sha: 'a'.repeat(64), bytes: 1 }) });
+    const cliente = new HttpGovernanceRelayClient(opcionesBase());
+    await cliente.writeFileFenced('Steven', 'zeus', RUTA, 'x', { state: 'absent' }, {
+      generation: 'measured-generation', containerId: 'container-one', path: RUTA,
+    });
+    const writeCall = httpsRequest.mock.results[0]?.value as { write: ReturnType<typeof vi.fn> };
+    const payload = writeCall.write.mock.calls[0]?.[0] as Buffer;
+    expect(JSON.parse(payload.toString('utf8'))).toEqual({
+      tenant_id: 'Steven', alias: 'zeus', path: RUTA, content_base64: 'eA==', precondition: { state: 'absent' },
+      expected_target: { generation: 'measured-generation', container_id: 'container-one', path: RUTA },
+    });
+  });
+
+  it('no transmite si falta generación o cambia destino', async () => {
+    const cliente = new HttpGovernanceRelayClient(opcionesBase());
+    for (const target of [
+      { generation: '', containerId: 'container-one', path: RUTA },
+      { generation: 'measured-generation', containerId: '', path: RUTA },
+      { generation: 'measured-generation', containerId: 'container-one', path: '/different/path' },
+    ]) {
+      expect(await cliente.writeFileFenced('Steven', 'zeus', RUTA, 'x', { state: 'absent' }, target)).toMatchObject({ error: 'conflict' });
+    }
+    expect(httpsRequest).not.toHaveBeenCalled();
+  });
+
+  it('rechazo de relay antiguo no se reintenta sin cercado', async () => {
+    prepararRespuesta({ statusCode: 400, body: JSON.stringify({ error: 'invalid_path', reason: 'campo desconocido' }) });
+    const cliente = new HttpGovernanceRelayClient(opcionesBase());
+    const result = await cliente.writeFileFenced('Steven', 'zeus', RUTA, 'x', { state: 'absent' }, {
+      generation: 'measured-generation', containerId: 'container-one', path: RUTA,
+    });
+    expect(result).toHaveProperty('error');
+    expect(httpsRequest).toHaveBeenCalledOnce();
+  });
+});

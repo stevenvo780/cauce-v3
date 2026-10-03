@@ -37,7 +37,7 @@ export function requireContext(condition: unknown, code: string): asserts condit
   if (!condition) throw new ContextRepositoryError(code);
 }
 
-function record(value: unknown, keys: readonly string[]): Record<string, unknown> {
+export function record(value: unknown, keys: readonly string[]): Record<string, unknown> {
   requireContext(value !== null && typeof value === 'object' && !Array.isArray(value), 'invalid_schema');
   const result = value as Record<string, unknown>;
   requireContext(Object.keys(result).length === keys.length
@@ -45,7 +45,7 @@ function record(value: unknown, keys: readonly string[]): Record<string, unknown
   return result;
 }
 
-function identifier(value: unknown, kind: 'instance' | 'tenant' | 'alias' = 'instance'): string {
+export function identifier(value: unknown, kind: 'instance' | 'tenant' | 'alias' = 'instance'): string {
   if (kind !== 'instance') {
     const parsed = (kind === 'tenant' ? TenantSchema : AliasSchema).safeParse(value);
     requireContext(parsed.success, 'invalid_identifier');
@@ -76,7 +76,7 @@ function assertNoRecognizedSecrets(text: string): void {
   requireContext(scan.count === 0 && scan.unscanned === undefined, 'forbidden_content');
 }
 
-function parseJson(text: string): unknown {
+export function parseJson(text: string): unknown {
   try {
     admitContextText(Buffer.from(text, 'utf8'));
     const result: unknown = JSON.parse(text);

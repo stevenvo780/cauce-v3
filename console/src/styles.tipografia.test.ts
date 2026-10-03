@@ -14,11 +14,13 @@ import { sinComentarios } from './test/css-parser';
 const HOJAS = [
   'styles.css',
   'features/live/live.css',
+  'features/live/native-context-repository.css',
   'features/live/live-hypergraph.css',
   'features/messages/messages.css',
   'features/queues/queues.css',
   'features/accounts/licenses.css',
   'features/auth/auth.css',
+  'features/auth/human-profile.css',
   'features/config/config.css',
   'features/config/settings.css',
   'features/config/toggles.css',

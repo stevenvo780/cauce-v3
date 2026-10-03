@@ -10,6 +10,12 @@ export type GovernanceWritePrecondition =
   | { readonly state: 'present'; readonly sha256: string }
   | { readonly state: 'absent' };
 
+export interface GovernanceWriteTarget {
+  readonly generation: string;
+  readonly containerId: string;
+  readonly path: string;
+}
+
 interface GovernanceFileWrite {
   readonly path: string;
   readonly operation: GovernanceWriteOperation;
@@ -49,13 +55,19 @@ export async function requestFileWrite(
   content: Buffer,
   precondition: GovernanceWritePrecondition,
   timeoutMs = 5_000,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  expectedTarget?: GovernanceWriteTarget,
 ): Promise<FileWriteOutcome> {
   if (!connection.alive) {
     return { error: 'unavailable', reason: 'el pty-agent de ese alias no está conectado' };
   }
   if (connection.hello.tenant_id !== tenantId || connection.hello.alias !== alias) {
     return { error: 'permission_denied', reason: 'la conexión no es la de ese alias' };
+  }
+  if (expectedTarget !== undefined && (!expectedTarget.generation || !expectedTarget.containerId
+    || expectedTarget.generation !== connection.hello.generation
+    || expectedTarget.containerId !== connection.hello.container_id || expectedTarget.path !== path)) {
+    return { error: 'conflict', reason: 'la conexión ya no corresponde al destino medido de la escritura' };
   }
   if (!connection.supportsGovernanceWrite) {
     return { error: 'unavailable', reason: 'el pty-agent de ese alias no sabe escribir ficheros de gobierno' };

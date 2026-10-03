@@ -85,3 +85,24 @@ de `AuthGate.account-lifecycle.test.tsx`, `auth-session.test.ts` y
   permisos ni hacerse pasar por una respuesta generada por un agente
 - La atribución en los consumidores del bus y el protocolo de delegación quedan
   fuera de esta corrección de la consola; no se ofrece un selector sin autoridad
+
+## Editar el nombre propio
+
+Con una sesión humana de contraseña, **Cuenta → Editar nombre → Guardar nombre**
+actualiza el nombre en el servidor. Se recortan los espacios exteriores y se aceptan
+entre 1 y 120 caracteres Unicode. La respuesta confirmada actualiza Cuenta sin cerrar
+la sesión ni descartar el borrador de mensaje. Si falla, la edición queda disponible
+para reintentar; Cancelar, Escape, cerrar Cuenta o navegar descartan la edición no guardada.
+Una operación ya enviada puede terminar aunque se cierre el editor.
+
+`PATCH /v3/auth/profile` recibe exclusivamente `{ "name": "Nombre" }` y devuelve
+únicamente el nombre persistido. Exige sesión humana password, CSRF y origen permitido.
+El servidor elige la fila autenticada: sólo modifica `display_name` y `updated_at`.
+También un lector puede cambiar su propio nombre, sin recibir capacidades operativas.
+No es una administración de personas ni permite cambiar correo, contraseña, rol,
+tenant, alias o estado. Las altas y bajas siguen bajo mantenimiento del dueño.
+
+Las sesiones externas y de servicio no ofrecen este editor. Los mensajes nuevos leen
+el nombre confirmado de la cuenta; los anteriores mantienen su instantánea y el sujeto
+humano estable. Las pruebas sintéticas de este flujo no acreditan PostgreSQL real,
+cuentas provisionadas ni despliegue; esos gates siguen siendo necesarios antes de integrar.
