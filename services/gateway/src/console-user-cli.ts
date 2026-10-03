@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline';
 import { createPool } from '@cauce/store';
 import { normalizeEmail } from './console-users.js';
 import { assertPasswordPolicy, hashPassword } from './password.js';
+import { maintainConsoleUser, type ConsoleUserMaintenance } from './console-user-maintenance.js';
 
 /**
  * CLI to provision, change password and deactivate console users.
@@ -10,18 +11,15 @@ import { assertPasswordPolicy, hashPassword } from './password.js';
  *   pnpm console:user --email user@example.com --deactivate
  */
 
-interface Options {
-  email: string;
-  name: string;
-  role: 'operator' | 'reader';
-  tenant: string;
-  alias: string;
+interface Options extends ConsoleUserMaintenance {
   deactivate: boolean;
 }
 
 function parseArguments(argv: readonly string[]): Options {
   const values = new Map<string, string>();
   let deactivate = false;
+  let updateOnly = false;
+  let activate = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === undefined) throw new Error('no se pudo leer el argumento');
@@ -29,6 +27,8 @@ function parseArguments(argv: readonly string[]): Options {
       deactivate = true;
       continue;
     }
+    if (argument === '--update') { updateOnly = true; continue; }
+    if (argument === '--activate') { activate = true; continue; }
     if (!argument.startsWith('--')) throw new Error(`argumento inesperado: ${argument}`);
     const separator = argument.indexOf('=');
     if (separator > 0) {
@@ -45,18 +45,24 @@ function parseArguments(argv: readonly string[]): Options {
   }
   const email = (values.get('email') ?? '').trim();
   if (email.length < 3 || !/^[^\s@]+@[^\s@]+$/.test(email)) throw new Error('--email es obligatorio y debe ser un correo');
-  const role = values.get('role') ?? 'operator';
-  if (role !== 'operator' && role !== 'reader') throw new Error('--role debe ser operator o reader');
-  const alias = values.get('alias') ?? 'kant';
-  if (!/^[a-z][a-z0-9_-]{1,63}$/.test(alias)) throw new Error('--alias inválido');
+  for (const key of values.keys()) {
+    if (!['email', 'name', 'role', 'tenant', 'alias'].includes(key)) throw new Error(`opción desconocida: --${key}`);
+  }
+  if (activate && !updateOnly) throw new Error('--activate requiere --update');
+  if (deactivate && (activate || updateOnly || [...values.keys()].some((key) => key !== 'email'))) {
+    throw new Error('--deactivate solo admite --email');
+  }
+  const role = values.get('role');
+  if (role !== undefined && role !== 'operator' && role !== 'reader') throw new Error('--role debe ser operator o reader');
+  const alias = values.get('alias');
+  if (alias !== undefined && !/^[a-z][a-z0-9_-]{1,63}$/.test(alias)) throw new Error('--alias inválido');
   return {
     email,
-    name: (values.get('name') ?? email.slice(0, email.indexOf('@'))).trim(),
+    name: values.get('name')?.trim(),
     role,
-    // Default Cauce identity for the console.
-    tenant: values.get('tenant') ?? 'Steven',
+    tenant: values.get('tenant'),
     alias,
-    deactivate
+    deactivate, updateOnly, activate
   };
 }
 
@@ -108,34 +114,13 @@ try {
     const password = await readPassword();
     assertPasswordPolicy(password);
     const passwordHash = await hashPassword(password);
-    const result = await pool.query<{ id: string; created_at: Date; updated_at: Date }>(
-      `INSERT INTO console_users
-         (email, email_normalized, password_hash, display_name, role, tenant_id, alias, active)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,true)
-       ON CONFLICT (email_normalized) DO UPDATE SET
-         email=EXCLUDED.email,
-         password_hash=EXCLUDED.password_hash,
-         display_name=EXCLUDED.display_name,
-         role=EXCLUDED.role,
-         tenant_id=EXCLUDED.tenant_id,
-         alias=EXCLUDED.alias,
-         active=true,
-         password_changed_at=CURRENT_TIMESTAMP,
-         updated_at=CURRENT_TIMESTAMP
-       RETURNING id, created_at, updated_at`,
-      [
-        options.email, normalizeEmail(options.email), passwordHash,
-        options.name, options.role, options.tenant, options.alias
-      ]
-    );
-    const row = result.rows[0];
-    if (row === undefined) throw new Error('la base no devolvió la cuenta escrita');
-    const created = row.created_at.getTime() === row.updated_at.getTime();
-    console.log(`${created ? 'cuenta creada' : 'cuenta actualizada'}: ${options.email}`);
+    const row = await maintainConsoleUser(pool, options, passwordHash);
+    console.log(`cuenta guardada: ${options.email}`);
     console.log(`  id      ${row.id}`);
-    console.log(`  rol     ${options.role}`);
-    console.log(`  actúa   ${options.tenant}:${options.alias}`);
-    if (!created) console.log('  las sesiones abiertas con la contraseña anterior quedaron invalidadas.');
+    console.log(`  rol     ${row.role}`);
+    console.log(`  actúa   ${row.tenant_id}:${row.alias}`);
+    console.log(`  activa  ${row.active ? 'sí' : 'no'}`);
+    console.log('  si la cuenta ya existía, se actualizó la marca de invalidación de sesiones.');
   }
 } finally {
   await pool.end();
