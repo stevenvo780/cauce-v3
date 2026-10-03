@@ -16,7 +16,6 @@
 .settings-administration h2, .settings-administration p { margin: 0 0 var(--space-2); }
 .settings-policy { max-width: var(--measure-prose); margin-block: var(--space-4); }
 .settings-policy summary { cursor: pointer; }
-.settings-return { margin-bottom: var(--space-3); }
 @media (max-width: 760px) {
   .settings-page .panel { padding: var(--space-4); }
   .settings-agent { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); padding: var(--space-2); }

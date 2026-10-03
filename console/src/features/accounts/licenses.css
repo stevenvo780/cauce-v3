@@ -3,6 +3,17 @@
 [data-route="accounts"] .metric { padding-block: var(--space-3); }
 [data-route="accounts"] th, [data-route="accounts"] td { padding-block: var(--space-2); }
 
+@media (max-width: 760px) {
+  .accounts-page > .page-header { grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: var(--space-2); padding-block: var(--space-1); margin-bottom: 0; }
+  .accounts-page > .page-header .page-actions { grid-column: 2; grid-row: 1; }
+  .accounts-page > .page-header .page-actions .button { width: 40px; min-width: 40px; min-height: 40px; padding: 0; }
+  .accounts-page > .page-header .page-actions svg { flex: none; }
+  .accounts-page > .view-tabs { margin-bottom: var(--space-3); }
+  .accounts-page > .auto-refresh-toggle { margin-top: 0; }
+  [data-route="accounts"] .quota-provider-panel > .panel-header { gap: var(--space-1); margin-bottom: var(--space-1); }
+  [data-route="accounts"] .quota-freshness-banner { margin-bottom: var(--space-1); padding-block: var(--space-2); line-height: 1.35; }
+}
+
 /* Banner de advertencia */
 .banner {
   display: flex;

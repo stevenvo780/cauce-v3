@@ -27,6 +27,8 @@
 .queues-permisos { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; }
 .queues-permisos .permission-line { margin: 0; }
 
+
+
 /* ---------------------------------------------------------------------------- el filtro */
 
 .queues-filtros { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
@@ -82,44 +84,39 @@
 .dlq-ack input { flex: none; margin-top: var(--space-1); }
 .tabla-dlq .subline { display: block; margin-top: var(--space-1); color: var(--faint); font-size: var(--tipo-apunte); }
 
-/*
- * ------------------------------------------------------------------ pantalla estrecha (teléfono)
- *
- * Dos defectos medidos a 360x800, y los dos son de la MISMA causa —una vista pensada
- * a 1280 aplicada tal cual—:
- *
- * 1. «DEAD LETTERS 7» quedaba bajo el pliegue. `styles.css` apila `.metrics-grid.three` a una sola
- *    columna en este corte, y tres tarjetas apiladas, con la cabecera de la página encima, dejan la
- *    tercera fuera de pantalla. Y la tercera es justo la que un operador viene a ver. Acá se quedan
- *    en fila, compactas: caben las tres, y ninguna necesita más que su número y su rótulo.
- *
- * 2. La columna «Estado» quedaba fuera de pantalla: la tabla tiene ocho columnas y
- *    `.table-wrap { overflow-x: auto }` la deja arrastrable en horizontal, así que en el teléfono
- *    se veían Delivery y Destino, y el estado —el dato por el que se entra a esta vista— había que
- *    ir a buscarlo. Acá la tabla deja de ser tabla: cada fila es una ficha y cada celda lleva su
- *    rótulo delante, sacado del `data-label` que escribe `DeliveryTable`. El DOM no cambia (sigue
- *    siendo una `<table>` con sus roles), sólo la disposición.
- */
 @media (max-width: 760px) {
-  /*
-   * `.metrics-grid.three.metricas-de-cola` y NO `.metricas-de-cola` a secas. Medido en Chrome a 360x800
-   * antes de corregirlo: la regla estaba escrita y NO se aplicaba —las tres tarjetas seguían
-   * apiladas—, porque `styles.css` declara `.metrics-grid.three { grid-template-columns: 1fr }` en
-   * este mismo corte y dos clases ganan a una. Con DOS clases tampoco alcanzaba —empatan en
-   * especificidad y gana la hoja que se carga última, que medida es `styles.css`—: hicieron falta
-   * tres. Una hoja puede decir una cosa y el navegador hacer otra, dos veces seguidas: por eso
-   * esto se comprobó abriendo la página en Chrome, no leyendo el fichero.
-   */
+  .queues-page > .page-header {
+    grid-template-columns: minmax(0, 1fr) 40px;
+    align-items: center;
+    margin-bottom: var(--space-1);
+    padding-block: 0;
+    gap: var(--space-1);
+  }
+  .queues-page > .page-header h1 { font-size: var(--tipo-panel); }
+  .queues-page > .page-header .page-actions .button { width: 40px; min-width: 40px; padding-inline: var(--space-2); }
+  .queues-page #view-panel-entregas > .panel { padding: var(--space-4); }
+  .queues-page #view-panel-entregas > .panel > .panel-header { margin-bottom: var(--space-2); }
+  .queues-page > .metrics-grid { margin-top: var(--space-3); }
+
+
   .metrics-grid.three.metricas-de-cola { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
-  .metricas-de-cola .metric { padding: var(--space-3) var(--space-2); }
-  .metricas-de-cola .metric p { margin-bottom: var(--space-2); font-size: var(--tipo-apunte); letter-spacing: .02em; }
+  .metrics-grid.three.metricas-de-cola > .metric {
+    grid-row: auto;
+    grid-template-rows: auto;
+    row-gap: var(--space-1);
+  }
+  .metricas-de-cola .metric { padding: var(--space-2) var(--space-2); }
+  .metricas-de-cola .metric p { margin-bottom: var(--space-2); font-size: var(--tipo-apunte); letter-spacing: 0; white-space: nowrap; }
   .metricas-de-cola .metric strong { font-size: 1.5rem; }
   .metricas-de-cola .metric span { margin-top: var(--space-1); font-size: var(--tipo-apunte); }
+  #view-panel-entregas > .panel { margin-top: var(--space-2); }
 
   .tabla-entregas, .tabla-entregas tbody, .tabla-entregas tr, .tabla-entregas td { display: block; width: 100%; }
   .tabla-entregas thead { position: absolute; overflow: hidden; width: 1px; height: 1px; clip-path: inset(50%); white-space: nowrap; }
   .tabla-entregas tr { margin-bottom: var(--space-2); padding: var(--space-1) 0; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
   .tabla-entregas td { display: grid; align-items: baseline; padding: var(--space-2) var(--space-3); border-bottom: 0; gap: var(--space-1) var(--space-3); grid-template-columns: 96px minmax(0, 1fr); }
+  .tabla-entregas td[data-label='Intentos'] { white-space: nowrap; }
+  .tabla-entregas .intentos-ratio { white-space: nowrap; }
   .tabla-entregas td::before { color: var(--faint); font-size: var(--tipo-apunte); letter-spacing: .06em; text-transform: uppercase; content: attr(data-label); }
   .tabla-entregas td .subline { grid-column: 2; }
 

@@ -33,6 +33,20 @@ const LIVE: QueueItem = { delivery_id: LIVE_ID, state: 'pending', attempts: 0, m
 const FAILED: QueueItem = { delivery_id: FAILED_ID, state: 'failed', attempts: 3, max_attempts: 5, recipient_alias: 'socrates', tenant_id: 'Steven' };
 const verifiedRefresh = async () => ({ data: {} });
 
+it('mantiene cada ratio de intentos como una sola unidad legible', () => {
+  const { container } = renderWithApi(<DeliveryTable
+    rows={[LIVE, { ...DEAD, attempts: undefined, max_attempts: undefined }]}
+    canReplay canCancel onChanged={verifiedRefresh}
+  />);
+
+  const intentos = container.querySelectorAll('td[data-label="Intentos"] .intentos-ratio');
+  expect(intentos).toHaveLength(2);
+  expect(intentos[0]).toHaveTextContent('0 / 5');
+  const ratioIncompleto = intentos[1];
+  expect(ratioIncompleto.querySelectorAll('.unknown')).toHaveLength(2);
+  expect(ratioIncompleto).toHaveTextContent('/');
+});
+
 it('la monta cualquier vista con sus propias filas y avisa a su dueño que hay que releer', async () => {
   let replayed = '';
   let recargas = 0;
