@@ -3,21 +3,18 @@ import type {
 } from 'fastify';
 import {
   ConsolePublishIntentExpiredSchema, MAX_PUBLISH_BODY_BYTES, NotifyRequestSchema,
-  QuotaSampleRequestSchema, SYSTEM_GATE_PROBE_MESSAGE_TYPE, SystemGateProbeBodySchema,
+  QuotaSampleRequestSchema,
 } from '@cauce/protocol';
-import { PublishIntentExpiredError, StoreError } from '@cauce/store';
+import { PublishIntentExpiredError } from '@cauce/store';
 import {
-  AuthorizationError, isAgentPrincipal, requireOperatorPermission, requirePermission, type AuthProvider,
+  requireOperatorPermission, requirePermission, type AuthProvider,
 } from '../../auth.js';
 import type { ConsolePublishTelemetry } from '../../console-publish-telemetry.js';
 import type { GatewayRepository } from '../../app.js';
 import { PasswordAuthProvider } from '../../password-auth.js';
-import { consoleMessageAuthor } from '../../console-message-author.js';
-import { logPublishRedaction, redactPublishBody } from '../publish-redaction.js';
-import {
-  consolePublishOperatorScope, principal, publicPublish, replyError, trustedPublishSemantics,
-  validatedPublishReceipt, type TrustedPublishCommand,
-} from '../shared.js';
+import { logPublishRedaction } from '../publish-redaction.js';
+import { principal, replyError } from '../shared.js';
+import { publishOperation } from '../../publish-operation.js';
 import type { CorePublishHandler, CoreRouteOptions } from './contracts.js';
 
 function requestAuthMechanism(authProvider: AuthProvider, request: FastifyRequest): string | undefined {
@@ -55,53 +52,14 @@ export function registerCorePublishRoutes(
     const consolePublish = request.routeOptions.url === '/v3/console/messages';
     try {
       const actor = await principal(request, options.authProvider);
-      requirePermission(actor, 'route');
-      const submitted = publicPublish(request.body);
-      const redaction = redactPublishBody(submitted.body);
-      logPublishRedaction(request.log, actor, redaction);
-      const command = { ...submitted, body: redaction.body };
-      const systemGateProbe = command.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE;
-      if (systemGateProbe) {
-        const probeBody = SystemGateProbeBodySchema.parse(command.body);
-        const exactRole = actor.roles.length === 1 && actor.roles[0] === 'agent';
-        const exactPermissions = actor.permissions.length === 2
-          && actor.permissions.includes('route') && actor.permissions.includes('read');
-        if (requestAuthMechanism(options.authProvider, request) !== 'mtls' || actor.tenant_id !== 'Steven' ||
-            actor.alias !== 'gate-probe' || actor.session_id !== 'gate-probe' ||
-            actor.channel !== 'gate' || actor.origin !== undefined || !exactRole || !exactPermissions) {
-          throw new AuthorizationError('system gate probe requires the exact dedicated mTLS identity');
-        }
-        const recipient = command.recipients[0];
-        if (command.room_id !== 'grp.steven' || command.recipients.length !== 1 ||
-            command.lane !== 'interactive' || command.priority !== -100 ||
-            command.idempotency_key !== `gate:${String(recipient?.tenant_id)}:${String(recipient?.alias)}:${probeBody.nonce}`) {
-          throw new Error('system gate probe payload is not canonical');
-        }
-      }
-      // `gate-probe` intentionally has no membership/agent/lease and can never become a routing
-      // target. Kant is only the durable actor required by the messages FK; the authenticated
-      // context still preserves the exact mTLS gate authority.
-      const trustedCommand: TrustedPublishCommand = {
-        ...trustedPublishSemantics(actor, command, request, systemGateProbe ? 'kant' : actor.alias),
-        idempotency_key: command.idempotency_key,
-      };
-      const author = consolePublish ? consoleMessageAuthor(actor) : undefined;
-      const receipt = validatedPublishReceipt(
-        await repository.publish(trustedCommand, {
-          requirePreparedConsoleIntent: consolePublish,
-          ...(author === undefined ? {} : { consoleAuthor: author }),
-          ...(!systemGateProbe && isAgentPrincipal(actor) ? { agentRoot: true } : {}),
-          ...(consolePublish
-            ? { consoleIntentOperatorScope: consolePublishOperatorScope(actor) }
-            : {}),
-        }),
-        trustedCommand,
-        command.recipients.length,
-      );
-      if (typeof repository.verifyPublishReceipt !== 'function'
-          || !(await repository.verifyPublishReceipt(trustedCommand, receipt))) {
-        throw new StoreError('conflict', 'publish receipt does not match its durable effect');
-      }
+      const receipt = await publishOperation(repository, {
+        actor, body: request.body, entry: consolePublish ? 'console' : 'direct',
+        authMechanism: requestAuthMechanism(options.authProvider, request),
+        priorityLog: request.log,
+        logRedaction: (redactionActor, redaction) => {
+          logPublishRedaction(request.log, redactionActor, redaction);
+        },
+      });
       if (consolePublish) {
         consolePublishTelemetry.record({ operation: 'publish', result: 'committed' });
       }

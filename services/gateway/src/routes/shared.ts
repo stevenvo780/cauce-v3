@@ -97,21 +97,25 @@ export function publicPublish(
  * misconfigured canary or an old adapter publishing instead of 400-ing; the drop is logged so the
  * misconfiguration is still visible.
  */
+export interface PublishSemanticsContext {
+  readonly interactiveHumanEntry: boolean;
+  readonly log: {
+    info(fields: Record<string, unknown>, message: string): void;
+    warn(fields: Record<string, unknown>, message: string): void;
+  };
+}
+
 function routedPriority(
   actor: Principal,
   requested: number,
   lane: PublishMessage['lane'],
-  request: FastifyRequest,
+  context: PublishSemanticsContext,
 ): number {
   const decision = publishPriorityDecision(actor, requested, {
-    interactiveHumanEntry: (
-      request.routeOptions.url === '/v3/console/messages'
-        || request.routeOptions.url === '/v3/console/publish-intents'
-    )
-      && lane === 'interactive',
+    interactiveHumanEntry: context.interactiveHumanEntry && lane === 'interactive',
   });
   if (decision.reason === 'agent_ceiling') {
-    request.log.warn({
+    context.log.warn({
       event: 'publish_priority_clamped',
       tenant_id: actor.tenant_id,
       alias: actor.alias,
@@ -120,7 +124,7 @@ function routedPriority(
       applied: decision.applied
     }, 'agent priority clamped to the agent band');
   } else if (decision.reason === 'human_entry_floor') {
-    request.log.info({
+    context.log.info({
       event: 'publish_priority_human_floor',
       tenant_id: actor.tenant_id,
       alias: actor.alias,
@@ -132,13 +136,13 @@ function routedPriority(
   return decision.applied;
 }
 
-export function trustedPublishSemantics(
+export function trustedPublishSemanticsForContext(
   actor: Principal,
   command: Pick<
     ConsolePublishIntentPrepare,
     'room_id' | 'recipients' | 'body' | 'lane' | 'priority'
   >,
-  request: FastifyRequest,
+  context: PublishSemanticsContext,
   actorAlias = actor.alias,
 ): Omit<TrustedPublishCommand, 'idempotency_key'> {
   return {
@@ -158,8 +162,21 @@ export function trustedPublishSemantics(
     )),
     body: command.body,
     lane: command.lane,
-    priority: routedPriority(actor, command.priority, command.lane, request),
+    priority: routedPriority(actor, command.priority, command.lane, context),
   };
+}
+
+export function trustedPublishSemantics(
+  actor: Principal,
+  command: Pick<ConsolePublishIntentPrepare, 'room_id' | 'recipients' | 'body' | 'lane' | 'priority'>,
+  request: FastifyRequest,
+  actorAlias = actor.alias,
+): Omit<TrustedPublishCommand, 'idempotency_key'> {
+  return trustedPublishSemanticsForContext(actor, command, {
+    interactiveHumanEntry: request.routeOptions.url === '/v3/console/messages'
+      || request.routeOptions.url === '/v3/console/publish-intents',
+    log: request.log,
+  }, actorAlias);
 }
 
 export function consolePublishOperatorScope(actor: Principal): string {
