@@ -243,7 +243,9 @@ describe('contenido y escritura tenant-qualified', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
-  const FACTS: RuntimeFacts = { harness: 'claude', home: '/home/dev' };
+  const FACTS: RuntimeFacts = {
+    harness: 'claude', home: '/home/dev', generation: 'measured-one', containerId: 'container-one',
+  };
   const NO_MEDIDO_CASES: readonly (readonly [
     string,
     { facts: RuntimeFacts; source: FactsSource } | undefined,
@@ -260,13 +262,13 @@ describe('contenido y escritura tenant-qualified', () => {
         text: '# no debe leerse', bytes: 17, truncated: false,
         modified_at: '2026-08-25T00:00:00Z', sha: sha('# no debe leerse'),
       }));
-      const writeGovernanceDocument = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
+      const writeGovernanceDocumentFenced = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
       vivo = servidor({
         probe: {
           ...probe({}),
           factsFor: vi.fn(async () => facts),
           readGovernanceDocument,
-          writeGovernanceDocument,
+          writeGovernanceDocumentFenced,
         },
       });
 
@@ -277,7 +279,7 @@ describe('contenido y escritura tenant-qualified', () => {
       expect(res.statusCode).toBe(409);
       expect(res.json()).toMatchObject({ error: 'no_medido' });
       expect(readGovernanceDocument).not.toHaveBeenCalled();
-      expect(writeGovernanceDocument).not.toHaveBeenCalled();
+      expect(writeGovernanceDocumentFenced).not.toHaveBeenCalled();
     },
   );
 
@@ -288,13 +290,13 @@ describe('contenido y escritura tenant-qualified', () => {
         text: '# anterior', bytes: 10, truncated: false,
         modified_at: '2026-08-25T00:00:00Z', sha: sha('# anterior'),
       }));
-      const writeGovernanceDocument = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
+      const writeGovernanceDocumentFenced = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
       vivo = servidor({
         probe: {
           ...probe({}),
           factsFor: vi.fn(async () => facts),
           readGovernanceDocument,
-          writeGovernanceDocument,
+          writeGovernanceDocumentFenced,
         },
       });
 
@@ -306,7 +308,7 @@ describe('contenido y escritura tenant-qualified', () => {
       expect(res.statusCode).toBe(409);
       expect(res.json()).toMatchObject({ error: 'no_medido' });
       expect(readGovernanceDocument).not.toHaveBeenCalled();
-      expect(writeGovernanceDocument).not.toHaveBeenCalled();
+      expect(writeGovernanceDocumentFenced).not.toHaveBeenCalled();
     },
   );
 
@@ -341,12 +343,12 @@ describe('contenido y escritura tenant-qualified', () => {
       text: '# identidad\n', bytes: 12, truncated: false,
       modified_at: '2026-08-25T00:00:00Z', sha: sha('# identidad\n'),
     }));
-    const writeGovernanceDocument = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
+    const writeGovernanceDocumentFenced = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
     vivo = servidor({
       probe: {
         ...probe({ 'Miguel:kant': { facts: OPENCLAW, source: 'measured' } }),
         readGovernanceDocument,
-        writeGovernanceDocument,
+        writeGovernanceDocumentFenced,
       },
     });
 
@@ -376,7 +378,7 @@ describe('contenido y escritura tenant-qualified', () => {
       payload: { content: 'nuevo', expected_sha: sha('# identidad\n'), reason: MOTIVO },
     });
     expect(put.statusCode).toBe(403);
-    expect(writeGovernanceDocument).not.toHaveBeenCalled();
+    expect(writeGovernanceDocumentFenced).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -456,7 +458,7 @@ describe('contenido y escritura tenant-qualified', () => {
     let permiso: string | undefined;
     const anterior = '# viejo';
     const nuevo = '# nuevo';
-    const writeGovernanceDocument = vi.fn(async () => ({ sha: sha(nuevo), bytes: 7 }));
+    const writeGovernanceDocumentFenced = vi.fn(async () => ({ sha: sha(nuevo), bytes: 7 }));
     vivo = servidor({
       authorize: async (_request, requested) => {
         permiso = requested;
@@ -468,7 +470,7 @@ describe('contenido y escritura tenant-qualified', () => {
           text: anterior, bytes: 7, truncated: false, modified_at: '2026-08-25T00:00:00Z',
           sha: sha(anterior),
         }),
-        writeGovernanceDocument,
+        writeGovernanceDocumentFenced,
       },
     });
 
@@ -489,9 +491,10 @@ describe('contenido y escritura tenant-qualified', () => {
       sha: sha(nuevo),
       bytes: 7,
     });
-    expect(writeGovernanceDocument).toHaveBeenCalledWith(
+    expect(writeGovernanceDocumentFenced).toHaveBeenCalledWith(
       '/home/dev/.claude/CLAUDE.md', nuevo,
       { state: 'present', sha256: sha(anterior) }, FACTS, 'Miguel', 'kant',
+      { generation: 'measured-one', containerId: 'container-one', path: '/home/dev/.claude/CLAUDE.md' },
     );
   });
 
@@ -499,7 +502,7 @@ describe('contenido y escritura tenant-qualified', () => {
     const nuevo = MANAGED_DIRECTIVE
       .replace('# Manual anterior', '# Manual nuevo')
       .replace('cola anterior', 'cola nueva');
-    const writeGovernanceDocument = vi.fn(async () => ({
+    const writeGovernanceDocumentFenced = vi.fn(async () => ({
       sha: sha(nuevo), bytes: Buffer.byteLength(nuevo, 'utf8'),
     }));
     vivo = servidor({
@@ -512,7 +515,7 @@ describe('contenido y escritura tenant-qualified', () => {
           modified_at: '2026-08-25T00:00:00Z',
           sha: sha(MANAGED_DIRECTIVE),
         }),
-        writeGovernanceDocument,
+        writeGovernanceDocumentFenced,
       },
     });
 
@@ -525,9 +528,10 @@ describe('contenido y escritura tenant-qualified', () => {
     expect(res.json()).toMatchObject({
       ok: true, state: 'written_pending_session', evidence: 'probe_write_ack', sha: sha(nuevo),
     });
-    expect(writeGovernanceDocument).toHaveBeenCalledWith(
+    expect(writeGovernanceDocumentFenced).toHaveBeenCalledWith(
       '/home/dev/.claude/CLAUDE.md', nuevo,
       { state: 'present', sha256: sha(MANAGED_DIRECTIVE) }, FACTS, 'Miguel', 'kant',
+      { generation: 'measured-one', containerId: 'container-one', path: '/home/dev/.claude/CLAUDE.md' },
     );
   });
 
@@ -558,7 +562,7 @@ describe('contenido y escritura tenant-qualified', () => {
       'malformed_proposed',
     ],
   ] as const)('%s responde 409 sin pedir escritura', async (_label, nuevo, conflict) => {
-    const writeGovernanceDocument = vi.fn(async () => ({
+    const writeGovernanceDocumentFenced = vi.fn(async () => ({
       sha: sha(nuevo), bytes: Buffer.byteLength(nuevo, 'utf8'),
     }));
     vivo = servidor({
@@ -571,7 +575,7 @@ describe('contenido y escritura tenant-qualified', () => {
           modified_at: '2026-08-25T00:00:00Z',
           sha: sha(MANAGED_DIRECTIVE),
         }),
-        writeGovernanceDocument,
+        writeGovernanceDocumentFenced,
       },
     });
 
@@ -582,21 +586,21 @@ describe('contenido y escritura tenant-qualified', () => {
 
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ error: 'managed_context_conflict', conflict });
-    expect(writeGovernanceDocument).not.toHaveBeenCalled();
+    expect(writeGovernanceDocumentFenced).not.toHaveBeenCalled();
   });
 
   it.each([
     `${MARCA_INICIO}\ncontrato\n${MARCA_FIN}\n`,
     '<!-- CAUCE:FUTURO v1 -->\n',
   ])('rechaza crear un manual ausente con marcadores reservados', async (nuevo) => {
-    const writeGovernanceDocument = vi.fn(async () => ({
+    const writeGovernanceDocumentFenced = vi.fn(async () => ({
       sha: sha(nuevo), bytes: Buffer.byteLength(nuevo, 'utf8'),
     }));
     vivo = servidor({
       probe: {
         ...probe({ 'Miguel:kant': { facts: FACTS, source: 'measured' } }),
         readGovernanceDocument: async () => ({ error: 'not_found', reason: 'no existe' }),
-        writeGovernanceDocument,
+        writeGovernanceDocumentFenced,
       },
     });
 
@@ -609,12 +613,12 @@ describe('contenido y escritura tenant-qualified', () => {
     expect(res.json()).toMatchObject({
       error: 'managed_context_conflict', conflict: 'reserved_markers_on_create',
     });
-    expect(writeGovernanceDocument).not.toHaveBeenCalled();
+    expect(writeGovernanceDocumentFenced).not.toHaveBeenCalled();
   });
 
   it('mantiene el CAS: una carrera de SHA responde 409 antes de comparar o escribir', async () => {
     const actual = '# cambio concurrente\n';
-    const writeGovernanceDocument = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
+    const writeGovernanceDocumentFenced = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
     vivo = servidor({
       probe: {
         ...probe({ 'Miguel:kant': { facts: FACTS, source: 'measured' } }),
@@ -622,7 +626,7 @@ describe('contenido y escritura tenant-qualified', () => {
           text: actual, bytes: Buffer.byteLength(actual, 'utf8'), truncated: false,
           modified_at: '2026-08-25T00:00:00Z', sha: sha(actual),
         }),
-        writeGovernanceDocument,
+        writeGovernanceDocumentFenced,
       },
     });
 
@@ -633,16 +637,16 @@ describe('contenido y escritura tenant-qualified', () => {
 
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ error: 'conflict' });
-    expect(writeGovernanceDocument).not.toHaveBeenCalled();
+    expect(writeGovernanceDocumentFenced).not.toHaveBeenCalled();
   });
 
   it('crea sólo cuando GET observó ausencia y el cliente manda create_if_absent', async () => {
-    const writeGovernanceDocument = vi.fn(async () => ({ sha: sha('# primero'), bytes: 9 }));
+    const writeGovernanceDocumentFenced = vi.fn(async () => ({ sha: sha('# primero'), bytes: 9 }));
     vivo = servidor({
       probe: {
         ...probe({ 'Miguel:kant': { facts: FACTS, source: 'measured' } }),
         readGovernanceDocument: async () => ({ error: 'not_found', reason: 'no existe' }),
-        writeGovernanceDocument,
+        writeGovernanceDocumentFenced,
       },
     });
 
@@ -652,13 +656,14 @@ describe('contenido y escritura tenant-qualified', () => {
     });
 
     expect(res.statusCode).toBe(202);
-    expect(writeGovernanceDocument).toHaveBeenCalledWith(
+    expect(writeGovernanceDocumentFenced).toHaveBeenCalledWith(
       '/home/dev/.claude/CLAUDE.md', '# primero', { state: 'absent' }, FACTS, 'Miguel', 'kant',
+      { generation: 'measured-one', containerId: 'container-one', path: '/home/dev/.claude/CLAUDE.md' },
     );
   });
 
   it('un prefijo truncado nunca se puede reemplazar, aun con el SHA real', async () => {
-    const writeGovernanceDocument = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
+    const writeGovernanceDocumentFenced = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
     vivo = servidor({
       probe: {
         ...probe({ 'Miguel:kant': { facts: FACTS, source: 'measured' } }),
@@ -666,7 +671,7 @@ describe('contenido y escritura tenant-qualified', () => {
           text: 'prefijo', bytes: 900_000, truncated: true,
           modified_at: '2026-08-25T00:00:00Z', sha: 'c'.repeat(64),
         }),
-        writeGovernanceDocument,
+        writeGovernanceDocumentFenced,
       },
     });
 
@@ -677,7 +682,7 @@ describe('contenido y escritura tenant-qualified', () => {
 
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ error: 'truncated_source' });
-    expect(writeGovernanceDocument).not.toHaveBeenCalled();
+    expect(writeGovernanceDocumentFenced).not.toHaveBeenCalled();
   });
 
   it('un 2xx interno sin ACK exacto se transforma en error y no en applied', async () => {
@@ -689,7 +694,7 @@ describe('contenido y escritura tenant-qualified', () => {
           text: anterior, bytes: 5, truncated: false,
           modified_at: '2026-08-25T00:00:00Z', sha: sha(anterior),
         }),
-        writeGovernanceDocument: async () => ({ sha: 'd'.repeat(64), bytes: 5 }),
+        writeGovernanceDocumentFenced: async () => ({ sha: 'd'.repeat(64), bytes: 5 }),
       },
     });
 
