@@ -51,6 +51,9 @@ it('presupuesta una cabecera y una fila de escritura compactas sin ocultar aviso
   expect(valor(declaraciones(mobile, '.messenger-composer textarea'), 'height')).toBe('44px');
   expect(valor(declaraciones(mobile, '.composer-input-row'), 'display')).toBe('flex');
   expect(valor(declaraciones(mobile, '.messenger-composer .composer-footer > span'), 'display')).toBe('none');
-  expect(valor(declaraciones(mobile, '.chat-queue-warning'), 'display')).not.toBe('none');
+  const notices = sinComentarios(leerCss('features/messages/messages.css'));
+  expect(valor(declaraciones(notices, '.chat-notice-bar'), 'display')).toBe('flex');
+  expect(valor(declaraciones(notices, '.chat-notice-summary'), 'overflow')).toBeUndefined();
+  expect(valor(declaraciones(notices, '.chat-notice-panel'), 'overflow-y')).toBe('auto');
   expect(valor(declaraciones(mobile, '.composer-blocked'), 'display')).not.toBe('none');
 });
