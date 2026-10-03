@@ -167,3 +167,75 @@ it('la respuesta tardía de un cuerpo no reemplaza el mensaje que se está leyen
   await waitFor(() => { expect(within(detail).getByText('Segundo mensaje')).toBeVisible(); });
   expect(within(detail).queryByText('Cuerpo tardío del primero')).toBeNull();
 });
+
+it('lee y presenta la respuesta canónica solo bajo la raíz propia y el delivery destinatario exacto', async () => {
+  const input = props();
+  const source = input.page?.items?.find((item) => item.deliveries?.some((delivery) => delivery.recipient_alias === 'argos'));
+  if (!source) throw new Error('Missing message fixture');
+  const delivery = source.deliveries?.find((item) => item.recipient_alias === 'argos');
+  if (!delivery?.delivery_id || !source.message_id) throw new Error('Missing root delivery fixture');
+  const root = {
+    ...source,
+    author: { kind: 'human' as const, subject_id: 'test-operator', display_name: 'Operador' },
+    deliveries: [{ ...delivery, status: 'done' as const }],
+  };
+  const getMessage = vi.spyOn(testApi, 'getMessage').mockResolvedValue({
+    message_id: root.message_id,
+    chain_open: true,
+    deliveries: [{
+      delivery_id: delivery.delivery_id, tenant_id: delivery.recipient_tenant ?? '',
+      alias: delivery.recipient_alias ?? '', status: 'done', reply: '<script>alert("x")</script> resultado',
+    }],
+  });
+  renderWithApi(<ConversationPane {...input} page={{ items: [root] }} />);
+  const reply = await screen.findByLabelText(/^Respuesta canónica de /);
+  expect(reply).toHaveTextContent('Respuesta provisional · cadena en curso');
+  expect(reply).toHaveTextContent('<script>alert("x")</script> resultado');
+  expect(reply.querySelector('script')).toBeNull();
+  expect(reply).toHaveAttribute('data-delivery-id', delivery.delivery_id);
+  expect(getMessage).toHaveBeenCalledWith(root.message_id);
+});
+
+it('actualiza el recibo sin estado con el terminal del feed y relee una vez en gateway legado', async () => {
+  const user = userEvent.setup();
+  const input = { ...props(), publisherSubject: 'Steven:operator' };
+  const agent = input.agent;
+  const messageId = '10000000-0000-4000-8000-000000000001';
+  const deliveryId = '20000000-0000-4000-8000-000000000002';
+  const requestId = '30000000-0000-4000-8000-000000000003';
+  const idempotencyKey = 'intent-canonical-reply';
+  const hash = 'a'.repeat(64);
+  vi.spyOn(testApi, 'preparePublishIntent').mockResolvedValue({
+    version: 1, state: 'prepared', idempotency_key: idempotencyKey, receipt: null,
+  });
+  vi.spyOn(testApi, 'publishMessage').mockResolvedValue({
+    message_id: messageId, delivery_ids: [deliveryId], duplicate: false,
+    request_id: requestId, trace_id: 'trace-canonical', idempotency_key: idempotencyKey,
+    tenant_id: 'Steven', actor_alias: 'operator', request_hash: hash, causal_hash: hash,
+  });
+  vi.spyOn(testApi, 'confirmPublishIntent').mockResolvedValue({
+    version: 1, confirmed: true, idempotency_key: idempotencyKey, message_id: messageId, causal_hash: hash,
+  });
+  const getMessage = vi.spyOn(testApi, 'getMessage').mockResolvedValue({
+    message_id: messageId,
+    deliveries: [{ delivery_id: deliveryId, tenant_id: agent.tenantId, alias: agent.alias, reply: 'respuesta del gateway anterior' }],
+  });
+  const view = renderWithApi(<ConversationPane {...input} page={{ items: [] }} />);
+  await user.type(screen.getByRole('textbox', { name: /Mensaje para/ }), 'consultar respuesta');
+  await user.click(screen.getByRole('button', { name: 'Enviar' }));
+  await waitFor(() => expect(getMessage).toHaveBeenCalledTimes(1));
+
+  view.rerender(<ApiProvider api={testApi}><ConversationPane {...input} page={{ items: [{
+    message_id: messageId, tenant_id: 'Steven', actor_alias: 'operator', room_id: 'grp.steven',
+    author: { kind: 'human', subject_id: input.publisherSubject, display_name: 'Operador' },
+    body_preview: 'consultar respuesta', created_at: '2026-10-03T17:00:00Z',
+    deliveries: [{ delivery_id: deliveryId, recipient_tenant: agent.tenantId, recipient_alias: agent.alias, status: 'done' }],
+  }] }} /></ApiProvider>);
+  await waitFor(() => expect(getMessage).toHaveBeenCalledTimes(2));
+  const reply = await screen.findByLabelText(`Respuesta canónica de ${agent.tenantId}:${agent.alias}`);
+  expect(reply).toHaveTextContent('respuesta del gateway anterior');
+  expect(reply).toHaveTextContent('no se demuestra que haya cerrado');
+  expect(within(reply).getByRole('button', { name: 'Releer respuesta' })).toBeVisible();
+  await act(async () => { await new Promise((resolve) => { window.setTimeout(resolve, 2_600); }); });
+  expect(getMessage).toHaveBeenCalledTimes(2);
+});
