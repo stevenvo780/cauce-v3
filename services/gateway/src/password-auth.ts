@@ -1,11 +1,12 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
-  AuthError, AuthorizationError, validatePrincipal,
-  type AuthProvider, type Principal, type PrincipalPermission, type PrincipalRole
+  AuthError, AuthorizationError,
+  type AuthProvider, type Principal
 } from './auth.js';
-import type { ConsoleUser, ConsoleUserRole, ConsoleUserStore } from './console-users.js';
+import type { ConsoleUser, ConsoleUserStore } from './console-users.js';
 import { clearHostSessionCookie, constantTimeText, hostSessionCookie, isHostCookieName, routedPath, scalarHeaderValue, uniqueCookieValue } from './http-auth-primitives.js';
+import { consoleRoleAuthority, consoleUserPrincipal } from './console-user-authority.js';
 import { DECOY_PASSWORD_HASH_PROMISE, MAX_PASSWORD_LENGTH, verifyPassword } from './password.js';
 
 /**
@@ -53,19 +54,6 @@ class SessionExpiredError extends AuthError {
     super('La sesión venció. Volvé a iniciar sesión.');
   }
 }
-
-/**
- * Console role -> Cauce authority. This is the MINIMUM reasonable mapping and lives in the code
- * rather than the database because it is a product decision, not data: `operator` operates
- * (publish, cancel, retry, terminals) and `reader` only watches. Either is then narrowed by
- * `memberships`/`role_policies`.
- */
-const ROLE_AUTHORITY: Readonly<Record<ConsoleUserRole, {
-  roles: readonly PrincipalRole[]; permissions: readonly PrincipalPermission[];
-}>> = Object.freeze({
-  operator: { roles: ['operator'], permissions: ['route', 'read', 'control', 'notify'] },
-  reader: { roles: [], permissions: ['read'] }
-});
 
 function base64urlJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
@@ -262,25 +250,6 @@ export class PasswordAuthProvider implements AuthProvider {
     return uniqueCookieValue(scalarHeaderValue(request.headers.cookie), this.cookieName);
   }
 
-  private principalFor(user: ConsoleUser, claims: ConsoleSessionClaims): Principal {
-    const authority = ROLE_AUTHORITY[user.role];
-    return validatePrincipal({
-      tenant_id: user.tenant_id,
-      alias: user.alias,
-      session_id: `console:${claims.sid}`,
-      channel: 'console',
-      roles: authority.roles,
-      permissions: authority.permissions,
-      // Identifier of the authenticated operator, derived from the console account.
-      operator_id: user.email,
-      operator_profile: { id: `console:${user.id}`, display_name: user.display_name },
-      /*
-       * A web session is not a return transport. The human identity is tracked through
-       * operator_id and session_id without registering as a durable delivery route.
-       */
-    });
-  }
-
   private async load(request: FastifyRequest): Promise<LoadedSession> {
     const cached = this.requestCache.get(request);
     if (cached) return cached;
@@ -292,7 +261,7 @@ export class PasswordAuthProvider implements AuthProvider {
     if (!user?.active) throw new AuthError('la cuenta de consola no está habilitada');
     // Changing the password invalidates previously issued tokens: revocation without a revocation table.
     if (claims.iat * 1_000 < user.password_changed_at - 1_000) throw new SessionExpiredError();
-    const loaded = { claims, user, principal: this.principalFor(user, claims) };
+    const loaded = { claims, user, principal: consoleUserPrincipal(user, `console:${claims.sid}`, 'console') };
     this.requestCache.set(request, loaded);
     return loaded;
   }
@@ -328,7 +297,7 @@ export class PasswordAuthProvider implements AuthProvider {
     if (!this.handles(request)) return { authenticated: false, login_mode: 'password' };
     try {
       const { claims, user } = await this.load(request);
-      const authority = ROLE_AUTHORITY[user.role];
+      const authority = consoleRoleAuthority(user.role);
       return {
         authenticated: true,
         login_mode: 'password',
@@ -422,7 +391,7 @@ export class PasswordAuthProvider implements AuthProvider {
     } catch {
       // The last-login marker is informational: losing it must never cost the login itself.
     }
-    const authority = ROLE_AUTHORITY[user.role];
+    const authority = consoleRoleAuthority(user.role);
     await reply
       .header('Cache-Control', 'no-store')
       .header('Set-Cookie', hostSessionCookie(this.cookieName, token, this.sessionTtlMs / 1_000, 'Strict'))
