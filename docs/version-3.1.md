@@ -117,15 +117,25 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `0272dc26` y runtime
-`bf2cd6d5`: actualización dirigida de consola del PR #5. La evidencia registra 9/9 servicios
-sanos, los otros ocho con contenedor e imagen preservados, y HTML más tres assets públicos iguales
-a la imagen activa. La aceptación global sigue pendiente: Astra está habilitada sin latido fresco
-(13/14 agentes con latido fresco), el SDK está staged pero no activo y el endpoint MCP público quedó
-diferido por decisión del dueño.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `b361aaaf`, también revisión del
+runtime central. La ventana actualizó los cinco servicios runtime y verificó 9/9 servicios activos
+sanos; los otros cuatro conservaron el mismo contenedor, inicio e imagen. HTML y tres assets
+públicos coinciden byte a byte con la consola activa, y el backup estricto pasó con blobs y
+retención. El digest runtime es `sha256:5ec90a7d2e757c9f2c19297a19552ed00d68deeec097a04d6f08a6f0cf7fc370`;
+la consola permanece en la revisión `0272dc26`, con digest
+`sha256:bf1ef207f9c81fa1cb6503782c386d85d754ce10a77bd411c2b10664afc4cc97`.
+La aceptación global sigue pendiente: Astra está habilitada sin latido fresco, no tiene lease y su
+VM está en error (13/14 agentes con latido fresco), y los ocho wakes pendientes corresponden a Astra.
+El builder oficial npm11 del SDK pasó con digest
+`sha256:22f84911d9e18cc17f8c3b339aeccbb64f6cc407c0336457bb536eaf9d598c4b`.
+El staging se verificó en VPS y server2 con el mismo digest receptor, propietario y permisos
+inmutables, sin symlinks que escapen del bundle. El SDK está staged pero no activo. Los canaries anteriores acreditan sólo
+el SDK previo. El endpoint MCP público quedó diferido por decisión autorizada del dueño. La evidencia de
+esta actualización está en
+`/var/log/cauce-v3-release/unified-20261002/runtime-attempt2/deployment.json`.
 
-En la verificación anterior, los quince alias completaron una entrega real al primer intento y se
-reiniciaron sus adaptadores y sesiones nativas. La shell y el visor web se probaron en los quince;
+Como evidencia histórica, en una verificación anterior los quince alias completaron una entrega
+real al primer intento y se reiniciaron sus adaptadores y sesiones nativas. La shell y el visor web se probaron en los quince;
 el teclado pasó en Claude, Codex y OpenClaw, incluido el borrado rápido. Iza conservó su encargo
 pendiente y sus siete archivos; la reconciliación posterior desde la web actualizó cinco huellas sin
 alterar los bytes. Esto es evidencia histórica y no describe el estado actual de latidos de la flota.
@@ -136,10 +146,11 @@ se publican desde el VPS con identidad y fecha observadas. El inventario refleja
 Docker en doce contenedores, más Astra y Kant nativos; las herramientas de ops instaladas
 conservan sus versiones anteriores para reversión.
 
-Cinco canaries anteriores acreditaron `mcp_deposit` y ACK final para el SDK MCP simplificado, y la
-cadena Zeus→Argos→Astra completó delegación, respuestas y síntesis final. El SDK está staged pero
-no activo; esos resultados no acreditan su activación actual. El endpoint MCP público está diferido
-por decisión del dueño. El formato de texto sigue disponible.
+Cinco canaries históricos del SDK previo acreditaron `mcp_deposit` y ACK final para el SDK MCP
+simplificado, y la cadena Zeus→Argos→Astra completó delegación, respuestas y síntesis final. No son
+evidencia de que el SDK nuevo staged esté activo ahora ni del heartbeat actual de la flota. El
+endpoint MCP público está
+diferido por decisión autorizada del dueño. El formato de texto sigue disponible.
 El detalle pendiente vive en [v3.1-pendientes](v3.1-pendientes.md); lo que queda por comprobar por
 efecto después de una ventana de despliegue está en `docs/v3.1-pendientes.md` §1, «Deuda de
 despliegue».
