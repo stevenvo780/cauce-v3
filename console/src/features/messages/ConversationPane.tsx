@@ -21,6 +21,7 @@ import { ConversationMenu } from './ConversationMenu';
 import { ConversationNotices } from './ConversationNotices';
 import { AgentSettingsView } from './AgentSettingsView';
 import { MessageTimeline } from './MessageTimeline';
+import { useCanonicalReply, type CanonicalReplyRoot } from './use-canonical-reply';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
 
@@ -76,6 +77,7 @@ export function ConversationPane({
   const setAviso = (notice: typeof aviso) => { updateForm((current) => ({ ...current, notice })); };
   const [mensajeElegido, setMensajeElegido] = useState<string>();
   const [selectedSnapshot, setSelectedSnapshot] = useState<TranscriptItem>();
+  const [receiptRoot, setReceiptRoot] = useState<{ key: string; root: CanonicalReplyRoot }>();
   const [cuerpos, setCuerpos] = useState<Record<string, CuerpoEntero>>({});
   /** The detail is born closed and is opened by the operator or by clicking a bubble. */
   const [detalleAbierto, setDetalleAbierto] = useState(false);
@@ -84,6 +86,7 @@ export function ConversationPane({
     id: `messenger:${agent.id}`, agent, sourceRoomId: '', openedAt: new Date(0).toISOString(), mode: 'transcript',
   }), [agent]);
   const hilo = useMemo(() => transcriptForSession(page, sesion), [page, sesion]);
+  const replyScopeKey = JSON.stringify([publisherSubject, agent.tenantId, agent.alias]);
 
   const roomUnavailable = Boolean(roomElegido && !route.sourceRoomIds.includes(roomElegido));
   const roomOrigen = roomElegido ?? (route.sourceRoomIds.length === 1 ? route.sourceRoomIds[0] : '');
@@ -118,6 +121,38 @@ export function ConversationPane({
     fleetAgentId(entrega.recipient_tenant ?? '', entrega.recipient_alias ?? '') !== agent.id
   ));
   const totalVisible = (page?.items ?? []).length;
+
+  const mensajePropio = (item: TranscriptItem | undefined) => Boolean(
+    publisherSubject && item?.message.author?.kind === 'human'
+      && item.message.author.subject_id === publisherSubject,
+  );
+  const deliveryDelAgente = (item: TranscriptItem | undefined) => {
+    const delivery = item?.delivery;
+    return delivery?.recipient_tenant === agent.tenantId && delivery.recipient_alias === agent.alias
+      && typeof delivery.delivery_id === 'string' && delivery.delivery_id.length > 0;
+  };
+  const receiptDeliveryFromFeed = receiptRoot?.key === replyScopeKey
+    ? hilo.find((item) => item.message.message_id === receiptRoot.root.messageId
+      && item.delivery?.delivery_id === receiptRoot.root.deliveryId
+      && item.delivery.recipient_tenant === agent.tenantId
+      && item.delivery.recipient_alias === agent.alias)?.delivery
+    : undefined;
+  const rootFromReceipt: CanonicalReplyRoot | undefined = receiptRoot?.key === replyScopeKey
+    ? { ...receiptRoot.root, status: receiptDeliveryFromFeed?.status ?? receiptRoot.root.status }
+    : undefined;
+  const selectedReplyRoot = mensajePropio(elegidoPorElOperador) && deliveryDelAgente(elegidoPorElOperador)
+    ? { messageId: elegidoPorElOperador?.message.message_id ?? '', deliveryId: elegidoPorElOperador?.delivery?.delivery_id ?? '', status: elegidoPorElOperador?.delivery?.status }
+    : undefined;
+  const latestOwnRoot = [...hilo].reverse().find((item) => mensajePropio(item) && deliveryDelAgente(item));
+  const candidateRoot = mensajeElegido
+    ? selectedReplyRoot
+    : rootFromReceipt ? rootFromReceipt
+      : latestOwnRoot ? {
+        messageId: latestOwnRoot.message.message_id ?? '',
+        deliveryId: latestOwnRoot.delivery?.delivery_id ?? '',
+        status: latestOwnRoot.delivery?.status,
+      } : undefined;
+  const canonical = useCanonicalReply({ publisherSubject, tenantId: agent.tenantId, alias: agent.alias, root: candidateRoot });
 
   /*
    * --------------------------------------------------- THE THREAD STARTS AT THE END
@@ -155,7 +190,7 @@ export function ConversationPane({
     if (!pegadoRef.current) { caja.scrollTop = scrollPosition.current; return; }
     irAlFinal(caja, false);
     setVistosHastaAqui(hilo.length);
-  }, [contextOpen, ultimoId, hilo.length]);
+  }, [canonical.reply?.chainOpen, canonical.reply?.messageId, canonical.reply?.reply, contextOpen, ultimoId, hilo.length]);
 
   function alDesplazar() {
     const caja = cajaRef.current;
@@ -213,6 +248,12 @@ export function ConversationPane({
       });
 
       updateForm((current) => ({ ...current, text: current.text === draft ? '' : current.text }));
+      const receiptDeliveryId = resultado.delivery_ids?.[0];
+      if (resultado.message_id && receiptDeliveryId) {
+        setReceiptRoot({ key: replyScopeKey, root: { messageId: resultado.message_id, deliveryId: receiptDeliveryId } });
+        setMensajeElegido(undefined);
+        setSelectedSnapshot(undefined);
+      }
       setAviso({
         tone: journalStatus === 'confirmed' ? 'success' : 'parcial',
         text: `${reconciled ? 'Publicación reconciliada desde el journal durable' : 'Aceptado por el control plane'} · ${compactId(resultado.message_id)}. `
@@ -347,9 +388,19 @@ export function ConversationPane({
             items={hilo}
             selectedMessageId={elegidoPorElOperador?.message.message_id ?? undefined}
             onSelectItem={elegir}
+            canonicalReply={canonical.reply}
+            canonicalReplyStale={canonical.stale}
+            onCanonicalReplyRetry={canonical.retry}
           />
         )}
       </div>
+
+      {canonical.error ? <p className="messenger-cuerpo-aviso" role="status">
+        {canonical.accessDenied ? 'La respuesta canónica ya no está disponible para esta identidad o destinatario.'
+          : canonical.stale ? 'No se pudo actualizar la respuesta canónica; se conserva el último dato como desactualizado.'
+            : 'No se pudo leer la respuesta canónica.'}
+        <button className="button small secondary" type="button" onClick={canonical.retry}>Releer respuesta</button>
+      </p> : null}
 
       {/*
         "Go to the end", with the count of what arrived while the operator was reading above. It only appears when
