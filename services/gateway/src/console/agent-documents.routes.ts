@@ -91,6 +91,12 @@ export interface GovernanceReadError {
   readonly reason: string;
 }
 
+/** Measured identity for an opt-in write; legacy writers must not be used as a fallback. */
+export interface GovernanceWriteTarget {
+  readonly generation: string;
+  readonly containerId: string;
+  readonly path: string;
+}
 export interface AgentFactsProbe {
   /** Facts about the alias, or `undefined` if nobody has measured them yet. */
   factsFor(tenantId: string, alias: string): Promise<
@@ -123,16 +129,7 @@ export interface AgentFactsProbe {
     signal?: AbortSignal,
   ): Promise<MemoryDirectoryListing | GovernanceReadError>;
 
-  /**
-   * Write a governance document of the alias. OPTIONAL: a probe that can only read does not bring this, and
-   * PUT answers 503 instead of pretending it saved.
-   *
-   * `expectedSha` is the fingerprint of what was opened: a file changed while being edited comes back
-   * as a conflict and is NOT written; a "last writer wins" loses prose that exists nowhere else.
-   *
-   * The same safeguards as read plus `verifyWritablePath` on the requested AND the resolved path: a
-   * `CLAUDE.md` linked to `~/.claude/.credentials.json` passes any check made on the name alone.
-   */
+  /** Optional CAS writer; read-only probes produce 503. Paths must pass writable-path policy. */
   writeGovernanceDocument?(
     path: string,
     contenido: string,
@@ -141,6 +138,11 @@ export interface AgentFactsProbe {
     tenantId: string,
     alias: string,
   ): Promise<{ sha: string; bytes: number } | GovernanceReadError | { error: 'conflict'; reason: string }>;
+
+  /** Explicit method so an older probe cannot silently discard the required fence. */
+  writeGovernanceDocumentFenced?(
+    ...args: [...Parameters<NonNullable<AgentFactsProbe['writeGovernanceDocument']>>, GovernanceWriteTarget]
+  ): ReturnType<NonNullable<AgentFactsProbe['writeGovernanceDocument']>>;
 
   /** Indivisible batch for multi-file profiles (OpenClaw). */
   writeGovernanceBatch?(

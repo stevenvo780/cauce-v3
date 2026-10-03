@@ -5,7 +5,7 @@ import type {
   RelayFileWriteBatch,
 } from './agent-documents.js';
 import type {
-  GovernanceBatchWrite, GovernanceReadError, GovernanceWritePrecondition,
+  GovernanceBatchWrite, GovernanceReadError, GovernanceWritePrecondition, GovernanceWriteTarget,
 } from './agent-documents.routes.js';
 import { hasNeverServePathSegment } from './agent-documents/catalog.js';
 
@@ -382,12 +382,40 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
     content: string,
     precondition: GovernanceWritePrecondition,
   ): Promise<RelayFileWrite | GovernanceWriteError> {
+    return this.sendFileWrite(tenantId, alias, path, content, precondition);
+  }
+
+  async writeFileFenced(
+    tenantId: string,
+    alias: string,
+    path: string,
+    content: string,
+    precondition: GovernanceWritePrecondition,
+    expectedTarget: GovernanceWriteTarget | undefined,
+  ): Promise<RelayFileWrite | GovernanceWriteError> {
+    if (!expectedTarget?.generation || !expectedTarget.containerId || expectedTarget.path !== path) {
+      return { error: 'conflict', reason: 'el destino medido de la escritura está incompleto' };
+    }
+    return this.sendFileWrite(tenantId, alias, path, content, precondition, expectedTarget);
+  }
+
+  private async sendFileWrite(
+    tenantId: string,
+    alias: string,
+    path: string,
+    content: string,
+    precondition: GovernanceWritePrecondition,
+    expectedTarget?: GovernanceWriteTarget,
+  ): Promise<RelayFileWrite | GovernanceWriteError> {
     let result: HttpResult;
     try {
       result = await this.send('/v3/terminal/relay/write', {
         tenant_id: tenantId,
         alias,
         path,
+        ...(expectedTarget === undefined ? {} : { expected_target: {
+          generation: expectedTarget.generation, container_id: expectedTarget.containerId, path: expectedTarget.path,
+        } }),
         content_base64: Buffer.from(content, 'utf8').toString('base64'),
         precondition,
       });

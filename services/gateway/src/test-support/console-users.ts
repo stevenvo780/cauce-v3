@@ -20,6 +20,13 @@ export class MemoryConsoleUserStore implements ConsoleUserStore {
     return this.users.get(id);
   }
 
+  async updateDisplayName(id: string, name: string): Promise<string | undefined> {
+    const user = this.users.get(id);
+    if (!user?.active) return undefined;
+    this.users.set(id, { ...user, display_name: name });
+    return name;
+  }
+
   recordLogin(): Promise<void> { return Promise.resolve(); }
 
   put(user: ConsoleUser): void {

@@ -1,3 +1,4 @@
+import { NativeContextRepositoryPanel } from './NativeContextRepositoryPanel';
 import { ContextRepositoryApply } from './ContextRepositoryApply';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
@@ -17,7 +18,7 @@ const JOURNAL: Record<JournalVerification, string> = {
 
 export function ContextRepositoryPanel(props: Props) {
   const [open, setOpen] = useState(false);
-  return <details className="historial-contexto" onToggle={(event) => { setOpen(event.currentTarget.open); }}>
+  return <details className="historial-contexto" onToggle={(event) => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open); }}>
     <summary>Versiones Git del contexto</summary>
     {open ? <RepositoryContent key={`${props.tenantId}/${props.alias}`} {...props} /> : null}
   </details>;
@@ -77,6 +78,7 @@ function RepositoryContent({ tenantId, alias, ...permissions }: Props) {
         {busy ? 'Inspeccionando…' : 'Inspeccionar versión'}
       </button>
     </form>
+    <NativeContextRepositoryPanel tenantId={tenantId} alias={alias} instanceId={capability.data.instance_id ?? ''} commit={commit} previous={previous} />
     {error ? <p role="alert">{error}</p> : null}
     {result ? <section aria-label="Resultado de inspección Git" className="historial-diff">
       <p className="historial-diff-texto">Commit: {result.commit}</p>

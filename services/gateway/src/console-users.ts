@@ -24,6 +24,7 @@ export interface ConsoleUserStore {
   ready(): Promise<void>;
   findByEmail(email: string): Promise<ConsoleUser | undefined>;
   findById(id: string): Promise<ConsoleUser | undefined>;
+  updateDisplayName(id: string, name: string): Promise<string | undefined>;
   recordLogin(id: string, at: Date): Promise<void>;
 }
 
@@ -90,6 +91,15 @@ export class PostgresConsoleUserStore implements ConsoleUserStore {
       `SELECT ${COLUMNS} FROM console_users WHERE id=$1::uuid`, [id]
     );
     return result.rows[0] === undefined ? undefined : toUser(result.rows[0]);
+  }
+
+  async updateDisplayName(id: string, name: string): Promise<string | undefined> {
+    if (!isAnyUuid(id)) return undefined;
+    const result = await this.pool.query<{ display_name: string }>(
+      'UPDATE console_users SET display_name=$2, updated_at=now() WHERE id=$1::uuid AND active=true RETURNING display_name',
+      [id, name]
+    );
+    return result.rows[0]?.display_name;
   }
 
   /** Best-effort: a failure writing the last-login marker must not bring down the login. */
