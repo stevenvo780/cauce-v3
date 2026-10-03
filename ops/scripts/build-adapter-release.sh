@@ -58,6 +58,6 @@ for harness in ('claude', 'codex', 'openclaw', 'grok'):
     if not entry.is_file() or not entry.stat().st_mode & 0o111:
         raise SystemExit(f'missing executable: {harness}')
 PY
-chmod -R a-w "$release_target"
+chmod -R u=rX,go=rX "$release_target"
 python3 ops/container-runtime/cauce-container-runtime.py bundle-digest "$release_target"
 git rev-parse HEAD

@@ -9,6 +9,7 @@ import pathlib
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -61,6 +62,12 @@ def inodes(root: pathlib.Path) -> set[tuple[int, int]]:
             if path.is_file() and not path.is_symlink()}
 
 
+def bundle_digest(root: pathlib.Path) -> str:
+    result = subprocess.run([sys.executable, '-B', str(ROOT / 'ops/container-runtime/cauce-container-runtime.py'),
+                             'bundle-digest', str(root)], check=True, capture_output=True, text=True, timeout=10)
+    return result.stdout.strip()
+
+
 class BuilderIsolation(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix='builder-hardlinks-')
@@ -104,10 +111,15 @@ class BuilderIsolation(unittest.TestCase):
                     path.chmod(path.stat().st_mode | stat.S_IWUSR | (stat.S_IXUSR if path.is_dir() else 0))
         self.temporary.cleanup()
 
-    def build(self, name: str, **environment: str) -> subprocess.CompletedProcess[str]:
+    def build(self, name: str, *, umask: int | None = None, **environment: str) -> subprocess.CompletedProcess[str]:
+        preexec_fn = None
+        if umask is not None:
+            def set_umask() -> None:
+                os.umask(umask)
+            preexec_fn = set_umask
         return subprocess.run(['bash', 'ops/scripts/build-adapter-release.sh', str(self.directory / name)],
                               cwd=self.repo, env={**self.environment, **environment},
-                              text=True, capture_output=True, timeout=30)
+                              text=True, capture_output=True, timeout=30, preexec_fn=preexec_fn)
 
     def test_two_builds_preserve_hashes_modes_links_and_private_inodes(self) -> None:
         sources = snapshot(self.repo / 'packages')
@@ -146,6 +158,41 @@ class BuilderIsolation(unittest.TestCase):
         self.assertEqual(first.returncode, 0, first.stderr)
         second = self.build('second')
         self.assertEqual(second.returncode, 0, second.stderr)
+
+    def test_umask_bundles_match_supervisor_copy_digest(self) -> None:
+        digests = []
+        for name, mask in [('private-umask', 0o077), ('standard-umask', 0o022)]:
+            result = self.build(name, umask=mask)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            release = self.directory / name
+            expected_digest = result.stdout.splitlines()[0]
+            self.assertEqual(bundle_digest(release), expected_digest)
+
+            package = release / 'packages/adapter-sdk'
+            executable = package / 'dist/src/bin/claude.js'
+            internal_link = package / 'node_modules/.bin/adapter'
+            self.assertEqual(stat.S_IMODE(executable.stat().st_mode), 0o555)
+            self.assertEqual(stat.S_IMODE((package / 'metadata.json').stat().st_mode), 0o444)
+            self.assertTrue(internal_link.is_symlink())
+            self.assertTrue(internal_link.resolve(strict=True).is_relative_to(release))
+
+            copied = self.directory / f'{name}-supervisor-copy'
+            old_umask = os.umask(mask)
+            try:
+                shutil.copytree(release, copied, symlinks=True)
+            finally:
+                os.umask(old_umask)
+            subprocess.run(['chmod', '-R', 'u=rX,go=rX', str(copied)], check=True, timeout=10)
+            self.assertEqual(bundle_digest(copied), expected_digest)
+            self.assertTrue((copied / 'packages/adapter-sdk/node_modules/.bin/adapter').is_symlink())
+            for path in [release, *release.rglob('*'), copied, *copied.rglob('*')]:
+                if path.is_symlink():
+                    continue
+                mode = stat.S_IMODE(path.stat().st_mode)
+                expected_mode = 0o555 if path.is_dir() or mode & 0o111 else 0o444
+                self.assertEqual(mode, expected_mode, str(path))
+            digests.append(expected_digest)
+        self.assertEqual(digests[0], digests[1])
 
     def test_existing_destination_is_rejected_without_mutation(self) -> None:
         result = self.build('first')

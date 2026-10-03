@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import pathlib
+import stat
 import subprocess
 import sys
 import tempfile
@@ -29,6 +30,7 @@ class HermesRuntimeVerifierTests(unittest.TestCase):
         (self.source / "hermes_cli" / "oneshot.py").write_text("", encoding="utf-8")
         (self.source / "uv.lock").write_text("locked\n", encoding="utf-8")
         subprocess.run(["git", "init", "-q", os.fspath(self.source)], check=True)
+        subprocess.run(["git", "-C", os.fspath(self.source), "config", "core.fsmonitor", "false"], check=True)
         subprocess.run(["git", "-C", os.fspath(self.source), "config", "user.email", "test@example.invalid"], check=True)
         subprocess.run(["git", "-C", os.fspath(self.source), "config", "user.name", "Cauce test"], check=True)
         subprocess.run(["git", "-C", os.fspath(self.source), "add", "."], check=True)
@@ -36,6 +38,7 @@ class HermesRuntimeVerifierTests(unittest.TestCase):
         self.commit = subprocess.check_output(
             ["git", "-C", os.fspath(self.source), "rev-parse", "HEAD"], text=True
         ).strip()
+        subprocess.run(["git", "-C", os.fspath(self.source), "config", "core.fsmonitor", "true"], check=True)
         site = next(self.venv.glob("lib/python*/site-packages"))
         (site / "hermes-source.pth").write_text(f"{self.source}\n", encoding="utf-8")
         dist = site / "hermes_agent-0.20.5.dist-info"
@@ -99,9 +102,29 @@ class HermesRuntimeVerifierTests(unittest.TestCase):
     def execute_verifier(self) -> subprocess.CompletedProcess[str]:
         return subprocess.run(self.command(), capture_output=True, text=True, check=False)
 
+    def source_tree_state(self) -> tuple[tuple[str, int, str], ...]:
+        entries: list[tuple[str, int, str]] = []
+        for current, directories, files in os.walk(self.source, followlinks=False):
+            for name in [*directories, *files]:
+                path = pathlib.Path(current) / name
+                details = os.lstat(path)
+                if stat.S_ISREG(details.st_mode):
+                    content = hashlib.sha256(path.read_bytes()).hexdigest()
+                elif stat.S_ISLNK(details.st_mode):
+                    content = os.readlink(path)
+                else:
+                    content = ""
+                entries.append((os.fspath(path.relative_to(self.source)), details.st_mode, content))
+        return tuple(sorted(entries))
+
     def test_standard_venv_links_and_final_editable_path_are_accepted(self) -> None:
+        fsmonitor_socket = self.source / ".git" / "fsmonitor--daemon.ipc"
+        before = self.source_tree_state()
+        self.assertFalse(fsmonitor_socket.exists())
         result = self.execute_verifier()
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(fsmonitor_socket.exists())
+        self.assertEqual(self.source_tree_state(), before)
 
     def test_symlink_escape_is_rejected(self) -> None:
         escape = self.runtime / "escape"
