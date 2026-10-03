@@ -1,0 +1,23 @@
+[Unit]
+Description=Revisar el lote horario de PR de Cauce V3
+ConditionUser=stev
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+UMask=0077
+StateDirectory=cauce-v3/pr-hourly
+StateDirectoryMode=0700
+WorkingDirectory=/datos/workspaces/personal/cauce-v3
+Environment=XDG_STATE_HOME=/home/stev/.local/state
+Environment=PATH=/home/stev/.local/bin:/usr/local/bin:/usr/bin:/bin
+UnsetEnvironment=CAUCE_PR_HOURLY_SNAPSHOT CAUCE_PR_HOURLY_INTERNAL_STATE_DIR CAUCE_PR_HOURLY_INTERNAL_RUN_DIR CAUCE_PR_HOURLY_INTERNAL_INITIAL_HEAD CAUCE_PR_HOURLY_BATCH_FILE CAUCE_PR_HOURLY_REPO CAUCE_PR_HOURLY_STATE_DIR CAUCE_PR_HOURLY_CODEX_BIN CAUCE_PR_HOURLY_GH_BIN CAUCE_PR_HOURLY_GIT_BIN CAUCE_PR_HOURLY_SSH_BIN CAUCE_PR_HOURLY_FLOCK_BIN CAUCE_PR_HOURLY_PGREP_BIN CAUCE_PR_HOURLY_PYTHON_BIN CAUCE_PR_HOURLY_REALPATH_BIN
+ExecStartPre=/usr/bin/bash /datos/workspaces/personal/cauce-v3/ops/scripts/cauce-pr-hourly.sh --healthcheck
+ExecStart=/usr/bin/bash /datos/workspaces/personal/cauce-v3/ops/scripts/cauce-pr-hourly.sh
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=infinity
+SendSIGKILL=no
+TimeoutStartSec=infinity
+NoNewPrivileges=yes

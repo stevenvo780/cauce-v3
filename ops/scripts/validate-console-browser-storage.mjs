@@ -30,6 +30,8 @@ const forbiddenNames = new Set([
 const failures = new Map();
 
 const exemptions = new Map([
+  ['App.test.tsx', { api: 'localStorage', keys: ['cauce.tema'] }],
+  ['features/auth/AccountMenu.test.tsx', { api: 'localStorage', keys: ['cauce.tema'] }],
   ['components/ThemeControl.tsx', { api: 'localStorage', keys: ['cauce.tema'] }],
   ['components/ThemeControl.test.tsx', { api: 'localStorage', keys: ['cauce.tema'] }],
   ['tema-bootstrap.test.ts', { api: 'localStorage', keys: ['cauce.tema'] }],

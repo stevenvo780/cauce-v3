@@ -1,0 +1,11 @@
+[Unit]
+Description=Ejecutar revisión de PR de Cauce V3 cada hora
+
+[Timer]
+OnCalendar=*-*-* *:00:00 America/Bogota
+Persistent=true
+AccuracySec=1min
+Unit=cauce-v3-pr-hourly.service
+
+[Install]
+WantedBy=timers.target
