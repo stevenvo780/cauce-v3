@@ -7,6 +7,7 @@ import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada } from './cuerpo-del-mensaje';
 import type { TranscriptItem } from './session';
 import { humanAuthor } from './message-author';
+import type { CanonicalReply } from '../messages/use-canonical-reply';
 
 function DeliveryProgress({ delivery, onSelect, compact, disabled }: { delivery: DeliveryView; onSelect: () => void; compact?: boolean; disabled?: boolean }) {
   const policy = deliveryPolicy(delivery.status);
@@ -34,12 +35,15 @@ function DeliveryProgress({ delivery, onSelect, compact, disabled }: { delivery:
 /**
  * Rendering component for the terminal transcript and conversation history.
  */
-export function TerminalTranscript({ items, selectedMessageId, onSelectItem, presentation = 'terminal' }: {
+export function TerminalTranscript({ items, selectedMessageId, onSelectItem, presentation = 'terminal', canonicalReply, canonicalReplyStale, onCanonicalReplyRetry }: {
   items: TranscriptItem[];
   presentation?: 'chat' | 'terminal';
   /** Id of the selected message. `undefined` means NONE; never "all". */
   selectedMessageId?: string;
   onSelectItem: (item: TranscriptItem) => void;
+  canonicalReply?: CanonicalReply;
+  canonicalReplyStale?: boolean;
+  onCanonicalReplyRetry?: () => void;
 }) {
   if (items.length === 0) {
     return (
@@ -68,6 +72,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, pre
               className={`transcript-entry ${direction}`}
               key={message.message_id ?? `${direction}-${String(index)}`}
               data-selected={(selectedMessageId != null && message.message_id === selectedMessageId) || undefined}
+              data-message-id={message.message_id ?? undefined}
             >
               <header>
                 <span className="transcript-direction">
@@ -79,6 +84,30 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, pre
                 <Time value={message.created_at} />
               </header>
               <p>{message.body_preview ?? 'Contenido no incluido por el servidor.'}{recortado ? '…' : null}</p>
+              {canonicalReply
+                && canonicalReply.messageId === message.message_id
+                && canonicalReply.deliveryId === delivery?.delivery_id
+                && canonicalReply.tenantId === delivery?.recipient_tenant
+                && canonicalReply.alias === delivery?.recipient_alias ? (
+                  <section className="canonical-reply" aria-label={`Respuesta canónica de ${canonicalReply.tenantId}:${canonicalReply.alias}`} data-delivery-id={canonicalReply.deliveryId}>
+                    <p className="eyebrow">Respuesta de {canonicalReply.tenantId}:{canonicalReply.alias}</p>
+                    {canonicalReply.reply === undefined ? <p>Respuesta canónica no disponible en este gateway.</p>
+                      : canonicalReply.reply === null || canonicalReply.reply === '' ? <p>Sin respuesta canónica disponible.</p>
+                        : <p style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{canonicalReply.reply}</p>}
+                    {canonicalReply.chainOpen === true ? <p role="status">Respuesta provisional · cadena en curso</p>
+                      : canonicalReply.chainOpen === false && ['done', 'failed', 'dead'].includes(canonicalReply.status ?? '')
+                        ? <p>Respuesta consolidada</p>
+                        : canonicalReply.chainOpen === false
+                          ? <p>La cadena informa cierre, pero aún no hay un estado terminal comprobado.</p>
+                          : <p>Estado de la cadena no informado · no se demuestra que haya cerrado.</p>}
+                    {canonicalReplyStale ? <p role="status">Dato desactualizado; la última lectura falló.</p> : null}
+                    {(canonicalReply.chainOpen === undefined
+                      || (canonicalReply.chainOpen === false && !['done', 'failed', 'dead'].includes(canonicalReply.status ?? '')))
+                      && onCanonicalReplyRetry
+                      ? <button className="button small secondary" type="button" onClick={onCanonicalReplyRetry}>Releer respuesta</button>
+                      : null}
+                  </section>
+                ) : null}
               {/*
                 The truncation is LABELED. The server sends `left(body,240)` and without this line
                 the bubble showed a message cut mid-word with the same look as a full one.

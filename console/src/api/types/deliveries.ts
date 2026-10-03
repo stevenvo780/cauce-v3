@@ -64,6 +64,18 @@ export interface MessageDetail {
   body?: unknown;
   lane?: JobLane | null;
   created_at?: string | null;
+  deliveries?: MessageDetailDelivery[] | null;
+  chain_open?: boolean;
+}
+
+export interface MessageDetailDelivery {
+  delivery_id?: string | null;
+  tenant_id?: string | null;
+  alias?: string | null;
+  status?: DeliveryState | null;
+  attempt?: number | null;
+  terminal_at?: string | null;
+  reply?: string | null;
 }
 
 export interface MessagePage {
