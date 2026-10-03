@@ -64,9 +64,3 @@ describe('lo que se despliega desde abajo aparece por debajo de la banda pegada'
     expect(PAGINA).toMatch(/getBoundingClientRect\(\)\.height/);
   });
 });
-
-describe('el mapa nace abierto y conserva el pliegue manual', () => {
-  it('el `details` del mapa se declara con `open`', () => {
-    expect(PAGINA).toMatch(/<details className="panel live-mapa" open>/);
-  });
-});

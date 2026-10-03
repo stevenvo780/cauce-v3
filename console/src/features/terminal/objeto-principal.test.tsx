@@ -15,6 +15,9 @@ it('el escenario de la terminal se declara como objeto principal de /terminal', 
     if (!nodo) throw new Error('Missing .ultimate-terminal-shell');
     return nodo;
   });
+  const resumen = container.querySelector('.terminal-overview');
+  expect(resumen).not.toBeNull();
+  expect(resumen?.compareDocumentPosition(escenario)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   expect(escenario).toHaveAttribute('data-objeto-principal', 'escenario');
   expect(container.querySelectorAll('[data-objeto-principal]')).toHaveLength(1);
 }, 25_000);
