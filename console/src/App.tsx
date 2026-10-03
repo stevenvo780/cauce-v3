@@ -12,6 +12,7 @@ import { ConsoleAccessProvider } from './api/console-access';
 import { BOTTOM_BAR_VIEWPORT, RAIL_VIEWPORT } from './breakpoints';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConsoleNavigation } from './components/ConsoleNavigation';
+import { useNavigationHint } from './components/use-navigation-hint';
 import { ConversationDrafts, ConversationDraftStore } from './features/messages/conversation-drafts';
 import { AuthGate, UnmanagedAuthBanner } from './features/auth/AuthGate';
 import { AccountMenu } from './features/auth/AccountMenu';
@@ -199,6 +200,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const { id: routeId, params, aliasedFrom, notFoundPath } = matchRoute(segments);
   const route = routes.find((candidate) => candidate.id === routeId);
   const bottomBar = useMediaQuery(BOTTOM_BAR_VIEWPORT);
+  const navigationHint = useNavigationHint(bottomBar, path);
   const narrowViewport = useMediaQuery(RAIL_VIEWPORT);
   const [drafts] = useState(() => new ConversationDraftStore());
   const lastConversation = useRef('/messages');
@@ -264,7 +266,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
     <ConversationDrafts.Provider value={drafts}>
     <div className="app-shell" data-sidebar={rail ? 'rail' : 'expanded'} data-view={routeId === 'messages' ? 'chat' : 'tools'}>
       <a className="skip-link" href="#main-content">Saltar al contenido</a>
-      <aside className="sidebar">
+      <aside className="sidebar" {...navigationHint.bindings}>
         <div className="brand">
           <span className="brand-mark" aria-hidden="true"><Activity size={22} /></span>
           <div><strong>Cauce</strong><small>Tu equipo de agentes</small></div>
@@ -286,6 +288,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
         ) : null}
         <ConsoleNavigation key={path} id={NAV_ID} rail={rail} routeId={notFoundPath ? '' : routeId} />
         <AccountMenu routeKey={`${routeId}/${params.join('/')}`} gate={gate} />
+        {navigationHint.hint}
       </aside>
       <div className="workspace">
         {routeId !== 'messages' ? <header className="topbar">

@@ -37,10 +37,10 @@ input, select, textarea { min-width: 0; }
   .app-shell { display: block; padding-bottom: calc(var(--nav-inferior-alto) + env(safe-area-inset-bottom, 0px)); }
   .sidebar { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 20; display: block; width: auto; height: calc(var(--nav-inferior-alto) + env(safe-area-inset-bottom, 0px)); padding: var(--space-1); padding-inline: var(--space-2); padding-bottom: env(safe-area-inset-bottom, 0px); background: var(--surface); border-top: 1px solid var(--border); border-right: 0; box-sizing: border-box; }
   .brand { display: none; }
-  .sidebar nav ul { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 64px; overflow: visible; gap: var(--space-1); }
+  .sidebar nav ul { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 48px; overflow: visible; gap: var(--space-1); }
   .sidebar nav li { min-width: 0; }
-  .sidebar nav a { min-width: 0; height: 100%; justify-content: center; gap: var(--space-1); padding: var(--space-1); font-size: var(--tipo-apunte); line-height: 1.15; text-align: center; }
-  .sidebar nav a span { display: block; min-width: 0; max-width: 100%; min-height: 2.3em; overflow-wrap: break-word; white-space: normal; }
+  .sidebar nav a { min-width: 0; min-height: 48px; height: 100%; justify-content: center; gap: var(--space-1); padding: var(--space-1); font-size: var(--tipo-apunte); line-height: 1.15; text-align: center; }
+  .sidebar nav a span { display: none; }
   .sidebar nav a { flex-direction: column; }
   .badge { white-space: normal; }
   .topbar { padding: 0 var(--space-3); }

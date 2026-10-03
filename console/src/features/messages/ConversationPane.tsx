@@ -318,6 +318,11 @@ export function ConversationPane({
             </dl>
             <p className="messenger-window-note">Hilo filtrado sobre los {totalVisible} mensajes que el servidor publica para tu identidad (tope {LIMITE_MENSAJES}, sin filtro por par).</p>
           </details>
+          {aviso?.tone === 'success' ? <details className="chat-agent-details">
+            <summary>Recibo del último envío</summary>
+            <p className="notice success">{aviso.text}</p>
+            <p>La aceptación no confirma la ejecución. El estado de entrega se consulta en el hilo.</p>
+          </details> : null}
         </ConversationMenu>
       </header>
 
@@ -498,7 +503,9 @@ export function ConversationPane({
         </div>
         {!canPublish ? <p className="composer-blocked"><LockKeyhole size={14} aria-hidden="true" /> Requiere el permiso message.publish.</p> : null}
         {!route.allowed ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> {route.reason}</p> : null}
-        {aviso ? <p className={`notice ${aviso.tone}`} role={aviso.tone === 'error' ? 'alert' : 'status'}>{aviso.text}</p> : null}
+        {aviso?.tone === 'success'
+          ? <span className="sr-only" role="status">Mensaje aceptado para entrega. La aceptación no confirma la ejecución.</span>
+          : aviso ? <p className={`notice ${aviso.tone}`} role={aviso.tone === 'error' ? 'alert' : 'status'}>{aviso.text}</p> : null}
       </form>
     </section>
   );

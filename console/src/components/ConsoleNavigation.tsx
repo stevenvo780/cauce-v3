@@ -33,7 +33,8 @@ export function ConsoleNavigation({ routeId, rail, id }: { routeId: string; rail
       <a href={`/${item.id}`} onClick={(event) => { onNavClick(event, `/${item.id}`, available.reason); }}
         aria-current={routeId === item.id ? 'page' : undefined}
         aria-disabled={available.disabled || undefined} className={available.disabled ? 'nav-inerte' : undefined}
-        aria-label={item.label} title={available.reason ?? (rail ? item.label : undefined)}>
+        aria-label={item.label} data-navigation-label={primary.has(item.id) ? item.label : undefined}
+        title={available.reason ?? (rail ? item.label : undefined)}>
         <Icon size={19} aria-hidden={true} /><span>{item.label}</span>
       </a>
     </li>;
@@ -47,6 +48,7 @@ export function ConsoleNavigation({ routeId, rail, id }: { routeId: string; rail
       <li>
         <button className="tools-trigger" type="button" ref={trigger} aria-expanded={open}
           aria-controls="console-tools" aria-label="Herramientas" data-active={secondary || undefined}
+          data-navigation-label="Herramientas" aria-current={secondary ? 'true' : undefined}
           title={rail ? 'Herramientas' : undefined} onClick={() => { setOpen(!open); }}>
           <Settings2 size={19} aria-hidden="true" /><span>Herramientas</span><ChevronDown size={14} aria-hidden="true" />
         </button>

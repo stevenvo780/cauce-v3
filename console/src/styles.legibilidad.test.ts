@@ -283,17 +283,12 @@ export function defectosDelMenuMovil(global: string, entradas = (PRIMARY_NAV_IDS
   }
 
   const rotulo = declaraciones(estrecho, '.sidebar nav a span');
-  if (valor(rotulo, 'white-space') !== 'normal') {
-    defectos.push(
-      `el rótulo del menú lleva white-space ${valor(rotulo, 'white-space') ?? 'heredado'}: sin permiso para `
-      + 'partirse en dos renglones se sale de su enlace y se pisa con el de al lado',
-    );
+  if (valor(rotulo, 'display') !== 'none') {
+    defectos.push('el rótulo vuelve a ocupar espacio en la barra móvil de iconos');
   }
-  if (!valor(rotulo, 'min-height')) {
-    defectos.push(
-      'el rótulo no reserva sus dos renglones: la altura de la barra pasa a depender de qué palabras '
-      + 'entren, y el compositor de /messages se ancla a un número que deja de ser cierto',
-    );
+  const objetivo = pixeles(valor(declaraciones(estrecho, '.sidebar nav a'), 'min-height'), tabla);
+  if (!Number.isFinite(objetivo) || objetivo < 48 || altoFila < 48) {
+    defectos.push('el objetivo táctil de la barra móvil mide menos de 48px');
   }
   return defectos;
 }
@@ -325,16 +320,16 @@ describe('que quepa en la pantalla', () => {
     expect(defectosDelMenuMovil(GLOBAL)).toEqual([]);
   });
 
-  it('CONTROL NEGATIVO — una entrada más de las que caben en dos filas se denuncia', () => {
-    expect(defectosDelMenuMovil(GLOBAL, (PRIMARY_NAV_IDS.length + 1) + 2))
+  it('CONTROL NEGATIVO — una entrada más de las que caben en una fila se denuncia', () => {
+    expect(defectosDelMenuMovil(GLOBAL, (PRIMARY_NAV_IDS.length + 1) + 1))
       .toContainEqual(expect.stringContaining('filas'));
   });
 
-  it('CONTROL NEGATIVO — marca volver a cuatro columnas, que con nueve entradas son tres filas', () => {
-    const roto = GLOBAL.replace('grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 64px;',
-      'grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 64px;');
+  it('CONTROL NEGATIVO — marca dos columnas, que convierten tres entradas en dos filas', () => {
+    const roto = GLOBAL.replace('grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 48px;',
+      'grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 48px;');
     expect(roto).not.toBe(GLOBAL);
-    expect(defectosDelMenuMovil(roto)).toContainEqual(expect.stringContaining('--nav-inferior-alto reserva 72px'));
+    expect(defectosDelMenuMovil(roto)).toContainEqual(expect.stringContaining('--nav-inferior-alto reserva 56px'));
   });
 
   it('CONTROL NEGATIVO — marca la vuelta a la tira `flex` que se arrastra', () => {
@@ -346,12 +341,15 @@ describe('que quepa en la pantalla', () => {
     expect(defectosDelMenuMovil(roto)).toContainEqual(expect.stringContaining('no una reja'));
   });
 
-  it('CONTROL NEGATIVO — marca el rótulo con `nowrap`, que es lo que hacía que se pisaran', () => {
-    const roto = GLOBAL.replace(
-      /(\.sidebar nav a span \{[^}]*?)white-space: normal;/,
-      '$1white-space: nowrap;',
-    );
+  it('CONTROL NEGATIVO — marca recuperar los rótulos visibles en la barra compacta', () => {
+    const roto = GLOBAL.replaceAll('.sidebar nav a span { display: none; }', '.sidebar nav a span { display: block; }');
     expect(roto).not.toBe(GLOBAL);
-    expect(defectosDelMenuMovil(roto)).toContainEqual(expect.stringContaining('se pisa con el de al lado'));
+    expect(defectosDelMenuMovil(roto)).toContainEqual(expect.stringContaining('el rótulo vuelve a ocupar espacio'));
+  });
+
+  it('CONTROL NEGATIVO — marca reducir el objetivo táctil bajo 48px', () => {
+    const roto = GLOBAL.replace('min-height: 48px;', 'min-height: 24px;');
+    expect(roto).not.toBe(GLOBAL);
+    expect(defectosDelMenuMovil(roto)).toContainEqual(expect.stringContaining('menos de 48px'));
   });
 });

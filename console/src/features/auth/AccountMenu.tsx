@@ -44,13 +44,13 @@ export function AccountMenu({ gate, routeKey = '' }: { gate: AuthGateState; rout
     if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) setOpen(false);
   }}>
     <button type="button" className="account-trigger" ref={trigger}
+      data-navigation-label="Cuenta"
       aria-label={status === 'in' ? `Cuenta de ${name}` : 'Cuenta y apariencia'}
       aria-haspopup="dialog" aria-expanded={open} aria-controls={id}
       onClick={() => { setOpen(!open); }}
       onKeyDown={(event) => { if (event.key === 'ArrowDown') { event.preventDefault(); setOpen(true); } }}>
       <span className="account-avatar" aria-hidden="true">{status === 'in' && name !== 'Cuenta' ? Array.from(name)[0]?.toLocaleUpperCase() : <UserRound size={18} />}</span>
       <span className="account-name">{name}</span>
-      <span className="account-compact-label" aria-hidden="true">Cuenta</span>
       <ChevronUp className="account-chevron" size={16} aria-hidden="true" />
     </button>
     <section hidden={!open} id={id} className="account-popover" role="dialog" aria-labelledby={`${id}-title`}>
