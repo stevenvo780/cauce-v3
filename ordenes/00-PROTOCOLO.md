@@ -4,12 +4,12 @@ Lo lee TODA instancia antes de tocar nada. Qué falta y por qué: `docs/roadmap.
 
 ## Una sola verdad de trabajo: `dev`; `main` es publicación
 
-- **Se permiten ramas propias y PR en borrador en checkouts aislados.** Pueden publicarse commits y borradores con pruebas pendientes, bloqueadas o fallidas si el PR declara el commit exacto, comandos, resultados, evidencia y pruebas no ejecutadas con su motivo (`docs/calidad-y-gates.md`). No se declaran listos ni se integran o despliegan hasta tener verdes todos los gates requeridos. Quien integra o despliega es responsable de ejecutarlos y verificar la evidencia del código exacto; quien despliega debe pasar el gate completo y los tests y gates de release aplicables. Los merges a `dev` o `main` quedan reservados a Steven o el agente que él autorice expresamente para integrar o desplegar; publicar un borrador no autoriza esos pasos.
+- **Se permiten ramas propias y PR abiertos y listos para revisión en checkouts aislados.** Pueden publicarse commits y PR abiertos con pruebas pendientes, bloqueadas o fallidas si el PR declara el commit exacto, comandos, resultados, evidencia y pruebas no ejecutadas con su motivo (`docs/calidad-y-gates.md`). No se declaran listos para integrar o desplegar ni se integran o despliegan hasta tener verdes todos los gates requeridos. Quien integra o despliega es responsable de ejecutarlos y verificar la evidencia del código exacto; quien despliega debe pasar el gate completo y los tests y gates de release aplicables. Los merges a `dev` o `main` quedan reservados a Steven o el agente que él autorice expresamente para integrar o desplegar; publicar un PR no autoriza esos pasos.
 - Las ramas históricas están archivadas. Recrear una sólo para recuperar un commit puntual requiere al dueño y se elimina en el momento; no vuelve a convertirse en carril de trabajo.
 
 ## Convivir en el checkout compartido de `dev` sin pisarse
 
-Las instancias que trabajan en el checkout compartido de `dev` mantienen estas reglas; los borradores de ramas propias usan checkouts aislados:
+Las instancias que trabajan en el checkout compartido de `dev` mantienen estas reglas; los PR de ramas propias usan checkouts aislados:
 
 1. **Propiedad por sector** (tabla abajo) — es LA protección principal. Prohibido tocar un fichero fuera de tu sector; si tu tarea lo exige, se pide al integrador — no se toca "de paso".
 2. **`git add` solo por rutas propias.** PROHIBIDO `git add -A`, `git add .` y `git commit -a`: barren el trabajo a medias de otra instancia. Se añade fichero a fichero (o por directorio propio).
@@ -39,7 +39,7 @@ El reparto concreto de sectores entre instancias se fija por ronda y no vive en 
 
 ## Reglas de commits y gates
 
-1. Gate antes de cada commit de código en el checkout compartido de `dev`: `pnpm typecheck && pnpm lint && pnpm test:unit` en verde — test:unit es GLOBAL (consola incluida). Los commits solo-`.md` están exentos de este gate por commit. En ramas propias se permite publicar commits y PR en borrador con pruebas pendientes explícitas según la regla anterior; la excepción no elimina ni rebaja gates para integrar o desplegar. La flota, el gate y el CI nocturno corren como root. Sólo `pnpm qa:runtime-packaging` exige usuario normal porque valida ownership; no se cablean otras guardias anti-root ni se chownea el árbol para ocultar un rojo.
+1. Gate antes de cada commit de código en el checkout compartido de `dev`: `pnpm typecheck && pnpm lint && pnpm test:unit` en verde — test:unit es GLOBAL (consola incluida). Los commits solo-`.md` están exentos de este gate por commit. En ramas propias se permite publicar commits y PR abiertos y listos para revisión con pruebas pendientes explícitas según la regla anterior; la excepción no elimina ni rebaja gates para integrar o desplegar. La flota, el gate y el CI nocturno corren como root. Sólo `pnpm qa:runtime-packaging` exige usuario normal porque valida ownership; no se cablean otras guardias anti-root ni se chownea el árbol para ocultar un rojo.
 2. `git mv` en commits separados de ediciones de contenido. Commits ≤20 ficheros salvo mv mecánico.
 3. Prohibido: comentarios narrativos, fechas o "incidentes" en el código; planes nuevos >100 líneas; declarar "hecho" sin pegar la salida del gate.
 4. Mensajes de commit: qué y por qué en ≤5 líneas, sin épica.
@@ -62,7 +62,7 @@ Todos los harness de la flota los soportan — **úsalos** para agilizar lo para
 
 ## Al terminar cada tarea
 
-1. En un borrador, publicar sólo la rama propia y mantener el PR en borrador mientras queden gates requeridos pendientes o fallidos. En el checkout compartido, dejar el checkout en `dev` y publicar sólo trabajo autorizado. Los merges a `dev` o `main` los hace sólo Steven o el agente que él autorice expresamente para integrar o desplegar, con gates requeridos en verde; desplegar requiere además el gate completo y todos los tests y gates de release aplicables.
+1. Al publicar un PR, publicar sólo la rama propia y dejarlo abierto y listo para revisión, declarando los gates requeridos pendientes o fallidos. En el checkout compartido, dejar el checkout en `dev` y publicar sólo trabajo autorizado. Los merges a `dev` o `main` los hace sólo Steven o el agente que él autorice expresamente para integrar o desplegar, con gates requeridos en verde; desplegar requiere además el gate completo y todos los tests y gates de release aplicables.
 2. Reportar en 5 líneas máximo: commits hechos (hashes), gate (pegado), qué quedó fuera y por qué. Sin ensayos.
 
 ## Credenciales de la flota: `ops/private/credentials/` — REGLA DURA
