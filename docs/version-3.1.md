@@ -117,22 +117,29 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `b361aaaf`, también revisión del
-runtime central. La ventana actualizó los cinco servicios runtime y verificó 9/9 servicios activos
-sanos; los otros cuatro conservaron el mismo contenedor, inicio e imagen. HTML y tres assets
-públicos coinciden byte a byte con la consola activa, y el backup estricto pasó con blobs y
-retención. El digest runtime es `sha256:5ec90a7d2e757c9f2c19297a19552ed00d68deeec097a04d6f08a6f0cf7fc370`;
-la consola permanece en la revisión `0272dc26`, con digest
-`sha256:bf1ef207f9c81fa1cb6503782c386d85d754ce10a77bd411c2b10664afc4cc97`.
-La aceptación global sigue pendiente: Astra está habilitada sin latido fresco, no tiene lease y su
-VM está en error (13/14 agentes con latido fresco), y los ocho wakes pendientes corresponden a Astra.
-El builder oficial npm11 del SDK pasó con digest
-`sha256:22f84911d9e18cc17f8c3b339aeccbb64f6cc407c0336457bb536eaf9d598c4b`.
-El staging se verificó en VPS y server2 con el mismo digest receptor, propietario y permisos
-inmutables, sin symlinks que escapen del bundle. El SDK está staged pero no activo. Los canaries anteriores acreditan sólo
-el SDK previo. El endpoint MCP público quedó diferido por decisión autorizada del dueño. La evidencia de
-esta actualización está en
-`/var/log/cauce-v3-release/unified-20261002/runtime-attempt2/deployment.json`.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra la actualización dirigida de consola
+PR #7: commit `7bdf7a9f`, árbol `d422c2cf20bff9cf63fcb0fa74dd46eec1cab000` y digest de fuente
+`sha256:2afe634a2877e1eb14812b1daa724a5618411c0cfbf86420afdd46ace863e4fa`. La consola sirve la
+imagen `sha256:795dc27d4408cd1cf63a94af99865379d976a4db82b458f347cb2712f435c2a4`; la ventana dejó
+9/9 servicios sanos, ocho con contenedor, inicio e imagen preservados, HTML y 87 assets públicos
+coincidentes, y backup estricto PASS. El runtime central sigue en la imagen
+`sha256:5ec90a7d2e757c9f2c19297a19552ed00d68deeec097a04d6f08a6f0cf7fc370`.
+
+El SDK unificado está activo en 13/13 alias salvo Astra, con release
+`bus-v3-20261003-unified-99b567d6` y digest
+`sha256:429f96756fbe95642cd26476c449a7f0f1bd61e55368f851ad209e3e3a7e2681`. Los 13 canaries de
+control mTLS pasaron sin inferencia LLM y los 13 watchdogs también pasaron. Astra está excluida del
+rollout por instrucción del dueño y no recibió mutaciones. La imagen MCP `sha256:a9297fb5b1640dbee2b63d3a9b1162730281ace048f87eca98ba1539c92b0916` está preparada,
+pero el endpoint público permanece inactivo, pendiente de OAuth e identidad dedicada del gateway. Los PR
+#8, #9 y #10 siguen siendo candidatos sin desplegar. La vista autenticada del operador y la prueba
+en teléfono real continúan pendientes. La evidencia de la consola está en
+`/var/log/cauce-v3-release/pr7-20261003/console-deployment.json`.
+
+La matriz móvil de 18/18 vistas pasa. `qa:layout` conserva los mismos incumplimientos que la base
+de PR #7: `/terminal` a 360 px, `/live` a 1100 px (cajón/perfil) y el cajón a 1920 px con 2.02;
+la comparación está registrada en `/tmp/cauce-close-except-astra-20261003/pr8-10-layout.log` y
+`/tmp/cauce-close-except-astra-20261003/pr8-10-layout-base.log`. En la integración candidata,
+typecheck, lint y las 2158 pruebas unitarias de consola pasaron.
 
 Como evidencia histórica, en una verificación anterior los quince alias completaron una entrega
 real al primer intento y se reiniciaron sus adaptadores y sesiones nativas. La shell y el visor web se probaron en los quince;
@@ -147,10 +154,10 @@ Docker en doce contenedores, más Astra y Kant nativos; las herramientas de ops 
 conservan sus versiones anteriores para reversión.
 
 Cinco canaries históricos del SDK previo acreditaron `mcp_deposit` y ACK final para el SDK MCP
-simplificado, y la cadena Zeus→Argos→Astra completó delegación, respuestas y síntesis final. No son
-evidencia de que el SDK nuevo staged esté activo ahora ni del heartbeat actual de la flota. El
-endpoint MCP público está
-diferido por decisión autorizada del dueño. El formato de texto sigue disponible.
+simplificado, y la cadena Zeus→Argos→Astra completó delegación, respuestas y síntesis final. Esa
+evidencia histórica no reemplaza los 13 canaries de control mTLS del SDK unificado ni acredita
+inferencias LLM. El endpoint MCP público sigue inactivo, pendiente de OAuth e identidad dedicada del
+gateway. El formato de texto sigue disponible.
 El detalle pendiente vive en [v3.1-pendientes](v3.1-pendientes.md); lo que queda por comprobar por
 efecto después de una ventana de despliegue está en `docs/v3.1-pendientes.md` §1, «Deuda de
 despliegue».
