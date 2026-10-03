@@ -123,6 +123,123 @@ export async function runGate() {
         await resetScroll(page);
         result.metrics = await page.evaluate(measureView, view.primary);
         result.failures.push(...viewportFailures(result.metrics, viewport), ...failuresFor(result.metrics, view));
+        if (view.id === 'accounts-inventario') {
+          const table = page.locator('#view-panel-inventario table').first();
+          await table.waitFor({ state: 'visible' });
+          const inventory = await table.evaluate((node) => {
+            const firstRow = node.querySelector('tbody tr');
+            const box = (element) => {
+              if (!element) return null;
+              const rect = element.getBoundingClientRect();
+              return {
+                x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+                painted: element.checkVisibility({ opacityProperty: true, visibilityProperty: true }),
+              };
+            };
+            return { table: box(node), firstRow: box(firstRow) };
+          });
+          result.inventory = inventory;
+          if (!inventory.table?.painted || inventory.table.width <= 0 || inventory.table.height <= 0
+            || !inventory.firstRow?.painted || inventory.firstRow.width <= 0 || inventory.firstRow.height <= 0) {
+            throw new Error(`Inventory table or first row is not visibly rendered: ${JSON.stringify(inventory)}`);
+          }
+        }
+        if (view.path === '/accounts') {
+          const refresh = page.getByRole('button', { name: 'Actualizar', exact: true });
+          result.refreshButton = await refresh.evaluate((button) => {
+            const buttonBox = button.getBoundingClientRect();
+            const icon = button.querySelector('svg');
+            if (!icon) return { buttonPainted: false, iconPainted: false, iconFits: false, buttonInViewport: false };
+            const iconBox = icon.getBoundingClientRect();
+            const content = icon.getBBox();
+            const [viewX, viewY, viewWidth, viewHeight] = (icon.getAttribute('viewBox') ?? '').split(/\s+/).map(Number);
+            const buttonStyle = getComputedStyle(button);
+            const iconStyle = getComputedStyle(icon);
+            const painted = (node, style) => node.checkVisibility({ opacityProperty: true, visibilityProperty: true })
+              && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0;
+            return {
+              buttonPainted: painted(button, buttonStyle) && buttonBox.width > 0 && buttonBox.height > 0,
+              iconPainted: painted(icon, iconStyle) && iconBox.width > 0 && iconBox.height > 0,
+              iconInsideButton: iconBox.left >= buttonBox.left - 1 && iconBox.top >= buttonBox.top - 1
+                && iconBox.right <= buttonBox.right + 1 && iconBox.bottom <= buttonBox.bottom + 1,
+              iconFits: content.width > 0 && content.height > 0 && viewWidth > 0 && viewHeight > 0
+                && content.x >= viewX - 0.5 && content.y >= viewY - 0.5
+                && content.x + content.width <= viewX + viewWidth + 0.5
+                && content.y + content.height <= viewY + viewHeight + 0.5,
+              buttonInViewport: buttonBox.left >= -1 && buttonBox.top >= -1
+                && buttonBox.right <= window.innerWidth + 1 && buttonBox.bottom <= window.innerHeight + 1,
+              buttonBox: { x: buttonBox.x, y: buttonBox.y, width: buttonBox.width, height: buttonBox.height },
+              iconBox: { x: iconBox.x, y: iconBox.y, width: iconBox.width, height: iconBox.height },
+              iconContent: { x: content.x, y: content.y, width: content.width, height: content.height },
+            };
+          });
+          if (!result.refreshButton.buttonPainted || !result.refreshButton.iconPainted || !result.refreshButton.iconInsideButton
+            || !result.refreshButton.iconFits || !result.refreshButton.buttonInViewport) {
+            throw new Error(`Accounts refresh control is clipped or not painted: ${JSON.stringify(result.refreshButton)}`);
+          }
+        }
+        if (view.id === 'config-agents' && viewport.width === 360 && colorScheme === 'light') {
+          const search = page.getByRole('searchbox', { name: 'Buscar agente o grupo' });
+          await search.fill('kant');
+          await page.getByRole('button', { name: 'Abrir contexto de Steven/kant', exact: true }).click();
+          await page.locator('.agent-context-panel .perfil-editor').waitFor({ state: 'visible' });
+          const purpose = page.getByRole('textbox', { name: 'Propósito' });
+          const editable = await purpose.isEnabled();
+          if (editable) {
+            const initialValue = await purpose.inputValue();
+            await purpose.fill(`${initialValue} `);
+            await purpose.fill(initialValue);
+          }
+          result.interaction = { flow: 'filter agent, open context, inspect canonical profile field', editable, submission: 'none' };
+          await page.screenshot({ path: resolve(output, '360-light-config-agents-flow.png'), fullPage: false, timeout: 10000 });
+        }
+        if (view.id === 'live' && viewport.width === 360) {
+          const capas = page.getByRole('group', { name: 'Capa del mapa' });
+          const visible = await Promise.all(['Ahora', 'Permisos'].map(async (name) => {
+            const box = await capas.getByRole('button', { name, exact: true }).boundingBox();
+            return box !== null && box.y >= 0 && box.y + box.height <= viewport.height;
+          }));
+          result.layerControlsVisible = visible.every(Boolean);
+          if (!result.layerControlsVisible) throw new Error('Ahora and Permisos must both be visible in the first mobile viewport');
+        }
+        if (viewport.width === 360 && colorScheme === 'light' && view.id === 'queues') {
+          const deliveries = page.locator('#view-panel-entregas .queues-conteo');
+          const before = await deliveries.textContent();
+          const pending = page.getByRole('button', { name: /Pendientes/ }).first();
+          await pending.click();
+          if (await pending.getAttribute('aria-pressed') !== 'true') throw new Error('Pending delivery filter did not activate');
+          const after = await deliveries.textContent();
+          if (before === after || !after?.toLocaleLowerCase().includes('pendientes')) throw new Error('Pending filter did not update delivery table status');
+          result.interaction = { flow: 'filter pending deliveries and verify table status', before, after, submission: 'none' };
+          await page.screenshot({ path: resolve(output, '360-light-queues-flow.png'), fullPage: false, timeout: 10000 });
+        }
+        if (viewport.width === 360 && colorScheme === 'light' && view.id === 'accounts-asignaciones') {
+          const form = page.locator('#view-panel-asignaciones .assignment-config-form');
+          await form.getByLabel('Agente').selectOption({ label: 'Steven/kant' });
+          await form.locator('label').filter({ hasText: /^Cuenta/ }).locator('select').selectOption('codex-steven');
+          const labels = await form.getByLabel('Operación').locator('option').allTextContents();
+          if (labels.some((label) => /alias_routing_ceiling|agent_account_binding/.test(label))) {
+            throw new Error('Backend operation names are visible to operators');
+          }
+          const matrix = page.getByRole('group', { name: 'Matriz de techo y fallback por agente y cuenta' });
+          const columns = await matrix.locator('thead th').allTextContents();
+          if (!columns.some((column) => column.includes('Agente')) || columns.length < 4) {
+            throw new Error(`Assignment matrix columns are missing: ${JSON.stringify(columns)}`);
+          }
+          const beforeScroll = await matrix.evaluate((node) => node.scrollLeft);
+          await matrix.focus();
+          await matrix.press('End');
+          const afterScroll = await matrix.evaluate((node) => node.scrollLeft);
+          if (afterScroll <= beforeScroll) throw new Error('Assignment matrix cannot be horizontally reached and scrolled by keyboard');
+          const lastColumnVisible = await matrix.locator('thead th').last().evaluate((node) => {
+            const box = node.getBoundingClientRect();
+            const viewport = node.closest('[role="group"]')?.getBoundingClientRect();
+            return !!viewport && box.left >= viewport.left - 1 && box.right <= viewport.right + 1;
+          });
+          if (!lastColumnVisible) throw new Error('End did not reveal the last account column');
+          result.interaction = { flow: 'select agent and account; inspect assignment matrix columns and keyboard-scroll to the final account', agent: 'Steven/kant', account: 'codex-steven', columns: columns.length, keyboardScroll: afterScroll, lastColumnVisible, submission: 'none' };
+          await page.screenshot({ path: resolve(output, '360-light-accounts-assignments-flow.png'), fullPage: false, timeout: 10000 });
+        }
         if (view.graph) {
           const reloaded = await page.reload({ waitUntil: 'networkidle' });
           assertSuccessfulResponse(reloaded?.status(), `${view.path} reload`);
