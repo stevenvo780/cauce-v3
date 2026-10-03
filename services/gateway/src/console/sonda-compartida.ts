@@ -95,6 +95,16 @@ export function sondaDiferida(hueco: SondaCompartida): AgentFactsProbe {
       }
       return actual.writeGovernanceDocument(path, content, precondition, facts, tenantId, alias);
     },
+    writeGovernanceDocumentFenced: (...args) => {
+      const actual = hueco.actual();
+      if (actual.writeGovernanceDocumentFenced === undefined) {
+        return Promise.resolve({
+          error: 'unavailable' as const,
+          reason: 'la sonda instalada no anuncia escritura con destino medido',
+        });
+      }
+      return actual.writeGovernanceDocumentFenced(...args);
+    },
     writeGovernanceBatch: (
       writes: readonly GovernanceBatchWrite[],
       facts: RuntimeFacts,
