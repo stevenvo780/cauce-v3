@@ -1,5 +1,5 @@
-import { DoorClosed, Filter, Inbox, Search } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { DoorClosed, Filter, Inbox, Search, X } from 'lucide-react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AgentAvatar } from '../../components/AgentAvatar';
 import { Badge, EmptyState, LoadingState } from '../../components/ui';
 import { LEASE_LABEL } from '../../vocabulario';
@@ -79,6 +79,15 @@ function PildorasDeCola({ salud }: { salud?: SaludDeCola }) {
 export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, error }: AgentRosterProps) {
   const [tenantId, setTenantId] = useState('all');
   const [query, setQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchId = useId();
+  const searchInput = useRef<HTMLInputElement>(null);
+  const searchToggle = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (searchOpen) searchInput.current?.focus(); }, [searchOpen]);
+  function closeSearch() {
+    setSearchOpen(false);
+    searchToggle.current?.focus();
+  }
   const tenants = useMemo(() => [...new Set(agents.map((agent) => agent.tenantId))].sort(), [agents]);
   const visibles = useMemo(
     () => ordenarPorSaludDeCola(filterFleetAgents(agents, { tenantId, roomId: 'all', query }), salud),
@@ -99,11 +108,22 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
         <Badge tone={online > 0 ? 'online' : agents.length ? 'warning' : 'unknown'}>{online} en línea</Badge>
       </header>
 
-      <div className="messenger-roster-filters">
-        <label className="messenger-search">
+      <div className="messenger-roster-filters" data-search-open={searchOpen || undefined}>
+        <button
+          ref={searchToggle}
+          type="button"
+          className="messenger-search-toggle"
+          aria-expanded={searchOpen}
+          aria-controls={searchId}
+          onClick={() => { if (searchOpen) closeSearch(); else setSearchOpen(true); }}
+        >
+          <Search size={18} aria-hidden="true" /> {searchOpen ? 'Cerrar búsqueda' : 'Buscar'}
+        </button>
+        <label className="messenger-search" id={searchId}>
           <span className="sr-only">Buscar agente</span>
           <Search size={15} aria-hidden="true" />
-          <input value={query} onChange={(event) => { setQuery(event.target.value); }} placeholder="Buscar agente…" />
+          <input ref={searchInput} value={query} onChange={(event) => { setQuery(event.target.value); }} placeholder="Buscar agente…"
+            onKeyDown={(event) => { if (event.key === 'Escape' && searchOpen) { event.preventDefault(); closeSearch(); } }} />
         </label>
         <label className="messenger-tenant-filter">
           <span><Filter size={12} aria-hidden="true" /> Cliente</span>
@@ -114,6 +134,13 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
         </label>
       </div>
 
+      {query.trim() ? (
+        <div className="messenger-active-query">
+          <span title={query}>Búsqueda: {query}</span>
+          <button type="button" aria-label="Limpiar búsqueda" onClick={() => { setQuery(''); searchToggle.current?.focus(); }}><X size={16} aria-hidden="true" /></button>
+        </div>
+      ) : null}
+      <p className="sr-only" role="status">{tenantId === 'all' ? 'Todos los clientes' : `Cliente: ${tenantId}`}{query.trim() ? ` · Búsqueda: ${query}` : ''} · {visibles.length} agentes visibles</p>
       <p className="messenger-roster-meta">
         <Inbox size={12} aria-hidden="true" /> {visibles.length} visibles · prioridad a lo que necesita atención
         {sueltos > 0 ? (

@@ -65,8 +65,8 @@ describe('lo que se despliega desde abajo aparece por debajo de la banda pegada'
   });
 });
 
-describe('el mapa no puede volver a nacer abierto', () => {
-  it('el `details` del mapa se declara sin `open`', () => {
-    expect(PAGINA).toMatch(/<details className="panel live-mapa">/);
+describe('el mapa nace abierto y conserva el pliegue manual', () => {
+  it('el `details` del mapa se declara con `open`', () => {
+    expect(PAGINA).toMatch(/<details className="panel live-mapa" open>/);
   });
 });
