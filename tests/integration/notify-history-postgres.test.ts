@@ -5,7 +5,8 @@ import { CauceRepository } from '@cauce/store';
 import type { AgentEgressResponse } from '@cauce/protocol';
 import { registerAgentEmissionRoutes } from '../../services/gateway/src/routes/agent-emission.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
-import { requireTestDatabaseUrl, openIsolatedDatabase } from './notify-history/database.js';
+import { dockerTestRequirement } from '../helpers/postgres.js';
+import { openIsolatedDatabase } from './notify-history/database.js';
 import { BODY, CONVERSATION, INCIDENT, seedFixture, type NotificationFixture } from './notify-history/fixture.js';
 import { requireConvergedSource, runConsumer } from './notify-history/consumer.js';
 
@@ -15,6 +16,7 @@ let httpUrl = '';
 let complete: NotificationFixture;
 let partial: NotificationFixture;
 const calls: { url: string; status: number }[] = [];
+const databaseRequirement = dockerTestRequirement('notify history requires real disposable PostgreSQL, SQL and HTTP');
 
 function history(prompt: string): { notices: { body: string; status: string; chunks: { expected: number; sent: number } }[] } {
   const block = prompt.split('--- BEGIN NOTIFICATION HISTORY DATA ---')[1]?.split('--- END NOTIFICATION HISTORY DATA ---')[0];
@@ -33,9 +35,9 @@ async function receipt(deliveryId: string, tenant = 'Steven', alias = 'argos'): 
 }
 
 beforeAll(async () => {
-  const url = requireTestDatabaseUrl();
   requireConvergedSource();
-  database = await openIsolatedDatabase(url);
+  await databaseRequirement.skipIfUnavailable((reason) => { throw new Error(String(reason)); });
+  database = await openIsolatedDatabase();
   const proof = await database.pool.query<{ version: string; name: string }>('SELECT version() AS version, current_database() AS name');
   expect(proof.rows[0]?.version).toMatch(/^PostgreSQL /u);
   expect(proof.rows[0]?.name).toBe(database.name);
@@ -46,7 +48,7 @@ beforeAll(async () => {
   app.addHook('onResponse', async (request, reply) => { calls.push({ url: request.url, status: reply.statusCode }); });
   registerAgentEmissionRoutes(app, DevOnlyAuthProvider.forTests(), repository);
   httpUrl = await app.listen({ host: '127.0.0.1', port: 0 });
-  console.info('NOTIFY_E2E_RUNTIME', JSON.stringify({ database: database.name, driver: 'pg.Pool',
+  console.info('NOTIFY_E2E_RUNTIME', JSON.stringify({ database: database.name, containerId: database.containerId, driver: 'pg.Pool',
     route: 'registerAgentEmissionRoutes', store: 'CauceRepository.listAgentEgress', pgDouble: false, gatewayDouble: false,
     harness: 'ControlledRunner', auth: 'DevOnlyAuthProvider.forTests' }));
 }, 90000);

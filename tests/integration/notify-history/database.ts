@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { applyMigrations, createPool, type DatabasePool } from '@cauce/store';
+import type { DatabasePool } from '@cauce/store';
+import { closeTestDatabase, startTestDatabase } from '../../helpers/postgres.js';
 
 export function requireTestDatabaseUrl(): string {
   const value = process.env.CAUCE_TEST_DATABASE_URL;
@@ -13,29 +13,17 @@ export function requireTestDatabaseUrl(): string {
   return value;
 }
 
-export async function openIsolatedDatabase(serverUrl: string): Promise<{
-  pool: DatabasePool; name: string; close: () => Promise<void>;
+export async function openIsolatedDatabase(): Promise<{
+  pool: DatabasePool; name: string; containerId?: string; close: () => Promise<void>;
 }> {
-  const admin = createPool(serverUrl, { max: 1, connectionTimeoutMillis: 3000 });
-  const name = `cauce_test_notify_${randomUUID().replaceAll('-', '')}`;
-  let created = false;
-  let pool: DatabasePool | undefined;
-  const close = async (): Promise<void> => {
-    try {
-      if (pool) await pool.end();
-      if (created) await admin.query(`DROP DATABASE "${name}"`);
-    } finally { await admin.end(); }
+  if (process.env.NODE_ENV === 'production') throw new Error('Production is not a test database environment.');
+  const external = process.env.CAUCE_TEST_DATABASE_URL;
+  if (external) requireTestDatabaseUrl();
+  const database = await startTestDatabase();
+  return {
+    pool: database.pool,
+    name: decodeURIComponent(new URL(database.url).pathname.slice(1)),
+    ...(external ? {} : { containerId: database.container.getId() }),
+    close: async () => { await closeTestDatabase(database); },
   };
-  try {
-    const result = await admin.query<{ name: string; version: string }>(
-      'SELECT current_database() AS name, version() AS version');
-    if (result.rows[0]?.name !== decodeURIComponent(new URL(serverUrl).pathname.slice(1))
-      || !result.rows[0].version.startsWith('PostgreSQL ')) throw new Error('Test PostgreSQL identity mismatch.');
-    await admin.query(`CREATE DATABASE "${name}"`);
-    created = true;
-    const url = new URL(serverUrl); url.pathname = `/${name}`;
-    pool = createPool(url.toString(), { max: 3, connectionTimeoutMillis: 3000 });
-    await applyMigrations(pool);
-    return { pool, name, close };
-  } catch (error) { await close(); throw error; }
 }
