@@ -28,9 +28,10 @@ outbound**:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `CAUCE_TERMINAL_RELAY_BIND_HOST` | `0.0.0.0` | Dirección IP literal de escucha común para agent, browser y health. Admite IPv4 e IPv6, incluidos `127.0.0.1` y `::1`; rechaza hostnames, valores vacíos y espacios. Loopback limita los tres listeners al host y requiere que sus clientes y Prometheus puedan alcanzarlos. |
 | `CAUCE_TERMINAL_RELAY_BROWSER_PORT` | `8446` | WebSocket listener for the console nginx. |
 | `CAUCE_TERMINAL_RELAY_AGENT_PORT` | `8445` | Raw TLS listener for PTY agents. |
-| `CAUCE_TERMINAL_RELAY_HEALTH_PORT` | `8085` | HTTP listener serving `/health/live`, `/health/ready` and `/metrics`. Bound on every interface of the compose network, exactly like the dispatcher's: Prometheus is a separate container and a loopback bind is a target it can never reach. Compose publishes no host port for it, so it is reachable only from inside the network. |
+| `CAUCE_TERMINAL_RELAY_HEALTH_PORT` | `8085` | Listener HTTP para `/health/live`, `/health/ready` y `/metrics`, en `CAUCE_TERMINAL_RELAY_BIND_HOST`. El valor predeterminado escucha en todas las interfaces IPv4 de la red Compose; Compose no publica un puerto de host para este listener. |
 | `CAUCE_TERMINAL_RELAY_TLS_CERT_FILE` | — | Server certificate for both listeners. |
 | `CAUCE_TERMINAL_RELAY_TLS_KEY_FILE` | — | Server private key. |
 | `CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE` | — | CA of the console nginx client certificate. |
