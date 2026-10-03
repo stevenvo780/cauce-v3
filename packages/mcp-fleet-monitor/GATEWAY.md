@@ -68,6 +68,8 @@ Las cabeceras `X-Forwarded-*` no son una fuente de identidad o confianza.
 
 El host elegido necesita una ruta ya autorizada al gateway privado. Este cambio no
 abre puertos, crea túneles, modifica infraestructura, despliega ni conecta una aplicación.
+La preparación aislada de imagen, Compose opt-in y proxy Caddy está en
+[`deploy/mcp/README.md`](../../deploy/mcp/README.md); no forma parte del Compose central.
 
 El transporte es MCP Streamable HTTP sin sesiones ni SSE persistente: POST JSON;
 GET y DELETE autenticados responden 405. Se crea un servidor MCP por petición.

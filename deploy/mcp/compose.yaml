@@ -1,0 +1,28 @@
+name: cauce-v3-mcp
+
+services:
+  mcp-gateway:
+    image: ${CAUCE_MCP_IMAGE:?set an immutable MCP image digest}
+    network_mode: host
+    user: "1000:1000"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    environment:
+      CAUCE_MCP_AUTH_MODE: oauth
+    env_file:
+      - ${CAUCE_MCP_ENV_FILE:?set the private MCP environment file}
+    volumes:
+      - type: bind
+        source: ${CAUCE_MCP_TLS_DIR:?set the dedicated gateway-read identity directory}
+        target: /run/mcp-gateway/tls
+        read_only: true

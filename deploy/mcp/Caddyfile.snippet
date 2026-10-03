@@ -1,0 +1,4 @@
+# Insert inside the existing HTTPS site's route block, after the private-bus 404
+# and before the SPA reverse_proxy fallback. Keep the private-bus rejection.
+reverse_proxy /mcp 127.0.0.1:3101
+reverse_proxy /.well-known/oauth-protected-resource/mcp 127.0.0.1:3101
