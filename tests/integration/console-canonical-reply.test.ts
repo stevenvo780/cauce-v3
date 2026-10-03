@@ -3,6 +3,7 @@ import { randomBytes, randomUUID, X509Certificate } from 'node:crypto';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request } from 'node:https';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { TLSSocket } from 'node:tls';
 import { promisify } from 'node:util';
@@ -160,7 +161,7 @@ async function cookiePasswordAuth(account: Account): Promise<string> {
   const password = randomBytes(32).toString('base64url');
   const email = `${account}@canonical.test`;
   try {
-    await execute(process.execPath, ['--import', import.meta.resolve('tsx'), 'services/gateway/src/console-user-cli.ts',
+    await execute(process.execPath, ['--import', createRequire(import.meta.url).resolve('tsx'), 'services/gateway/src/console-user-cli.ts',
       '--email', email, '--name', `Canonical ${account}`, '--role', role, '--tenant', identity.tenant, '--alias', identity.alias],
     { cwd: process.cwd(), env: consoleCliEnvironment(db().url, password), timeout: 30_000 });
   } catch { throw new Error('disposable console account provisioning failed'); }
