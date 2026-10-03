@@ -37,6 +37,7 @@ export interface AdmittedProfileWrite {
   readonly profile: AgentProfile;
   /** Prose the operator typed. Never defaulted, never generated, never derived from the profile. */
   readonly reason: string;
+  readonly context_source?: unknown;
 }
 
 export interface RejectedProfileWrite {
@@ -59,7 +60,7 @@ const PROFILE_FIELDS = new Set([
   'purpose', 'role_summary', 'human_brief', 'responsibilities', 'restrictions', 'tools',
   'operating_rules',
 ]);
-const BODY_FIELDS = new Set(['expected_revision', 'profile', 'reason']);
+const BODY_FIELDS = new Set(['expected_revision', 'profile', 'reason', 'context_source']);
 
 export function isRejectedProfileWrite(
   value: AdmittedProfileWrite | RejectedProfileWrite,
@@ -104,7 +105,8 @@ export function admitProfileWrite(
     const profile = normalizeAgentProfile({
       ...(rawProfile as Record<string, unknown>), tenant_id: tenantId, alias,
     });
-    return { expected_revision: expectedRevision, profile, reason };
+    return { expected_revision: expectedRevision, profile, reason,
+      ...(Object.hasOwn(source, 'context_source') ? { context_source: source.context_source } : {}) };
   } catch (error) {
     if (error instanceof AgentProfileError) {
       return { status: 422, body: { error: 'invalid_input', field: error.field, message: error.message } };

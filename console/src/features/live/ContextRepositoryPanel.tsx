@@ -1,10 +1,12 @@
+import { ContextRepositoryApply } from './ContextRepositoryApply';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import type { ContextRepositoryInspection, JournalVerification } from '../../api/client/context-repository-client';
 import { CAMPOS_DEL_PERFIL, ETIQUETAS } from './perfil';
 
-interface Props { tenantId: string; alias: string }
+interface Props { tenantId: string; alias: string; canApply?: boolean; blocked?: boolean; refreshRevision?: number;
+  onSettled?: () => void; onWriteInFlightChange?: (value: boolean) => void }
 const OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const JOURNAL: Record<JournalVerification, string> = {
   journal_match: 'Coincide con la revisión del diario consultada',
@@ -12,15 +14,15 @@ const JOURNAL: Record<JournalVerification, string> = {
   journal_unavailable: 'La revisión del diario no está disponible',
 };
 
-export function ContextRepositoryPanel({ tenantId, alias }: Props) {
+export function ContextRepositoryPanel(props: Props) {
   const [open, setOpen] = useState(false);
   return <details className="historial-contexto" onToggle={(event) => { setOpen(event.currentTarget.open); }}>
     <summary>Versiones Git del contexto</summary>
-    {open ? <RepositoryContent key={`${tenantId}/${alias}`} tenantId={tenantId} alias={alias} /> : null}
+    {open ? <RepositoryContent key={`${props.tenantId}/${props.alias}`} {...props} /> : null}
   </details>;
 }
 
-function RepositoryContent({ tenantId, alias }: Props) {
+function RepositoryContent({ tenantId, alias, ...permissions }: Props) {
   const api = useApi();
   const capability = useResource(`context-repository/${tenantId}/${alias}`, () => api.getContextRepository(tenantId, alias));
   const [commit, setCommit] = useState('');
@@ -59,7 +61,7 @@ function RepositoryContent({ tenantId, alias }: Props) {
 
   return <div className="perfil-vista-previa">
     <p>Repositorio vinculado a la instancia {capability.data.instance_id}. Consultá versiones de los siete campos canónicos de {alias}.</p>
-    <p className="muted">Sólo lectura. No crea versiones ni cambia el perfil o los archivos del arnés. El diario de PostgreSQL conserva la autoridad.</p>
+    <p className="muted">Inspeccionar no cambia el perfil ni los archivos. Aplicar exige vista previa y confirmación explícitas. El diario de PostgreSQL conserva la autoridad.</p>
     <form className="perfil-editor" onSubmit={(event) => { event.preventDefault(); void inspect(); }}>
       <label className="perfil-campo" htmlFor={`${id}-commit`}>Commit completo
         <input id={`${id}-commit`} value={commit} maxLength={64} autoComplete="off" spellCheck={false}
@@ -80,6 +82,12 @@ function RepositoryContent({ tenantId, alias }: Props) {
       <p role="status">{JOURNAL[result.journal]}</p>
       {result.previousCommit ? <p className="historial-diff-texto">Comparación: {result.previousCommit}. {result.previousJournal ? JOURNAL[result.previousJournal] : ''}</p> : null}
       <p>Árbol de trabajo e índice no observados. Aplicación al arnés y adopción de sesión no evaluadas.</p>
+      {permissions.canApply && result.journal === 'journal_match' && capability.data.instance_id ? <ContextRepositoryApply
+        key={`${result.commit}/${String(result.previousCommit)}`} tenantId={tenantId} alias={alias}
+        instanceId={capability.data.instance_id} commit={result.commit} canApply={permissions.canApply}
+        blocked={permissions.blocked ?? false} refreshRevision={permissions.refreshRevision}
+        onSettled={permissions.onSettled} onWriteInFlightChange={permissions.onWriteInFlightChange} />
+        : permissions.canApply ? <p>Esta versión permanece en modo inspección: aplicar exige un origen coincidente en el diario. El contenido nuevo creado sólo en Git todavía no se importa.</p> : null}
       {CAMPOS_DEL_PERFIL.map((field) => {
         const current = result.profile[field];
         const old = result.previousProfile?.[field];

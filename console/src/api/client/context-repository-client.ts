@@ -1,3 +1,4 @@
+import { putAgentPerfil } from './agent-client';
 import type { AgentPerfilValor } from '../types';
 import { CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO } from '../../features/live/perfil';
 import { ApiError } from './core';
@@ -58,7 +59,46 @@ function snapshot(value: unknown, tenantId: string, alias: string, instanceId: s
   return profile(row.profile, tenantId, alias);
 }
 
+export interface ContextSourcePreview {
+  readonly tenant_id: string;
+  readonly alias: string;
+  readonly expected_revision: number;
+  readonly before: AgentPerfilValor;
+  readonly profile: AgentPerfilValor;
+  readonly context_source: Readonly<Record<string, string | number>>;
+  readonly ficheros: readonly { nombre: string; texto: string }[];
+}
+
+function sourcePreview(value: unknown, tenantId: string, alias: string, instanceId: string, commit: string): ContextSourcePreview {
+  const row = record(value);
+  validateIdentity(row, tenantId, alias);
+  const source = record(row.context_source);
+  const oid = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
+  const sha = /^[a-f0-9]{64}$/u;
+  const journalId = (id: unknown) => typeof id === 'string' && /^[1-9][0-9]*$/u.test(id);
+  if (row.application !== 'not_applied' || row.sourceState !== 'not_observed'
+    || !Number.isSafeInteger(row.expected_revision) || Number(row.expected_revision) < 1
+    || source.instance_id !== instanceId || source.commit !== commit || !oid.test(commit)
+    || typeof source.tree !== 'string' || !oid.test(source.tree)
+    || !journalId(source.expected_journal_id) || !journalId(source.source_journal_id)
+    || !Number.isSafeInteger(source.source_revision) || Number(source.source_revision) < 1
+    || !['profile_sha256', 'runtime_fingerprint', 'application_id'].every((key) => typeof source[key] === 'string' && sha.test(source[key]))
+    || Object.keys(source).sort().join(',') !== 'application_id,commit,expected_journal_id,instance_id,profile_sha256,runtime_fingerprint,source_journal_id,source_revision,tree'
+    || !Array.isArray(row.ficheros) || row.ficheros.length === 0) malformed();
+  const files = row.ficheros.map((value: unknown) => {
+    const file = record(value);
+    if (typeof file.nombre !== 'string' || typeof file.texto !== 'string' || file.nombre.includes('/') || file.nombre.includes('..')) return malformed();
+    return { nombre: file.nombre, texto: file.texto };
+  });
+  if (new Set(files.map((file) => file.nombre)).size !== files.length) malformed();
+  return { tenant_id: tenantId, alias, expected_revision: Number(row.expected_revision),
+    before: profile(row.before, tenantId, alias), profile: profile(row.profile, tenantId, alias),
+    context_source: source as Record<string, string | number>, ficheros: files };
+}
+
 export interface ContextRepositoryClient {
+  previewContextSource(tenantId: string, alias: string, instanceId: string, commit: string, reason: string): Promise<ContextSourcePreview>;
+  applyContextSource(preview: ContextSourcePreview, reason: string): Promise<unknown>;
   getContextRepository(tenantId: string, alias: string): Promise<ContextRepositoryCapability>;
   inspectContextRepository(tenantId: string, alias: string, instanceId: string, commit: string,
     previousCommit?: string): Promise<ContextRepositoryInspection>;
@@ -66,6 +106,15 @@ export interface ContextRepositoryClient {
 
 export function contextRepositoryClient(request: RequestFn): ContextRepositoryClient {
   return {
+    async previewContextSource(tenantId, alias, instanceId, commit, reason) {
+      return sourcePreview(await request(`${route(tenantId, alias)}/preview`, {
+        method: 'POST', body: JSON.stringify({ commit, reason }), cache: 'no-store',
+      }), tenantId, alias, instanceId, commit);
+    },
+    applyContextSource(preview, reason) {
+      return putAgentPerfil(request, preview.tenant_id, preview.alias, preview.profile,
+        preview.expected_revision, reason, preview.context_source);
+    },
     async getContextRepository(tenantId, alias) {
       let value: unknown;
       try { value = await request(route(tenantId, alias), { cache: 'no-store' }); }

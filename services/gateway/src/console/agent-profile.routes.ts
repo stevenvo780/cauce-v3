@@ -1,3 +1,6 @@
+import type { AgentProfileSourceGuard, AgentProfileSourceReceipt } from '@cauce/store';
+import { assertSourceApplication, parseSourceConfirmation, type ContextSourceConfirmation } from './context-repository/apply-preview.js';
+import { ContextRepositoryError } from './context-repository/model.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   AGENT_PROFILE_LIMITS, AliasSchema, TenantSchema, agentProfileUnits,
@@ -23,37 +26,24 @@ import type { TerminalAuditEntry } from '../terminal/audit.js';
 
 export type { TopeSuperado } from './agent-profile/write-gates.js';
 
-/**
- * Preview and management of the agent profile: generates and projects the exact content of
- * the governance files (`CLAUDE.md`, `AGENTS.md`, OpenClaw workspaces) for each harness
- * from `ficherosDelArnes()`.
- */
 
-/** Where the profile and facts come from. Injectable to test the route without a database. */
 export interface AgentProfileDeps {
-  /** Authenticates the principal and enforces the operation's role permission. */
-  authorize(
+    authorize(
     request: unknown, permission: 'read' | 'control'
   ): Promise<{ tenant_id: string; alias: string }>;
-  /**
-   * Authorizes the actor→target pair using the CANONICAL identity of the target. `undefined`
-   * does not reveal whether the alias does not exist or the ACL hides it.
-   */
-  authorizeTarget(
+    authorizeTarget(
     actor: { tenant_id: string; alias: string },
     targetTenantId: string,
     targetAlias: string,
     permission: 'read' | 'control',
     legacySameTenant: boolean,
   ): Promise<{ tenant_id: string; alias: string; enabled?: boolean } | undefined>;
-  /** Not wired means nobody is named, and the profile PUT then fails closed. */
-  resolveOperator?: (request: unknown) => DocumentOperator | Promise<DocumentOperator>;
+    resolveOperator?: (request: unknown) => DocumentOperator | Promise<DocumentOperator>;
   recordAudit(entry: TerminalAuditEntry): Promise<void>;
   measureContext?: ProfileContextMeasure;
   readRuntimeExpectation?: ProfileExpectationReader;
   telemetry?: Pick<ContextContaminationTelemetry, 'recordVerdict'>;
-  /** The authored profile plus derived facts and the actual presence of its row. */
-  readContext(tenantId: string, alias: string): Promise<{
+    readContext(tenantId: string, alias: string): Promise<{
     contexto: ContextoDeAlias;
     exists: boolean;
     revision: number | null;
@@ -64,12 +54,24 @@ export interface AgentProfileDeps {
     profile: AgentProfile,
     expectedRevision: number | null,
     actor: { tenant_id: string; alias: string },
+    source?: AgentProfileSourceGuard,
   ): Promise<{
+    source_receipt?: AgentProfileSourceReceipt;
     perfil: AgentProfile;
     exists: true;
     revision: number;
     applied_revision: number | null;
   }>;
+  contextSource?: {
+    instance_id: string | undefined;
+    readReceipt(tenantId: string, alias: string, actor: { tenant_id: string; alias: string }, applicationId: string): Promise<AgentProfileSourceReceipt | undefined>;
+    confirm(input: {
+      source: ContextSourceConfirmation; profile: AgentProfile;
+      current: Awaited<ReturnType<AgentProfileDeps['readContext']>>; preflight: ProfileRuntimePreflight;
+      actor: { tenant_id: string; alias: string }; operator: DocumentOperator;
+      tenantId: string; alias: string; reason: string;
+    }): Promise<AgentProfileSourceGuard>;
+  };
   /** Read-only runtime snapshot that is materialized only after the durable CAS returns a revision. */
   prepareRuntime?(
     tenantId: string, alias: string, contexto: ContextoDeAlias,
@@ -522,6 +524,26 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     const { expected_revision: expectedRevision, profile } = admitido;
     escritura.reason = admitido.reason;
 
+    let source: ContextSourceConfirmation | undefined;
+    const caller = { actor, operator: escritura.operador, tenantId, alias, reason: admitido.reason };
+    const replay = (receipt: AgentProfileSourceReceipt) => reply.code(202).send({
+      ok: true, state: 'effect_unknown', tenant_id: tenantId, alias, source_receipt: receipt,
+      message: 'la revisión durable ya se registró; releé el estado, sin repetir el lote nativo',
+    });
+    if (Object.hasOwn(admitido, 'context_source')) {
+      if (deps.contextSource === undefined) return denegar(503, { error: 'context_source_unavailable' });
+      try {
+        source = parseSourceConfirmation(admitido.context_source);
+        if (source.instance_id !== deps.contextSource.instance_id) throw new ContextRepositoryError('scope_unavailable');
+        assertSourceApplication(source, caller, expectedRevision);
+        const receipt = await deps.contextSource.readReceipt(tenantId, alias, actor, source.application_id);
+        if (receipt !== undefined) return await replay(receipt);
+      } catch (error) {
+        return denegar(error instanceof ContextRepositoryError ? 409 : 503, {
+          error: error instanceof ContextRepositoryError ? error.code : 'context_source_unavailable',
+        });
+      }
+    }
     const current = await deps.readContext(tenantId, alias);
     if (current.contexto.perfil.tenant_id !== tenantId || current.contexto.perfil.alias !== alias) {
       throw new Error('agent profile repository returned a non-canonical identity');
@@ -575,23 +597,54 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       });
     }
 
+    let sourceGuard: AgentProfileSourceGuard | undefined;
+    if (source !== undefined && deps.contextSource !== undefined) {
+      try {
+        sourceGuard = await deps.contextSource.confirm({ ...caller, source, profile, current, preflight });
+        const currentActor = await deps.authorize(request, 'control');
+        const currentOperator = await deps.resolveOperator?.(request);
+        const authorized = await deps.authorizeTarget(currentActor, tenantId, alias, 'control', false);
+        if (currentActor.tenant_id !== actor.tenant_id || currentActor.alias !== actor.alias
+          || currentOperator?.attributed !== true || currentOperator.operator_id !== escritura.operador.operator_id
+          || authorized?.tenant_id !== tenantId || authorized.alias !== alias || authorized.enabled !== true) {
+          return await denegar(403, { error: 'forbidden' });
+        }
+        await fila(escritura, 'allow', { phase: 'intent', context_source: sourceGuard });
+      } catch (error) {
+        return denegar(error instanceof ContextRepositoryError ? 409 : 503, {
+          error: error instanceof ContextRepositoryError ? error.code : 'context_source_unavailable',
+        });
+      }
+    }
     let desired: Awaited<ReturnType<NonNullable<AgentProfileDeps['replaceProfile']>>>;
     try {
-      desired = await deps.replaceProfile(profile, expectedRevision, actor);
+      desired = sourceGuard === undefined
+        ? await deps.replaceProfile(profile, expectedRevision, actor)
+        : await deps.replaceProfile(profile, expectedRevision, actor, sourceGuard);
     } catch (error) {
       const code = runtimeErrorCode(error);
+      if (source !== undefined && !['not_found', 'disabled', 'conflict'].includes(code ?? '')) {
+        return reply.code(503).send({ error: 'profile_write_unconfirmed', state: 'effect_unknown',
+          message: 'el resultado durable es incierto; releé antes de reintentar' });
+      }
       const status = code === 'not_found' ? 404 : code === 'disabled' || code === 'conflict' ? 409 : 500;
       return denegar(status, {
         error: code ?? 'profile_write_failed',
         message: runtimeErrorMessage(error, 'no se pudo persistir el perfil desired'),
       });
     }
+    if (desired.source_receipt !== undefined) return replay(desired.source_receipt);
     /* The row goes here and only here: past this point the desired revision EXISTS, so every later
      * outcome reports how far the runtime got instead of denying a write that did happen. */
-    await fila(escritura, 'allow', {
-      revision: desired.revision,
-      bytes: Buffer.byteLength(JSON.stringify(profile), 'utf8'),
-    });
+    try {
+      await fila(escritura, 'allow', { revision: desired.revision, bytes: Buffer.byteLength(JSON.stringify(profile), 'utf8') });
+    } catch (error) {
+      if (source === undefined) throw error;
+      return reply.code(503).send({ error: 'profile_audit_unconfirmed', state: 'pending', revision: desired.revision });
+    }
+    if (source !== undefined && desired.revision !== Number(expectedRevision) + 1) {
+      return reply.code(409).send({ error: 'profile_revision_mismatch', state: 'pending', revision: desired.revision });
+    }
 
     let prepared: PreparedProfileRuntime;
     try {
@@ -623,7 +676,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     } catch (error) {
       return reply.code(runtimeErrorStatus(error)).send({
         error: runtimeErrorCode(error) ?? 'runtime_apply_failed',
-        state: 'pending',
+        state: source === undefined ? 'pending' : 'effect_unknown',
         message: runtimeErrorMessage(error, 'el runtime no acreditó el lote'),
         revision: desired.revision,
         applied_revision: desired.applied_revision,

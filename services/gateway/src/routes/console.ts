@@ -1,3 +1,5 @@
+import { registerContextSourcePreviewRoute } from '../console/context-repository/apply-routes.js';
+import { confirmContextSource, snapshotContextSourceDeps } from '../console/context-repository/apply-preview.js';
 import { registerContextRepositoryRoutes } from '../console/context-repository/routes.js';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import {
@@ -14,7 +16,7 @@ import {
 import { registerAgentContextReconcileRoutes } from '../console/agent-context-reconcile.routes.js';
 import { registerAgentDocumentRoutes } from '../console/agent-documents.routes.js';
 import { prepareAgentProfileRuntime } from '../console/agent-profile-runtime.js';
-import { registerAgentProfileRoutes } from '../console/agent-profile.routes.js';
+import { registerAgentProfileRoutes, type AgentProfileDeps } from '../console/agent-profile.routes.js';
 import { SondaCompartida, sondaDiferida } from '../console/sonda-compartida.js';
 import { recordTerminalAudit } from '../terminal/audit.js';
 import { DEFAULT_OPERATOR_HEADER } from '../terminal/config.js';
@@ -312,7 +314,7 @@ function registerConsoleAgentRoutes(
     );
     const recordRuntimeExpectation = repository.recordProfileRuntimeExpectation.bind(repository);
     const readRuntimeAdoption = repository.readProfileRuntimeAdoption.bind(repository);
-    registerAgentProfileRoutes(app, {
+    const profileDeps: AgentProfileDeps = {
       authorize: autorizarPerfil,
       authorizeTarget: autorizarDestino,
       resolveOperator: resolveProfileOperator,
@@ -322,8 +324,8 @@ function registerConsoleAgentRoutes(
       readRuntimeExpectation: (tenantId, alias) =>
         expectativaDeRuntime(options.pool, tenantId, alias),
       readContext: (tenantId, alias) => perfiles.readContextWithPresence(tenantId, alias),
-      replaceProfile: (profile, expectedRevision, actor) =>
-        perfiles.replace(profile, expectedRevision, actor),
+      replaceProfile: (profile, expectedRevision, actor, source) =>
+        perfiles.replace(profile, expectedRevision, actor, source),
       prepareRuntime: (tenantId, alias, contexto) =>
         prepareAgentProfileRuntime(profileProbe, tenantId, alias, contexto),
       recordRuntimeExpectation: (tenantId, alias, revision, verification) =>
@@ -336,7 +338,21 @@ function registerConsoleAgentRoutes(
         ),
       markProfileApplied: (tenantId, alias, revision, actor) =>
         perfiles.markApplied(tenantId, alias, revision, actor),
+    };
+    const sourceDeps = snapshotContextSourceDeps({
+      ...(options.contextRepository === undefined ? {} : { binding: options.contextRepository }),
+      profile: profileDeps,
+      readProfileRevision: (tenantId: string, alias: string, revision: number) =>
+        diario.readProfileRevision(tenantId, alias, revision),
     });
+    profileDeps.contextSource = {
+      instance_id: sourceDeps.binding?.instance_id,
+      readReceipt: (tenantId, alias, actor, applicationId) => perfiles.readSourceReceipt(tenantId, alias, actor, applicationId),
+      confirm: ({ source, profile, current, preflight, ...caller }) =>
+        confirmContextSource(sourceDeps, caller, source, profile, current, preflight),
+    };
+    registerAgentProfileRoutes(app, profileDeps);
+    registerContextSourcePreviewRoute(app, sourceDeps);
     registerAgentDocumentRoutes(app, {
       authorize: autorizarPerfil,
       authorizeTarget: autorizarDestino,

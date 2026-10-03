@@ -239,12 +239,14 @@ export function putAgentPerfil(
   profile: AgentPerfilValor,
   expectedRevision: number | null,
   reason: string,
+  contextSource?: unknown,
 ): Promise<unknown> {
   return request(
     `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil`,
     {
       method: 'PUT',
-      body: JSON.stringify({ expected_revision: expectedRevision, profile, reason }),
+      body: JSON.stringify({ expected_revision: expectedRevision, profile, reason,
+        ...(contextSource === undefined ? {} : { context_source: contextSource }) }),
     },
     { mapError: falloDeGobernanza },
   );
