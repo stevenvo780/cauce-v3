@@ -3,6 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { NativeProfileContext } from "../src/context/native-profile-context.js";
+import { reloadServer, waitForReload } from "./native-profile-reload.fixtures.js";
 import { profileReloadRequest } from "../src/context/native-profile-context.js";
 import { DurableStore } from "../src/sdk/durable-store.js";
 import { HarnessAdapter } from "../src/harnesses/index.js";
@@ -140,4 +143,50 @@ for (const escenario of RELOAD_CASES) {
       assert.equal(requests.length, 1);
       assert.equal(readFileSync(path, "utf8"), bytesAfterFirst);
     });
+}
+
+for (const mode of ["503", "error", "timeout"] as const) {
+  test(`native expectation reload recovers after ${mode} in the same generation`, async (t) => {
+    const root = mkdtempSync(join(tmpdir(), "cauce-reload-recovery-"));
+    t.after(() => { rmSync(root, { recursive: true, force: true }); });
+    const config = join(root, ".claude");
+    mkdirSync(config);
+    const path = join(config, "CLAUDE.md");
+    writeFileSync(path, profileFile("zeus", 41, "CURRENT"));
+    const fixture = await reloadServer(join(root, "pki"), mode, t);
+    const native = new NativeProfileContext("claude", false, {
+      ...nativeEnvironment(), ...fixture.environment, HOME: root, CLAUDE_CONFIG_DIR: config,
+      CAUCE_CONTAINER_GENERATION: "runtime-41",
+    });
+    const stale = { ...context("zeus"),
+      native_profile_contract: { ...contract(41, [path]), generation: "runtime-40" } };
+    const reject = () => {
+      assert.throws(() => native.prepare(stale), (error: unknown) => {
+        const failure = error as { code?: string; retryable?: boolean };
+        assert.equal(failure.code, "NATIVE_PROFILE_CONTEXT_GENERATION_MISMATCH");
+        assert.equal(failure.retryable, true);
+        return true;
+      });
+    };
+    const original = readFileSync(path, "utf8");
+    reject(); reject();
+    await waitForReload(() => fixture.calls() === 1);
+    await delay(50);
+    reject();
+    await delay(20);
+    assert.equal(fixture.calls(), 1, "in-flight and cooldown deliveries coalesce");
+    await delay(mode === "timeout" ? 6_150 : 1_150);
+    fixture.recover();
+    reject(); reject();
+    await waitForReload(() => fixture.calls() === 2);
+    await delay(50);
+    reject();
+    await delay(1_150);
+    reject();
+    await delay(20);
+    assert.equal(fixture.calls(), 2, "successful reload stays deduplicated");
+    assert.equal(readFileSync(path, "utf8"), original, "stale deliveries never alter profile bytes");
+    const prepared = native.prepare({ ...context("zeus"), native_profile_contract: contract(41, [path]) });
+    assert.equal(prepared.native_profile_context, true);
+  });
 }
