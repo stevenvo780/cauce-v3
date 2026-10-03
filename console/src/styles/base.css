@@ -62,7 +62,7 @@
   --radius-md: 12px;
   --radius-pill: 999px;
   /* Alto de barra de navegación inferior en viewport móvil. */
-  --nav-inferior-alto: 72px;
+  --nav-inferior-alto: 56px;
 
   /* THE SPACING SCALE. It rules the whole console, not only new rules: every padding, margin and
      gap of every sheet comes from here, and `styles.espaciado.test.ts` fails on a raw px that is

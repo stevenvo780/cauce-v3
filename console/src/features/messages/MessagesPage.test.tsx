@@ -47,6 +47,20 @@ async function abrirConversacion(user: ReturnType<typeof userEvent.setup>, alias
   return screen.findByRole('region', { name: new RegExp(`conversación con ${alias}`, 'i') });
 }
 
+async function abrirRecibo(user: ReturnType<typeof userEvent.setup>, hilo: HTMLElement) {
+  expect(await within(hilo).findByText('Mensaje aceptado para entrega. La aceptación no confirma la ejecución.'))
+    .toHaveClass('sr-only');
+  expect(hilo.querySelector('.messenger-composer .notice.success')).toBeNull();
+  const more = within(hilo).getByRole('button', { name: 'Más' });
+  if (more.getAttribute('aria-expanded') !== 'true') await user.click(more);
+  const summary = within(hilo).getByText('Recibo del último envío');
+  expect(summary.closest('details')).not.toHaveAttribute('open');
+  await user.click(summary);
+  const receipt = summary.closest('details');
+  if (!receipt) throw new Error('Falta el detalle del recibo');
+  return receipt;
+}
+
 /**
  * The BUBBLES, without the detail panel.
  *
@@ -141,7 +155,15 @@ it('emite el mensaje al agente elegido derivando el room, sin pedirlo escrito a 
     body: { text: 'revisá la cola' },
     lane: 'interactive',
   });
-  expect(await within(hilo).findByText(/Aceptado por el control plane/i)).toBeInTheDocument();
+  expect(within(hilo).queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument();
+  const receipt = await abrirRecibo(user, hilo);
+  expect(within(receipt).getByText(/Aceptado por el control plane/i)).toBeVisible();
+  expect(receipt).toHaveTextContent('Intención confirmada; el ACK llega por polling');
+  expect(receipt).toHaveTextContent('La aceptación no confirma la ejecución');
+  await user.keyboard('{Escape}');
+  expect(within(hilo).queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument();
+  expect(within(hilo).getByRole('button', { name: 'Más' })).toHaveFocus();
+  expect(within(hilo).getByRole('textbox', { name: /mensaje para argos/i })).toHaveValue('');
 }, 25_000);
 
 it('no inventa éxito ni borra el borrador ante un 202 sin recibo durable exacto', async () => {
@@ -219,7 +241,7 @@ it('reconcilia un lost-202 reintentando una sola vez con la misma clave y sin du
   await user.type(campo, 'confirmó pero se perdió el 202');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
-  expect(await within(hilo).findByText(/reconciliada desde el journal durable/i)).toBeInTheDocument();
+  expect(within(await abrirRecibo(user, hilo)).getByText(/reconciliada desde el journal durable/i)).toBeVisible();
   expect(campo).toHaveValue('');
   expect(enviados).toHaveLength(2);
   expect(enviados[0]?.idempotency_key).toBe(enviados[1]?.idempotency_key);
@@ -267,7 +289,7 @@ it('recupera el journal sin body al cerrar y reabrir la conversación tras dos r
   await user.type(campoReabierto, 'retry exacto al reabrir');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
-  expect(await within(hilo).findByText(/reconciliada desde el journal durable/i)).toBeInTheDocument();
+  expect(within(await abrirRecibo(user, hilo)).getByText(/reconciliada desde el journal durable/i)).toBeVisible();
   expect(keys).toHaveLength(2);
   expect(new Set(keys).size).toBe(1);
 }, 30_000);
@@ -318,7 +340,7 @@ it('recupera del servidor un publish confirmado tras recargar sin repetir el POS
   );
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
-  expect(await within(hilo).findByText(/reconciliada desde el journal durable/i)).toBeInTheDocument();
+  expect(within(await abrirRecibo(user, hilo)).getByText(/reconciliada desde el journal durable/i)).toBeVisible();
   expect(within(hilo).getByRole('textbox', { name: /mensaje para argos/i })).toHaveValue('');
   expect(publishes).toBe(2);
 }, 35_000);
@@ -615,3 +637,22 @@ it('marca la envoltura con data-conversacion sólo cuando hay un hilo abierto', 
   await abrirConversacion(user, 'argos');
   expect(envoltura).toHaveAttribute('data-conversacion', 'abierta');
 }, 20_000);
+
+
+it.each(['pending', 'rejected'])('mantiene visible la confirmación %s sin esconderla en el recibo', async (status) => {
+  const user = userEvent.setup();
+  capturarPublish();
+  server.use(http.post('*/v3/console/publish-intents/confirm', () => status === 'pending'
+    ? HttpResponse.error()
+    : HttpResponse.json({ error: 'confirmation_rejected' }, { status: 400 })));
+  renderRouted(MessagesPage);
+  const hilo = await abrirConversacion(user, 'argos');
+  await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'Confirmar estado');
+  await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
+  const warning = await within(hilo).findByText(status === 'pending' ? /Confirmación incierta/ : /Confirmación rechazada/);
+  expect(warning).toBeVisible();
+  expect(warning).toHaveAttribute('role', 'status');
+  expect(warning.closest('.messenger-composer')).not.toBeNull();
+  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
+  expect(within(hilo).queryByText('Recibo del último envío')).not.toBeInTheDocument();
+}, 25_000);
