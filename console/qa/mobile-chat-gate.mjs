@@ -7,7 +7,7 @@ import { chromium } from 'playwright';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = resolve(process.env.CAUCE_MOBILE_QA_OUTPUT ?? resolve(ROOT, '../artifacts/mobile-chat'));
-const ORIGIN = process.env.CAUCE_QA_ORIGIN ?? 'http://127.0.0.1:4190';
+const ORIGIN = process.env.CAUCE_QA_ORIGIN ?? 'http://127.0.0.1:4174';
 const VIEWPORTS = [{ width: 360, height: 800 }, { width: 390, height: 844 }, { width: 430, height: 932 }];
 const compiled = await build({ entryPoints: [resolve(ROOT, 'src/test/mobile-chat-fixtures.ts')], bundle: true, platform: 'node', format: 'esm', write: false });
 const { mobileChatFixtures } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
@@ -45,7 +45,7 @@ async function waitForServer() {
 }
 
 await mkdir(OUTPUT, { recursive: true });
-const server = process.env.CAUCE_QA_ORIGIN ? undefined : spawn(process.execPath, [resolve(ROOT, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '4190', '--strictPort'], {
+const server = process.env.CAUCE_QA_ORIGIN ? undefined : spawn(process.execPath, [resolve(ROOT, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '4174', '--strictPort'], {
   cwd: ROOT, env: { ...process.env, VITE_USE_MOCKS: 'false' }, stdio: ['ignore', 'pipe', 'pipe'],
 });
 let serverLog = '';
