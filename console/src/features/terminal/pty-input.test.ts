@@ -9,6 +9,7 @@ function makeEntry(overrides: Partial<PtyEntry> = {}): PtyEntry {
     inputChunks: [],
     inputBytes: 0,
     readOnly: false,
+    view: { state: 'open', notices: [], seguirAlFinal: true },
     ...overrides,
   } as unknown as PtyEntry;
 }
@@ -163,6 +164,34 @@ describe('queueInput — protección contra flood', () => {
 });
 
 describe('queueInput — modo readOnly', () => {
+  it('descarta las teclas del handshake sin guardarlas para ready', () => {
+    vi.useFakeTimers();
+    const socket = makeSocket();
+    const entry = makeEntry({ view: { state: 'attaching', notices: [], seguirAlFinal: true } });
+    attachSocket(entry, socket);
+    queueInput(entry, 'antes', () => undefined);
+    entry.view.state = 'open';
+    vi.advanceTimersByTime(8);
+    expect(socket.frames()).toEqual([]);
+    expect(entry.inputChunks).toEqual([]);
+    queueInput(entry, 'después', () => undefined);
+    vi.advanceTimersByTime(8);
+    expect(socket.frames()).toEqual([{ type: 'input', data: 'después' }]);
+  });
+
+  it.each(['readOnly', 'attaching'] as const)('descarta el batch si cambia a %s antes del envío', (change) => {
+    vi.useFakeTimers();
+    const socket = makeSocket();
+    const entry = makeEntry();
+    attachSocket(entry, socket);
+    queueInput(entry, 'pendiente', () => undefined);
+    if (change === 'readOnly') entry.readOnly = true;
+    else entry.view.state = 'attaching';
+    vi.advanceTimersByTime(8);
+    expect(socket.frames()).toEqual([]);
+    expect(entry.inputChunks).toEqual([]);
+  });
+
   it('una pulsación normal NI se envía NI dispara flood: el canal es de solo lectura', () => {
     const socket = makeSocket();
     const entry = makeEntry({ readOnly: true });

@@ -217,12 +217,13 @@ export function SessionStage({ session, sessionToken, agents, access, capability
         estado: error instanceof TerminalApiError ? error.status : undefined,
         codigo: error instanceof TerminalApiError ? error.code : undefined,
       });
-      setRequestError(explicada);
       if (explicada.codigo === 'session_limit') {
         onReconciliarPlazas('session_limit');
       } else if (error instanceof TerminalApiError && error.code === 'invalid_grant_receipt') {
         onReconciliarPlazas('invalid_grant_receipt');
       }
+      if (mode === WRITABLE_TUI_MODE) throw error;
+      setRequestError(explicada);
       if (mode === LIVE_TUI_MODE) onUpdate({ ...liveSession, liveTuiAttempted: true });
       return undefined;
     } finally {

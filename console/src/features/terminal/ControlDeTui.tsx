@@ -102,6 +102,13 @@ function explicar(error: unknown): DenegacionExplicada {
   });
 }
 
+function canRetryTake(error: DenegacionExplicada): boolean {
+  if (error.codigo !== undefined) {
+    return ['agent_busy', 'control_held', 'stale_terminal_owner', 'agent_offline', 'session_limit', 'container_busy'].includes(error.codigo);
+  }
+  return error.estado === undefined || error.estado >= 500 || error.estado === 408 || error.estado === 429;
+}
+
 function vencimiento(arriendo: ControlDeTuiTomado): string {
   return arriendo.expires_at === undefined
     ? 'El gateway no dijo hasta cuándo vale el arriendo, así que devolvelo vos en cuanto termines'
@@ -142,6 +149,8 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
   const tomandoRef = useRef(false);
   const alineadoRef = useRef(false);
   const vivoRef = useRef(true);
+  const takeGenerationRef = useRef(0);
+  const revokedGenerationRef = useRef(0);
   const grantRef = useRef(grant);
   grantRef.current = grant;
   const enganchadaRef = useRef(sesionEnganchada);
@@ -151,6 +160,7 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
 
   const problema = ptyReasonProblem(motivo);
   const pendiente = fase !== 'reposo';
+  const escrituraBloqueada = error !== undefined && !canRetryTake(error);
 
   const soltarEnSilencio = useCallback((keepalive: boolean) => {
     const pendienteDeSoltar = porDevolverRef.current;
@@ -171,10 +181,16 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
 
   useEffect(() => { onControlCambia(arriendo !== undefined); }, [arriendo, onControlCambia]);
 
+  useEffect(() => {
+    takeGenerationRef.current += 1;
+  }, [grant?.session_id, grant?.request_id, grant?.owner_generation, grant?.owner_token]);
+
   // The relay already took the hold away: posting a release would claim something that did not
   // happen, so the state is dropped WITHOUT a request and the operator is told in Spanish.
   useEffect(() => {
     if (codigoDeCierre !== CIERRE_CONTROL_DEVUELTO) return;
+    takeGenerationRef.current += 1;
+    revokedGenerationRef.current += 1;
     porDevolverRef.current = undefined;
     setArriendo(undefined);
     setPerdido(true);
@@ -203,11 +219,12 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
   // take frozen on «Abriendo la sesión…» forever — it was the browser, not the suite, that saw it.
   useEffect(() => {
     vivoRef.current = true;
-    const alCerrarLaPestana = () => { soltarEnSilencio(true); };
+    const alCerrarLaPestana = () => { takeGenerationRef.current += 1; soltarEnSilencio(true); };
     window.addEventListener('beforeunload', alCerrarLaPestana);
     return () => {
       window.removeEventListener('beforeunload', alCerrarLaPestana);
       vivoRef.current = false;
+      takeGenerationRef.current += 1;
       soltarEnSilencio(false);
     };
   }, [soltarEnSilencio]);
@@ -232,11 +249,12 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
   }
 
   async function tomar(allowBusy = false) {
-    if (problema !== undefined || pendiente || tomandoRef.current) return;
+    if (problema !== undefined || pendiente || tomandoRef.current || escrituraBloqueada) return;
     tomandoRef.current = true;
     const escrito = motivo.trim();
     setError(undefined);
     setPerdido(false);
+    let postedGeneration: number | undefined;
     try {
       // A writable session already on screen is REUSED: asking for a second one returns a grant the
       // workspace refuses to adopt, and that refusal is what made the second click do nothing.
@@ -263,16 +281,32 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
         return;
       }
       setFase('tomando');
+      postedGeneration = takeGenerationRef.current;
+      const revokedGeneration = revokedGenerationRef.current;
+      const owner = dueno(escribible);
+      const takeApi = apiRef.current;
       const tomado = await tomarControlDeTui(
-        escribible.session_id, dueno(escribible), escrito, apiRef.current, allowBusy,
+        escribible.session_id, owner, escrito, takeApi, allowBusy,
       );
-      porDevolverRef.current = { sessionId: escribible.session_id, owner: dueno(escribible) };
+      const current = grantRef.current;
+      const sameOwner = current?.session_id === escribible.session_id && current.request_id === owner.request_id
+        && current.owner_generation === owner.owner_generation && current.owner_token === owner.owner_token;
+      if (!sigueVivo() || postedGeneration !== takeGenerationRef.current || !sameOwner
+        || estadoRef.current === 'closed' || estadoRef.current === 'error') {
+        if (revokedGeneration === revokedGenerationRef.current) {
+          void devolverControlDeTui(escribible.session_id, owner, takeApi).catch(() => undefined);
+        }
+        return;
+      }
+      porDevolverRef.current = { sessionId: escribible.session_id, owner };
       recordarCsrf();
       setReintentable(false);
       setArriendo(tomado);
     } catch (fallo) {
-      setError(explicar(fallo));
-      setReintentable(true);
+      if (!sigueVivo() || (postedGeneration !== undefined && postedGeneration !== takeGenerationRef.current)) return;
+      const explicada = explicar(fallo);
+      setError(explicada);
+      setReintentable(canRetryTake(explicada));
     } finally {
       tomandoRef.current = false;
       if (sigueVivo()) setFase('reposo');
@@ -343,6 +377,9 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
         </>
       ) : (
         <>
+          {grant?.target.mode === WRITABLE_TUI_MODE ? (
+            <p className="pty-control-pista">Esta TUI está en solo lectura. Cambiar de pestaña devuelve el control; para usar el teclado, tomalo de nuevo.</p>
+          ) : null}
           <label className="pty-control-motivo" htmlFor="pty-control-motivo">
             Motivo de la toma (lo escribís vos y es lo único que queda en la auditoría)
             <textarea
@@ -363,13 +400,13 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
           <button
             className="button small primary pty-control-tomar"
             type="button"
-            disabled={problema !== undefined || pendiente || pidiendoSesion}
-            title={problema}
+            disabled={problema !== undefined || pendiente || pidiendoSesion || escrituraBloqueada}
+            title={escrituraBloqueada ? error.titulo : problema}
             onClick={() => void tomar()}
           >
             <KeyRound size={14} aria-hidden="true" /> {pendiente
               ? ETIQUETA_DE_FASE[fase]
-              : reintentable ? 'Reintentar la toma' : 'Tomar el control'}
+              : escrituraBloqueada ? 'Escritura no disponible' : reintentable ? 'Reintentar la toma' : 'Tomar el control'}
           </button>
           {error?.codigo === 'agent_busy' ? (
             <button

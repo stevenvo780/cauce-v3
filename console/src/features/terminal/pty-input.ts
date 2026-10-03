@@ -21,6 +21,7 @@ export function queueInput(
   data: string,
   onFlood: (message: string, code: number) => void,
 ): void {
+  if (entry.view.state !== 'open') return;
   if (entry.readOnly) {
     if (!esRespuestaTecnicaDelTerminal(data) || entry.socket?.readyState !== WebSocket.OPEN) return;
     entry.socket.send(JSON.stringify({ type: 'terminal_response', data }));
@@ -41,7 +42,7 @@ export function queueInput(
     const chunks = entry.inputChunks;
     entry.inputChunks = [];
     entry.inputBytes = 0;
-    if (chunks.length === 0 || entry.socket?.readyState !== WebSocket.OPEN) return;
+    if (chunks.length === 0 || entry.readOnly || entry.view.state !== 'open' || entry.socket?.readyState !== WebSocket.OPEN) return;
 
     let batch: string[] = [];
     let batchBytes = 0;

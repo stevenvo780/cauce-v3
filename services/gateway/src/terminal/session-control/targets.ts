@@ -45,6 +45,8 @@ function terminalTargetDenialReason(denial: TerminalDenial | undefined, target: 
       return `no_grant_for_operator: no hay concesión en grants.json para tu operador sobre ${target}`;
     case 'no_recognized_mode':
       return `no_recognized_mode: el agente PTY de ${target} no publica ningún modo que este gateway conozca`;
+    case 'writable_tui_disabled':
+      return 'writable_tui_disabled: el control de la TUI está desactivado en el gateway.';
     case 'attribution_required':
       return `attribution_required: sin identidad por persona para alcanzar ${target}`;
     default:
@@ -123,14 +125,26 @@ export function registerTerminalTargetRoute(
         }
         const reported = (observation?.presence.modes ?? ['shell']).filter(isTerminalMode);
         const modes: TerminalMode[] = [];
+        let writableTuiDisabled = false;
         if (denial === undefined) {
           for (const mode of reported) {
-            if (await grants.allowsCohort(operator.operator_id, cohort, mode, now)) modes.push(mode);
+            if (!(await grants.allowsCohort(operator.operator_id, cohort, mode, now))) continue;
+            if (mode === 'harness_rw' && config.writableTuiEnabled !== true) {
+              writableTuiDisabled = true;
+              continue;
+            }
+            modes.push(mode);
           }
-          // A missing grant row is only possible for a mode this gateway knows; no known mode is a refusal.
-          if (modes.length === 0) denial = reported.length > 0 ? 'no_grant_for_operator' : 'no_recognized_mode';
+          if (modes.length === 0) {
+            denial = writableTuiDisabled
+              ? 'writable_tui_disabled'
+              : reported.length > 0 ? 'no_grant_for_operator' : 'no_recognized_mode';
+          }
         }
         const usable = denial === undefined;
+        const availabilityReason = writableTuiDisabled
+          ? ` ${terminalTargetDenialReason('writable_tui_disabled', `${placement.tenant_id}:${placement.alias}`)}`
+          : '';
         items.push({
           tenant_id: placement.tenant_id,
           alias: placement.alias,
@@ -150,7 +164,7 @@ export function registerTerminalTargetRoute(
           last_seen: observation?.observed_at ?? null,
           authorized: usable,
           reason: usable
-            ? terminalTargetStateReason(resolution, placement.container)
+            ? terminalTargetStateReason(resolution, placement.container) + availabilityReason
             : terminalTargetDenialReason(denial, `${placement.tenant_id}:${placement.alias}`)
         });
       }

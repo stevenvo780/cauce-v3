@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, vi } from 'vitest';
+import { Terminal } from '@xterm/xterm';
 import {
   attachPtySession,
   closePtySession,
@@ -28,6 +29,7 @@ let restore: () => void;
 beforeEach(() => { restore = installStubWebSocket(); });
 afterEach(() => {
   closePtySession(SESSION);
+  vi.useRealTimers();
   vi.restoreAllMocks();
   restore();
 });
@@ -45,6 +47,85 @@ function open(options: { sessionId?: string; ticket?: string; readOnly?: boolean
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
+
+it('focuses a visible terminal only after readiness and an explicit writable transition', () => {
+  const focus = vi.spyOn(Terminal.prototype, 'focus');
+  const socket = open({ readOnly: true });
+  const wrapper = document.createElement('div');
+  wrapper.className = 'pty-mount';
+  document.body.append(wrapper);
+  vi.spyOn(wrapper, 'getClientRects').mockReturnValue([{}] as unknown as DOMRectList);
+  attachPtySession(SESSION, wrapper);
+  expect(focus).not.toHaveBeenCalled();
+  socket.emitControl(ready());
+  expect(focus).not.toHaveBeenCalled();
+  ensurePtySession({ sessionId: SESSION, ticket: 'single-use-ticket', websocketPath: '/v3/console/terminal/ws', readOnly: false });
+  expect(focus).toHaveBeenCalledOnce();
+  wrapper.remove();
+});
+
+it('does not steal form focus when a visible writable terminal receives ready again', () => {
+  const socket = open();
+  const wrapper = document.createElement('div');
+  wrapper.className = 'pty-mount';
+  const form = document.createElement('input');
+  document.body.append(wrapper, form);
+  vi.spyOn(wrapper, 'getClientRects').mockReturnValue([{}] as unknown as DOMRectList);
+  attachPtySession(SESSION, wrapper);
+  socket.emitControl(ready());
+  form.focus();
+  const focus = vi.spyOn(Terminal.prototype, 'focus');
+  socket.emitControl(ready());
+  expect(focus).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(form);
+  wrapper.remove();
+  form.remove();
+});
+
+it('detaching and reattaching drops input queued by the previous view', () => {
+  vi.useFakeTimers();
+  const socket = open();
+  socket.emitControl(ready());
+  const wrapper = document.createElement('div');
+  document.body.append(wrapper);
+  attachPtySession(SESSION, wrapper);
+  ptySessionType(SESSION, 'stale');
+  detachPtySession(SESSION);
+  attachPtySession(SESSION, wrapper);
+  vi.advanceTimersByTime(8);
+  expect(socket.framesOfType('input')).toEqual([]);
+  ptySessionType(SESSION, 'fresh');
+  vi.advanceTimersByTime(8);
+  expect(socket.framesOfType('input')).toEqual([{ type: 'input', data: 'fresh' }]);
+  wrapper.remove();
+});
+
+it('an input refusal drops pending input without replaying it after another ready', () => {
+  vi.useFakeTimers();
+  const socket = open();
+  socket.emitControl(ready());
+  ptySessionType(SESSION, 'stale');
+  socket.emitControl({ type: 'input_refused', reason: 'control_not_held' });
+  socket.emitControl(ready());
+  vi.advanceTimersByTime(8);
+  expect(socket.framesOfType('input')).toEqual([]);
+  ptySessionType(SESSION, 'fresh');
+  vi.advanceTimersByTime(8);
+  expect(socket.framesOfType('input')).toEqual([{ type: 'input', data: 'fresh' }]);
+});
+
+it('devolver y retomar el control no reproduce las teclas pendientes de la toma anterior', async () => {
+  const socket = open();
+  socket.emitControl(ready());
+  ptySessionType(SESSION, 'pendiente');
+  ensurePtySession({ sessionId: SESSION, ticket: 'single-use-ticket', websocketPath: '/v3/console/terminal/ws', readOnly: true });
+  ensurePtySession({ sessionId: SESSION, ticket: 'single-use-ticket', websocketPath: '/v3/console/terminal/ws', readOnly: false });
+  await settle();
+  expect(socket.framesOfType('input')).toEqual([]);
+  ptySessionType(SESSION, 'nueva');
+  await settle();
+  expect(socket.framesOfType('input')).toEqual([{ type: 'input', data: 'nueva' }]);
+});
 
 function ready(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {

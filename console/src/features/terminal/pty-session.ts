@@ -15,6 +15,7 @@ import {
   stopViewerHeartbeat,
 } from './pty-connection';
 import { cancelPendingInput, queueInput } from './pty-input';
+import { focusWritablePty } from './pty-focus';
 import { finishOutput, initTerminalWorker } from './pty-output';
 import {
   COLUMNAS_MINIMAS,
@@ -113,6 +114,7 @@ const EVENTOS_DE_ENTRADA = ['beforeinput', 'input', 'paste', 'drop', 'compositio
 
 /** `harness_rw` starts without the keyboard and gains it on the take: the guard is re-armable. */
 function aplicarSoloLectura(entry: PtyEntry, soloLectura: boolean): void {
+  if (soloLectura) cancelPendingInput(entry);
   entry.readOnly = soloLectura;
   entry.terminal.options.cursorBlink = !soloLectura;
   entry.terminal.attachCustomKeyEventHandler(() => !soloLectura);
@@ -140,6 +142,7 @@ export function ensurePtySession(options: PtySessionOptions): void {
     if (existing.readOnly !== (options.readOnly === true)) {
       aplicarSoloLectura(existing, options.readOnly === true);
       sendResize(existing);
+      focusWritablePty(existing);
     }
     return;
   }
@@ -254,11 +257,13 @@ export function attachPtySession(sessionId: string, wrapper: HTMLElement): void 
     entry.resizeObserver.observe(wrapper);
   }
   sendResize(entry);
+  focusWritablePty(entry);
 }
 
 export function detachPtySession(sessionId: string): void {
   const entry = entries.get(sessionId);
   if (!entry) return;
+  cancelPendingInput(entry);
   entry.resizeObserver?.disconnect();
   holder().appendChild(entry.container);
 }
