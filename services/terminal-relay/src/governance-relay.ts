@@ -1,3 +1,4 @@
+import type { GovernanceWriteTarget } from './governance-write.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
@@ -68,6 +69,7 @@ interface ReadRequest {
 type DirectoryRequest = ReadRequest;
 
 interface WriteRequest extends ReadRequest {
+  readonly expectedTarget?: GovernanceWriteTarget;
   readonly content: Buffer;
   readonly precondition: GovernanceWritePrecondition;
 }
@@ -180,7 +182,7 @@ export function parseWriteRequest(raw: string): WriteRequest | { readonly reject
   const parsed = parseObject(raw);
   if ('rejected' in parsed) return parsed;
   const source = parsed.value;
-  const allowed = new Set(['tenant_id', 'alias', 'path', 'content_base64', 'precondition']);
+  const allowed = new Set(['tenant_id', 'alias', 'path', 'content_base64', 'precondition', 'expected_target']);
   if (Object.keys(source).some((key) => !allowed.has(key))) {
     return { rejected: 'el cuerpo trae campos que este protocolo no conoce' };
   }
@@ -189,6 +191,19 @@ export function parseWriteRequest(raw: string): WriteRequest | { readonly reject
   }));
   if ('rejected' in common) return common;
 
+  let expectedTarget: GovernanceWriteTarget | undefined;
+  if (Object.hasOwn(source, 'expected_target')) {
+    const target = source.expected_target;
+    if (target === null || typeof target !== 'object' || Array.isArray(target)) {
+      return { rejected: 'expected_target debe contener generación, contenedor y ruta medidos' };
+    }
+    const fields = target as Record<string, unknown>;
+    if (Object.keys(fields).length !== 3 || typeof fields.generation !== 'string' || !fields.generation
+      || typeof fields.container_id !== 'string' || !fields.container_id || fields.path !== common.path) {
+      return { rejected: 'expected_target está incompleto o no corresponde a la ruta solicitada' };
+    }
+    expectedTarget = { generation: fields.generation, containerId: fields.container_id, path: common.path };
+  }
   const encoded = source.content_base64;
   if (typeof encoded !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
     return { rejected: 'content_base64 no es base64 canónico' };
@@ -203,11 +218,11 @@ export function parseWriteRequest(raw: string): WriteRequest | { readonly reject
   }
   const record = precondition as Record<string, unknown>;
   if (record.state === 'absent' && Object.keys(record).length === 1) {
-    return { ...common, content, precondition: { state: 'absent' } };
+    return { ...common, ...(expectedTarget === undefined ? {} : { expectedTarget }), content, precondition: { state: 'absent' } };
   }
   if (record.state === 'present' && Object.keys(record).length === 2
     && typeof record.sha256 === 'string' && SHA256_PATTERN.test(record.sha256)) {
-    return { ...common, content, precondition: { state: 'present', sha256: record.sha256 } };
+    return { ...common, ...(expectedTarget === undefined ? {} : { expectedTarget }), content, precondition: { state: 'present', sha256: record.sha256 } };
   }
   return { rejected: 'precondition debe ser absent o present con SHA-256 minúscula' };
 }
@@ -529,6 +544,7 @@ async function serveWrite(
     parsed.precondition,
     options.timeoutMs,
     abort.signal,
+    parsed.expectedTarget,
   );
   logOutcome('write', parsed, outcome);
   send(response, 200, outcome);
