@@ -8,7 +8,7 @@ import { AgentSettings } from './AgentSettings';
 import { esNegativaDePermiso } from './config-change';
 import './settings.css';
 
-export function ConfigWorkspace({ administration }: { administration: (active: boolean) => ReactNode }) {
+export function ConfigWorkspace({ administration }: { administration: (active: boolean, onReturn: () => void) => ReactNode }) {
   const [advanced, setAdvanced] = useState(false);
   const [visited, setVisited] = useState(false);
   const advancedPanel = useRef<HTMLDivElement>(null);
@@ -22,10 +22,7 @@ export function ConfigWorkspace({ administration }: { administration: (active: b
       <ConsoleAccessBoundary><ConfigOverview onAdvanced={() => { setVisited(true); setAdvanced(true); }} /></ConsoleAccessBoundary>
     </div> : null}
     {visited ? <div ref={advancedPanel} tabIndex={-1} hidden={!advanced} inert={!advanced}>
-      <button type="button" className="button secondary settings-return" onClick={() => { setAdvanced(false); }}>
-        Volver a agentes y contexto
-      </button>
-      {administration(advanced)}
+      {administration(advanced, () => { setAdvanced(false); })}
     </div> : null}
   </>;
 }

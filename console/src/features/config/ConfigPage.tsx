@@ -1,5 +1,5 @@
 import { Braces, RotateCcw, Save, SearchCheck, ShieldOff } from 'lucide-react';
-import { useMemo, useState, type SyntheticEvent } from 'react';
+import { useMemo, useState, type ReactNode, type SyntheticEvent } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
 import type {
@@ -173,6 +173,17 @@ function revisionTrasEscribir(recarga: EstadoRecarga | undefined, actual: number
 
 const PANEL_DE_AREA = 'config-area-panel';
 
+function EstadoConfigConRetorno({ onReturn, children }: { onReturn?: () => void; children: ReactNode }) {
+  if (!onReturn) return <>{children}</>;
+  return <div className="config-pagina">
+    <PageHeader eyebrow="Topología y permisos" title="Ajustes y altas"
+      description="Administración avanzada: topología, políticas y cambios versionados. El contexto se edita en el panel canónico de cada agente."
+      actions={<button type="button" className="button secondary" aria-label="Volver a agentes y contexto" onClick={onReturn}>Volver</button>}
+    />
+    {children}
+  </div>;
+}
+
   /**
    * The outcome of a write, in the channel that produced it. Each control painting its OWN slot is what keeps the raw
    * editor's notice from being read as a row action's; `data-canal` only names the channel the slot belongs to.
@@ -187,14 +198,14 @@ function Aviso({ aviso, canal }: { aviso?: ConfigMutationNotice; canal: string }
 }
 
 export function ConfigPage() {
-  return <ConfigWorkspace administration={(active) => <ConfigAdministration active={active} />} />;
+  return <ConfigWorkspace administration={(active, onReturn) => <ConfigAdministration active={active} onReturn={onReturn} />} />;
 }
 
-export function ConfigAdministration({ active = true }: { active?: boolean }) {
-  return <ConsoleAccessBoundary><ConfigPageContent active={active} /></ConsoleAccessBoundary>;
+export function ConfigAdministration({ active = true, onReturn }: { active?: boolean; onReturn?: () => void }) {
+  return <ConsoleAccessBoundary><ConfigPageContent active={active} onReturn={onReturn} /></ConsoleAccessBoundary>;
 }
 
-function ConfigPageContent({ active }: { active: boolean }) {
+function ConfigPageContent({ active, onReturn }: { active: boolean; onReturn?: () => void }) {
   const api = useApi();
   const config = useResource('configuration', () => api.getConfiguration());
   const access = useConsoleAccess();
@@ -431,12 +442,16 @@ function ConfigPageContent({ active }: { active: boolean }) {
     });
   }
 
-  if (config.loading && !config.data) return <LoadingState label="Leyendo configuración versionada…" />;
+  if (config.loading && !config.data) return <EstadoConfigConRetorno onReturn={onReturn}>
+    <LoadingState label="Leyendo configuración versionada…" />
+  </EstadoConfigConRetorno>;
   // A 403 is NOT a crash: the GET was refused for lack of `read`. See `esNegativaDePermiso` and `SinPermisoDeLectura`.
   if (config.error && !config.data) {
-    return esNegativaDePermiso(config.error)
-      ? <SinPermisoDeLectura detalle={config.error.message} />
-      : <ErrorState error={config.error} onRetry={config.reload} />;
+    return <EstadoConfigConRetorno onReturn={onReturn}>
+      {esNegativaDePermiso(config.error)
+        ? <SinPermisoDeLectura detalle={config.error.message} />
+        : <ErrorState error={config.error} onRetry={config.reload} />}
+    </EstadoConfigConRetorno>;
   }
 
   return <div className="config-pagina">
@@ -446,7 +461,10 @@ function ConfigPageContent({ active }: { active: boolean }) {
       eyebrow="Topología y permisos"
       title="Ajustes y altas"
       description="Administración avanzada: topología, políticas y cambios versionados. El contexto se edita en el panel canónico de cada agente."
-      actions={<RefreshButton onClick={config.reload} loading={config.loading} />}
+      actions={<>
+        {onReturn ? <button type="button" className="button secondary" aria-label="Volver a agentes y contexto" onClick={onReturn}>Volver</button> : null}
+        <RefreshButton onClick={config.reload} loading={config.loading} />
+      </>}
     />
 
     {/* Without permission, NOTHING is hidden: the tables look the same and the buttons stay inert with the reason
@@ -475,18 +493,8 @@ function ConfigPageContent({ active }: { active: boolean }) {
       onSelect={irAArea}
     />
 
-    {/* The area description goes open, not in a tooltip: it is the first thing to read upon entering, and hiding
-        behind a question mark exactly what orients you would repeat the defect this change is meant to fix.
-
-        Open goes ONE sentence. The rest—what explains why the tab matters—goes folded: the operator who enters
-        twenty times a day already knows it and was paying for the scroll twenty times. It is a `<details>` on purpose,
-        not a tooltip: the folded content can be read with the keyboard, can be copied, and does not depend on the mouse. */}
     {activa ? <PageShell kind="documento">
       <p className="config-area-descripcion">{activa.area.descripcion}</p>
-      <details className="config-detalle">
-        <summary>Qué es exactamente «{activa.area.label}»</summary>
-        <p>{activa.area.detalle}</p>
-      </details>
     </PageShell> : null}
 
     <div className="config-area" id={PANEL_DE_AREA} role="tabpanel" aria-label={activa?.area.label ?? 'Configuración'}>
@@ -591,6 +599,13 @@ function ConfigPageContent({ active }: { active: boolean }) {
     </details>
       </> : null}
     </div>
+    {activa ? <PageShell kind="documento">
+      <details className="config-detalle">
+        <summary>Qué es exactamente «{activa.area.label}»</summary>
+        <p>{activa.area.detalle}</p>
+      </details>
+    </PageShell> : null}
+
   </div>;
 }
 

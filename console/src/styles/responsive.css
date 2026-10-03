@@ -46,7 +46,7 @@ input, select, textarea { min-width: 0; }
   .topbar { padding: 0 var(--space-3); }
   /* Sin rótulo el botón medía 30x22: por debajo del mínimo de 24x24 que pide un dedo. */
   .theme-option { min-width: var(--space-5); min-height: var(--space-5); justify-content: center; }
-  main { padding: 29px 15px calc(var(--nav-inferior-alto) + 16px + env(safe-area-inset-bottom, 0px)); }
+  main { padding: 14px 15px calc(var(--nav-inferior-alto) + 16px + env(safe-area-inset-bottom, 0px)); }
   .page-header { align-items: start; flex-direction: column; }
   .metrics-grid, .metrics-grid.three, .explain-grid, .trust-grid { grid-template-columns: 1fr; }
   .auto-refresh-toggle { margin-top: var(--space-1); }

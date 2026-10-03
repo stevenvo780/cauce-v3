@@ -249,9 +249,15 @@ it('FAMILIA 8: la orientación de cada pestaña es UNA frase, y lo que sobra que
   expect(frase).toHaveTextContent('Los clientes, sus salas y quién está dentro de cada sala.');
   expect(frase?.textContent.length ?? 999).toBeLessThanOrEqual(90);
 
-  const plegado = document.querySelector('.config-detalle');
+  const area = document.querySelector('.config-area');
+  expect(frase?.compareDocumentPosition(area as Node) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  const plegado = [...document.querySelectorAll('.config-detalle')].find((node) => (
+    node.querySelector('summary')?.textContent.includes('Qué es exactamente «Espacios y miembros»')
+  ));
+  expect(area?.compareDocumentPosition(plegado as Node) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   expect(plegado).not.toBeNull();
   expect(plegado).not.toHaveAttribute('open');
+  expect(plegado).toHaveClass('config-detalle');
 
   expect(plegado).toHaveTextContent(/un alias sin membership habilitada no recibe entregas/i);
 
@@ -259,7 +265,9 @@ it('FAMILIA 8: la orientación de cada pestaña es UNA frase, y lo que sobra que
   expect(plegado).toHaveAttribute('open');
 
   await irA(user, PERMISOS);
-  expect(document.querySelector('.config-detalle')).toHaveTextContent(/todo empieza denegado/i);
+  expect([...document.querySelectorAll('.config-detalle')].find((node) => (
+    node.querySelector('summary')?.textContent.includes('Qué es exactamente «Permisos»')
+  ))).toHaveTextContent(/todo empieza denegado/i);
 });
 
 it('FAMILIA 8: el permiso se dice en castellano, sin perder el identificador que hay que citar', async () => {
