@@ -121,7 +121,7 @@ afterAll(async () => {
 
 describe('login E2E de la consola contra PostgreSQL real (base dev aislada y efímera)', () => {
   it('la cuenta se creó por el camino de producción y sin imprimir la contraseña', () => {
-    expect(provisionStdout).toContain('cuenta creada');
+    expect(provisionStdout.split(/\r?\n/u)).toContain(`cuenta guardada: ${CONSOLE_EMAIL}`);
     expect(provisionStdout).not.toContain(CONSOLE_PASSWORD);
   });
 
