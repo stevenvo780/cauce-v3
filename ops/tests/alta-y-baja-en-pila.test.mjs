@@ -9,6 +9,11 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  createTestComposeStack,
+  teardownTestComposeStack,
+  withTestComposeStack,
+} from './test-compose-stack.mjs';
 
 const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const COMPOSE = path.join(ops, 'compose.test.yaml');
@@ -18,6 +23,7 @@ const ALIAS = `t030-${process.pid}-${Date.now().toString(36)}`;
 const INSTANCE = 't030-pila';
 const READY_TIMEOUT_MS = 90_000;
 const MIGRATOR_TIMEOUT_MS = 300_000;
+const stack = await createTestComposeStack();
 
 assert.match(ALIAS, /^[a-z0-9-]{1,63}$/u, 'alias de prueba con charset seguro para SQL');
 
@@ -26,8 +32,9 @@ function quote(value) {
 }
 
 function compose(args, { timeoutMs = 60_000 } = {}) {
-  const result = spawnSync('docker', ['compose', '-f', COMPOSE, ...args], {
+  const result = spawnSync('docker', ['compose', '-f', COMPOSE, '-f', stack.overrideFile, ...args], {
     encoding: 'utf8',
+    env: stack.environment,
     timeout: timeoutMs,
   });
   if (result.error) throw new Error(`docker compose ${args.join(' ')}: ${result.error.message}`);
@@ -85,7 +92,8 @@ function claimSql(epoch) {
 }
 
 let stackReady = false;
-try {
+process.stdout.write(`compose test project=${stack.projectName} started_at=${stack.startedAt} published_ports=none\n`);
+await withTestComposeStack(stack, async () => {
   await ensureStack();
   stackReady = true;
 
@@ -137,14 +145,31 @@ SELECT alias, lease_until > now() AS lease_activo FROM connection_leases WHERE a
   assert.equal(expira[1], `${ALIAS}|f`, 'tras la baja no debe quedar lease activo');
 
   process.stdout.write(`alta/baja en pila ok: alias ${ALIAS} reclamó habilitado y rechazó deshabilitado en transacción\n`);
-} finally {
+}, async () => {
+  const failures = [];
   if (stackReady) {
-    const cleanup = compose(['exec', '-T', 'postgres', 'psql',
-      '-U', 'cauce_test', '-d', 'cauce_test', '-At', '-c',
-      `DELETE FROM connection_leases WHERE tenant_id = ${quote(TENANT)} AND alias = ${quote(ALIAS)};
+    try {
+      const cleanup = compose(['exec', '-T', 'postgres', 'psql',
+        '-U', 'cauce_test', '-d', 'cauce_test', '-At', '-c',
+        `DELETE FROM connection_leases WHERE tenant_id = ${quote(TENANT)} AND alias = ${quote(ALIAS)};
 DELETE FROM memberships WHERE tenant_id = ${quote(TENANT)} AND alias = ${quote(ALIAS)};
 DELETE FROM agents WHERE tenant_id = ${quote(TENANT)} AND alias = ${quote(ALIAS)};`]);
-    if (cleanup.status !== 0) process.stderr.write(`aviso: limpieza de ${ALIAS} falló:\n${cleanup.stderr}`);
+      if (cleanup.status !== 0) throw new Error(`limpieza SQL de ${ALIAS}: ${cleanup.stderr}`);
+    } catch (error) {
+      failures.push(error);
+    }
   }
-  // La pila queda levantada a propósito: es compartida con otras suites.
-}
+  try {
+    const resources = await teardownTestComposeStack(stack, {
+      compose: (args, { timeoutMs }) => compose(args, { timeoutMs }),
+      docker: (args, { timeoutMs }) => spawnSync('docker', args, {
+        encoding: 'utf8', env: stack.environment, timeout: timeoutMs,
+      }),
+    });
+    process.stdout.write(`compose cleanup project=${stack.projectName} finished_at=${new Date().toISOString()} resources=${JSON.stringify(resources)}\n`);
+  } catch (error) {
+    failures.push(error);
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, `falló la limpieza de ${stack.projectName}`);
+});
