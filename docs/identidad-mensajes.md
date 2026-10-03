@@ -42,13 +42,41 @@ humano dirigido al mismo alias técnico de una salida del agente. El alias sigue
 disponible como identidad técnica. El historial previo no se reescribe: la
 captura original por sí sola no demuestra qué persona escribió cada fila.
 
-## Trabajo pendiente para perfiles, cuentas y representación
+## Cuentas humanas y alcance del candidato
 
-- La tabla de usuarios ya admite cuentas separadas; esta corrección distingue su
-  autoría aunque compartan alias técnico. No crea cuentas ni cambia permisos
-- Faltan una experiencia de perfiles/cambio de cuenta y una política explícita de
-  pertenencia y permisos por sujeto humano antes de tratarla como aislamiento
-  completo entre cuentas que hoy comparten el mismo alias
+`console_users` ya admite personas con identificadores, nombres, contraseñas
+derivadas y roles propios. El proveedor por contraseña relee la cuenta activa
+en cada petición y deriva de ella la identidad humana y el tenant/alias técnico.
+El alta y mantenimiento existentes corresponden al dueño; esta fase no crea
+cuentas, credenciales, membresías ni permisos y no añade otro proveedor.
+
+El candidato implementa **Cuenta** con el nombre humano y el detalle técnico,
+y **Cambiar cuenta** mediante los endpoints de cierre e inicio existentes.
+El cierre se confirma antes de reabrir la aplicación privada. Un cambio de
+sesión descarta borradores, permisos y respuestas pendientes de la cuenta
+anterior. Esto describe el código candidato; no acredita su publicación ni
+despliegue. El proveedor externo puede volver a elegir la misma cuenta.
+
+Dos personas con el mismo tenant/alias tienen autorías y scopes de intención
+distintos, pero comparten el ámbito técnico de lectura y autorización existente.
+Esto puede representar colaboración deliberada: el perfil humano no introduce
+por sí solo privacidad entre esas personas. Los filtros actuales siguen
+aplicándose por tenant, alias, participación y ACL.
+
+La regresión `tests/unit/gateway-human-accounts.test.ts` enlaza dos logins del
+proveedor real con sesión, acceso, prepare, publicación y confirmación del
+gateway. Comprueba nombre/sujeto humano, cambio de sesión, relectura del perfil,
+rol por cuenta, separación de actores de servicio y filtros técnicos. Usa sólo
+usuarios y repositorio en memoria con `app.inject`; no prueba PostgreSQL,
+aprovisionamiento real, navegador ni aislamiento durable nuevo. Las regresiones
+de `AuthGate.account-lifecycle.test.tsx`, `auth-session.test.ts` y
+`client.auth-race.test.ts` cubren por separado borradores y respuestas pendientes.
+
+## Decisiones pendientes para representación y privacidad
+
+- Si se necesita privacidad entre personas que comparten tenant/alias, el dueño
+  debe decidir qué se comparte y qué es privado antes de definir pertenencia,
+  permisos o almacenamiento por sujeto humano. No se cambia esa frontera aquí
 - Hablar en nombre de otro actor requiere un contrato propio: selección limitada
   a delegaciones vigentes autorizadas por servidor, tenant derivado de la sesión,
   comprobación de alcance en prepare y publish y registro tanto del sujeto humano
