@@ -532,7 +532,7 @@ it('los datos tardíos del chat no quitan el foco de la cuenta abierta', async (
   try {
     renderWithApi(<App />);
     await userEvent.click(await screen.findByRole('button', { name: /^Cuenta de/ }));
-    const heading = screen.getByRole('heading', { name: 'Cuenta y apariencia' });
+    const heading = await screen.findByRole('heading', { name: 'Cuenta y apariencia' });
     expect(heading).toHaveFocus();
     release();
     await screen.findByRole('heading', { name: 'argos', level: 2 });

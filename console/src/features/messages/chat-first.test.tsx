@@ -198,7 +198,7 @@ it('lee y presenta la respuesta canónica solo bajo la raíz propia y el deliver
 
 it('actualiza el recibo sin estado con el terminal del feed y relee una vez en gateway legado', async () => {
   const user = userEvent.setup();
-  const input = { ...props(), publisherSubject: 'Steven:operator' };
+  const input = { ...props(), publisherSubject: 'Steven:operator', publisherHumanSubject: `human:${'a'.repeat(64)}` };
   const agent = input.agent;
   const messageId = '10000000-0000-4000-8000-000000000001';
   const deliveryId = '20000000-0000-4000-8000-000000000002';
@@ -227,7 +227,7 @@ it('actualiza el recibo sin estado con el terminal del feed y relee una vez en g
 
   view.rerender(<ApiProvider api={testApi}><ConversationPane {...input} page={{ items: [{
     message_id: messageId, tenant_id: 'Steven', actor_alias: 'operator', room_id: 'grp.steven',
-    author: { kind: 'human', subject_id: input.publisherSubject, display_name: 'Operador' },
+    author: { kind: 'human', subject_id: input.publisherHumanSubject, display_name: 'Operador' },
     body_preview: 'consultar respuesta', created_at: '2026-10-03T17:00:00Z',
     deliveries: [{ delivery_id: deliveryId, recipient_tenant: agent.tenantId, recipient_alias: agent.alias, status: 'done' }],
   }] }} /></ApiProvider>);

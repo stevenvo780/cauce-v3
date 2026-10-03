@@ -176,7 +176,7 @@ function MessagesPageContent({ params }: MessagesPageProps) {
               for zeus would stay in kant's box — and the effect that opens the thread at the
               bottom does not run again, because the component is not remounted.
             */
-            key={`${accesoVerificado?.subject ?? ''}:${seleccionado.id}`}
+            key={`${accesoVerificado?.human_subject ?? accesoVerificado?.subject ?? ''}:${seleccionado.id}`}
             agent={seleccionado}
             page={messages.data}
             loading={messages.loading}
@@ -184,6 +184,7 @@ function MessagesPageContent({ params }: MessagesPageProps) {
             route={operatorRouteForAgent(topologiaVerificada, accesoVerificado, seleccionado)}
             canPublish={canPublish}
             publisherSubject={accesoVerificado?.subject}
+            publisherHumanSubject={accesoVerificado?.human_subject}
             salud={salud[seleccionado.id]}
             queueError={queues.error ?? activity.error}
             onQueueReload={() => { void queues.reload(); void activity.reload(); }}
