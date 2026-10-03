@@ -99,6 +99,15 @@ function rutaDeclaradaAntes(source: string, hasta: number, nombre: string): stri
   return ultima;
 }
 
+function helperRouteBefore(source: string, before: number, expression: string): string | undefined {
+  const name = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/.exec(expression)?.[1];
+  if (name === undefined) return undefined;
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`function\\s+${escapedName}\\s*\\([^)]*\\)\\s*(?::\\s*string)?\\s*\\{\\s*return\\s*([\`'"])([^\`'"]*)\\1\\s*;?\\s*\\}`, 'g');
+  const matches = [...source.slice(0, before).matchAll(pattern)];
+  return matches.length === 1 ? matches[0]?.[2] : undefined;
+}
+
 function esParametroDeLaFuncion(source: string, index: number, identificador: string): boolean {
   const firma = source.slice(Math.max(0, index - 240), index);
   const abre = firma.lastIndexOf('(');
@@ -121,16 +130,25 @@ function extractClientCalls(source: string): ApiCall[] {
     const args = callArguments(source, openParen);
     const pathMatch = /^\s*[`'"]([^`'"]*)[`'"]/.exec(args);
     let ruta = pathMatch?.[1];
+    if (ruta?.startsWith('${')) {
+      const leading = /^\$\{([^}]+)\}([\s\S]*)$/.exec(ruta);
+      const prefix = leading?.[1] === undefined ? undefined : helperRouteBefore(source, index, leading[1]);
+      ruta = prefix === undefined ? undefined : `${prefix}${leading?.[2] ?? ''}`;
+    }
     if (ruta === undefined) {
       // `callArguments` returns the interior WITHOUT the closing parenthesis, so the name may
       // end the string: without the `$` the match failed and the warning fired anyway.
-      const identificador = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:,|\)|$)/.exec(args)?.[1];
-      ruta = identificador === undefined ? undefined : rutaDeclaradaAntes(source, index, identificador);
+      const primerArgumento = /^\s*([\s\S]*?)(?:,|$)/.exec(args)?.[1]?.trim() ?? '';
+      ruta = helperRouteBefore(source, index, primerArgumento);
+      const identificador = /^([A-Za-z_$][A-Za-z0-9_$]*)$/.exec(primerArgumento)?.[1];
       if (ruta === undefined) {
-        // A pass-through carries no route: the concrete one is at its callers, also read here.
-        if (identificador !== undefined && esParametroDeLaFuncion(source, index, identificador)) continue;
-        sinResolver.push(args.slice(0, 60).replace(/\s+/g, ' '));
-        continue;
+        ruta = identificador === undefined ? undefined : rutaDeclaradaAntes(source, index, identificador);
+        if (ruta === undefined) {
+          // A pass-through carries no route: the concrete one is at its callers, also read here.
+          if (identificador !== undefined && esParametroDeLaFuncion(source, index, identificador)) continue;
+          sinResolver.push(args.slice(0, 60).replace(/\s+/g, ' '));
+          continue;
+        }
       }
     }
     if (!ruta.startsWith('/v3/')) continue;
@@ -226,9 +244,19 @@ describe('console API surface matches the gateway routing table', () => {
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/agents/1/1/directive' });
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/documents' });
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/perfil' });
+    expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/context/repository' });
+    expect(calls).toContainEqual({ method: 'POST', path: '/v3/console/tenants/1/agents/1/context/repository/preview' });
+    expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/context/repository/inspect?1' });
     expect(calls.map((call) => call.path)).not.toContain('/v3/console/topology/access');
 
     expect(await unroutedPaths(calls)).toEqual([]);
+  });
+
+  it.each([
+    'request(unknownRoute(tenantId, alias));',
+    'request(`${unknownRoute(tenantId, alias)}/preview`, { method: \'POST\' });',
+  ])('rejects an unresolved helper instead of omitting its route: %s', (source) => {
+    expect(() => extractClientCalls(source)).toThrow('el extractor no supo sacar la ruta');
   });
 
   it('serves every route the MSW development mock declares', async () => {
