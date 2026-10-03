@@ -3,7 +3,7 @@ import { randomBytes, randomUUID, X509Certificate } from 'node:crypto';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request } from 'node:https';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { TLSSocket } from 'node:tls';
 import { promisify } from 'node:util';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
@@ -50,13 +50,37 @@ function db(): TestDatabase {
   return database;
 }
 
-function assertLocalDatabase(): void {
+async function assertLocalDatabase(): Promise<void> {
   if (process.env.CAUCE_TEST_DATABASE_URL !== undefined) {
     throw new Error('this suite rejects external database URLs and requires its own disposable container');
   }
-  if (process.env.CAUCE_TEST_DOCKER_NETWORK || process.env.DOCKER_CONTEXT
+  if (process.env.DOCKER_CONTEXT
     || (process.env.DOCKER_HOST && !process.env.DOCKER_HOST.startsWith('unix://'))) {
-    throw new Error('this suite requires local Docker without network/context overrides');
+    throw new Error('this suite requires local Docker without context or remote host overrides');
+  }
+  const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
+  const owner = process.env.CAUCE_TEST_DOCKER_NETWORK_OWNER;
+  if (network === undefined) {
+    if (owner !== undefined) throw new Error('fixture network owner requires an explicit network');
+    return;
+  }
+  if (!network || !owner || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(owner)) {
+    throw new Error('fixture network requires an explicit UUIDv4 owner');
+  }
+  let inspected: unknown;
+  try {
+    const { stdout } = await execute('docker', ['network', 'inspect', '--format', '{{json .}}', '--', network], { timeout: 5_000 });
+    inspected = JSON.parse(stdout) as unknown;
+  } catch { throw new Error('fixture network inspection failed'); }
+  if (typeof inspected !== 'object' || inspected === null || Array.isArray(inspected)) {
+    throw new Error('invalid fixture network inspection');
+  }
+  const info = inspected as Record<string, unknown>;
+  const labels = info.Labels;
+  if (info.Driver !== 'bridge' || info.Scope !== 'local' || info.Internal !== false
+    || typeof labels !== 'object' || labels === null || Array.isArray(labels)
+    || (labels as Record<string, unknown>)['cauce.test.owner'] !== owner) {
+    throw new Error('fixture network must be a local bridge owned by this test run');
   }
 }
 
@@ -100,7 +124,7 @@ async function closeSuite(): Promise<void> {
   }
   consoleApp = undefined; agentApp = undefined; database = undefined; directory = undefined;
   cookies.clear();
-  if (failures.length) throw new Error('fixture teardown failed; inspect local disposable resources');
+  if (failures.length) throw new AggregateError(failures, 'fixture teardown failed; inspect local disposable resources');
 }
 
 async function startSuite(): Promise<void> {
@@ -119,9 +143,16 @@ async function startSuite(): Promise<void> {
         cert: await readFile(join(directory, 'server.pem')), requestCert: true, rejectUnauthorized: true } });
     agentUrl = await agentApp.listen({ host: '127.0.0.1', port: 0 });
   } catch (error) {
-    await closeSuite();
+    try { await closeSuite(); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'fixture setup and teardown failed'); }
     throw error;
   }
+}
+
+function consoleCliEnvironment(url: string, password: string): NodeJS.ProcessEnv {
+  if (!directory) throw new Error('ephemeral fixture directory is not ready');
+  return { PATH: dirname(process.execPath), TMPDIR: directory, NODE_ENV: 'test',
+    DATABASE_URL: url, CAUCE_CONSOLE_USER_PASSWORD: password };
 }
 
 async function cookiePasswordAuth(account: Account): Promise<string> {
@@ -129,9 +160,9 @@ async function cookiePasswordAuth(account: Account): Promise<string> {
   const password = randomBytes(32).toString('base64url');
   const email = `${account}@canonical.test`;
   try {
-    await execute(join(process.cwd(), 'node_modules/.bin/tsx'), ['services/gateway/src/console-user-cli.ts',
+    await execute(process.execPath, ['--import', import.meta.resolve('tsx'), 'services/gateway/src/console-user-cli.ts',
       '--email', email, '--name', `Canonical ${account}`, '--role', role, '--tenant', identity.tenant, '--alias', identity.alias],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: db().url, CAUCE_CONSOLE_USER_PASSWORD: password }, timeout: 30_000 });
+    { cwd: process.cwd(), env: consoleCliEnvironment(db().url, password), timeout: 30_000 });
   } catch { throw new Error('disposable console account provisioning failed'); }
   const login = await fetch(`${consoleUrl}/v3/auth/login`, { method: 'POST',
     headers: { 'content-type': 'application/json', origin: consoleUrl }, body: JSON.stringify({ email, password }) });
@@ -152,7 +183,7 @@ async function cookiePasswordAuth(account: Account): Promise<string> {
 }
 
 beforeEach(async ({ skip }) => {
-  assertLocalDatabase();
+  await assertLocalDatabase();
   if (!setup) {
     await requirement.skipIfUnavailable(skip);
     setup = startSuite();
