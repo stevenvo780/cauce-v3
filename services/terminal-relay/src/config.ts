@@ -1,6 +1,7 @@
 /** Terminal relay configuration. Everything is a path or a bound: the relay holds no secret of
  * its own beyond the gateway bearer token it reads from disk at call time. */
 
+import { isIP } from 'node:net';
 import { booleanEnv, integerEnv, portEnv, requiredEnv } from '@cauce/protocol';
 import {
   CLAIM_DEADLINE_SAFETY_MARGIN_MS,
@@ -11,9 +12,10 @@ import { DEFAULT_RECORDING_MAX_BYTES } from './recording.js';
 import { isRelayInstanceId } from './relay-identity.js';
 
 export interface TerminalRelayConfig {
+  readonly listenHost: string;
   readonly browserPort: number;
   readonly agentPort: number;
-  /** Loopback-only HTTP readiness listener; never published by Compose. */
+  /** HTTP readiness listener shares listenHost; never published by Compose. */
   readonly healthPort: number;
   readonly tlsCertFile: string;
   readonly tlsKeyFile: string;
@@ -117,6 +119,10 @@ export function loadRelayConfig(environment: NodeJS.ProcessEnv = process.env): T
       'CAUCE_TERMINAL_CLAIM_LEASE_SECONDS must strictly exceed authz interval, grace, gateway timeout and takeover margin',
     );
   }
+  const listenHost = environment.CAUCE_TERMINAL_RELAY_BIND_HOST ?? '0.0.0.0';
+  if (listenHost.trim() !== listenHost || isIP(listenHost) === 0) {
+    throw new Error('CAUCE_TERMINAL_RELAY_BIND_HOST must be an IP literal without whitespace');
+  }
   const browserPort = portEnv(environment, 'CAUCE_TERMINAL_RELAY_BROWSER_PORT', DEFAULT_BROWSER_PORT);
   const agentPort = portEnv(environment, 'CAUCE_TERMINAL_RELAY_AGENT_PORT', DEFAULT_AGENT_PORT);
   const healthPort = portEnv(environment, 'CAUCE_TERMINAL_RELAY_HEALTH_PORT', DEFAULT_HEALTH_PORT);
@@ -128,6 +134,7 @@ export function loadRelayConfig(environment: NodeJS.ProcessEnv = process.env): T
   ) * 1_000;
   const recordingDir = recordingDirectory(environment);
   return {
+    listenHost,
     browserPort,
     agentPort,
     healthPort,

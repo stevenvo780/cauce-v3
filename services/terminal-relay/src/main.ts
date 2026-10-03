@@ -114,6 +114,7 @@ const browser = new BrowserLeg({
 const healthServer = createRelayHealthServer(healthState, {
   port: config.healthPort,
   metrics: () => metrics.render(),
+  host: config.listenHost,
 });
 // Governance reads share the browser-side listener: it is regular HTTP, not a WebSocket, so it
 // coexists with `BrowserLeg` (which only listens on `upgrade`) without colliding. The token is
@@ -131,10 +132,10 @@ agentServer.on('error', (error: unknown) => { logEvent('terminal_relay_agent_ser
 browserServer.on('tlsClientError', () => { logEvent('terminal_relay_console_handshake_rejected'); });
 browserServer.on('error', (error: unknown) => { logEvent('terminal_relay_browser_server_error', { error: errorLabel(error) }); });
 
-agentServer.listen(config.agentPort, '0.0.0.0', () => {
+agentServer.listen(config.agentPort, config.listenHost, () => {
   logEvent('terminal_relay_agent_listening', { port: config.agentPort });
 });
-browserServer.listen(config.browserPort, '0.0.0.0', () => {
+browserServer.listen(config.browserPort, config.listenHost, () => {
   logEvent('terminal_relay_browser_listening', { port: config.browserPort });
 });
 healthServer.on('error', (error: unknown) => {
