@@ -26,6 +26,7 @@ export interface ConsoleAuthState {
 /** Server-derived RBAC snapshot. Missing permissions are UNKNOWN, never implicitly allowed. */
 export interface ConsoleAccess {
   subject?: string | null;
+  human_subject?: string | null;
   roles?: string[] | null;
   permissions?: string[] | null;
   observed_at?: string | null;
