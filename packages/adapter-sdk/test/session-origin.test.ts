@@ -90,9 +90,12 @@ function telegramDelivery(id: string): Delivery {
 function consoleDelivery(id: string): Delivery {
   return {
     ...base(id),
+    console_human_subject: `human:${"a".repeat(64)}`,
     authenticated_context: { session_id: "sid-de-login", channel: "console" },
   };
 }
+
+const CONSOLE_HUMAN_CONVERSATION = `operator:Steven:human:${"a".repeat(64)}`;
 
 /** A delivery with no channel: there is no conversation to name, and none is invented. */
 function sinCanalDelivery(id: string): Delivery {
@@ -147,7 +150,7 @@ test("una publicación de consola se etiqueta como consola, no como Telegram", a
   assert.deepEqual((sesiones[clave] as Record<string, unknown>).origin, {
     adapter: "console",
     channel: "console",
-    conversation_id: "operator:Steven:kant",
+    conversation_id: CONSOLE_HUMAN_CONVERSATION,
   });
 });
 
@@ -204,7 +207,7 @@ test("OpenClaw mueve el pointer estable a la conversación humana real sin colap
     .map(([, value]) => value as { origin?: unknown });
   assert.deepEqual(sources.map((source) => source.origin), [
     { adapter: "telegram", channel: "telegram", conversation_id: "8981434475" },
-    { adapter: "console", channel: "console", conversation_id: "operator:Steven:kant" },
+    { adapter: "console", channel: "console", conversation_id: CONSOLE_HUMAN_CONVERSATION },
   ]);
   assert.equal(events.filter((event) => event.phase === "done").length, 2);
 });
