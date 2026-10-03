@@ -36,7 +36,7 @@ function project(detail: MessageDetail, root: CanonicalReplyRoot, tenantId: stri
     throw new Error('El servidor devolvió entregas inválidas.');
   }
   const delivery = detail.deliveries?.find((candidate) => candidate.delivery_id === root.deliveryId);
-  if (!delivery || delivery.tenant_id !== tenantId || delivery.alias !== alias) {
+  if (delivery?.tenant_id !== tenantId || delivery.alias !== alias) {
     throw new Error('La entrega del detalle no coincide con este destinatario.');
   }
   if (delivery.reply !== undefined && delivery.reply !== null && typeof delivery.reply !== 'string') {

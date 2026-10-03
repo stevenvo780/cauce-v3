@@ -223,7 +223,7 @@ it('actualiza el recibo sin estado con el terminal del feed y relee una vez en g
   const view = renderWithApi(<ConversationPane {...input} page={{ items: [] }} />);
   await user.type(screen.getByRole('textbox', { name: /Mensaje para/ }), 'consultar respuesta');
   await user.click(screen.getByRole('button', { name: 'Enviar' }));
-  await waitFor(() => expect(getMessage).toHaveBeenCalledTimes(1));
+  await waitFor(() => { expect(getMessage).toHaveBeenCalledTimes(1); });
 
   view.rerender(<ApiProvider api={testApi}><ConversationPane {...input} page={{ items: [{
     message_id: messageId, tenant_id: 'Steven', actor_alias: 'operator', room_id: 'grp.steven',
@@ -231,7 +231,7 @@ it('actualiza el recibo sin estado con el terminal del feed y relee una vez en g
     body_preview: 'consultar respuesta', created_at: '2026-10-03T17:00:00Z',
     deliveries: [{ delivery_id: deliveryId, recipient_tenant: agent.tenantId, recipient_alias: agent.alias, status: 'done' }],
   }] }} /></ApiProvider>);
-  await waitFor(() => expect(getMessage).toHaveBeenCalledTimes(2));
+  await waitFor(() => { expect(getMessage).toHaveBeenCalledTimes(2); });
   const reply = await screen.findByLabelText(`Respuesta canónica de ${agent.tenantId}:${agent.alias}`);
   expect(reply).toHaveTextContent('respuesta del gateway anterior');
   expect(reply).toHaveTextContent('no se demuestra que haya cerrado');

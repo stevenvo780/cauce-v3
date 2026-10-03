@@ -148,12 +148,11 @@ export function ConversationPane({
   const latestOwnRoot = [...hilo].reverse().find((item) => mensajePropio(item) && deliveryDelAgente(item));
   const candidateRoot = mensajeElegido
     ? selectedReplyRoot
-    : rootFromReceipt ? rootFromReceipt
-      : latestOwnRoot ? {
+    : rootFromReceipt ?? (latestOwnRoot ? {
         messageId: latestOwnRoot.message.message_id ?? '',
         deliveryId: latestOwnRoot.delivery?.delivery_id ?? '',
         status: latestOwnRoot.delivery?.status,
-      } : undefined;
+      } : undefined);
   const canonical = useCanonicalReply({ publisherSubject: replySubject, tenantId: agent.tenantId, alias: agent.alias, root: candidateRoot });
 
   /*
@@ -250,7 +249,7 @@ export function ConversationPane({
       });
 
       updateForm((current) => ({ ...current, text: current.text === draft ? '' : current.text }));
-      const receiptDeliveryId = resultado.delivery_ids?.[0];
+      const receiptDeliveryId = resultado.delivery_ids[0];
       if (resultado.message_id && receiptDeliveryId) {
         setReceiptRoot({ key: replyScopeKey, root: { messageId: resultado.message_id, deliveryId: receiptDeliveryId } });
         setMensajeElegido(undefined);

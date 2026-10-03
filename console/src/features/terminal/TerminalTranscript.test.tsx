@@ -24,6 +24,7 @@ it('adjunta el texto escapado únicamente al message y delivery que coinciden', 
   expect(reply).toHaveTextContent(canonical.reply ?? '');
   expect(reply).toHaveTextContent('Respuesta consolidada');
   expect(reply.querySelector('img')).toBeNull();
-  expect(within(document.querySelector('[data-message-id="other-root"]') as HTMLElement)
-    .queryByLabelText(/^Respuesta canónica/)).toBeNull();
+  const otherRoot = document.querySelector<HTMLElement>('[data-message-id="other-root"]');
+  if (otherRoot === null) throw new Error('Falta el artículo del otro mensaje');
+  expect(within(otherRoot).queryByLabelText(/^Respuesta canónica/)).toBeNull();
 });

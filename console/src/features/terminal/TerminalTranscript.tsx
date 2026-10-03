@@ -84,11 +84,11 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, pre
                 <Time value={message.created_at} />
               </header>
               <p>{message.body_preview ?? 'Contenido no incluido por el servidor.'}{recortado ? '…' : null}</p>
-              {canonicalReply
+              {canonicalReply && delivery !== undefined
                 && canonicalReply.messageId === message.message_id
-                && canonicalReply.deliveryId === delivery?.delivery_id
-                && canonicalReply.tenantId === delivery?.recipient_tenant
-                && canonicalReply.alias === delivery?.recipient_alias ? (
+                && canonicalReply.deliveryId === delivery.delivery_id
+                && canonicalReply.tenantId === delivery.recipient_tenant
+                && canonicalReply.alias === delivery.recipient_alias ? (
                   <section className="canonical-reply" aria-label={`Respuesta canónica de ${canonicalReply.tenantId}:${canonicalReply.alias}`} data-delivery-id={canonicalReply.deliveryId}>
                     <p className="eyebrow">Respuesta de {canonicalReply.tenantId}:{canonicalReply.alias}</p>
                     {canonicalReply.reply === undefined ? <p>Respuesta canónica no disponible en este gateway.</p>
@@ -102,7 +102,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, pre
                           : <p>Estado de la cadena no informado · no se demuestra que haya cerrado.</p>}
                     {canonicalReplyStale ? <p role="status">Dato desactualizado; la última lectura falló.</p> : null}
                     {(canonicalReply.chainOpen === undefined
-                      || (canonicalReply.chainOpen === false && !['done', 'failed', 'dead'].includes(canonicalReply.status ?? '')))
+                      || (!canonicalReply.chainOpen && !['done', 'failed', 'dead'].includes(canonicalReply.status ?? '')))
                       && onCanonicalReplyRetry
                       ? <button className="button small secondary" type="button" onClick={onCanonicalReplyRetry}>Releer respuesta</button>
                       : null}

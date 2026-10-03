@@ -20,7 +20,7 @@ it('lee una sola raíz activa, valida delivery y mantiene explícito chain_open 
     publisherSubject: 'operator-a', tenantId: 'tenant-a', alias: 'agent-a',
     root: { messageId: 'root-1', deliveryId: 'delivery-1', status: 'done' },
   }), { wrapper });
-  await waitFor(() => expect(result.current.reply?.reply).toBe('respuesta'));
+  await waitFor(() => { expect(result.current.reply?.reply).toBe('respuesta'); });
   expect(result.current.reply?.chainOpen).toBeUndefined();
   expect(getMessage).toHaveBeenCalledOnce();
   expect(getMessage).toHaveBeenCalledWith('root-1');
@@ -35,13 +35,13 @@ it('purga el dato visible al perder autorización y permite relectura explícita
     publisherSubject: 'operator-a', tenantId: 'tenant-a', alias: 'agent-a',
     root: { messageId: 'root-2', deliveryId: 'delivery-2', status: 'done' },
   }), { wrapper });
-  await waitFor(() => expect(result.current.reply?.reply).toBe('dato previo'));
+  await waitFor(() => { expect(result.current.reply?.reply).toBe('dato previo'); });
   await act(async () => { result.current.retry(); });
-  await waitFor(() => expect(result.current.accessDenied).toBe(true));
+  await waitFor(() => { expect(result.current.accessDenied).toBe(true); });
   expect(result.current.reply).toBeUndefined();
   expect(getMessage).toHaveBeenCalledTimes(2);
   await act(async () => { result.current.retry(); });
-  await waitFor(() => expect(result.current.reply?.reply).toBe('permiso recuperado'));
+  await waitFor(() => { expect(result.current.reply?.reply).toBe('permiso recuperado'); });
   expect(result.current.accessDenied).toBe(false);
   expect(getMessage).toHaveBeenCalledTimes(3);
 });
@@ -55,7 +55,7 @@ it('rechaza un detalle cuya entrega pertenece a otro tenant/alias', async () => 
     publisherSubject: 'operator-a', tenantId: 'tenant-a', alias: 'agent-a',
     root: { messageId: 'root-3', deliveryId: 'delivery-3', status: 'done' },
   }), { wrapper });
-  await waitFor(() => expect(result.current.error).toBeInstanceOf(Error));
+  await waitFor(() => { expect(result.current.error).toBeInstanceOf(Error); });
   expect(result.current.reply).toBeUndefined();
 });
 
