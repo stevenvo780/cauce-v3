@@ -11,13 +11,14 @@ beforeEach(() => {
 });
 
 describe('lo que hay por encima de la tabla de flota', () => {
-  it('el mapa llega abierto para mostrar la flota sin un paso extra', async () => {
+  it('en escritorio prioriza la tabla y deja el mapa disponible bajo su disclosure', async () => {
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
 
     const mapa = document.querySelector('details.live-mapa');
     expect(mapa).not.toBeNull();
-    expect(mapa).toHaveAttribute('open');
+    expect(mapa).not.toHaveAttribute('open');
+    expect(mapa?.textContent).toContain('Quién le habla a quién, ahora');
   });
 
   it('la leyenda también, y su contenido sigue en el documento para quien lo busque', async () => {
@@ -36,7 +37,7 @@ describe('plegar una sección no la borra del esquema de encabezados', () => {
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
 
-    expect(screen.getByRole('heading', { name: /quién le habla a quién, ahora/i })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /leyenda y referencia/i })).toBeInTheDocument();
+    expect(document.querySelector('details.live-mapa h2')?.textContent).toMatch(/quién le habla a quién, ahora/i);
+    expect(document.querySelector('details.live-leyenda h2')?.textContent).toMatch(/leyenda y referencia/i);
   });
 });

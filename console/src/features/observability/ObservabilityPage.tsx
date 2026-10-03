@@ -60,16 +60,15 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
       actions={<RefreshButton onClick={reloadAll} loading={resource.loading || relays.loading} />}
     />
     <div className="observation-line"><Activity size={16} />Observado: <Time value={data?.observed_at} /></div>
-    <div className="metrics-grid">
-      <Metric label="En línea" value={status.online} tone="positive" detail="leases vigentes" />
-      <Metric label="En cola" value={status.queued} tone="warning" detail="entregas no terminales" />
-      <Metric label="DLQ" value={status.dead_letters} tone="danger" detail="entregas muertas abiertas" />
-      <Metric label="Salida pendiente" value={status.outbox_pending} detail="despertar + relay al origen" />
-    </div>
-
     <ViewTabs tabs={TABS} active={tab} onSelect={setTab} label="Señales y auditoría" />
 
     {tab === 'senales' ? <ViewTabPanel id="senales">
+      <div className="metrics-grid">
+        <Metric label="En línea" value={status.online} tone="positive" detail="leases vigentes" />
+        <Metric label="En cola" value={status.queued} tone="warning" detail="entregas no terminales" />
+        <Metric label="DLQ" value={status.dead_letters} tone="danger" detail="entregas muertas abiertas" />
+        <Metric label="Salida pendiente" value={status.outbox_pending} detail="despertar + relay al origen" />
+      </div>
       <div className="trust-grid">
         <article><Gauge /><div><strong>Colas</strong><p>{queues?.pending ?? 'sin dato de'} pendientes, {queues?.retrying ?? 'sin dato de'} en reintento, {queues?.dead ?? 'sin dato de'} muertas. El detalle por entrega, con reinyectar y cancelar, está en <a href="/queues" onClick={(event) => { onNavClick(event, '/queues'); }}>Queues &amp; DLQ</a>.</p></div></article>
       </div>

@@ -145,12 +145,11 @@ it('la auditoría es una pestaña de esta vista y conserva todo lo que mostraba 
   const user = userEvent.setup();
   renderWithApi(<ObservabilityPage />);
 
-  // The four metrics from the same `observed_at` stay outside the tabs: they show no matter
-  // which one you look at. That is the only instant comparison in the console and hiding it
-  // would break it.
+  // The four metrics from the same `observed_at` belong to the signals view. Keeping them out
+  // of audit lets the search and event log start near the top of a mobile screen.
   await screen.findByText('En línea');
   await user.click(screen.getByRole('tab', { name: 'Auditoría' }));
-  expect(screen.getByText('En línea')).toBeInTheDocument();
+  expect(screen.queryByText('En línea')).not.toBeInTheDocument();
 
   const eventos = screen.getByRole('heading', { level: 2, name: 'Eventos' }).closest('section');
   if (!eventos) throw new Error('section not found');
@@ -172,6 +171,8 @@ it('la auditoría es una pestaña de esta vista y conserva todo lo que mostraba 
   // And the search box keeps filtering over the six fields.
   await user.type(screen.getByRole('searchbox'), 'kant');
   expect(screen.getByText('1 visibles de 2')).toBeInTheDocument();
+  await user.click(screen.getByRole('tab', { name: 'Señales y relays' }));
+  expect(screen.getByText('En línea')).toBeInTheDocument();
 });
 
 it('cruzar un relay contra su auditoría es UN clic: el trace viaja al filtro', async () => {

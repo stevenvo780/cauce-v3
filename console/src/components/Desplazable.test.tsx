@@ -1,61 +1,107 @@
-/**
- * The scroll box that becomes keyboard-reachable only while it really overflows.
- *
- * jsdom computes no geometry —every box measures 0— so the widths are stubbed here on purpose:
- * what this file pins down is the DECISION taken from a measurement, not the measurement. That the
- * measurement itself is right was checked in Chrome by `pnpm qa:layout`, whose `recorteSinTeclado`
- * budget went from 738 px stranded at 360 to 0 at all six widths.
- */
-import { render, screen } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, expect, it, vi } from 'vitest';
 import { Desplazable } from './Desplazable';
 
-const original = {
-  scrollWidth: Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth'),
-  clientWidth: Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth'),
-};
+afterEach(() => { vi.restoreAllMocks(); });
 
-function medidas(scroll: number, cliente: number) {
-  Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, get: () => scroll });
-  Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => cliente });
-}
+it('moves a focused overflowing table with horizontal keys and returns with Home', async () => {
+  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(640);
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(280);
+  const user = userEvent.setup();
+  render(<Desplazable etiqueta="Matriz de cuentas"><table><tbody><tr><td>fixture</td></tr></tbody></table></Desplazable>);
+  const scroll = screen.getByRole('group', { name: 'Matriz de cuentas' });
+  expect(scroll).toHaveAttribute('tabindex', '0');
+  expect(scroll).toHaveClass('table-wrap');
 
-afterEach(() => {
-  if (original.scrollWidth) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', original.scrollWidth);
-  if (original.clientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', original.clientWidth);
+  await user.click(scroll);
+  await user.keyboard('{End}');
+  expect(scroll.scrollLeft).toBeGreaterThan(0);
+  await user.keyboard('{Home}');
+  expect(scroll.scrollLeft).toBe(0);
 });
 
-it('cuando el contenido se sale, la caja entra en el orden de tabulación y dice cómo se llama', () => {
-  medidas(1206, 1070);
-  render(<Desplazable etiqueta="Actividad en vuelo por agente"><table><tbody><tr><td>x</td></tr></tbody></table></Desplazable>);
+it('pans a focused map vertically and horizontally without losing access to its far edge', async () => {
+  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(860);
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320);
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(640);
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(256);
+  const user = userEvent.setup();
+  render(<Desplazable etiqueta="Mapa de la flota" className="lhg-scroll"><svg /></Desplazable>);
+  const scroll = screen.getByRole('group', { name: 'Mapa de la flota' });
 
-  const region = screen.getByRole('group', { name: 'Actividad en vuelo por agente' });
-  expect(region).toHaveAttribute('tabindex', '0');
-  expect(region).toHaveClass('table-wrap');
+  await user.click(scroll);
+  await user.keyboard('{ArrowDown}');
+  expect(scroll.scrollTop).toBeGreaterThan(0);
+  await user.keyboard('{PageDown}');
+  expect(scroll.scrollTop).toBeGreaterThan(48);
+  await user.keyboard('{End}');
+  expect(scroll.scrollLeft).toBeGreaterThan(0);
 });
 
-/* Without this the tab stop would exist at every width, including the ones where the table fits:
-   a stop that scrolls nothing is noise for whoever navigates by keyboard. */
-it('🔴 CONTROL NEGATIVO: si el contenido entra, no gasta una parada de tabulación', () => {
-  medidas(1070, 1070);
-  render(<Desplazable etiqueta="Actividad en vuelo por agente"><table><tbody><tr><td>x</td></tr></tbody></table></Desplazable>);
+it('makes a vertical-only scroller keyboard reachable and moves it with PageDown', async () => {
+  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(320);
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320);
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(640);
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(256);
+  const user = userEvent.setup();
+  render(<Desplazable etiqueta="Lista vertical"><p>fixture</p></Desplazable>);
+  const scroll = screen.getByRole('group', { name: 'Lista vertical' });
+
+  await user.click(scroll);
+  const horizontalKey = new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true });
+  scroll.dispatchEvent(horizontalKey);
+  expect(horizontalKey.defaultPrevented).toBe(false);
+  const pageDown = new KeyboardEvent('keydown', { key: 'PageDown', bubbles: true, cancelable: true });
+  scroll.dispatchEvent(pageDown);
+  expect(pageDown.defaultPrevented).toBe(true);
+  expect(scroll.scrollTop).toBeGreaterThan(0);
+});
+
+it('leaves vertical page keys alone when only a table’s horizontal axis overflows', async () => {
+  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(640);
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(280);
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(256);
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(256);
+  const user = userEvent.setup();
+  render(<Desplazable etiqueta="Tabla horizontal"><table><tbody><tr><td>fixture</td></tr></tbody></table></Desplazable>);
+  const scroll = screen.getByRole('group', { name: 'Tabla horizontal' });
+  await user.click(scroll);
+
+  const arrowDown = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
+  fireEvent(scroll, arrowDown);
+  const pageDown = new KeyboardEvent('keydown', { key: 'PageDown', bubbles: true, cancelable: true });
+  fireEvent(scroll, pageDown);
+  expect(arrowDown.defaultPrevented).toBe(false);
+  expect(pageDown.defaultPrevented).toBe(false);
+});
+
+it.each([1070, 1071])('does not add a tab stop for content width %i with a 1070px viewport', (width) => {
+  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(width);
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1070);
+  render(<Desplazable etiqueta="Actividad en vuelo por agente"><p>fixture</p></Desplazable>);
 
   expect(screen.queryByRole('group')).not.toBeInTheDocument();
   expect(document.querySelector('.table-wrap')).not.toHaveAttribute('tabindex');
 });
 
-it('un desborde de un solo píxel no cuenta: es el ruido del redondeo', () => {
-  medidas(1071, 1070);
-  render(<Desplazable etiqueta="Actividad en vuelo por agente"><p>x</p></Desplazable>);
+it.each([256, 257])('does not add a tab stop for content height %i with a 256px viewport', (height) => {
+  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(320);
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320);
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(height);
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(256);
+  render(<Desplazable etiqueta="Lista vertical"><p>fixture</p></Desplazable>);
 
   expect(screen.queryByRole('group')).not.toBeInTheDocument();
+  expect(document.querySelector('.table-wrap')).not.toHaveAttribute('tabindex');
 });
 
-it('respeta la clase que le pasan, para las cajas que no son tablas', () => {
-  medidas(900, 360);
+it('preserves the custom class for overflowing content outside a table', () => {
+  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(900);
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(360);
   render(<Desplazable etiqueta="Mapa de la flota" className="lhg-scroll"><svg /></Desplazable>);
 
-  const region = screen.getByRole('group', { name: 'Mapa de la flota' });
-  expect(region).toHaveClass('lhg-scroll');
-  expect(region).not.toHaveClass('table-wrap');
+  const scroll = screen.getByRole('group', { name: 'Mapa de la flota' });
+  expect(scroll).toHaveClass('lhg-scroll');
+  expect(scroll).not.toHaveClass('table-wrap');
 });

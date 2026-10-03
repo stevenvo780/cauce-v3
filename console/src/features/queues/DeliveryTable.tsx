@@ -233,7 +233,11 @@ export function DeliveryTable({
                     value={policy.known ? policy.label : undefined}
                     motivo={item.state && !policy.known ? `El servidor mandó un estado que esta consola no conoce: ${item.state}` : undefined}
                   /></Badge></td>
-                  <td data-label="Intentos"><Unknown value={item.attempts} /> / <Unknown value={item.max_attempts} /></td>
+                  <td data-label="Intentos">
+                    <span className="intentos-ratio">
+                      <Unknown value={item.attempts} /> / <Unknown value={item.max_attempts} />
+                    </span>
+                  </td>
                   <td data-label="Disponible"><span className="inline-icon"><Clock size={15} aria-hidden="true" /><Time value={item.available_at} relativo /></span></td>
                   {/* "No error" is not UNKNOWN when the lifecycle policy says no failure is expected. */}
                   <td data-label="Último error" className="error-copy">

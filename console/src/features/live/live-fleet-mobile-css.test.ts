@@ -27,6 +27,8 @@ describe('mobile fleet layout contracts', () => {
     expect(mobileValue(graph, '.lhg-scroll', 'overflow-x')).toBe('auto');
     expect(mobileValue(graph, '.lhg-scroll', 'max-width')).toBe('100%');
     expect(mobileValue(graph, '.lhg-scroll', 'overscroll-behavior-x')).toBe('contain');
+    expect(mobileValue(graph, '.lhg-scroll', 'max-height')).toBe('15rem');
+    expect(mobileValue(graph, '.lhg-scroll', 'overflow-y')).toBe('auto');
     expect(mobileValue(graph, '.lhg-svg', 'min-width')).toBe('860px');
     expect(mobileValue(graph, '.lhg-svg', 'max-height')).toBe('none');
   });

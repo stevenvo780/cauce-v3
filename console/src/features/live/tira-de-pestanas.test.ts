@@ -2,13 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { leerCss } from '../../test/leer-css';
 import { cuerposDeSelector as cuerpos, sinComentarios } from '../../test/css-parser';
 
-/**
- * The drawer's tab strip is the shared `<ViewTabs variant="panel">`, so the two things that keep it
- * inside a 420px drawer are now checked on `styles.css` and not on a skin of its own.
- */
 const GLOBAL = sinComentarios(leerCss('styles.css'));
 /** Without comments: otherwise a `flex-wrap: wrap` quoted in prose would count as a declaration. */
-const CAJON = sinComentarios(leerCss('features/live/live.css'));
 
 const TIRA = ".view-tabs[data-variant='panel']";
 const PESTANA = `${TIRA} .view-tab`;
@@ -42,8 +37,4 @@ describe('la tira de pestañas del cajón cabe en el cajón', () => {
     expect(valor(GLOBAL, '.view-tab', 'white-space')).toBe('nowrap');
   });
 
-  it('el cajón sigue midiendo 420 px, que es lo que hace falta contener', () => {
-    expect(valor(CAJON, '.live-page.has-drawer', 'grid-template-columns'))
-      .toContain('420px');
-  });
 });

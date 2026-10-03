@@ -73,13 +73,14 @@ function QueuesPageContent() {
   }
 
   return (
-    <>
+    <div className="queues-page">
       <PageHeader
         eyebrow="Control de entregas"
         title="Colas y DLQ operativo"
-        description="Las entregas y los incidentes causales son fuentes distintas. Replay/cancel operan entregas; cerrar un incidente DLQ registra una decisión sin volver a ejecutar ni reenviar nada."
+        description="Entregas y reintentos; incidentes DLQ por separado."
         notes={
           <>
+            <p>Las entregas y los incidentes causales son fuentes distintas. Cerrar un incidente DLQ conserva su evidencia y registra una decisión; no ejecuta agentes ni reenvía mensajes.</p>
             <p><strong>Replay:</strong> {EXPLICACION_REPLAY} <strong>Cancelar:</strong> {EXPLICACION_CANCEL} Las dos piden confirmación antes de salir al servidor.</p>
             <div className="queues-permisos">
               <PermissionBadge access={verifiedAccess} permission="delivery.replay" />
@@ -87,7 +88,7 @@ function QueuesPageContent() {
             </div>
           </>
         }
-        actions={<RefreshButton onClick={resource.reload} loading={resource.loading} />}
+        actions={<RefreshButton onClick={resource.reload} loading={resource.loading} compact />}
       />
 
       {/*
@@ -97,24 +98,6 @@ function QueuesPageContent() {
         thousands and hides exactly the work that has to be rescued. Below it goes, when they
         differ, how many rows of that group DID fit here: that difference is the page truncation,
         and hiding it would promise rows the table below does not have. */}
-      <div className="metrics-grid three metricas-de-cola" role="group" aria-label="Filtrar por estado">
-        <TarjetaFiltro
-          etiqueta="Pendientes" valor={totalDelGrupo(snapshot, 'pendientes')} tono="neutral" detalle="disponibles o claimed"
-          grupo="pendientes" activo={filtro.grupo === 'pendientes'} enPagina={porGrupo.pendientes}
-          bloqueado={conFoco} onElegir={elegirGrupo}
-        />
-        <TarjetaFiltro
-          etiqueta="En retry" valor={totalDelGrupo(snapshot, 'retry')} tono="warning" detalle="backoff durable"
-          grupo="retry" activo={filtro.grupo === 'retry'} enPagina={porGrupo.retry}
-          bloqueado={conFoco} onElegir={elegirGrupo}
-        />
-        <TarjetaFiltro
-          etiqueta="Dead letters" valor={totalDelGrupo(snapshot, 'revision')} tono="danger" detalle="requieren revisión"
-          grupo="revision" activo={filtro.grupo === 'revision'} enPagina={porGrupo.revision}
-          bloqueado={conFoco} onElegir={elegirGrupo}
-        />
-      </div>
-
       <ViewTabs tabs={PESTANAS} active={pestana} onSelect={setPestana} label="Colas y DLQ operativo" />
 
       <ViewTabPanel id="entregas" hidden={pestana !== 'entregas'}>
@@ -184,6 +167,24 @@ function QueuesPageContent() {
         </Panel>
       </ViewTabPanel>
 
+      <div className="metrics-grid three metricas-de-cola" role="group" aria-label="Filtrar por estado">
+        <TarjetaFiltro
+          etiqueta="Pendientes" valor={totalDelGrupo(snapshot, 'pendientes')} tono="neutral" detalle="disponibles o claimed"
+          grupo="pendientes" activo={filtro.grupo === 'pendientes'} enPagina={porGrupo.pendientes}
+          bloqueado={conFoco} onElegir={elegirGrupo}
+        />
+        <TarjetaFiltro
+          etiqueta="En retry" valor={totalDelGrupo(snapshot, 'retry')} tono="warning" detalle="backoff durable"
+          grupo="retry" activo={filtro.grupo === 'retry'} enPagina={porGrupo.retry}
+          bloqueado={conFoco} onElegir={elegirGrupo}
+        />
+        <TarjetaFiltro
+          etiqueta="Dead letters" valor={totalDelGrupo(snapshot, 'revision')} tono="danger" detalle="requieren revisión"
+          grupo="revision" activo={filtro.grupo === 'revision'} enPagina={porGrupo.revision}
+          bloqueado={conFoco} onElegir={elegirGrupo}
+        />
+      </div>
+
       <ViewTabPanel id="dlq" hidden={pestana !== 'dlq'}>
         {dlqAccess === 'allowed' ? <OperationalDlqPanel /> : (
           <Panel title="DLQ operativo" subtitle="La reconciliación causal está separada de replay y cancelación de entregas.">
@@ -195,7 +196,7 @@ function QueuesPageContent() {
           </Panel>
         )}
       </ViewTabPanel>
-    </>
+    </div>
   );
 }
 

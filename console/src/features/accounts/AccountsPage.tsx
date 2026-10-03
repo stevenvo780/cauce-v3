@@ -55,7 +55,7 @@ function AccountsPageContent() {
     return <ErrorState error={config.error} onRetry={reloadAll} />;
   }
 
-  return <>
+  return <div className="accounts-page">
     <PageHeader
       eyebrow="Pool de suscripciones"
       title="Cuentas y cuotas"
@@ -67,7 +67,7 @@ function AccountsPageContent() {
           <PermissionBadge access={access.error ? undefined : access.data} permission="config.write" />
         </>
       }
-      actions={<RefreshButton onClick={reloadAll} loading={quotas.loading || config.loading} />}
+      actions={<RefreshButton onClick={reloadAll} loading={quotas.loading || config.loading} compact />}
     />
 
     <label className="auto-refresh-toggle">
@@ -92,5 +92,5 @@ function AccountsPageContent() {
     <ViewTabPanel id="asignaciones" hidden={tab !== 'asignaciones'}>
       <AssignmentMatrix config={config} access={access} registry={registry} />
     </ViewTabPanel>
-  </>;
+  </div>;
 }

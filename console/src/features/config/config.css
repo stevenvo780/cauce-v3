@@ -104,10 +104,16 @@
  * diferencia entre entender la pantalla y no entenderla — pero no hace falta releerla cada vez. */
 .config-area-descripcion {
   max-width: var(--measure-prose);
-  margin: 0 0 var(--space-2);
+  margin: 0 0 var(--space-1);
   color: var(--text-2);
-  font-size: var(--tipo-cuerpo);
-  line-height: 1.5;
+  font-size: var(--tipo-rotulo);
+  line-height: 1.4;
+}
+
+@media (max-width: 760px) {
+  .config-pagina > .page-header { margin-bottom: var(--space-2); padding-block: var(--space-1); gap: var(--space-1); }
+  .config-pagina .config-permiso { margin-bottom: var(--space-2); padding-block: var(--space-1); }
+  .config-pagina .view-tabs[data-variant='page'] { margin-bottom: var(--space-2); }
 }
 
 .config-detalle { max-width: var(--measure-prose); margin: 0 0 var(--space-4); }
@@ -373,4 +379,3 @@
 :root[data-theme="light"] .config-modal-fondo { background: rgb(30 45 66 / 42%); }
 :root[data-theme="light"] .alta-segmento { background: #eef3f9; }
 :root[data-theme="light"] .alta-segmento-boton[aria-pressed='true'] { background: #ffffff; box-shadow: 0 1px 2px rgb(38 63 92 / 18%); }
-

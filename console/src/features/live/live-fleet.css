@@ -173,9 +173,46 @@ table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { whi
 .live-legend-item span { color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.35; }
 
 @media (max-width: 760px) {
+  .live-page > .live-main { gap: 0; }
+  .live-page > .live-main > .page-header { margin-bottom: 0; padding-block: 0; }
+  .live-page .live-command-strip { gap: var(--space-1); }
+  .live-command-strip .live-toolbar { gap: var(--space-1) var(--space-2); padding: var(--space-1) var(--space-2); }
+  .live-command-strip .live-layer-switch { margin-bottom: 0; }
+  .live-main > .live-mapa { margin-bottom: 0; padding: 0 var(--space-1); }
+  .live-tally {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding: 0;
+    scrollbar-width: thin;
+  }
+  .live-tally:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .live-tally-rotulo,
+  .live-tally-chip { flex: none; }
   .live-legend { grid-template-columns: 1fr; }
   .activity-search input { min-width: 0; width: 100%; }
   .activity-search { display: flex; }
+  .live-toolbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--space-1) var(--space-2);
+    padding: var(--space-2);
+  }
+  .live-toolbar > .tooltip-anchor { grid-column: 1; grid-row: 1; }
+  .live-toolbar > .live-refresh-filter { grid-column: 2; grid-row: 1; }
+  .live-toolbar > button { grid-column: 3; grid-row: 1; padding: var(--space-2); white-space: nowrap; }
+  .live-toolbar > .live-age { grid-column: 1 / -1; grid-row: 2; margin: 0; }
+  .live-toolbar > .live-search { grid-column: 1 / 3; grid-row: 3; min-width: 0; }
+  .live-toolbar > .live-search input { width: 100%; min-width: 0; }
+  .live-toolbar > .live-client-filter { grid-column: 3; grid-row: 3; }
+  .live-toolbar > .notice { grid-column: 1 / -1; }
+  .live-refresh-compact { display: inline; }
+  .live-refresh-wide { display: none; }
+}
+
+.live-main > .panel:has(.activity-search) table[data-objeto-principal='tabla-de-flota']
+  > tbody > tr:not(.row-detail) > td {
+  padding-block: var(--space-2);
 }
 
 /* --- La banda de veredicto ------------------------------------------------- */
@@ -244,6 +281,7 @@ table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { whi
 /* --- Barra superior: lo que se le sumó ------------------------------------- */
 
 .live-age strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.live-refresh-compact { display: none; }
 
 .live-search {
   display: inline-flex;
@@ -426,8 +464,9 @@ table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { whi
 .live-search:focus-within { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 @media (max-width: 760px) {
+  .live-page { gap: var(--space-2); }
   .live-command-strip { gap: var(--space-2); padding-block: 0; }
-  .live-toolbar { gap: var(--space-2); padding: var(--space-2); }
+  .live-toolbar { gap: var(--space-1) var(--space-2); padding: var(--space-2); }
   .live-toolbar label { min-width: 0; max-width: 100%; }
   .live-toolbar select { min-width: 0; max-width: 100%; }
   .live-age { font-size: var(--tipo-apunte); }
@@ -436,4 +475,8 @@ table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { whi
   .fleet-verdict { gap: var(--space-2); padding: var(--space-3); }
   .fleet-verdict-phrase { font-size: 24px; }
   .live-mapa-titulo { flex: 0 1 auto; min-width: 0; }
+  .live-mapa > summary { margin-bottom: 0; }
+  .live-mapa-apunte { margin: var(--space-2) 0 0; }
+  .live-refresh-compact { display: inline; }
+  .live-refresh-wide { display: none; }
 }

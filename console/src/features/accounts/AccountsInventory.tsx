@@ -175,12 +175,6 @@ export function AccountsInventory({ config, access, quotas, registry }: {
   }
 
   return <>
-    <div className="metrics-grid">
-      <Metric label="Cuentas visibles" value={accounts.available ? accounts.items.length : null} detail={accounts.available ? 'propias más las publicadas al pool' : 'el servidor no publica el inventario de cuentas'} />
-      <Metric label="Publicadas al pool" value={pooled} detail="cuentas que su pagador prestó al pool" />
-      <Metric label="Habilitadas" value={enabled} detail="cuentas que el despacho puede usar" />
-      <Metric label="Pagadas por otro tenant" value={foreign} tone={foreign ? 'warning' : 'neutral'} detail={actorTenant ? `cuentas cuyo pagador no es ${actorTenant}` : 'el servidor no informó el tenant del actor'} />
-    </div>
 
     <Panel title="Inventario de cuentas" subtitle="Datos efectivos del servidor. Deshabilitar conserva el registro; borrar se reserva para retiro definitivo o rotación y exige confirmación más dry-run.">
       {!accounts.available
@@ -262,6 +256,13 @@ export function AccountsInventory({ config, access, quotas, registry }: {
         El snapshot nunca trae <code>credential_ref</code>. Lo único que se registra es dónde encontrar la credencial —una variable de entorno, una ruta, o un <code>esquema:path</code> de secret manager— y sólo el host que ya tiene el material puede resolverla. Por eso prestar una cuenta no filtra nada.
       </p>
     </Panel>
+
+    <div className="metrics-grid">
+      <Metric label="Cuentas visibles" value={accounts.available ? accounts.items.length : null} detail={accounts.available ? 'propias más las publicadas al pool' : 'el servidor no publica el inventario de cuentas'} />
+      <Metric label="Publicadas al pool" value={pooled} detail="cuentas que su pagador prestó al pool" />
+      <Metric label="Habilitadas" value={enabled} detail="cuentas que el despacho puede usar" />
+      <Metric label="Pagadas por otro tenant" value={foreign} tone={foreign ? 'warning' : 'neutral'} detail={actorTenant ? `cuentas cuyo pagador no es ${actorTenant}` : 'el servidor no informó el tenant del actor'} />
+    </div>
 
     {form.kind === 'create' ? <Panel title="Alta de cuenta" subtitle="Un alta declara quién paga la suscripción y dónde está su credencial. Todo pasa por dry-run antes de aplicarse.">
       <div className="config-form">

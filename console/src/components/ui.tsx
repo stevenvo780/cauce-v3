@@ -210,10 +210,21 @@ export function EmptyState({ children }: { children: ReactNode }) {
   return <p className="empty-state">{children}</p>;
 }
 
-export function RefreshButton({ onClick, loading = false }: { onClick: () => void; loading?: boolean }) {
+export function RefreshButton({ onClick, loading = false, compact = false }: {
+  onClick: () => void;
+  loading?: boolean;
+  compact?: boolean;
+}) {
+  const label = loading ? 'Actualizando…' : 'Actualizar';
   return (
-    <button type="button" className="button secondary" onClick={onClick} disabled={loading}>
-      <RefreshCw size={16} aria-hidden="true" /> {loading ? 'Actualizando…' : 'Actualizar'}
+    <button
+      type="button"
+      className="button secondary"
+      onClick={onClick}
+      disabled={loading}
+      {...(compact ? { 'aria-label': label, title: label } : {})}
+    >
+      <RefreshCw size={16} aria-hidden="true" />{compact ? <span className="sr-only">{label}</span> : ` ${label}`}
     </button>
   );
 }

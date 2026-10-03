@@ -15,7 +15,11 @@ it('abre con teclado, enfoca, conserva consulta al cerrar con Escape y permite l
   render(<AgentRoster agents={agents} salud={{}} loading={false} onSelect={vi.fn()} />);
   const toggle = screen.getByRole('button', { name: 'Buscar' });
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  expect(document.getElementById(toggle.getAttribute('aria-controls')!)).toContainElement(screen.getByRole('textbox', { name: 'Buscar agente' }));
+  const panelId = toggle.getAttribute('aria-controls');
+  if (!panelId) throw new Error('the search toggle has no controlled panel');
+  const panel = document.getElementById(panelId);
+  if (!panel) throw new Error('the controlled search panel is missing');
+  expect(panel).toContainElement(screen.getByRole('textbox', { name: 'Buscar agente' }));
   toggle.focus();
   await user.keyboard('{Enter}');
   const input = screen.getByRole('textbox', { name: 'Buscar agente' });

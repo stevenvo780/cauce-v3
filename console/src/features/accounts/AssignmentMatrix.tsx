@@ -13,11 +13,11 @@ import {
 type Operation = 'grant-ceiling' | 'revoke-ceiling' | 'create-binding' | 'update-binding' | 'delete-binding';
 
 const operationLabels: Record<Operation, string> = {
-  'grant-ceiling': 'Otorgar techo (alias_routing_ceiling create)',
-  'revoke-ceiling': 'Revocar techo (alias_routing_ceiling delete, cascadea el binding)',
-  'create-binding': 'Crear binding de fallback (agent_account_binding create)',
-  'update-binding': 'Actualizar binding de fallback (agent_account_binding update)',
-  'delete-binding': 'Quitar binding de fallback (agent_account_binding delete)',
+  'grant-ceiling': 'Dar acceso a una cuenta',
+  'revoke-ceiling': 'Quitar acceso a una cuenta',
+  'create-binding': 'Agregar cuenta de respaldo',
+  'update-binding': 'Cambiar orden de respaldo',
+  'delete-binding': 'Quitar cuenta de respaldo',
 };
 
 interface Assignment {
@@ -126,6 +126,49 @@ export function AssignmentMatrix({ config, access, registry }: {
           );
 
   return <>
+    {missing.length ? <p className="notice error" role="alert">
+      No disponible: este gateway no publica {missing.map((name) => <code key={name}>{name} </code>)}
+      dentro de <code>GET /v3/console/config</code>. La matriz se muestra incompleta a propósito; la consola no rellena lo que el servidor no informa.
+    </p> : null}
+
+    <Panel title="Asignar" subtitle="Cada cambio muestra una vista previa antes de confirmarlo.">
+      <div className="config-form assignment-config-form">
+        <label>Agente
+          <select value={assignment.agentKey} onChange={(event) => { patch({ agentKey: event.target.value }); }}>
+            <option value="">— elegir —</option>
+            {agents.items.map((agent) => {
+              const key = agentKeyOf(agent.tenantId, agent.alias);
+              return <option key={key} value={key}>{key}</option>;
+            })}
+          </select>
+        </label>
+        <label>Cuenta
+          <select value={assignment.accountId} onChange={(event) => { patch({ accountId: event.target.value }); }}>
+            <option value="">— elegir —</option>
+            {accounts.items.map((account) => <option key={account.id} value={account.id}>
+              {account.id} · paga {account.payerTenant ?? 'UNKNOWN'}{account.sharedWithPool === true ? ' · en el pool' : ''}
+            </option>)}
+          </select>
+        </label>
+        <label className="config-json">Operación
+          <select value={assignment.operation} onChange={(event) => { patch({ operation: event.target.value as Operation }); }}>
+            {(Object.keys(operationLabels) as Operation[]).map((operation) => <option key={operation} value={operation}>{operationLabels[operation]}</option>)}
+          </select>
+        </label>
+        {needsPriority ? <label>Prioridad <span className="label-hint">0–32767, menor se intenta primero</span>
+          <input value={assignment.priority} onChange={(event) => { patch({ priority: event.target.value }); }} />
+        </label> : null}
+        {needsPriority ? <label><input type="checkbox" checked={assignment.enabled} onChange={(event) => { patch({ enabled: event.target.checked }); }} /> Binding habilitado</label> : null}
+      </div>
+      {assignment.operation === 'revoke-ceiling' ? <p className="notice" role="note">
+        <Link2Off size={14} aria-hidden="true" /> Revocar el techo borra en cascada el binding de ese alias hacia esa cuenta: la revocación no depende del orden en que se hagan las cosas.
+      </p> : null}
+      {assignment.operation === 'grant-ceiling' ? <p className="notice" role="note">
+        <ShieldQuestion size={14} aria-hidden="true" /> Si la cuenta la paga otro tenant, sólo se puede otorgar cuando su pagador la publicó al pool. Ese consentimiento lo verifica Postgres, no la consola.
+      </p> : null}
+      <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="asignación" />
+    </Panel>
+
     <header className="section-header">
       <h2>Ruteo: qué cuenta puede usar cada agente</h2>
       <p>
@@ -138,11 +181,6 @@ export function AssignmentMatrix({ config, access, registry }: {
     <p className="notice" role="note">
       El intento 1 de cada delivery corre <strong>sin ningún override de entorno</strong>: el CLI resuelve la credencial que ya tiene logueada dentro de su container. Por eso el main del harness no es una fila de estas tablas y el orden de abajo describe únicamente los <strong>reintentos</strong>.
     </p>
-
-    {missing.length ? <p className="notice error" role="alert">
-      No disponible: este gateway no publica {missing.map((name) => <code key={name}>{name} </code>)}
-      dentro de <code>GET /v3/console/config</code>. La matriz se muestra incompleta a propósito; la consola no rellena lo que el servidor no informa.
-    </p> : null}
 
     <Panel title="Techo por alias" subtitle="Filas: agentes registrados. Columnas: cuentas visibles. Una celda sólo tiene estado si existe la fila de techo.">
       {!available && agents.items.length === 0
@@ -211,42 +249,5 @@ export function AssignmentMatrix({ config, access, registry }: {
       </ul>}
     </Panel>
 
-    <Panel title="Asignar" subtitle="Otorgar o revocar techo y ordenar el fallback. Todo pasa por el mismo POST /v3/console/config/changes con dry-run previo.">
-      <div className="config-form">
-        <label>Agente
-          <select value={assignment.agentKey} onChange={(event) => { patch({ agentKey: event.target.value }); }}>
-            <option value="">— elegir —</option>
-            {agents.items.map((agent) => {
-              const key = agentKeyOf(agent.tenantId, agent.alias);
-              return <option key={key} value={key}>{key}</option>;
-            })}
-          </select>
-        </label>
-        <label>Cuenta
-          <select value={assignment.accountId} onChange={(event) => { patch({ accountId: event.target.value }); }}>
-            <option value="">— elegir —</option>
-            {accounts.items.map((account) => <option key={account.id} value={account.id}>
-              {account.id} · paga {account.payerTenant ?? 'UNKNOWN'}{account.sharedWithPool === true ? ' · en el pool' : ''}
-            </option>)}
-          </select>
-        </label>
-        <label className="config-json">Operación
-          <select value={assignment.operation} onChange={(event) => { patch({ operation: event.target.value as Operation }); }}>
-            {(Object.keys(operationLabels) as Operation[]).map((operation) => <option key={operation} value={operation}>{operationLabels[operation]}</option>)}
-          </select>
-        </label>
-        {needsPriority ? <label>Prioridad <span className="label-hint">0–32767, menor se intenta primero</span>
-          <input value={assignment.priority} onChange={(event) => { patch({ priority: event.target.value }); }} />
-        </label> : null}
-        {needsPriority ? <label><input type="checkbox" checked={assignment.enabled} onChange={(event) => { patch({ enabled: event.target.checked }); }} /> Binding habilitado</label> : null}
-      </div>
-      {assignment.operation === 'revoke-ceiling' ? <p className="notice" role="note">
-        <Link2Off size={14} aria-hidden="true" /> Revocar el techo borra en cascada el binding de ese alias hacia esa cuenta: la revocación no depende del orden en que se hagan las cosas.
-      </p> : null}
-      {assignment.operation === 'grant-ceiling' ? <p className="notice" role="note">
-        <ShieldQuestion size={14} aria-hidden="true" /> Si la cuenta la paga otro tenant, sólo se puede otorgar cuando su pagador la publicó al pool. Ese consentimiento lo verifica Postgres, no la consola.
-      </p> : null}
-      <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="asignación" />
-    </Panel>
   </>;
 }

@@ -66,7 +66,7 @@ export function LiveFleetToolbar({
         </span>
       </Tooltip>
 
-      <label>
+      <label className="live-refresh-filter">
         Refresco
         <select
           value={intervalMs}
@@ -81,7 +81,8 @@ export function LiveFleetToolbar({
 
       <button type="button" className="button secondary" onClick={refrescarTodo}>
         {intervalMs <= 0 ? <Play size={15} aria-hidden="true" /> : <Pause size={15} aria-hidden="true" />}
-        Refrescar ahora
+        <span className="live-refresh-wide">Refrescar ahora</span>
+        <span className="live-refresh-compact">Actualizar</span>
       </button>
 
       <span className="muted live-age">
@@ -101,7 +102,7 @@ export function LiveFleetToolbar({
       </label>
 
       {tenants.length > 1 ? (
-        <label>
+        <label className="live-client-filter">
           Cliente
           <select value={tenantFilter} onChange={(event) => { setTenantFilter(event.target.value); }}>
             <option value="todos">todos ({tenants.length})</option>

@@ -138,16 +138,29 @@ export function ConsumptionSection({ quotas, config, registry }: {
         </div>
       )}
 
-      {staleCollectors.length > 0 && (
-        <div className="banner banner-warning">
-          <AlertCircle size={18} aria-hidden="true" />
-          <span>
-            <strong>Muestra vieja.</strong> {staleCollectors.length === 1 ? 'Un recolector está' : `${String(staleCollectors.length)} recolectores están`}{' '}
-            fuera de plazo ({staleCollectors.map((collector) => `${collector.host ?? UNKNOWN}: ${freshness(collector, thresholds).label}`).join(' · ')}).
-            Los porcentajes de abajo son de esa corrida, no del momento actual.
-          </span>
-        </div>
-      )}
+      <Panel title="Proveedores" subtitle="Riesgo primero · saldo por cuenta y ventana." className="quota-provider-panel">
+        {staleCollectors.length > 0 && (
+          <div className="banner banner-warning quota-freshness-banner">
+            <AlertCircle size={18} aria-hidden="true" />
+            <span>
+              <strong>Muestra vieja.</strong> {staleCollectors.map((collector) => `${collector.host ?? UNKNOWN}: ${freshness(collector, thresholds).label}`).join(' · ')}.
+              Saldos de esa corrida, no actuales.
+            </span>
+          </div>
+        )}
+        {providers.length === 0 ? (
+          <EmptyState>Sin datos de cuota: el recolector nunca corrió, o la última corrida no trajo ningún proveedor.</EmptyState>
+        ) : providers.map((provider) => (
+          <ProviderCard
+            key={`${provider.host ?? 'unknown'}:${provider.provider ?? 'unknown'}`}
+            provider={provider}
+            expanded={expanded}
+            onToggle={toggle}
+            staleAfterSeconds={thresholds?.stale_after_seconds}
+          />
+        ))}
+      </Panel>
+
 
       <div className="metrics-grid">
         <Metric label="Cuentas registradas" value={configDown ? null : totalAccounts} detail="cuentas del inventario" />
@@ -219,20 +232,6 @@ export function ConsumptionSection({ quotas, config, registry }: {
             </span>
           </div>
         )}
-      </Panel>
-
-      <Panel title="Proveedores" subtitle="Ordenados por severidad: el que está por agotarse aparece primero, no en orden alfabético. Una fila por cuenta y familia de ventana: el consumo de cada cuenta se lee acá.">
-        {providers.length === 0 ? (
-          <EmptyState>Sin datos de cuota: el recolector nunca corrió, o la última corrida no trajo ningún proveedor.</EmptyState>
-        ) : providers.map((provider) => (
-          <ProviderCard
-            key={`${provider.host ?? 'unknown'}:${provider.provider ?? 'unknown'}`}
-            provider={provider}
-            expanded={expanded}
-            onToggle={toggle}
-            staleAfterSeconds={thresholds?.stale_after_seconds}
-          />
-        ))}
       </Panel>
 
       <Panel title="Suscripciones pausadas" subtitle="Las que pausó el recolector por cuota agotada sólo las levanta el recolector; el resto son pausas que puso una persona a mano.">
