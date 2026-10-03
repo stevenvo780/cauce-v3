@@ -176,8 +176,6 @@ table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { whi
   .live-legend { grid-template-columns: 1fr; }
   .activity-search input { min-width: 0; width: 100%; }
   .activity-search { display: flex; }
-  .fleet-verdict-phrase { font-size: 24px; }
-  .live-search input { width: 110px; }
 }
 
 /* --- La banda de veredicto ------------------------------------------------- */
@@ -260,6 +258,7 @@ table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { whi
 
 .live-search input {
   width: 150px;
+  min-width: 0;
   border: none;
   background: none;
   color: var(--text);
@@ -329,11 +328,7 @@ table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { whi
 .live-fold[open] > summary { border-bottom: 1px solid var(--border); }
 .live-fold > *:not(summary) { margin: var(--space-3) var(--space-4); }
 
-/* --- El mapa, plegable y plegado -------------------------------------------
-   The drawing is 889px tall at 1546 wide (viewBox 1652x950), so with it open the fleet table starts
-   at 1770 on a 1080-tall screen and nothing that matters is above the fold. Capping it letterboxes
-   the graph and halves the label scale, so the map ships FOLDED and whoever wants the picture opens
-   it. Nothing remembers the choice: browser storage is forbidden in this console. */
+/* The graph starts open; native disclosure preserves the operator’s choice during refreshes. */
 
 .live-mapa > summary { margin-bottom: var(--space-4); cursor: pointer; }
 .live-mapa-rotulo {
@@ -427,3 +422,18 @@ table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { whi
 :root[data-theme="light"] .live-layer-switch { background: #f8fafd; }
 :root[data-theme="light"] .live-layer-button[aria-pressed='true'] { background: #e6eef8; }
 
+
+.live-search:focus-within { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+@media (max-width: 760px) {
+  .live-command-strip { gap: var(--space-2); padding-block: 0; }
+  .live-toolbar { gap: var(--space-2); padding: var(--space-2); }
+  .live-toolbar label { min-width: 0; max-width: 100%; }
+  .live-toolbar select { min-width: 0; max-width: 100%; }
+  .live-age { font-size: var(--tipo-apunte); }
+  .live-search { flex: 0 1 auto; max-width: 100%; min-height: 36px; }
+  .live-search input { width: 110px; font-size: 16px; }
+  .fleet-verdict { gap: var(--space-2); padding: var(--space-3); }
+  .fleet-verdict-phrase { font-size: 24px; }
+  .live-mapa-titulo { flex: 0 1 auto; min-width: 0; }
+}

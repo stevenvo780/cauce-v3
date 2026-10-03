@@ -1,3 +1,5 @@
+.messenger-search-toggle, .messenger-active-query { display: none; }
+
 .messenger-roster-filters { display: grid; gap: var(--space-2); padding: 0 var(--space-4) var(--space-3); }
 
 .messenger-search { position: relative; display: block; }
@@ -244,6 +246,19 @@
   .chat-page-heading .page-header { grid-template-columns: minmax(0, 1fr) auto; }
   .messenger-shell { display: block; height: calc(var(--messenger-viewport-height, 100dvh) - var(--messenger-tope, 120px) - var(--messenger-navigation-height, var(--nav-inferior-alto)) - env(safe-area-inset-bottom, 0px)); overflow: hidden; }
   .messenger-roster { height: 100%; }
+  .messenger-roster-head { padding: var(--space-2) var(--space-3); }
+  .messenger-roster-filters { grid-template-columns: auto minmax(0, 1fr); align-items: center; padding: 0 var(--space-3) var(--space-2); }
+  .messenger-search-toggle { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); min-width: 44px; min-height: 44px; padding: var(--space-2); }
+  .messenger-roster-filters .messenger-search { display: none; grid-column: 1 / -1; grid-row: 2; }
+  .messenger-roster-filters[data-search-open] .messenger-search { display: block; }
+  .messenger-search input { min-height: 44px; font-size: 16px; }
+  .messenger-tenant-filter { min-width: 0; justify-content: flex-end; }
+  .messenger-tenant-filter > span { flex: none; }
+  .messenger-tenant-filter select { min-width: 0; max-width: 100%; min-height: 44px; font-size: 16px; }
+  .messenger-active-query { display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3) var(--space-2); }
+  .messenger-active-query > span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .messenger-active-query > button { flex: none; min-width: 44px; min-height: 44px; }
+
   .messenger-agent-list { max-height: none; }
   .messenger-shell[data-conversacion="abierta"] .messenger-roster { display: none; }
   .messenger-shell > .messenger-empty[data-state="welcome"] { display: none; }

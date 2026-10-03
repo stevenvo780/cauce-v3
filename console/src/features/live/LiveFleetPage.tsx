@@ -368,7 +368,7 @@ export function LiveFleetPage() {
           />
         </div>
 
-        <details className="panel live-mapa">
+        <details className="panel live-mapa" open>
           <summary>
             <div className="live-mapa-rotulo">
               <h2 className="live-mapa-titulo">Quién le habla a quién, ahora</h2>
