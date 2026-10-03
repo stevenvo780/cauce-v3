@@ -632,24 +632,23 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         return denegar(403, { error: 'forbidden', message: veredicto.reason ?? 'no se puede escribir ahí' });
       }
 
-      // NO harness budget gate here: `project_doc_max_bytes` caps the AGGREGATE of the
-      // WORKSPACE-scope manuals (as `agent-directive.routes.ts` applies it), and the only
-      // document this channel writes for codex is the user-scope `$CODEX_HOME/AGENTS.md`, which
-      // the process applies whole. Capping it 413s a legitimate write with a false message.
-      if (deps.probe.writeGovernanceDocument === undefined) {
+      const { generation, containerId } = medido.facts;
+      if (!generation || !containerId) {
+        return denegar(409, {
+          error: 'conflict', message: 'la medición no acredita generación y contenedor del destino',
+        });
+      }
+      const expectedTarget: GovernanceWriteTarget = { generation, containerId, path: doc.path };
+      if (deps.probe.writeGovernanceDocumentFenced === undefined) {
         return denegar(503, {
           error: 'unavailable',
           message: 'este gateway sabe leer los ficheros del alias pero no escribirlos: su sonda no '
-            + 'tiene canal de escritura hasta el contenedor.',
+            + 'tiene canal de escritura con destino medido hasta el contenedor.',
         });
       }
 
-      /*
-       * FRESH PREFLIGHT. The browser's SHA alone does not tell whether what it saw was a truncated prefix:
-       * create demands the file still absent, and replace demands a FULL read whose fingerprint is the one
-       * edited. The pty-agent CASes again on the descriptor; this does not replace that, it is the gate that
-       * stops a client holding 256 KiB of a larger file from replacing the whole file with that prefix.
-       */
+      // CAS on the descriptor cannot prevent replacing a full file with a truncated prefix;
+      // the preflight must accredit absence or an untruncated read with the expected SHA.
       const actual = await deps.probe.readGovernanceDocument(
         doc.path, medido.facts, target.tenant_id, target.alias,
       );
@@ -730,8 +729,8 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         }
       }
 
-      const escrito = await deps.probe.writeGovernanceDocument(
-        doc.path, contenido, precondition, medido.facts, target.tenant_id, target.alias,
+      const escrito = await deps.probe.writeGovernanceDocumentFenced(
+        doc.path, contenido, precondition, medido.facts, target.tenant_id, target.alias, expectedTarget,
       );
       if ('error' in escrito) {
         if (escrito.error === 'conflict') {
