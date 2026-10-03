@@ -103,6 +103,9 @@ def validate(run_directory: pathlib.Path) -> None:
         summary = report["summary"]
         if summary["tests"] != len(tests) or summary["passed"] != len(tests):
             raise EvidenceError(f"{name} summary is not the exact all-passing test set")
+        real = sum(test["evidence"] == "real" and test.get("evidenceClass") != "protocol-double" for test in tests)
+        if summary["real"] != real:
+            raise EvidenceError(f"{name} summary.real is not the exact real evidence count")
         if instant(report["finishedAt"], f"{name}.finishedAt") < instant(report["startedAt"], f"{name}.startedAt"):
             raise EvidenceError(f"{name} report finishes before it starts")
         reports.append(report)
