@@ -36,6 +36,25 @@ afterEach(async () => {
 });
 
 describe('relay configuration and identity registry', () => {
+  const bindEnvironment: NodeJS.ProcessEnv = {
+    CAUCE_TERMINAL_RELAY_TLS_CERT_FILE: '/run/tls/cert.pem',
+    CAUCE_TERMINAL_RELAY_TLS_KEY_FILE: '/run/tls/key.pem',
+    CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE: '/run/tls/console-ca.pem',
+    CAUCE_TERMINAL_RELAY_AGENT_CA_FILE: '/run/tls/agent-ca.pem',
+    CAUCE_TERMINAL_RELAY_TOKEN_FILE: '/run/secrets/relay-token',
+    CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE: '/run/tls/gateway-client.pem',
+    CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE: '/run/tls/gateway-client-key.pem',
+    CAUCE_TERMINAL_RELAY_INSTANCE_ID: RELAY_INSTANCE_ID,
+  };
+  it.each([undefined, '127.0.0.1', '::1'])('loads IP bind host %s with unchanged default', (host) => {
+    expect(loadRelayConfig({ ...bindEnvironment,
+      ...(host === undefined ? {} : { CAUCE_TERMINAL_RELAY_BIND_HOST: host }),
+    }).listenHost).toBe(host ?? '0.0.0.0');
+  });
+  it.each(['', 'localhost', ' 127.0.0.1', '127.0.0.1 ', '::1\n', '256.0.0.1', '[::1]'])('rejects invalid bind host %s', (host) => {
+    expect(() => loadRelayConfig({ ...bindEnvironment, CAUCE_TERMINAL_RELAY_BIND_HOST: host }))
+      .toThrow(/CAUCE_TERMINAL_RELAY_BIND_HOST/u);
+  });
   it('fills the documented defaults and refuses a gateway URL that is not plain HTTPS', () => {
     const environment: NodeJS.ProcessEnv = {
       CAUCE_TERMINAL_RELAY_TLS_CERT_FILE: '/run/tls/cert.pem',
