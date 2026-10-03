@@ -92,7 +92,7 @@ Las skills todavía no tienen instalador gobernado. Requieren ampliar primero el
 contrato cerrado de rutas/capacidades y la evidencia de carga; no se enviarán al
 escritor de manuales ni se presumirá que el lote actual las admite.
 
-## Diseño de la consola, pendiente de integración
+## Diseño de la consola y aplicación futura
 
 La instancia muestra su repo vinculado, commit deseado y diferencias pendientes.
 La selección tenant/agente conserva los permisos existentes. Dentro del agente:
@@ -117,3 +117,28 @@ la UI exige volver a medir y conciliar antes de cualquier escritura.
   impiden admitir la instantánea; nunca se devuelven en errores.
 - El inspector no escribe, aplica, instala skills, cambia permisos ni crea remotos.
 - Pruebas existentes de perfil, manuales y reconciliación conservan su contrato.
+
+## Incremento ejecutable de lectura
+
+GET `/v3/console/tenants/:tenantId/agents/:alias/context/repository` devuelve
+`configured` o `not_configured`. Configurado sólo acredita que existe una pareja
+servidor de instancia/raíz; no acredita acceso al disco ni contenido válido.
+GET en `/inspect` acepta exclusivamente `commit` y `previous_commit` opcional,
+ambos OID completos. Autenticación y ACL de destino preceden la lectura; la
+autorización se repite antes de devolver los cuerpos. No se expone la raíz.
+Ambas respuestas usan `Cache-Control: no-store`. No hay ruta de mutación.
+
+`journalVerification` distingue `journal_match`, `journal_mismatch` y
+`journal_unavailable`. La consulta existente obtiene la fila más reciente con
+esa revisión; se exige ID del diario, tenant, alias, revisión, operación y siete
+campos iguales. No certifica otra encarnación del alias, continuidad de la BD,
+aplicación al arnés ni adopción. Un fallo de BD impide devolver la inspección.
+`sourceState: not_observed` y `application: not_evaluated` no cambian.
+
+El panel Git está cerrado inicialmente, no carga hasta abrirse, y distingue
+gateway sin endpoint de agente no visible. La capacidad y cada respuesta se
+validan contra identidad, instancia y OID solicitado. Cambiar agente/commit o
+cerrar invalida respuestas pendientes. Sólo compara campos; no crea borradores,
+importa perfiles, guarda archivos, realiza commits ni escribe repositorios.
+El siguiente incremento de escritura requiere contrato de autoría y retención,
+CAS de ciclo de vida y confirmación; queda fuera de esta entrega.

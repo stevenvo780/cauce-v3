@@ -1,3 +1,4 @@
+import { configuredContextRepository } from './console/context-repository/binding.js';
 import { readFile } from 'node:fs/promises';
 import { createPool, type DatabasePool } from '@cauce/store';
 import { buildGateway } from './app.js';
@@ -210,7 +211,9 @@ const terminalRegistry = terminal === undefined ? undefined : new AgentRegistry(
 const wakePumpTelemetry = new WakePumpTelemetry();
 const consolePublishTelemetry = new ConsolePublishTelemetry();
 const blobs = configuredBlobApi(process.env);
+const contextRepository = configuredContextRepository();
 const app = await buildGateway({
+  ...(contextRepository === undefined ? {} : { contextRepository }),
   pool,
   authProvider,
   logger: true,

@@ -45,4 +45,6 @@ guardia de versión y los hashes; no forma parte del árbol candidato.
 - [x] Verificar los 2168 blobs de dev `7bdf7a9` y conservar los mensajes publicados.
 - [x] Admitir tenant canónico con capitalización, sin ampliar permisos ni rutas.
 - [x] Cubrir capitalización, igualdad exacta, segmentos inválidos y alias canónico.
-- [ ] Validar la composición final e integración de lectura autorizada.
+- [x] Conectar binding explícito del servidor, ACL y diario a rutas de lectura.
+- [x] Conectar panel de comparación Git con validación de identidad y respuestas viejas.
+- [ ] Cerrar gates de la composición final y revisión independiente.
