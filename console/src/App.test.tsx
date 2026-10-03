@@ -22,7 +22,9 @@ it('provides basic accessible landmarks and identity guidance', async () => {
   expect(screen.getByRole('main')).not.toHaveFocus();
   expect(screen.getByRole('button', { name: 'Herramientas' })).toHaveAttribute('aria-expanded', 'false');
   await userEvent.click(screen.getByRole('button', { name: /^Cuenta de/ }));
-  expect(within(screen.getByRole('dialog', { name: 'Cuenta y apariencia' })).getByText('Steven:kant')).toBeInTheDocument();
+  const account = within(screen.getByRole('dialog', { name: 'Cuenta y apariencia' }));
+  expect(account.getByText('Steven:kant', { selector: 'code' })).toBeInTheDocument();
+  expect(account.getByText('Persona autenticada')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /cerrar sesión/i })).toBeInTheDocument();
 });
 

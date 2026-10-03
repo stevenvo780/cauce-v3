@@ -1,20 +1,33 @@
 import { ChevronUp, LogOut, UserRound, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
+import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
+import { humanProfileName } from './account-identity';
 import { ThemeControl } from '../../components/ThemeControl';
 import { Time } from '../../components/ui';
 import type { AuthGateState } from './auth-session';
 import './auth.css';
 
 export function AccountMenu({ gate, routeKey = '' }: { gate: AuthGateState; routeKey?: string }) {
+  return <ConsoleAccessBoundary><AccountPopover gate={gate} routeKey={routeKey} /></ConsoleAccessBoundary>;
+}
+
+function AccountPopover({ gate, routeKey }: { gate: AuthGateState; routeKey: string }) {
   const { state, status, busy, error } = gate;
+  const access = useConsoleAccess();
+  const technicalIdentity = access.data?.subject?.trim();
+  const [confirmSwitch, setConfirmSwitch] = useState(false);
   const [open, setOpen] = useState(false);
   const id = useId();
   const container = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
-  const name = status === 'in' ? state?.name ?? state?.subject ?? 'Cuenta' : 'Cuenta';
+  const switchTrigger = useRef<HTMLButtonElement>(null);
+  const switchHeading = useRef<HTMLParagraphElement>(null);
+  const name = status === 'in' ? humanProfileName(state) : 'Cuenta';
 
-  useEffect(() => { setOpen(false); }, [routeKey]);
+  useEffect(() => { setOpen(false); setConfirmSwitch(false); }, [routeKey, state?.subject]);
+  useEffect(() => { if (!open) setConfirmSwitch(false); }, [open]);
+  useEffect(() => { if (confirmSwitch) switchHeading.current?.focus({ preventScroll: true }); }, [confirmSwitch]);
 
   useEffect(() => {
     if (!open) return;
@@ -59,13 +72,31 @@ export function AccountMenu({ gate, routeKey = '' }: { gate: AuthGateState; rout
         <button type="button" className="account-close" aria-label="Cerrar cuenta y apariencia" onClick={close}><X size={18} aria-hidden="true" /></button>
       </header>
       {status === 'in' && state ? <div className="account-identity">
+        <p className="account-section-label">Perfil humano actual</p>
         <strong>{name}</strong>
-        {state.name && state.subject ? <p>{state.subject}</p> : null}
+        {state.subject ? <p><span>Cuenta: </span><span>{state.subject}</span></p> : null}
+        <p>Este es tu perfil de sesión. La autoría de cada mensaje conserva su propia evidencia.</p>
         <p className="account-expiry">{state.expires_at ? <>La sesión vence <Time value={state.expires_at} /></> : 'Vencimiento no informado por el servidor.'}</p>
       </div> : <p className="account-unmanaged">Sin login de verdad: no hay sesión de usuario que cerrar.</p>}
+      {status === 'in' ? <div className="account-identity account-technical">
+        <p className="account-section-label">Identidad técnica</p>
+        {access.error ? <><p role="status">No se pudo verificar la identidad técnica.</p><button
+          type="button" className="button secondary" disabled={access.loading}
+          onClick={() => { void access.reload(); }}>Reintentar identidad</button></>
+          : access.loading ? <p role="status">Verificando identidad técnica…</p>
+          : <><code>{technicalIdentity === undefined || technicalIdentity.length === 0 ? 'No informada por el servidor' : technicalIdentity}</code>
+            <p>El servidor usa esta identidad para enrutar y comprobar permisos. No es el nombre de la persona.</p></>}
+      </div> : null}
       <div className="account-appearance"><span>Apariencia</span><ThemeControl /></div>
       {error ? <p className="auth-failure" role="alert">{error.message}</p> : null}
-      {status === 'in' ? <button className="button secondary account-logout" type="button" disabled={busy} onClick={() => { void gate.logout(); }}>
+      {status === 'in' ? <button ref={switchTrigger} type="button" className="button secondary account-logout" disabled={busy} aria-expanded={confirmSwitch} onClick={() => { setConfirmSwitch(!confirmSwitch); }}>Cambiar cuenta</button> : null}
+      {status === 'in' && confirmSwitch ? <div className="account-switch">
+        <p ref={switchHeading} tabIndex={-1}>Se cerrará esta sesión y se descartarán los borradores locales. Después podés entrar con otra cuenta existente.</p>
+        {state?.login_mode !== 'password' ? <p>El proveedor de acceso puede volver a usar la misma cuenta; elegí otra allí si ocurre.</p> : null}
+        <button type="button" className="button secondary" disabled={busy} onClick={() => { setConfirmSwitch(false); switchTrigger.current?.focus({ preventScroll: true }); }}>Cancelar cambio</button>
+        <button type="button" className="button secondary" disabled={busy} onClick={() => { void gate.logout(); }}>{busy ? 'Cerrando…' : 'Cerrar sesión y continuar'}</button>
+      </div> : null}
+      {status === 'in' && !confirmSwitch ? <button className="button secondary account-logout" type="button" disabled={busy} onClick={() => { void gate.logout(); }}>
         <LogOut size={16} aria-hidden="true" />{busy ? 'Cerrando…' : 'Cerrar sesión'}
       </button> : null}
     </section>

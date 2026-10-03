@@ -1,7 +1,8 @@
 import { KeyRound, LogIn, ShieldAlert } from 'lucide-react';
-import { useState, type SyntheticEvent, type ReactNode } from 'react';
+import { Fragment, useState, type SyntheticEvent, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import { useAuthGate, type AuthGateState } from './auth-session';
+import { authSessionKey } from './account-identity';
 import './auth.css';
 
 /**
@@ -171,5 +172,5 @@ export function AuthGate({ children }: { children: (gate: AuthGateState) => Reac
       ? <PasswordLoginForm login={gate.login} busy={gate.busy} reason={gate.state.reason} />
       : <RedirectLoginScreen loginUrl={api.getLoginUrl()} reason={gate.state?.reason} />;
   }
-  return <>{children(gate)}</>;
+  return <Fragment key={authSessionKey(gate.state)}>{children(gate)}</Fragment>;
 }
