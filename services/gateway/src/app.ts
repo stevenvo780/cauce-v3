@@ -1,3 +1,4 @@
+import type { ContextRepositoryBinding } from './console/context-repository/binding.js';
 import { randomUUID } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { ServerOptions as HttpsServerOptions } from 'node:https';
 import websocket from '@fastify/websocket';
@@ -144,6 +145,7 @@ interface GatewayNarrowedRepository {
 export type GatewayRepository = StoreDerivedRepository & GatewayNarrowedRepository;
 
 export interface GatewayOptions {
+  contextRepository?: ContextRepositoryBinding;
   pool: DatabasePool;
   authProvider: AuthProvider;
   repository?: GatewayRepository;

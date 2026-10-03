@@ -1,3 +1,4 @@
+import { registerContextRepositoryRoutes } from '../console/context-repository/routes.js';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import {
   AliasSchema, CreateJobSchema, DeliveryIdSchema, ProfileRuntimeContractSchema, TenantSchema,
@@ -357,6 +358,14 @@ function registerConsoleAgentRoutes(
     });
 
     const diario = new AgentContextRevisionsStore(options.pool);
+    registerContextRepositoryRoutes(app, {
+      ...(options.contextRepository === undefined ? {} : { binding: options.contextRepository }),
+      authorize: autorizarPerfil,
+      authorizeTarget: (actor, tenantId, alias, permission) =>
+        autorizarDestino(actor, tenantId, alias, permission),
+      readProfileRevision: (tenantId, alias, revision) =>
+        diario.readProfileRevision(tenantId, alias, revision),
+    });
     registerAgentContextHistoryRoutes(app, {
       authorize: autorizarPerfil,
       authorizeTarget: (actor, tenantId, alias, permission) =>

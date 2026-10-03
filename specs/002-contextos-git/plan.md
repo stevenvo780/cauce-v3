@@ -6,7 +6,7 @@ Composición revisable sobre dev `7bdf7a9fb70b201afb9bd53b6241e43aaf2fc632`,
 árbol `d422c2cf20bff9cf63fcb0fa74dd46eec1cab000`, con 2168 blobs verificados.
 Se reutiliza la fundación R2 sobre `0272dc260d3b08ec0bfdba34d3071a244839564c`.
 Los cambios publicados de mensajes se conservan sin modificación.
-Primer incremento: estos ocho archivos, sin rutas HTTP ni UI. Tenant y alias
+Primer incremento: ocho archivos de fundación. Segundo: integración de lectura. Tenant y alias
 usan los esquemas canónicos; se conserva la capitalización de tenant y las
 restricciones de segmentos/rutas. Pruebas Git usan el tenant sintético `Steven`.
 Sin commits, publicación, despliegue ni acceso a repositorios de contexto vivos.
@@ -70,10 +70,24 @@ La raíz local sigue siendo una vinculación confiable del servidor; la lectura
 no ofrece aislamiento del filesystem ante reemplazos hostiles de directorios.
 Formato contrastado con [objetos Git](https://git-scm.com/book/en/v2/Git-Internals-Git-Objects)
 y [layout del repositorio](https://git-scm.com/docs/gitrepository-layout).
-No se conecta este incremento a HTTP hasta diseñar binding confiable por instancia,
-autorización, auditoría, persistencia, UI y adopción. El path local no vendrá del
-cliente. No se inicia ni clona ningún repositorio real de contexto.
+El segundo incremento conecta HTTP y UI de lectura con binding confiable del
+servidor, ACL canónica y consulta al diario. No crea ni clona repositorios reales.
+El cliente no elige rutas ni instancia; no se añade aplicación al runtime.
 Revisión, ID del diario y hashes no confieren autorización. Un lector Git accede
 a toda la historia, aunque el inspector filtre su respuesta por tenant/agente.
 Antes de transporte futuro se exige revisar contenido y destinatarios; no se
 considera el texto autorado libre de secretos por excluir archivos de configuración.
+
+## Integración de lectura
+
+`binding.ts` admite una pareja explícita `CAUCE_CONTEXT_INSTANCE_ID` +
+`CAUCE_CONTEXT_REPOSITORY_ROOT` del servidor; sin ambas no hay vinculación.
+`routes.ts` publica GET por tenant/agente para capacidad e inspección de OID
+completos. Autoriza antes de leer y antes de devolver la inspección.
+Compara identidad del diario y siete campos con la consulta canónica vigente
+para esa revisión. Una revisión repetida con otro ID no obtiene coincidencia.
+La UI consulta al abrir, permite comparar dos commits y descarta respuestas
+viejas al cambiar agente/commit o cerrar. No ofrece escribir ni importar.
+Aceptación: pruebas inyectadas HTTP con objetos reales sintéticos y constructor
+del gateway; regresiones de contexto, identidad, errores, carreras y consola.
+No se sustituyen gates agregados, PostgreSQL, arneses nativos ni revisión visual.

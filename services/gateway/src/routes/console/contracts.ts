@@ -1,3 +1,4 @@
+import type { ContextRepositoryBinding } from '../../console/context-repository/binding.js';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { DatabasePool } from '@cauce/store';
 import type { GatewayRepository } from '../../app.js';
@@ -5,6 +6,7 @@ import type { AuthProvider } from '../../auth.js';
 import type { OperatorResolution } from '../../terminal/authority.js';
 
 export interface ConsoleRouteOptions {
+  readonly contextRepository?: ContextRepositoryBinding;
   readonly pool: DatabasePool;
   readonly authProvider: AuthProvider;
   readonly allowedJobKinds?: readonly string[];

@@ -1,3 +1,4 @@
+import { ContextRepositoryPanel } from './ContextRepositoryPanel';
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type {
   AgentDocumentKind, AgentPerfilCampos, ConfigurationSnapshot,
@@ -88,6 +89,7 @@ function ContextoTabContent({
 
   return (
     <div className="contexto-tab">
+      <ContextRepositoryPanel key={`${tenantId}/${alias}/git`} tenantId={tenantId} alias={alias} />
       <section className="contexto-seccion contexto-efectivo" aria-labelledby="contexto-efectivo-titulo">
         <header className="contexto-cabecera">
           <h3 id="contexto-efectivo-titulo">Contexto efectivo</h3>
