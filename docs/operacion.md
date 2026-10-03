@@ -119,6 +119,12 @@ El comando conserva su comportamiento de alta si el correo no existe y actualiza
 - **Baja:** `pnpm console:user --email persona@example.com --deactivate`; no pide contraseña,
   falla si no existe y sólo acepta `--email`. El gateway relee la fila y rechaza cuentas inactivas.
 
+**Límite del alta/actualización implícita:** si la parte local del correo (antes de `@`) supera
+120 caracteres y se omite `--name`, el nombre derivado incumple la restricción de la base antes de
+resolver `ON CONFLICT`, incluso si la cuenta ya existe. Para rotar la contraseña de una cuenta
+existente conservando su nombre, usar `pnpm console:user --email <correo> --update` y omitir `--name`;
+esta operación no construye un alta candidata ni crea una cuenta si el correo no existe.
+
 Toda actualización de contraseña, incluida una reactivación explícita, avanza `password_changed_at`;
 las sesiones anteriores se evalúan contra esa marca con la tolerancia temporal existente del proveedor.
 La salida muestra rol, ámbito y estado activo devueltos por la base, no defaults del parser.
