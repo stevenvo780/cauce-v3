@@ -43,6 +43,7 @@ const NATIVE_PROFILE_CONTEXT_CONTRACT_MISSING = "NATIVE_PROFILE_CONTEXT_CONTRACT
 const NATIVE_PROFILE_CONTEXT_GENERATION_MISMATCH = "NATIVE_PROFILE_CONTEXT_GENERATION_MISMATCH";
 
 const PROFILE_RELOAD_TIMEOUT_MS = 5_000;
+const PROFILE_RELOAD_RETRY_DELAY_MS = 1_000;
 const GATEWAY_ORIGIN = /^https:\/\/[A-Za-z0-9._:-]+$/u;
 
 interface NativeProfilePath {
@@ -92,7 +93,7 @@ export function profileReloadRequest(
   };
 }
 
-function postProfileReload(target: ProfileReloadRequest): void {
+function postProfileReload(target: ProfileReloadRequest, settled: (success: boolean) => void): void {
   const url = new URL(target.url);
   const call = request({
     protocol: url.protocol,
@@ -106,9 +107,27 @@ function postProfileReload(target: ProfileReloadRequest): void {
     headers: { "content-length": "0" },
     timeout: PROFILE_RELOAD_TIMEOUT_MS,
   });
-  call.on("error", () => { call.destroy(); });
-  call.on("timeout", () => { call.destroy(); });
-  call.on("response", (response) => { response.resume(); });
+  let finished = false;
+  const finish = (success: boolean): void => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(deadline);
+    settled(success);
+    if (!success) call.destroy();
+  };
+  const deadline = setTimeout(() => { finish(false); }, PROFILE_RELOAD_TIMEOUT_MS);
+  deadline.unref();
+  call.on("error", () => { finish(false); });
+  call.on("timeout", () => { finish(false); });
+  call.on("response", (response) => {
+    response.on("error", () => { finish(false); });
+    response.on("aborted", () => { finish(false); });
+    response.on("end", () => {
+      finish(response.complete && response.statusCode !== undefined
+        && response.statusCode >= 200 && response.statusCode < 300);
+    });
+    response.resume();
+  });
   call.end();
 }
 
@@ -136,6 +155,7 @@ export class NativeProfileContext {
   private readonly presenceGeneration: string | undefined;
   private readonly environment: NodeJS.ProcessEnv;
   private reloadRequestedFor: string | undefined;
+  private nextReloadAt = 0;
   private reloadOutcome: ExpectationReload = { retryable: false };
 
   constructor(
@@ -284,13 +304,22 @@ export class NativeProfileContext {
   private requestExpectationReload(alias: string): ExpectationReload {
     const target = profileReloadRequest(this.environment, alias);
     if (target === undefined) return { retryable: false };
-    if (this.reloadRequestedFor === this.runtimeGeneration) return this.reloadOutcome;
+    if (this.reloadRequestedFor === this.runtimeGeneration || performance.now() < this.nextReloadAt) {
+      return this.reloadOutcome;
+    }
     this.reloadRequestedFor = this.runtimeGeneration;
     let dispatched = true;
     try {
-      postProfileReload(target);
+      postProfileReload(target, (success) => {
+        if (!success) {
+          this.reloadRequestedFor = undefined;
+          this.nextReloadAt = performance.now() + PROFILE_RELOAD_RETRY_DELAY_MS;
+        }
+      });
     } catch {
       dispatched = false;
+      this.reloadRequestedFor = undefined;
+      this.nextReloadAt = performance.now() + PROFILE_RELOAD_RETRY_DELAY_MS;
     }
     process.stderr.write(`${JSON.stringify({
       event: "native_profile_expectation_reload_requested",
