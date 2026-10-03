@@ -8,17 +8,20 @@ import { validateContextRepositoryBinding, type ContextRepositoryBinding } from 
 import { inspectContextRepository } from './inspect.js';
 import { requireContext, serializeSourceProfile } from './model.js';
 
-export interface ContextSourceConfirmation {
+interface ContextSourceIdentity {
   readonly instance_id: string;
   readonly commit: string;
   readonly tree: string;
   readonly profile_sha256: string;
-  readonly source_journal_id: string;
-  readonly source_revision: number;
   readonly expected_journal_id: string;
   readonly runtime_fingerprint: string;
-  readonly application_id: string;
 }
+
+type ContextSourceProvenance =
+  | { readonly source_kind?: never; readonly source_journal_id: string; readonly source_revision: number }
+  | { readonly source_kind: 'git_authored'; readonly source_journal_id?: never; readonly source_revision?: never };
+type ContextSourceFields = ContextSourceIdentity & ContextSourceProvenance;
+export type ContextSourceConfirmation = ContextSourceFields & { readonly application_id: string };
 
 export interface ContextSourceDeps {
   readonly binding?: ContextRepositoryBinding;
@@ -42,8 +45,10 @@ interface Caller {
 export function parseSourceConfirmation(value: unknown): ContextSourceConfirmation {
   requireContext(value !== null && typeof value === 'object' && !Array.isArray(value), 'invalid_confirmation');
   const row = value as Record<string, unknown>;
-  const keys = ['instance_id', 'commit', 'tree', 'profile_sha256', 'source_journal_id', 'source_revision',
-    'expected_journal_id', 'runtime_fingerprint', 'application_id'];
+  const authored = row.source_kind === 'git_authored';
+  const keys = ['instance_id', 'commit', 'tree', 'profile_sha256',
+    'expected_journal_id', 'runtime_fingerprint', 'application_id',
+    ...(authored ? ['source_kind'] : ['source_journal_id', 'source_revision'])];
   const oid = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
   const sha = /^[a-f0-9]{64}$/u;
   requireContext(Object.keys(row).length === keys.length && keys.every((key) => Object.hasOwn(row, key))
@@ -51,18 +56,23 @@ export function parseSourceConfirmation(value: unknown): ContextSourceConfirmati
     && typeof row.commit === 'string' && oid.test(row.commit)
     && typeof row.tree === 'string' && oid.test(row.tree)
     && typeof row.profile_sha256 === 'string' && sha.test(row.profile_sha256)
-    && isJournalCursor(row.source_journal_id) && isJournalCursor(row.expected_journal_id)
-    && typeof row.source_revision === 'number' && Number.isSafeInteger(row.source_revision) && row.source_revision > 0
+    && isJournalCursor(row.expected_journal_id)
+    && (authored || (isJournalCursor(row.source_journal_id)
+      && typeof row.source_revision === 'number' && Number.isSafeInteger(row.source_revision) && row.source_revision > 0))
     && typeof row.runtime_fingerprint === 'string' && sha.test(row.runtime_fingerprint)
     && typeof row.application_id === 'string' && sha.test(row.application_id), 'invalid_confirmation');
-  return Object.fromEntries(keys.map((key) => [key, row[key]])) as unknown as ContextSourceConfirmation;
+  const provenance = authored ? { source_kind: 'git_authored' as const }
+    : { source_journal_id: row.source_journal_id as string, source_revision: row.source_revision as number };
+  return { instance_id: row.instance_id, commit: row.commit, tree: row.tree, profile_sha256: row.profile_sha256,
+    ...provenance, expected_journal_id: row.expected_journal_id, runtime_fingerprint: row.runtime_fingerprint,
+    application_id: row.application_id };
 }
 
 function hash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
-export function sourceApplicationId(source: Omit<ContextSourceConfirmation, 'application_id'>, caller: Caller, revision: number): string {
+export function sourceApplicationId(source: ContextSourceFields, caller: Caller, revision: number): string {
   return hash({ source, tenant_id: caller.tenantId, alias: caller.alias,
     actor: caller.actor, operator: caller.operator.operator_id, reason: caller.reason, expected_revision: revision });
 }
@@ -97,11 +107,15 @@ export async function prepareContextSource(
   requireContext(binding !== undefined, 'repository_not_configured');
   const { desired } = await inspectContextRepository({ repositoryPath: binding.repositoryPath, commit,
     scope: { instance_id: binding.instance_id, tenant_id: caller.tenantId, alias: caller.alias } });
-  const sourceJournal = await deps.readProfileRevision(caller.tenantId, caller.alias, desired.sourceAgent.source_journal.revision);
-  requireContext(sourceJournal?.id === desired.sourceAgent.source_journal.id
-    && sourceJournal.revision === desired.sourceAgent.source_journal.revision
-    && (sourceJournal.operation === 'insert' || sourceJournal.operation === 'update')
-    && serializeSourceProfile(sourceJournal, desired.scope) === serializeSourceProfile(desired.profile, desired.scope), 'source_journal_unverified');
+  const journal = desired.sourceAgent.source_journal;
+  let provenance: ContextSourceProvenance = { source_kind: 'git_authored' };
+  if (journal !== null) {
+    const sourceJournal = await deps.readProfileRevision(caller.tenantId, caller.alias, journal.revision);
+    requireContext(sourceJournal?.id === journal.id && sourceJournal.revision === journal.revision
+      && (sourceJournal.operation === 'insert' || sourceJournal.operation === 'update')
+      && serializeSourceProfile(sourceJournal, desired.scope) === serializeSourceProfile(desired.profile, desired.scope), 'source_journal_unverified');
+    provenance = { source_journal_id: sourceJournal.id, source_revision: sourceJournal.revision };
+  }
   const current = existing?.current ?? await deps.profile.readContext(caller.tenantId, caller.alias);
   requireContext(current.exists && current.revision !== null, 'profile_absent');
   requireContext(serializeSourceProfile(current.contexto.perfil, desired.scope)
@@ -116,9 +130,8 @@ export async function prepareContextSource(
   requireContext(deps.profile.prepareRuntime !== undefined, 'profile_write_unavailable');
   const context: ContextoDeAlias = { perfil: desired.profile, hechos: current.contexto.hechos };
   const preflight = existing?.preflight ?? await deps.profile.prepareRuntime(caller.tenantId, caller.alias, context);
-  const fields = { instance_id: binding.instance_id, commit: desired.commit, tree: desired.tree,
-    profile_sha256: desired.profileSource.sha256,
-    source_journal_id: sourceJournal.id, source_revision: sourceJournal.revision,
+  const fields: ContextSourceFields = { instance_id: binding.instance_id, commit: desired.commit, tree: desired.tree,
+    profile_sha256: desired.profileSource.sha256, ...provenance,
     expected_journal_id: currentJournal.id, runtime_fingerprint: runtimeFingerprint(preflight, current.revision + 1) };
   const confirmation: ContextSourceConfirmation = { ...fields, application_id: sourceApplicationId(fields, caller, current.revision) };
   return { tenant_id: caller.tenantId, alias: caller.alias, expected_revision: current.revision,

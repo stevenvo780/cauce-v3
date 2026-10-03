@@ -179,3 +179,41 @@ it.each(['pending', 'applied'].flatMap((state) => [
   expect(screen.queryByRole('button', { name: 'Aplicar versión confirmada' })).toBeNull();
   expect(writes).toBe(1);
 });
+
+const AUTHORED_SOURCE = { instance_id: SOURCE.instance_id, commit: SOURCE.commit, tree: SOURCE.tree,
+  profile_sha256: SOURCE.profile_sha256, source_kind: 'git_authored', expected_journal_id: SOURCE.expected_journal_id,
+  runtime_fingerprint: SOURCE.runtime_fingerprint, application_id: SOURCE.application_id };
+
+it('shows all new Git-authored fields and the native projection before the explicit canonical PUT', async () => {
+  const written: unknown[] = [];
+  server.use(http.post(`${BASE}/context/repository/preview`, () => HttpResponse.json({ ...PREVIEW, context_source: AUTHORED_SOURCE })),
+    http.put(`${BASE}/perfil`, async ({ request }) => { written.push(await request.json()); return HttpResponse.json(RECEIPT); }));
+  const user = userEvent.setup(); renderWithApi(<ContextRepositoryApply {...props()} />);
+  const apply = await prepare(user);
+  expect(screen.getByText(/Aplicar contenido nuevo de Git/)).toHaveTextContent('operador autenticado');
+  expect(screen.getAllByText(/^Vigente:/)).toHaveLength(7);
+  expect(screen.getAllByText(/^Propuesto:/)).toHaveLength(7);
+  expect(screen.getByText('Reviewed projection')).toBeInTheDocument();
+  expect(apply).toBeDisabled(); expect(written).toEqual([]);
+  await user.click(screen.getByRole('checkbox')); await user.click(apply);
+  expect(await screen.findByText(/Versión guardada; la adopción/)).toBeInTheDocument();
+  expect(written).toHaveLength(1);
+  expect(written[0]).toMatchObject({ context_source: AUTHORED_SOURCE, expected_revision: 4, reason: REASON });
+  expect(written[0]).not.toHaveProperty('context_source.source_journal_id');
+});
+
+it.each([
+  { ...AUTHORED_SOURCE, source_kind: undefined }, { ...AUTHORED_SOURCE, source_kind: 'journal_match' },
+  { ...AUTHORED_SOURCE, source_journal_id: '30' }, { ...AUTHORED_SOURCE, source_revision: 1 },
+  { ...SOURCE, source_kind: 'git_authored' }, { ...SOURCE, source_journal_id: null },
+])('client rejects omitted, mixed or forged Git provenance: %j', async (context_source) => {
+  const request = vi.fn(async () => ({ ...PREVIEW, context_source })) as unknown as RequestFn;
+  await expect(contextRepositoryClient(request).previewContextSource('Steven', 'helper', 'fixture', COMMIT, REASON))
+    .rejects.toMatchObject({ code: 'invalid_context_repository' });
+});
+
+it('labels an existing journal snapshot as a restore', async () => {
+  const user = userEvent.setup(); renderWithApi(<ContextRepositoryApply {...props()} />);
+  await prepare(user);
+  expect(screen.getByText('Restaurar contenido del diario 30, revisión 1.')).toBeInTheDocument();
+});

@@ -5,7 +5,7 @@ import type { DatabasePool } from './db.js';
 const actor = { tenant_id: 'Steven', alias: 'operator' };
 const profile = { tenant_id: 'Steven', alias: 'helper', purpose: 'version from Git', role_summary: null,
   human_brief: null, responsibilities: [], restrictions: [], tools: [], operating_rules: [] };
-const guard: AgentProfileSourceGuard = { application_id: 'a'.repeat(64), expected_journal_id: '42',
+const journalGuard: AgentProfileSourceGuard = { application_id: 'a'.repeat(64), expected_journal_id: '42',
   instance_id: 'fixture', commit: 'b'.repeat(40), tree: 'c'.repeat(40), profile_sha256: 'd'.repeat(64),
   source_journal_id: '30', source_revision: 2, operator_id: 'human' };
 
@@ -27,7 +27,10 @@ function database(overrides: { journal?: Record<string, unknown>; receipt?: unkn
   return { pool: { query, connect: async () => client } as unknown as DatabasePool, queries };
 }
 
-describe('Git source guard in the existing profile CAS', () => {
+const { source_journal_id: _sourceJournal, source_revision: _sourceRevision, ...identity } = journalGuard;
+const authoredGuard: AgentProfileSourceGuard = { ...identity, source_kind: 'git_authored' };
+
+describe.each([journalGuard, authoredGuard])('Git source guard in the existing profile CAS: %j', (guard) => {
   it('locks identity and profile before journal, then writes provenance atomically without bodies', async () => {
     const { pool, queries } = database();
     const result = await new AgentProfileRepository(pool).replace(profile, 4, actor, guard);
@@ -98,7 +101,7 @@ describe('Git source guard in the existing profile CAS', () => {
   });
 });
 
-it('serializes concurrent source replacements through the existing row lock', async () => {
+it.each([journalGuard, authoredGuard])('serializes concurrent source replacements through the existing row lock: %j', async (guard) => {
   let locked: Promise<void> = Promise.resolve();
   let revision = 4;
   let receipt: number | undefined;
@@ -127,4 +130,16 @@ it('serializes concurrent source replacements through the existing row lock', as
   expect(updates).toBe(1);
   expect(results.filter((result) => result.source_receipt !== undefined)).toHaveLength(1);
   expect(results.map((result) => result.revision)).toEqual([5, 5]);
+});
+
+
+it.each([
+  { ...authoredGuard, source_journal_id: '30' }, { ...authoredGuard, source_revision: 1 },
+  { ...journalGuard, source_kind: 'git_authored' }, { ...authoredGuard, source_kind: 'journal_match' },
+  { ...identity }, { ...journalGuard, source_journal_id: null },
+])('rejects ambiguous or missing source guard provenance without I/O: %j', async (source) => {
+  const { pool, queries } = database();
+  await expect(new AgentProfileRepository(pool).replace(profile, 4, actor, source as unknown as AgentProfileSourceGuard))
+    .rejects.toMatchObject({ code: 'conflict' });
+  expect(queries).toEqual([]);
 });

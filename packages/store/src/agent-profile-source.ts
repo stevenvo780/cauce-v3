@@ -1,17 +1,20 @@
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { isJournalCursor } from './agent-context-revisions.js';
 
-export interface AgentProfileSourceGuard {
+interface ProfileSourceIdentity {
   readonly application_id: string;
   readonly expected_journal_id: string;
   readonly instance_id: string;
   readonly commit: string;
   readonly tree: string;
   readonly profile_sha256: string;
-  readonly source_journal_id: string;
-  readonly source_revision: number;
   readonly operator_id: string;
 }
+
+export type AgentProfileSourceGuard = ProfileSourceIdentity & (
+  | { readonly source_kind?: never; readonly source_journal_id: string; readonly source_revision: number }
+  | { readonly source_kind: 'git_authored'; readonly source_journal_id?: never; readonly source_revision?: never }
+);
 
 export interface AgentProfileSourceReceipt {
   readonly application_id: string;
@@ -21,11 +24,14 @@ export interface AgentProfileSourceReceipt {
 export function validProfileSourceGuard(value: AgentProfileSourceGuard): boolean {
   const oid = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
   const hash = /^[a-f0-9]{64}$/u;
-  return hash.test(value.application_id) && isJournalCursor(value.expected_journal_id)
+  const provenance = value.source_kind === 'git_authored'
+    ? !Object.hasOwn(value, 'source_journal_id') && !Object.hasOwn(value, 'source_revision')
+    : !Object.hasOwn(value, 'source_kind') && isJournalCursor(value.source_journal_id)
+      && Number.isSafeInteger(value.source_revision) && value.source_revision > 0;
+  return provenance && hash.test(value.application_id) && isJournalCursor(value.expected_journal_id)
     && /^[a-z0-9][a-z0-9_-]{0,63}$/u.test(value.instance_id)
     && oid.test(value.commit) && oid.test(value.tree) && hash.test(value.profile_sha256)
-    && isJournalCursor(value.source_journal_id) && Number.isSafeInteger(value.source_revision)
-    && value.source_revision > 0 && value.operator_id.length > 0 && value.operator_id.length <= 256;
+    && value.operator_id.length > 0 && value.operator_id.length <= 256;
 }
 
 export async function readProfileSourceReceipt(

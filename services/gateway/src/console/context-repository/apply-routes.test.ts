@@ -30,7 +30,9 @@ const oldJournal: ProfileRevisionEntry = { ...target, ...fields, id: '30', revis
   operation: 'insert', actor_tenant: null, actor_alias: null, changed_at: 'private-time' };
 const newJournal: ProfileRevisionEntry = { ...oldJournal, ...context.perfil, id: '42', revision: 4, operation: 'update' };
 
-describe('Git preview and the canonical profile writer', () => {
+describe.each(['journal', 'git_authored'])('Git %s preview and the canonical profile writer', (kind) => {
+  const authored = kind === 'git_authored';
+  const expectedProvenance = authored ? { source_kind: 'git_authored' } : { source_journal_id: '30', source_revision: 1 };
   let root: string;
   let commit: string;
   let app: FastifyInstance;
@@ -48,14 +50,14 @@ describe('Git preview and the canonical profile writer', () => {
     return oid;
   }
   const entry = (name: string, oid: string, mode = '40000') => Buffer.concat([Buffer.from(`${mode} ${name}\0`), Buffer.from(oid, 'hex')]);
-  async function fixture(content: unknown = fields): Promise<string> {
+  async function fixture(content: unknown = fields, gitAuthored = authored): Promise<string> {
     let oid = await object('blob', Buffer.from(JSON.stringify(content)));
     oid = await object('tree', entry('profile.json', oid, '100644'));
     for (const name of ['helper', 'agents', 'Steven']) oid = await object('tree', entry(name, oid));
-    const manifest = await object('blob', Buffer.from(JSON.stringify({ schema_version: 1, instance_id: 'fixture',
-      agents: [{ ...target, source_journal: { id: '30', revision: 1 } }] })));
+    const manifest = await object('blob', Buffer.from(JSON.stringify({ schema_version: gitAuthored ? 2 : 1, instance_id: 'fixture',
+      agents: [{ ...target, source_journal: gitAuthored ? null : { id: '30', revision: 1 } }] })));
     const tree = await object('tree', Buffer.concat([entry('context.json', manifest, '100644'), entry('tenants', oid)]));
-    return object('commit', Buffer.from(`tree ${tree}\n\nSynthetic snapshot\n`));
+    return object('commit', Buffer.from(`tree ${tree}\nauthor Not the operator <git-author@example.invalid> 0 +0000\n\nSynthetic snapshot\n`));
   }
 
   function sourceDeps() { return captured; }
@@ -97,7 +99,7 @@ describe('Git preview and the canonical profile writer', () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.json()).toMatchObject({ ...target, application: 'not_applied', sourceState: 'not_observed',
-      expected_revision: 4, context_source: { commit, source_journal_id: '30', expected_journal_id: '42' } });
+      expected_revision: 4, context_source: { commit, ...expectedProvenance, expected_journal_id: '42' } });
     expect(response.body).not.toContain(root); expect(response.body).not.toContain('private-time');
     expect(deps.replaceProfile).not.toHaveBeenCalled(); expect(apply).not.toHaveBeenCalled();
   });
@@ -132,11 +134,16 @@ describe('Git preview and the canonical profile writer', () => {
     expect(response.statusCode).toBe(202);
     expect(response.json()).toMatchObject({ ...target, state: 'pending_session_refresh', revision: 5, runtime_adoption: null });
     expect(deps.replaceProfile).toHaveBeenCalledWith({ ...target, ...fields }, 4, actor,
-      expect.objectContaining({ commit, source_journal_id: '30', expected_journal_id: '42', operator_id: 'human' }));
+      expect.objectContaining({ commit, ...expectedProvenance, expected_journal_id: '42', operator_id: 'human' }));
     expect(apply).toHaveBeenCalledTimes(1);
     const audits = vi.mocked(deps.recordAudit).mock.calls.map(([row]) => row.metadata);
     expect(audits.some((row) => row.phase === 'intent' && row.context_source !== undefined)).toBe(true);
     expect(JSON.stringify(audits)).not.toContain(fields.purpose);
+    expect(JSON.stringify(audits)).not.toContain('git-author');
+    if (authored) {
+      expect(JSON.stringify(audits)).not.toContain('source_journal_id');
+      expect(journal.mock.calls.every((call) => call[2] === 4)).toBe(true);
+    }
   });
 
   it('claims applied only after the matching adapter adoption and durable ACK', async () => {
@@ -188,8 +195,8 @@ describe('Git preview and the canonical profile writer', () => {
     expect(deps.replaceProfile).not.toHaveBeenCalled(); expect(apply).not.toHaveBeenCalled();
   });
 
-  it('keeps new Git-authored content without matching journal inspect-only', async () => {
-    commit = await fixture({ ...fields, purpose: 'Authored only in Git' });
+  it('keeps a v1 journal claim with new content inspect-only', async () => {
+    commit = await fixture({ ...fields, purpose: 'Authored only in Git' }, false);
     expect((await preview()).json()).toMatchObject({ error: 'source_journal_unverified' });
     expect(deps.prepareRuntime).not.toHaveBeenCalled();
   });
@@ -296,6 +303,54 @@ describe('Git preview and the canonical profile writer', () => {
     commit = await fixture({ ...fields, purpose: 'Authorization: Bearer ghp_123456789012345678901234567890123456' });
     const response = await preview(); expect(response.statusCode).toBe(409);
     expect(response.body).not.toContain('ghp_'); expect(deps.replaceProfile).not.toHaveBeenCalled();
+  });
+
+
+  it('does not carry an application identity across provenance kinds', async () => {
+    const payload = await body();
+    if (authored) {
+      delete payload.context_source.source_kind;
+      payload.context_source.source_journal_id = '30'; payload.context_source.source_revision = 1;
+    } else {
+      delete payload.context_source.source_journal_id; delete payload.context_source.source_revision;
+      payload.context_source.source_kind = 'git_authored';
+    }
+    expect((await put(payload)).statusCode).toBe(409);
+    expect(required(deps.contextSource).readReceipt).not.toHaveBeenCalled();
+    expect(deps.replaceProfile).not.toHaveBeenCalled(); expect(apply).not.toHaveBeenCalled();
+  });
+
+  it.each(['mixed', 'omitted', 'forged'])('rejects %s provenance before receipt or source I/O', async (invalid) => {
+    const payload = await body();
+    if (invalid === 'mixed') Object.assign(payload.context_source, { source_kind: 'git_authored', source_journal_id: '30', source_revision: 1 });
+    if (invalid === 'forged') payload.context_source.source_kind = 'journal_match';
+    if (invalid === 'omitted') {
+      delete payload.context_source.source_kind; delete payload.context_source.source_journal_id; delete payload.context_source.source_revision;
+    }
+    expect((await put(payload)).json()).toMatchObject({ error: 'invalid_confirmation' });
+    expect(required(deps.contextSource).readReceipt).not.toHaveBeenCalled();
+    expect(deps.replaceProfile).not.toHaveBeenCalled(); expect(apply).not.toHaveBeenCalled();
+  });
+
+  it('rejects altered commit object bytes after preview', async () => {
+    const payload = await body();
+    await writeFile(join(root, '.git', 'objects', commit.slice(0, 2), commit.slice(2)), deflateSync(Buffer.from('commit 7\0changed')));
+    expect((await put(payload)).statusCode).toBe(409);
+    expect(deps.replaceProfile).not.toHaveBeenCalled(); expect(apply).not.toHaveBeenCalled();
+  });
+
+  it.each(['absent', 'wrong_identity', 'wrong_content', 'deleted'])('rejects %s current journal', async (invalid) => {
+    journal.mockImplementation(async (_tenant, _alias, revision) => revision === 1 ? oldJournal
+      : invalid === 'absent' ? undefined : { ...newJournal,
+        ...(invalid === 'wrong_identity' ? { alias: 'other' } : invalid === 'wrong_content' ? { purpose: 'Unverified current' } : { operation: 'delete' as const }) });
+    expect((await preview()).statusCode).toBe(409);
+    expect(deps.prepareRuntime).not.toHaveBeenCalled(); expect(deps.replaceProfile).not.toHaveBeenCalled();
+  });
+
+  it('rejects an absent profile instead of creating it from Git', async () => {
+    vi.mocked(deps.readContext).mockResolvedValue({ contexto: context, exists: false, revision: null, applied_revision: null });
+    expect((await preview()).json()).toMatchObject({ error: 'profile_absent' });
+    expect(deps.prepareRuntime).not.toHaveBeenCalled(); expect(deps.replaceProfile).not.toHaveBeenCalled();
   });
 
   it('keeps direct preparation pure with no registered endpoints', async () => {

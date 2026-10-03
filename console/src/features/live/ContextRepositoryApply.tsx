@@ -93,8 +93,8 @@ export function ContextRepositoryApply(props: Props) {
   }
 
   return <section className="perfil-recarga" aria-label="Aplicar versión Git">
-    <p>Sólo pueden aplicarse versiones que coincidan con su diario de origen a un perfil existente.
-      El contenido nuevo creado únicamente en Git permanece en modo inspección.</p>
+    <p>Restaurar exige una versión coincidente con el diario. El contenido nuevo de Git debe declarar
+      explícitamente que no procede del diario. Ambos requieren un perfil existente y esta confirmación.</p>
     <label htmlFor={`${id}-reason`}>Motivo de la aplicación
       <input id={`${id}-reason`} value={reason} maxLength={DOCUMENT_REASON_MAX} disabled={disabled}
         onChange={(event) => { sequence.current += 1; setReason(event.target.value); setPreview(undefined); setConfirmed(false); setMessage(undefined); }} />
@@ -102,6 +102,9 @@ export function ContextRepositoryApply(props: Props) {
     <button className="button small secondary" type="button" disabled={disabled || invalidReason !== undefined}
       onClick={() => { void run('preview'); }}>{phase === 'preview' ? 'Preparando…' : 'Preparar aplicación'}</button>
     {preview ? <section aria-label="Confirmación de versión Git">
+      <p>{preview.context_source.source_kind === 'git_authored'
+        ? 'Aplicar contenido nuevo de Git. Su autor Git no acredita identidad ni permisos; esta operación se atribuye al operador autenticado.'
+        : `Restaurar contenido del diario ${String(preview.context_source.source_journal_id)}, revisión ${String(preview.context_source.source_revision)}.`}</p>
       <p>Commit {preview.context_source.commit}; instancia {props.instanceId}; {props.tenantId}/{props.alias}.
         Revisión vigente {preview.expected_revision}; diario {preview.context_source.expected_journal_id}.</p>
       {CAMPOS_DEL_PERFIL.map((field) => <div key={field}>

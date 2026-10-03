@@ -12,6 +12,7 @@ const JOURNAL: Record<JournalVerification, string> = {
   journal_match: 'Coincide con la revisión del diario consultada',
   journal_mismatch: 'No coincide con la identidad o contenido del diario consultado',
   journal_unavailable: 'La revisión del diario no está disponible',
+  git_authored: 'Contenido nuevo de Git; no declara una revisión de origen en el diario',
 };
 
 export function ContextRepositoryPanel(props: Props) {
@@ -82,12 +83,12 @@ function RepositoryContent({ tenantId, alias, ...permissions }: Props) {
       <p role="status">{JOURNAL[result.journal]}</p>
       {result.previousCommit ? <p className="historial-diff-texto">Comparación: {result.previousCommit}. {result.previousJournal ? JOURNAL[result.previousJournal] : ''}</p> : null}
       <p>Árbol de trabajo e índice no observados. Aplicación al arnés y adopción de sesión no evaluadas.</p>
-      {permissions.canApply && result.journal === 'journal_match' && capability.data.instance_id ? <ContextRepositoryApply
+      {permissions.canApply && ['journal_match', 'git_authored'].includes(result.journal) && capability.data.instance_id ? <ContextRepositoryApply
         key={`${result.commit}/${String(result.previousCommit)}`} tenantId={tenantId} alias={alias}
         instanceId={capability.data.instance_id} commit={result.commit} canApply={permissions.canApply}
         blocked={permissions.blocked ?? false} refreshRevision={permissions.refreshRevision}
         onSettled={permissions.onSettled} onWriteInFlightChange={permissions.onWriteInFlightChange} />
-        : permissions.canApply ? <p>Esta versión permanece en modo inspección: aplicar exige un origen coincidente en el diario. El contenido nuevo creado sólo en Git todavía no se importa.</p> : null}
+        : permissions.canApply ? <p>Esta versión permanece en modo inspección: su origen declarado no coincide con el diario o no está disponible.</p> : null}
       {CAMPOS_DEL_PERFIL.map((field) => {
         const current = result.profile[field];
         const old = result.previousProfile?.[field];

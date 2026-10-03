@@ -4,7 +4,7 @@ import { CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO } from '../../features/live/perfil';
 import { ApiError } from './core';
 import type { RequestFn } from './system-client';
 
-export type JournalVerification = 'journal_match' | 'journal_mismatch' | 'journal_unavailable';
+export type JournalVerification = 'journal_match' | 'journal_mismatch' | 'journal_unavailable' | 'git_authored';
 export interface ContextRepositoryCapability {
   readonly state: 'configured' | 'not_configured' | 'not_published';
   readonly instance_id: string | null;
@@ -47,15 +47,24 @@ function profile(value: unknown, tenantId: string, alias: string): AgentPerfilVa
 }
 
 function journal(value: unknown): JournalVerification {
-  if (value !== 'journal_match' && value !== 'journal_mismatch' && value !== 'journal_unavailable') return malformed();
+  if (value !== 'journal_match' && value !== 'journal_mismatch' && value !== 'journal_unavailable' && value !== 'git_authored') return malformed();
   return value;
 }
 
-function snapshot(value: unknown, tenantId: string, alias: string, instanceId: string, commit: string): AgentPerfilValor {
+function snapshot(value: unknown, tenantId: string, alias: string, instanceId: string, commit: string, provenance: JournalVerification): AgentPerfilValor {
   const row = record(value);
   const scope = record(row.scope);
   validateIdentity(scope, tenantId, alias);
   if (scope.instance_id !== instanceId || row.commit !== commit || row.provenanceVerification !== 'not_evaluated') malformed();
+  const source = record(row.sourceAgent);
+  validateIdentity(source, tenantId, alias);
+  if (provenance === 'git_authored') {
+    if (source.source_journal !== null) malformed();
+  } else {
+    const journal = record(source.source_journal);
+    if (typeof journal.id !== 'string' || !/^[1-9][0-9]*$/u.test(journal.id)
+      || !Number.isSafeInteger(journal.revision) || Number(journal.revision) < 1) malformed();
+  }
   return profile(row.profile, tenantId, alias);
 }
 
@@ -76,14 +85,18 @@ function sourcePreview(value: unknown, tenantId: string, alias: string, instance
   const oid = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
   const sha = /^[a-f0-9]{64}$/u;
   const journalId = (id: unknown) => typeof id === 'string' && /^[1-9][0-9]*$/u.test(id);
+  const authored = source.source_kind === 'git_authored';
+  const keys = ['application_id', 'commit', 'expected_journal_id', 'instance_id', 'profile_sha256', 'runtime_fingerprint', 'tree',
+    ...(authored ? ['source_kind'] : ['source_journal_id', 'source_revision'])];
   if (row.application !== 'not_applied' || row.sourceState !== 'not_observed'
     || !Number.isSafeInteger(row.expected_revision) || Number(row.expected_revision) < 1
     || source.instance_id !== instanceId || source.commit !== commit || !oid.test(commit)
     || typeof source.tree !== 'string' || !oid.test(source.tree)
-    || !journalId(source.expected_journal_id) || !journalId(source.source_journal_id)
-    || !Number.isSafeInteger(source.source_revision) || Number(source.source_revision) < 1
+    || !journalId(source.expected_journal_id)
+    || (!authored && (!journalId(source.source_journal_id)
+      || !Number.isSafeInteger(source.source_revision) || Number(source.source_revision) < 1))
     || !['profile_sha256', 'runtime_fingerprint', 'application_id'].every((key) => typeof source[key] === 'string' && sha.test(source[key]))
-    || Object.keys(source).sort().join(',') !== 'application_id,commit,expected_journal_id,instance_id,profile_sha256,runtime_fingerprint,source_journal_id,source_revision,tree'
+    || Object.keys(source).sort().join(',') !== keys.sort().join(',')
     || !Array.isArray(row.ficheros) || row.ficheros.length === 0) malformed();
   const files = row.ficheros.map((value: unknown) => {
     const file = record(value);
@@ -143,8 +156,8 @@ export function contextRepositoryClient(request: RequestFn): ContextRepositoryCl
       if (previousCommit === undefined && (row.previous !== null || verification.previous !== null)) malformed();
       return {
         commit, previousCommit: previousCommit ?? null,
-        profile: snapshot(row.desired, tenantId, alias, instanceId, commit),
-        previousProfile: previousCommit === undefined ? null : snapshot(row.previous, tenantId, alias, instanceId, previousCommit),
+        profile: snapshot(row.desired, tenantId, alias, instanceId, commit, journal(verification.desired)),
+        previousProfile: previousCommit === undefined ? null : snapshot(row.previous, tenantId, alias, instanceId, previousCommit, journal(verification.previous)),
         journal: journal(verification.desired), previousJournal: previousCommit === undefined ? null : journal(verification.previous),
       };
     },
