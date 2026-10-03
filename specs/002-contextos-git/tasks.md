@@ -47,4 +47,14 @@ guardia de versión y los hashes; no forma parte del árbol candidato.
 - [x] Cubrir capitalización, igualdad exacta, segmentos inválidos y alias canónico.
 - [x] Conectar binding explícito del servidor, ACL y diario a rutas de lectura.
 - [x] Conectar panel de comparación Git con validación de identidad y respuestas viejas.
-- [ ] Cerrar gates de la composición final y revisión independiente.
+- [x] Cerrar gates de la composición final y revisión independiente.
+
+## Validación final en el host autorizado
+
+Typecheck y lint globales correctos; 5505 pruebas unitarias globales y 145 pruebas de
+binding, modelo, lectura Git y rutas correctas. Build de consola correcto. Se documentaron
+las dos variables opt-in del binding, sin configurarlas en producción. Revisión independiente
+de fuente frontend y backend sin bloqueos; Chromium local verificó el panel cerrado, estado
+sin configuración y comparación sintética a 360 y 1440 px sin desborde ni escrituras.
+No se acredita inspección de un repositorio productivo, adopción del arnés ni PostgreSQL real
+en esta funcionalidad. La aceptación autenticada del operador sigue pendiente.

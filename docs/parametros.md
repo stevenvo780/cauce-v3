@@ -103,6 +103,8 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 
 | Parámetro | Unidad | Valor | Fuente | Cubre |
 |---|---|---|---|---|
+| `CAUCE_CONTEXT_INSTANCE_ID` (`gateway/console/context-repository/binding.ts`) | identidad | sin default; requiere también la raíz, ambas ausentes desactivan la inspección | env del servidor | unit binding + rutas |
+| `CAUCE_CONTEXT_REPOSITORY_ROOT` (`gateway/console/context-repository/binding.ts`) | ruta absoluta | sin default; raíz canónica confiable de un repo con objetos sueltos, sin packs, alternates ni worktrees enlazados | env del servidor, junto con la identidad | unit binding + inspección Git |
 | `CAUCE_CONSOLE_SESSION_TTL_SECONDS` (`DEFAULT_SESSION_TTL_MS`=8 h) | s | 28_800 (8 h), rango 60–86_400 | env | — |
 | Login throttle | intentos | 8 fallos / 15 min / 10_000 claves | fijo | — |
 | scrypt (`DEFAULT_SCRYPT_COST`, `DEFAULT_SCRYPT_BLOCK_SIZE`, `DEFAULT_SCRYPT_PARALLELISM`, `MAX_MEMORY`=96 MiB) | N/r/p | 32_768 / 8 / 1; clave 32 B, salt 16 B | fijo | — |
