@@ -38,14 +38,14 @@ describe('authorized Git context reads', () => {
     return object('tree', Buffer.concat([Buffer.from(`${mode} ${name}\0`), Buffer.from(oid, 'hex')]));
   }
 
-  async function fixture(purpose = PROFILE.purpose, instance_id = 'fixture'): Promise<string> {
+  async function fixture(purpose = PROFILE.purpose, instance_id = 'fixture', authored = false): Promise<string> {
     const profile = await object('blob', Buffer.from(JSON.stringify({ ...PROFILE, purpose })));
     const helper = await tree('profile.json', profile, '100644');
     const agents = await tree('helper', helper);
     const tenant = await tree('agents', agents);
     const tenants = await tree('Steven', tenant);
-    const manifest = await object('blob', Buffer.from(JSON.stringify({ schema_version: 1, instance_id,
-      agents: [{ tenant_id: 'Steven', alias: 'helper', source_journal: { id: '42', revision: 1 } }],
+    const manifest = await object('blob', Buffer.from(JSON.stringify({ schema_version: authored ? 2 : 1, instance_id,
+      agents: [{ tenant_id: 'Steven', alias: 'helper', source_journal: authored ? null : { id: '42', revision: 1 } }],
     })));
     const rootTree = await object('tree', Buffer.concat([
       Buffer.from('100644 context.json\0'), Buffer.from(manifest, 'hex'),
@@ -73,6 +73,20 @@ describe('authorized Git context reads', () => {
     commit = await fixture();
   });
   afterEach(async () => { await app.close(); await rm(root, { recursive: true, force: true }); });
+
+  it('reports v2 content as Git-authored without looking up or implying a source journal', async () => {
+    const deps = server();
+    const authored = await fixture('New from Git', 'fixture', true);
+    const response = await app.inject({ url: `${BASE}/inspect?commit=${authored}` });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ journalVerification: { desired: 'git_authored', previous: null },
+      desired: { sourceAgent: { source_journal: null }, profile: { purpose: 'New from Git' } },
+      application: 'not_evaluated', sourceState: 'not_observed' });
+    expect(deps.readProfileRevision).not.toHaveBeenCalled();
+    const compared = await app.inject({ url: `${BASE}/inspect?commit=${authored}&previous_commit=${commit}` });
+    expect(compared.json()).toMatchObject({ provenanceChanged: true,
+      journalVerification: { desired: 'git_authored', previous: 'journal_match' } });
+  });
 
   it('reports configured, without claiming source observation or exposing the local path', async () => {
     const deps = server();

@@ -42,6 +42,7 @@ import { PublishIntentReconciliationRequired } from './messages/contracts.js';
 import { MessagePublishingRepository } from './messages/publishing.js';
 import { reconstructCommittedConsoleIntentReceipt } from './messages/receipts.js';
 import type { MessageListRow } from './visibility-rows.js';
+import { MESSAGE_AUTHOR_SQL, withMessageAuthor } from './messages/author.js';
 
 export {
   PublishIntentExpiredError,
@@ -546,7 +547,7 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
     const result = await this.pool.query<MessageListRow>(
       `SELECT m.id AS message_id,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
               left(COALESCE(m.body->>'text',m.body->>'prompt',m.body::text),240) AS body_preview,
-              m.lane,m.created_at,
+              m.lane,m.created_at,${MESSAGE_AUTHOR_SQL},
               COALESCE(jsonb_agg(jsonb_build_object(
                 'delivery_id',d.id,'recipient_tenant',d.recipient_tenant,'recipient_alias',d.recipient_alias,
                 'status',d.status,'attempt',d.attempt,
@@ -576,6 +577,6 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
               )))
        GROUP BY m.id ORDER BY m.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
     );
-    return { items: result.rows, next_cursor: null };
+    return { items: result.rows.map(withMessageAuthor), next_cursor: null };
   }
 }

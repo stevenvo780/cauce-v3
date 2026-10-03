@@ -37,9 +37,14 @@ export interface CauceApi extends SystemClient, MessagingClient, AgentClient, Co
 export class CauceApi {
   private readonly baseUrl: string;
   private csrfToken: string | undefined;
+  private authGeneration = 0;
+  private sessionRead = 0;
+  private sessionIdentity: string | undefined;
+  private sessionRequest?: { generation: number; promise: Promise<ConsoleAuthState> };
   private bffSessionSupported: boolean | null = null;
   private readonly developmentIdentity?: { tenant: string; alias: string };
   private readonly unauthorizedListeners = new Set<UnauthorizedListener>();
+  private readonly authSessionListeners = new Set<(state: ConsoleAuthState) => void>();
 
   constructor(
     baseUrl = import.meta.env.VITE_CAUCE_API_BASE ?? '',
@@ -65,9 +70,14 @@ export class CauceApi {
     init: RequestInit = {},
     { requireCsrf = true, mapError }: RequestOptions = {},
   ): Promise<T> {
+    const requestGeneration = this.authGeneration;
     const method = init.method?.toUpperCase() ?? 'GET';
     const unsafe = isUnsafeMethod(method);
     const csrfToken = unsafe && requireCsrf ? await this.csrfForMutation() : undefined;
+
+    if (unsafe && requestGeneration !== this.authGeneration) {
+      throw new ApiError('La sesión cambió antes de enviar la operación. Reintentá desde la cuenta actual.', 409, 'session_changed');
+    }
 
     const propio = init.signal || !(this.tiempoMaximoMs > 0) ? undefined : new AbortController();
     const reloj = propio ? setTimeout(() => { propio.abort(); }, this.tiempoMaximoMs) : undefined;
@@ -127,9 +137,10 @@ export class CauceApi {
     if (response === undefined) throw new Error('la petición terminó sin respuesta HTTP');
 
     if (!response.ok) {
-      if (response.status === 401) {
+      if (response.status === 401 && !path.startsWith(AUTH_PATH)
+          && requestGeneration === this.authGeneration) {
         this.csrfToken = undefined;
-        if (!path.startsWith(AUTH_PATH)) this.announceUnauthorized();
+        this.announceUnauthorized();
       }
       const mapped = mapError?.(response.status, body);
       if (mapped !== undefined) throw mapped;
@@ -163,34 +174,64 @@ export class CauceApi {
     return `${this.baseUrl}/v3/auth/login`;
   }
 
+  onAuthSession(listener: (state: ConsoleAuthState) => void): () => void {
+    this.authSessionListeners.add(listener);
+    return () => { this.authSessionListeners.delete(listener); };
+  }
+
+  private acceptSession(state: ConsoleAuthState): void {
+    const identity = JSON.stringify([state.authenticated, state.subject, state.csrf_token]);
+    if (this.sessionIdentity !== undefined && identity !== this.sessionIdentity) this.authGeneration += 1;
+    this.sessionIdentity = identity;
+    this.bffSessionSupported = state.authenticated !== null;
+    this.csrfToken = state.authenticated && typeof state.csrf_token === 'string' ? state.csrf_token : undefined;
+    for (const listener of [...this.authSessionListeners]) listener(state);
+  }
+
   async login(email: string, password: string): Promise<ConsoleAuthState> {
+    const generation = ++this.authGeneration;
+    this.sessionRead += 1;
     const state = await this.request<ConsoleAuthState>('/v3/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     }, { requireCsrf: false });
-    this.bffSessionSupported = true;
-    this.csrfToken = typeof state.csrf_token === 'string' ? state.csrf_token : undefined;
+    if (generation === this.authGeneration) this.acceptSession(state);
     return state;
   }
 
-  async getAuthSession(): Promise<ConsoleAuthState> {
+  getAuthSession(): Promise<ConsoleAuthState> {
+    const generation = this.authGeneration;
+    if (this.sessionRequest?.generation === generation) return this.sessionRequest.promise;
+    const promise = this.readAuthSession(generation, ++this.sessionRead);
+    this.sessionRequest = { generation, promise };
+    const clear = () => { if (this.sessionRequest?.promise === promise) this.sessionRequest = undefined; };
+    void promise.then(clear, clear);
+    return promise;
+  }
+
+  private async readAuthSession(generation: number, read: number): Promise<ConsoleAuthState> {
     try {
       const state = await this.request<ConsoleAuthState>('/v3/auth/session');
-      this.bffSessionSupported = true;
-      this.csrfToken = state.authenticated && typeof state.csrf_token === 'string' ? state.csrf_token : undefined;
+      if (generation === this.authGeneration && read === this.sessionRead) this.acceptSession(state);
       return state;
     } catch (error) {
       if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
-        this.bffSessionSupported = false;
-        return { authenticated: null, reason: 'El gateway usa autenticación no-BFF.' };
+        const state: ConsoleAuthState = { authenticated: null, reason: 'El gateway usa autenticación no-BFF.' };
+        if (generation === this.authGeneration && read === this.sessionRead) this.acceptSession(state);
+        return state;
       }
       throw error;
     }
   }
 
   async logout(): Promise<void> {
+    const generation = ++this.authGeneration;
+    this.sessionRead += 1;
     await this.request<undefined>('/v3/auth/logout', { method: 'POST' });
-    this.csrfToken = undefined;
+    if (generation === this.authGeneration) {
+      this.csrfToken = undefined;
+      this.sessionIdentity = undefined;
+    }
   }
 }
 

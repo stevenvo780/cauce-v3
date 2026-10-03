@@ -49,7 +49,7 @@ it('con sesión válida deja pasar y publica la identidad y el cierre de sesión
   })));
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('button', { name: 'Cuenta de steven@elenxos.com' })).toBeVisible();
+  expect(await screen.findByRole('button', { name: 'Cuenta de Persona autenticada' })).toBeVisible();
   expect(screen.getByRole('navigation', { name: /principal/i })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /cerrar sesión/i })).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: /^Cuenta de/ }));

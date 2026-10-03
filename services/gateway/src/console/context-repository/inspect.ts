@@ -92,7 +92,7 @@ export function prepareProfileExport(input: {
   readonly snapshot: ProfileRevisionEntry;
 }): {
   readonly scope: ContextScope;
-  readonly sourceAgent: ContextSourceAgent;
+  readonly sourceAgent: ContextSourceAgent & { readonly source_journal: NonNullable<ContextSourceAgent['source_journal']> };
   readonly source: ContextSourceFile;
   readonly state: 'content_review_required';
   readonly application: 'not_evaluated';
@@ -132,8 +132,8 @@ export async function inspectContextRepository(input: {
   return {
     desired, previous, changes: previous === null ? null : compareSnapshots(previous, desired),
     provenanceChanged: previous === null ? null
-      : previous.sourceAgent.source_journal.id !== desired.sourceAgent.source_journal.id
-        || previous.sourceAgent.source_journal.revision !== desired.sourceAgent.source_journal.revision,
+      : previous.sourceAgent.source_journal?.id !== desired.sourceAgent.source_journal?.id
+        || previous.sourceAgent.source_journal?.revision !== desired.sourceAgent.source_journal?.revision,
     sourceState: 'not_observed', application: 'not_evaluated',
   };
 }

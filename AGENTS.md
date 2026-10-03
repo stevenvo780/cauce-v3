@@ -26,7 +26,7 @@ Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threa
 
 - **Efecto demostrado.** Nada está "hecho" sin pegar la salida del gate; un despliegue no está hecho sin mostrar el efecto real contra el sistema vivo.
 - **Revisor ≠ autor.** Todo sector tiene un dueño de escritura por ronda y un revisor que no es su autor; ninguna instancia se autoaprueba.
-- **Trabajo en `dev`, publicación de `main` por el dueño.** Prohibido crear ramas de tarea. Convivencia por sector + `git add` solo de rutas propias + commit siempre con pathspec, nunca `-a` ni `add -A`. Cambiar o publicar `main` requiere autorización explícita del dueño.
+- **Ramas propias para revisión; integración autorizada.** Se permiten commits y PR abiertos y listos para revisión en ramas propias con pruebas pendientes explícitas según `docs/calidad-y-gates.md`. En el checkout compartido de `dev`, convivencia por sector + `git add` solo de rutas propias + commit siempre con pathspec, nunca `-a` ni `add -A`. Los merges a `dev` o `main` quedan reservados a Steven o el agente que él autorice expresamente para integrar o desplegar; publicar un PR no autoriza integrar ni desplegar.
 - **Usuarios de ejecución.** Cada alias conserva el usuario de `ops/flota.json`: `dev`, `claw`, `ubuntu` o `server` según el entorno. Los supervisores usan `placement.systemdUser` o el valor predeterminado `stev`. No cambiar propietarios de perfiles o sesiones para acomodar un gate. El CI de root usa un worktree desechable; los builds del workspace usan su propietario. `pnpm qa:runtime-packaging` exige usuario normal.
 - **GitHub Actions prohibido.** El gate completo corre en el propio host (`cauce-v3-ci-local.timer`), no en un servicio pagado.
 - **Idioma: `.md` en español, código en inglés.** Identificadores y comentarios exportados en inglés; toda la documentación de proyecto en español.
@@ -40,7 +40,7 @@ Cada directorio tiene UN dueño de escritura por ronda; tocar algo fuera del sec
 
 ## Gates
 
-Gate de todo commit que toque código: `pnpm typecheck && pnpm lint && pnpm test:unit`, en verde. `pnpm test` (`scripts/test-all.mjs`) es el gate completo. `ops/scripts/validate.sh` valida sintaxis de `ops`+`deploy`, `shellcheck`, YAML/JSON Schema de manifiestos, y la identidad byte a byte de lo generado desde `ops/flota.json` — obligatorio tras tocar cualquier cosa de la flota. `scripts/calidad.mjs` aplica el trinquete de líneas por fichero, fechas y comentarios (solo puede bajar).
+Gate requerido para integrar código: `pnpm typecheck && pnpm lint && pnpm test:unit`, en verde. `pnpm test` (`scripts/test-all.mjs`) es el gate completo. Los commits y PR abiertos y listos para revisión en ramas propias pueden publicarse con gates pendientes o fallidos, declarando su estado y evidencia exacta; no acreditan trabajo listo para integrar o desplegar. Antes de integrar o desplegar deben estar verdes todos los gates requeridos. Quien integra o despliega es responsable de ejecutarlos y verificar la evidencia del código exacto que integra o despliega, incluido el gate completo y los gates de release aplicables antes del despliegue. `ops/scripts/validate.sh` valida sintaxis de `ops`+`deploy`, `shellcheck`, YAML/JSON Schema de manifiestos, y la identidad byte a byte de lo generado desde `ops/flota.json` — obligatorio tras tocar cualquier cosa de la flota. `scripts/calidad.mjs` aplica el trinquete de líneas por fichero, fechas y comentarios (solo puede bajar).
 
 ## NO TOCAR (sin excepción)
 
@@ -48,11 +48,11 @@ Gate de todo commit que toque código: `pnpm typecheck && pnpm lint && pnpm test
 
 ## Cómo se trabaja
 
-1. En `dev`, `git pull --ff-only origin dev` antes de empezar; el árbol es compartido en tiempo real por varias instancias.
+1. Para revisión mediante PR, usa una rama propia en un checkout aislado. Si trabajas en el checkout compartido de `dev`, `git pull --ff-only origin dev` antes de empezar; el árbol es compartido en tiempo real por varias instancias.
 2. Trabaja SOLO en tu sector. `git add` fichero a fichero o por directorio propio — nunca `git add -A` ni `git add .`.
-3. Gate en verde antes de cada commit que toque código (commits solo-`.md` no lo requieren).
+3. En el checkout compartido de `dev`, gate en verde antes de cada commit que toque código (commits solo-`.md` no lo requieren). En ramas propias se permite commitear y publicar PR abiertos y listos para revisión con pruebas pendientes explícitas; consulta `docs/calidad-y-gates.md`.
 4. `git mv` en commits separados de cualquier edición de contenido. Commits ≤20 ficheros, uno por tarea, e inmediatos: nada de acumular horas sin commitear en el árbol compartido.
 5. Commitea SIEMPRE con pathspec — `git commit <tus rutas> -m "..."` — nunca `git commit -a` ni `-m` a secas: se lleva el índice completo, incluido trabajo ajeno staged.
 6. Nada está "hecho" sin la evidencia pegada: salida real del gate, o el efecto verificado contra el sistema vivo.
 7. Subagentes: úsalos para lo paralelizable, ficheros DISJUNTOS por subagente, tope 4, profundidad 1; solo el proceso principal commitea. Detalle: sección "Subagentes" de `ordenes/00-PROTOCOLO.md`.
-8. Al terminar: `git push origin dev`, deja el checkout en `dev` y reporta en ≤5 líneas (commits, gate, qué quedó fuera). Sólo el dueño, con autorización explícita, integra y publica `main`.
+8. Al terminar una tarea, publica únicamente tu rama propia y deja el PR abierto y listo para revisión; reporta en ≤5 líneas (commits, estado y evidencia de gates, qué quedó fuera). En el checkout compartido, deja el checkout en `dev` y publica sólo trabajo autorizado. Sólo Steven o el agente que él autorice expresamente para integrar o desplegar hace merges a `dev` o `main`; integrar o desplegar exige los gates requeridos en verde.

@@ -297,6 +297,43 @@ describe('terminal control plane', () => {
     }
   });
 
+  const allModes = ['shell', 'harness', 'harness_rw'];
+  const readOnlyModes = ['harness'];
+  const legacyModes = ['shell', 'harness'];
+  it.each([
+    { name: 'disabled', enabled: false, reported: allModes, granted: allModes, available: legacyModes, disabled: true },
+    { name: 'default disabled', enabled: undefined, reported: allModes, granted: allModes, available: legacyModes, disabled: true },
+    { name: 'enabled and granted', enabled: true, reported: allModes, granted: allModes, available: allModes, disabled: false },
+    { name: 'disabled without grant', enabled: false, reported: allModes, granted: legacyModes, available: legacyModes, disabled: false },
+    { name: 'enabled without grant', enabled: true, reported: allModes, granted: legacyModes, available: legacyModes, disabled: false },
+    { name: 'disabled without capability', enabled: false, reported: legacyModes, granted: allModes, available: legacyModes, disabled: false },
+    { name: 'enabled without capability', enabled: true, reported: legacyModes, granted: allModes, available: legacyModes, disabled: false },
+    { name: 'read-only with flag disabled', enabled: false, reported: readOnlyModes, granted: allModes, available: readOnlyModes, disabled: false },
+    { name: 'read-only with flag enabled', enabled: true, reported: readOnlyModes, granted: allModes, available: readOnlyModes, disabled: false },
+    { name: 'only writable TUI disabled', enabled: false, reported: ['harness_rw'], granted: allModes, available: [], disabled: true },
+    { name: 'no grant with flag disabled', enabled: false, reported: allModes, granted: [], available: [], disabled: false },
+  ])('advertises available terminal modes: $name', async ({ enabled, reported, granted, available, disabled }) => {
+    await grant([{ tenant_id: 'Steven', alias: 'jarvis', modes: granted }]);
+    await build(enabled === undefined ? {} : { writableTuiEnabled: enabled }, consoleAuthProvider({ operator_id: 'steven' }));
+    await report([presence({ modes: reported })]);
+    const response = await app.inject({ method: 'GET', url: '/v3/console/terminal/targets' });
+    expect(response.statusCode).toBe(200);
+    const target = response.json<{ items: Record<string, unknown>[] }>().items.find(
+      (item) => item.tenant_id === 'Steven' && item.alias === 'jarvis',
+    );
+    expect(target).toMatchObject({
+      tenant_id: 'Steven', alias: 'jarvis', pty_state: 'online', authorized: available.length > 0,
+      modes: available, writable_modes: available.filter((mode) => mode !== 'harness'),
+    });
+    if (disabled) expect(target?.reason).toContain('writable_tui_disabled:');
+    else if (available.length > 0) expect(target?.reason).toBe('El agente PTY está conectado al terminal-relay.');
+    else expect(target?.reason).toContain('no_grant_for_operator:');
+    expect(target).toMatchObject(available.length > 0
+      ? { container: 'claw', runtime_user: 'claw', harness: 'openclaw', image: 'sha256:c0ffee' }
+      : { container: null, runtime_user: null, harness: null, image: null });
+    expect(database.sessions.size).toBe(0);
+  });
+
   it('redacts an entire shared cohort when any colocated identity is not control-visible', async () => {
     database.placements.push({
       tenant_id: 'Pablo', alias: 'oculto', container_name: 'claw', runtime_user: 'dev',

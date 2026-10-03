@@ -29,6 +29,7 @@ export interface Principal {
   readonly permissions: readonly PrincipalPermission[];
   /** Authenticated person authority, when established; it outranks delegated headers. */
   readonly operator_id?: string;
+  readonly operator_profile?: { readonly id: string; readonly display_name: string };
 }
 
 export class AuthError extends Error {
@@ -96,7 +97,13 @@ export function validatePrincipal(value: Principal): Principal {
     roles: principalRoles,
     permissions: principalPermissions,
     ...(origin === undefined ? {} : { origin: origin.data }),
-    ...(operatorId === undefined ? {} : { operator_id: operatorId })
+    ...(operatorId === undefined ? {} : { operator_id: operatorId }),
+    ...(value.operator_profile === undefined ? {} : {
+      operator_profile: {
+        id: nonEmptyString(value.operator_profile.id, 'operator profile id', 256),
+        display_name: nonEmptyString(value.operator_profile.display_name, 'operator display name', 240),
+      },
+    })
   };
 }
 

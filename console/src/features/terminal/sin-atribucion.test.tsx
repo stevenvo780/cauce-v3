@@ -218,7 +218,8 @@ describe('T041 · la toma de teclado exige persona con nombre', () => {
     // Sin teclado: ni estado sostenido ni tecla viajando al relay.
     expect(screen.queryByText(/Tenés el teclado de esta TUI/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /devolver el control/i })).not.toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: /reintentar la toma/i })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: 'Escritura no disponible' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /reintentar la toma/i })).not.toBeInTheDocument();
     expect(escribible.framesOfType('input')).toHaveLength(0);
   }, 20_000);
 });

@@ -30,6 +30,7 @@ import {
   type PublishResult,
 } from './contracts.js';
 import { reconstructPublishReceipt } from './receipts.js';
+import { MESSAGE_AUTHOR_SQL, requireConsoleAuthor, withMessageAuthor } from './author.js';
 import {
   assertAgentRootSlot, lockAgentRootActor, senderView, type MessageReader,
 } from './agent-roots.js';
@@ -86,6 +87,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
   }
 
   async publish(input: PublishMessage, options: PublishOptions = {}): Promise<PublishResult> {
+    const author = requireConsoleAuthor(options.consoleAuthor, options.requirePreparedConsoleIntent === true);
     if (options.requirePreparedConsoleIntent === true) {
       if (options.consoleIntentOperatorScope === undefined
           || !validConsoleOperatorScope(options.consoleIntentOperatorScope)) {
@@ -373,6 +375,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
              recipients: uniqueRecipients,
              authenticated_session_id: authenticated?.session_id ?? input.session_id,
              authenticated_channel: authenticated?.channel ?? input.channel,
+             ...(author === undefined ? {} : { console_author: author }),
              ...(agentRoot ? { agent_root: true } : {})
            })]
       );
@@ -394,7 +397,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
                 FROM jsonb_array_elements(m.body->'attachments_v1')
                      WITH ORDINALITY AS entry(attachment,position)
               ) END,'[]'::jsonb) AS attachments,
-              m.origin,m.lane,m.priority,m.created_at,
+              m.origin,m.lane,m.priority,m.created_at,${MESSAGE_AUTHOR_SQL},
               COALESCE(jsonb_agg(jsonb_build_object(
          'delivery_id',d.id,'tenant_id',d.recipient_tenant,'alias',d.recipient_alias,
          'status',d.status,'attempt',d.attempt,'terminal_at',d.terminal_at
@@ -424,9 +427,9 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
     if (!row) throw new StoreError('not_found', 'message not found or not visible');
     const view = reader === undefined || row.tenant_id !== actorTenant || row.actor_alias !== actorAlias
       ? undefined : await senderView(this.pool, messageId, reader);
-    if (view === undefined) return row;
+    if (view === undefined) return withMessageAuthor(row);
     return {
-      ...row, chain_open: view.chainOpen,
+      ...withMessageAuthor(row), chain_open: view.chainOpen,
       deliveries: row.deliveries.map((delivery) => ({ ...delivery, reply: view.replies.get(delivery.delivery_id) ?? null })),
     };
   }

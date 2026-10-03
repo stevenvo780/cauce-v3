@@ -1,4 +1,3 @@
-/** Keyboard ownership, explicit takeover, session fencing and release over the PTY channel. */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -83,15 +82,8 @@ function servirSesiones(registro: SesionPedida[]) {
   );
 }
 
-/**
- * THE FENCE THAT MADE THIS FEATURE A LIE. The gateway accepts `/control` and `/extend` only over a
- * session the relay already redeemed (`consumed_at IS NOT NULL`, `helpers.ts`); before that it
- * answers `409 stale_terminal_owner`. These handlers refuse exactly like that, so a console that
- * writes before the attach turns this suite red instead of turning into a take that never works.
- */
 const enganchadas = new Set<string>();
 
-/** Plays the relay redeeming the single-use ticket of whatever session this socket attached to. */
 function engancharSocket(socket: StubWebSocket): StubWebSocket {
   act(() => {
     socket.acceptOpen();
@@ -163,7 +155,6 @@ function escenario(overrides: Partial<TerminalTarget> = {}) {
   return { sesiones, controles, prorrogas };
 }
 
-/** Selects the alias and waits for the read-only TUI the panel opens on its own. */
 async function abrirZeus(user: ReturnType<typeof userEvent.setup>) {
   const vista = renderWithApi(<TerminalPage />);
   await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }, { timeout: 5000 }));
@@ -179,18 +170,14 @@ function botonDeToma(): HTMLElement {
   return screen.getByRole('button', { name: /tomar el control/i });
 }
 
-/** Attaches the read-only TUI the panel opened on its own, which is what `/extend` is fenced on. */
 function engancharLaTui(): StubWebSocket {
   return engancharSocket(StubWebSocket.last());
 }
 
-/** Takes the control with a hand-typed reason and returns the socket of the writable session. */
 async function tomarElControl(user: ReturnType<typeof userEvent.setup>, controles: ControlPedido[]) {
   const abiertos = StubWebSocket.instances.length;
   await user.type(campoDeMotivo(), MOTIVO);
   await user.click(botonDeToma());
-  // The writable channel is a session of its own: its socket is the one the keystrokes travel on,
-  // and until the relay redeems ITS ticket the gateway refuses the take.
   await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(abiertos); }, { timeout: 5000 });
   const socket = engancharSocket(StubWebSocket.last());
   await waitFor(() => { expect(controles).toHaveLength(1); }, { timeout: 5000 });
@@ -204,8 +191,6 @@ beforeEach(() => {
   restaurarSocket = installStubWebSocket();
 });
 afterEach(async () => {
-  // Unmount HERE, while the handlers are still installed: the release the panel fires on its way
-  // out landed after `resetHandlers` and printed an unhandled-request error over a green suite.
   cleanup();
   await act(async () => { await new Promise((listo) => setTimeout(listo, 0)); });
   closePtySession(SESION_HARNESS);
@@ -233,7 +218,6 @@ describe('el botón sólo existe si el gateway publica un modo con escritura', (
 
   it('CONTROL NEGATIVO: con harness_rw entre los modos pero sin modo escribible publicado, no hay botón', async () => {
     const user = userEvent.setup();
-    // The ONE thing that changes versus the case below: `writable_modes` comes back empty.
     const { controles } = escenario({ writable_modes: [] });
     await abrirZeus(user);
 
@@ -247,7 +231,6 @@ describe('el botón sólo existe si el gateway publica un modo con escritura', (
     await abrirZeus(user);
 
     expect(await screen.findByRole('button', { name: /tomar el control/i })).toBeInTheDocument();
-    // The consequence is on screen BEFORE the reason is typed, not after the take.
     expect(screen.getByText(/no le entrega mensajes/i)).toBeInTheDocument();
     expect(screen.getByText(/quedan en cola/i)).toBeInTheDocument();
   }, 20_000);
@@ -278,10 +261,8 @@ describe('el motivo lo escribe una persona', () => {
 
     expect(controles[0].body).toMatchObject({ action: 'take', reason: MOTIVO });
     expect(Object.keys(controles[0].body).sort()).toEqual([...CAMPOS_DE_CONTROL, 'reason'].sort());
-    // The writable session carries the SAME hand-typed reason...
     const escribible = sesiones.at(-1);
     expect(escribible).toMatchObject({ mode: WRITABLE_TUI_MODE, reason: MOTIVO });
-    // ...and never the automatic observation sentence, which is read-only justification.
     expect(escribible?.reason).not.toBe(liveTuiReason(ALIAS));
     expect(controles[0].body.reason).not.toBe(liveTuiReason(ALIAS));
   }, 20_000);
@@ -297,14 +278,10 @@ describe('con el control tomado', () => {
 
     await screen.findByRole('button', { name: /devolver el control/i });
     expect(screen.getByText(/quedan en cola/i)).toBeInTheDocument();
-    // The keyboard guard is lifted by an effect, one commit AFTER the hold exists: a keystroke
-    // typed before that is DROPPED —not queued— and the assertion below would be flaky for a
-    // reason that has nothing to do with the control.
     await waitFor(() => {
       expect(document.querySelector('.pty-shell[data-read-only]')).toBeNull();
     }, { timeout: 5000 });
 
-    // The mirror of `live-tui.test.tsx`, where the SAME call produces zero input frames.
     act(() => { ptySessionType(SESION_ESCRIBIBLE, 'ls -la\r'); });
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(socket.framesOfType('input')).toHaveLength(1);
@@ -362,8 +339,6 @@ describe('con el control tomado', () => {
     };
     try {
       window.dispatchEvent(new Event('beforeunload'));
-      // SYNCHRONOUS on purpose: a release that first awaits `/v3/auth/session` never leaves a
-      // page that is going away, and the alias stays muted until the hold expires by itself.
       expect(salidas.filter((url) => url.includes('/control'))).toHaveLength(1);
     } finally {
       globalThis.fetch = originalFetch;
@@ -384,7 +359,6 @@ describe('con el control tomado', () => {
     act(() => { socket.emitClose(4410, 'control_released'); });
 
     expect(await screen.findByText(/el control de la TUI dejó de ser tuyo/i)).toBeInTheDocument();
-    // The hold is already gone server-side: posting a release would be a lie about what happened.
     expect(controles.filter((llamada) => llamada.body.action === 'release')).toHaveLength(0);
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /devolver el control/i })).not.toBeInTheDocument();
@@ -398,7 +372,6 @@ describe('la prórroga es un acto humano, no un latido', () => {
     const { prorrogas } = escenario();
     await abrirZeus(user);
 
-    // The grant already exists and the bar is painted: before, that alone made the button live.
     const boton = await screen.findByRole('button', { name: /prorrogar/i });
     expect(boton).toBeDisabled();
     expect(boton.getAttribute('title')).toMatch(/el relay ya enganchó/i);
@@ -450,18 +423,58 @@ describe('la prórroga es un acto humano, no un latido', () => {
     await waitFor(() => { expect(prorrogas).toHaveLength(1); });
     expect(Object.keys(prorrogas[0]).sort()).toEqual([...CAMPOS_DE_PRORROGA].sort());
 
-    // No timer asks for a second one: the extension is explicit and audited, never ambient.
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
     expect(prorrogas).toHaveLength(1);
   }, 20_000);
 });
 
-/* ---------------------------------------------------------------------------------------------
- * THE ORDER OF THE TAKE. `/control` is fenced on `consumed_at IS NOT NULL`: posting it the moment
- * the grant exists —which is what the panel did— answered `409 stale_terminal_owner` every time
- * and left the operator on a writable session with no keyboard and no way forward but closing it.
- * ------------------------------------------------------------------------------------------- */
 describe('la toma espera al enganche del relay', () => {
+  it.each(['writable_tui_disabled', 'no_grant', 'control_permission_required', 'writable_requires_named_operator'] as const)(
+    'blocks retry after a permanent %s denial during admission or take', async (reason) => {
+      for (const phase of ['admission', 'take'] as const) {
+        const user = userEvent.setup({ delay: null });
+        const { controles } = escenario();
+        await abrirZeus(user);
+        engancharLaTui();
+        if (phase === 'admission') {
+          server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json({ reason }, { status: 403 })));
+          await user.type(campoDeMotivo(), MOTIVO);
+          await user.click(botonDeToma());
+        } else {
+          servirControl(controles, { status: 403, reason });
+          await tomarElControl(user, controles);
+        }
+        expect(await screen.findByText(TERMINAL_DENY_MESSAGES[reason].titulo)).toBeInTheDocument();
+        const blocked = await screen.findByRole('button', { name: 'Escritura no disponible' });
+        expect(blocked).toBeDisabled();
+        expect(screen.queryByRole('button', { name: /reintentar la toma/i })).not.toBeInTheDocument();
+        expect(screen.getByRole('alert')).toHaveTextContent(TERMINAL_DENY_MESSAGES[reason].quienLoLevanta);
+        await user.click(blocked);
+        expect(controles.filter(call => call.body.action === 'take')).toHaveLength(phase === 'take' ? 1 : 0);
+        cleanup();
+        closePtySession(SESION_HARNESS);
+        closePtySession(SESION_ESCRIBIBLE);
+      }
+    }, 20_000,
+  );
+
+  it.each([408, 429, 503])('keeps an HTTP %i failure retryable without automatically taking control', async (status) => {
+    const user = userEvent.setup({ delay: null });
+    const { controles } = escenario();
+    await abrirZeus(user);
+    engancharLaTui();
+    servirControl(controles, { status, reason: 'temporary_failure' });
+    await tomarElControl(user, controles);
+    const retry = await screen.findByRole('button', { name: /reintentar la toma/i });
+    expect(retry).toBeEnabled();
+    expect(campoDeMotivo()).toHaveValue(MOTIVO);
+    expect(controles).toHaveLength(1);
+    servirControl(controles);
+    await user.click(retry);
+    expect(await screen.findByText(/Tenés el teclado/)).toBeInTheDocument();
+    expect(controles.filter(call => call.body.action === 'take')).toHaveLength(2);
+  }, 20_000);
+
   it('no manda /control antes de que el ticket se consuma, y lo dice mientras espera', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
@@ -473,8 +486,6 @@ describe('la toma espera al enganche del relay', () => {
     await user.type(campoDeMotivo(), MOTIVO);
     await user.click(botonDeToma());
 
-    // The writable session exists and its socket is open, but the relay has not redeemed its
-    // ticket: not one byte of `/control` may travel yet.
     await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(abiertos); }, { timeout: 5000 });
     expect(await screen.findByRole('button', { name: /enganchando la sesión/i })).toBeDisabled();
     expect(controles).toHaveLength(0);
@@ -499,7 +510,7 @@ describe('la toma espera al enganche del relay', () => {
     await user.type(campoDeMotivo(), MOTIVO);
     await user.click(botonDeToma());
 
-    expect(await screen.findByText(/no llegó a abrir la sesión con teclado/i)).toBeInTheDocument();
+    expect(await screen.findByText(TERMINAL_DENY_MESSAGES.container_busy.titulo)).toBeInTheDocument();
     expect(controles).toHaveLength(0);
     expect(await screen.findByRole('button', { name: /reintentar la toma/i })).toBeEnabled();
   }, 20_000);
@@ -515,7 +526,6 @@ describe('la toma espera al enganche del relay', () => {
     await user.type(campoDeMotivo(), MOTIVO);
     await user.click(botonDeToma());
     await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(abiertos); }, { timeout: 5000 });
-    // The relay drops the channel before redeeming the ticket: the attach is never going to come.
     act(() => { StubWebSocket.last().emitClose(4404, 'agent_offline'); });
 
     const aviso = await screen.findByText(/no llegó a engancharse/i);
@@ -524,7 +534,6 @@ describe('la toma espera al enganche del relay', () => {
     expect(controles).toHaveLength(0);
     const pedidas = sesiones.length;
 
-    // A second click is NOT a silent no-op: it reopens the dead channel and finishes the take.
     const reintento = await screen.findByRole('button', { name: /reintentar la toma/i });
     await user.click(reintento);
     await waitFor(() => { expect(sesiones.length).toBeGreaterThan(pedidas); }, { timeout: 5000 });
@@ -539,8 +548,6 @@ describe('la toma espera al enganche del relay', () => {
   it('CONTROL NEGATIVO de montaje doble: con StrictMode la toma sigue viva y llega a /control', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
-    // StrictMode runs cleanup+setup on the SAME mount. A liveness flag that only ever went false
-    // froze the take on «Abriendo la sesión…» for ever, and no suite without StrictMode saw it.
     const vista = renderWithApi(<StrictMode><TerminalPage /></StrictMode>);
     await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }, { timeout: 5000 }));
     await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(0); }, { timeout: 5000 });
@@ -577,8 +584,6 @@ describe('la toma espera al enganche del relay', () => {
   it('un recibo incompleto NO pierde el arriendo: se dice y se devuelve igual al desmontar', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
-    // The gateway granted the hold —the alias is already muted— but the receipt came back without
-    // `expires_at` nor `held_by`. Throwing here left the browser with no record of a real hold.
     server.use(http.post('*/v3/console/terminal/sessions/:sid/control', async ({ request, params }) => {
       const body = await request.json() as Record<string, unknown>;
       const sid = String(params.sid);
@@ -595,8 +600,6 @@ describe('la toma espera al enganche del relay', () => {
     await screen.findByRole('button', { name: /devolver el control/i });
     const recibo = screen.getByText(/recibo incompleto/i);
     expect(recibo).toHaveTextContent(/held_by/);
-    // The notice has no rule of its own: it borrows the panel's amber notice. Pinned here so a
-    // later edit cannot leave it as unstyled body text without the suite noticing.
     expect(recibo).toHaveClass('pty-control-perdido');
 
     vista.unmount();
@@ -606,9 +609,6 @@ describe('la toma espera al enganche del relay', () => {
   }, 20_000);
 });
 
-/* ---------------------------------------------------------------------------------------------
- * `readOnly` stops being "is this the live TUI" and becomes "is this writable AND do I hold it".
- * ------------------------------------------------------------------------------------------- */
 describe('la toma no se dispara dos veces y la devolución tolera un CSRF rotado', () => {
   it('dos clics en el MISMO frame abren UNA sola sesión con teclado', async () => {
     const user = userEvent.setup();
@@ -727,11 +727,6 @@ describe('solo lectura es una función del modo y del control', () => {
   });
 });
 
-/* ---------------------------------------------------------------------------------------------
- * PARITY WITH THE GATEWAY SOURCE. The request and response shapes are READ from disk, exactly
- * like `denegaciones.test.tsx` reads the denial unions: a drift in the gateway turns this red
- * here, instead of turning into a 400 in front of an operator.
- * ------------------------------------------------------------------------------------------- */
 describe('el contrato de /control, /extend y writable_modes sale del gateway, no de la memoria', () => {
   function fuenteDelGateway(...partes: string[]): string {
     let directorio = dirname(fileURLToPath(import.meta.url));
@@ -746,8 +741,7 @@ describe('el contrato de /control, /extend y writable_modes sale del gateway, no
     throw new Error(`No se encontró services/gateway/src/terminal/${partes.join('/')}`);
   }
 
-  /** Members of a `const X = ['a', 'b'] as const;` list in the gateway source. */
-  function listaDelGateway(fuente: string, nombre: string): string[] {
+    function listaDelGateway(fuente: string, nombre: string): string[] {
     const bloque = new RegExp(`const ${nombre} = \\[([\\s\\S]*?)\\]`).exec(fuente);
     if (!bloque) throw new Error(`No se encontró la lista ${nombre} en el gateway`);
     return [...bloque[1].matchAll(/'([a-z_]+)'/g)].map((match) => match[1]).sort();

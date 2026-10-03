@@ -17,12 +17,13 @@ export interface ContextRepositoryRouteDeps {
 
 interface Params { tenantId: string; alias: string }
 type Request = FastifyRequest<{ Params: Params; Querystring: Record<string, unknown> }>;
-type JournalVerification = 'journal_match' | 'journal_mismatch' | 'journal_unavailable';
+type JournalVerification = 'journal_match' | 'journal_mismatch' | 'journal_unavailable' | 'git_authored';
 
 async function journalVerification(
   snapshot: ContextSourceSnapshot, deps: ContextRepositoryRouteDeps,
 ): Promise<JournalVerification> {
   const { scope, sourceAgent } = snapshot;
+  if (sourceAgent.source_journal === null) return 'git_authored';
   const journal = await deps.readProfileRevision(scope.tenant_id, scope.alias, sourceAgent.source_journal.revision);
   if (journal === undefined) return 'journal_unavailable';
   if (journal.id !== sourceAgent.source_journal.id || journal.revision !== sourceAgent.source_journal.revision

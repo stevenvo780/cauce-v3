@@ -12,6 +12,7 @@ import {
 import type { ConsolePublishTelemetry } from '../../console-publish-telemetry.js';
 import type { GatewayRepository } from '../../app.js';
 import { PasswordAuthProvider } from '../../password-auth.js';
+import { consoleMessageAuthor } from '../../console-message-author.js';
 import { logPublishRedaction, redactPublishBody } from '../publish-redaction.js';
 import {
   consolePublishOperatorScope, principal, publicPublish, replyError, trustedPublishSemantics,
@@ -84,9 +85,11 @@ export function registerCorePublishRoutes(
         ...trustedPublishSemantics(actor, command, request, systemGateProbe ? 'kant' : actor.alias),
         idempotency_key: command.idempotency_key,
       };
+      const author = consolePublish ? consoleMessageAuthor(actor) : undefined;
       const receipt = validatedPublishReceipt(
         await repository.publish(trustedCommand, {
           requirePreparedConsoleIntent: consolePublish,
+          ...(author === undefined ? {} : { consoleAuthor: author }),
           ...(!systemGateProbe && isAgentPrincipal(actor) ? { agentRoot: true } : {}),
           ...(consolePublish
             ? { consoleIntentOperatorScope: consolePublishOperatorScope(actor) }

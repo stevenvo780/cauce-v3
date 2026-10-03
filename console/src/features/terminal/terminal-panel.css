@@ -883,27 +883,30 @@ main:has(.ultimate-terminal-page[data-tui="abierta"]) {
   .fleet-plegar { display: none; }
 }
 
-/* ---------------------------------------------------------------------------------------------
- * Compact step. The terminal used to start at y=1952 on a 800px screen — off it entirely. Here
- * the stage goes first and keeps a little over half the screen.
- * ------------------------------------------------------------------------------------------ */
+/* Stacked controls need document scroll; a viewport cap clips the terminal's minimum height. */
+@media (max-width: 1100px) {
+  .app-shell:has(.ultimate-terminal-page[data-tui="abierta"]) .workspace { height: auto; }
+  main:has(.ultimate-terminal-page[data-tui="abierta"]) { overflow: visible; }
+  .page-shell-aplicacion:has(.ultimate-terminal-page[data-tui="abierta"]) { height: auto; }
+  .ultimate-terminal-page[data-tui="abierta"] .page-header { position: static; }
+  .ultimate-terminal-page[data-tui="abierta"] .page-title { flex-wrap: wrap; }
+  .ultimate-terminal-page[data-tui="abierta"] .page-title-fila { flex: none; }
+  .ultimate-terminal-page[data-tui="abierta"] .page-actions { justify-self: stretch; flex-wrap: wrap; }
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-grid-wrapper,
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-grid-container,
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-panel { height: auto; flex: none; }
+  .ultimate-terminal-page[data-tui="abierta"] .pty-viewport { min-height: 52vh; }
+}
+
 @media (max-width: 760px) {
+  html:has(.ultimate-terminal-page[data-tui="abierta"]) { scroll-padding-bottom: calc(var(--nav-inferior-alto) + var(--space-4) + env(safe-area-inset-bottom, 0px)); }
   .ultimate-terminal-page[data-tui="abierta"] .ultimate-terminal-shell { height: auto; display: flex; flex-direction: column; }
   /* The terminal ON TOP: in portrait the list of 14 agents above pushed it to y=1952. */
   .ultimate-terminal-page[data-tui="abierta"] .terminal-grid-wrapper { order: -1; }
   .ultimate-terminal-page[data-tui="abierta"] .terminal-fleet-sidebar { max-height: 320px; }
-  /*
-   * The six counters wrapped to 132px in three rows, a sixth of a 800px screen spent repeating
-   * what is already known: they become one row that drags sideways, and all six are still there.
-   */
   .ultimate-terminal-page[data-tui="abierta"] .page-header { margin-bottom: var(--space-2); }
   .ultimate-terminal-page[data-tui="abierta"] .terminal-overview { display: flex; flex-wrap: nowrap; overflow-x: auto; }
   .ultimate-terminal-page[data-tui="abierta"] .terminal-overview article { flex: none; }
-  /*
-   * The session header measured 282px in portrait: the compact step put it in a column and the
-   * four-mode switch broke into two rows, leaving the terminal at y=736 of an 800px screen. Here
-   * it is a row again and the switch drags sideways instead of wrapping.
-   */
   .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head { min-height: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2); }
   .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-avatar { display: none; }
   .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-identity-text .eyebrow { display: none; }
@@ -918,7 +921,6 @@ main:has(.ultimate-terminal-page[data-tui="abierta"]) {
   .ultimate-terminal-page[data-tui="abierta"] .pty-bar-readonly { display: none; }
   .ultimate-terminal-page[data-tui="abierta"] .pty-session-bar { gap: var(--space-1) var(--space-3); margin-bottom: var(--space-1); padding: var(--space-2); }
   .terminal-panel { height: auto; }
-  .pty-viewport { min-height: 52vh; }
   .terminal-pty-pane { padding: var(--space-2); }
   .pty-plazas li > button { margin-left: 0; width: 100%; justify-content: center; }
 }

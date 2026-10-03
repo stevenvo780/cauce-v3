@@ -161,3 +161,29 @@ it.each(['../Steven', '/Steven', 'Steven/a', 'Steven\\a', 'Steven%2fa', '0tenant
 it('rejects digit-prefixed aliases according to the canonical protocol', () => {
   expect(() => { validateContextScope({ ...scope, alias: '0helper' }); }).toThrow();
 });
+
+
+it('admits explicitly Git-authored v2 without manufacturing source journal provenance', () => {
+  expect(parseContextManifest(JSON.stringify({ ...manifest, schema_version: 2,
+    agents: [{ tenant_id: agent.tenant_id, alias: agent.alias, source_journal: null }] })))
+    .toEqual({ schema_version: 2, instance_id: 'fixture', agents: [{ tenant_id: agent.tenant_id, alias: agent.alias, source_journal: null }] });
+});
+
+it.each([
+  { schema_version: 1, source_journal: null },
+  { schema_version: 2, source_journal: agent.source_journal },
+  { schema_version: 2, source_journal: undefined },
+  { schema_version: 2, source_journal: { kind: 'git_authored' } },
+  { schema_version: 3, source_journal: null },
+])('refuses crossed, omitted or invented manifest provenance: %j', ({ schema_version, source_journal }) => {
+  expect(() => parseContextManifest(JSON.stringify({ ...manifest, schema_version, agents: [{ ...agent, source_journal }] }))).toThrow();
+});
+
+it('rejects mixed v2 journal claims and authority attributes', () => {
+  for (const extra of [{ actor: 'operator' }, { source_kind: 'git_authored' }, { repositoryPath: '/caller' }]) {
+    expect(() => parseContextManifest(JSON.stringify({ ...manifest, schema_version: 2,
+      agents: [{ ...agent, source_journal: null, ...extra }] }))).toThrow('invalid_schema');
+  }
+  expect(() => parseContextManifest(JSON.stringify({ ...manifest, schema_version: 2,
+    agents: [{ ...agent, source_journal: null }, { ...agent, alias: 'other' }] }))).toThrow('invalid_provenance');
+});

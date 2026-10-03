@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import type { ConsoleAuthState } from '../../api/types';
 
@@ -40,18 +40,44 @@ export function useAuthGate(): AuthGateState {
   const [error, setError] = useState<Error>();
   const [busy, setBusy] = useState(false);
 
-  const check = useCallback(async () => {
+  const mounted = useRef(false);
+  const generation = useRef(0);
+  const mutating = useRef(false);
+
+  const refresh = useCallback(async (expectedAuthenticated?: boolean) => {
+    const current = ++generation.current;
     try {
       const next = await api.getAuthSession();
-      setState(next);
-      setError(undefined);
+      if (expectedAuthenticated !== undefined && next.authenticated !== expectedAuthenticated) {
+        throw new Error(expectedAuthenticated
+          ? 'El servidor no confirmó el inicio de sesión.'
+          : 'El servidor no confirmó el cierre de sesión.');
+      }
+      if (mounted.current && current === generation.current) {
+        setState(next);
+        setError(undefined);
+      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause : new Error('No se pudo verificar la sesión'));
+      if (mounted.current && current === generation.current) {
+        setError(cause instanceof Error ? cause : new Error('No se pudo verificar la sesión'));
+      }
     }
   }, [api]);
 
+  const check = useCallback(async () => {
+    if (!mutating.current) await refresh();
+  }, [refresh]);
+
+  useEffect(() => api.onAuthSession((next) => {
+    if (!mounted.current || mutating.current) return;
+    generation.current += 1;
+    setState(next);
+    setError(undefined);
+  }), [api]);
+
   useEffect(() => {
     let active = true;
+    mounted.current = true;
     void check();
     // Periodic revalidation and on tab focus: an expired session must be noticed without
     // waiting for the operator to touch something that writes.
@@ -60,6 +86,8 @@ export function useAuthGate(): AuthGateState {
     window.addEventListener('focus', onFocus);
     return () => {
       active = false;
+      mounted.current = false;
+      generation.current += 1;
       window.clearInterval(timer);
       window.removeEventListener('focus', onFocus);
     };
@@ -76,33 +104,41 @@ export function useAuthGate(): AuthGateState {
     });
   }, [api, check]);
 
-  /**
-   * Password login. Like logout, it does not assume its own optimism: after the POST it asks the
-   * server again. A credential failure is propagated to the caller —to be shown inside the form—
-   * instead of becoming `error`, which paints "could not verify the session".
-   */
   const login = useCallback(async (email: string, password: string) => {
+    if (mutating.current) return;
+    mutating.current = true;
+    generation.current += 1;
     setBusy(true);
+    setError(undefined);
     try {
       await api.login(email, password);
-      await check();
+      if (!mounted.current) return;
+      setState(undefined);
+      await refresh(true);
     } finally {
-      setBusy(false);
+      mutating.current = false;
+      if (mounted.current) setBusy(false);
     }
-  }, [api, check]);
+  }, [api, refresh]);
 
   const logout = useCallback(async () => {
+    if (mutating.current) return;
+    mutating.current = true;
+    generation.current += 1;
     setBusy(true);
+    setError(undefined);
     try {
       await api.logout();
-      // The POST result is not assumed: the server is asked again who I am.
-      await check();
+      if (!mounted.current) return;
+      setState(undefined);
+      await refresh(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause : new Error('No se pudo cerrar la sesión'));
+      if (mounted.current) setError(cause instanceof Error ? cause : new Error('No se pudo cerrar la sesión'));
     } finally {
-      setBusy(false);
+      mutating.current = false;
+      if (mounted.current) setBusy(false);
     }
-  }, [api, check]);
+  }, [api, refresh]);
 
   return { state, error, status: statusOf(state, error), busy, check, login, logout };
 }

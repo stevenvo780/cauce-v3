@@ -20,7 +20,8 @@ const CAPABILITY = { tenant_id: 'Steven', alias: 'helper', state: 'configured', 
 
 function snapshot(commit = COMMIT) {
   return { scope: { instance_id: 'fixture', tenant_id: 'Steven', alias: 'helper' }, commit,
-    profile: PROFILE, provenanceVerification: 'not_evaluated' };
+    profile: PROFILE, provenanceVerification: 'not_evaluated',
+    sourceAgent: { tenant_id: 'Steven', alias: 'helper', source_journal: { id: '30', revision: 1 } as { id: string; revision: number } | null } };
 }
 function result() {
   return { tenant_id: 'Steven', alias: 'helper', sourceState: 'not_observed', application: 'not_evaluated',
@@ -183,4 +184,76 @@ it('validates capability identity and never sends a client root, instance or pri
   expect(calls[0]?.init).toEqual({ cache: 'no-store' });
   const wrong = (async () => ({ ...CAPABILITY, tenant_id: 'steven' })) as unknown as RequestFn;
   await expect(contextRepositoryClient(wrong).getContextRepository('Steven', 'helper')).rejects.toMatchObject({ code: 'invalid_context_repository' });
+});
+
+
+it.each([
+  { error: 'unclassified_gateway_failure' },
+  { message: 'transient response without a route code' },
+])('preserves an ambiguous 404 as a retryable failure: %j', async (body) => {
+  let calls = 0;
+  server.use(http.get(BASE, () => {
+    calls += 1;
+    return calls === 1 ? HttpResponse.json(body, { status: 404 }) : HttpResponse.json(CAPABILITY);
+  }));
+  const user = userEvent.setup();
+  renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
+  await user.click(screen.getByText('Versiones Git del contexto'));
+  expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo consultar la vinculación Git');
+  expect(screen.queryByText('Este gateway todavía no publica la inspección Git.')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Reintentar' }));
+  expect(await screen.findByLabelText('Commit completo')).toBeInTheDocument();
+  expect(calls).toBe(2);
+});
+
+it('preserves a non-JSON transport 404 as a retryable failure', async () => {
+  server.use(http.get(BASE, () => new HttpResponse('upstream resource missing', { status: 404 })));
+  const user = userEvent.setup();
+  renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
+  await user.click(screen.getByText('Versiones Git del contexto'));
+  expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo consultar');
+  expect(screen.getByRole('button', { name: 'Reintentar' })).toBeEnabled();
+});
+
+it('recognizes explicit HTTP 501 without disguising a failure to find the agent', async () => {
+  server.use(http.get(BASE, () => HttpResponse.json({ error: 'unavailable' }, { status: 501 })));
+  const user = userEvent.setup();
+  renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
+  await user.click(screen.getByText('Versiones Git del contexto'));
+  expect(await screen.findByText('Este gateway todavía no publica la inspección Git.')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Reintentar' })).toBeNull();
+});
+
+it.each(['journal_match', 'git_authored', 'journal_mismatch', 'journal_unavailable'])(
+  'offers explicit preview only for an admissible %s origin', async (provenance) => {
+    const response = result(); response.journalVerification.desired = provenance;
+    if (provenance === 'git_authored') response.desired.sourceAgent.source_journal = null;
+    let previews = 0; let writes = 0;
+    server.use(http.get(`${BASE}/inspect`, () => HttpResponse.json(response)),
+      http.post(`${BASE}/preview`, () => { previews += 1; return HttpResponse.json({}); }),
+      http.put(BASE.replace('/context/repository', '/perfil'), () => { writes += 1; return HttpResponse.json({}); }));
+    const user = userEvent.setup(); renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" canApply />);
+    await user.click(screen.getByText('Versiones Git del contexto'));
+    fireEvent.change(await screen.findByLabelText('Commit completo'), { target: { value: COMMIT } });
+    await user.click(screen.getByRole('button', { name: 'Inspeccionar versión' }));
+    await screen.findByText('Review context');
+    if (['journal_match', 'git_authored'].includes(provenance)) {
+      expect(screen.getByRole('button', { name: 'Preparar aplicación' })).toBeDisabled();
+    } else expect(screen.queryByRole('button', { name: 'Preparar aplicación' })).toBeNull();
+    if (provenance === 'git_authored') expect(screen.getByText(/Contenido nuevo de Git; no declara/)).toBeInTheDocument();
+    expect(previews).toBe(0); expect(writes).toBe(0);
+  },
+);
+
+it.each([
+  { journal: 'git_authored', source: snapshot().sourceAgent },
+  { journal: 'journal_match', source: { ...snapshot().sourceAgent, source_journal: null } },
+  { journal: 'git_authored', source: { ...snapshot().sourceAgent, source_journal: undefined } },
+  { journal: 'git_authored', source: { ...snapshot().sourceAgent, alias: 'other', source_journal: null } },
+])('client refuses an inspection provenance contradiction: %j', async ({ journal, source }) => {
+  const response = { ...result(), desired: { ...snapshot(), sourceAgent: source },
+    journalVerification: { desired: journal, previous: null } };
+  const request = vi.fn(async () => response) as unknown as RequestFn;
+  await expect(contextRepositoryClient(request).inspectContextRepository('Steven', 'helper', 'fixture', COMMIT))
+    .rejects.toMatchObject({ code: 'invalid_context_repository' });
 });

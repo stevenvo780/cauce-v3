@@ -17,11 +17,11 @@ export interface ContextScope {
 export interface ContextSourceAgent {
   readonly tenant_id: string;
   readonly alias: string;
-  readonly source_journal: { readonly id: string; readonly revision: number };
+  readonly source_journal: { readonly id: string; readonly revision: number } | null;
 }
 
 export interface ContextManifest {
-  readonly schema_version: 1;
+  readonly schema_version: 1 | 2;
   readonly instance_id: string;
   readonly agents: readonly ContextSourceAgent[];
 }
@@ -107,8 +107,12 @@ function rejectDuplicateKeys(text: string): void {
   }
 }
 
-function parseAgent(value: unknown): ContextSourceAgent {
+function parseAgent(value: unknown, schema: 1 | 2): ContextSourceAgent {
   const input = record(value, ['tenant_id', 'alias', 'source_journal']);
+  if (schema === 2) {
+    requireContext(input.source_journal === null, 'invalid_provenance');
+    return { tenant_id: identifier(input.tenant_id, 'tenant'), alias: identifier(input.alias, 'alias'), source_journal: null };
+  }
   const journal = record(input.source_journal, ['id', 'revision']);
   requireContext(isJournalCursor(journal.id), 'invalid_journal_id');
   requireContext(typeof journal.revision === 'number' && Number.isSafeInteger(journal.revision)
@@ -121,12 +125,13 @@ function parseAgent(value: unknown): ContextSourceAgent {
 
 export function parseContextManifest(text: string): ContextManifest {
   const input = record(parseJson(text), ['schema_version', 'instance_id', 'agents']);
-  requireContext(input.schema_version === 1, 'unsupported_schema');
+  requireContext(input.schema_version === 1 || input.schema_version === 2, 'unsupported_schema');
+  const schema = input.schema_version;
   requireContext(Array.isArray(input.agents) && input.agents.length > 0
     && input.agents.length <= CONTEXT_REPOSITORY_LIMITS.agents, 'invalid_agents');
-  const agents = input.agents.map(parseAgent);
+  const agents = input.agents.map((agent) => parseAgent(agent, schema));
   requireContext(new Set(agents.map(sourceAgentPath)).size === agents.length, 'duplicate_agent');
-  return { schema_version: 1, instance_id: identifier(input.instance_id), agents };
+  return { schema_version: schema, instance_id: identifier(input.instance_id), agents };
 }
 
 function sourceAgentPath(agent: Pick<ContextSourceAgent, 'tenant_id' | 'alias'>): string {

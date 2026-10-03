@@ -1,4 +1,5 @@
 import { cancelPendingInput } from './pty-input';
+import { focusWritablePty } from './pty-focus';
 import { finishOutput, writeOutput } from './pty-output';
 import {
   PTY_HANDSHAKE_TIMEOUT_MS,
@@ -99,10 +100,9 @@ function handleControlFrame(
     publish({ state: 'open', message: undefined, ticketConsumido: true });
     startViewerHeartbeat(entry);
     onReady();
-    try {
-      entry.terminal.focus();
-    } catch {
-      // Focus is best-effort; a headless renderer has nothing to focus.
+    // A background reconnect must not steal the operator's current form or another tab.
+    if (document.activeElement === document.body || entry.container.contains(document.activeElement)) {
+      focusWritablePty(entry);
     }
     return;
   }
@@ -113,6 +113,7 @@ function handleControlFrame(
     return;
   }
   if (payload.type === 'input_refused') {
+    cancelPendingInput(entry);
     publish({ notices: [...entry.view.notices, { level: 'warn', message: avisoDeEntradaRechazada(payload.reason) }] });
     return;
   }

@@ -1,5 +1,6 @@
 import type { ConsoleAccess, DeliveryView, MessagePage, MessageView, TopologySnapshot } from '../../api/types';
 import type { FleetAgent } from './fleet';
+import { humanAuthor } from './message-author';
 
 export interface OperatorSession {
   id: string;
@@ -129,7 +130,7 @@ export function operatorRouteForAgent(
 /** Projects authoritative server messages into a recipient-scoped, non-durable UI session. */
 export function transcriptForSession(page: MessagePage | undefined, session: OperatorSession): TranscriptItem[] {
   return (page?.items ?? []).flatMap((message): TranscriptItem[] => {
-    const output = same(message.tenant_id, session.agent.tenantId)
+    const output = humanAuthor(message) === undefined && same(message.tenant_id, session.agent.tenantId)
       && same(message.actor_alias, session.agent.alias);
     const delivery = (message.deliveries ?? []).find((candidate) => (
       same(candidate.recipient_tenant, session.agent.tenantId)

@@ -5,6 +5,11 @@ import {
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
+import {
+  readProfileSourceReceipt, validProfileSourceGuard,
+  type AgentProfileSourceGuard, type AgentProfileSourceReceipt,
+} from './agent-profile-source.js';
+export type { AgentProfileSourceGuard, AgentProfileSourceReceipt } from './agent-profile-source.js';
 
 /**
  * Repository for reading, persistence, and context of agent profiles (agent_profiles).
@@ -44,6 +49,7 @@ export interface StoredAgentProfile {
 export interface PersistedAgentProfile extends StoredAgentProfile {
   readonly exists: true;
   readonly revision: number;
+  readonly source_receipt?: AgentProfileSourceReceipt;
 }
 
 export interface StoredAgentContext {
@@ -141,14 +147,38 @@ export class AgentProfileRepository {
     input: AgentProfile | Record<string, unknown>,
     expectedRevision: number | null,
     actor: AgentProfileAuditActor,
+    source?: AgentProfileSourceGuard,
   ): Promise<PersistedAgentProfile> {
     const profile = normalizeAgentProfile(input as Record<string, unknown>);
     if (expectedRevision !== null
       && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) {
       throw new AgentProfileMutationError('conflict', 'expected profile revision is invalid');
     }
+    if (source !== undefined && (expectedRevision === null || !validProfileSourceGuard(source))) {
+      throw new AgentProfileMutationError('conflict', 'profile source guard is invalid');
+    }
     return withTransaction(this.pool, async (client) => {
       await this.assertEnabled(client, profile.tenant_id, profile.alias);
+      if (source !== undefined) {
+        const locked = await client.query<ProfileRow>(
+          `SELECT ${profileColumns} FROM agent_profiles WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`,
+          [profile.tenant_id, profile.alias],
+        );
+        const current = locked.rows[0];
+        if (current === undefined) throw new AgentProfileMutationError('conflict', 'profile source target disappeared');
+        const receipt = await readProfileSourceReceipt(client, profile.tenant_id, profile.alias, actor, source.application_id);
+        if (receipt !== undefined) return { ...stored(current), source_receipt: receipt };
+        const journal = await client.query<{ id: string; revision: string; operation: string }>(
+          `SELECT id::text,revision::text,operation FROM agent_profile_revisions
+           WHERE tenant_id=$1 AND alias=$2 ORDER BY id DESC LIMIT 1`,
+          [profile.tenant_id, profile.alias],
+        );
+        const latest = journal.rows[0];
+        if (latest?.id !== source.expected_journal_id || Number(latest.revision) !== expectedRevision
+          || (latest.operation !== 'insert' && latest.operation !== 'update')) {
+          throw new AgentProfileMutationError('conflict', 'profile source lifecycle changed');
+        }
+      }
       const values = [
         profile.tenant_id, profile.alias, profile.purpose, profile.role_summary,
         profile.human_brief, [...profile.responsibilities], [...profile.restrictions],
@@ -187,9 +217,16 @@ export class AgentProfileRepository {
         expected_revision: expectedRevision,
         desired_revision: state.revision,
         applied_revision: state.applied_revision,
+        ...(source === undefined ? {} : { context_source: source }),
       });
       return state;
     });
+  }
+
+  readSourceReceipt(
+    tenantId: string, alias: string, actor: AgentProfileAuditActor, applicationId: string,
+  ): Promise<AgentProfileSourceReceipt | undefined> {
+    return readProfileSourceReceipt(this.pool, tenantId, alias, actor, applicationId);
   }
 
   /**

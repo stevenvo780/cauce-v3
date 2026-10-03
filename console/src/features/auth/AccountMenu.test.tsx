@@ -51,7 +51,7 @@ it('Tab sale del popover y pulsar el compositor lo cierra sin robar el foco', as
   render(<><AccountMenu gate={gate()} /><textarea aria-label="Compositor" /></>);
   const trigger = screen.getByRole('button', { name: /^Cuenta de/ });
   await user.click(trigger);
-  for (let step = 0; step < 6; step += 1) await user.tab();
+  for (let step = 0; step < 7; step += 1) await user.tab();
   expect(screen.getByRole('textbox', { name: 'Compositor' })).toHaveFocus();
   expect(screen.queryByRole('dialog')).toBeNull();
   await user.click(trigger);
