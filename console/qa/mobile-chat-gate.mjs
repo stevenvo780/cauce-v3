@@ -8,9 +8,10 @@ import { chromium } from 'playwright';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = resolve(process.env.CAUCE_MOBILE_QA_OUTPUT ?? resolve(ROOT, '../artifacts/mobile-chat'));
 const ORIGIN = process.env.CAUCE_QA_ORIGIN ?? 'http://127.0.0.1:4174';
+const STATES = ['seeded', 'attention', 'empty', 'keyboard', 'combined', 'combined-keyboard'];
 const VIEWPORTS = [{ width: 360, height: 800 }, { width: 390, height: 844 }, { width: 430, height: 932 }];
 const compiled = await build({ entryPoints: [resolve(ROOT, 'src/test/mobile-chat-fixtures.ts')], bundle: true, platform: 'node', format: 'esm', write: false });
-const { mobileChatFixtures } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+const { mobileChatFixtures, mobileChatFailureFixtures, LONG_MOBILE_AGENT } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 
 function measure() {
   const box = (selector) => {
@@ -31,7 +32,7 @@ function measure() {
     shell, header, messages, composer, visibleMessages, viewportBottom: bottom,
     messageRatio: messages.height / shell.height,
     overflow: Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
-    openTechnicalPanels: document.querySelectorAll('.chat-more-panel, .messenger-delivery-detail, .chat-agent-details[open], .account-popover:not([hidden])').length,
+    openTechnicalPanels: document.querySelectorAll('.chat-more-panel, .messenger-delivery-detail, .chat-agent-details[open], .account-popover:not([hidden]), .chat-notice-panel').length,
     keyboardOpen: document.querySelector('.messenger-shell').hasAttribute('data-keyboard-open'),
   };
 }
@@ -57,12 +58,17 @@ try {
   await waitForServer();
   browser = await chromium.launch();
   for (const viewport of VIEWPORTS) {
-    for (const state of ['seeded', 'attention', 'empty', 'keyboard']) {
+    for (const state of STATES) {
       const context = await browser.newContext({ viewport, deviceScaleFactor: 1, isMobile: true, hasTouch: true, serviceWorkers: 'block', colorScheme: 'light' });
       const page = await context.newPage();
       const errors = [];
       const mutations = [];
-      const fixtures = mobileChatFixtures(state);
+      const combined = state.startsWith('combined');
+      const keyboard = state.endsWith('keyboard');
+      const alias = combined ? LONG_MOBILE_AGENT : 'kant';
+      const fixtures = combined ? mobileChatFailureFixtures(keyboard) : mobileChatFixtures(state);
+      let messageReadFails = false;
+      let queueReadFails = combined;
       page.on('pageerror', (error) => { errors.push(error.message); });
       await page.route('**/v3/**', async (route) => {
         const request = route.request();
@@ -71,14 +77,22 @@ try {
           mutations.push(`${request.method()} ${path}`);
           return route.abort();
         }
+        if ((queueReadFails && path === '/v3/console/queues') || (messageReadFails && path === '/v3/console/messages')) {
+          await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable', message: path.endsWith('queues') ? 'El servicio de colas no está disponible. Intentá nuevamente.' : 'El servicio de mensajes no está disponible. Intentá nuevamente.' }) });
+          return;
+        }
         const payload = fixtures[path];
         await route.fulfill({ status: payload ? 200 : 404, contentType: 'application/json', body: JSON.stringify(payload ?? { error: 'fixture_not_declared', path }) });
       });
-      await page.goto(`${ORIGIN}/messages/Steven/kant`);
-      await page.locator('.messenger-composer textarea:enabled').waitFor();
+      await page.goto(`${ORIGIN}/messages/Steven/${encodeURIComponent(alias)}`);
+      await page.locator(`.messenger-composer textarea:${state === 'combined' ? 'disabled' : 'enabled'}`).waitFor();
       if (state !== 'empty') await page.locator('.transcript-entry').first().waitFor();
-      if (state === 'keyboard') {
-        await page.getByRole('textbox', { name: 'Mensaje para kant' }).fill('Borrador conservado con el teclado abierto');
+      if (combined) {
+        await page.getByText('Cola sin verificar', { exact: true }).waitFor();
+        await page.getByText('Lease vencido · envío en cola', { exact: true }).waitFor();
+      }
+      if (keyboard) {
+        await page.getByRole('textbox', { name: `Mensaje para ${alias}` }).fill('Borrador conservado con el teclado abierto');
         await page.evaluate(() => {
           Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: 440 });
           window.visualViewport.dispatchEvent(new Event('resize'));
@@ -99,12 +113,36 @@ try {
       if (state !== 'empty' && metrics.visibleMessages === 0) failures.push('no seeded message in the first viewport');
       if (metrics.composer.bottom > metrics.viewportBottom + 1) failures.push('composer extends below the visual viewport');
       if (metrics.openTechnicalPanels !== 0) failures.push('technical panels opened without intent');
-      if (state === 'attention' && !(await page.getByRole('link', { name: 'Revisar en Colas' }).isVisible())) failures.push('queue warning not visible');
+      if (state === 'attention' && !(await page.getByRole('status').filter({ hasText: '1 muerta(s)' }).isVisible())) failures.push('queue warning not visible');
+      if (combined && !(await page.getByRole('alert').filter({ hasText: 'Cola sin verificar' }).isVisible())) failures.push('unknown queue state not visible');
+      if (combined && !(await page.getByRole('note').filter({ hasText: 'Lease vencido · envío en cola' }).isVisible())) failures.push('expired lease/enqueue state not visible');
+      if (state === 'combined' && !(await page.getByText('Requiere el permiso message.publish.', { exact: false }).isVisible())) failures.push('publish permission warning not visible');
       if (state === 'empty' && !(await page.getByText(/No hay mensajes de este agente en la ventana recibida/).isVisible())) failures.push('empty conversation guidance not visible');
       failures.push(...errors, ...mutations.map((mutation) => `Unexpected mutation: ${mutation}`));
       const name = `${String(viewport.width)}x${String(viewport.height)}-${state}`;
       await page.screenshot({ path: resolve(OUTPUT, `${name}.png`), clip: { x: 0, y: 0, width: viewport.width, height: Math.min(viewport.height, metrics.viewportBottom) } });
-      results.push({ name, state, viewport, metrics, failures, keyboardEvidence: state === 'keyboard' ? 'Simulated visualViewport resize in Chromium; no physical OS keyboard' : undefined });
+      results.push({ name, state, viewport, metrics, failures, keyboardEvidence: keyboard ? 'Simulated visualViewport resize in Chromium; no physical OS keyboard' : undefined });
+      if (combined || state === 'attention') {
+        await page.getByRole('button', { name: /^Ver detalles:/ }).click();
+        await page.getByRole('region', { name: 'Detalles de los avisos' }).waitFor();
+        if (combined) {
+          if (!(await page.getByText(/No se pudo actualizar la cola: El servicio de colas/).isVisible())) failures.push('full queue error inaccessible');
+          if (!(await page.getByText(new RegExp(`El lease de ${alias} está vencido`)).isVisible())) failures.push('full lease explanation inaccessible');
+          if (!(await page.getByRole('button', { name: 'Reintentar cola' }).isVisible())) failures.push('queue retry inaccessible');
+        } else if (!(await page.getByRole('link', { name: 'Revisar en Colas' }).isVisible())) failures.push('queue management link inaccessible');
+        await page.screenshot({ path: resolve(OUTPUT, `${name}-warnings.png`) });
+        if (combined) {
+          queueReadFails = false;
+          await page.getByRole('button', { name: 'Reintentar cola' }).click();
+          await page.getByRole('button', { name: 'Reintentar cola' }).waitFor({ state: 'detached' });
+          const heading = page.getByRole('heading', { name: 'Avisos de la conversación' });
+          if (!(await heading.evaluate((node) => node === document.activeElement))) failures.push('partial queue recovery did not preserve focus in the notice panel');
+          if (!(await page.getByText(new RegExp(`El lease de ${alias} está vencido`)).isVisible())) failures.push('partial queue recovery hid the remaining lease warning');
+          await page.screenshot({ path: resolve(OUTPUT, `${name}-queue-recovered.png`) });
+        }
+        await page.keyboard.press('Escape');
+        if (await page.locator('.chat-notice-panel').count()) failures.push('notice details did not close with Escape');
+      }
       if (state === 'seeded') {
         await page.getByRole('button', { name: 'Más', exact: true }).click();
         await page.getByRole('link', { name: 'Configurar agente' }).waitFor();
@@ -113,6 +151,19 @@ try {
         await page.getByRole('button', { name: 'Cuenta de Steven', exact: true }).click();
         await page.getByRole('dialog', { name: 'Cuenta y apariencia' }).waitFor();
         await page.screenshot({ path: resolve(OUTPUT, `${name}-account.png`) });
+        await page.keyboard.press('Escape');
+        messageReadFails = true;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const more = page.getByRole('button', { name: 'Más', exact: true });
+          await more.click();
+          await page.getByRole('button', { name: 'Sincronizar', exact: true }).click();
+          await page.keyboard.press('Escape');
+          await page.getByText('Historial anterior: sin actualizar', { exact: true }).waitFor();
+          await page.keyboard.press('Escape');
+          if (await more.getAttribute('aria-expanded') !== 'false' || await page.locator('.chat-more-panel').count()) failures.push('Escape did not dismiss More after failed synchronization');
+          if (!(await more.evaluate((node) => node === document.activeElement))) failures.push('Escape did not return focus after failed synchronization');
+        }
+        await page.screenshot({ path: resolve(OUTPUT, `${name}-failed-sync.png`) });
       }
       await context.close();
     }
@@ -125,4 +176,4 @@ try {
 }
 const failures = results.flatMap((result) => result.failures.map((failure) => `${result.name}: ${failure}`));
 console.log(JSON.stringify({ measuredStates: results.length, failures, output: OUTPUT }, null, 2));
-if (results.length !== 12 || failures.length) process.exitCode = 1;
+if (results.length !== VIEWPORTS.length * STATES.length || failures.length) process.exitCode = 1;

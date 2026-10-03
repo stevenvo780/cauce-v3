@@ -57,8 +57,10 @@ it('reintentos, muertas y fallos de lectura permanecen visibles sin roster ni M�
     salud={{ pendientes: undefined, enCurso: 0, reintentos: 2, muertas: 3, muertasTruncadas: true }}
     queueError={new Error('cola inaccesible')} />);
   expect(screen.getByText(/2 reintento\(s\).*≥ 3 muerta\(s\)/)).toBeVisible();
+  expect(screen.getByRole('alert')).toHaveTextContent('Cola sin verificar');
+  await user.click(screen.getByRole('button', { name: /Cola sin verificar/ }));
   expect(screen.getByRole('link', { name: 'Revisar en Colas' })).toHaveAttribute('href', '/queues');
-  expect(screen.getByRole('alert')).toHaveTextContent('Estado sin verificar');
+  expect(screen.getByText(/No se pudo actualizar la cola: cola inaccesible/)).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Reintentar cola' }));
   expect(input.onQueueReload).toHaveBeenCalledOnce();
   expect(screen.queryByRole('region', { name: 'Más opciones de conversación' })).toBeNull();

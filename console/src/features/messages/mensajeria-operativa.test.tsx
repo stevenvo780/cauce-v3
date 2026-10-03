@@ -134,11 +134,10 @@ describe('el compositor', () => {
     renderRouted(MessagesPage);
 
     const hilo = await abrirConversacion(user, 'kratos');
-    const aviso = within(hilo).getAllByRole('note').find((nota) => /lease de kratos/i.test(nota.textContent));
-    expect(aviso).toBeDefined();
+    expect(await within(hilo).findByText('Lease vencido · envío en cola')).toBeVisible();
 
     await user.type(within(hilo).getByRole('textbox', { name: /mensaje para kratos/i }), 'seguís ahí?');
-    expect(within(hilo).getAllByRole('note').some((nota) => nota.textContent.includes('Cauce encola el mensaje igual')))
+    expect(within(hilo).getAllByRole('note').some((nota) => nota.textContent.includes('envío en cola')))
       .toBe(true);
   }, 25_000);
 });

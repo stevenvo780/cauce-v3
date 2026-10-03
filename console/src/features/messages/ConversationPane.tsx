@@ -1,4 +1,4 @@
-import { ArrowDownToLine, ArrowLeft, ChevronDown, CircleOff, DoorClosed, LockKeyhole, RefreshCw, Send, Settings2, TerminalSquare, X } from 'lucide-react';
+import { ArrowDownToLine, ArrowLeft, ChevronDown, CircleOff, LockKeyhole, RefreshCw, Send, Settings2, TerminalSquare, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent, type KeyboardEvent } from 'react';
 import { useApi } from '../../api/context';
 import { ApiError } from '../../api/client';
@@ -18,6 +18,7 @@ import { TerminalTranscript } from '../terminal/TerminalTranscript';
 import { estaPegadoAlFinal, irAlFinal } from './desplazamiento';
 import { publishDurably } from './durable-publish';
 import { ConversationMenu } from './ConversationMenu';
+import { ConversationNotices } from './ConversationNotices';
 import { AgentSettingsView } from './AgentSettingsView';
 import { MessageTimeline } from './MessageTimeline';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
@@ -320,23 +321,10 @@ export function ConversationPane({
         </ConversationMenu>
       </header>
 
-      {fueraDeLaTopologia(agent) ? (
-        <p className="messenger-loose-note" role="note">
-          <DoorClosed size={14} aria-hidden="true" /> {motivoDeAgenteSuelto(agent)}
-        </p>
-      ) : null}
-
-      {(salud?.reintentos ?? 0) > 0 || (salud?.muertas ?? 0) > 0 ? <p className="chat-queue-warning" role="status">
-        {salud?.reintentos ? `${String(salud.reintentos)} reintento(s). ` : ''}
-        {salud?.muertas ? `${salud.muertasTruncadas ? '≥ ' : ''}${String(salud.muertas)} muerta(s). ` : ''}
-        <a href="/queues" onClick={(event) => { onNavClick(event, '/queues'); }}>Revisar en Colas</a>
-      </p> : null}
-      {queueError ? <p className="chat-queue-warning" role="alert">
-        No se pudo actualizar la cola: {queueError.message}. Estado sin verificar.
-        <button className="button small secondary" type="button" onClick={onQueueReload}>Reintentar cola</button>
-      </p> : null}
-
-      {error && page ? <p className="chat-feed-error" role="alert">No se pudo actualizar la conversación: {error.message}. Se muestra el último historial recibido.</p> : null}
+      <ConversationNotices health={salud} queueError={queueError} feedError={page ? error : undefined}
+        leaseWarning={avisoDeLease} leaseExpired={agent.leaseState === 'expired'}
+        topologyWarning={fueraDeLaTopologia(agent) ? motivoDeAgenteSuelto(agent) : undefined}
+        onQueueReload={onQueueReload} fallbackFocusRef={moreTrigger} />
 
       {/* Thread filtered over the server's message window. */}
       <div className="messenger-thread-scroll" ref={cajaRef} onScroll={alDesplazar}>
@@ -490,7 +478,6 @@ export function ConversationPane({
         {roomUnavailable ? <p className="composer-blocked" role="alert">La sala elegida ya no está disponible. Elegí otra sala antes de enviar; el borrador se conserva.</p>
           : route.allowed && !roomOrigen ? <p className="composer-blocked" role="note">Elegí una sala de origen antes de enviar.</p> : null}
         {lane === 'batch' ? <p className="messenger-room-fixed">Envío en segundo plano · cambiá el carril en Más.</p> : null}
-        {avisoDeLease ? <p className="notice parcial" role="note">{avisoDeLease}</p> : null}
         <div className="composer-input-row">
         <textarea
           id={`messenger-input-${agent.id}`}

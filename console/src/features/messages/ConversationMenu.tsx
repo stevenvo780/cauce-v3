@@ -13,16 +13,20 @@ export function ConversationMenu({ children, triggerRef }: {
     const dismiss = (event: PointerEvent) => {
       if (event.target instanceof Node && !container.current?.contains(event.target)) setOpen(false);
     };
-    document.addEventListener('pointerdown', dismiss);
-    return () => { document.removeEventListener('pointerdown', dismiss); };
-  }, [open]);
-  return <div className="chat-more" ref={container} onKeyDown={(event) => {
-    if (event.key === 'Escape' && open) {
+    const dismissWithEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
       event.preventDefault();
       setOpen(false);
-      triggerRef.current?.focus();
-    }
-  }} onBlur={(event) => {
+      triggerRef.current?.focus({ preventScroll: true });
+    };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', dismissWithEscape);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss);
+      document.removeEventListener('keydown', dismissWithEscape);
+    };
+  }, [open, triggerRef]);
+  return <div className="chat-more" ref={container} onBlur={(event) => {
     if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) setOpen(false);
   }}>
     <button type="button" className="button small secondary" ref={triggerRef}

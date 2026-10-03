@@ -431,6 +431,9 @@ it('un mensaje a un alias SIN membresía ni lease sigue teniendo hilo: el caso g
   await user.click(fila);
   const hilo = await screen.findByRole('region', { name: /conversación con gaia/i });
   expect(await within(historial(hilo)).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
+  expect(within(hilo).getByText('Fuera de la topología')).toBeVisible();
+  expect(within(hilo).getByText('Lease sin dato · envío en cola')).toBeVisible();
+  await user.click(within(hilo).getByRole('button', { name: /^Ver detalles:/ }));
   expect(notaQueDice(hilo, /registro de agentes y en NINGUNA sala/i)).toBe(true);
   expect(notaQueDice(hilo, /El servidor no informa el lease de gaia/i)).toBe(true);
 }, 25_000);
@@ -444,6 +447,9 @@ it('con el registro caído, el hilo sigue existiendo porque el propio feed lo so
   await user.click(fila);
   const hilo = await screen.findByRole('region', { name: /conversación con gaia/i });
   expect(await within(historial(hilo)).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
+  expect(within(hilo).getByText('Fuera de la topología')).toBeVisible();
+  expect(within(hilo).getByText('Lease sin dato · envío en cola')).toBeVisible();
+  await user.click(within(hilo).getByRole('button', { name: /^Ver detalles:/ }));
   expect(notaQueDice(hilo, /sólo porque el servidor publicó mensajes suyos/i)).toBe(true);
 }, 25_000);
 

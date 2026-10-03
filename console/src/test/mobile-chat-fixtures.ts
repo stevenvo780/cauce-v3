@@ -41,3 +41,16 @@ export function mobileChatFixtures(state = 'seeded') {
     '/v3/console/terminal/capability': { available: false, reason: 'Fixture de conversación, sin terminal real.' },
   };
 }
+
+export const LONG_MOBILE_AGENT = 'coordinador-supervisor-de-operaciones-internacionales';
+
+export function mobileChatFailureFixtures(publishPermission: boolean) {
+  const fixtures = JSON.parse(JSON.stringify(mobileChatFixtures()).replaceAll('kant', LONG_MOBILE_AGENT)) as ReturnType<typeof mobileChatFixtures>;
+  for (const presence of fixtures['/v3/status'].presence ?? []) {
+    if (presence.alias !== LONG_MOBILE_AGENT) continue;
+    presence.online = false;
+    presence.lease_expires_at = '2000-01-01T00:00:00Z';
+  }
+  if (!publishPermission) fixtures['/v3/console/access'].permissions = [];
+  return fixtures;
+}
