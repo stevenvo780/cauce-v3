@@ -5,43 +5,29 @@ import { ContextoContaminadoError } from '../../api/client/agent-client';
 import { useApi } from '../../api/context';
 import type { AgentPerfil } from '../../api/types';
 import { useResource, type RecargaResultado } from '../../api/use-resource';
-import { EmptyState, Unknown, ViewTabs } from '../../components/ui';
+import { EmptyState, ViewTabs } from '../../components/ui';
 import type { PermissionState } from '../../lib';
 import {
   DOCUMENT_REASON_MAX, DOCUMENT_REASON_MIN, explicarFalloDeMotivo, problemaDeMotivo,
 } from './ficheros-motivo';
-import { MedidorDeRol } from './MedidorDeRol';
+import { ProfileFields } from './ProfileFields';
 import { AvisoDeContaminacion, RecargaDeContexto } from './RecargaDeContexto';
 import { ContextReconciliation } from './ContextReconciliation';
 import { ProfileStatus } from './ProfileStatus';
 import { pendingProfileReceipt, profileIsAdopted } from './profile-save-receipt';
 import { draftFields, draftRevisionConflict, editProfileDraft, profileMatchesDraft, type ProfileDraft, type ProfileOutcome, type ProfileSettlement } from './profile-draft';
 import {
-  CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, CONTAMINACION_ILEGIBLE, ETIQUETAS, MENSAJES_DE_APLICACION,
-  camposQueNoEntran, contaminacionDe, contarUnidades,
-  destinosDelArnes, entradasDeLista, esPerfilAplicado, hayCambios, lineasCrudas, listaALineas,
+  CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, CONTAMINACION_ILEGIBLE, MENSAJES_DE_APLICACION,
+  camposQueNoEntran, contaminacionDe,
+  destinosDelArnes, esPerfilAplicado, hayCambios, lineasCrudas,
   motivoSinDestino,
   perfilParaGuardar, unidadesDelPerfil, veredictoVigente,
-  type CampoDelPerfil, type ContaminacionDeContexto, type DestinoDelCampo,
+  type ContaminacionDeContexto,
 } from './perfil';
 
 /**
  * Editor and preview of the agent profile and directive fields.
  */
-
-function AyudaDelCampo({ campo, destino }: { campo: CampoDelPerfil; destino: DestinoDelCampo }) {
-  return (
-    <span className="muted perfil-campo-ayuda">
-      {ETIQUETAS[campo].ayuda}{' '}
-      <em className="perfil-destino">
-        →{' '}
-        {destino.tipo === 'fichero'
-          ? destino.nombre
-          : <Unknown value={null} ausente={destino.ausente} motivo={destino.motivo} />}
-      </em>
-    </span>
-  );
-}
 
 interface PerfilTabProps {
   tenantId: string;
@@ -385,51 +371,12 @@ export function PerfilTab({
           </p>
         )}
 
-        {CAMPOS_DE_TEXTO.map((campo) => {
-          const valor = campos[campo];
-          const tope = campo === 'role_summary'
-            ? perfil.data?.limites?.role_summary
-            : perfil.data?.limites?.purpose;
-          const medido = contarUnidades(valor);
-          return (
-            <label key={campo} className="perfil-campo">
-              <span className="perfil-campo-titulo">{ETIQUETAS[campo].titulo}</span>
-              <AyudaDelCampo campo={campo} destino={destinos[campo]} />
-              <textarea
-                value={valor}
-                rows={campo === 'purpose' ? 4 : 3}
-                disabled={soloLectura || busy || !agenteHabilitado
-                  || !arnesConPerfil || runtimeNoVerificado || !runtimeActual}
-                onChange={(event) => { editarTexto(campo, event.target.value); }}
-              />
-              <span className={`perfil-cuenta${tope !== undefined && medido > tope ? ' perfil-cuenta-fuera' : ''}`}>
-                {medido} / {tope ?? '—'}
-              </span>
-              {campo === 'role_summary' ? <MedidorDeRol texto={valor} /> : null}
-            </label>
-          );
-        })}
-
-        {CAMPOS_DE_LISTA.map((campo) => {
-          const items = campos[campo];
-          const entradas = entradasDeLista(items).length;
-          return (
-            <label key={campo} className="perfil-campo">
-              <span className="perfil-campo-titulo">{ETIQUETAS[campo].titulo}</span>
-              <AyudaDelCampo campo={campo} destino={destinos[campo]} />
-              <textarea
-                value={listaALineas(items)}
-                rows={4}
-                disabled={soloLectura || busy || !agenteHabilitado
-                  || !arnesConPerfil || runtimeNoVerificado || !runtimeActual}
-                onChange={(event) => { editarLista(campo, event.target.value); }}
-              />
-              <span className={`perfil-cuenta${entradas > (perfil.data?.limites?.items ?? Infinity) ? ' perfil-cuenta-fuera' : ''}`}>
-                {entradas} {entradas === 1 ? 'entrada' : 'entradas'} / {perfil.data?.limites?.items ?? '—'}
-              </span>
-            </label>
-          );
-        })}
+        <ProfileFields
+          fields={campos} destinations={destinos} limits={perfil.data?.limites}
+          disabled={soloLectura || busy || !agenteHabilitado
+            || !arnesConPerfil || runtimeNoVerificado || !runtimeActual}
+          onTextChange={editarTexto} onListChange={editarLista}
+        />
 
         {fuera.length > 0 ? (
           <ul className="perfil-fuera" role="alert">
