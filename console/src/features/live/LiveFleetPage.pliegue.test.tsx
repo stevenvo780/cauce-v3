@@ -11,13 +11,13 @@ beforeEach(() => {
 });
 
 describe('lo que hay por encima de la tabla de flota', () => {
-  it('el mapa llega PLEGADO: abierto son 889px de dibujo entre la cinta y la tabla', async () => {
+  it('el mapa llega abierto para mostrar la flota sin un paso extra', async () => {
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
 
     const mapa = document.querySelector('details.live-mapa');
     expect(mapa).not.toBeNull();
-    expect(mapa).not.toHaveAttribute('open');
+    expect(mapa).toHaveAttribute('open');
   });
 
   it('la leyenda también, y su contenido sigue en el documento para quien lo busque', async () => {

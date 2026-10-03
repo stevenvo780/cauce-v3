@@ -33,6 +33,8 @@
  * del cual los nombres dejan de leerse.
  */
 .lhg-scroll {
+  max-width: 100%;
+  overscroll-behavior-x: contain;
   overflow-x: auto;
   overflow-y: hidden;
 }
@@ -398,3 +400,7 @@
 :root[data-theme="light"] .member { background: #e4eefb; color: #1d5f95; }
 :root[data-theme="light"] .edge-list li { background: #f8fafd; }
 
+
+@media (max-width: 760px) {
+  .lhg-svg { max-height: none; }
+}
