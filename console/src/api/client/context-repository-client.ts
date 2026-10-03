@@ -70,7 +70,7 @@ export function contextRepositoryClient(request: RequestFn): ContextRepositoryCl
       let value: unknown;
       try { value = await request(route(tenantId, alias), { cache: 'no-store' }); }
       catch (error) {
-        if (error instanceof ApiError && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
+        if (error instanceof ApiError && error.status === 501) {
           return { state: 'not_published', instance_id: null };
         }
         throw error;

@@ -184,3 +184,41 @@ it('validates capability identity and never sends a client root, instance or pri
   const wrong = (async () => ({ ...CAPABILITY, tenant_id: 'steven' })) as unknown as RequestFn;
   await expect(contextRepositoryClient(wrong).getContextRepository('Steven', 'helper')).rejects.toMatchObject({ code: 'invalid_context_repository' });
 });
+
+
+it.each([
+  { error: 'unclassified_gateway_failure' },
+  { message: 'transient response without a route code' },
+])('preserves an ambiguous 404 as a retryable failure: %j', async (body) => {
+  let calls = 0;
+  server.use(http.get(BASE, () => {
+    calls += 1;
+    return calls === 1 ? HttpResponse.json(body, { status: 404 }) : HttpResponse.json(CAPABILITY);
+  }));
+  const user = userEvent.setup();
+  renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
+  await user.click(screen.getByText('Versiones Git del contexto'));
+  expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo consultar la vinculación Git');
+  expect(screen.queryByText('Este gateway todavía no publica la inspección Git.')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Reintentar' }));
+  expect(await screen.findByLabelText('Commit completo')).toBeInTheDocument();
+  expect(calls).toBe(2);
+});
+
+it('preserves a non-JSON transport 404 as a retryable failure', async () => {
+  server.use(http.get(BASE, () => new HttpResponse('upstream resource missing', { status: 404 })));
+  const user = userEvent.setup();
+  renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
+  await user.click(screen.getByText('Versiones Git del contexto'));
+  expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo consultar');
+  expect(screen.getByRole('button', { name: 'Reintentar' })).toBeEnabled();
+});
+
+it('recognizes explicit HTTP 501 without disguising a failure to find the agent', async () => {
+  server.use(http.get(BASE, () => HttpResponse.json({ error: 'unavailable' }, { status: 501 })));
+  const user = userEvent.setup();
+  renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
+  await user.click(screen.getByText('Versiones Git del contexto'));
+  expect(await screen.findByText('Este gateway todavía no publica la inspección Git.')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Reintentar' })).toBeNull();
+});
