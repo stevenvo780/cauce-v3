@@ -11,8 +11,8 @@ import './styles.css';
  *
  * The flag is a BUILD flag, not a runtime one: a build without it evaluates this condition as a
  * constant and the bundler drops the whole `import()`, so `msw` does not ship in the production
- * bundle. And when it is set, the app declares it on screen with the `MOCK API` badge in the top
- * bar (`App.tsx`): a demo that does not advertise itself as such is a lie.
+ * bundle. And when it is set, the app declares it on screen with the `MOCK API` badge above the
+ * content (`App.tsx`): a demo that does not advertise itself as such is a lie.
  */
 async function enableMocking(): Promise<void> {
   if (import.meta.env.VITE_USE_MOCKS !== 'true') return;

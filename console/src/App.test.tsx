@@ -21,7 +21,8 @@ it('provides basic accessible landmarks and identity guidance', async () => {
   expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.getByRole('main')).not.toHaveFocus();
   expect(screen.getByRole('button', { name: 'Herramientas' })).toHaveAttribute('aria-expanded', 'false');
-  expect(await screen.findByText('Steven:kant')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: /^Cuenta de/ }));
+  expect(within(screen.getByRole('dialog', { name: 'Cuenta y apariencia' })).getByText('Steven:kant')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /cerrar sesión/i })).toBeInTheDocument();
 });
 
@@ -160,7 +161,7 @@ it('abre /messages/:tenant/:alias en la conversación, que es adonde navega el r
   window.history.pushState({}, '', '/messages/Miguel/kratos');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: 'Mensajes' }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 2, name: 'kratos' }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.queryByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeNull();
   expect(window.location.pathname).toBe('/messages/Miguel/kratos');
 });
@@ -222,7 +223,7 @@ it('el menú contiene la portada más ocho entradas consolidadas', async () => {
 
   expect(entradas).toEqual([
     'Conversaciones',
-    'Agentes',
+    'Grafo y actividad',
     'Resumen',
     'Cuentas y cuotas',
     'Queues & DLQ',
@@ -454,4 +455,73 @@ it('las identidades del hilo y el indicador de trabajo proceden de datos reales'
   await waitFor(() => { expect(row.querySelector('.chat-avatar')).toHaveAttribute('data-working', 'true'); });
   const conversation = await screen.findByRole('region', { name: 'Conversación con argos' });
   expect(conversation.querySelector('.transcript-direction')).toHaveTextContent(/kant.*hacia.*argos/);
+});
+
+it.each([1280, 390])('el chat a %i conserva una sola cabecera y el borrador al usar cuenta y tema', async (width) => {
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    matches: query.includes('1100px') ? width <= 1100 : query.includes('760px') && width <= 760,
+    media: query, onchange: null,
+    addEventListener: () => undefined, removeEventListener: () => undefined,
+    addListener: () => undefined, removeListener: () => undefined, dispatchEvent: () => false,
+  }));
+  window.history.pushState({}, '', '/messages/Steven/argos');
+  const user = userEvent.setup();
+  renderWithApi(<App />);
+  const composer = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
+  await user.type(composer, 'Borrador que conserva su destino');
+  expect(document.querySelector('.topbar')).toBeNull();
+  expect(document.querySelector('.chat-page-heading')).toBeNull();
+  expect(screen.getByRole('heading', { name: 'argos', level: 2 })).toBeVisible();
+  const trigger = screen.getByRole('button', { name: /^Cuenta de/ });
+  expect(trigger.closest('.sidebar')).not.toBeNull();
+  expect(screen.getAllByRole('button', { name: /^Cuenta de/ })).toHaveLength(1);
+  expect(screen.queryByRole('button', { name: 'Cerrar sesión' })).toBeNull();
+  await user.click(trigger);
+  await user.click(screen.getByRole('button', { name: 'Oscuro' }));
+  await user.keyboard('{Escape}');
+  expect(trigger).toHaveFocus();
+  expect(composer).toHaveValue('Borrador que conserva su destino');
+  expect(window.location.pathname).toBe('/messages/Steven/argos');
+  expect(screen.getByRole('link', { name: 'Volver a los agentes' })).toBeInTheDocument();
+  window.localStorage.removeItem('cauce.tema');
+  document.documentElement.removeAttribute('data-theme');
+});
+
+it('MOCK y ausencia de login permanecen visibles con la cuenta cerrada en un chat', async () => {
+  vi.stubEnv('VITE_USE_MOCKS', 'true');
+  server.use(http.get('http://localhost/v3/auth/session', () => HttpResponse.json({ error: 'not_found' }, { status: 404 })));
+  window.history.pushState({}, '', '/messages/Steven/argos');
+  try {
+    renderWithApi(<App />);
+    await screen.findByRole('textbox', { name: 'Mensaje para argos' });
+    expect(screen.getByText('MOCK API')).toBeVisible();
+    expect(screen.getByText('Esta consola no tiene login de usuario.')).toBeVisible();
+    expect(screen.queryByRole('dialog', { name: 'Cuenta y apariencia' })).toBeNull();
+    expect(document.querySelector('.topbar')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Cuenta y apariencia' }));
+    expect(screen.getByRole('group', { name: 'Tema de la consola' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Cerrar sesión' })).toBeNull();
+    expect(screen.getByText('Esta consola no tiene login de usuario.')).toBeVisible();
+  } finally { vi.unstubAllEnvs(); }
+});
+
+it('los datos tardíos del chat no quitan el foco de la cuenta abierta', async () => {
+  let release: () => void = () => undefined;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  server.use(http.get('http://localhost/v3/console/access', async () => {
+    await pending;
+    return HttpResponse.json({ subject: 'Steven:kant', roles: ['operator'], permissions: ['message.publish'] });
+  }));
+  window.history.pushState({}, '', '/messages/Steven/argos');
+  try {
+    renderWithApi(<App />);
+    await userEvent.click(await screen.findByRole('button', { name: /^Cuenta de/ }));
+    const heading = screen.getByRole('heading', { name: 'Cuenta y apariencia' });
+    expect(heading).toHaveFocus();
+    release();
+    await screen.findByRole('heading', { name: 'argos', level: 2 });
+    expect(heading).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
+    expect(screen.getByRole('button', { name: /^Cuenta de/ })).toHaveFocus();
+  } finally { release(); }
 });

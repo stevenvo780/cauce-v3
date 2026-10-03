@@ -188,7 +188,11 @@ describe('a deep link draws its view, and any other arity the explicit 404', () 
     window.history.pushState({}, '', `/${id}/${segmentos.join('/')}`);
     renderWithApi(<App />);
 
-    expect(await verDestino(id)).toBeInTheDocument();
+    const destination = id === 'messages'
+      ? await screen.findByRole('heading', { level: 2, name: segmentos[1] }, { timeout: 10_000 })
+      : await verDestino(id);
+    expect(destination).toBeInTheDocument();
+    expect(window.location.pathname).toBe(`/${id}/${segmentos.join('/')}`);
     expect(screen.queryByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeNull();
   });
 

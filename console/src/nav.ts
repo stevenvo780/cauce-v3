@@ -1,6 +1,6 @@
 import {
   BookOpen, CreditCard, Gauge, LayoutDashboard, ListRestart, MessageSquareText,
-  Settings2, Sparkles, TerminalSquare,
+  Settings2, Network, TerminalSquare,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 import { useConsoleAccess } from './api/console-access';
@@ -31,7 +31,7 @@ export const PRIMARY_NAV_IDS: readonly string[] = ['messages', 'live'];
 
 export const NAV_ENTRIES: NavEntry[] = [
   { id: 'messages', label: 'Conversaciones', icon: MessageSquareText, que: 'La conversación con cada agente y el estado de cada entrega.' },
-  { id: 'live', label: 'Agentes', icon: Sparkles, que: 'Quién está trabajando, quién está trabado y quién le delegó a quién, en vivo.' },
+  { id: 'live', label: 'Grafo y actividad', icon: Network, que: 'Quién está trabajando, quién está trabado y quién le delegó a quién, en vivo.' },
   { id: 'overview', label: 'Resumen', icon: LayoutDashboard, que: 'El resumen de conjunto: flota, colas, cuotas y lo que exige atención.' },
   { id: 'accounts', label: 'Cuentas y cuotas', icon: CreditCard, que: 'El registro de cuentas, qué agente usa cada una y cuánto saldo le queda.' },
   { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, que: 'Cada entrega pendiente, en reintento o muerta, con reinyectar y cancelar.' },

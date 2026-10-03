@@ -9,7 +9,6 @@ import { permissionState } from '../../lib';
 import { navigate, onNavClick } from '../../router';
 import { fleetAgentId, type FleetAgent } from '../terminal/fleet';
 import { operatorRouteForAgent } from '../terminal/session';
-import { AgentAvatar } from '../../components/AgentAvatar';
 import { AgentRoster } from './AgentRoster';
 import { ConversationPane } from './ConversationPane';
 import './messages.css';
@@ -117,7 +116,9 @@ function MessagesPageContent({ params }: MessagesPageProps) {
     const root = envolturaRef.current;
     if (seleccionado && lastSelected.current !== seleccionado.id) {
       lastSelected.current = seleccionado.id;
-      root?.querySelector<HTMLElement>('.messenger-thread h2')?.focus({ preventScroll: true });
+      if (!document.activeElement?.closest('[role="dialog"]')) {
+        root?.querySelector<HTMLElement>('.messenger-thread h2')?.focus({ preventScroll: true });
+      }
     } else if (!requestedId && lastSelected.current) {
       const previous = lastSelected.current;
       lastSelected.current = undefined;
@@ -142,12 +143,12 @@ function MessagesPageContent({ params }: MessagesPageProps) {
 
   return (
     <>
-      <div className="chat-page-heading"><PageHeader
+      {!pedido ? <div className="chat-page-heading"><PageHeader
         eyebrow="Tu espacio"
         title="Mensajes"
         description="Una conversación por agente, con el estado de su cola al lado del nombre y un salto directo a su terminal. El actor, el tenant de origen y el canal siguen siendo autoridad del servidor."
         actions={<RefreshButton onClick={sincronizar} loading={messages.loading && !messages.data} />}
-      /></div>
+      /></div> : null}
 
       {/*
         `data-conversacion` es para la hoja de estilo, no para la lógica: en pantalla estrecha el
@@ -198,12 +199,6 @@ function MessagesPageContent({ params }: MessagesPageProps) {
             ) : (
               <>
                 <p>Elegí un agente para retomar una conversación, compartir una idea o darle una tarea.</p>
-                <div className="chat-agent-suggestions" aria-label="Empezar una conversación">
-                  {agents.slice(0, 4).map((agent) => <button key={agent.id} type="button" onClick={() => { abrir(agent); }}>
-                    <AgentAvatar alias={agent.alias} tenantId={agent.tenantId} state={agent.leaseState} />
-                    <strong>{agent.alias}</strong><small>{agent.tenantId}</small>
-                  </button>)}
-                </div>
                 <p className="chat-welcome-hint"><Sparkles size={15} aria-hidden="true" /> Tus agentes y sus conversaciones, en un solo lugar</p>
               </>
             )}

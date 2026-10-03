@@ -1,9 +1,7 @@
-import { KeyRound, LogIn, LogOut, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { KeyRound, LogIn, ShieldAlert } from 'lucide-react';
 import { useState, type SyntheticEvent, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
-import type { ConsoleAuthState } from '../../api/types';
-import { timestamp } from '../../lib';
-import { useAuthGate, type AuthGateState, type GateStatus } from './auth-session';
+import { useAuthGate, type AuthGateState } from './auth-session';
 import './auth.css';
 
 /**
@@ -21,7 +19,7 @@ import './auth.css';
  *    by navigating to `/v3/auth/login`.
  *
  * The three possible outcomes, and why each behaves that way:
- *  - `authenticated: true`  → passes, and the identity stays visible at the top with its expiry.
+ *  - `authenticated: true`  → passes, and the identity and expiry are available in the account popover.
  *  - `authenticated: false` → login screen. Nothing behind the console is rendered.
  *  - `authenticated: null`  → the gateway exposes no BFF (`CAUCE_AUTH_PROVIDER=mtls`, which is
  *    what is deployed until login is enabled). It lets through, because blocking would render
@@ -138,36 +136,6 @@ function ErrorScreen({ error, onRetry }: { error: Error; onRetry: () => void }) 
         <button type="button" className="button auth-primary" onClick={onRetry}>Reintentar</button>
       </section>
     </main>
-  );
-}
-
-/** Session identity for the top bar. */
-export function SessionBadge({ state, status, busy, onLogout }: {
-  state?: ConsoleAuthState;
-  status: GateStatus;
-  busy: boolean;
-  onLogout: () => void;
-}) {
-  if (status === 'unmanaged') {
-    return (
-      <span className="auth-state auth-unmanaged" title="El gateway corre con CAUCE_AUTH_PROVIDER=mtls: no hay sesión de usuario que mostrar.">
-        <ShieldAlert size={14} aria-hidden="true" /> Sin login de verdad
-      </span>
-    );
-  }
-  if (status !== 'in' || !state) return null;
-  return (
-    <div className="auth-state authenticated">
-      <ShieldCheck size={14} aria-hidden="true" />
-      <span>
-        <strong>{state.name ?? state.subject ?? 'identidad verificada'}</strong>
-        {state.name && state.subject ? <small>{state.subject}</small> : null}
-        {state.expires_at ? <small>vence {timestamp(state.expires_at)}</small> : null}
-      </span>
-      <button className="button small secondary" type="button" disabled={busy} onClick={onLogout}>
-        <LogOut size={14} aria-hidden="true" /> {busy ? 'Cerrando…' : 'Cerrar sesión'}
-      </button>
-    </div>
   );
 }
 

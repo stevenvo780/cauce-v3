@@ -250,13 +250,8 @@ main:focus, main:focus-visible { outline: none; }
 
 .workspace { min-width: 0; }
 .topbar { display: flex; min-height: 56px; align-items: center; justify-content: space-between; padding: 0 var(--space-6); border-bottom: 1px solid var(--border); color: var(--muted); font-size: var(--tipo-rotulo); padding-inline: var(--space-5); background: var(--surface); }
-.topbar > div { display: flex; align-items: center; gap: var(--space-2); }
-.topbar-meta { gap: var(--space-4) !important; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 5px rgb(99 222 185 / 10%), 0 0 14px var(--mint); }
 .mock-flag { padding: var(--space-1) var(--space-2); border: 1px solid #785c23; border-radius: var(--radius-pill); background: var(--amber-dim); color: var(--on-amber); font-size: var(--tipo-apunte); font-weight: 800; letter-spacing: .08em; }
-.auth-state { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--muted); }
-.auth-state.authenticated > span { display: grid; line-height: 1.25; text-align: right; }
-.auth-state.authenticated strong { color: var(--mint); font-size: var(--tipo-apunte); letter-spacing: .06em; text-transform: uppercase; }
 /* The tail is the only part of this padding that comes from the scale: the top and the sides are the
    numbers `presupuesto()` has written in `styles.legibilidad.test.ts`, but nothing answers for the
    dead air under the last panel, and 70px of it cost 38px of scroll depth on every route. */

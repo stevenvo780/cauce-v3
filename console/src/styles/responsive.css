@@ -44,10 +44,6 @@ input, select, textarea { min-width: 0; }
   .sidebar nav a { flex-direction: column; }
   .badge { white-space: normal; }
   .topbar { padding: 0 var(--space-3); }
-  /* El punto vivo se queda; su rótulo no: con el control de tema en la barra, los 135 px del
-     rótulo son lo que hacía que la barra desbordara 32 px a 360. */
-  .topbar-rotulo { display: none; }
-  .topbar-meta span:not(.mock-flag) { display: none; }
   /* Sin rótulo el botón medía 30x22: por debajo del mínimo de 24x24 que pide un dedo. */
   .theme-option { min-width: var(--space-5); min-height: var(--space-5); justify-content: center; }
   main { padding: 29px 15px calc(var(--nav-inferior-alto) + 16px + env(safe-area-inset-bottom, 0px)); }
@@ -113,7 +109,7 @@ input, select, textarea { min-width: 0; }
 }
 
 /* Gemela del bloque de arriba para el tema claro FORZADO: la consulta de medios no llega
-   cuando el sistema prefiere oscuro y el operador eligió «claro» en la barra superior. */
+   cuando el sistema prefiere oscuro y el operador eligió «claro» en el menú de cuenta. */
 :root[data-theme="light"] .panel { background: linear-gradient(145deg, rgb(255 255 255 / 98%), rgb(245 248 252 / 98%)); }
 :root[data-theme="light"] input,
 :root[data-theme="light"] select,

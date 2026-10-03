@@ -68,12 +68,6 @@
 .auth-card-quiet { flex-flow: row; align-items: center; grid-auto-flow: column; color: var(--muted); }
 .auth-card-error { border-color: color-mix(in srgb, var(--red) 40%, var(--border)); }
 
-/* Insignia de identidad en la barra superior. */
-.auth-state { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--tipo-rotulo); }
-.auth-state.authenticated strong { display: block; font-size: var(--tipo-rotulo); }
-.auth-state.authenticated small { display: block; color: var(--faint); font-size: var(--tipo-apunte); }
-.auth-unmanaged { padding: var(--space-1) var(--space-2); border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--border)); border-radius: var(--radius-pill); background: var(--amber-dim); color: var(--amber); font-weight: 700; }
-
 /* Aviso permanente de "acá no hay login". Molesta a propósito. */
 .auth-banner {
   display: flex;
@@ -88,3 +82,35 @@
 }
 .auth-banner svg { flex: none; margin-top: var(--space-1); color: var(--amber); }
 .auth-banner p { margin: 0; font-size: var(--tipo-rotulo); line-height: 1.5; }
+
+.account-menu { position: relative; margin-top: auto; padding-top: var(--space-3); }
+.account-trigger { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 48px; padding: var(--space-2); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.account-trigger:hover, .account-trigger[aria-expanded="true"] { background: var(--surface); }
+.account-avatar { display: grid; flex: none; width: 32px; height: 32px; place-items: center; border-radius: 50%; background: var(--surface-3); color: var(--text); font-size: var(--tipo-rotulo); font-weight: 650; }
+.account-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--tipo-rotulo); }
+.account-chevron { flex: none; margin-left: auto; color: var(--muted); }
+.account-compact-label { display: none; }
+.account-popover { position: absolute; z-index: 1; bottom: calc(100% + var(--space-2)); left: 0; width: min(320px, calc(100vw - var(--space-5))); max-height: calc(100dvh - 100px); overflow-y: auto; display: grid; gap: var(--space-4); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); color: var(--text); }
+.account-popover header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.account-popover h2 { margin: 0; font-size: var(--tipo-cuerpo); }
+.account-close { display: grid; flex: none; width: 36px; height: 36px; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; }
+.account-close:hover { background: var(--surface-2); }
+.account-identity { overflow-wrap: anywhere; }
+.account-identity p { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--tipo-rotulo); }
+.account-identity .account-expiry { margin-top: var(--space-2); font-size: var(--tipo-apunte); }
+.account-unmanaged { margin: 0; color: var(--on-amber); font-size: var(--tipo-rotulo); }
+.account-appearance { display: grid; justify-items: start; gap: var(--space-2); font-size: var(--tipo-rotulo); }
+.account-popover .theme-option { min-height: 40px; }
+.account-logout { justify-content: flex-start; min-height: 44px; }
+.app-shell[data-sidebar="rail"] .account-name, .app-shell[data-sidebar="rail"] .account-chevron { display: none; }
+.app-shell[data-sidebar="rail"] .account-trigger { justify-content: center; padding-inline: 0; }
+
+@media (max-width: 760px) {
+  .account-menu { margin: 0; padding: 0; }
+  .account-trigger { flex-direction: column; justify-content: center; height: 64px; gap: var(--space-1); padding: var(--space-1); text-align: center; }
+  .account-name, .account-chevron { display: none; }
+  .account-compact-label { display: block; font-size: var(--tipo-apunte); }
+  .account-popover { position: fixed; bottom: calc(var(--nav-inferior-alto) + env(safe-area-inset-bottom, 0px) + var(--space-2)); left: var(--space-3); right: var(--space-3); width: auto; max-height: calc(100dvh - var(--nav-inferior-alto) - env(safe-area-inset-bottom, 0px) - var(--space-5)); }
+}
+
+.account-popover[hidden] { display: none; }
