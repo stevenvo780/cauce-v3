@@ -101,6 +101,30 @@ systemctl --user daemon-reload && systemctl --user enable --now cauce-v3-contain
 
 **Aviso de orden**: `enabled=false` en BD saca al agente del enrutado de entregas, pero el `hello`/lease del gateway se autoriza además por certificado mTLS — un agente dado de baja en BD puede seguir conectándose hasta que `retirar` revoca su credencial. No dar el UPDATE por baja completa sin correr `retirar`.
 
+### CLI de cuentas humanas de consola
+
+Con `DATABASE_URL` apuntando a la instancia elegida, `pnpm console:user --email persona@example.com`
+pide una contraseña nueva (o lee `CAUCE_CONSOLE_USER_PASSWORD`). No pasar contraseñas por argumentos.
+El comando conserva su comportamiento de alta si el correo no existe y actualización si ya existe:
+
+- **Alta:** sin atributos explícitos, nombre = parte local del correo, rol = `operator`, tenant =
+  `Steven`, alias = `kant`; la cuenta se crea activa. `--name`, `--role`, `--tenant` y `--alias`
+  sustituyen esos valores para esta alta.
+- **Cuenta existente:** cambia la contraseña y sólo los atributos indicados explícitamente.
+  Omitir nombre, rol, tenant o alias conserva su valor persistido. El correo normalizado identifica
+  la cuenta; no se reescribe su correo de presentación ni se reactiva una cuenta dada de baja.
+- **Mantenimiento sin alta accidental:** añadir `--update`; si el correo no existe, falla sin crear.
+- **Reactivación explícita:** `--update --activate`; exige cuenta existente y contraseña nueva,
+  conserva los demás atributos omitidos. Cambiar contraseña por sí solo no reactiva.
+- **Baja:** `pnpm console:user --email persona@example.com --deactivate`; no pide contraseña,
+  falla si no existe y sólo acepta `--email`. El gateway relee la fila y rechaza cuentas inactivas.
+
+Toda actualización de contraseña, incluida una reactivación explícita, avanza `password_changed_at`;
+las sesiones anteriores se evalúan contra esa marca con la tolerancia temporal existente del proveedor.
+La salida muestra rol, ámbito y estado activo devueltos por la base, no defaults del parser.
+Flags desconocidos o combinaciones incompatibles fallan antes de abrir el pool. Para cambiar un ámbito
+usar sus flags expresamente; esto no sustituye las reglas de autorización ni crea membresías de agentes.
+
 ## 3. Diagnóstico y recuperación de un adaptador caído
 
 `cauce <alias>` resuelve primero `~/.config/cauce-v3/alias-host.tsv` del usuario real de la
