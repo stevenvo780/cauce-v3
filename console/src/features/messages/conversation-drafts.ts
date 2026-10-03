@@ -6,7 +6,7 @@ interface ConversationDraft {
   lane: JobLane;
   roomId?: string;
   sending: boolean;
-  notice?: { tone: 'success' | 'error'; text: string };
+  notice?: { tone: 'success' | 'error' | 'parcial'; text: string };
 }
 const EMPTY_DRAFT: ConversationDraft = { text: '', lane: 'interactive', sending: false };
 type DraftUpdate = (current: ConversationDraft) => ConversationDraft;

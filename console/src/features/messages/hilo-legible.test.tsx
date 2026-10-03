@@ -112,13 +112,15 @@ it('🔴 el detalle abre en el ÚLTIMO mensaje del hilo, no en el primero sin en
   renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
+  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
+  await user.click(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' }));
   const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
 
   // The bug: it opened on `aaaaaaaa…`, the OLDEST, because that was the first item without delivery.
   expect(within(detalle).getByText('cccccccc-3333-4333-8333-333333333333')).toBeInTheDocument();
   expect(within(detalle).queryByText('aaaaaaaa-1111-4111-8111-111111111111')).not.toBeInTheDocument();
   // And it is said to be the last and not the operator's choice, which is the textual complaint.
-  expect(within(detalle).getByText(/Último mensaje del hilo/i)).toBeInTheDocument();
+  expect(within(detalle).getByText(/Mensaje que elegiste/i)).toBeInTheDocument();
 }, 25_000);
 
 /**
@@ -132,13 +134,12 @@ it('🔴 el detalle arranca CERRADO y lo abre el clic del operador', async () =>
   renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
-  const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
-  expect(detalle).not.toHaveAttribute('open');
-  // And even closed it says which message it is about, so there is no need to open it just to know.
-  expect(within(detalle).getByText(/Último mensaje del hilo/i)).toBeInTheDocument();
-
+  expect(within(hilo).queryByRole('group', { name: /detalle del mensaje seleccionado/i })).toBeNull();
+  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
+  expect(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' })).toBeVisible();
+  await user.keyboard('{Escape}');
   await user.click(within(burbujas(hilo)[0]).getByRole('button', { name: /ver detalle/i }));
-  expect(detalle).toHaveAttribute('open');
+  expect(within(hilo).getByRole('group', { name: /detalle del mensaje seleccionado/i })).toBeVisible();
 }, 25_000);
 
 it('🔴 clicar una burbuja SIN entrega también selecciona: antes no hacía nada', async () => {
@@ -147,6 +148,8 @@ it('🔴 clicar una burbuja SIN entrega también selecciona: antes no hacía nad
   renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
+  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
+  await user.click(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' }));
   await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
 
   const vieja = burbujas(hilo)[0];
@@ -252,6 +255,8 @@ it('🔴 «Ver el mensaje completo» pide el cuerpo al servidor y lo pinta enter
   renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
+  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
+  await user.click(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' }));
   const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
   await user.click(await within(detalle).findByRole('button', { name: /ver el mensaje completo/i }));
 
@@ -260,13 +265,7 @@ it('🔴 «Ver el mensaje completo» pide el cuerpo al servidor y lo pinta enter
   await waitFor(() => { expect(cuerpo.querySelector('pre')?.textContent).toBe(CUERPO_LARGO); });
 }, 25_000);
 
-/**
- * NEGATIVE CONTROL of the previous fix. The route is new and the production gateway does not
- * yet publish it: if the button swallowed the 404 silently, the operator would again be left
- * without knowing there is more text — the same bug, with a button on top. It must say so
- * and must NOT accuse the message of not existing, because that is not what happened.
- */
-it('🔴 si el gateway no publica la ruta todavía, lo dice con esas palabras', async () => {
+it('🔴 informa el 404 del cuerpo sin inventar su causa y conserva la vista previa', async () => {
   server.use(http.get('*/v3/console/messages/:messageId', () => HttpResponse.json(
     { error: 'not_found', message: 'not found' }, { status: 404 },
   )));
@@ -275,10 +274,14 @@ it('🔴 si el gateway no publica la ruta todavía, lo dice con esas palabras', 
   renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
+  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
+  await user.click(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' }));
   const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
   await user.click(await within(detalle).findByRole('button', { name: /ver el mensaje completo/i }));
 
   const aviso = await within(detalle).findByRole('alert');
-  expect(aviso).toHaveTextContent(/no publica todavía GET \/v3\/console\/messages/i);
+  expect(aviso).toHaveTextContent(/No se pudo obtener el cuerpo completo \(HTTP 404\)/);
   expect(aviso).not.toHaveTextContent(/no existe/i);
+  expect(aviso).not.toHaveTextContent(/no publica todavía/i);
+  expect(within(detalle).getByLabelText('Cuerpo del mensaje').querySelector('pre')).toHaveTextContent(RECORTADO);
 }, 25_000);

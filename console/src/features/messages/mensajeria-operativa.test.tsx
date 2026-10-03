@@ -67,7 +67,9 @@ describe('el room de origen cuando hay más de uno', () => {
     const hilo = await abrirConversacion(user, 'argos');
     const selector = await within(hilo).findByRole('combobox', { name: /room de origen/i });
     expect(within(selector).getAllByRole('option').map((opcion) => opcion.textContent))
-      .toEqual(['grp.steven', 'ops.infra']);
+      .toEqual(['Elegí la sala de origen', 'grp.steven', 'ops.infra']);
+    expect(selector).toHaveValue('');
+    expect(within(hilo).getByRole('button', { name: 'Enviar' })).toBeDisabled();
 
     await user.selectOptions(selector, 'ops.infra');
     await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'desde ops.infra');
@@ -83,6 +85,7 @@ describe('el room de origen cuando hay más de uno', () => {
 
     const hilo = await abrirConversacion(user, 'argos');
     expect(within(hilo).queryByRole('combobox', { name: /room de origen/i })).toBeNull();
+    await user.click(within(hilo).getByRole('button', { name: 'Más' }));
     expect(hilo.querySelector('.messenger-room-fixed')).toHaveTextContent(
       /Room de origen: grp\.steven · derivado de tu topología/,
     );
@@ -158,6 +161,8 @@ describe('la cola al lado de la conversación', () => {
 
     const hilo = await abrirConversacion(user, 'argos');
     // `dl` carries no list role: the strip is read by its own class, which the stylesheet also uses.
+    await user.click(within(hilo).getByRole('button', { name: 'Más' }));
+    await user.click(within(hilo).getByText(/Estado y detalles del agente/));
     const cola = hilo.querySelector('.messenger-queue-strip');
     await waitFor(() => { expect(cola).toHaveTextContent(/Muertas\s*≥ 200/); });
   }, 25_000);
@@ -173,6 +178,7 @@ describe('la cola al lado de la conversación', () => {
 
     const hilo = await abrirConversacion(user, 'argos');
     const antes = lecturas;
+    await user.click(within(hilo).getByRole('button', { name: 'Más' }));
     await user.click(within(hilo).getByRole('button', { name: /sincronizar/i }));
 
     await waitFor(() => { expect(lecturas).toBeGreaterThan(antes); });
@@ -197,6 +203,7 @@ describe('cambiar de conversación y volver a leer', () => {
     const detalle = within(hilo).getByRole('group', { name: /detalle del mensaje seleccionado/i });
     expect(detalle).toHaveTextContent(/Mensaje que elegiste/);
 
+    await user.click(within(hilo).getByRole('button', { name: 'Más' }));
     await user.click(within(hilo).getByRole('button', { name: /sincronizar/i }));
 
     await waitFor(() => {

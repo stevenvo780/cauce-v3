@@ -13,8 +13,8 @@ import { BOTTOM_BAR_VIEWPORT, RAIL_VIEWPORT } from './breakpoints';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConsoleNavigation } from './components/ConsoleNavigation';
 import { ConversationDrafts, ConversationDraftStore } from './features/messages/conversation-drafts';
-import { ThemeControl } from './components/ThemeControl';
-import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/AuthGate';
+import { AuthGate, UnmanagedAuthBanner } from './features/auth/AuthGate';
+import { AccountMenu } from './features/auth/AccountMenu';
 import type { AuthGateState } from './features/auth/auth-session';
 import { NAV_ENTRIES } from './nav';
 import { onNavClick, redirect, useRouteSegments } from './router';
@@ -285,19 +285,17 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
           </button>
         ) : null}
         <ConsoleNavigation key={path} id={NAV_ID} rail={rail} routeId={notFoundPath ? '' : routeId} />
-        <div className="sidebar-caption"><span className="live-dot" aria-hidden="true" /><span>Un espacio para trabajar juntos</span></div>
+        <AccountMenu routeKey={`${routeId}/${params.join('/')}`} gate={gate} />
       </aside>
       <div className="workspace">
-        <header className="topbar">
-          <div>{routeId !== 'messages' ? <a className="back-to-chat" aria-label="Volver a la conversación" href={lastConversation.current} onClick={(event) => { onNavClick(event, lastConversation.current); }}><ArrowLeft size={16} aria-hidden="true" /><span>Volver a la conversación</span></a> : <span className="topbar-rotulo">Tu equipo, en una conversación</span>}</div>
-          <div className="topbar-meta">
-            {import.meta.env.VITE_USE_MOCKS === 'true' ? <span className="mock-flag">MOCK API</span> : null}
-            <ThemeControl />
-            <SessionBadge state={gate.state} status={gate.status} busy={gate.busy} onLogout={() => void gate.logout()} />
-          </div>
-        </header>
+        {routeId !== 'messages' ? <header className="topbar">
+          <a className="back-to-chat" aria-label="Volver a la conversación" href={lastConversation.current} onClick={(event) => { onNavClick(event, lastConversation.current); }}><ArrowLeft size={16} aria-hidden="true" /><span>Volver a la conversación</span></a>
+        </header> : null}
         <main id="main-content" data-route={routeId} ref={mainRef} tabIndex={-1}>
-          {gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}
+          {import.meta.env.VITE_USE_MOCKS === 'true' || gate.status === 'unmanaged' ? <div className="shell-notices">
+            {import.meta.env.VITE_USE_MOCKS === 'true' ? <span className="mock-flag" role="status">MOCK API</span> : null}
+            {gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}
+          </div> : null}
           {notFoundPath
             ? <RouteNotFound path={notFoundPath} />
             : Page

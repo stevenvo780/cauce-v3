@@ -44,13 +44,18 @@ it('con sesión válida deja pasar y publica la identidad y el cierre de sesión
   server.use(http.get(SESSION, () => HttpResponse.json({
     authenticated: true,
     subject: 'steven@elenxos.com',
+    expires_at: '2026-10-03T12:00:00.000Z',
     csrf_token: 'x'.repeat(32),
   })));
   renderWithApi(<App />);
 
-  expect(await screen.findByText('steven@elenxos.com')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Cuenta de steven@elenxos.com' })).toBeVisible();
   expect(screen.getByRole('navigation', { name: /principal/i })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /cerrar sesión/i })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: /^Cuenta de/ }));
   expect(screen.getByRole('button', { name: /cerrar sesión/i })).toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: 'Cuenta y apariencia' }).querySelector('time'))
+    .toHaveAttribute('datetime', '2026-10-03T12:00:00.000Z');
 });
 
 it('cerrar sesión vuelve a preguntarle al servidor y devuelve a la pantalla de login', async () => {
@@ -67,7 +72,8 @@ it('cerrar sesión vuelve a preguntarle al servidor y devuelve a la pantalla de 
   const user = userEvent.setup();
   renderWithApi(<App />);
 
-  await user.click(await screen.findByRole('button', { name: /cerrar sesión/i }));
+  await user.click(await screen.findByRole('button', { name: /^Cuenta de/ }));
+  await user.click(screen.getByRole('button', { name: /cerrar sesión/i }));
 
   // Do not trust its own optimism: the state comes from re-reading /v3/auth/session.
   expect(await screen.findByRole('link', { name: /iniciar sesión/i })).toBeInTheDocument();
@@ -105,10 +111,11 @@ it('en modo contraseña muestra el formulario y entra con las credenciales corre
 
   // The state does not come from the POST: it comes from re-asking /v3/auth/session.
   expect(await screen.findByRole('navigation', { name: /principal/i })).toBeInTheDocument();
-  // The identity in the top bar is the PERSON, not the tenant: name and email, together.
-  const badge = screen.getByRole('button', { name: /cerrar sesión/i }).closest('.auth-state');
-  expect(within(badge as HTMLElement).getByText('Steven')).toBeInTheDocument();
-  expect(within(badge as HTMLElement).getByText('steven@elenxos.com')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /^Cuenta de/ }));
+  const account = screen.getByRole('dialog', { name: 'Cuenta y apariencia' });
+  expect(within(account).getByText('Steven')).toBeInTheDocument();
+  expect(within(account).getByText('steven@elenxos.com')).toBeInTheDocument();
+  expect(within(account).getByRole('button', { name: /cerrar sesión/i })).toBeInTheDocument();
 });
 
 it('cuando el gateway no expone el BFF deja pasar pero lo declara a los gritos', async () => {
@@ -119,6 +126,7 @@ it('cuando el gateway no expone el BFF deja pasar pero lo declara a los gritos',
 
   expect(await screen.findByRole('navigation', { name: /principal/i })).toBeInTheDocument();
   expect(screen.getByText(/no tiene login de usuario/i)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Cuenta y apariencia' }));
   expect(screen.getByText(/sin login de verdad/i)).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /cerrar sesión/i })).not.toBeInTheDocument();
 });
