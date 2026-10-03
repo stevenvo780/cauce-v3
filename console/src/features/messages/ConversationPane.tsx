@@ -33,6 +33,7 @@ interface ConversationPaneProps {
   route: OperatorRoute;
   canPublish: boolean;
   publisherSubject?: string | null;
+  publisherHumanSubject?: string | null;
   salud?: SaludDeCola;
   queueError?: Error;
   onQueueReload: () => void;
@@ -54,7 +55,7 @@ type CuerpoEntero =
  * Conversation panel with an agent: history, delivery state and message composer.
  */
 export function ConversationPane({
-  agent, page, loading, error, route, canPublish, publisherSubject, salud, queueError, onQueueReload, onReload,
+  agent, page, loading, error, route, canPublish, publisherSubject, publisherHumanSubject, salud, queueError, onQueueReload, onReload,
 }: ConversationPaneProps) {
   const api = useApi();
   const search = useRouteSearch();
@@ -68,7 +69,8 @@ export function ConversationPane({
     if (wasContextOpen.current && !contextOpen) moreTrigger.current?.focus({ preventScroll: true });
     wasContextOpen.current = contextOpen;
   }, [contextOpen]);
-  const draftKey = JSON.stringify([publisherSubject, agent.id]);
+  const replySubject = publisherHumanSubject ?? publisherSubject;
+  const draftKey = JSON.stringify([replySubject, agent.id]);
   const [form, updateForm] = useConversationDraft(draftKey);
   const { text: draft, roomId: roomElegido, lane, sending: enviando, notice: aviso } = form;
   const setDraft = (text: string) => { updateForm((current) => ({ ...current, text })); };
@@ -86,7 +88,7 @@ export function ConversationPane({
     id: `messenger:${agent.id}`, agent, sourceRoomId: '', openedAt: new Date(0).toISOString(), mode: 'transcript',
   }), [agent]);
   const hilo = useMemo(() => transcriptForSession(page, sesion), [page, sesion]);
-  const replyScopeKey = JSON.stringify([publisherSubject, agent.tenantId, agent.alias]);
+  const replyScopeKey = JSON.stringify([replySubject, agent.tenantId, agent.alias]);
 
   const roomUnavailable = Boolean(roomElegido && !route.sourceRoomIds.includes(roomElegido));
   const roomOrigen = roomElegido ?? (route.sourceRoomIds.length === 1 ? route.sourceRoomIds[0] : '');
@@ -123,8 +125,8 @@ export function ConversationPane({
   const totalVisible = (page?.items ?? []).length;
 
   const mensajePropio = (item: TranscriptItem | undefined) => Boolean(
-    publisherSubject && item?.message.author?.kind === 'human'
-      && item.message.author.subject_id === publisherSubject,
+    replySubject && item?.message.author?.kind === 'human'
+      && item.message.author.subject_id === replySubject,
   );
   const deliveryDelAgente = (item: TranscriptItem | undefined) => {
     const delivery = item?.delivery;
@@ -152,7 +154,7 @@ export function ConversationPane({
         deliveryId: latestOwnRoot.delivery?.delivery_id ?? '',
         status: latestOwnRoot.delivery?.status,
       } : undefined;
-  const canonical = useCanonicalReply({ publisherSubject, tenantId: agent.tenantId, alias: agent.alias, root: candidateRoot });
+  const canonical = useCanonicalReply({ publisherSubject: replySubject, tenantId: agent.tenantId, alias: agent.alias, root: candidateRoot });
 
   /*
    * --------------------------------------------------- THE THREAD STARTS AT THE END

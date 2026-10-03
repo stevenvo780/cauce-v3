@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { requirePermission } from '../../auth.js';
+import { consoleHumanSubject } from '../../console-message-author.js';
 import { visibleMessageList } from '../../facades.js';
 import { principal, replyError } from '../shared.js';
 import type {
@@ -38,6 +39,7 @@ export function registerConsoleAccessRoutes(
       ];
       return {
         subject: `${actor.tenant_id}:${actor.alias}`,
+        ...(consoleHumanSubject(actor) === undefined ? {} : { human_subject: consoleHumanSubject(actor) }),
         roles: effectiveRoles,
         permissions,
         observed_at: new Date().toISOString()

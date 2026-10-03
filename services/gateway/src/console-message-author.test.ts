@@ -35,6 +35,27 @@ async function gateway(actor = human, overrides: Partial<GatewayRepository> = {}
 }
 
 describe('authenticated console authorship', () => {
+  it('exposes the durable human subject separately from the shared routing subject', async () => {
+    const first = await gateway();
+    const secondActor = { ...human, operator_profile: { id: 'console:two', display_name: 'Otra persona' } };
+    const second = await gateway(secondActor);
+    const firstAccess = await first.app.inject({ method: 'GET', url: '/v3/console/access', headers });
+    const secondAccess = await second.app.inject({ method: 'GET', url: '/v3/console/access', headers });
+    expect(firstAccess.statusCode).toBe(200);
+    expect(firstAccess.json()).toMatchObject({ subject: 'Steven:kant', human_subject: consoleMessageAuthor(human)?.subject_id });
+    expect(secondAccess.json()).toMatchObject({ subject: 'Steven:kant', human_subject: consoleMessageAuthor(secondActor)?.subject_id });
+    expect(firstAccess.json<{ human_subject: string }>().human_subject)
+      .not.toBe(secondAccess.json<{ human_subject: string }>().human_subject);
+    expect(firstAccess.body).not.toContain(human.operator_id);
+  });
+
+  it('keeps the human subject after a reader downgrade without granting publish permission', async () => {
+    const { app } = await gateway({ ...human, roles: [], permissions: ['read'] });
+    const response = await app.inject({ method: 'GET', url: '/v3/console/access', headers });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ human_subject: consoleMessageAuthor(human)?.subject_id, roles: [], permissions: [] });
+  });
+
   it('uses the existing server profile without exposing email or inferring an owner role', () => {
     const author = consoleMessageAuthor(validatePrincipal(human));
     expect(author).toMatchObject({ kind: 'human', display_name: 'Steven' });
