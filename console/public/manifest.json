@@ -1,0 +1,32 @@
+{
+  "id": "/",
+  "name": "Cauce V3",
+  "short_name": "Cauce",
+  "description": "Consola operativa de Cauce V3",
+  "lang": "es",
+  "start_url": "/messages",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#f3f6fa",
+  "background_color": "#f3f6fa",
+  "icons": [
+    {
+      "src": "/icons/cauce-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/cauce-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/cauce-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
