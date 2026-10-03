@@ -10,7 +10,7 @@ export const VIEWS = [
   view('entry', '/', '.messenger-agent'),
   view('messages', '/messages', '.messenger-agent'),
   view('conversation', '/messages/Steven/kant', '.messenger-thread-scroll'),
-  { ...view('conversation-context', '/messages/Steven/kant?view=context', '.agent-context-panel .directiva-resumen'),
+  { ...view('conversation-context', '/messages/Steven/kant?view=context', '.agent-context-panel .contexto-campos'),
     ready: ['.agent-context-panel .perfil-tab .perfil-editor', '.agent-context-panel .ficheros-lista li'] },
   view('overview', '/overview', '.landing-alertas'),
   { ...view('live', '/live', '.lhg-scroll'), graph: true },
@@ -18,18 +18,18 @@ export const VIEWS = [
     ['Ahora', '.live-detail dl', ['.live-reason']],
     ['Conexión', '.live-detail dl', ['.live-detail dd:last-of-type .chip']],
     ['Entregas', '.drawer-delivery', ['.drawer-delivery dl']],
-    ['Contexto', '.directiva-resumen', ['.perfil-tab .perfil-editor', '.ficheros-lista li']],
+    ['Contexto', '.contexto-campos', ['.perfil-tab .perfil-editor', '.ficheros-lista li']],
     ['Ficheros', '.ficheros-lista li', ['.ficheros-lista li']],
   ].map(([name, primary, ready], index) => ({
     ...view(`live-${index}`, '/live?agente=Steven%2Fkant&pestana=ahora', `.agent-drawer-body ${primary}`, [tab(name)]),
     ready: ready.map((selector) => `.agent-drawer-body ${selector}`),
   })),
-  ...[['Consumo', 'consumo', '.quota-provider'], ['Inventario', 'inventario', 'table'], ['Asignaciones', 'asignaciones', 'table']].map(([name, id, selector]) =>
+  ...[['Consumo', 'consumo', '.quota-provider'], ['Inventario', 'inventario', '.panel'], ['Asignaciones', 'asignaciones', '.assignment-config-form']].map(([name, id, selector]) =>
     view(`accounts-${id}`, '/accounts', `#view-panel-${id} ${selector}`, [tab(name)])),
   view('queues', '/queues', '#view-panel-entregas tbody tr'),
-  view('observability-signals', '/observability', '#view-panel-senales .trust-grid', [tab('Señales y relays')]),
-  view('observability-audit', '/observability', '.audit-row', [tab('Auditoría')]),
-  view('config-agents', '/config', '.settings-agent'),
+  view('observability-signals', '/observability', '#view-panel-senales .metrics-grid', [tab('Señales y relays')]),
+  view('observability-audit', '/observability', '#view-panel-auditoria .search-field', [tab('Auditoría')]),
+  view('config-agents', '/config', '.settings-page input[type="search"]'),
   ...['Espacios y miembros', 'Permisos', 'Agentes', 'Avisos y cadena', 'Historial y JSON', 'Otros'].map((name, index) =>
     view(`config-${index}`, '/config', '.config-area', [button('Administración avanzada'), tab(name)])),
   view('terminal', '/terminal', '.ultimate-terminal-shell'),

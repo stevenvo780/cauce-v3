@@ -69,12 +69,6 @@ export function LandingPage() {
         actions={<RefreshButton onClick={recargarTodo} loading={cargando} />}
       />
 
-      <div className="metrics-grid">
-        <Metric label="Agentes en línea" value={status.data?.online} tone="positive" detail={ALCANCE_DE_LA_CIFRA.leases} />
-        <Metric label="En vuelo" value={totals?.in_flight} detail="tomadas por un agente" />
-        <Metric label="Esperando turno" value={totals?.queued} tone="warning" detail={`según ${ALCANCE_DE_LA_CIFRA.actividad}`} />
-        <Metric label="Entregas muertas" value={queues.data?.dead} tone="danger" detail="nadie las va a contestar" />
-      </div>
 
       <section className="landing-alertas" aria-label="Lo que exige atención">
         {!asentadas ? <LoadingState label="Leyendo flota, colas y cuotas…" /> : null}
@@ -137,6 +131,13 @@ export function LandingPage() {
         ) : null}
       </section>
 
+
+      <div className="metrics-grid">
+        <Metric label="Agentes en línea" value={status.data?.online} tone="positive" detail={ALCANCE_DE_LA_CIFRA.leases} />
+        <Metric label="En vuelo" value={totals?.in_flight} detail="tomadas por un agente" />
+        <Metric label="Esperando turno" value={totals?.queued} tone="warning" detail={`según ${ALCANCE_DE_LA_CIFRA.actividad}`} />
+        <Metric label="Entregas muertas" value={queues.data?.dead} tone="danger" detail="nadie las va a contestar" />
+      </div>
       {asentadas ? (
         <section className="landing-tiras" aria-label="El detalle de lo que ya se leyó">
           <article className="panel landing-tira">

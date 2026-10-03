@@ -25,22 +25,21 @@ function todoSano() {
   ];
 }
 
-it('resume la consola entera: flota, colas y cuotas, con los números PRIMERO', async () => {
+it('resume la consola entera: deja lo que exige atención antes de las métricas', async () => {
   renderWithApi(<LandingPage />);
 
   expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
   // The aggregate metrics, with their real snapshot number (mockStatus.online = 99).
   expect(await screen.findByText('99')).toBeInTheDocument();
 
-  // And they go BEFORE the alerts band in document order. At 1280×900, the eight alert bands
-  // occupied ~580 px and pushed the four numbers off the bottom edge: the aggregate summary was
-  // invisible when the user came in for it.
+  // The actionable alert band comes before the aggregate metrics so an operator can reach the
+  // actual incident without scrolling past four large cards.
   const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
   const numeros = screen.getByText('99').closest('.metrics-grid');
   expect(numeros).not.toBeNull();
   if (numeros) {
-    // `compareDocumentPosition` with FOLLOWING = the numbers are before the band.
-    expect(numeros.compareDocumentPosition(banda) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // `compareDocumentPosition` with FOLLOWING = the alert band is before the numbers.
+    expect(banda.compareDocumentPosition(numeros) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   }
 });
 
