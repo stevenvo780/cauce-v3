@@ -5,6 +5,7 @@ import { withAbortableTransaction, withTransaction } from '../../db.js';
 import { agentContextReconcileLockKey } from '../agent-context-lock.js';
 import { StoreError } from '../errors.js';
 import { MessagesRepository } from '../messages.js';
+import { MESSAGE_AUTHOR_SQL, messageAuthor } from '../messages/author.js';
 import { validConnectionToken } from '../outbox.js';
 import { conversationWorkScopeKey, conversationWorkState } from './conversation-work.js';
 import type { DeliveryRow } from '../observability.js';
@@ -274,6 +275,8 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         && capabilities.includes('agent_profile_adoption_v1');
       const includeConversationWork = Array.isArray(capabilities)
         && capabilities.includes('conversation_work_v1');
+      const includeConsoleHumanScope = Array.isArray(capabilities)
+        && capabilities.includes('console_human_scope_v1');
 
       await client.query(
         `INSERT INTO delivery_lane_fairness(tenant_id,alias) VALUES($1,$2)
@@ -286,7 +289,8 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
 // The durable column counts human streaks; the lane is inherited at every hop and does not
 // split agent chains.
       let humanStreak = fairness.rows[0]?.interactive_streak ?? 0;
-      const claimedRows: DeliveryRow[] = [];
+      type AuthoredDeliveryRow = DeliveryRow & { author?: unknown };
+      const claimedRows: AuthoredDeliveryRow[] = [];
 
       /*
        * Hold the durable capacity row through the claim commit. Configuration mutations take
@@ -366,8 +370,8 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       );
 
       // A control hold gates new leases; durable terminal evidence survives a corrupted row.
-      const claimOne = async (humanOriginated: boolean): Promise<DeliveryRow | undefined> => {
-        const claimed = await client.query<DeliveryRow>(
+      const claimOne = async (humanOriginated: boolean): Promise<AuthoredDeliveryRow | undefined> => {
+        const claimed = await client.query<AuthoredDeliveryRow>(
           `WITH picked AS (
              SELECT d.id FROM deliveries d JOIN messages m ON m.id=d.message_id
              WHERE d.recipient_tenant=$1 AND d.recipient_alias=$2
@@ -398,7 +402,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
            SELECT u.id,u.message_id,u.recipient_tenant,u.recipient_alias,u.status,u.attempt,u.max_attempts,
                   u.last_ack_rank,u.consumer_instance_id,u.consumer_epoch,u.claim_token,u.ack_deadline_at,
                    m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,m.body,m.lane,m.priority,m.origin,
-                   m.auth_session_id,m.auth_channel
+                   m.auth_session_id,m.auth_channel${includeConsoleHumanScope ? `,${MESSAGE_AUTHOR_SQL}` : ''}
            FROM updated u JOIN messages m ON m.id=u.message_id`,
           [tenantId, alias, epoch, instanceId, HUMAN_PRIORITY_FLOOR, ackDeadlineMs, humanOriginated]
         );
@@ -425,7 +429,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
           ? [true]
           : yieldTurn ? [false, true] : [true, false];
 
-        let row: DeliveryRow | undefined;
+        let row: AuthoredDeliveryRow | undefined;
         let claimedHuman = false;
         let yieldedToNobody = false;
         for (const humanOriginated of order) {
@@ -485,6 +489,8 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
           throw new StoreError('conflict', 'claimed delivery is missing its fencing fields');
         }
         const workState = workStates.get(row.id);
+        const consoleAuthor = includeConsoleHumanScope && row.auth_channel === 'console'
+          ? messageAuthor(row.author) : undefined;
         return {
           type: 'delivery',
           version: PROTOCOL_VERSION,
@@ -502,6 +508,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
           actor_alias: row.actor_alias,
           recipient_alias: row.recipient_alias,
           body: row.body,
+          ...(consoleAuthor === undefined ? {} : { console_human_subject: consoleAuthor.subject_id }),
           ...(workState === undefined ? {} : { conversation_work_state: workState }),
           ...(routingTargets === undefined ? {} : { routing_targets: routingTargets }),
           ...(selfRole === undefined ? {} : { self_role: selfRole }),

@@ -158,6 +158,7 @@ export const DeliveryEnvelopeSchema = z.object({
   body: MessageBodySchema,
   origin: OriginSchema.optional(),
   authenticated_context: AuthenticatedContextSchema.optional(),
+  console_human_subject: z.string().length(70).regex(/^human:[a-f0-9]{64}$/u).optional(),
   routing_targets: z.array(RoutingTargetSchema).max(100).optional(),
   // Recipient's declared role (agents.role_brief). The adapter prepends it to the contract as an identity
   // preamble. Optional and behind the `agent_identity_v1` capability for the same reason as routing_targets:
