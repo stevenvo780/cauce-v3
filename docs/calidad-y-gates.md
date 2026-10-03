@@ -12,7 +12,13 @@ está hecha para incomodar. Los demás solo aceptan bajadas.
 
 ## Jerarquía de gates
 
-Todo commit que toque código **debe pasar el gate antes de hacer commit**. Commits que solo tocan archivos `.md` están exentos.
+### Publicación de borradores e integración
+
+Los commits y PR **en borrador en ramas propias** pueden publicarse aunque haya pruebas pendientes, bloqueadas o fallidas. El gate no bloquea esa publicación. El PR debe identificar el commit exacto, los comandos ejecutados, sus resultados y la evidencia disponible (salida o enlace), y enumerar las pruebas no ejecutadas y el motivo. Una prueba no ejecutada, una suite `VACIA` o un resultado parcial no cuentan como verde.
+
+Publicar el borrador no significa que el trabajo esté listo ni autoriza merge o despliegue. **Antes de integrar o desplegar deben estar verdes todos los gates requeridos para ese paso y las rutas modificadas.** Quien integra o despliega es responsable de ejecutarlos y comprobar la evidencia del código exacto que va a integrar o desplegar; quien despliega debe pasar el gate completo y todos los tests y gates de release aplicables antes del despliegue. Los merges a `dev` o `main` están reservados a Steven o el agente que él autorice expresamente para integrar o desplegar.
+
+No se elimina ningún gate ni test, no se rebajan sus criterios y no se sustituye la revisión independiente. En el checkout compartido de `dev` se mantiene el gate antes de cada commit de código; los commits que solo tocan archivos `.md` siguen exentos del gate por commit. Las frecuencias de la tabla se aplican a ese checkout y determinan qué gates quedan pendientes en un borrador de rama propia.
 
 | Comando | Qué ejecuta | Cuándo |
 |---|---|---|
