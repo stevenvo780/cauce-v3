@@ -242,3 +242,40 @@ Reglas que la vía cumple, y por qué:
 - `console/src/features/live/` — una vista **Contexto** para las mutaciones y **Ficheros** como visor.
 
 Las rutas de documentos y perfil están registradas en `services/gateway/src/routes/console.ts`.
+
+## Manual nativo de Git: sólo inspección
+
+El visor `GET /v3/console/tenants/:tenantId/agents/:alias/context/repository/native-inspect`
+lee un commit completo y, opcionalmente, `previous_commit` desde el repositorio ligado al
+servidor. No recibe rutas del navegador. La autorización de identidad exacta se comprueba
+antes y después de leer; las respuestas llevan `Cache-Control: no-store`.
+
+El manifiesto `context.json` de esquema **3** es exclusivo de este visor. Tiene exactamente
+`schema_version`, `instance_id` y `agents`. Cada agente declara `tenant_id`, `alias`,
+`source_journal: null` y `native_manual: { harness }`, además de conservar su `profile.json`
+con los siete campos existentes. El arnés declarado sólo puede ser `claude`, `codex` u
+`openclaw`. Se deriva exactamente uno de estos archivos fuente por agente:
+
+- `tenants/<tenant>/agents/<alias>/native/claude/CLAUDE.md`
+- `tenants/<tenant>/agents/<alias>/native/codex/AGENTS.md`
+- `tenants/<tenant>/agents/<alias>/native/openclaw/AGENTS.md`
+
+El árbol no puede incluir otros blobs ni otro manual del mismo agente. Todos los perfiles
+se validan y todos los textos pasan el escáner de secretos reconocido, aunque sólo se
+entrega el agente seleccionado. Se mantienen los límites de 64 agentes, 256 blobs,
+128 KiB por blob y 2 MiB por árbol, objetos sueltos verificados y modos regulares; no se
+admiten packs, alternates, enlaces o ejecutables. El escáner no acredita ausencia de toda
+información sensible: hay que revisar los contenidos antes de incorporarlos al repositorio.
+
+La respuesta contiene perfil, manual, bytes y SHA-256 de fuente; el diff incluye cambios
+del perfil y del manual. Cambiar de arnés produce retirada y adición, sin inferir un
+renombrado de destino. El texto se presenta escapado: Markdown, HTML e imports son datos,
+no se cargan ni se siguen. El panel es secundario y se abre bajo «sólo inspección».
+
+Estos nombres describen **fuentes Git**, no archivos runtime medidos ni manuales efectivos.
+Por ejemplo, `AGENTS.override.md` puede desplazar `AGENTS.md` en Codex. La respuesta declara
+`sourceState: not_observed`, `application: not_evaluated` y `applySupported: false`.
+Los inspectores de perfil y los flujos existentes de preview/PUT siguen admitiendo
+únicamente esquemas 1/2: no extraen ni aplican silenciosamente el perfil de un esquema 3.
+No se crea recibo de aplicación, no se escribe en el runtime ni se acredita adopción por
+ninguna sesión. Skills, memoria e instalación de un manual quedan fuera de este contrato.

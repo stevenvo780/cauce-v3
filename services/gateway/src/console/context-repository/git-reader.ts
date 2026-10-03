@@ -11,6 +11,9 @@ const decompress = promisify(inflate);
 const OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const PROFILE_PATH = /^tenants\/[A-Za-z][A-Za-z0-9_-]{0,63}\/agents\/[a-z][a-z0-9_-]{0,63}\/profile\.json$/u;
 
+const NATIVE_MANUAL_PATH = /^tenants\/[A-Za-z][A-Za-z0-9_-]{0,63}\/agents\/[a-z][a-z0-9_-]{0,63}\/native\/(?:claude\/CLAUDE\.md|(?:codex|openclaw)\/AGENTS\.md)$/u;
+export type ContextGitPathPolicy = 'profiles' | 'native-inspection';
+
 export interface ContextGitEntry {
   readonly path: string;
   readonly oid: string;
@@ -59,9 +62,10 @@ export class ContextGitReader {
   private readonly cache = new Map<string, LooseObject>();
   private readBytes = 0;
 
-  private constructor(private readonly objectsPath: string) {}
+  private constructor(private readonly objectsPath: string, private readonly pathPolicy: ContextGitPathPolicy) {}
 
-  static async open(repositoryPath: string): Promise<ContextGitReader> {
+  static async open(repositoryPath: string, pathPolicy: ContextGitPathPolicy = 'profiles'): Promise<ContextGitReader> {
+    requireContext(['profiles', 'native-inspection'].includes(pathPolicy), 'invalid_path_policy');
     requireContext(isAbsolute(repositoryPath), 'invalid_repository_root');
     try {
       const root = await realpath(repositoryPath);
@@ -80,7 +84,7 @@ export class ContextGitReader {
       } finally {
         await pack.close();
       }
-      return new ContextGitReader(objects);
+      return new ContextGitReader(objects, pathPolicy);
     } catch (error) {
       if (error instanceof ContextRepositoryError) throw error;
       throw new ContextRepositoryError('invalid_repository_root');
@@ -155,7 +159,8 @@ export class ContextGitReader {
           requireContext(pending.length <= CONTEXT_REPOSITORY_LIMITS.files * 4, 'size_limit');
         } else {
           requireContext(entries.length < CONTEXT_REPOSITORY_LIMITS.files, 'size_limit');
-          requireContext(path === 'context.json' || PROFILE_PATH.test(path), 'unexpected_files');
+          requireContext(path === 'context.json' || PROFILE_PATH.test(path)
+            || (this.pathPolicy === 'native-inspection' && NATIVE_MANUAL_PATH.test(path)), 'unexpected_files');
           const blob = await this.object(objectId);
           requireContext(blob.type === 'blob', 'invalid_blob');
           bytes += blob.body.length;
