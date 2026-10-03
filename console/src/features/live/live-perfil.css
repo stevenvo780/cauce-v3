@@ -217,3 +217,27 @@
   .context-status-stages { grid-template-columns: minmax(0, 1fr); }
   .perfil-cabecera { flex-direction: column; }
 }
+
+.profile-fields { display: grid; gap: var(--space-4); min-width: 0; }
+.profile-field-group {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.profile-field-group legend { padding: 0 var(--space-1); font-size: var(--tipo-rotulo); font-weight: 600; }
+.profile-group-help { margin: 0; font-size: var(--tipo-apunte); line-height: 1.45; }
+.profile-field-examples { min-width: 0; font-size: var(--tipo-apunte); line-height: 1.45; overflow-wrap: anywhere; }
+.profile-field-examples summary { cursor: pointer; padding-block: var(--space-2); color: var(--muted); }
+.profile-field-examples summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.profile-field-examples p, .profile-field-examples dl { margin: var(--space-2) 0 0; }
+.profile-field-examples dt { font-weight: 600; }
+.profile-field-examples dd { margin: var(--space-1) 0 var(--space-3); white-space: pre-line; }
+.profile-fields .perfil-campo { min-width: 0; }
+@container cajon (min-width: 1200px) {
+  .profile-field-group { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--space-5); }
+  .profile-field-group > :not(.perfil-campo) { grid-column: 1 / -1; }
+}
