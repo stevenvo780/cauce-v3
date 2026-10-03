@@ -32,6 +32,7 @@ import { LiveHypergraph, type HypergraphLayer } from './LiveHypergraph';
 import { LiveFleetToolbar } from './LiveFleetToolbar';
 import { LiveFleetTally } from './LiveFleetTally';
 import { LiveFleetLegend } from './LiveFleetLegend';
+import { useCompactLayout } from '../../hooks/use-compact-layout';
 import './live.css';
 import './live-hypergraph.css';
 
@@ -54,6 +55,9 @@ interface TooltipTarget {
 }
 
 export function LiveFleetPage() {
+  const graphFirst = useCompactLayout();
+  const [mapOpenOverride, setMapOpenOverride] = useState<boolean | null>(null);
+  const mapOpen = mapOpenOverride ?? graphFirst;
   const api = useApi();
   const activity = useResource('live-fleet-activity', () => api.getFleetActivity());
   const topology = useResource('live-topology', () => api.getTopology());
@@ -323,6 +327,102 @@ export function LiveFleetPage() {
   }
   if (activity.loading && !snapshot) return <LoadingState label="Leyendo la actividad de la flota…" />;
 
+  const capas = (
+    <div className="live-layer-switch" role="group" aria-label="Capa del mapa">
+      {(['ahora', 'permisos'] as const).map((option) => (
+        <button
+          key={option}
+          type="button"
+          className="live-layer-button"
+          aria-pressed={layer === option}
+          onClick={() => { setLayer(option); }}
+        >
+          {option === 'ahora' ? 'Ahora' : 'Permisos'}
+        </button>
+      ))}
+    </div>
+  );
+  const veredictoFlota = (
+    <FleetVerdict
+      verdict={verdict}
+      totals={snapshot?.totals}
+      onCulprit={(culprit) => { enfocarCulpable(culprit.key); }}
+    />
+  );
+  const resumenTriage = (
+    <LiveFleetTally
+      tally={tally}
+      stateFilter={stateFilter}
+      setStateFilter={setStateFilter}
+      deriva={deriva}
+    />
+  );
+  const mapa = (
+    <details className="panel live-mapa" open={mapOpen}>
+      <summary onClick={(event) => {
+        event.preventDefault();
+        setMapOpenOverride(!mapOpen);
+      }}>
+        <div className="live-mapa-rotulo">
+          <h2 className="live-mapa-titulo">Quién le habla a quién, ahora</h2>
+        </div>
+      </summary>
+
+      {fueraDeAlcance > 0 ? (
+        <p className="notice" data-testid="aviso-recorte">
+          Mapa acotado a <strong>{tenantFilter}</strong>: {fueraDeAlcance} alias de otros
+          clientes, sus salas y las flechas que los tocan no se dibujan.
+          {layer === 'permisos' ? ' Tampoco se ven las aristas ACL hacia ellos.' : ''}
+          {' '}Elegí «todos» en Cliente para verlos.
+        </p>
+      ) : null}
+
+      {layer === 'ahora' && edgesEnAlcance.length === 0 && alcance.length > 0 ? (
+        <p className="live-empty-calm">
+          <strong>{tenantFilter === 'todos' ? 'La flota está libre.' : `Nadie de ${tenantFilter} tiene trabajo entre manos.`}</strong>
+          {' '}Nadie tiene trabajo entre manos ahora mismo — eso no es una avería.
+          {tenantFilter === 'todos' && typeof snapshot?.totals?.in_flight === 'number'
+            ? ` Hay ${String(snapshot.totals.in_flight)} en vuelo y ${String(snapshot.totals.queued ?? 0)} esperando turno.`
+            : null}
+        </p>
+      ) : null}
+
+      <LiveHypergraph
+        topology={topologiaDelMapa}
+        views={alcance}
+        edges={edgesEnAlcance}
+        serverEdges={snapshot?.edges}
+        thresholds={snapshot?.thresholds}
+        origins={origins}
+        layer={layer}
+        focusKey={hovered ?? selected ?? null}
+        spotlight={spotlight}
+        loadingTopology={topology.loading && !topology.data}
+        topologyError={topology.error ?? null}
+        onRetryTopology={recargarTopologia}
+        onFocus={(key) => { setHovered(key ?? undefined); }}
+        onOpen={(view) => { abrirCajon(view.key); }}
+        onHover={(key, anchor, view, alias) => {
+          setTip(key && anchor ? { anchor, view, alias } : null);
+        }}
+      />
+      <p className="live-mapa-apunte">
+        «Ahora» muestra entregas en vuelo; «Permisos» muestra quién puede hablarle a quién.
+      </p>
+    </details>
+  );
+  const tablaActividad = (
+    <FleetActivityTable
+      snapshot={snapshot}
+      selectedKey={selected ?? null}
+      onlyKeys={spotlight}
+      filterLabel={stateFilter ? LIVE_STATE_META[stateFilter].label : undefined}
+      estados={estadosVivos}
+      onSelect={(key) => { setHovered(key ?? undefined); }}
+      onOpen={(key) => { abrirCajon(key); }}
+    />
+  );
+
   return (
     <div className={`live-page${drawer && detail ? ' has-drawer' : ''}`
       + (drawer && detail && (drawer.tab === 'rol' || drawer.tab === 'ficheros') ? ' cajon-ancho' : '')}>
@@ -336,113 +436,59 @@ export function LiveFleetPage() {
               + ' Todo lo de abajo —veredicto, cinta, mapa y lista— está acotado a este cliente.'}
         />
 
-        <div className="live-command-strip" ref={medirCinta}>
-          <LiveFleetToolbar
-            feedState={feedState}
-            intervalMs={intervalMs}
-            setIntervalMs={setIntervalMs}
-            refrescarTodo={refrescarTodo}
-            observedAt={observedAt}
-            edadSegundos={edadSegundos}
-            query={query}
-            setQuery={setQuery}
-            tenants={tenants}
-            tenantFilter={tenantFilter}
-            setTenantFilter={setTenantFilter}
-            activityError={activity.error}
-            topologyError={topology.error}
-            recargarTopologia={recargarTopologia}
-          />
-
-          <FleetVerdict
-            verdict={verdict}
-            totals={snapshot?.totals}
-            onCulprit={(culprit) => { enfocarCulpable(culprit.key); }}
-          />
-
-          <LiveFleetTally
-            tally={tally}
-            stateFilter={stateFilter}
-            setStateFilter={setStateFilter}
-            deriva={deriva}
-          />
-        </div>
-
-        <details className="panel live-mapa" open>
-          <summary>
-            <div className="live-mapa-rotulo">
-              <h2 className="live-mapa-titulo">Quién le habla a quién, ahora</h2>
-              <span className="live-mapa-apunte">
-                Los mismos muñecos, en su sala. En «Ahora» cada flecha es una entrega en vuelo
-                real; en «Permisos», quién tiene derecho a hablarle a quién. Nunca las dos capas a
-                la vez: no significan lo mismo.
-              </span>
+        {graphFirst ? (
+          <>
+            <div className="live-command-strip" ref={medirCinta}>
+              <LiveFleetToolbar
+                feedState={feedState}
+                intervalMs={intervalMs}
+                setIntervalMs={setIntervalMs}
+                refrescarTodo={refrescarTodo}
+                observedAt={observedAt}
+                edadSegundos={edadSegundos}
+                query={query}
+                setQuery={setQuery}
+                tenants={tenants}
+                tenantFilter={tenantFilter}
+                setTenantFilter={setTenantFilter}
+                activityError={activity.error}
+                topologyError={topology.error}
+                recargarTopologia={recargarTopologia}
+              />
+              {capas}
             </div>
-          </summary>
-
-          <div className="live-layer-switch" role="group" aria-label="Capa del mapa">
-            {(['ahora', 'permisos'] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                className="live-layer-button"
-                aria-pressed={layer === option}
-                onClick={() => { setLayer(option); }}
-              >
-                {option === 'ahora' ? 'Ahora' : 'Permisos'}
-              </button>
-            ))}
-          </div>
-
-          {fueraDeAlcance > 0 ? (
-            <p className="notice" data-testid="aviso-recorte">
-              Mapa acotado a <strong>{tenantFilter}</strong>: {fueraDeAlcance} alias de otros
-              clientes, sus salas y las flechas que los tocan no se dibujan.
-              {layer === 'permisos' ? ' Tampoco se ven las aristas ACL hacia ellos.' : ''}
-              {' '}Elegí «todos» en Cliente para verlos.
-            </p>
-          ) : null}
-
-          {layer === 'ahora' && edgesEnAlcance.length === 0 && alcance.length > 0 ? (
-            <p className="live-empty-calm">
-              <strong>{tenantFilter === 'todos' ? 'La flota está libre.' : `Nadie de ${tenantFilter} tiene trabajo entre manos.`}</strong>
-              {' '}Nadie tiene trabajo entre manos ahora mismo — eso no es una avería.
-              {tenantFilter === 'todos' && typeof snapshot?.totals?.in_flight === 'number'
-                ? ` Hay ${String(snapshot.totals.in_flight)} en vuelo y ${String(snapshot.totals.queued ?? 0)} esperando turno.`
-                : null}
-            </p>
-          ) : null}
-
-          <LiveHypergraph
-            topology={topologiaDelMapa}
-            views={alcance}
-            edges={edgesEnAlcance}
-            serverEdges={snapshot?.edges}
-            thresholds={snapshot?.thresholds}
-            origins={origins}
-            layer={layer}
-            focusKey={hovered ?? selected ?? null}
-            spotlight={spotlight}
-            loadingTopology={topology.loading && !topology.data}
-            topologyError={topology.error ?? null}
-            onRetryTopology={recargarTopologia}
-            onFocus={(key) => { setHovered(key ?? undefined); }}
-            onOpen={(view) => { abrirCajon(view.key); }}
-            onHover={(key, anchor, view, alias) => {
-              setTip(key && anchor ? { anchor, view, alias } : null);
-            }}
-          />
-        </details>
-
-        <FleetActivityTable
-          snapshot={snapshot}
-          selectedKey={selected ?? null}
-          onlyKeys={spotlight}
-          filterLabel={stateFilter ? LIVE_STATE_META[stateFilter].label : undefined}
-          estados={estadosVivos}
-          onSelect={(key) => { setHovered(key ?? undefined); }}
-          onOpen={(key) => { abrirCajon(key); }}
-        />
+            {mapa}
+            {resumenTriage}
+            {tablaActividad}
+            {veredictoFlota}
+          </>
+        ) : (
+          <>
+            <div className="live-command-strip" ref={medirCinta}>
+              <LiveFleetToolbar
+                feedState={feedState}
+                intervalMs={intervalMs}
+                setIntervalMs={setIntervalMs}
+                refrescarTodo={refrescarTodo}
+                observedAt={observedAt}
+                edadSegundos={edadSegundos}
+                query={query}
+                setQuery={setQuery}
+                tenants={tenants}
+                tenantFilter={tenantFilter}
+                setTenantFilter={setTenantFilter}
+                activityError={activity.error}
+                topologyError={topology.error}
+                recargarTopologia={recargarTopologia}
+              />
+              {veredictoFlota}
+              {resumenTriage}
+            </div>
+            {capas}
+            {tablaActividad}
+            {mapa}
+          </>
+        )}
 
         <LiveFleetLegend
           snapshot={snapshot}

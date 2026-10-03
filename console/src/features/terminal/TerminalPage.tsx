@@ -6,6 +6,7 @@ import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
 import { Badge, EmptyState, PageHeader, PageShell } from '../../components/ui';
 import { permissionState } from '../../lib';
+import { useCompactLayout } from '../../hooks/use-compact-layout';
 import { listTerminalTargets } from './api';
 import { TEXTO_DOCTRINA } from './doctrina';
 import {
@@ -48,6 +49,7 @@ export function TerminalPage({ params }: TerminalPageProps = {}) {
 }
 
 function TerminalPageContent({ params }: TerminalPageProps) {
+  const compactLayout = useCompactLayout();
   const api = useApi();
   const tenantId = params?.[0];
   const alias = params?.[1];
@@ -200,8 +202,6 @@ function TerminalPageContent({ params }: TerminalPageProps) {
           <EmptyState>El servidor no observa al agente {tenantId}:{alias}. No se abrió otra terminal en su lugar.</EmptyState>
         ) : (
           <>
-            {observando ? null : contadores}
-
             {relayUnavailable ? (
               <div className="terminal-relay-notice" role="status">
                 <TerminalSquare size={17} aria-hidden="true" />
@@ -227,6 +227,7 @@ function TerminalPageContent({ params }: TerminalPageProps) {
               </div>
             ) : null}
 
+            {!compactLayout && !observando ? contadores : null}
             <OperatorWorkspace
               agents={agents}
               initialAgentId={initialAgentId}
@@ -242,6 +243,7 @@ function TerminalPageContent({ params }: TerminalPageProps) {
               flotaPlegada={flotaPlegada}
               onPlegarFlota={() => { setFlotaPlegada((plegada) => !plegada); }}
             />
+            {compactLayout && !observando ? contadores : null}
           </>
         )}
       </div>

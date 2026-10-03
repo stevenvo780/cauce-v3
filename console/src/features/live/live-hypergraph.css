@@ -38,6 +38,7 @@
   overflow-x: auto;
   overflow-y: hidden;
 }
+.lhg-scroll:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 /*
  * `min-width: 0` en toda la cadena hasta el contenedor con scroll.
@@ -402,5 +403,14 @@
 
 
 @media (max-width: 760px) {
+  .lhg-scroll {
+    max-height: 15rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .lhg-empty,
+  .lhg-legend,
+  .lhg-note { margin-top: var(--space-2); }
+  .lhg-note { margin-top: 0; }
   .lhg-svg { max-height: none; }
 }
