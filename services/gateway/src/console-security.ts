@@ -23,7 +23,7 @@ function ownOrigin(request: FastifyRequest): string | undefined {
 }
 
 const ALIAS_SELF_RELOAD = /^\/v3\/console\/agents\/[^/]+\/context\/reload$/u;
-const BROWSER_AUTH_ROUTES = ['/v3/auth/login', '/v3/auth/session', '/v3/auth/logout'];
+const BROWSER_AUTH_ROUTES = ['/v3/auth/login', '/v3/auth/session', '/v3/auth/logout', '/v3/auth/profile'];
 
 function machineSelfReload(request: FastifyRequest, path: string): boolean {
   if (request.method !== 'POST' || !ALIAS_SELF_RELOAD.test(path)) return false;

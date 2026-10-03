@@ -39,6 +39,8 @@ export class CauceApi {
   private csrfToken: string | undefined;
   private authGeneration = 0;
   private sessionRead = 0;
+  private confirmedSession?: ConsoleAuthState;
+  private profileRequest?: Promise<{ name: string }>;
   private sessionIdentity: string | undefined;
   private sessionRequest?: { generation: number; promise: Promise<ConsoleAuthState> };
   private bffSessionSupported: boolean | null = null;
@@ -182,6 +184,7 @@ export class CauceApi {
   private acceptSession(state: ConsoleAuthState): void {
     const identity = JSON.stringify([state.authenticated, state.subject, state.csrf_token]);
     if (this.sessionIdentity !== undefined && identity !== this.sessionIdentity) this.authGeneration += 1;
+    this.confirmedSession = state;
     this.sessionIdentity = identity;
     this.bffSessionSupported = state.authenticated !== null;
     this.csrfToken = state.authenticated && typeof state.csrf_token === 'string' ? state.csrf_token : undefined;
@@ -189,6 +192,7 @@ export class CauceApi {
   }
 
   async login(email: string, password: string): Promise<ConsoleAuthState> {
+    this.profileRequest = undefined;
     const generation = ++this.authGeneration;
     this.sessionRead += 1;
     const state = await this.request<ConsoleAuthState>('/v3/auth/login', {
@@ -199,7 +203,40 @@ export class CauceApi {
     return state;
   }
 
+  updateHumanProfile(name: string): Promise<{ name: string }> {
+    if (this.profileRequest) return Promise.reject(new Error('Ya hay un nombre guardándose. Esperá y reintentá.'));
+    const generation = this.authGeneration;
+    this.sessionRead += 1;
+    this.sessionRequest = undefined;
+    const promise = this.saveHumanProfile(name, generation);
+    this.profileRequest = promise;
+    const clear = () => { if (this.profileRequest === promise) this.profileRequest = undefined; };
+    void promise.then(clear, clear);
+    return promise;
+  }
+
+  private async saveHumanProfile(name: string, generation: number): Promise<{ name: string }> {
+    const session = this.confirmedSession;
+    if (!session?.authenticated || session.login_mode !== 'password') {
+      throw new ApiError('Hace falta una sesión de persona con contraseña.', 401, 'unauthorized');
+    }
+    const saved = await this.request<{ name: string }>('/v3/auth/profile', {
+      method: 'PATCH', body: JSON.stringify({ name }),
+    });
+    if (generation !== this.authGeneration) throw new ApiError('La sesión cambió.', 409, 'session_changed');
+    if (typeof saved.name !== 'string' || !saved.name.trim() || Array.from(saved.name).length > 120) {
+      throw new Error('El servidor no confirmó el nombre.');
+    }
+    this.sessionRead += 1;
+    this.sessionRequest = undefined;
+    this.acceptSession({ ...session, name: saved.name });
+    return saved;
+  }
+
   getAuthSession(): Promise<ConsoleAuthState> {
+    if (this.profileRequest) return this.profileRequest.then(
+      () => this.getAuthSession(), () => this.getAuthSession(),
+    );
     const generation = this.authGeneration;
     if (this.sessionRequest?.generation === generation) return this.sessionRequest.promise;
     const promise = this.readAuthSession(generation, ++this.sessionRead);
@@ -213,6 +250,10 @@ export class CauceApi {
     try {
       const state = await this.request<ConsoleAuthState>('/v3/auth/session');
       if (generation === this.authGeneration && read === this.sessionRead) this.acceptSession(state);
+      if (generation === this.authGeneration && read !== this.sessionRead) {
+        if (this.profileRequest) await this.profileRequest.catch(() => undefined);
+        return this.confirmedSession ?? state;
+      }
       return state;
     } catch (error) {
       if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
@@ -225,6 +266,7 @@ export class CauceApi {
   }
 
   async logout(): Promise<void> {
+    this.profileRequest = undefined;
     const generation = ++this.authGeneration;
     this.sessionRead += 1;
     await this.request<undefined>('/v3/auth/logout', { method: 'POST' });

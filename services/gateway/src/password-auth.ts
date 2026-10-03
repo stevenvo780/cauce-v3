@@ -348,6 +348,22 @@ export class PasswordAuthProvider implements AuthProvider {
     }
   }
 
+  async updateProfile(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    await this.requireCsrf(request);
+    const { user } = await this.load(request);
+    const body: unknown = request.body;
+    const fields = body !== null && typeof body === 'object' && !Array.isArray(body)
+      ? body as Record<string, unknown> : {};
+    const name = typeof fields.name === 'string' ? fields.name.trim() : '';
+    if (Object.keys(fields).length !== 1 || name.length === 0 || Array.from(name).length > 120 || name.includes('\0')) {
+      await reply.code(400).send({ error: 'invalid_request', message: 'El nombre debe tener entre 1 y 120 caracteres.' });
+      return;
+    }
+    const saved = await this.users.updateDisplayName(user.id, name);
+    if (saved === undefined) throw new AuthError('la cuenta de consola no está habilitada');
+    await reply.header('Cache-Control', 'no-store').send({ name: saved });
+  }
+
   private issue(user: ConsoleUser): { token: string; claims: ConsoleSessionClaims } {
     const issuedAtMs = this.now();
     const claims: ConsoleSessionClaims = {
@@ -466,6 +482,9 @@ export function registerPasswordAuth(app: FastifyInstance, provider: PasswordAut
   app.get('/v3/auth/session', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     return provider.authState(request);
+  });
+  app.patch('/v3/auth/profile', async (request, reply) => {
+    await provider.updateProfile(request, reply);
   });
   app.post('/v3/auth/logout', async (request, reply) => {
     await provider.logout(request, reply);
