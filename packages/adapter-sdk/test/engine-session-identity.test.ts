@@ -38,16 +38,32 @@ test("originless publishes are isolated per authenticated tenant", async () => {
   assert.notEqual(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
 });
 
-/**
- * Point 4: the console has to converge on ONE conversation per operator. The `session_id` of
- * an OIDC principal is the login's `sid` and changes on every re-login; if it entered the
- * key, the console would start a new session every time Steven logs in again.
- */
-test("console keeps one session per operator across re-login", async () => {
+test("console keeps one session per audited human across re-login", async () => {
   const context = await setup("engine-console-relogin");
-  await context.engine.handleDelivery(originless(delivery("console-login-a"), "sid-primer-login"));
-  await context.engine.handleDelivery(originless(delivery("console-login-b"), "sid-segundo-login"));
+  const subject = `human:${'a'.repeat(64)}`;
+  await context.engine.handleDelivery({ ...originless(delivery("console-login-a"), "sid-primer-login"), console_human_subject: subject });
+  await context.engine.handleDelivery({ ...originless(delivery("console-login-b"), "sid-segundo-login"), console_human_subject: subject });
   assert.equal(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
+});
+
+test("console separates audited humans sharing an alias and ignores body identity", async () => {
+  const context = await setup("engine-console-distinct-humans");
+  for (const subject of ['a', 'b']) {
+    await context.engine.handleDelivery({
+      ...originless(delivery(`human-${subject}`), 'same-sid'),
+      console_human_subject: `human:${subject.repeat(64)}`,
+      body: { prompt: 'perform the task', session_key: 'shared', console_human_subject: `human:${'f'.repeat(64)}` },
+    });
+  }
+  assert.notEqual(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
+});
+
+test("console without audited identity isolates publications even with a declared origin", async () => {
+  const context = await setup("engine-console-unverified");
+  for (const id of ['fallback-a', 'fallback-b']) {
+    await context.engine.handleDelivery({ ...delivery(id), authenticated_context: { session_id: 'same-sid', channel: 'console' } });
+  }
+  assert.notEqual(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
 });
 
 /**
@@ -273,4 +289,3 @@ test("the next message of the same conversation lands in the session the retry u
   assert.equal(sessionOf(context.runner, 0), sessionOf(context.runner, 2));
   assert.equal(sessionOf(context.runner, 1), sessionOf(context.runner, 2));
 });
-

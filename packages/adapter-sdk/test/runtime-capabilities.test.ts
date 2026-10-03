@@ -5,6 +5,7 @@ import { HARNESS_DEFINITIONS, openClawDefinition } from "../src/harnesses/index.
 import { helloCapabilityStrings } from "../src/sdk/client.js";
 
 const HELLO_SUFFIXES = [
+  "console_human_scope_v1",
   "agent_identity_v1",
   "agent_profile_adoption_v1",
   "agent_profile_v1",
@@ -47,7 +48,7 @@ test("hello advertises only capabilities consumed by runtime or operational read
       [`harness.${definition.id}`, ...HELLO_SUFFIXES, ...workState].sort(),
       definition.id,
     );
-    assert.equal(advertised.length, 9 + workState.length, definition.id);
+    assert.equal(advertised.length, 10 + workState.length, definition.id);
     assert.equal(new Set(advertised).size, advertised.length, definition.id);
   }
 });
