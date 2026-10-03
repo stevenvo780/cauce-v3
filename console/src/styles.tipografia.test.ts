@@ -19,6 +19,7 @@ const HOJAS = [
   'features/queues/queues.css',
   'features/accounts/licenses.css',
   'features/auth/auth.css',
+  'features/auth/human-profile.css',
   'features/config/config.css',
   'features/config/settings.css',
   'features/config/toggles.css',
