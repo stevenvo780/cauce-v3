@@ -3,8 +3,9 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { GatewayReader } from './gateway-client.js';
 import { httpsOrigin } from './gateway-configuration.js';
-import { MCP_METADATA_PATH, type GatewayAuthorization } from './gateway-authorization.js';
+import { MCP_METADATA_PATH, type GatewayAuthorization, type HumanGatewayAuthorization } from './gateway-authorization.js';
 import { createGatewayToolServer } from './gateway-tools.js';
+import type { GatewayOperationsFactory } from './gateway-operations.js';
 
 export const MAX_MCP_REQUEST_BYTES = 16 * 1024;
 export const MAX_MCP_REQUESTS = 8;
@@ -47,11 +48,12 @@ async function requestBody(request: IncomingMessage): Promise<unknown> {
   catch { throw new RequestError(400); }
 }
 
-export function createGatewayHttpServer(options: {
-  readonly reader: GatewayReader;
-  readonly authorization: GatewayAuthorization;
-  readonly publicOrigin: string;
-}) {
+type GatewayHttpOptions = { readonly publicOrigin: string } & (
+  | { readonly reader: GatewayReader; readonly authorization: GatewayAuthorization; readonly operationsFactory?: never }
+  | { readonly operationsFactory: GatewayOperationsFactory; readonly authorization: HumanGatewayAuthorization; readonly reader?: never }
+);
+
+export function createGatewayHttpServer(options: GatewayHttpOptions) {
   const origin = httpsOrigin(options.publicOrigin);
   const host = new URL(origin).host;
   let active = 0;
@@ -72,31 +74,48 @@ export function createGatewayHttpServer(options: {
     if (request.url !== '/mcp') { reply(response, 404); return; }
     if (active >= MAX_MCP_REQUESTS) { reply(response, 503); return; }
     active++;
-    const timeout = setTimeout(() => response.destroy(), 10_000);
+    const controller = new AbortController();
+    const requestAborted = () => controller.signal.aborted;
+    const timeout = setTimeout(() => { controller.abort(); response.destroy(); }, 10_000);
     request.setTimeout(5000, () => request.destroy());
-    const server = createGatewayToolServer(options.reader, options.authorization.mode === 'oauth');
+    let server: ReturnType<typeof createGatewayToolServer> | undefined;
     const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
     const closed = new Promise<void>((resolve) => {
-      response.once('close', resolve);
-      response.once('finish', resolve);
+      const finish = () => { controller.abort(); resolve(); };
+      response.once('close', finish);
+      response.once('finish', finish);
     });
     try {
-      if (headerCount(request, 'authorization') !== 1
-        || !await options.authorization.authenticate(request.headers.authorization ?? '')) {
+      if (headerCount(request, 'authorization') !== 1) {
         reply(response, 401, options.authorization.challenge); return;
+      }
+      const header = request.headers.authorization ?? '';
+      if (options.operationsFactory !== undefined) {
+        const identity = await options.authorization.authenticateIdentity(header);
+        if (!identity) { reply(response, 401, options.authorization.challenge); return; }
+        if (requestAborted()) return;
+        server = createGatewayToolServer({ factory: options.operationsFactory, identity, signal: controller.signal });
+      } else {
+        if (!await options.authorization.authenticate(header)) {
+          reply(response, 401, options.authorization.challenge); return;
+        }
+        if (requestAborted()) return;
+        server = createGatewayToolServer(options.reader, options.authorization.mode === 'oauth');
       }
       if (request.method !== 'POST') { reply(response, 405); return; }
       const body = await requestBody(request);
       // SDK 1.x optional callbacks predate exactOptionalPropertyTypes; omitted session IDs mean stateless mode.
       await server.connect(transport as Transport);
-      await transport.handleRequest(request, response, body);
+      if (requestAborted()) return;
+      await Promise.race([transport.handleRequest(request, response, body), closed]);
       await closed;
     } catch (error) {
       reply(response, error instanceof RequestError ? error.status : 400);
     } finally {
       clearTimeout(timeout);
       active--;
-      await server.close();
+      controller.abort();
+      await server?.close();
     }
   }
 

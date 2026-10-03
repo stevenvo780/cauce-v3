@@ -3,6 +3,7 @@ import { createOAuthIdentityVerifier, MAX_JWKS_BYTES } from './gateway-oauth-ide
 import { httpsOrigin, validBearer, type GatewayAccessConfiguration } from './gateway-configuration.js';
 
 export const MCP_READ_SCOPE = 'cauce.read';
+export const MCP_PUBLISH_SCOPE = 'cauce.publish';
 export const MCP_METADATA_PATH = '/.well-known/oauth-protected-resource/mcp';
 export { MAX_JWKS_BYTES };
 
@@ -37,3 +38,25 @@ export function createGatewayAuthorization(publicOrigin: string, config: Gateway
 }
 
 export type GatewayAuthorization = ReturnType<typeof createGatewayAuthorization>;
+
+export function createHumanGatewayAuthorization(
+  publicOrigin: string,
+  config: import('./gateway-oauth-identity.js').OAuthIdentityVerifierConfiguration,
+) {
+  const origin = httpsOrigin(publicOrigin);
+  const verifyIdentity = createOAuthIdentityVerifier(publicOrigin, config);
+  return {
+    mode: 'oauth' as const,
+    challenge: `Bearer resource_metadata="${origin}${MCP_METADATA_PATH}"`,
+    metadata: {
+      resource: `${origin}/mcp`, authorization_servers: [config.issuer],
+      scopes_supported: [MCP_READ_SCOPE, MCP_PUBLISH_SCOPE], bearer_methods_supported: ['header'], resource_name: 'Cauce MCP',
+    },
+    authenticateIdentity: async (authorization: string) => {
+      if (!authorization.startsWith('Bearer ') || !validBearer(authorization.slice(7))) return undefined;
+      return verifyIdentity(authorization.slice(7));
+    },
+  };
+}
+
+export type HumanGatewayAuthorization = ReturnType<typeof createHumanGatewayAuthorization>;

@@ -6,7 +6,10 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createGatewayHttpServer, MAX_MCP_REQUEST_BYTES, MAX_MCP_REQUESTS } from './gateway-http.js';
 import { GatewayReadError, projectGatewayAgents, projectGatewayStatus } from './gateway-projection.js';
-import { createGatewayAuthorization, MCP_METADATA_PATH, type GatewayAuthorization } from './gateway-authorization.js';
+import { createGatewayAuthorization, createHumanGatewayAuthorization, MCP_METADATA_PATH, type GatewayAuthorization } from './gateway-authorization.js';
+
+import { GatewayOperationError, type GatewayOperationsFactory } from './gateway-operations.js';
+import type { VerifiedOAuthIdentity } from './gateway-oauth-identity.js';
 
 const accessToken = 'mcp-fixture-token-not-a-real-secret-0000';
 const publicOrigin = 'https://mcp.example';
@@ -224,4 +227,98 @@ describe('gateway Streamable HTTP endpoint', () => {
     expect((await Promise.all(pending)).every((response) => response.status === 401)).toBe(true);
     expect(agents).not.toHaveBeenCalled(); expect(status).not.toHaveBeenCalled();
   });
+});
+
+async function startHumanServer(factory: GatewayOperationsFactory, scopes = ['cauce.read']) {
+  await new Promise<void>((resolve) => http.close(() => { resolve(); }));
+  const base = createHumanGatewayAuthorization(publicOrigin, { issuer: 'https://issuer.example', jwksUri: 'https://issuer.example/jwks' });
+  const authorization = { ...base, authenticateIdentity: async (header: string): Promise<VerifiedOAuthIdentity | undefined> => {
+    if (!['Bearer human-a', 'Bearer human-b'].includes(header)) return undefined;
+    return Object.freeze({ kind: 'oauth', issuer: 'https://issuer.example', subject: header.slice(7),
+      audience: `${publicOrigin}/mcp`, expiresAt: 4_000_000_000, scopes });
+  } };
+  http = createGatewayHttpServer({ operationsFactory: factory, authorization, publicOrigin });
+  await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
+  const address = http.address();
+  if (!address || typeof address === 'string') throw new Error('missing test listener');
+  endpoint = new URL(`http://127.0.0.1:${String(address.port)}/mcp`);
+}
+
+it('binds concurrent human requests to separate verified subjects without a fixed reader', async () => {
+  const seen: string[] = [];
+  const forRequest = vi.fn<GatewayOperationsFactory['forRequest']>(async (identity, signal) => {
+    seen.push(identity.subject);
+    expect(signal.aborted).toBe(false);
+    const tenant = identity.subject === 'human-a' ? 'TenantA' : 'TenantB';
+    return { submit: async () => { throw new Error('unused'); }, receipt: async () => { throw new Error('unused'); }, status: async () => projectGatewayStatus({ version: '3.0', presence: [] }, tenant),
+      agents: async () => projectGatewayAgents({ items: [] }, tenant) };
+  });
+  await startHumanServer({ forRequest });
+  const results = await Promise.all(['human-a', 'human-b'].map(async (subject) => {
+    const response = await fetch(endpoint, { method: 'POST', headers: { ...headers, authorization: `Bearer ${subject}` },
+      body: rpc('tools/call', { name: 'cauce_status', arguments: {} }) });
+    return await response.json() as { result: { content: { text: string }[] } };
+  }));
+  expect(results.map((result) => JSON.parse(result.result.content[0]?.text ?? '{}') as unknown)).toEqual([
+    projectGatewayStatus({ version: '3.0', presence: [] }, 'TenantA'),
+    projectGatewayStatus({ version: '3.0', presence: [] }, 'TenantB'),
+  ]);
+  expect(seen.sort()).toEqual(['human-a', 'human-b']);
+  expect(status).not.toHaveBeenCalled();
+  expect(agents).not.toHaveBeenCalled();
+});
+
+it('never resolves a principal for rejected authentication or authority arguments', async () => {
+  const forRequest = vi.fn<GatewayOperationsFactory['forRequest']>();
+  await startHumanServer({ forRequest });
+  const denied = await fetch(endpoint, { method: 'POST', headers, body: rpc('tools/call', { name: 'cauce_status' }) });
+  expect(denied.status).toBe(401);
+  const invalid = await fetch(endpoint, { method: 'POST', headers: { ...headers, authorization: 'Bearer human-a' },
+    body: rpc('tools/call', { name: 'cauce_agents', arguments: { operator_id: 'injected' } }) });
+  expect(await invalid.json()).toMatchObject({ result: { isError: true, content: [{ text: 'invalid_arguments' }] } });
+  expect(forRequest).not.toHaveBeenCalled();
+});
+
+it('aborts the per-request operation signal when the client disconnects', async () => {
+  let operationSignal: AbortSignal | undefined;
+  const forRequest = vi.fn<GatewayOperationsFactory['forRequest']>(async (_identity, signal) => {
+    operationSignal = signal;
+    return { submit: async () => { throw new Error('unused'); }, receipt: async () => { throw new Error('unused'); }, agents, status: async () => {
+      await new Promise<void>((resolve) => { signal.addEventListener('abort', () => { resolve(); }, { once: true }); });
+      throw new Error('cancelled fixture');
+    } };
+  });
+  await startHumanServer({ forRequest });
+  const req = request(endpoint, { method: 'POST', headers: { ...headers, authorization: 'Bearer human-a' } });
+  req.on('error', () => undefined);
+  req.end(rpc('tools/call', { name: 'cauce_status' }));
+  await vi.waitFor(() => { expect(forRequest).toHaveBeenCalledOnce(); });
+  req.destroy();
+  await vi.waitFor(() => { expect(operationSignal?.aborted).toBe(true); });
+});
+
+it('preserves semantic rate limiting over HTTP and the SDK without retrying the write', async () => {
+  const failure = { status_code: 429, version: 1, error: 'publish_intent_rate_limited',
+    retry_after_seconds: 60, safe_to_retry: true } as const;
+  const submit = vi.fn<import('./gateway-operations.js').HumanGatewayOperations['submit']>(async () => { throw new GatewayOperationError(failure); });
+  await startHumanServer({ forRequest: async () => ({ status, agents, submit,
+    receipt: async () => { throw new Error('unused'); } }) }, ['cauce.read', 'cauce.publish']);
+  const humanHeaders = { ...headers, authorization: 'Bearer human-a' };
+  const connection = new Client({ name: 'human-errors-http-test', version: '1.0.0' });
+  clients.push(connection);
+  await connection.connect(new StreamableHTTPClientTransport(endpoint, {
+    requestInit: { headers: humanHeaders }, fetch,
+  }) as Transport);
+  const arguments_ = { request_key: '10000000-0000-4000-8000-000000000001', room_id: 'grp.steven',
+    recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }], body: { text: 'Hermetic rate limit fixture' } };
+  const result = await connection.callTool({ name: 'cauce_submit', arguments: arguments_ });
+  expect(result).toMatchObject({ isError: true, structuredContent: failure });
+  expect(submit).toHaveBeenCalledOnce();
+  const response = await fetch(endpoint, { method: 'POST', headers: humanHeaders,
+    body: rpc('tools/call', { name: 'cauce_submit', arguments: arguments_ }) });
+  expect(response.status).toBe(200);
+  expect(response.headers.get('retry-after')).toBeNull();
+  expect(await response.json()).toMatchObject({ result: { isError: true, structuredContent: failure } });
+  expect(submit).toHaveBeenCalledTimes(2);
+  expect(submit.mock.calls.map(([argument]) => argument)).toEqual([arguments_, arguments_]);
 });
