@@ -1,3 +1,4 @@
+import { registerNativeContextRepositoryRoutes } from '../console/context-repository/native-routes.js';
 import { registerContextSourcePreviewRoute } from '../console/context-repository/apply-routes.js';
 import { confirmContextSource, snapshotContextSourceDeps } from '../console/context-repository/apply-preview.js';
 import { registerContextRepositoryRoutes } from '../console/context-repository/routes.js';
@@ -374,6 +375,12 @@ function registerConsoleAgentRoutes(
     });
 
     const diario = new AgentContextRevisionsStore(options.pool);
+    registerNativeContextRepositoryRoutes(app, {
+      ...(options.contextRepository === undefined ? {} : { binding: options.contextRepository }),
+      authorize: autorizarPerfil,
+      authorizeTarget: (actor, tenantId, alias, permission) =>
+        autorizarDestino(actor, tenantId, alias, permission),
+    });
     registerContextRepositoryRoutes(app, {
       ...(options.contextRepository === undefined ? {} : { binding: options.contextRepository }),
       authorize: autorizarPerfil,

@@ -1,0 +1,16 @@
+.native-context-repository {
+  min-width: 0;
+  margin-block: 0.75rem;
+}
+.native-context-repository summary,
+.native-context-repository .historial-diff-texto {
+  overflow-wrap: anywhere;
+}
+.native-context-source {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 24rem;
+  overflow: auto;
+  font: inherit;
+  font-family: monospace;
+}
