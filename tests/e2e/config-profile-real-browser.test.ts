@@ -19,6 +19,75 @@ function append(current: string, chunk: Buffer): string {
   return `${current}${chunk.toString('utf8')}`.slice(-16 * 1024);
 }
 
+interface AuthResponseEvidence {
+  status: number;
+  authenticated: boolean | null;
+  login_mode: 'password' | 'redirect' | 'missing-or-unknown';
+  error: 'none' | 'unauthorized' | 'forbidden' | 'reason-present' | 'other-error' | 'no-response';
+}
+
+function authEvidence(status: number, body: unknown): AuthResponseEvidence {
+  const value = body !== null && typeof body === 'object' && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+  const loginMode = value.login_mode === 'password' || value.login_mode === 'redirect'
+    ? value.login_mode
+    : 'missing-or-unknown';
+  const error = value.error === 'unauthorized' || value.error === 'forbidden'
+    ? value.error
+    : typeof value.error === 'string'
+      ? 'other-error'
+      : typeof value.reason === 'string'
+        ? 'reason-present'
+        : status >= 400 ? 'other-error' : 'none';
+  return {
+    status,
+    authenticated: typeof value.authenticated === 'boolean' ? value.authenticated : null,
+    login_mode: loginMode,
+    error,
+  };
+}
+
+function noAuthResponse(): AuthResponseEvidence {
+  return { status: 0, authenticated: null, login_mode: 'missing-or-unknown', error: 'no-response' };
+}
+
+async function authEvidenceBefore(
+  evidence: Promise<AuthResponseEvidence>,
+  deadline: number,
+): Promise<AuthResponseEvidence> {
+  const remaining = Math.max(0, deadline - Date.now());
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      evidence,
+      new Promise<AuthResponseEvidence>((resolve) => {
+        timeout = setTimeout(() => { resolve(noAuthResponse()); }, remaining);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+function safeVisibleBody(raw: string, email: string, password: string): string {
+  return raw
+    .replaceAll(email, '[correo]')
+    .replaceAll(password, '[redactado]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu, '[correo]')
+    .replace(/\b(?:eyJ[A-Za-z0-9_-]{12,}|[A-Fa-f0-9]{32,})\b/gu, '[redactado]')
+    .slice(0, 1_200);
+}
+
+function safePagePath(pageUrl: string): string {
+  try {
+    const url = new URL(pageUrl);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return '[url no disponible]';
+  }
+}
+
 async function docker(args: string[], timeout = 30_000): Promise<string> {
   const result = await execute('docker', args, { timeout, maxBuffer: 128 * 1024 });
   return result.stdout.trim();
@@ -167,9 +236,55 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     expect(initial.ficheros).toEqual([expect.objectContaining({ nombre: 'AGENTS.md' })]);
 
     const page = await active.browserPage({ width: 360, height: 800 });
+    let resolveAuthEvidence: ((evidence: AuthResponseEvidence) => void) | undefined;
+    const authEvidencePromise = new Promise<AuthResponseEvidence>((resolve) => { resolveAuthEvidence = resolve; });
+    const pageErrors: string[] = [];
+    page.on('pageerror', (error) => {
+      const value = error !== null && typeof error === 'object' ? error as { name?: unknown } : {};
+      pageErrors.push(typeof value.name === 'string' ? value.name.slice(0, 80) : 'Error');
+    });
+    page.on('response', (response) => {
+      if (resolveAuthEvidence === undefined) return;
+      let responseUrl: URL;
+      try { responseUrl = new URL(response.url()); }
+      catch { return; }
+      if (responseUrl.pathname !== '/v3/auth/session' || response.request().method() !== 'GET') return;
+      const complete = resolveAuthEvidence;
+      resolveAuthEvidence = undefined;
+      const readable = response as unknown as { status(): number; json(): Promise<unknown> };
+      void readable.json().then((body) => {
+        complete(authEvidence(readable.status(), body));
+      }).catch(() => {
+        complete(authEvidence(readable.status(), null));
+      });
+    });
     const entry = await page.goto(active.baseUrl, { waitUntil: 'domcontentloaded' });
     expect(entry?.status()).toBe(200);
-    await page.getByLabel('Correo').waitFor({ timeout: 15_000 });
+    const authDeadline = Date.now() + 15_000;
+    try {
+      await page.getByLabel('Correo').waitFor({ timeout: 15_000 });
+    } catch (error) {
+      const auth = await authEvidenceBefore(authEvidencePromise, authDeadline);
+      const visibleBody = safeVisibleBody(
+        await page.locator('body').innerText().catch(() => '[body no disponible]'),
+        active.operatorEmail,
+        active.operatorPassword,
+      );
+      const artifactDirectory = process.env.CAUCE_E2E_ARTIFACT_DIR;
+      if (artifactDirectory) {
+        await mkdir(artifactDirectory, { recursive: true });
+        await page.screenshot({ path: join(artifactDirectory, 'config-profile-360-auth-timeout.png') });
+      }
+      throw new Error(
+        `password form timeout; auth=${JSON.stringify(auth)}; page=${safePagePath(page.url())}; ` +
+        `visibleBody=${JSON.stringify(visibleBody)}; pageErrors=${JSON.stringify(pageErrors.slice(0, 5))}`,
+        { cause: error },
+      );
+    }
+    const initialAuth = await authEvidenceBefore(authEvidencePromise, authDeadline);
+    expect(initialAuth).toEqual({
+      status: 200, authenticated: false, login_mode: 'password', error: 'none',
+    });
     await page.getByLabel('Correo').fill(active.operatorEmail);
     await page.getByLabel('Contraseña').fill(active.operatorPassword);
     await page.getByRole('button', { name: 'Iniciar sesión' }).click();
