@@ -1,20 +1,23 @@
 import { IncomingMessage, request as httpRequest, type IncomingHttpHeaders, type ServerResponse } from 'node:http';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createGatewayHttpHandler, type GatewayHttpOptions } from '@cauce/mcp-fleet-monitor/gateway-http';
+import { createGatewayHttpHandler, type GatewayHttpHandler, type GatewayHttpOptions } from '@cauce/mcp-fleet-monitor/gateway-http';
 import { registerMcpIngress } from './mcp-ingress.js';
 
 const handedOff = vi.hoisted(() => vi.fn<(request: IncomingMessage, response: ServerResponse) => void>());
+const drainStarted = vi.hoisted(() => vi.fn<() => void>());
 vi.mock('@cauce/mcp-fleet-monitor/gateway-http', async (importOriginal) => {
   const original = await importOriginal<typeof import('@cauce/mcp-fleet-monitor/gateway-http')>();
   return {
     ...original,
     createGatewayHttpHandler: vi.fn((options: GatewayHttpOptions) => {
       const handler = original.createGatewayHttpHandler(options);
-      return (request: IncomingMessage, response: ServerResponse) => {
+      const wrapped: GatewayHttpHandler = (request: IncomingMessage, response: ServerResponse) => {
         handedOff(request, response);
         handler(request, response);
       };
+      wrapped.drain = () => { drainStarted(); return handler.drain(); };
+      return wrapped;
     }),
   };
 });
@@ -275,6 +278,68 @@ describe('MCP ingress over native HTTP on the Fastify listener', () => {
     } finally { release?.(); }
     expect((await Promise.all(pending)).every((response) => response.statusCode === 200)).toBe(true);
     expect((await send(app, request)).statusCode).toBe(200);
+  });
+
+  it('waits for request cleanup during app.close before closing the listener', async () => {
+    const options = humanOptions();
+    let releaseCleanup: (() => void) | undefined;
+    const cleanupBarrier = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    let cleanupFinished = false;
+    let operationSignal: AbortSignal | undefined;
+    options.operationsFactory.forRequest = vi.fn(async (_identity, signal) => {
+      operationSignal = signal;
+      await new Promise<void>((resolve) => signal.addEventListener('abort', async () => {
+        await cleanupBarrier;
+        cleanupFinished = true;
+        resolve();
+      }, { once: true }));
+      return {
+        status: async () => ({ version: '3.0', tenant_id: 'TenantA', online: 0, presence: { items: [], total: 0, truncated: false } }),
+        agents: async () => ({ tenant_id: 'TenantA', items: [], total: 0, truncated: false }),
+        submit: async () => { throw new Error('Fixture cannot publish'); },
+        receipt: async () => { throw new Error('Fixture has no receipts'); },
+      };
+    });
+    const app = await mount(options);
+    const pending = send(app, { method: 'POST', url: '/mcp', headers, payload: rpc('tools/call', { name: 'cauce_status' }) }).catch(() => undefined);
+    try {
+      await vi.waitFor(() => { expect(options.operationsFactory.forRequest).toHaveBeenCalledOnce(); });
+      let closed = false;
+      const closing = app.close().then(() => { closed = true; });
+      await vi.waitFor(() => { expect(drainStarted).toHaveBeenCalledOnce(); });
+      await vi.waitFor(() => { expect(operationSignal?.aborted).toBe(true); });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(closed).toBe(false);
+      expect(cleanupFinished).toBe(false);
+      releaseCleanup?.();
+      await closing;
+      expect(cleanupFinished).toBe(true);
+      await pending;
+    } finally {
+      releaseCleanup?.();
+      if (app.server.listening) await app.close();
+    }
+  });
+
+  it('does not interrupt an unrelated Fastify route while draining MCP', async () => {
+    let markStarted: (() => void) | undefined;
+    const routeStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+    const app = await mount(humanOptions(), (instance) => {
+      instance.get('/health-delayed', async () => {
+        markStarted?.();
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return { status: 'ok' };
+      });
+    });
+    const health = send(app, { url: '/health-delayed', headers: { connection: 'close' } });
+    await routeStarted;
+    let closed = false;
+    const closing = app.close().then(() => { closed = true; });
+    const response = await health;
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ status: 'ok' });
+    await closing;
+    expect(closed).toBe(true);
   });
 
   it('returns a safe error without leaking authorization failures', async () => {

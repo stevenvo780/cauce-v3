@@ -401,3 +401,236 @@ describe.each(['wrapper', 'handler'] as const)('gateway HTTP %s', (mode) => {
     expect(next.every((response) => response.status === 200)).toBe(true);
   });
 });
+
+describe('gateway HTTP handler lifecycle', () => {
+  const servers: Server[] = [];
+  const portFor = async (server: Server): Promise<number> => {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('missing lifecycle fixture listener');
+    return address.port;
+  };
+  const send = async (port: number, method = 'POST', path = '/mcp', body?: unknown, token = accessToken): Promise<number | undefined> => new Promise((resolve) => {
+    const req = request({ hostname: '127.0.0.1', port, path, method,
+      headers: { host: 'mcp.example', authorization: 'Bearer ' + token, accept: 'application/json, text/event-stream', 'content-type': 'application/json' } }, (res) => {
+      res.resume();
+      res.once('end', () => resolve(res.statusCode));
+    });
+    req.once('error', () => resolve(undefined));
+    req.end(method === 'POST' ? JSON.stringify(body ?? { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'cauce_status', arguments: {} } }) : undefined);
+  });
+  afterEach(async () => {
+    for (const server of servers.splice(0)) {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('drains all eight operations and waits for abort cleanup before resolving', async () => {
+    let releaseCleanup: (() => void) | undefined;
+    const cleanupBarrier = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    let aborts = 0;
+    let activeOperations = 0;
+    let completedCleanups = 0;
+    let toolCalls = 0;
+    const identity = { kind: 'oauth' as const, issuer: 'https://issuer.example', subject: 'fixture',
+      audience: publicOrigin + '/mcp', expiresAt: Date.now() / 1000 + 60, scopes: ['cauce.read'] };
+    const authorization = { mode: 'oauth' as const, challenge: 'Bearer fixture',
+      metadata: { resource: publicOrigin + '/mcp', authorization_servers: ['https://issuer.example'],
+        scopes_supported: ['cauce.read'], bearer_methods_supported: ['header'], resource_name: 'fixture' },
+      authenticateIdentity: async () => identity };
+    const options: GatewayHttpOptions = {
+      publicOrigin, authorization,
+      operationsFactory: { forRequest: async (_identity, signal) => {
+        activeOperations += 1;
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', async () => {
+            aborts += 1;
+            await cleanupBarrier;
+            activeOperations -= 1;
+            completedCleanups += 1;
+            resolve();
+          }, { once: true });
+        });
+        return {
+          status: async () => { toolCalls += 1; return projectGatewayStatus({ version: '3.0', presence: [] }, 'TenantA'); },
+          agents, submit: async () => { throw new Error('unused'); }, receipt: async () => { throw new Error('unused'); },
+        };
+      } },
+    };
+    const managed = createGatewayHttpHandler(options) as ReturnType<typeof createGatewayHttpHandler> & { drain(): Promise<void> };
+    const server = createServer(managed);
+    servers.push(server);
+    const port = await portFor(server);
+    const pending = Array.from({ length: MAX_MCP_REQUESTS }, () => send(port));
+    try {
+      await vi.waitFor(() => { expect(activeOperations).toBe(MAX_MCP_REQUESTS); });
+      const draining = managed.drain();
+      expect(managed.drain()).toBe(draining);
+      await vi.waitFor(() => { expect(aborts).toBe(MAX_MCP_REQUESTS); });
+      await expect(send(port)).resolves.toBe(503);
+      await expect(send(port, 'GET', MCP_METADATA_PATH)).resolves.toBe(503);
+      let drained = false;
+      void draining.then(() => { drained = true; });
+      expect(drained).toBe(false);
+      expect(completedCleanups).toBe(0);
+      releaseCleanup?.();
+      await draining;
+      expect(activeOperations).toBe(0);
+      expect(completedCleanups).toBe(MAX_MCP_REQUESTS);
+      expect(toolCalls).toBe(0);
+      await Promise.all(pending);
+    } finally {
+      releaseCleanup?.();
+      await managed.drain();
+    }
+  });
+
+  it('waits for pending authentication and rejects new requests during drain', async () => {
+    let releaseAuthentication: (() => void) | undefined;
+    const authenticationBarrier = new Promise<void>((resolve) => { releaseAuthentication = resolve; });
+    let authenticationStarted = false;
+    const authorization = createGatewayAuthorization(publicOrigin, { mode: 'static', accessToken });
+    authorization.authenticate = async () => {
+      authenticationStarted = true;
+      await authenticationBarrier;
+      return true;
+    };
+    const managed = createGatewayHttpHandler({ publicOrigin, authorization, reader: { status, agents } });
+    const server = createServer(managed);
+    servers.push(server);
+    const port = await portFor(server);
+    const requestOnce = () => new Promise<number | undefined>((resolve) => {
+      const req = request({ hostname: '127.0.0.1', port, path: '/mcp', method: 'POST', headers }, (res) => {
+        res.resume(); res.once('end', () => resolve(res.statusCode));
+      });
+      req.once('error', () => resolve(undefined));
+      req.end(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }));
+    });
+    const pending = requestOnce();
+    try {
+      await vi.waitFor(() => { expect(authenticationStarted).toBe(true); });
+      let drained = false;
+      const draining = managed.drain().then(() => { drained = true; });
+      await expect(requestOnce()).resolves.toBe(503);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(drained).toBe(false);
+      releaseAuthentication?.();
+      await draining;
+      expect(await pending).toBeUndefined();
+    } finally {
+      releaseAuthentication?.();
+      await managed.drain();
+    }
+  });
+
+  it('reserves the eight concurrent slots before scheduling request work', async () => {
+    let releaseAuthentication: (() => void) | undefined;
+    const authenticationBarrier = new Promise<void>((resolve) => { releaseAuthentication = resolve; });
+    let authenticationCalls = 0;
+    const authorization = createGatewayAuthorization(publicOrigin, { mode: 'static', accessToken });
+    authorization.authenticate = async (header) => {
+      authenticationCalls += 1;
+      if (header !== 'Bearer ' + accessToken) return false;
+      await authenticationBarrier;
+      return true;
+    };
+    const managed = createGatewayHttpHandler({ publicOrigin, authorization, reader: { status, agents } });
+    const server = createServer(managed);
+    servers.push(server);
+    const port = await portFor(server);
+    const denied = await send(port, 'POST', '/mcp', undefined, 'invalid');
+    expect(denied).toBe(401);
+    const burst = Array.from({ length: MAX_MCP_REQUESTS + 1 }, () => send(port));
+    try {
+      await vi.waitFor(() => { expect(authenticationCalls).toBe(MAX_MCP_REQUESTS + 1); });
+      releaseAuthentication?.();
+      const responses = await Promise.all(burst);
+      expect(responses.filter((response) => response === 200)).toHaveLength(MAX_MCP_REQUESTS);
+      expect(responses.filter((response) => response === 503)).toHaveLength(1);
+      expect(authenticationCalls).toBe(MAX_MCP_REQUESTS + 1);
+    } finally {
+      releaseAuthentication?.();
+      await managed.drain();
+    }
+  });
+
+  it('aborts a partially received request body and finishes its task', async () => {
+    const authorization = createGatewayAuthorization(publicOrigin, { mode: 'static', accessToken });
+    const authenticated = vi.fn(async () => true);
+    authorization.authenticate = authenticated;
+    const managed = createGatewayHttpHandler({ publicOrigin, authorization, reader: { status, agents } });
+    const server = createServer(managed);
+    servers.push(server);
+    const port = await portFor(server);
+    const pending = new Promise<number | undefined>((resolve) => {
+      const req = request({ hostname: '127.0.0.1', port, path: '/mcp', method: 'POST', headers: { ...headers, 'content-length': '100' } }, (res) => {
+        res.resume(); res.once('end', () => resolve(res.statusCode));
+      });
+      req.once('error', () => resolve(undefined));
+      req.write('{"jsonrpc":');
+    });
+    await vi.waitFor(() => { expect(authenticated).toHaveBeenCalledOnce(); });
+    await managed.drain();
+    expect(await pending).toBeUndefined();
+  });
+
+  it.each([
+    ['status', 'cauce_status', {}],
+    ['submit', 'cauce_submit', { request_key: '65f94fa9-b452-4c33-9163-331819c764e3', room_id: 'lifecycle', recipients: [{ tenant_id: 'TenantA', alias: 'claw' }], body: { text: 'fixture' } }],
+    ['receipt', 'cauce_receipt', { message_id: 'b3b4a1ad-3054-44cb-a811-396ecf5672c3' }],
+  ] as const)('awaits the SDK %s operation after its signal is aborted', async (operation, tool, args) => {
+    let releaseCleanup: (() => void) | undefined;
+    const cleanupBarrier = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    let operationStarted = false;
+    let operationAborted = false;
+    let cleanupFinished = false;
+    let sideEffectQueries = 0;
+    const operationCalls = { status: 0, agents: 0, submit: 0, receipt: 0 };
+    const waitForAbort = async (signal: AbortSignal): Promise<never> => {
+      operationStarted = true;
+      await new Promise<void>((resolve) => signal.addEventListener('abort', () => { operationAborted = true; resolve(); }, { once: true }));
+      await cleanupBarrier;
+      cleanupFinished = true;
+      throw new Error('fixture operation cancelled');
+    };
+    const identity = { kind: 'oauth' as const, issuer: 'https://issuer.example', subject: 'fixture',
+      audience: publicOrigin + '/mcp', expiresAt: Date.now() / 1000 + 60, scopes: ['cauce.read', 'cauce.publish'] };
+    const options: GatewayHttpOptions = {
+      publicOrigin,
+      authorization: { mode: 'oauth', challenge: 'Bearer fixture', metadata: {
+        resource: publicOrigin + '/mcp', authorization_servers: ['https://issuer.example'],
+        scopes_supported: ['cauce.read', 'cauce.publish'], bearer_methods_supported: ['header'], resource_name: 'fixture',
+      },
+        authenticateIdentity: async () => identity },
+      operationsFactory: { forRequest: async (_identity, signal) => ({
+        status: async () => { operationCalls.status += 1; if (operation === 'status') return waitForAbort(signal); sideEffectQueries += 1; throw new Error('Unexpected status call'); },
+        agents: async () => { operationCalls.agents += 1; sideEffectQueries += 1; throw new Error('Unexpected agents call'); },
+        submit: async () => { operationCalls.submit += 1; if (operation === 'submit') return waitForAbort(signal); sideEffectQueries += 1; throw new Error('Unexpected publish'); },
+        receipt: async () => { operationCalls.receipt += 1; if (operation === 'receipt') return waitForAbort(signal); sideEffectQueries += 1; throw new Error('Unexpected receipt call'); },
+      }) },
+    };
+    const managed = createGatewayHttpHandler(options);
+    const server = createServer(managed);
+    servers.push(server);
+    const port = await portFor(server);
+    const pending = send(port, 'POST', '/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: tool, arguments: args } });
+    try {
+      await vi.waitFor(() => { expect(operationStarted).toBe(true); });
+      let drained = false;
+      const draining = managed.drain().then(() => { drained = true; });
+      await vi.waitFor(() => { expect(operationAborted).toBe(true); });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(drained).toBe(false);
+      releaseCleanup?.();
+      await draining;
+      expect(cleanupFinished).toBe(true);
+      expect(sideEffectQueries).toBe(0);
+      expect(operationCalls).toEqual({ status: Number(operation === 'status'), agents: 0, submit: Number(operation === 'submit'), receipt: Number(operation === 'receipt') });
+      await pending;
+    } finally {
+      releaseCleanup?.();
+      await managed.drain();
+    }
+  });
+});
