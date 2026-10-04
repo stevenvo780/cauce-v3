@@ -21,14 +21,24 @@ Supervisar, desplegar, actualizar y hacer rollback de adapters V3 que se ejecuta
    install -m 0644 ops/generated/container-systemd/rootless/cauce-v3-container-*.service "$HOME/.config/systemd/user/"
    systemctl --user daemon-reload
    ```
-3. **Paso del dueño, fuera de este árbol**: construir el bundle `release-nuevo` y calcular su digest.
-   Este repositorio no trae —ni traerá— el script que lo construye (`/opt` está en la lista NO TOCAR
-   de `AGENTS.md`): lo hace el dueño en la máquina destino. `release-nuevo` es el nombre de un
-   directorio bajo `<raíz del bundle>/<alias>/releases/`, donde la raíz depende de quién corre el
-   supervisor: `/opt/cauce-v3-adapter` en el despliegue como root de la flota, y
-   `$XDG_DATA_HOME/cauce-v3-adapter` (`~/.local/share/cauce-v3-adapter`, lo que fijan las unidades
-   rootless generadas) cuando lo corre un usuario. El release tiene que cumplir lo que comprueba
-   `validate_bundle` (`ops/scripts/container-adapter-supervisor.sh:400-427`):
+3. Construir el bundle desde un worktree limpio, como usuario normal. Para una unidad rootless,
+   usar el mismo usuario propietario del servicio y un destino absoluto nuevo bajo
+   `${XDG_DATA_HOME:-$HOME/.local/share}/cauce-v3-adapter/<alias>/releases/` (normalmente
+   `~/.local/share/cauce-v3-adapter/<alias>/releases/`). Ejecutar desde la raíz del checkout limpio
+   cuyo código se va a liberar:
+   ```sh
+   # [no ejecutable en verificación]
+   ops/scripts/build-adapter-release.sh \
+     "${XDG_DATA_HOME:-$HOME/.local/share}/cauce-v3-adapter/<alias>/releases/<release-nuevo>"
+   ```
+   El script construye protocolo y adapter, ejecuta `package-smoke.mjs`, empaqueta el SDK y deja
+   las entradas de solo lectura para el usuario propietario. Requiere que el worktree no tenga
+   cambios (`git status --porcelain` vacío) y falla si el destino ya existe. Para una unidad
+   gestionada por el sistema, construir en un destino absoluto nuevo escribible por el usuario
+   normal. El integrador prepara el destino final bajo `/opt`, verifica el propietario requerido y
+   vuelve a calcular allí el digest; el constructor no cambia propietarios ni promueve releases.
+   El bundle tiene que cumplir lo que comprueba `validate_bundle`
+   (`ops/scripts/container-adapter-supervisor.sh:400-427`):
    - contiene `packages/adapter-sdk/dist/src/bin/<harness>.js`, fichero regular, ejecutable y no
      enlace simbólico (`<harness>` es el arnés asignado al alias);
    - el directorio del release, todas sus entradas y todos sus enlaces simbólicos pertenecen al
@@ -39,15 +49,15 @@ Supervisar, desplegar, actualizar y hacer rollback de adapters V3 que se ejecuta
      dispositivos), y todo enlace resuelve dentro del propio release: ninguno se escapa;
    - el digest calculado sobre el release coincide con el `BUNDLE_SHA256` que se fija en el paso 4.
 
-   El `sha256:<digest-nuevo>` sale del mismo ayudante que usan `validate_bundle` y
-   `pin-container-release.py` —cualquier otro cálculo dará un digest distinto y el arranque morirá
-   con `configured bundle digest differs from pinned immutable release`—:
+   Calcular el digest con el mismo ayudante que usan `validate_bundle` y
+   `pin-container-release.py`; conservar exactamente la salida `sha256:<digest>`:
    ```sh
    # [no ejecutable en verificación]
    python3 ops/container-runtime/cauce-container-runtime.py bundle-digest \
-     "$HOME/.local/share/cauce-v3-adapter/<alias>/releases/release-nuevo"   # rootless; /opt/... como root
+     "${XDG_DATA_HOME:-$HOME/.local/share}/cauce-v3-adapter/<alias>/releases/<release-nuevo>"
    ```
-4. Fijar el release mediante compare-and-swap (CAS):
+4. **Paso exclusivo del integrador**: fijar el release mediante compare-and-swap (CAS), después de
+   revisar el bundle, su propietario y su digest:
    ```sh
    # [no ejecutable en verificación]
    ops/scripts/pin-container-release.py pin <alias> \
