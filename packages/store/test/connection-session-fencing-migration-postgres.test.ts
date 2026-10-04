@@ -3,11 +3,11 @@ import { readFile } from 'node:fs/promises';
 import { requireValue } from './helpers.js';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  applyMigrations, inspectMigrationIntegrity, type DatabasePool,
+  applyMigrationsThrough, inspectMigrationIntegrity, type DatabasePool,
 } from '../src/index.js';
 import {
   resetTestDatabase,
-  startTestDatabase,
+  startTestDatabaseThrough,
   type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
 
@@ -43,7 +43,7 @@ preparePostgresSuite(import.meta.url, async () => {
       new URL(`../migrations/down/${version}`, import.meta.url), 'utf8',
     ))),
   ]);
-  database = await startTestDatabase();
+  database = await startTestDatabaseThrough('043_blob_tenant_entitlements.sql');
   databaseStarted = true;
   pool = database.pool;
 }, 120_000);
@@ -88,11 +88,13 @@ afterEach(async () => {
   } else {
     await pool.query('DELETE FROM schema_migrations WHERE version=$1', [version031]);
   }
-  await applyMigrations(pool);
+  await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
   const client = await pool.connect();
   try {
     const integrity = await inspectMigrationIntegrity(client);
-    const latest = integrity.entries.filter((entry) => entry.version >= version031);
+    const latest = integrity.entries.filter((entry) => (
+      entry.version >= version031 && entry.version !== '044_human_mcp_identity.sql'
+    ));
     const expectedVersions = [version031, ...laterVersions];
     expect(latest).toHaveLength(expectedVersions.length);
     for (const version of expectedVersions) {
@@ -103,6 +105,11 @@ afterEach(async () => {
         verificationMethod: 'atomic-ledger-v1',
       });
     }
+    expect(integrity.entries.find((entry) => entry.version === '044_human_mcp_identity.sql')).toMatchObject({
+      applied: false,
+      sourceOrigin: 'pending',
+      verificationMethod: 'not-applied',
+    });
   } finally {
     client.release();
   }
