@@ -100,7 +100,6 @@ function ConversationPaneContent({
   const submissions = useRef(new Set<string>());
   const [receiptRoot, setReceiptRoot] = useState<{ key: string; root: CanonicalReplyRoot }>();
   const [cuerpos, setCuerpos] = useState<Record<string, CuerpoEntero>>({});
-  const [confirmandoPublicacion, setConfirmandoPublicacion] = useState(false);
   /** The detail is born closed and is opened by the operator or by clicking a bubble. */
   const [detalleAbierto, setDetalleAbierto] = useState(false);
 
@@ -256,7 +255,6 @@ function ConversationPaneContent({
     const texto = draft.trim();
     if (!puedeEnviar || !texto || enviando || submissions.current.has(draftKey)) return;
     submissions.current.add(draftKey);
-    setConfirmandoPublicacion(false);
     updateForm((current) => ({ ...current, sending: true, notice: undefined }));
     const stillActive = () => activePublishScope.current === publishScope;
     const refresh = () => { if (stillActive()) onReload(); };
@@ -276,11 +274,9 @@ function ConversationPaneContent({
         expectedDeliveries: 1,
         reconcile: refresh,
         onAccepted: ({ receipt }) => {
-          setConfirmandoPublicacion(true);
           updateForm((current) => ({
-            ...current,
-            text: current.text === draft ? '' : current.text,
-            notice: { tone: 'success', text: `Aceptado por el control plane · ${compactId(receipt.message_id)}. Confirmación pendiente; todavía no hay estado de entrega.` },
+            ...current, text: current.text === draft ? '' : current.text,
+            notice: { tone: 'parcial', text: `Mensaje aceptado para entrega · ${compactId(receipt.message_id)}. Confirmación pendiente; la aceptación no confirma la ejecución.` },
           }));
           if (!stillActive()) return;
           setReceiptRoot({ key: replyScopeKey, root: { messageId: receipt.message_id, deliveryId: receipt.delivery_ids[0] } });
@@ -295,16 +291,15 @@ function ConversationPaneContent({
       setAviso({
         tone: journalStatus === 'confirmed' ? 'success' : 'parcial',
         text: `${reconciled ? 'Publicación reconciliada desde el journal durable' : 'Aceptado por el control plane'} · ${compactId(resultado.message_id)}. `
-          + (journalStatus === 'confirmed'
-            ? 'Intención confirmada.'
+          + `${journalStatus === 'confirmed'
+            ? 'Intención confirmada'
             : journalStatus === 'pending'
-              ? 'Confirmación incierta; intención pendiente y cercada.'
-              : 'Confirmación rechazada; intención cercada contra duplicados.'),
+              ? 'Confirmación incierta; intención pendiente y cercada'
+              : 'Confirmación rechazada; intención cercada contra duplicados'}; el ACK llega por polling.`,
       });
     } catch (causa) {
       setAviso({ tone: 'error', text: causa instanceof Error ? causa.message : 'No se pudo publicar el mensaje.' });
     } finally {
-      setConfirmandoPublicacion(false);
       submissions.current.delete(draftKey);
       updateForm((current) => ({ ...current, sending: false }));
     }
@@ -398,7 +393,7 @@ function ConversationPaneContent({
           {aviso?.tone === 'success' ? <details className="chat-agent-details">
             <summary>Recibo del último envío</summary>
             <p className="notice success">{aviso.text}</p>
-            <p>La publicación durable no demuestra lectura ni ejecución. El estado actual aparece junto al mensaje.</p>
+            <p>La aceptación no confirma la ejecución. El estado de entrega se consulta en el hilo.</p>
           </details> : null}
         </ConversationMenu>
       </header>
@@ -584,15 +579,15 @@ function ConversationPaneContent({
         <div className="composer-footer">
           <span><kbd>Enter</kbd> enviar · <kbd>Shift</kbd> + <kbd>Enter</kbd> nueva línea</span>
           <button className="button primary" type="submit" disabled={!puedeEnviar || enviando || !draft.trim()}>
-            <Send size={15} aria-hidden="true" /><span>{enviando ? confirmandoPublicacion || aviso?.tone === 'success' ? 'Confirmando…' : 'Enviando…' : 'Enviar'}</span>
+            <Send size={15} aria-hidden="true" /><span>{enviando ? aviso?.tone === 'parcial' ? 'Confirmando…' : 'Enviando…' : 'Enviar'}</span>
           </button>
         </div>
         </div>
         {!canPublish ? <p className="composer-blocked"><LockKeyhole size={14} aria-hidden="true" /> Requiere el permiso message.publish.</p> : null}
         {!route.allowed ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> {route.reason}</p> : null}
-        {aviso && aviso.tone !== 'success'
-          ? <p className={`notice ${aviso.tone}`} role={aviso.tone === 'error' ? 'alert' : 'status'}>{aviso.text}</p>
-          : null}
+        {aviso?.tone === 'success'
+          ? <span className="sr-only" role="status">Mensaje aceptado para entrega. La aceptación no confirma la ejecución.</span>
+          : aviso ? <p className={`notice ${aviso.tone}`} role={aviso.tone === 'error' ? 'alert' : 'status'}>{aviso.text}</p> : null}
       </form>
     </section>
   );

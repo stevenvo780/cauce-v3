@@ -286,8 +286,7 @@ it('muestra aceptación y empieza a leer antes de confirm, con doble submit bloq
   expect(f.publish).toHaveBeenCalledOnce();
   expect(f.confirm).toHaveBeenCalledOnce();
   expect(f.input.onReload).toHaveBeenCalledOnce();
-  expect(screen.queryByText(/Mensaje aceptado para entrega ·/)).toBeNull();
-  expect(screen.queryByText(/ACK llega por polling/i)).toBeNull();
+  expect(screen.getByText(/Mensaje aceptado para entrega ·/)).toHaveTextContent('Confirmación pendiente');
   expect(screen.getByRole('button', { name: 'Confirmando…' })).toBeDisabled();
   expect(screen.getByRole('textbox')).toHaveValue('');
   expect(screen.getByRole('textbox')).toBeDisabled();

@@ -48,8 +48,8 @@ async function abrirConversacion(user: ReturnType<typeof userEvent.setup>, alias
 }
 
 async function abrirRecibo(user: ReturnType<typeof userEvent.setup>, hilo: HTMLElement) {
-  expect(within(hilo).queryByText('Mensaje aceptado para entrega. La aceptación no confirma la ejecución.'))
-    .not.toBeInTheDocument();
+  expect(await within(hilo).findByText('Mensaje aceptado para entrega. La aceptación no confirma la ejecución.'))
+    .toHaveClass('sr-only');
   expect(hilo.querySelector('.messenger-composer .notice.success')).toBeNull();
   const more = within(hilo).getByRole('button', { name: 'Más' });
   if (more.getAttribute('aria-expanded') !== 'true') await user.click(more);
@@ -156,12 +156,10 @@ it('emite el mensaje al agente elegido derivando el room, sin pedirlo escrito a 
     lane: 'interactive',
   });
   expect(within(hilo).queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument();
-  expect(within(hilo).queryByText(/ACK llega por polling/i)).not.toBeInTheDocument();
-  expect(within(hilo).queryByText(/Mensaje aceptado para entrega/i)).not.toBeInTheDocument();
   const receipt = await abrirRecibo(user, hilo);
   expect(within(receipt).getByText(/Aceptado por el control plane/i)).toBeVisible();
-  expect(receipt).toHaveTextContent('Intención confirmada.');
-  expect(receipt).toHaveTextContent('no demuestra lectura ni ejecución');
+  expect(receipt).toHaveTextContent('Intención confirmada; el ACK llega por polling');
+  expect(receipt).toHaveTextContent('La aceptación no confirma la ejecución');
   await user.keyboard('{Escape}');
   expect(within(hilo).queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument();
   expect(within(hilo).getByRole('button', { name: 'Más' })).toHaveFocus();
