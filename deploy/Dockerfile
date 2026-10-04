@@ -1,7 +1,7 @@
 ARG CAUCE_NODE_BASE=docker.io/library/node@sha256:56a687b4d23e7a6cb49114924f5e257fcfbd33ad1f28f5c67aea9365996f2819
 ARG CAUCE_PYTHON_BASE=docker.io/library/python@sha256:53739acebd52a300f19f52d93f2a6165f63300689bdf6f8af2bff0d63780e5e6
 ARG CAUCE_NGINX_BASE=docker.io/nginxinc/nginx-unprivileged@sha256:28d91bdce70ad09025ea901458fdd149259d8e05982ade79d4ef2c0d9470eb48
-ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH=043_blob_tenant_entitlements.sql
+ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH=044_human_mcp_identity.sql
 ARG CAUCE_TERMINAL_RELAY_INSTANCE_ID=""
 FROM ${CAUCE_NODE_BASE} AS build
 WORKDIR /app
@@ -24,6 +24,7 @@ COPY packages ./packages
 COPY services ./services
 COPY console ./console
 COPY vitest.config.ts ./
+COPY tests/terminal-pty/certs.mjs tests/terminal-pty/certs.d.mts ./tests/terminal-pty/
 ARG VITE_CAUCE_API_BASE=""
 ARG VITE_CAUCE_DEV_AUTH="false"
 ARG VITE_CAUCE_DEV_TENANT=""
@@ -32,7 +33,7 @@ ENV VITE_CAUCE_API_BASE=${VITE_CAUCE_API_BASE} \
     VITE_CAUCE_DEV_AUTH=${VITE_CAUCE_DEV_AUTH} \
     VITE_CAUCE_DEV_TENANT=${VITE_CAUCE_DEV_TENANT} \
     VITE_CAUCE_DEV_ALIAS=${VITE_CAUCE_DEV_ALIAS}
-RUN pnpm build:core && pnpm build:adapter && pnpm build:console
+RUN pnpm build:core && pnpm build:adapter && pnpm build:mcp && pnpm build:console
 
 FROM ${CAUCE_NODE_BASE} AS production-dependencies
 WORKDIR /app
@@ -41,6 +42,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/protocol/package.json ./packages/protocol/
 COPY packages/store/package.json ./packages/store/
 COPY packages/adapter-sdk/package.json ./packages/adapter-sdk/
+COPY packages/mcp-fleet-monitor/package.json ./packages/mcp-fleet-monitor/
 COPY services/gateway/package.json ./services/gateway/
 COPY services/dispatcher/package.json ./services/dispatcher/
 COPY services/telegram-bridge/package.json ./services/telegram-bridge/
@@ -48,6 +50,7 @@ COPY services/terminal-relay/package.json ./services/terminal-relay/
 RUN pnpm --filter @cauce/protocol \
   --filter @cauce/store \
   --filter @cauce/adapter-sdk \
+  --filter @cauce/mcp-fleet-monitor \
   --filter @cauce/gateway \
   --filter @cauce/dispatcher \
   --filter @cauce/telegram-bridge \
@@ -86,6 +89,7 @@ COPY --from=build --chown=node:node /app/dist/services/terminal-relay/src ./serv
 COPY --from=build --chown=node:node /app/dist/packages/store/src ./packages/store/dist
 COPY --from=build --chown=node:node /app/packages/store/migrations ./packages/store/migrations
 COPY --from=build --chown=node:node /app/packages/protocol/dist ./packages/protocol/dist
+COPY --from=build --chown=node:node /app/packages/mcp-fleet-monitor/dist ./packages/mcp-fleet-monitor/dist
 COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/src ./packages/adapter-sdk/dist/src
 COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/bridge ./packages/adapter-sdk/dist/bridge
 RUN chmod -R 0555 ./packages/adapter-sdk/dist/bridge
@@ -94,7 +98,9 @@ COPY --chown=node:node deploy/runtime/readiness-probe.mjs deploy/runtime/local-r
 COPY --chown=node:node deploy/runtime/runtime-entrypoint.sh ./deploy/runtime-entrypoint.sh
 RUN chmod 0555 ./deploy/runtime-entrypoint.sh
 USER node
-RUN node deploy/runtime-package-smoke.mjs
+RUN node deploy/runtime-package-smoke.mjs \
+  && cd services/gateway \
+  && node --input-type=module --eval "import { strict as assert } from 'node:assert'; import { createGatewayHttpHandler } from '@cauce/mcp-fleet-monitor/gateway-http'; import { FleetReadModel } from '@cauce/mcp-fleet-monitor'; assert.equal(typeof createGatewayHttpHandler, 'function'); assert.equal(typeof FleetReadModel, 'function');"
 STOPSIGNAL SIGTERM
 EXPOSE 8080 8082 8083 8084 8085 8086 8443 8445 8446
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=5 \

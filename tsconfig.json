@@ -21,7 +21,8 @@
     "paths": {
       "@cauce/protocol": ["packages/protocol/src/index.ts"],
       "@cauce/store": ["packages/store/src/index.ts"],
-      "@cauce/adapter-sdk": ["packages/adapter-sdk/src/index.ts"]
+      "@cauce/adapter-sdk": ["packages/adapter-sdk/src/index.ts"],
+      "@cauce/mcp-fleet-monitor/gateway-http": ["packages/mcp-fleet-monitor/src/gateway-http.ts"]
     }
   },
   "include": [
