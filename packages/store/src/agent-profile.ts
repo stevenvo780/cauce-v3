@@ -117,6 +117,21 @@ function toProfile(row: ProfileRow): AgentProfile {
   };
 }
 
+function validatedProfileMutation(
+  input: AgentProfile | Record<string, unknown>, expectedRevision: number | null,
+  source: AgentProfileSourceGuard | undefined,
+): AgentProfile {
+  const profile = normalizeAgentProfile(input as Record<string, unknown>);
+  if (expectedRevision !== null
+    && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) {
+    throw new AgentProfileMutationError('conflict', 'expected profile revision is invalid');
+  }
+  if (source !== undefined && (expectedRevision === null || !validProfileSourceGuard(source))) {
+    throw new AgentProfileMutationError('conflict', 'profile source guard is invalid');
+  }
+  return profile;
+}
+
 export class AgentProfileRepository {
   constructor(private readonly pool: DatabasePool) {}
 
@@ -151,8 +166,9 @@ export class AgentProfileRepository {
     actor: AgentProfileAuditActor,
     source?: AgentProfileSourceGuard,
   ): Promise<PersistedAgentProfile> {
+    const profile = validatedProfileMutation(input, expectedRevision, source);
     return withTransaction(this.pool, (client) =>
-      this.replaceInTransaction(client, input, expectedRevision, actor, source));
+      this.replaceInTransaction(client, profile, expectedRevision, actor, source));
   }
 
   async replaceInTransaction(
@@ -162,14 +178,7 @@ export class AgentProfileRepository {
     actor: AgentProfileAuditActor,
     source?: AgentProfileSourceGuard,
   ): Promise<PersistedAgentProfile> {
-    const profile = normalizeAgentProfile(input as Record<string, unknown>);
-    if (expectedRevision !== null
-      && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) {
-      throw new AgentProfileMutationError('conflict', 'expected profile revision is invalid');
-    }
-    if (source !== undefined && (expectedRevision === null || !validProfileSourceGuard(source))) {
-      throw new AgentProfileMutationError('conflict', 'profile source guard is invalid');
-    }
+    const profile = validatedProfileMutation(input, expectedRevision, source);
     await client.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',
       [agentContextReconcileLockKey(profile.tenant_id, profile.alias)]);
     await assertAgentContextAdmissionAllowed(client, profile.tenant_id, profile.alias);

@@ -1,15 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import { publishRequestHash, type PublishMessage } from '@cauce/protocol';
 import { CauceRepository, StoreError, type DatabasePool } from '../index.js';
+import { CONTEXT_WRITE_QUARANTINE_KIND } from './agent-context-quarantine.js';
 
 function repositoryFor(rowsFor: (sql: string) => Record<string, unknown>[]) {
-  const query = vi.fn(async (sql: string) => {
+  const query = vi.fn(async (sql: string, _params: readonly unknown[] = []) => {
     const rows = rowsFor(sql);
     return { rows, rowCount: rows.length };
   });
   const release = vi.fn();
   const pool = { connect: async () => ({ query, release, on: vi.fn(), off: vi.fn() }) } as unknown as DatabasePool;
   return { repository: new CauceRepository(pool), query, release };
+}
+
+function isContextAdmissionQuery(sql: string): boolean {
+  return sql.startsWith('SET LOCAL lock_timeout=')
+    || sql.startsWith('SELECT pg_advisory_xact_lock_shared(')
+    || sql.includes('SELECT id,payload,status,claim_token::text,lease_until FROM jobs WHERE tenant_id=$1 AND kind=$2');
 }
 
 describe('store recovery reasons', () => {
@@ -31,6 +38,7 @@ describe('store recovery reasons', () => {
     const { repository, query, release } = repositoryFor((sql) => {
       if (sql.includes('SELECT policy.allow_route')) return [{ allow_route: true }];
       if (sql.includes('SELECT max_concurrent_deliveries AS cap')) return expected.capacity;
+      if (isContextAdmissionQuery(sql)) return [];
       if (sql === 'BEGIN' || sql === 'ROLLBACK') return [];
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -42,6 +50,8 @@ describe('store recovery reasons', () => {
     });
     expect(query).toHaveBeenLastCalledWith('ROLLBACK');
     expect(release).toHaveBeenCalledOnce();
+    const admission = query.mock.calls.find(([sql]) => sql.includes('FROM jobs WHERE tenant_id=$1 AND kind=$2'));
+    expect(admission?.[1]).toEqual(['Steven', CONTEXT_WRITE_QUARANTINE_KIND]);
   });
 
   it.each([
@@ -61,6 +71,7 @@ describe('store recovery reasons', () => {
       if (sql.includes('SELECT max_concurrent_deliveries AS cap')) return expected.configured;
       if (sql.includes('SELECT 1 FROM connection_leases')) return [{ live: true }];
       if (sql.includes(' AS human_in_flight')) return expected.usage;
+      if (isContextAdmissionQuery(sql)) return [];
       if (sql.startsWith('SET LOCAL') || sql.startsWith('SELECT pg_advisory_xact_lock_shared')
           || sql.includes('INSERT INTO delivery_lane_fairness') || sql === 'BEGIN' || sql === 'ROLLBACK') return [];
       throw new Error(`unexpected query: ${sql}`);
@@ -73,6 +84,8 @@ describe('store recovery reasons', () => {
     });
     expect(query).toHaveBeenLastCalledWith('ROLLBACK');
     expect(release).toHaveBeenCalledOnce();
+    const admission = query.mock.calls.find(([sql]) => sql.includes('FROM jobs WHERE tenant_id=$1 AND kind=$2'));
+    expect(admission?.[1]).toEqual(['Steven', CONTEXT_WRITE_QUARANTINE_KIND]);
   });
 
   const command: PublishMessage = {
