@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { request as httpRequest, type Server as HttpServer } from 'node:http';
+import { request as httpRequest } from 'node:http';
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
 import { createPrivateKey, generateKeyPairSync, sign } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -11,9 +11,6 @@ import { randomUUID } from 'node:crypto';
 import { CauceRepository, type DatabasePool } from '@cauce/store';
 import { startTestDatabase, resetTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 import { hashPassword } from '../../services/gateway/src/password.js';
-import { PostgresConsoleUserStore } from '../../services/gateway/src/console-users.js';
-import type { VerifiedOAuthIdentity } from '../../packages/mcp-fleet-monitor/src/gateway-oauth-identity.js';
-import type { ExternalSubjectResolver } from '../../services/gateway/src/human-mcp-authority.js';
 
 const execute = promisify(execFile);
 const TEST_PASSWORD = 'mcp-human-test-password-never-used-for-login';
@@ -44,10 +41,8 @@ export interface HumanOperationsFixture {
   readonly database: TestDatabase;
   readonly pool: DatabasePool;
   readonly repository: CauceRepository;
-  readonly users: PostgresConsoleUserStore;
   readonly issuer: OAuthIssuerFixture;
   readonly accounts: readonly [HumanAccount, HumanAccount, HumanAccount];
-  readonly subjectBindings: Map<string, { userId: string; status: 'active' | 'inactive' | 'revoked' }>;
   close(): Promise<void>;
 }
 
@@ -91,7 +86,7 @@ export async function connectSdkClient(origin: string, token: string): Promise<H
   }
 }
 
-function listen(server: HttpServer | HttpsServer): Promise<number> {
+function listen(server: HttpsServer): Promise<number> {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => {
@@ -103,7 +98,7 @@ function listen(server: HttpServer | HttpsServer): Promise<number> {
   });
 }
 
-function close(server: HttpServer | HttpsServer): Promise<void> {
+function close(server: HttpsServer): Promise<void> {
   return new Promise((resolve, reject) => {
     server.close((error) => {
       if (error) reject(error);
@@ -111,14 +106,6 @@ function close(server: HttpServer | HttpsServer): Promise<void> {
     });
     server.closeAllConnections();
   });
-}
-
-export async function listenMcpHttpServer(server: HttpServer): Promise<number> {
-  return listen(server);
-}
-
-export async function closeMcpHttpServer(server: HttpServer): Promise<void> {
-  await close(server);
 }
 
 async function makeCertificate(directory: string): Promise<{ ca: Buffer; key: Buffer; certificate: Buffer }> {
@@ -225,8 +212,6 @@ export async function startHumanOperationsFixture(): Promise<HumanOperationsFixt
     directory = await mkdtemp(join(tmpdir(), 'cauce-mcp-human-'));
     await chmod(directory, 0o700);
     issuer = await startOAuthIssuer(directory);
-    const users = new PostgresConsoleUserStore(database.pool);
-    await users.ready();
     const accounts: [HumanAccount, HumanAccount, HumanAccount] = [
       { id: randomUUID(), tenant: TENANTS[0], alias: ALIAS, subject: SUBJECTS[0] },
       { id: randomUUID(), tenant: TENANTS[1], alias: ALIAS, subject: SUBJECTS[1] },
@@ -252,12 +237,25 @@ export async function startHumanOperationsFixture(): Promise<HumanOperationsFixt
          VALUES($1,$2,'claude',true,10,$3,'dev','/home/dev','/home/dev/.cauce/mcp-e2e') ON CONFLICT DO NOTHING`,
         [account.tenant, target, `mcp-e2e-${target}`],
       );
+      await database.pool.query(
+        `INSERT INTO agents(tenant_id,alias,harness_id,enabled,max_concurrent_deliveries,container_name,
+                            runtime_user,home_directory,state_directory)
+         VALUES($1,$2,'claude',true,10,$3,'dev','/home/dev','/home/dev/.cauce/mcp-e2e-human') ON CONFLICT DO NOTHING`,
+        [account.tenant, account.alias, `mcp-e2e-human-${account.tenant}`],
+      );
+      await database.pool.query(
+        `INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions,enabled)
+         VALUES($1,$2,$3,'operator',ARRAY['route','read','control','notify']::text[],true)`,
+        [account.id, account.tenant, account.alias],
+      );
+      await database.pool.query(
+        `INSERT INTO human_external_identities(human_id,provider,namespace,subject,enabled)
+         VALUES($1,'oauth',$2,$3,true)`,
+        [account.id, issuer.issuer, account.subject],
+      );
     }
-    const subjectBindings = new Map<string, { userId: string; status: 'active' | 'inactive' | 'revoked' }>(
-      accounts.map((account) => [account.subject, { userId: account.id, status: 'active' }]),
-    );
-    return { database, pool: database.pool, repository: new CauceRepository(database.pool), users, issuer,
-      accounts, subjectBindings, async close() {
+    return { database, pool: database.pool, repository: new CauceRepository(database.pool), issuer,
+      accounts, async close() {
         const failures: unknown[] = [];
         for (const cleanup of [async () => issuer?.close(), async () => database.pool.end(),
           async () => database.container.stop(), async () => { if (directory) await rm(directory, { recursive: true }); }]) {
@@ -294,16 +292,4 @@ export async function startHttpsForwarder(
   const port = await listen(server);
   return { origin: `https://${publicHost}:${String(port)}`, setTarget(portNumber) { targetPort = portNumber; },
     async close() { await close(server); } };
-}
-
-export function fixtureSubjectResolver(
-  bindings: ReadonlyMap<string, { userId: string; status: 'active' | 'inactive' | 'revoked' }>,
-): ExternalSubjectResolver {
-  return Object.freeze({
-    async resolve(identity: VerifiedOAuthIdentity, signal: AbortSignal) {
-      signal.throwIfAborted();
-      const binding = bindings.get(identity.subject);
-      return binding === undefined ? undefined : Object.freeze({ ...binding });
-    },
-  });
 }

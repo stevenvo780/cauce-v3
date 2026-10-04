@@ -4,10 +4,9 @@ import { PublishIntentExpiredError, PublishIntentRateLimitedError, PublishIntent
 import {
   McpSubmitCommandSchema, HumanMcpReceiptSchema,
   GatewayOperationError,
-  type GatewayOperationsFactory, type HumanMcpReceipt, type McpSubmitCommand,
-} from '../../../packages/mcp-fleet-monitor/src/gateway-operations.js';
-import { projectGatewayAgents, projectGatewayStatus } from '../../../packages/mcp-fleet-monitor/src/gateway-projection.js';
-import type { VerifiedOAuthIdentity } from '../../../packages/mcp-fleet-monitor/src/gateway-oauth-identity.js';
+  projectGatewayAgents, projectGatewayStatus,
+  type GatewayOperationsFactory, type HumanMcpReceipt, type McpSubmitCommand, type VerifiedOAuthIdentity,
+} from '@cauce/mcp-fleet-monitor/gateway-http';
 import type { GatewayRepository } from './app.js';
 import { AuthError, AuthorizationError, requirePermission, type Principal } from './auth.js';
 import { ConsolePublishTelemetry } from './console-publish-telemetry.js';

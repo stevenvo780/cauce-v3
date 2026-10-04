@@ -1,18 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createHumanMcpOperationsFactory } from '../../services/gateway/src/mcp-operations.js';
-import { createGatewayHttpServer } from '../../packages/mcp-fleet-monitor/src/gateway-http.js';
-import { createHumanGatewayAuthorization } from '../../packages/mcp-fleet-monitor/src/gateway-authorization.js';
+import type { FastifyInstance } from 'fastify';
+import { buildGateway } from '../../services/gateway/src/app.js';
+import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
+import { createHumanGatewayAuthorization } from '../../packages/mcp-fleet-monitor/src/gateway-http.js';
 import {
-  closeMcpHttpServer, connectSdkClient, fixtureSubjectResolver, listenMcpHttpServer,
-  startHttpsForwarder, startHumanOperationsFixture, trustFixtureCa,
+  connectSdkClient, startHttpsForwarder, startHumanOperationsFixture, trustFixtureCa,
   type HumanMcpClient, type HumanOperationsFixture, type HttpsForwarder,
 } from './mcp-human-operations.fixtures.js';
 
 interface ToolResult { readonly isError?: boolean; readonly content: readonly { type: string; text?: string }[] }
 let fixture: HumanOperationsFixture | undefined;
 let forwarder: HttpsForwarder | undefined;
-let listener: ReturnType<typeof createGatewayHttpServer> | undefined;
+let app: FastifyInstance | undefined;
 let restoreTrust: (() => void) | undefined;
 const clients: HumanMcpClient[] = [];
 
@@ -53,12 +53,15 @@ beforeAll(async () => {
   const authorization = createHumanGatewayAuthorization(forwarder.origin, {
     issuer: fixture.issuer.issuer, jwksUri: fixture.issuer.jwksUri,
   });
-  const operationsFactory = createHumanMcpOperationsFactory({
-    repository: fixture.repository, users: fixture.users, resolver: fixtureSubjectResolver(fixture.subjectBindings),
-    priorityLog: { info: () => undefined, warn: () => undefined }, logRedaction: () => undefined,
+  app = await buildGateway({
+    pool: fixture.pool,
+    authProvider: DevOnlyAuthProvider.forTests(),
+    humanMcp: { publicOrigin: forwarder.origin, authorization },
   });
-  listener = createGatewayHttpServer({ publicOrigin: forwarder.origin, authorization, operationsFactory });
-  forwarder.setTarget(await listenMcpHttpServer(listener));
+  const address = await app.listen({ port: 0, host: '127.0.0.1' });
+  const port = Number(new URL(address).port);
+  if (!Number.isSafeInteger(port) || port < 1) throw new Error('MCP gateway listener did not expose an ephemeral port');
+  forwarder.setTarget(port);
 }, 180_000);
 
 afterAll(async () => {
@@ -67,7 +70,7 @@ afterAll(async () => {
     try { await client.close(); } catch (error) { failures.push(error); }
   }
   for (const cleanup of [
-    async () => { if (listener) await closeMcpHttpServer(listener); },
+    async () => { await app?.close(); },
     async () => { await forwarder?.close(); },
     async () => { restoreTrust?.(); },
     async () => { await fixture?.close(); },
@@ -221,7 +224,22 @@ describe('human MCP operations over real OAuth, SDK transport and PostgreSQL', (
     const publishOnly = await connect(stevenA.subject, ['cauce.publish']);
     const readDenied = await call(publishOnly, 'cauce_status');
     expect(readDenied.isError).toBe(true);
-    fixture.subjectBindings.set(stevenB.subject, { userId: stevenB.id, status: 'revoked' });
+    const roleChange = await fixture.pool.query(
+      `UPDATE human_tenant_memberships SET role='reader', permissions=ARRAY['read']::text[], revision=revision+1
+        WHERE human_id=$1::uuid AND tenant_id=$2`,
+      [stevenA.id, stevenA.tenant],
+    );
+    expect(roleChange.rowCount).toBe(1);
+    const roleDenied = await call(clientA, 'cauce_submit', publishArguments(randomUUID(),
+      { tenant_id: 'Steven', alias: 'mcp_target_steven' }, 'database role must deny this send'));
+    expect(roleDenied.isError).toBe(true);
+    expect(roleDenied.structuredContent).toEqual({ status_code: 403, error: 'forbidden' });
+    const revokedBinding = await fixture.pool.query(
+      `UPDATE human_external_identities SET enabled=false, revoked_at=now(), revision=revision+1
+        WHERE human_id=$1::uuid AND provider='oauth' AND namespace=$2 AND subject=$3 AND enabled=true`,
+      [stevenB.id, fixture.issuer.issuer, stevenB.subject],
+    );
+    expect(revokedBinding.rowCount).toBe(1);
     const revoked = await call(clientB, 'cauce_status');
     expect(revoked.isError).toBe(true);
     expect(JSON.stringify(revoked)).not.toContain('Steven');

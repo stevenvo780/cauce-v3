@@ -12,7 +12,7 @@ COPY packages/protocol/package.json packages/protocol/tsconfig.json ./packages/p
 COPY packages/protocol/src ./packages/protocol/src
 COPY packages/store/package.json ./packages/store/
 COPY packages/adapter-sdk/package.json packages/adapter-sdk/tsconfig.json ./packages/adapter-sdk/
-COPY packages/mcp-fleet-monitor/package.json packages/mcp-fleet-monitor/tsconfig.json ./packages/mcp-fleet-monitor/
+COPY packages/mcp-fleet-monitor/package.json packages/mcp-fleet-monitor/tsconfig.json packages/mcp-fleet-monitor/tsconfig.build.json ./packages/mcp-fleet-monitor/
 COPY services/gateway/package.json ./services/gateway/
 COPY services/dispatcher/package.json services/dispatcher/tsconfig.json ./services/dispatcher/
 COPY services/telegram-bridge/package.json ./services/telegram-bridge/

@@ -35,6 +35,7 @@ import { registerGatewayHealthRoutes } from './routes/health.js';
 import { registerChainGateRoutes } from './routes/chain-gates.js';
 import { registerAgentEmissionRoutes } from './routes/agent-emission.js';
 import { prepareBlobDirectory, registerBlobRoutes, type BlobStoreOptions } from './routes/blobs.js';
+import { humanMcpListenerOptions, registerHumanMcp, type HumanMcpConfiguration } from './mcp-mounting.js';
 
 export { WakePumpTelemetry } from './wake-pump-telemetry.js';
 export type {
@@ -179,6 +180,7 @@ export interface GatewayOptions {
   terminalCapability?: Readonly<Record<string, unknown>>;
   operatorResolution?: OperatorResolution;
   https?: HttpsServerOptions;
+  humanMcp?: HumanMcpConfiguration;
   exposeHealthRoutes?: boolean;
   logger?: boolean;
   blobs?: BlobStoreOptions;
@@ -208,7 +210,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   const maxQueryLimit = admission.maxInflightDeliveries + admission.humanReservedDeliveries;
   const app = Fastify({
     logger: options.logger ?? false,
-    ...(options.https === undefined ? {} : { https: options.https })
+    ...humanMcpListenerOptions(options.humanMcp, options.https),
   });
   const repository: GatewayRepository = options.repository ?? new CauceRepository(options.pool);
   if (options.authProvider.mode === 'production') {
@@ -289,6 +291,10 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   }
 
   await coreRoutes.registerRuntimeRoutes(agentProfiles);
+
+  if (options.humanMcp !== undefined) {
+    await registerHumanMcp(app, options.humanMcp, repository, options.pool, consolePublishTelemetry);
+  }
 
   return app;
 }

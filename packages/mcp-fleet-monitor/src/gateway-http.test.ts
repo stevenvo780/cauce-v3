@@ -414,15 +414,15 @@ describe('gateway HTTP handler lifecycle', () => {
     const req = request({ hostname: '127.0.0.1', port, path, method,
       headers: { host: 'mcp.example', authorization: 'Bearer ' + token, accept: 'application/json, text/event-stream', 'content-type': 'application/json' } }, (res) => {
       res.resume();
-      res.once('end', () => resolve(res.statusCode));
+      res.once('end', () => { resolve(res.statusCode); });
     });
-    req.once('error', () => resolve(undefined));
+    req.once('error', () => { resolve(undefined); });
     req.end(method === 'POST' ? JSON.stringify(body ?? { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'cauce_status', arguments: {} } }) : undefined);
   });
   afterEach(async () => {
     for (const server of servers.splice(0)) {
       server.closeAllConnections();
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => server.close((error) => { if (error) reject(error); else resolve(); }));
     }
   });
 
@@ -502,9 +502,9 @@ describe('gateway HTTP handler lifecycle', () => {
     const port = await portFor(server);
     const requestOnce = () => new Promise<number | undefined>((resolve) => {
       const req = request({ hostname: '127.0.0.1', port, path: '/mcp', method: 'POST', headers }, (res) => {
-        res.resume(); res.once('end', () => resolve(res.statusCode));
+        res.resume(); res.once('end', () => { resolve(res.statusCode); });
       });
-      req.once('error', () => resolve(undefined));
+      req.once('error', () => { resolve(undefined); });
       req.end(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }));
     });
     const pending = requestOnce();
@@ -565,9 +565,9 @@ describe('gateway HTTP handler lifecycle', () => {
     const port = await portFor(server);
     const pending = new Promise<number | undefined>((resolve) => {
       const req = request({ hostname: '127.0.0.1', port, path: '/mcp', method: 'POST', headers: { ...headers, 'content-length': '100' } }, (res) => {
-        res.resume(); res.once('end', () => resolve(res.statusCode));
+        res.resume(); res.once('end', () => { resolve(res.statusCode); });
       });
-      req.once('error', () => resolve(undefined));
+      req.once('error', () => { resolve(undefined); });
       req.write('{"jsonrpc":');
     });
     await vi.waitFor(() => { expect(authenticated).toHaveBeenCalledOnce(); });
@@ -589,7 +589,7 @@ describe('gateway HTTP handler lifecycle', () => {
     const operationCalls = { status: 0, agents: 0, submit: 0, receipt: 0 };
     const waitForAbort = async (signal: AbortSignal): Promise<never> => {
       operationStarted = true;
-      await new Promise<void>((resolve) => signal.addEventListener('abort', () => { operationAborted = true; resolve(); }, { once: true }));
+      await new Promise<void>((resolve) => { signal.addEventListener('abort', () => { operationAborted = true; resolve(); }, { once: true }); });
       await cleanupBarrier;
       cleanupFinished = true;
       throw new Error('fixture operation cancelled');
