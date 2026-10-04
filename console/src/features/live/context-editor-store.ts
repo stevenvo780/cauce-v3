@@ -30,7 +30,10 @@ function storeFor(api: CauceApi, key: string): EditorStore {
 export function useContextEditorStore(tenantId: string, alias: string) {
   const api = useApi();
   const access = useConsoleAccess();
-  const identity = JSON.stringify([access.data?.subject, tenantId, alias]);
+  const humanSubject = access.data?.human_subject;
+  const subject = typeof humanSubject === 'string' && /^human:[a-f0-9]{64}$/u.test(humanSubject)
+    ? humanSubject : access.data?.subject;
+  const identity = JSON.stringify([subject, tenantId, alias]);
   const store = storeFor(api, identity);
   const subscribe = useCallback((listener: () => void) => {
     store.listeners.add(listener);
