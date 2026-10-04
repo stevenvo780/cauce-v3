@@ -8,7 +8,6 @@ import {
 
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
 const receipts = new Map<string, string>();
-const visibleReplyGaps: string[] = [];
 let isaOwnerPage: Awaited<ReturnType<typeof newTrustedPage>> | undefined;
 
 beforeAll(async () => {
@@ -108,6 +107,7 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
       const bubble = page.getByText(nonce, { exact: true });
       await bubble.waitFor({ timeout: 20_000 });
       const entry = bubble.locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
+      await entry.getByText(/^Detalles del mensaje/u).click();
       await entry.locator('.transcript-delivery').click();
       await entry.getByText('HECHA', { exact: true }).waitFor({ timeout: 35_000 }).catch(async (cause: unknown) => {
         const state = await activeFixture.database.pool.query(
@@ -121,8 +121,8 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
         throw new Error(`UI no mostró estado terminal; durable=${JSON.stringify(state.rows)} adapter=${activeFixture.prompts[`${tenant.tenant}:stderr`] ?? ''} capture=${JSON.stringify(prompt.slice(0, 800))} body=${JSON.stringify((await page.locator('body').innerText()).slice(-1000))}`, { cause });
       });
       receipts.set(tenant.tenant, nonce);
-      const persisted = await activeFixture.database.pool.query<{ id: string; actor_alias: string; body: { text?: string }; tenant_id: string; auth_channel: string | null; auth_session_id: string | null }>(
-        `SELECT message.id,message.actor_alias,message.body,message.tenant_id,message.auth_channel,message.auth_session_id
+      const persisted = await activeFixture.database.pool.query<{ id: string; delivery_id: string; actor_alias: string; body: { text?: string }; tenant_id: string; auth_channel: string | null; auth_session_id: string | null }>(
+        `SELECT message.id,delivery.id AS delivery_id,message.actor_alias,message.body,message.tenant_id,message.auth_channel,message.auth_session_id
            FROM messages message JOIN deliveries delivery ON delivery.message_id=message.id
           WHERE message.tenant_id=$1 AND message.body->>'text'=$2 AND delivery.recipient_alias=$3`,
         [tenant.tenant, nonce, tenant.target],
@@ -131,7 +131,9 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
       expect(persisted.rows[0]).toMatchObject({ actor_alias: tenant.operator, tenant_id: tenant.tenant, body: { text: nonce }, auth_channel: 'console' });
       expect(persisted.rows[0]?.auth_session_id).toMatch(/^console:/u);
       const messageId = persisted.rows[0]?.id;
-      if (!messageId) throw new Error(`missing persisted message id for ${tenant.tenant}`);
+      const deliveryId = persisted.rows[0]?.delivery_id;
+      if (!messageId || !deliveryId) throw new Error(`missing persisted message or delivery id for ${tenant.tenant}`);
+      const reply = page.locator(`.transcript-entry.output[data-reply-to="${messageId}"] .canonical-reply[data-delivery-id="${deliveryId}"]`);
       const historyReads: string[] = [];
       page.on('request', (value) => {
         if (value === null || typeof value !== 'object' || !('url' in value) || !('method' in value)
@@ -145,7 +147,9 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
       const historyBubble = page.getByText(nonce, { exact: true });
       await historyBubble.waitFor({ state: 'visible', timeout: 20_000 });
       const historyEntry = historyBubble.locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
-      await historyEntry.getByText(`respuesta sintética ${tenant.tenant}`, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+      expect(await historyEntry.count()).toBe(1);
+      await reply.getByText(`respuesta sintética ${tenant.tenant}`, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+      expect(await reply.count()).toBe(1);
       expect(historyReads).toContain(`${activeFixture.baseUrl}/v3/console/messages/${encodeURIComponent(messageId)}`);
       const detail = await page.evaluate(async (url) => {
         const response = await fetch(url, { credentials: 'include' });
@@ -164,8 +168,7 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
       }, `${activeFixture.baseUrl}/v3/console/messages/${encodeURIComponent(messageId)}`);
       expect(foreignDetail.status, 'a different tenant session must not read message detail').toBe(404);
       expect(JSON.stringify(foreignDetail.body)).not.toContain(`respuesta sintética ${tenant.tenant}`);
-      await entry.getByText(`respuesta sintética ${tenant.tenant}`, { exact: true }).waitFor({ state: 'visible', timeout: 12_000 })
-        .catch(() => { visibleReplyGaps.push(`${tenant.tenant}:${messageId}`); });
+      await reply.getByText(`respuesta sintética ${tenant.tenant}`, { exact: true }).waitFor({ state: 'visible', timeout: 12_000 });
       const delivered = await activeFixture.database.pool.query<{ status: string; result: unknown; attempt: number }>(
         `SELECT status,result,attempt FROM deliveries d JOIN messages m ON m.id=d.message_id
           WHERE m.tenant_id=$1 AND m.body->>'text'=$2 AND d.recipient_alias=$3`, [tenant.tenant, nonce, tenant.target],
@@ -203,7 +206,7 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
     expect(audit.rows.map((row) => [row.tenant_id, row.action, row.outcome])).toEqual([
       ['Isa', 'message.publish', 'allow'], ['Jhon', 'message.publish', 'allow'],
     ]);
-    expect(visibleReplyGaps, 'canonical reply must appear inside the exact published message entry').toEqual([]);
+
   }, 180_000);
 
   it('recupera solo las respuestas humanas propias para UUID distintos con el mismo tenant y alias', async () => {
@@ -247,6 +250,7 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
       const message = page.getByText(nonce, { exact: true });
       await message.waitFor({ timeout: 20_000 });
       const entry = message.locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
+      await entry.getByText(/^Detalles del mensaje/u).click();
       await entry.locator('.transcript-delivery').click();
       await entry.getByText('HECHA', { exact: true }).waitFor({ timeout: 35_000 });
       const persisted = await activeFixture.database.pool.query<{ id: string; author: { subject_id?: string } | null }>(
@@ -261,13 +265,19 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
       expect(persisted.rows).toHaveLength(1);
       const messageId = persisted.rows[0]?.id;
       if (!messageId) throw new Error(`missing durable message ID for ${nonce}`);
-      const delivery = await activeFixture.database.pool.query<{ attempt: number; result: unknown; status: string }>(
-        `SELECT delivery.status,delivery.attempt,delivery.result FROM deliveries delivery WHERE delivery.message_id=$1`, [messageId],
+      const delivery = await activeFixture.database.pool.query<{ id: string; attempt: number; result: unknown; status: string }>(
+        `SELECT delivery.id,delivery.status,delivery.attempt,delivery.result FROM deliveries delivery WHERE delivery.message_id=$1`, [messageId],
       );
       expect(delivery.rows).toHaveLength(1);
       expect(delivery.rows[0]).toMatchObject({ status: 'done', attempt: 1 });
       expect(JSON.stringify(delivery.rows[0]?.result)).toContain(`respuesta sintética Isa ${nonce}`);
-      return { id: messageId, author: persisted.rows[0]?.author };
+      const deliveryId = delivery.rows[0]?.id;
+      if (!deliveryId) throw new Error(`missing durable delivery ID for ${nonce}`);
+      const acknowledgement = await activeFixture.database.pool.query<{ status: string; applied: boolean }>(
+        'SELECT status,applied FROM delivery_acks WHERE delivery_id=$1 ORDER BY id DESC LIMIT 1', [deliveryId],
+      );
+      expect(acknowledgement.rows).toEqual([{ status: 'done', applied: true }]);
+      return { id: messageId, deliveryId, author: persisted.rows[0]?.author };
     };
 
     const firstMessage = await publish(firstHumanPage, ownerNonce);
@@ -279,16 +289,22 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
     expect(firstMessage.author?.subject_id).not.toBe(secondMessage.author?.subject_id);
 
     await firstHumanPage.reload({ waitUntil: 'domcontentloaded' });
-    const firstRoot = firstHumanPage.getByText(ownerNonce, { exact: true }).locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
-    await firstRoot.getByText(`respuesta sintética Isa ${ownerNonce}`, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
-    const secondRootOnFirstPage = firstHumanPage.getByText(secondNonce, { exact: true }).locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
-    await secondRootOnFirstPage.getByText(`respuesta sintética Isa ${secondNonce}`, { exact: true }).waitFor({ state: 'hidden', timeout: 12_000 });
+    await firstHumanPage.getByText(ownerNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+    const firstReply = firstHumanPage.locator(`.transcript-entry.output[data-reply-to="${firstMessage.id}"] .canonical-reply[data-delivery-id="${firstMessage.deliveryId}"]`);
+    await firstReply.getByText(`respuesta sintética Isa ${ownerNonce}`, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+    expect(await firstReply.count()).toBe(1);
+    await firstHumanPage.getByText(secondNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+    expect(await firstHumanPage.locator(`.transcript-entry.output[data-reply-to="${secondMessage.id}"]`).count()).toBe(0);
+    expect(await firstHumanPage.getByText(`respuesta sintética Isa ${secondNonce}`, { exact: true }).count()).toBe(0);
 
     await secondHumanPage.reload({ waitUntil: 'domcontentloaded' });
-    const secondRoot = secondHumanPage.getByText(secondNonce, { exact: true }).locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
-    await secondRoot.getByText(`respuesta sintética Isa ${secondNonce}`, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
-    const firstRootOnSecondPage = secondHumanPage.getByText(ownerNonce, { exact: true }).locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
-    await firstRootOnSecondPage.getByText(`respuesta sintética Isa ${ownerNonce}`, { exact: true }).waitFor({ state: 'hidden', timeout: 12_000 });
+    await secondHumanPage.getByText(secondNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+    const secondReply = secondHumanPage.locator(`.transcript-entry.output[data-reply-to="${secondMessage.id}"] .canonical-reply[data-delivery-id="${secondMessage.deliveryId}"]`);
+    await secondReply.getByText(`respuesta sintética Isa ${secondNonce}`, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+    expect(await secondReply.count()).toBe(1);
+    await secondHumanPage.getByText(ownerNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+    expect(await secondHumanPage.locator(`.transcript-entry.output[data-reply-to="${firstMessage.id}"]`).count()).toBe(0);
+    expect(await secondHumanPage.getByText(`respuesta sintética Isa ${ownerNonce}`, { exact: true }).count()).toBe(0);
 
     const crossTenantPage = await loginAndCreateMembership(jhonTenant, { width: 360, height: 800 }, false);
     const crossTenantDetail = await crossTenantPage.evaluate(async (url) => {
