@@ -14,6 +14,7 @@ import {
   type AgentNotifyEntry, type NotifyDenialCode
 } from '../deliveries.js';
 import { StoreError } from '../errors.js';
+import { loadDeliveryHumanLineage, preserveHumanMessageLineage } from '../human-message-lineage.js';
 import { insertMessage } from '../messages/_insert.js';
 import type { DeliveryRow } from '../observability.js';
 import { visibleText } from '../outbox.js';
@@ -67,6 +68,17 @@ function agentNotifyRequestId(deliveryId: string, attempt: number, notifyIndex: 
 }
 
 export abstract class AgentNotificationsRepository extends AgentChainControlRepository {
+  private async notificationHumanLineage(client: DatabaseClient, context: NotificationContext) {
+    if (context.sourceDeliveryId === undefined && context.sourceMessageId === undefined
+      && context.source !== 'agent_output') return undefined;
+    if (context.sourceDeliveryId === undefined || context.sourceMessageId === undefined) {
+      throw new StoreError('conflict', 'notification source is unavailable');
+    }
+    return loadDeliveryHumanLineage(client, {
+      id: context.sourceDeliveryId, message_id: context.sourceMessageId,
+      recipient_tenant: context.tenant, recipient_alias: context.alias,
+    });
+  }
 
   /**
    * The single authorization engine for proactive egress. Both surfaces (the
@@ -136,6 +148,15 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
     );
     const previous = replay.rows[0];
     if (previous) {
+      if (previous.produced_message_id !== null) {
+        const target = await client.query(
+          'SELECT id FROM messages WHERE id=$1 AND tenant_id=$2 AND actor_alias=$3 FOR SHARE',
+          [previous.produced_message_id, context.tenant, context.alias],
+        );
+        if (target.rowCount !== 1) throw new StoreError('conflict', 'notification target disagrees');
+        await preserveHumanMessageLineage(client, previous.produced_message_id,
+          await this.notificationHumanLineage(client, context), true);
+      }
       return {
         notification_id: previous.id,
         decision: previous.decision,
@@ -246,6 +267,7 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
       if (quiet) return deny('quiet_hours');
     }
 
+    const lineage = await this.notificationHumanLineage(client, context);
     const notificationMessage = await insertMessage(client, {
       requestId: context.requestId,
       traceId: context.traceId,
@@ -279,6 +301,7 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
       throw new Error('egress notification message insert returned no id');
     }
     const notificationMessageId = insertedMessage.id;
+    await preserveHumanMessageLineage(client, notificationMessageId, lineage);
 
     // The relay's own correlation root is the notification message itself, never
     // the chain it came from. Reusing the inbound root would make claimOutbox's
