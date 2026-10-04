@@ -1,3 +1,4 @@
+import type { OpenClawPhaseObserver } from "../sdk/openclaw-phases.js";
 import type { NoticeSelection } from "../sdk/notify-history.js";
 import type { HarnessTimeoutKind } from "../sdk/message-timeout.js";
 import type { DeliveryEnvelope, ProfileRuntimeContract } from "@cauce/protocol";
@@ -94,6 +95,7 @@ export interface HarnessAdapterOptions {
 export type SessionLane = "human" | "agent";
 
 export interface HarnessExecuteRequest {
+  readonly onOpenClawPhase?: OpenClawPhaseObserver;
   readonly emissionSocketPath?: string;
   readonly noticeHistory?: NoticeSelection;
   readonly emissionOutput?: () => StructuredOutput | undefined;

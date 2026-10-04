@@ -1,3 +1,4 @@
+import { OpenClawPhaseFrames, phaseEmitter } from "./openclaw-phases.js";
 import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { closeSync } from "node:fs";
@@ -167,10 +168,15 @@ export class SpawnCommandRunner {
         }
       }
 
+      const phase = phaseEmitter(request.harness === "openclaw" ? request.onOpenClawPhase : undefined, "cli");
+      const phaseFrames = request.harness === "openclaw" && request.openClawPhaseFrames === true && request.startWitness?.kind === "stderr-marker" && request.startWitness.marker === "<<cauce:harness-started>>"
+        ? new OpenClawPhaseFrames(request.onOpenClawPhase) : undefined;
+      phase("child_spawned");
       this.logger({ event: "spawn", harness: request.harness });
       const pid = child.pid;
       let stdout: Buffer = Buffer.alloc(0);
       let stderr: Buffer = Buffer.alloc(0);
+      let stderrBytes = 0;
       const witness = request.startWitness;
       let harnessStarted: boolean | undefined = witness === undefined ? undefined : false;
       const noteHarnessStart = (): void => {
@@ -193,7 +199,9 @@ export class SpawnCommandRunner {
 
       const settle = (): void => {
         if (settled) return;
+        if (phaseFrames !== undefined) stderr = collect(stderr, phaseFrames.finish());
         settled = true;
+        phase("runner_settled");
         clearTimeout(timeout);
         if (reapTimer !== undefined) clearTimeout(reapTimer);
         request.signal.removeEventListener("abort", onAbort);
@@ -256,6 +264,7 @@ export class SpawnCommandRunner {
         timedOut ||= reason === "timeout";
         cancelled ||= reason === "cancel";
         outputExceeded ||= reason === "output";
+        phase(reason === "timeout" ? "runner_timeout" : reason === "cancel" ? "runner_cancelled" : "runner_failed");
         this.logger({ event: "terminate", harness: request.harness, timedOut, cancelled });
         signalProcessGroup(child, pid, "SIGTERM");
         const killTimer = setTimeout(() => { signalProcessGroup(child, pid, "SIGKILL"); }, this.killGraceMs);
@@ -287,8 +296,11 @@ export class SpawnCommandRunner {
         if (witness?.kind === "stdout-first-byte" && chunk.byteLength > 0) noteHarnessStart();
       });
       child.stderr.on("data", (chunk: Buffer) => {
-        noteProgress();
-        stderr = collect(stderr, chunk);
+        stderrBytes += chunk.byteLength;
+        if (phaseFrames !== undefined && stderrBytes > this.maxOutputBytes) terminate("output");
+        const ordinary = phaseFrames?.push(chunk) ?? chunk;
+        if (phaseFrames === undefined || ordinary.byteLength > 0) noteProgress();
+        stderr = collect(stderr, ordinary);
         // Search the marker over the accumulated stderr in case it arrives split across reads.
         if (witness?.kind === "stderr-marker" && stderr.includes(witness.marker)) noteHarnessStart();
       });
@@ -297,6 +309,7 @@ export class SpawnCommandRunner {
       request.signal.addEventListener("abort", onAbort, { once: true });
 
       child.once("error", () => {
+        phase("runner_failed");
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
@@ -306,12 +319,14 @@ export class SpawnCommandRunner {
       });
 
       child.once("exit", (code, signal) => {
+        phase("child_exit");
         exitCode = code;
         exitSignal = signal;
         armReap(this.orphanPipeGraceMs);
       });
 
       child.once("close", (code, signal) => {
+        phase("child_close");
         exitCode ??= code;
         exitSignal ??= signal;
         settle();
