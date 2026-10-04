@@ -7,6 +7,7 @@ import {
 import { filterOwnedBlobArtifactRefs } from '../../owned-blob-artifacts.js';
 import { insertDelivery, insertMessage } from '../../../messages/_insert.js';
 import type { DeliveryRow } from '../../../observability.js';
+import { loadDeliveryHumanLineage, preserveHumanMessageLineage } from '../../../human-message-lineage.js';
 import type { ResolvedAgentOutputEntry } from '../policy.js';
 
 interface PersistedAgentOutput {
@@ -33,6 +34,7 @@ export async function persistAgentOutput(
     visitedPathAvailable: boolean;
   }
 ): Promise<PersistedAgentOutput> {
+  const humanLineage = await loadDeliveryHumanLineage(client, input.row);
   const proposed = attachmentsFromArtifacts(input.output.artifacts, input.output.artifactsWithheld);
   const filtered = await filterOwnedBlobArtifactRefs(
     client, proposed.refs, input.row.recipient_tenant, input.row.recipient_alias,
@@ -66,6 +68,7 @@ export async function persistAgentOutput(
   });
   const messageId = message.rows[0]?.id;
   if (!messageId) throw new Error('agent output message insert returned no id');
+  await preserveHumanMessageLineage(client, messageId, humanLineage);
   const delivery = await insertDelivery(client, {
     messageId,
     recipientTenant: input.targetTenant,

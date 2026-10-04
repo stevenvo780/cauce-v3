@@ -2,6 +2,10 @@ import {
   clampAgentPriority, isLiteralTrue, isRfcUuid, type DeliveryState, type Tenant
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient } from '../../../db.js';
+import { StoreError } from '../../errors.js';
+import {
+  humanLineageConsensus, loadDeliveryHumanLineage, preserveHumanMessageLineage,
+} from '../../human-message-lineage.js';
 import { AgentsRepository } from '../../agents.js';
 import { grantCarriedBlobs } from '../../blob-carry.js';
 import { postgresTextSafe } from '../../deliveries.js';
@@ -43,25 +47,25 @@ export abstract class AgentResponseRepository extends AgentsRepository {
     errorCode?: string,
     late?: { previousStatus: DeliveryState }
   ): Promise<AgentResponseDisposition> {
-    const responseCorrelation = row.body.type === 'agent.response'
-      ? objectRecord(row.body.correlation)
-      : undefined;
-    const claimedResponseToDeliveryId = isRfcUuid(responseCorrelation?.response_to_delivery_id)
-      ? responseCorrelation.response_to_delivery_id
-      : null;
-    const trustedResponse = claimedResponseToDeliveryId === null
-      ? false
-      : (await client.query(
-        `SELECT 1 FROM audit_events
-         WHERE message_id=$1 AND delivery_id=$2
-           AND action='agent_output.response' AND decision='allow'
-         LIMIT 1 FOR SHARE`,
-        [row.message_id, row.id]
-      )).rowCount === 1;
-    const responseToDeliveryId = trustedResponse ? claimedResponseToDeliveryId : null;
+    const responseSources = row.body.type === 'agent.response'
+      ? await client.query<{ source_delivery_id: string }>(
+        `SELECT audit.metadata->>'source_delivery_id' AS source_delivery_id
+         FROM audit_events audit
+         JOIN deliveries delivery ON delivery.id=audit.delivery_id
+           AND delivery.message_id=audit.message_id
+         WHERE audit.message_id=$1 AND audit.delivery_id=$2
+           AND audit.action='agent_output.response' AND audit.decision='allow'
+         FOR SHARE OF audit,delivery`, [row.message_id, row.id],
+      ) : undefined;
+    const sourceIds = new Set(responseSources?.rows.map((entry) => entry.source_delivery_id));
+    if (sourceIds.size > 1) throw new StoreError('conflict', 'response lineage is ambiguous');
+    const sourceId = [...sourceIds][0];
+    const responseToDeliveryId = isRfcUuid(sourceId) ? sourceId : null;
     const parent = await client.query<{
       source_delivery_id: string;
       source_attempt: number;
+      produced_message_id: string;
+      produced_delivery_id: string;
       source_message_id: string;
       source_tenant: Tenant;
       source_alias: string;
@@ -70,7 +74,8 @@ export abstract class AgentResponseRepository extends AgentsRepository {
       correlation: Record<string, unknown>;
     }>(
       `SELECT materialization.source_delivery_id,materialization.source_attempt,
-              materialization.source_message_id,
+              materialization.source_message_id,materialization.produced_message_id,
+              materialization.produced_delivery_id,
               materialization.source_tenant,materialization.source_alias,
               materialization.hop_count,materialization.hop_budget,materialization.correlation
        FROM agent_output_materializations materialization
@@ -87,6 +92,21 @@ export abstract class AgentResponseRepository extends AgentsRepository {
     );
     const relationship = parent.rows[0];
     if (!relationship) return 'not_child';
+
+    const humanLineage = humanLineageConsensus([
+      await loadDeliveryHumanLineage(client, row),
+      await loadDeliveryHumanLineage(client, {
+        id: relationship.produced_delivery_id, message_id: relationship.produced_message_id,
+        recipient_tenant: row.recipient_tenant, recipient_alias: row.recipient_alias,
+      }),
+      await loadDeliveryHumanLineage(client, {
+        id: relationship.source_delivery_id, message_id: relationship.source_message_id,
+        recipient_tenant: relationship.source_tenant, recipient_alias: relationship.source_alias,
+      }),
+    ]);
+    if (responseToDeliveryId === null && relationship.produced_delivery_id !== row.id) {
+      throw new StoreError('conflict', 'response delivery does not match its materialization');
+    }
 
     // Verify the recipient agent has exactly one enabled membership in its room.
     // Counted via rowCount for compatibility with FOR SHARE.
@@ -173,6 +193,10 @@ export abstract class AgentResponseRepository extends AgentsRepository {
         client, row, relationship, attempt, childDeliveryId, outcome, policy, error, errorCode
       );
     if (reservation && !reservation.emit) {
+      if (!reservation.lastNoticeMessageId) {
+        throw new StoreError('conflict', 'coalesced response target is unavailable');
+      }
+      await preserveHumanMessageLineage(client, reservation.lastNoticeMessageId, humanLineage, true);
       await this.recordCoalescedFailure(
         client, row, relationship, reservation, attempt, childDeliveryId, outcome
       );
@@ -261,6 +285,7 @@ export abstract class AgentResponseRepository extends AgentsRepository {
     });
     const responseMessageId = message.rows[0]?.id;
     if (!responseMessageId) throw new Error('agent response message insert returned no id');
+    await preserveHumanMessageLineage(client, responseMessageId, humanLineage);
     const delivery = await insertDelivery(client, {
       messageId: responseMessageId,
       recipientTenant: relationship.source_tenant,
