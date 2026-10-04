@@ -110,6 +110,9 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | scrypt (`DEFAULT_SCRYPT_COST`, `DEFAULT_SCRYPT_BLOCK_SIZE`, `DEFAULT_SCRYPT_PARALLELISM`, `MAX_MEMORY`=96 MiB) | N/r/p | 32_768 / 8 / 1; clave 32 B, salt 16 B | fijo | — |
 | Contraseña (`MIN_PASSWORD_LENGTH`, `MAX_PASSWORD_LENGTH`) | chars | 12–1_024 | fijo | — |
 | `CAUCE_AUTH_PROVIDER`, `CAUCE_CONSOLE_PASSWORD_FALLBACK` | enum | `mtls` (fallback token-file/none) | env | — |
+| `CAUCE_MCP_PUBLIC_ORIGIN` | origen | sin default; origen HTTPS exacto, sin ruta, query, fragmento ni credenciales; la audiencia MCP deriva `{origen}/mcp` | env público, no secreto | arranque MCP |
+| `CAUCE_MCP_OAUTH_ISSUER` | URL | sin default; emisor HTTPS exacto esperado en el token | env público, no secreto | arranque MCP |
+| `CAUCE_MCP_OAUTH_JWKS_URI` | URL | sin default; endpoint HTTPS fijo de claves públicas, sin query, fragmento ni credenciales | env público, no secreto | arranque MCP |
 | OIDC sesión/login/leeway | ms | 8 h / 10 min / 30 s | código | — |
 | JWKS cache/tolerancia | ms/s | 300_000 / 30 | código | — |
 | `SECRET_HANDOFF_MAX_TTL_MS` (`protocol/sealing.ts:23`, `MIN_HANDOFF_TTL_MS`=30_000) | ms | 86_400_000 (24 h) | fijo | — |
@@ -123,6 +126,9 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | Puertos (`PORT`, `CAUCE_HEALTH_PORT`, `CAUCE_CONSOLE_ORIGINS`) | — | datos 8080, health 8081 (≠), consola 8444 | env | e2e |
 | Redacción (`MAX_SCANNED_CHARACTERS`, `MAX_RULE_MATCH_CHARACTERS`, `MAX_SCANNED_VALUE_CHARACTERS`, `MAX_SCANNED_NODES`, `MAX_SCANNED_TOTAL_CHARACTERS`) | chars/nodos | ventana 256 KiB, match 20 KiB, valor 1 MiB, nodos 100 K, total 4 MiB | fijo | e2e redaction |
 | `CAUCE_REDACT_PUBLISH` | bool | true | env | — |
+
+El MCP humano permanece desactivado si las tres variables están ausentes. Una configuración
+parcial o una URL inválida hace abortar el arranque antes de crear el pool PostgreSQL.
 
 ## 7. Retención, GC y poda
 
