@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "build": "pnpm typecheck && pnpm exec esbuild src/server.ts --bundle --platform=node --format=esm --external:pg --outfile=dist/server.js && pnpm exec esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js && pnpm exec esbuild src/gateway-server.ts src/gateway-http.ts --bundle --platform=node --format=esm --packages=external --external:@cauce/protocol --outdir=dist && pnpm exec tsc --noEmit false --declaration --emitDeclarationOnly --outDir dist/types",
+    "build": "pnpm exec tsc --noEmit -p tsconfig.build.json && pnpm exec esbuild src/server.ts --bundle --platform=node --format=esm --external:pg --outfile=dist/server.js && pnpm exec esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js && pnpm exec esbuild src/gateway-server.ts src/gateway-http.ts --bundle --platform=node --format=esm --packages=external --external:@cauce/protocol --outdir=dist && pnpm exec tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir dist/types",
     "start": "node dist/server.js",
     "start:gateway": "node dist/gateway-server.js",
     "dev": "tsx src/server.ts",
