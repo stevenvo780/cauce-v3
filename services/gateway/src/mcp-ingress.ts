@@ -4,9 +4,9 @@ import { createGatewayHttpHandler, type GatewayHttpOptions } from '@cauce/mcp-fl
 export type McpIngressOptions = GatewayHttpOptions;
 
 // The listener owner must configure header, connection and HTTP timeouts separately.
-// The handler's void return cannot expose completion of SDK cleanup to app.close().
 export const registerMcpIngress: FastifyPluginAsync<McpIngressOptions> = async (app, options) => {
   const handler = createGatewayHttpHandler(options);
+  app.addHook('preClose', async () => { await handler.drain(); });
   for (const url of ['/mcp', '/.well-known/oauth-protected-resource/mcp']) {
     app.all(url, {
       onRequest: async (request, reply) => {
