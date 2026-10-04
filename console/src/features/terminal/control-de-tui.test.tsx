@@ -28,6 +28,8 @@ const MOTIVO = 'destrabo a mano la aprobacion colgada de zeus';
 interface SesionPedida { mode: string; reason: string }
 interface ControlPedido { sid: string; body: Record<string, unknown> }
 
+const sesionesTerminalEmitidas = new Set<string>();
+
 function destino(overrides: Partial<TerminalTarget> = {}): TerminalTarget {
   return {
     tenant_id: TENANT,
@@ -68,8 +70,11 @@ function servirSesiones(registro: SesionPedida[]) {
       const body = await request.json() as Record<string, unknown>;
       const mode = String(body.mode);
       registro.push({ mode, reason: String(body.reason) });
+      const writableGrant = mode === WRITABLE_TUI_MODE;
+      const sessionId = writableGrant ? `pty-rw-${String(registro.filter((item) => item.mode === WRITABLE_TUI_MODE).length)}` : SESION_HARNESS;
+      sesionesTerminalEmitidas.add(sessionId);
       return HttpResponse.json(mockTerminalGrant({
-        sessionId: mode === WRITABLE_TUI_MODE ? SESION_ESCRIBIBLE : SESION_HARNESS,
+        sessionId,
         tenantId: TENANT,
         alias: ALIAS,
         container: 'ws-zeus',
@@ -195,6 +200,8 @@ afterEach(async () => {
   await act(async () => { await new Promise((listo) => setTimeout(listo, 0)); });
   closePtySession(SESION_HARNESS);
   closePtySession(SESION_ESCRIBIBLE);
+  for (const sessionId of sesionesTerminalEmitidas) closePtySession(sessionId);
+  sesionesTerminalEmitidas.clear();
   restaurarSocket();
 });
 
