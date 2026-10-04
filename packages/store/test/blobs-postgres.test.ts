@@ -2,9 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { applyMigrations, CauceRepository, StoreError, type DatabasePool } from '../src/index.js';
+import { applyMigrationsThrough, CauceRepository, StoreError, type DatabasePool } from '../src/index.js';
 import { grantBlobForDelivery } from '../src/repository/blob-entitlements.js';
-import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
+import { resetTestDatabase, startTestDatabaseThrough, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
 let database: TestDatabase;
 let databaseStarted = false;
@@ -53,7 +53,7 @@ function blob(overrides: Partial<Parameters<CauceRepository['registerBlob']>[0]>
 }
 
 preparePostgresSuite(import.meta.url, async () => {
-  database = await startTestDatabase();
+  database = await startTestDatabaseThrough('043_blob_tenant_entitlements.sql');
   databaseStarted = true;
   pool = database.pool;
   repository = new CauceRepository(pool);
@@ -66,7 +66,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await applyMigrations(pool);
+  await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
   await resetTestDatabase(pool);
   await pool.query('DELETE FROM blobs');
 });
@@ -281,7 +281,7 @@ describe('blobs repository', () => {
        WHERE constraint_row.conname='blobs_pkey' GROUP BY constraint_row.oid`,
     );
     expect(key.rows[0]?.columns).toEqual(['sha256']);
-    await applyMigrations(pool);
+    await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
   });
 
   it('can remove 043 and 042, then recreate both tables', async () => {
@@ -291,7 +291,7 @@ describe('blobs repository', () => {
     await pool.query(down042);
     const gone = await pool.query<{ relation: string | null }>(`SELECT to_regclass('public.blobs') AS relation`);
     expect(gone.rows[0]?.relation).toBeNull();
-    await applyMigrations(pool);
+    await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
     const back = await pool.query<{ relation: string | null }>(`SELECT to_regclass('public.blobs') AS relation`);
     expect(back.rows[0]?.relation).toBe('blobs');
     const grants = await pool.query<{ relation: string | null }>(

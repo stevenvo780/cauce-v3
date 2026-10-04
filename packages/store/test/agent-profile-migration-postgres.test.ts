@@ -1,8 +1,8 @@
 import { preparePostgresSuite } from './postgres-suite.js';
 import { readFile } from 'node:fs/promises';
 import { afterAll, describe, expect, it } from 'vitest';
-import { applyMigrations, type DatabasePool } from '../src/index.js';
-import { startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
+import { applyMigrationsThrough, type DatabasePool } from '../src/index.js';
+import { startTestDatabaseThrough, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { removeSecretHandoffLayer } from './secret-handoff-layer.js';
 import { removeAgentContextRevisionsLayer } from './agent-context-revisions-layer.js';
 import { removeTerminalControlHoldsLayer } from './terminal-control-holds-layer.js';
@@ -14,8 +14,8 @@ import { removeTerminalControlHoldsLayer } from './terminal-control-holds-layer.
  * Postgres, REVERTED with its `down/`, and applied again — which is the only thing that proves
  * the `down/` is the reverse of something and not a file nobody ever ran.
  *
- * It also tests the SEED, which cannot be observed any other way: `applyMigrations` runs all 23
- * migrations in one shot against an empty database, so when 026 is applied for the first time
+ * It also tests the SEED, which cannot be observed any other way: `applyMigrationsThrough` runs the bundled prefix through 043
+ * in one shot against an empty-prefix database, so when 026 is applied for the first time
  * there is no `agents.role_brief` to copy. The only way to see the seeding work is to revert
  * 026, set briefs, and re-apply it. That is exactly what will happen in production, where the
  * `agents` table carries fifteen rows with their role written.
@@ -85,7 +85,7 @@ async function downProfileDependentsIfApplied(): Promise<void> {
 }
 
 preparePostgresSuite(import.meta.url, async () => {
-  database = await startTestDatabase();
+  database = await startTestDatabaseThrough('043_blob_tenant_entitlements.sql');
   databaseStarted = true;
   pool = database.pool;
 }, 120_000);
@@ -95,7 +95,7 @@ afterAll(async () => {
     // Leave the schema UP no matter what: the other files in the suite share this database,
     // and finding it half-migrated would break them for a reason that is not theirs.
   try {
-    await applyMigrations(pool);
+    await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
   } finally {
     await pool.end();
     await database.container.stop();
@@ -103,8 +103,8 @@ afterAll(async () => {
 });
 
 describe('026 arriba, abajo y arriba otra vez', () => {
-  it('applyMigrations la deja aplicada, con su tabla y sus dos funciones', async () => {
-    await applyMigrations(pool);
+  it('applyMigrationsThrough la deja aplicada, con su tabla y sus dos funciones', async () => {
+    await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
     expect(await tableExists('agent_profiles')).toBe(true);
     expect(await functionExists('cauce_utf16_units')).toBe(true);
     expect(await functionExists('cauce_text_items_ok')).toBe(true);
@@ -147,7 +147,7 @@ describe('026 arriba, abajo y arriba otra vez', () => {
        ON CONFLICT (tenant_id,alias) DO UPDATE SET role_brief=NULL`
     );
 
-    await applyMigrations(pool);
+    await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
 
     const sembrados = await pool.query<{ alias: string; role_summary: string }>(
       `SELECT alias,role_summary FROM agent_profiles ORDER BY alias`
@@ -208,7 +208,7 @@ describe('026 arriba, abajo y arriba otra vez', () => {
     expect(await tableExists('agent_profiles')).toBe(false);
     expect(await functionExists('cauce_utf16_units')).toBe(false);
 
-    await applyMigrations(pool);
+    await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
     expect(await tableExists('agent_profiles')).toBe(true);
     expect(await functionExists('cauce_utf16_units')).toBe(true);
   });
