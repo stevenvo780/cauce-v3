@@ -1,0 +1,6 @@
+services:
+  gateway:
+    environment:
+      CAUCE_MCP_PUBLIC_ORIGIN: ${CAUCE_MCP_PUBLIC_ORIGIN:?required}
+      CAUCE_MCP_OAUTH_ISSUER: ${CAUCE_MCP_OAUTH_ISSUER:?required}
+      CAUCE_MCP_OAUTH_JWKS_URI: ${CAUCE_MCP_OAUTH_JWKS_URI:?required}
