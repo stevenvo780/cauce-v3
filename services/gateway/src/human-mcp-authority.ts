@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isAnyUuid, TenantSchema, type Tenant } from '@cauce/protocol';
 import { lockHumanIdentity, resolveHumanIdentity, StoreError,
   type DatabaseClient, type DatabasePool, type HumanIdentityKey, type HumanIdentitySnapshot } from '@cauce/store';
-import type { VerifiedOAuthIdentity } from '../../../packages/mcp-fleet-monitor/src/gateway-oauth-identity.js';
+import type { VerifiedOAuthIdentity } from '@cauce/mcp-fleet-monitor/gateway-http';
 import { AuthError, AuthorizationError, validatePrincipal, type Principal } from './auth.js';
 import type { ConsoleUserStore } from './console-users.js';
 import { consoleRoleAuthority, consoleUserPrincipal } from './console-user-authority.js';

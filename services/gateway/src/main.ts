@@ -18,6 +18,7 @@ import { registerSecretHandoffPlane } from './secret-handoff/routes.js';
 import { registerTerminalControlPlane } from './terminal/plugin.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
 import { ConsolePublishTelemetry } from './console-publish-telemetry.js';
+import { configuredHumanMcp } from './mcp-configuration.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is required');
@@ -198,6 +199,7 @@ function configuredConsoleOrigins(): string[] | undefined {
   return origins.length === 0 ? undefined : origins;
 }
 
+const humanMcp = configuredHumanMcp();
 const pool = createPool(databaseUrl);
 const consoleOrigins = configuredConsoleOrigins();
 const authProvider = await configuredAuthProvider(pool);
@@ -213,6 +215,7 @@ const consolePublishTelemetry = new ConsolePublishTelemetry();
 const blobs = configuredBlobApi(process.env);
 const contextRepository = configuredContextRepository();
 const app = await buildGateway({
+  ...(humanMcp === undefined ? {} : { humanMcp }),
   ...(contextRepository === undefined ? {} : { contextRepository }),
   pool,
   authProvider,

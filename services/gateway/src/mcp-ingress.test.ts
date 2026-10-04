@@ -288,11 +288,11 @@ describe('MCP ingress over native HTTP on the Fastify listener', () => {
     let operationSignal: AbortSignal | undefined;
     options.operationsFactory.forRequest = vi.fn(async (_identity, signal) => {
       operationSignal = signal;
-      await new Promise<void>((resolve) => signal.addEventListener('abort', async () => {
+      await new Promise<void>((resolve) => { signal.addEventListener('abort', async () => {
         await cleanupBarrier;
         cleanupFinished = true;
         resolve();
-      }, { once: true }));
+      }, { once: true }); });
       return {
         status: async () => ({ version: '3.0', tenant_id: 'TenantA', online: 0, presence: { items: [], total: 0, truncated: false } }),
         agents: async () => ({ tenant_id: 'TenantA', items: [], total: 0, truncated: false }),

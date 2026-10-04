@@ -7,6 +7,14 @@ import { MCP_METADATA_PATH, type GatewayAuthorization, type HumanGatewayAuthoriz
 import { createGatewayToolServer } from './gateway-tools.js';
 import type { GatewayOperationsFactory } from './gateway-operations.js';
 
+export { createHumanGatewayAuthorization, type HumanGatewayAuthorization } from './gateway-authorization.js';
+export { type VerifiedOAuthIdentity, type OAuthIdentityVerifierConfiguration } from './gateway-oauth-identity.js';
+export {
+  GatewayOperationError, GatewayOperationFailureSchema, McpSubmitCommandSchema, HumanMcpReceiptSchema,
+  type GatewayOperationsFactory, type HumanMcpReceipt, type McpSubmitCommand,
+} from './gateway-operations.js';
+export { projectGatewayAgents, projectGatewayStatus } from './gateway-projection.js';
+
 export const MAX_MCP_REQUEST_BYTES = 16 * 1024;
 export const MAX_MCP_REQUESTS = 8;
 

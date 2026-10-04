@@ -5,7 +5,7 @@ import {
   PublishIntentExpiredError, PublishIntentRateLimitedError, PublishIntentReconciliationRequired, StoreError,
   type DatabaseClient, type HumanIdentitySnapshot, type HumanMessageOptions,
 } from '@cauce/store';
-import { GatewayOperationError, type McpSubmitCommand } from '../../../packages/mcp-fleet-monitor/src/gateway-operations.js';
+import { GatewayOperationError, type McpSubmitCommand } from '@cauce/mcp-fleet-monitor/gateway-http';
 import type { VerifiedOAuthIdentity } from '../../../packages/mcp-fleet-monitor/src/gateway-oauth-identity.js';
 import type { GatewayRepository } from './app.js';
 import type { ConsoleUser } from './console-users.js';
