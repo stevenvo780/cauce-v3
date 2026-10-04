@@ -392,6 +392,16 @@ class TheBarrierIsReadFromARealPane(unittest.TestCase):
         self._set_barrier("f" * 64)
         self.assertTrue(agent.pane_input_barrier_held(self.bundle))
 
+    def test_new_harnesses_keep_the_live_pane_barrier_and_prefix(self) -> None:
+        for harness in ("muse", "grok"):
+            with self.subTest(harness=harness):
+                self.bundle["harness"] = harness
+                self._set_barrier("")
+                self.assertFalse(agent.pane_input_barrier_held(self.bundle))
+                self._set_barrier("f" * 64)
+                self.assertTrue(agent.pane_input_barrier_held(self.bundle))
+                self.assertEqual(agent.InputBarrier(self.bundle).prefix_bytes(), frozenset({0x02}))
+
     def test_a_keystroke_is_dropped_while_the_real_option_is_set(self) -> None:
         self._set_barrier("a" * 64)
         master, slave = os.openpty()

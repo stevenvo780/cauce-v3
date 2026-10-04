@@ -571,7 +571,7 @@ publish_bundle() {
     TMUX_SESSION_FOUND=''
     # shellcheck disable=SC2034  # contract: the PTY suite reads this variable
     TMUX_TARGET_FOUND=''
-    if [[ $harness == codex || $harness == claude ]]; then
+    if [[ $harness == codex || $harness == claude || $harness == muse || $harness == grok ]]; then
       if derive_harness_command; then
         printf 'cauce-pty-launcher: live tmux context measured alias=%s socket=%s measured_session_id=%s\n' \
           "$alias_name" "$TMUX_SOCKET" "$TMUX_SESSION_FOUND" >&2

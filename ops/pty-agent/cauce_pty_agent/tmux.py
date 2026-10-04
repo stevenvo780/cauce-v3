@@ -57,7 +57,7 @@ def _tmux_tui_config(value: Any, harness: str, alias: str) -> dict[str, str] | N
     """
     if value in (None, "", {}):
         return None
-    if harness not in ("claude", "codex") or not isinstance(value, dict):
+    if harness not in ("claude", "codex", "muse", "grok") or not isinstance(value, dict):
         raise PermanentError("bundle field is invalid: tmux_tui")
     if set(value) != {"path", "socket"} or not TMUX_IDENTITY_RE.fullmatch(alias):
         raise PermanentError("bundle field is invalid: tmux_tui")
@@ -87,7 +87,7 @@ def tmux_tui_target(bundle: dict[str, Any]) -> str | None:
     alias = bundle.get("alias")
     if not isinstance(config, dict) or not isinstance(alias, str):
         return None
-    if not TMUX_IDENTITY_RE.fullmatch(alias) or bundle.get("harness") not in ("claude", "codex"):
+    if not TMUX_IDENTITY_RE.fullmatch(alias) or bundle.get("harness") not in ("claude", "codex", "muse", "grok"):
         return None
     return f"cauce-{alias}:{TMUX_TUI_WINDOW}"
 
