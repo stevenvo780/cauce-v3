@@ -1,18 +1,27 @@
 import { screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { vi } from 'vitest';
+import { beforeEach, vi } from 'vitest';
 import { ConfigPage } from './ConfigPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { recordChanges, servirConfig, type ChangeRequest } from './ConfigPage.test-helpers';
 
+const contextDrafts = vi.hoisted(() => new Map<string, string>());
+
 vi.mock('../live/AgentContextPanel', () => ({
-  AgentContextPanel: ({ tenantId, alias, onDirtyChange }: { tenantId: string; alias: string; onDirtyChange: (dirty: boolean) => void }) =>
-    <div data-testid="canonical-context">{tenantId}/{alias}
-      <button onClick={() => { onDirtyChange(true); }}>Editar borrador</button>
-    </div>,
+  AgentContextPanel: ({ tenantId, alias, onDirtyChange }: { tenantId: string; alias: string; onDirtyChange: (dirty: boolean) => void }) => {
+    const key = `${tenantId}/${alias}`;
+    const [, render] = useState(0);
+    return <div data-testid="canonical-context">{key}
+      {contextDrafts.has(key) ? <p>Borrador guardado: {contextDrafts.get(key)}</p> : null}
+      <button onClick={() => { contextDrafts.set(key, 'perfil pendiente'); render((revision) => revision + 1); onDirtyChange(true); }}>Editar borrador</button>
+    </div>;
+  },
 }));
+
+beforeEach(() => { contextDrafts.clear(); });
 
 const snapshot = {
   revision: 4,
@@ -44,7 +53,10 @@ it('abre en agentes y grupos sin exponer altas, JSON ni permisos como mandos cot
   expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Mutación JSON')).not.toBeInTheDocument();
   expect(screen.queryByTestId('canonical-context')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Abrir contexto de A/member_only' })).toBeDisabled();
+  const memberOnly = screen.getByRole('button', { name: 'Abrir contexto de A/member_only' });
+  expect(memberOnly).toBeDisabled();
+  expect(screen.getByText(/Contexto no disponible.*solo aparece como miembro/i)).toBeVisible();
+  expect(memberOnly).toHaveAttribute('aria-describedby', expect.stringContaining('context-unavailable'));
   expect(changes).toEqual([]);
 });
 
@@ -61,6 +73,31 @@ it('abre la autoridad canónica con identidad completa y vuelve sin descartar el
   expect(screen.getByRole('button', { name: 'Abrir contexto de A/same' })).toHaveFocus();
   await user.click(screen.getByRole('button', { name: 'Abrir contexto de B/same' }));
   expect(screen.getByTestId('canonical-context')).toHaveTextContent('B/same');
+});
+
+it('recupera foco y conserva el borrador si desaparece el agente y vuelve en otra lectura', async () => {
+  let current = snapshot;
+  servirConfig(() => current);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await user.click(await screen.findByRole('button', { name: 'Abrir contexto de A/same' }));
+  await user.click(screen.getByRole('button', { name: 'Editar borrador' }));
+  expect(screen.getByText('Borrador guardado: perfil pendiente')).toBeInTheDocument();
+
+  current = { ...snapshot, agents: [], memberships: [] };
+  await user.click(screen.getByRole('button', { name: 'Actualizar' }));
+  const recovery = await screen.findByRole('button', { name: 'Volver al inventario y conservar borrador' });
+  expect(await screen.findByRole('alert')).toHaveTextContent(/borrador sigue conservado/);
+  await waitFor(() => { expect(recovery).toHaveFocus(); });
+  await user.click(recovery);
+  expect(screen.getByRole('searchbox')).toHaveFocus();
+  expect(screen.queryByTestId('canonical-context')).not.toBeInTheDocument();
+
+  current = snapshot;
+  await user.click(screen.getByRole('button', { name: 'Actualizar' }));
+  await user.click(await screen.findByRole('button', { name: 'Abrir contexto de A/same' }));
+  expect(screen.getByText('Borrador guardado: perfil pendiente')).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Uno · Contexto' })).toHaveFocus();
 });
 
 it('filtra por grupos sin alterar el inventario y abre administración sólo a pedido', async () => {

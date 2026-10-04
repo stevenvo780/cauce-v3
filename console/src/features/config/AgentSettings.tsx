@@ -9,16 +9,23 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
   const [selected, setSelected] = useState<string>();
   const [dirty, setDirty] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const recoveryButton = useRef<HTMLButtonElement>(null);
   const buttons = useRef(new Map<string, HTMLButtonElement>());
   const previous = useRef<string | undefined>(undefined);
   const agents = useMemo(() => settingsAgents(snapshot), [snapshot]);
   const visible = filterSettingsAgents(agents, query);
   const current = agents.find((agent) => agent.key === selected);
   useEffect(() => {
-    if (selected) heading.current?.focus({ preventScroll: true });
-    else if (previous.current) buttons.current.get(previous.current)?.focus({ preventScroll: true });
+    if (selected && current?.registered) heading.current?.focus({ preventScroll: true });
+    else if (selected) recoveryButton.current?.focus({ preventScroll: true });
+    else if (previous.current) {
+      const previousButton = buttons.current.get(previous.current);
+      if (previousButton) previousButton.focus({ preventScroll: true });
+      else searchInput.current?.focus({ preventScroll: true });
+    }
     previous.current = selected;
-  }, [selected]);
+  }, [current?.registered, selected]);
 
   if (current?.registered) return <section className="settings-context" aria-label={`Contexto de ${current.tenantId}/${current.alias}`}>
     <div className="settings-context-heading">
@@ -31,12 +38,16 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
   </section>;
 
   return <>
-    {selected ? <p className="notice" role="alert">
-      El agente seleccionado ya no aparece en el registro de esta lectura. Su borrador sigue conservado en esta pestaña.
-    </p> : null}
+    {selected ? <div className="notice" role="alert">
+      <p>El agente seleccionado ya no aparece en el registro de esta lectura. Su borrador sigue conservado en esta pestaña.</p>
+      <button ref={recoveryButton} type="button" className="button secondary"
+        onClick={() => { setSelected(undefined); setDirty(false); }}>
+        Volver al inventario y conservar borrador
+      </button>
+    </div> : null}
     <Panel title="Agentes y contexto" subtitle="Identidad, grupos y responsabilidad en un solo lugar.">
       <label className="settings-search">Buscar agente o grupo
-        <input type="search" value={query} onChange={(event) => { setQuery(event.target.value); }} />
+        <input ref={searchInput} type="search" value={query} onChange={(event) => { setQuery(event.target.value); }} />
       </label>
       {!Array.isArray(snapshot.agents) ? <p className="notice" role="note">
         Registro de agentes desconocido: el servidor no lo publica. Las membresías no acreditan un perfil editable.
@@ -52,6 +63,9 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
                 <span>{agent.tenantId} / {agent.alias}</span>
                 <span>Arnés declarado: {agent.harness ?? 'desconocido'}</span>
                 {agent.enabled === false ? <span className="notice">Registro deshabilitado</span> : null}
+                {!agent.registered ? <span id={`context-unavailable-${encodeURIComponent(agent.key)}`}>
+                  Contexto no disponible: solo aparece como miembro, sin registro editable de agente.
+                </span> : null}
               </div>
               <div className="settings-agent-details">
                 <p>{agent.responsibility ?? 'Responsabilidad sin publicar en esta lectura'}</p>
@@ -68,6 +82,7 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
                 aria-label={`Abrir contexto de ${agent.tenantId}/${agent.alias}`}
                 ref={(button) => { if (button) buttons.current.set(agent.key, button); else buttons.current.delete(agent.key); }}
                 disabled={!agent.registered}
+                aria-describedby={!agent.registered ? `context-unavailable-${encodeURIComponent(agent.key)}` : undefined}
                 title={agent.registered ? undefined : 'No hay registro de agente en esta lectura'}
                 onClick={() => { setSelected(agent.key); setDirty(false); }}
               >Abrir contexto</button>
