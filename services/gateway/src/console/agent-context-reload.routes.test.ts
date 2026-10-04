@@ -1,3 +1,4 @@
+import { coordinateWriteFixture, FIXTURE_WRITE_OPERATION } from './agent-profile.fixtures.js';
 import { createHash } from 'node:crypto';
 import { StoreError } from '@cauce/store';
 import Fastify from 'fastify';
@@ -8,7 +9,7 @@ import {
 } from '@cauce/protocol';
 import {
   medirContextoDeGobierno, registerAgentContextReloadRoutes, type AgentContextReloadDeps,
-  type DeliveriesInFlight, type ContextReloadResponse,
+  type DeliveriesInFlight,
 } from './agent-context-reload.routes.js';
 import {
   registerAgentContextHistoryRoutes, type DocumentRevisionView,
@@ -23,11 +24,6 @@ import type { RuntimeFacts } from './agent-documents.js';
 import type {
   PreparedProfileRuntime, ProfileRuntimeAck, ProfileRuntimePreflight, ProfileRuntimeVerification,
 } from './agent-profile.routes.js';
-
-/**
- * The routes are stood up and hit with `app.inject`. The runtime is a double, but the ORDER the
- * handler imposes on it is the thing under test: nothing may be written before the guard runs.
- */
 
 const OPERADOR_ACTOR = { tenant_id: 'Steven', alias: 'zeus' };
 const ALIAS_ACTOR = { tenant_id: 'Steven', alias: 'argos' };
@@ -234,17 +230,20 @@ function servidor(deps: Partial<TestReloadDeps> = {}, doble = runtime()) {
       generation: 'gen-viva', revision: 3,
       documents: [{ name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('a') }],
     }),
-    fenceRuntime: async (input) => {
-      try {
-      const effect = await input.apply();
-      await deps.recordRuntimeExpectation?.(input.tenantId, input.alias, effect.expectation.revision, (effect.value as ContextReloadResponse).runtime_verification);
-      for (const document of effect.documentRevisions) await deps.recordDocumentRevision?.({ ...document,
-        tenantId: input.tenantId, alias: input.alias, kind: document.kind ?? 'directive' });
-      await (deps.recordAudit ?? (async (entry) => { auditoria.push(entry); }))({ tenant_id: effect.resultAudit.tenantId,
-        actor_alias: effect.resultAudit.actorAlias, action: 'agent_document.write', decision: 'allow', metadata: effect.resultAudit.metadata });
-      return { state: 'committed', value: effect.value };
-      } catch { return { state: 'effect_unknown' }; }
-    },
+    coordinateWrite: (input) => coordinateWriteFixture(input, async (sql, values) => {
+      if (sql.includes('agent_profile_runtime_expectations')) await deps.recordRuntimeExpectation?.(input.tenantId, input.alias, Number(values[2]), {
+        state: 'current', generation: String(values[3]), container_id: null,
+        observed_at: new Date(0).toISOString(), documents: [],
+      });
+      if (sql.includes('agent_document_revisions')) await deps.recordDocumentRevision?.({
+        tenantId: input.tenantId, alias: input.alias, path: String(values[2]), sha256: String(values[3]),
+        bytes: Number(values[4]), actorTenant: String(values[5]), actorAlias: String(values[6]), kind: String(values[7]),
+      });
+      if (sql.includes('audit_events')) await (deps.recordAudit ?? (async (entry) => { auditoria.push(entry); }))({
+        tenant_id: String(values[0]), actor_alias: String(values[1]), action: 'agent_document.write', decision: 'allow',
+        metadata: JSON.parse(String(values[3])) as Record<string, unknown>,
+      });
+    }),
     deliveryInFlight: async () => ({ count: 0, deliveries: [] }),
     recordAudit: async (entry) => { auditoria.push(entry); },
     ...deps,
@@ -291,10 +290,10 @@ describe('POST .../context/reload as an operator', () => {
     let busy = false;
     vivo = servidor({
       prepareRuntime: async () => { reached(); await gate; return double.preflight; },
-      fenceRuntime: async (input) => {
+      coordinateWrite: async (input) => {
         if (busy) throw new StoreError('conflict', 'context reload target has work in flight');
-        const effect = await input.apply();
-        return { state: 'committed', value: effect.value };
+        const effect = await input.dispatch(FIXTURE_WRITE_OPERATION);
+        return { state: 'committed', resolution: 'target', value: effect };
       },
     }, double);
     const request = vivo.inject({ method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO } });
