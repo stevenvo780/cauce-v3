@@ -334,8 +334,8 @@ export class AdapterEngine {
       return;
     }
 
-    if (selectionError !== undefined) {
-      await this.finishError(accepted.record, this.adapterError(selectionError, accepted.record));
+    if (selectionError !== undefined || (humanInitiator !== undefined && this.emission !== undefined && !harness.supportsEmissionEndpoint && delivery.body.type !== "agent.fanin")) {
+      await this.finishError(accepted.record, this.adapterError(selectionError === undefined ? new AdapterError("UNSUPPORTED_HUMAN_EMISSION_SCOPE", "Human emission isolation is unavailable", false) : selectionError, accepted.record));
       return;
     }
     let executionBudget: ExecutionBudget;
@@ -452,9 +452,11 @@ export class AdapterEngine {
           delivery, context: requestContext, signal: controller.signal,
           isCurrent: () => delivery.epoch === this.store.epoch && !this.fenced.has(delivery.delivery_id),
         });
+        const emissionSocketPath = emissionTurn === undefined || humanInitiator === undefined || !harness.supportsEmissionEndpoint ? undefined : await this.emission?.endpointFor(emissionTurn);
         const noticeHistory = await noticeHistoryFor(delivery, this.store, this.egressReceipts,
           this.ownTenantId, controller.signal, this.clock.now().getTime());
         output = await harness.execute({
+          ...(emissionSocketPath === undefined ? {} : { emissionSocketPath }),
           ...(noticeHistory === undefined ? {} : { noticeHistory }),
           prompt,
           ...(attachments === undefined ? {} : { attachments: attachments.attachments }),
@@ -507,7 +509,10 @@ export class AdapterEngine {
     } catch (error) {
       executionFailure = error;
     } finally {
-      if (emissionTurn !== undefined) this.emission?.end(emissionTurn);
+      if (emissionTurn !== undefined) {
+        this.emission?.end(emissionTurn);
+        try { await this.emission?.releaseEndpoint(emissionTurn); } catch (error) { executionFailure ??= error; }
+      }
       await stopClaimRenewal();
     }
 

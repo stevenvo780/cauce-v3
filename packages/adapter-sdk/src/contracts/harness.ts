@@ -94,6 +94,7 @@ export interface HarnessAdapterOptions {
 export type SessionLane = "human" | "agent";
 
 export interface HarnessExecuteRequest {
+  readonly emissionSocketPath?: string;
   readonly noticeHistory?: NoticeSelection;
   readonly emissionOutput?: () => StructuredOutput | undefined;
   readonly onEmissionReady?: (correlationId?: string) => void;

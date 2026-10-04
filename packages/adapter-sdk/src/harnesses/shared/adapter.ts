@@ -128,6 +128,10 @@ export class HarnessAdapter {
       && this.runner.witnessesHarnessStart === true;
   }
 
+  get supportsEmissionEndpoint(): boolean {
+    return this.sharedSession === undefined && !isSharedSessionRunner(this.runner);
+  }
+
   async execute(request: HarnessExecuteRequest): Promise<StructuredOutput> {
     if (request.context?.message_type === "agent.fanin") {
       throw new AdapterError(
@@ -363,6 +367,7 @@ export class HarnessAdapter {
     let degradation: SharedSessionDegradation | undefined;
     if (!isSharedSessionRunner(this.runner)) request.onEmissionReady?.();
     const result = await this.runner.run({
+      ...(this.sharedSession !== undefined || isSharedSessionRunner(this.runner) || request.emissionSocketPath === undefined ? {} : { emissionSocketPath: request.emissionSocketPath }),
       ...invocation,
       ...workspaceCwd(),
       ...(() => {

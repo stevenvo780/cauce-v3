@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
+import { isAbsolute } from "node:path";
 import { closeSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";
 import { ProcessExecutionError } from "./errors.js";
@@ -37,11 +38,20 @@ const SAFE_ENVIRONMENT = [
 ];
 const SECRET_ENVIRONMENT = /(?:secret|token|password|passwd|api[_-]?key|auth|credential|cookie|session)/iu;
 
-function childEnvironment(additions: Readonly<Record<string, string>> | undefined): NodeJS.ProcessEnv {
+function childEnvironment(additions: Readonly<Record<string, string>> | undefined, endpoint: string | undefined): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const key of SAFE_ENVIRONMENT) {
     const value = process.env[key];
     if (value !== undefined) environment[key] = value;
+  }
+  if (additions !== undefined && Object.hasOwn(additions, "CAUCE_EMISSION_SOCKET_PATH")) {
+    throw new ProcessExecutionError("EMISSION_ENDPOINT_OVERRIDE", "Emission endpoint must come from the owned turn", false);
+  }
+  if (endpoint !== undefined) {
+    if (!isAbsolute(endpoint) || endpoint.includes("\0") || endpoint.trim() !== endpoint) {
+      throw new ProcessExecutionError("INVALID_EMISSION_ENDPOINT", "Emission endpoint is invalid", false);
+    }
+    environment.CAUCE_EMISSION_SOCKET_PATH = endpoint;
   }
   for (const [key, value] of Object.entries(additions ?? {})) {
     if (SECRET_ENVIRONMENT.test(key)) {
@@ -55,7 +65,7 @@ function childEnvironment(additions: Readonly<Record<string, string>> | undefine
 function spawnHarness(request: CommandRunRequest, stdinDescriptor: number | undefined): HarnessChild {
   const options = {
     ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
-    env: childEnvironment(request.env),
+    env: childEnvironment(request.env, request.emissionSocketPath),
     shell: false,
     detached: process.platform !== "win32",
     windowsHide: true,

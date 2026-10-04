@@ -257,6 +257,7 @@ type HarnessStartWitness =
 export type HarnessStdinSource = 'pipe' | 'file'; // what backs fd 0; 'file' for CLIs that reopen /dev/stdin (prompt-stdin.ts)
 
 export interface CommandRunRequest extends CommandInvocation {
+  readonly emissionSocketPath?: string;
   readonly emissionOutput?: () => StructuredOutput | undefined;
   readonly onEmissionReady?: (correlationId?: string) => void;
   readonly stdin: string;
