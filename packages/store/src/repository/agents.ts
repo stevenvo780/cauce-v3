@@ -4,7 +4,7 @@ import type { DatabaseClient } from '../db.js';
 import { withTransaction } from '../db.js';
 import {
   canonicalProfileRuntimeContract, reconcileAgentContextWithFence,
-  type AgentContextReconcileFenceInput, type AgentContextReconcileFenceResult,
+  type AgentContextFenceInput, type AgentContextReconcileFenceResult,
 } from './agent-context-reconcile.js';
 import { canonicallyEqual } from './config.js';
 import { DeliveryAcksRepository, type RoutingTarget } from './deliveries.js';
@@ -20,7 +20,7 @@ export type ProfileRuntimeAdoptionAck = ProfileRuntimeAdoptionEvidence & {
 export abstract class AgentsRepository extends DeliveryAcksRepository {
 
   async reconcileAgentContextRuntime<Value>(
-    input: AgentContextReconcileFenceInput<Value>,
+    input: AgentContextFenceInput<Value>,
   ): Promise<AgentContextReconcileFenceResult<Value>> {
     return reconcileAgentContextWithFence(this.pool, input);
   }

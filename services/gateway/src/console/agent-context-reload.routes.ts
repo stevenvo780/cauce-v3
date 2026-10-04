@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import type { CauceRepository } from '@cauce/store';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AliasSchema, TenantSchema, nombresDelArnes, type ContextoDeAlias } from '@cauce/protocol';
 import { profileDocumentPaths, type DocumentKind } from './agent-documents.js';
@@ -6,7 +8,7 @@ import type {
 } from './agent-documents.routes.js';
 import { DOCUMENT_REASON_MAX, DOCUMENT_REASON_MIN } from './agent-documents/write-admission.js';
 import type {
-  PreparedProfileRuntime, ProfileRuntimeAck, ProfileRuntimePreflight, ProfileRuntimeVerification,
+  PreparedProfileRuntime, ProfileRuntimePreflight, ProfileRuntimeVerification,
 } from './agent-profile.routes.js';
 import {
   runtimeErrorCode, runtimeErrorMessage, runtimeErrorStatus,
@@ -115,22 +117,10 @@ export interface AgentContextReloadDeps {
   /** The expectation recorded for this alias, whichever generation it belongs to. */
   readRuntimeExpectation(
     tenantId: string, alias: string,
-  ): Promise<RecordedContextExpectation | undefined>;
-  recordRuntimeExpectation(
-    tenantId: string, alias: string, revision: number, verification: ProfileRuntimeVerification,
-  ): Promise<void>;
+  ): Promise<(RecordedContextExpectation & { readonly revision: number }) | undefined>;
+  fenceRuntime: CauceRepository['reconcileAgentContextRuntime'];
   /** A reload rewrites the files a delivery in flight may be reading right now. */
   deliveryInFlight(tenantId: string, alias: string): Promise<DeliveriesInFlight>;
-  recordDocumentRevision(input: {
-    readonly tenantId: string;
-    readonly alias: string;
-    readonly kind: string;
-    readonly path: string;
-    readonly sha256: string | null;
-    readonly bytes: number;
-    readonly actorTenant: string | null;
-    readonly actorAlias: string | null;
-  }): Promise<unknown>;
   recordAudit(entry: TerminalAuditEntry): Promise<void>;
   /** Overridable so a test counts on its own instance instead of the process-wide one. */
   telemetry?: Pick<ContextContaminationTelemetry, 'recordVerdict'>;
@@ -420,6 +410,11 @@ export function registerAgentContextReloadRoutes(
       });
     }
     const revision = lectura.revision;
+    let priorExpectation;
+    try { priorExpectation = await deps.readRuntimeExpectation(target.tenant_id, target.alias); }
+    catch (error) {
+      return denegar(runtimeErrorStatus(error), { error: runtimeErrorCode(error) ?? 'runtime_expectation_invalid', revision });
+    }
 
     let prepared: PreparedProfileRuntime;
     let existentes: ReadonlyMap<string, string> | undefined;
@@ -457,128 +452,69 @@ export function registerAgentContextReloadRoutes(
 
     const medido = contextoMedido(target, prepared, existentes);
     const contaminacion = evaluarContaminacion(
-      medido, await deps.readRuntimeExpectation(target.tenant_id, target.alias),
+      medido, priorExpectation,
     );
     if (contaminacion.contaminated) return cuarentena(contaminacion, revision);
 
-    let acknowledgements: readonly ProfileRuntimeAck[];
+    let fenced;
     try {
-      acknowledgements = await prepared.apply();
+      fenced = await deps.fenceRuntime({
+        mode: 'reload', tenantId: TenantSchema.parse(target.tenant_id), alias: target.alias,
+        expectedRevision: revision, expectedExpectation: priorExpectation ?? null,
+        apply: async () => {
+          const acknowledgements = await prepared.apply();
+          const verification = appliedRuntimeVerification(
+            prepared.verification, acknowledgements, { requireExactBytes: false },
+          );
+          if (verification.documents.some((document) => !document.current)) {
+            throw Object.assign(new Error('runtime did not acknowledge the complete reload'), { code: 'runtime_ack_incomplete' });
+          }
+          const ackByName = new Map(acknowledgements.map((ack) => [ack.name, ack]));
+          const documents: ContextReloadDocument[] = [];
+          const documentRevisions = [];
+          for (const document of prepared.verification.documents) {
+            const ack = ackByName.get(document.name);
+            if (ack === undefined) continue;
+            documents.push({ name: document.name, path: document.path,
+              sha_before: document.observed_sha, sha_after: ack.sha, bytes: ack.bytes });
+            const kind = RELOAD_DOCUMENT_KINDS.get(document.name);
+            if (kind === undefined || ack.state === 'preserved') continue;
+            documentRevisions.push({ kind, path: ack.path, sha256: ack.sha, bytes: ack.bytes,
+              actorTenant: caller.actor.tenant_id, actorAlias: caller.actor.alias });
+          }
+          const state: ContextApplyState = 'pending_session_refresh';
+          const value: ContextReloadResponse = {
+            ok: true, state, evidence: CONTEXT_APPLY_POLICY[state].evidence,
+            message: CONTEXT_APPLY_POLICY[state].message, tenant_id: target.tenant_id,
+            alias: target.alias, revision, runtime_verification: verification, documents, contaminacion,
+          };
+          if (verification.generation === null) throw new Error('reload runtime generation is absent');
+          return {
+            value, documentRevisions,
+            expectation: { revision, generation: verification.generation,
+              documents: verification.documents.map((document) => ({
+                name: document.name, path: document.path, sha: document.observed_sha ?? '',
+              })) },
+            resultAudit: { tenantId: caller.actor.tenant_id, actorAlias: caller.actor.alias,
+              traceId: randomUUID(), metadata: metadatos(caller, target, {
+                revision, state, generation: verification.generation, documents,
+              }) },
+          };
+        },
+      });
     } catch (error) {
       return denegar(runtimeErrorStatus(error), {
-        error: runtimeErrorCode(error) ?? 'runtime_apply_failed',
-        message: runtimeErrorMessage(error, 'el runtime no acreditó el lote de la recarga'),
+        error: runtimeErrorCode(error) ?? 'context_reload_conflict',
+        message: runtimeErrorMessage(error, 'no se pudo cercar la recarga sin modificar el runtime'),
         revision,
       });
     }
-
-    const verification = appliedRuntimeVerification(
-      prepared.verification,
-      acknowledgements,
-      { requireExactBytes: false },
-    );
-    const ackByName = new Map(acknowledgements.map((ack) => [ack.name, ack]));
-    if (verification.documents.some((document) => !document.current)) {
-      return denegar(502, {
-        error: 'runtime_ack_incomplete',
-        message: 'el runtime no acreditó exactamente todos los documentos de la recarga',
-        revision,
-      });
+    if (fenced.state === 'effect_unknown') {
+      try { await fila(caller, target, 'allow', { revision, state: 'effect_unknown' }); }
+      catch { return reply.code(503).send({ error: 'context_reload_effect_unknown_audit_failed', state: 'effect_unknown', revision }); }
+      return reply.code(503).send({ error: 'context_reload_effect_unknown', state: 'effect_unknown', revision });
     }
-
-    try {
-      await deps.recordRuntimeExpectation(target.tenant_id, target.alias, revision, verification);
-    } catch (error) {
-      return denegar(runtimeErrorCode(error) === 'conflict' ? 409 : 503, {
-        error: runtimeErrorCode(error) ?? 'runtime_expectation_not_recorded',
-        message: runtimeErrorMessage(
-          error, 'los ficheros quedaron escritos pero no se pudo registrar su expectativa',
-        ),
-        revision,
-      });
-    }
-
-    const documents: ContextReloadDocument[] = [];
-    const anotables: { readonly kind: DocumentKind; readonly ack: ProfileRuntimeAck }[] = [];
-    for (const document of prepared.verification.documents) {
-      const ack = ackByName.get(document.name);
-      if (ack === undefined) continue;
-      documents.push({
-        name: document.name,
-        path: document.path,
-        sha_before: document.observed_sha,
-        sha_after: ack.sha,
-        bytes: ack.bytes,
-      });
-      const kind = RELOAD_DOCUMENT_KINDS.get(document.name);
-      /*
-       * A `preserved` file belongs to the agent and the batch only VERIFIED it. Journaling it
-       * would make the diary read as if the reload had rewritten MEMORY.md, which is the one
-       * thing this path promises never to do.
-       */
-      if (kind === undefined || ack.state === 'preserved') continue;
-      anotables.push({ kind, ack });
-    }
-
-    /*
-     * `pending_session_refresh` and not `applied`: the batch proves bytes on disk and nothing
-     * more. Only the adapter's own adoption ACK, which arrives on its next delivery, says the
-     * process is reading them — and this route deliberately does not go and fetch it, because
-     * making the reload wait for it would tempt somebody into restarting the harness to hurry it.
-     */
-    const state: ContextApplyState = 'pending_session_refresh';
-    await fila(caller, target, 'allow', {
-      revision,
-      state,
-      generation: verification.generation,
-      documents: documents.map((document) => ({
-        name: document.name, path: document.path,
-        sha_before: document.sha_before, sha_after: document.sha_after, bytes: document.bytes,
-      })),
-    });
-
-    /*
-     * The journal goes AFTER the audit row on purpose. Both describe a reload that already put
-     * bytes on somebody's disk, and if only one of them can exist, it has to be the one that
-     * accuses a person. Fingerprint and size only: no column here can hold a body.
-     */
-    try {
-      for (const anotable of anotables) {
-        await deps.recordDocumentRevision({
-          tenantId: target.tenant_id,
-          alias: target.alias,
-          kind: anotable.kind,
-          path: anotable.ack.path,
-          sha256: anotable.ack.sha,
-          bytes: anotable.ack.bytes,
-          actorTenant: caller.actor.tenant_id,
-          actorAlias: caller.actor.alias,
-        });
-      }
-    } catch {
-      return reply.code(503).send({
-        error: 'context_journal_not_recorded',
-        message: 'los ficheros quedaron escritos y la fila de auditoría los acusa, pero el diario '
-          + 'de documentos no anotó la reescritura: el histórico de esta recarga queda incompleto',
-        revision,
-        state,
-        documents,
-      });
-    }
-
-    const response: ContextReloadResponse = {
-      ok: true,
-      state,
-      evidence: CONTEXT_APPLY_POLICY[state].evidence,
-      message: CONTEXT_APPLY_POLICY[state].message,
-      tenant_id: target.tenant_id,
-      alias: target.alias,
-      revision,
-      runtime_verification: verification,
-      documents,
-      contaminacion,
-    };
-    return reply.send(response);
+    return reply.send(fenced.value);
   }
 
   app.post<{ Params: { tenantId: string; alias: string }; Body: unknown }>(

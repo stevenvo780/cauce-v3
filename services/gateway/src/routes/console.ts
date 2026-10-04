@@ -39,7 +39,7 @@ import { publishRouteOptions } from './core/publish.js';
 export { createConsoleRoutes } from './console/access.js';
 
 async function expectativaDeRuntime(
-  pool: ConsoleRoutes['options']['pool'], tenantId: string, alias: string,
+  pool: ConsoleRoutes['options']['pool'], tenantId: string, alias: string, strict = false,
 ): Promise<{
   revision: number;
   generation: string;
@@ -51,11 +51,18 @@ async function expectativaDeRuntime(
     [tenantId, alias],
   );
   const row = result.rows[0];
-  if (row === undefined || !Array.isArray(row.documents)) return undefined;
+  if (row === undefined) return undefined;
+  if (!Array.isArray(row.documents)) {
+    if (strict) throw new StoreError('conflict', 'runtime expectation is invalid');
+    return undefined;
+  }
   const parsed = ProfileRuntimeContractSchema.safeParse({
     revision: Number(row.revision), generation: row.generation, documents: row.documents,
   });
-  if (!parsed.success) return undefined;
+  if (!parsed.success) {
+    if (strict) throw new StoreError('conflict', 'runtime expectation is invalid');
+    return undefined;
+  }
   return parsed.data;
 }
 
@@ -409,13 +416,9 @@ function registerConsoleAgentRoutes(
       measureContext: (tenantId, alias) =>
         medirContextoDeGobierno(profileProbe, tenantId, alias),
       readRuntimeExpectation: (tenantId, alias) =>
-        expectativaDeRuntime(options.pool, tenantId, alias),
-      recordRuntimeExpectation: (tenantId, alias, revision, verification) =>
-        recordRuntimeExpectation(
-          tenantId, alias, runtimeContractFromVerification(revision, verification),
-        ),
+        expectativaDeRuntime(options.pool, tenantId, alias, true),
+      fenceRuntime: (input) => repository.reconcileAgentContextRuntime(input),
       deliveryInFlight: (tenantId, alias) => entregaEnVuelo(options.pool, tenantId, alias),
-      recordDocumentRevision: (input) => diario.recordDocumentRevision(input),
       recordAudit: (entry) => recordTerminalAudit(options.pool, entry),
     });
     registerAgentContextReconcileRoutes(app, {

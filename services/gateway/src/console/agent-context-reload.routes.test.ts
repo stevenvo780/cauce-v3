@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { StoreError } from '@cauce/store';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -7,7 +8,7 @@ import {
 } from '@cauce/protocol';
 import {
   medirContextoDeGobierno, registerAgentContextReloadRoutes, type AgentContextReloadDeps,
-  type DeliveriesInFlight,
+  type DeliveriesInFlight, type ContextReloadResponse,
 } from './agent-context-reload.routes.js';
 import {
   registerAgentContextHistoryRoutes, type DocumentRevisionView,
@@ -20,7 +21,7 @@ import { prepareAgentProfileRuntime } from './agent-profile-runtime.js';
 import type { AgentFactsProbe, TerminalAuditEntry } from './agent-documents.routes.js';
 import type { RuntimeFacts } from './agent-documents.js';
 import type {
-  PreparedProfileRuntime, ProfileRuntimeAck, ProfileRuntimePreflight,
+  PreparedProfileRuntime, ProfileRuntimeAck, ProfileRuntimePreflight, ProfileRuntimeVerification,
 } from './agent-profile.routes.js';
 
 /**
@@ -198,7 +199,13 @@ function contextoReal(tenantId: string, alias: string): ContextoDeAlias {
 
 const auditoria: TerminalAuditEntry[] = [];
 
-function servidor(deps: Partial<AgentContextReloadDeps> = {}, doble = runtime()) {
+type TestReloadDeps = AgentContextReloadDeps & {
+  recordRuntimeExpectation(tenant: string, alias: string, revision: number, verification: ProfileRuntimeVerification): Promise<void>;
+  recordDocumentRevision(input: { tenantId: string; alias: string; kind: string; path: string;
+    sha256: string | null; bytes: number; actorTenant: string | null; actorAlias: string | null }): Promise<unknown>;
+};
+
+function servidor(deps: Partial<TestReloadDeps> = {}, doble = runtime()) {
   const app = Fastify();
   registerAgentContextReloadRoutes(app, {
     authorize: async () => OPERADOR_ACTOR,
@@ -224,12 +231,21 @@ function servidor(deps: Partial<AgentContextReloadDeps> = {}, doble = runtime())
         .map(([name, text]) => ({ name, path: `/home/dev/${name}`, sha: sha('a'), text })),
     }),
     readRuntimeExpectation: async () => ({
-      generation: 'gen-viva',
+      generation: 'gen-viva', revision: 3,
       documents: [{ name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('a') }],
     }),
-    recordRuntimeExpectation: async () => undefined,
+    fenceRuntime: async (input) => {
+      try {
+      const effect = await input.apply();
+      await deps.recordRuntimeExpectation?.(input.tenantId, input.alias, effect.expectation.revision, (effect.value as ContextReloadResponse).runtime_verification);
+      for (const document of effect.documentRevisions) await deps.recordDocumentRevision?.({ ...document,
+        tenantId: input.tenantId, alias: input.alias, kind: document.kind ?? 'directive' });
+      await (deps.recordAudit ?? (async (entry) => { auditoria.push(entry); }))({ tenant_id: effect.resultAudit.tenantId,
+        actor_alias: effect.resultAudit.actorAlias, action: 'agent_document.write', decision: 'allow', metadata: effect.resultAudit.metadata });
+      return { state: 'committed', value: effect.value };
+      } catch { return { state: 'effect_unknown' }; }
+    },
     deliveryInFlight: async () => ({ count: 0, deliveries: [] }),
-    recordDocumentRevision: async () => undefined,
     recordAudit: async (entry) => { auditoria.push(entry); },
     ...deps,
   });
@@ -255,10 +271,45 @@ let vivo: ReturnType<typeof servidor> | undefined;
 afterEach(async () => { await vivo?.close(); vivo = undefined; auditoria.length = 0; });
 
 describe('POST .../context/reload as an operator', () => {
+  it('refuses an invalid expectation snapshot before preparing or applying runtime bytes', async () => {
+    const double = runtime();
+    const prepare = vi.fn(async () => double.preflight);
+    vivo = servidor({ prepareRuntime: prepare,
+      readRuntimeExpectation: async () => { throw new StoreError('conflict', 'invalid runtime expectation'); } }, double);
+    const response = await vivo.inject({ method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO } });
+    expect(response.statusCode).toBe(409);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(double.aplicaciones).toEqual([]);
+  });
+
+  it('denies a delivery claimed after preflight before writing the runtime', async () => {
+    const double = runtime();
+    let reached = (): void => undefined;
+    const prepared = new Promise<void>((resolve) => { reached = resolve; });
+    let resume = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { resume = resolve; });
+    let busy = false;
+    vivo = servidor({
+      prepareRuntime: async () => { reached(); await gate; return double.preflight; },
+      fenceRuntime: async (input) => {
+        if (busy) throw new StoreError('conflict', 'context reload target has work in flight');
+        const effect = await input.apply();
+        return { state: 'committed', value: effect.value };
+      },
+    }, double);
+    const request = vivo.inject({ method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO } });
+    await prepared;
+    busy = true;
+    resume();
+    const response = await request;
+    expect(double.aplicaciones).toEqual([]);
+    expect(response.statusCode).toBe(409);
+  });
+
   it('re-materializes and answers the written-but-not-yet-read state with its evidence', async () => {
     const doble = runtime();
     const recordDocumentRevision =
-      vi.fn<AgentContextReloadDeps['recordDocumentRevision']>(async () => undefined);
+      vi.fn<TestReloadDeps['recordDocumentRevision']>(async () => undefined);
     vivo = servidor({ recordDocumentRevision }, doble);
     const response = await vivo.inject({
       method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
@@ -505,7 +556,7 @@ describe('the contamination guard quarantines the reload', () => {
   it('quarantines prose injected outside the block, which the projection copies verbatim', async () => {
     const disco = proyectar('regla añadida a mano', 'Steven/argos', 'perfil sembrado con cuotas de hoy');
     const recordRuntimeExpectation =
-      vi.fn<AgentContextReloadDeps['recordRuntimeExpectation']>(async () => undefined);
+      vi.fn<TestReloadDeps['recordRuntimeExpectation']>(async () => undefined);
     const doble = runtime({
       observedSha: sha('c'),
       texto: disco,
@@ -550,7 +601,7 @@ describe('the contamination guard quarantines the reload', () => {
     });
     vivo = servidor({
       readRuntimeExpectation: async () => ({
-        generation: 'gen-viva',
+        generation: 'gen-viva', revision: 3,
         documents: [{ name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('a') }],
       }),
     }, doble);
@@ -566,7 +617,7 @@ describe('the contamination guard quarantines the reload', () => {
     const doble = runtime({ observedSha: sha('c') });
     vivo = servidor({
       readRuntimeExpectation: async () => ({
-        generation: 'gen-anterior',
+        generation: 'gen-anterior', revision: 3,
         documents: [{ name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('a') }],
       }),
     }, doble);
@@ -648,8 +699,7 @@ describe('the journal of a reload is readable back', () => {
       method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
     });
     expect(response.statusCode).toBe(503);
-    expect(response.json<{ error: string }>().error).toBe('context_journal_not_recorded');
-    // The bytes landed and the row that accuses a person is there, even without the journal.
+    expect(response.json<{ error: string }>().error).toBe('context_reload_effect_unknown');
     expect(auditoria.map((entry) => [entry.action, entry.decision]))
       .toEqual([['agent_document.write', 'allow']]);
   });
@@ -699,19 +749,19 @@ describe('POST /v3/console/agents/:alias/context/reload as the alias itself', ()
 });
 
 describe('a reload never claims more than it proved', () => {
-  it('reports the runtime failure without advancing anything when the batch is not attested', async () => {
+  it('reports unknown effect without advancing metadata when the batch is not attested', async () => {
     const doble = runtime({
       aplicar: async () => { throw Object.assign(new Error('el lote no acreditó'), { code: 'conflict' }); },
     });
     const recordRuntimeExpectation =
-      vi.fn<AgentContextReloadDeps['recordRuntimeExpectation']>(async () => undefined);
+      vi.fn<TestReloadDeps['recordRuntimeExpectation']>(async () => undefined);
     vivo = servidor({ recordRuntimeExpectation }, doble);
     const response = await vivo.inject({
       method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
     });
-    expect(response.statusCode).toBe(409);
+    expect(response.statusCode).toBe(503);
     expect(recordRuntimeExpectation).not.toHaveBeenCalled();
-    expect(auditoria.map((entry) => entry.decision)).toEqual(['deny']);
+    expect(auditoria.map((entry) => entry.decision)).toEqual(['allow']);
   });
 
   it('refuses to write without a measured generation able to fence the ACK', async () => {
@@ -727,7 +777,7 @@ describe('a reload never claims more than it proved', () => {
 
   it('records the expectation of the revision it re-materialized, never a new one', async () => {
     const recordRuntimeExpectation =
-      vi.fn<AgentContextReloadDeps['recordRuntimeExpectation']>(async () => undefined);
+      vi.fn<TestReloadDeps['recordRuntimeExpectation']>(async () => undefined);
     vivo = servidor({ recordRuntimeExpectation });
     const response = await vivo.inject({
       method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
