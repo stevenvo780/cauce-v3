@@ -1,5 +1,6 @@
+import { humanHarnessSelector } from "./engine/delivery-context.js";
 import type { EgressReceiptSource } from "./notify-history.js";
-import { AliasSchema, PROTOCOL_VERSION } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
+import { AliasSchema, HUMAN_MESSAGE_INITIATOR_CAPABILITY, PROTOCOL_VERSION } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import {
   resumenDeLaSiembra, sembrarPerfilDelArnes, type ResultadoDeLaSiembra,
 } from '../context/siembra-del-perfil.js';
@@ -41,6 +42,7 @@ interface AdapterClientOptions {
   readonly connector: ConsumerConnector;
   readonly store: DurableStore;
   readonly harness: HarnessAdapter;
+  readonly humanHarness?: HarnessAdapter;
   readonly clock?: Clock;
   readonly random?: () => number;
   readonly onError?: (code: string) => void;
@@ -66,7 +68,6 @@ type CapabilityEncoder = (capabilities: AdapterCapabilities) => readonly string[
 function matchesCapability(value: unknown, expected: string | boolean): boolean {
   return value === expected;
 }
-
 interface ExecutionIntentWaiter {
   readonly delivery_id: string;
   readonly attempt: number;
@@ -74,20 +75,17 @@ interface ExecutionIntentWaiter {
   readonly confirm: () => void;
   readonly reject: (error: AdapterError) => void;
 }
-
 interface SendDeadline {
   /** Absolute wall-clock deadline; queueing behind an earlier frame consumes this budget. */
   readonly at: number;
   readonly signal: AbortSignal;
 }
-
 interface ConnectionGeneration {
   readonly id: number;
   readonly connection: ConsumerConnection;
   readonly abortController: AbortController;
   failure?: AdapterError;
 }
-
 const CAPABILITY_ENCODERS = {
   mcp_emit: (value) => matchesCapability(value.mcp_emit, true) ? ['mcp_emit'] : [],
   harness: (value) => [`harness.${value.harness}`],
@@ -101,15 +99,15 @@ const CAPABILITY_ENCODERS = {
   conversation_work_v1: (value) => matchesCapability(value.conversation_work_v1, true) ? ['conversation_work_v1'] : [],
 } satisfies Partial<Record<keyof AdapterCapabilities, CapabilityEncoder>>;
 
-export function helloCapabilityStrings(capabilities: AdapterCapabilities): string[] {
-  return ['console_human_scope_v1', ...Object.values(CAPABILITY_ENCODERS).flatMap((encode) => encode(capabilities))];
+export function helloCapabilityStrings(capabilities: AdapterCapabilities, humanIsolation = false): string[] {
+  return [...(humanIsolation ? [HUMAN_MESSAGE_INITIATOR_CAPABILITY] : []), 'console_human_scope_v1', ...Object.values(CAPABILITY_ENCODERS).flatMap((encode) => encode(capabilities))];
 }
-
 export class AdapterClient {
   private readonly config: AdapterConfig;
   private readonly connector: ConsumerConnector;
   private readonly store: DurableStore;
   private readonly harness: HarnessAdapter;
+  private readonly humanHarness: HarnessAdapter | undefined;
   private readonly clock: Clock;
   private readonly timeouts: ConnectionTimeouts;
   private readonly backoff: ExponentialBackoff;
@@ -132,6 +130,7 @@ export class AdapterClient {
     this.connector = options.connector;
     this.store = options.store;
     this.harness = options.harness;
+    this.humanHarness = options.humanHarness;
     this.onError = options.onError ?? (() => undefined);
     this.logger = options.logger ?? (() => undefined);
     this.onLeaseAcquired = options.onLeaseAcquired;
@@ -146,6 +145,7 @@ export class AdapterClient {
       ...(options.emission === undefined ? {} : { emission: options.emission }),
       store: this.store,
       harness: this.harness,
+      harnessForDelivery: humanHarnessSelector(this.harness, this.humanHarness),
       publish: (event) => this.sendEvent(event),
       publishExecutionIntent: (event, signal, timeoutMs) => (
         this.publishAndConfirmExecutionIntent(event, signal, timeoutMs)
@@ -200,7 +200,7 @@ export class AdapterClient {
               tenant_id: this.config.tenantId,
               alias: this.config.alias,
               instance_id: this.config.instanceId,
-              capabilities: helloCapabilityStrings(this.harness.definition.capabilities),
+              capabilities: helloCapabilityStrings(this.harness.definition.capabilities, this.humanHarness !== undefined),
             });
             await this.consume(generation, signal);
           } finally {

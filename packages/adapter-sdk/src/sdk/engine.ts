@@ -1,7 +1,7 @@
 import { noticeHistoryFor } from "./notify-history-context.js";
 import { randomUUID } from "node:crypto";
 import {
-  isAgentToAgentBody, isAmbiguousAckErrorCode, MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs,
+  isAmbiguousAckErrorCode, MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs,
   SYSTEM_GATE_PROBE_MESSAGE_TYPE,
 } from "@cauce/protocol";
 import type { InboxRecord } from "./durable-store.js";
@@ -9,7 +9,6 @@ import { DurableStore } from "./durable-store.js";
 import { AdapterError, StaleEpochError, asAdapterError } from "./errors.js";
 import type {
   HarnessAdapter, HarnessRequestContext, HarnessSessionReservation, RuntimeProfileMeasurement,
-  SessionLane,
 } from "../contracts/harness.js";
 import type {
   AdapterLogger,
@@ -29,12 +28,12 @@ import {
   DEFAULT_QUEUE_WAIT_TIMEOUT_MS,
   profileAdoptionFor,
 } from "./engine/contracts.js";
-import type { ExecutionBudget, HarnessSessionRequestScope } from "./engine/delivery-context.js";
+import type { ExecutionBudget, DeliveryHarnessInvocation } from "./engine/delivery-context.js";
 import {
   executionBudgetFor,
   routingTargetsFromDelivery,
   selfRoleFromDelivery,
-  sessionFromDelivery,
+  prepareDeliveryInvocation,
   timeoutFromBody,
   timeoutKindFromBody,
 } from "./engine/delivery-context.js";
@@ -62,6 +61,7 @@ export class AdapterEngine {
   private readonly emission: EmissionRuntime | undefined;
   private readonly store: DurableStore;
   private readonly harness: HarnessAdapter;
+  private readonly harnessForDelivery: AdapterEngineOptions["harnessForDelivery"];
   private readonly publishEvent: EventPublisher;
   private readonly publishExecutionIntent: ExecutionIntentPublisher | undefined;
   private readonly logger: AdapterLogger;
@@ -89,6 +89,7 @@ export class AdapterEngine {
     this.emission?.trackDeliveries(() => this.tasks.size);
     this.store = options.store;
     this.harness = options.harness;
+    this.harnessForDelivery = options.harnessForDelivery;
     this.publishEvent = options.publish;
     this.publishExecutionIntent = options.publishExecutionIntent;
     if (this.publishExecutionIntent === undefined && options.executionIntentMode !== "local-test-only") {
@@ -178,18 +179,7 @@ export class AdapterEngine {
       });
       return task;
     }
-    const fanin = delivery.body.type === "agent.fanin";
-    // Shared session: uses a single lane tied to the alias to synchronize the TUI.
-    const compartida = process.env.CAUCE_SHARED_SESSION === "1";
-    const lane: SessionLane = compartida
-      ? "human"
-      : (isAgentToAgentBody(delivery.body) ? "agent" : "human");
-    const session: HarnessSessionRequestScope = fanin
-      ? {}
-      : (compartida
-        ? { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane }
-        : { ...sessionFromDelivery(delivery, this.ownTenantId), sessionLane: lane });
-    const reservation = fanin ? undefined : this.harness.reserveSession(session.sessionKey, lane);
+    const invocation = prepareDeliveryInvocation(delivery, this.harness, this.harnessForDelivery, this.ownTenantId);
 
     this.logger({
       event: 'delivery_start',
@@ -199,7 +189,7 @@ export class AdapterEngine {
       timestamp: this.clock.now().toISOString(),
     });
 
-    const execution = this.runDelivery(delivery, session, reservation);
+    const execution = this.runDelivery(delivery, invocation);
     const task = execution.finally(() => {
       if (this.tasks.get(delivery.delivery_id)?.promise === task) {
         this.tasks.delete(delivery.delivery_id);
@@ -300,13 +290,12 @@ export class AdapterEngine {
 
   private async runDelivery(
     delivery: Delivery,
-    session: HarnessSessionRequestScope,
-    reservation: HarnessSessionReservation | undefined,
+    invocation: DeliveryHarnessInvocation,
   ): Promise<void> {
     try {
-      await this.runReservedDelivery(delivery, session, reservation);
+      await this.runReservedDelivery(delivery, invocation);
     } finally {
-      reservation?.release();
+      invocation.reservation?.release();
     }
   }
 
@@ -322,9 +311,9 @@ export class AdapterEngine {
 
   private async runReservedDelivery(
     delivery: Delivery,
-    session: HarnessSessionRequestScope,
-    reservation: HarnessSessionReservation | undefined,
+    invocation: DeliveryHarnessInvocation,
   ): Promise<void> {
+    const { harness, session, reservation, humanInitiator, selectionError } = invocation;
     const occurredAt = this.clock.now().toISOString();
     const accepted = await this.store.acceptAndEnqueue(delivery, occurredAt);
     if (accepted.acceptance === "stale" || accepted.acceptance === "blocked") return;
@@ -345,6 +334,10 @@ export class AdapterEngine {
       return;
     }
 
+    if (selectionError !== undefined) {
+      await this.finishError(accepted.record, this.adapterError(selectionError, accepted.record));
+      return;
+    }
     let executionBudget: ExecutionBudget;
     try {
       executionBudget = executionBudgetFor(
@@ -377,6 +370,7 @@ export class AdapterEngine {
       : "request";
     const rawRequestContext: HarnessRequestContext = {
       ...(this.emission === undefined ? {} : { mcp_emit: true }),
+      ...(humanInitiator === undefined ? {} : { human_initiator: humanInitiator }),
       self_alias: delivery.recipient_alias,
       sender_alias: delivery.actor_alias,
       tenant_id: this.ownTenantId ?? delivery.tenant_id,
@@ -397,7 +391,7 @@ export class AdapterEngine {
     let requestContext = rawRequestContext;
     if (messageType !== "agent.fanin") {
       try {
-        requestContext = this.harness.prepareContext(rawRequestContext);
+        requestContext = harness.prepareContext(rawRequestContext);
       } catch (error) {
         await this.finishError(accepted.record, this.adapterError(error, accepted.record));
         return;
@@ -460,7 +454,7 @@ export class AdapterEngine {
         });
         const noticeHistory = await noticeHistoryFor(delivery, this.store, this.egressReceipts,
           this.ownTenantId, controller.signal, this.clock.now().getTime());
-        output = await this.harness.execute({
+        output = await harness.execute({
           ...(noticeHistory === undefined ? {} : { noticeHistory }),
           prompt,
           ...(attachments === undefined ? {} : { attachments: attachments.attachments }),
