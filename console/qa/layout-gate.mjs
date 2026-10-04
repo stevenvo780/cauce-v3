@@ -7,18 +7,16 @@
  * every declared route at every breakpoint and compares real numbers against a recorded baseline.
  * Semantics match scripts/calidad.mjs: the numbers may only improve, in both directions.
  */
-import { spawn } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { startLayoutDevServer } from './layout-dev-server.mjs';
 import { chromium } from 'playwright';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CONSOLE_ROOT = resolve(HERE, '..');
 const BASELINE = resolve(HERE, 'layout-baseline.json');
 const VITE_ENTRY = resolve(CONSOLE_ROOT, 'node_modules/vite/bin/vite.js');
-const PORT = 4188;
-const ORIGIN = `http://127.0.0.1:${String(PORT)}`;
 
 /* Opened through the deep link the console already supports, never by clicking the first row: the
    fleet table sorts by state, so the row under the cursor —and the height it measures— changes. */
@@ -64,23 +62,6 @@ const PERFIL = '/live#perfil';
 const SIN_MOVIMIENTO = '*,*::before,*::after{animation:none!important;transition:none!important}';
 
 const escribirBaseline = process.argv.includes('--update');
-
-function esperar(ms) {
-  return new Promise((cumplir) => setTimeout(cumplir, ms));
-}
-
-async function esperarServidor(salida, intentos = 60) {
-  for (let i = 0; i < intentos; i += 1) {
-    try {
-      const respuesta = await fetch(ORIGIN);
-      if (respuesta.ok) return;
-    } catch { /* el servidor todavía no escucha */ }
-    await esperar(500);
-  }
-  // Swallowing the server's own output turns "it never started" into a bare timeout on the first
-  // navigation, which reads like a broken page instead of a missing server.
-  throw new Error(`the console did not answer at ${ORIGIN}\n${salida() || '(the dev server printed nothing)'}`);
-}
 
 /** Runs inside the page. Returns raw geometry only: every judgement is made on this side, so the
     failure message can name the budget that broke. */
@@ -195,7 +176,7 @@ function medirEnLaPagina() {
 
 /** Drives the two clicked states of /live. A state that cannot be reached is recorded and the run
     continues: losing one state must not cost the other five viewports. */
-async function medirEstadosDeLive(pagina, viewport, medidas, sinMedir) {
+async function medirEstadosDeLive(pagina, viewport, medidas, sinMedir, origin) {
   const medir = async (etiqueta, accion) => {
     try {
       await accion();
@@ -209,7 +190,7 @@ async function medirEstadosDeLive(pagina, viewport, medidas, sinMedir) {
   };
 
   const abrir = (pestana) => async () => {
-    await pagina.goto(`${ORIGIN}/live?agente=${encodeURIComponent(ALIAS_MEDIDO)}&pestana=${pestana}`, {
+    await pagina.goto(`${origin}/live?agente=${encodeURIComponent(ALIAS_MEDIDO)}&pestana=${pestana}`, {
       waitUntil: 'domcontentloaded', timeout: 30000,
     });
     await pagina.addStyleTag({ content: SIN_MOVIMIENTO });
@@ -228,8 +209,8 @@ async function medirEstadosDeLive(pagina, viewport, medidas, sinMedir) {
  * a timer, so the gate would wait for a quiet network that this page never has. The layout is
  * settled once `main` is painted and the transitions are off.
  */
-async function medirRuta(pagina, ruta) {
-  await pagina.goto(ORIGIN + ruta, { waitUntil: 'domcontentloaded', timeout: 30000 });
+async function medirRuta(pagina, ruta, origin) {
+  await pagina.goto(origin + ruta, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await pagina.locator('main').waitFor({ state: 'visible', timeout: 15000 });
   await pagina.addStyleTag({ content: SIN_MOVIMIENTO });
   await pagina.waitForTimeout(700);
@@ -252,7 +233,7 @@ async function medirPortadores(pagina) {
   }).length);
 }
 
-async function medirViewport(navegador, viewport) {
+async function medirViewport(navegador, viewport, origin) {
   const contexto = await navegador.newContext({ viewport: { width: viewport, height: ALTO } });
   const pagina = await contexto.newPage();
   const medidas = [];
@@ -260,11 +241,11 @@ async function medirViewport(navegador, viewport) {
   try {
     for (const ruta of ROUTES) {
       const t0 = Date.now();
-      const medida = { ruta, viewport, ...(await medirRuta(pagina, ruta)), portadoresBajos: 0 };
+      const medida = { ruta, viewport, ...(await medirRuta(pagina, ruta, origin)), portadoresBajos: 0 };
       if (ruta === '/live') medida.portadoresBajos = await medirPortadores(pagina);
       medidas.push(medida);
       process.stderr.write(`  ${String(viewport)}px ${ruta} ${String(Date.now() - t0)}ms\n`);
-      if (ruta === '/live') await medirEstadosDeLive(pagina, viewport, medidas, sinMedir);
+      if (ruta === '/live') await medirEstadosDeLive(pagina, viewport, medidas, sinMedir, origin);
       if (ruta === '/messages') {
         await pagina.getByRole('button', { name: 'Herramientas', exact: true }).click();
         medidas.push({ ruta: '/messages#herramientas', viewport, ...await pagina.evaluate(medirEnLaPagina), portadoresBajos: 0 });
@@ -277,12 +258,12 @@ async function medirViewport(navegador, viewport) {
   return { medidas, sinMedir };
 }
 
-async function medirTodo() {
+async function medirTodo(origin) {
   const navegador = await chromium.launch();
   try {
     const pasadas = [];
     for (const viewport of VIEWPORTS) {
-      pasadas.push(await medirViewport(navegador, viewport));
+      pasadas.push(await medirViewport(navegador, viewport, origin));
     }
     return {
       medidas: pasadas.flatMap((pasada) => pasada.medidas),
@@ -520,23 +501,13 @@ function imprimirTabla(medidas) {
 }
 
 async function principal() {
-  const servidor = spawn(process.execPath, [VITE_ENTRY, '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
-    cwd: CONSOLE_ROOT,
-    env: { ...process.env, VITE_USE_MOCKS: 'true' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let registro = '';
-  const anotar = (trozo) => { registro = (registro + String(trozo)).slice(-2000); };
-  servidor.stdout.on('data', anotar);
-  servidor.stderr.on('data', anotar);
-  servidor.on('error', (fallo) => { anotar(`spawn failed: ${fallo.message}\n`); });
+  const servidor = await startLayoutDevServer({ root: CONSOLE_ROOT, viteEntry: VITE_ENTRY });
   let medidas;
   let sinMedir;
   try {
-    await esperarServidor(() => registro);
-    ({ medidas, sinMedir } = await medirTodo());
+    ({ medidas, sinMedir } = await medirTodo(servidor.origin));
   } finally {
-    servidor.kill('SIGTERM');
+    await servidor.close();
   }
 
   imprimirTabla(medidas);
