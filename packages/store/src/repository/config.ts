@@ -54,18 +54,21 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
   }
 
   override async assertPermission(
-    tenantId: Tenant, alias: string, permission: Permission
+    tenantId: Tenant, alias: string, permission: Permission,
+    client?: DatabaseClient, lockAuthority = false,
   ): Promise<void> {
     const column = PERMISSION_COLUMNS[permission];
-    const result = await this.pool.query(
+    const result = await (client ?? this.pool).query(
       `SELECT 1 FROM memberships membership
        JOIN role_policies role ON role.role=membership.role
        JOIN tenants tenant ON tenant.id=membership.tenant_id
        JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
        WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
-         AND tenant.enabled AND room.enabled AND role.${column} LIMIT 1`, [tenantId, alias]
+         AND tenant.enabled AND room.enabled AND role.${column}${lockAuthority
+          ? ' ORDER BY membership.room_id FOR SHARE OF membership,role,tenant,room' : ' LIMIT 1'}`,
+      [tenantId, alias],
     );
-    if (result.rowCount !== 1) throw new StoreError('forbidden', `principal lacks ${permission} permission`);
+    if ((result.rowCount ?? 0) < 1) throw new StoreError('forbidden', `principal lacks ${permission} permission`);
   }
 
   /**

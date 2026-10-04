@@ -102,6 +102,52 @@ async function failureOf(operation: Promise<unknown>): Promise<Readonly<Record<s
 }
 
 describe('human MCP authority boundaries', () => {
+  it('uses one bounded durable read signal for status and agents and keeps the projection scoped', async () => {
+    const state = setup();
+    state.users.set(USER_A, user(USER_A, 'reader'));
+    const privateMarker = 'private-inventory-field';
+    const presence = vi.spyOn(state.repository, 'listPresence').mockImplementation(async (_tenant, _alias, access) => {
+      if (!access) throw new Error('status lost its durable read authority');
+      expect(await access.humanAuthority(client())).toMatchObject({ humanId: USER_A, actorAlias: 'kant' });
+      return [
+        { tenant_id: 'Steven', alias: 'argos', online: true, last_heartbeat_at: null, privateMarker },
+        { tenant_id: 'Isa', alias: 'argos', online: true, last_heartbeat_at: null, privateMarker },
+      ];
+    });
+    const agents = vi.spyOn(state.repository, 'listAgents').mockImplementation(async (_tenant, _alias, access) => {
+      if (!access) throw new Error('agents lost its durable read authority');
+      expect(await access.humanAuthority(client())).toMatchObject({ humanId: USER_A, actorAlias: 'kant' });
+      return { items: [
+        { tenant_id: 'Steven', alias: 'argos', enabled: true, online: true,
+          deployment_status: 'online', last_heartbeat_at: null, privateMarker },
+        { tenant_id: 'Isa', alias: 'argos', enabled: true, online: true,
+          deployment_status: 'online', last_heartbeat_at: null, privateMarker },
+      ] };
+    });
+    const request = new AbortController();
+    const ops = await state.factory.forRequest(identity(SUBJECT_A, ['cauce.read']), request.signal);
+    const status = await ops.status();
+    const inventory = await ops.agents();
+    expect(status).toMatchObject({ presence: { items: [
+      { tenant_id: 'Steven', alias: 'argos', online: true, last_heartbeat_at: null },
+    ] } });
+    expect(inventory).toMatchObject({ items: [
+      { tenant_id: 'Steven', alias: 'argos', enabled: true, online: true,
+        deployment_status: 'online', last_heartbeat_at: null },
+    ] });
+    expect(JSON.stringify([status, inventory])).not.toContain(privateMarker);
+    const statusAccess = presence.mock.calls[0]?.[2];
+    const agentsAccess = agents.mock.calls[0]?.[2];
+    expect(statusAccess?.signal).toBe(agentsAccess?.signal);
+    expect(statusAccess?.signal).not.toBe(request.signal);
+    request.abort(new Error('private request cancellation'));
+    expect(statusAccess?.signal.aborted).toBe(true);
+    expect(await failureOf(ops.status())).toEqual({ status_code: 503, error: 'operation_unavailable' });
+    expect(await failureOf(ops.agents())).toEqual({ status_code: 503, error: 'operation_unavailable' });
+    expect(presence).toHaveBeenCalledOnce();
+    expect(agents).toHaveBeenCalledOnce();
+  });
+
   it('fails closed for legacy resolver-backed submit and receipt while retaining legacy status reads', async () => {
     const repository = fakeRepository();
     const prepare = vi.spyOn(repository, 'prepareConsolePublishIntent');
