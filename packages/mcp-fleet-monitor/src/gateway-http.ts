@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type RequestListener, type ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { GatewayReader } from './gateway-client.js';
@@ -48,12 +48,12 @@ async function requestBody(request: IncomingMessage): Promise<unknown> {
   catch { throw new RequestError(400); }
 }
 
-type GatewayHttpOptions = { readonly publicOrigin: string } & (
+export type GatewayHttpOptions = { readonly publicOrigin: string } & (
   | { readonly reader: GatewayReader; readonly authorization: GatewayAuthorization; readonly operationsFactory?: never }
   | { readonly operationsFactory: GatewayOperationsFactory; readonly authorization: HumanGatewayAuthorization; readonly reader?: never }
 );
 
-export function createGatewayHttpServer(options: GatewayHttpOptions) {
+export function createGatewayHttpHandler(options: GatewayHttpOptions): RequestListener {
   const origin = httpsOrigin(options.publicOrigin);
   const host = new URL(origin).host;
   let active = 0;
@@ -119,9 +119,13 @@ export function createGatewayHttpServer(options: GatewayHttpOptions) {
     }
   }
 
-  const http = createServer({ maxHeaderSize: 16 * 1024 }, (request, response) => {
+  return (request, response): void => {
     void handle(request, response).catch(() => { reply(response, 500); });
-  });
+  };
+}
+
+export function createGatewayHttpServer(options: GatewayHttpOptions) {
+  const http = createServer({ maxHeaderSize: 16 * 1024 }, createGatewayHttpHandler(options));
   http.requestTimeout = 10_000;
   http.headersTimeout = 10_000;
   http.keepAliveTimeout = 1000;
