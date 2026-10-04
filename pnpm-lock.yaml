@@ -253,6 +253,9 @@ importers:
 
   services/gateway:
     dependencies:
+      '@cauce/mcp-fleet-monitor':
+        specifier: workspace:*
+        version: link:../../packages/mcp-fleet-monitor
       '@cauce/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol

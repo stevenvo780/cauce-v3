@@ -5,10 +5,17 @@
   "type": "module",
   "main": "dist/server.js",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/types/packages/mcp-fleet-monitor/src/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./gateway-http": {
+      "types": "./dist/types/packages/mcp-fleet-monitor/src/gateway-http.d.ts",
+      "default": "./dist/gateway-http.js"
+    }
   },
   "scripts": {
-    "build": "pnpm typecheck && pnpm exec esbuild src/server.ts --bundle --platform=node --format=esm --external:pg --outfile=dist/server.js && pnpm exec esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js && pnpm exec esbuild src/gateway-server.ts --bundle --platform=node --format=esm --packages=external --external:@cauce/protocol --outfile=dist/gateway-server.js",
+    "build": "pnpm typecheck && pnpm exec esbuild src/server.ts --bundle --platform=node --format=esm --external:pg --outfile=dist/server.js && pnpm exec esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js && pnpm exec esbuild src/gateway-server.ts src/gateway-http.ts --bundle --platform=node --format=esm --packages=external --external:@cauce/protocol --outdir=dist && pnpm exec tsc --noEmit false --declaration --emitDeclarationOnly --outDir dist/types",
     "start": "node dist/server.js",
     "start:gateway": "node dist/gateway-server.js",
     "dev": "tsx src/server.ts",
@@ -33,5 +40,6 @@
   },
   "engines": {
     "node": ">=22"
-  }
+  },
+  "types": "./dist/types/packages/mcp-fleet-monitor/src/index.d.ts"
 }

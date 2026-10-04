@@ -5,10 +5,11 @@
   "type": "module",
   "exports": "./src/app.ts",
   "scripts": {
-    "test": "vitest run src",
+    "test": "pnpm --filter @cauce/mcp-fleet-monitor build && vitest run src",
     "typecheck": "tsc --noEmit -p ../../tsconfig.json"
   },
   "dependencies": {
+    "@cauce/mcp-fleet-monitor": "workspace:*",
     "@cauce/protocol": "workspace:*",
     "@cauce/store": "workspace:*",
     "@fastify/websocket": "^11.2.0",
