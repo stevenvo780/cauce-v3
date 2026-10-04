@@ -1,5 +1,6 @@
 import { isRfcUuid, parseBlobArtifactUri, type DeliveryState, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../../db.js';
+import { loadFaninHumanLineage, preserveHumanMessageLineage } from '../../human-message-lineage.js';
 import { grantBlobForDelivery } from '../../blob-entitlements.js';
 import { reservedInternalMessageTypes } from '../../config.js';
 import { insertDelivery, insertMessage } from '../../messages/_insert.js';
@@ -128,6 +129,7 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
               root_message.origin,root_message.auth_session_id,root_message.auth_channel
        FROM agent_output_materializations materialization
        JOIN deliveries source ON source.id=materialization.source_delivery_id
+         AND source.message_id=materialization.source_message_id
        JOIN messages root_message ON root_message.id=source.message_id
        WHERE materialization.status='materialized'
          AND materialization.correlation->>'root_message_id'=$1
@@ -140,13 +142,18 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
     const rootRow = root.rows[0];
     if (!rootRow) throw new Error('fan-in root delivery is unavailable');
 
-    const existing = await client.query(
-      `SELECT 1 FROM adapter_outbox
+    const humanLineage = await loadFaninHumanLineage(client, rootRow.message_id);
+    const existing = await client.query<{ message_id: string }>(
+      `SELECT message_id FROM adapter_outbox
        WHERE tenant_id=$1 AND adapter='gateway' AND idempotency_key=$2
        LIMIT 1`,
       [rootRow.recipient_tenant, `agent-fanin:${rootMessageId}`]
     );
-    if (existing.rowCount) return { hasFanout: true, scheduled: true };
+    const existingMessageId = existing.rows[0]?.message_id;
+    if (existingMessageId) {
+      await preserveHumanMessageLineage(client, existingMessageId, humanLineage, true);
+      return { hasFanout: true, scheduled: true };
+    }
 
     const branchRows = await client.query<{
       output_index: number;
@@ -357,6 +364,7 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
     });
     const messageId = message.rows[0]?.id;
     if (!messageId) throw new Error('fan-in message insert returned no id');
+    await preserveHumanMessageLineage(client, messageId, humanLineage);
     const delivery = await insertDelivery(client, {
       messageId, recipientTenant: rootRow.recipient_tenant, recipientAlias: rootRow.recipient_alias,
     });
