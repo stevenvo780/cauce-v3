@@ -14,8 +14,8 @@ import { renderWithApi } from './test/render';
 /**
  * Matriz permiso→vista de la consola (T050). Lo verificado por lectura de `console/src`:
  *
- * NAV (`nav.ts` + `router.ts`): la única entrada gobernada por un permiso es `config`,
- * por `config.write` en `denied` (inhabilitada, nunca oculta). `terminal` la gobierna la
+ * NAV (`nav.ts` + `router.ts`): `config` permanece navegable porque su lectura la decide el GET;
+ * `config.write` solo gobierna las acciones internas. `terminal` la gobierna la
  * topología del relay PTY (`deriveTerminalRelayState`), NO `ultimate-terminal.connect`.
  * El resto no lo gobierna nada: `hidden` es siempre `false`.
  * RUTAS (`App.tsx`): ningún permiso oculta ni redirige una vista. `/config` sin
@@ -59,7 +59,7 @@ const GOBIERNO_NAV: Record<string, 'config.write' | 'relay' | null> = {
   messages: null,
   queues: null,
   observability: null,
-  config: 'config.write',
+  config: null,
   terminal: 'relay',
   ayuda: null,
 };
@@ -120,7 +120,7 @@ it('operador pleno: las nueve entradas habilitadas y «Ajustes y altas» navega'
   expect(window.location.pathname).toBe('/config');
 });
 
-it('sin config.write: solo «Ajustes y altas» queda inerte, el resto habilitado', async () => {
+it('sin config.write: «Ajustes y altas» sigue navegable y la vista decide el acceso de lectura', async () => {
   servirAcceso(['message.publish'], ['agent']);
   servirRelayDisponible();
   window.history.pushState({}, '', '/live');
@@ -129,16 +129,15 @@ it('sin config.write: solo «Ajustes y altas» queda inerte, el resto habilitado
   await esperarLaFlota();
   const nav = barra();
   const config = within(nav).getByRole('link', { name: 'Ajustes y altas' });
-  await waitFor(() => { expect(config).toHaveAttribute('aria-disabled', 'true'); });
-  expect(config).toHaveAttribute('title', expect.stringContaining('permiso de control'));
+  await waitFor(() => { expect(config).not.toHaveAttribute('aria-disabled'); });
   for (const entrada of NAV_ENTRIES.filter((candidate) => candidate.id !== 'config')) {
     expect(within(nav).getByRole('link', { name: entrada.label })).not.toHaveAttribute('aria-disabled');
   }
   await userEvent.click(config);
-  expect(window.location.pathname).toBe('/live');
+  expect(window.location.pathname).toBe('/config');
 });
 
-it('sin ningún permiso: el menú no esconde nada, solo inhabilita «Ajustes y altas»', async () => {
+it('sin permisos de acción: el menú deja abrir la vista y la escritura falla cerrada', async () => {
   servirAcceso([], []);
   servirRelayDisponible();
   window.history.pushState({}, '', '/live');
@@ -149,7 +148,7 @@ it('sin ningún permiso: el menú no esconde nada, solo inhabilita «Ajustes y a
   expect(within(nav).getAllByRole('link').map((enlace) => enlace.getAttribute('aria-label')))
     .toEqual(NAV_ENTRIES.map((entrada) => entrada.label));
   const config = within(nav).getByRole('link', { name: 'Ajustes y altas' });
-  await waitFor(() => { expect(config).toHaveAttribute('aria-disabled', 'true'); });
+  await waitFor(() => { expect(config).not.toHaveAttribute('aria-disabled'); });
   for (const entrada of NAV_ENTRIES.filter((candidate) => candidate.id !== 'config')) {
     expect(within(nav).getByRole('link', { name: entrada.label })).not.toHaveAttribute('aria-disabled');
   }
@@ -168,7 +167,7 @@ it('permiso no acreditado (null): «Ajustes y altas» sigue navegable en el men�
   expect(window.location.pathname).toBe('/config');
 });
 
-it('los roles no gobiernan el menú: solo los permisos deciden', async () => {
+it('los roles y los permisos de escritura no gobiernan la navegación a Configuración', async () => {
   servirRelayDisponible();
   servirAcceso(PERMISOS_PLENOS, ['agent']);
   window.history.pushState({}, '', '/live');
@@ -184,7 +183,7 @@ it('los roles no gobiernan el menú: solo los permisos deciden', async () => {
 
   await esperarLaFlota();
   const config = within(barra()).getByRole('link', { name: 'Ajustes y altas' });
-  await waitFor(() => { expect(config).toHaveAttribute('aria-disabled', 'true'); });
+  await waitFor(() => { expect(config).not.toHaveAttribute('aria-disabled'); });
 });
 
 it('«Terminal de agentes» en el menú lo gobierna el relay, no ultimate-terminal.connect', async () => {
