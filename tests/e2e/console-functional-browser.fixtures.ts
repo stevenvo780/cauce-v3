@@ -1,0 +1,484 @@
+import { execFile } from 'node:child_process';
+import { randomBytes, randomUUID, X509Certificate } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { Agent as HttpsAgent } from 'node:https';
+import { createServer as createTcpServer } from 'node:net';
+import { buildGateway } from '../../services/gateway/src/app.js';
+import { MtlsAuthProvider, HashedMtlsIdentityFileProvider } from '../../services/gateway/src/auth.js';
+import { PostgresConsoleUserStore } from '../../services/gateway/src/console-users.js';
+import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
+import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
+
+interface ExecOptions { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number }
+class SubprocessError extends Error {
+  readonly stderr: string;
+  readonly stdout: string;
+  constructor(command: string, cause: unknown, stdout: string, stderr: string) {
+    super(`subprocess ${command} failed`, { cause });
+    this.stdout = stdout.slice(-64 * 1024);
+    this.stderr = stderr.slice(-8 * 1024);
+  }
+}
+function exec(command: string, args: string[], options: ExecOptions = {}): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const timeoutMs = options.timeout ?? 60_000;
+    const { timeout: _timeout, maxBuffer, ...execOptions } = options;
+    let timedOut = false;
+    let escalation: NodeJS.Timeout | undefined;
+    const child = execFile(command, args, { encoding: 'utf8', maxBuffer: maxBuffer ?? 64 * 1024, ...execOptions }, (error, stdout, stderr) => {
+      clearTimeout(timer);
+      if (escalation) clearTimeout(escalation);
+      if (error || timedOut) reject(new SubprocessError(command, error ?? new Error(`timed out after ${String(timeoutMs)}ms`), stdout, stderr));
+      else resolve({ stdout, stderr });
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      escalation = setTimeout(() => child.kill('SIGKILL'), 1_000);
+    }, timeoutMs);
+  });
+}
+function docker(args: string[], options: ExecOptions = {}): Promise<{ stdout: string; stderr: string }> {
+  return exec('docker', args, { timeout: 15_000, maxBuffer: 64 * 1024, ...options });
+}
+const require = createRequire(join(process.cwd(), 'console/package.json'));
+interface Locator { fill(value: string): Promise<void>; click(): Promise<void>; count(): Promise<number>; waitFor(options?: { state?: 'visible' | 'hidden'; timeout?: number }): Promise<void>; selectOption(value: string): Promise<void>; filter(options: { hasText: string }): Locator; locator(selector: string): Locator; getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): Locator; getByText(text: string | RegExp, options?: { exact?: boolean }): Locator }
+interface BrowserPage { goto(url: string, options?: { waitUntil?: 'domcontentloaded' }): Promise<{ status(): number; url(): string } | null>; reload(options?: { waitUntil?: 'domcontentloaded' }): Promise<{ status(): number; url(): string } | null>; url(): string; on(event: string, handler: (value: unknown) => void): void; getByLabel(name: string, options?: { exact?: boolean }): Locator; getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): Locator; getByText(text: string | RegExp, options?: { exact?: boolean }): Locator; locator(selector: string): { innerText(): Promise<string> }; evaluate<T>(callback: () => T): Promise<Awaited<T>>; evaluate<T, A>(callback: (argument: A) => T, argument: A): Promise<Awaited<T>>; viewportSize(): { width: number; height: number } | null; context(): BrowserContext }
+interface BrowserContext { cookies(url?: string): Promise<{ name: string; httpOnly: boolean; secure: boolean }[]>; close(): Promise<void>; newPage(): Promise<BrowserPage> }
+interface Browser { connectOverCDP(endpoint: string, options: { timeout: number }): Promise<ConnectedBrowser> }
+interface ConnectedBrowser { newContext(options: { viewport: { width: number; height: number }; ignoreHTTPSErrors: false; serviceWorkers: 'block' }): Promise<BrowserContext>; close(): Promise<void> }
+interface ViteServer { close(): Promise<void>; httpServer: import('node:http').Server | null; listen(): Promise<void> }
+const chromium = (require('playwright') as { chromium: Browser }).chromium;
+
+export interface FunctionalTenant { tenant: 'Isa' | 'Jhon'; operator: string; target: string; room: string; email: string; password: string; marker: string }
+export const functionalTenants: FunctionalTenant[] = [
+  { tenant: 'Isa', operator: 'e2eisa', target: 'e2eagentisa', room: 'e2e.isa', email: 'operator-isa@cauce.test', password: randomBytes(24).toString('base64url'), marker: 'CONTEXTO ISA DE PRUEBA' },
+  { tenant: 'Jhon', operator: 'e2ejhon', target: 'e2eagentjhon', room: 'e2e.jhon', email: 'operator-jhon@cauce.test', password: randomBytes(24).toString('base64url'), marker: 'CONTEXTO JHON DE PRUEBA' },
+];
+function tenantAt(index: number): FunctionalTenant {
+  const tenant = functionalTenants[index];
+  if (!tenant) throw new Error(`missing tenant fixture at index ${String(index)}`);
+  return tenant;
+}
+export const isaTenant = tenantAt(0);
+export const jhonTenant = tenantAt(1);
+export const isaSecondHuman: FunctionalTenant = {
+  ...isaTenant,
+  email: 'operator-isa-second@cauce.test',
+  password: randomBytes(24).toString('base64url'),
+};
+
+interface Identity { tenant_id: string; alias: string; session_id: string; channel: string; roles: string[]; permissions: string[] }
+interface Pki { ca: { key: string; cert: string }; server: { key: string; cert: string }; consoleClient: { key: string; cert: string }; adapterCerts: { key: string; cert: string }[]; identityPath: string }
+interface BrowserRuntime { image: string; imageId: string; owned: boolean; playwrightVersion: string }
+interface Fixture { database: TestDatabase; directory: string; browserRuntime: BrowserRuntime; baseUrl: string; gatewayUrl: string; pki: Pki; app: Awaited<ReturnType<typeof buildGateway>>; vite: ViteServer; browser: ConnectedBrowser; browserContainer: string; contexts: BrowserContext[]; adapters: ChildProcess[]; prompts: Record<string, string>; close(): Promise<void> }
+
+function errorStderr(error: unknown): string {
+  let current = error;
+  while (current !== null && typeof current === 'object') {
+    if ('stderr' in current) {
+      if (typeof current.stderr === 'string') return current.stderr;
+      if (Buffer.isBuffer(current.stderr)) return current.stderr.toString('utf8');
+    }
+    current = 'cause' in current ? current.cause : undefined;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function errorStdout(error: unknown): string {
+  let current = error;
+  while (current !== null && typeof current === 'object') {
+    if ('stdout' in current && typeof current.stdout === 'string') return current.stdout;
+    current = 'cause' in current ? current.cause : undefined;
+  }
+  return '';
+}
+
+async function inspectImage(image: string): Promise<string | undefined> {
+  try { return (await docker(['image', 'inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}}', image])).stdout.trim(); }
+  catch (error) {
+    if (/No such image/iu.test(errorStderr(error))) return undefined;
+    throw error;
+  }
+}
+
+async function removeBrowserImage(runtime: BrowserRuntime): Promise<void> {
+  if (!runtime.owned) return;
+  const current = await inspectImage(runtime.image);
+  if (current === undefined) return;
+  if (current !== `${runtime.imageId} ui-functional`) throw new Error(`owned image tag ${runtime.image} changed identity/ownership; refusing to remove it`);
+  await docker(['image', 'rm', runtime.image]);
+  if (await inspectImage(runtime.image) !== undefined) throw new Error(`owned image tag ${runtime.image} remains after cleanup`);
+}
+
+async function cleanPartialBrowserImage(image: string, playwrightVersion: string, cause: unknown, buildLog: string): Promise<void> {
+  let imageInfo: string | undefined;
+  try { imageInfo = await inspectImage(image); }
+  catch (inspectError) { throw new AggregateError([cause, inspectError], `could not inspect possible partial browser image ${image}; build log=${buildLog}`); }
+  if (imageInfo === undefined) return;
+  const [imageId, owner] = imageInfo.split(' ');
+  if (!imageId || owner !== 'ui-functional') throw new AggregateError([cause], `partial image ${image} exists without confirmed ownership; build log=${buildLog}`);
+  try { await removeBrowserImage({ image, imageId, owned: true, playwrightVersion }); }
+  catch (cleanupError) { throw new AggregateError([cause, cleanupError], `partial browser image cleanup failed for ${image}; build log=${buildLog}`); }
+}
+
+const chromePathCommand = "for base in /opt/playwright-browsers /root/.cache/ms-playwright; do if [ -d \"$base\" ]; then find \"$base\" -type f -path '*/chrome-linux*/chrome' -print -quit; fi; done | sed -n '1p'";
+
+function expectedChromiumVersion(): string {
+  const playwrightPackage = require.resolve('playwright/package.json');
+  const browsers = JSON.parse(readFileSync(join(playwrightPackage, '..', '..', 'playwright-core', 'browsers.json'), 'utf8')) as { browsers?: { name?: string; browserVersion?: string }[] };
+  const version = browsers.browsers?.find((browser) => browser.name === 'chromium')?.browserVersion;
+  if (!version) throw new Error('Playwright lock metadata has no Chromium browserVersion');
+  return version;
+}
+
+function assertChromeVersion(output: string, expected: string): void {
+  const actual = /\b\d+\.\d+\.\d+\.\d+\b/u.exec(output)?.[0];
+  if (!output.includes('Chrome for Testing') || actual !== expected) throw new Error(`Chromium must match Playwright ${expected}; received ${JSON.stringify(output.trim())}`);
+}
+
+async function prepareBrowserRuntime(directory: string): Promise<BrowserRuntime> {
+  const playwrightVersion = (require('playwright/package.json') as { version: string }).version;
+  const chromiumVersion = expectedChromiumVersion();
+  const override = process.env.CAUCE_UI_FUNCTIONAL_BROWSER_IMAGE;
+  if (override) {
+    const imageInfo = await inspectImage(override);
+    if (!imageInfo) throw new Error(`browser override image is not present locally: ${override}`);
+    const [imageId] = imageInfo.split(' ');
+    const capability = await docker(['run', '--rm', '--network', 'none', '--entrypoint', 'sh', override, '-lc', `node -p "require('/opt/playwright/node_modules/playwright/package.json').version+' '+require('/opt/playwright/node_modules/playwright-core/browsers.json').browsers.find(x=>x.name==='chromium').browserVersion" && command -v certutil && ${chromePathCommand}`]);
+    const [versions, certutilPath, browserPath] = capability.stdout.trim().split('\n').map((line) => line.trim());
+    if (versions !== `${playwrightVersion} ${chromiumVersion}` || certutilPath !== '/usr/bin/certutil') throw new Error(`browser override must use Playwright ${playwrightVersion}, Chromium ${chromiumVersion}, and certutil: ${override}`);
+    if (typeof browserPath !== 'string' || !browserPath.startsWith('/') || !browserPath.endsWith('/chrome')) throw new Error(`browser override lacks certutil or Chromium: ${override}`);
+    const version = await docker(['run', '--rm', '--network', 'none', '--entrypoint', browserPath, override, '--version']);
+    assertChromeVersion(version.stdout, chromiumVersion);
+    process.stdout.write(`E2E browser override: ${override} ${imageInfo}; Playwright=${playwrightVersion}; Chromium=${chromiumVersion}\n`);
+    return { image: override, imageId: imageId ?? '', owned: false, playwrightVersion };
+  }
+
+  const image = `cauce-ui-functional:${randomUUID()}`;
+  if (await inspectImage(image) !== undefined) throw new Error('random browser image tag collision; refusing to reuse it');
+  const dockerfile = `FROM node@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+RUN apt-get update && apt-get install -y --no-install-recommends libnss3-tools && rm -rf /var/lib/apt/lists/*
+RUN npm install --global --no-audit --no-fund playwright@${playwrightVersion}
+RUN playwright install --with-deps chromium
+`;
+  const dockerfilePath = join(directory, 'Dockerfile.browser');
+  await writeFile(dockerfilePath, dockerfile, { mode: 0o600 });
+  const buildLog = join(tmpdir(), `cauce-ui-functional-build-${image.slice(image.indexOf(':') + 1)}.log`);
+  try {
+    const buildOutput = await docker(['build', '--progress=plain', '--label', 'cauce.e2e.owner=ui-functional', '--tag', image, '--file', dockerfilePath, directory], { timeout: 8 * 60_000, maxBuffer: 24 * 1024 * 1024 });
+    await writeFile(buildLog, `${buildOutput.stdout}${buildOutput.stderr}`, { mode: 0o600 });
+  } catch (error) {
+    await writeFile(buildLog, `${errorStdout(error)}${errorStderr(error)}`, { mode: 0o600 }).catch(() => undefined);
+    await cleanPartialBrowserImage(image, playwrightVersion, error, buildLog);
+    throw new Error(`browser runtime build failed for Playwright ${playwrightVersion}; log=${buildLog}`, { cause: error });
+  }
+  let imageInfo: string | undefined;
+  try { imageInfo = await inspectImage(image); }
+  catch (error) {
+    await cleanPartialBrowserImage(image, playwrightVersion, error, buildLog);
+    throw error;
+  }
+  if (!imageInfo) throw new Error(`browser runtime build completed without image ${image}; log=${buildLog}`);
+  const [imageId, owner] = imageInfo.split(' ');
+  if (!imageId || owner !== 'ui-functional') throw new Error(`built image ownership label is invalid for ${image}; log=${buildLog}`);
+  const runtime = { image, imageId, owned: true, playwrightVersion };
+  try {
+    const capability = await docker(['run', '--rm', '--network', 'none', '--entrypoint', 'sh', image, '-lc', `playwright --version && command -v certutil && ${chromePathCommand}`]);
+    const lines = capability.stdout.trim().split('\n');
+    if (lines[0]?.trim() !== `Version ${playwrightVersion}` || !lines.some((line) => line.trim() === '/usr/bin/certutil') || !lines.at(-1)?.trim().endsWith('/chrome')) {
+      throw new Error(`built runtime failed capability validation: ${JSON.stringify(capability.stdout.trim())}`);
+    }
+    const version = await docker(['run', '--rm', '--network', 'none', '--entrypoint', lines.at(-1)?.trim() ?? '', image, '--version']);
+    assertChromeVersion(version.stdout, chromiumVersion);
+    process.stdout.write(`E2E browser runtime: ${image} ${imageId}; Playwright=${playwrightVersion}; Chromium=${chromiumVersion}; build log=${buildLog}\n`);
+    return runtime;
+  } catch (error) {
+    try { await removeBrowserImage(runtime); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'browser runtime validation failed and its image could not be confirmed removed'); }
+    throw error;
+  }
+}
+
+async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime): Promise<{ browser: ConnectedBrowser; container: string }> {
+  const { image } = runtime;
+  const container = `cauce-ui-browser-${randomUUID()}`;
+  try {
+    const collision = await docker(['inspect', '--format', '{{.Id}}', container]).then((result) => result.stdout.trim()).catch((error: unknown) => {
+      if (/No such (?:object|container)/iu.test(errorStderr(error))) return '';
+      throw error;
+    });
+    if (collision) throw new Error(`random browser container name collision; refusing to reuse ${container}`);
+    await docker(['run', '--rm', '--detach', '--network', 'host', '--name', container, '--label', 'cauce.e2e.owner=ui-functional', '--entrypoint', 'sh', image, '-lc', 'sleep 600']);
+    const containerCa = `/tmp/${container}-ca.crt`;
+    await docker(['cp', caCertPath, `${container}:${containerCa}`]);
+    const initializeNss = 'if [ -d "$HOME/.pki/nssdb" ]; then nssdb="$HOME/.pki/nssdb"; else nssdb="${XDG_DATA_HOME:-$HOME/.local/share}/pki/nssdb"; fi; install -d -m 700 "$nssdb" && certutil -N --empty-password -d "sql:$nssdb" && printf "%s\\n" "$nssdb"';
+    const nssdb = (await docker(['exec', container, 'sh', '-lc', initializeNss])).stdout.trim();
+    if (!nssdb.startsWith('/root/') || nssdb.includes(' ')) throw new Error(`isolated browser selected an unexpected NSS database path: ${JSON.stringify(nssdb)}`);
+    await docker(['exec', container, 'certutil', '-A', '-f', '/dev/null', '-d', `sql:${nssdb}`, '-n', 'Cauce E2E private CA', '-t', 'C,,', '-i', containerCa], { timeout: 5_000 });
+    const browserPath = (await docker(['exec', container, 'sh', '-lc', chromePathCommand])).stdout.trim();
+    if (!browserPath.startsWith('/') || !browserPath.endsWith('/chrome')) {
+      throw new Error(`la imagen browser no tiene un ejecutable Chrome compatible: ${JSON.stringify(browserPath)}`);
+    }
+    const chromeVersion = await docker(['exec', container, browserPath, '--version']);
+    assertChromeVersion(chromeVersion.stdout, expectedChromiumVersion());
+    await docker(['exec', '--detach', container, browserPath, '--no-sandbox', '--headless=new', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', '--user-data-dir=/tmp/cauce-ui-functional-chrome', 'about:blank']);
+    const profile = '/tmp/cauce-ui-functional-chrome/DevToolsActivePort';
+    const deadline = Date.now() + 15_000;
+    let port = 0;
+    while (Date.now() < deadline) {
+      const activePort = await docker(['exec', container, 'cat', profile], { timeout: 2_000 }).catch(() => undefined);
+      const parsedPort = activePort?.stdout.split(/\s+/u)[0];
+      if (parsedPort && /^\d+$/u.test(parsedPort)) { port = Number(parsedPort); break; }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!port) throw new Error('Chrome aislado no publicó un puerto CDP efímero en el plazo previsto');
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${String(port)}`, { timeout: 10_000 });
+    return { browser, container };
+  } catch (error) {
+    try { await removeBrowserContainer(container); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'browser startup failed and its owned container could not be confirmed removed'); }
+    throw error;
+  }
+}
+
+async function inspectBrowserContainer(container: string): Promise<string | undefined> {
+  try { return (await docker(['inspect', '--format', '{{.State.Status}} {{index .Config.Labels "cauce.e2e.owner"}}', container])).stdout.trim(); }
+  catch (error) {
+    if (/No such (?:object|container)/iu.test(errorStderr(error))) return undefined;
+    throw error;
+  }
+}
+
+async function removeBrowserContainer(container: string): Promise<void> {
+  const inspection = await inspectBrowserContainer(container);
+  if (inspection === undefined) return;
+  if (inspection.split(/\s+/u).at(-1) !== 'ui-functional') throw new Error(`browser container ${container} lacks the expected ownership label`);
+  let removalError: unknown;
+  try { await docker(['rm', '--force', container]); }
+  catch (error) { removalError = error; }
+  let after: string | undefined;
+  try { after = await inspectBrowserContainer(container); }
+  catch (inspectError) {
+    throw new AggregateError(removalError === undefined ? [inspectError] : [removalError, inspectError], `could not confirm owned browser container ${container} was removed`);
+  }
+  if (after !== undefined) throw new Error(`owned browser container ${container} remains after cleanup`, { cause: removalError });
+}
+
+async function attemptCleanup(errors: Error[], label: string, operation: () => Promise<unknown>): Promise<void> {
+  try { await operation(); }
+  catch (error) { errors.push(new Error(`cleanup failed for ${label}`, { cause: error })); }
+}
+
+function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const onExit = () => { clearTimeout(timer); resolve(true); };
+    const timer = setTimeout(() => { child.off('exit', onExit); resolve(false); }, timeoutMs);
+    child.once('exit', onExit);
+  });
+}
+
+async function certificate(directory: string, name: string, ca?: { cert: string; key: string }, san = 'DNS:localhost,IP:127.0.0.1') {
+  const key = join(directory, `${name}.key`);
+  const cert = join(directory, `${name}.crt`);
+  const csr = join(directory, `${name}.csr`);
+  const config = join(directory, `${name}.cnf`);
+  await exec('openssl', ['genrsa', '-out', key, '2048']);
+  const isCa = ca === undefined;
+  await writeFile(config, `[req]\ndistinguished_name=dn\nprompt=no\n${isCa ? '' : 'req_extensions=ext\n'}[dn]\nCN=${name}\n${isCa ? '' : `[ext]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=${name === 'gateway-server' ? 'serverAuth' : 'clientAuth'}\nsubjectAltName=${san}\n`}`);
+  await exec('openssl', ['req', '-new', '-key', key, '-out', csr, '-config', config]);
+  if (ca) await exec('openssl', ['x509', '-req', '-in', csr, '-CA', ca.cert, '-CAkey', ca.key, '-CAcreateserial', '-out', cert, '-days', '2', '-sha256', '-extfile', config, '-extensions', 'ext']);
+  else await exec('openssl', ['req', '-x509', '-new', '-key', key, '-out', cert, '-days', '2', '-sha256', '-config', config, '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign']);
+  await chmod(key, 0o600);
+  await chmod(cert, 0o600);
+  return { key, cert };
+}
+
+async function createPki(directory: string) {
+  const ca = await certificate(directory, 'test-ca');
+  const server = await certificate(directory, 'gateway-server', ca, 'DNS:localhost,IP:127.0.0.1');
+  const consoleClient = await certificate(directory, 'console-proxy', ca, 'DNS:console.test');
+  const adapters = await Promise.all(functionalTenants.map((tenant) => certificate(directory, tenant.target, ca, `DNS:${tenant.target}.test`)));
+  const identities = [
+    { cert: consoleClient.cert, principal: { tenant_id: isaTenant.tenant, alias: 'e2eproxy', session_id: `proxy:${randomUUID()}`, channel: 'console-proxy', roles: ['adapter'], permissions: ['read'] } satisfies Identity },
+    ...functionalTenants.map((tenant, index) => {
+      const cert = adapters[index];
+      if (!cert) throw new Error(`missing adapter certificate for ${tenant.tenant}`);
+      return { cert: cert.cert, principal: { tenant_id: tenant.tenant, alias: tenant.target, session_id: `adapter:${randomUUID()}`, channel: 'agent', roles: ['agent'], permissions: ['route', 'read'] } satisfies Identity };
+    }),
+  ].map(({ cert, principal }) => ({ certificate_sha256: new X509Certificate(readFileSync(cert)).fingerprint256.replaceAll(':', '').toLowerCase(), expires_at: new Date(Date.now() + 10 * 60_000).toISOString(), principal }));
+  const identityPath = join(directory, 'identities.json');
+  await writeFile(identityPath, JSON.stringify({ version: 1, identities }), { mode: 0o600 });
+  return { ca, server, consoleClient, adapterCerts: adapters, identityPath };
+}
+
+async function seed(database: TestDatabase, directory: string) {
+  for (const item of functionalTenants) {
+    await database.pool.query('INSERT INTO tenants(id) VALUES ($1) ON CONFLICT DO NOTHING', [item.tenant]);
+    await database.pool.query('INSERT INTO rooms(id,tenant_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [item.room, item.tenant]);
+    await database.pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory)
+      VALUES ($1,$2,'fake',$2,true,$3,'stev',$4,$5) ON CONFLICT (tenant_id,alias) DO NOTHING`, [item.tenant, item.target, `cauce-e2e-${item.target}`, directory, join(directory, item.target)]);
+    await database.pool.query("INSERT INTO agent_profiles(tenant_id,alias,role_summary) VALUES ($1,$2,$3) ON CONFLICT (tenant_id,alias) DO NOTHING", [item.tenant, item.target, item.marker]);
+    await database.pool.query('INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES ($1,$2,$3,\'operator\') ON CONFLICT DO NOTHING', [item.tenant, item.room, item.operator]);
+  }
+}
+
+async function availableLoopbackPort(): Promise<number> {
+  const server = createTcpServer();
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  const port = (server.address() as import('node:net').AddressInfo).port;
+  await new Promise<void>((resolve, reject) => server.close((error) => { if (error) reject(error); else resolve(); }));
+  return port;
+}
+
+export async function startConsoleFunctionalFixture(): Promise<Fixture> {
+  const directory = await mkdtemp(join(tmpdir(), 'cauce-ui-functional-'));
+  let setupStage = 'prepare browser runtime';
+  let browserRuntime: BrowserRuntime | undefined;
+  let database: TestDatabase | undefined;
+  let app: Fixture['app'] | undefined;
+  let vite: Fixture['vite'] | undefined;
+  let browser: ConnectedBrowser | undefined;
+  let browserContainer: string | undefined;
+  let proxyAgent: HttpsAgent | undefined;
+  const contexts: Fixture['contexts'] = [];
+  const adapters: Fixture['adapters'] = [];
+  const prompts: Record<string, string> = {};
+  try {
+    const runtime = await prepareBrowserRuntime(directory);
+    browserRuntime = runtime;
+    setupStage = 'start isolated PostgreSQL';
+    database = await startTestDatabase();
+    setupStage = 'seed fixture and create TLS material';
+    await seed(database, directory);
+    const pki = await createPki(directory);
+    if (process.env.VITE_USE_MOCKS === 'true') throw new Error('VITE_USE_MOCKS=true no se admite en E2E contra gateway/PostgreSQL reales');
+    for (const user of [...functionalTenants, isaSecondHuman]) {
+      setupStage = `provision password user ${user.tenant}`;
+      const provision = await exec(join(process.cwd(), 'node_modules/.bin/tsx'), [
+        'services/gateway/src/console-user-cli.ts', '--email', user.email, '--name', `${user.tenant} E2E operator`,
+        '--role', 'operator', '--tenant', user.tenant, '--alias', user.operator,
+      ], { cwd: process.cwd(), env: { PATH: process.env.PATH ?? '/usr/bin:/bin', NODE_ENV: 'test', DATABASE_URL: database.url, CAUCE_CONSOLE_USER_PASSWORD: user.password }, timeout: 15_000 });
+      if (!provision.stdout.includes('cuenta guardada') || provision.stdout.includes(user.password)) {
+        throw new Error(`la CLI de cuentas no confirmó creación limpia; stdout sin contraseña=${JSON.stringify(provision.stdout.replaceAll(user.password, '[REDACTED]'))}`);
+      }
+    }
+    const frontendPort = await availableLoopbackPort();
+    setupStage = 'build gateway and start HTTPS listener';
+    const auth = new PasswordAuthProvider({
+      users: new PostgresConsoleUserStore(database.pool), signingKey: randomBytes(32), sessionTtlMs: 10 * 60_000,
+      fallback: new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(pki.identityPath)),
+    });
+    await auth.ready();
+    app = await buildGateway({ pool: database.pool, authProvider: auth, https: {
+      key: await readFile(pki.server.key), cert: await readFile(pki.server.cert), ca: await readFile(pki.ca.cert), requestCert: true, rejectUnauthorized: true,
+    }, consoleOrigins: [`https://localhost:${String(frontendPort)}`] });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const gatewayAddress = app.server.address() as import('node:net').AddressInfo;
+    proxyAgent = new HttpsAgent({ cert: await readFile(pki.consoleClient.cert), key: await readFile(pki.consoleClient.key), ca: await readFile(pki.ca.cert), rejectUnauthorized: true });
+    const { createServer } = require('vite') as { createServer: (config: Record<string, unknown>) => Promise<ViteServer> };
+    setupStage = 'start Vite HTTPS server';
+    const devServer = await createServer({ configFile: join(process.cwd(), 'console/vite.config.ts'), root: join(process.cwd(), 'console'), envDir: directory, server: {
+      host: '127.0.0.1', port: frontendPort, strictPort: true, https: { key: await readFile(pki.server.key), cert: await readFile(pki.server.cert) },
+      proxy: { '/v3': { target: `https://localhost:${String(gatewayAddress.port)}`, agent: proxyAgent, secure: true, changeOrigin: false, ws: true } },
+    } });
+    vite = devServer;
+    await devServer.listen();
+    const address = devServer.httpServer?.address() as import('node:net').AddressInfo;
+    setupStage = 'start isolated browser';
+    const isolatedBrowser = await startIsolatedBrowser(pki.ca.cert, runtime);
+    const activeBrowser = isolatedBrowser.browser;
+    const activeBrowserContainer = isolatedBrowser.container;
+    browser = activeBrowser;
+    browserContainer = activeBrowserContainer;
+    const fixture: Fixture = {
+      database, directory, browserRuntime: runtime, baseUrl: `https://localhost:${String(address.port)}`, gatewayUrl: `https://localhost:${String(gatewayAddress.port)}`, pki, app, vite, browser: activeBrowser, browserContainer: activeBrowserContainer, contexts, adapters, prompts,
+      close: async () => {
+        const cleanupErrors: Error[] = [];
+        for (const [index, context] of contexts.entries()) await attemptCleanup(cleanupErrors, `browser context ${String(index)}`, () => context.close());
+        await attemptCleanup(cleanupErrors, 'CDP browser', () => activeBrowser.close());
+        await attemptCleanup(cleanupErrors, 'owned browser container', () => removeBrowserContainer(activeBrowserContainer));
+        for (const child of adapters) {
+          if (child.exitCode !== null || child.signalCode !== null) continue;
+          await attemptCleanup(cleanupErrors, `adapter process ${String(child.pid)}`, async () => {
+            child.kill('SIGTERM');
+            if (!(await waitForChildExit(child, 2_000))) {
+              child.kill('SIGKILL');
+              if (!(await waitForChildExit(child, 2_000))) throw new Error(`process ${String(child.pid)} did not exit after SIGKILL`);
+            }
+          });
+        }
+        proxyAgent?.destroy();
+        if (vite) await attemptCleanup(cleanupErrors, 'Vite server', () => vite?.close() ?? Promise.resolve());
+        if (app) await attemptCleanup(cleanupErrors, 'gateway server', () => app?.close() ?? Promise.resolve());
+        if (database) await attemptCleanup(cleanupErrors, 'database pool', () => database?.pool.end() ?? Promise.resolve());
+        if (database) await attemptCleanup(cleanupErrors, 'owned PostgreSQL container', () => database?.container.stop() ?? Promise.resolve());
+        await attemptCleanup(cleanupErrors, 'owned browser image', () => removeBrowserImage(runtime));
+        await attemptCleanup(cleanupErrors, 'fixture temporary directory', () => rm(directory, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 }));
+        if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'functional E2E cleanup was incomplete');
+      },
+    };
+    return fixture;
+  } catch (error) {
+    process.stderr.write(`functional fixture setup failed at: ${setupStage}\n`);
+    const cleanupErrors: Error[] = [];
+    if (browser) await attemptCleanup(cleanupErrors, 'CDP browser', () => browser?.close() ?? Promise.resolve());
+    if (browserContainer) {
+      const ownedContainer = browserContainer;
+      await attemptCleanup(cleanupErrors, 'owned browser container', () => removeBrowserContainer(ownedContainer));
+    }
+    proxyAgent?.destroy();
+    if (vite) await attemptCleanup(cleanupErrors, 'Vite server', () => vite?.close() ?? Promise.resolve());
+    if (app) await attemptCleanup(cleanupErrors, 'gateway server', () => app?.close() ?? Promise.resolve());
+    if (database) await attemptCleanup(cleanupErrors, 'database pool', () => database?.pool.end() ?? Promise.resolve());
+    if (database) await attemptCleanup(cleanupErrors, 'owned PostgreSQL container', () => database?.container.stop() ?? Promise.resolve());
+    if (browserRuntime) {
+      const ownedRuntime = browserRuntime;
+      await attemptCleanup(cleanupErrors, 'owned browser image', () => removeBrowserImage(ownedRuntime));
+    }
+    await attemptCleanup(cleanupErrors, 'fixture temporary directory', () => rm(directory, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 }));
+    if (cleanupErrors.length > 0) throw new AggregateError([error, ...cleanupErrors], 'functional fixture startup failed and cleanup was incomplete', { cause: error });
+    throw error;
+  }
+}
+
+export async function startBoundedAdapter(fixture: Fixture, tenant: FunctionalTenant): Promise<ChildProcess> {
+  const index = functionalTenants.indexOf(tenant);
+  const tls = fixture.pki.adapterCerts[index];
+  if (!tls) throw new Error(`no TLS material for ${tenant.tenant}`);
+  const capture = join(fixture.directory, `${tenant.tenant}-captured-prompt.txt`);
+  const harness = join(fixture.directory, `${tenant.tenant}-bounded-harness.mjs`);
+  await writeFile(harness, `#!/usr/bin/env node\nimport { appendFile } from 'node:fs/promises';\nconst chunks=[]; for await (const item of process.stdin) chunks.push(Buffer.from(item));\nconst prompt=Buffer.concat(chunks).toString('utf8');\nawait appendFile(${JSON.stringify(capture)}, prompt+'\\n---TURN---\\n', {mode:0o600});\nconst humanMarker=/UI-HUMAN-[A-Z0-9-]+/u.exec(prompt)?.[0];\nconst reply=${JSON.stringify(`respuesta sintética ${tenant.tenant}`)}+(humanMarker ? ' '+humanMarker : '');\nprocess.stdout.write(JSON.stringify({reply,messages:[],status:'done',retryable:false,artifacts:[]})+'\\n');\n`);
+  await chmod(harness, 0o700);
+  const child = spawn(process.execPath, ['packages/adapter-sdk/dist/src/bin/fake.js'], {
+    cwd: process.cwd(), env: {
+      PATH: process.env.PATH, NODE_ENV: 'test',
+      CAUCE_TENANT: tenant.tenant, CAUCE_ROOM: tenant.room, CAUCE_ALIAS: tenant.target,
+      CAUCE_INSTANCE_ID: `ui-e2e-${tenant.tenant.toLowerCase()}`, CAUCE_STATE_DIR: join(fixture.directory, `${tenant.tenant}-state`),
+      CAUCE_RELAY_URL: `${fixture.gatewayUrl.replace('https:', 'wss:')}/v3/ws`, CAUCE_ENVIRONMENT: 'test',
+      CAUCE_HARNESS_COMMAND: harness, CAUCE_HEARTBEAT_MS: '250',
+      CAUCE_TLS_CERT_FILE: tls.cert, CAUCE_TLS_KEY_FILE: tls.key, CAUCE_TLS_CA_FILE: fixture.pki.ca.cert,
+    }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const appendBounded = (key: string, chunk: Buffer) => {
+    const combined = (fixture.prompts[key] ?? '') + chunk.toString('utf8');
+    fixture.prompts[key] = combined.slice(-64 * 1024);
+  };
+  child.stdout.on('data', (chunk: Buffer) => { appendBounded(`${tenant.tenant}:stdout`, chunk); });
+  child.stderr.on('data', (chunk: Buffer) => { appendBounded(`${tenant.tenant}:stderr`, chunk); });
+  fixture.adapters.push(child);
+  fixture.prompts[`${tenant.tenant}:capture`] = capture;
+  return child;
+}
+
+export async function newTrustedPage(fixture: Fixture, viewport: { width: number; height: number }): Promise<BrowserPage> {
+  const context = await fixture.browser.newContext({ viewport, ignoreHTTPSErrors: false, serviceWorkers: 'block' });
+  fixture.contexts.push(context);
+  return context.newPage();
+}
