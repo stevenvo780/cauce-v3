@@ -84,9 +84,22 @@ if (args[0] === 'compose') {
   if (process.env.MOCK_FAILURE === 'pinned-config' && operation === 'config' && previous.some(entry => entry.args[0] === 'build')) process.exit(20);
   process.exit(0);
 }
+const pinned = previous.some(entry => entry.args[0] === 'build');
+if (args[0] === 'ps' && pinned && process.env.MOCK_FAILURE?.startsWith('blob-')) {
+  if (process.env.MOCK_FAILURE === 'blob-check') process.exit(22);
+  console.log('overlay-fixture-postgres-1'); process.exit(0);
+}
+if (args[0] === 'exec') {
+  if (args.at(-1).includes('terminal_sessions')) {
+    if (process.env.MOCK_FAILURE === 'b1-query') process.exit(23);
+    console.log('1');
+  } else console.log('0');
+  process.exit(0);
+}
 if (['build', 'push', 'ps'].includes(args[0]) || (args[0] === 'volume' && args[1] === 'ls')) process.exit(0);
 if (args[0] === 'inspect') {
-  if (args.length === 2) process.exit(1);
+  if (args.length === 2) process.exit(process.env.MOCK_FAILURE?.startsWith('b1-') ? 0 : 1);
+  if (args[1] === '-f') { console.log('true'); process.exit(0); }
   if (args[2].includes('instance-id')) console.log('0'.repeat(64));
   else if (args[2].includes('RepoDigests')) console.log('fixture/' + (args.at(-1).includes('runtime') ? 'runtime' : 'console') + '@sha256:' + '1'.repeat(64));
   else process.exit(94);
@@ -116,6 +129,7 @@ function execute(configuration: string, options: {
     copyFileSync(join(root, 'deploy', name), join(deployment, name));
   }
   writeFileSync(join(migrations, '001_fixture.sql'), '');
+  if (options.failure?.startsWith('blob-')) writeFileSync(join(migrations, '043_blob_tenant_entitlements.sql'), '');
   for (const name of ['docker', 'git', 'id', 'date', 'backup-monitor']) {
     writeFileSync(join(binaries, name), mock, { mode: 0o700 });
   }
@@ -172,7 +186,7 @@ function execute(configuration: string, options: {
     ...options.environment,
   };
   const result = spawnSync('bash', [join(deployment, 'deploy.sh')], {
-    cwd: directory, encoding: 'utf8', env: environment, timeout: 30_000,
+    cwd: directory, encoding: 'utf8', env: environment, input: 'no\n', timeout: 30_000,
   });
   const commands = () => existsSync(log)
     ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as Command)
@@ -324,9 +338,12 @@ describe('deploy human MCP overlay selection', () => {
   });
 
   it('rejects failed MCP rendering before build, fetch or pin changes', () => {
-    const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + publicConfiguration, { failure: 'config' });
+    const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + publicConfiguration, {
+      failure: 'config', environment: { SNAPSHOT_READY: '1' },
+    });
     expectUnchanged(result);
     expect(result.stderr).toContain('el compose MCP no renderiza');
+    expect(result.stderr).not.toContain('Rollback MCP manual');
   });
 
   it.each(['pinned-config', 'run', 'up', 'refresh-observability.sh', 'smoke.sh'])('preserves manual rollback with the exact overlay after %s fails', failure => {
@@ -348,6 +365,60 @@ describe('deploy human MCP overlay selection', () => {
     for (const command of recoveredCompose) {
       expect(command.args).toContain(join(result.repository, 'deploy/compose.mcp-human.yaml'));
       expect(command.mcp).toEqual(publicValues);
+    }
+  });
+
+  it.each(['confirmation', 'blob-check', 'blob-pending', 'b1-sessions', 'b1-query'])(
+    'offers manual recovery for %s before the migrator without changing the snapshot', failure => {
+    const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + publicConfiguration, {
+      failure, environment: failure === 'confirmation' ? { CAUCE_DEPLOY_CONFIRMADO: '' } : {},
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(failure === 'b1-query' ? 23 : 1);
+    expect(result.stderr.match(/Rollback MCP manual/g)).toHaveLength(1);
+    const reasons: Record<string, string> = {
+      confirmation: 'abortado por el dueño',
+      'blob-check': 'no pude enumerar contenedores',
+      'blob-pending': '043 paso a pendiente despues del backup',
+      'b1-sessions': 'sesiones de terminal sin anclar',
+      'b1-query': 'comando fallido antes del migrator',
+    };
+    expect(result.stderr).toContain(reasons[failure]);
+    expect(result.snapshots()).toEqual([result.initialEnvironment]);
+    expect(result.currentEnvironment()).toContain('CAUCE_RUNTIME_IMAGE=fixture/runtime@sha256:');
+    expect(result.currentEnvironment()).not.toBe(result.initialEnvironment);
+    expect(existsSync(result.history)).toBe(false);
+    const beforeRecovery = result.commands();
+    expect(composeCommands(beforeRecovery).every(command => !command.args.includes('run') && !command.args.includes('up'))).toBe(true);
+    expect(beforeRecovery.some(command => command.args.includes('down') || command.args.includes('stop'))).toBe(false);
+    const recoveryCommands = result.stderr.split('\n').filter(line => line.startsWith('cp -a ') || line.startsWith('env -u '));
+    expect(recoveryCommands).toHaveLength(3);
+    const recovery = result.recover(recoveryCommands.join('\n'));
+    expect(recovery.status, recovery.stderr).toBe(0);
+    expect(result.currentEnvironment()).toBe(result.initialEnvironment);
+    expect(result.snapshots()).toEqual([result.initialEnvironment]);
+    const recovered = composeCommands(result.commands().slice(beforeRecovery.length));
+    expect(recovered.map(command => command.args.find(arg => ['config', 'up'].includes(arg)))).toEqual(['config', 'up']);
+    for (const command of recovered) {
+      expect(command.args).toContain(join(result.repository, 'deploy/compose.mcp-human.yaml'));
+      expect(command.args[command.args.indexOf('--env-file') + 1]).toBe(result.environmentFile);
+      expect(command.mcp).toEqual(publicValues);
+    }
+  });
+
+  it.each(['', 'CAUCE_MCP_HUMAN_ENABLED=0\n'])(
+    'keeps default/off pre-migrator aborts unchanged (%j)', flag => {
+    for (const failure of ['confirmation', 'blob-check', 'blob-pending', 'b1-sessions', 'b1-query']) {
+      const result = execute(flag + publicConfiguration, {
+        failure, environment: failure === 'confirmation' ? { CAUCE_DEPLOY_CONFIRMADO: '' } : {},
+      });
+      expect(result.status, result.stderr).toBe(failure === 'b1-query' ? 23 : 1);
+      expect(result.stderr).not.toContain('Rollback MCP manual');
+      expect(result.snapshots()).toEqual([result.initialEnvironment]);
+      expect(result.currentEnvironment()).not.toBe(result.initialEnvironment);
+      expect(existsSync(result.history)).toBe(false);
+      expect(composeCommands(result.commands()).every(command => !command.args.some(arg => arg.endsWith('compose.mcp-human.yaml'))
+        && !command.args.includes('run') && !command.args.includes('up'))).toBe(true);
     }
   });
 

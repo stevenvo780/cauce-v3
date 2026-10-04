@@ -12,8 +12,14 @@ BACKUP_STATUS_FILE="${CAUCE_DEPLOY_BACKUP_STATUS_FILE:-/var/log/cauce-v3-backup/
 BACKUP_MAX_AGE_HOURS="${CAUCE_DEPLOY_BACKUP_MAX_AGE_HOURS:-24}"
 BACKUP_MONITOR="${CAUCE_DEPLOY_BACKUP_MONITOR:-$REPO/ops/scripts/host-backup-monitor.sh}"
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$REPO/deploy/compose.yaml" -f "$REPO/deploy/compose.postgres.yaml" --project-directory "$REPO/deploy")
+SNAPSHOT_READY=0
 
-die() { echo "deploy: $*" >&2; exit 1; }
+die() {
+  if [ "${MCP_HUMAN_ENABLED:-0}" = 1 ] && [ "${SNAPSHOT_READY:-0}" = 1 ]; then
+    deployment_failed "$*"
+  fi
+  echo "deploy: $*" >&2; exit 1
+}
 env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -1 | tr -d '\r'; }
 env_declarations() { grep -Ec "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*[=:]" "$ENV_FILE" || true; }
 profile_enabled() {
@@ -57,7 +63,8 @@ prepare_terminal() {
   export CAUCE_TERMINAL_RELAY_INSTANCE_ID="$INSTANCE_ID"
 }
 deployment_failed() {
-  echo "deploy: $*" >&2
+  local exit_status="${2:-1}"
+  echo "deploy: $1" >&2
   if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
     local -a recovery=(env -u CAUCE_MCP_PUBLIC_ORIGIN -u CAUCE_MCP_OAUTH_ISSUER -u CAUCE_MCP_OAUTH_JWKS_URI
       "CAUCE_TERMINAL_RELAY_INSTANCE_ID=$INSTANCE_ID" "CAUCE_BLOB_API_ENABLED=$BLOB_API_ENABLED")
@@ -70,7 +77,12 @@ deployment_failed() {
     printf '%q ' "${recovery[@]}" >&2; printf 'config\n' >&2
     printf '%q ' "${recovery[@]}" >&2; printf 'up -d --wait --wait-timeout 300 --remove-orphans\n' >&2
   fi
-  exit 1
+  exit "$exit_status"
+}
+deployment_error() {
+  local failure_status="$?"
+  trap - ERR
+  deployment_failed "comando fallido antes del migrator; pins pueden haber cambiado; snapshot previo: $ENV_FILE.pre-deploy-$STAMP" "$failure_status"
 }
 
 [ "${CAUCE_FASE3_CON_DUENO:-}" = "si" ] || die "FASE 3 solo con el dueño presente (exporta CAUCE_FASE3_CON_DUENO=si)"
@@ -329,6 +341,10 @@ echo "runtime: $RUNTIME_DIGEST"
 echo "console: $CONSOLE_DIGEST"
 
 cp -a "$ENV_FILE" "$ENV_FILE.pre-deploy-$STAMP"
+if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
+  SNAPSHOT_READY=1
+  trap deployment_error ERR
+fi
 sed -i "s|^CAUCE_RUNTIME_IMAGE=.*|CAUCE_RUNTIME_IMAGE=$RUNTIME_DIGEST|" "$ENV_FILE"
 sed -i "s|^CAUCE_CONSOLE_IMAGE=.*|CAUCE_CONSOLE_IMAGE=$CONSOLE_DIGEST|" "$ENV_FILE"
 
@@ -349,6 +365,7 @@ if docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
 else
   echo "PostgreSQL nuevo: la comprobacion de sesiones previas no aplica antes del primer migrator."
 fi
+if [ "$MCP_HUMAN_ENABLED" = 1 ]; then trap - ERR; fi
 "${COMPOSE[@]}" run --rm -T migrator || deployment_failed "migracion fallida; $ENV_FILE apunta a los digests nuevos (runtime=$RUNTIME_DIGEST console=$CONSOLE_DIGEST). Comprueba el esquema antes de restaurar pins anteriores: con 043 aplicada, el gateway viejo con API de blobs=1 es incompatible. Snapshot previo: $ENV_FILE.pre-deploy-$STAMP"
 "${COMPOSE[@]}" up -d --wait --wait-timeout 300 --remove-orphans || deployment_failed "up fallo; no levantes el gateway anterior con API de blobs=1 si 043 esta aplicada. Para revertir, restaura juntos BD y volumen del snapshot previo a 043, verifica esquema anterior y despues los pins de $ENV_FILE.pre-deploy-$STAMP"
 CAUCE_ENV_FILE="$ENV_FILE" "$REPO/deploy/refresh-observability.sh" \
