@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { UUID_ANY_PATTERN } from '../patterns.js';
 import {
   AckErrorCodeSchema,
   AckStatusSchema,
@@ -139,6 +140,15 @@ const WsAckSchema = AckSchema.safeExtend({
   delivery_id: DeliveryIdSchema
 }).strict();
 
+export const HUMAN_MESSAGE_INITIATOR_CAPABILITY = 'human_message_initiator_v1' as const;
+
+export const HumanMessageInitiatorSchema = z.object({
+  human_id: z.string().regex(UUID_ANY_PATTERN),
+  tenant_id: TenantSchema,
+  conversation_id: z.string().min(1).refine((text) => new TextEncoder().encode(text).byteLength <= 512),
+  root_message_id: z.string().regex(UUID_ANY_PATTERN),
+}).strict();
+
 export const DeliveryEnvelopeSchema = z.object({
   type: z.literal('delivery'),
   version: z.literal(PROTOCOL_VERSION),
@@ -156,6 +166,7 @@ export const DeliveryEnvelopeSchema = z.object({
   actor_alias: AliasSchema,
   recipient_alias: AliasSchema,
   body: MessageBodySchema,
+  human_initiator: HumanMessageInitiatorSchema.optional(),
   origin: OriginSchema.optional(),
   authenticated_context: AuthenticatedContextSchema.optional(),
   console_human_subject: z.string().length(70).regex(/^human:[a-f0-9]{64}$/u).optional(),
