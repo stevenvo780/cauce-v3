@@ -57,7 +57,10 @@ export class OpenClawPhaseFrames {
   private dropping = false;
   private lineStart = true;
   private count = 0;
+  private discardedBytes = 0;
   constructor(private readonly observer: OpenClawPhaseObserver | undefined) {}
+
+  get diagnosticBytes(): number { return this.discardedBytes; }
 
   finish(): Buffer {
     const ordinary = Buffer.from(this.prefix, "latin1");
@@ -68,8 +71,9 @@ export class OpenClawPhaseFrames {
   push(chunk: Buffer): Buffer {
     const ordinary: number[] = [];
     for (const byte of chunk) {
-      if (this.dropping) { if (byte === 10) { this.dropping = false; this.lineStart = true; } continue; }
+      if (this.dropping) { this.discardedBytes++; if (byte === 10) { this.dropping = false; this.lineStart = true; } continue; }
       if (this.frame !== undefined) {
+        this.discardedBytes++;
         if (byte === 10) {
           const value = bridgeObservation(this.frame);
           if (value !== undefined && this.count++ < 32) { try { this.observer?.(value); } catch { /* Diagnostic only. */ } }
@@ -81,7 +85,7 @@ export class OpenClawPhaseFrames {
       if (this.lineStart) {
         this.prefix += String.fromCharCode(byte);
         if (OPENCLAW_PHASE_PREFIX.startsWith(this.prefix)) {
-          if (this.prefix === OPENCLAW_PHASE_PREFIX) { this.frame = this.prefix; this.prefix = ''; }
+          if (this.prefix === OPENCLAW_PHASE_PREFIX) { this.discardedBytes += this.prefix.length; this.frame = this.prefix; this.prefix = ''; }
           continue;
         }
         for (const character of this.prefix) ordinary.push(character.charCodeAt(0));
