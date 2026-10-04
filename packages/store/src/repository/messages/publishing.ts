@@ -6,8 +6,9 @@ import {
   consolePublishIntentSemanticHash,
   isSystemGateProbeBody,
   publishRequestHash,
+  isAnyUuid,
 } from '@cauce/protocol';
-import { withTransaction } from '../../db.js';
+import { withAbortableTransaction, withTransaction, type DatabaseClient } from '../../db.js';
 import {
   ConfigRepository,
   assertPublishRoute,
@@ -28,7 +29,9 @@ import {
   PublishIntentExpiredError,
   type PublishOptions,
   type PublishResult,
+  type HumanPublishProvenance,
 } from './contracts.js';
+import { loadHumanMessageInitiator, putHumanMessageInitiator } from './human-initiators.js';
 import { reconstructPublishReceipt } from './receipts.js';
 import { MESSAGE_AUTHOR_SQL, requireConsoleAuthor, withMessageAuthor } from './author.js';
 import {
@@ -44,6 +47,43 @@ function conversationKind(chatType: unknown): 'dm' | 'group' | 'unknown' {
   if (chatType === 'private') return 'dm';
   if (chatType === 'group' || chatType === 'supergroup' || chatType === 'channel') return 'group';
   return 'unknown';
+}
+
+async function humanPublicationAuthority(
+  client: DatabaseClient, input: PublishMessage, options: PublishOptions,
+): Promise<HumanPublishProvenance | undefined> {
+  if (options.humanAuthority === undefined) {
+    if (input.authenticated_context?.channel === 'human-mcp') {
+      throw new StoreError('forbidden', 'human MCP publication requires durable authority');
+    }
+    return undefined;
+  }
+  if (options.signal === undefined || options.requirePreparedConsoleIntent !== true
+      || options.consoleAuthor === undefined) {
+    throw new StoreError('forbidden', 'human publication requires a cancellable authenticated intent');
+  }
+  options.signal.throwIfAborted();
+  const authority = await options.humanAuthority(client);
+  options.signal.throwIfAborted();
+  if (!isAnyUuid(authority.humanId) || authority.tenantId !== input.tenant_id
+      || authority.actorAlias !== input.actor_alias
+      || options.consoleAuthor.subject_id !== `human:${sha256([
+        'cauce-v3:human-author:v1', input.tenant_id, `console:${authority.humanId}`,
+      ])}`) {
+    throw new StoreError('forbidden', 'human publication identity is inconsistent');
+  }
+  return Object.freeze({ ...authority });
+}
+
+async function assertHumanRoot(
+  client: DatabaseClient, input: PublishMessage, messageId: string, human: HumanPublishProvenance,
+): Promise<void> {
+  const initiator = await loadHumanMessageInitiator(client, messageId);
+  if (initiator?.humanId !== human.humanId || initiator.tenantId !== human.tenantId
+      || initiator.messageTenantId !== input.tenant_id || initiator.rootMessageId !== messageId
+      || initiator.conversationId !== consolePublishConversationHash(input)) {
+    throw new StoreError('not_found', 'message not found or not owned');
+  }
 }
 
 export abstract class MessagePublishingRepository extends ConfigRepository {
@@ -126,8 +166,9 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
     if (uniqueRecipients.length !== input.recipients.length) {
       throw new StoreError('conflict', 'recipient list contains duplicates');
     }
-    return withTransaction(this.pool, async (client) => {
-      await assertPublishRoute(client, input);
+    const work = async (client: DatabaseClient): Promise<PublishResult> => {
+      const human = await humanPublicationAuthority(client, input, options);
+      await assertPublishRoute(client, input, human !== undefined);
 
       if (options.requirePreparedConsoleIntent === true) {
         await lockConsolePublishIntents(client, input.tenant_id, input.actor_alias);
@@ -212,6 +253,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
         if (!existing.message_id || existing.response === null) {
           throw new StoreError('conflict', 'idempotency request is still in progress');
         }
+        if (human !== undefined) await assertHumanRoot(client, input, existing.message_id, human);
         const repaired = await reconstructPublishReceipt(
           client,
           input,
@@ -247,6 +289,11 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
       });
       const messageId = message.rows[0]?.id;
       if (!messageId) throw new Error('message insert returned no id');
+      if (human !== undefined) await putHumanMessageInitiator(client, {
+        messageId, messageTenantId: input.tenant_id, humanId: human.humanId,
+        tenantId: human.tenantId, rootMessageId: messageId,
+        conversationId: consolePublishConversationHash(input),
+      });
       const deliveryIds: string[] = [];
       for (const recipient of uniqueRecipients) {
         const delivery = await insertDelivery(client, {
@@ -380,7 +427,9 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
            })]
       );
       return response;
-    });
+    };
+    return options.signal === undefined ? withTransaction(this.pool, work)
+      : withAbortableTransaction(this.pool, options.signal, work);
   }
 
   async getMessage(
