@@ -87,3 +87,36 @@ test("transport selection changes runtime behavior without inventing hello negot
     helloCapabilityStrings(cli.capabilities),
   );
 });
+
+
+test("human initiator capability is absent by default and explicit only for the complete consumer", () => {
+  const capabilities = HARNESS_DEFINITIONS.claude.capabilities;
+  assert.equal(helloCapabilityStrings(capabilities).includes("human_message_initiator_v1"), false);
+  const enabled = helloCapabilityStrings(capabilities, true);
+  assert.equal(enabled.filter((capability) => capability === "human_message_initiator_v1").length, 1);
+  assert.deepEqual(enabled.filter((capability) => capability !== "human_message_initiator_v1"),
+    helloCapabilityStrings(capabilities));
+});
+
+
+test("client HELLO follows the immutable factory capability for supported and unsupported harnesses", async (t) => {
+  const { isolatedEngine } = await import("./human-initiator-session-isolation.fixtures.js");
+  const { FakeConnection, waitUntil } = await import("./client-fixtures.js");
+  const { AdapterClient } = await import("../src/sdk/client.js");
+  const { deliveryHarnesses } = await import("../src/bin/shared.js");
+  for (const definition of [HARNESS_DEFINITIONS.claude, HARNESS_DEFINITIONS.codex, HARNESS_DEFINITIONS.fake]) {
+    const context = await isolatedEngine(t);
+    const connection = new FakeConnection(1);
+    const adapters = deliveryHarnesses({ definition, runner: context.manual, store: context.store, sessionNamespace: "argos" }, context.headless);
+    const client = new AdapterClient({ config: { tenantId: "Steven", alias: "argos", instanceId: "human-sdk-client",
+      stateDirectory: context.directory }, connector: { connect: async () => connection }, store: context.store, ...adapters });
+    const stop = new AbortController();
+    const running = client.run(stop.signal);
+    try {
+      await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"), "HELLO capability");
+      const hello = connection.sent.find((frame) => frame.type === "hello");
+      assert.ok(hello);
+      assert.equal(hello.capabilities.includes("human_message_initiator_v1"), definition.id !== "fake");
+    } finally { stop.abort(); await running; }
+  }
+});
