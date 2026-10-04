@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import sys
 from typing import Any
 
 from .framing import (
@@ -12,6 +13,8 @@ from .framing import (
     TAG_WRITE_BATCH_OK,
     TAG_WRITE_ERR,
     TAG_WRITE_OK,
+    TAG_WRITE_STATUS_ERR,
+    TAG_WRITE_STATUS_OK,
     ProtocolError,
     encode_json,
 )
@@ -25,13 +28,11 @@ from .governance_paths import (
     NEVER_SERVE_SUFFIXES,
     SHA256_RE,
 )
+from .governance_write_journal import GovernanceWriteJournal, GovernanceWriteReceipt, JournalError
+from .governance_write_transaction import GovernanceBindMountError, GovernanceWriteTransactionMixin
 
 MOUNTINFO_PATH = "/proc/self/mountinfo"
 _OCTAL_DIGITS = frozenset("01234567")
-
-
-class GovernanceBindMountError(Exception):
-    """The destination is a bind-mounted file and the caller cannot commit it with a rename."""
 
 
 def _read_mountinfo() -> str | None:
@@ -103,6 +104,7 @@ class GovernanceWrite:
         content_sha: str,
         content_bytes: int,
         chunks: int,
+        operation_descriptor: dict[str, Any] | None = None,
     ) -> None:
         self.request_id = request_id
         self.path = path
@@ -113,6 +115,7 @@ class GovernanceWrite:
         self.chunks = chunks
         self.received_chunks = 0
         self.content = bytearray()
+        self.operation_descriptor = operation_descriptor
 
 
 class GovernanceBatchEntry:
@@ -138,9 +141,15 @@ class GovernanceBatchEntry:
 
 
 class GovernanceWriteBatch:
-    def __init__(self, request_id: str, entries: list[GovernanceBatchEntry]) -> None:
+    def __init__(
+        self,
+        request_id: str,
+        entries: list[GovernanceBatchEntry],
+        operation_descriptor: dict[str, Any] | None = None,
+    ) -> None:
         self.request_id = request_id
         self.entries = entries
+        self.operation_descriptor = operation_descriptor
 
     def receiving_entry(self) -> GovernanceBatchEntry | None:
         return next((entry for entry in self.entries if entry.received_chunks < entry.chunks), None)
@@ -149,7 +158,7 @@ class GovernanceWriteBatch:
         return all(entry.received_chunks == entry.chunks for entry in self.entries)
 
 
-class GovernanceWriteMixin:
+class GovernanceWriteMixin(GovernanceWriteTransactionMixin):
 
     def _on_write(self, request: dict[str, Any]) -> None:
         """Empieza una escritura sin abrir procesos ni interpretar el contenido.
@@ -169,6 +178,32 @@ class GovernanceWriteMixin:
         if len(self.pending_writes) >= MAX_WRITE_TRANSACTIONS:
             self._write_error(request_id, "unavailable", "too many governance writes in flight")
             return
+
+        operation_fields = (
+            "operation_id", "operation_token", "operation_generation", "runtime_generation",
+        )
+        supplied_operation_fields = [field for field in operation_fields if field in request]
+        operation_descriptor: dict[str, Any] | None = None
+        if supplied_operation_fields:
+            if len(supplied_operation_fields) != len(operation_fields):
+                self._write_error(request_id, "invalid_path", "operation receipt descriptor is incomplete")
+                return
+            journal = getattr(self, "governance_write_journal", None)
+            if not isinstance(journal, GovernanceWriteJournal):
+                self._write_error(request_id, "unavailable", "durable write journal is not configured")
+                return
+            operation_descriptor = {
+                "operation_id": request["operation_id"],
+                "operation_token": request["operation_token"],
+                "operation_generation": request["operation_generation"],
+                "request_id": request_id,
+                "runtime_generation": request["runtime_generation"],
+            }
+            try:
+                journal.validate_descriptor(operation_descriptor, request_id)
+            except JournalError:
+                self._write_error(request_id, "conflict", "operation receipt descriptor is invalid")
+                return
 
         path = request.get("path")
         operation = request.get("operation")
@@ -206,6 +241,7 @@ class GovernanceWriteMixin:
 
         pending = GovernanceWrite(
             request_id, path, operation, expected_sha, content_sha, content_bytes, chunks,
+            operation_descriptor,
         )
         self.pending_writes[request_id] = pending
         if chunks == 0:
@@ -241,6 +277,31 @@ class GovernanceWriteMixin:
             self.pending_write_batches.pop(request_id, None)
             self._write_batch_error(request_id, "conflict", "duplicate write batch request id")
             return
+        operation_fields = (
+            "operation_id", "operation_token", "operation_generation", "runtime_generation",
+        )
+        supplied_operation_fields = [field for field in operation_fields if field in request]
+        operation_descriptor: dict[str, Any] | None = None
+        if supplied_operation_fields:
+            if len(supplied_operation_fields) != len(operation_fields):
+                self._write_batch_error(request_id, "invalid_path", "operation receipt descriptor is incomplete")
+                return
+            journal = getattr(self, "governance_write_journal", None)
+            if not isinstance(journal, GovernanceWriteJournal):
+                self._write_batch_error(request_id, "unavailable", "durable write journal is not configured")
+                return
+            operation_descriptor = {
+                "operation_id": request["operation_id"],
+                "operation_token": request["operation_token"],
+                "operation_generation": request["operation_generation"],
+                "request_id": request_id,
+                "runtime_generation": request["runtime_generation"],
+            }
+            try:
+                journal.validate_descriptor(operation_descriptor, request_id)
+            except JournalError:
+                self._write_batch_error(request_id, "conflict", "operation receipt descriptor is invalid")
+                return
         if len(self.pending_writes) + len(self.pending_write_batches) >= MAX_WRITE_TRANSACTIONS:
             self._write_batch_error(request_id, "unavailable", "too many governance writes in flight")
             return
@@ -328,7 +389,7 @@ class GovernanceWriteMixin:
                 path, mode, operation, expected_sha, content_sha, content_bytes, chunks,
             ))
 
-        pending = GovernanceWriteBatch(request_id, entries)
+        pending = GovernanceWriteBatch(request_id, entries, operation_descriptor)
         self.pending_write_batches[request_id] = pending
         if pending.complete():
             self._finish_write_batch(pending)
@@ -376,6 +437,19 @@ class GovernanceWriteMixin:
                     pending.request_id, "invalid_path", "governance content must be UTF-8 text",
                 )
                 return
+        journal = getattr(self, "governance_write_journal", None)
+        receipt: GovernanceWriteReceipt | None = None
+        if pending.operation_descriptor is not None:
+            try:
+                receipt = journal.begin(
+                    pending.operation_descriptor,
+                    [self._journal_entry(entry) for entry in pending.entries],
+                )
+            except JournalError as error:
+                self._write_batch_error(
+                    pending.request_id, error.code, "durable write journal refused the operation",
+                )
+                return
         try:
             acknowledgements = self._apply_governance_batch(pending)
         except GovernanceBindMountError as error:
@@ -393,202 +467,97 @@ class GovernanceWriteMixin:
                 pending.request_id, "unknown", f"batch write failed: {type(error).__name__}",
             )
         else:
-            self._queue(encode_json(TAG_WRITE_BATCH_OK, {
-                "request_id": pending.request_id, "files": acknowledgements,
-            }))
-
-    def _apply_governance_batch(self, pending: GovernanceWriteBatch) -> list[dict[str, Any]]:
-        """Preflight, stage, revalidate and commit; any failed commit rolls the prefix back."""
-        plans: list[dict[str, Any]] = []
-        try:
-            # COMPLETE PRE-FLIGHT. Nothing is created, truncated, renamed, or touched before this loop ends.
-            for index, entry in enumerate(pending.entries):
-                directory, basename = self._open_governance_parent(entry.path)
-                plan: dict[str, Any] = {
-                    "entry": entry, "directory": directory, "basename": basename,
-                    "index": index, "temporary": None, "backup": None, "committed": False,
-                }
-                plans.append(plan)
+            if receipt is not None:
                 try:
-                    current_sha, current_info = self._hash_regular_at(directory, basename)
-                    exists = True
-                except FileNotFoundError:
-                    current_sha, current_info, exists = None, None, False
-                plan.update({"current_sha": current_sha, "current_info": current_info, "exists": exists})
-
-                if entry.mode == "verify":
-                    if entry.operation == "present":
-                        if not exists:
-                            raise FileNotFoundError(basename)
-                        if current_sha != entry.expected_sha:
-                            raise ValueError(f"{basename} changed; SHA-256 precondition failed")
-                        plan["ack_operation"] = "unchanged"
-                    else:
-                        if exists:
-                            raise FileExistsError(basename)
-                        plan["ack_operation"] = "absent"
-                    continue
-
-                if exists and current_sha == entry.content_sha:
-                    plan["ack_operation"] = "unchanged"
-                    continue
-                if entry.operation == "create":
-                    if exists:
-                        raise FileExistsError(basename)
-                else:
-                    if not exists:
-                        raise FileNotFoundError(basename)
-                    if current_sha != entry.expected_sha:
-                        raise ValueError(f"{basename} changed; SHA-256 precondition failed")
-                    if self._target_is_mount_point(directory, entry.path, current_info):
-                        # The rollback of this transaction is a hardlink to the ORIGINAL inode
-                        # restored with os.replace: over a mounted destination there is no inode
-                        # to link and no name to put back. Refusing keeps the mount whole.
-                        raise GovernanceBindMountError(
-                            f"{basename} is a bind-mounted file; a transactional profile cannot commit it",
-                        )
-                plan["ack_operation"] = entry.operation
-
-            # COMPLETE STAGING. Temporaries are not served names and do not change destinations.
-            for plan in plans:
-                entry = plan["entry"]
-                if entry.mode != "write" or plan["ack_operation"] == "unchanged":
-                    continue
-                directory = plan["directory"]
-                temporary = f".cauce-profile-{pending.request_id}-{plan['index']}.tmp"
-                temp_fd = os.open(
-                    temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                    0o600, dir_fd=directory,
-                )
-                plan["temporary"] = temporary
-                try:
-                    content = memoryview(bytes(entry.content))
-                    written = 0
-                    while written < len(content):
-                        amount = os.write(temp_fd, content[written:])
-                        if amount <= 0:
-                            raise OSError("short governance batch write")
-                        written += amount
-                    current_info = plan["current_info"]
-                    if current_info is not None:
-                        os.fchmod(temp_fd, stat.S_IMODE(current_info.st_mode))
-                        if current_info.st_uid != os.geteuid() or current_info.st_gid != os.getegid():
-                            os.fchown(temp_fd, current_info.st_uid, current_info.st_gid)
-                    os.fsync(temp_fd)
-                    staged = os.fstat(temp_fd)
-                    plan["staged_inode"] = (staged.st_dev, staged.st_ino)
-                finally:
-                    os.close(temp_fd)
-
-            # GLOBAL REVALIDATION. Verifies and no-ops are also re-measured right before.
-            for plan in plans:
-                entry = plan["entry"]
-                directory = plan["directory"]
-                basename = plan["basename"]
-                try:
-                    latest_sha, latest_info = self._hash_regular_at(directory, basename)
-                    latest_exists = True
-                except FileNotFoundError:
-                    latest_sha, latest_info, latest_exists = None, None, False
-                if plan["exists"] != latest_exists:
-                    raise ValueError(f"{basename} changed after preflight")
-                if latest_exists and self._stat_identity(latest_info) != self._stat_identity(plan["current_info"]):
-                    raise ValueError(f"{basename} changed after preflight")
-                if latest_sha != plan["current_sha"]:
-                    raise ValueError(f"{basename} changed after preflight")
-                if entry.mode == "write" and plan["ack_operation"] == "replace":
-                    backup = f".cauce-profile-{pending.request_id}-{plan['index']}.bak"
-                    os.link(basename, backup, src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False)
-                    plan["backup"] = backup
-                    # Creating the rollback hardlink changes the inode's ctime/nlink even though
-                    # nobody edited its bytes. That post-link identity is the one that must reach commit.
-                    plan["commit_identity"] = self._stat_identity(
-                        os.stat(basename, dir_fd=directory, follow_symlinks=False),
+                    journal.complete(receipt, acknowledgements)
+                except JournalError:
+                    self._write_batch_error(
+                        pending.request_id, "unknown", "durable write receipt could not be finalized",
                     )
-                elif latest_info is not None:
-                    plan["commit_identity"] = self._stat_identity(latest_info)
+                    return
+            response: dict[str, Any] = {
+                "request_id": pending.request_id, "files": acknowledgements,
+            }
+            if receipt is not None:
+                response["receipt"] = {
+                    "operation_id": receipt.operation_id,
+                    "operation_generation": receipt.operation_generation,
+                    "request_id": receipt.request_id,
+                    "runtime_generation": receipt.runtime_generation,
+                    "writer_instance_id": receipt.writer_instance_id,
+                    "tenant_id": receipt.tenant_id,
+                    "alias": receipt.alias,
+                    "container_id": receipt.container_id,
+                    "state": "done",
+                    "files": self._wire_receipt_files(acknowledgements),
+                }
+            self._queue(encode_json(TAG_WRITE_BATCH_OK, response))
 
-            # COMMIT. Each step is atomic; if one fails, the prefix is reverted in reverse order.
-            try:
-                for plan in plans:
-                    entry = plan["entry"]
-                    operation = plan["ack_operation"]
-                    if entry.mode != "write" or operation == "unchanged":
-                        continue
-                    directory = plan["directory"]
-                    basename = plan["basename"]
-                    temporary = plan["temporary"]
-                    if operation == "create":
-                        os.link(
-                            temporary, basename,
-                            src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False,
-                        )
-                        os.unlink(temporary, dir_fd=directory)
-                        plan["temporary"] = None
-                    else:
-                        latest = os.stat(basename, dir_fd=directory, follow_symlinks=False)
-                        if self._stat_identity(latest) != plan["commit_identity"]:
-                            raise ValueError(f"{basename} changed before commit")
-                        os.replace(temporary, basename, src_dir_fd=directory, dst_dir_fd=directory)
-                        plan["temporary"] = None
-                    plan["committed"] = True
-                    os.fsync(directory)
-            except BaseException:
-                rollback_failed = False
-                for plan in reversed(plans):
-                    if not plan["committed"]:
-                        continue
-                    directory = plan["directory"]
-                    basename = plan["basename"]
-                    try:
-                        current_sha, current = self._hash_regular_at(directory, basename)
-                        entry = plan["entry"]
-                        if ((current.st_dev, current.st_ino) != plan["staged_inode"]
-                                or current_sha != entry.content_sha):
-                            rollback_failed = True
-                            continue
-                        if plan["ack_operation"] == "create":
-                            os.unlink(basename, dir_fd=directory)
-                        else:
-                            os.replace(
-                                plan["backup"], basename,
-                                src_dir_fd=directory, dst_dir_fd=directory,
-                            )
-                            plan["backup"] = None
-                        os.fsync(directory)
-                    except OSError:
-                        rollback_failed = True
-                if rollback_failed:
-                    raise OSError("governance batch rollback could not restore every file") from None
-                raise
+    def _on_write_status(self, request: dict[str, Any]) -> None:
+        journal = getattr(self, "governance_write_journal", None)
+        writer_instance_id = getattr(self, "writer_instance_id", None)
+        required = {
+            "operation_id", "operation_token", "operation_generation", "request_id",
+            "runtime_generation", "tenant_id", "alias", "container_id",
+        }
+        if not isinstance(journal, GovernanceWriteJournal) or not isinstance(writer_instance_id, str):
+            self._queue(encode_json(TAG_WRITE_STATUS_ERR, {
+                "error": "unavailable", "reason": "write status is not configured",
+            }))
+            return
+        if not isinstance(request, dict) or set(request) != required:
+            self._queue(encode_json(TAG_WRITE_STATUS_ERR, {
+                "error": "conflict", "reason": "write status request is invalid",
+            }))
+            return
+        descriptor = {key: request[key] for key in (
+            "operation_id", "operation_token", "operation_generation", "request_id", "runtime_generation",
+        )}
+        try:
+            journal.validate_descriptor(descriptor, descriptor["request_id"])
+        except JournalError:
+            self._queue(encode_json(TAG_WRITE_STATUS_ERR, {
+                "error": "conflict", "reason": "write status request is invalid",
+            }))
+            return
+        same_identity = (
+            request.get("tenant_id") == self.identity.get("tenant_id")
+            and request.get("alias") == self.identity.get("alias")
+            and request.get("container_id") == self.identity.get("container_id")
+            and request.get("runtime_generation") == self.identity.get("generation")
+        )
+        status = journal.status(descriptor) if same_identity else None
+        known = status is not None and status.state in ("writing", "done")
+        self._queue(encode_json(TAG_WRITE_STATUS_OK, {
+            "operation_id": descriptor["operation_id"],
+            "operation_generation": descriptor["operation_generation"],
+            "request_id": descriptor["request_id"],
+            "runtime_generation": self.identity["generation"],
+            "writer_instance_id": writer_instance_id,
+            "tenant_id": self.identity["tenant_id"],
+            "alias": self.identity["alias"],
+            "container_id": self.identity["container_id"],
+            "state": status.state if known else "unknown",
+            "files": self._wire_receipt_files(status.entries) if status is not None and status.state == "done" else [],
+        }))
 
-            acknowledgements: list[dict[str, Any]] = []
-            for plan in plans:
-                entry = plan["entry"]
-                if plan["ack_operation"] == "absent":
-                    digest, size = None, 0
-                elif entry.mode == "write":
-                    digest, size = entry.content_sha, entry.content_bytes
-                else:
-                    digest, size = entry.expected_sha, plan["current_info"].st_size
-                acknowledgements.append({
-                    "path": entry.path,
-                    "operation": plan["ack_operation"],
-                    "sha": digest,
-                    "bytes": size,
-                })
-            return acknowledgements
-        finally:
-            for plan in plans:
-                directory = plan["directory"]
-                for key in ("temporary", "backup"):
-                    name = plan.get(key)
-                    if name is not None:
-                        try:
-                            os.unlink(name, dir_fd=directory)
-                        except OSError:
-                            pass
-                os.close(directory)
+    @staticmethod
+    def _wire_receipt_files(entries: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
+        return [{key: entry[key] for key in ("path", "sha", "bytes")} for entry in entries]
+
+    @staticmethod
+    def _journal_entry(entry: GovernanceBatchEntry) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            "mode": entry.mode,
+            "path": entry.path,
+            "operation": entry.operation,
+            "bytes": entry.content_bytes,
+        }
+        if entry.expected_sha is not None:
+            metadata["expected_sha"] = entry.expected_sha
+        if entry.content_sha is not None:
+            metadata["content_sha"] = entry.content_sha
+        return metadata
 
     def _write_batch_error(self, request_id: str, code: str, reason: str) -> None:
         self._queue(encode_json(TAG_WRITE_BATCH_ERR, {
@@ -606,8 +575,20 @@ class GovernanceWriteMixin:
         except UnicodeDecodeError:
             self._write_error(pending.request_id, "invalid_path", "governance content must be UTF-8 text")
             return
+        journal = getattr(self, "governance_write_journal", None)
+        receipt: GovernanceWriteReceipt | None = None
+        if pending.operation_descriptor is not None:
+            try:
+                receipt = journal.begin(pending.operation_descriptor, [{
+                    "mode": "write", "path": pending.path, "operation": pending.operation,
+                    "expected_sha": pending.expected_sha, "content_sha": pending.content_sha,
+                    "bytes": pending.content_bytes,
+                }])
+            except JournalError as error:
+                self._write_error(pending.request_id, error.code, "durable write journal refused the operation")
+                return
         try:
-            self._apply_governance_write(pending, content)
+            result = self._apply_governance_write(pending, content)
         except FileExistsError:
             self._write_error(pending.request_id, "conflict", "the file exists; create precondition failed")
         except FileNotFoundError:
@@ -618,6 +599,33 @@ class GovernanceWriteMixin:
             self._write_error(pending.request_id, "conflict", str(error))
         except OSError as error:
             self._write_error(pending.request_id, "unknown", f"write failed: {type(error).__name__}")
+        else:
+            if receipt is not None:
+                try:
+                    journal.complete(receipt, [result])
+                except JournalError:
+                    self._write_error(
+                        pending.request_id, "unknown", "durable write receipt could not be finalized",
+                    )
+                    return
+            response: dict[str, Any] = {
+                "request_id": pending.request_id, "path": pending.path,
+                "operation": pending.operation, "sha": pending.content_sha,
+                "bytes": pending.content_bytes,
+            }
+            if receipt is not None:
+                response["receipt"] = {
+                    "operation_id": receipt.operation_id,
+                    "operation_generation": receipt.operation_generation,
+                    "request_id": receipt.request_id,
+                    "runtime_generation": receipt.runtime_generation,
+                    "writer_instance_id": receipt.writer_instance_id,
+                    "tenant_id": receipt.tenant_id,
+                    "alias": receipt.alias,
+                    "container_id": receipt.container_id,
+                    "state": "done", "files": self._wire_receipt_files([result]),
+                }
+            self._queue(encode_json(TAG_WRITE_OK, response))
 
     def _validate_write_shape(self, path: Any) -> tuple[str, str] | None:
         if not isinstance(path, str) or not path:
@@ -640,13 +648,8 @@ class GovernanceWriteMixin:
             return ("permission_denied", "path is outside the agent home")
         return None
 
-    def _apply_governance_write(self, pending: GovernanceWrite, content: bytes) -> None:
-        """Commits with the mechanism the destination needs, decided once before anything is staged.
-
-        `create` commits with link(2), which fails with EEXIST and never overwrites a creation
-        that won the race. A mounted destination must keep its inode, so it is written in place
-        and no temporary is staged: its parent directory may not be writable.
-        """
+    def _apply_governance_write(self, pending: GovernanceWrite, content: bytes) -> dict[str, Any]:
+        """Commit by link, rename, or in-place write after validating preconditions."""
         directory, basename = self._open_governance_parent(pending.path)
         temporary = f".cauce-governance-{pending.request_id}.tmp"
         temp_fd: int | None = None
@@ -658,10 +661,9 @@ class GovernanceWriteMixin:
             except FileNotFoundError:
                 current_sha, current_info, exists = None, None, False
 
-            # Lost ACK: repeating the same operation must not turn a real success into a conflict.
-            if exists and current_sha == pending.content_sha:
-                self._write_ok(pending)
-                return
+            unchanged = exists and current_sha == pending.content_sha
+            if unchanged and pending.operation_descriptor is None:
+                return {"path": pending.path, "operation": "unchanged", "sha": current_sha, "bytes": current_info.st_size}
             if pending.operation == "create" and exists:
                 raise FileExistsError(basename)
             if pending.operation == "replace":
@@ -669,6 +671,9 @@ class GovernanceWriteMixin:
                     raise FileNotFoundError(basename)
                 if current_sha != pending.expected_sha:
                     raise ValueError("the file changed; SHA-256 precondition failed")
+            if unchanged:
+                self._sync_unchanged_governance_file(directory, basename, current_info, current_sha)
+                return {"path": pending.path, "operation": "unchanged", "sha": current_sha, "bytes": current_info.st_size}
 
             in_place = exists and self._target_is_mount_point(directory, pending.path, current_info)
             if not in_place:
@@ -716,16 +721,30 @@ class GovernanceWriteMixin:
                     os.replace(temporary, basename, src_dir_fd=directory, dst_dir_fd=directory)
                     temp_exists = False
             os.fsync(directory)
-            self._write_ok(pending)
+            return {
+                "path": pending.path, "operation": pending.operation,
+                "sha": pending.content_sha, "bytes": pending.content_bytes,
+            }
         finally:
+            active_error = sys.exc_info()[1]
+            cleanup_error: OSError | None = None
             if temp_fd is not None:
                 os.close(temp_fd)
             if temp_exists:
                 try:
                     os.unlink(temporary, dir_fd=directory)
-                except OSError:
-                    pass
+                except OSError as error:
+                    cleanup_error = error
+                else:
+                    try:
+                        os.fsync(directory)
+                    except OSError as error:
+                        cleanup_error = error
             os.close(directory)
+            if cleanup_error is not None:
+                if active_error is None:
+                    raise OSError("governance write cleanup was not durable") from cleanup_error
+                active_error.add_note("governance write cleanup was not durable")
 
     @staticmethod
     def _target_is_mount_point(directory: int, path: str, info: os.stat_result) -> bool:
@@ -760,8 +779,8 @@ class GovernanceWriteMixin:
             previous = _read_at(fd, opened.st_size)
             try:
                 _write_at(fd, content)
-                os.fsync(fd)
                 os.ftruncate(fd, len(content))
+                os.fsync(fd)
             except BaseException:
                 _write_at(fd, previous)
                 os.ftruncate(fd, len(previous))
@@ -769,15 +788,6 @@ class GovernanceWriteMixin:
                 raise
         finally:
             os.close(fd)
-
-    def _write_ok(self, pending: GovernanceWrite) -> None:
-        self._queue(encode_json(TAG_WRITE_OK, {
-            "request_id": pending.request_id,
-            "path": pending.path,
-            "operation": pending.operation,
-            "sha": pending.content_sha,
-            "bytes": pending.content_bytes,
-        }))
 
     def _write_error(self, request_id: str, code: str, reason: str) -> None:
         self._queue(encode_json(TAG_WRITE_ERR, {
