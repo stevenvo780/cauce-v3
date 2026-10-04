@@ -3,7 +3,7 @@ import { lockHumanIdentity, StoreError, type DatabaseClient, type HumanIdentityS
 import type { VerifiedOAuthIdentity } from '../../../packages/mcp-fleet-monitor/src/gateway-oauth-identity.js';
 import { AuthError } from './auth.js';
 import type { ConsoleUser } from './console-users.js';
-import { createHumanPublishAuthority, resolveHumanMcpAuthority, type ExternalSubjectResolver, type HumanIdentityStore } from './human-mcp-authority.js';
+import { createHumanPublishAuthority, createHumanReadAuthority, resolveHumanMcpAuthority, type ExternalSubjectResolver, type HumanIdentityStore } from './human-mcp-authority.js';
 
 const user: ConsoleUser = {
   id: '00000000-0000-4000-8000-000000000081', email: 'account@example.test',
@@ -366,5 +366,135 @@ describe('human identity locking query contract', () => {
     await expect(lockHumanIdentity({ query } as unknown as DatabaseClient,
       { provider: 'oauth', namespace: 'issuer', subject: 'subject' }, user.id)).rejects.toMatchObject({ code: 'forbidden' });
     expect(query).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe('durable human read authority', () => {
+  it.each(['account', 'membership', 'both'] as const)('accepts a %s reader without operator or route authority', async (source) => {
+    const f = durableFixture();
+    f.identityStore.lock.mockResolvedValue({ ...f.record,
+      account: { ...f.record.account, role: source === 'membership' ? 'operator' : 'reader' },
+      membership: { ...f.record.membership, role: source === 'account' ? 'operator' : 'reader', permissions: ['read'] },
+    });
+    const result = await createHumanReadAuthority(identity({ scopes: ['cauce.read'] }), f.pinned, signal(), f.identityStore)(f.client);
+    expect(result).toEqual(f.pinned);
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(f.identityStore.lock).toHaveBeenCalledExactlyOnceWith(f.client,
+      { provider: 'oauth', namespace: identity().issuer, subject: identity().subject }, user.id);
+    expect(f.identityStore.resolve).not.toHaveBeenCalled();
+    expect(f.query).toHaveBeenCalledTimes(1);
+    await expect(createHumanPublishAuthority(identity(), f.pinned, signal(), f.identityStore)(f.client))
+      .rejects.toMatchObject({ code: 'forbidden' });
+  });
+
+  it.each([[], ['cauce.publish'], ['read'], ['unrelated']].map((scopes) => ({ scopes })))('requires the verified read scope: $scopes', async ({ scopes }) => {
+    const f = durableFixture();
+    await expect(createHumanReadAuthority(identity({ scopes }), f.pinned, signal(), f.identityStore)(f.client))
+      .rejects.toMatchObject({ code: 'forbidden' });
+  });
+
+  it('accepts read scope duplicates but does not infer membership read permission from role or route', async () => {
+    const f = durableFixture();
+    const authorize = createHumanReadAuthority(identity({ scopes: ['cauce.read', 'cauce.read'] }), f.pinned, signal(), f.identityStore);
+    await expect(authorize(f.client)).resolves.toEqual(f.pinned);
+    f.identityStore.lock.mockResolvedValue({ ...f.record, membership: { ...f.record.membership, permissions: ['route'] } });
+    await expect(authorize(f.client)).rejects.toMatchObject({ code: 'forbidden' });
+    expect(f.identityStore.lock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['account', 'membership', 'binding'] as const)('revalidates fresh %s revocation on every callback', async (source) => {
+    const f = durableFixture();
+    const authorize = createHumanReadAuthority(identity(), f.pinned, signal(), f.identityStore);
+    await expect(authorize(f.client)).resolves.toEqual(f.pinned);
+    if (source === 'account') f.identityStore.lock.mockResolvedValue({ ...f.record, account: { ...f.record.account, active: false } });
+    else if (source === 'membership') f.identityStore.lock.mockResolvedValue({ ...f.record, membership: { ...f.record.membership, enabled: false } });
+    else f.identityStore.lock.mockRejectedValue(new StoreError('forbidden', 'human identity is unavailable'));
+    await expect(authorize(f.client)).rejects.toBeDefined();
+    expect(f.identityStore.lock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['account', 'membership'] as const)('fails closed for an unknown %s role', async (source) => {
+    const f = durableFixture();
+    f.identityStore.lock.mockResolvedValue({ ...f.record, [source]: { ...f.record[source], role: 'unknown' } });
+    await expect(createHumanReadAuthority(identity(), f.pinned, signal(), f.identityStore)(f.client)).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it.each(['humanId', 'tenantId', 'actorAlias'] as const)('rejects a changed pinned %s', async (field) => {
+    const f = durableFixture();
+    const pinned = { ...f.pinned, [field]: field === 'humanId' ? '00000000-0000-4000-8000-000000000082'
+      : field === 'tenantId' ? 'Jhon' : 'different-human' };
+    await expect(createHumanReadAuthority(identity(), pinned, signal(), f.identityStore)(f.client))
+      .rejects.toMatchObject({ code: 'conflict', message: 'human read identity changed' });
+  });
+
+  it('pins immutable copies of the verified identity, scopes, and server identity', async () => {
+    const f = durableFixture();
+    const verified = { ...identity(), scopes: ['cauce.read'] };
+    const authorize = createHumanReadAuthority(verified, f.pinned, signal(), f.identityStore);
+    verified.issuer = 'changed'; verified.subject = 'changed'; verified.expiresAt = 0; verified.scopes.length = 0;
+    f.pinned.humanId = 'changed'; f.pinned.actorAlias = 'changed';
+    await expect(authorize(f.client)).resolves.toEqual({ humanId: user.id, tenantId: 'Steven', actorAlias: 'member-human' });
+    expect(f.identityStore.lock).toHaveBeenCalledWith(f.client,
+      { provider: 'oauth', namespace: identity().issuer, subject: identity().subject }, user.id);
+  });
+
+  it.each([0, NaN, Infinity])('rejects expired or invalid expiry %s before SQL', async (expiresAt) => {
+    const f = durableFixture();
+    await expect(createHumanReadAuthority(identity({ expiresAt }), f.pinned, signal(), f.identityStore)(f.client)).rejects.toBeInstanceOf(AuthError);
+    expect(f.query).not.toHaveBeenCalled();
+    expect(f.identityStore.lock).not.toHaveBeenCalled();
+  });
+
+  it('rejects pre-abort before SQL and preserves the cancellation reason', async () => {
+    const f = durableFixture();
+    const controller = new AbortController(); controller.abort(new Error('cancelled'));
+    await expect(createHumanReadAuthority(identity(), f.pinned, controller.signal, f.identityStore)(f.client)).rejects.toBe(controller.signal.reason);
+    expect(f.query).not.toHaveBeenCalled();
+    expect(f.identityStore.lock).not.toHaveBeenCalled();
+  });
+
+  it.each(['expiry', 'abort'] as const)('rechecks %s after locks are acquired', async (mode) => {
+    vi.useFakeTimers();
+    const f = durableFixture();
+    const controller = new AbortController();
+    const verified = identity({ expiresAt: Date.now() / 1000 + 1 });
+    const reason = new Error('cancelled');
+    f.identityStore.lock.mockImplementation(async () => {
+      if (mode === 'expiry') vi.setSystemTime(Date.now() + 1000);
+      else controller.abort(reason);
+      return f.record;
+    });
+    const result = expect(createHumanReadAuthority(verified, f.pinned, controller.signal, f.identityStore)(f.client)).rejects;
+    if (mode === 'expiry') await result.toBeInstanceOf(AuthError);
+    else await result.toBe(reason);
+  });
+
+  it.each([1, 1200, 10000])('caps SQL timeouts to min(5000, JWT lifetime) for %s milliseconds', async (remaining) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(2000000);
+    const f = durableFixture();
+    await createHumanReadAuthority(identity({ expiresAt: (Date.now() + remaining) / 1000 }), f.pinned, signal(), f.identityStore)(f.client);
+    expect(f.query).toHaveBeenCalledExactlyOnceWith(
+      "SELECT set_config('statement_timeout', $1, true), set_config('lock_timeout', $1, true)", [String(Math.min(5000, remaining))]);
+    expect(f.query.mock.invocationCallOrder[0]).toBeLessThan(f.identityStore.lock.mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it('defaults to canonical account, binding, membership locks on the caller client without owning a transaction', async () => {
+    const rows = [[], ...lockedRows()];
+    const query = vi.fn(async (_sql: string, _values: unknown[]) => ({ rows: rows.shift() ?? [] }));
+    const f = durableFixture();
+    const client = { query } as unknown as DatabaseClient;
+    await expect(createHumanReadAuthority(identity(), f.pinned, signal())(client)).resolves.toEqual(f.pinned);
+    expect(query.mock.calls.map(([sql]) => sql)).toEqual([
+      expect.stringContaining("set_config('statement_timeout'"),
+      expect.stringMatching(/^SELECT human_id FROM human_external_identities/),
+      expect.stringMatching(/FROM console_users WHERE id=\$1 FOR SHARE$/),
+      expect.stringMatching(/FROM human_external_identities[\s\S]+FOR SHARE$/),
+      expect.stringMatching(/FROM human_tenant_memberships WHERE human_id=\$1 AND tenant_id=\$2 FOR SHARE$/),
+    ]);
+    expect(query.mock.calls[1]?.[1]).toEqual(['oauth', identity().issuer, identity().subject]);
+    expect(query.mock.calls[2]?.[1]).toEqual([user.id]);
+    expect(query.mock.calls[3]?.[1]).toEqual(query.mock.calls[1]?.[1]);
+    expect(query.mock.calls[4]?.[1]).toEqual([user.id, 'Steven']);
   });
 });

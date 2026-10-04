@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildPublishReceipt, type ConsolePublishIntentPrepareResult, type PublishMessage, type PublishResult } from '@cauce/protocol';
 import {
   PublishIntentExpiredError, PublishIntentRateLimitedError, PublishIntentReconciliationRequired, StoreError,
+  type DatabaseClient, type HumanIdentitySnapshot, type HumanMessageOptions,
 } from '@cauce/store';
 import { GatewayOperationError, type McpSubmitCommand } from '../../../packages/mcp-fleet-monitor/src/gateway-operations.js';
 import type { VerifiedOAuthIdentity } from '../../../packages/mcp-fleet-monitor/src/gateway-oauth-identity.js';
@@ -67,6 +68,27 @@ function setup(repository = fakeRepository()) {
   } };
   const factory = createHumanMcpOperationsFactory({
     repository, users: { findById: async (id) => users.get(id) }, resolver,
+    identityStore: {
+      async resolve(key, signal) {
+        signal.throwIfAborted();
+        const binding = subjects.get(key.subject);
+        const user = binding?.status === 'active' ? users.get(binding.userId) : undefined;
+        if (!user?.active || binding === undefined) return undefined;
+        const snapshot: HumanIdentitySnapshot = {
+          humanId: user.id, bindingId: `binding-${user.id}`, provider: 'oauth',
+          namespace: key.namespace, subject: key.subject, bindingRevision: '1',
+          account: { active: user.active, role: user.role, defaultTenant: user.tenant_id, displayName: user.display_name },
+          membership: { tenantId: user.tenant_id, actorAlias: user.alias, role: user.role,
+            permissions: user.role === 'reader' ? ['read'] : ['read', 'route'], enabled: true, revision: '1' },
+        };
+        return snapshot;
+      },
+      async lock(_client, key, humanId) {
+        const snapshot = await this.resolve(key, new AbortController().signal);
+        if (snapshot?.humanId !== humanId) throw new StoreError('forbidden', 'identity is unavailable');
+        return snapshot;
+      },
+    },
     priorityLog: { info: () => undefined, warn: () => undefined }, logRedaction: () => undefined,
   });
   return { repository, users, subjects, factory };
@@ -265,7 +287,13 @@ describe('human MCP operations phase boundaries', () => {
         { delivery_id: '66666666-6666-4666-8666-666666666666', tenant_id: 'Steven', alias: 'other', status: 'started',
           attempt: 1, terminal_at: null, reply: null },
       ] };
-    vi.spyOn(state.repository, 'getMessage').mockResolvedValue(detail);
+    const owned = async (_messageId: string, access: HumanMessageOptions) => {
+      const client = { query: async () => ({ rows: [], rowCount: 0 }) } as unknown as DatabaseClient;
+      const owner = await access.humanAuthority(client);
+      if (owner.humanId !== USER_A) throw new StoreError('not_found', 'message is not owned');
+      return detail;
+    };
+    vi.spyOn(state.repository, 'getHumanMessage').mockImplementation(owned);
     const ownerOps = await state.factory.forRequest(identity(SUBJECT_A), new AbortController().signal);
     const projected = await ownerOps.receipt(MESSAGE_ID);
     expect(projected).toMatchObject({ message_id: MESSAGE_ID, chain_open: true,
@@ -280,10 +308,10 @@ describe('human MCP operations phase boundaries', () => {
 
     const sameAliasOtherUuid = await state.factory.forRequest(identity(SUBJECT_B), new AbortController().signal);
     expect(await failureOf(sameAliasOtherUuid.receipt(MESSAGE_ID))).toEqual({ status_code: 404, error: 'not_found' });
-    vi.spyOn(state.repository, 'getMessage').mockRejectedValue(new StoreError('not_found', 'private missing row'));
+    vi.spyOn(state.repository, 'getHumanMessage').mockRejectedValue(new StoreError('not_found', 'private missing row'));
     expect(await failureOf(ownerOps.receipt('77777777-7777-4777-8777-777777777777')))
       .toEqual({ status_code: 404, error: 'not_found' });
-    vi.spyOn(state.repository, 'getMessage').mockResolvedValue({ ...detail, deliveries: [] });
+    vi.spyOn(state.repository, 'getHumanMessage').mockResolvedValue({ ...detail, deliveries: [] });
     expect(await failureOf(ownerOps.receipt(MESSAGE_ID))).toEqual({ status_code: 409, error: 'operation_conflict' });
   });
 });

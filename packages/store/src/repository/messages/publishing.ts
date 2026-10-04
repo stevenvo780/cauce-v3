@@ -6,8 +6,10 @@ import {
   consolePublishIntentSemanticHash,
   isSystemGateProbeBody,
   publishRequestHash,
+  isAnyUuid,
+  TenantSchema,
 } from '@cauce/protocol';
-import { withTransaction } from '../../db.js';
+import { withAbortableTransaction, withTransaction, type DatabaseClient } from '../../db.js';
 import {
   ConfigRepository,
   assertPublishRoute,
@@ -28,13 +30,17 @@ import {
   PublishIntentExpiredError,
   type PublishOptions,
   type PublishResult,
+  type HumanPublishProvenance,
+  type HumanMessageOptions,
 } from './contracts.js';
+import { putHumanMessageInitiator } from './human-initiators.js';
+import { assertHumanMessageRoot, humanMessageAuthority, lockHumanMessageRead } from './human-authority.js';
 import { reconstructPublishReceipt } from './receipts.js';
-import { MESSAGE_AUTHOR_SQL, requireConsoleAuthor, withMessageAuthor } from './author.js';
+import { requireConsoleAuthor } from './author.js';
 import {
-  assertAgentRootSlot, lockAgentRootActor, senderView, type MessageReader,
+  assertAgentRootSlot, humanSenderView, lockAgentRootActor, senderView, type MessageReader,
 } from './agent-roots.js';
-import type { MessageDetailRow } from '../visibility-rows.js';
+import { loadMessageDetail, messageDetailWithReplies } from './message-detail.js';
 
 // The BUS writes this, not the agent: first person made it a lie through an 8 h outage.
 const telegramRelayAcknowledgement = 'Recibido por el bus; en cola para el agente.';
@@ -46,13 +52,42 @@ function conversationKind(chatType: unknown): 'dm' | 'group' | 'unknown' {
   return 'unknown';
 }
 
+async function humanPublicationAuthority(
+  client: DatabaseClient, input: PublishMessage, options: PublishOptions,
+): Promise<HumanPublishProvenance | undefined> {
+  if (options.humanAuthority === undefined) {
+    if (input.authenticated_context?.channel === 'human-mcp') {
+      throw new StoreError('forbidden', 'human MCP publication requires durable authority');
+    }
+    return undefined;
+  }
+  if (options.signal === undefined || options.requirePreparedConsoleIntent !== true
+      || options.consoleAuthor === undefined) {
+    throw new StoreError('forbidden', 'human publication requires a cancellable authenticated intent');
+  }
+  options.signal.throwIfAborted();
+  const authority = await options.humanAuthority(client);
+  options.signal.throwIfAborted();
+  if (!isAnyUuid(authority.humanId) || authority.tenantId !== input.tenant_id
+      || authority.actorAlias !== input.actor_alias
+      || options.consoleAuthor.subject_id !== `human:${sha256([
+        'cauce-v3:human-author:v1', input.tenant_id, `console:${authority.humanId}`,
+      ])}`) {
+    throw new StoreError('forbidden', 'human publication identity is inconsistent');
+  }
+  return Object.freeze({ ...authority });
+}
+
+
 export abstract class MessagePublishingRepository extends ConfigRepository {
   // Verify receipt IDs against locked durable rows, never that receipt's own digest.
-  async verifyPublishReceipt(input: PublishMessage, candidate: PublishResult): Promise<boolean> {
+  async verifyPublishReceipt(input: PublishMessage, candidate: PublishResult, options: PublishOptions = {}): Promise<boolean> {
     const parsed = PublishResultSchema.safeParse(candidate);
     if (!parsed.success) return false;
     const hash = publishRequestHash(input);
-    return withTransaction(this.pool, async (client) => {
+    const work = async (client: DatabaseClient): Promise<boolean> => {
+      const human = await humanPublicationAuthority(client, input, options);
+      if (human !== undefined) await assertPublishRoute(client, input, true);
       const result = await client.query<{
         request_hash: string;
         response: unknown;
@@ -68,6 +103,9 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
           || durableKey.response === null) {
         return false;
       }
+      if (human !== undefined) await assertHumanMessageRoot(
+        client, durableKey.message_id, human, consolePublishConversationHash(input),
+      );
       try {
         const durable = await reconstructPublishReceipt(
           client,
@@ -83,7 +121,9 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
         if (error instanceof StoreError && error.code === 'conflict') return false;
         throw error;
       }
-    });
+    };
+    return options.signal === undefined ? withTransaction(this.pool, work)
+      : withAbortableTransaction(this.pool, options.signal, work);
   }
 
   async publish(input: PublishMessage, options: PublishOptions = {}): Promise<PublishResult> {
@@ -126,8 +166,9 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
     if (uniqueRecipients.length !== input.recipients.length) {
       throw new StoreError('conflict', 'recipient list contains duplicates');
     }
-    return withTransaction(this.pool, async (client) => {
-      await assertPublishRoute(client, input);
+    const work = async (client: DatabaseClient): Promise<PublishResult> => {
+      const human = await humanPublicationAuthority(client, input, options);
+      await assertPublishRoute(client, input, human !== undefined);
 
       if (options.requirePreparedConsoleIntent === true) {
         await lockConsolePublishIntents(client, input.tenant_id, input.actor_alias);
@@ -212,6 +253,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
         if (!existing.message_id || existing.response === null) {
           throw new StoreError('conflict', 'idempotency request is still in progress');
         }
+        if (human !== undefined) await assertHumanMessageRoot(client, existing.message_id, human, consolePublishConversationHash(input));
         const repaired = await reconstructPublishReceipt(
           client,
           input,
@@ -247,6 +289,11 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
       });
       const messageId = message.rows[0]?.id;
       if (!messageId) throw new Error('message insert returned no id');
+      if (human !== undefined) await putHumanMessageInitiator(client, {
+        messageId, messageTenantId: input.tenant_id, humanId: human.humanId,
+        tenantId: human.tenantId, rootMessageId: messageId,
+        conversationId: consolePublishConversationHash(input),
+      });
       const deliveryIds: string[] = [];
       for (const recipient of uniqueRecipients) {
         const delivery = await insertDelivery(client, {
@@ -380,58 +427,36 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
            })]
       );
       return response;
+    };
+    return options.signal === undefined ? withTransaction(this.pool, work)
+      : withAbortableTransaction(this.pool, options.signal, work);
+  }
+
+  async getHumanMessage(messageId: string, options: HumanMessageOptions): Promise<Record<string, unknown>> {
+    return withAbortableTransaction(this.pool, options.signal, async (client) => {
+      const human = await humanMessageAuthority(client, options);
+      await assertHumanMessageRoot(client, messageId, human);
+      await lockHumanMessageRead(client, messageId, human);
+      const row = await loadMessageDetail(client, messageId, human.tenantId, human.actorAlias);
+      await assertHumanMessageRoot(client, messageId, human, consolePublishConversationHash({
+        tenant_id: human.tenantId, room_id: row.room_id, actor_alias: row.actor_alias,
+        recipients: row.deliveries.map((delivery) => ({
+          tenant_id: TenantSchema.parse(delivery.tenant_id), alias: delivery.alias,
+        })),
+      }));
+      const view = await humanSenderView(client, messageId, human);
+      if (view === undefined) throw new StoreError('not_found', 'message not found or not owned');
+      return messageDetailWithReplies(row, view);
     });
   }
 
   async getMessage(
     messageId: string, actorTenant: Tenant, actorAlias: string, reader?: MessageReader,
   ): Promise<Record<string, unknown>> {
-    const result = await this.pool.query<MessageDetailRow & { attachments: unknown }>(
-      `SELECT m.id,m.version,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
-              m.body-'attachments_v1'::text AS body,
-              COALESCE(CASE WHEN jsonb_typeof(m.body->'attachments_v1')='array' THEN (
-                SELECT jsonb_agg(jsonb_build_object(
-                         'name',entry.attachment->'name','mime_type',entry.attachment->'mime_type',
-                         'file_size',entry.attachment->'file_size','sha256',entry.attachment->'sha256'
-                       ) ORDER BY entry.position)
-                FROM jsonb_array_elements(m.body->'attachments_v1')
-                     WITH ORDINALITY AS entry(attachment,position)
-              ) END,'[]'::jsonb) AS attachments,
-              m.origin,m.lane,m.priority,m.created_at,${MESSAGE_AUTHOR_SQL},
-              COALESCE(jsonb_agg(jsonb_build_object(
-         'delivery_id',d.id,'tenant_id',d.recipient_tenant,'alias',d.recipient_alias,
-         'status',d.status,'attempt',d.attempt,'terminal_at',d.terminal_at
-       ) ORDER BY d.created_at) FILTER (WHERE d.id IS NOT NULL), '[]'::jsonb) AS deliveries
-       FROM messages m LEFT JOIN deliveries d ON d.message_id=m.id AND (
-         EXISTS (SELECT 1 FROM memberships source_member
-                 WHERE source_member.tenant_id=$2 AND source_member.room_id=m.room_id
-                   AND source_member.alias=$3 AND source_member.enabled)
-         OR (d.recipient_tenant=$2 AND d.recipient_alias=$3)
-       )
-       WHERE m.id=$1 AND EXISTS (
-         SELECT 1 FROM memberships own JOIN role_policies role ON role.role=own.role
-         WHERE own.tenant_id=$2 AND own.alias=$3 AND own.enabled AND role.allow_read
-       ) AND (
-         EXISTS (SELECT 1 FROM memberships source_member
-                 WHERE source_member.tenant_id=$2 AND source_member.room_id=m.room_id
-                   AND source_member.alias=$3 AND source_member.enabled AND m.tenant_id=$2)
-         OR (EXISTS (SELECT 1 FROM deliveries participant
-                     WHERE participant.message_id=m.id AND participant.recipient_tenant=$2
-                       AND participant.recipient_alias=$3)
-             AND (m.tenant_id=$2 OR EXISTS (SELECT 1 FROM acl_edges edge
-                         WHERE edge.from_tenant=$2 AND edge.to_tenant=m.tenant_id
-                           AND edge.enabled AND edge.allow_read)))
-       ) GROUP BY m.id`, [messageId, actorTenant, actorAlias]
-    );
-    const row = result.rows[0];
-    if (!row) throw new StoreError('not_found', 'message not found or not visible');
+    const row = await loadMessageDetail(this.pool, messageId, actorTenant, actorAlias);
     const view = reader === undefined || row.tenant_id !== actorTenant || row.actor_alias !== actorAlias
       ? undefined : await senderView(this.pool, messageId, reader);
-    if (view === undefined) return withMessageAuthor(row);
-    return {
-      ...withMessageAuthor(row), chain_open: view.chainOpen,
-      deliveries: row.deliveries.map((delivery) => ({ ...delivery, reply: view.replies.get(delivery.delivery_id) ?? null })),
-    };
+    return messageDetailWithReplies(row, view);
   }
 
 }

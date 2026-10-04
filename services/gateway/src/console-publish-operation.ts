@@ -3,7 +3,7 @@ import {
   ConsolePublishIntentPrepareResultSchema, ConsolePublishIntentPrepareSchema,
   type ConsolePublishIntentConfirmResult, type ConsolePublishIntentPrepareResult,
 } from '@cauce/protocol';
-import { PublishIntentRateLimitedError, PublishIntentReconciliationRequired } from '@cauce/store';
+import { PublishIntentRateLimitedError, PublishIntentReconciliationRequired, type HumanMessageOptions } from '@cauce/store';
 import type { GatewayRepository } from './app.js';
 import { requirePermission, type Principal } from './auth.js';
 import type { ConsolePublishTelemetry } from './console-publish-telemetry.js';
@@ -23,12 +23,14 @@ export interface PrepareConsolePublishOperationInput extends Pick<PublishOperati
 > {
   readonly interactiveHumanEntry: boolean;
   readonly consoleIntentOperatorScope?: string;
+  readonly humanAccess?: HumanMessageOptions;
 }
 
 export interface ConfirmConsolePublishOperationInput {
   readonly actor: Principal;
   readonly body: unknown;
   readonly consoleIntentOperatorScope?: string;
+  readonly humanAccess?: HumanMessageOptions;
 }
 
 export async function prepareConsolePublishOperation(
@@ -49,8 +51,11 @@ export async function prepareConsolePublishOperation(
       requested_priority: submitted.priority,
     };
     const result = ConsolePublishIntentPrepareResultSchema.parse(
-      await repository.prepareConsolePublishIntent(command,
-        input.consoleIntentOperatorScope ?? consolePublishOperatorScope(input.actor)),
+      await (input.humanAccess === undefined
+        ? repository.prepareConsolePublishIntent(command,
+          input.consoleIntentOperatorScope ?? consolePublishOperatorScope(input.actor))
+        : repository.prepareConsolePublishIntent(command,
+          input.consoleIntentOperatorScope ?? consolePublishOperatorScope(input.actor), input.humanAccess)),
     );
     telemetry.record({ operation: 'prepare', result: result.state });
     return result;
@@ -71,8 +76,11 @@ export async function confirmConsolePublishOperation(
     requirePermission(input.actor, 'route');
     const confirmation = ConsolePublishIntentConfirmSchema.parse(input.body);
     const result = ConsolePublishIntentConfirmResultSchema.parse(
-      await repository.confirmConsolePublishIntent(input.actor.tenant_id, input.actor.alias,
-        input.consoleIntentOperatorScope ?? consolePublishOperatorScope(input.actor), confirmation),
+      await (input.humanAccess === undefined
+        ? repository.confirmConsolePublishIntent(input.actor.tenant_id, input.actor.alias,
+          input.consoleIntentOperatorScope ?? consolePublishOperatorScope(input.actor), confirmation)
+        : repository.confirmConsolePublishIntent(input.actor.tenant_id, input.actor.alias,
+          input.consoleIntentOperatorScope ?? consolePublishOperatorScope(input.actor), confirmation, input.humanAccess)),
     );
     telemetry.record({ operation: 'confirm', result: 'confirmed' });
     return result;

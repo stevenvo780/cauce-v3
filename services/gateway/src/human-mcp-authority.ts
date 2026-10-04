@@ -146,8 +146,9 @@ function durableAuthority(snapshot: HumanIdentitySnapshot | undefined, identity:
   }) });
 }
 
-// This capability is server-only; its client must be the publication transaction client.
-export function createHumanPublishAuthority(
+// The caller owns the transaction and retains the locks through the authorized operation.
+function createHumanMessageAuthority(
+  access: 'publish' | 'read',
   identity: VerifiedOAuthIdentity,
   pinnedIdentity: PinnedHumanIdentity,
   signal: AbortSignal,
@@ -168,11 +169,32 @@ export function createHumanPublishAuthority(
     const authority = durableAuthority(snapshot, verified);
     if (authority.userId !== pinned.humanId || authority.principal.tenant_id !== pinned.tenantId
         || authority.principal.alias !== pinned.actorAlias) {
-      throw new StoreError('conflict', 'human publication identity changed');
+      throw new StoreError('conflict', access === 'publish' ? 'human publication identity changed' : 'human read identity changed');
     }
-    if (!authority.scopes.includes('cauce.publish') || !authority.principal.roles.includes('operator')
-        || !authority.principal.permissions.includes('route')) throw new AuthorizationError();
+    const allowed = access === 'publish'
+      ? authority.scopes.includes('cauce.publish') && authority.principal.roles.includes('operator')
+        && authority.principal.permissions.includes('route')
+      : authority.scopes.includes('cauce.read') && authority.principal.permissions.includes('read');
+    if (!allowed) throw new AuthorizationError();
     return Object.freeze({ humanId: authority.userId, tenantId: authority.principal.tenant_id,
       actorAlias: authority.principal.alias });
   };
+}
+
+export function createHumanPublishAuthority(
+  identity: VerifiedOAuthIdentity,
+  pinnedIdentity: PinnedHumanIdentity,
+  signal: AbortSignal,
+  identityStore?: Pick<HumanIdentityStore, 'lock'>,
+): (client: DatabaseClient) => Promise<Readonly<PinnedHumanIdentity>> {
+  return createHumanMessageAuthority('publish', identity, pinnedIdentity, signal, identityStore);
+}
+
+export function createHumanReadAuthority(
+  identity: VerifiedOAuthIdentity,
+  pinnedIdentity: PinnedHumanIdentity,
+  signal: AbortSignal,
+  identityStore?: Pick<HumanIdentityStore, 'lock'>,
+): (client: DatabaseClient) => Promise<Readonly<PinnedHumanIdentity>> {
+  return createHumanMessageAuthority('read', identity, pinnedIdentity, signal, identityStore);
 }

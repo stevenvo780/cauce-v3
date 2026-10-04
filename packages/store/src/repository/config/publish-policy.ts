@@ -551,24 +551,34 @@ export async function expireStaleConsolePublishIntent(
 export async function assertPublishRoute(
   client: DatabaseClient,
   input: PublishRouteCommand,
+  lockAuthority = false,
 ): Promise<void> {
+  const tenants = [...new Set([input.tenant_id, ...input.recipients.map((recipient) => recipient.tenant_id)])].sort();
+  if (lockAuthority) await client.query(
+    'SELECT id FROM tenants WHERE id=ANY($1::text[]) ORDER BY id FOR SHARE', [tenants],
+  );
   const actor = await client.query(
     `SELECT 1 FROM memberships m JOIN role_policies p ON p.role=m.role
      JOIN tenants t ON t.id=m.tenant_id JOIN rooms r ON r.id=m.room_id AND r.tenant_id=m.tenant_id
      WHERE m.tenant_id=$1 AND m.room_id=$2 AND m.alias=$3 AND m.enabled
-       AND t.enabled AND r.enabled AND p.allow_route`,
+       AND t.enabled AND r.enabled AND p.allow_route
+     ${lockAuthority ? 'FOR SHARE OF m,p,t,r' : ''}`,
     [input.tenant_id, input.room_id, input.actor_alias],
   );
   if (actor.rowCount !== 1) {
     throw new StoreError('invalid_actor', 'actor lacks route permission in the source room');
   }
 
-  for (const recipient of input.recipients) {
+  const recipients = lockAuthority ? [...input.recipients].sort((left, right) => (
+    `${left.tenant_id}\u0000${left.alias}`.localeCompare(`${right.tenant_id}\u0000${right.alias}`)
+  )) : input.recipients;
+  for (const recipient of recipients) {
     const member = await client.query(
       `SELECT 1 FROM memberships m JOIN tenants t ON t.id=m.tenant_id
        JOIN rooms r ON r.id=m.room_id AND r.tenant_id=m.tenant_id
        WHERE m.tenant_id=$1 AND m.alias=$2 AND m.enabled AND t.enabled AND r.enabled
-         AND NOT (m.alias=ANY($3::text[])) LIMIT 1`,
+         AND NOT (m.alias=ANY($3::text[]))
+       ORDER BY m.room_id LIMIT 1 ${lockAuthority ? 'FOR SHARE OF m,t,r' : ''}`,
       [recipient.tenant_id, recipient.alias, SYSTEM_PRINCIPAL_ALIASES],
     );
     if (member.rowCount !== 1) {
@@ -580,7 +590,8 @@ export async function assertPublishRoute(
          JOIN tenants source ON source.id=edge.from_tenant
          JOIN tenants target ON target.id=edge.to_tenant
          WHERE edge.from_tenant=$1 AND edge.to_tenant=$2
-           AND edge.enabled AND edge.allow_route AND (source.is_hub OR target.is_hub)`,
+           AND edge.enabled AND edge.allow_route AND (source.is_hub OR target.is_hub)
+         ${lockAuthority ? 'FOR SHARE OF edge,source,target' : ''}`,
         [input.tenant_id, recipient.tenant_id],
       );
       if (edge.rowCount !== 1) {

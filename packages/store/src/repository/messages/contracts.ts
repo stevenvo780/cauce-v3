@@ -2,7 +2,9 @@ import type {
   ConsolePublishIntentExpired,
   ConsolePublishIntentReconciliation,
   PublishResult as ProtocolPublishResult,
+  Tenant,
 } from '@cauce/protocol';
+import type { DatabaseClient } from '../../db.js';
 import { StoreError } from '../errors.js';
 import type { ConsoleMessageAuthor } from './author.js';
 
@@ -31,7 +33,18 @@ export class PublishIntentExpiredError extends StoreError {
 
 export type PublishResult = ProtocolPublishResult;
 
-export interface PublishOptions {
+export interface HumanPublishProvenance {
+  readonly humanId: string;
+  readonly tenantId: Tenant;
+  readonly actorAlias: string;
+}
+
+export interface HumanMessageOptions {
+  readonly humanAuthority: (client: DatabaseClient) => Promise<Readonly<HumanPublishProvenance>>;
+  readonly signal: AbortSignal;
+}
+
+export interface PublishOptions extends Partial<HumanMessageOptions> {
   /** Console-only gate. Machine endpoints deliberately leave it disabled. */
   readonly requirePreparedConsoleIntent?: boolean;
   readonly consoleIntentOperatorScope?: string;

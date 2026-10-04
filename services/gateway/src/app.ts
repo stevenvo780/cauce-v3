@@ -11,7 +11,7 @@ import {
   CauceRepository, type subscribeDeliveryWakes,
   type ConnectionSessionFence, type DatabasePool, type DeliveryLeaseCap,
   type FencedWakeOutboxRecipient, type LeaseResult, type OutboxEvent,
-  type PublishOptions, type PublishResult,
+  type HumanMessageOptions, type PublishOptions, type PublishResult,
 } from '@cauce/store';
 import type { AuthProvider } from './auth.js';
 import { createConsoleSecurityHook } from './console-security.js';
@@ -62,7 +62,7 @@ type StoreDerivedRepository = Pick<CauceRepository,
   'ackDelivery' | 'agentChain' | 'answerChainGate' | 'registerBlob' | 'findBlob'
   | 'assertPermission' | 'assertPrincipal' | 'authorizeAgentTarget' | 'cancelChainGate'
   | 'cancelDelivery' | 'confirmConsolePublishIntent' | 'enqueueJob' | 'enqueueNotification'
-  | 'fleetActivity' | 'getAgent' | 'getAgentByIdentity' | 'getConfiguration' | 'getMessage'
+  | 'fleetActivity' | 'getAgent' | 'getAgentByIdentity' | 'getConfiguration' | 'getMessage' | 'getHumanMessage'
   | 'listAdapters' | 'listAgents' | 'listAudit' | 'listChainGates' | 'listJobs' | 'listMessages'
   | 'listAgentEgress' | 'listNotifications' | 'listOperationalDlq' | 'listOriginRelays' | 'liveDeliveryClaims'
   | 'principalAccess' | 'queueSnapshot' | 'quotaSnapshot' | 'readProfileRuntimeAdoption'
@@ -77,9 +77,10 @@ interface GatewayNarrowedRepository {
   prepareConsolePublishIntent(
     input: TrustedPublishIntentCommand,
     operatorScopeHash: string,
+    options?: HumanMessageOptions,
   ): Promise<ConsolePublishIntentPrepareResult>;
   /** Independent durable reconciliation; receipt-contained hashes are not an authority for IDs. */
-  verifyPublishReceipt(input: TrustedPublishCommand, receipt: PublishResult): Promise<boolean>;
+  verifyPublishReceipt(input: TrustedPublishCommand, receipt: PublishResult, options?: PublishOptions): Promise<boolean>;
   /** The actor is mandatory: the store skips its permission check when both arguments are absent. */
   status(actorTenant: Tenant, actorAlias: string): Promise<Record<string, number>>;
   listPresence(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>[]>;

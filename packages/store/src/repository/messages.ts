@@ -14,7 +14,6 @@ import {
   consolePublishIntentRequestedHash,
   consolePublishIntentSemanticHash,
 } from '@cauce/protocol';
-import { withTransaction } from '../db.js';
 import {
   CONSOLE_PUBLISH_CONFIRM_ACTION,
   CONSOLE_PUBLISH_PREPARE_ACTION,
@@ -41,6 +40,8 @@ import { StoreError } from './errors.js';
 import { PublishIntentReconciliationRequired } from './messages/contracts.js';
 import { MessagePublishingRepository } from './messages/publishing.js';
 import { reconstructCommittedConsoleIntentReceipt } from './messages/receipts.js';
+import { assertHumanMessageRoot, lockHumanMessageRoute, withHumanMessageTransaction } from './messages/human-authority.js';
+import type { HumanMessageOptions } from './messages/contracts.js';
 import type { MessageListRow } from './visibility-rows.js';
 import { MESSAGE_AUTHOR_SQL, withMessageAuthor } from './messages/author.js';
 
@@ -49,7 +50,7 @@ export {
   PublishIntentReconciliationRequired,
   terminal,
 } from './messages/contracts.js';
-export type { PublishOptions, PublishResult } from './messages/contracts.js';
+export type { HumanMessageOptions, HumanPublishProvenance, PublishOptions, PublishResult } from './messages/contracts.js';
 export {
   AgentRootLimitError, type MessageReader, type OpenAgentRoot, type OpenAgentRootRecipient,
 } from './messages/agent-roots.js';
@@ -60,6 +61,7 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
   async prepareConsolePublishIntent(
     input: ConsolePublishIntentCommand,
     operatorScopeHash: string,
+    options?: HumanMessageOptions,
   ): Promise<ConsolePublishIntentPrepareResult> {
     if (!validConsoleOperatorScope(operatorScopeHash)) {
       throw new StoreError('forbidden', 'console publish operator scope is invalid');
@@ -93,8 +95,8 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
     const requestedHash = consolePublishIntentRequestedHash(normalizedInput);
     const conversationHash = consolePublishConversationHash(normalizedInput);
     const intentNonceHash = consolePublishIntentNonceHash(intentNonce);
-    return withTransaction(this.pool, async (client) => {
-      await assertPublishRoute(client, normalizedInput);
+    return withHumanMessageTransaction(this.pool, options, normalizedInput.tenant_id, normalizedInput.actor_alias, async (client, human) => {
+      await assertPublishRoute(client, normalizedInput, human !== undefined);
       await lockConsolePublishIntents(
         client, normalizedInput.tenant_id, normalizedInput.actor_alias,
       );
@@ -149,6 +151,7 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
           if (durable.message_id === null || durable.response === null) {
             throw new StoreError('conflict', 'prepared console publish durable effect is inconsistent');
           }
+          if (human !== undefined) await assertHumanMessageRoot(client, durable.message_id, human, prepared.conversation_hash);
           const receipt = await reconstructCommittedConsoleIntentReceipt(
             client,
             {
@@ -235,6 +238,7 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
         if (durable.message_id === null || durable.response === null) {
           throw new StoreError('conflict', 'prepared console publish durable effect is inconsistent');
         }
+        if (human !== undefined) await assertHumanMessageRoot(client, durable.message_id, human, prepared.conversation_hash);
         const receipt = await reconstructCommittedConsoleIntentReceipt(
           client,
           {
@@ -419,12 +423,17 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
     actorAlias: string,
     operatorScopeHash: string,
     candidate: ConsolePublishIntentConfirm,
+    options?: HumanMessageOptions,
   ): Promise<ConsolePublishIntentConfirmResult> {
     if (!validConsoleOperatorScope(operatorScopeHash)) {
       throw new StoreError('forbidden', 'console publish operator scope is invalid');
     }
     const input = ConsolePublishIntentConfirmSchema.parse(candidate);
-    return withTransaction(this.pool, async (client) => {
+    return withHumanMessageTransaction(this.pool, options, tenantId, actorAlias, async (client, human) => {
+      if (human !== undefined) {
+        await assertHumanMessageRoot(client, input.message_id, human);
+        await lockHumanMessageRoute(client, input.message_id, human);
+      }
       await lockConsolePublishIntents(client, tenantId, actorAlias);
       const state = await expireStaleConsolePublishIntent(
         client,
@@ -439,6 +448,7 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
           || prepared.operator_scope_hash !== operatorScopeHash) {
         throw new StoreError('conflict', 'console publish intent was not prepared by this actor');
       }
+      if (human !== undefined) await assertHumanMessageRoot(client, input.message_id, human, prepared.conversation_hash);
 
       const confirmed = state.confirmed;
       let head: ConsolePublishHeadState | undefined;
