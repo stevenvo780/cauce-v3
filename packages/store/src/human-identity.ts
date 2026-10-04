@@ -112,13 +112,63 @@ export interface ConsoleHumanSnapshot {
   readonly membership: HumanIdentitySnapshot['membership'];
 }
 
-export async function lockConsoleHuman(client: DatabaseClient, humanId: string): Promise<ConsoleHumanSnapshot> {
+export interface ConsoleCredentialSnapshot {
+  readonly userId: string;
+  readonly passwordHash: string;
+  readonly passwordChangedAtUs: string;
+}
+
+export type ConsoleCredentialStampVerifier = (
+  stamp: string,
+  current: Readonly<ConsoleCredentialSnapshot>,
+) => boolean;
+
+export interface ConsoleCredentialStampCheck {
+  readonly credentialStamp: string;
+  readonly verifyCredentialStamp: ConsoleCredentialStampVerifier;
+}
+
+function credentialVerifierAccepted(value: unknown): value is true {
+  return value === true;
+}
+
+export async function lockConsoleHuman(
+  client: DatabaseClient,
+  humanId: string,
+  credentialCheck?: Readonly<ConsoleCredentialStampCheck>,
+): Promise<ConsoleHumanSnapshot> {
   if (!isAnyUuid(humanId)) throw new StoreError('forbidden', 'console human authority is unavailable');
-  const account = (await client.query<AccountRow & { alias: string; password_changed_at: Date }>(
-    'SELECT id, active, role, tenant_id, alias, password_changed_at FROM console_users WHERE id=$1 FOR SHARE',
+  if (credentialCheck !== undefined && (typeof credentialCheck.credentialStamp !== 'string'
+      || !/^[A-Za-z0-9_-]{43}$/u.test(credentialCheck.credentialStamp)
+      || typeof credentialCheck.verifyCredentialStamp !== 'function')) {
+    throw new StoreError('forbidden', 'console human authority is unavailable');
+  }
+  const credentialColumns = credentialCheck === undefined ? '' :
+    ', password_hash, (extract(epoch FROM password_changed_at)*1000000)::numeric(20,0)::text AS password_changed_at_us';
+  const account = (await client.query<AccountRow & {
+    alias: string; password_changed_at: Date; password_hash?: string; password_changed_at_us?: string;
+  }>(
+    `SELECT id, active, role, tenant_id, alias, password_changed_at${credentialColumns}
+     FROM console_users WHERE id=$1 FOR SHARE`,
     [humanId],
   )).rows[0];
   if (!account?.active) throw new StoreError('forbidden', 'console human authority is unavailable');
+  if (credentialCheck !== undefined) {
+    if (typeof account.password_hash !== 'string' || typeof account.password_changed_at_us !== 'string') {
+      throw new StoreError('forbidden', 'console human authority is unavailable');
+    }
+    const credential: Readonly<ConsoleCredentialSnapshot> = Object.freeze({ userId: account.id,
+      passwordHash: account.password_hash, passwordChangedAtUs: account.password_changed_at_us });
+    let verified = false;
+    try {
+      verified = credentialVerifierAccepted(
+        credentialCheck.verifyCredentialStamp(credentialCheck.credentialStamp, credential),
+      );
+    } catch {
+      verified = false;
+    }
+    if (!verified) throw new StoreError('forbidden', 'console human authority is unavailable');
+  }
   const membership = (await client.query<MembershipRow>(
     `SELECT tenant_id, actor_alias, role, permissions, enabled, revision::text, revoked_at
      FROM human_tenant_memberships WHERE human_id=$1 AND tenant_id=$2 FOR SHARE`,
