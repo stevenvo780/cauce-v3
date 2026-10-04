@@ -76,7 +76,7 @@ export async function notificationDestination(tenant: Tenant = 'Steven', alias =
   await pool.query("UPDATE role_policies SET allow_notify=true WHERE role='agent'");
   await pool.query(`INSERT INTO egress_destinations(tenant_id,alias,handle,adapter,channel,conversation_id,
     conversation_kind,allow_kinds,require_prior_contact,min_interval_seconds,max_per_hour,max_per_day,max_per_root,enabled)
-    VALUES($1,$2,'fixture.dm','telegram','telegram','fixture-conversation','group',ARRAY['task_complete'],false,0,100,100,100,true)`,
+    VALUES($1,$2,'fixture.dm','telegram','telegram','-1001234567890','group',ARRAY['task_complete'],false,0,60,100,20,true)`,
   [tenant, alias]);
 }
 
