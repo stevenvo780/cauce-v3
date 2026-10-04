@@ -265,7 +265,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
       http.post('*/v3/console/terminal/sessions', async ({ request }) => {
         const body = await request.json() as Record<string, unknown>;
         const alias = String(body.alias);
-        const item = { alias, body, gate: deferred(), sid: `sid-pending-${pending.length}` };
+        const item = { alias, body, gate: deferred(), sid: `sid-pending-${String(pending.length)}` };
         pending.push(item); abiertas.push(item.sid);
         await item.gate.promise;
         return HttpResponse.json(mockTerminalGrant({

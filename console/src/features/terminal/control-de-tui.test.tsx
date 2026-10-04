@@ -200,21 +200,25 @@ afterEach(async () => {
 });
 
 describe('el botón sólo existe si el gateway publica un modo con escritura', () => {
-  it('un turno activo requiere una segunda toma explícita y nunca se cancela al mirar', async () => {
+  it('la toma inicial durante un turno usa allow_busy sin una segunda acción', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
-    servirControl(controles, { status: 409, reason: 'agent_busy' });
+    server.use(http.post('*/v3/console/terminal/sessions/:sid/control', async ({ request, params }) => {
+      const body = await request.json() as Record<string, unknown>;
+      const sid = String(params.sid);
+      controles.push({ sid, body });
+      if (faltaElEnganche(sid)) return HttpResponse.json(NEGATIVA_RANCIA, { status: 409 });
+      if (body.allow_busy !== true) return HttpResponse.json({ error: 'conflict', reason: 'agent_busy' }, { status: 409 });
+      return HttpResponse.json({ session_id: sid, hold_id: 'hold-busy', held_by: 'operador:steven',
+        expires_at: new Date(Date.now() + 600_000).toISOString() });
+    }));
     await abrirZeus(user);
-    engancharLaTui();
     expect(controles).toHaveLength(0);
     await tomarElControl(user, controles);
-    expect(await screen.findByText('El agente tiene un turno en curso')).toBeInTheDocument();
-    expect(controles[0]?.body.allow_busy).toBeUndefined();
-    servirControl(controles);
-    await user.click(screen.getByRole('button', { name: 'Tomar control durante el turno' }));
-    await waitFor(() => { expect(controles).toHaveLength(2); });
-    expect(controles[1]?.body).toMatchObject({ action: 'take', reason: MOTIVO, allow_busy: true });
+    expect(controles[0]?.body).toMatchObject({ action: 'take', reason: MOTIVO, allow_busy: true });
     expect(await screen.findByText(/Tenés el teclado/)).toBeInTheDocument();
+    expect(controles).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Tomar control durante el turno' })).not.toBeInTheDocument();
   });
 
   it('CONTROL NEGATIVO: con harness_rw entre los modos pero sin modo escribible publicado, no hay botón', async () => {
@@ -246,7 +250,7 @@ describe('control directo con auditoría', () => {
     expect(controles).toHaveLength(0);
     await tomarElControl(user, controles);
     expect(controles[0].body).toMatchObject({ action: 'take', reason: MOTIVO });
-    expect(Object.keys(controles[0].body).sort()).toEqual([...CAMPOS_DE_CONTROL, 'reason'].sort());
+    expect(Object.keys(controles[0].body).sort()).toEqual([...CAMPOS_DE_CONTROL, 'reason', 'allow_busy'].sort());
     expect(controles[0].body.reason).not.toBe(liveTuiReason(ALIAS));
   }, 20_000);
 

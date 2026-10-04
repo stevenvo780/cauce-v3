@@ -275,6 +275,21 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     });
   });
 
+  it('la primera toma con busy autorizado conserva autoridad, owner y auditoría', async () => {
+    const pool = controlPool({ session: ownedRow(), busy: true });
+    const grants = new GrantStore(grantsFileWith('steven-kant'));
+    ctx = buildContext({ pool, grants: grants as unknown as never });
+    const response = await control({ ...validControlRequest(), allow_busy: true });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ session_id: UUID_OK, hold_id: HOLD_ID, held_by: 'steven-kant' });
+    expect(pool.__queries.filter((query) => query.text.includes('INSERT INTO terminal_control_holds'))).toHaveLength(1);
+    expect(auditRows(pool)).toEqual([expect.objectContaining({
+      action: 'terminal.control_taken', decision: 'allow', metadata: expect.objectContaining({
+        allow_busy: true, operator_reason: 'tomar la TUI para desatascar el turno', mode: 'harness_rw',
+      }) as unknown,
+    })]);
+  });
+
   it('rechaza una excepción busy mal tipada o aplicada a la devolución', async () => {
     ctx = buildContext({ pool: controlPool({ session: ownedRow() }) });
     expect((await control({ ...validControlRequest(), allow_busy: 'true' })).statusCode).toBe(400);

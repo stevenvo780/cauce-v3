@@ -434,7 +434,7 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, top
     try {
       for (const session of sessions) {
         await releaseChannel(session.id);
-        if (grantsRef.current[session.id] !== undefined) return;
+        if ((grantsRef.current[session.id] as TerminalSessionGrant | undefined) !== undefined) return;
         closeSession(session.id);
       }
       openAgent(agent);

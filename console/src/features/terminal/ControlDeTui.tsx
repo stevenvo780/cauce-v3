@@ -225,7 +225,7 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
     }
   }
 
-  async function tomar(allowBusy = false) {
+  async function tomar(allowBusy = true) {
     if (pendiente || tomandoRef.current || escrituraBloqueada) return;
     tomandoRef.current = true;
     const escrito = motivo.trim();
@@ -373,16 +373,6 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
               ? ETIQUETA_DE_FASE[fase]
               : escrituraBloqueada ? 'Escritura no disponible' : reintentable ? 'Reintentar la toma' : 'Tomar el control'}
           </button>
-          {error?.codigo === 'agent_busy' ? (
-            <button
-              className="button small secondary"
-              type="button"
-              disabled={pendiente || pidiendoSesion}
-              onClick={() => void tomar(true)}
-            >
-              Tomar control durante el turno
-            </button>
-          ) : null}
         </>
       )}
 
