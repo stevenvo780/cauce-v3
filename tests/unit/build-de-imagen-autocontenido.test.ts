@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, globSync, readFileSync, statSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -10,26 +10,47 @@ import { describe, expect, it } from 'vitest';
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, '../..');
 
-function imageBuildRoots(): string[] {
+function copySources(line: string): string[] {
+  const copy = /^COPY\s+(.+)$/u.exec(line.trim());
+  const argumentsText = copy?.[1];
+  if (argumentsText === undefined) return [];
+
+  const tokens = argumentsText.split(/\s+/u).filter(token => token.length > 0);
+  if (tokens.some(token => token === '--from' || token.startsWith('--from='))) return [];
+
+  const paths = tokens.filter(token => !token.startsWith('--'));
+  return paths.length < 2 ? [] : paths.slice(0, -1);
+}
+
+function imageBuildSources(): string[] {
   const dockerfile = readFileSync(resolve(REPOSITORY_ROOT, 'deploy/Dockerfile'), 'utf8');
   const stage = dockerfile.slice(
     dockerfile.indexOf('AS build'),
     dockerfile.indexOf('AS production-dependencies'),
   );
-  const roots = new Set<string>();
+  const sources = new Set<string>();
   for (const line of stage.split('\n')) {
-    const copy = /^COPY\s+(?!--from)(.+)$/.exec(line.trim());
-    const sources = copy?.[1];
-    if (sources === undefined) continue;
-    // The last token of a COPY is the destination; everything before it is a source.
-    const tokens = sources.split(/\s+/).filter(Boolean).slice(0, -1);
-    for (const token of tokens) roots.add(firstSegment(token));
+    for (const source of copySources(line)) sources.add(source);
   }
-  return [...roots];
+  return [...sources];
 }
 
-function firstSegment(path: string): string {
-  return path.split('/')[0] ?? path;
+function sourceCoversFile(source: string, file: string): boolean {
+  const normalized = source.replace(/^\.\//u, '').replace(/\/$/u, '') || '.';
+  if (normalized === '.') return true;
+  if (normalized.includes('*') || normalized.includes('?') || normalized.includes('[')) {
+    return globSync(normalized, { cwd: REPOSITORY_ROOT })
+      .some(match => sourceCoversFile(match, file));
+  }
+  const absolute = resolve(REPOSITORY_ROOT, normalized);
+  if (!existsSync(absolute)) return false;
+  return statSync(absolute).isDirectory()
+    ? file.startsWith(`${normalized}/`)
+    : file === normalized;
+}
+
+function isCopiedBuildFile(file: string, sources: string[]): boolean {
+  return sources.some(source => sourceCoversFile(source, file));
 }
 
 function buildFiles(): string[] {
@@ -46,15 +67,30 @@ function buildFiles(): string[] {
 
 describe('el build de la imagen es autocontenido', () => {
   it('no compila ningún fichero fuera de lo que el Dockerfile copia', () => {
-    const roots = imageBuildRoots();
-    expect(roots).toContain('packages');
-    expect(roots).toContain('services');
-    // The guard only means something if the root `tests/` tree is genuinely absent from the stage.
-    expect(roots).not.toContain('tests');
+    const sources = imageBuildSources();
+    expect(sources).toContain('packages');
+    expect(sources).toContain('services');
+    expect(isCopiedBuildFile('tests/unit/parametros.test.ts', sources)).toBe(false);
 
-    const outside = buildFiles().filter(file => !roots.includes(firstSegment(file)));
+    const outside = buildFiles().filter(file => !isCopiedBuildFile(file, sources));
     expect(outside, `estos ficheros no existen dentro de la imagen: ${outside.join(', ')}`).toEqual([]);
   }, 120_000);
+
+  it('reconoce rutas COPY exactas y directorios sin cubrir pruebas no copiadas', () => {
+    const sources = imageBuildSources();
+    expect(sources).toContain('tests/terminal-pty/certs.mjs');
+    expect(sources).toContain('tests/terminal-pty/certs.d.mts');
+    expect(isCopiedBuildFile('tests/terminal-pty/certs.d.mts', sources)).toBe(true);
+    expect(sourceCoversFile('tests/terminal-pty', 'tests/terminal-pty/certs.d.mts')).toBe(true);
+    expect(sourceCoversFile('tests/terminal-pty/certs.mjs', 'tests/terminal-pty/certs.d.mts')).toBe(false);
+    expect(isCopiedBuildFile('tests/unit/parametros.test.ts', sources)).toBe(false);
+  });
+
+  it('no trata rutas de otra etapa como fuentes del host', () => {
+    expect(copySources('COPY --chown=node:node --from=build /app/dist ./dist')).toEqual([]);
+    expect(copySources('COPY --from=build --chown=node:node /app/dist ./dist')).toEqual([]);
+    expect(copySources('COPY packages/protocol ./packages/protocol')).toEqual(['packages/protocol']);
+  });
 
   // Negative control: an empty compiler listing would make the subset assertion pass falsely.
   it('el listado del compilador no viene vacío', () => {
