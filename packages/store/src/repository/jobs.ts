@@ -3,6 +3,7 @@ import { withTransaction } from '../db.js';
 import { StoreError } from './errors.js';
 import { ObservabilityRepository } from './observability.js';
 import { jobRetryBackoffSeconds } from './observability/policy.js';
+import { CONTEXT_WRITE_QUARANTINE_KIND } from './agent-context-quarantine.js';
 
 export interface JobClaim extends Record<string, unknown> {
   id: string;
@@ -17,6 +18,9 @@ export interface JobClaim extends Record<string, unknown> {
 
 export abstract class JobsRepository extends ObservabilityRepository {
   async enqueueJob(tenantId: Tenant, lane: Lane, priority: number, kind: string, payload: Record<string, unknown>): Promise<string> {
+    if (kind === CONTEXT_WRITE_QUARANTINE_KIND) {
+      throw new StoreError('conflict', 'context reservation repository');
+    }
     const result = await this.pool.query<{ id: string }>(
       `INSERT INTO jobs(tenant_id,lane,priority,kind,payload) VALUES($1,$2,$3,$4,$5::jsonb) RETURNING id`,
       [tenantId, lane, priority, kind, JSON.stringify(payload)]
@@ -33,11 +37,11 @@ export abstract class JobsRepository extends ObservabilityRepository {
     return withTransaction(this.pool, async (client) => {
       const result = await client.query<JobClaim>(
         `WITH picked AS (
-           SELECT id FROM jobs WHERE lane=$1 AND status='queued' AND available_at<=now()
+         SELECT id FROM jobs WHERE lane=$1 AND status='queued' AND available_at<=now() AND kind<>$5
             ORDER BY priority DESC,created_at FOR UPDATE SKIP LOCKED LIMIT $3
           ) UPDATE jobs j SET status='running',attempts=j.attempts+1,claimed_by=$2,claimed_at=now(),
               claim_token=gen_random_uuid(),lease_until=now()+$4*interval '1 millisecond',updated_at=now()
-            FROM picked p WHERE j.id=p.id RETURNING j.*`, [lane, worker, limit, leaseMs]
+            FROM picked p WHERE j.id=p.id RETURNING j.*`, [lane, worker, limit, leaseMs, CONTEXT_WRITE_QUARANTINE_KIND]
       );
       return result.rows;
     });
@@ -66,8 +70,9 @@ export abstract class JobsRepository extends ObservabilityRepository {
       for (let index = 0; index < Math.min(limit, 100); index += 1) {
         const availability = await client.query<{ interactive: boolean; batch: boolean }>(
           `SELECT
-             EXISTS(SELECT 1 FROM jobs WHERE lane='interactive' AND status='queued' AND available_at<=now()) AS interactive,
-             EXISTS(SELECT 1 FROM jobs WHERE lane='batch' AND status='queued' AND available_at<=now()) AS batch`
+             EXISTS(SELECT 1 FROM jobs WHERE lane='interactive' AND status='queued' AND available_at<=now() AND kind<>$1) AS interactive,
+             EXISTS(SELECT 1 FROM jobs WHERE lane='batch' AND status='queued' AND available_at<=now() AND kind<>$1) AS batch`,
+          [CONTEXT_WRITE_QUARANTINE_KIND]
         );
         const available = availability.rows[0];
         if (!available || (!available.interactive && !available.batch)) break;
@@ -75,12 +80,12 @@ export abstract class JobsRepository extends ObservabilityRepository {
           && (!available.interactive || interactiveStreak >= interactiveBurst) ? 'batch' : 'interactive';
         const claimed = await client.query<JobClaim>(
           `WITH picked AS (
-             SELECT id FROM jobs WHERE lane=$1 AND status='queued' AND available_at<=now()
+             SELECT id FROM jobs WHERE lane=$1 AND status='queued' AND available_at<=now() AND kind<>$2
              ORDER BY priority DESC,created_at FOR UPDATE SKIP LOCKED LIMIT 1
-           ) UPDATE jobs j SET status='running',attempts=j.attempts+1,claimed_by=$2,
+           ) UPDATE jobs j SET status='running',attempts=j.attempts+1,claimed_by=$3,
                claimed_at=now(),claim_token=gen_random_uuid(),
-               lease_until=now()+$3*interval '1 millisecond',updated_at=now()
-             FROM picked p WHERE j.id=p.id RETURNING j.*`, [lane, worker, leaseMs]
+               lease_until=now()+$4*interval '1 millisecond',updated_at=now()
+             FROM picked p WHERE j.id=p.id RETURNING j.*`, [lane, CONTEXT_WRITE_QUARANTINE_KIND, worker, leaseMs]
         );
         const job = claimed.rows[0];
         if (!job) continue;
@@ -110,8 +115,8 @@ export abstract class JobsRepository extends ObservabilityRepository {
     if (!claimToken) return false;
     const result = await this.pool.query(
       `UPDATE jobs SET status='done',lease_until=NULL,updated_at=now()
-       WHERE id=$1 AND claimed_by=$2 AND claim_token=$3 AND status='running' AND lease_until>now()`,
-      [id, worker, claimToken]
+       WHERE id=$1 AND claimed_by=$2 AND claim_token=$3 AND status='running' AND lease_until>now() AND kind<>$4`,
+      [id, worker, claimToken, CONTEXT_WRITE_QUARANTINE_KIND]
     );
     return result.rowCount === 1;
   }
@@ -124,7 +129,7 @@ export abstract class JobsRepository extends ObservabilityRepository {
       }>(
         `SELECT id,tenant_id,payload,attempts,max_attempts FROM jobs
          WHERE id=$1 AND claimed_by=$2 AND claim_token=$3 AND status='running'
-           AND lease_until>now() FOR UPDATE`, [id, worker, claimToken]
+           AND lease_until>now() AND kind<>$4 FOR UPDATE`, [id, worker, claimToken, CONTEXT_WRITE_QUARANTINE_KIND]
       );
       const job = result.rows[0];
       if (!job) return 'fenced';
@@ -155,8 +160,8 @@ export abstract class JobsRepository extends ObservabilityRepository {
     return withTransaction(this.pool, async (client) => {
       const result = await client.query<{ id: string; attempts: number; max_attempts: number; tenant_id: Tenant; payload: Record<string, unknown> }>(
         `SELECT id,attempts,max_attempts,tenant_id,payload FROM jobs
-         WHERE status='running' AND lease_until<now()
-         ORDER BY lease_until FOR UPDATE SKIP LOCKED LIMIT $1`, [limit]
+         WHERE status='running' AND lease_until<now() AND kind<>$2
+         ORDER BY lease_until FOR UPDATE SKIP LOCKED LIMIT $1`, [limit, CONTEXT_WRITE_QUARANTINE_KIND]
       );
       for (const job of result.rows) {
         if (job.attempts >= job.max_attempts) {
@@ -187,7 +192,8 @@ export abstract class JobsRepository extends ObservabilityRepository {
     await this.assertPermission(actorTenant, actorAlias, 'read');
     const result = await this.pool.query<Record<string, unknown>>(
       `SELECT id AS job_id,tenant_id,lane,kind,status,priority,attempts,claimed_by,claimed_at,created_at,updated_at
-       FROM jobs WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT $2`, [actorTenant, limit]
+       FROM jobs WHERE tenant_id=$1 AND kind<>$2 ORDER BY created_at DESC LIMIT $3`,
+      [actorTenant, CONTEXT_WRITE_QUARANTINE_KIND, limit]
     );
     return { items: result.rows };
   }

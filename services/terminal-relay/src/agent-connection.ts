@@ -13,6 +13,7 @@ import {
   FEATURE_SESSION_OUTPUT_FLOW_CONTROL,
   FEATURE_WRITE_GOVERNANCE,
   FEATURE_WRITE_GOVERNANCE_BATCH,
+  FEATURE_WRITE_QUIESCENCE,
   MAX_AGENT_CRITICAL_QUEUE_BYTES,
   MAX_AGENT_READS_IN_FLIGHT,
   MAX_AGENT_WRITE_QUEUE_BYTES,
@@ -26,6 +27,13 @@ import {
   type AgentWriteHandlers,
 } from './agent-hello.js';
 import { integerField, stringField } from './validation.js';
+import type { GovernanceOperationDescriptor } from './governance-operation.js';
+
+export interface AgentWriteStatusHandlers {
+  onStatusOk(body: Record<string, unknown>): void;
+  onStatusErr(failure: { readonly code: string; readonly reason: string }): void;
+  onAgentGone(reason: string): void;
+}
 
 /** One live agent socket. Frame routing to sessions lives here so the leg stays a registry. */
 export class AgentConnection {
@@ -40,6 +48,7 @@ export class AgentConnection {
   private readonly terminalReads = new Set<string>();
   /** Governed writes in flight. Separated from PTY and from reads by capacity negotiation. */
   private readonly writes = new Map<string, AgentWriteHandlers>();
+  private readonly writeStatuses = new Map<string, AgentWriteStatusHandlers>();
   private readonly ping: NodeJS.Timeout;
   private lastPongAt: number;
   private queuedWrites: Buffer[] = [];
@@ -108,6 +117,9 @@ export class AgentConnection {
         ? {} : { project_doc_fallback_filenames: this.hello.project_doc_fallback_filenames }),
       agent_version: this.hello.agent_version,
       modes: this.hello.modes,
+      features: this.hello.features,
+      ...(this.hello.writer_instance_id === undefined
+        ? {} : { writer_instance_id: this.hello.writer_instance_id }),
       connected_since: this.connectedAt.toISOString()
     };
   }
@@ -141,6 +153,31 @@ export class AgentConnection {
     return this.hello.features.includes(FEATURE_WRITE_GOVERNANCE_BATCH);
   }
 
+  get supportsWriteQuiescence(): boolean {
+    return this.hello.features.includes(FEATURE_WRITE_QUIESCENCE)
+      && this.hello.writer_instance_id !== undefined;
+  }
+
+  attachWriteStatus(requestId: string, handlers: AgentWriteStatusHandlers): boolean {
+    if (this.closed || this.writeStatuses.has(requestId)) return false;
+    this.writeStatuses.set(requestId, handlers);
+    return true;
+  }
+
+  detachWriteStatus(requestId: string): void {
+    this.writeStatuses.delete(requestId);
+  }
+
+  sendWriteStatus(operation: GovernanceOperationDescriptor): boolean {
+    if (!this.supportsWriteQuiescence) return false;
+    return this.write(encodeJsonFrame(FRAME_TAGS.WRITE_STATUS, {
+      ...operation,
+      tenant_id: this.hello.tenant_id,
+      alias: this.hello.alias,
+      container_id: this.hello.container_id,
+    }));
+  }
+
   get supportsSessionOutputFlowControl(): boolean {
     return this.hello.features.includes(FEATURE_SESSION_OUTPUT_FLOW_CONTROL);
   }
@@ -165,8 +202,10 @@ export class AgentConnection {
     this.terminalReads.add(requestId);
   }
 
-  attachWrite(requestId: string, handlers: AgentWriteHandlers): void {
+  attachWrite(requestId: string, handlers: AgentWriteHandlers): boolean {
+    if (this.closed || this.writes.has(requestId)) return false;
     this.writes.set(requestId, handlers);
+    return true;
   }
 
   detachWrite(requestId: string): void {
@@ -192,7 +231,8 @@ export class AgentConnection {
     operation: 'replace' | 'create',
     expectedSha: string | undefined,
     contentSha: string,
-    content: Buffer
+    content: Buffer,
+    durableOperation?: GovernanceOperationDescriptor
   ): boolean {
     if (!this.supportsGovernanceWrite) return false;
     const chunks: Buffer[] = [];
@@ -205,6 +245,7 @@ export class AgentConnection {
     }
     const begin = encodeJsonFrame(FRAME_TAGS.WRITE, {
       request_id: requestId,
+      ...(durableOperation ?? {}),
       path,
       operation,
       ...(expectedSha === undefined ? {} : { expected_sha: expectedSha }),
@@ -224,7 +265,11 @@ export class AgentConnection {
    * Sends the profile as a single transaction. The DATAs arrive in the same order as `entries`,
    * and the agent preflights nothing and touches no disk until all their digests are verified.
    */
-  sendGovernanceWriteBatch(requestId: string, entries: readonly AgentGovernanceBatchEntry[]): boolean {
+  sendGovernanceWriteBatch(
+    requestId: string,
+    entries: readonly AgentGovernanceBatchEntry[],
+    operation?: GovernanceOperationDescriptor,
+  ): boolean {
     if (!this.supportsGovernanceWriteBatch) return false;
     const frames: Buffer[] = [];
     const metadata = entries.map((entry) => {
@@ -257,7 +302,11 @@ export class AgentConnection {
         chunks,
       };
     });
-    const begin = encodeJsonFrame(FRAME_TAGS.WRITE_BATCH, { request_id: requestId, entries: metadata });
+    const begin = encodeJsonFrame(FRAME_TAGS.WRITE_BATCH, {
+      request_id: requestId,
+      ...(operation ?? {}),
+      entries: metadata,
+    });
     return this.writeBatch([begin, ...frames]);
   }
 
@@ -322,11 +371,13 @@ export class AgentConnection {
     clearInterval(this.ping);
     // In-flight reads are notified the same way as sessions: otherwise they keep waiting until
     // their timer expires and the requester sees "it was slow" where what happened was "it fell".
-    const handlers = [...this.sessions.values(), ...this.reads.values(), ...this.writes.values()];
+    const handlers = [...this.sessions.values(), ...this.reads.values(), ...this.writes.values(),
+      ...this.writeStatuses.values()];
     this.sessions.clear();
     this.reads.clear();
     this.terminalReads.clear();
     this.writes.clear();
+    this.writeStatuses.clear();
     this.queuedWrites = [];
     this.queuedWriteBytes = 0;
     this.waitingDrain = false;
@@ -450,6 +501,23 @@ export class AgentConnection {
       }); });
       return;
     }
+    if (frame.tag === FRAME_TAGS.WRITE_STATUS_OK) {
+      const body = decodeJsonFrame(frame.payload);
+      const requestId = stringField(body, 'request_id');
+      if (requestId === undefined) throw new FramingError('WRITE_STATUS_OK without a request id');
+      this.dispatchWriteStatus(requestId, (handlers) => { handlers.onStatusOk(body); });
+      return;
+    }
+    if (frame.tag === FRAME_TAGS.WRITE_STATUS_ERR) {
+      const body = decodeJsonFrame(frame.payload);
+      const requestId = stringField(body, 'request_id');
+      if (requestId === undefined) throw new FramingError('WRITE_STATUS_ERR without a request id');
+      this.dispatchWriteStatus(requestId, (handlers) => { handlers.onStatusErr({
+        code: stringField(body, 'error') ?? 'unknown',
+        reason: stringField(body, 'reason') ?? 'write_status_failed',
+      }); });
+      return;
+    }
     // AGENT_HELLO after the handshake, or any frame only the relay may send, is a violation.
     throw new FramingError('unexpected frame from the agent');
   }
@@ -485,6 +553,16 @@ export class AgentConnection {
       apply(handlers);
     } catch (error) {
       logEvent('terminal_relay_write_handler_failed', { request_id: requestId, error: errorLabel(error) });
+    }
+  }
+
+  private dispatchWriteStatus(requestId: string, apply: (handlers: AgentWriteStatusHandlers) => void): void {
+    const handlers = this.writeStatuses.get(requestId);
+    if (!handlers) return;
+    try {
+      apply(handlers);
+    } catch (error) {
+      logEvent('terminal_relay_write_status_handler_failed', { request_id: requestId, error: errorLabel(error) });
     }
   }
 

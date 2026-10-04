@@ -1,5 +1,5 @@
 import { DELIVERY_STATES, renderCounters, type DeliveryState, type Lane } from '@cauce/protocol';
-import type { ChainSilenceSweepResult, DatabasePool } from '@cauce/store';
+import { CONTEXT_WRITE_QUARANTINE_KIND, type ChainSilenceSweepResult, type DatabasePool } from '@cauce/store';
 import { DISPATCHER_PHASES, type DispatcherPhase } from './phases.js';
 
 type ChainSweepOutcome = 'scanned' | 'fanin_recovered' | 'notified' | 'skipped' | 'failed';
@@ -183,10 +183,11 @@ export class DispatcherMetrics {
 
     try {
       const [jobs, jobOldest, deliveries, deliveryOldest, dlq, jobLeases, deliveryLeases, consumerLeases, relays, relayOldest] = await Promise.all([
-        this.pool.query<CountRow>(`SELECT lane,status,count(*)::text AS count FROM jobs GROUP BY lane,status`),
+        this.pool.query<CountRow>(`SELECT lane,status,count(*)::text AS count FROM jobs
+          WHERE kind<>$1 GROUP BY lane,status`, [CONTEXT_WRITE_QUARANTINE_KIND]),
         this.pool.query<CountRow>(`SELECT lane,'queued'::text AS status,count(*)::text AS count,
           COALESCE(extract(epoch FROM now()-min(created_at)),0)::float8 AS oldest_seconds
-          FROM jobs WHERE status='queued' GROUP BY lane`),
+          FROM jobs WHERE status='queued' AND kind<>$1 GROUP BY lane`, [CONTEXT_WRITE_QUARANTINE_KIND]),
         this.pool.query<CountRow>(`SELECT m.lane,d.status,count(*)::text AS count
           FROM deliveries d JOIN messages m ON m.id=d.message_id GROUP BY m.lane,d.status`),
         this.pool.query<CountRow>(`SELECT m.lane,d.status,count(*)::text AS count,
@@ -197,9 +198,10 @@ export class DispatcherMetrics {
           CASE WHEN dl.job_id IS NULL THEN 'delivery' ELSE 'job' END AS target,count(*)::text AS count
           FROM dead_letters dl LEFT JOIN jobs j ON j.id=dl.job_id
           LEFT JOIN deliveries d ON d.id=dl.delivery_id LEFT JOIN messages m ON m.id=d.message_id
-          WHERE dl.resolved_at IS NULL GROUP BY COALESCE(j.lane,m.lane),target`),
+          WHERE dl.resolved_at IS NULL AND (dl.job_id IS NULL OR j.kind<>$1)
+          GROUP BY COALESCE(j.lane,m.lane),target`, [CONTEXT_WRITE_QUARANTINE_KIND]),
         this.pool.query<CountRow>(`SELECT lane,count(*)::text AS count FROM jobs
-          WHERE status='running' AND lease_until>now() GROUP BY lane`),
+          WHERE status='running' AND lease_until>now() AND kind<>$1 GROUP BY lane`, [CONTEXT_WRITE_QUARANTINE_KIND]),
         this.pool.query<CountRow>(`SELECT m.lane,count(*)::text AS count FROM deliveries d
           JOIN messages m ON m.id=d.message_id
           WHERE d.status IN ('leased','accepted','started') AND d.claim_expires_at>now() GROUP BY m.lane`),

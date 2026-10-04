@@ -6,6 +6,7 @@ import {
 import type { DatabaseClient } from '../../db.js';
 import { withAbortableTransaction, withTransaction } from '../../db.js';
 import { agentContextReconcileLockKey } from '../agent-context-lock.js';
+import { assertAgentContextAdmissionAllowed } from '../agent-context-quarantine.js';
 import { StoreError } from '../errors.js';
 import { MessagesRepository } from '../messages.js';
 import { MESSAGE_AUTHOR_SQL, messageAuthor } from '../messages/author.js';
@@ -51,6 +52,21 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       throw new StoreError('conflict', 'requireEnabledAgent requires requireDeclaredCapacity');
     }
     return withTransaction(this.pool, async (client) => {
+      await client.query("SET LOCAL lock_timeout='5000ms'");
+      try {
+        await client.query(`SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))`, [
+          agentContextReconcileLockKey(tenantId, alias),
+        ]);
+      } catch (error) {
+        const code = error !== null && typeof error === 'object' && 'code' in error
+          ? String(error.code)
+          : '';
+        if (code === '55P03') {
+          throw new StoreError('conflict', 'context reconciliation temporarily fences lease admission');
+        }
+        throw error;
+      }
+      await assertAgentContextAdmissionAllowed(client, tenantId, alias);
       await this.assertRuntimeRoute(client, tenantId, alias);
       if (options.requireDeclaredCapacity === true) {
         const capacity = await client.query<{ cap: number | null; enabled: boolean }>(
@@ -243,7 +259,6 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       throw new StoreError('fenced', 'delivery claim requires a valid connection token');
     }
     const work = async (client: DatabaseClient): Promise<ClaimedDeliveryEnvelope[]> => {
-      await this.assertRuntimeRoute(client, tenantId, alias);
       await client.query("SET LOCAL lock_timeout='85000ms'");
       try {
         await client.query(`SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))`, [
@@ -258,6 +273,8 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         }
         throw error;
       }
+      await assertAgentContextAdmissionAllowed(client, tenantId, alias);
+      await this.assertRuntimeRoute(client, tenantId, alias);
       const lease = await client.query<{ capabilities: unknown }>(
         `SELECT capabilities FROM connection_leases
          WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4
