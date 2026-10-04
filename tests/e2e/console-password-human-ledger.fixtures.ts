@@ -67,10 +67,19 @@ export async function startConsoleLedgerFixture(options: { sessionTtlMs?: number
     const users = await Promise.all(['a', 'b', 'missing'].map(async (label) => {
       const email = `${label}-${suffix}@fixture.invalid`;
       const password = randomBytes(24).toString('base64url');
+      if (label === 'missing') {
+        const inserted = await pool.query<{ id: string }>(`INSERT INTO console_users
+          (email,email_normalized,password_hash,display_name,role,tenant_id,alias,active)
+          VALUES($1,$2,$3,$4,'operator',$5,$6,true) RETURNING id`,
+        [email, email.toLowerCase(), await hashPassword(password), 'Human missing', tenant, actor]);
+        const id = inserted.rows[0]?.id;
+        if (id === undefined) throw new Error('Missing-membership console account was not inserted');
+        return { id, email, password };
+      }
       const user = await maintainConsoleUser(pool, { email, name: `Human ${label}`, role: 'operator',
         tenant, alias: actor, updateOnly: false, activate: false }, await hashPassword(password));
-      if (label !== 'missing') await pool.query(`INSERT INTO human_tenant_memberships
-        (human_id,tenant_id,actor_alias,role,permissions) VALUES($1,$2,$3,'operator',ARRAY['route','read'])`, [user.id, tenant, actor]);
+      await pool.query(`UPDATE human_tenant_memberships SET permissions=ARRAY['route','read']
+        WHERE human_id=$1 AND tenant_id=$2 AND actor_alias=$3`, [user.id, tenant, actor]);
       return { id: user.id, email, password };
     }));
     directory = await mkdtemp(join(tmpdir(), 'cch-'));

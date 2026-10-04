@@ -1,4 +1,5 @@
-import type { DatabasePool } from '@cauce/store';
+import { withTransaction, type DatabasePool } from '@cauce/store';
+import { consoleRoleAuthority } from './console-user-authority.js';
 import { normalizeEmail, type ConsoleUserRole } from './console-users.js';
 
 export interface ConsoleUserMaintenance {
@@ -20,7 +21,7 @@ export interface MaintainedConsoleUser {
 }
 
 export async function maintainConsoleUser(
-  pool: Pick<DatabasePool, 'query'>,
+  pool: DatabasePool,
   options: ConsoleUserMaintenance,
   passwordHash: string,
 ): Promise<MaintainedConsoleUser> {
@@ -32,20 +33,46 @@ export async function maintainConsoleUser(
     active=COALESCE($7,console_users.active),
     password_changed_at=CURRENT_TIMESTAMP,
     updated_at=CURRENT_TIMESTAMP`;
-  const query = options.updateOnly
-    ? `UPDATE console_users SET ${assignments} WHERE email_normalized=$1`
-    : `INSERT INTO console_users
-        (email, email_normalized, password_hash, display_name, role, tenant_id, alias, active)
+  const values = [normalizeEmail(options.email), passwordHash,
+    options.name ?? null, options.role ?? null, options.tenant ?? null, options.alias ?? null,
+    options.activate ? true : null];
+  if (options.updateOnly) {
+    const result = await pool.query<MaintainedConsoleUser>(
+      `UPDATE console_users SET ${assignments} WHERE email_normalized=$1
+       RETURNING id, role, tenant_id, alias, active`, values,
+    );
+    const row = result.rows[0];
+    if (row === undefined) throw new Error(`no existe una cuenta de consola para ${options.email}`);
+    return row;
+  }
+
+  return withTransaction(pool, async (client) => {
+    const inserted = await client.query<MaintainedConsoleUser>(
+      `INSERT INTO console_users
+       (email, email_normalized, password_hash, display_name, role, tenant_id, alias, active)
        VALUES ($8,$1,$2,COALESCE($3,split_part($8,'@',1)),COALESCE($4,'operator'),
-         COALESCE($5,'Steven'),COALESCE($6,'kant'),true)
-       ON CONFLICT (email_normalized) DO UPDATE SET ${assignments}`;
-  const result = await pool.query<MaintainedConsoleUser>(
-    `${query} RETURNING id, role, tenant_id, alias, active`,
-    [normalizeEmail(options.email), passwordHash,
-      options.name ?? null, options.role ?? null, options.tenant ?? null, options.alias ?? null,
-      options.activate ? true : null, ...(options.updateOnly ? [] : [options.email])],
-  );
-  const row = result.rows[0];
-  if (row === undefined) throw new Error(`no existe una cuenta de consola para ${options.email}`);
-  return row;
+         COALESCE($5,'Steven'),COALESCE($6,'kant'),COALESCE($7,true))
+       ON CONFLICT (email_normalized) DO NOTHING
+       RETURNING id, role, tenant_id, alias, active`,
+      [...values, options.email],
+    );
+    let row = inserted.rows[0];
+    if (row !== undefined) {
+      const authority = consoleRoleAuthority(row.role);
+      await client.query(
+        `INSERT INTO human_tenant_memberships
+          (human_id,tenant_id,actor_alias,role,permissions,enabled,revoked_at)
+         VALUES ($1,$2,$3,$4,$5,true,NULL)`,
+        [row.id, row.tenant_id, row.alias, row.role, [...authority.permissions]],
+      );
+    } else {
+      const updated = await client.query<MaintainedConsoleUser>(
+        `UPDATE console_users SET ${assignments} WHERE email_normalized=$1
+         RETURNING id, role, tenant_id, alias, active`, values,
+      );
+      row = updated.rows[0];
+      if (row === undefined) throw new Error(`no existe una cuenta de consola para ${options.email}`);
+    }
+    return row;
+  });
 }
