@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startRealPtyFixture, type RealPtyFixture } from './real-pty-agent.fixtures.js';
+import { observeUiBootstrap } from './ui-bootstrap-diagnostics.js';
 
 const execute = promisify(execFile);
 const OWNER = 'config-profile-real-browser';
@@ -236,6 +237,7 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     expect(initial.ficheros).toEqual([expect.objectContaining({ nombre: 'AGENTS.md' })]);
 
     const page = await active.browserPage({ width: 360, height: 800 });
+    observeUiBootstrap(page);
     let resolveAuthEvidence: ((evidence: AuthResponseEvidence) => void) | undefined;
     const authEvidencePromise = new Promise<AuthResponseEvidence>((resolve) => { resolveAuthEvidence = resolve; });
     const pageErrors: string[] = [];

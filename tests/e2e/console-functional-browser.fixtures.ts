@@ -13,6 +13,8 @@ import { MtlsAuthProvider, HashedMtlsIdentityFileProvider } from '../../services
 import { PostgresConsoleUserStore } from '../../services/gateway/src/console-users.js';
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
+import { observeUiBootstrap } from './ui-bootstrap-diagnostics.js';
+import { isolatedBrowserNetwork, publishBrowserCdp } from './ui-bootstrap-network.js';
 
 interface ExecOptions { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number }
 class SubprocessError extends Error {
@@ -208,16 +210,18 @@ RUN playwright install --with-deps chromium
   }
 }
 
-async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime): Promise<{ browser: ConnectedBrowser; container: string; containerId: string }> {
+async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime, ports: readonly number[]): Promise<{ browser: ConnectedBrowser; container: string; containerId: string; closeNetwork(): Promise<void> }> {
   const { image } = runtime;
   const container = `cauce-ui-browser-${randomUUID()}`;
+  const network = await isolatedBrowserNetwork(docker, ports);
+  let cdp: Awaited<ReturnType<typeof publishBrowserCdp>> | undefined;
   try {
     const collision = await docker(['inspect', '--format', '{{.Id}}', container]).then((result) => result.stdout.trim()).catch((error: unknown) => {
       if (/No such (?:object|container)/iu.test(errorStderr(error))) return '';
       throw error;
     });
     if (collision) throw new Error(`random browser container name collision; refusing to reuse ${container}`);
-    await docker(['run', '--rm', '--detach', '--network', 'host', '--name', container, '--label', 'cauce.e2e.owner=ui-functional', '--entrypoint', 'sh', image, '-lc', 'sleep 600']);
+    await docker(['run', '--rm', '--detach', '--network', network.name, '--mount', `type=bind,source=${network.directory},target=/qa-browser-transport,readonly`, '--name', container, '--label', 'cauce.e2e.owner=ui-functional', '--entrypoint', 'sh', image, '-lc', 'sleep 600']);
     const identity = (await docker(['inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}}', container])).stdout.trim().split(/\s+/u);
     const containerId = identity[0];
     if (!containerId || identity[1] !== 'ui-functional') throw new Error(`isolated browser container identity/owner validation failed: ${container}`);
@@ -233,7 +237,17 @@ async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime)
     }
     const chromeVersion = await docker(['exec', container, browserPath, '--version']);
     assertChromeVersion(chromeVersion.stdout, expectedChromiumVersion());
-    await docker(['exec', '--detach', container, browserPath, '--no-sandbox', '--headless=new', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', '--user-data-dir=/tmp/cauce-ui-functional-chrome', 'about:blank']);
+    const mounts = JSON.parse((await docker(['inspect', '--format', '{{json .Mounts}}', container])).stdout) as { Source: string; Destination: string; RW: boolean }[];
+    if (mounts.length !== 1 || mounts[0]?.Source !== network.directory || mounts[0].Destination !== '/qa-browser-transport' || mounts[0].RW) throw new Error('Private browser transport mount differs');
+    const metadata = await docker(['exec', container, 'node', '-e', "const s=require('node:fs').lstatSync('/qa-browser-transport/proxy.sock');console.log(JSON.stringify({uid:s.uid,ino:s.ino,dev:s.dev,mode:s.mode&511,socket:s.isSocket()}))"]);
+    const socket = JSON.parse(metadata.stdout) as { uid: number; ino: number; dev: number; mode: number; socket: boolean };
+    if (!socket.socket || socket.mode !== 0o600 || socket.uid !== network.socketIdentity.uid || socket.ino !== network.socketIdentity.ino || socket.dev !== network.socketIdentity.dev) throw new Error('Browser daemon mounted a different private socket');
+    const proxyForward = "const net=require('node:net'),fs=require('node:fs');net.createServer(s=>{const u=net.connect('/qa-browser-transport/proxy.sock');s.on('error',()=>u.destroy());u.on('error',()=>s.destroy());s.on('close',()=>u.destroy());u.on('close',()=>s.destroy());s.pipe(u);u.pipe(s)}).listen(1080,'127.0.0.1',()=>fs.writeFileSync('/tmp/cauce-proxy-forward-ready','ready',{mode:384,flag:'wx'}));";
+    await docker(['exec', '--detach', container, 'node', '-e', proxyForward]);
+    await docker(['exec', container, 'node', '-e', "const net=require('node:net');const s=net.connect('/qa-browser-transport/proxy.sock');s.setTimeout(3000,()=>{s.destroy();process.exitCode=1});s.on('connect',()=>{s.destroy()});s.on('error',()=>{process.exitCode=1})"], { timeout: 5_000 });
+    const proxyReady = await docker(['exec', container, 'cat', '/tmp/cauce-proxy-forward-ready']);
+    if (proxyReady.stdout.trim() !== 'ready') throw new Error('Private proxy forwarder is not ready');
+    await docker(['exec', '--detach', container, browserPath, '--no-sandbox', '--headless=new', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check', `--proxy-server=${network.proxyUrl}`, '--proxy-bypass-list=<-loopback>', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', '--user-data-dir=/tmp/cauce-ui-functional-chrome', 'about:blank']);
     const profile = '/tmp/cauce-ui-functional-chrome/DevToolsActivePort';
     const deadline = Date.now() + 15_000;
     let port = 0;
@@ -244,11 +258,37 @@ async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime)
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     if (!port) throw new Error('Chrome aislado no publicó un puerto CDP efímero en el plazo previsto');
-    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${String(port)}`, { timeout: 10_000 });
-    return { browser, container, containerId };
+    if (port === 9223) throw new Error('Chromium CDP port conflicts with its private forwarder');
+    const forward = `const net=require('node:net'),fs=require('node:fs');net.createServer(s=>{const u=net.connect(${String(port)},'127.0.0.1');s.on('error',()=>u.destroy());u.on('error',()=>s.destroy());s.on('close',()=>u.destroy());u.on('close',()=>s.destroy());s.pipe(u);u.pipe(s)}).listen(9223,'0.0.0.0',()=>fs.writeFileSync('/tmp/cauce-cdp-forward-ready','ready',{mode:384,flag:'wx'}));`;
+    await docker(['exec', '--detach', container, 'node', '-e', forward]);
+    let ready = false;
+    while (Date.now() < deadline) {
+      ready = (await docker(['exec', container, 'cat', '/tmp/cauce-cdp-forward-ready'], { timeout: 2_000 }).catch(() => undefined))?.stdout.trim() === 'ready';
+      if (ready) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!ready) throw new Error('Private CDP forwarder did not become ready within browser startup budget');
+    const networks = JSON.parse((await docker(['inspect', '--format', '{{json .NetworkSettings.Networks}}', container])).stdout) as Record<string, { NetworkID: string; IPAddress: string }>;
+    const attachment = networks[network.name];
+    if (Object.keys(networks).length !== 1 || attachment?.NetworkID !== network.id || !/^\d+\.\d+\.\d+\.\d+$/u.test(attachment.IPAddress)) throw new Error('Browser network attachment differs from its owned namespace');
+    cdp = await publishBrowserCdp(attachment.IPAddress);
+    const endpoint = `http://127.0.0.1:${String(cdp.port)}`;
+    const version = await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(10_000) }).then(async (response) => response.json() as Promise<{ webSocketDebuggerUrl: string }>);
+    const websocket = new URL(version.webSocketDebuggerUrl);
+    if (websocket.hostname !== '127.0.0.1' || websocket.port !== String(cdp.port)) throw new Error('Published CDP websocket address differs from its private host binding');
+    const browser = await chromium.connectOverCDP(endpoint, { timeout: 10_000 });
+    return { browser, container, containerId, closeNetwork: async () => {
+      const errors: Error[] = [];
+      await attemptCleanup(errors, 'private CDP publication', () => cdp?.close() ?? Promise.resolve());
+      await attemptCleanup(errors, 'owned browser network', () => network.close());
+      if (errors.length > 0) throw new AggregateError(errors, 'Browser network cleanup incomplete');
+    } };
   } catch (error) {
-    try { await removeBrowserContainer(container); }
-    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'browser startup failed and its owned container could not be confirmed removed'); }
+    const errors: Error[] = [];
+    await attemptCleanup(errors, 'owned browser container', () => removeBrowserContainer(container));
+    await attemptCleanup(errors, 'private CDP publication', () => cdp?.close() ?? Promise.resolve());
+    await attemptCleanup(errors, 'owned browser network', () => network.close());
+    if (errors.length > 0) throw new AggregateError([error, ...errors], 'Browser setup failed with incomplete cleanup');
     throw error;
   }
 }
@@ -286,10 +326,10 @@ export interface TrustedBrowser {
   close(): Promise<void>;
 }
 
-export async function startTrustedBrowser(caCertPath: string, directory: string): Promise<TrustedBrowser> {
+export async function startTrustedBrowser(caCertPath: string, directory: string, ports: readonly number[]): Promise<TrustedBrowser> {
   const runtime = await prepareBrowserRuntime(directory);
   try {
-    const isolated = await startIsolatedBrowser(caCertPath, runtime);
+    const isolated = await startIsolatedBrowser(caCertPath, runtime, ports);
     return {
       browser: isolated.browser,
       container: isolated.container,
@@ -299,6 +339,7 @@ export async function startTrustedBrowser(caCertPath: string, directory: string)
         const errors: Error[] = [];
         await attemptCleanup(errors, 'CDP browser', () => isolated.browser.close());
         await attemptCleanup(errors, 'owned browser container', () => removeBrowserContainer(isolated.container, isolated.containerId));
+        await attemptCleanup(errors, 'owned browser network', () => isolated.closeNetwork());
         await attemptCleanup(errors, 'owned browser image', () => removeBrowserImage(runtime));
         if (errors.length > 0) throw new AggregateError(errors, 'trusted browser cleanup was incomplete');
       },
@@ -386,6 +427,7 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
   let vite: Fixture['vite'] | undefined;
   let browser: ConnectedBrowser | undefined;
   let browserContainer: string | undefined;
+  let closeBrowserNetwork: (() => Promise<void>) | undefined;
   let proxyAgent: HttpsAgent | undefined;
   const contexts: Fixture['contexts'] = [];
   const adapters: Fixture['adapters'] = [];
@@ -432,7 +474,8 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
     await devServer.listen();
     const address = devServer.httpServer?.address() as import('node:net').AddressInfo;
     setupStage = 'start isolated browser';
-    const isolatedBrowser = await startIsolatedBrowser(pki.ca.cert, runtime);
+    const isolatedBrowser = await startIsolatedBrowser(pki.ca.cert, runtime, [frontendPort, gatewayAddress.port]);
+    closeBrowserNetwork = () => isolatedBrowser.closeNetwork();
     const activeBrowser = isolatedBrowser.browser;
     const activeBrowserContainer = isolatedBrowser.container;
     browser = activeBrowser;
@@ -444,6 +487,7 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
         for (const [index, context] of contexts.entries()) await attemptCleanup(cleanupErrors, `browser context ${String(index)}`, () => context.close());
         await attemptCleanup(cleanupErrors, 'CDP browser', () => activeBrowser.close());
         await attemptCleanup(cleanupErrors, 'owned browser container', () => removeBrowserContainer(activeBrowserContainer));
+        await attemptCleanup(cleanupErrors, 'owned browser network', () => closeBrowserNetwork?.() ?? Promise.resolve());
         for (const child of adapters) {
           if (child.exitCode !== null || child.signalCode !== null) continue;
           await attemptCleanup(cleanupErrors, `adapter process ${String(child.pid)}`, async () => {
@@ -473,6 +517,7 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
       const ownedContainer = browserContainer;
       await attemptCleanup(cleanupErrors, 'owned browser container', () => removeBrowserContainer(ownedContainer));
     }
+    await attemptCleanup(cleanupErrors, 'owned browser network', () => closeBrowserNetwork?.() ?? Promise.resolve());
     proxyAgent?.destroy();
     if (vite) await attemptCleanup(cleanupErrors, 'Vite server', () => vite?.close() ?? Promise.resolve());
     if (app) await attemptCleanup(cleanupErrors, 'gateway server', () => app?.close() ?? Promise.resolve());
@@ -520,5 +565,7 @@ export async function startBoundedAdapter(fixture: Fixture, tenant: FunctionalTe
 export async function newTrustedPage(fixture: Fixture, viewport: { width: number; height: number }): Promise<BrowserPage> {
   const context = await fixture.browser.newContext({ viewport, ignoreHTTPSErrors: false, serviceWorkers: 'block' });
   fixture.contexts.push(context);
-  return context.newPage();
+  const page = await context.newPage();
+  observeUiBootstrap(page);
+  return page;
 }

@@ -491,7 +491,7 @@ WORKDIR /home/node
     if (!frontendAddress || typeof frontendAddress === 'string') throw new Error('Vite HTTPS server did not expose its bound address');
     baseUrl = `https://localhost:${String(frontendAddress.port)}`;
     if (baseUrl !== frontendOrigin) throw new Error('Vite HTTPS server did not bind its reserved origin');
-    const trusted = await startTrustedBrowser(pkiValue.caCert, directory);
+    const trusted = await startTrustedBrowser(pkiValue.caCert, directory, [frontendPort, gatewayPort]);
     trustedBrowser = trusted;
     const provision = await execute(join(process.cwd(), 'node_modules/.bin/tsx'), [
       'services/gateway/src/console-user-cli.ts', '--email', OPERATOR_EMAIL, '--name', 'Real PTY E2E operator',
