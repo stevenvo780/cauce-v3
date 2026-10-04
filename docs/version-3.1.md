@@ -130,10 +130,13 @@ La sesión pública está verificada y muestra catorce agentes conectados. Evide
 
 El nuevo SDK usa release `bus-v3-20261003-unified-fc30f85e`, digest
 `sha256:26fb3280f46474dbde9195547e4ff558eac0ac09c2305b3d51d73ac40f981a60`.
-El registro de esta ventana acredita Argos activo, 1/13, con proceso real y canary mTLS PASS;
-sus dos ventanas de 4200,2 segundos siguen en observación antes de ampliar. Los otros doce
-conservan `bus-v3-20261003-unified-99b567d6`, digest
-`sha256:429f96756fbe95642cd26476c449a7f0f1bd61e55368f851ad209e3e3a7e2681`.
+Los trece adaptadores nuevos están activos y pasaron comprobación de proceso real, digest completo
+y canary mTLS con ACK final: Argos, Atlas, Gaia, Hades, Hegel, Iza, Janus, Jarvis, Kratos, Salva,
+Sócrates, Zeus y Kant. Argos superó sus dos ventanas individuales: 4202,821 segundos y 211
+verificaciones. La observación conjunta de los trece comenzó a las 07:34:25 UTC y requiere
+4200,2 segundos; la aceptación global permanece pendiente mientras esa observación siga en curso.
+El registro privado está en `/root/cauce-v3-release-fc30-sdk/fleet-two-windows-r5-r1.json`;
+sólo su resultado real puede acreditar las dos ventanas de la flota.
 Los trece canaries y watchdogs del rollout anterior son evidencia histórica, sin inferencia LLM;
 no acreditan aceptación global del nuevo bundle. Astra está excluida del rollout por instrucción
 del dueño y no recibió mutaciones. El endpoint MCP público permanece inactivo, pendiente de OAuth
