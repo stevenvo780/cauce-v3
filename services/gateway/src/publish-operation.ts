@@ -17,6 +17,7 @@ export interface PublishOperationInput {
   readonly authMechanism: string | undefined;
   readonly priorityLog: PublishSemanticsContext['log'];
   readonly logRedaction: (actor: Principal, redaction: PublishRedaction) => void;
+  readonly consoleIntentOperatorScope?: string;
 }
 
 export async function publishOperation(
@@ -64,7 +65,7 @@ export async function publishOperation(
       ...(author === undefined ? {} : { consoleAuthor: author }),
       ...(!systemGateProbe && isAgentPrincipal(actor) ? { agentRoot: true } : {}),
       ...(consolePublish
-        ? { consoleIntentOperatorScope: consolePublishOperatorScope(actor) }
+        ? { consoleIntentOperatorScope: input.consoleIntentOperatorScope ?? consolePublishOperatorScope(actor) }
         : {}),
     }),
     trustedCommand,
