@@ -2,6 +2,8 @@ import { RESERVED_INTERNAL_MESSAGE_TYPES, SYSTEM_GATE_PROBE_MESSAGE_TYPE, type T
 import type { DatabaseClient } from '../../db.js';
 import { AGENT_ROOT_OPEN_LIMIT } from '../../delegation-guard.js';
 import { StoreError } from '../errors.js';
+import type { HumanPublishProvenance } from './contracts.js';
+import { assertHumanMessageRoot } from './human-initiators.js';
 
 export interface OpenAgentRootRecipient {
   readonly tenant_id: Tenant;
@@ -109,6 +111,19 @@ export interface SenderView {
  */
 export async function senderView(
   pool: Pick<DatabaseClient, 'query'>, messageId: string, reader: MessageReader,
+): Promise<SenderView | undefined> {
+  return loadSenderView(pool, messageId, reader);
+}
+
+export async function humanSenderView(
+  client: DatabaseClient, messageId: string, human: HumanPublishProvenance,
+): Promise<SenderView | undefined> {
+  await assertHumanMessageRoot(client, messageId, human);
+  return loadSenderView(client, messageId, 'human');
+}
+
+async function loadSenderView(
+  pool: Pick<DatabaseClient, 'query'>, messageId: string, reader: MessageReader | 'human',
 ): Promise<SenderView | undefined> {
   const head = await pool.query<{ probe: boolean; agent_root: boolean; chain_open: boolean }>(
     `SELECT m.body->>'type' IS NOT DISTINCT FROM $2 AS probe,

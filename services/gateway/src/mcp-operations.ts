@@ -9,24 +9,20 @@ import {
 import { projectGatewayAgents, projectGatewayStatus } from '../../../packages/mcp-fleet-monitor/src/gateway-projection.js';
 import type { VerifiedOAuthIdentity } from '../../../packages/mcp-fleet-monitor/src/gateway-oauth-identity.js';
 import type { GatewayRepository } from './app.js';
-import { AuthError, AuthorizationError, messageReader, requirePermission, type Principal } from './auth.js';
-import { consoleHumanSubject } from './console-message-author.js';
+import { AuthError, AuthorizationError, requirePermission, type Principal } from './auth.js';
 import { ConsolePublishTelemetry } from './console-publish-telemetry.js';
 import { prepareConsolePublishOperation, confirmConsolePublishOperation } from './console-publish-operation.js';
-import type { ConsoleUserStore } from './console-users.js';
-import { visibleMessage } from './facades.js';
-import { resolveHumanMcpAuthority, type ExternalSubjectResolver } from './human-mcp-authority.js';
+import { createHumanPublishAuthority, createHumanReadAuthority, resolveHumanMcpAuthority,
+  type HumanMcpAuthorityOptions } from './human-mcp-authority.js';
 import { publishOperation, type PublishOperationInput } from './publish-operation.js';
 
 export type HumanMcpRepository = Pick<GatewayRepository,
   'publish' | 'verifyPublishReceipt' | 'prepareConsolePublishIntent' | 'confirmConsolePublishIntent'
-  | 'listPresence' | 'listAgents' | 'getMessage'
+  | 'listPresence' | 'listAgents' | 'getHumanMessage'
 >;
 
-export interface HumanMcpOperationsOptions extends Pick<PublishOperationInput, 'priorityLog' | 'logRedaction'> {
+export interface HumanMcpOperationsOptions extends HumanMcpAuthorityOptions, Pick<PublishOperationInput, 'priorityLog' | 'logRedaction'> {
   readonly repository: HumanMcpRepository;
-  readonly users: Pick<ConsoleUserStore, 'findById'>;
-  readonly resolver: ExternalSubjectResolver;
   readonly telemetry?: ConsolePublishTelemetry;
 }
 
@@ -73,12 +69,8 @@ async function guardedOperation<T>(operation: () => Promise<T>, mutating = false
   }
 }
 
-function projectReceipt(value: Record<string, unknown>, actor: Principal, messageId: string): HumanMcpReceipt {
-  const row = visibleMessage(value, actor);
-  const expectedSubject = consoleHumanSubject(actor);
-  const author = record(row?.author);
-  if (row?.id !== messageId || expectedSubject === undefined || author?.kind !== 'human'
-      || author.subject_id !== expectedSubject) {
+function projectReceipt(row: Record<string, unknown>, messageId: string): HumanMcpReceipt {
+  if (row.id !== messageId) {
     throw new StoreError('not_found', 'message not found or not visible');
   }
   if (!Array.isArray(row.deliveries)) throw new StoreError('conflict', 'message receipt is incomplete');
@@ -99,15 +91,29 @@ function projectReceipt(value: Record<string, unknown>, actor: Principal, messag
 export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptions): GatewayOperationsFactory {
   const telemetry = options.telemetry ?? new ConsolePublishTelemetry();
   return Object.freeze({
-    async forRequest(identity: VerifiedOAuthIdentity, signal: AbortSignal) {
+    async forRequest(candidate: VerifiedOAuthIdentity, requestSignal: AbortSignal) {
       return guardedOperation(async () => {
+      const identity = Object.freeze({ ...candidate, scopes: Object.freeze([...candidate.scopes]) });
+      const remaining = Math.floor(identity.expiresAt * 1000 - Date.now());
+      if (!Number.isFinite(remaining) || remaining <= 0) throw new AuthError();
+      const signal = AbortSignal.any([requestSignal, AbortSignal.timeout(Math.min(10_000, remaining))]);
       function active(): void {
-        signal.throwIfAborted();
         if (identity.expiresAt * 1_000 <= Date.now()) throw new AuthError();
+        signal.throwIfAborted();
       }
       active();
       const initial = await resolveHumanMcpAuthority(options, identity, signal);
       active();
+      const pinned = Object.freeze({ humanId: initial.userId, tenantId: initial.principal.tenant_id,
+        actorAlias: initial.principal.alias });
+      function access(mode: 'read' | 'publish') {
+        if (options.identityStore === undefined && options.pool === undefined) {
+          throw new AuthError('durable human MCP authority is unavailable');
+        }
+        return { signal, humanAuthority: mode === 'read'
+          ? createHumanReadAuthority(identity, pinned, signal, options.identityStore)
+          : createHumanPublishAuthority(identity, pinned, signal, options.identityStore) };
+      }
 
       async function authorize(permission: 'read' | 'route', scope: 'cauce.read' | 'cauce.publish') {
         active();
@@ -138,12 +144,13 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           if (!parsed.success) throw new StoreError('invalid_input', 'invalid submit command');
           const command = parsed.data;
           const authority = await authorize('route', 'cauce.publish');
+          const humanAccess = access('publish');
           const consoleIntentOperatorScope = intentScope(authority.userId, authority.principal);
           const prepared = await prepareConsolePublishOperation(options.repository, {
             actor: authority.principal,
             body: { room_id: command.room_id, recipients: command.recipients, body: command.body,
               intent_nonce: command.request_key, lane: 'interactive', priority: 0 },
-            interactiveHumanEntry: true, consoleIntentOperatorScope,
+            interactiveHumanEntry: true, consoleIntentOperatorScope, humanAccess,
             priorityLog: options.priorityLog, logRedaction: options.logRedaction,
           }, telemetry);
           const beforePublish = await authorize('route', 'cauce.publish');
@@ -164,7 +171,7 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
                 actor: beforePublish.principal, entry: 'console', authMechanism: 'oauth',
                 body: { room_id: command.room_id, recipients: command.recipients, body: command.body,
                   idempotency_key: prepared.idempotency_key, lane: 'interactive', priority: 0 },
-                consoleIntentOperatorScope, priorityLog: options.priorityLog, logRedaction: options.logRedaction,
+                consoleIntentOperatorScope, humanAccess, priorityLog: options.priorityLog, logRedaction: options.logRedaction,
               });
               telemetry.record({ operation: 'publish', result: 'committed' });
             } catch (error) {
@@ -174,7 +181,7 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           }
           const beforeConfirm = await authorize('route', 'cauce.publish');
           await confirmConsolePublishOperation(options.repository, {
-            actor: beforeConfirm.principal, consoleIntentOperatorScope,
+            actor: beforeConfirm.principal, consoleIntentOperatorScope, humanAccess,
             body: { idempotency_key: receipt.idempotency_key, message_id: receipt.message_id,
               causal_hash: receipt.causal_hash },
           }, telemetry);
@@ -185,11 +192,10 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           const parsed = CanonicalUuidV4Schema.safeParse(candidate);
           if (!parsed.success) throw new StoreError('invalid_input', 'invalid message id');
           const messageId = parsed.data;
-          const { principal } = await authorize('read', 'cauce.read');
-          const row = await options.repository.getMessage(messageId, principal.tenant_id,
-            principal.alias, messageReader(principal));
+          await authorize('read', 'cauce.read');
+          const row = await options.repository.getHumanMessage(messageId, access('read'));
           active();
-          return projectReceipt(row, principal, messageId);
+          return projectReceipt(row, messageId);
         },
       };
       return Object.freeze({

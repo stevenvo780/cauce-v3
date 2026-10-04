@@ -39,14 +39,17 @@ export interface HumanPublishProvenance {
   readonly actorAlias: string;
 }
 
-export interface PublishOptions {
+export interface HumanMessageOptions {
+  readonly humanAuthority: (client: DatabaseClient) => Promise<Readonly<HumanPublishProvenance>>;
+  readonly signal: AbortSignal;
+}
+
+export interface PublishOptions extends Partial<HumanMessageOptions> {
   /** Console-only gate. Machine endpoints deliberately leave it disabled. */
   readonly requirePreparedConsoleIntent?: boolean;
   readonly consoleIntentOperatorScope?: string;
   readonly consoleAuthor?: ConsoleMessageAuthor;
   readonly agentRoot?: boolean; // Server-derived from the principal's roles, never from the request body.
-  readonly humanAuthority?: (client: DatabaseClient) => Promise<Readonly<HumanPublishProvenance>>;
-  readonly signal?: AbortSignal;
 }
 
 export function terminal(status: string): boolean {

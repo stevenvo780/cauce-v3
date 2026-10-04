@@ -1,5 +1,6 @@
 import type { DatabaseClient } from '../../db.js';
 import { StoreError } from '../errors.js';
+import type { HumanPublishProvenance } from './contracts.js';
 
 export interface HumanMessageInitiator {
   readonly messageId: string;
@@ -35,10 +36,21 @@ export async function putHumanMessageInitiator(
       initiator.tenantId, initiator.rootMessageId, initiator.conversationId],
   );
   const existing = await loadHumanMessageInitiator(client, initiator.messageId);
-  if (existing === undefined || existing.messageId !== initiator.messageId
+  if (existing?.messageId !== initiator.messageId
       || existing.messageTenantId !== initiator.messageTenantId || existing.humanId !== initiator.humanId
       || existing.tenantId !== initiator.tenantId || existing.rootMessageId !== initiator.rootMessageId
       || existing.conversationId !== initiator.conversationId) {
     throw new StoreError('conflict', 'durable human message initiator is inconsistent');
+  }
+}
+
+export async function assertHumanMessageRoot(
+  client: DatabaseClient, messageId: string, human: HumanPublishProvenance, conversationId?: string,
+): Promise<void> {
+  const owner = await loadHumanMessageInitiator(client, messageId);
+  if (owner?.humanId !== human.humanId || owner.tenantId !== human.tenantId
+      || owner.messageTenantId !== human.tenantId || owner.rootMessageId !== messageId
+      || (conversationId !== undefined && owner.conversationId !== conversationId)) {
+    throw new StoreError('not_found', 'message not found or not owned');
   }
 }

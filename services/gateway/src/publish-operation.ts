@@ -1,5 +1,5 @@
 import { SYSTEM_GATE_PROBE_MESSAGE_TYPE, SystemGateProbeBodySchema } from '@cauce/protocol';
-import { StoreError, type PublishResult } from '@cauce/store';
+import { StoreError, type HumanMessageOptions, type PublishOptions, type PublishResult } from '@cauce/store';
 import { AuthorizationError, isAgentPrincipal, requirePermission, type Principal } from './auth.js';
 import type { GatewayRepository } from './app.js';
 import { consoleMessageAuthor } from './console-message-author.js';
@@ -18,6 +18,7 @@ export interface PublishOperationInput {
   readonly priorityLog: PublishSemanticsContext['log'];
   readonly logRedaction: (actor: Principal, redaction: PublishRedaction) => void;
   readonly consoleIntentOperatorScope?: string;
+  readonly humanAccess?: HumanMessageOptions;
 }
 
 export async function publishOperation(
@@ -59,20 +60,24 @@ export async function publishOperation(
     idempotency_key: command.idempotency_key,
   };
   const author = consolePublish ? consoleMessageAuthor(actor) : undefined;
-  const receipt = validatedPublishReceipt(
-    await repository.publish(trustedCommand, {
+  const options: PublishOptions = {
       requirePreparedConsoleIntent: consolePublish,
       ...(author === undefined ? {} : { consoleAuthor: author }),
       ...(!systemGateProbe && isAgentPrincipal(actor) ? { agentRoot: true } : {}),
       ...(consolePublish
         ? { consoleIntentOperatorScope: input.consoleIntentOperatorScope ?? consolePublishOperatorScope(actor) }
         : {}),
-    }),
+      ...(input.humanAccess ?? {}),
+  };
+  const receipt = validatedPublishReceipt(
+    await repository.publish(trustedCommand, options),
     trustedCommand,
     command.recipients.length,
   );
   if (typeof repository.verifyPublishReceipt !== 'function'
-      || !(await repository.verifyPublishReceipt(trustedCommand, receipt))) {
+      || !(await (input.humanAccess === undefined
+        ? repository.verifyPublishReceipt(trustedCommand, receipt)
+        : repository.verifyPublishReceipt(trustedCommand, receipt, options)))) {
     throw new StoreError('conflict', 'publish receipt does not match its durable effect');
   }
   return receipt;
