@@ -1,3 +1,5 @@
+import { canonicalProfileRuntimeContract, persistAgentContextReconcileInTransaction } from '@cauce/store';
+import { coordinateContextRequest } from './agent-context-write-coordinator.js';
 import { randomUUID } from 'node:crypto';
 import type { CauceRepository } from '@cauce/store';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -118,9 +120,10 @@ export interface AgentContextReloadDeps {
   readRuntimeExpectation(
     tenantId: string, alias: string,
   ): Promise<(RecordedContextExpectation & { readonly revision: number }) | undefined>;
-  fenceRuntime: CauceRepository['reconcileAgentContextRuntime'];
+  fenceRuntime?: CauceRepository['reconcileAgentContextRuntime'];
   /** A reload rewrites the files a delivery in flight may be reading right now. */
   deliveryInFlight(tenantId: string, alias: string): Promise<DeliveriesInFlight>;
+  coordinateWrite?: import('./agent-profile.routes.js').AgentProfileDeps['coordinateWrite'];
   recordAudit(entry: TerminalAuditEntry): Promise<void>;
   /** Overridable so a test counts on its own instance instead of the process-wide one. */
   telemetry?: Pick<ContextContaminationTelemetry, 'recordVerdict'>;
@@ -458,11 +461,14 @@ export function registerAgentContextReloadRoutes(
 
     let fenced;
     try {
-      fenced = await deps.fenceRuntime({
-        mode: 'reload', tenantId: TenantSchema.parse(target.tenant_id), alias: target.alias,
+      if (deps.coordinateWrite === undefined) throw new Error('durable context coordinator unavailable');
+      fenced = await coordinateContextRequest(deps.coordinateWrite.bind(deps), request, reply, {
+        tenantId: TenantSchema.parse(target.tenant_id), alias: target.alias,
         expectedRevision: revision, expectedExpectation: priorExpectation ?? null,
-        apply: async () => {
-          const acknowledgements = await prepared.apply();
+        documents: prepared.verification.documents.map((doc) => ({ name: doc.name,
+          path: doc.path, beforeSha: doc.observed_sha, targetSha: doc.expected_sha })),
+        dispatch: async (operation) => {
+          const acknowledgements = await prepared.apply(operation);
           const verification = appliedRuntimeVerification(
             prepared.verification, acknowledgements, { requireExactBytes: false },
           );
@@ -501,6 +507,15 @@ export function registerAgentContextReloadRoutes(
               }) },
           };
         },
+        persistTarget: async (client, proof, effect) => {
+          const verifiedEffect = { ...effect, expectation: { ...effect.expectation,
+            documents: proof.documents.map((doc) => ({ name: doc.name, path: doc.path, sha: doc.sha ?? '' })),
+          } };
+          await persistAgentContextReconcileInTransaction(client, {
+            mode: 'reload', tenantId: TenantSchema.parse(target.tenant_id), alias: target.alias, expectedRevision: revision,
+            expectedExpectation: canonicalProfileRuntimeContract(priorExpectation) ?? null, apply: async () => verifiedEffect,
+          }, canonicalProfileRuntimeContract(priorExpectation), verifiedEffect);
+        },
       });
     } catch (error) {
       return denegar(runtimeErrorStatus(error), {
@@ -509,12 +524,15 @@ export function registerAgentContextReloadRoutes(
         revision,
       });
     }
+    if (fenced.state === 'not_applied') {
+      return reply.code(409).send({ error: 'context_write_not_applied', state: 'not_applied', operation_id: fenced.operation_id });
+    }
     if (fenced.state === 'effect_unknown') {
       try { await fila(caller, target, 'allow', { revision, state: 'effect_unknown' }); }
-      catch { return reply.code(503).send({ error: 'context_reload_effect_unknown_audit_failed', state: 'effect_unknown', revision }); }
-      return reply.code(503).send({ error: 'context_reload_effect_unknown', state: 'effect_unknown', revision });
+      catch { return reply.code(503).send({ error: 'context_reload_effect_unknown_audit_failed', state: 'effect_unknown', operation_id: fenced.operation_id, revision }); }
+      return reply.code(503).send({ error: 'context_reload_effect_unknown', state: 'effect_unknown', operation_id: fenced.operation_id, revision });
     }
-    return reply.send(fenced.value);
+    return reply.send(fenced.value.value);
   }
 
   app.post<{ Params: { tenantId: string; alias: string }; Body: unknown }>(

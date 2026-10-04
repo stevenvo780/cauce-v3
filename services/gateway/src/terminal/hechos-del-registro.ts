@@ -62,6 +62,8 @@ export function hechosDelRegistro(registry: AgentRegistry): MeasuredFactsSource 
 
       // Explicit mapping of presence fields to RuntimeFacts.
       const facts: RuntimeFacts = {
+        ...(observacion.presence.features === undefined ? {} : { features: observacion.presence.features }),
+        ...(observacion.presence.writer_instance_id === undefined ? {} : { writerInstanceId: observacion.presence.writer_instance_id }),
         harness,
         home,
         generation: observacion.presence.generation,
