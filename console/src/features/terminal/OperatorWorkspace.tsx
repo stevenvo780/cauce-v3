@@ -234,7 +234,7 @@ export function OperatorWorkspace({ agents, initialAgentId, adapters, access, to
       for (const grant of Object.values(grantsRef.current)) {
         void deleteTerminalSession(grant.session_id, grant, apiRef.current)
           .catch(() => undefined)
-          .finally(() => closePtySession(grant.session_id, 'la vista de terminal se cerró'));
+          .finally(() => { closePtySession(grant.session_id, 'la vista de terminal se cerró'); });
       }
     };
   }, []);
@@ -442,7 +442,7 @@ export function OperatorWorkspace({ agents, initialAgentId, adapters, access, to
   return (
     <>
       {Object.keys(revocationFailures).map((id) => {
-        const grant = grantsRef.current[id];
+        const grant = grantsRef.current[id] as TerminalSessionGrant | undefined;
         if (!grant) return null;
         return (
           <div className="notice error" role="alert" key={id}>
