@@ -10,6 +10,8 @@ import { canonicallyEqual } from './config.js';
 import { DeliveryAcksRepository, type RoutingTarget } from './deliveries.js';
 import { StoreError } from './errors.js';
 import { agentDeploymentStatus, type DeliveryRow } from './observability.js';
+import type { HumanMessageOptions } from './messages/contracts.js';
+import { withHumanMessageTransaction } from './messages/human-authority.js';
 
 export type ProfileRuntimeAdoptionAck = ProfileRuntimeAdoptionEvidence & {
   readonly adopted_at: string;
@@ -185,8 +187,23 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
 
 
 
-  async listPresence(actorTenant?: Tenant, actorAlias?: string): Promise<Record<string, unknown>[]> {
-    const result = await this.pool.query<Record<string, unknown>>(
+  async listPresence(
+    actorTenant?: Tenant, actorAlias?: string, options?: HumanMessageOptions,
+  ): Promise<Record<string, unknown>[]> {
+    if (options === undefined) return this.readPresence(this.pool, actorTenant, actorAlias);
+    if (actorTenant === undefined || actorAlias === undefined) {
+      throw new StoreError('forbidden', 'human presence access requires a pinned actor');
+    }
+    return withHumanMessageTransaction(this.pool, options, actorTenant, actorAlias, async (client) => {
+      await this.assertPermission(actorTenant, actorAlias, 'read', client, true);
+      return this.readPresence(client, actorTenant, actorAlias, true);
+    });
+  }
+
+  private async readPresence(
+    reader: Pick<DatabaseClient, 'query'>, actorTenant?: Tenant, actorAlias?: string, ownTenantOnly = false,
+  ): Promise<Record<string, unknown>[]> {
+    const result = await reader.query<Record<string, unknown>>(
       `SELECT tenant_id,alias,instance_id,epoch,capabilities,last_heartbeat_at,lease_until,
                (lease_until > now()) AS online
         FROM connection_leases l
@@ -196,7 +213,7 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
         ) AND (l.tenant_id=$1 OR EXISTS (
           SELECT 1 FROM acl_edges a WHERE a.from_tenant=$1 AND a.to_tenant=l.tenant_id
             AND a.enabled AND a.allow_read
-        )))
+        )))${ownTenantOnly ? ' AND l.tenant_id=$1' : ''}
        ORDER BY tenant_id,alias`, [actorTenant ?? null, actorAlias ?? null]
     );
     return result.rows.map((row) => ({ ...row, epoch: Number(row.epoch) }));
@@ -318,9 +335,27 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
    *  filters — own tenant plus any tenant the actor has an allow_read ACL edge into (see
    *  topology()). Deployment status is registry+presence only; kratos execution state
    *  (systemd/docker) has no reporter yet, see docs/adr/006-agent-registry-and-deferred-execution.md. */
-  async listAgents(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
-    await this.assertPermission(actorTenant, actorAlias, 'read');
-    const result = await this.pool.query<Record<string, unknown>>(
+  async listAgents(
+    actorTenant: Tenant, actorAlias: string, options?: HumanMessageOptions,
+  ): Promise<Record<string, unknown>> {
+    if (options === undefined) {
+      await this.assertPermission(actorTenant, actorAlias, 'read');
+      return this.readAgents(this.pool, actorTenant);
+    }
+    return withHumanMessageTransaction(this.pool, options, actorTenant, actorAlias, async (client) => {
+      await this.assertPermission(actorTenant, actorAlias, 'read', client, true);
+      return this.readAgents(client, actorTenant, true);
+    });
+  }
+
+  private async readAgents(
+    reader: Pick<DatabaseClient, 'query'>, actorTenant: Tenant, ownTenantOnly = false,
+  ): Promise<Record<string, unknown>> {
+    const foreign = ownTenantOnly ? '' : ` OR EXISTS (
+         SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$1 AND edge.to_tenant=a.tenant_id
+           AND edge.enabled AND edge.allow_read
+       )`;
+    const result = await reader.query<Record<string, unknown>>(
       `SELECT a.tenant_id,a.alias,a.harness_id,h.display_name AS harness_label,a.display_name,
               a.enabled,a.container_name,a.runtime_user,a.home_directory,a.state_directory,
               a.created_at,a.updated_at,
@@ -341,10 +376,7 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
            AND ceiling.alias=b.agent_alias AND ceiling.account_id=b.account_id
          WHERE b.tenant_id=a.tenant_id AND b.agent_alias=a.alias AND b.enabled
        ) routing ON true
-       WHERE a.tenant_id=$1 OR EXISTS (
-         SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$1 AND edge.to_tenant=a.tenant_id
-           AND edge.enabled AND edge.allow_read
-       )
+       WHERE a.tenant_id=$1${foreign}
        ORDER BY a.tenant_id,a.alias`, [actorTenant]
     );
     return { items: result.rows.map((row) => ({ ...row, deployment_status: agentDeploymentStatus(row) })) };

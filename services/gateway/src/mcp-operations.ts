@@ -129,13 +129,17 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
       const operations = {
         async status() {
           const { principal } = await authorize('read', 'cauce.read');
-          const presence = await options.repository.listPresence(principal.tenant_id, principal.alias);
+          const presence = options.identityStore === undefined && options.pool === undefined
+            ? await options.repository.listPresence(principal.tenant_id, principal.alias)
+            : await options.repository.listPresence(principal.tenant_id, principal.alias, access('read'));
           active();
           return projectGatewayStatus({ version: PROTOCOL_VERSION, presence }, principal.tenant_id);
         },
         async agents() {
           const { principal } = await authorize('read', 'cauce.read');
-          const agents = await options.repository.listAgents(principal.tenant_id, principal.alias);
+          const agents = options.identityStore === undefined && options.pool === undefined
+            ? await options.repository.listAgents(principal.tenant_id, principal.alias)
+            : await options.repository.listAgents(principal.tenant_id, principal.alias, access('read'));
           active();
           return projectGatewayAgents(agents, principal.tenant_id);
         },

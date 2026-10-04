@@ -83,7 +83,7 @@ interface GatewayNarrowedRepository {
   verifyPublishReceipt(input: TrustedPublishCommand, receipt: PublishResult, options?: PublishOptions): Promise<boolean>;
   /** The actor is mandatory: the store skips its permission check when both arguments are absent. */
   status(actorTenant: Tenant, actorAlias: string): Promise<Record<string, number>>;
-  listPresence(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>[]>;
+  listPresence(actorTenant: Tenant, actorAlias: string, options?: HumanMessageOptions): Promise<Record<string, unknown>[]>;
   /** No `takeover`: a console or adapter call must never fence a live consumer of the same alias. */
   acquireLease(
     tenantId: Tenant,
