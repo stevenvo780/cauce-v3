@@ -136,10 +136,13 @@ Sócrates, Zeus y Kant. Argos superó sus dos ventanas individuales: 4202,821 se
 verificaciones. La observación conjunta de los trece comenzó a las 07:34:25 UTC y terminó
 en rojo tras 1564,557 segundos y 1001 verificaciones, antes de completar los 4200,2 segundos
 requeridos. Los trece procesos conservaron su identidad; una ronda de medición superó
-el límite de treinta segundos. La aceptación global sigue pendiente de una nueva ejecución
-completa, con el mismo umbral y la misma ventana.
-El registro privado está en `/root/cauce-v3-release-fc30-sdk/fleet-two-windows-r5-r1.json`;
-sólo su resultado real puede acreditar las dos ventanas de la flota.
+el límite de treinta segundos. La aceptación global exige una nueva ejecución completa,
+con el mismo umbral y la misma ventana. El fallo se conserva en el registro privado
+`/root/cauce-v3-release-fc30-sdk/fleet-two-windows-r5-r1.json`. La nueva observación R6
+comenzó a las 08:23:07 UTC, con el control de cadencia revisado independientemente;
+su registro está en `/root/cauce-v3-release-fc30-sdk/fleet-two-windows-r6-r1.json`.
+Sólo un resultado real `passed` con `fleetAccepted=true` y los 4200,2 segundos completos
+acredita las dos ventanas de los trece, sin trasladar el crédito del canario individual.
 Los trece canaries y watchdogs del rollout anterior son evidencia histórica, sin inferencia LLM;
 no acreditan aceptación global del nuevo bundle. Astra está excluida del rollout por instrucción
 del dueño y no recibió mutaciones. El endpoint MCP público permanece inactivo, pendiente de OAuth
