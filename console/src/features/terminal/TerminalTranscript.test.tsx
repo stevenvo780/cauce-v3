@@ -5,6 +5,7 @@ import { mockMessages } from '../../mocks/data';
 import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { TerminalTranscript } from './TerminalTranscript';
 import type { CanonicalReply } from '../messages/use-canonical-reply';
+import type { TranscriptItem } from './session';
 
 it('adjunta el texto escapado únicamente al message y delivery que coinciden', () => {
   const first = mockMessages().items?.[0];
