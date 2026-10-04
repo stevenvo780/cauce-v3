@@ -97,7 +97,7 @@ it('StrictMode conserva el token de un enlace con inventario ya disponible al mo
   renderWithApi(<StrictMode><OperatorWorkspace
     initialAgentId="Steven:kant"
     agents={[{ id: 'Steven:kant', tenantId: 'Steven', alias: 'kant', roomIds: [], roomMembership: {}, leaseState: 'online' }]}
-    adapters={[]} fleetLoading={false}
+    fleetLoading={false}
     access={{ subject: 'Steven:kant', roles: ['operator'], permissions: ['ultimate-terminal.connect'] }}
     terminalCapability={{ available: true, plugin_id: 'ultimate-terminal.client', capabilities: ['terminal.pty.client'], websocket_path: '/v3/console/terminal/ws' }}
     terminalTargets={{ observed_at: new Date().toISOString(), websocket_path: '/v3/console/terminal/ws', items: [target] }}

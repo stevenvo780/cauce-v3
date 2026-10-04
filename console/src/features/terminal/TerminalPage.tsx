@@ -103,7 +103,6 @@ function TerminalPageContent({ params }: TerminalPageProps) {
           <OperatorWorkspace
             agents={agents}
             initialAgentId={initialAgentId}
-            adapters={[]}
             toolbar={<>
               <a href="/ayuda#terminal">Docs</a>
               <button className="button small secondary" type="button" onClick={refreshAll} title="Actualizar agentes y permisos">

@@ -80,7 +80,7 @@ export function HelpPage() {
         <details>
           <summary>Terminal de agentes</summary>
           <p>Elegí un agente en el selector superior. Su TUI se abre con teclado cuando el servidor autoriza el control; no hace falta escribir una justificación. La apertura y la toma quedan auditadas con tu identidad.</p>
-          <p>Mientras tenés el control, sus mensajes del bus quedan en cola. Devolver el control, cambiar de agente o cerrar la vista libera el teclado y permite continuar las entregas. La sesión tiene una ventana limitada; Prorrogar la extiende.</p>
+          <p>Mientras tenés el control, los mensajes nuevos del bus quedan en cola; un turno que ya estaba en marcha puede terminar. Devolver el control, cambiar de agente o cerrar la vista libera el teclado y permite continuar las entregas. La sesión tiene una ventana limitada; Prorrogar la extiende.</p>
           <p>Si el destino sólo permite observar, la terminal indica «Solo lectura». Si falta autoridad o conexión, muestra el motivo real. Una shell es una sesión aparte; no reemplaza la TUI del agente.</p>
         </details>
       </section>

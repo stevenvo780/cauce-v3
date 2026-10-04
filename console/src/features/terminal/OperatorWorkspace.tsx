@@ -1,7 +1,7 @@
 import { AlertTriangle, MonitorPlay } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type RefObject, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
-import type { AdapterView, ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
+import type { ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { EmptyState, LoadingState } from '../../components/ui';
 import { GridContainer } from './GridContainer';
@@ -27,7 +27,6 @@ import type { TerminalGrantRequestOutcome } from './types';
 interface OperatorWorkspaceProps {
   agents: FleetAgent[];
   initialAgentId?: string;
-  adapters: AdapterView[];
   toolbar?: ReactNode;
   access?: ConsoleAccess;
   topologyAccess?: TopologySnapshot;

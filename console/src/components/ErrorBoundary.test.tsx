@@ -100,7 +100,7 @@ function agenteDePrueba(): FleetAgent {
 it('en la terminal del operador, un fallo del grid deja operativo el selector', async () => {
   const agente = agenteDePrueba();
   renderWithApi(
-    <OperatorWorkspace agents={[agente]} initialAgentId={agente.id} adapters={[]} fleetLoading={false} />,
+    <OperatorWorkspace agents={[agente]} initialAgentId={agente.id} fleetLoading={false} />,
   );
 
   await waitFor(() => { expect(screen.getByRole('alert')).toBeInTheDocument(); });
