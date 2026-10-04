@@ -47,7 +47,7 @@ export function registerConsolePublishIntentRoutes(
       const result = await prepareConsolePublishOperation(repository, {
         actor, body: request.body, priorityLog: request.log,
         interactiveHumanEntry: request.routeOptions.url === '/v3/console/publish-intents',
-        logRedaction: (redactionActor, redaction) => logPublishRedaction(request.log, redactionActor, redaction),
+        logRedaction: (redactionActor, redaction) => { logPublishRedaction(request.log, redactionActor, redaction); },
       }, consolePublishTelemetry);
       return await reply.code(200).send(result);
     } catch (error) {

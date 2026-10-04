@@ -14,11 +14,12 @@ describe('shared console journal operations', () => {
   it('binds nonce, redaction, priority and operator scope before the durable reservation', async () => {
     const { repository } = fixture();
     const telemetry = new ConsolePublishTelemetry();
+    const prepare = vi.spyOn(repository, 'prepareConsolePublishIntent');
     await prepareConsolePublishOperation(repository, {
       ...input(), body: preparedBody, interactiveHumanEntry: true,
     }, telemetry);
-    expect(repository.prepareConsolePublishIntent).toHaveBeenCalledOnce();
-    const [command, scope] = vi.mocked(repository.prepareConsolePublishIntent).mock.calls[0] ?? [];
+    expect(prepare).toHaveBeenCalledOnce();
+    const [command, scope] = prepare.mock.calls[0] ?? [];
     expect(command).toMatchObject({
       tenant_id: actor.tenant_id, actor_alias: actor.alias, intent_nonce: nonce,
       authenticated_context: { session_id: actor.session_id, channel: actor.channel },
@@ -31,6 +32,8 @@ describe('shared console journal operations', () => {
   it('uses a server-selected UUID scope consistently for prepare and confirmation', async () => {
     const { repository } = fixture();
     const telemetry = new ConsolePublishTelemetry();
+    const prepare = vi.spyOn(repository, 'prepareConsolePublishIntent');
+    const confirm = vi.spyOn(repository, 'confirmConsolePublishIntent');
     const scope = 'a'.repeat(64);
     const prepared = await prepareConsolePublishOperation(repository, {
       ...input(), body: preparedBody, interactiveHumanEntry: true, consoleIntentOperatorScope: scope,
@@ -40,32 +43,35 @@ describe('shared console journal operations', () => {
       message_id: '20000000-0000-4000-8000-000000000002', causal_hash: 'b'.repeat(64),
     };
     await confirmConsolePublishOperation(repository, { actor, body: confirmation, consoleIntentOperatorScope: scope }, telemetry);
-    expect(repository.prepareConsolePublishIntent).toHaveBeenCalledWith(expect.anything(), scope);
-    expect(repository.confirmConsolePublishIntent).toHaveBeenCalledWith(actor.tenant_id, actor.alias, scope, confirmation);
+    expect(prepare).toHaveBeenCalledWith(expect.anything(), scope);
+    expect(confirm).toHaveBeenCalledWith(actor.tenant_id, actor.alias, scope, confirmation);
     expect(telemetry.snapshot()['confirm:confirmed']).toBe(1);
   });
 
   it('rejects caller-selected scope and human authority before reserving an intent', async () => {
     const { repository } = fixture();
     const telemetry = new ConsolePublishTelemetry();
+    const prepare = vi.spyOn(repository, 'prepareConsolePublishIntent');
     await expect(prepareConsolePublishOperation(repository, {
       ...input(), body: { ...preparedBody, consoleIntentOperatorScope: 'a'.repeat(64), tenant_id: 'Pablo' },
       interactiveHumanEntry: true,
     }, telemetry)).rejects.toThrow();
-    expect(repository.prepareConsolePublishIntent).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
     expect(telemetry.snapshot()['prepare:error']).toBe(1);
   });
 
   it('checks live local route authority before either journal mutation', async () => {
     const { repository } = fixture();
     const telemetry = new ConsolePublishTelemetry();
+    const prepare = vi.spyOn(repository, 'prepareConsolePublishIntent');
+    const confirm = vi.spyOn(repository, 'confirmConsolePublishIntent');
     const reader = { ...actor, roles: [] as const, permissions: ['read'] as const };
     await expect(prepareConsolePublishOperation(repository, {
       ...input(), actor: reader, body: preparedBody, interactiveHumanEntry: true,
     }, telemetry)).rejects.toThrow('route permission');
     await expect(confirmConsolePublishOperation(repository, { actor: reader, body: {} }, telemetry)).rejects.toThrow('route permission');
-    expect(repository.prepareConsolePublishIntent).not.toHaveBeenCalled();
-    expect(repository.confirmConsolePublishIntent).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
     expect(telemetry.snapshot()['prepare:error']).toBe(1);
     expect(telemetry.snapshot()['confirm:error']).toBe(1);
   });

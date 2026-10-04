@@ -100,7 +100,7 @@ describe('human MCP operations over real OAuth, SDK transport and PostgreSQL', (
         accepted.push(parseContent(result));
       }
     }
-    console.info(`MCP same-human race: ${accepted.length} accepted, ${concurrent.length - accepted.length} retryable conflicts`);
+    console.info(`MCP same-human race: ${String(accepted.length)} accepted, ${String(concurrent.length - accepted.length)} retryable conflicts`);
     const acceptedIds = accepted.map((receipt) => stringField(receipt, 'message_id'));
     expect(new Set(acceptedIds).size).toBeLessThanOrEqual(1);
 

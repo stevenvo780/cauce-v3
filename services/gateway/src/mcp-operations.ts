@@ -77,7 +77,7 @@ function projectReceipt(value: Record<string, unknown>, actor: Principal, messag
   const row = visibleMessage(value, actor);
   const expectedSubject = consoleHumanSubject(actor);
   const author = record(row?.author);
-  if (!row || row.id !== messageId || expectedSubject === undefined || author?.kind !== 'human'
+  if (row?.id !== messageId || expectedSubject === undefined || author?.kind !== 'human'
       || author.subject_id !== expectedSubject) {
     throw new StoreError('not_found', 'message not found or not visible');
   }
