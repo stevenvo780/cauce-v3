@@ -104,3 +104,34 @@ export async function lockHumanIdentity(
   if (!snapshot) throw new StoreError('forbidden', 'human identity is unavailable');
   return snapshot;
 }
+
+export interface ConsoleHumanSnapshot {
+  readonly humanId: string;
+  readonly account: Readonly<{ active: boolean; role: string; defaultTenant: string;
+    actorAlias: string; passwordChangedAt: number }>;
+  readonly membership: HumanIdentitySnapshot['membership'];
+}
+
+export async function lockConsoleHuman(client: DatabaseClient, humanId: string): Promise<ConsoleHumanSnapshot> {
+  if (!isAnyUuid(humanId)) throw new StoreError('forbidden', 'console human authority is unavailable');
+  const account = (await client.query<AccountRow & { alias: string; password_changed_at: Date }>(
+    'SELECT id, active, role, tenant_id, alias, password_changed_at FROM console_users WHERE id=$1 FOR SHARE',
+    [humanId],
+  )).rows[0];
+  if (!account?.active) throw new StoreError('forbidden', 'console human authority is unavailable');
+  const membership = (await client.query<MembershipRow>(
+    `SELECT tenant_id, actor_alias, role, permissions, enabled, revision::text, revoked_at
+     FROM human_tenant_memberships WHERE human_id=$1 AND tenant_id=$2 FOR SHARE`,
+    [humanId, account.tenant_id],
+  )).rows[0];
+  if (!membership?.enabled || membership.revoked_at !== null) {
+    throw new StoreError('forbidden', 'console human authority is unavailable');
+  }
+  return Object.freeze({ humanId: account.id,
+    account: Object.freeze({ active: account.active, role: account.role, defaultTenant: account.tenant_id,
+      actorAlias: account.alias, passwordChangedAt: account.password_changed_at.getTime() }),
+    membership: Object.freeze({ tenantId: membership.tenant_id, actorAlias: membership.actor_alias,
+      role: membership.role, permissions: Object.freeze([...membership.permissions]),
+      enabled: membership.enabled, revision: membership.revision }),
+  });
+}

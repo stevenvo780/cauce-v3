@@ -188,6 +188,14 @@ interface LoadedSession {
   principal: Principal;
 }
 
+export interface VerifiedConsoleSession {
+  readonly humanId: string;
+  readonly tenantId: Principal['tenant_id'];
+  readonly actorAlias: string;
+  readonly issuedAtMs: number;
+  readonly expiresAtMs: number;
+}
+
 export class PasswordAuthProvider implements AuthProvider {
   readonly name = 'console-password';
   readonly mode = 'production' as const;
@@ -269,6 +277,13 @@ export class PasswordAuthProvider implements AuthProvider {
   /** `true` when the request carries the console cookie; the rest belongs to the `fallback` (mTLS). */
   handles(request: FastifyRequest): boolean {
     return this.token(request) !== undefined;
+  }
+
+  async verifiedConsoleSession(request: FastifyRequest): Promise<Readonly<VerifiedConsoleSession> | undefined> {
+    if (!this.handles(request)) return undefined;
+    const { claims, user, principal } = await this.load(request);
+    return Object.freeze({ humanId: user.id, tenantId: principal.tenant_id, actorAlias: principal.alias,
+      issuedAtMs: claims.iat * 1000, expiresAtMs: claims.exp * 1000 });
   }
 
   async authenticateHttp(request: FastifyRequest): Promise<Principal> {
