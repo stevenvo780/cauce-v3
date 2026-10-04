@@ -2,8 +2,67 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   AckSchema, AMBIGUOUS_ACK_ERROR_CODES, AuthenticatedPublishSchema, DeliveryEnvelopeSchema,
+  HUMAN_MESSAGE_INITIATOR_CAPABILITY, HumanMessageInitiatorSchema,
   isAgentToAgentBody, isAmbiguousAckErrorCode, PublishMessageSchema
 } from '@cauce/protocol';
+
+describe('human message initiator contract', () => {
+  const initiator = {
+    human_id: 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF', tenant_id: 'Steven',
+    conversation_id: '  unchanged conversation  ',
+    root_message_id: '00000000-0000-0000-0000-000000000000',
+  };
+  const delivery = {
+    type: 'delivery', version: '3.0', event_id: randomUUID(), delivery_id: randomUUID(),
+    message_id: randomUUID(), request_id: randomUUID(), trace_id: 'human-initiator',
+    epoch: 1, attempt: 1, claim_token: randomUUID(), ack_deadline_at: new Date().toISOString(),
+    tenant_id: 'Isa', room_id: 'grp.isa', actor_alias: 'salva', recipient_alias: 'kant',
+    body: { text: 'ordinary work' },
+  };
+
+  it('keeps legacy envelopes valid and accepts only the four-field optional initiator', () => {
+    expect(HUMAN_MESSAGE_INITIATOR_CAPABILITY).toBe('human_message_initiator_v1');
+    expect(Object.hasOwn(DeliveryEnvelopeSchema.parse(delivery), 'human_initiator')).toBe(false);
+    expect(DeliveryEnvelopeSchema.parse({ ...delivery, human_initiator: initiator }).human_initiator)
+      .toEqual(initiator);
+    expect(DeliveryEnvelopeSchema.safeParse({ ...delivery, human_initiator: null }).success).toBe(false);
+  });
+
+  it.each(['permissions', 'alias', 'token', 'message_id', 'message_tenant_id'])(
+    'rejects extra initiator field %s', (field) => {
+      const invalid = { ...initiator, [field]: 'untrusted' };
+      expect(HumanMessageInitiatorSchema.safeParse(invalid).success).toBe(false);
+      expect(DeliveryEnvelopeSchema.safeParse({ ...delivery, human_initiator: invalid }).success).toBe(false);
+    },
+  );
+
+  it.each(['human_id', 'root_message_id'] as const)('uses UUID_ANY_PATTERN for %s', (field) => {
+    for (const uuid of ['00000000-0000-0000-0000-000000000000', 'ABCDEF12-3456-F789-0123-456789ABCDEF']) {
+      expect(HumanMessageInitiatorSchema.parse({ ...initiator, [field]: uuid })[field]).toBe(uuid);
+    }
+    expect(HumanMessageInitiatorSchema.safeParse({ ...initiator, [field]: 'invalid-uuid' }).success).toBe(false);
+  });
+
+  it('matches the tenant shape without changing identifiers or whitespace', () => {
+    expect(HumanMessageInitiatorSchema.parse(initiator)).toEqual(initiator);
+    expect(HumanMessageInitiatorSchema.parse({ ...initiator, tenant_id: 'New_tenant-2' }).tenant_id).toBe('New_tenant-2');
+    expect(HumanMessageInitiatorSchema.safeParse({ ...initiator, tenant_id: ' invalid' }).success).toBe(false);
+    expect(HumanMessageInitiatorSchema.parse({ ...initiator, conversation_id: ' ' }).conversation_id).toBe(' ');
+  });
+
+  it.each(['a'.repeat(512), 'é'.repeat(256), '😀'.repeat(128)])(
+    'accepts exactly 512 UTF-8 bytes', (conversationId) => {
+      expect(HumanMessageInitiatorSchema.parse({ ...initiator, conversation_id: conversationId }).conversation_id)
+        .toBe(conversationId);
+      expect(HumanMessageInitiatorSchema.safeParse({ ...initiator, conversation_id: `${conversationId}a` }).success)
+        .toBe(false);
+    },
+  );
+
+  it('rejects an empty conversation identifier', () => {
+    expect(HumanMessageInitiatorSchema.safeParse({ ...initiator, conversation_id: '' }).success).toBe(false);
+  });
+});
 
 describe('versioned protocol schemas', () => {
   it('accepts the complete V3 correlation contract', () => {
