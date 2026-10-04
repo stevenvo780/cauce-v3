@@ -42,6 +42,7 @@ export interface HumanPublishProvenance {
 export interface HumanMessageOptions {
   readonly humanAuthority: (client: DatabaseClient) => Promise<Readonly<HumanPublishProvenance>>;
   readonly signal: AbortSignal;
+  readonly coalesceConsolePublishIntents?: boolean;
 }
 
 export interface PublishOptions extends Partial<HumanMessageOptions> {

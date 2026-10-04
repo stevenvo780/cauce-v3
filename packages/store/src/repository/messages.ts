@@ -37,7 +37,7 @@ import {
   type ConsolePublishPrepareMetadata,
 } from './config.js';
 import { StoreError } from './errors.js';
-import { PublishIntentReconciliationRequired } from './messages/contracts.js';
+import { PublishIntentExpiredError, PublishIntentReconciliationRequired } from './messages/contracts.js';
 import { MessagePublishingRepository } from './messages/publishing.js';
 import { reconstructCommittedConsoleIntentReceipt } from './messages/receipts.js';
 import { assertHumanMessageRoot, lockHumanMessageRoute, withHumanMessageTransaction } from './messages/human-authority.js';
@@ -115,13 +115,13 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
           nonceState,
         );
         const prepared = state.prepared;
-        if (prepared === undefined || state.expired
-            || prepared.requested_hash !== requestedHash
+        if (prepared?.requested_hash !== requestedHash
             || prepared.conversation_hash !== conversationHash
             || prepared.intent_nonce_hash !== intentNonceHash
             || prepared.operator_scope_hash !== operatorScopeHash) {
           throw new StoreError('conflict', 'console publish intent nonce was reused inconsistently');
         }
+        if (state.expired) throw new PublishIntentExpiredError(prepared.idempotency_key);
         if (state.confirmed === undefined) {
           const head = await loadConsolePublishHead(
             client,
@@ -218,7 +218,7 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
         readonly receipt: ProtocolPublishResult;
       }[] = [];
       const uneffectedMatches: ConsolePublishIntentKeyState[] = [];
-      for (const state of activeStates) {
+      for (const state of options?.coalesceConsolePublishIntents === false ? [] : activeStates) {
         const prepared = state.prepared;
         if (prepared?.requested_hash !== requestedHash) continue;
         const durableResult = await client.query<{

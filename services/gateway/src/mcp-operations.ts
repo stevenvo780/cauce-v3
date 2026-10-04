@@ -148,7 +148,7 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           if (!parsed.success) throw new StoreError('invalid_input', 'invalid submit command');
           const command = parsed.data;
           const authority = await authorize('route', 'cauce.publish');
-          const humanAccess = access('publish');
+          const humanAccess = { ...access('publish'), coalesceConsolePublishIntents: false };
           const consoleIntentOperatorScope = intentScope(authority.userId, authority.principal);
           const prepared = await prepareConsolePublishOperation(options.repository, {
             actor: authority.principal,
