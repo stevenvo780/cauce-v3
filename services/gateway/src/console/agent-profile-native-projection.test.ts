@@ -19,14 +19,17 @@ import type {
 import type { RuntimeFacts } from './agent-documents.js';
 import { runtimeContractFromVerification } from '../routes/console/helpers.js';
 import { prepareAgentProfileRuntime } from './agent-profile-runtime.js';
+import type { GovernanceWriteOperation } from './governance-write-operation.js';
 import {
   registerAgentProfileRoutes,
   type AgentProfileDeps,
   type PerfilAplicado,
   type ProfileRuntimeVerification,
 } from './agent-profile.routes.js';
+import { coordinateWriteFixture, profileWriteFixtureDeps } from './agent-profile.fixtures.js';
 
 const ACTOR = { tenant_id: 'Steven', alias: 'zeus' };
+const OPERATOR = { operator_id: 'steven@elenxos', attributed: true };
 const URL = '/v3/console/tenants/Steven/agents/zeus/perfil';
 const MOTIVO = 'republico el perfil nativo tras cambiar su composición';
 
@@ -75,6 +78,7 @@ function liveRuntime(harness: 'claude' | 'openclaw'): {
   readonly disk: Map<string, string>;
   readonly paths: readonly string[];
   readonly probe: AgentFactsProbe;
+  readonly durableOperations: GovernanceWriteOperation[];
 } {
   const home = '/home/dev';
   const workspace = '/home/dev/.openclaw/workspace-zeus';
@@ -104,6 +108,31 @@ function liveRuntime(harness: 'claude' | 'openclaw'): {
     disk.set(`${workspace}/HEARTBEAT.md`, 'PRIVATE HEARTBEAT\n');
   }
 
+  const durableOperations: GovernanceWriteOperation[] = [];
+  const writeBatch: NonNullable<AgentFactsProbe['writeGovernanceBatch']> = async (writes) => {
+    for (const write of writes) {
+      const before = disk.get(write.path);
+      const valid = write.precondition.state === 'absent'
+        ? before === undefined
+        : before !== undefined && sha(before) === write.precondition.sha256;
+      if (!valid) return { error: 'conflict', reason: 'precondition changed' };
+    }
+    const acknowledgements: GovernanceBatchWriteAck[] = [];
+    for (const write of writes) {
+      const before = disk.get(write.path);
+      if (write.mode === 'write') disk.set(write.path, write.content);
+      const after = disk.get(write.path);
+      acknowledgements.push({
+        path: write.path,
+        operation: write.mode === 'verify'
+          ? (after === undefined ? 'absent' : 'unchanged')
+          : (before === undefined ? 'create' : 'replace'),
+        sha: after === undefined ? null : sha(after),
+        bytes: after === undefined ? 0 : Buffer.byteLength(after, 'utf8'),
+      });
+    }
+    return acknowledgements;
+  };
   const probe: AgentFactsProbe = {
     factsFor: async () => ({ facts, source: 'measured' }),
     readGovernanceDocument: async (path) => {
@@ -111,32 +140,19 @@ function liveRuntime(harness: 'claude' | 'openclaw'): {
       return text === undefined ? { error: 'not_found', reason: 'missing' } : content(text);
     },
     listMemoryDirectory: async () => ({ error: 'unavailable', reason: 'not needed' }),
-    writeGovernanceBatch: async (writes) => {
-      for (const write of writes) {
-        const before = disk.get(write.path);
-        const valid = write.precondition.state === 'absent'
-          ? before === undefined
-          : before !== undefined && sha(before) === write.precondition.sha256;
-        if (!valid) return { error: 'conflict', reason: 'precondition changed' };
-      }
-      const acknowledgements: GovernanceBatchWriteAck[] = [];
-      for (const write of writes) {
-        const before = disk.get(write.path);
-        if (write.mode === 'write') disk.set(write.path, write.content);
-        const after = disk.get(write.path);
-        acknowledgements.push({
-          path: write.path,
-          operation: write.mode === 'verify'
-            ? (after === undefined ? 'absent' : 'unchanged')
-            : (before === undefined ? 'create' : 'replace'),
-          sha: after === undefined ? null : sha(after),
-          bytes: after === undefined ? 0 : Buffer.byteLength(after, 'utf8'),
-        });
-      }
-      return acknowledgements;
+    writeGovernanceBatch: writeBatch,
+    writeGovernanceBatchDurable: async (writes, measuredFacts, tenantId, alias, operation) => {
+      expect(measuredFacts.generation).toBe(operation.runtimeGeneration);
+      expect(operation.operationId).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(operation.operationToken).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(operation.operationGeneration).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(tenantId).toBe('Steven');
+      expect(alias).toBe('zeus');
+      durableOperations.push(operation);
+      return writeBatch(writes, measuredFacts, tenantId, alias);
     },
   };
-  return { disk, paths, probe };
+  return { disk, paths, probe, durableOperations };
 }
 
 function verificationKey(revision: number, verification: ProfileRuntimeVerification): string {
@@ -163,12 +179,36 @@ describe('native profile publishing saga', () => {
         readonly key: string;
         readonly contract: ProfileRuntimeContract;
       }>();
+      const runtimeVerifications = new Map<number, ProfileRuntimeVerification>();
       const events: string[] = [];
+      const recordRuntimeExpectation: NonNullable<AgentProfileDeps['recordRuntimeExpectation']> =
+        async (_tenant, _alias, expectedRevision, verification) => {
+          for (const document of verification.documents) {
+            const text = runtime.disk.get(document.path)
+              ?? expect.unreachable(`Runtime document is missing: ${document.path}`);
+            expect(document.expected_sha).toBe(sha(text));
+            expect(document.expected_bytes).toBe(Buffer.byteLength(text, 'utf8'));
+          }
+          expectations.set(expectedRevision, {
+            key: verificationKey(expectedRevision, verification),
+            contract: {
+              revision: expectedRevision,
+              generation: verification.generation
+                ?? expect.unreachable('Runtime verification generation is missing'),
+              documents: verification.documents.map((document) => ({
+                name: document.name,
+                path: document.path,
+                sha: document.expected_sha,
+              })),
+            },
+          });
+          events.push(`expect:${String(expectedRevision)}`);
+        };
 
-      const deps: AgentProfileDeps = {
+      const deps: AgentProfileDeps = profileWriteFixtureDeps({
         authorize: async () => ACTOR,
         recordAudit: async () => undefined,
-        resolveOperator: () => ({ operator_id: 'steven@elenxos', attributed: true }),
+        resolveOperator: () => OPERATOR,
         authorizeTarget: async () => ({ tenant_id: 'Steven', alias: 'zeus', enabled: true }),
         readContext: async () => ({
           contexto: current,
@@ -176,6 +216,7 @@ describe('native profile publishing saga', () => {
           revision,
           applied_revision: appliedRevision,
         }),
+        readWriteExpectation: async () => expectations.get(revision)?.contract,
         replaceProfile: async (next, expectedRevision) => {
           if (expectedRevision !== revision) {
             throw Object.assign(new Error('stale revision'), { code: 'conflict' });
@@ -200,38 +241,18 @@ describe('native profile publishing saga', () => {
             materialize: (materializedRevision: number) => {
               events.push(`materialize:${String(materializedRevision)}`);
               const prepared = preflight.materialize(materializedRevision);
+              runtimeVerifications.set(materializedRevision, prepared.verification);
               return {
                 ...prepared,
-                apply: async () => {
+                apply: async (operation) => {
                   events.push('apply');
-                  return prepared.apply();
+                  return prepared.apply(operation);
                 },
               };
             },
           };
         },
-        recordRuntimeExpectation: async (_tenant, _alias, expectedRevision, verification) => {
-          for (const document of verification.documents) {
-            const text = runtime.disk.get(document.path)
-              ?? expect.unreachable(`Runtime document is missing: ${document.path}`);
-            expect(document.expected_sha).toBe(sha(text));
-            expect(document.expected_bytes).toBe(Buffer.byteLength(text, 'utf8'));
-          }
-          expectations.set(expectedRevision, {
-            key: verificationKey(expectedRevision, verification),
-            contract: {
-              revision: expectedRevision,
-              generation: verification.generation
-                ?? expect.unreachable('Runtime verification generation is missing'),
-              documents: verification.documents.map((document) => ({
-                name: document.name,
-                path: document.path,
-                sha: document.expected_sha,
-              })),
-            },
-          });
-          events.push(`expect:${String(expectedRevision)}`);
-        },
+        recordRuntimeExpectation,
         readRuntimeAdoption: async (_tenant, _alias, expectedRevision, verification) => {
           events.push(`adopt:${String(expectedRevision)}`);
           const expectation = expectations.get(expectedRevision);
@@ -257,7 +278,25 @@ describe('native profile publishing saga', () => {
             applied_revision: appliedRevision,
           };
         },
-      };
+        coordinateWrite: (input) => coordinateWriteFixture(input, async (sql, values) => {
+          if (!sql.includes('agent_profile_runtime_expectations')) return;
+          const expectedRevision = Number(values[2]);
+          const verification = runtimeVerifications.get(expectedRevision)
+            ?? expect.unreachable(`Runtime verification is missing for revision ${String(expectedRevision)}`);
+          const persistedDocuments = JSON.parse(String(values[4])) as {
+            readonly name: string; readonly path: string; readonly sha: string;
+          }[];
+          expect(String(values[3])).toBe(verification.generation);
+          const persistedContract = [...persistedDocuments].sort((left, right) => left.name.localeCompare(right.name));
+          const expectedContract = verification.documents.map((document) => ({
+            name: document.name,
+            path: document.path,
+            sha: document.expected_sha,
+          })).sort((left, right) => left.name.localeCompare(right.name));
+          expect(persistedContract).toEqual(expectedContract);
+          await recordRuntimeExpectation('Steven', 'zeus', expectedRevision, verification);
+        }, 'generation-zeus'),
+      }, OPERATOR);
       const app = Fastify();
       registerAgentProfileRoutes(app, deps);
       await app.ready();
@@ -319,13 +358,17 @@ describe('native profile publishing saga', () => {
           runtime_adoption: { revision: 3 },
         });
         expect(events).toEqual([
-          'prepare', 'replace:2', 'materialize:2', 'apply', 'expect:2', 'adopt:2',
+          'prepare', 'materialize:2', 'replace:2', 'apply', 'expect:2', 'adopt:2',
           'evidence:2',
-          'prepare', 'replace:2', 'materialize:2', 'apply', 'expect:2', 'adopt:2', 'mark:2',
-          'prepare', 'replace:3', 'materialize:3', 'apply', 'expect:3', 'adopt:3',
+          'prepare', 'materialize:2', 'replace:2', 'apply', 'expect:2', 'adopt:2', 'mark:2',
+          'prepare', 'materialize:3', 'replace:3', 'apply', 'expect:3', 'adopt:3',
           'evidence:3',
-          'prepare', 'replace:3', 'materialize:3', 'apply', 'expect:3', 'adopt:3', 'mark:3',
+          'prepare', 'materialize:3', 'replace:3', 'apply', 'expect:3', 'adopt:3', 'mark:3',
         ]);
+        expect(runtime.durableOperations).toHaveLength(4);
+        expect(runtime.durableOperations.every((operation) => (
+          operation.runtimeGeneration === 'generation-zeus'
+        ))).toBe(true);
         expect(expectations.get(2)?.key).not.toBe(expectations.get(3)?.key);
         expect(expectations.get(3)?.contract.documents.map((document) => document.name))
           .toEqual(harness === 'claude' ? ['CLAUDE.md'] : FICHEROS_OPENCLAW);
