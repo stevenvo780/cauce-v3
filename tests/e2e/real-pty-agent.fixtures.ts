@@ -3,6 +3,7 @@ import { randomBytes, randomUUID, X509Certificate } from 'node:crypto';
 import { createServer, type AddressInfo } from 'node:net';
 import { request as httpsRequest } from 'node:https';
 import { get as httpGet } from 'node:http';
+import { createRequire } from 'node:module';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +18,7 @@ import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
 import { deriveAliasKey } from '../../services/gateway/src/terminal/tickets.js';
 import { relayInstanceIdFromCertificate } from '../../services/terminal-relay/src/relay-identity.js';
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
+import { startTrustedBrowser, type BrowserContext, type BrowserPage, type TrustedBrowser } from './console-functional-browser.fixtures.js';
 
 const execute = promisify(execFile);
 const APPROVED_NODE_IMAGE = 'node@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436';
@@ -29,6 +31,7 @@ const OPERATOR_ALIAS = `ptyop${randomBytes(4).toString('hex')}`;
 const TARGET_ALIAS = `ptyagent${randomBytes(4).toString('hex')}`;
 const OPERATOR_EMAIL = `pty-${randomBytes(5).toString('hex')}@cauce.test`;
 const OPERATOR_PASSWORD = randomBytes(24).toString('base64url');
+const consoleRequire = createRequire(join(process.cwd(), 'console/package.json'));
 
 interface HttpResult { status: number; headers: import('node:http').IncomingHttpHeaders; body: string }
 interface Pki {
@@ -59,6 +62,9 @@ export interface RealPtyFixture {
   app: Awaited<ReturnType<typeof buildGateway>>;
   directory: string;
   gatewayUrl: string;
+  baseUrl: string;
+  browserContainer: string;
+  browserPage(viewport: { width: number; height: number }): Promise<BrowserPage>;
   relayPorts: { browser: number; agent: number; health: number };
   relayInstanceId: string;
   agentContainer: string;
@@ -311,6 +317,9 @@ export async function startRealPtyFixture(): Promise<RealPtyFixture> {
   let directory = '';
   let database: TestDatabase | undefined;
   let app: Awaited<ReturnType<typeof buildGateway>> | undefined;
+  let vite: { close(): Promise<void>; httpServer: import('node:http').Server | null; listen(): Promise<void> } | undefined;
+  let trustedBrowser: TrustedBrowser | undefined;
+  const browserContexts: BrowserContext[] = [];
   let relay: ChildProcess | undefined;
   let agent: ChildProcess | undefined;
   let agentContainerId: string | undefined;
@@ -318,12 +327,21 @@ export async function startRealPtyFixture(): Promise<RealPtyFixture> {
   let relayLog = '';
   let agentLog = '';
   let proxyAgent: import('node:https').Agent | undefined;
+  let browserProxyAgent: import('node:https').Agent | undefined;
   let relayInstanceId = '';
   let gatewayUrl = '';
+  let baseUrl = '';
   let ports: RealPtyFixture['relayPorts'] | undefined;
   const cleanupErrors: Error[] = [];
   const record = (label: string, error: unknown) => { cleanupErrors.push(new Error(`${label} cleanup failed`, { cause: error })); };
   const cleanup = async () => {
+    for (const [index, context] of browserContexts.entries()) {
+      try { await context.close(); } catch (error) { record(`browser context ${String(index)}`, error); }
+    }
+    if (trustedBrowser) {
+      try { await trustedBrowser.close(); } catch (error) { record('owned browser runtime', error); }
+    }
+    if (vite) { try { await vite.close(); } catch (error) { record('Vite server', error); } }
     if (relay) { try { await stopProcess(relay, 'terminal relay'); } catch (error) { record('terminal relay', error); } }
     let ownedContainerFound = false;
     try {
@@ -346,6 +364,7 @@ export async function startRealPtyFixture(): Promise<RealPtyFixture> {
       if (!await waitForExit(agent, 2_000)) record('agent exec process', new Error('agent docker exec process did not exit after its container stopped'));
     }
     proxyAgent?.destroy();
+    browserProxyAgent?.destroy();
     if (app) { try { await app.close(); } catch (error) { record('gateway', error); } }
     if (database) {
       try { await database.pool.end(); } catch (error) { record('database pool', error); }
@@ -418,9 +437,11 @@ WORKDIR /home/node
       requestCert: true, rejectUnauthorized: true,
     };
     const gatewayPort = await availableLoopbackPort();
+    const frontendPort = await availableLoopbackPort();
     gatewayUrl = `https://127.0.0.1:${String(gatewayPort)}`;
+    const frontendOrigin = `https://localhost:${String(frontendPort)}`;
     app = await buildGateway({
-      pool: startedDatabase.pool, authProvider: auth, https: tls, consoleOrigins: [gatewayUrl],
+      pool: startedDatabase.pool, authProvider: auth, https: tls, consoleOrigins: [gatewayUrl, frontendOrigin],
       terminalCapability: terminalCapabilityAnnouncement(config),
       operatorResolution: { operatorHeader: config.operatorHeader, operators: config.operators },
     });
@@ -431,6 +452,37 @@ WORKDIR /home/node
       cert: await readFile(pkiValue.consoleClientCert), key: await readFile(pkiValue.consoleClientKey),
       ca: await readFile(pkiValue.caCert), rejectUnauthorized: true,
     });
+    browserProxyAgent = new (await import('node:https')).Agent({
+      cert: await readFile(pkiValue.consoleClientCert), key: await readFile(pkiValue.consoleClientKey),
+      ca: await readFile(pkiValue.caCert), rejectUnauthorized: true,
+    });
+    const viteModule = consoleRequire('vite') as {
+      createServer(config: Record<string, unknown>): Promise<{ close(): Promise<void>; httpServer: import('node:http').Server | null; listen(): Promise<void> }>;
+    };
+    const relayWebsocketPath = `/v3/console/terminal/relays/${relayInstanceId}/ws`;
+    vite = await viteModule.createServer({
+      configFile: join(process.cwd(), 'console/vite.config.ts'),
+      root: join(process.cwd(), 'console'),
+      envDir: directory,
+      server: {
+        host: '127.0.0.1', port: frontendPort, strictPort: true,
+        https: { key: await readFile(pkiValue.serverKey), cert: await readFile(pkiValue.serverCert) },
+        proxy: {
+          [relayWebsocketPath]: {
+            target: `https://127.0.0.1:${String(ports.browser)}`,
+            agent: browserProxyAgent, secure: true, changeOrigin: false, ws: true,
+          },
+          '/v3': { target: gatewayUrl, agent: proxyAgent, secure: true, changeOrigin: false, ws: false },
+        },
+      },
+    });
+    await vite.listen();
+    const frontendAddress = vite.httpServer?.address() as AddressInfo | null;
+    if (!frontendAddress || typeof frontendAddress === 'string') throw new Error('Vite HTTPS server did not expose its bound address');
+    baseUrl = `https://localhost:${String(frontendAddress.port)}`;
+    if (baseUrl !== frontendOrigin) throw new Error('Vite HTTPS server did not bind its reserved origin');
+    const trusted = await startTrustedBrowser(pkiValue.caCert, directory);
+    trustedBrowser = trusted;
     const provision = await execute(join(process.cwd(), 'node_modules/.bin/tsx'), [
       'services/gateway/src/console-user-cli.ts', '--email', OPERATOR_EMAIL, '--name', 'Real PTY E2E operator',
       '--role', 'operator', '--tenant', TENANT, '--alias', OPERATOR_ALIAS,
@@ -506,7 +558,14 @@ WORKDIR /home/node
 
     const relayPorts = ports;
     return {
-      database: startedDatabase, app, directory, gatewayUrl, relayPorts: ports, relayInstanceId,
+      database: startedDatabase, app, directory, gatewayUrl, baseUrl, browserContainer: trustedBrowser?.container ?? '',
+      browserPage: async (viewport) => {
+        if (!trustedBrowser) throw new Error('trusted Chromium fixture is not initialized');
+        const context = await trustedBrowser.browser.newContext({ viewport, ignoreHTTPSErrors: false, serviceWorkers: 'block' });
+        browserContexts.push(context);
+        return await context.newPage();
+      },
+      relayPorts: ports, relayInstanceId,
       agentContainer: containerName, agentContainerId, agentImage, agentImageId: imageId,
       operatorEmail: OPERATOR_EMAIL, operatorPassword: OPERATOR_PASSWORD, operatorAlias: OPERATOR_ALIAS, targetAlias: TARGET_ALIAS, tenant: TENANT, nonce: NONCE,
       agentLog: () => agentLog,

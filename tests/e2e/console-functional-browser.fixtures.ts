@@ -47,11 +47,14 @@ function docker(args: string[], options: ExecOptions = {}): Promise<{ stdout: st
   return exec('docker', args, { timeout: 15_000, maxBuffer: 64 * 1024, ...options });
 }
 const require = createRequire(join(process.cwd(), 'console/package.json'));
-interface Locator { fill(value: string): Promise<void>; click(): Promise<void>; count(): Promise<number>; waitFor(options?: { state?: 'visible' | 'hidden'; timeout?: number }): Promise<void>; selectOption(value: string): Promise<void>; filter(options: { hasText: string }): Locator; locator(selector: string): Locator; getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): Locator; getByText(text: string | RegExp, options?: { exact?: boolean }): Locator }
-interface BrowserPage { goto(url: string, options?: { waitUntil?: 'domcontentloaded' }): Promise<{ status(): number; url(): string } | null>; reload(options?: { waitUntil?: 'domcontentloaded' }): Promise<{ status(): number; url(): string } | null>; url(): string; on(event: string, handler: (value: unknown) => void): void; getByLabel(name: string, options?: { exact?: boolean }): Locator; getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): Locator; getByText(text: string | RegExp, options?: { exact?: boolean }): Locator; locator(selector: string): { innerText(): Promise<string> }; evaluate<T>(callback: () => T): Promise<Awaited<T>>; evaluate<T, A>(callback: (argument: A) => T, argument: A): Promise<Awaited<T>>; viewportSize(): { width: number; height: number } | null; context(): BrowserContext }
-interface BrowserContext { cookies(url?: string): Promise<{ name: string; httpOnly: boolean; secure: boolean }[]>; close(): Promise<void>; newPage(): Promise<BrowserPage> }
+export interface Locator { fill(value: string): Promise<void>; type(value: string): Promise<void>; press(key: string): Promise<void>; click(): Promise<void>; count(): Promise<number>; waitFor(options?: { state?: 'visible' | 'hidden'; timeout?: number }): Promise<void>; selectOption(value: string): Promise<void>; filter(options: { hasText: string }): Locator; locator(selector: string): Locator; getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): Locator; getByText(text: string | RegExp, options?: { exact?: boolean }): Locator; innerText(): Promise<string> }
+export interface BrowserSocket { url(): string; on(event: 'close', handler: (socket: BrowserSocket) => void): void }
+export interface BrowserRequest { method(): string }
+export interface BrowserResponse { url(): string; status(): number; request(): BrowserRequest }
+export interface BrowserPage { goto(url: string, options?: { waitUntil?: 'domcontentloaded' }): Promise<{ status(): number; url(): string } | null>; reload(options?: { waitUntil?: 'domcontentloaded' }): Promise<{ status(): number; url(): string } | null>; url(): string; on(event: 'websocket', handler: (value: BrowserSocket) => void): void; on(event: 'response', handler: (value: BrowserResponse) => void): void; on(event: string, handler: (value: unknown) => void): void; getByLabel(name: string, options?: { exact?: boolean }): Locator; getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): Locator; getByText(text: string | RegExp, options?: { exact?: boolean }): Locator; locator(selector: string): Locator; evaluate<T>(callback: () => T): Promise<Awaited<T>>; evaluate<T, A>(callback: (argument: A) => T, argument: A): Promise<Awaited<T>>; viewportSize(): { width: number; height: number } | null; setViewportSize(viewport: { width: number; height: number }): Promise<void>; screenshot(options: { path: string; fullPage?: boolean }): Promise<Buffer>; context(): BrowserContext }
+export interface BrowserContext { cookies(url?: string): Promise<{ name: string; value: string; httpOnly: boolean; secure: boolean }[]>; close(): Promise<void>; newPage(): Promise<BrowserPage> }
 interface Browser { connectOverCDP(endpoint: string, options: { timeout: number }): Promise<ConnectedBrowser> }
-interface ConnectedBrowser { newContext(options: { viewport: { width: number; height: number }; ignoreHTTPSErrors: false; serviceWorkers: 'block' }): Promise<BrowserContext>; close(): Promise<void> }
+export interface ConnectedBrowser { newContext(options: { viewport: { width: number; height: number }; ignoreHTTPSErrors: false; serviceWorkers: 'block' }): Promise<BrowserContext>; close(): Promise<void> }
 interface ViteServer { close(): Promise<void>; httpServer: import('node:http').Server | null; listen(): Promise<void> }
 const chromium = (require('playwright') as { chromium: Browser }).chromium;
 
@@ -75,7 +78,7 @@ export const isaSecondHuman: FunctionalTenant = {
 
 interface Identity { tenant_id: string; alias: string; session_id: string; channel: string; roles: string[]; permissions: string[] }
 interface Pki { ca: { key: string; cert: string }; server: { key: string; cert: string }; consoleClient: { key: string; cert: string }; adapterCerts: { key: string; cert: string }[]; identityPath: string }
-interface BrowserRuntime { image: string; imageId: string; owned: boolean; playwrightVersion: string }
+export interface BrowserRuntime { image: string; imageId: string; owned: boolean; playwrightVersion: string }
 interface Fixture { database: TestDatabase; directory: string; browserRuntime: BrowserRuntime; baseUrl: string; gatewayUrl: string; pki: Pki; app: Awaited<ReturnType<typeof buildGateway>>; vite: ViteServer; browser: ConnectedBrowser; browserContainer: string; contexts: BrowserContext[]; adapters: ChildProcess[]; prompts: Record<string, string>; close(): Promise<void> }
 
 function errorStderr(error: unknown): string {
@@ -205,7 +208,7 @@ RUN playwright install --with-deps chromium
   }
 }
 
-async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime): Promise<{ browser: ConnectedBrowser; container: string }> {
+async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime): Promise<{ browser: ConnectedBrowser; container: string; containerId: string }> {
   const { image } = runtime;
   const container = `cauce-ui-browser-${randomUUID()}`;
   try {
@@ -215,6 +218,9 @@ async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime)
     });
     if (collision) throw new Error(`random browser container name collision; refusing to reuse ${container}`);
     await docker(['run', '--rm', '--detach', '--network', 'host', '--name', container, '--label', 'cauce.e2e.owner=ui-functional', '--entrypoint', 'sh', image, '-lc', 'sleep 600']);
+    const identity = (await docker(['inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}}', container])).stdout.trim().split(/\s+/u);
+    const containerId = identity[0];
+    if (!containerId || identity[1] !== 'ui-functional') throw new Error(`isolated browser container identity/owner validation failed: ${container}`);
     const containerCa = `/tmp/${container}-ca.crt`;
     await docker(['cp', caCertPath, `${container}:${containerCa}`]);
     const initializeNss = 'if [ -d "$HOME/.pki/nssdb" ]; then nssdb="$HOME/.pki/nssdb"; else nssdb="${XDG_DATA_HOME:-$HOME/.local/share}/pki/nssdb"; fi; install -d -m 700 "$nssdb" && certutil -N --empty-password -d "sql:$nssdb" && printf "%s\\n" "$nssdb"';
@@ -239,7 +245,7 @@ async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime)
     }
     if (!port) throw new Error('Chrome aislado no publicó un puerto CDP efímero en el plazo previsto');
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${String(port)}`, { timeout: 10_000 });
-    return { browser, container };
+    return { browser, container, containerId };
   } catch (error) {
     try { await removeBrowserContainer(container); }
     catch (cleanupError) { throw new AggregateError([error, cleanupError], 'browser startup failed and its owned container could not be confirmed removed'); }
@@ -248,16 +254,18 @@ async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime)
 }
 
 async function inspectBrowserContainer(container: string): Promise<string | undefined> {
-  try { return (await docker(['inspect', '--format', '{{.State.Status}} {{index .Config.Labels "cauce.e2e.owner"}}', container])).stdout.trim(); }
+  try { return (await docker(['inspect', '--format', '{{.Id}} {{.State.Status}} {{index .Config.Labels "cauce.e2e.owner"}}', container])).stdout.trim(); }
   catch (error) {
     if (/No such (?:object|container)/iu.test(errorStderr(error))) return undefined;
     throw error;
   }
 }
 
-async function removeBrowserContainer(container: string): Promise<void> {
+async function removeBrowserContainer(container: string, expectedId?: string): Promise<void> {
   const inspection = await inspectBrowserContainer(container);
   if (inspection === undefined) return;
+  const [id] = inspection.split(/\s+/u);
+  if (expectedId !== undefined && id !== expectedId) throw new Error(`browser container ${container} changed identity`);
   if (inspection.split(/\s+/u).at(-1) !== 'ui-functional') throw new Error(`browser container ${container} lacks the expected ownership label`);
   let removalError: unknown;
   try { await docker(['rm', '--force', container]); }
@@ -268,6 +276,38 @@ async function removeBrowserContainer(container: string): Promise<void> {
     throw new AggregateError(removalError === undefined ? [inspectError] : [removalError, inspectError], `could not confirm owned browser container ${container} was removed`);
   }
   if (after !== undefined) throw new Error(`owned browser container ${container} remains after cleanup`, { cause: removalError });
+}
+
+export interface TrustedBrowser {
+  browser: ConnectedBrowser;
+  container: string;
+  containerId: string;
+  runtime: BrowserRuntime;
+  close(): Promise<void>;
+}
+
+export async function startTrustedBrowser(caCertPath: string, directory: string): Promise<TrustedBrowser> {
+  const runtime = await prepareBrowserRuntime(directory);
+  try {
+    const isolated = await startIsolatedBrowser(caCertPath, runtime);
+    return {
+      browser: isolated.browser,
+      container: isolated.container,
+      containerId: isolated.containerId,
+      runtime,
+      close: async () => {
+        const errors: Error[] = [];
+        await attemptCleanup(errors, 'CDP browser', () => isolated.browser.close());
+        await attemptCleanup(errors, 'owned browser container', () => removeBrowserContainer(isolated.container, isolated.containerId));
+        await attemptCleanup(errors, 'owned browser image', () => removeBrowserImage(runtime));
+        if (errors.length > 0) throw new AggregateError(errors, 'trusted browser cleanup was incomplete');
+      },
+    };
+  } catch (error) {
+    try { await removeBrowserImage(runtime); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'trusted browser startup failed and its owned image could not be confirmed removed'); }
+    throw error;
+  }
 }
 
 async function attemptCleanup(errors: Error[], label: string, operation: () => Promise<unknown>): Promise<void> {
