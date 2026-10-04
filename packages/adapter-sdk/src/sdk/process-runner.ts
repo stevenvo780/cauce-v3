@@ -176,7 +176,6 @@ export class SpawnCommandRunner {
       const pid = child.pid;
       let stdout: Buffer = Buffer.alloc(0);
       let stderr: Buffer = Buffer.alloc(0);
-      let stderrBytes = 0;
       const witness = request.startWitness;
       let harnessStarted: boolean | undefined = witness === undefined ? undefined : false;
       const noteHarnessStart = (): void => {
@@ -296,9 +295,8 @@ export class SpawnCommandRunner {
         if (witness?.kind === "stdout-first-byte" && chunk.byteLength > 0) noteHarnessStart();
       });
       child.stderr.on("data", (chunk: Buffer) => {
-        stderrBytes += chunk.byteLength;
-        if (phaseFrames !== undefined && stderrBytes > this.maxOutputBytes) terminate("output");
         const ordinary = phaseFrames?.push(chunk) ?? chunk;
+        if (phaseFrames !== undefined && phaseFrames.diagnosticBytes > this.maxOutputBytes) terminate("output");
         if (phaseFrames === undefined || ordinary.byteLength > 0) noteProgress();
         stderr = collect(stderr, ordinary);
         // Search the marker over the accumulated stderr in case it arrives split across reads.

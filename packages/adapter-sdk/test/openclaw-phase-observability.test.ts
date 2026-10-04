@@ -15,6 +15,7 @@ import { delivery } from './engine-fixtures.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { SpawnCommandRunner } from '../src/sdk/process-runner.js';
+import { ProcessExecutionError } from '../src/sdk/errors.js';
 import { OpenClawPhaseFrames, type OpenClawPhaseObservation } from '../src/sdk/openclaw-phases.js';
 import { FRAME, phaseRequest, NATIVE_OUTPUT, nativeModules } from './openclaw-phase-observability.fixtures.js';
 
@@ -43,6 +44,28 @@ test('mixed stderr preserves ordinary bytes and strips only reserved frames', as
   const result = await new SpawnCommandRunner().run(phaseRequest('mixed'));
   assert.equal(result.stderr, 'ordinary\ntail\n');
 });
+test('diagnostics do not consume the ordinary stderr budget', async () => {
+  const ordinary = 'x'.repeat(1000) + '\n';
+  const frame = FRAME + JSON.stringify({ phase: 'agent_cli_started', elapsedMs: 1, utc: new Date().toISOString() }) + '\n';
+  const output = frame + ordinary + frame;
+  assert.ok(Buffer.byteLength(output) > 1024);
+  const result = await new SpawnCommandRunner({ maxOutputBytes: 1024 }).run(phaseRequest('mixed', {
+    args: ['--eval', `process.stderr.write(${JSON.stringify(output)});`], timeoutKind: 'hard', timeoutMs: 2000,
+  }));
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stderr, ordinary);
+  assert.equal(result.timedOut, false);
+});
+for (const mode of ['ordinary', 'diagnostic', 'unfinished'] as const) {
+  test(`${mode} stderr retains its independent output bound`, async () => {
+    const frame = FRAME + JSON.stringify({ phase: 'agent_cli_started', elapsedMs: 1, utc: new Date().toISOString() }) + '\n';
+    const output = mode === 'ordinary' ? 'x'.repeat(1025)
+      : mode === 'diagnostic' ? frame.repeat(20) : FRAME + 'x'.repeat(1025);
+    await assert.rejects(new SpawnCommandRunner({ maxOutputBytes: 1024, killGraceMs: 20, orphanPipeGraceMs: 20 }).run(phaseRequest('mixed', {
+      args: ['--eval', `process.stderr.write(${JSON.stringify(output)});`], timeoutKind: 'hard', timeoutMs: 2000,
+    })), (error: unknown) => error instanceof ProcessExecutionError && error.code === 'OUTPUT_LIMIT_AMBIGUOUS');
+  });
+}
 test('undeclared bridge and other harnesses retain their stderr contract', async () => {
   for (const harness of ['openclaw', 'fake'] as const) {
     const request = phaseRequest('mixed', { harness });
