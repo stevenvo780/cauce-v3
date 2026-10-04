@@ -1,8 +1,9 @@
+import { oauthLogMessage, oauthRequestLog } from './oauth-request-logging.js';
 import type { ContextRepositoryBinding } from './console/context-repository/binding.js';
 import { randomUUID } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { ServerOptions as HttpsServerOptions } from 'node:https';
 import websocket from '@fastify/websocket';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import {
   type ClaimedAck, type ConfigMutation, type ConsolePublishIntentPrepareResult,
   type DeliveryEnvelope, type OutboxAckWithConnection, type Tenant,
@@ -182,7 +183,7 @@ export interface GatewayOptions {
   https?: HttpsServerOptions;
   humanMcp?: HumanMcpConfiguration;
   exposeHealthRoutes?: boolean;
-  logger?: boolean;
+  logger?: FastifyServerOptions['logger'];
   blobs?: BlobStoreOptions;
 }
 
@@ -201,6 +202,10 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   if (process.env.NODE_ENV === 'production' && options.authProvider.mode !== 'production') {
     throw new Error('development/test AuthProvider is forbidden in production');
   }
+  if (options.humanMcp?.oauth !== undefined && (!(options.authProvider instanceof PasswordAuthProvider)
+      || options.humanMcp.oauth.passwordAuth !== options.authProvider)) {
+    throw new Error('Local OAuth requires the configured password provider');
+  }
   const ackDeadlineMs = validateAckDeadlineMs(options.ackDeadlineMs ?? DEFAULT_ACK_DEADLINE_MS);
   const deliveryLeaseCap = options.deliveryLeaseCap ?? {};
   const admission = validateDeliveryAdmission(options.admission ?? {
@@ -209,7 +214,11 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   });
   const maxQueryLimit = admission.maxInflightDeliveries + admission.humanReservedDeliveries;
   const app = Fastify({
-    logger: options.logger ?? false,
+    logger: options.logger ? { ...(typeof options.logger === 'object' ? options.logger : {}),
+      serializers: { ...(typeof options.logger === 'object' ? options.logger.serializers : {}), req: oauthRequestLog },
+      hooks: { logMethod(args, method) {
+        Reflect.apply(method, this, args.map(value => typeof value === 'string' ? oauthLogMessage(value) : value));
+      } } } : false,
     ...humanMcpListenerOptions(options.humanMcp, options.https),
   });
   const repository: GatewayRepository = options.repository ?? new CauceRepository(options.pool);
