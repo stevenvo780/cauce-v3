@@ -117,43 +117,27 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra la consola de `fc30f85e`,
-árbol `e61811f259c2a26cd56a3ae1c991f88ea4a82d27`, fuente
-`sha256:b2a1d2fa7c303ec493b2ef48b8a7eb13ead0b1e62945763c642163ec5dea7805` e imagen
-`sha256:d22fe316bec2c69fef2f0a98f08c75099533fe397ea99ae1459f43dd70d3e626`.
-La ventana dejó 9/9 servicios sanos, ocho conservados, HTML, 86 assets y seis recursos PWA
-coincidentes, y backup estricto PASS. Los cinco servicios runtime también usan `fc30f85e`, sin DDL,
-con fuente `sha256:ce2a02df453a829f9378894ee855df2a8b1026af5832a36c543388bd966dc551` e imagen
-`sha256:d0d44532cbe07a9afd2ea77b8472bf299270b92a7065684721ae78ea664bfea6`.
-La sesión pública está verificada y muestra catorce agentes conectados. Evidencia central:
-`/var/log/cauce-v3-release/wave2-2408c138/{runtime,console}/`.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra la consola `2d587daa`, árbol
+`54982b6b6ae8b5b9e09e4d6335c5e6fbca28eac6`, fuente
+`sha256:372bc05a4f16aa0aa57fb462e4edf304b90af12c38c05dc7feb3398b63bf4c5d` e imagen
+`sha256:4dda3420c270159b7c010bbad4acf4df77cf40ae76441deaf7a0ec1e7cbd2ff6`. La verificación
+independiente confirmó 9/9 servicios sanos, ocho contenedores preservados, HTML, 87 assets y seis
+recursos PWA coincidentes con la imagen montada, y once gates PASS para el SHA exacto. El navegador
+autenticado no se probó en esa verificación. Evidencia: `/tmp/cauce-programa-20261004/root-release-2d587daa/live-independent-verification.json` y
+`/home/stev/cauce-release-qa/wave4-2d587daa/gate-evidence-complete.json`.
 
-El nuevo SDK usa release `bus-v3-20261003-unified-fc30f85e`, digest
-`sha256:26fb3280f46474dbde9195547e4ff558eac0ac09c2305b3d51d73ac40f981a60`.
-Los trece adaptadores nuevos están activos y pasaron comprobación de proceso real, digest completo
-y canary mTLS con ACK final: Argos, Atlas, Gaia, Hades, Hegel, Iza, Janus, Jarvis, Kratos, Salva,
-Sócrates, Zeus y Kant. Argos superó sus dos ventanas individuales: 4202,821 segundos y 211
-verificaciones. La observación conjunta de los trece comenzó a las 07:34:25 UTC y terminó
-en rojo tras 1564,557 segundos y 1001 verificaciones, antes de completar los 4200,2 segundos
-requeridos. Los trece procesos conservaron su identidad; una ronda de medición superó
-el límite de treinta segundos. La aceptación global exige una nueva ejecución completa,
-con el mismo umbral y la misma ventana. El fallo se conserva en el registro privado
-`/root/cauce-v3-release-fc30-sdk/fleet-two-windows-r5-r1.json`. La nueva observación R6
-comenzó a las 08:23:07 UTC, con el control de cadencia revisado independientemente;
-su registro está en `/root/cauce-v3-release-fc30-sdk/fleet-two-windows-r6-r1.json`.
-Sólo un resultado real `passed` con `fleetAccepted=true` y los 4200,2 segundos completos
-acredita las dos ventanas de los trece, sin trasladar el crédito del canario individual.
-Los trece canaries y watchdogs del rollout anterior son evidencia histórica, sin inferencia LLM;
-no acreditan aceptación global del nuevo bundle. Astra está excluida del rollout por instrucción
-del dueño y no recibió mutaciones. El endpoint MCP público permanece inactivo, pendiente de OAuth
-e identidad dedicada del gateway; no se activa con el despliegue central. Teléfono real pendiente.
+El runtime sigue en `fc30f85e`, imagen
+`sha256:d0d44532cbe07a9afd2ea77b8472bf299270b92a7065684721ae78ea664bfea6`, fuente
+`sha256:ce2a02df453a829f9378894ee855df2a8b1026af5832a36c543388bd966dc551`, sin DDL y compatible
+hasta `043_blob_tenant_entitlements.sql`. La migración `044` no está promovida. El SDK de PR #78
+tampoco está promovido ni se acredita su adopción por los agentes. La nueva consola no cambia por sí
+sola el runtime ni el estado de los adaptadores.
 
-El SHA central publicado pasó los once gates de tipos, lint, unitarios, matriz completa,
-dependencias, Ops, layout, empaquetado runtime, Testcontainers, bundle SDK y cobertura.
-La matriz completa terminó con 11/11 suites PASS, cero FAIL y sin suites contables omitidas;
-los logs de cada gate y sus metadatos de SHA están en `/tmp/cauce-release-wave3-fc30f85e/`.
-Binding Git permanece apagado. Las mejoras de la siguiente integración siguen pendientes de
-validación y promoción; la existencia de sus fuentes no las acredita como desplegadas.
+La ruta pública `/mcp` sigue respondiendo 404; el servicio MCP no está disponible para clientes
+públicos. La fuente, sus pruebas y el despliegue de la consola no equivalen a publicar ese endpoint.
+La aceptación global de flota y la verificación autenticada en navegador continúan pendientes. Las
+mejoras de las siguientes integraciones requieren sus propios gates y una promoción; incluir sus
+fuentes no las despliega.
 
 Como evidencia histórica, en una verificación anterior los quince alias completaron una entrega
 real al primer intento y se reiniciaron sus adaptadores y sesiones nativas. La shell y el visor web se probaron en los quince;
