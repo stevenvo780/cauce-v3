@@ -19,5 +19,6 @@ it('Docs explica la cola y la devolución del teclado sin exigir una justificaci
   expect(screen.getByRole('heading', { name: 'Ayuda y documentación' })).toBeInTheDocument();
   expect(document.getElementById('terminal')).toHaveTextContent('no hace falta escribir una justificación');
   expect(document.getElementById('terminal')).toHaveTextContent('cambiar de agente');
-  expect(document.getElementById('terminal')).toHaveTextContent('mensajes del bus quedan en cola');
+  expect(document.getElementById('terminal')).toHaveTextContent('mensajes nuevos del bus quedan en cola');
+  expect(document.getElementById('terminal')).toHaveTextContent('un turno que ya estaba en marcha puede terminar');
 });
