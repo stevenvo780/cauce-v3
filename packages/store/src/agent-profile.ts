@@ -5,6 +5,8 @@ import {
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
+import { agentContextReconcileLockKey } from './repository/agent-context-lock.js';
+import { assertAgentContextAdmissionAllowed } from './repository/agent-context-quarantine.js';
 import {
   readProfileSourceReceipt, validProfileSourceGuard,
   type AgentProfileSourceGuard, type AgentProfileSourceReceipt,
@@ -149,6 +151,17 @@ export class AgentProfileRepository {
     actor: AgentProfileAuditActor,
     source?: AgentProfileSourceGuard,
   ): Promise<PersistedAgentProfile> {
+    return withTransaction(this.pool, (client) =>
+      this.replaceInTransaction(client, input, expectedRevision, actor, source));
+  }
+
+  async replaceInTransaction(
+    client: DatabaseClient,
+    input: AgentProfile | Record<string, unknown>,
+    expectedRevision: number | null,
+    actor: AgentProfileAuditActor,
+    source?: AgentProfileSourceGuard,
+  ): Promise<PersistedAgentProfile> {
     const profile = normalizeAgentProfile(input as Record<string, unknown>);
     if (expectedRevision !== null
       && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) {
@@ -157,70 +170,71 @@ export class AgentProfileRepository {
     if (source !== undefined && (expectedRevision === null || !validProfileSourceGuard(source))) {
       throw new AgentProfileMutationError('conflict', 'profile source guard is invalid');
     }
-    return withTransaction(this.pool, async (client) => {
-      await this.assertEnabled(client, profile.tenant_id, profile.alias);
-      if (source !== undefined) {
-        const locked = await client.query<ProfileRow>(
-          `SELECT ${profileColumns} FROM agent_profiles WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`,
-          [profile.tenant_id, profile.alias],
-        );
-        const current = locked.rows[0];
-        if (current === undefined) throw new AgentProfileMutationError('conflict', 'profile source target disappeared');
-        const receipt = await readProfileSourceReceipt(client, profile.tenant_id, profile.alias, actor, source.application_id);
-        if (receipt !== undefined) return { ...stored(current), source_receipt: receipt };
-        const journal = await client.query<{ id: string; revision: string; operation: string }>(
-          `SELECT id::text,revision::text,operation FROM agent_profile_revisions
-           WHERE tenant_id=$1 AND alias=$2 ORDER BY id DESC LIMIT 1`,
-          [profile.tenant_id, profile.alias],
-        );
-        const latest = journal.rows[0];
-        if (latest?.id !== source.expected_journal_id || Number(latest.revision) !== expectedRevision
-          || (latest.operation !== 'insert' && latest.operation !== 'update')) {
-          throw new AgentProfileMutationError('conflict', 'profile source lifecycle changed');
-        }
+    await client.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',
+      [agentContextReconcileLockKey(profile.tenant_id, profile.alias)]);
+    await assertAgentContextAdmissionAllowed(client, profile.tenant_id, profile.alias);
+    await this.assertEnabled(client, profile.tenant_id, profile.alias);
+    if (source !== undefined) {
+      const locked = await client.query<ProfileRow>(
+        `SELECT ${profileColumns} FROM agent_profiles WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`,
+        [profile.tenant_id, profile.alias],
+      );
+      const current = locked.rows[0];
+      if (current === undefined) throw new AgentProfileMutationError('conflict', 'profile source target disappeared');
+      const receipt = await readProfileSourceReceipt(client, profile.tenant_id, profile.alias, actor, source.application_id);
+      if (receipt !== undefined) return { ...stored(current), source_receipt: receipt };
+      const journal = await client.query<{ id: string; revision: string; operation: string }>(
+        `SELECT id::text,revision::text,operation FROM agent_profile_revisions
+         WHERE tenant_id=$1 AND alias=$2 ORDER BY id DESC LIMIT 1`,
+        [profile.tenant_id, profile.alias],
+      );
+      const latest = journal.rows[0];
+      if (latest?.id !== source.expected_journal_id || Number(latest.revision) !== expectedRevision
+        || (latest.operation !== 'insert' && latest.operation !== 'update')) {
+        throw new AgentProfileMutationError('conflict', 'profile source lifecycle changed');
       }
-      const values = [
-        profile.tenant_id, profile.alias, profile.purpose, profile.role_summary,
-        profile.human_brief, [...profile.responsibilities], [...profile.restrictions],
-        [...profile.tools], [...profile.operating_rules],
-      ];
-      const result = expectedRevision === null
-        ? await client.query<ProfileRow>(
-            `INSERT INTO agent_profiles
-               (tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,tools,operating_rules)
-             VALUES ($1,$2,$3,$4,$5,$6::text[],$7::text[],$8::text[],$9::text[])
-             ON CONFLICT (tenant_id,alias) DO NOTHING
-             RETURNING ${profileColumns}`,
-            values,
-          )
-        : await client.query<ProfileRow>(
-            `UPDATE agent_profiles SET
-               purpose=$3,role_summary=$4,human_brief=$5,responsibilities=$6::text[],
-               restrictions=$7::text[],tools=$8::text[],operating_rules=$9::text[],updated_at=now()
-             WHERE tenant_id=$1 AND alias=$2 AND revision=$10
-             RETURNING ${profileColumns}`,
-            [...values, expectedRevision],
-          );
-      const row = result.rows[0];
-      if (row === undefined) {
-        throw new AgentProfileMutationError(
-          'conflict',
-          expectedRevision === null
-            ? 'agent profile already exists'
-            : `agent profile revision changed from ${String(expectedRevision)}`,
+    }
+    const values = [
+      profile.tenant_id, profile.alias, profile.purpose, profile.role_summary,
+      profile.human_brief, [...profile.responsibilities], [...profile.restrictions],
+      [...profile.tools], [...profile.operating_rules],
+    ];
+    const result = expectedRevision === null
+      ? await client.query<ProfileRow>(
+          `INSERT INTO agent_profiles
+             (tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,tools,operating_rules)
+           VALUES ($1,$2,$3,$4,$5,$6::text[],$7::text[],$8::text[],$9::text[])
+           ON CONFLICT (tenant_id,alias) DO NOTHING
+           RETURNING ${profileColumns}`,
+          values,
+        )
+      : await client.query<ProfileRow>(
+          `UPDATE agent_profiles SET
+             purpose=$3,role_summary=$4,human_brief=$5,responsibilities=$6::text[],
+             restrictions=$7::text[],tools=$8::text[],operating_rules=$9::text[],updated_at=now()
+           WHERE tenant_id=$1 AND alias=$2 AND revision=$10
+           RETURNING ${profileColumns}`,
+          [...values, expectedRevision],
         );
-      }
-      const state = stored(row);
-      await this.audit(client, actor, 'agent_profile.desired', {
-        target_tenant: profile.tenant_id,
-        target_alias: profile.alias,
-        expected_revision: expectedRevision,
-        desired_revision: state.revision,
-        applied_revision: state.applied_revision,
-        ...(source === undefined ? {} : { context_source: source }),
-      });
-      return state;
+    const row = result.rows[0];
+    if (row === undefined) {
+      throw new AgentProfileMutationError(
+        'conflict',
+        expectedRevision === null
+          ? 'agent profile already exists'
+          : `agent profile revision changed from ${String(expectedRevision)}`,
+      );
+    }
+    const state = stored(row);
+    await this.audit(client, actor, 'agent_profile.desired', {
+      target_tenant: profile.tenant_id,
+      target_alias: profile.alias,
+      expected_revision: expectedRevision,
+      desired_revision: state.revision,
+      applied_revision: state.applied_revision,
+      ...(source === undefined ? {} : { context_source: source }),
     });
+    return state;
   }
 
   readSourceReceipt(

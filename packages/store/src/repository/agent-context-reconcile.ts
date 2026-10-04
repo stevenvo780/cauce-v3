@@ -1,10 +1,11 @@
 import type { ProfileRuntimeContract, Tenant } from '@cauce/protocol';
-import { ProfileRuntimeContractSchema } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from '../db.js';
 import { withTransaction } from '../db.js';
 import { canonicallyEqual } from './config.js';
 import { StoreError } from './errors.js';
 import { agentContextReconcileLockKey } from './agent-context-lock.js';
+import { assertAgentContextAdmissionAllowed, canonicalProfileRuntimeContract } from './agent-context-quarantine.js';
+export { canonicalProfileRuntimeContract } from './agent-context-quarantine.js';
 
 export interface AgentContextReconcileDocumentRevision {
   readonly path: string;
@@ -57,18 +58,6 @@ export interface AgentContextReconcileRuntimeContract {
     readonly path: string;
     readonly sha: string;
   }[];
-}
-
-export function canonicalProfileRuntimeContract(
-  value: unknown,
-): ProfileRuntimeContract | undefined {
-  const parsed = ProfileRuntimeContractSchema.safeParse(value);
-  if (!parsed.success) return undefined;
-  return {
-    ...parsed.data,
-    documents: [...parsed.data.documents].sort((left, right) =>
-      left.name.localeCompare(right.name) || left.path.localeCompare(right.path)),
-  };
 }
 
 async function lockReconcileContract(
@@ -132,7 +121,7 @@ function exactDocumentIdentity(
     });
 }
 
-async function persistReconcileResult<Value>(
+export async function persistAgentContextReconcileInTransaction<Value>(
   client: DatabaseClient,
   input: AgentContextFenceInput<Value>,
   expected: ProfileRuntimeContract | undefined,
@@ -202,10 +191,11 @@ export async function reconcileAgentContextWithFence<Value>(
       await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [
         agentContextReconcileLockKey(input.tenantId, input.alias),
       ]);
+      await assertAgentContextAdmissionAllowed(client, input.tenantId, input.alias);
       await lockReconcileContract(client, input, expected);
       effectState.started = true;
       const effect = await input.apply();
-      await persistReconcileResult(client, input, expected, effect);
+      await persistAgentContextReconcileInTransaction(client, input, expected, effect);
       return effect.value;
     });
     return { state: 'committed', value };

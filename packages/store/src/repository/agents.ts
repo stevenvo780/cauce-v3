@@ -1,5 +1,9 @@
 import type { Ack, ProfileRuntimeAdoptionEvidence, ProfileRuntimeContract, Tenant } from '@cauce/protocol';
 import { PROTOCOL_VERSION, SYSTEM_PRINCIPAL_ALIASES } from '@cauce/protocol';
+import {
+  reserveAgentContextWrite, readAgentContextWrite, authorizeAgentContextDispatch, resolveAgentContextWrite,
+  type ReserveContextWriteInput, type ContextWriteDescriptor, type ContextWriterQuiescence,
+} from './agent-context-quarantine.js';
 import type { DatabaseClient } from '../db.js';
 import { withTransaction } from '../db.js';
 import {
@@ -18,6 +22,24 @@ export type ProfileRuntimeAdoptionAck = ProfileRuntimeAdoptionEvidence & {
 };
 
 export abstract class AgentsRepository extends DeliveryAcksRepository {
+
+  async reserveContextWrite(input: ReserveContextWriteInput): Promise<ContextWriteDescriptor> {
+    return reserveAgentContextWrite(this.pool, input);
+  }
+  async readContextWrite(tenantId: Tenant, alias: string, operationId: string): Promise<ContextWriteDescriptor | undefined> {
+    return readAgentContextWrite(this.pool, tenantId, alias, operationId);
+  }
+  async authorizeContextWriteDispatch(descriptor: ContextWriteDescriptor, signal?: AbortSignal): Promise<ContextWriteDescriptor> {
+    return authorizeAgentContextDispatch(this.pool, descriptor, signal);
+  }
+  async resolveContextWrite(
+    descriptor: ContextWriteDescriptor,
+    authenticatedProof: (client: DatabaseClient) => Promise<ContextWriterQuiescence>,
+    persistTarget: (client: DatabaseClient, proof: ContextWriterQuiescence) => Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<'target' | 'old'> {
+    return resolveAgentContextWrite(this.pool, descriptor, authenticatedProof, persistTarget, signal);
+  }
 
   async reconcileAgentContextRuntime<Value>(
     input: AgentContextFenceInput<Value>,
