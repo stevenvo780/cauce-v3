@@ -21,7 +21,6 @@ interface DurablePublishOutcome {
   journalStatus: 'confirmed' | 'pending' | 'rejected';
 }
 
-/** Only outcomes whose effect may already have been confirmed admit an immediate exact retry. */
 function uncertainPublishOutcome(cause: unknown): boolean {
   if (!(cause instanceof ApiError)) return true;
   return cause.code === 'timeout'
@@ -70,12 +69,14 @@ export async function publishDurably({
   publisherSubject,
   expectedDeliveries,
   reconcile,
+  onAccepted,
 }: {
   api: DurablePublishApi;
   input: PublishIntentSemantics;
   publisherSubject: string | null | undefined;
   expectedDeliveries: number;
   reconcile: () => void;
+  onAccepted?: (outcome: Pick<DurablePublishOutcome, 'receipt' | 'reconciled'>) => void;
 }): Promise<DurablePublishOutcome> {
   const intentNonce = randomUuid();
   const prepareInput = { ...input, intent_nonce: intentNonce };
@@ -157,6 +158,12 @@ export async function publishDurably({
         );
       }
     }
+  }
+
+  try {
+    onAccepted?.({ receipt, reconciled });
+  } catch {
+    // A presentation callback cannot undo publication or prevent durable confirmation.
   }
 
   let journalStatus: DurablePublishOutcome['journalStatus'] = 'pending';

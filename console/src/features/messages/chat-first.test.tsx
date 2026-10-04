@@ -1,6 +1,8 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
+import { ApiError, CauceApi } from '../../api/client';
+import { ConversationDrafts, ConversationDraftStore } from './conversation-drafts';
 import { ApiProvider } from '../../api/context';
 import type { ComponentProps } from 'react';
 import { mockMessages, mockStatus, topology } from '../../mocks/data';
@@ -142,10 +144,10 @@ it.each([
   expect(composer).toHaveFocus();
 });
 
-it('no promete detalles para un mensaje sin identificador', () => {
+it('no promete detalles para un mensaje sin identificador', async () => {
   const input = props();
   const items = input.page?.items?.map((item) => ({ ...item, message_id: undefined }));
-  renderWithApi(<ConversationPane {...input} page={{ ...input.page, items }} />);
+  await act(async () => { renderWithApi(<ConversationPane {...input} page={{ ...input.page, items }} />); });
   expect(screen.getByRole('button', { name: /Detalle no disponible: mensaje sin identificador/ })).toBeDisabled();
 });
 
@@ -238,4 +240,238 @@ it('actualiza el recibo sin estado con el terminal del feed y relee una vez en g
   expect(within(reply).getByRole('button', { name: 'Releer respuesta' })).toBeVisible();
   await act(async () => { await new Promise((resolve) => { window.setTimeout(resolve, 2_600); }); });
   expect(getMessage).toHaveBeenCalledTimes(2);
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (cause: Error) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+function pendingPublish() {
+  const input = { ...props(), publisherSubject: 'Steven:operator', publisherHumanSubject: `human:${'a'.repeat(64)}` };
+  const receipt = {
+    message_id: '10000000-0000-4000-8000-000000000001', delivery_ids: ['20000000-0000-4000-8000-000000000002'], duplicate: false,
+    request_id: '30000000-0000-4000-8000-000000000003', trace_id: 'trace-confirm', idempotency_key: 'intent-confirm',
+    tenant_id: 'Steven', actor_alias: 'operator', request_hash: 'a'.repeat(64), causal_hash: 'b'.repeat(64),
+  };
+  const confirmation = { version: 1 as const, confirmed: true as const, idempotency_key: receipt.idempotency_key, message_id: receipt.message_id, causal_hash: receipt.causal_hash };
+  const pending = deferred<typeof confirmation>();
+  const prepare = vi.spyOn(testApi, 'preparePublishIntent').mockResolvedValue({ version: 1, state: 'prepared', idempotency_key: receipt.idempotency_key, receipt: null });
+  const publish = vi.spyOn(testApi, 'publishMessage').mockResolvedValue(receipt);
+  const confirm = vi.spyOn(testApi, 'confirmPublishIntent').mockReturnValue(pending.promise);
+  const read = vi.spyOn(testApi, 'getMessage').mockResolvedValue({
+    message_id: receipt.message_id, chain_open: false,
+    deliveries: [{ delivery_id: receipt.delivery_ids[0], tenant_id: input.agent.tenantId, alias: input.agent.alias, status: 'done', reply: 'Pong antes de confirm' }],
+  });
+  const page = { items: [{
+    message_id: receipt.message_id, tenant_id: 'Steven', actor_alias: 'operator', room_id: 'grp.steven',
+    author: { kind: 'human' as const, subject_id: input.publisherHumanSubject, display_name: 'Steven' },
+    body_preview: 'Ping', created_at: '2026-10-03T17:00:00Z',
+    deliveries: [{ delivery_id: receipt.delivery_ids[0], recipient_tenant: input.agent.tenantId, recipient_alias: input.agent.alias, status: 'done' as const }],
+  }] };
+  return { input, receipt, confirmation, pending, prepare, publish, confirm, read, page };
+}
+
+it('muestra aceptación y empieza a leer antes de confirm, con doble submit bloqueado y un solo refresh', async () => {
+  const f = pendingPublish();
+  renderWithApi(<ConversationPane {...f.input} page={{ items: [] }} />);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Ping' } });
+  const form = screen.getByRole('textbox').closest('form');
+  if (!form) throw new Error('Missing composer');
+  act(() => { fireEvent.submit(form); fireEvent.submit(form); });
+  await waitFor(() => { expect(f.read).toHaveBeenCalledWith(f.receipt.message_id); });
+  expect(f.prepare).toHaveBeenCalledOnce();
+  expect(f.publish).toHaveBeenCalledOnce();
+  expect(f.confirm).toHaveBeenCalledOnce();
+  expect(f.input.onReload).toHaveBeenCalledOnce();
+  expect(screen.getByText(/Mensaje aceptado para entrega ·/)).toHaveTextContent('Confirmación pendiente');
+  expect(screen.getByRole('button', { name: 'Confirmando…' })).toBeDisabled();
+  expect(screen.getByRole('textbox')).toHaveValue('');
+  expect(screen.getByRole('textbox')).toBeDisabled();
+  fireEvent.submit(form);
+  expect(f.prepare).toHaveBeenCalledOnce();
+  await act(async () => { f.pending.resolve(f.confirmation); });
+  expect(screen.getByRole('button', { name: 'Enviar' })).toBeDisabled();
+  expect(screen.getByRole('textbox')).toBeEnabled();
+  expect(f.input.onReload).toHaveBeenCalledOnce();
+});
+
+it('muestra la respuesta preconfirm en otra burbuja con el agente correcto', async () => {
+  const f = pendingPublish();
+  const view = renderWithApi(<ConversationPane {...f.input} page={{ items: [] }} />);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Ping' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+  await waitFor(() => { expect(f.read).toHaveBeenCalledOnce(); });
+  view.rerender(<ApiProvider api={testApi}><ConversationPane {...f.input} page={f.page} /></ApiProvider>);
+  const human = screen.getByText('Ping').closest('article');
+  const response = await screen.findByRole('article', { name: `Mensaje de ${f.input.agent.alias}` });
+  expect(human).toHaveClass('input');
+  expect(human).toHaveTextContent('Steven');
+  expect(human).not.toHaveTextContent('Pong antes de confirm');
+  expect(response).toHaveClass('output');
+  expect(response).toHaveTextContent('Pong antes de confirm');
+  expect(response).not.toHaveTextContent('Ping');
+  expect(response.parentElement).toBe(human?.parentElement);
+  expect(screen.getByRole('button', { name: 'Confirmando…' })).toBeDisabled();
+  await act(async () => { f.pending.resolve(f.confirmation); });
+});
+
+it.each([
+  { code: 'timeout', status: 0, text: 'Confirmación incierta', calls: 2 },
+  { code: undefined, status: 409, text: 'Confirmación rechazada', calls: 1 },
+])('conserva el recibo aceptado con $text sin otro publish', async ({ code, status, text, calls }) => {
+  const f = pendingPublish();
+  f.confirm.mockRejectedValue(new ApiError('confirm unavailable', status, code));
+  renderWithApi(<ConversationPane {...f.input} page={{ items: [] }} />);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Ping' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+  expect(await screen.findByText(new RegExp(text))).toHaveTextContent('Aceptado por el control plane');
+  expect(f.publish).toHaveBeenCalledOnce();
+  expect(f.confirm).toHaveBeenCalledTimes(calls);
+  expect(f.input.onReload).toHaveBeenCalledOnce();
+  expect(f.read).toHaveBeenCalledWith(f.receipt.message_id);
+  expect(screen.getByRole('textbox')).toHaveValue('');
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it.each(['identidad', 'conversación'])('cerca el recibo tardío tras cambiar de %s', async (change) => {
+  const f = pendingPublish();
+  const publish = deferred<typeof f.receipt>();
+  f.publish.mockReturnValue(publish.promise);
+  const view = renderWithApi(<ConversationPane {...f.input} page={{ items: [] }} />);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Ping' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+  await waitFor(() => { expect(f.publish).toHaveBeenCalledOnce(); });
+  const next = change === 'identidad'
+    ? { ...f.input, publisherSubject: 'Steven:other', publisherHumanSubject: `human:${'b'.repeat(64)}` }
+    : { ...f.input, agent: { ...f.input.agent, id: 'other:agent', tenantId: 'other', alias: 'agent' } };
+  view.rerender(<ApiProvider api={testApi}><ConversationPane {...next} page={{ items: [] }} /></ApiProvider>);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Nuevo borrador' } });
+  await act(async () => { publish.resolve(f.receipt); });
+  expect(f.confirm).toHaveBeenCalledOnce();
+  expect(f.read).not.toHaveBeenCalled();
+  expect(f.input.onReload).not.toHaveBeenCalled();
+  expect(screen.queryByText(/Mensaje aceptado para entrega ·/)).toBeNull();
+  expect(screen.getByRole('textbox')).toHaveValue('Nuevo borrador');
+  await act(async () => { f.pending.resolve(f.confirmation); });
+  expect(screen.getByRole('textbox')).toHaveValue('Nuevo borrador');
+  expect(screen.queryByText('Mensaje aceptado para entrega. La aceptación no confirma la ejecución.')).toBeNull();
+});
+
+it('conserva el bloqueo al cerrar y reabrir mientras confirm está pendiente', async () => {
+  const f = pendingPublish();
+  const store = new ConversationDraftStore();
+  const pane = (open: boolean) => <ApiProvider api={testApi}><ConversationDrafts.Provider value={store}>
+    {open ? <ConversationPane {...f.input} page={{ items: [] }} /> : null}
+  </ConversationDrafts.Provider></ApiProvider>;
+  const view = renderWithApi(pane(true));
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Ping' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+  await waitFor(() => { expect(f.confirm).toHaveBeenCalledOnce(); });
+  view.rerender(pane(false));
+  view.rerender(pane(true));
+  expect(screen.getByRole('button', { name: 'Confirmando…' })).toBeDisabled();
+  const form = screen.getByRole('textbox').closest('form');
+  if (!form) throw new Error('Missing composer');
+  fireEvent.submit(form);
+  expect(f.publish).toHaveBeenCalledOnce();
+  await act(async () => { f.pending.resolve(f.confirmation); });
+  expect(screen.getByRole('textbox')).toBeEnabled();
+  expect(f.input.onReload).toHaveBeenCalledOnce();
+});
+
+it('aísla un cambio de API aunque conserve humano y destinatario', async () => {
+  const f = pendingPublish();
+  const publish = deferred<typeof f.receipt>();
+  f.publish.mockReturnValue(publish.promise);
+  const store = new ConversationDraftStore();
+  const pane = (api: CauceApi) => <ApiProvider api={api}><ConversationDrafts.Provider value={store}>
+    <ConversationPane {...f.input} page={{ items: [] }} />
+  </ConversationDrafts.Provider></ApiProvider>;
+  const view = renderWithApi(pane(testApi));
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Ping' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+  await waitFor(() => { expect(f.publish).toHaveBeenCalledOnce(); });
+  const nextApi = new CauceApi('http://another-api.invalid');
+  const nextRead = vi.spyOn(nextApi, 'getMessage');
+  view.rerender(pane(nextApi));
+  expect(screen.getByRole('textbox')).toBeEnabled();
+  expect(screen.getByRole('textbox')).toHaveValue('');
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Borrador de la nueva API' } });
+  await act(async () => { publish.resolve(f.receipt); f.pending.resolve(f.confirmation); });
+  expect(f.confirm).toHaveBeenCalledOnce();
+  expect(nextRead).not.toHaveBeenCalled();
+  expect(f.read).not.toHaveBeenCalled();
+  expect(f.input.onReload).not.toHaveBeenCalled();
+  expect(screen.getByRole('textbox')).toHaveValue('Borrador de la nueva API');
+  expect(screen.queryByText(/Mensaje aceptado para entrega/)).toBeNull();
+});
+
+it.each(['identidad', 'API'])('no conserva la raíz aceptada bajo otra %s mientras termina confirm', async (change) => {
+  const f = pendingPublish();
+  const view = renderWithApi(<ConversationPane {...f.input} page={{ items: [] }} />);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Ping' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+  await waitFor(() => { expect(f.read).toHaveBeenCalledOnce(); });
+  const api = change === 'API' ? new CauceApi('http://another-api.invalid') : testApi;
+  const nextRead = api === testApi ? f.read : vi.spyOn(api, 'getMessage');
+  nextRead.mockClear();
+  const input = change === 'identidad' ? { ...f.input, publisherHumanSubject: `human:${'b'.repeat(64)}` } : f.input;
+  view.rerender(<ApiProvider api={api}><ConversationPane {...input} page={{ items: [] }} /></ApiProvider>);
+  await act(async () => { f.pending.resolve(f.confirmation); });
+  expect(nextRead).not.toHaveBeenCalled();
+  expect(screen.queryByText(/Mensaje aceptado para entrega/)).toBeNull();
+  expect(screen.queryByLabelText(/^Respuesta canónica/)).toBeNull();
+  expect(screen.getByRole('textbox')).toBeEnabled();
+  expect(f.input.onReload).toHaveBeenCalledOnce();
+});
+
+it('descarta la respuesta previa y relee el mismo feed humano poblado al cambiar de API', async () => {
+  const f = pendingPublish();
+  const view = renderWithApi(<ConversationPane {...f.input} page={f.page} />);
+  expect(await screen.findByText('Pong antes de confirm')).toBeVisible();
+  expect(f.read).toHaveBeenCalledWith(f.receipt.message_id);
+  const nextApi = new CauceApi('http://another-api.invalid');
+  const pending = deferred<Awaited<ReturnType<CauceApi['getMessage']>>>();
+  const nextRead = vi.spyOn(nextApi, 'getMessage').mockReturnValue(pending.promise);
+  view.rerender(<ApiProvider api={nextApi}><ConversationPane {...f.input} page={f.page} /></ApiProvider>);
+  await waitFor(() => { expect(nextRead).toHaveBeenCalledExactlyOnceWith(f.receipt.message_id); });
+  expect(screen.queryByText('Pong antes de confirm')).toBeNull();
+  expect(screen.queryByLabelText(/^Respuesta canónica/)).toBeNull();
+  await act(async () => { pending.resolve({
+    message_id: f.receipt.message_id, chain_open: false,
+    deliveries: [{ delivery_id: f.receipt.delivery_ids[0], tenant_id: f.input.agent.tenantId, alias: f.input.agent.alias, status: 'done', reply: 'Respuesta de la nueva API' }],
+  }); });
+  expect(await screen.findByText('Respuesta de la nueva API')).toBeVisible();
+  expect(screen.queryByText('Pong antes de confirm')).toBeNull();
+  expect(f.read).toHaveBeenCalledOnce();
+});
+
+it('cierra la selección y descarta el cuerpo completo retenido al cambiar de API', async () => {
+  const user = userEvent.setup();
+  const f = pendingPublish();
+  f.page.items[0].body_preview = 'p'.repeat(240);
+  f.read.mockResolvedValue({
+    message_id: f.receipt.message_id, body: { text: 'Cuerpo completo de la API anterior' }, chain_open: false,
+    deliveries: [{ delivery_id: f.receipt.delivery_ids[0], tenant_id: f.input.agent.tenantId, alias: f.input.agent.alias, status: 'done', reply: 'Respuesta anterior' }],
+  });
+  const view = renderWithApi(<ConversationPane {...f.input} page={f.page} />);
+  await screen.findByText('Respuesta anterior');
+  await user.click(screen.getByText(/Detalles del mensaje/));
+  await user.click(screen.getByRole('button', { name: /Ver detalle$/ }));
+  await user.click(screen.getByRole('button', { name: 'Ver el mensaje completo' }));
+  expect(await screen.findByText('Cuerpo completo de la API anterior')).toBeVisible();
+  const nextApi = new CauceApi('http://another-api.invalid');
+  const nextRead = vi.spyOn(nextApi, 'getMessage').mockResolvedValue({
+    message_id: f.receipt.message_id, chain_open: false,
+    deliveries: [{ delivery_id: f.receipt.delivery_ids[0], tenant_id: f.input.agent.tenantId, alias: f.input.agent.alias, status: 'done', reply: 'Nueva respuesta verificada' }],
+  });
+  view.rerender(<ApiProvider api={nextApi}><ConversationPane {...f.input} page={f.page} /></ApiProvider>);
+  expect(screen.queryByRole('group', { name: 'Detalle del mensaje seleccionado' })).toBeNull();
+  expect(screen.queryByText('Cuerpo completo de la API anterior')).toBeNull();
+  expect(screen.queryByText('Respuesta anterior')).toBeNull();
+  expect(await screen.findByText('Nueva respuesta verificada')).toBeVisible();
+  expect(nextRead).toHaveBeenCalledExactlyOnceWith(f.receipt.message_id);
 });

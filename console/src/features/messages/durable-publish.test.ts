@@ -231,3 +231,79 @@ describe('durable console publish', () => {
     expect(api.confirmPublishIntent).not.toHaveBeenCalled();
   });
 });
+
+describe('accepted receipt before durable confirmation', () => {
+  it('notifies exactly once before a suspended confirmation completes', async () => {
+    let confirm!: (value: typeof confirmation) => void;
+    const confirmPublishIntent = vi.fn(() => new Promise<typeof confirmation>((resolve) => { confirm = resolve; }));
+    const onAccepted = vi.fn();
+    const api = apiWith({ confirmPublishIntent });
+    let settled = false;
+    const outcome = publishDurably({
+      api, input, publisherSubject: 'Steven:kant', expectedDeliveries: 1, reconcile: vi.fn(), onAccepted,
+    }).then((value) => { settled = true; return value; });
+    await vi.waitFor(() => { expect(confirmPublishIntent).toHaveBeenCalledOnce(); });
+    expect(onAccepted).toHaveBeenCalledExactlyOnceWith({ receipt, reconciled: false });
+    expect(onAccepted.mock.invocationCallOrder[0]).toBeLessThan(confirmPublishIntent.mock.invocationCallOrder[0]);
+    expect(settled).toBe(false);
+    confirm(confirmation);
+    await expect(outcome).resolves.toMatchObject({ receipt, journalStatus: 'confirmed' });
+    expect(onAccepted).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { status: 0, code: 'timeout', expected: 'pending', calls: 2 },
+    { status: 409, code: undefined, expected: 'rejected', calls: 1 },
+  ])('preserves the accepted receipt after confirmation $expected', async ({ status, code, expected, calls }) => {
+    const confirmPublishIntent = vi.fn().mockRejectedValue(new ApiError('confirmation unavailable', status, code));
+    const onAccepted = vi.fn();
+    const api = apiWith({ confirmPublishIntent });
+    const outcome = await publishDurably({
+      api, input, publisherSubject: 'Steven:kant', expectedDeliveries: 1, reconcile: vi.fn(), onAccepted,
+    });
+    expect(onAccepted).toHaveBeenCalledExactlyOnceWith({ receipt, reconciled: false });
+    expect(outcome).toMatchObject({ receipt, journalStatus: expected });
+    expect(confirmPublishIntent).toHaveBeenCalledTimes(calls);
+    expect(api.publishMessage).toHaveBeenCalledOnce();
+    for (const [request] of confirmPublishIntent.mock.calls) expect(request).toEqual({
+      idempotency_key: key, message_id: receipt.message_id, causal_hash: receipt.causal_hash,
+    });
+  });
+
+  it('notifies a reconciled committed effect without another publish', async () => {
+    const api = apiWith({ preparePublishIntent: vi.fn().mockRejectedValue(new PublishIntentReconciliationError({
+      version: 1, error: 'publish_intent_reconciliation_required', state: 'committed', idempotency_key: key, receipt,
+    })) });
+    const onAccepted = vi.fn();
+    await publishDurably({
+      api, input, publisherSubject: 'Steven:kant', expectedDeliveries: 1, reconcile: vi.fn(), onAccepted,
+    });
+    expect(onAccepted).toHaveBeenCalledExactlyOnceWith({ receipt, reconciled: true });
+    expect(api.publishMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { ...receipt, message_id: 'not-a-message-id' },
+    { ...receipt, delivery_ids: [] },
+    { ...receipt, actor_alias: 'other-actor' },
+    { ...receipt, idempotency_key: 'other-key' },
+  ])('never announces a malformed or mismatched receipt', async (invalid) => {
+    const api = apiWith({ publishMessage: vi.fn().mockResolvedValue(invalid) });
+    const onAccepted = vi.fn();
+    await expect(publishDurably({
+      api, input, publisherSubject: 'Steven:kant', expectedDeliveries: 1, reconcile: vi.fn(), onAccepted,
+    })).rejects.toThrow('Resultado incierto');
+    expect(onAccepted).not.toHaveBeenCalled();
+    expect(api.confirmPublishIntent).not.toHaveBeenCalled();
+  });
+
+  it('does not let a presentation callback interrupt confirmation of a committed effect', async () => {
+    const api = apiWith();
+    await expect(publishDurably({
+      api, input, publisherSubject: 'Steven:kant', expectedDeliveries: 1, reconcile: vi.fn(),
+      onAccepted: () => { throw new Error('presentation failed'); },
+    })).resolves.toMatchObject({ receipt, journalStatus: 'confirmed' });
+    expect(api.publishMessage).toHaveBeenCalledOnce();
+    expect(api.confirmPublishIntent).toHaveBeenCalledOnce();
+  });
+});
