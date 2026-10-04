@@ -117,29 +117,34 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra la actualización dirigida de consola
-PR #11: commit `3eccb575`, árbol `d1262babe2c1c75c826db5f5ae52c042a0dbb301` y digest de fuente
-`sha256:adeecad2ed6b46b345817b1fa4628b2eb529b959971c1b9a8d6b394ba937dfd6`. La consola sirve la
-imagen `sha256:64d5089bd7101023843bed11267098895d09aa3863204cd51edf444fc92229c1`; la ventana dejó
-9/9 servicios sanos, ocho conservados, HTML, 87 assets y seis recursos PWA coincidentes, y backup
-estricto PASS. Los cinco servicios runtime también usan el mismo commit, sin migraciones, en la
-imagen `sha256:ca3c0b0c2bb16d8701884c8b5e5b2221f62fb8472878b604d62bd9905826cbd1`.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra la consola de `fc30f85e`,
+árbol `e61811f259c2a26cd56a3ae1c991f88ea4a82d27`, fuente
+`sha256:b2a1d2fa7c303ec493b2ef48b8a7eb13ead0b1e62945763c642163ec5dea7805` e imagen
+`sha256:d22fe316bec2c69fef2f0a98f08c75099533fe397ea99ae1459f43dd70d3e626`.
+La ventana dejó 9/9 servicios sanos, ocho conservados, HTML, 86 assets y seis recursos PWA
+coincidentes, y backup estricto PASS. Los cinco servicios runtime también usan `fc30f85e`, sin DDL,
+con fuente `sha256:ce2a02df453a829f9378894ee855df2a8b1026af5832a36c543388bd966dc551` e imagen
+`sha256:d0d44532cbe07a9afd2ea77b8472bf299270b92a7065684721ae78ea664bfea6`.
+La sesión pública está verificada y muestra catorce agentes conectados. Evidencia central:
+`/var/log/cauce-v3-release/wave2-2408c138/{runtime,console}/`.
 
-El SDK unificado está activo en 13/13 alias salvo Astra, con release
-`bus-v3-20261003-unified-99b567d6` y digest
-`sha256:429f96756fbe95642cd26476c449a7f0f1bd61e55368f851ad209e3e3a7e2681`. Los 13 canaries de
-control mTLS y los 13 watchdogs se repitieron tras el runtime (06:51 UTC), sin inferencia LLM. Astra está excluida del
-rollout por instrucción del dueño y no recibió mutaciones. La imagen MCP `sha256:a9297fb5b1640dbee2b63d3a9b1162730281ace048f87eca98ba1539c92b0916` está preparada,
-pero el endpoint público permanece inactivo, pendiente de OAuth e identidad dedicada del gateway.
-Auth0 gratuito exige aceptar sus condiciones en el navegador; aún no hay issuer activo. El código de los PR #1–11
-está fusionado y desplegado; la vista del operador muestra siete campos y tres grupos de perfil sin
-editar. Evidencia: `/var/log/cauce-v3-release/pr11-20261003/console-deployment.json`; teléfono real pendiente.
+El nuevo SDK usa release `bus-v3-20261003-unified-fc30f85e`, digest
+`sha256:26fb3280f46474dbde9195547e4ff558eac0ac09c2305b3d51d73ac40f981a60`.
+El registro de esta ventana acredita Argos activo, 1/13, con proceso real y canary mTLS PASS;
+sus dos ventanas de 4200,2 segundos siguen en observación antes de ampliar. Los otros doce
+conservan `bus-v3-20261003-unified-99b567d6`, digest
+`sha256:429f96756fbe95642cd26476c449a7f0f1bd61e55368f851ad209e3e3a7e2681`.
+Los trece canaries y watchdogs del rollout anterior son evidencia histórica, sin inferencia LLM;
+no acreditan aceptación global del nuevo bundle. Astra está excluida del rollout por instrucción
+del dueño y no recibió mutaciones. El endpoint MCP público permanece inactivo, pendiente de OAuth
+e identidad dedicada del gateway; no se activa con el despliegue central. Teléfono real pendiente.
 
-La matriz móvil de 18/18 vistas pasa. `qa:layout` conserva los mismos incumplimientos que la base
-de PR #7: `/terminal` a 360 px, `/live` a 1100 px (cajón/perfil) y el cajón a 1920 px con 2.02;
-la comparación está registrada en `/tmp/cauce-close-except-astra-20261003/pr8-10-layout.log` y
-`/tmp/cauce-close-except-astra-20261003/pr8-10-layout-base.log`. El candidato publicado pasó
-typecheck, lint, 5505 pruebas unitarias globales y 145 pruebas focales del backend Git; binding Git apagado.
+El SHA central publicado pasó los once gates de tipos, lint, unitarios, matriz completa,
+dependencias, Ops, layout, empaquetado runtime, Testcontainers, bundle SDK y cobertura.
+La matriz completa terminó con 11/11 suites PASS, cero FAIL y sin suites contables omitidas;
+los logs de cada gate y sus metadatos de SHA están en `/tmp/cauce-release-wave3-fc30f85e/`.
+Binding Git permanece apagado. Las mejoras de la siguiente integración siguen pendientes de
+validación y promoción; la existencia de sus fuentes no las acredita como desplegadas.
 
 Como evidencia histórica, en una verificación anterior los quince alias completaron una entrega
 real al primer intento y se reiniciaron sus adaptadores y sesiones nativas. La shell y el visor web se probaron en los quince;
