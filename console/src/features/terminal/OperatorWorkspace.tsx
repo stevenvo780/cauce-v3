@@ -198,6 +198,7 @@ export function OperatorWorkspace({ agents, initialAgentId, adapters, access, to
   const [activeId, setActiveId] = useState<string>();
   const [grants, setGrants] = useState<Record<string, TerminalSessionGrant>>({});
   const [closedChannels, setClosedChannels] = useState<Record<string, true | undefined>>({});
+  const [revocationFailures, setRevocationFailures] = useState<Record<string, true | undefined>>({});
   const [plazas, setPlazas] = useState<TerminalSessionListItem[]>([]);
   const [plazasAlaVista, setPlazasAlaVista] = useState(0);
   const [topeAlcanzado, setTopeAlcanzado] = useState(false);
@@ -231,8 +232,9 @@ export function OperatorWorkspace({ agents, initialAgentId, adapters, access, to
       sessionTokens.clear();
       terminalIntents.clear();
       for (const grant of Object.values(grantsRef.current)) {
-        closePtySession(grant.session_id, 'la vista de terminal se cerró');
-        void deleteTerminalSession(grant.session_id, grant, apiRef.current).catch(() => undefined);
+        void deleteTerminalSession(grant.session_id, grant, apiRef.current)
+          .catch(() => undefined)
+          .finally(() => closePtySession(grant.session_id, 'la vista de terminal se cerró'));
       }
     };
   }, []);
@@ -404,17 +406,20 @@ export function OperatorWorkspace({ agents, initialAgentId, adapters, access, to
   async function releaseChannel(id: string) {
     const grant = grantsRef.current[id] as TerminalSessionGrant | undefined;
     if (!grant) return;
-    terminalIntentsRef.current.delete(id);
-    const remaining = omitKey(grantsRef.current, id);
-    grantsRef.current = remaining;
-    setGrants(remaining);
-    closePtySession(grant.session_id);
+    let revoked = false;
     try {
       await deleteTerminalSession(grant.session_id, grant, api);
+      revoked = true;
+      terminalIntentsRef.current.delete(id);
+      const remaining = omitKey(grantsRef.current, id);
+      grantsRef.current = remaining;
+      setGrants(remaining);
+      setRevocationFailures((current) => omitKey(current, id));
     } catch {
-      // The socket still has to go: a client-side failure must not leave a shell attached here.
+      setRevocationFailures((current) => ({ ...current, [id]: true }));
     } finally {
-      setClosedChannels((current) => omitKey(current, id));
+      closePtySession(grant.session_id);
+      setClosedChannels((current) => revoked ? omitKey(current, id) : ({ ...current, [id]: true }));
     }
   }
 
@@ -436,6 +441,16 @@ export function OperatorWorkspace({ agents, initialAgentId, adapters, access, to
 
   return (
     <>
+      {Object.keys(revocationFailures).map((id) => {
+        const grant = grantsRef.current[id];
+        if (!grant) return null;
+        return (
+          <div className="notice error" role="alert" key={id}>
+            <span>No se confirmó la revocación de la sesión PTY. El canal local se cerró; vuelve a intentarlo.</span>
+            <button type="button" onClick={() => { void releaseChannel(id); }}>Reintentar revocación</button>
+          </div>
+        );
+      })}
       <PlazasColgadas
         items={plazas}
         aLaVista={plazasAlaVista}

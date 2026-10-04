@@ -449,13 +449,14 @@ it.each([
 
 it('releases the grant server-side when the operator closes the session', async () => {
   const user = userEvent.setup();
+  const deletion = deferred();
   let deleted: string | undefined;
   enableCapability();
   serveTargets([target({ tenant_id: 'Steven', alias: 'jarvis' })]);
   serveGrant();
   server.use(http.delete('*/v3/console/terminal/sessions/:sid', ({ params }) => {
     deleted = String(params.sid);
-    return new HttpResponse(null, { status: 204 });
+    return deletion.promise.then(() => new HttpResponse(null, { status: 204 }));
   }));
   renderWithApi(<TerminalPage />);
 
@@ -471,8 +472,44 @@ it('releases the grant server-side when the operator closes the session', async 
   await user.click(within(screen.getByLabelText('Sesión PTY activa')).getByRole('button', { name: /cerrar la terminal/i }));
 
   await waitFor(() => { expect(deleted).toBe(PTY_SESSION_ID); });
+  expect(socket.closeCode).toBeUndefined();
+  deletion.resolve();
   await waitFor(() => { expect(screen.getByRole('button', { name: /^Feed$/i })).toHaveAttribute('aria-pressed', 'true'); });
   expect(socket.closeCode).toBe(1000);
+}, 20_000);
+
+it('closes the local socket and offers retry when server-side revocation fails', async () => {
+  const user = userEvent.setup();
+  let attempts = 0;
+  enableCapability();
+  serveTargets([target({ tenant_id: 'Steven', alias: 'jarvis' })]);
+  serveGrant();
+  server.use(http.delete('*/v3/console/terminal/sessions/:sid', () => {
+    attempts += 1;
+    return attempts === 1
+      ? HttpResponse.json({ error: 'temporarily unavailable' }, { status: 503 })
+      : new HttpResponse(null, { status: 204 });
+  }));
+  renderWithApi(<TerminalPage />);
+
+  const socket = await openPtyChannel(user, 'jarvis', 'cerrar y reintentar revocación');
+  act(() => {
+    socket.acceptOpen();
+    socket.emitControl({
+      type: 'ready', claim_token: '12345678-1234-4234-8234-123456789abc',
+      claim_epoch: '1', claim_lease_ms: 45_000,
+    });
+  });
+
+  await user.click(within(screen.getByLabelText('Sesión PTY activa')).getByRole('button', { name: /cerrar la terminal/i }));
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent(/No se confirmó la revocación/i);
+  expect(socket.closeCode).toBe(1000);
+  expect(attempts).toBe(1);
+
+  await user.click(within(alert).getByRole('button', { name: 'Reintentar revocación' }));
+  await waitFor(() => { expect(attempts).toBe(2); });
+  await waitFor(() => { expect(screen.queryByRole('alert')).not.toBeInTheDocument(); });
 }, 20_000);
 
 it('surfaces a 409 conflict from the gateway without opening any socket', async () => {
