@@ -205,7 +205,7 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
   ): Promise<Record<string, unknown>[]> {
     const result = await reader.query<Record<string, unknown>>(
       `SELECT tenant_id,alias,instance_id,epoch,capabilities,last_heartbeat_at,lease_until,
-               (lease_until > now()) AS online
+               (lease_until > ${ownTenantOnly ? 'statement_timestamp()' : 'now()'}) AS online
         FROM connection_leases l
         WHERE ($1::text IS NULL OR EXISTS (
           SELECT 1 FROM memberships own JOIN role_policies role ON role.role=own.role
@@ -216,7 +216,13 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
         )))${ownTenantOnly ? ' AND l.tenant_id=$1' : ''}
        ORDER BY tenant_id,alias`, [actorTenant ?? null, actorAlias ?? null]
     );
-    return result.rows.map((row) => ({ ...row, epoch: Number(row.epoch) }));
+    return result.rows.map((row) => ({
+      ...row,
+      ...(ownTenantOnly && row.last_heartbeat_at instanceof Date
+        ? { last_heartbeat_at: row.last_heartbeat_at.toISOString() }
+        : {}),
+      epoch: Number(row.epoch),
+    }));
   }
 
 
@@ -365,7 +371,7 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
        FROM agents a
        LEFT JOIN harness_definitions h ON h.id=a.harness_id
        LEFT JOIN LATERAL (
-         SELECT (l.lease_until>now()) AS online, l.last_heartbeat_at
+         SELECT (l.lease_until>${ownTenantOnly ? 'statement_timestamp()' : 'now()'}) AS online, l.last_heartbeat_at
          FROM connection_leases l WHERE l.tenant_id=a.tenant_id AND l.alias=a.alias
        ) lease ON true
        LEFT JOIN LATERAL (
@@ -379,7 +385,13 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
        WHERE a.tenant_id=$1${foreign}
        ORDER BY a.tenant_id,a.alias`, [actorTenant]
     );
-    return { items: result.rows.map((row) => ({ ...row, deployment_status: agentDeploymentStatus(row) })) };
+    return { items: result.rows.map((row) => ({
+      ...row,
+      ...(ownTenantOnly && row.last_heartbeat_at instanceof Date
+        ? { last_heartbeat_at: row.last_heartbeat_at.toISOString() }
+        : {}),
+      deployment_status: agentDeploymentStatus(row),
+    })) };
   }
 
 
