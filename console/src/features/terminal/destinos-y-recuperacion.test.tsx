@@ -66,7 +66,7 @@ describe('destinos que el servidor publica a medias', () => {
     }));
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
     // The TUI is offered —the server publishes `harness`— and it is what got asked for.
     await waitFor(() => { expect(posts).toBe(1); });
@@ -92,7 +92,7 @@ describe('destinos que el servidor publica a medias', () => {
     }));
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus.*PTY: PTY desconocido/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
     await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
 
     await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeDisabled(); });
@@ -118,7 +118,7 @@ describe('el plano de control que contesta a medias y luego se recupera', () => 
     // The failing read is named: "Presencia", not a bare technical error with no owner.
     expect(aviso).toHaveTextContent(/Presencia:/);
     // The fleet still came from topology, so the view is degraded and not empty.
-    expect(await screen.findByRole('button', { name: /abrir sesión con kant/i })).toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: /^kant ·/i })).toBeInTheDocument();
 
     caido = false;
     await user.click(within(aviso).getByRole('button', { name: /reintentar/i }));

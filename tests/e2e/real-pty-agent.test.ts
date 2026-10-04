@@ -151,10 +151,10 @@ describe('PTY real Python agent through gateway and relay', () => {
     }
     expect(relayEnabled, 'the real relay must enable the visible Terminal menu entry').toBe(true);
     await terminalLink.click();
-    await page.getByRole('heading', { name: 'Terminal de agentes' }).waitFor({ timeout: 20_000 });
-    const targetButton = page.getByRole('button', { name: new RegExp(`Abrir sesión con ${active.targetAlias}`, 'u') });
-    await targetButton.waitFor({ state: 'visible', timeout: 25_000 });
-    await targetButton.click();
+    await page.getByRole('heading', { name: 'Terminal de agentes', exact: true }).waitFor({ timeout: 20_000 });
+    const selector = page.getByRole('combobox', { name: 'Agente' });
+    await selector.waitFor({ state: 'visible', timeout: 25_000 });
+    await selector.selectOption(`${active.tenant}:${active.targetAlias}`);
     await page.getByRole('button', { name: 'PTY', exact: true }).click();
     await page.getByRole('dialog', { name: new RegExp(`Abrir PTY en ${active.targetAlias}`, 'u') }).waitFor({ timeout: 10_000 });
     await page.getByLabel('Motivo de la sesión (queda en la auditoría)').fill('Verificación local de resize y cierre desde Chromium móvil.');

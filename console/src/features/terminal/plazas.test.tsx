@@ -162,7 +162,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     servirAperturas(() => 'sid-zeus', borrados);
     const vista = renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
     await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
     act(() => { StubWebSocket.last().acceptOpen(); });
 
@@ -202,7 +202,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     );
     const vista = renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
     await waitFor(() => { expect(posts).toBe(1); });
     // Auto-open owns the sole attempt. A click while it is pending is visibly fenced and cannot
     // create a second reservation.
@@ -245,7 +245,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     );
     const vista = renderWithApi(<StrictMode><TerminalPage /></StrictMode>);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
     await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
     expect(posts).toBe(1);
 
@@ -253,11 +253,10 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     await waitFor(() => { expect(borrados).toEqual(['sid-strict-mode']); });
   });
 
-  it('cambiar A→B→A conserva el fence del workspace y no emite un segundo POST para A', async () => {
+  it('cambiar A→B→A compensa respuestas antiguas sin adoptar ni revocar la nueva intención', async () => {
     const user = userEvent.setup();
-    const gates = new Map<string, Deferred<void>>();
-    const posts: string[] = [];
-    const borrados: string[] = [];
+    const pending: { alias: string; body: Record<string, unknown>; gate: Deferred<void>; sid: string }[] = [];
+    const borrados: { sid: string; body: Record<string, unknown> }[] = [];
     servirEntorno([
       target({ tenant_id: 'Steven', alias: 'zeus' }),
       target({ tenant_id: 'Isa', alias: 'salva', container: 'ws-isa' }),
@@ -266,43 +265,40 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
       http.post('*/v3/console/terminal/sessions', async ({ request }) => {
         const body = await request.json() as Record<string, unknown>;
         const alias = String(body.alias);
-        posts.push(alias);
-        const gate = deferred();
-        gates.set(alias, gate);
-        await gate.promise;
+        const item = { alias, body, gate: deferred(), sid: `sid-pending-${pending.length}` };
+        pending.push(item); abiertas.push(item.sid);
+        await item.gate.promise;
         return HttpResponse.json(mockTerminalGrant({
-          sessionId: `sid-${alias}`,
-          tenantId: String(body.tenant_id),
-          alias,
-          container: alias === 'salva' ? 'ws-isa' : 'ws-zeus',
-          runtimeUser: 'dev',
-          mode: String(body.mode),
-          requestId: String(body.request_id),
+          sessionId: item.sid, tenantId: String(body.tenant_id), alias,
+          container: alias === 'salva' ? 'ws-isa' : 'ws-zeus', runtimeUser: 'dev',
+          mode: String(body.mode), requestId: String(body.request_id),
         }), { status: 201 });
       }),
-      http.delete('*/v3/console/terminal/sessions/:sid', ({ params }) => {
-        borrados.push(String(params.sid));
+      http.delete('*/v3/console/terminal/sessions/:sid', async ({ params, request }) => {
+        borrados.push({ sid: String(params.sid), body: await request.json() as Record<string, unknown> });
         return new HttpResponse(null, { status: 204 });
       }),
     );
     const vista = renderWithApi(<TerminalPage />);
-
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-    await waitFor(() => { expect(posts).toEqual(['zeus']); });
-    await user.click(screen.getByRole('button', { name: /abrir sesión con salva/i }));
-    await waitFor(() => { expect(posts).toEqual(['zeus', 'salva']); }); // order IS the contract: the operator's click sequence
-    await user.click(screen.getByRole('tab', { name: /zeus/i }));
-    await waitFor(() => { expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled(); });
-    expect(posts).toEqual(['zeus', 'salva']);
-
-    gates.get('zeus')?.resolve(undefined);
+    const select = async (alias: string) => user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }),
+      await screen.findByRole('option', { name: new RegExp(`^${alias} ·`) }));
+    await select('zeus'); await waitFor(() => { expect(pending).toHaveLength(1); });
+    await select('salva'); await waitFor(() => { expect(pending).toHaveLength(2); });
+    await select('zeus'); await waitFor(() => { expect(pending).toHaveLength(3); });
+    expect(pending[2].body.request_id).not.toBe(pending[0].body.request_id);
+    pending[2].gate.resolve(undefined);
     await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
-    expect(borrados).toEqual([]);
-    gates.get('salva')?.resolve(undefined);
-    await waitFor(() => { expect(posts).toEqual(['zeus', 'salva']); });
-
+    pending[0].gate.resolve(undefined); pending[1].gate.resolve(undefined);
+    await waitFor(() => { expect(borrados).toHaveLength(2); });
+    expect(new Set(borrados.map(item => item.sid))).toEqual(new Set(['sid-pending-0', 'sid-pending-1']));
+    for (const deleted of borrados) {
+      const issued = pending.find(item => item.sid === deleted.sid);
+      expect(deleted.body.request_id).toBe(issued?.body.request_id);
+      expect(deleted.body.owner_token).toBe(issued?.body.owner_token);
+    }
+    expect(StubWebSocket.instances).toHaveLength(1);
     vista.unmount();
-    await waitFor(() => { expect(new Set(borrados)).toEqual(new Set(['sid-zeus', 'sid-salva'])); });
+    await waitFor(() => { expect(borrados.map(item => item.sid)).toContain('sid-pending-2'); });
   });
 
   it('cerrar y reabrir crea otra intención y la respuesta vieja sólo compensa su propio owner', async () => {
@@ -344,12 +340,12 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     );
     const vista = renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
     await waitFor(() => { expect(pending).toHaveLength(1); });
     await user.click(screen.getByRole('button', { name: /cerrar sesión zeus/i }));
     await waitFor(() => { expect(screen.queryByRole('tab', { name: /zeus/i })).not.toBeInTheDocument(); });
 
-    await user.click(screen.getByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Agente' }), screen.getByRole('option', { name: /^zeus ·/ }));
     await waitFor(() => { expect(pending).toHaveLength(2); });
     expect(pending[1].body.request_id).not.toBe(pending[0].body.request_id);
     expect(pending[1].body.owner_token).not.toBe(pending[0].body.owner_token);
@@ -406,7 +402,7 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
     );
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
     const tira = await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza');
     expect(tira).toHaveTextContent('tales');
@@ -430,7 +426,7 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
     );
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
     const tira = await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza');
     expect(tira).toHaveTextContent('No se pudo leer qué sesiones están ocupando el tope');
@@ -452,7 +448,7 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
     );
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
     const tira = await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza');
     expect(tira).toHaveTextContent('El tope se liberó antes de terminar la verificación');
@@ -489,7 +485,7 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
     );
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
     const tira = await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza');
     expect(tira).toHaveTextContent('El grant fue inválido; estas son las reservas visibles');
@@ -504,7 +500,7 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
 });
 
 describe('la geometría de la vista', () => {
-  it('con dos sesiones abiertas hay DOS pestañas y UN solo escenario', async () => {
+  it('cambiar de agente conserva un único escenario y una única sesión visible', async () => {
     const user = userEvent.setup();
     servirEntorno([
       target({ tenant_id: 'Steven', alias: 'zeus' }),
@@ -513,10 +509,10 @@ describe('la geometría de la vista', () => {
     servirAperturas((alias) => `sid-${alias}`, []);
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con salva/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^salva ·/ }));
 
-    await waitFor(() => { expect(screen.getAllByRole('tab')).toHaveLength(2); });
+    await waitFor(() => { expect(screen.getAllByRole('tab')).toHaveLength(1); });
     /*
      * THIS is the assertion that previously returned 2 and made the page measure 3,537 px: a
      * 600 px panel per session, stacked, and the terminal off-screen. Now only the active stage
@@ -530,60 +526,43 @@ describe('la geometría de la vista', () => {
   }, 20_000);
 });
 
-describe('el tope gastado con todo a la vista', () => {
-  /*
-   * The other side of the same 409, and it must be tested separately: when there is NO orphan,
-   * the ones spending the cap are the tabs above. Repeating "close one of your open sessions"
-   * there does not help anyone — they are already open and in view; what must be said is that the
-   * way out is to close a tab. Without this case, nobody looks at the whole branch of the new
-   * text and it could say anything.
-   */
-  it('cuando las que gastan el tope están a la vista, lo dice y no ofrece cerrar nada de fuera', async () => {
+describe('el selector libera plaza antes de cambiar', () => {
+  it('recorre tres agentes con un tope de una sesión sin recibir session_limit', async () => {
     const user = userEvent.setup();
-    let permitir = 2;
+    const vivas = new Set<string>();
+    const borrados: string[] = [];
+    let refusals = 0;
     servirEntorno([
       target({ tenant_id: 'Steven', alias: 'zeus' }),
       target({ tenant_id: 'Isa', alias: 'salva', container: 'ws-isa' }),
-      target({ tenant_id: 'Jhon', alias: 'hegel', container: 'ws-jhon' }),
+      target({ tenant_id: 'Steven', alias: 'kant', container: 'ws-server2' }),
     ]);
-    const vivas: string[] = [];
     server.use(
       http.post('*/v3/console/terminal/sessions', async ({ request }) => {
         const body = await request.json() as Record<string, unknown>;
-        if (permitir <= 0) return HttpResponse.json({ error: 'conflict', reason: 'session_limit' }, { status: 409 });
-        permitir -= 1;
+        if (vivas.size) {
+          refusals += 1;
+          return HttpResponse.json({ reason: 'session_limit' }, { status: 409 });
+        }
         const id = `sid-${String(body.alias)}`;
-        vivas.push(id);
-        abiertas.push(id);
-        return HttpResponse.json(mockTerminalGrant({
-          sessionId: id,
-          tenantId: String(body.tenant_id),
-          alias: String(body.alias),
-          container: 'c',
-          runtimeUser: 'dev',
-          mode: String(body.mode),
-          requestId: String(body.request_id),
-        }), { status: 201 });
+        vivas.add(id); abiertas.push(id);
+        return HttpResponse.json(mockTerminalGrant({ sessionId: id, tenantId: String(body.tenant_id),
+          alias: String(body.alias), container: 'c', runtimeUser: 'dev',
+          mode: String(body.mode), requestId: String(body.request_id) }), { status: 201 });
       }),
-      http.get('*/v3/console/terminal/sessions', () => HttpResponse.json({
-        items: vivas.map((id) => ({
-          session_id: id, tenant_id: 'x', alias: id.slice(4), mode: 'harness',
-          opened_at: new Date(Date.now() - 30_000).toISOString(),
-          expires_at: new Date(Date.now() + 600_000).toISOString(), state: 'active',
-          request_id: '11111111-1111-4111-8111-111111111111', owner_generation: '1',
-        })),
-      })),
-      http.delete('*/v3/console/terminal/sessions/:sid', () => new HttpResponse(null, { status: 204 })),
+      http.delete('*/v3/console/terminal/sessions/:sid', ({ params }) => {
+        const id = String(params.sid); vivas.delete(id); borrados.push(id);
+        return new HttpResponse(null, { status: 204 });
+      }),
     );
     renderWithApi(<TerminalPage />);
-
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con salva/i }));
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con hegel/i }));
-
-    const tira = await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza');
-    expect(tira).toHaveTextContent('Tope de sesiones alcanzado: las 2 que lo gastan están abiertas acá');
-    // Not a single row with "Cerrar ahora": there is nothing from outside to close, and offering it would be a lie.
-    expect(within(tira).queryByRole('button', { name: /cerrar ahora/i })).not.toBeInTheDocument();
+    for (const alias of ['zeus', 'salva', 'kant']) {
+      await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }),
+        await screen.findByRole('option', { name: new RegExp(`^${alias} ·`) }));
+      await waitFor(() => { expect([...vivas]).toEqual([`sid-${alias}`]); });
+    }
+    expect(refusals).toBe(0);
+    expect(borrados).toEqual(['sid-zeus', 'sid-salva']);
+    expect(screen.queryByLabelText('Sesiones de terminal que siguen ocupando plaza')).not.toBeInTheDocument();
   });
 });

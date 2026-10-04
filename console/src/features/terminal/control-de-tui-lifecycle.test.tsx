@@ -15,7 +15,6 @@ import { TerminalPage } from './TerminalPage';
 
 const READONLY_SESSION = 'lifecycle-readonly';
 const WRITABLE_SESSION = 'lifecycle-writable';
-const REASON = 'inspect the synthetic terminal manually';
 const READY = { type: 'ready', claim_token: '12345678-1234-4234-8234-123456789abc', claim_epoch: '1', claim_lease_ms: 45_000 };
 interface ControlCall { sid: string; body: Record<string, unknown> }
 let restoreSocket: () => void;
@@ -80,19 +79,14 @@ function attach(socket: StubWebSocket) {
 
 async function requestTake() {
   const user = userEvent.setup({ delay: null });
-  await user.type(screen.getByLabelText(/motivo/i), REASON);
-  await user.click(screen.getByRole('button', { name: 'Tomar el control' }));
   return user;
 }
 
 async function openPageAndTake(controls: ControlCall[]) {
   const user = userEvent.setup({ delay: null });
   renderWithApi(<TerminalPage />);
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
   await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
-  attach(StubWebSocket.last());
-  await requestTake();
-  await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(2); });
   const socket = attach(StubWebSocket.last());
   await waitFor(() => { expect(controls.filter(call => call.body.action === 'take')).toHaveLength(1); });
   return { user, socket };

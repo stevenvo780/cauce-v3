@@ -187,8 +187,7 @@ describe('la negativa que ve el operador', () => {
       )));
 
       renderWithApi(<TerminalPage />);
-      const boton = await screen.findByRole('button', { name: /Abrir sesión con zeus/i }, { timeout: 5000 });
-      await userEvent.click(boton);
+      await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
       // The auto-open of the TUI already hits the gateway and gets the rejection.
       const aviso = await waitFor(() => {
@@ -236,8 +235,7 @@ describe('la negativa que ve el operador', () => {
     );
 
     renderWithApi(<TerminalPage />);
-    const boton = await screen.findByRole('button', { name: /Abrir sesión con zeus/i }, { timeout: 5000 });
-    await userEvent.click(boton);
+    await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
     const panel = await screen.findByRole('tabpanel', {}, { timeout: 5000 });
     await waitFor(() => {

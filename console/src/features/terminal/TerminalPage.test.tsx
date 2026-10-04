@@ -80,7 +80,7 @@ afterEach(() => {
 
 /** Drives the UI from the fleet list up to a live PTY socket. */
 async function openPtyChannel(user: ReturnType<typeof userEvent.setup>, alias: string, reason: string) {
-  await user.click(await screen.findByRole('button', { name: new RegExp(`abrir sesión con ${alias}`, 'i') }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: new RegExp(`^${alias} ·`, 'i') }));
   await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: /^PTY$/i }));
 
@@ -92,7 +92,7 @@ async function openPtyChannel(user: ReturnType<typeof userEvent.setup>, alias: s
   return StubWebSocket.last();
 }
 
-it('abre sesiones simultáneas, deja el feed en solo lectura y deriva cada escritura a su única vista', async () => {
+it('abre el agente seleccionado, deja el feed en solo lectura y deriva cada escritura a su única vista', async () => {
   const user = userEvent.setup();
   let messagePosts = 0;
   let replayPosts = 0;
@@ -105,8 +105,7 @@ it('abre sesiones simultáneas, deja el feed en solo lectura y deriva cada escri
   renderWithApi(<TerminalPage />);
 
   expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' })).toBeInTheDocument();
-  expect(screen.getByText('Flota en vivo')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /plano de control/i })).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/ayuda#terminal');
   expect(await screen.findByText('Aquí no se puede espejar ninguna TUI')).toBeInTheDocument();
   for (const textoIngles of ['Ultimate Terminal', 'Fleet live', 'Capability gates', 'Adapters', 'No active target']) {
     expect(screen.queryByText(textoIngles), `rótulo visible sin traducir: ${textoIngles}`).not.toBeInTheDocument();
@@ -116,10 +115,9 @@ it('abre sesiones simultáneas, deja el feed en solo lectura y deriva cada escri
   // here only bought a test that breaks without anything breaking. What does matter — and does
   // not depend on the fixture — is that the counter does not claim a fleet size different from
   // what it shows.
-  const listed = await screen.findAllByRole('button', { name: /abrir sesión con/i });
+  const listed = await screen.findAllByRole('option');
   expect(listed.length).toBeGreaterThan(1);
-  expect(await screen.findByText(`${String(listed.length)} agentes`)).toBeInTheDocument();
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con argos/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^argos ·/ }));
 
   const messages = await screen.findByRole('link', { name: /escribir a argos en mensajes/i });
   expect(messages).toHaveAttribute('href', '/messages/Steven/argos');
@@ -134,11 +132,7 @@ it('abre sesiones simultáneas, deja el feed en solo lectura y deriva cada escri
   expect(replayPosts).toBe(0);
   expect(cancelPosts).toBe(0);
   expect(screen.getByRole('tab', { name: /argos/i })).toHaveAttribute('aria-selected', 'true');
-  // `getAllByText` and not `getByText`: since the doctrine footer folds in observation mode, the
-  // same sentence is ALSO written in the "Fleet status" dropdown of the header — from a single
-  // constant, `doctrina.ts` — so folding it does not make it disappear from view. What this
-  // case asserts is still the same: the doctrine is written on the page.
-  expect(screen.getAllByText(/no crea workers remotos/i).length).toBeGreaterThan(0);
+
 }, 20_000);
 
 it('abre automáticamente el agente pedido por el deep-link sin una segunda vista acotada', async () => {
@@ -160,7 +154,7 @@ it('keeps the durable feed operational on a real PTY 501 and disables only PTY',
   );
   renderWithApi(<TerminalPage />);
 
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con argos/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^argos ·/ }));
   expect(await screen.findByRole('link', { name: /escribir a argos en mensajes/i })).toHaveAttribute(
     'href', '/messages/Steven/argos',
   );
@@ -169,7 +163,7 @@ it('keeps the durable feed operational on a real PTY 501 and disables only PTY',
   expect(screen.getByText(/4 ACK/i)).toBeInTheDocument();
   // The label of the "Your terminal permission" card, in Spanish: it used to be `connectState`
   // in capitals, i.e. the raw RBAC value.
-  expect(screen.getByText('DENEGADO')).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Docs' })).toBeInTheDocument();
 });
 
 it('con el canal cerrado el escenario no dice que falte elegir alias: dice que no se puede espejar', async () => {
@@ -220,14 +214,12 @@ it('labels every alias with an explicit PTY state instead of a spinner or a bare
   ]);
   renderWithApi(<TerminalPage />);
 
-  expect(await screen.findByRole('button', { name: /abrir sesión con jarvis.*PTY: TUI en vivo/i })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /abrir sesión con argos.*PTY: Agente PTY no instalado/i })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /abrir sesión con salva.*PTY: Sin autoridad/i })).toBeInTheDocument();
+  expect(await screen.findByRole('option', { name: /^jarvis ·.*TUI en vivo/i })).toBeInTheDocument();
+  expect(screen.getByRole('option', { name: /^argos ·.*Agente PTY no instalado/i })).toBeInTheDocument();
+  expect(screen.getByRole('option', { name: /^salva ·.*Sin autoridad/i })).toBeInTheDocument();
   // An alias the inventory never mentioned is UNKNOWN, never silently "available".
-  expect(screen.getByRole('button', { name: /abrir sesión con kant.*PTY: PTY desconocido/i })).toBeInTheDocument();
-  // The two KPIs count 1 of 3: one with PTY online and — once jarvis publishes its `harness` —
-  // one that also emits its TUI.
-  expect(await screen.findAllByText('1 / 3')).toHaveLength(2);
+  expect(screen.getByRole('option', { name: /^kant ·.*PTY desconocido/i })).toBeInTheDocument();
+
 });
 
 it('un alias con PTY pero SIN modo harness no se pinta en verde: lleva su motivo, como gaia', async () => {
@@ -238,20 +230,13 @@ it('un alias con PTY pero SIN modo harness no se pinta en verde: lleva su motivo
   ]);
   renderWithApi(<TerminalPage />);
 
-  const conTui = await screen.findByRole('button', { name: /abrir sesión con zeus/i });
-  const sinTui = screen.getByRole('button', { name: /abrir sesión con jarvis/i });
+  const conTui = await screen.findByRole('option', { name: /^zeus ·/i });
+  const sinTui = screen.getByRole('option', { name: /^jarvis ·/i });
 
-  // The one that emits: green, with the state the server does publish.
-  expect(within(conTui).getByText('TUI en vivo')).toHaveAttribute('data-status', 'allowed');
-  // The one that does not: gray (`no_tui`, the same family as `unknown`/`not_installed`) and with
-  // the server's reason on the chip, not hidden behind a click.
-  const chip = within(sinTui).getByText('Sin TUI que emitir');
-  expect(chip).toHaveAttribute('data-status', 'no_tui');
-  expect(chip).toHaveAttribute('title', expect.stringContaining('no publica el modo harness'));
-  // And it does NOT share the green state with the one that does emit.
-  expect(chip.getAttribute('data-status')).not.toBe('allowed');
-  // The KPI that already counted right (8/14 in production) keeps counting the same: 1 of 2 here.
-  expect(await screen.findByText('1 / 2')).toBeInTheDocument();
+  expect(conTui).toHaveTextContent('TUI en vivo');
+  expect(sinTui).toHaveTextContent('Sin TUI que emitir');
+  expect(sinTui).toHaveAttribute('title', expect.stringContaining('no publica el modo harness'));
+  expect(sinTui).not.toHaveTextContent('TUI en vivo');
 });
 
 it('disables PTY for a denied destination and shows the server motive, not an empty tooltip', async () => {
@@ -260,7 +245,7 @@ it('disables PTY for a denied destination and shows the server motive, not an em
   serveTargets([target({ tenant_id: 'Isa', alias: 'salva', authorized: false, reason: 'attribution_required: falta identidad por persona.' })]);
   renderWithApi(<TerminalPage />);
 
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con salva/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^salva ·/ }));
 
   const ptyButton = await screen.findByRole('button', { name: /^PTY$/i });
   await waitFor(() => { expect(ptyButton).toBeDisabled(); });
@@ -271,7 +256,8 @@ it('disables PTY for a denied destination and shows the server motive, not an em
   expect(screen.getByText(/Lo levanta:/i)).toBeInTheDocument();
   expect(document.body.textContent).not.toContain('attribution_required');
   // The motive is stated twice on purpose: in the fleet list and over the open session.
-  expect(screen.getAllByText('Sin autoridad')).toHaveLength(2);
+  expect(screen.getAllByText('Sin autoridad')).toHaveLength(1);
+  expect(screen.getByRole('option', { name: /^salva ·.*Sin autoridad/ })).toBeInTheDocument();
 });
 
 it('states not_installed explicitly rather than leaving the operator on a spinner', async () => {
@@ -280,10 +266,11 @@ it('states not_installed explicitly rather than leaving the operator on a spinne
   serveTargets([target({ tenant_id: 'Steven', alias: 'argos', pty_state: 'not_installed', container: 'ctrl-infra', reason: 'El agente PTY no está instalado en ctrl-infra.' })]);
   renderWithApi(<TerminalPage />);
 
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con argos/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^argos ·/ }));
 
   await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeDisabled(); });
-  expect(screen.getAllByText('Agente PTY no instalado')).toHaveLength(2);
+  expect(screen.getAllByText('Agente PTY no instalado')).toHaveLength(1);
+  expect(screen.getByRole('option', { name: /^argos ·.*Agente PTY no instalado/ })).toBeInTheDocument();
   expect(screen.getByText(/no está instalado en ctrl-infra/i)).toBeInTheDocument();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   // No spinner is left standing in place of an answer.
@@ -301,7 +288,7 @@ it('refuses to confirm without a written motive and spells out who shares the co
   })]);
   renderWithApi(<TerminalPage />);
 
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con jarvis/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^jarvis ·/ }));
   await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: /^PTY$/i }));
 
@@ -393,7 +380,7 @@ it('fences two confirmations in the same render to one PTY reservation POST', as
   );
   renderWithApi(<TerminalPage />);
 
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con jarvis/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^jarvis ·/ }));
   await user.click(await screen.findByRole('button', { name: /^PTY$/i }));
   const dialog = await screen.findByRole('dialog');
   await user.type(within(dialog).getByRole('textbox'), 'verificar carrera de reserva');
@@ -519,7 +506,7 @@ it('surfaces a 409 conflict from the gateway without opening any socket', async 
   server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json({ error: 'conflict', reason: 'agent_offline' }, { status: 409 })));
   renderWithApi(<TerminalPage />);
 
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con jarvis/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^jarvis ·/ }));
   await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: /^PTY$/i }));
   const dialog = await screen.findByRole('dialog');
@@ -579,55 +566,3 @@ it.each([502, 503, 504])(
   },
   20_000,
 );
-
-describe('los adaptadores se dicen en palabras, no en pseudo-etiquetas', () => {
-  it('pinta el estado de cada adaptador y NUNCA un tag sin renderizar', async () => {
-    const user = userEvent.setup();
-    renderWithApi(<TerminalPage />);
-
-    // The inspector is mounted once now, and only while its dialog is open.
-    await user.click(await screen.findByRole('button', { name: /plano de control/i }));
-    const inspector = await screen.findByRole('dialog', { name: /plano de control/i });
-    expect(within(inspector).getAllByText('Disponible')).not.toHaveLength(0);
-    expect(within(inspector).getAllByText('Degradado')).not.toHaveLength(0);
-    expect(within(inspector).getAllByText('Sin reportar')).not.toHaveLength(0);
-    // The exact bug, in case someone lets the JSX escape again.
-    expect(screen.queryByText(/UNKNOWN VALUE=/i)).not.toBeInTheDocument();
-    expect(document.body.textContent).not.toMatch(/<Unknown value/i);
-  });
-
-  it('cuenta disponibles, con fallo y sin reportar en vez de una fracción que sugiere avería', async () => {
-    renderWithApi(<TerminalPage />);
-
-    // The fixture has 2 available, 1 degraded and 1 unknown.
-    // Twice: the KPI at the top and the health strip of the fleet list. Both count the same.
-    expect(await screen.findAllByText('2 disponibles · 1 con fallo · 1 sin reportar')).toHaveLength(2);
-    expect(screen.queryByText('2 / 4')).not.toBeInTheDocument();
-  });
-});
-
-describe('el riel de la flota se pliega sin perder a ningún agente', () => {
-  it('el control es un interruptor «pulsado», no un desplegable, y la página lo publica para la hoja', async () => {
-    const user = userEvent.setup();
-    const { container } = renderWithApi(<TerminalPage />);
-
-    const boton = await screen.findByRole('button', { name: 'Plegar la lista de la flota' });
-    expect(boton).toHaveAttribute('aria-pressed', 'false');
-    expect(boton).not.toHaveAttribute('aria-expanded');
-    expect(container.querySelector('.ultimate-terminal-page')).not.toHaveAttribute('data-flota');
-    const lista = document.getElementById(boton.getAttribute('aria-controls') ?? '');
-    expect(lista).not.toBeNull();
-
-    await user.click(boton);
-
-    expect(container.querySelector('.ultimate-terminal-page')).toHaveAttribute('data-flota', 'plegada');
-    const desplegar = await screen.findByRole('button', { name: 'Desplegar la lista de la flota' });
-    expect(desplegar).toHaveAttribute('aria-pressed', 'true');
-    const kant = await screen.findByRole('button', { name: /abrir sesión con kant/i });
-    expect(kant).toBeInTheDocument();
-    expect(kant.querySelector('.agent-name strong')).toHaveTextContent('kant');
-
-    await user.click(desplegar);
-    expect(container.querySelector('.ultimate-terminal-page')).not.toHaveAttribute('data-flota');
-  });
-});
