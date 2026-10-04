@@ -74,6 +74,7 @@ export class HarnessAdapter {
   private readonly sessionLocks = new Map<string, Promise<void>>();
   private readonly commandOverride: HarnessCommandOverride | undefined;
   private readonly sessionNamespace: string | undefined;
+  private readonly canonicalTerminalSession: boolean;
   private readonly fallbackSessionKey: string | undefined;
   private readonly resolveCredentialEnv: (() => Promise<Readonly<Record<string, string>>>) | undefined;
   private readonly sharedSession: HarnessAdapterOptions["sharedSession"];
@@ -86,6 +87,7 @@ export class HarnessAdapter {
     this.store = options.store;
     this.commandOverride = options.commandOverride;
     this.sessionNamespace = options.sessionNamespace;
+    this.canonicalTerminalSession = options.canonicalTerminalSession ?? true;
     this.fallbackSessionKey = options.fallbackSessionKey;
     this.resolveCredentialEnv = options.resolveCredentialEnv;
     const environment = options.environment ?? process.env;
@@ -533,6 +535,7 @@ export class HarnessAdapter {
           ...origin,
         };
         if (this.definition.id === "openclaw"
+          && this.canonicalTerminalSession
           && this.sessionNamespace !== undefined
           && request.sessionLane !== "agent") {
           await this.store.setCanonicalOpenClawTerminalSession(

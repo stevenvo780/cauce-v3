@@ -72,6 +72,7 @@ export interface HarnessAdapterOptions {
   readonly commandOverride?: HarnessCommandOverride;
   /** Stable, non-secret alias namespace used to isolate persisted native sessions. */
   readonly sessionNamespace?: string;
+  readonly canonicalTerminalSession?: boolean;
   /** Trusted local fallback used when a harness requires a session selector. */
   readonly fallbackSessionKey?: string;
   /**
