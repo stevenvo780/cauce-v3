@@ -75,10 +75,14 @@ async function send(app: FastifyInstance, input: FixtureRequest | string): Promi
   const options = typeof input === 'string' ? { url: input } : input;
   const address = app.server.address();
   if (!address || typeof address === 'string') throw new Error('Missing fixture listener');
+  const requestHeaders = { ...options.headers };
+  if (options.payload !== undefined && ['GET', 'OPTIONS'].includes(options.method ?? 'GET')) {
+    requestHeaders['content-length'] = String(Buffer.byteLength(options.payload));
+  }
   return new Promise((resolve, reject) => {
     const request = httpRequest({
       hostname: '127.0.0.1', port: address.port, path: options.url,
-      method: options.method ?? 'GET', headers: options.headers,
+      method: options.method ?? 'GET', headers: requestHeaders,
     }, (response) => {
       const chunks: Buffer[] = [];
       response.on('data', (chunk: Buffer) => { chunks.push(chunk); });
