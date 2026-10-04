@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { startRealPtyFixture, type RealPtyFixture } from './real-pty-agent.fixtures.js';
 
 let fixture: RealPtyFixture | undefined;
+const sessionClosed = (row: { revoked_at: Date | null; closed_at: Date | null } | undefined) =>
+  row !== undefined && Boolean(row.revoked_at) && Boolean(row.closed_at);
 
 beforeAll(async () => {
   fixture = await startRealPtyFixture();
@@ -98,7 +100,7 @@ describe('PTY real Python agent through gateway and relay', () => {
     const page = await active.browserPage({ width: 360, height: 800 });
     const nonce = `UI-PTY-${randomUUID().slice(0, 8)}`;
     const websocketPath = `/v3/console/terminal/relays/${active.relayInstanceId}/ws`;
-    let browserSocketClosed = false;
+    const browserSocket = { closed: false };
     let browserSocketSeen = false;
     const browserErrors: string[] = [];
     page.on('pageerror', (error) => { browserErrors.push(String(error)); });
@@ -106,7 +108,7 @@ describe('PTY real Python agent through gateway and relay', () => {
     page.on('websocket', (socket) => {
       if (!socket.url().endsWith(websocketPath)) return;
       browserSocketSeen = true;
-      socket.on('close', () => { browserSocketClosed = true; });
+      socket.on('close', () => { browserSocket.closed = true; });
     });
 
     const loginPage = await page.goto(active.baseUrl, { waitUntil: 'domcontentloaded' });
@@ -230,19 +232,19 @@ describe('PTY real Python agent through gateway and relay', () => {
     while (uiDeleteStatus === undefined && Date.now() < deleteDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
     expect(uiDeleteStatus).toBe(204);
     const closeDeadline = Date.now() + 15_000;
-    while (!browserSocketClosed && Date.now() < closeDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(browserSocketClosed).toBe(true);
+    while (!browserSocket.closed && Date.now() < closeDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(browserSocket.closed).toBe(true);
     const durableDeadline = Date.now() + 15_000;
     let durable = await active.database.pool.query<{ revoked_at: Date | null; closed_at: Date | null }>(
       'SELECT revoked_at,closed_at FROM terminal_sessions WHERE id=$1', [live.id],
     );
-    while ((!durable.rows[0]?.revoked_at || !durable.rows[0]?.closed_at) && Date.now() < durableDeadline) {
+    while (!sessionClosed(durable.rows[0]) && Date.now() < durableDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       durable = await active.database.pool.query<{ revoked_at: Date | null; closed_at: Date | null }>(
         'SELECT revoked_at,closed_at FROM terminal_sessions WHERE id=$1', [live.id],
       );
     }
-    if (!durable.rows[0]?.revoked_at || !durable.rows[0]?.closed_at) {
+    if (!sessionClosed(durable.rows[0])) {
       const state = await active.database.pool.query<{ id: string; request_id: string; revoked_at: Date | null; closed_at: Date | null }>(
         'SELECT id::text AS id,request_id,revoked_at,closed_at FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2',
         [active.tenant, active.targetAlias],
@@ -261,6 +263,6 @@ describe('PTY real Python agent through gateway and relay', () => {
     );
     expect(revokeAudit.rows).toEqual([{ decision: 'info', session_id: live.id }]);
     if (artifactDirectory) await page.screenshot({ path: join(artifactDirectory, 'terminal-360-closed.png'), fullPage: true });
-    process.stdout.write(`E2E mobile PTY: session=${live.id} request=${live.request_id} browser=${active.browserContainer} geometry=${firstSize.join('x')}->${resizedSize.join('x')} DELETE=${String(uiDeleteStatus)} browserSocketClosed=${String(browserSocketClosed)}\n`);
+    process.stdout.write(`E2E mobile PTY: session=${live.id} request=${live.request_id} browser=${active.browserContainer} geometry=${firstSize.join('x')}->${resizedSize.join('x')} DELETE=${String(uiDeleteStatus)} browserSocketClosed=${String(browserSocket.closed)}\n`);
   }, 180_000);
 });
