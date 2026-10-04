@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { AgentContextWriteCoordinator } from '../../../services/gateway/src/console/agent-context-write-coordinator.js';
 import { registerAgentContextReloadRoutes } from '../../../services/gateway/src/console/agent-context-reload.routes.js';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -491,6 +492,23 @@ describe('gateway reload with the canonical Store fence', () => {
       let finish = (): void => undefined;
       const atPrepare = new Promise<void>((resolve) => { prepared = resolve; });
       const barrier = new Promise<void>((resolve) => { finish = resolve; });
+      const unchanged = async () => ({
+        profile: (await pool.query('SELECT to_jsonb(p) AS value FROM agent_profiles p WHERE tenant_id=$1 AND alias=$2', [tenant, alias])).rows,
+        profileJournal: (await pool.query('SELECT to_jsonb(j) AS value FROM agent_profile_revisions j WHERE tenant_id=$1 AND alias=$2 ORDER BY id', [tenant, alias])).rows,
+        documents: (await pool.query('SELECT to_jsonb(d) AS value FROM agent_document_revisions d WHERE tenant_id=$1 AND alias=$2 ORDER BY id', [tenant, alias])).rows,
+        expectation: (await pool.query('SELECT to_jsonb(e) AS value FROM agent_profile_runtime_expectations e WHERE tenant_id=$1 AND alias=$2', [tenant, alias])).rows,
+        audit: (await pool.query("SELECT to_jsonb(a) AS value FROM audit_events a WHERE tenant_id=$1 AND action IN ('agent_profile.write','agent_document.write') ORDER BY id", [tenant])).rows,
+      });
+      const before = await unchanged();
+      const status = vi.fn(async (): Promise<never> => { throw new Error('Admission must precede writer status'); });
+      const coordinator = new AgentContextWriteCoordinator(pool, {
+        factsFor: async () => ({ source: 'measured', facts: { harness: 'claude', home: '/home/dev',
+          generation: 'runtime-generation-a', containerId: 'own-runtime',
+          writerInstanceId: randomUUID(), features: ['write_quiescence_v1'] } }),
+        readGovernanceDocument: async () => { throw new Error('Admission must precede physical readback'); },
+        listMemoryDirectory: async () => { throw new Error('This fixture has no memory directory'); },
+        supportsDurableWrites: () => true, writeStatus: status,
+      });
       const app = Fastify();
       const apply = vi.fn(async () => { await writeFile(file, 'after'); return []; });
       registerAgentContextReloadRoutes(app, {
@@ -501,7 +519,7 @@ describe('gateway reload with the canonical Store fence', () => {
         readRuntimeExpectation: async () => undefined,
         measureContext: async () => undefined,
         deliveryInFlight: async () => ({ count: 0, deliveries: [] }),
-        fenceRuntime: (input) => repository.reconcileAgentContextRuntime(input),
+        coordinateWrite: (input) => coordinator.coordinate(input),
         recordAudit: async () => undefined,
         prepareRuntime: async () => {
           prepared(); await barrier;
@@ -521,8 +539,12 @@ describe('gateway reload with the canonical Store fence', () => {
         finish();
         const response = await request;
         expect(response.statusCode).toBe(409);
+        expect(response.json<{ error: string }>()).toMatchObject({ error: 'conflict' });
         expect(apply).not.toHaveBeenCalled();
+        expect(status).not.toHaveBeenCalled();
         expect(await readFile(file, 'utf8')).toBe('before');
+        expect(await unchanged()).toEqual(before);
+        expect((await pool.query("SELECT id FROM jobs WHERE tenant_id=$1 AND kind='system.context.write.quarantine.v1'", [tenant])).rows).toEqual([]);
       } finally { finish(); await Promise.allSettled([request]); await app.close(); }
     });
   });
