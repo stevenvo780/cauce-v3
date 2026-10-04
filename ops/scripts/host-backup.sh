@@ -289,7 +289,8 @@ if [ "$(docker inspect -f '{{.State.Running}}' "$CAUCE_DB_CONTAINER" 2>/dev/null
             -e POSTGRES_USER=postgres "$restore_image" >/dev/null 2>>"$tmperr"
     then
       attempt=0
-      until docker exec "$restore_container" pg_isready -U postgres -d cauce_restore >/dev/null 2>>"$tmperr"; do
+      until docker exec -e PGCONNECT_TIMEOUT=2 "$restore_container" psql -X -w -h 127.0.0.1 -U postgres -d cauce_restore \
+          -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>>"$tmperr"; do
         attempt=$((attempt + 1))
         if [ "$attempt" -ge 60 ]; then break; fi
         sleep 1
