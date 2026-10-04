@@ -102,7 +102,7 @@ const CAPABILITY_ENCODERS = {
 } satisfies Partial<Record<keyof AdapterCapabilities, CapabilityEncoder>>;
 
 export function helloCapabilityStrings(capabilities: AdapterCapabilities): string[] {
-  return ['console_human_scope_v1', ...Object.values(CAPABILITY_ENCODERS).flatMap((encode) => encode(capabilities))];
+  return ['console_human_scope_v1', 'human_mcp_scope_v1', ...Object.values(CAPABILITY_ENCODERS).flatMap((encode) => encode(capabilities))];
 }
 
 export class AdapterClient {

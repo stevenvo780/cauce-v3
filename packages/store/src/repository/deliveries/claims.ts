@@ -277,6 +277,8 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         && capabilities.includes('conversation_work_v1');
       const includeConsoleHumanScope = Array.isArray(capabilities)
         && capabilities.includes('console_human_scope_v1');
+      const includeHumanMcpScope = Array.isArray(capabilities)
+        && capabilities.includes('human_mcp_scope_v1');
 
       await client.query(
         `INSERT INTO delivery_lane_fairness(tenant_id,alias) VALUES($1,$2)
@@ -389,6 +391,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
                   WHERE h.tenant_id=d.recipient_tenant AND h.alias=d.recipient_alias
                     AND h.released_at IS NULL AND h.expires_at>now()
                )
+               AND (m.auth_channel IS DISTINCT FROM 'human-mcp' OR $8::boolean)
                AND (m.priority >= $5)=$7::boolean
              ORDER BY (m.lane='interactive') DESC,m.priority DESC,d.available_at,d.created_at
              FOR UPDATE OF d SKIP LOCKED LIMIT 1
@@ -402,9 +405,9 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
            SELECT u.id,u.message_id,u.recipient_tenant,u.recipient_alias,u.status,u.attempt,u.max_attempts,
                   u.last_ack_rank,u.consumer_instance_id,u.consumer_epoch,u.claim_token,u.ack_deadline_at,
                    m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,m.body,m.lane,m.priority,m.origin,
-                   m.auth_session_id,m.auth_channel${includeConsoleHumanScope ? `,${MESSAGE_AUTHOR_SQL}` : ''}
+                   m.auth_session_id,m.auth_channel${includeConsoleHumanScope || includeHumanMcpScope ? `,${MESSAGE_AUTHOR_SQL}` : ''}
            FROM updated u JOIN messages m ON m.id=u.message_id`,
-          [tenantId, alias, epoch, instanceId, HUMAN_PRIORITY_FLOOR, ackDeadlineMs, humanOriginated]
+          [tenantId, alias, epoch, instanceId, HUMAN_PRIORITY_FLOOR, ackDeadlineMs, humanOriginated, includeHumanMcpScope]
         );
         const row = claimed.rows[0];
         if (row?.body.type !== 'agent.response') return row;
@@ -491,6 +494,8 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         const workState = workStates.get(row.id);
         const consoleAuthor = includeConsoleHumanScope && row.auth_channel === 'console'
           ? messageAuthor(row.author) : undefined;
+        const humanMcpAuthor = includeHumanMcpScope && row.auth_channel === 'human-mcp'
+          ? messageAuthor(row.author) : undefined;
         return {
           type: 'delivery',
           version: PROTOCOL_VERSION,
@@ -509,6 +514,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
           recipient_alias: row.recipient_alias,
           body: row.body,
           ...(consoleAuthor === undefined ? {} : { console_human_subject: consoleAuthor.subject_id }),
+          ...(humanMcpAuthor === undefined ? {} : { human_mcp_subject: humanMcpAuthor.subject_id }),
           ...(workState === undefined ? {} : { conversation_work_state: workState }),
           ...(routingTargets === undefined ? {} : { routing_targets: routingTargets }),
           ...(selfRole === undefined ? {} : { self_role: selfRole }),

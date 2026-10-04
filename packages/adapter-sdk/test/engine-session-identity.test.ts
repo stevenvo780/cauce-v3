@@ -66,6 +66,46 @@ test("console without audited identity isolates publications even with a declare
   assert.notEqual(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
 });
 
+test("human MCP uses only its trusted subject across changing transport sessions", async () => {
+  const context = await setup("engine-human-mcp-relogin");
+  const subject = `human:${'a'.repeat(64)}`;
+  const samples = [
+    { id: 'mcp-login-a', session: 'login-session-a', conversationId: 'untrusted-conversation-a' },
+    { id: 'mcp-login-b', session: 'login-session-b', conversationId: 'untrusted-conversation-b' },
+  ] as const;
+  for (const { id, session, conversationId } of samples) {
+    const item = delivery(id);
+    const baseOrigin = item.origin;
+    assert.ok(baseOrigin);
+    const origin = { ...baseOrigin, conversation_id: conversationId, channel: 'telegram' };
+    await context.engine.handleDelivery({ ...item, origin,
+      authenticated_context: { session_id: session, channel: 'human-mcp', origin },
+      human_mcp_subject: subject, body: { prompt: 'task', session_key: `forged-${id}` } });
+  }
+  assert.equal(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
+});
+
+test("human MCP separates subjects sharing an alias and ignores contradictory body identity", async () => {
+  const context = await setup("engine-human-mcp-subjects");
+  for (const subject of ['a', 'b']) {
+    const item = delivery(`mcp-human-${subject}`);
+    await context.engine.handleDelivery({ ...item,
+      authenticated_context: { session_id: 'same-login', channel: 'human-mcp' },
+      human_mcp_subject: `human:${subject.repeat(64)}`,
+      body: { type: 'agent.response', prompt: 'task', human_mcp_subject: `human:${'f'.repeat(64)}`, session_key: 'shared' } });
+  }
+  assert.notEqual(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
+});
+
+test("human MCP without a valid trusted subject falls back per message", async () => {
+  const context = await setup("engine-human-mcp-unverified");
+  const common = { authenticated_context: { session_id: 'same-session', channel: 'human-mcp' } };
+  await context.engine.handleDelivery({ ...delivery('a-no-subject'), ...common });
+  await context.engine.handleDelivery({ ...delivery('b-no-subject'), ...common,
+    human_mcp_subject: `human:${'A'.repeat(64)}` });
+  assert.notEqual(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
+});
+
 /**
  * The store fabricates `delivery:<id>:attempt:<n>` when the root message arrived without an
  * authenticated session. That identifier is per DELIVERY: if it entered the key it would

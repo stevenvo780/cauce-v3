@@ -29,6 +29,8 @@ describe('real console human context isolation', () => {
     expect(a.author.subject_id).not.toBe(b.author.subject_id);
     expect(a.delivery.console_human_subject).toBe(a.author.subject_id);
     expect(b.delivery.console_human_subject).toBe(b.author.subject_id);
+    expect(a.delivery).not.toHaveProperty('human_mcp_subject');
+    expect(b.delivery).not.toHaveProperty('human_mcp_subject');
     expect(a.author).toEqual(again.author);
     expect(a.author).not.toEqual(b.author);
     expect(a.delivery.authenticated_context?.session_id).not.toBe(again.delivery.authenticated_context?.session_id);
@@ -61,11 +63,20 @@ describe('real console human context isolation', () => {
     expect(fixture.forged.console_human_subject).toBe(a.delivery.console_human_subject);
     expect(sessionFromDelivery(fixture.forged, 'Isa').sessionKey).toBe(sessionFromDelivery(a.delivery, 'Isa').sessionKey);
     expect(fixture.legacy).not.toHaveProperty('console_human_subject');
+    expect(fixture.legacy).not.toHaveProperty('human_mcp_subject');
     expect(DeliveryEnvelopeSchema.omit({ console_human_subject: true }).safeParse(fixture.legacy).success).toBe(true);
   });
 
   it.each(['human:short', `human:${'A'.repeat(64)}`, `human:${'a'.repeat(64)}\n`])('rejects malformed subject %s at the wire boundary', (subject) => {
     const [a] = publications();
     expect(DeliveryEnvelopeSchema.safeParse({ ...a.delivery, console_human_subject: subject }).success).toBe(false);
+  });
+
+  it('accepts only the exact human MCP subject shape at the wire boundary', () => {
+    const [a] = publications();
+    expect(DeliveryEnvelopeSchema.safeParse({ ...a.delivery, human_mcp_subject: `human:${'a'.repeat(64)}` }).success).toBe(true);
+    for (const subject of ['human:short', `human:${'A'.repeat(64)}`, `human:${'a'.repeat(64)}\n`]) {
+      expect(DeliveryEnvelopeSchema.safeParse({ ...a.delivery, human_mcp_subject: subject }).success).toBe(false);
+    }
   });
 });

@@ -266,6 +266,14 @@ function conversationScope(delivery: Delivery): ConversationScope | undefined {
   const channel = context?.channel ?? origin?.channel;
   if (channel === undefined || channel.length === 0) return undefined;
 
+  if (channel === 'human-mcp') {
+    const subject = delivery.human_mcp_subject;
+    const identity = typeof subject === 'string' && /^human:[a-f0-9]{64}$/u.test(subject)
+      ? subject : `message:${delivery.message_id}`;
+    return { adapter: channel, channel,
+      conversation_id: `operator:${delivery.tenant_id}:${identity}`, scope: null };
+  }
+
   if (channel === 'console' && !isAgentToAgentBody(delivery.body)) {
     const subject = delivery.console_human_subject;
     const identity = typeof subject === 'string' && /^human:[a-f0-9]{64}$/u.test(subject)

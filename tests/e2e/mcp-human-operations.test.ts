@@ -189,11 +189,22 @@ describe('human MCP operations over real OAuth, SDK transport and PostgreSQL', (
     expect(crossTenantOwner.structuredContent, JSON.stringify(crossTenantOwner))
       .toEqual({ status_code: 404, error: 'not_found' });
     const claimInstance = `mcp-human-${randomUUID()}`;
-    const lease = await fixture.repository.acquireLease('Steven', 'mcp_target_steven', claimInstance, [], 60_000);
+    const oldLease = await fixture.repository.acquireLease('Steven', 'mcp_target_steven', claimInstance,
+      ['console_human_scope_v1'], 60_000);
+    if (!oldLease.acquired || oldLease.epoch === undefined) throw new Error('legacy recipient lease was not acquired');
+    const legacyClaims = await fixture.repository.claimDeliveries('Steven', 'mcp_target_steven', claimInstance, oldLease.epoch, 5);
+    expect(legacyClaims).toHaveLength(0);
+    const untouched = await fixture.pool.query<{ status: string }>(
+      'SELECT status FROM deliveries WHERE message_id=$1', [receiptAId],
+    );
+    expect(untouched.rows[0]?.status).toBe('pending');
+    const lease = await fixture.repository.acquireLease('Steven', 'mcp_target_steven', claimInstance,
+      ['human_mcp_scope_v1'], 60_000, { resume: true });
     if (!lease.acquired || lease.epoch === undefined) throw new Error('recipient lease was not acquired');
     const claims = await fixture.repository.claimDeliveries('Steven', 'mcp_target_steven', claimInstance, lease.epoch, 5);
     const delivery = claims.find((candidate) => candidate.message_id === receiptAId);
     if (!delivery) throw new Error('published human MCP delivery was not claimed');
+    expect(delivery.human_mcp_subject).toMatch(/^human:[a-f0-9]{64}$/u);
     const ackBase = { version: '3.0' as const, instance_id: claimInstance, epoch: lease.epoch,
       claim_token: delivery.claim_token, attempt: delivery.attempt, retryable: false };
     await expect(fixture.repository.ackDelivery(delivery.delivery_id, 'Steven', 'mcp_target_steven', {
