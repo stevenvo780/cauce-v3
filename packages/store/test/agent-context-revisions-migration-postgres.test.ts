@@ -2,9 +2,9 @@ import { preparePostgresSuite } from './postgres-suite.js';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { applyMigrations, type DatabasePool } from '../src/index.js';
+import { applyMigrationsThrough, type DatabasePool } from '../src/index.js';
 import {
-  resetTestDatabase, startTestDatabase, type TestDatabase,
+  resetTestDatabase, startTestDatabaseThrough, type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
 
 const version = '041_agent_context_revisions.sql';
@@ -88,7 +88,7 @@ preparePostgresSuite(import.meta.url, async () => {
     readFile(upPath, 'utf8'), readFile(downPath, 'utf8'),
     Promise.all(laterDownPaths.map((path) => readFile(path, 'utf8'))),
   ]);
-  database = await startTestDatabase();
+  database = await startTestDatabaseThrough('043_blob_tenant_entitlements.sql');
   databaseStarted = true;
   pool = database.pool;
 }, 120_000);
@@ -106,7 +106,7 @@ afterEach(async () => {
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
   await ensureUp();
   await clearJournal();
-  await applyMigrations(pool);
+  await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
 });
 
 afterAll(async () => {

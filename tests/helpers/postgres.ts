@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 import { afterAll, afterEach, expect, type TestContext } from 'vitest';
 import {
-  applyMigrations, createPool, migrationSourcesForApply,
+  applyMigrations, applyMigrationsThrough, createPool, migrationSourcesForApply,
   type DatabaseClient, type DatabasePool
 } from '@cauce/store';
 
@@ -429,7 +429,15 @@ export async function startEmptyTestDatabase(serverUrl: string): Promise<EmptyTe
   }
 }
 
-export async function startTestDatabase(): Promise<TestDatabase> {
+export function startTestDatabase(): Promise<TestDatabase> {
+  return startTestDatabaseAt();
+}
+
+export function startTestDatabaseThrough(version: string): Promise<TestDatabase> {
+  return startTestDatabaseAt(version);
+}
+
+async function startTestDatabaseAt(migrationThrough?: string): Promise<TestDatabase> {
   /*
    * External database support via CAUCE_TEST_DATABASE_URL for environments where the Docker
    * daemon is unavailable for testcontainers.
@@ -442,12 +450,14 @@ export async function startTestDatabase(): Promise<TestDatabase> {
     assertTestDatabaseUrl(externa);
     const fichero = ficheroDeLaSuite();
     const { url, soltar, tirarConexiones } = await crearBaseEfimera(externa, createPool, {
-      plantilla: fichero === undefined || !SUITES_SIN_PLANTILLA.has(fichero),
+      plantilla: migrationThrough === undefined
+        && (fichero === undefined || !SUITES_SIN_PLANTILLA.has(fichero)),
     });
     const pool = createPool(url);
     try {
       await waitForDatabase(pool);
-      await applyMigrations(pool);
+      if (migrationThrough === undefined) await applyMigrations(pool);
+      else await applyMigrationsThrough(pool, migrationThrough);
       await guardarSemillaDeCatalogo(pool);
       return { container: contenedorDesacoplado(soltar, tirarConexiones), pool, url };
     } catch (error) {
@@ -488,7 +498,8 @@ export async function startTestDatabase(): Promise<TestDatabase> {
     // A healthy container can become visible a few milliseconds before its
     // address is routable on an existing shared Docker network.
     await waitForDatabase(pool);
-    await applyMigrations(pool);
+    if (migrationThrough === undefined) await applyMigrations(pool);
+    else await applyMigrationsThrough(pool, migrationThrough);
     await guardarSemillaDeCatalogo(pool);
     return { container, pool, url };
   } catch (error) {

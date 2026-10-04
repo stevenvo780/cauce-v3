@@ -2,10 +2,10 @@ import { preparePostgresSuite } from './postgres-suite.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { applyMigrations, type DatabasePool } from '../src/index.js';
+import { applyMigrations, applyMigrationsThrough, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase,
-  startTestDatabase,
+  startTestDatabaseThrough,
   type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
 import {
@@ -70,7 +70,7 @@ preparePostgresSuite(import.meta.url, async () => {
     readFile(up038Path, 'utf8'),
     readFile(down038Path, 'utf8'),
   ]);
-  database = await startTestDatabase();
+  database = await startTestDatabaseThrough('043_blob_tenant_entitlements.sql');
   databaseStarted = true;
   pool = database.pool;
 }, 120_000);
@@ -401,88 +401,95 @@ describe('destructive migrations serialize with applyMigrations', () => {
   it.each([version033, version034, version035, version037])(
     '%s waits behind a successful forward apply and cannot leave the latest schema torn down',
     async (downVersion) => {
-      // beforeEach deliberately places the database at schema 034 for the historical migration
-      // tests above.  Use the real runner here so its integrity ledger and the latest schema are
-      // both exact before introducing concurrency.
-      await applyMigrations(pool);
-      if (downVersion === version037) {
-        // Exercise the appearance CAS, not a no-op forward apply. Remove 038 before 037 so only
-        // a pre-lock snapshot can distinguish "explicit down after a no-op" (allowed)
-        // from "037 appeared while down was queued" (must be rejected).
-        await removeAgentContextRevisionsLayer(pool);
-        await removeTerminalControlHoldsLayer(pool);
-        await removeSecretHandoffLayer(pool);
-        await removeLatestTextItemsSearchPathFix();
-        await pool.query(down037);
-      }
-
-      const sources: Record<string, string> = {
-        [version033]: down033,
-        [version034]: down034,
-        [version035]: down035,
-        [version037]: down037,
-      };
-      const source = sources[downVersion];
-      if (source === undefined) throw new Error(`missing down source for ${downVersion}`);
-
-      const blocker = await pool.connect();
-      const downgrade = await pool.connect();
-      let blockerOpen = false;
-      let applyOutcome: Promise<{ ok: true } | { ok: false; error: unknown }> | undefined;
-      let downOutcome: Promise<{ ok: true } | { ok: false; error: unknown }> | undefined;
+      // Keep the real head runner in a disposable database separate from historical downgrades.
+      const historicalPool = pool;
+      const concurrencyDatabase = await startTestDatabaseThrough('043_blob_tenant_entitlements.sql');
+      pool = concurrencyDatabase.pool;
       try {
-        // Force the real forward runner to pause *after* it owns the global migration fence.  The
-        // down must queue on that same advisory lock, not run ahead and block later on a table.
-        await blocker.query('BEGIN');
-        blockerOpen = true;
-        await blocker.query(downVersion === version037
-          ? 'LOCK TABLE audit_events IN ACCESS EXCLUSIVE MODE'
-          : 'LOCK TABLE schema_migrations IN ACCESS EXCLUSIVE MODE');
-        applyOutcome = applyMigrations(pool).then(
-          () => ({ ok: true as const }),
-          (error: unknown) => ({ ok: false as const, error }),
-        );
-        expect(await waitForGlobalMigrationLockHolder()).toBeDefined();
+        await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
+        if (downVersion === version037) {
+          // Exercise the appearance CAS, not a no-op forward apply. Remove 038 before 037 so only
+          // a pre-lock snapshot can distinguish "explicit down after a no-op" (allowed)
+          // from "037 appeared while down was queued" (must be rejected).
+          await removeAgentContextRevisionsLayer(pool);
+          await removeTerminalControlHoldsLayer(pool);
+          await removeSecretHandoffLayer(pool);
+          await removeLatestTextItemsSearchPathFix();
+          await pool.query(down037);
+        }
 
-        const pidResult = await downgrade.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
-        const downgradePid = pidResult.rows[0]?.pid;
-        if (downgradePid === undefined) throw new Error('downgrade backend has no pid');
-        downOutcome = downgrade.query(source).then(
-          () => ({ ok: true as const }),
-          (error: unknown) => ({ ok: false as const, error }),
-        );
-        expect(await waitsForGlobalMigrationLock(downgradePid)).toBe(true);
+        const sources: Record<string, string> = {
+          [version033]: down033,
+          [version034]: down034,
+          [version035]: down035,
+          [version037]: down037,
+        };
+        const source = sources[downVersion];
+        if (source === undefined) throw new Error(`missing down source for ${downVersion}`);
 
-        await blocker.query('COMMIT');
-        blockerOpen = false;
+        const blocker = await pool.connect();
+        const downgrade = await pool.connect();
+        let blockerOpen = false;
+        let applyOutcome: Promise<{ ok: true } | { ok: false; error: unknown }> | undefined;
+        let downOutcome: Promise<{ ok: true } | { ok: false; error: unknown }> | undefined;
+        try {
+          // Force the real forward runner to pause *after* it owns the global migration fence.  The
+          // down must queue on that same advisory lock, not run ahead and block later on a table.
+          await blocker.query('BEGIN');
+          blockerOpen = true;
+          await blocker.query(downVersion === version037
+            ? 'LOCK TABLE audit_events IN ACCESS EXCLUSIVE MODE'
+            : 'LOCK TABLE schema_migrations IN ACCESS EXCLUSIVE MODE');
+          applyOutcome = applyMigrations(pool).then(
+            () => ({ ok: true as const }),
+            (error: unknown) => ({ ok: false as const, error }),
+          );
+          expect(await waitForGlobalMigrationLockHolder()).toBeDefined();
 
-        const applied = await applyOutcome;
-        expect(applied).toEqual({ ok: true });
-        const downgraded = await downOutcome;
-        expect(downgraded.ok).toBe(false);
-        if (downgraded.ok) throw new Error(`${downVersion} unexpectedly succeeded`);
-        expect(downgraded.error).toBeInstanceOf(Error);
-        expect((downgraded.error as Error).message).toMatch(
-          downVersion === version037 ? /concurrently changed ledger state/u : /later migration/u,
-        );
+          const pidResult = await downgrade.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+          const downgradePid = pidResult.rows[0]?.pid;
+          if (downgradePid === undefined) throw new Error('downgrade backend has no pid');
+          downOutcome = downgrade.query(source).then(
+            () => ({ ok: true as const }),
+            (error: unknown) => ({ ok: false as const, error }),
+          );
+          expect(await waitsForGlobalMigrationLock(downgradePid)).toBe(true);
 
-        const versions = await pool.query<{ count: string }>(
-          `SELECT count(*)::text AS count
-             FROM schema_migrations
-            WHERE version = ANY($1::text[])`,
-          [[version033, version034, version035, version037, version038]],
-        );
-        expect(versions.rows[0]?.count).toBe('5');
-        await expect(terminalColumnExists('request_id')).resolves.toBe(true);
-        await expect(terminalColumnExists('relay_instance_id')).resolves.toBe(true);
-        await expect(profileLayerExists()).resolves.toBe(true);
-        await expect(consolePublishIndexesExist()).resolves.toBe(true);
+          await blocker.query('COMMIT');
+          blockerOpen = false;
+
+          const applied = await applyOutcome;
+          expect(applied).toEqual({ ok: true });
+          const downgraded = await downOutcome;
+          expect(downgraded.ok).toBe(false);
+          if (downgraded.ok) throw new Error(`${downVersion} unexpectedly succeeded`);
+          expect(downgraded.error).toBeInstanceOf(Error);
+          expect((downgraded.error as Error).message).toMatch(
+            downVersion === version037 ? /concurrently changed ledger state/u : /later migration/u,
+          );
+
+          const versions = await pool.query<{ count: string }>(
+            `SELECT count(*)::text AS count
+               FROM schema_migrations
+              WHERE version = ANY($1::text[])`,
+            [[version033, version034, version035, version037, version038]],
+          );
+          expect(versions.rows[0]?.count).toBe('5');
+          await expect(terminalColumnExists('request_id')).resolves.toBe(true);
+          await expect(terminalColumnExists('relay_instance_id')).resolves.toBe(true);
+          await expect(profileLayerExists()).resolves.toBe(true);
+          await expect(consolePublishIndexesExist()).resolves.toBe(true);
+        } finally {
+          if (blockerOpen) await blocker.query('ROLLBACK').catch(() => undefined);
+          if (applyOutcome !== undefined) await applyOutcome;
+          if (downOutcome !== undefined) await downOutcome;
+          blocker.release();
+          downgrade.release();
+        }
       } finally {
-        if (blockerOpen) await blocker.query('ROLLBACK').catch(() => undefined);
-        if (applyOutcome !== undefined) await applyOutcome;
-        if (downOutcome !== undefined) await downOutcome;
-        blocker.release();
-        downgrade.release();
+        pool = historicalPool;
+        await concurrencyDatabase.pool.end();
+        await concurrencyDatabase.container.stop();
       }
     },
     120_000,

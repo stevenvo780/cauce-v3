@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase,
-  startTestDatabase,
+  startTestDatabaseThrough,
   type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
 import {
@@ -62,7 +62,7 @@ preparePostgresSuite(import.meta.url, async () => {
     readFile(up038Path, 'utf8'),
     readFile(down038Path, 'utf8'),
   ]);
-  database = await startTestDatabase();
+  database = await startTestDatabaseThrough('043_blob_tenant_entitlements.sql');
   databaseStarted = true;
   pool = database.pool;
 }, 120_000);

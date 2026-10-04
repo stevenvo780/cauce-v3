@@ -8,11 +8,11 @@ import { removeSecretHandoffLayer } from './secret-handoff-layer.js';
 import { removeTerminalControlHoldsLayer } from './terminal-control-holds-layer.js';
 import type { PublishMessage } from '@cauce/protocol';
 import {
-  AgentProfileRepository, CauceRepository, applyMigrations,
+  AgentProfileRepository, CauceRepository, applyMigrationsThrough,
   type DatabasePool,
 } from '../src/index.js';
 import {
-  resetTestDatabase, startTestDatabase, type TestDatabase,
+  resetTestDatabase, startTestDatabaseThrough, type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
 
 /**
@@ -43,7 +43,7 @@ async function migrationApplied(): Promise<boolean> {
 }
 
 async function ensureUp(): Promise<void> {
-  if (!(await migrationApplied())) await applyMigrations(pool);
+  if (!(await migrationApplied())) await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
 }
 
 async function ensureDown(): Promise<void> {
@@ -77,7 +77,7 @@ async function insertAgent(
 }
 
 preparePostgresSuite(import.meta.url, async () => {
-  database = await startTestDatabase();
+  database = await startTestDatabaseThrough('043_blob_tenant_entitlements.sql');
   databaseStarted = true;
   pool = database.pool;
 }, 180_000);
@@ -162,7 +162,7 @@ describe('reconciliación y compatibilidad de la migración 028', () => {
        VALUES ('Steven','blank','   ')`,
     );
 
-    await applyMigrations(pool);
+    await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
 
     const rows = await pool.query<{
       alias: string; role_summary: string | null; role_brief: string | null;
@@ -207,7 +207,7 @@ describe('reconciliación y compatibilidad de la migración 028', () => {
     expect(Array.from(requireValue(state.rows[0], 'state.rows').role_brief)).toHaveLength(1_200);
     expect(state.rows[0]?.role_brief.endsWith('🎉')).toBe(true);
 
-    await applyMigrations(pool);
+    await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
     expect((await new AgentProfileRepository(pool).read('Steven', 'rollback_safe')).role_summary)
       .toBe(rich);
   });

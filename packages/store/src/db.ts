@@ -85,7 +85,20 @@ export function createPool(connectionString: string, options: DatabasePoolOption
 }
 
 export async function applyMigrations(pool: DatabasePool): Promise<void> {
+  await runMigrations(pool);
+}
+
+export async function applyMigrationsThrough(pool: DatabasePool, exactBundledVersion: string): Promise<void> {
+  await runMigrations(pool, exactBundledVersion);
+}
+
+async function runMigrations(pool: DatabasePool, exactBundledVersion?: string): Promise<void> {
   const migrations = await migrationSourcesForApply();
+  let cutoff = migrations.length - 1;
+  if (exactBundledVersion !== undefined) {
+    cutoff = migrations.findIndex((migration) => migration.version === exactBundledVersion);
+    if (cutoff < 0) throw new Error(`migration cutoff is not bundled: ${exactBundledVersion}`);
+  }
   await withTransaction(pool, async (client) => {
     await client.query('SELECT pg_advisory_xact_lock(783_003_003)');
     await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -95,7 +108,24 @@ export async function applyMigrations(pool: DatabasePool): Promise<void> {
     // Recompute the observed legacy fingerprint on every attempt. A prior verification row is
     // evidence, never permission to trust later drift.
     await inspectMigrationIntegrity(client);
-    for (const migration of migrations) {
+    if (exactBundledVersion !== undefined) {
+      const appliedLater = await client.query<{ version: string }>(
+        `SELECT version FROM (
+           SELECT version FROM schema_migrations WHERE version > $1
+           UNION
+           SELECT version FROM schema_migration_ledger WHERE version > $1
+         ) applied ORDER BY version LIMIT 1`,
+        [exactBundledVersion],
+      );
+      if (appliedLater.rows.length > 0) {
+        throw new Error(
+          `cannot apply migrations through ${exactBundledVersion}; later migration is already applied: ` +
+          (appliedLater.rows[0]?.version ?? 'unknown'),
+        );
+      }
+    }
+    const pendingMigrations = migrations.slice(0, cutoff + 1);
+    for (const migration of pendingMigrations) {
       const applied = await client.query<{ exists: boolean; source_sha256: string | null }>(
         `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1) AS exists,
                 (SELECT source_sha256 FROM schema_migration_ledger WHERE version=$1) AS source_sha256`,
