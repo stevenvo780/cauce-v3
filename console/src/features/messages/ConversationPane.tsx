@@ -25,6 +25,18 @@ import { useCanonicalReply, type CanonicalReplyRoot } from './use-canonical-repl
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
 
+const apiDraftScopes = new WeakMap<object, number>();
+let nextApiDraftScope = 0;
+
+function conversationDraftKey(api: object, subject: string | null | undefined, agentId: string): string {
+  let scope = apiDraftScopes.get(api);
+  if (scope === undefined) {
+    scope = ++nextApiDraftScope;
+    apiDraftScopes.set(api, scope);
+  }
+  return JSON.stringify([scope, subject, agentId]);
+}
+
 interface ConversationPaneProps {
   agent: AgenteDeMensajeria;
   page?: MessagePage;
@@ -54,7 +66,13 @@ type CuerpoEntero =
 /**
  * Conversation panel with an agent: history, delivery state and message composer.
  */
-export function ConversationPane({
+export function ConversationPane(props: ConversationPaneProps) {
+  const api = useApi();
+  const key = conversationDraftKey(api, props.publisherHumanSubject ?? props.publisherSubject, props.agent.id);
+  return <ConversationPaneContent key={key} {...props} />;
+}
+
+function ConversationPaneContent({
   agent, page, loading, error, route, canPublish, publisherSubject, publisherHumanSubject, salud, queueError, onQueueReload, onReload,
 }: ConversationPaneProps) {
   const api = useApi();
@@ -70,7 +88,7 @@ export function ConversationPane({
     wasContextOpen.current = contextOpen;
   }, [contextOpen]);
   const replySubject = publisherHumanSubject ?? publisherSubject;
-  const draftKey = JSON.stringify([replySubject, agent.id]);
+  const draftKey = conversationDraftKey(api, replySubject, agent.id);
   const [form, updateForm] = useConversationDraft(draftKey);
   const { text: draft, roomId: roomElegido, lane, sending: enviando, notice: aviso } = form;
   const setDraft = (text: string) => { updateForm((current) => ({ ...current, text })); };
@@ -79,6 +97,7 @@ export function ConversationPane({
   const setAviso = (notice: typeof aviso) => { updateForm((current) => ({ ...current, notice })); };
   const [mensajeElegido, setMensajeElegido] = useState<string>();
   const [selectedSnapshot, setSelectedSnapshot] = useState<TranscriptItem>();
+  const submissions = useRef(new Set<string>());
   const [receiptRoot, setReceiptRoot] = useState<{ key: string; root: CanonicalReplyRoot }>();
   const [cuerpos, setCuerpos] = useState<Record<string, CuerpoEntero>>({});
   /** The detail is born closed and is opened by the operator or by clicking a bubble. */
@@ -88,7 +107,13 @@ export function ConversationPane({
     id: `messenger:${agent.id}`, agent, sourceRoomId: '', openedAt: new Date(0).toISOString(), mode: 'transcript',
   }), [agent]);
   const hilo = useMemo(() => transcriptForSession(page, sesion), [page, sesion]);
-  const replyScopeKey = JSON.stringify([replySubject, agent.tenantId, agent.alias]);
+  const replyScopeKey = JSON.stringify([draftKey, agent.tenantId, agent.alias]);
+  const publishScope = useMemo(() => ({ key: replyScopeKey, api, publisherSubject }), [api, publisherSubject, replyScopeKey]);
+  const activePublishScope = useRef<typeof publishScope | undefined>(publishScope);
+  useEffect(() => {
+    activePublishScope.current = publishScope;
+    return () => { activePublishScope.current = undefined; };
+  }, [publishScope]);
 
   const roomUnavailable = Boolean(roomElegido && !route.sourceRoomIds.includes(roomElegido));
   const roomOrigen = roomElegido ?? (route.sourceRoomIds.length === 1 ? route.sourceRoomIds[0] : '');
@@ -228,9 +253,11 @@ export function ConversationPane({
   async function enviar(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     const texto = draft.trim();
-    if (!puedeEnviar || !texto || enviando) return;
-    updateForm((current) => ({ ...current, sending: true }));
-    setAviso(undefined);
+    if (!puedeEnviar || !texto || enviando || submissions.current.has(draftKey)) return;
+    submissions.current.add(draftKey);
+    updateForm((current) => ({ ...current, sending: true, notice: undefined }));
+    const stillActive = () => activePublishScope.current === publishScope;
+    const refresh = () => { if (stillActive()) onReload(); };
     try {
       const semantics = {
         room_id: roomOrigen,
@@ -245,16 +272,22 @@ export function ConversationPane({
         input: semantics,
         publisherSubject,
         expectedDeliveries: 1,
-        reconcile: onReload,
+        reconcile: refresh,
+        onAccepted: ({ receipt }) => {
+          updateForm((current) => ({
+            ...current, text: current.text === draft ? '' : current.text,
+            notice: { tone: 'parcial', text: `Mensaje aceptado para entrega · ${compactId(receipt.message_id)}. Confirmación pendiente; la aceptación no confirma la ejecución.` },
+          }));
+          if (!stillActive()) return;
+          setReceiptRoot({ key: replyScopeKey, root: { messageId: receipt.message_id, deliveryId: receipt.delivery_ids[0] } });
+          setMensajeElegido(undefined);
+          setSelectedSnapshot(undefined);
+          pegadoRef.current = true;
+          setPegado(true);
+          refresh();
+        },
       });
 
-      updateForm((current) => ({ ...current, text: current.text === draft ? '' : current.text }));
-      const receiptDeliveryId = resultado.delivery_ids[0];
-      if (resultado.message_id && receiptDeliveryId) {
-        setReceiptRoot({ key: replyScopeKey, root: { messageId: resultado.message_id, deliveryId: receiptDeliveryId } });
-        setMensajeElegido(undefined);
-        setSelectedSnapshot(undefined);
-      }
       setAviso({
         tone: journalStatus === 'confirmed' ? 'success' : 'parcial',
         text: `${reconciled ? 'Publicación reconciliada desde el journal durable' : 'Aceptado por el control plane'} · ${compactId(resultado.message_id)}. `
@@ -264,13 +297,10 @@ export function ConversationPane({
               ? 'Confirmación incierta; intención pendiente y cercada'
               : 'Confirmación rechazada; intención cercada contra duplicados'}; el ACK llega por polling.`,
       });
-      // What one just wrote is watched: publishing sticks the thread back to the end.
-      pegadoRef.current = true;
-      setPegado(true);
-      onReload();
     } catch (causa) {
       setAviso({ tone: 'error', text: causa instanceof Error ? causa.message : 'No se pudo publicar el mensaje.' });
     } finally {
+      submissions.current.delete(draftKey);
       updateForm((current) => ({ ...current, sending: false }));
     }
   }
@@ -549,7 +579,7 @@ export function ConversationPane({
         <div className="composer-footer">
           <span><kbd>Enter</kbd> enviar · <kbd>Shift</kbd> + <kbd>Enter</kbd> nueva línea</span>
           <button className="button primary" type="submit" disabled={!puedeEnviar || enviando || !draft.trim()}>
-            <Send size={15} aria-hidden="true" /><span>{enviando ? 'Enviando…' : 'Enviar'}</span>
+            <Send size={15} aria-hidden="true" /><span>{enviando ? aviso?.tone === 'parcial' ? 'Confirmando…' : 'Enviando…' : 'Enviar'}</span>
           </button>
         </div>
         </div>
