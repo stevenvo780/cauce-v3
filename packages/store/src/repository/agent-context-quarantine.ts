@@ -2,6 +2,7 @@ import { canonicallyEqual, sha256Hex, AliasSchema, ProfileRuntimeContractSchema,
 import { withTransaction, withAbortableTransaction, type DatabaseClient, type DatabasePool } from '../db.js';
 import { agentContextReconcileLockKey } from './agent-context-lock.js';
 import { StoreError } from './errors.js';
+import { contextWritePlanMatches, parseContextWritePlan, type ContextWritePlan } from './agent-context-write-plan.js';
 
 export const CONTEXT_WRITE_QUARANTINE_KIND = 'system.context.write.quarantine.v1';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -24,7 +25,7 @@ export interface ContextWriteSnapshot {
   readonly agentSha256: string;
   readonly expectation: ProfileRuntimeContract | null;
 }
-export interface ContextWriteDescriptor {
+export interface ContextWriteDescriptorV1 {
   readonly version: 1;
   readonly operationId: string;
   readonly token: string;
@@ -38,6 +39,11 @@ export interface ContextWriteDescriptor {
   readonly dispatch: 'reserved' | 'authorized';
   readonly completion: { readonly resolution: ContextWriteResolution; readonly proofSha256: string } | null;
 }
+export type ContextWriteDescriptorV2 = Omit<ContextWriteDescriptorV1, 'version'> & {
+  readonly version: 2;
+  readonly plan: ContextWritePlan;
+};
+export type ContextWriteDescriptor = ContextWriteDescriptorV1 | ContextWriteDescriptorV2;
 export interface ReserveContextWriteInput {
   readonly operationId: string;
   readonly token: string;
@@ -50,6 +56,7 @@ export interface ReserveContextWriteInput {
   readonly documents: readonly ContextWriteDocument[];
   readonly signal?: AbortSignal;
   readonly updateDesired?: (client: DatabaseClient) => Promise<void>;
+  readonly plan?: ContextWritePlan;
 }
 export interface ContextWriterQuiescence {
   readonly operationId: string;
@@ -61,6 +68,24 @@ export interface ContextWriterQuiescence {
   readonly documents: readonly { readonly name: string; readonly path: string; readonly sha: string | null }[];
 }
 export type ContextWriteResolution = 'target' | 'old';
+export type ContextWriterRecoveryProof = Omit<ContextWriterQuiescence, 'documents'> & {
+  readonly documents: readonly { readonly name: string; readonly path: string; readonly sha: string | null; readonly bytes: number }[];
+};
+export interface ContextWriteRecoveryInput {
+  readonly tenantId: Tenant;
+  readonly alias: string;
+  readonly operationId: string;
+  readonly signal: AbortSignal;
+  readonly lockHumanAuthority: (client: DatabaseClient) => Promise<void>;
+  readonly assertTargetControl: (client: DatabaseClient, descriptor: ContextWriteDescriptorV2) => Promise<void>;
+  readonly authenticatedReadback: (client: DatabaseClient, descriptor: ContextWriteDescriptorV2) => Promise<ContextWriterRecoveryProof>;
+  readonly persistTarget: (client: DatabaseClient, plan: ContextWritePlan, proof: ContextWriterRecoveryProof,
+    descriptor: ContextWriteDescriptorV2) => Promise<void>;
+}
+export interface ContextWriteHistory {
+  readonly operationId: string;
+  readonly resolution: ContextWriteResolution;
+}
 
 function conflict(message: string): never {
   throw new StoreError('conflict', message);
@@ -115,15 +140,20 @@ function documents(value: unknown): value is readonly ContextWriteDocument[] {
   return true;
 }
 function parseDescriptor(value: unknown): ContextWriteDescriptor | undefined {
-  if (!record(value) || !keys(value, ['version', 'operationId', 'token', 'generation', 'tenantId', 'alias', 'writer', 'before', 'after', 'documents', 'dispatch', 'completion'])
-    || value.version !== 1 || typeof value.operationId !== 'string' || !UUID.test(value.operationId)
+  if (!record(value) || !keys(value, ['version', 'operationId', 'token', 'generation', 'tenantId', 'alias', 'writer', 'before', 'after', 'documents', 'dispatch', 'completion', ...(value.version === 2 ? ['plan'] : [])])
+    || (value.version !== 1 && value.version !== 2) || typeof value.operationId !== 'string' || !UUID.test(value.operationId)
     || typeof value.token !== 'string' || !UUID.test(value.token) || typeof value.generation !== 'string' || !UUID.test(value.generation)
     || !TenantSchema.safeParse(value.tenantId).success || !AliasSchema.safeParse(value.alias).success
     || !writer(value.writer) || !snapshot(value.before) || !snapshot(value.after) || !documents(value.documents)
     || !['reserved', 'authorized'].includes(String(value.dispatch))
     || (value.completion !== null && (!record(value.completion) || !keys(value.completion, ['resolution', 'proofSha256'])
       || !['target', 'old'].includes(String(value.completion.resolution)) || typeof value.completion.proofSha256 !== 'string' || !SHA.test(value.completion.proofSha256)))) return undefined;
-  return value as unknown as ContextWriteDescriptor;
+  const descriptor = value as unknown as ContextWriteDescriptor;
+  if (descriptor.version === 2) {
+    const plan = parseContextWritePlan(descriptor.plan);
+    if (plan === undefined || !contextWritePlanMatches(plan, descriptor.documents, descriptor.after)) return undefined;
+  }
+  return descriptor;
 }
 
 export async function assertAgentContextAdmissionAllowed(client: DatabaseClient, tenantId: Tenant, alias: string): Promise<void> {
@@ -191,7 +221,9 @@ export async function reserveAgentContextWrite(pool: DatabasePool, input: Reserv
   }
   const expected = input.expectedExpectation === null ? null : canonicalProfileRuntimeContract(input.expectedExpectation);
   if (expected === undefined) throw new StoreError('invalid_input', 'context write expectation is invalid');
-  await transaction(pool, input.signal, async (client) => {
+  const plan = input.plan === undefined ? undefined : parseContextWritePlan(structuredClone(input.plan));
+  if (input.plan !== undefined && plan === undefined) throw new StoreError('invalid_input', 'context write plan is invalid');
+  const reserved = await transaction(pool, input.signal, async (client) => {
     await exclusive(client, input.tenantId, input.alias);
     await assertAgentContextAdmissionAllowed(client, input.tenantId, input.alias);
     const before = await lockAgentContextSnapshot(client, input.tenantId, input.alias);
@@ -199,14 +231,20 @@ export async function reserveAgentContextWrite(pool: DatabasePool, input: Reserv
     await assertNoContextDeliveriesInFlight(client, input.tenantId, input.alias);
     await input.updateDesired?.(client);
     const after = await lockAgentContextSnapshot(client, input.tenantId, input.alias);
-    const descriptor: ContextWriteDescriptor = { version: 1, operationId: input.operationId, token: input.token, generation: input.generation,
+    const base: ContextWriteDescriptorV1 = { version: 1, operationId: input.operationId, token: input.token, generation: input.generation,
       tenantId: input.tenantId, alias: input.alias, writer: structuredClone(input.writer), before, after, documents: structuredClone(input.documents), dispatch: 'reserved', completion: null };
+    if (plan !== undefined && !contextWritePlanMatches(plan, base.documents, after)) {
+      throw new StoreError('invalid_input', 'context write plan differs from snapshot or catalog');
+    }
+    const descriptor: ContextWriteDescriptor = plan === undefined ? base : { ...base, version: 2, plan };
     await client.query(`INSERT INTO jobs(id,tenant_id,lane,kind,payload,status,claim_token,lease_until) VALUES($1,$2,'interactive',$3,$4::jsonb,'running',$5,NULL)`,
       [input.operationId, input.tenantId, CONTEXT_WRITE_QUARANTINE_KIND, JSON.stringify(descriptor), input.token]);
+    return descriptor;
   });
   const committed = await readAgentContextWrite(pool, input.tenantId, input.alias, input.operationId)
     .catch(() => unverifiedCommit('context write commit is unverified'));
-  if (committed?.token !== input.token || committed.generation !== input.generation) unverifiedCommit('context write commit is unverified');
+  if (!same(committed, reserved)) unverifiedCommit('context write commit is unverified');
+  if (committed === undefined) unverifiedCommit('context write commit is unverified');
   return committed;
 }
 async function lockedDescriptor(client: DatabaseClient, expected: ContextWriteDescriptor): Promise<ContextWriteDescriptor> {
@@ -235,15 +273,89 @@ export async function authorizeAgentContextDispatch(pool: DatabasePool, expected
   if (!same(authorized, readback)) unverifiedCommit('context write dispatch commit is unverified');
   return authorized;
 }
-function parseProof(value: unknown): ContextWriterQuiescence | undefined {
+function parseProof(value: unknown, withBytes: true): ContextWriterRecoveryProof | undefined;
+function parseProof(value: unknown, withBytes?: false): ContextWriterQuiescence | undefined;
+function parseProof(value: unknown, withBytes = false): ContextWriterQuiescence | ContextWriterRecoveryProof | undefined {
   if (!record(value) || !keys(value, ['operationId', 'token', 'generation', 'writer', 'state', 'durability', 'documents'])
     || value.state !== 'quiescent' || value.durability !== 'post_fsync'
     || !writer(value.writer) || !Array.isArray(value.documents) || value.documents.length < 1 || value.documents.length > 7
     || ![value.operationId, value.token, value.generation].every((id) => typeof id === 'string' && UUID.test(id))) return undefined;
   for (const item of value.documents) {
-    if (!record(item) || !keys(item, ['name', 'path', 'sha']) || !text(item.name) || !text(item.path) || !sha(item.sha)) return undefined;
+    if (!record(item) || !keys(item, ['name', 'path', 'sha', ...(withBytes ? ['bytes'] : [])])
+      || !text(item.name) || !text(item.path) || !sha(item.sha)
+      || (withBytes && (!Number.isSafeInteger(item.bytes) || Number(item.bytes) < 0
+        || (item.sha === null && item.bytes !== 0)))) return undefined;
   }
   return value as unknown as ContextWriterQuiescence;
+}
+
+async function persistResolution(
+  client: DatabaseClient, descriptor: ContextWriteDescriptor, proof: ContextWriterQuiescence,
+  persistTarget: () => Promise<void>,
+): Promise<ContextWriteResolution> {
+  if (proof.operationId !== descriptor.operationId || proof.token !== descriptor.token
+    || proof.generation !== descriptor.generation || !same(proof.writer, descriptor.writer)
+    || proof.documents.length !== descriptor.documents.length) conflict('context writer quiescence is unverified');
+  const measured = new Map(proof.documents.map((item) => [item.name, item]));
+  if (measured.size !== descriptor.documents.length) conflict('context writer document proof is incomplete');
+  const matches = (field: 'beforeSha' | 'targetSha'): boolean => descriptor.documents.every((item) => {
+    const actual = measured.get(item.name);
+    return actual?.path === item.path && sha(actual.sha) && actual.sha === item[field];
+  });
+  const target = matches('targetSha');
+  if (!target && !matches('beforeSha')) conflict('context writer files are mixed or unexpected');
+  if (target) await persistTarget();
+  const resolution = target ? 'target' : 'old';
+  await client.query(`UPDATE jobs SET status='done',payload=$2::jsonb,updated_at=clock_timestamp() WHERE id=$1`,
+    [descriptor.operationId, JSON.stringify({ ...descriptor, completion: { resolution, proofSha256: digest(proof) } })]);
+  return resolution;
+}
+
+export async function recoverAgentContextWrite(pool: DatabasePool, input: ContextWriteRecoveryInput): Promise<ContextWriteHistory> {
+  if (!TenantSchema.safeParse(input.tenantId).success || !AliasSchema.safeParse(input.alias).success
+    || !UUID.test(input.operationId) || !(input.signal instanceof AbortSignal)
+    || ![input.lockHumanAuthority, input.assertTargetControl, input.authenticatedReadback, input.persistTarget]
+      .every((callback) => typeof callback === 'function')) {
+    throw new StoreError('invalid_input', 'context recovery authority or scope is invalid');
+  }
+  return withAbortableTransaction(pool, input.signal, async (client) => {
+    await input.lockHumanAuthority(client);
+    input.signal.throwIfAborted();
+    await exclusive(client, input.tenantId, input.alias);
+    const rows = await client.query<{ payload: unknown; status: string; claim_token: string | null; lease_until: Date | null }>(
+      `SELECT payload,status,claim_token::text,lease_until FROM jobs WHERE id=$1 AND tenant_id=$2 AND kind=$3 FOR UPDATE`,
+      [input.operationId, input.tenantId, CONTEXT_WRITE_QUARANTINE_KIND],
+    );
+    const row = rows.rows[0];
+    if (row === undefined) throw new StoreError('not_found', 'context write reservation not found');
+    const descriptor = parseDescriptor(row.payload);
+    if (descriptor?.tenantId !== input.tenantId || descriptor.alias !== input.alias || descriptor.operationId !== input.operationId) {
+      throw new StoreError('not_found', 'context write reservation not found');
+    }
+    if (descriptor.version !== 2) conflict('context write recovery plan is unavailable');
+    if (row.lease_until !== null || row.claim_token !== descriptor.token || descriptor.dispatch !== 'authorized') {
+      conflict('context write recovery control fields are invalid');
+    }
+    if (row.status === 'done' && descriptor.completion !== null) {
+      await input.assertTargetControl(client, structuredClone(descriptor));
+      input.signal.throwIfAborted();
+      return { operationId: descriptor.operationId, resolution: descriptor.completion.resolution };
+    }
+    if (row.status !== 'running' || descriptor.completion !== null) conflict('context write recovery control fields are invalid');
+    if (!same(await lockAgentContextSnapshot(client, input.tenantId, input.alias), descriptor.after)) {
+      conflict('context write snapshot changed before recovery');
+    }
+    await input.assertTargetControl(client, structuredClone(descriptor));
+    input.signal.throwIfAborted();
+    const proof = parseProof(await input.authenticatedReadback(client, structuredClone(descriptor)), true);
+    if (proof === undefined) conflict('context writer recovery proof is invalid');
+    input.signal.throwIfAborted();
+    const resolution = await persistResolution(client, descriptor, proof, async () => {
+      await input.persistTarget(client, structuredClone(descriptor.plan), structuredClone(proof), structuredClone(descriptor));
+      input.signal.throwIfAborted();
+    });
+    return { operationId: descriptor.operationId, resolution };
+  });
 }
 
 export async function resolveAgentContextWrite(
@@ -258,22 +370,8 @@ export async function resolveAgentContextWrite(
     if (descriptor.dispatch !== 'authorized') conflict('context write was not dispatched');
     if (!same(await lockAgentContextSnapshot(client, expected.tenantId, expected.alias), descriptor.after)) conflict('context write snapshot changed before resolution');
     const received: unknown = await authenticatedProof(client);
-    const proof = parseProof(received);
-    if (proof?.operationId !== descriptor.operationId || proof.token !== descriptor.token
-      || proof.generation !== descriptor.generation || !same(proof.writer, descriptor.writer)
-      || proof.documents.length !== descriptor.documents.length) conflict('context writer quiescence is unverified');
-    const measured = new Map(proof.documents.map((item) => [item.name, item]));
-    if (measured.size !== descriptor.documents.length) conflict('context writer document proof is incomplete');
-    const matches = (field: 'beforeSha' | 'targetSha'): boolean => descriptor.documents.every((item) => {
-      const actual = measured.get(item.name);
-      return actual?.path === item.path && sha(actual.sha) && actual.sha === item[field];
-    });
-    const target = matches('targetSha');
-    if (!target && !matches('beforeSha')) conflict('context writer files are mixed or unexpected');
-    if (target) await persistTarget(client, proof);
-    const resolution = target ? 'target' : 'old';
-    await client.query(`UPDATE jobs SET status='done',payload=$2::jsonb,updated_at=clock_timestamp() WHERE id=$1`,
-      [descriptor.operationId, JSON.stringify({ ...descriptor, completion: { resolution, proofSha256: digest(proof) } })]);
-    return resolution;
+    const proof = descriptor.version === 2 ? parseProof(received, true) : parseProof(received);
+    if (proof === undefined) conflict('context writer quiescence is unverified');
+    return persistResolution(client, descriptor, proof, () => persistTarget(client, proof));
   });
 }

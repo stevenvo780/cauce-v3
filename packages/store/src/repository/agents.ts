@@ -1,8 +1,9 @@
 import type { Ack, ProfileRuntimeAdoptionEvidence, ProfileRuntimeContract, Tenant } from '@cauce/protocol';
 import { PROTOCOL_VERSION, SYSTEM_PRINCIPAL_ALIASES } from '@cauce/protocol';
 import {
-  reserveAgentContextWrite, readAgentContextWrite, authorizeAgentContextDispatch, resolveAgentContextWrite,
+  reserveAgentContextWrite, readAgentContextWrite, authorizeAgentContextDispatch, resolveAgentContextWrite, recoverAgentContextWrite,
   type ReserveContextWriteInput, type ContextWriteDescriptor, type ContextWriterQuiescence,
+  type ContextWriteRecoveryInput, type ContextWriteHistory,
 } from './agent-context-quarantine.js';
 import type { DatabaseClient } from '../db.js';
 import { withTransaction } from '../db.js';
@@ -22,6 +23,10 @@ export type ProfileRuntimeAdoptionAck = ProfileRuntimeAdoptionEvidence & {
 };
 
 export abstract class AgentsRepository extends DeliveryAcksRepository {
+
+  async recoverContextWrite(input: ContextWriteRecoveryInput): Promise<ContextWriteHistory> {
+    return recoverAgentContextWrite(this.pool, input);
+  }
 
   async reserveContextWrite(input: ReserveContextWriteInput): Promise<ContextWriteDescriptor> {
     return reserveAgentContextWrite(this.pool, input);
