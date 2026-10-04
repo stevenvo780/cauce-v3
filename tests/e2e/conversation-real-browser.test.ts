@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ackEnvelope, terminalAck } from '../../packages/store/test/helpers/consumer.js';
 import type { Locator } from './console-functional-browser.fixtures.js';
@@ -8,6 +10,7 @@ import {
 } from './conversation-real-browser.fixtures.js';
 
 let fixture: ConversationBrowserFixture | undefined;
+const sourceRoot = fileURLToPath(new URL('../../', import.meta.url));
 
 interface InputLocator extends Locator {
   inputValue(): Promise<string>;
@@ -18,7 +21,7 @@ beforeAll(async () => {
   fixture = await startConversationBrowserFixture();
   console.info(JSON.stringify({
     e2e: 'PR52 real conversation browser',
-    head: '054dbee2395859059ac388cebb51d12c6383e8b6',
+    head: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: sourceRoot, encoding: 'utf8' }).trim(),
     postgresContainer: fixture.pty.database.container.getId(),
     browserContainer: fixture.pty.browserContainer,
     agentContainer: fixture.pty.agentContainerId,
@@ -132,7 +135,14 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
       };
       await send.click({ clickCount: 2 });
 
-      await page.getByText(/Mensaje aceptado para entrega/u).waitFor({ state: 'visible', timeout: 20_000 });
+      const humanEntry = page.locator('.transcript-entry.input').filter({ hasText: marker });
+      const pendingCheck = humanEntry.getByRole('status', {
+        name: 'Entrega: Publicado · esperando aceptación del agente', exact: true,
+      });
+      await pendingCheck.waitFor({ state: 'visible', timeout: 20_000 });
+      expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(1);
+      expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(0);
+      expect(await humanEntry.locator('.canonical-reply').count()).toBe(0);
       const confirmingButton = page.getByRole('button', { name: 'Confirmando…', exact: true });
       await confirmingButton.waitFor({ state: 'visible', timeout: 10_000 });
       await fault.waitForCalls(1);
@@ -161,7 +171,6 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
       expect((await messageEvidence(active, marker)).message_id).toBe(pendingRoot.message_id);
       expect(await page.getByText(marker, { exact: true }).count()).toBe(1);
 
-      const humanEntry = page.locator('.transcript-entry.input').filter({ hasText: marker });
       const author = humanEntry.locator('.transcript-direction span[title^="Persona autenticada"]');
       await author.waitFor({ state: 'visible', timeout: 15_000 });
       expect(await author.innerText()).toBe('REAL PTY E2E OPERATOR');
@@ -174,7 +183,13 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
       await page.screenshot({ path: `${evidenceDirectory}/${viewport.label}-message-details-open.png`, fullPage: false });
 
       await ackFromActualStore(active, pendingRoot.message_id, reply, async () => {
-        await page.getByText('EN CURSO', { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+        const startedCheck = humanEntry.getByRole('status', {
+          name: 'Entrega: El agente inició la ejecución', exact: true,
+        });
+        await startedCheck.waitFor({ state: 'visible', timeout: 20_000 });
+        expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(1);
+        expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(0);
+        expect(await humanEntry.locator('.canonical-reply').count()).toBe(0);
         const inProgress = await active.pty.database.pool.query<{ status: string }>(
           'SELECT status FROM deliveries WHERE id=$1::uuid', [pendingRoot.delivery_id],
         );
@@ -188,7 +203,12 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
       expect(completed.rows[0]?.status).toBe('done');
       await page.getByText(reply, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
       await page.getByText('Respuesta consolidada', { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
-      await humanEntry.getByText('HECHA', { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+      const doneCheck = humanEntry.getByRole('status', {
+        name: 'Entrega: El agente terminó; respuesta recibida', exact: true,
+      });
+      await doneCheck.waitFor({ state: 'visible', timeout: 20_000 });
+      expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(0);
+      expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(1);
       const agentBubble = page.getByRole('article', { name: `Mensaje de ${active.pty.targetAlias}`, exact: true });
       expect(await agentBubble.count()).toBe(1);
       expect(await agentBubble.innerText()).toContain(reply);

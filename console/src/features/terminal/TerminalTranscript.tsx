@@ -92,12 +92,12 @@ function DeliveryCheck({ delivery, responseReceived = false }: { delivery: Deliv
   let checks: 0 | 1 | 2;
   let tone: 'neutral' | 'positive' | 'danger';
   if (status === 'accepted') {
-    label = 'El agente aceptó la entrega'; checks = 2; tone = 'positive';
+    label = 'El agente aceptó la entrega'; checks = 1; tone = 'positive';
   } else if (status === 'started') {
-    label = 'El agente inició la ejecución'; checks = 2; tone = 'positive';
+    label = 'El agente inició la ejecución'; checks = 1; tone = 'positive';
   } else if (status === 'done') {
     label = responseReceived ? 'El agente terminó; respuesta recibida' : 'El agente terminó; respuesta no disponible';
-    checks = 2; tone = 'positive';
+    checks = responseReceived ? 2 : 1; tone = 'positive';
   } else if (status === 'failed') {
     label = 'La ejecución falló'; checks = 0; tone = 'danger';
   } else if (status === 'dead') {
@@ -128,9 +128,10 @@ function CanonicalReplyDetails({ reply, stale, onRetry }: {
   onRetry?: () => void;
 }) {
   const terminal = ['done', 'failed', 'dead'].includes(reply.status ?? '');
-  const availability = typeof reply.reply === 'string' && reply.reply.length > 0
+  const availability = typeof reply.reply === 'string' && reply.reply.trim().length > 0
     ? 'Respuesta recibida'
-    : reply.reply === null || reply.reply === '' ? 'Respuesta vacía' : 'Respuesta no disponible';
+    : reply.reply === null || (typeof reply.reply === 'string' && reply.reply.trim().length === 0)
+      ? 'Respuesta vacía' : 'Respuesta no disponible';
   const chain = reply.chainOpen === true ? 'Cadena en curso'
     : reply.chainOpen === false && terminal ? `Cadena cerrada · ${deliveryPolicy(reply.status).label}`
       : reply.chainOpen === false ? 'El gateway indica cierre; falta confirmar estado terminal'
@@ -241,7 +242,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, pre
             && canonicalReply.tenantId === delivery.recipient_tenant
             && canonicalReply.alias === delivery.recipient_alias
             ? canonicalReply : undefined;
-          const responseReceived = typeof matchingReply?.reply === 'string' && matchingReply.reply.length > 0;
+          const responseReceived = typeof matchingReply?.reply === 'string' && matchingReply.reply.trim().length > 0;
           const response = matchingReply && (!humanChat || responseReceived)
             ? <CanonicalResponse reply={matchingReply} stale={canonicalReplyStale} onRetry={onCanonicalReplyRetry} chatBubble={humanChat} />
             : null;

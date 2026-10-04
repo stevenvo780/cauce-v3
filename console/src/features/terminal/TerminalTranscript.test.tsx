@@ -59,6 +59,7 @@ it('separa el humano autenticado y el agente en burbujas hermanas y pliega la id
   expect(agent.parentElement).toBe(human.parentElement);
   expect(human).not.toHaveTextContent('Pong del agente');
   expect(within(human).getByRole('status', { name: 'Entrega: El agente terminó; respuesta recibida' })).toBeVisible();
+  expect(human.querySelector('[data-checks="2"]')).toBeInTheDocument();
   expect(agent).not.toHaveTextContent('Ping humano');
   expect(agent).toHaveAttribute('data-reply-to', message.message_id);
   expect(agent).toHaveTextContent(canonical.alias);
@@ -69,11 +70,11 @@ it('separa el humano autenticado y el agente en burbujas hermanas y pliega la id
 });
 
 it.each([
-  { status: 'pending', events: ['published'], label: 'Publicado · esperando aceptación del agente', checks: '1' },
-  { status: 'accepted', events: ['published', 'accepted'], label: 'El agente aceptó la entrega', checks: '2' },
-  { status: 'started', events: ['published', 'accepted', 'started'], label: 'El agente inició la ejecución', checks: '2' },
-  { status: 'done', events: ['published', 'accepted', 'started', 'done'], label: 'El agente terminó; respuesta no disponible', checks: '2' },
-] as const)('representa $status con checks durables sin afirmar lectura y deja el ACK en los detalles', ({ status, events, label, checks }) => {
+  { status: 'pending', events: ['published'], label: 'Publicado · esperando aceptación del agente' },
+  { status: 'accepted', events: ['published', 'accepted'], label: 'El agente aceptó la entrega' },
+  { status: 'started', events: ['published', 'accepted', 'started'], label: 'El agente inició la ejecución' },
+  { status: 'done', events: ['published', 'accepted', 'started', 'done'], label: 'El agente terminó; respuesta no disponible' },
+] as const)('representa $status con checks durables sin afirmar lectura y deja el ACK en los detalles', ({ status, events, label }) => {
   const { message, delivery } = humanChatFixture();
   const durableDelivery = {
     ...delivery,
@@ -87,7 +88,9 @@ it.each([
   if (!human) throw new Error('Missing human message');
   expect(within(human).getByRole('status', { name: `Entrega: ${label}` })).toBeVisible();
   const check = human.querySelector('.chat-delivery-check');
-  expect(check).toHaveTextContent(checks === '2' ? '✓✓' : '✓');
+  expect(check).toHaveTextContent('✓');
+  expect(human.querySelector('[data-checks="1"]')).toBeInTheDocument();
+  expect(human.querySelector('[data-checks="2"]')).toBeNull();
   expect(check).not.toHaveTextContent(label);
   expect(human).not.toHaveTextContent(/leído|leyó/i);
   expect(human.querySelector('details')).not.toHaveAttribute('open');
@@ -113,7 +116,12 @@ it('presenta la sonda estructurada como comprobación legible y conserva el JSON
   expect(within(human).getByText(/"nonce": "aaaaaaaa/)).toBeVisible();
 });
 
-it.each([null, undefined])('no crea una burbuja de respuesta vacía antes de recibir texto real (%s)', async (reply) => {
+it.each([
+  { reply: null, availability: 'Respuesta vacía' },
+  { reply: undefined, availability: 'Respuesta no disponible' },
+  { reply: '', availability: 'Respuesta vacía' },
+  { reply: '   ', availability: 'Respuesta vacía' },
+])('no crea una burbuja ni un doble check sin texto de respuesta real (%o)', async ({ reply, availability }) => {
   const user = userEvent.setup();
   const { message, delivery, canonical } = humanChatFixture();
   const emptyReply = { ...canonical, reply };
@@ -123,17 +131,20 @@ it.each([null, undefined])('no crea una burbuja de respuesta vacía antes de rec
   const human = document.querySelector<HTMLElement>(`[data-message-id="${message.message_id ?? ''}"]`);
   if (!human) throw new Error('Missing human message');
   expect(within(human).getByRole('status', { name: 'Entrega: El agente terminó; respuesta no disponible' })).toBeVisible();
-  expect(human.querySelector('.chat-delivery-check')).toHaveTextContent('✓✓');
+  expect(human.querySelector('[data-checks="1"]')).toBeInTheDocument();
+  expect(human.querySelector('[data-checks="2"]')).toBeNull();
+  expect(human.querySelector('.canonical-reply')).toBeNull();
   expect(document.querySelectorAll('.transcript-entry')).toHaveLength(1);
   expect(screen.queryByText(/Sin respuesta canónica disponible|Respuesta canónica no disponible/iu)).toBeNull();
 
   await user.click(within(human).getByText(/Detalles del mensaje/iu));
-  expect(within(human).getByText(reply === null ? 'Respuesta vacía' : 'Respuesta no disponible')).toBeVisible();
+  expect(within(human).getByText(availability)).toBeVisible();
   expect(within(human).getByText(/Cadena cerrada/iu)).toBeVisible();
 
   rerender(<TerminalTranscript {...input} canonicalReply={{ ...canonical, reply: 'Pong real' }} />);
   expect(document.querySelectorAll('.transcript-entry')).toHaveLength(2);
   expect(screen.getByText('Pong real')).toBeVisible();
+  expect(human.querySelector('[data-checks="2"]')).toBeInTheDocument();
 });
 
 it.each(['__proto__', 'constructor', 'toString'])('mantiene el tipo desconocido %s como texto sin fallar el render', (type) => {
@@ -169,5 +180,10 @@ it.each([
   const { message, delivery, canonical } = humanChatFixture();
   render(<TerminalTranscript items={[{ message, delivery, direction: 'input' }]} presentation="chat" canonicalReply={{ ...canonical, ...mismatch }} onSelectItem={vi.fn()} />);
   expect(screen.queryByText('Pong del agente')).toBeNull();
+  const human = document.querySelector<HTMLElement>(`[data-message-id="${message.message_id ?? ''}"]`);
+  if (!human) throw new Error('Missing human message');
+  expect(human.querySelector('[data-checks="1"]')).toBeInTheDocument();
+  expect(human.querySelector('[data-checks="2"]')).toBeNull();
+  expect(human.querySelector('.canonical-reply')).toBeNull();
   expect(document.querySelectorAll('.transcript-entry')).toHaveLength(1);
 });
