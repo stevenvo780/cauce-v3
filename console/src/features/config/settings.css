@@ -1,11 +1,14 @@
 .settings-search { display: grid; gap: var(--space-2); margin-bottom: var(--space-4); max-width: var(--measure-prose); }
-.settings-agents { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
-.settings-agent { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr) auto; align-items: center; gap: var(--space-4); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); }
-.settings-agent-identity { display: grid; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
+.settings-agents { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.settings-agent { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: start; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.settings-agent-identity { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
+.settings-agent-identity > span:not(:first-of-type) { grid-column: 1 / -1; }
+.settings-agent > button { justify-self: start; }
 .settings-agent-identity > span, .settings-source { color: var(--text-2); font-size: var(--tipo-rotulo); }
-.settings-agent-details { min-width: 0; }
-.settings-agent-details p { margin: 0 0 var(--space-2); overflow-wrap: anywhere; }
-.settings-groups { display: flex; flex-wrap: wrap; gap: var(--space-2); color: var(--text-2); font-size: var(--tipo-rotulo); }
+.settings-agent-details { display: contents; }
+.settings-agent-details p { grid-column: 1 / -1; margin: 0; overflow-wrap: anywhere; }
+.settings-unpublished { color: var(--text-2); font-size: var(--tipo-rotulo); }
+.settings-groups { display: flex; flex-wrap: wrap; min-width: 0; gap: var(--space-2); color: var(--text-2); font-size: var(--tipo-rotulo); }
 .settings-groups > span { padding: var(--space-1) var(--space-2); background: var(--surface-2); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
 .settings-source { max-width: var(--measure-prose); margin-bottom: 0; }
 .settings-context { margin-block: var(--space-4); }
@@ -18,8 +21,4 @@
 .settings-policy summary { cursor: pointer; }
 @media (max-width: 760px) {
   .settings-page .panel { padding: var(--space-4); }
-  .settings-agent { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); padding: var(--space-2); }
-  .settings-agent-identity { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .settings-agent-identity > span:not(:first-of-type) { grid-column: 1 / -1; }
-  .settings-agent > button { justify-self: start; }
 }
