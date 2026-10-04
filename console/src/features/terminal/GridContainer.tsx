@@ -1,8 +1,7 @@
-import { ShieldCheck, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import type { ConsoleAccess, TerminalCapability } from '../../api/types';
 import { useRovingTabs } from '../../components/use-roving-tabs';
 import type { TerminalSessionGrant, TerminalTargetsSnapshot } from './api';
-import { TEXTO_DOCTRINA } from './doctrina';
 import type { FleetAgent } from './fleet';
 import type { MotivoReconciliacionPlaza } from './PlazasColgadas';
 import { SessionStage } from './SessionStage';
@@ -99,7 +98,6 @@ export function GridContainer({
           </div>
         </div>
       </div>
-      <footer className="terminal-doctrine"><ShieldCheck size={14} aria-hidden="true" /> {TEXTO_DOCTRINA}</footer>
     </div>
   );
 }

@@ -76,6 +76,15 @@ export function HelpPage() {
           + 'qué significa cada estado de la flota y qué atajos de teclado declara la interfaz.'}
       />
 
+      <section id="terminal">
+        <details>
+          <summary>Terminal de agentes</summary>
+          <p>Elegí un agente en el selector superior. Su TUI se abre con teclado cuando el servidor autoriza el control; no hace falta escribir una justificación. La apertura y la toma quedan auditadas con tu identidad.</p>
+          <p>Mientras tenés el control, sus mensajes del bus quedan en cola. Devolver el control, cambiar de agente o cerrar la vista libera el teclado y permite continuar las entregas. La sesión tiene una ventana limitada; Prorrogar la extiende.</p>
+          <p>Si el destino sólo permite observar, la terminal indica «Solo lectura». Si falta autoridad o conexión, muestra el motivo real. Una shell es una sesión aparte; no reemplaza la TUI del agente.</p>
+        </details>
+      </section>
+
       <Panel title="Mapa de vistas de la consola" subtitle="Cada entrada del menú y lo que resuelve.">
         <dl className="help-lista help-mapa">
           {NAV_ENTRIES.map((entrada) => (
