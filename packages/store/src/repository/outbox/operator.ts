@@ -3,6 +3,7 @@ import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
 import { hubEdgeExistsSql } from '../acl-edges.js';
 import { StoreError } from '../errors.js';
+import { loadDeliveryHumanLineage, preserveHumanMessageLineage } from '../human-message-lineage.js';
 import { insertDelivery, MESSAGE_INSERT_COLUMNS } from '../messages/_insert.js';
 import { agentRootActorNode, assertAgentRootSlot, lockAgentRootActor } from '../messages/agent-roots.js';
 import { OutboxSettlementRepository } from './settlement.js';
@@ -133,21 +134,37 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
       if (!row) throw new StoreError('not_found', 'terminal delivery not found or not visible');
       await this.assertReplayAuthorization(client, actorTenant, actorAlias, row, own);
 
-      const existingReplay = await client.query<{ delivery_id: string; state: string }>(
-        `SELECT replayed_delivery.id AS delivery_id,replayed_delivery.status AS state
+      const existingReplay = await client.query<{
+        delivery_id: string; state: string; message_id: string;
+        recipient_tenant: string; recipient_alias: string;
+        tenant_id: string; room_id: string; actor_alias: string;
+      }>(
+        `SELECT DISTINCT replayed_delivery.id AS delivery_id,replayed_delivery.status AS state,
+                replayed_message.id AS message_id,replayed_delivery.recipient_tenant,
+                replayed_delivery.recipient_alias,replayed_message.tenant_id,
+                replayed_message.room_id,replayed_message.actor_alias
          FROM audit_events replay
          JOIN deliveries replayed_delivery ON replayed_delivery.id=replay.delivery_id
          JOIN messages replayed_message ON replayed_message.id=replay.message_id
          WHERE replay.action='delivery.replay' AND replay.decision='allow'
            AND replay.metadata->>'replayed_from_delivery_id'=$1
            AND replayed_delivery.message_id=replayed_message.id
-         LIMIT 1`,
+         LIMIT 2`,
         [row.id]
       );
       const existing = existingReplay.rows[0];
+      if (existing && !own) throw new StoreError('conflict', 'delivery already has a durable replay clone');
       if (existing) {
-        if (own) return { ...existing, replayed_from_delivery_id: row.id, replayed: true, already_replayed: true };
-        throw new StoreError('conflict', 'delivery already has a durable replay clone');
+        if (existingReplay.rows.length !== 1 || existing.tenant_id !== row.tenant_id
+          || existing.room_id !== row.room_id || existing.actor_alias !== row.actor_alias
+          || existing.recipient_tenant !== row.recipient_tenant || existing.recipient_alias !== row.recipient_alias) {
+          throw new StoreError('conflict', 'durable replay clone disagrees');
+        }
+        await preserveHumanMessageLineage(client, existing.message_id, await loadDeliveryHumanLineage(client, row), true);
+        return {
+          delivery_id: existing.delivery_id, state: existing.state,
+          replayed_from_delivery_id: row.id, replayed: true, already_replayed: true,
+        };
       }
 
       const legacyReplay = row.dead_letter_resolved_at === null
@@ -168,6 +185,7 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
         throw new StoreError('not_found', 'terminal delivery has no open or legacy-replay dead letter');
       }
 
+      const lineage = await loadDeliveryHumanLineage(client, row);
       const agentRoot = await agentRootActorNode(client, row.message_id) !== undefined; // The clone keeps the root's limits.
       if (agentRoot) {
         await lockAgentRootActor(client, row.tenant_id, row.actor_alias);
@@ -183,6 +201,7 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
       );
       const replayedMessage = message.rows[0];
       if (!replayedMessage) throw new Error('replay message insert returned no id');
+      await preserveHumanMessageLineage(client, replayedMessage.id, lineage);
 
       const delivery = await insertDelivery(client, {
         messageId: replayedMessage.id,

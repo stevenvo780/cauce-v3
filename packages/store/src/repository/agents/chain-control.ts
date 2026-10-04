@@ -4,6 +4,9 @@ import { type DatabaseClient, withTransaction } from '../../db.js';
 import { hubEdgeExistsSql, tenantReadableSql } from '../acl-edges.js';
 import { postgresTextSafe } from '../deliveries.js';
 import { StoreError } from '../errors.js';
+import {
+  humanLineageConsensus, loadDeliveryHumanLineage, loadHumanMessageLineage, preserveHumanMessageLineage,
+} from '../human-message-lineage.js';
 import { insertDelivery, insertMessage } from '../messages/_insert.js';
 import { truncateUtf8 } from '../observability.js';
 import { objectRecord, visibleText } from '../outbox.js';
@@ -119,6 +122,7 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
       const gate = await client.query<{
         id: string;
         root_message_id: string;
+        source_delivery_id: string;
         tenant_id: Tenant;
         asked_by_alias: string;
         trace_id: string;
@@ -127,7 +131,7 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
         correlation: Record<string, unknown> | null;
         origin: Origin | null;
       }>(
-        `SELECT id,root_message_id,tenant_id,asked_by_alias,trace_id,question,status,correlation,origin
+        `SELECT id,root_message_id,source_delivery_id,tenant_id,asked_by_alias,trace_id,question,status,correlation,origin
          FROM agent_chain_gates WHERE id=$1 FOR UPDATE`,
         [gateId]
       );
@@ -153,6 +157,19 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
       if (!roomId) {
         throw new StoreError('invalid_actor', 'the agent that opened the gate has no routable room');
       }
+      const sourceDelivery = await client.query<{ message_id: string }>(
+        `SELECT source.message_id FROM deliveries source JOIN messages root ON root.id=$2
+         WHERE source.id=$1 FOR SHARE OF source,root`, [row.source_delivery_id, row.root_message_id],
+      );
+      const sourceMessageId = sourceDelivery.rows[0]?.message_id;
+      if (!sourceMessageId) throw new StoreError('conflict', 'chain gate source is unavailable');
+      const lineage = humanLineageConsensus([
+        await loadDeliveryHumanLineage(client, {
+          id: row.source_delivery_id, message_id: sourceMessageId,
+          recipient_tenant: row.tenant_id, recipient_alias: row.asked_by_alias,
+        }),
+        await loadHumanMessageLineage(client, row.root_message_id),
+      ]);
       const gateCorrelation = objectRecord(row.correlation) ?? {};
       // One hop is subtracted on purpose. The stored correlation is what the CHILD of this branch
       // would have carried; resuming does not step down a level, it returns to the SAME agent.
@@ -191,6 +208,7 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
       });
       const resumeMessageId = message.rows[0]?.id;
       if (!resumeMessageId) throw new Error('gate resume message insert returned no id');
+      await preserveHumanMessageLineage(client, resumeMessageId, lineage);
       const delivery = await insertDelivery(client, {
         messageId: resumeMessageId, recipientTenant: row.tenant_id, recipientAlias: row.asked_by_alias,
       });
