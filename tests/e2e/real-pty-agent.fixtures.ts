@@ -85,6 +85,10 @@ export interface RealPtyFixture {
   close(): Promise<void>;
 }
 
+export interface RealPtyFixtureOptions {
+  readonly governanceRelay?: boolean;
+}
+
 function boundedAppend(current: string, chunk: Buffer, limit = 24 * 1024): string {
   return `${current}${chunk.toString('utf8')}`.slice(-limit);
 }
@@ -309,7 +313,7 @@ async function seed(database: TestDatabase, containerId: string): Promise<void> 
   }
 }
 
-export async function startRealPtyFixture(): Promise<RealPtyFixture> {
+export async function startRealPtyFixture(options: RealPtyFixtureOptions = {}): Promise<RealPtyFixture> {
   if (process.env.CAUCE_TEST_DATABASE_URL !== undefined) throw new Error('real PTY E2E requires its own Testcontainers database');
   const imageTag = `cauce-real-pty-agent:${randomUUID()}`;
   const containerName = `cauce-real-pty-${randomUUID()}`;
@@ -423,6 +427,12 @@ WORKDIR /home/node
     }] }), 0o644);
     const config: TerminalConfig = {
       wsPath: '/v3/console/terminal/ws', ticketKey, relayToken, relayInstanceIds: new Set([relayInstanceId]),
+      ...(options.governanceRelay ? {
+        relayUrl: `https://127.0.0.1:${String(ports.browser)}`,
+        relayClientCertFile: pkiValue.consoleClientCert,
+        relayClientKeyFile: pkiValue.consoleClientKey,
+        relayCaFile: pkiValue.caCert,
+      } : {}),
       grantsFile, ticketTtlSeconds: 60, sessionTtlSeconds: 900, sessionMaxTotalSeconds: 1_800,
       claimLeaseSeconds: 150, maxSessionsPerOperator: 2, operatorHeader: 'x-cauce-operator', operators: new Set([OPERATOR_EMAIL]),
     };
@@ -558,7 +568,7 @@ WORKDIR /home/node
 
     const relayPorts = ports;
     return {
-      database: startedDatabase, app, directory, gatewayUrl, baseUrl, browserContainer: trustedBrowser?.container ?? '',
+      database: startedDatabase, app, directory, gatewayUrl, baseUrl, browserContainer: trustedBrowser.container,
       browserPage: async (viewport) => {
         if (!trustedBrowser) throw new Error('trusted Chromium fixture is not initialized');
         const context = await trustedBrowser.browser.newContext({ viewport, ignoreHTTPSErrors: false, serviceWorkers: 'block' });
