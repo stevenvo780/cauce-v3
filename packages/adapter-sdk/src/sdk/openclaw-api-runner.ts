@@ -1,3 +1,4 @@
+import { phaseEmitter } from "./openclaw-phases.js";
 import { isIP } from "node:net"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -85,6 +86,8 @@ export class OpenClawApiRunner implements CommandRunner {
     }
     if (request.signal.aborted) throw this.cancelledBeforeDispatch();
 
+    const phase = phaseEmitter(request.onOpenClawPhase, "api");
+    phase("api_enter");
     const token = await readBearerTokenFile(this.tokenFile);
     if (signalAborted(request.signal)) throw this.cancelledBeforeDispatch();
     const controller = new AbortController();
@@ -104,6 +107,7 @@ export class OpenClawApiRunner implements CommandRunner {
 
     try {
       dispatched = true;
+      phase("api_dispatch");
       const { stdout, status } = await this.requestCompletion(
         JSON.stringify({
           model: this.agentTarget,
@@ -112,7 +116,7 @@ export class OpenClawApiRunner implements CommandRunner {
           messages: [{ role: "user", content: request.stdin }],
         }),
         token,
-        controller.signal,
+        controller.signal, phase,
       );
       if (status < 200 || status >= 300) {
         const diagnostic = openClawHttpDiagnostic(status, stdout);
@@ -125,6 +129,7 @@ export class OpenClawApiRunner implements CommandRunner {
           false,
         );
       }
+      phase("api_resolved");
       return {
         stdout,
         stderr: "",
@@ -134,7 +139,7 @@ export class OpenClawApiRunner implements CommandRunner {
         cancelled: false,
       };
     } catch (error) { // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Abort callbacks can mutate both flags before the transport rejects.
-      if (timedOut || cancelled) {
+      phase(timedOut ? "api_timeout" : cancelled ? "api_cancelled" : "api_failed"); if (timedOut || cancelled) {
         if (!dispatched) throw this.cancelledBeforeDispatch();
         return this.abortedResult(timedOut);
       }
@@ -150,7 +155,7 @@ export class OpenClawApiRunner implements CommandRunner {
     }
   }
 
-  private requestCompletion(body: string, token: string, signal: AbortSignal): Promise<{ stdout: string; status: number }> {
+  private requestCompletion(body: string, token: string, signal: AbortSignal, phase: ReturnType<typeof phaseEmitter>): Promise<{ stdout: string; status: number }> {
     return new Promise((resolveResponse, rejectResponse) => {
       let responseReceived = false;
       const send = this.endpoint.protocol === "https:" ? httpsRequest : httpRequest;
@@ -167,6 +172,7 @@ export class OpenClawApiRunner implements CommandRunner {
         },
       }, (response) => {
         responseReceived = true;
+        phase("api_headers");
         const status = response.statusCode ?? 500;
         if ([301, 302, 303, 307, 308].includes(status)) {
           response.destroy();
@@ -174,7 +180,7 @@ export class OpenClawApiRunner implements CommandRunner {
           return;
         }
         void boundedResponse(response, this.maxOutputBytes).then(
-          (stdout) => { resolveResponse({ stdout, status }); },
+          (stdout) => { phase("api_body_complete"); resolveResponse({ stdout, status }); },
           rejectResponse,
         );
       });
