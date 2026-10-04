@@ -133,8 +133,11 @@ El nuevo SDK usa release `bus-v3-20261003-unified-fc30f85e`, digest
 Los trece adaptadores nuevos están activos y pasaron comprobación de proceso real, digest completo
 y canary mTLS con ACK final: Argos, Atlas, Gaia, Hades, Hegel, Iza, Janus, Jarvis, Kratos, Salva,
 Sócrates, Zeus y Kant. Argos superó sus dos ventanas individuales: 4202,821 segundos y 211
-verificaciones. La observación conjunta de los trece comenzó a las 07:34:25 UTC y requiere
-4200,2 segundos; la aceptación global permanece pendiente mientras esa observación siga en curso.
+verificaciones. La observación conjunta de los trece comenzó a las 07:34:25 UTC y terminó
+en rojo tras 1564,557 segundos y 1001 verificaciones, antes de completar los 4200,2 segundos
+requeridos. Los trece procesos conservaron su identidad; una ronda de medición superó
+el límite de treinta segundos. La aceptación global sigue pendiente de una nueva ejecución
+completa, con el mismo umbral y la misma ventana.
 El registro privado está en `/root/cauce-v3-release-fc30-sdk/fleet-two-windows-r5-r1.json`;
 sólo su resultado real puede acreditar las dos ventanas de la flota.
 Los trece canaries y watchdogs del rollout anterior son evidencia histórica, sin inferencia LLM;
