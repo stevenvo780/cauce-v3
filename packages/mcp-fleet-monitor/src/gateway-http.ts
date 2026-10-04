@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type RequestListener, type ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { GatewayReader } from './gateway-client.js';
@@ -28,6 +28,12 @@ function headerCount(request: IncomingMessage, name: string): number {
   return request.rawHeaders.filter((value, index) => index % 2 === 0 && value.toLowerCase() === name).length;
 }
 
+function validHostOrigin(request: IncomingMessage, host: string, origin: string): boolean {
+  return headerCount(request, 'host') === 1 && request.headers.host === host
+    && headerCount(request, 'origin') <= 1
+    && (request.headers.origin === undefined || request.headers.origin === origin);
+}
+
 async function requestBody(request: IncomingMessage): Promise<unknown> {
   if (request.headers['content-type']?.split(';')[0]?.trim() !== 'application/json') throw new RequestError(415);
   if (request.headers['content-encoding'] !== undefined) throw new RequestError(415);
@@ -48,23 +54,37 @@ async function requestBody(request: IncomingMessage): Promise<unknown> {
   catch { throw new RequestError(400); }
 }
 
-type GatewayHttpOptions = { readonly publicOrigin: string } & (
+export type GatewayHttpOptions = { readonly publicOrigin: string } & (
   | { readonly reader: GatewayReader; readonly authorization: GatewayAuthorization; readonly operationsFactory?: never }
   | { readonly operationsFactory: GatewayOperationsFactory; readonly authorization: HumanGatewayAuthorization; readonly reader?: never }
 );
 
-export function createGatewayHttpServer(options: GatewayHttpOptions) {
+export interface GatewayHttpHandler extends RequestListener {
+  drain(): Promise<void>;
+}
+
+interface ActiveRequest {
+  readonly request: IncomingMessage;
+  readonly response: ServerResponse;
+  readonly controller: AbortController;
+  readonly admitted: boolean;
+  task: Promise<void>;
+}
+
+export function createGatewayHttpHandler(options: GatewayHttpOptions): GatewayHttpHandler {
   const origin = httpsOrigin(options.publicOrigin);
   const host = new URL(origin).host;
+  const requests = new Set<ActiveRequest>();
   let active = 0;
+  let draining = false;
+  let drainTask: Promise<void> | undefined;
 
-  async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  async function handle(request: IncomingMessage, response: ServerResponse, controller: AbortController): Promise<void> {
     response.setHeader('cache-control', 'no-store');
-    if (headerCount(request, 'host') !== 1 || request.headers.host !== host
-      || headerCount(request, 'origin') > 1
-      || (request.headers.origin !== undefined && request.headers.origin !== origin)) {
+    if (!validHostOrigin(request, host, origin)) {
       reply(response, 403); return;
     }
+    if (draining && (request.url === '/mcp' || request.url === MCP_METADATA_PATH)) { reply(response, 503); return; }
     if (request.url === MCP_METADATA_PATH && options.authorization.metadata) {
       if (request.method !== 'GET') { reply(response, 405, undefined, 'GET'); return; }
       response.writeHead(200, { 'content-type': 'application/json' });
@@ -72,9 +92,6 @@ export function createGatewayHttpServer(options: GatewayHttpOptions) {
       return;
     }
     if (request.url !== '/mcp') { reply(response, 404); return; }
-    if (active >= MAX_MCP_REQUESTS) { reply(response, 503); return; }
-    active++;
-    const controller = new AbortController();
     const requestAborted = () => controller.signal.aborted;
     const timeout = setTimeout(() => { controller.abort(); response.destroy(); }, 10_000);
     request.setTimeout(5000, () => request.destroy());
@@ -107,21 +124,57 @@ export function createGatewayHttpServer(options: GatewayHttpOptions) {
       // SDK 1.x optional callbacks predate exactOptionalPropertyTypes; omitted session IDs mean stateless mode.
       await server.connect(transport as Transport);
       if (requestAborted()) return;
-      await Promise.race([transport.handleRequest(request, response, body), closed]);
+      await transport.handleRequest(request, response, body);
       await closed;
     } catch (error) {
       reply(response, error instanceof RequestError ? error.status : 400);
     } finally {
       clearTimeout(timeout);
-      active--;
       controller.abort();
       await server?.close();
     }
   }
 
-  const http = createServer({ maxHeaderSize: 16 * 1024 }, (request, response) => {
-    void handle(request, response).catch(() => { reply(response, 500); });
-  });
+  const handler: GatewayHttpHandler = (request, response): void => {
+    response.setHeader('cache-control', 'no-store');
+    if (!validHostOrigin(request, host, origin)) { reply(response, 403); return; }
+    if (draining && (request.url === '/mcp' || request.url === MCP_METADATA_PATH)) {
+      reply(response, 503);
+      return;
+    }
+    const admitted = request.url === '/mcp';
+    if (admitted && active >= MAX_MCP_REQUESTS) { reply(response, 503); return; }
+    if (admitted) active += 1;
+    const activeRequest: ActiveRequest = { request, response, controller: new AbortController(), admitted, task: Promise.resolve() };
+    requests.add(activeRequest);
+    activeRequest.task = Promise.resolve().then(() => handle(request, response, activeRequest.controller))
+      .catch(() => { reply(response, 500); })
+      .finally(() => {
+        requests.delete(activeRequest);
+        if (activeRequest.admitted) active -= 1;
+      });
+  };
+  handler.drain = (): Promise<void> => {
+    if (drainTask) return drainTask;
+    draining = true;
+    drainTask = (async () => {
+      while (requests.size > 0) {
+        const active = [...requests];
+        for (const request of active) {
+          request.controller.abort();
+          request.request.destroy();
+          request.response.destroy();
+        }
+        await Promise.allSettled(active.map((request) => request.task));
+      }
+    })();
+    return drainTask;
+  };
+  return handler;
+}
+
+export function createGatewayHttpServer(options: GatewayHttpOptions) {
+  const http = createServer({ maxHeaderSize: 16 * 1024 }, createGatewayHttpHandler(options));
   http.requestTimeout = 10_000;
   http.headersTimeout = 10_000;
   http.keepAliveTimeout = 1000;
