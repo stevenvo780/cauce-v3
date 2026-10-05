@@ -1,0 +1,15 @@
+[Unit]
+Description=Renovación acotada de la identidad de supervisión de Praxis
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/lib/praxis-supervision/renew-identity.py
+TimeoutStartSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/praxis-supervision /etc/cauce-v3-hospital/pki/praxis-supervisor /etc/cauce-v3-hospital/identities
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER

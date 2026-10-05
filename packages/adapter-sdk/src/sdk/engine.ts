@@ -48,6 +48,7 @@ import type { SealedSecretGateway, TurnInput, TurnInputDeps } from "./engine/tur
 import { materializeTurnInput, releaseTurn } from "./engine/turn-cleanup.js";
 import { runSystemGateProbe } from "./engine/system-gate-probe.js";
 import { isConversationStatusRequest, runConversationStatus } from "./engine/conversation-status.js";
+import { PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE, runPraxisSupervisionNotice } from "./engine/praxis-supervision-notice.js";
 import { DEFAULT_NO_PROGRESS_TIMEOUT_MS } from "./message-timeout.js";
 import type { EmissionRuntime } from "./mcp-emission/runtime.js";
 import type { EmissionTurn } from "./mcp-emission/tools.js";
@@ -152,11 +153,14 @@ export class AdapterEngine {
       return Promise.resolve();
     }
     const statusRequest = isConversationStatusRequest(delivery, this.ownTenantId, this.ownRoom);
-    if (delivery.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE || statusRequest) {
+    const supervisionNotice = delivery.body.type === PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE;
+    if (delivery.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE || statusRequest || supervisionNotice) {
       const controller = new AbortController();
       this.controllers.set(delivery.delivery_id, controller);
-      const execution = statusRequest ? runConversationStatus(delivery, {
+      const localHandler = supervisionNotice ? runPraxisSupervisionNotice : runConversationStatus;
+      const execution = statusRequest || supervisionNotice ? localHandler(delivery, {
         store: this.store, clock: this.clock, publishEvent: this.publishEvent,
+        ownTenantId: this.ownTenantId, ownRoom: this.ownRoom,
         isCurrent: () => delivery.epoch === this.store.epoch
           && !this.fenced.has(delivery.delivery_id) && !controller.signal.aborted,
       }) : this.runSystemGateProbe(delivery);
@@ -168,9 +172,7 @@ export class AdapterEngine {
         }
       });
       this.tasks.set(delivery.delivery_id, {
-        attempt: delivery.attempt,
-        claimToken: delivery.claim_token,
-        promise: task,
+        attempt: delivery.attempt, claimToken: delivery.claim_token, promise: task,
       });
       return task;
     }
