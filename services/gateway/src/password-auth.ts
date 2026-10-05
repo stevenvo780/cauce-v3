@@ -197,6 +197,7 @@ interface LoadedSession {
 
 export interface VerifiedConsoleSession {
   readonly humanId: string;
+  readonly loginSid: string;
   readonly tenantId: Principal['tenant_id'];
   readonly actorAlias: string;
   readonly issuedAtMs: number;
@@ -297,7 +298,7 @@ export class PasswordAuthProvider implements AuthProvider {
   async verifiedConsoleSession(request: FastifyRequest): Promise<Readonly<VerifiedConsoleSession> | undefined> {
     if (!this.handles(request)) return undefined;
     const { claims, user, principal } = await this.load(request);
-    return Object.freeze({ humanId: user.id, tenantId: principal.tenant_id, actorAlias: principal.alias,
+    return Object.freeze({ humanId: user.id, loginSid: claims.sid, tenantId: principal.tenant_id, actorAlias: principal.alias,
       issuedAtMs: claims.iat * 1000, expiresAtMs: claims.exp * 1000,
       ...(claims.credential_stamp === undefined ? {} : { credentialStamp: claims.credential_stamp }) });
   }
