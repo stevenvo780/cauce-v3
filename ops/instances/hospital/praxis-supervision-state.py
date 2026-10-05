@@ -29,6 +29,19 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def command_identity(command: list[str]) -> dict:
+    if command[:2] != ["git", "-C"]:
+        return {}
+    owner = Path(command[2]).stat()
+    if owner.st_uid == 0:
+        raise SupervisionError("git_workspace_requires_unprivileged_owner")
+    if os.geteuid() != 0:
+        if owner.st_uid != os.geteuid():
+            raise SupervisionError("git_workspace_owner_mismatch")
+        return {}
+    return {"user": owner.st_uid, "group": owner.st_gid, "extra_groups": []}
+
+
 def trusted_file(path: Path, directory: bool = False) -> None:
     metadata = path.lstat()
     valid_type = stat.S_ISDIR(metadata.st_mode) if directory else stat.S_ISREG(metadata.st_mode)

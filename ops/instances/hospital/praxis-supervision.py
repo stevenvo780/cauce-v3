@@ -196,11 +196,9 @@ def run_command(command: list[str], deadline: float, input_text: str | None = No
     if timeout <= 0:
         raise SupervisionError("pass_timeout")
     environment = {"PATH": "/usr/bin:/bin"}
-    if command[:2] == ["git", "-C"]:
-        environment.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="safe.directory", GIT_CONFIG_VALUE_0=command[2])
     try:
         result = subprocess.run(command, input=input_text, text=True, capture_output=True,
-                                timeout=timeout, check=True, env=environment)
+                                timeout=timeout, check=True, env=environment, **STATE.command_identity(command))
         return result.stdout
     except (subprocess.SubprocessError, OSError) as error:
         raise SupervisionError("observation_unavailable") from error

@@ -62,6 +62,16 @@ class FakeApi:
 
 
 class PraxisSupervisionTests(unittest.TestCase):
+    def test_git_helpers_cannot_inherit_host_root_identity(self):
+        with mock.patch.object(SUP.STATE.os, "geteuid", return_value=0), \
+                mock.patch.object(SUP.STATE.Path, "stat", return_value=mock.Mock(st_uid=1000, st_gid=1000)), \
+                mock.patch.object(SUP.subprocess, "run", return_value=mock.Mock(stdout="synthetic")) as execute:
+            SUP.run_command(["git", "-C", str(self.workspace), "status", "--porcelain"], time.monotonic() + 5)
+        self.assertEqual(execute.call_args.kwargs["user"], 1000)
+        self.assertEqual(execute.call_args.kwargs["group"], 1000)
+        self.assertEqual(execute.call_args.kwargs["extra_groups"], [])
+        self.assertNotIn("GIT_CONFIG_VALUE_0", execute.call_args.kwargs["env"])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.directory = Path(self.temporary.name)
