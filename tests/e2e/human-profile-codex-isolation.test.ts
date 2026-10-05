@@ -405,7 +405,7 @@ describe('aislamiento de iniciadores humanos y perfil Codex', () => {
         expect(withConsoleSubject.human_initiator).toBeDefined();
 
         const ordinary = { reserveSession: () => ({}) } as unknown as HarnessAdapter;
-        const isolatedHuman = { reserveSession: () => ({}) } as unknown as HarnessAdapter;
+        const isolatedHuman = { reserveSession: () => ({}), supportsEmissionEndpoint: true } as unknown as HarnessAdapter;
         const ordinaryScope = prepareDeliveryInvocation(
           withConsoleSubject, ordinary, humanHarnessSelector(ordinary, isolatedHuman), 'Isa',
         );
@@ -424,13 +424,17 @@ describe('aislamiento de iniciadores humanos y perfil Codex', () => {
           expect(invocation.session.sessionKey).toBe(ordinaryScope.session.sessionKey);
           expect(invocation.session.sessionKey).not.toBe(`shared:${withConsoleSubject.recipient_alias}`);
           expect(invocation.humanInitiator).toEqual(withConsoleSubject.human_initiator);
-          const legacyInvocation = prepareDeliveryInvocation(
+          const legacyConsoleInvocation = prepareDeliveryInvocation(
             fixture.legacy, ordinary, humanHarnessSelector(ordinary, isolatedHuman), 'Isa',
           );
+          expect(fixture.legacy.authenticated_context?.channel).toBe('console');
           expect(fixture.legacy).not.toHaveProperty('human_initiator');
-          expect(legacyInvocation.harness).toBe(ordinary);
-          expect(legacyInvocation.session.sessionKey).toBe(`shared:${fixture.legacy.recipient_alias}`);
-          expect(legacyInvocation.humanInitiator).toBeUndefined();
+          expect(legacyConsoleInvocation.selectionError).toBeUndefined();
+          expect(legacyConsoleInvocation.harness).toBe(isolatedHuman);
+          expect(legacyConsoleInvocation.session.sessionKey).toBe(sessionFromDelivery(fixture.legacy, 'Isa').sessionKey);
+          expect(legacyConsoleInvocation.session.sessionKey).toMatch(/^auth-v3:/u);
+          expect(legacyConsoleInvocation.session.sessionKey).not.toBe(`shared:${fixture.legacy.recipient_alias}`);
+          expect(legacyConsoleInvocation.humanInitiator).toBeUndefined();
         } finally {
           restoreEnvironment('CAUCE_SHARED_SESSION', oldSharedSession);
         }
