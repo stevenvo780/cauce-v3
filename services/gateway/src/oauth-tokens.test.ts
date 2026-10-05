@@ -42,7 +42,8 @@ describe('local OAuth access tokens', () => {
     const tokens = create();
     const token = tokens.issue(input).token;
     expect(tokens.verify(`${token}a`)).toBeUndefined();
-    expect(tokens.verify('eyJhbGciOiJub25lIn0.e30.')).toBeUndefined();
+    const unsignedToken = [Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'), Buffer.from(JSON.stringify({})).toString('base64url'), ''].join('.');
+    expect(tokens.verify(unsignedToken)).toBeUndefined();
     expect(() => tokens.issue({ ...input, expiresAt: NaN })).toThrow();
   });
   it('requires an injected P-256 private key and a TTL no larger than five minutes', () => {
