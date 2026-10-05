@@ -45,10 +45,11 @@ function project(detail: MessageDetail, root: CanonicalReplyRoot, tenantId: stri
   if (delivery.reply !== undefined && delivery.reply !== null && typeof delivery.reply !== 'string') {
     throw new Error('El servidor devolvió una respuesta canónica inválida.');
   }
+  const status = delivery.status === undefined ? root.status : delivery.status;
   return {
     messageId: root.messageId, deliveryId: root.deliveryId, tenantId, alias,
     ...(detail.chain_open === undefined ? {} : { chainOpen: detail.chain_open }),
-    ...((root.status ?? delivery.status) === undefined ? {} : { status: root.status ?? delivery.status }),
+    ...(status === undefined ? {} : { status }),
     ...(delivery.reply === undefined ? {} : { reply: delivery.reply }),
   };
 }
@@ -98,7 +99,7 @@ export function useCanonicalReply(input: {
     }
   }, [key, resource.data, resource.error]);
 
-  const effectiveStatus = root?.status ?? resource.data?.status;
+  const effectiveStatus = resource.data === undefined ? root?.status : resource.data.status;
   const effectiveTerminal = terminal(effectiveStatus);
   useEffect(() => {
     if (!resource.data) return;
