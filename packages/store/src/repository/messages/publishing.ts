@@ -34,6 +34,7 @@ import {
   type HumanMessageOptions,
 } from './contracts.js';
 import { putHumanMessageInitiator } from './human-initiators.js';
+import { putHumanClientProvenance } from '../../human-client-provenance.js';
 import { assertHumanMessageRoot, humanMessageAuthority, lockHumanMessageRead } from './human-authority.js';
 import { reconstructPublishReceipt } from './receipts.js';
 import { requireConsoleAuthor } from './author.js';
@@ -290,11 +291,15 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
       });
       const messageId = message.rows[0]?.id;
       if (!messageId) throw new Error('message insert returned no id');
-      if (human !== undefined) await putHumanMessageInitiator(client, {
+      if (human !== undefined) {
+        await putHumanMessageInitiator(client, {
         messageId, messageTenantId: input.tenant_id, humanId: human.humanId,
         tenantId: human.tenantId, rootMessageId: messageId,
         conversationId: consolePublishConversationHash(input),
-      });
+        });
+        await putHumanClientProvenance(client, { messageId, humanId: human.humanId,
+          tenantId: human.tenantId, conversationId: consolePublishConversationHash(input) }, human.clientProvenance);
+      }
       const deliveryIds: string[] = [];
       for (const recipient of uniqueRecipients) {
         const delivery = await insertDelivery(client, {

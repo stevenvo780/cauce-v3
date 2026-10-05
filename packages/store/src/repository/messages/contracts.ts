@@ -7,6 +7,7 @@ import type {
 import type { DatabaseClient } from '../../db.js';
 import { StoreError } from '../errors.js';
 import type { ConsoleMessageAuthor } from './author.js';
+import type { HumanClientProvenance } from '../../human-client-provenance.js';
 
 export class PublishIntentReconciliationRequired extends StoreError {
   constructor(readonly reconciliation: ConsolePublishIntentReconciliation) {
@@ -37,6 +38,7 @@ export interface HumanPublishProvenance {
   readonly humanId: string;
   readonly tenantId: Tenant;
   readonly actorAlias: string;
+  readonly clientProvenance?: HumanClientProvenance;
 }
 
 export interface HumanMessageOptions {

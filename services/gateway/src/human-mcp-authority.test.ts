@@ -259,7 +259,7 @@ describe('durable human MCP authority', () => {
     expect(f.identityStore.lock).toHaveBeenCalledWith(f.client,
       { provider: 'oauth', namespace: identity().issuer, subject: identity().subject }, user.id);
     expect(f.identityStore.resolve).not.toHaveBeenCalled();
-    expect(result).toEqual(f.pinned);
+    expect(result).toEqual({ ...f.pinned, clientProvenance: { kind: 'unknown' } });
     expect(Object.isFrozen(result)).toBe(true);
   });
 
@@ -277,7 +277,7 @@ describe('durable human MCP authority', () => {
   it('rejects fresh role or permission revocation without trusting the prepare snapshot', async () => {
     const f = durableFixture();
     const authorize = createHumanPublishAuthority(identity(), f.pinned, signal(), f.identityStore);
-    await expect(authorize(f.client)).resolves.toEqual(f.pinned);
+    await expect(authorize(f.client)).resolves.toEqual({ ...f.pinned, clientProvenance: { kind: 'unknown' } });
     f.identityStore.lock.mockResolvedValue({ ...f.record, account: { ...f.record.account, role: 'reader' } });
     await expect(authorize(f.client)).rejects.toMatchObject({ code: 'forbidden' });
     f.identityStore.lock.mockResolvedValue({ ...f.record, membership: { ...f.record.membership, permissions: ['read'] } });
@@ -293,7 +293,8 @@ describe('durable human MCP authority', () => {
     verified.subject = 'changed';
     verified.scopes.length = 0;
     f.pinned.actorAlias = 'changed';
-    expect(await authorize(f.client)).toEqual({ humanId: user.id, tenantId: 'Steven', actorAlias: 'member-human' });
+    expect(await authorize(f.client)).toEqual({ humanId: user.id, tenantId: 'Steven', actorAlias: 'member-human',
+      clientProvenance: { kind: 'unknown' } });
   });
 
   it('checks expiry and abort again after acquiring locks', async () => {

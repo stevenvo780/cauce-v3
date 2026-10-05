@@ -22,3 +22,4 @@ export * from './artifact-uri.js';
 export * from './blob-reference.js';
 export * from './deterministic-uuid.js';
 export * from './agent-egress.js';
+export * from './schemas/client-provenance.js';

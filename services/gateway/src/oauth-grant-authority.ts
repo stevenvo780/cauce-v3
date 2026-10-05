@@ -1,4 +1,4 @@
-import { lockHumanIdentity, lockConsoleHuman, StoreError, type ConsoleCredentialStampVerifier, type DatabaseClient, type HumanIdentitySnapshot } from '@cauce/store';
+import { lockHumanIdentity, lockConsoleHuman, StoreError, type HumanClientProvenance, type ConsoleCredentialStampVerifier, type DatabaseClient, type HumanIdentitySnapshot } from '@cauce/store';
 import { isAnyUuid } from '@cauce/protocol';
 import { consoleRoleAuthority } from './console-user-authority.js';
 import { OAuthError, OAUTH_SCOPES, type OAuthAccessIdentity, type OAuthScope, type OAuthStore } from './oauth-authorization-types.js';
@@ -76,7 +76,7 @@ export async function requireOAuthExpiry(client: DatabaseClient, expiresAt: Date
 export async function lockOAuthAccess(
   client: DatabaseClient, identity: OAuthAccessIdentity, issuer: string, resource: string,
   verifyCredentialStamp: ConsoleCredentialStampVerifier,
-): Promise<void> {
+): Promise<HumanClientProvenance> {
   if (!oauthIdentityKind(identity.kind) || identity.issuer !== issuer || identity.audience !== resource
       || !isAnyUuid(identity.subject) || !isAnyUuid(identity.grantId) || !isAnyUuid(identity.tokenId)) {
     throw new OAuthError('invalid_grant');
@@ -91,6 +91,8 @@ export async function lockOAuthAccess(
       || grant.scopes.length !== identity.scopes.length
       || grant.scopes.some((scope) => !identity.scopes.includes(scope))) throw new OAuthError('invalid_grant');
   await requireOAuthExpiry(client, new Date(Math.min(grant.expires_at.getTime(), token.expires_at.getTime())));
+  return Object.freeze({ kind: 'oauth_client', verification: 'local_grant', issuer,
+    clientId: grant.client_id, grantId: grant.id, instance: 'unknown' });
 }
 
 export function createLocalOAuthAuthorization(tokens: OAuthTokens, store: Pick<OAuthStore, 'validate'>) {

@@ -1,6 +1,6 @@
 import type { ProfileRuntimeContract, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import {
-  HUMAN_MESSAGE_INITIATOR_CAPABILITY, HumanMessageInitiatorSchema,
+  HUMAN_MESSAGE_INITIATOR_CAPABILITY,
   HUMAN_PRIORITY_FLOOR, isLiteralTrue, PROTOCOL_VERSION,
 } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
@@ -10,7 +10,7 @@ import { assertAgentContextAdmissionAllowed } from '../agent-context-quarantine.
 import { StoreError } from '../errors.js';
 import { MessagesRepository } from '../messages.js';
 import { MESSAGE_AUTHOR_SQL, messageAuthor } from '../messages/author.js';
-import { loadHumanMessageInitiator } from '../messages/human-initiators.js';
+import { projectHumanClientProvenance } from './client-provenance.js';
 import { validConnectionToken } from '../outbox.js';
 import { conversationWorkScopeKey, conversationWorkState } from './conversation-work.js';
 import type { DeliveryRow } from '../observability.js';
@@ -511,25 +511,14 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
           workStates.set(row.id, conversationStates.get(scope));
         }
       }
-      const humanInitiators = new Map<string, ReturnType<typeof HumanMessageInitiatorSchema.parse>>();
-      if (includeHumanInitiator) {
-        for (const row of claimedRows) {
-          const initiator = await loadHumanMessageInitiator(client, row.message_id);
-          if (initiator === undefined) continue;
-          humanInitiators.set(row.id, HumanMessageInitiatorSchema.parse({
-            human_id: initiator.humanId,
-            tenant_id: initiator.tenantId,
-            conversation_id: initiator.conversationId,
-            root_message_id: initiator.rootMessageId,
-          }));
-        }
-      }
+      const humanProjections = await projectHumanClientProvenance(client, claimedRows,
+        Array.isArray(capabilities) ? capabilities.filter((value): value is string => typeof value === 'string') : []);
       return claimedRows.map((row) => {
         if (row.claim_token === null || row.ack_deadline_at === null) {
           throw new StoreError('conflict', 'claimed delivery is missing its fencing fields');
         }
         const workState = workStates.get(row.id);
-        const humanInitiator = humanInitiators.get(row.id);
+
         const consoleAuthor = includeConsoleHumanScope && row.auth_channel === 'console'
           ? messageAuthor(row.author) : undefined;
         return {
@@ -549,7 +538,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
           actor_alias: row.actor_alias,
           recipient_alias: row.recipient_alias,
           body: row.body,
-          ...(humanInitiator === undefined ? {} : { human_initiator: humanInitiator }),
+          ...humanProjections.get(row.id),
           ...(consoleAuthor === undefined ? {} : { console_human_subject: consoleAuthor.subject_id }),
           ...(workState === undefined ? {} : { conversation_work_state: workState }),
           ...(routingTargets === undefined ? {} : { routing_targets: routingTargets }),

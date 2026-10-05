@@ -2,7 +2,7 @@ import { lockOAuthAccess } from './oauth-grant-authority.js';
 import { scopes as oauthScopes } from './oauth-authorization-types.js';
 import { randomUUID } from 'node:crypto';
 import { isAnyUuid, TenantSchema, type Tenant } from '@cauce/protocol';
-import { lockHumanIdentity, resolveHumanIdentity, StoreError,
+import { activeClientDelegation, lockHumanIdentity, resolveHumanIdentity, StoreError, type HumanPublishProvenance, type HumanClientProvenance,
   type ConsoleCredentialStampVerifier, type DatabaseClient, type DatabasePool, type HumanIdentityKey, type HumanIdentitySnapshot } from '@cauce/store';
 import type { VerifiedOAuthIdentity } from '@cauce/mcp-fleet-monitor/gateway-http';
 import { AuthError, AuthorizationError, validatePrincipal, type Principal } from './auth.js';
@@ -156,7 +156,7 @@ function createHumanMessageAuthority(
   pinnedIdentity: PinnedHumanIdentity,
   signal: AbortSignal,
   identityStore: Pick<HumanIdentityStore, 'lock' | 'verifyCredentialStamp'> = { lock: lockHumanIdentity },
-): (client: DatabaseClient) => Promise<Readonly<PinnedHumanIdentity>> {
+): (client: DatabaseClient) => Promise<Readonly<HumanPublishProvenance>> {
   const verified = Object.freeze({ ...identity, scopes: Object.freeze([...identity.scopes]) });
   const key = externalKey(verified);
   const pinned = Object.freeze({ ...pinnedIdentity });
@@ -167,9 +167,10 @@ function createHumanMessageAuthority(
     const timeout = String(Math.max(1, Math.min(5000, Math.floor(verified.expiresAt * 1000 - Date.now()))));
     await client.query("SELECT set_config('statement_timeout', $1, true), set_config('lock_timeout', $1, true)", [timeout]);
     const snapshot = await lock(client, key, pinned.humanId);
+    let clientProvenance: HumanClientProvenance = Object.freeze({ kind: 'unknown' });
     if (verified.authorizationServer === 'local') {
       if (!verified.grantId || !verified.tokenId || !identityStore.verifyCredentialStamp) throw new AuthError(AUTHORITY_REQUIRED);
-      await lockOAuthAccess(client, { ...verified, authorizationServer: 'local', grantId: verified.grantId, tokenId: verified.tokenId,
+      clientProvenance = await lockOAuthAccess(client, { ...verified, authorizationServer: 'local', grantId: verified.grantId, tokenId: verified.tokenId,
         scopes: oauthScopes(verified.scopes.join(' ')) }, verified.issuer, verified.audience, identityStore.verifyCredentialStamp);
     }
     signal.throwIfAborted();
@@ -184,8 +185,13 @@ function createHumanMessageAuthority(
         && authority.principal.permissions.includes('route')
       : authority.scopes.includes('cauce.read') && authority.principal.permissions.includes('read');
     if (!allowed) throw new AuthorizationError();
+    if (access === 'publish' && clientProvenance.kind === 'oauth_client') {
+      const delegationBindingId = await activeClientDelegation(client, clientProvenance.grantId);
+      clientProvenance = Object.freeze({ ...clientProvenance,
+        ...(delegationBindingId === undefined ? {} : { delegationBindingId }) });
+    }
     return Object.freeze({ humanId: authority.userId, tenantId: authority.principal.tenant_id,
-      actorAlias: authority.principal.alias });
+      actorAlias: authority.principal.alias, ...(access === 'publish' ? { clientProvenance } : {}) });
   };
 }
 
@@ -194,7 +200,7 @@ export function createHumanPublishAuthority(
   pinnedIdentity: PinnedHumanIdentity,
   signal: AbortSignal,
   identityStore?: Pick<HumanIdentityStore, 'lock' | 'verifyCredentialStamp'>,
-): (client: DatabaseClient) => Promise<Readonly<PinnedHumanIdentity>> {
+): (client: DatabaseClient) => Promise<Readonly<HumanPublishProvenance>> {
   return createHumanMessageAuthority('publish', identity, pinnedIdentity, signal, identityStore);
 }
 
