@@ -18,6 +18,7 @@ export interface ConsoleUser {
   readonly password_hash: string;
   /** Epoch ms. Any JWT issued before this marker is no longer valid. */
   readonly password_changed_at: number;
+  readonly password_changed_at_us?: string;
 }
 
 export interface ConsoleUserStore {
@@ -43,6 +44,7 @@ interface ConsoleUserRow {
   active: boolean;
   password_hash: string;
   password_changed_at: Date;
+  password_changed_at_us: string;
 }
 
 function toUser(row: ConsoleUserRow): ConsoleUser {
@@ -58,12 +60,14 @@ function toUser(row: ConsoleUserRow): ConsoleUser {
     alias: row.alias,
     active: row.active,
     password_hash: row.password_hash,
-    password_changed_at: row.password_changed_at.getTime()
+    password_changed_at: row.password_changed_at.getTime(),
+    password_changed_at_us: row.password_changed_at_us
   };
 }
 
 const COLUMNS =
-  'id, email, display_name, role, tenant_id, alias, active, password_hash, password_changed_at';
+  'id, email, display_name, role, tenant_id, alias, active, password_hash, password_changed_at, '
+  + '(extract(epoch FROM password_changed_at)*1000000)::numeric(20,0)::text AS password_changed_at_us';
 
 export class PostgresConsoleUserStore implements ConsoleUserStore {
   constructor(private readonly pool: DatabasePool) {}

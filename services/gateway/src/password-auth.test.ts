@@ -6,7 +6,8 @@ import { AuthError, validatePrincipal, type AuthProvider, type Principal } from 
 import type { ConsoleUser } from './console-users.js';
 import { MemoryConsoleUserStore } from './test-support/console-users.js';
 import { hashPassword } from './password.js';
-import { LoginThrottle, PasswordAuthProvider, isConsoleSurface } from './password-auth.js';
+import { LoginThrottle, PasswordAuthProvider, isConsoleSurface, signConsoleSession } from './password-auth.js';
+import { verifyConsoleCredentialStamp } from './console-credential-stamp.js';
 import { fakePool, fakeRepository, noDeliveryWakes } from './test-support/gateway-doubles.js';
 
 /**
@@ -365,6 +366,74 @@ describe('login por contraseña de la consola', () => {
       const api = await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } });
       expect(api.statusCode).toBe(200);
       expect(api.json()).toMatchObject({ auth_provider: 'console-password' });
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('sella la contraseña exacta que se verificó aunque el registro cambie antes de emitir la cookie', async () => {
+    const original = await makeUser();
+    const test = await fixture({ user: original });
+    const replacement = await makeUser({
+      password_hash: await hashPassword('otra-frase-de-paso-larga', TEST_SCRYPT),
+      password_changed_at: original.password_changed_at
+    });
+    const findByEmail = test.users.findByEmail.bind(test.users);
+    vi.spyOn(test.users, 'findByEmail').mockImplementation(async (email) => {
+      const verifiedCandidate = await findByEmail(email);
+      queueMicrotask(() => { test.users.put(replacement); });
+      return verifiedCandidate;
+    });
+
+    try {
+      const login = await test.login(original.email, PASSWORD);
+      expect(login.statusCode).toBe(200);
+      const token = cookieFrom(login.headers).split('=', 2)[1]?.split(';', 1)[0];
+      expect(token).toBeDefined();
+      const encodedPayload = token?.split('.')[1];
+      if (encodedPayload === undefined) throw new Error('la cookie de sesión no incluye un payload');
+      const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as {
+        credential_stamp?: string;
+      };
+      expect(payload.credential_stamp).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      const stamp = payload.credential_stamp;
+      if (stamp === undefined) throw new Error('la sesión no incluye sello de credenciales');
+      const key = Buffer.alloc(32, 7);
+      const snapshot = (user: ConsoleUser) => ({ userId: user.id, passwordHash: user.password_hash,
+        passwordChangedAtUs: user.password_changed_at_us ?? String(user.password_changed_at * 1_000) });
+      expect(verifyConsoleCredentialStamp(key, stamp, snapshot(original))).toBe(true);
+      expect(verifyConsoleCredentialStamp(key, stamp, snapshot(replacement))).toBe(false);
+      expect(login.body).not.toContain(original.password_hash);
+      expect(login.body).not.toContain(replacement.password_hash);
+      const current = await test.users.findById(original.id);
+      expect(current?.password_hash).toBe(replacement.password_hash);
+      const stale = await test.app.inject({ method: 'GET', url: '/v3/auth/session', headers: {
+        cookie: cookieFrom(login.headers)
+      } });
+      expect(stale.json()).toMatchObject({ authenticated: false, login_mode: 'password' });
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('mantiene la lectura de cookies antiguas pero rechaza su uso para una publicación durable', async () => {
+    const test = await fixture();
+    const prepare = vi.spyOn(test.repository, 'prepareConsolePublishIntent');
+    const csrf = Buffer.alloc(32, 9).toString('base64url');
+    const token = signConsoleSession(Buffer.alloc(32, 7), {
+      iss: 'cauce-v3-gateway', aud: 'cauce-v3-console', sub: '11111111-2222-4333-8444-555555555555',
+      sid: 'legacy-session-identifier', csrf, iat: 1_786_017_600, exp: 1_786_021_200
+    });
+    const cookie = `__Host-cauce_session=${token}`;
+    try {
+      const session = await test.app.inject({ method: 'GET', url: '/v3/auth/session', headers: { cookie } });
+      expect(session.json()).toMatchObject({ authenticated: true, login_mode: 'password' });
+
+      const durable = await test.app.inject({ method: 'POST', url: '/v3/console/publish-intents',
+        headers: { cookie, origin: 'http://localhost', 'x-csrf-token': csrf }, payload: {} });
+      expect(durable.statusCode).toBe(403);
+      expect(durable.json()).toMatchObject({ error: 'forbidden' });
+      expect(prepare).not.toHaveBeenCalled();
     } finally {
       await test.app.close();
     }
