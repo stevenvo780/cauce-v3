@@ -257,7 +257,7 @@ describe.each(['wrapper', 'handler'] as const)('gateway HTTP %s', (mode) => {
       seen.push(identity.subject); signals.push(signal);
       expect(signal.aborted).toBe(false);
       const tenant = identity.subject === 'human-a' ? 'TenantA' : 'TenantB';
-      return { submit: async () => { throw new Error('unused'); }, receipt: async () => { throw new Error('unused'); }, status: async () => projectGatewayStatus({ version: '3.0', presence: [] }, tenant),
+      return { submit: async () => { throw new Error('unused'); }, receipt: async () => { throw new Error('unused'); }, inbox: async () => { throw new Error('unused'); }, status: async () => projectGatewayStatus({ version: '3.0', presence: [] }, tenant),
         agents: async () => projectGatewayAgents({ items: [] }, tenant) };
     });
     await startHumanServer({ forRequest });
@@ -293,7 +293,7 @@ describe.each(['wrapper', 'handler'] as const)('gateway HTTP %s', (mode) => {
     let operationSignal: AbortSignal | undefined;
     const forRequest = vi.fn<GatewayOperationsFactory['forRequest']>(async (_identity, signal) => {
       operationSignal = signal;
-      return { submit: async () => { throw new Error('unused'); }, receipt: async () => { throw new Error('unused'); }, agents, status: async () => {
+      return { submit: async () => { throw new Error('unused'); }, receipt: async () => { throw new Error('unused'); }, inbox: async () => { throw new Error('unused'); }, agents, status: async () => {
         await new Promise<void>((resolve) => { signal.addEventListener('abort', () => { resolve(); }, { once: true }); });
         throw new Error('cancelled fixture');
       } };
@@ -312,7 +312,7 @@ describe.each(['wrapper', 'handler'] as const)('gateway HTTP %s', (mode) => {
       retry_after_seconds: 60, safe_to_retry: true } as const;
     const submit = vi.fn<import('./gateway-operations.js').HumanGatewayOperations['submit']>(async () => { throw new GatewayOperationError(failure); });
     await startHumanServer({ forRequest: async () => ({ status, agents, submit,
-      receipt: async () => { throw new Error('unused'); } }) }, ['cauce.read', 'cauce.publish']);
+      receipt: async () => { throw new Error('unused'); }, inbox: async () => { throw new Error('unused'); } }) }, ['cauce.read', 'cauce.publish']);
     const humanHeaders = { ...headers, authorization: 'Bearer human-a' };
     const connection = new Client({ name: 'human-errors-http-test', version: '1.0.0' });
     clients.push(connection);
@@ -378,7 +378,7 @@ describe.each(['wrapper', 'handler'] as const)('gateway HTTP %s', (mode) => {
     const ready = new Promise<void>((resolve) => { started = resolve; });
     const forRequest = vi.fn<GatewayOperationsFactory['forRequest']>(async (_identity, signal) => {
       signals.push(signal);
-      return { submit: async () => { throw new Error('unused'); }, receipt: async () => { throw new Error('unused'); }, agents,
+      return { submit: async () => { throw new Error('unused'); }, receipt: async () => { throw new Error('unused'); }, inbox: async () => { throw new Error('unused'); }, agents,
         status: async () => {
           if (++running === MAX_MCP_REQUESTS) started?.();
           await new Promise<void>((resolve) => { signal.addEventListener('abort', () => { resolve(); }, { once: true }); });
@@ -396,7 +396,7 @@ describe.each(['wrapper', 'handler'] as const)('gateway HTTP %s', (mode) => {
     expect(signals.every((signal) => signal.aborted)).toBe(true);
     expect((await Promise.all(pending)).every((result) => result instanceof Error)).toBe(true);
     vi.useRealTimers();
-    forRequest.mockResolvedValue({ status, agents, submit: async () => { throw new Error('unused'); }, receipt: async () => { throw new Error('unused'); } });
+    forRequest.mockResolvedValue({ status, agents, submit: async () => { throw new Error('unused'); }, receipt: async () => { throw new Error('unused'); }, inbox: async () => { throw new Error('unused'); } });
     const next = await Promise.all(Array.from({ length: MAX_MCP_REQUESTS }, async () => fetch(endpoint, { method: 'POST', headers: { ...headers, authorization: 'Bearer human-a' }, body: rpc('tools/call', { name: 'cauce_status' }) })));
     expect(next.every((response) => response.status === 200)).toBe(true);
   });
@@ -454,7 +454,7 @@ describe('gateway HTTP handler lifecycle', () => {
         });
         return {
           status: async () => { toolCalls += 1; return projectGatewayStatus({ version: '3.0', presence: [] }, 'TenantA'); },
-          agents, submit: async () => { throw new Error('unused'); }, receipt: async () => { throw new Error('unused'); },
+          agents, submit: async () => { throw new Error('unused'); }, receipt: async () => { throw new Error('unused'); }, inbox: async () => { throw new Error('unused'); },
         };
       } },
     };
@@ -579,6 +579,7 @@ describe('gateway HTTP handler lifecycle', () => {
     ['status', 'cauce_status', {}],
     ['submit', 'cauce_submit', { request_key: '65f94fa9-b452-4c33-9163-331819c764e3', room_id: 'lifecycle', recipients: [{ tenant_id: 'TenantA', alias: 'claw' }], body: { text: 'fixture' } }],
     ['receipt', 'cauce_receipt', { message_id: 'b3b4a1ad-3054-44cb-a811-396ecf5672c3' }],
+    ['inbox', 'cauce_inbox', {}],
   ] as const)('awaits the SDK %s operation after its signal is aborted', async (operation, tool, args) => {
     let releaseCleanup: (() => void) | undefined;
     const cleanupBarrier = new Promise<void>((resolve) => { releaseCleanup = resolve; });
@@ -586,7 +587,7 @@ describe('gateway HTTP handler lifecycle', () => {
     let operationAborted = false;
     let cleanupFinished = false;
     let sideEffectQueries = 0;
-    const operationCalls = { status: 0, agents: 0, submit: 0, receipt: 0 };
+    const operationCalls = { status: 0, agents: 0, submit: 0, receipt: 0, inbox: 0 };
     const waitForAbort = async (signal: AbortSignal): Promise<never> => {
       operationStarted = true;
       await new Promise<void>((resolve) => { signal.addEventListener('abort', () => { operationAborted = true; resolve(); }, { once: true }); });
@@ -608,6 +609,7 @@ describe('gateway HTTP handler lifecycle', () => {
         agents: async () => { operationCalls.agents += 1; sideEffectQueries += 1; throw new Error('Unexpected agents call'); },
         submit: async () => { operationCalls.submit += 1; if (operation === 'submit') return waitForAbort(signal); sideEffectQueries += 1; throw new Error('Unexpected publish'); },
         receipt: async () => { operationCalls.receipt += 1; if (operation === 'receipt') return waitForAbort(signal); sideEffectQueries += 1; throw new Error('Unexpected receipt call'); },
+        inbox: async () => { operationCalls.inbox += 1; if (operation === 'inbox') return waitForAbort(signal); sideEffectQueries += 1; throw new Error('Unexpected inbox call'); },
       }) },
     };
     const managed = createGatewayHttpHandler(options);
@@ -626,7 +628,8 @@ describe('gateway HTTP handler lifecycle', () => {
       await draining;
       expect(cleanupFinished).toBe(true);
       expect(sideEffectQueries).toBe(0);
-      expect(operationCalls).toEqual({ status: Number(operation === 'status'), agents: 0, submit: Number(operation === 'submit'), receipt: Number(operation === 'receipt') });
+      expect(operationCalls).toEqual({ status: Number(operation === 'status'), agents: 0, submit: Number(operation === 'submit'),
+        receipt: Number(operation === 'receipt'), inbox: Number(operation === 'inbox') });
       await pending;
     } finally {
       releaseCleanup?.();

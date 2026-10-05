@@ -75,6 +75,7 @@ export async function operations(
     listPresence: (...args) => repository.listPresence(...args),
     listAgents: (...args) => repository.listAgents(...args),
     getHumanMessage: (...args) => repository.getHumanMessage(...args),
+    listHumanInbox: (...args) => repository.listHumanInbox(...args),
   };
   const identity: VerifiedOAuthIdentity = Object.freeze({
     kind: 'oauth', issuer: account.key.namespace, subject: account.key.subject,

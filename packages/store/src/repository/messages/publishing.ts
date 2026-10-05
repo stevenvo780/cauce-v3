@@ -41,6 +41,7 @@ import {
   assertAgentRootSlot, humanSenderView, lockAgentRootActor, senderView, type MessageReader,
 } from './agent-roots.js';
 import { loadMessageDetail, messageDetailWithReplies } from './message-detail.js';
+import { loadHumanInboxPage, type HumanInboxPage, type HumanInboxQuery } from './human-inbox.js';
 
 // The BUS writes this, not the agent: first person made it a lie through an 8 h outage.
 const telegramRelayAcknowledgement = 'Recibido por el bus; en cola para el agente.';
@@ -447,6 +448,13 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
       const view = await humanSenderView(client, messageId, human);
       if (view === undefined) throw new StoreError('not_found', 'message not found or not owned');
       return messageDetailWithReplies(row, view);
+    });
+  }
+
+  async listHumanInbox(query: HumanInboxQuery, options: HumanMessageOptions): Promise<HumanInboxPage> {
+    return withAbortableTransaction(this.pool, options.signal, async (client) => {
+      const human = await humanMessageAuthority(client, options);
+      return loadHumanInboxPage(client, human, query);
     });
   }
 

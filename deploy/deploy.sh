@@ -66,8 +66,11 @@ deployment_failed() {
   local exit_status="${2:-1}"
   echo "deploy: $1" >&2
   if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
-    local -a recovery=(env -u CAUCE_MCP_PUBLIC_ORIGIN -u CAUCE_MCP_OAUTH_ISSUER -u CAUCE_MCP_OAUTH_JWKS_URI
+    local -a mcp_unset=()
+    for name in "${MCP_NAMES[@]:1}"; do mcp_unset+=(-u "$name"); done
+    local -a recovery=(env "${mcp_unset[@]}"
       "CAUCE_TERMINAL_RELAY_INSTANCE_ID=$INSTANCE_ID" "CAUCE_BLOB_API_ENABLED=$BLOB_API_ENABLED")
+    [ "$MCP_PROVIDER" != local ] || recovery+=("CAUCE_MCP_OAUTH_SIGNING_KEY_PATH=$MCP_SIGNING_KEY_PATH")
     if [ "$TERMINAL_ENABLED" = 0 ]; then
       recovery+=(CAUCE_GATEWAY_RELAY_CLIENT_CERT_PATH=/dev/null CAUCE_GATEWAY_RELAY_CLIENT_KEY_PATH=/dev/null)
     fi
@@ -100,7 +103,78 @@ if [ "${CAUCE_MCP_HUMAN_ENABLED+x}" = x ] \
    && [ "$CAUCE_MCP_HUMAN_ENABLED" != "$MCP_HUMAN_ENABLED" ]; then
   die "CAUCE_MCP_HUMAN_ENABLED del entorno contradice el archivo de la instancia"
 fi
-if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
+MCP_PROVIDER_DECLARATIONS="$(env_declarations CAUCE_MCP_OAUTH_PROVIDER)"
+[ "$MCP_PROVIDER_DECLARATIONS" -le 1 ] || die "CAUCE_MCP_OAUTH_PROVIDER esta duplicado en $ENV_FILE"
+MCP_PROVIDER=""
+[ "$MCP_PROVIDER_DECLARATIONS" -eq 0 ] || MCP_PROVIDER="$(env_value CAUCE_MCP_OAUTH_PROVIDER)"
+[ -z "$MCP_PROVIDER" ] || [ "$MCP_PROVIDER" = local ] \
+  || die "CAUCE_MCP_OAUTH_PROVIDER solo admite 'local' o ausente (modo externo) en $ENV_FILE"
+if [ "${CAUCE_MCP_OAUTH_PROVIDER+x}" = x ] \
+   && [ "$CAUCE_MCP_OAUTH_PROVIDER" != "$MCP_PROVIDER" ]; then
+  die "CAUCE_MCP_OAUTH_PROVIDER del entorno contradice el archivo de la instancia"
+fi
+MCP_SIGNING_KEY_PATH=""
+if [ "$MCP_HUMAN_ENABLED" = 1 ] && [ "$MCP_PROVIDER" = local ]; then
+  MCP_OVERLAY_NAME=compose.mcp-human-local.yaml
+  for name in CAUCE_MCP_OAUTH_ISSUER CAUCE_MCP_OAUTH_JWKS_URI; do
+    [ "$(env_declarations "$name")" -eq 0 ] \
+      || die "$name no se admite con CAUCE_MCP_OAUTH_PROVIDER=local en $ENV_FILE"
+    [ "${!name+x}" != x ] \
+      || die "$name del entorno no se admite con CAUCE_MCP_OAUTH_PROVIDER=local"
+  done
+  AUTH_PROVIDER_DECLARATIONS="$(env_declarations CAUCE_AUTH_PROVIDER)"
+  [ "$AUTH_PROVIDER_DECLARATIONS" -le 1 ] || die "CAUCE_AUTH_PROVIDER esta duplicado en $ENV_FILE"
+  AUTH_PROVIDER=""
+  [ "$AUTH_PROVIDER_DECLARATIONS" -eq 0 ] || AUTH_PROVIDER="$(env_value CAUCE_AUTH_PROVIDER)"
+  if [ "${CAUCE_AUTH_PROVIDER+x}" = x ]; then
+    [ -z "$AUTH_PROVIDER" ] || [ "$CAUCE_AUTH_PROVIDER" = "$AUTH_PROVIDER" ] \
+      || die "CAUCE_AUTH_PROVIDER del entorno contradice el archivo de la instancia"
+    AUTH_PROVIDER="$CAUCE_AUTH_PROVIDER"
+  fi
+  [ "$AUTH_PROVIDER" = password ] \
+    || die "CAUCE_MCP_OAUTH_PROVIDER=local exige CAUCE_AUTH_PROVIDER=password"
+  MCP_SIGNING_KEY_PATH="${CAUCE_MCP_OAUTH_SIGNING_KEY_PATH:-}"
+  [ -n "$MCP_SIGNING_KEY_PATH" ] \
+    || die "exporta CAUCE_MCP_OAUTH_SIGNING_KEY_PATH con la ruta de la clave de firma"
+  MCP_NAMES=(CAUCE_MCP_HUMAN_ENABLED CAUCE_MCP_OAUTH_PROVIDER CAUCE_MCP_PUBLIC_ORIGIN CAUCE_MCP_OAUTH_SIGNING_KID)
+  MCP_EXPECTED=("$MCP_HUMAN_ENABLED" local)
+  for name in CAUCE_MCP_PUBLIC_ORIGIN CAUCE_MCP_OAUTH_SIGNING_KID; do
+    [ "$(env_declarations "$name")" -eq 1 ] \
+      || die "$name debe declararse una sola vez en $ENV_FILE"
+    value="$(env_value "$name")"
+    [[ "$value" =~ [^[:space:]] ]] || die "$name no puede estar vacio en $ENV_FILE"
+    if [ "${!name+x}" = x ] && [ "${!name}" != "$value" ]; then
+      die "$name del entorno contradice el archivo de la instancia"
+    fi
+    unset "$name"
+    MCP_EXPECTED+=("$value")
+  done
+  MCP_RENDERED="$(env -u CAUCE_MCP_HUMAN_ENABLED -u CAUCE_MCP_OAUTH_PROVIDER -u CAUCE_MCP_PUBLIC_ORIGIN -u CAUCE_MCP_OAUTH_SIGNING_KID \
+    docker compose --env-file "$ENV_FILE" --project-name cauce-deploy-mcp-config \
+      --project-directory "$REPO/deploy" -f - config --format json 2>/dev/null <<'YAML' | python3 -c '
+import json, sys
+try:
+    values = json.load(sys.stdin)["services"]["mcp-config"]["environment"]
+    for name in ("CAUCE_MCP_HUMAN_ENABLED", "CAUCE_MCP_OAUTH_PROVIDER", "CAUCE_MCP_PUBLIC_ORIGIN", "CAUCE_MCP_OAUTH_SIGNING_KID"):
+        value = values[name]
+        if not isinstance(value, str) or any(character in value for character in "\r\n\0"):
+            raise ValueError()
+        print(value)
+except (ValueError, KeyError, TypeError):
+    raise SystemExit(1)
+'
+services:
+  mcp-config:
+    image: scratch
+    environment:
+      CAUCE_MCP_HUMAN_ENABLED: ${CAUCE_MCP_HUMAN_ENABLED-0}
+      CAUCE_MCP_OAUTH_PROVIDER: ${CAUCE_MCP_OAUTH_PROVIDER-}
+      CAUCE_MCP_PUBLIC_ORIGIN: ${CAUCE_MCP_PUBLIC_ORIGIN-}
+      CAUCE_MCP_OAUTH_SIGNING_KID: ${CAUCE_MCP_OAUTH_SIGNING_KID-}
+YAML
+  )" || die "configuracion MCP ambigua o dotenv invalido en $ENV_FILE"
+elif [ "$MCP_HUMAN_ENABLED" = 1 ]; then
+  MCP_OVERLAY_NAME=compose.mcp-human.yaml
   MCP_NAMES=(CAUCE_MCP_HUMAN_ENABLED CAUCE_MCP_PUBLIC_ORIGIN CAUCE_MCP_OAUTH_ISSUER CAUCE_MCP_OAUTH_JWKS_URI)
   MCP_EXPECTED=("$MCP_HUMAN_ENABLED")
   for name in CAUCE_MCP_PUBLIC_ORIGIN CAUCE_MCP_OAUTH_ISSUER CAUCE_MCP_OAUTH_JWKS_URI; do
@@ -139,14 +213,16 @@ services:
       CAUCE_MCP_OAUTH_JWKS_URI: ${CAUCE_MCP_OAUTH_JWKS_URI-}
 YAML
   )" || die "configuracion MCP ambigua o dotenv invalido en $ENV_FILE"
+fi
+if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
   mapfile -t MCP_VALUES <<< "$MCP_RENDERED"
-  for index in 0 1 2 3; do
+  for index in "${!MCP_NAMES[@]}"; do
     [ "${MCP_VALUES[$index]:-}" = "${MCP_EXPECTED[$index]}" ] \
       || die "${MCP_NAMES[$index]} debe ser literal y coincidir con Compose en $ENV_FILE"
   done
   prepare_terminal
-  [ -r "$REPO/deploy/compose.mcp-human.yaml" ] || die "no puedo leer deploy/compose.mcp-human.yaml"
-  COMPOSE+=(-f "$REPO/deploy/compose.mcp-human.yaml")
+  [ -r "$REPO/deploy/$MCP_OVERLAY_NAME" ] || die "no puedo leer deploy/$MCP_OVERLAY_NAME"
+  COMPOSE+=(-f "$REPO/deploy/$MCP_OVERLAY_NAME")
   "${COMPOSE[@]}" config >/dev/null || die "el compose MCP no renderiza con $ENV_FILE"
 fi
 REGISTRY="${REGISTRY%/}"
