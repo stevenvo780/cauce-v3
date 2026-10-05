@@ -59,8 +59,10 @@ async function guardedOperation<T>(operation: () => Promise<T>, mutating = false
         throw new GatewayOperationError({ status_code: 400, error: 'invalid_request' });
       }
       if (error.code === 'conflict') {
+        const retrySameKey = mutating && error.recoveryReason !== 'idempotency_durable_conflict'
+          && error.message === 'idempotency request is still in progress';
         throw new GatewayOperationError({ status_code: 409, error: 'operation_conflict',
-          ...(mutating ? { safe_to_retry_same_request_key: true } : {}) });
+          ...(retrySameKey ? { safe_to_retry_same_request_key: true } : {}) });
       }
     }
     throw new GatewayOperationError({ status_code: 503, error: 'operation_unavailable',
