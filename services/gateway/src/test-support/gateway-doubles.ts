@@ -282,6 +282,7 @@ export function fakeRepository(overrides: Partial<GatewayRepository> = {}): Gate
       deliveries: []
     })),
     getHumanMessage: vi.fn(async () => { throw new Error('human ownership is not part of this test double'); }),
+    listHumanInbox: vi.fn(async () => { throw new Error('human ownership is not part of this test double'); }),
     recordProfileRuntimeExpectation: vi.fn(async () => undefined),
     reconcileAgentContextRuntime: vi.fn(async () => ({ state: 'effect_unknown' as const })),
     readProfileRuntimeAdoption: vi.fn(async () => undefined),

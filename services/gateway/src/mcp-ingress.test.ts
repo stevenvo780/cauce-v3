@@ -56,6 +56,7 @@ function humanOptions() {
         agents: async () => ({ tenant_id: 'TenantA', items: [], total: 0, truncated: false }),
         submit: async () => { throw new Error('Fixture cannot publish'); },
         receipt: async () => { throw new Error('Fixture has no receipts'); },
+        inbox: async () => { throw new Error('Fixture has no inbox'); },
       })),
     },
   } satisfies HumanOptions;
@@ -318,6 +319,7 @@ describe('MCP ingress over native HTTP on the Fastify listener', () => {
         agents: async () => ({ tenant_id: 'TenantA', items: [], total: 0, truncated: false }),
         submit: async () => { throw new Error('Fixture cannot publish'); },
         receipt: async () => { throw new Error('Fixture has no receipts'); },
+        inbox: async () => { throw new Error('Fixture has no inbox'); },
       };
     });
     const app = await mount(options);

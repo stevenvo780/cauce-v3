@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, describe, expect, it } from 'vitest';
-import { applyMigrations } from '@cauce/store';
+import { applyMigrationsThrough } from '@cauce/store';
 import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.js';
-import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
+import { startTestDatabaseThrough, type TestDatabase } from '../helpers/postgres.js';
 import {
   ALIAS, INSERT_INITIATOR, VERSION, rejectsSql, rollbackFixture, seedAgent, seedHuman,
   seedLineage, seedMembership, seedMessage,
@@ -18,14 +18,11 @@ const pool = (): TestDatabase['pool'] => {
 };
 
 preparePostgresSuite(import.meta.url, async () => {
-  // 045 depends on 044 and its down refuses while 045 is recorded, so the 044 rollback first removes the empty 045.
-  const [source, own, later] = await Promise.all([
+  [up, down] = await Promise.all([
     readFile(new URL(`../../packages/store/migrations/${VERSION}`, import.meta.url), 'utf8'),
     readFile(new URL(`../../packages/store/migrations/down/${VERSION}`, import.meta.url), 'utf8'),
-    readFile(new URL('../../packages/store/migrations/down/045_mcp_oauth_authorization.sql', import.meta.url), 'utf8'),
   ]);
-  up = source; down = `${later}\n${own}`;
-  database = await startTestDatabase();
+  database = await startTestDatabaseThrough(VERSION);
 }, 120_000);
 
 afterAll(async () => {
@@ -35,8 +32,8 @@ afterAll(async () => {
 
 describe('human identity migration on real PostgreSQL', () => {
   it('runs the canonical migration runner twice without changing its exact source ledger', async () => {
-    await applyMigrations(pool());
-    await applyMigrations(pool());
+    await applyMigrationsThrough(pool(), VERSION);
+    await applyMigrationsThrough(pool(), VERSION);
     const result = await pool().query('SELECT source_sha256 FROM schema_migration_ledger WHERE version=$1', [VERSION]);
     expect(result.rows).toEqual([{ source_sha256: createHash('sha256').update(up).digest('hex') }]);
   });
@@ -82,7 +79,7 @@ describe('human identity migration on real PostgreSQL', () => {
       await client.query(down);
       human = await seedHuman(client, { alias: 'missing_human_agent' });
       await client.query('COMMIT');
-      await expect(applyMigrations(pool())).rejects.toMatchObject({
+      await expect(applyMigrationsThrough(pool(), VERSION)).rejects.toMatchObject({
         message: 'human identity backfill requires existing agents',
         detail: `human_id=${human} tenant_id=Steven alias=missing_human_agent`,
       });
@@ -96,7 +93,7 @@ describe('human identity migration on real PostgreSQL', () => {
       await client.query('ROLLBACK');
       if (human) await client.query('DELETE FROM console_users WHERE id=$1', [human]);
       client.release();
-      await applyMigrations(pool());
+      await applyMigrationsThrough(pool(), VERSION);
     }
   });
 
