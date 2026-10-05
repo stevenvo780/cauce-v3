@@ -21,7 +21,7 @@
 .live-search:focus-within { outline: 2px solid var(--blue); outline-offset: 2px; }
 .live-refresh, .live-refresh-settings > summary { display: grid; place-items: center; flex: none; width: 44px; height: 44px; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); cursor: pointer; }
 .live-refresh { position: relative; }
-.live-refresh .live-feed-state { position: absolute; inset: 3px 3px auto auto; }
+.live-refresh .live-feed-state { position: absolute; inset: var(--space-1) var(--space-1) auto auto; }
 .live-refresh-settings { position: relative; }
 .live-refresh-settings > summary { list-style: none; }
 .live-refresh-settings > summary::-webkit-details-marker { display: none; }
@@ -170,7 +170,7 @@ table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { whi
 
 @media (max-width: 760px) {
   .live-heading { align-items: center; flex-direction: row; gap: var(--space-2); }
-  .fleet-verdict-phrase { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .fleet-verdict-phrase { position: absolute; width: 1px; height: 1px; padding: 0; margin: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .fleet-verdict-light { margin: 0; }
   .live-heading .page-header h1 { font-size: var(--tipo-panel); }
   .live-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(88px, 100px) 44px 44px; gap: var(--space-1); }
@@ -194,8 +194,8 @@ table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { whi
 .fleet-verdict-popover { position: absolute; inset-inline-end: 0; top: 100%; z-index: var(--layer-overlay); display: grid; gap: var(--space-2); width: min(360px, 80vw); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow); }
 
 .live-page .live-main > .panel.fleet-activity-panel:has(.activity-search) table[data-objeto-principal='tabla-de-flota'] > tbody > tr[data-agent-key]:not(.row-detail) > td { padding: 0 var(--space-2); }
-table[data-objeto-principal='tabla-de-flota'] .row-open { min-height: 44px; min-width: 44px; }
-table[data-objeto-principal='tabla-de-flota'] .row-toggle { width: 44px; height: 44px; }
+table[data-objeto-principal='tabla-de-flota'] > tbody > tr[data-agent-key] > td > .identity-cell > .row-open { min-height: 44px; min-width: 44px; }
+table[data-objeto-principal='tabla-de-flota'] > tbody > tr[data-agent-key] > td > .row-toggle { width: 44px; height: 44px; }
 .activity-agent-details { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-1) var(--space-3); margin: 0 0 var(--space-3); font-size: var(--tipo-rotulo); }
 .activity-agent-details dt { color: var(--muted); }
 .activity-agent-details dd { margin: 0; overflow-wrap: anywhere; }
@@ -209,7 +209,7 @@ table[data-objeto-principal='tabla-de-flota'] .row-toggle { width: 44px; height:
 table[data-objeto-principal='tabla-de-flota'] > thead > tr > th { padding-block: var(--space-1); }
 table[data-objeto-principal='tabla-de-flota'] > tbody > tr[data-agent-key] .badge { min-height: 20px; padding-block: 0; line-height: 18px; }
 table[data-objeto-principal='tabla-de-flota'] > tbody > tr[data-agent-key] > td:nth-child(3) > .badge { display: flex; width: fit-content; }
-table[data-objeto-principal='tabla-de-flota'] .flag-chip-list { margin-top: 0; gap: var(--space-1); }
+table[data-objeto-principal='tabla-de-flota'] > tbody > tr[data-agent-key] > td > .flag-chip-list { margin-top: 0; gap: var(--space-1); }
 @media (min-width: 1101px) {
   .live-page > .live-main { gap: var(--space-2); }
 }
