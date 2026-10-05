@@ -367,7 +367,10 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
       }
 
       const remainingPercent = row.remaining_percent === null ? null : Number(row.remaining_percent);
-      const severity = windowSeverity(remainingPercent, row.status, DEFAULT_QUOTA_THRESHOLDS);
+      // A window whose reset already passed holds a value from BEFORE the reset: until the collector
+      // resamples it, it says nothing about today, so it cannot raise «sin saldo» on its own.
+      const resetPassed = row.reset_at !== null && row.reset_at.getTime() <= observedAt.getTime();
+      const severity = resetPassed ? 'unknown' : windowSeverity(remainingPercent, row.status, DEFAULT_QUOTA_THRESHOLDS);
       const historyKey = JSON.stringify([row.host, row.provider, row.group_key, row.window_key]);
       const points = historyByWindow.get(historyKey) ?? [];
 
@@ -423,6 +426,9 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
       };
     });
 
+    // A stale collector's providers keep their windows for inspection, but their severity is not a
+    // present-tense reading: the «recolector rancio» notice already covers that host.
+    const staleHosts = new Set(collectors.filter((collector) => collector.stale).map((collector) => collector.host));
     const providers = providerRows.rows.map((row) => {
       const providerKey = JSON.stringify([row.host, row.provider]);
       const groups = [...(groupsByProvider.get(providerKey)?.values() ?? [])];
@@ -433,7 +439,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         observed_at: row.observed_at?.toISOString() ?? null,
         age_seconds: Math.max(0, Math.round((observedAt.getTime() - row.received_at.getTime()) / 1_000)),
         available_groups: row.available_groups, limiting_groups: row.limiting_groups,
-        severity: worstQuotaSeverity(groups.map((group) => group.severity)),
+        severity: staleHosts.has(row.host) ? 'unknown' : worstQuotaSeverity(groups.map((group) => group.severity)),
         groups
       };
     });
