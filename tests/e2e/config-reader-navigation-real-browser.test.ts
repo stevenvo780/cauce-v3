@@ -215,6 +215,54 @@ describe('navegación de Configuración para lectores', () => {
       expect(writeButtons.length).toBeGreaterThan(0);
       expect(writeButtons.every((button) => button.disabled), JSON.stringify(writeButtons)).toBe(true);
 
+      const spacesTab = page.getByRole('tab', { name: 'Espacios y miembros' });
+      await spacesTab.click();
+      await page.getByRole('heading', { name: 'Tenants', exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+      await page.getByRole('button', { name: 'Espacio completo, paso a paso' }).click();
+      await page.getByRole('heading', { name: 'Wizard de espacios', exact: true }).waitFor({ state: 'visible' });
+
+      const wizardInputs = [
+        { step: '1. Tenant', label: 'Tenant id' },
+        { step: '2. Room', label: 'Room id' },
+        { step: '3. Membership', label: 'Alias' },
+        { step: '4. Harness', label: 'Harness id' },
+      ];
+      const wizardControls: { step: string; label: string; disabled: boolean }[] = [];
+      for (const input of wizardInputs) {
+        const step = page.getByRole('group', { name: 'Pasos del wizard' }).getByRole('button', { name: input.step });
+        await step.click();
+        await page.getByLabel(input.label).waitFor({ state: 'visible' });
+        const disabled = await page.evaluate((label) => {
+          const fieldLabel = Array.from(document.querySelectorAll('label'))
+            .find((element) => element.textContent.trim().startsWith(label));
+          return fieldLabel?.querySelector('input')?.disabled ?? null;
+        }, input.label);
+        wizardControls.push({ step: input.step, label: input.label, disabled: disabled === true });
+      }
+      expect(wizardControls).toEqual(wizardInputs.map((input) => ({ ...input, disabled: true })));
+
+      await page.getByRole('group', { name: 'Pasos del wizard' }).getByRole('button', { name: '5. Dry-run y aplicar' }).click();
+      const reviewActions = await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const disabled = (label: string) => buttons.find((button) => button.textContent.includes(label))?.disabled ?? null;
+        return {
+          previewDisabled: disabled('Previsualizar paso'),
+          applyDisabled: disabled('Aplicar paso'),
+          resetDisabled: disabled('Reiniciar wizard'),
+        };
+      });
+      expect(reviewActions).toEqual({ previewDisabled: true, applyDisabled: true, resetDisabled: false });
+      await page.getByRole('button', { name: 'Reiniciar wizard' }).click();
+      await page.getByLabel('Tenant id').waitFor({ state: 'visible' });
+      const resetValue = await page.evaluate(() => {
+        const fieldLabel = Array.from(document.querySelectorAll('label'))
+          .find((element) => element.textContent.trim().startsWith('Tenant id'));
+        return fieldLabel?.querySelector('input')?.value ?? null;
+      });
+      expect(resetValue).toBe('Acme');
+
+      expect(changePosts).toEqual([]);
+
       const deniedWrite = await page.evaluate(async ({ revision, csrfToken }) => {
         const response = await fetch('/v3/console/config/changes', {
           method: 'POST', credentials: 'include',
