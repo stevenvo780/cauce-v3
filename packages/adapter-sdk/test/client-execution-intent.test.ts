@@ -307,17 +307,20 @@ test("reconnect replays the same intent and a duplicate receipt releases it with
 test("an execution-intent receipt fsync failure never releases the harness", async () => {
   const connection = new FakeConnection(1, undefined, false);
   const runner = new CountingRunner();
+  const clock = new VirtualClock();
   const errors: string[] = [];
+  let receiptPersistenceFailures = 0;
   const context = await makeClient(
     "execution-intent-receipt-fsync",
     new ScriptedConnector(connection),
-    { runner, claimWatchdogMs: escala(500), onError: (code) => errors.push(code) },
+    { runner, clock, claimWatchdogMs: escala(500), onError: (code) => errors.push(code) },
   );
   const acknowledgeResult = context.store.acknowledgeResult.bind(context.store);
   Object.defineProperty(context.store, "acknowledgeResult", {
     configurable: true,
     value: async (...args: Parameters<DurableStore["acknowledgeResult"]>) => {
       if (args[1]?.execution_intent_receipt !== undefined) {
+        receiptPersistenceFailures += 1;
         throw new Error("injected execution-intent receipt fsync failure");
       }
       return acknowledgeResult(...args);
@@ -330,7 +333,7 @@ test("an execution-intent receipt fsync failure never releases the harness", asy
     const input = renewableDelivery(
       "execution-intent-receipt-fsync",
       "000000000087",
-      claimDeadline(),
+      clock.now().getTime() + 30_000,
     );
     connection.push(input);
     await waitUntil(() => startedAcks(connection).some((frame) => frame.execution_started === true), "the execution-intent ACK on the wire");
@@ -346,6 +349,9 @@ test("an execution-intent receipt fsync failure never releases the harness", asy
       applied: true,
       receipt: "applied",
     });
+    await waitUntil(() => receiptPersistenceFailures === 1, "the injected execution-intent receipt persistence failure");
+    assert.equal(runner.calls, 0, "a gateway receipt without durable persistence must not release the harness");
+    clock.advance(escala(250));
     await waitUntil(
       () => context.store.getDelivery(input.delivery_id)?.state === "failed",
       escala(3_000),
