@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startRealPtyFixture, type RealPtyFixture } from './real-pty-agent.fixtures.js';
+import { decodeTerminalSubject } from '../../services/gateway/src/terminal/authority-continuity.js';
 const execute = promisify(execFile);
 const artifactDirectory = process.env.CAUCE_E2E_ARTIFACT_DIR;
 let fixture: RealPtyFixture | undefined;
@@ -216,8 +217,11 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     if (!fixture) throw new Error('real PTY fixture not initialized');
     const active = fixture;
     const reader = await provisionReader(active);
-    const readOperatorSession = (id?: string) => active.database.pool.query<{ id: string; reason: string; revoked_at: Date | null; closed_at: Date | null }>(
-      `SELECT id::text AS id, reason, revoked_at, closed_at
+    const human = await active.database.pool.query<{ id: string }>(
+      'SELECT id::text AS id FROM console_users WHERE email=$1', [active.operatorEmail]);
+    expect(human.rows).toHaveLength(1);
+    const readOperatorSession = (id?: string) => active.database.pool.query<{ id: string; reason: string; console_subject: string; revoked_at: Date | null; closed_at: Date | null }>(
+      `SELECT id::text AS id, reason, console_subject, revoked_at, closed_at
          FROM terminal_sessions
         WHERE tenant_id=$1 AND alias=$2 AND ($3::uuid IS NULL OR id=$3::uuid)
         ORDER BY issued_at DESC
@@ -233,6 +237,10 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
         closed = await readOperatorSession(id);
       }
       expect(closed.rows[0]?.id).toBe(id);
+      const row = closed.rows[0];
+      if (!row) throw new Error('owned terminal row disappeared');
+      expect(decodeTerminalSubject(row.console_subject)).toEqual({ kind: 'human', humanId: human.rows[0]?.id,
+        actor: { tenantId: active.tenant, alias: active.operatorAlias } });
       expect(closed.rows[0]?.revoked_at).toBeInstanceOf(Date);
       expect(closed.rows[0]?.reason).toBe(reason);
       expect(closed.rows[0]?.closed_at).toBeInstanceOf(Date);

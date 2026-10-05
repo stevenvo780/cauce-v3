@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startRealPtyFixture, type RealPtyFixture } from './real-pty-agent.fixtures.js';
+import { decodeTerminalSubject } from '../../services/gateway/src/terminal/authority-continuity.js';
 
 let fixture: RealPtyFixture | undefined;
 const sessionClosed = (row: { revoked_at: Date | null; closed_at: Date | null } | undefined) =>
@@ -14,6 +15,15 @@ beforeAll(async () => {
 }, 10 * 60_000);
 
 afterAll(async () => { await fixture?.close(); });
+
+async function expectHumanSubject(active: RealPtyFixture, subject: string | undefined): Promise<void> {
+  if (subject === undefined) throw new Error('durable terminal subject is missing');
+  const human = await active.database.pool.query<{ id: string }>(
+    'SELECT id::text AS id FROM console_users WHERE email=$1', [active.operatorEmail]);
+  expect(human.rows).toHaveLength(1);
+  expect(decodeTerminalSubject(subject)).toEqual({ kind: 'human', humanId: human.rows[0]?.id,
+    actor: { tenantId: active.tenant, alias: active.operatorAlias } });
+}
 
 describe('PTY real Python agent through gateway and relay', () => {
   it('authenticates, claims a real PTY, runs fixed shell probes as UID 1000, and revokes it', async () => {
@@ -33,10 +43,11 @@ describe('PTY real Python agent through gateway and relay', () => {
     });
     expect(opened.status, opened.body).toBe(201);
     const admission = JSON.parse(opened.body) as {
-      session_id: string; ticket: string; websocket_path: string; owner_generation: string; request_id: string;
+      session_id: string; ticket: string; authority_proof: string; websocket_path: string; owner_generation: string; request_id: string;
     };
     expect(admission.request_id).toBe(requestId);
-    const pty = await active.connect(admission.ticket, admission.session_id, 100, 30);
+    expect(admission.authority_proof).toMatch(/^ac2\./u);
+    const pty = await active.connect(admission.ticket, admission.session_id, admission.authority_proof, 100, 30);
     const ready = await pty.waitControl((frame) => frame.type === 'ready');
     expect(ready).toMatchObject({ type: 'ready', session_id: admission.session_id, resumed: false });
     expect(typeof ready.claim_token).toBe('string');
@@ -51,9 +62,10 @@ describe('PTY real Python agent through gateway and relay', () => {
     expect(claimed.rows).toHaveLength(1);
     expect(claimed.rows[0]).toMatchObject({
       relay_claim_epoch: ready.claim_epoch, request_id: requestId, browser_owner_generation: admission.owner_generation,
-      operator_id: active.operatorEmail, console_subject: `${active.tenant}:${active.operatorAlias}`,
+      operator_id: active.operatorEmail,
       revoked_at: null, closed_at: null,
     });
+    await expectHumanSubject(active, claimed.rows[0]?.console_subject);
     expect(claimed.rows[0]?.relay_claim_sha256?.toString('hex')).toBe(
       createHash('sha256').update(String(ready.claim_token)).digest('hex'),
     );
@@ -215,11 +227,11 @@ describe('PTY real Python agent through gateway and relay', () => {
     expect(live.relay_claim_epoch).not.toBeNull();
     expect(live).toMatchObject({
       operator_id: active.operatorEmail,
-      console_subject: `${active.tenant}:${active.operatorAlias}`,
       revoked_at: null,
       closed_at: null,
     });
 
+    await expectHumanSubject(active, live.console_subject);
     let uiDeleteStatus: number | undefined;
     page.on('response', (response) => {
       if (response.request().method() === 'DELETE' && response.url().endsWith(`/v3/console/terminal/sessions/${live.id}`)) {
