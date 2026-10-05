@@ -31,8 +31,12 @@ beforeAll(async () => {
 
 afterAll(async () => { await fixture?.close(); });
 
-async function openConversation(active: ConversationBrowserFixture, viewport: { width: number; height: number }) {
-  const page = await active.pty.browserPage(viewport);
+async function openConversation(
+  active: ConversationBrowserFixture,
+  viewport: { width: number; height: number },
+  device?: { isMobile?: boolean; hasTouch?: boolean },
+) {
+  const page = await active.pty.browserPage(viewport, device);
   const response = await page.goto(active.pty.baseUrl, { waitUntil: 'domcontentloaded' });
   expect(response?.status()).toBe(200);
   await page.getByLabel('Correo', { exact: true }).fill(active.pty.operatorEmail);
@@ -244,4 +248,31 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
         outcome: 'one durable human root, started then done ACK, canonical reply shown in a separate agent bubble' }));
     }
   }, 10 * 60_000);
+
+  it('envía con un toque móvil mientras el compositor conserva el foco', async () => {
+    if (!fixture) throw new Error('conversation browser fixture was not initialized');
+    const active = fixture;
+    const page = await openConversation(active, { width: 360, height: 800 }, { isMobile: true, hasTouch: true });
+    const marker = `pr52-touch-${randomUUID()}`;
+    const textbox = page.getByLabel(`Mensaje para ${active.pty.targetAlias}`, { exact: true });
+    await textbox.fill(marker);
+    expect(await page.evaluate(() => document.activeElement?.matches('.messenger-composer textarea'))).toBe(true);
+
+    const bounds = await page.getByRole('button', { name: 'Enviar', exact: true }).boundingBox();
+    if (bounds === null) throw new Error('send button has no visible touch target');
+    const touchscreen = (page as unknown as { touchscreen: { tap(x: number, y: number): Promise<void> } }).touchscreen;
+    await touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+
+    const entry = page.locator('.transcript-entry.input').filter({ hasText: marker });
+    await entry.waitFor({ state: 'visible', timeout: 20_000 });
+    await entry.getByRole('status', { name: 'Entrega: Publicado · esperando aceptación del agente', exact: true })
+      .waitFor({ state: 'visible', timeout: 20_000 });
+    expect(await page.getByText(marker, { exact: true }).count()).toBe(1);
+    expect(await page.evaluate(() => document.activeElement?.matches('.messenger-composer textarea'))).toBe(true);
+    expect(await (page.locator('textarea') as unknown as InputLocator).inputValue()).toBe('');
+
+    const durableRoot = await messageEvidence(active, marker);
+    expect(durableRoot).toMatchObject({ status: 'pending', initiators: '1', outbox: '1', prepare: '1', confirm: '1' });
+    await page.screenshot({ path: `${evidenceDirectory}/${marker}-single-touch.png`, fullPage: false });
+  }, 90_000);
 });

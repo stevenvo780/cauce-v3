@@ -65,7 +65,7 @@ export interface RealPtyFixture {
   gatewayUrl: string;
   baseUrl: string;
   browserContainer: string;
-  browserPage(viewport: { width: number; height: number }): Promise<BrowserPage>;
+  browserPage(viewport: { width: number; height: number }, device?: { isMobile?: boolean; hasTouch?: boolean }): Promise<BrowserPage>;
   relayPorts: { browser: number; agent: number; health: number };
   relayInstanceId: string;
   agentContainer: string;
@@ -574,9 +574,9 @@ WORKDIR /home/node
       browser_container: trustedBrowser.container })}\n`);
     return {
       database: startedDatabase, app, directory, gatewayUrl, baseUrl, browserContainer: trustedBrowser.container,
-      browserPage: async (viewport) => {
+      browserPage: async (viewport, device = {}) => {
         if (!trustedBrowser) throw new Error('trusted Chromium fixture is not initialized');
-        const context = await trustedBrowser.browser.newContext({ viewport, ignoreHTTPSErrors: false, serviceWorkers: 'block' });
+        const context = await trustedBrowser.browser.newContext({ viewport, ignoreHTTPSErrors: false, serviceWorkers: 'block', ...device });
         browserContexts.push(context);
         return await context.newPage();
       },
