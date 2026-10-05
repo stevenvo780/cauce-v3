@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from '../../services/gateway/node_modules/fastify/types/instance.js';
-import type { Principal } from '../../services/gateway/src/auth.js';
 import { createConsoleSecurityHook } from '../../services/gateway/src/console-security.js';
 import type { TerminalConfig } from '../../services/gateway/src/terminal/config.js';
 import { registerTerminalControlPlane } from '../../services/gateway/src/terminal/plugin.js';
@@ -13,16 +12,16 @@ import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
 import {
   deriveAliasKey, verifyTicketSignature,
 } from '../../services/gateway/src/terminal/tickets.js';
-import { UNATTRIBUTED_OPERATOR } from '../../services/gateway/src/terminal/types.js';
 import type { DatabasePool } from '@cauce/store';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
+import { TerminalPasswordFixture } from '../helpers/terminal-password.js';
 
 const ORIGIN = 'https://console.test';
 const RELAY_TOKEN = 'relay-token-that-is-long-enough-for-tests-012345';
 const CLAIM_A = '11111111-1111-4111-8111-111111111111';
 const CLAIM_B = '22222222-2222-4222-8222-222222222222';
 const TICKET_KEY = Buffer.alloc(32, 7);
-const NAMED_OPERATORS = ['steven', 'miguel', UNATTRIBUTED_OPERATOR];
+const NAMED_OPERATORS = ['steven', 'miguel'];
 const RELAY_INSTANCE_ID = 'a'.repeat(64);
 const RELAY_BOOT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 let database: TestDatabase;
@@ -31,6 +30,7 @@ let pool: DatabasePool;
 const CEILING_SECONDS = 1_200;
 let app!: FastifyInstance;
 let directory!: string;
+let authentication!: TerminalPasswordFixture;
 
 const requireFromGateway = createRequire(new URL('../../services/gateway/package.json', import.meta.url));
 const Fastify = requireFromGateway('fastify') as (options: { logger: false }) => FastifyInstance;
@@ -41,8 +41,8 @@ async function build(maxSessionsPerOperator: number, sessionMaxTotalSeconds?: nu
   await writeFile(grantsFile, JSON.stringify({
     version: 1,
     grants: NAMED_OPERATORS.flatMap((operator) => [
-      { operator, tenant_id: 'Steven', alias: 'jarvis', modes: ['shell', 'harness', 'harness_rw'] },
-      { operator, tenant_id: 'Steven', alias: 'socrates', modes: ['shell', 'harness', 'harness_rw'] },
+      { operator: authentication.operator(operator), tenant_id: 'Steven', alias: 'jarvis', modes: ['shell', 'harness', 'harness_rw'] },
+      { operator: authentication.operator(operator), tenant_id: 'Steven', alias: 'socrates', modes: ['shell', 'harness', 'harness_rw'] },
     ]),
   }));
   const config: TerminalConfig = {
@@ -52,10 +52,6 @@ async function build(maxSessionsPerOperator: number, sessionMaxTotalSeconds?: nu
     maxSessionsPerOperator,
     ...(sessionMaxTotalSeconds === undefined ? {} : { sessionMaxTotalSeconds }),
     operatorHeader: 'x-cauce-operator', operators: new Set(['steven', 'miguel']),
-  };
-  const principal: Principal = {
-    tenant_id: 'Steven', alias: 'kant', session_id: 'session', channel: 'console',
-    roles: ['operator'], permissions: ['route', 'read', 'control'],
   };
   const registry = new AgentRegistry();
   registry.observe({ relay_instance_id: RELAY_INSTANCE_ID, relay_boot_id: RELAY_BOOT_ID }, [
@@ -81,11 +77,7 @@ async function build(maxSessionsPerOperator: number, sessionMaxTotalSeconds?: nu
   app.addHook('onRequest', createConsoleSecurityHook({ allowedOrigins: [ORIGIN] }));
   await app.register(registerTerminalControlPlane, {
     pool,
-    authProvider: {
-      name: 'postgres-test', mode: 'test',
-      authenticateHttp: async () => principal,
-      authenticateHello: async () => principal,
-    },
+    authProvider: authentication.provider,
     config,
     registry,
     measuredFacts: { factsFor: async () => undefined },
@@ -101,15 +93,18 @@ async function request(
   reason = 'probar admisión concurrente real',
   receipt: { requestId?: string; ownerToken?: string } = {},
 ) {
-  return app.inject({
+  const response = await app.inject({
     method: 'POST', url: '/v3/console/terminal/sessions',
-    headers: { origin: ORIGIN, ...(operator === undefined ? {} : { 'x-cauce-operator': operator }) },
+    headers: { cookie: authentication.cookie(operator), origin: ORIGIN,
+      ...(operator === undefined ? {} : { 'x-cauce-operator': operator }) },
     payload: {
       tenant_id: 'Steven', alias, mode: 'shell',
       reason, cols: 100, rows: 30,
       request_id: receipt.requestId ?? randomUUID(), owner_token: receipt.ownerToken ?? randomUUID(),
     },
   });
+  if (response.statusCode === 201) authentication.remember(response.json<{ session_id: string; authority_proof: string }>());
+  return response;
 }
 
 async function consume(sessionId: string, ticket: string, claimToken = CLAIM_A) {
@@ -117,7 +112,7 @@ async function consume(sessionId: string, ticket: string, claimToken = CLAIM_A) 
     method: 'POST',
     url: `/v3/terminal/relay/sessions/${sessionId}/consume`,
     headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-    payload: { ticket, claim_token: claimToken },
+    payload: { ticket, claim_token: claimToken, authority_proof: authentication.proof(sessionId) },
   });
 }
 
@@ -134,6 +129,7 @@ async function resume(
     payload: {
       resume_token: resumeToken,
       claim_token: claimToken,
+      authority_proof: authentication.proof(sessionId),
       ...(claimEpoch === undefined ? {} : { claim_epoch: claimEpoch }),
     },
   });
@@ -157,7 +153,7 @@ async function authorize(sessionId: string, claimEpoch: string, claimToken = CLA
     method: 'POST',
     url: `/v3/terminal/relay/sessions/${sessionId}/authz`,
     headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-    payload: { claim_token: claimToken, claim_epoch: claimEpoch },
+    payload: { claim_token: claimToken, claim_epoch: claimEpoch, authority_proof: authentication.proof(sessionId) },
   });
 }
 
@@ -165,10 +161,10 @@ async function takeHold(sessionId: string, window: 'live' | 'expired'): Promise<
   const taken = await pool.query<{ id: string }>(
     `INSERT INTO terminal_control_holds(
        session_id,tenant_id,alias,operator_id,reason,taken_at,expires_at
-     ) VALUES($1,'Steven','jarvis','steven','tomar la TUI para desatascar el turno',
+     ) VALUES($1,'Steven','jarvis',$4,'tomar la TUI para desatascar el turno',
        now()-make_interval(secs => $2),now()+make_interval(secs => $3))
      RETURNING id`,
-    [sessionId, window === 'live' ? 0 : 600, window === 'live' ? 300 : -1],
+    [sessionId, window === 'live' ? 0 : 600, window === 'live' ? 300 : -1, authentication.operator('steven')],
   );
   const row = taken.rows[0];
   if (row === undefined) throw new Error('the control hold was not inserted');
@@ -221,7 +217,7 @@ beforeEach(async () => {
   await resetTestDatabase(pool);
   // terminal_sessions predates the shared reset table list and is intentionally independent of
   // message delivery state. This suite owns its rows, so clear them explicitly between races.
-  await pool.query('TRUNCATE TABLE terminal_sessions CASCADE');
+  await pool.query('TRUNCATE TABLE terminal_sessions,console_users CASCADE');
   await pool.query(`
     INSERT INTO agents(
       tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,
@@ -231,6 +227,8 @@ beforeEach(async () => {
       ('Steven','jarvis','openclaw','Jarvis',true,'claw','claw','/home/claw','/state/jarvis'),
       ('Steven','socrates','codex','Socrates',true,'claw','claw','/home/claw','/state/socrates');
   `);
+  authentication = new TerminalPasswordFixture(pool);
+  await authentication.initialize();
   // Makes the historical COUNT/COUNT/INSERT implementation fail deterministically: both callers
   // finish their counts before either insert returns. The fixed one-statement admission keeps its
   // advisory lock through this trigger, so the second caller re-evaluates after the first commit.
@@ -290,7 +288,7 @@ describe('atomic PTY admission', () => {
     expect(count.rows[0]?.count).toBe('1');
   });
 
-  it('admits and lists the unattributed subject scope with a PostgreSQL-safe lock key', async () => {
+  it('admits and isolates the authenticated subject without an operator header', async () => {
     await build(1);
     const ownerToken = randomUUID();
     const requestId = randomUUID();
@@ -304,8 +302,8 @@ describe('atomic PTY admission', () => {
       [issued.session_id],
     );
     expect(stored.rows[0]).toEqual({
-      operator_id: 'unattributed:console-basic-auth',
-      console_subject: 'Steven:kant',
+      operator_id: authentication.operator('steven'),
+      console_subject: authentication.subject(),
     });
     await pool.query(
       `UPDATE terminal_sessions
@@ -313,19 +311,20 @@ describe('atomic PTY admission', () => {
         WHERE id=$1`,
       [issued.session_id],
     );
-    const listed = await app.inject({ method: 'GET', url: '/v3/console/terminal/sessions' });
+    const listed = await app.inject({ method: 'GET', url: '/v3/console/terminal/sessions',
+      headers: { cookie: authentication.cookie() } });
     expect(listed.json()).toEqual({ items: [] });
     const revoke = await app.inject({
       method: 'DELETE',
       url: `/v3/console/terminal/sessions/${issued.session_id}`,
-      headers: { origin: ORIGIN },
+      headers: { cookie: authentication.cookie(), origin: ORIGIN },
       payload: {
         request_id: issued.request_id,
         owner_generation: issued.owner_generation,
         owner_token: ownerToken,
       },
     });
-    expect(revoke.statusCode).toBe(409);
+    expect(revoke.statusCode).toBe(403);
     const untouched = await pool.query<{ revoked_at: Date | null }>(
       'SELECT revoked_at FROM terminal_sessions WHERE id=$1',
       [issued.session_id],
@@ -391,7 +390,7 @@ describe('atomic PTY admission', () => {
     const list = () => app.inject({
       method: 'GET',
       url: '/v3/console/terminal/sessions',
-      headers: { 'x-cauce-operator': 'steven' },
+      headers: { cookie: authentication.cookie(), 'x-cauce-operator': 'steven' },
     });
 
     const live = await list();
@@ -422,7 +421,7 @@ describe('atomic PTY admission', () => {
     const row = stored.rows[0];
     expect(row).toBeDefined();
     if (!row) throw new Error('Expected terminal session row');
-    expect(row.expires_at.getTime() - row.issued_at.getTime()).toBe(30_000);
+    expect(row.expires_at.getTime()).toBe(Math.floor((row.issued_at.getTime() + 30_000) / 1_000) * 1_000);
     expect(issued.expires_at).toBe(row.expires_at.toISOString());
     expect(verifyTicketSignature(
       issued.ticket,
@@ -436,7 +435,8 @@ describe('atomic PTY admission', () => {
       method: 'POST',
       url: `/v3/terminal/relay/sessions/${issued.session_id}/consume`,
       headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-      payload: { ticket: issued.ticket, claim_token: CLAIM_A },
+      payload: { ticket: issued.ticket, claim_token: CLAIM_A,
+        authority_proof: authentication.proof(issued.session_id) },
     });
     expect(consumed.statusCode).toBe(200);
     await pool.query(
@@ -452,6 +452,7 @@ describe('atomic PTY admission', () => {
       payload: {
         claim_token: CLAIM_A,
         claim_epoch: consumed.json<{ claim_epoch: string }>().claim_epoch,
+        authority_proof: authentication.proof(issued.session_id),
       },
     });
     expect(authz.statusCode).toBe(403);
@@ -729,12 +730,22 @@ describe('atomic PTY admission', () => {
     expect(consumed.statusCode).toBe(200);
     const first = consumed.json<{ resume_token: string; claim_epoch: string }>();
 
+    const before = await pool.query<{ expires_at: Date }>(
+      'SELECT relay_claim_expires_at AS expires_at FROM terminal_sessions WHERE id=$1',
+      [issued.session_id],
+    );
+    expect(before.rows[0]?.expires_at).toBeInstanceOf(Date);
     await pool.query(
       `UPDATE memberships SET enabled=false WHERE tenant_id='Steven' AND alias='kant'`,
     );
     const refused = await resume(issued.session_id, first.resume_token, CLAIM_A, first.claim_epoch);
     expect(refused.statusCode).toBe(403);
-    expect(refused.json()).toMatchObject({ ok: false, reason: 'control_authority_revoked' });
+    expect(refused.json()).toEqual({ error: 'forbidden', message: 'principal lacks control permission' });
+    const after = await pool.query<{ expires_at: Date }>(
+      'SELECT relay_claim_expires_at AS expires_at FROM terminal_sessions WHERE id=$1',
+      [issued.session_id],
+    );
+    expect(after.rows[0]?.expires_at).toEqual(before.rows[0]?.expires_at);
   });
 
   it('rolls back an exact close when its audit fails, then drains a legacy epoch-zero row', async () => {

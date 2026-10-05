@@ -6,13 +6,13 @@ import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from '../../services/gateway/node_modules/fastify/types/instance.js';
-import type { Principal } from '../../services/gateway/src/auth.js';
 import { createConsoleSecurityHook } from '../../services/gateway/src/console-security.js';
 import type { TerminalConfig } from '../../services/gateway/src/terminal/config.js';
 import { registerTerminalControlPlane } from '../../services/gateway/src/terminal/plugin.js';
 import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
 import type { DatabasePool } from '@cauce/store';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
+import { TerminalPasswordFixture } from '../helpers/terminal-password.js';
 
 /**
  * The control hold read by the THREE relay routes that hand a grant back. `/authz` already refused
@@ -33,6 +33,7 @@ let databaseStarted = false;
 let pool: DatabasePool;
 let app!: FastifyInstance;
 let directory!: string;
+let authentication!: TerminalPasswordFixture;
 
 const requireFromGateway = createRequire(new URL('../../services/gateway/package.json', import.meta.url));
 const Fastify = requireFromGateway('fastify') as (options: { logger: false }) => FastifyInstance;
@@ -42,10 +43,10 @@ async function build(): Promise<void> {
   const grantsFile = join(directory, 'grants.json');
   await writeFile(grantsFile, JSON.stringify({
     version: 1,
-    grants: [{
-      operator: 'steven', tenant_id: 'Steven', alias: 'jarvis',
+    grants: ['jarvis', 'socrates'].map((alias) => ({
+      operator: authentication.operator('steven'), tenant_id: 'Steven', alias,
       modes: ['shell', 'harness', 'harness_rw'],
-    }],
+    })),
   }));
   const config: TerminalConfig = {
     wsPath: '/v3/console/terminal/ws', ticketKey: TICKET_KEY, relayToken: RELAY_TOKEN,
@@ -53,10 +54,6 @@ async function build(): Promise<void> {
     grantsFile, ticketTtlSeconds: 30, sessionTtlSeconds: 900, claimLeaseSeconds: 150,
     maxSessionsPerOperator: 10,
     operatorHeader: 'x-cauce-operator', operators: new Set(['steven']),
-  };
-  const principal: Principal = {
-    tenant_id: 'Steven', alias: 'kant', session_id: 'session', channel: 'console',
-    roles: ['operator'], permissions: ['route', 'read', 'control'],
   };
   const registry = new AgentRegistry();
   registry.observe({ relay_instance_id: RELAY_INSTANCE_ID, relay_boot_id: RELAY_BOOT_ID }, [{
@@ -75,11 +72,7 @@ async function build(): Promise<void> {
   app.addHook('onRequest', createConsoleSecurityHook({ allowedOrigins: [ORIGIN] }));
   await app.register(registerTerminalControlPlane, {
     pool,
-    authProvider: {
-      name: 'postgres-test', mode: 'test',
-      authenticateHttp: async () => principal,
-      authenticateHello: async () => principal,
-    },
+    authProvider: authentication.provider,
     config,
     registry,
     measuredFacts: { factsFor: async () => undefined },
@@ -92,7 +85,7 @@ async function build(): Promise<void> {
 async function abrirSesion(): Promise<{ session_id: string; ticket: string }> {
   const opened = await app.inject({
     method: 'POST', url: '/v3/console/terminal/sessions',
-    headers: { origin: ORIGIN, 'x-cauce-operator': 'steven' },
+    headers: { cookie: authentication.cookie(), origin: ORIGIN, 'x-cauce-operator': 'steven' },
     payload: {
       tenant_id: 'Steven', alias: 'jarvis', mode: 'shell',
       reason: 'probar el arriendo del control en el relay', cols: 100, rows: 30,
@@ -100,6 +93,7 @@ async function abrirSesion(): Promise<{ session_id: string; ticket: string }> {
     },
   });
   expect(opened.statusCode).toBe(201);
+  authentication.remember(opened.json<{ session_id: string; authority_proof: string }>());
   return opened.json<{ session_id: string; ticket: string }>();
 }
 
@@ -108,7 +102,7 @@ async function consume(sessionId: string, ticket: string) {
     method: 'POST',
     url: `/v3/terminal/relay/sessions/${sessionId}/consume`,
     headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-    payload: { ticket, claim_token: CLAIM },
+    payload: { ticket, claim_token: CLAIM, authority_proof: authentication.proof(sessionId) },
   });
 }
 
@@ -117,7 +111,8 @@ async function resume(sessionId: string, resumeToken: string, claimEpoch: string
     method: 'POST',
     url: `/v3/terminal/relay/sessions/${sessionId}/resume`,
     headers: { authorization: `Bearer ${RELAY_TOKEN}` },
-    payload: { resume_token: resumeToken, claim_token: CLAIM, claim_epoch: claimEpoch },
+    payload: { resume_token: resumeToken, claim_token: CLAIM, claim_epoch: claimEpoch,
+      authority_proof: authentication.proof(sessionId) },
   });
 }
 
@@ -129,10 +124,10 @@ async function tomarArriendo(sessionId: string): Promise<string> {
   const taken = await pool.query<{ id: string }>(
     `INSERT INTO terminal_control_holds(
        session_id,tenant_id,alias,operator_id,reason,taken_at,expires_at
-     ) VALUES($1,'Steven','jarvis','steven','tomar la TUI para desatascar el turno',
+     ) VALUES($1,'Steven','jarvis',$2,'tomar la TUI para desatascar el turno',
        now(),now()+make_interval(secs => 300))
      RETURNING id`,
-    [sessionId],
+    [sessionId, authentication.operator('steven')],
   );
   const row = taken.rows[0];
   if (row === undefined) throw new Error('the control hold was not inserted');
@@ -155,15 +150,18 @@ preparePostgresSuite(import.meta.url, async () => {
 
 beforeEach(async () => {
   await resetTestDatabase(pool);
-  await pool.query('TRUNCATE TABLE terminal_sessions CASCADE');
+  await pool.query('TRUNCATE TABLE terminal_sessions,console_users CASCADE');
   await pool.query(`
     INSERT INTO agents(
       tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,
       home_directory,state_directory
     ) VALUES
       ('Steven','kant','codex','Kant',true,'ctrl-infra','dev','/home/dev','/state/kant'),
-      ('Steven','jarvis','openclaw','Jarvis',true,'claw','claw','/home/claw','/state/jarvis');
+      ('Steven','jarvis','openclaw','Jarvis',true,'claw','claw','/home/claw','/state/jarvis'),
+      ('Steven','socrates','codex','Socrates',true,'claw','claw','/home/claw','/state/socrates');
   `);
+  authentication = new TerminalPasswordFixture(pool);
+  await authentication.initialize();
   await build();
 });
 
