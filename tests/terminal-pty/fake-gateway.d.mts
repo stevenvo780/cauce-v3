@@ -68,6 +68,7 @@ export interface FakeGatewayHandle {
   readonly audit: FakeGatewayAuditEntry[];
   readonly agents: Record<string, unknown>[];
   readonly sessions: FakeGatewaySession[];
+  authorityProof(sessionId: string): string;
   session(sessionId: string): FakeGatewaySession | undefined;
   setGrants(next: string[]): void;
   revokeAll(): void;
