@@ -26,6 +26,7 @@ interface AdapterEngineBaseOptions {
   readonly emission?: EmissionRuntime;
   readonly store: DurableStore;
   readonly harness: HarnessAdapter;
+  readonly harnessForDelivery?: (delivery: Delivery) => HarnessAdapter;
   readonly publish: EventPublisher;
   readonly logger?: AdapterLogger;
   readonly ownTenantId?: string;
