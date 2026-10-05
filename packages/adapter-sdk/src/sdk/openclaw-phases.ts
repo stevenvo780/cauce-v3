@@ -62,8 +62,9 @@ export class OpenClawPhaseFrames {
 
   get diagnosticBytes(): number { return this.discardedBytes; }
 
-  finish(): Buffer {
-    const ordinary = Buffer.from(this.prefix, "latin1");
+  finish(discardPartialDiagnostics = false): Buffer {
+    const ordinary = discardPartialDiagnostics ? Buffer.alloc(0) : Buffer.from(this.prefix, 'latin1');
+    if (discardPartialDiagnostics) this.discardedBytes += this.prefix.length;
     this.prefix = ""; this.frame = undefined; this.dropping = false; this.lineStart = true;
     return ordinary;
   }
