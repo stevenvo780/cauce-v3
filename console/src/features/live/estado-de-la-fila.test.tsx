@@ -1,4 +1,5 @@
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import type { FleetActivitySnapshot } from '../../api/types';
 import { mockActivity } from '../../mocks/data';
@@ -44,11 +45,17 @@ function filasPintadas(): { alias: string; estado: string }[] {
     });
 }
 
+async function abrirListaAgentes() {
+  const user = userEvent.setup();
+  await user.click(await screen.findByText(/^Agentes ·/u));
+}
+
 describe('la columna «Estado» de la tabla de /live', () => {
   it('sólo emite palabras del vocabulario de los chips, nunca un juego propio', async () => {
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
+    await abrirListaAgentes();
 
     const permitidas = new Set(LIVE_STATES.map((estado) => LIVE_STATE_META[estado].label));
     const ajenas = filasPintadas()
@@ -75,6 +82,7 @@ describe('la columna «Estado» de la tabla de /live', () => {
     });
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
+    await abrirListaAgentes();
 
     const fila = await screen.findByRole('row', { name: /iza/i });
     const estado = within(fila).getAllByRole('cell')[2];
@@ -102,6 +110,7 @@ describe('la columna «Estado» de la tabla de /live', () => {
     });
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
+    await abrirListaAgentes();
 
     const fila = await screen.findByRole('row', { name: /salva/i });
     expect(within(fila).getAllByRole('cell')[2]).toHaveTextContent(LIVE_STATE_META.idle.label);
@@ -112,6 +121,7 @@ describe('la columna «Estado» de la tabla de /live', () => {
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
+    await abrirListaAgentes();
 
     const ordenDeLaCinta = [...document.querySelectorAll('.live-tally-chip:not(.is-unreported)')]
       .map((chip) => chip.textContent.replace(/\d+$/, '').trim());

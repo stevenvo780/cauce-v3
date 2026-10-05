@@ -57,6 +57,7 @@ async function abrirContextoDe(alias: string) {
   const user = userEvent.setup();
   renderWithApi(<LiveFleetPage />);
   await screen.findByLabelText('Veredicto de la flota');
+  await user.click(await screen.findByText(/^Agentes ·/u));
   await user.click(await screen.findByRole('row', { name: new RegExp(alias, 'i') }));
   const cajon = await screen.findByRole('dialog', { name: new RegExp(`detalle de ${alias}`, 'i') });
   await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));

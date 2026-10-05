@@ -28,6 +28,7 @@ it('Contexto comparte una sola lectura de config.write entre perfil, manual y re
   await screen.findByLabelText('Veredicto de la flota');
   expect(accessReads).toBe(0);
 
+  await user.click(await screen.findByText(/^Agentes ·/u));
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
   await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
@@ -49,6 +50,7 @@ it('el cajón tiene un solo lugar de contexto y Ficheros nunca ofrece una mutaci
 
   renderWithApi(<LiveFleetPage />);
   await screen.findByLabelText('Veredicto de la flota');
+  await user.click(await screen.findByText(/^Agentes ·/u));
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
   const navegacion = within(cajon).getByRole('tablist', { name: 'Secciones del detalle' });
@@ -119,6 +121,7 @@ it('un borrador manual bloquea aplicar campos hasta guardarlo, sin perder ningun
   );
   renderWithApi(<LiveFleetPage />);
   await screen.findByLabelText('Veredicto de la flota');
+  await user.click(await screen.findByText(/^Agentes ·/u));
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
   await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
@@ -163,6 +166,7 @@ it('un perfil en vuelo bloquea empezar, guardar o descartar una edición manual 
 
   renderWithApi(<LiveFleetPage />);
   await screen.findByLabelText('Veredicto de la flota');
+  await user.click(await screen.findByText(/^Agentes ·/u));
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   let cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
   await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
