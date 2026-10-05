@@ -140,7 +140,11 @@ test("derived agent traffic keeps the human conversation lane and PostgreSQL UUI
     human_initiator: { ...root.human_initiator, human_id: HUMAN_A,
       tenant_id: "Steven", root_message_id: root.message_id, conversation_id: "conversation-one" },
     body: { type: "agent-output", prompt: "delegated task" } });
-  assert.equal(context.headless.requests[0]?.args.at(-1), context.headless.requests[1]?.args.at(-1));
+  assert.equal(context.headless.requests.length, 2);
+  const firstSessionId = context.headless.requests[0]?.args.at(-1);
+  assert.equal(typeof firstSessionId, "string");
+  assert.notEqual(firstSessionId, "");
+  assert.equal(firstSessionId, context.headless.requests[1]?.args.at(-1));
 });
 
 test("accepted recovery uses the same human selector and completed retries never execute again", async (t) => {
