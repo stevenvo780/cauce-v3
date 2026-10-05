@@ -69,6 +69,7 @@ export function relayClaimState(
 }
 
 interface RelayClaimMutation {
+  readonly authorityExpiresAt: Date;
   readonly sid: string;
   readonly claimSha256: Buffer;
   readonly identity: RelayProcessIdentity;
@@ -90,15 +91,15 @@ export async function renewRelayClaim(
     `UPDATE terminal_sessions
         SET relay_claim_expires_at=LEAST(
           ${sessionWindowExpression(4, 8)},
-          now()+make_interval(secs => $3)
+          clock_timestamp()+make_interval(secs => $3), $9::timestamptz
         )
       WHERE id=$1 AND relay_claim_sha256=$2 AND relay_claim_epoch=$5::bigint
-        AND relay_claim_expires_at>now()
+        AND relay_claim_expires_at>clock_timestamp()
         AND relay_instance_id=$6 AND relay_boot_id=$7
         AND consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
-        AND ${sessionWindowExpression(4, 8)}>now()
-      RETURNING *,now() AS database_now,
-                ${sessionWindowExpression(4, 8)} AS session_expires_at`,
+        AND ${sessionWindowExpression(4, 8)}>clock_timestamp() AND clock_timestamp()<$9::timestamptz
+      RETURNING *,clock_timestamp() AS database_now,
+                LEAST(${sessionWindowExpression(4, 8)}, $9::timestamptz) AS session_expires_at`,
     [
       input.sid,
       input.claimSha256,
@@ -108,6 +109,7 @@ export async function renewRelayClaim(
       input.identity.relay_instance_id,
       input.identity.relay_boot_id,
       input.sessionMaxTotalSeconds ?? null,
+      input.authorityExpiresAt,
     ],
   );
   return result.rows[0];
@@ -125,19 +127,19 @@ export async function takeOverExpiredRelayClaim(
     `UPDATE terminal_sessions
         SET relay_claim_sha256=$2,
             relay_claim_epoch=relay_claim_epoch+1,
-            relay_claimed_at=now(),
+            relay_claimed_at=clock_timestamp(),
             relay_instance_id=$5,
             relay_boot_id=$6,
             relay_claim_expires_at=LEAST(
               ${sessionWindowExpression(4, 7)},
-              now()+make_interval(secs => $3)
+              clock_timestamp()+make_interval(secs => $3), $8::timestamptz
             )
       WHERE id=$1 AND consumed_at IS NOT NULL
         AND revoked_at IS NULL AND closed_at IS NULL
-        AND ${sessionWindowExpression(4, 7)}>now()
-        AND (relay_claim_expires_at IS NULL OR relay_claim_expires_at<=now())
+        AND ${sessionWindowExpression(4, 7)}>clock_timestamp() AND clock_timestamp()<$8::timestamptz
+        AND (relay_claim_expires_at IS NULL OR relay_claim_expires_at<=clock_timestamp())
         AND relay_claim_epoch<9223372036854775807
-      RETURNING *,now() AS database_now`,
+      RETURNING *,clock_timestamp() AS database_now`,
     [
       input.sid,
       input.claimSha256,
@@ -146,6 +148,7 @@ export async function takeOverExpiredRelayClaim(
       input.identity.relay_instance_id,
       input.identity.relay_boot_id,
       input.sessionMaxTotalSeconds ?? null,
+      input.authorityExpiresAt,
     ],
   );
   return result.rows[0];

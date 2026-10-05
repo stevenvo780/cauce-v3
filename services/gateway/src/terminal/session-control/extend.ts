@@ -4,10 +4,12 @@ import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import { terminalAuditMetadata, terminalSessionAuditContext } from '../audit.js';
 import { resolveOperator } from '../authority.js';
 import {
-  cohortLabels, operatorScopePredicate, ownedLiveSessionQuery, sessionWindowExpression, subjectFor,
+  cohortLabels, operatorScopePredicate, ownedLiveSessionQuery, sessionWindowExpression,
   type OwnedTerminalSession,
 } from '../helpers.js';
 import type { TerminalSessionControlOptions } from '../session-control.js';
+import { terminalDatabaseNow } from '../session-authority.js';
+import { encodeTerminalSubject } from '../authority-continuity.js';
 import { ticketSha256 } from '../tickets.js';
 import { authorizeTerminalControlActor } from './control-authorization.js';
 
@@ -29,7 +31,7 @@ export function registerTerminalExtendRoute(
   options: TerminalSessionControlOptions,
 ): void {
   const {
-    pool, config, repository, principal, currentCohort, parseSessionExtend, replyError,
+    pool, config, repository, authority, principal, currentCohort, parseSessionExtend, replyError,
     recordTransactionalTerminalAudit,
   } = options;
 
@@ -40,20 +42,23 @@ export function registerTerminalExtendRoute(
       const operator = resolveOperator(request, actor, config);
       if (!UUID_ANY_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
       const body = parseSessionExtend(request.body);
+      const proof = await authority.browserProof(request, body.authority_proof);
+      if (proof.sessionId !== request.params.sid) throw new Error('terminal authority is unavailable');
       const owned = ownedLiveSessionQuery({
         sessionId: request.params.sid,
         body,
         operator,
-        consoleSubject: subjectFor(actor),
+        consoleSubject: encodeTerminalSubject(proof.origin),
         config,
         lock: true,
       });
       const windowSql = sessionWindowExpression(8, 9);
-      const pushed = 'LEAST(now()+make_interval(secs => $8), consumed_at+make_interval(secs => $9))';
+      const pushed = 'LEAST(clock_timestamp()+make_interval(secs => $8), consumed_at+make_interval(secs => $9), $10::timestamptz)';
       type ExtendOutcome =
         | { readonly row: OwnedTerminalSession }
         | { readonly reason: 'stale_terminal_owner' | 'extension_exhausted' };
       const outcome: ExtendOutcome = await withTransaction<ExtendOutcome>(pool, async (client) => {
+        const deadline = await authority.lockSession(client, proof, repository);
         const locked = await client.query<OwnedTerminalSession>(owned.text, owned.values);
         if (locked.rows[0] === undefined) return { reason: 'stale_terminal_owner' };
         const extended = await client.query<OwnedTerminalSession>(
@@ -63,18 +68,19 @@ export function registerTerminalExtendRoute(
               AND browser_owner_generation=$6::bigint
               AND browser_owner_sha256=$7
               AND consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
-              AND ${pushed}>${windowSql}
+              AND ${pushed}>${windowSql} AND clock_timestamp()<$10::timestamptz
             RETURNING *, ${windowSql} AS session_expires_at`,
           [
             request.params.sid,
             operator.operator_id,
             operator.attributed,
-            subjectFor(actor),
+            encodeTerminalSubject(proof.origin),
             body.request_id,
             body.owner_generation,
             ticketSha256(body.owner_token),
             config.sessionTtlSeconds,
             config.sessionMaxTotalSeconds ?? null,
+            deadline,
           ],
         );
         const row = extended.rows[0];
@@ -94,7 +100,8 @@ export function registerTerminalExtendRoute(
             expires_at: row.session_expires_at.toISOString(),
           }),
         });
-        return { row };
+        await terminalDatabaseNow(client, deadline);
+          return { row };
       });
       if (!('row' in outcome)) {
         await reply.code(409).send({ error: 'conflict', reason: outcome.reason });

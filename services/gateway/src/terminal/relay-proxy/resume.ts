@@ -6,8 +6,9 @@ import {
   sessionExpiry, sessionWindowExpression, type ControlHoldColumns,
 } from '../helpers.js';
 import {
-  ticketSha256, verifyResumeTokenSignature, TicketError,
+  ticketSha256, verifyAuthorityResumeToken, TicketError,
 } from '../tickets.js';
+import { terminalDatabaseNow } from '../session-authority.js';
 import type { TerminalSessionRow } from '../types.js';
 import {
   relayClaimState, renewRelayClaim, takeOverExpiredRelayClaim,
@@ -16,7 +17,7 @@ import type { RelayProxyContext } from './context.js';
 
 export function registerRelayResumeRoute(context: RelayProxyContext): void {
   const {
-    app, pool, config, RESUME_KEYS, RESUME_WITH_EPOCH_KEYS,
+    authority, repository, app, pool, config, RESUME_KEYS, RESUME_WITH_EPOCH_KEYS,
     requestRelayIdentity, relayClaimToken, relayClaimEpoch, currentSessionPolicy, sessionActor,
     recordTransactionalTerminalAudit, relayGrant, replyError,
   } = context;
@@ -43,12 +44,14 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
       }
       const identity = requestRelayIdentity(request, record);
       if (identity === undefined) { await reply.code(401).send(); return; }
+      const continuity = authority.verify(record.authority_proof);
+      if (continuity.sessionId !== sid) throw new Error('terminal authority is unavailable');
       const token = record.resume_token;
       const claimToken = relayClaimToken(record.claim_token);
       const rawClaimEpoch = record.claim_epoch;
       const presentedEpoch = rawClaimEpoch === undefined
         ? undefined : relayClaimEpoch(rawClaimEpoch);
-      if (typeof token !== 'string' || token.length < 80 || token.length > 1_024
+      if (typeof token !== 'string' || token.length < 80 || Buffer.byteLength(token) > 8_192
           || claimToken === undefined
           || (rawClaimEpoch !== undefined && presentedEpoch === undefined)) {
         await refuse(401, 'resume_invalid');
@@ -64,10 +67,11 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
       let takenOver = false;
       let refusal: { status: 401 | 403 | 409; reason: string; retry_after_ms?: number } | undefined;
       await withTransaction(pool, async (client) => {
+        const authorityExpiresAt = await authority.lockSession(client, continuity, repository);
         const locked = await client.query<LockedResumeSession>(
-          `SELECT terminal_sessions.*,now() AS database_now,
+          `SELECT terminal_sessions.*,clock_timestamp() AS database_now,
                   consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
-                    AND ${sessionWindowExpression(2, 3)}>now() AS session_unexpired,
+                    AND ${sessionWindowExpression(2, 3)}>clock_timestamp() AS session_unexpired,
                   ${CONTROL_HOLD_COLUMNS}
              FROM terminal_sessions WHERE id=$1 FOR UPDATE`,
           [sid, config.sessionTtlSeconds, config.sessionMaxTotalSeconds ?? null],
@@ -78,13 +82,13 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
         } else {
           let credential;
           try {
-            credential = verifyResumeTokenSignature(token, config.ticketKey);
+            credential = verifyAuthorityResumeToken(token, config.ticketKey, record.authority_proof as string);
           } catch (error) {
             if (!(error instanceof TicketError)) throw error;
           }
           const expiry = sessionExpiry(row, config.sessionTtlSeconds, config.sessionMaxTotalSeconds);
           if (credential?.sid !== sid || credential.op !== row.operator_id
-              || expiry === undefined || credential.exp !== Math.floor(expiry.getTime() / 1_000)) {
+              || expiry === undefined || credential.exp !== Math.min(Math.floor(expiry.getTime() / 1_000), continuity.origin.expiresAtSeconds)) {
             refusal = { status: 401, reason: 'resume_invalid' };
           } else if (row.consumed_at === null) {
             refusal = { status: 403, reason: 'not_consumed' };
@@ -128,6 +132,7 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
                   claimLeaseSeconds: config.claimLeaseSeconds,
                   sessionTtlSeconds: config.sessionTtlSeconds,
                   sessionMaxTotalSeconds: config.sessionMaxTotalSeconds,
+                  authorityExpiresAt,
                 });
                 session = renewed;
                 databaseNow = renewed?.database_now;
@@ -157,6 +162,7 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
                   claimLeaseSeconds: config.claimLeaseSeconds,
                   sessionTtlSeconds: config.sessionTtlSeconds,
                   sessionMaxTotalSeconds: config.sessionMaxTotalSeconds,
+                  authorityExpiresAt,
                 });
                 session = takeover;
                 databaseNow = takeover?.database_now;
@@ -173,13 +179,14 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
                   metadata: terminalAuditMetadata(auditContext, {
                     session_id: sid,
                     claim_epoch: session.relay_claim_epoch,
-                    claim_taken_over: takenOver,
+
                   }),
                 });
               }
             }
           }
         }
+        await terminalDatabaseNow(client, authorityExpiresAt);
       });
       if (session === undefined) {
         await refuse(
@@ -192,6 +199,9 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
       if (databaseNow === undefined) throw new Error('database omitted terminal claim clock');
       return await reply.code(200).send({
         ...relayGrant(session, token, claimToken, databaseNow, identity),
+        authority_proof: record.authority_proof,
+        session_expires_at: new Date(Math.min((sessionExpiry(session, config.sessionTtlSeconds, config.sessionMaxTotalSeconds) ?? session.expires_at).getTime(), continuity.origin.expiresAtSeconds * 1000)).toISOString(),
+        expires_at: new Date(Math.min((sessionExpiry(session, config.sessionTtlSeconds, config.sessionMaxTotalSeconds) ?? session.expires_at).getTime(), continuity.origin.expiresAtSeconds * 1000)).toISOString(),
         claim_taken_over: takenOver,
       });
     } catch (error) { replyError(reply, error); }

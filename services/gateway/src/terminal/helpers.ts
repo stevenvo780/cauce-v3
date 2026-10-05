@@ -1,4 +1,4 @@
-import { terminalSessionWindowExpression } from '@cauce/store';
+import { type DatabaseClient, terminalSessionWindowExpression } from '@cauce/store';
 import type { Tenant } from '@cauce/protocol';
 import type { GatewayRepository } from '../app.js';
 import type { Principal } from '../auth.js';
@@ -18,7 +18,7 @@ export type AgentTargetRepository = Required<Pick<GatewayRepository, 'authorizeA
  * union and let this plane assert one it must never assert, so the literal stays hand written.
  */
 export interface TerminalControlRepository extends AgentTargetRepository {
-  assertPermission(tenantId: Tenant, alias: string, permission: 'control'): Promise<void>;
+  assertPermission(tenantId: Tenant, alias: string, permission: 'control', client?: DatabaseClient, lockAuthority?: boolean): Promise<void>;
 }
 
 export type FleetCohort = ReturnType<typeof containerCohort>;
@@ -73,8 +73,9 @@ export function operatorScopePredicate(
   attributedParameter: number,
   subjectParameter: number,
 ): string {
-  return `operator_id=$${String(operatorParameter)}
-          AND ($${String(attributedParameter)}::boolean OR console_subject=$${String(subjectParameter)})`;
+  return `console_subject=$${String(subjectParameter)}
+          AND $${String(operatorParameter)}::text IS NOT NULL
+          AND $${String(attributedParameter)}::boolean IS NOT NULL`;
 }
 
 export interface OwnedTerminalSession extends TerminalSessionRow {
@@ -111,7 +112,7 @@ export function ownedLiveSessionQuery(
               AND browser_owner_generation=$6::bigint
               AND browser_owner_sha256=$7
               AND consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
-              AND ${window}>now()${input.lock === true ? '\n            FOR UPDATE' : ''}`,
+              AND ${window}>clock_timestamp()${input.lock === true ? '\n            FOR UPDATE' : ''}`,
     values: [
       input.sessionId,
       input.operator.operator_id,
@@ -130,7 +131,7 @@ export const CONTROL_HOLD_COLUMNS =
   `EXISTS(SELECT 1 FROM terminal_control_holds h WHERE h.session_id=terminal_sessions.id)
      AS control_ever_held,
    EXISTS(SELECT 1 FROM terminal_control_holds h WHERE h.session_id=terminal_sessions.id
-            AND h.released_at IS NULL AND h.expires_at>now()) AS control_held`;
+            AND h.released_at IS NULL AND h.expires_at>clock_timestamp()) AS control_held`;
 
 export interface ControlHoldColumns {
   readonly control_ever_held: boolean;

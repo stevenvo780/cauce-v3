@@ -9,20 +9,22 @@ import {
 } from '../authority.js';
 import type { TerminalConfig } from '../config.js';
 import {
-  sessionExpiry, type AgentTargetRepository, type FleetCohort,
+  sessionExpiry, type TerminalControlRepository, type FleetCohort,
 } from '../helpers.js';
 import { AgentRegistry, type RelayProcessIdentity } from '../registry.js';
 import { ticketSha256 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
+import { decodeTerminalSubject } from '../authority-continuity.js';
+import type { TerminalSessionAuthority } from '../session-authority.js';
 import { isAuthorizedTlsSocket } from '../../runtime-guards.js';
 import {
   databaseClaimEpoch, relayClaimEpoch,
 } from './claim-transition.js';
 
 const PRESENCE_KEYS = ['agents', 'relay_boot_id', 'relay_instance_id'] as const;
-const CONSUME_KEYS = ['claim_token', 'relay_boot_id', 'relay_instance_id', 'ticket'] as const;
-const AUTHZ_KEYS = ['claim_epoch', 'claim_token', 'relay_boot_id', 'relay_instance_id'] as const;
-const RESUME_KEYS = ['claim_token', 'relay_boot_id', 'relay_instance_id', 'resume_token'] as const;
+const CONSUME_KEYS = ['authority_proof', 'claim_token', 'relay_boot_id', 'relay_instance_id', 'ticket'] as const;
+const AUTHZ_KEYS = ['authority_proof', 'claim_epoch', 'claim_token', 'relay_boot_id', 'relay_instance_id'] as const;
+const RESUME_KEYS = ['authority_proof', 'claim_token', 'relay_boot_id', 'relay_instance_id', 'resume_token'] as const;
 const RESUME_WITH_EPOCH_KEYS = [...RESUME_KEYS, 'claim_epoch'].sort();
 const CLOSE_KEYS = ['bytes_in', 'bytes_out', 'exit_code', 'reason', 'relay_boot_id', 'relay_instance_id'] as const;
 const CLOSE_WITH_CLAIM_KEYS = [...CLOSE_KEYS, 'claim_epoch', 'claim_token'].sort();
@@ -86,7 +88,8 @@ export interface TerminalRelayProxyOptions {
   readonly config: TerminalConfig;
   readonly registry: AgentRegistry;
   readonly grants: GrantStore;
-  readonly repository: AgentTargetRepository;
+  readonly repository: TerminalControlRepository;
+  readonly authority: TerminalSessionAuthority;
   readonly relayPeerInstanceId: ((request: FastifyRequest) => string | undefined) | undefined;
   readonly replyError: (reply: FastifyReply, error: unknown) => void;
   readonly recordTransactionalTerminalAudit: (
@@ -105,6 +108,8 @@ interface CurrentSessionPolicy {
 }
 
 export interface RelayProxyContext {
+  readonly authority: TerminalSessionAuthority;
+  readonly repository: TerminalControlRepository;
   readonly app: FastifyInstance;
   readonly pool: DatabasePool;
   readonly config: TerminalConfig;
@@ -217,13 +222,10 @@ export function createRelayProxyContext(
   }
 
   function sessionActor(row: TerminalSessionRow): { tenant_id: string; alias: string } | undefined {
-    const separator = row.console_subject.indexOf(':');
-    if (separator <= 0 || separator !== row.console_subject.lastIndexOf(':')
-        || separator === row.console_subject.length - 1) return undefined;
-    return {
-      tenant_id: row.console_subject.slice(0, separator),
-      alias: row.console_subject.slice(separator + 1),
-    };
+    try {
+      const identity = decodeTerminalSubject(row.console_subject);
+      return { tenant_id: identity.actor.tenantId, alias: identity.actor.alias };
+    } catch { return undefined; }
   }
 
   /**
@@ -280,6 +282,8 @@ export function createRelayProxyContext(
   }
 
   return {
+    authority: options.authority,
+    repository,
     app,
     pool,
     config,
