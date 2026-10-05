@@ -1,4 +1,5 @@
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';
 import { renderWithApi } from '../../test/render';
 import { LiveFleetPage } from './LiveFleetPage';
@@ -9,6 +10,8 @@ import { LiveFleetPage } from './LiveFleetPage';
 it('el grafo precede a la tabla como objeto principal de /live', async () => {
   const { container } = renderWithApi(<LiveFleetPage />);
 
+  const user = userEvent.setup();
+  await user.click(await screen.findByText(/^Agentes ·/u));
   const tabla = await screen.findByRole('table', { name: /actividad en vuelo por agente/i });
   const mapa = screen.getByRole('region', { name: 'Mapa de la flota' });
   expect(mapa).toHaveAttribute('data-objeto-principal', 'mapa-de-flota');
