@@ -20,8 +20,32 @@ function stringParameter(value: unknown): string {
 function fixture(initial?: typeof existing) {
   let account = initial === undefined ? undefined : { ...initial };
   const query = vi.fn(async (sql: string, params: unknown[]) => {
-    const updateOnly = sql.startsWith('UPDATE console_users SET');
-    const assignments = sql.split(updateOnly ? 'SET ' : 'DO UPDATE SET ')[1];
+    if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [], rowCount: 0 };
+    if (sql.startsWith('INSERT INTO human_tenant_memberships')) {
+      expect(params).toHaveLength(5);
+      expect(params[0]).toBe(account?.id);
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql.startsWith('INSERT INTO console_users')) {
+      expect(sql).toContain('ON CONFLICT (email_normalized) DO NOTHING');
+      expect(sql).toContain('RETURNING id, role, tenant_id, alias, active');
+      expect(sql).toContain("VALUES ($8,$1,$2,COALESCE($3,split_part($8,'@',1)),COALESCE($4,'operator'),");
+      expect(params[0]).toBe('person@example.test');
+      expect(params).toHaveLength(8);
+      if (params[2] === '') throw new Error('fixture constraint rejection');
+      if (account !== undefined) return { rows: [], rowCount: 0 };
+      account = {
+        ...existing, id: 'fixture-person', email: stringParameter(params[7]),
+        display_name: params[2] === null ? stringParameter(params[7]).split('@')[0] ?? '' : stringParameter(params[2]),
+        role: params[3] === null ? 'operator' : stringParameter(params[3]),
+        tenant_id: params[4] === null ? 'Steven' : stringParameter(params[4]),
+        alias: params[5] === null ? 'kant' : stringParameter(params[5]),
+        active: true, password_hash: stringParameter(params[1]), password_changed_at: 1,
+      };
+      return { rows: [{ ...account }], rowCount: 1 };
+    }
+    if (!sql.startsWith('UPDATE console_users SET')) throw new Error('Unexpected maintenance query');
+    const assignments = sql.split('SET ')[1];
     expect(assignments).toBeDefined();
     expect(assignments).toContain('password_hash=$2');
     for (const [field, index] of [['display_name', 3], ['role', 4], ['tenant_id', 5], ['alias', 6], ['active', 7]]) {
@@ -32,18 +56,12 @@ function fixture(initial?: typeof existing) {
     expect(assignments).not.toMatch(/(?:^|[\s,])email\s*=|EXCLUDED\.|active=true/);
     expect(sql).toContain('RETURNING id, role, tenant_id, alias, active');
     expect(params[0]).toBe('person@example.test');
-    expect(params).toHaveLength(updateOnly ? 7 : 8);
-    if (account === undefined && updateOnly) {
+    expect(params).toHaveLength(7);
+    if (account === undefined) {
       expect(sql).not.toContain('INSERT');
       return { rows: [], rowCount: 0 };
     }
-    if (!updateOnly) {
-      expect(sql).toContain("VALUES ($8,$1,$2,COALESCE($3,split_part($8,'@',1)),COALESCE($4,'operator'),");
-      expect(sql).toContain("COALESCE($5,'Steven'),COALESCE($6,'kant'),true)");
-    }
     // This double models only the asserted statement contract; it is not a SQL engine.
-    account ??= { ...existing, email: stringParameter(params[7]), display_name: stringParameter(params[7]).split('@')[0] ?? '',
-      role: 'operator', tenant_id: 'Steven', alias: 'kant', active: true, password_changed_at: 0 };
     account = { ...account,
       display_name: params[2] === null ? account.display_name : stringParameter(params[2]), role: params[3] === null ? account.role : stringParameter(params[3]),
       tenant_id: params[4] === null ? account.tenant_id : stringParameter(params[4]), alias: params[5] === null ? account.alias : stringParameter(params[5]),
@@ -51,7 +69,11 @@ function fixture(initial?: typeof existing) {
       password_hash: stringParameter(params[1]), password_changed_at: account.password_changed_at + 1 };
     return { rows: [{ ...account }], rowCount: 1 };
   });
-  return { pool: { query } as unknown as Pick<DatabasePool, 'query'>, query, current: () => account };
+  const pool = {
+    query,
+    connect: async () => ({ query, release: vi.fn(), on: vi.fn(), off: vi.fn() }),
+  } as unknown as DatabasePool;
+  return { pool, query, current: () => account };
 }
 
 describe('mantenimiento de usuarios: contrato de persistencia', () => {
@@ -61,9 +83,10 @@ describe('mantenimiento de usuarios: contrato de persistencia', () => {
     await maintainConsoleUser(store.pool, omitted, 'new-fixture-hash');
     await maintainConsoleUser(store.pool, omitted, 'newer-fixture-hash');
     expect(store.current()).toEqual({ ...before, password_hash: 'newer-fixture-hash', password_changed_at: 3 });
-    expect(store.query).toHaveBeenCalledTimes(2);
-    expect(store.query.mock.calls[0]?.[1]).toEqual([
-      'person@example.test', 'new-fixture-hash', null, null, null, null, null, 'Person@Example.test',
+    expect(store.query).toHaveBeenCalledTimes(8);
+    const firstUpdate = store.query.mock.calls.find(([sql]) => sql.startsWith('UPDATE console_users SET'));
+    expect(firstUpdate?.[1]).toEqual([
+      'person@example.test', 'new-fixture-hash', null, null, null, null, null,
     ]);
   });
 
@@ -86,14 +109,46 @@ describe('mantenimiento de usuarios: contrato de persistencia', () => {
   });
 
   it('un nombre vacío sigue siendo explícito y no oculta un rechazo de la base', async () => {
-    const query = vi.fn().mockRejectedValue(new Error('fixture constraint rejection'));
-    const pool = { query } as unknown as Pick<DatabasePool, 'query'>;
+    const query = vi.fn(async (sql: string, _params: unknown[]) => {
+      if (sql.startsWith('INSERT INTO console_users')) throw new Error('fixture constraint rejection');
+      return { rows: [], rowCount: 0 };
+    });
+    const pool = {
+      query,
+      connect: async () => ({ query, release: vi.fn(), on: vi.fn(), off: vi.fn() }),
+    } as unknown as DatabasePool;
     await expect(maintainConsoleUser(pool, { ...omitted, name: '' }, 'new-fixture-hash'))
       .rejects.toThrow('fixture constraint rejection');
-    expect(query).toHaveBeenCalledTimes(1);
-    expect(query.mock.calls[0]?.[1]).toEqual([
+    expect(query).toHaveBeenCalledTimes(3);
+    const insert = query.mock.calls.find(([sql]) => sql.startsWith('INSERT INTO console_users'));
+    expect(insert?.[1]).toEqual([
       'person@example.test', 'new-fixture-hash', '', null, null, null, null, 'Person@Example.test',
     ]);
+  });
+
+  it('preserva el error original y destruye la conexion si el rollback falla', async () => {
+    const originalError = new Error('fixture insert failure');
+    const rollbackError = new Error('rollback network drop');
+    const release = vi.fn();
+    const query = vi.fn(async (sql: string) => {
+      if (sql === 'BEGIN') return { rows: [], rowCount: 0 };
+      if (sql.startsWith('INSERT INTO console_users')) throw originalError;
+      if (sql === 'ROLLBACK') throw rollbackError;
+      return { rows: [], rowCount: 0 };
+    });
+    const pool = {
+      query,
+      connect: async () => ({
+        query,
+        release,
+        on: vi.fn(),
+        off: vi.fn(),
+      }),
+    } as unknown as DatabasePool;
+
+    await expect(maintainConsoleUser(pool, omitted, 'new-fixture-hash'))
+      .rejects.toThrow('fixture insert failure');
+    expect(release).toHaveBeenCalledWith(true);
   });
 
   it('un alta respeta nombre, rol y ámbito explícitos', async () => {
