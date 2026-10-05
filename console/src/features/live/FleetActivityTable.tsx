@@ -80,7 +80,6 @@ export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabe
   return (
     <Panel
       title="Agentes"
-      subtitle="En el MISMO orden que los chips de arriba (caído > trabado > delegando > recibiendo > trabajando > salió de vuelo > libre), no alfabéticamente: lo que hace ruido tiene que quedar arriba. La columna «Estado» dice exactamente lo que dice el muñeco de ese alias; el subtítulo traía antes un tercer juego de rótulos. Es la misma lectura del hipergrafo, en números; no dibuja las delegaciones otra vez."
     >
       <label className="activity-search">
         <Search size={15} aria-hidden="true" />
