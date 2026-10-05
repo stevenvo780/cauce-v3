@@ -186,10 +186,18 @@ async function inboxItem(
     from: { tenantId: human.tenantId, alias: row.actor_alias },
     text: typeof body.text === 'string' ? body.text.slice(0, HUMAN_INBOX_TEXT_CHARS) : null,
     chainOpen: view.chainOpen,
-    deliveries: row.deliveries.map((delivery) => ({
-      deliveryId: delivery.delivery_id, tenantId: delivery.tenant_id, alias: delivery.alias, status: delivery.status,
-      attempt: delivery.attempt, terminalAt: delivery.terminal_at, reply: view.replies.get(delivery.delivery_id) ?? null,
-    })),
+    deliveries: row.deliveries.map((delivery) => {
+      // humanSenderView reads the reply whole (its query is shared with cauce_receipt's single-message
+      // read, which an inbox page cannot cap in SQL without touching that shared query). Slicing here,
+      // right where the row enters the page, keeps a 50-root x 100-delivery scan from retaining
+      // it unbounded the way it already avoids for the root's own body.text above.
+      const reply = view.replies.get(delivery.delivery_id) ?? null;
+      return {
+        deliveryId: delivery.delivery_id, tenantId: delivery.tenant_id, alias: delivery.alias, status: delivery.status,
+        attempt: delivery.attempt, terminalAt: delivery.terminal_at,
+        reply: typeof reply === 'string' ? reply.slice(0, HUMAN_INBOX_TEXT_CHARS) : null,
+      };
+    }),
   };
 }
 
@@ -249,6 +257,9 @@ async function inboxChainMessages(
            JOIN deliveries d ON d.message_id=m.id AND d.recipient_tenant=$1 AND d.recipient_alias=root.actor_alias
            WHERE h.initiating_tenant_id=$1 AND h.initiating_human_id=$2::uuid AND h.root_message_id=ANY($3::uuid[])
              AND h.message_id<>h.root_message_id
+             -- answerChainGate's resume message carries the gate answer and who gave it (chain-control.ts):
+             -- never surface it here, inboxQuestions is the only sanctioned path for a gate's outcome.
+             AND m.auth_channel IS DISTINCT FROM 'chain-gate'
              AND (m.tenant_id=$1 OR EXISTS (SELECT 1 FROM acl_edges edge
                   WHERE edge.from_tenant=$1 AND edge.to_tenant=m.tenant_id AND edge.enabled AND edge.allow_read))) ranked
      WHERE ranked.rank<=$5 ORDER BY ranked.root_message_id,ranked.created_at DESC,ranked.id DESC`,

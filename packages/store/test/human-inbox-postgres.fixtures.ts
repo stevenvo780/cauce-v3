@@ -122,3 +122,29 @@ export async function chainGate(
   if (!id) throw new Error('chain gate insert returned no id');
   return id;
 }
+
+/**
+ * Opens a gate asked BY `askedByAlias` — which must be the alias that `root`'s delivery was sent
+ * to, exactly as `tiedRoots(account, 1, { recipient: askedByAlias })` produces — and answers it
+ * for real through the repository, like an agent processing that delivery would. Unlike
+ * `chainGate`, which only ever writes the `agent_chain_gates` row by hand, this also produces the
+ * `agent.message` resume that `answerChainGate` delivers back into the human's own lineage.
+ */
+export async function askAndAnswerChainGate(
+  root: InboxRoot, askedByAlias: string, question: string, answer: string, answeredBy = 'argos',
+): Promise<{ gateId: string; resumeMessageId: string }> {
+  const gate = await databasePool().query<{ id: string }>(
+    `INSERT INTO agent_chain_gates(root_message_id,tenant_id,asked_by_alias,source_delivery_id,source_attempt,
+       output_index,trace_id,question,correlation,status)
+     VALUES($1,'Steven',$2,$3,1,(SELECT count(*)::integer FROM agent_chain_gates WHERE source_delivery_id=$3),
+       $4,$5,$6::jsonb,'open') RETURNING id`,
+    [root.messageId, askedByAlias, root.deliveryId, `inbox-gate-${randomUUID()}`, question,
+      JSON.stringify({ root_message_id: root.messageId })],
+  );
+  const gateId = gate.rows[0]?.id;
+  if (!gateId) throw new Error('chain gate insert returned no id');
+  const result = await getRepository().answerChainGate(gateId, answer, 'Steven', answeredBy) as { resume_message_id?: string };
+  const resumeMessageId = result.resume_message_id;
+  if (!resumeMessageId) throw new Error('answerChainGate returned no resume message id');
+  return { gateId, resumeMessageId };
+}

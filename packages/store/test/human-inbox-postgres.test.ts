@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { HUMAN_INBOX_TEXT_CHARS } from '../src/index.js';
 import {
-  chainGate, chainMessageBack, databasePool, finishRoots, humanOptions, inbox, inboxAs, publishHumanRoot, recent,
-  seedLegacyRoot, seededHuman, seedTenantHuman, switchHumanToReader, tiedRoots, verifiedIdentity, getRepository,
+  askAndAnswerChainGate, chainGate, chainMessageBack, databasePool, finishRoots, humanOptions, inbox, inboxAs,
+  publishHumanRoot, recent, seedLegacyRoot, seededHuman, seedTenantHuman, switchHumanToReader, tiedRoots,
+  verifiedIdentity, getRepository,
 } from './human-inbox-postgres.fixtures.js';
 import { createHumanReadAuthority } from '../../../services/gateway/src/human-mcp-authority.js';
 
@@ -105,6 +107,38 @@ describe('human MCP inbox on PostgreSQL', () => {
     expect(serialized).not.toContain(stray);
     expect(serialized).not.toContain('private operator answer');
     expect(serialized).not.toContain('operator:private');
+  });
+
+  it('never shows a real gate resume message: not its answer, not who answered it', async () => {
+    const account = await seededHuman();
+    // The delivery the gate hangs off is sent to the human's own alias, exactly like the chain
+    // node answerChainGate resumes: it is the only shape that can reach chain_messages at all.
+    const [root] = await tiedRoots(account, 1, { recipient: account.alias });
+    if (!root) throw new Error('missing inbox root');
+    await askAndAnswerChainGate(root, account.alias, '¿Aprobás el gasto?', 'texto interno confidencial', 'argos');
+
+    const [item] = (await inbox(account)).items;
+    expect(item?.chainMessages).toEqual([]);
+    expect(item?.chainMessagesTruncated).toBe(false);
+    expect(item?.questions.map((question) => [question.question, question.status, question.askedBy]))
+      .toEqual([['¿Aprobás el gasto?', 'answered', { tenantId: 'Steven', alias: account.alias }]]);
+    expect(item?.questions[0]?.answeredAt).not.toBeNull();
+    const serialized = JSON.stringify(item);
+    expect(serialized).not.toContain('texto interno confidencial');
+    expect(serialized).not.toContain('argos');
+  });
+
+  it('caps a delivery reply read from the chain, not only the text the gateway trims later', async () => {
+    const account = await seededHuman();
+    const root = await publishHumanRoot(account);
+    const oversized = 'r'.repeat(HUMAN_INBOX_TEXT_CHARS + 5_000);
+    await finishRoots([{ messageId: root.receipt.message_id, humanId: account.humanId, reply: oversized }]);
+
+    const [item] = (await inbox(account)).items;
+    const reply = item?.deliveries[0]?.reply;
+    expect(reply).not.toBeNull();
+    expect(reply).toHaveLength(HUMAN_INBOX_TEXT_CHARS);
+    expect(oversized.startsWith(reply ?? '')).toBe(true);
   });
 
   it('withholds a root whose recipients no longer match its durable conversation', async () => {
