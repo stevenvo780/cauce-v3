@@ -203,39 +203,22 @@ describe('prepareAgentProfileRuntime', () => {
     });
   });
 
-  it('MEMORY.md grande se acredita por SHA/tamaño sin copiar ni reescribir su prefijo', async () => {
+  it('rejects incomplete preserved memory before preparing any physical write', async () => {
     const workspace = '/home/claw/.openclaw/workspace-kant';
     const memory = `${workspace}/MEMORY.md`;
     const prefix = 'memoria visible'.repeat(100);
-    const fullBytes = 900_000;
-    const fullSha = 'd'.repeat(64);
     const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
-    const prepared = await prepareRevision(
+    await expect(prepareRevision(
       probe(
         { harness: 'openclaw', home: '/home/claw', openclawWorkspace: workspace },
         new Map([[memory, read(prefix, {
-          truncated: true, bytes: fullBytes, sha: fullSha,
+          truncated: true, bytes: 900_000, sha: 'd'.repeat(64),
         })]]),
         batch,
       ),
       'Steven', 'kant', contexto('kant', 'openclaw'),
-    );
-
-    const memoryPreview = prepared.preview.find((file) => file.nombre === 'MEMORY.md');
-    expect(memoryPreview).toMatchObject({ politica: 'solo-si-falta', texto: '' });
-    expect(prepared.verification.documents.find((file) => file.name === 'MEMORY.md')).toMatchObject({
-      expected_sha: fullSha, observed_sha: fullSha,
-      expected_bytes: fullBytes, observed_bytes: fullBytes, current: true,
-    });
-
-    const acknowledgements = await prepared.apply();
-    const memoryWrite = batch.mock.calls[0]?.[0].find((write) => write.path === memory);
-    expect(memoryWrite).toEqual({
-      mode: 'verify', path: memory, precondition: { state: 'present', sha256: fullSha },
-    });
-    expect(acknowledgements.find((ack) => ack.name === 'MEMORY.md')).toMatchObject({
-      state: 'preserved', sha: fullSha, bytes: fullBytes,
-    });
+    )).rejects.toMatchObject({ name: 'ProfileRuntimeError', code: 'truncated' });
+    expect(batch).not.toHaveBeenCalled();
   });
 
   it('dos alias con HOME compartido escriben sólo en su CODEX_HOME medido', async () => {

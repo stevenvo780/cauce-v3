@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerAgentProfileRoutes, type AgentProfileDeps } from '../agent-profile.routes.js';
-import { contexto, preparedRuntime, runtimePreflight } from '../agent-profile.fixtures.js';
+import { contexto, preparedRuntime, runtimePreflight, profileWriteFixtureDeps } from '../agent-profile.fixtures.js';
 import { registerContextSourcePreviewRoute } from './apply-routes.js';
 import { confirmContextSource, sourceApplicationId, type ContextSourceDeps } from './apply-preview.js';
 import { nativeFiles, NATIVE_PROFILE, NATIVE_ROOT, writeNativeFixture } from './native-test-fixtures.js';
@@ -31,14 +31,14 @@ describe('v3 never reaches profile writers', () => {
     const reason = 'Review synthetic source';
     const apply = vi.fn();
     const replaceProfile = vi.fn();
-    const deps: AgentProfileDeps = {
+    const deps: AgentProfileDeps = profileWriteFixtureDeps({
       authorize: vi.fn(async () => actor),
       authorizeTarget: vi.fn(async () => ({ ...target, enabled: true })),
       resolveOperator: vi.fn(async () => operator), recordAudit: vi.fn(async () => undefined),
       readContext: vi.fn(async () => ({ contexto: contexto({ ...target, purpose: 'Current' }, 'codex'), exists: true, revision: 4, applied_revision: 3 })),
       prepareRuntime: vi.fn(async () => runtimePreflight((revision) => preparedRuntime(revision, { apply }))),
       replaceProfile,
-    };
+    }, operator);
     const sourceDeps: ContextSourceDeps = { binding: { instance_id: 'fixture', repositoryPath: root },
       profile: deps, readProfileRevision: vi.fn() };
     deps.contextSource = { instance_id: 'fixture', readReceipt: vi.fn(async () => undefined),
