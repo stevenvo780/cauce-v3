@@ -11,6 +11,13 @@ const publicValues = {
   CAUCE_MCP_OAUTH_JWKS_URI: 'https://issuer.example.test/keys.json',
 };
 const publicConfiguration = Object.entries(publicValues).map(([name, value]) => `${name}=${value}\n`).join('');
+const localValues = {
+  CAUCE_MCP_OAUTH_PROVIDER: 'local',
+  CAUCE_MCP_PUBLIC_ORIGIN: 'https://mcp.example.test',
+  CAUCE_MCP_OAUTH_SIGNING_KID: 'fixture-kid-1',
+};
+const localConfiguration = Object.entries(localValues).map(([name, value]) => `${name}=${value}\n`).join('');
+const localAmbient = { CAUCE_AUTH_PROVIDER: 'password', CAUCE_MCP_OAUTH_SIGNING_KEY_PATH: '/fixture/mcp-oauth-signing-key' };
 const baseEnvironment = `COMPOSE_PROJECT_NAME=overlay-fixture
 POSTGRES_USER=fixture
 POSTGRES_DB=fixture
@@ -38,7 +45,7 @@ let mcp = {};
 if (command === 'docker' && args[0] === 'compose') {
   if (args.includes(process.env.MOCK_OVERLAY)) {
     const text = fs.readFileSync(args[args.indexOf('--env-file') + 1], 'utf8');
-    for (const name of ['CAUCE_MCP_PUBLIC_ORIGIN', 'CAUCE_MCP_OAUTH_ISSUER', 'CAUCE_MCP_OAUTH_JWKS_URI']) {
+    for (const name of (process.env.MOCK_MCP_NAMES || 'CAUCE_MCP_PUBLIC_ORIGIN,CAUCE_MCP_OAUTH_ISSUER,CAUCE_MCP_OAUTH_JWKS_URI').split(',')) {
       const line = text.split('\n').find(line => line.startsWith(name + '='));
       mcp[name] = process.env[name] ?? (line || '').slice(name.length + 1).replace(/^(['"])(.*)\1$/, '$2');
     }
@@ -112,6 +119,8 @@ function execute(configuration: string, options: {
   environment?: Record<string, string>;
   failure?: string;
   missingOverlay?: boolean;
+  missingLocalOverlay?: boolean;
+  provider?: 'local';
   realCompose?: boolean;
 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'cauce deploy mcp '));
@@ -124,8 +133,9 @@ function execute(configuration: string, options: {
   mkdirSync(migrations, { recursive: true });
   mkdirSync(binaries);
   copyFileSync(join(root, 'deploy/deploy.sh'), join(deployment, 'deploy.sh'));
-  for (const name of ['compose.yaml', 'compose.postgres.yaml', 'compose.mcp-human.yaml']) {
+  for (const name of ['compose.yaml', 'compose.postgres.yaml', 'compose.mcp-human.yaml', 'compose.mcp-human-local.yaml']) {
     if (name === 'compose.mcp-human.yaml' && options.missingOverlay) continue;
+    if (name === 'compose.mcp-human-local.yaml' && options.missingLocalOverlay) continue;
     copyFileSync(join(root, 'deploy', name), join(deployment, name));
   }
   writeFileSync(join(migrations, '001_fixture.sql'), '');
@@ -155,11 +165,13 @@ function execute(configuration: string, options: {
     CAUCE_DEPLOY_BACKUP_STATUS_FILE: join(directory, 'backup-status.json'),
     CAUCE_DEPLOY_BACKUP_MONITOR: join(binaries, 'backup-monitor'),
     MOCK_COMMAND_LOG: log,
-    MOCK_OVERLAY: join(deployment, 'compose.mcp-human.yaml'),
+    MOCK_OVERLAY: join(deployment, options.provider === 'local' ? 'compose.mcp-human-local.yaml' : 'compose.mcp-human.yaml'),
+    MOCK_MCP_NAMES: options.provider === 'local' ? Object.keys(localValues).join(',') : '',
     MOCK_FAILURE: options.failure ?? '',
     MOCK_REAL_COMPOSE: options.realCompose ? '1' : '0',
     MOCK_REAL_PATH: process.env.PATH ?? '',
     DOCKER_CONFIG: dockerConfig,
+    ...(options.provider === 'local' ? localAmbient : {}),
     ...(options.realCompose ? {
       CAUCE_AUTH_PROVIDER: 'password',
       CAUCE_CONSOLE_GATEWAY_CLIENT_CERT_PATH: '/fixture/console-client.crt',
@@ -497,5 +509,87 @@ describe('deploy human MCP overlay selection', () => {
     expect(recovered).toEqual(initial);
     expect(recovered?.gateway.CAUCE_BLOB_API_ENABLED).toBe('0');
     expect(result.currentEnvironment()).toBe(result.initialEnvironment);
+  });
+});
+
+describe('deploy human MCP local overlay selection', () => {
+  it('uses the local overlay and instance paths for preflight, pinned config, migrator and recreation', () => {
+    const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + localConfiguration, { provider: 'local' });
+    expect(result.status, result.stderr).toBe(0);
+    const commands = composeCommands(result.commands());
+    expect(commands.map(command => command.args.find(arg => ['config', 'run', 'up'].includes(arg))))
+      .toEqual(['config', 'config', 'run', 'up']);
+    for (const command of commands) {
+      expect(command.args.filter(arg => arg.endsWith('.yaml'))).toEqual([
+        join(result.repository, 'deploy/compose.yaml'), join(result.repository, 'deploy/compose.postgres.yaml'),
+        join(result.repository, 'deploy/compose.mcp-human-local.yaml'),
+      ]);
+      expect(command.mcp).toEqual(localValues);
+    }
+    expect(result.snapshots()).toEqual([result.initialEnvironment]);
+    expect(result.currentEnvironment()).toContain('CAUCE_MCP_HUMAN_ENABLED=1\n' + localConfiguration);
+    expect(result.currentEnvironment()).toContain('CAUCE_RUNTIME_IMAGE=fixture/runtime@sha256:');
+  });
+
+  it('ignores a CAUCE_MCP_OAUTH_PROVIDER=local declaration while MCP is default/off', () => {
+    const result = execute(localConfiguration, { environment: localAmbient });
+    expect(result.status, result.stderr).toBe(0);
+    expect(composeCommands(result.commands()).every(command => Object.keys(command.mcp).length === 0)).toBe(true);
+  });
+
+  it('rejects an unrecognized CAUCE_MCP_OAUTH_PROVIDER value before changes', () => {
+    const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\nCAUCE_MCP_OAUTH_PROVIDER=oidc\n' + publicConfiguration);
+    expectUnchanged(result);
+    expect(result.stderr).toContain("CAUCE_MCP_OAUTH_PROVIDER solo admite 'local' o ausente");
+  });
+
+  it.each(['CAUCE_MCP_OAUTH_ISSUER=https://issuer.example.test\n', 'CAUCE_MCP_OAUTH_JWKS_URI=https://issuer.example.test/keys.json\n'])(
+    'rejects %s declared together with CAUCE_MCP_OAUTH_PROVIDER=local', extra => {
+    const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + localConfiguration + extra, { provider: 'local' });
+    expectUnchanged(result);
+    expect(result.stderr).toContain('no se admite con CAUCE_MCP_OAUTH_PROVIDER=local');
+  });
+
+  it('rejects local mode without CAUCE_AUTH_PROVIDER=password before changes', () => {
+    const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + localConfiguration, {
+      provider: 'local', environment: { CAUCE_AUTH_PROVIDER: '' },
+    });
+    expectUnchanged(result);
+    expect(result.stderr).toContain('CAUCE_MCP_OAUTH_PROVIDER=local exige CAUCE_AUTH_PROVIDER=password');
+  });
+
+  it('rejects local mode without CAUCE_MCP_OAUTH_SIGNING_KEY_PATH exported before changes', () => {
+    const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + localConfiguration, {
+      provider: 'local', environment: { CAUCE_MCP_OAUTH_SIGNING_KEY_PATH: '' },
+    });
+    expectUnchanged(result);
+    expect(result.stderr).toContain('exporta CAUCE_MCP_OAUTH_SIGNING_KEY_PATH');
+  });
+
+  it('rejects an unreadable local overlay before changes', () => {
+    const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + localConfiguration, { provider: 'local', missingLocalOverlay: true });
+    expectUnchanged(result);
+    expect(result.stderr).toContain('no puedo leer deploy/compose.mcp-human-local.yaml');
+  });
+
+  it.each(['pinned-config', 'run', 'up'])('preserves manual rollback with the local overlay and signing key path after %s fails', failure => {
+    const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + localConfiguration, { provider: 'local', failure });
+    expect(result.status, result.stderr).not.toBe(0);
+    expect(result.stderr).toContain('solo despues de verificar/restaurar esquema, BD y volumen');
+    const recoveryCommands = result.stderr.split('\n').filter(line => line.startsWith('cp -a ') || line.startsWith('env -u '));
+    expect(recoveryCommands).toHaveLength(3);
+    for (const line of recoveryCommands.filter(line => line.startsWith('env -u '))) {
+      expect(line).toContain(`CAUCE_MCP_OAUTH_SIGNING_KEY_PATH=${localAmbient.CAUCE_MCP_OAUTH_SIGNING_KEY_PATH}`);
+    }
+    const beforeRecovery = result.commands();
+    const recovery = result.recover(recoveryCommands.join('\n'), { CAUCE_MCP_PUBLIC_ORIGIN: 'https://unrelated-shell.example.test' });
+    expect(recovery.status, recovery.stderr).toBe(0);
+    expect(result.currentEnvironment()).toBe(result.initialEnvironment);
+    const recoveredCompose = composeCommands(result.commands().slice(beforeRecovery.length));
+    expect(recoveredCompose.map(command => command.args.find(arg => ['config', 'up'].includes(arg)))).toEqual(['config', 'up']);
+    for (const command of recoveredCompose) {
+      expect(command.args).toContain(join(result.repository, 'deploy/compose.mcp-human-local.yaml'));
+      expect(command.mcp).toEqual(localValues);
+    }
   });
 });
