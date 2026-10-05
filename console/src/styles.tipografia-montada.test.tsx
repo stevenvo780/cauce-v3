@@ -133,8 +133,13 @@ describe('ningún texto de las páginas montadas baja del suelo tipográfico', (
       window.history.pushState({}, '', ruta);
       let releaseFleetLoading: (() => void) | undefined;
       if (ruta === '/terminal') {
+        const getStatus = testApi.getStatus.bind(testApi);
         const getTopology = testApi.getTopology.bind(testApi);
         const fleetLoading = new Promise<void>((resolve) => { releaseFleetLoading = resolve; });
+        vi.spyOn(testApi, 'getStatus').mockImplementation(async () => {
+          await fleetLoading;
+          return getStatus();
+        });
         vi.spyOn(testApi, 'getTopology').mockImplementation(async () => {
           await fleetLoading;
           return getTopology();
