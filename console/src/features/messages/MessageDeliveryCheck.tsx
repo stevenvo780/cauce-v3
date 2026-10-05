@@ -1,5 +1,5 @@
 import type { DeliveryView } from '../../api/types';
-import { HarnessConsumptionEvidenceSchema } from '@cauce/protocol';
+import { HarnessConsumptionEvidenceSchema } from '@cauce/protocol/harness-consumption';
 
 export function MessageDeliveryCheck({ delivery }: { delivery: DeliveryView }) {
   const events = (delivery.timeline ?? []).filter((event) => event.applied !== false

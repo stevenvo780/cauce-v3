@@ -8,6 +8,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./dist/index.js"
+    },
+    "./harness-consumption": {
+      "types": "./src/harness-consumption.ts",
+      "import": "./dist/harness-consumption.js"
     }
   },
   "files": ["dist"],
