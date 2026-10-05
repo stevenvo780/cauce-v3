@@ -75,7 +75,7 @@ it('abre la autoridad canónica con identidad completa y vuelve sin descartar el
   expect(screen.getByTestId('canonical-context')).toHaveTextContent('B/same');
 });
 
-it('recupera foco y conserva el borrador si desaparece el agente y vuelve en otra lectura', async () => {
+it.each([false, true])('recupera foco y conserva el borrador si desaparece el agente y vuelve en otra lectura (membresías conservadas: %s)', async (retainMemberships) => {
   let current = snapshot;
   servirConfig(() => current);
   const user = userEvent.setup();
@@ -84,7 +84,7 @@ it('recupera foco y conserva el borrador si desaparece el agente y vuelve en otr
   await user.click(screen.getByRole('button', { name: 'Editar borrador' }));
   expect(screen.getByText('Borrador guardado: perfil pendiente')).toBeInTheDocument();
 
-  current = { ...snapshot, agents: [], memberships: [] };
+  current = { ...snapshot, agents: [], memberships: retainMemberships ? snapshot.memberships : [] };
   await user.click(screen.getByRole('button', { name: 'Actualizar' }));
   const recovery = await screen.findByRole('button', { name: 'Volver al inventario y conservar borrador' });
   expect(await screen.findByRole('alert')).toHaveTextContent(/borrador sigue conservado/);

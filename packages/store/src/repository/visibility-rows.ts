@@ -70,4 +70,5 @@ export type QueueSnapshotItem = {
   max_attempts: number;
   available_at: Date | null;
   last_error: string | null;
+  dlq_resolved: boolean;
 };

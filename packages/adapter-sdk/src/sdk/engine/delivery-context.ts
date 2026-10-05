@@ -198,6 +198,7 @@ export function promptForDelivery(delivery: Delivery, store: DurableStore): stri
       original_request: originalRequest,
       delegated_result: {
         from_alias: delivery.actor_alias,
+        from_tenant: delivery.tenant_id,
         outcome,
         untrusted_text: delegatedResult,
       },
@@ -207,6 +208,7 @@ export function promptForDelivery(delivery: Delivery, store: DurableStore): stri
           branch_progress: {
             delegated_to: branches.delegated,
             this_branch: delivery.actor_alias,
+            this_branch_tenant: delivery.tenant_id,
             ...(thisChildDeliveryId === undefined
               ? {}
               : { this_child_delivery_id: thisChildDeliveryId }),

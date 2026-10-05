@@ -5,6 +5,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID, X509Certificate } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,7 +59,7 @@ function locateRelay(): RelayLocation | null {
   for (const entry of candidates) {
     if (!existsSync(entry)) continue;
     return entry.endsWith('.ts')
-      ? { entry, command: 'pnpm', args: ['exec', 'tsx', entry] }
+      ? { entry, command: process.execPath, args: ['--import', 'tsx', entry] }
       : { entry, command: process.execPath, args: [entry] };
   }
   return null;
@@ -82,6 +83,25 @@ interface ChildLaunch {
 
 let relayExitCode: number | null = null;
 let relayLaunchFailure = '';
+let relayStartupErrors: string[] = [];
+let relayLogRemainders: Record<'stdout' | 'stderr', string> = { stdout: '', stderr: '' };
+
+function captureRelayStartupError(chunk: Buffer, stream: 'stdout' | 'stderr'): void {
+  const lines = `${relayLogRemainders[stream]}${chunk.toString('utf8')}`.split(/\r?\n/u);
+  relayLogRemainders[stream] = lines.pop()?.slice(-8_192) ?? '';
+  for (const line of lines) {
+    try {
+      const event: unknown = JSON.parse(line);
+      if (typeof event !== 'object' || event === null) continue;
+      const row = event as Record<string, unknown>;
+      if (!['terminal_relay_agent_server_error', 'terminal_relay_browser_server_error', 'terminal_relay_health_server_error'].includes(String(row.event))) continue;
+      const detail = typeof row.error === 'string' && row.error.includes('EADDRINUSE') ? 'address-in-use' : 'listener-error';
+      relayStartupErrors = [...relayStartupErrors, `${String(row.event)}:${detail}`].slice(-8);
+    } catch {
+      continue;
+    }
+  }
+}
 
 function dropPrivileges(command: string, args: string[]): ChildLaunch {
   const uid = String(UNPRIVILEGED_UID);
@@ -145,13 +165,61 @@ async function childExited(child: ChildProcess, timeoutMs: number): Promise<bool
   });
 }
 
-async function stopChild(child: ChildProcess): Promise<void> {
+async function stopChild(child: ChildProcess, termTimeoutMs = 5_000, killTimeoutMs = 5_000): Promise<void> {
   signalChild(child, 'TERM');
-  if (await childExited(child, 5_000)) return;
+  if (await childExited(child, termTimeoutMs)) return;
   signalChild(child, 'KILL');
-  await childExited(child, 5_000);
+  if (!await childExited(child, killTimeoutMs)) {
+    throw new Error(`child process ${String(child.pid)} did not exit after SIGKILL`);
+  }
 }
-
+async function allocateLoopbackPort(): Promise<number> {
+  const reservation = createServer();
+  await new Promise<void>((resolve, reject) => {
+    reservation.once('error', reject);
+    reservation.listen(0, '127.0.0.1', () => { reservation.removeListener('error', reject); resolve(); });
+  });
+  const address = reservation.address();
+  if (address === null || typeof address === 'string') throw new Error('ephemeral relay port is unavailable');
+  await new Promise<void>((resolve, reject) => {
+    reservation.close((error) => { if (error) reject(error); else resolve(); });
+  });
+  return address.port;
+}
+async function allocateRelayPorts(): Promise<readonly [number, number, number]> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const ports = [await allocateLoopbackPort(), await allocateLoopbackPort(), await allocateLoopbackPort()] as const;
+    if (new Set(ports).size === ports.length) return ports;
+  }
+  throw new Error('could not allocate three distinct ephemeral loopback ports for terminal relay');
+}
+it('does not report teardown complete until the owned child is reaped after escalation', async () => {
+  const plan = unprivilegedLaunch(process.execPath, [
+    '-e', "process.on('SIGTERM',()=>{});process.stdout.write('ready\\n');setInterval(()=>{},1000)",
+  ]);
+  const child = spawn(plan.command, plan.args, { stdio: ['ignore', 'pipe', 'ignore'] });
+  let failure: unknown;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { reject(new Error('owned child did not report readiness')); }, 2_000);
+      child.once('error', (error) => { clearTimeout(timer); reject(error); });
+      child.stdout.once('data', () => { clearTimeout(timer); resolve(); });
+    });
+    await stopChild(child, 50, 2_000);
+    expect(child.signalCode).toBe('SIGKILL');
+  } catch (error) {
+    failure = error;
+  }
+  if (child.exitCode === null && child.signalCode === null) {
+    signalChild(child, 'KILL');
+    if (!await childExited(child, 2_000)) {
+      const cleanupError = new Error('owned child remained alive after cleanup');
+      failure = failure === undefined ? cleanupError : new AggregateError([failure, cleanupError]);
+    }
+  }
+  if (failure instanceof Error) throw failure;
+  if (failure !== undefined) throw new Error('owned child cleanup failed');
+});
 const FAKE_AGENT_ENTRY = fileURLToPath(new URL('fake-agent-child.mjs', import.meta.url));
 const AGENT_FAILED_BEFORE_READY = new Set([
   'refuses_root', 'hello_rejected', 'agent_abort', 'transport_error',
@@ -303,6 +371,9 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
   let launch: ChildLaunch | null = null;
   const sockets: WebSocket[] = [];
   const agents: AgentProcess[] = [];
+  let gatewayReady = false;
+  let tlsReady = false;
+  let cleanupStarted = false;
 
   function openMaterialToTheChild(): void {
     chmodSync(relayDirectory, 0o777);
@@ -317,9 +388,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
 
   async function startRelay(overrides: Record<string, string> = {}): Promise<void> {
     if (!relay || launch === null) return;
-    wsPort = 18_700 + Math.floor(Math.random() * 200);
-    agentPort = wsPort + 1_000;
-    healthPort = agentPort + 1_000;
+    [wsPort, agentPort, healthPort] = await allocateRelayPorts();
     writeFileSync(tokenFile, `${gateway.token}\n`);
     writeFileSync(registryFile, JSON.stringify({
       version: 1,
@@ -336,6 +405,8 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     }
     relayExitCode = null;
     relayLaunchFailure = '';
+    relayStartupErrors = [];
+    relayLogRemainders = { stdout: '', stderr: '' };
     process_ = spawn(launch.command, launch.args, {
       cwd: fileURLToPath(repoRoot),
       env: {
@@ -343,6 +414,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
         CAUCE_TERMINAL_RELAY_BROWSER_PORT: String(wsPort),
         CAUCE_TERMINAL_RELAY_AGENT_PORT: String(agentPort),
         CAUCE_TERMINAL_RELAY_HEALTH_PORT: String(healthPort),
+        CAUCE_TERMINAL_RELAY_BIND_HOST: '127.0.0.1',
         CAUCE_TERMINAL_RELAY_TLS_CERT_FILE: tls.cert_path,
         CAUCE_TERMINAL_RELAY_TLS_KEY_FILE: tls.key_path,
         CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE: tls.cert_path,
@@ -361,13 +433,16 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
         CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS: '1',
         ...overrides,
       },
-      stdio: ['ignore', 'inherit', 'inherit'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
+    process_.stdout?.on('data', (chunk: Buffer) => { captureRelayStartupError(chunk, 'stdout'); });
+    process_.stderr?.on('data', (chunk: Buffer) => { captureRelayStartupError(chunk, 'stderr'); });
     process_.once('exit', (code) => { relayExitCode = code; });
     process_.once('error', (error) => {
       relayLaunchFailure = `${launch?.command ?? 'terminal-relay'} could not be spawned: ${error.message}`;
     });
     await waitForPort(wsPort, tls);
+    console.info(`[terminal-pty] own relay pid=${String(process_.pid)} entry=${relay.entry} listeners: browser=127.0.0.1:${String(wsPort)} agent=127.0.0.1:${String(agentPort)} health=127.0.0.1:${String(healthPort)}`);
   }
 
   async function attachAgent(): Promise<AgentProcess> {
@@ -387,24 +462,33 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
   }
 
   beforeAll(async () => {
-    tls = createSelfSignedCert(isRoot ? { mode: 0o755 } : {});
-    relayInstanceId = createHash('sha256').update(new X509Certificate(tls.cert).raw).digest('hex');
-    relayDirectory = mkdtempSync(path.join(tmpdir(), 'cauce-pty-relay-'));
-    tokenFile = path.join(relayDirectory, 'relay_token');
-    registryFile = path.join(relayDirectory, 'pty_agent_identities.json');
-    spoolFile = path.join(relayDirectory, 'close-reports.json');
-    agentFingerprint = new X509Certificate(tls.cert).fingerprint256;
-    gateway = await startFakeGateway({
-      master_key_b64: MASTER_KEY_B64,
-      relay_token: RELAY_TOKEN,
-      relay_instance_id: relayInstanceId,
-    });
-    if (isRoot) {
-      openMaterialToTheChild();
-      agentEntry = copyAgentWhereTheDroppedUidCanRead(path.join(relayDirectory, 'agent'));
+    try {
+      tls = createSelfSignedCert(isRoot ? { mode: 0o755 } : {});
+      tlsReady = true;
+      relayInstanceId = createHash('sha256').update(new X509Certificate(tls.cert).raw).digest('hex');
+      relayDirectory = mkdtempSync(path.join(tmpdir(), 'cauce-pty-relay-'));
+      tokenFile = path.join(relayDirectory, 'relay_token');
+      registryFile = path.join(relayDirectory, 'pty_agent_identities.json');
+      spoolFile = path.join(relayDirectory, 'close-reports.json');
+      agentFingerprint = new X509Certificate(tls.cert).fingerprint256;
+      gateway = await startFakeGateway({
+        master_key_b64: MASTER_KEY_B64,
+        relay_token: RELAY_TOKEN,
+        relay_instance_id: relayInstanceId,
+      });
+      gatewayReady = true;
+      if (isRoot) {
+        openMaterialToTheChild();
+        agentEntry = copyAgentWhereTheDroppedUidCanRead(path.join(relayDirectory, 'agent'));
+      }
+      if (relay !== null) launch = relayLaunch(relay, relayDirectory);
+      await startRelay();
+    } catch (error) {
+      try { await cleanupFixture(); } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'terminal relay setup and cleanup failed');
+      }
+      throw error;
     }
-    if (relay !== null) launch = relayLaunch(relay, relayDirectory);
-    await startRelay();
   });
 
   afterEach(async () => {
@@ -418,16 +502,32 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     }
   });
 
-  afterAll(async () => {
+  async function cleanupFixture(): Promise<void> {
+    if (cleanupStarted) return;
+    cleanupStarted = true;
     for (const socket of sockets.splice(0)) socket.close();
     agent = null;
-    await Promise.all(agents.splice(0).map((spawned) => spawned.stop()));
-    if (process_ !== null) await stopChild(process_);
-    if (relayLaunchFailure !== '') console.warn(`[terminal-pty] ${relayLaunchFailure}`);
-    await gateway.close();
-    if (relayDirectory) rmSync(relayDirectory, { recursive: true, force: true });
-    rmSync(tls.directory, { recursive: true, force: true });
-  });
+    const cleanupFailures: unknown[] = [];
+    let childrenExited = true;
+    for (const spawned of agents.splice(0)) { try { await spawned.stop(); } catch (error) { cleanupFailures.push(error); childrenExited = false; } }
+    if (process_ !== null) try {
+      if (process_.pid !== undefined || relayLaunchFailure === '') await stopChild(process_);
+    } catch (error) { cleanupFailures.push(error); childrenExited = false; }
+    if (relayLaunchFailure !== '') cleanupFailures.push(new Error(relayLaunchFailure));
+    if (gatewayReady) try { await gateway.close(); } catch (error) { cleanupFailures.push(error); }
+    if (childrenExited) {
+      if (relayDirectory) {
+        try { rmSync(relayDirectory, { recursive: true, force: true }); } catch (error) { cleanupFailures.push(error); }
+      }
+      if (tlsReady) try { rmSync(tls.directory, { recursive: true, force: true }); } catch (error) { cleanupFailures.push(error); }
+  } else {
+    cleanupFailures.push(new Error(`preserved terminal relay fixture material because a child exit was not confirmed: ${relayDirectory}`));
+  }
+  console.info(`[terminal-pty] cleanup relayScratch=${relayDirectory || 'none'} tlsScratch=${tlsReady ? tls.directory : 'none'} relayAbsent=${String(relayDirectory === '' || !existsSync(relayDirectory))} tlsAbsent=${String(!tlsReady || !existsSync(tls.directory))}`);
+  if (cleanupFailures.length > 0) throw new AggregateError(cleanupFailures, 'terminal relay fixture cleanup failed');
+}
+
+  afterAll(cleanupFixture);
 
   it('attaches with a valid ticket, says ready and echoes bytes back', async () => {
     await attachAgent();
@@ -679,6 +779,7 @@ async function waitForPort(port: number, material: SelfSignedCert, timeoutMs = 2
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (relayLaunchFailure !== '') throw new Error(relayLaunchFailure);
+    if (relayStartupErrors.length > 0) throw new Error(`terminal-relay reported listener error: ${relayStartupErrors.join(',')}`);
     if (relayExitCode !== null) {
       throw new Error(relayExitCode === ROOT_REFUSAL_EXIT
         ? `terminal-relay exited ${String(ROOT_REFUSAL_EXIT)}: it ran as euid 0, so the privilege drop never took effect`

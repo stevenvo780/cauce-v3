@@ -105,6 +105,37 @@ class DynamicTmuxIdentityTest(unittest.TestCase):
                 process.kill()
                 process.wait(timeout=3)
 
+    def test_muse_and_grok_attach_to_the_existing_identity_and_refuse_a_changed_marker(self) -> None:
+        for harness in ("muse", "grok"):
+            with self.subTest(harness=harness):
+                self._session("zeus", harness)
+                bundle = _bundle(self.socket, harness=harness)
+                argv = agent.resolve_tmux_tui_command(bundle, mode="harness_rw")
+                self.assertIsNotNone(argv)
+                master, slave = os.openpty()
+                process = None
+                try:
+                    process = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave,
+                                               close_fds=True, env=self.env)
+                    os.close(slave)
+                    slave = -1
+                    time.sleep(0.2)
+                    self.assertIsNone(process.poll())
+                    subprocess.run([TMUX, "-L", self.socket, "set-option", "-t", "cauce-zeus",
+                                    "@cauce_harness", "codex"], check=True, env=self.env)
+                    refused = subprocess.run(argv, stdin=subprocess.DEVNULL,
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=self.env)
+                    self.assertEqual(refused.returncode, 77)
+                    subprocess.run([TMUX, "-L", self.socket, "kill-server"], check=True, env=self.env)
+                    process.wait(timeout=3)
+                finally:
+                    if slave >= 0:
+                        os.close(slave)
+                    os.close(master)
+                    if process is not None and process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=3)
+
     def test_the_same_resolver_discovers_a_session_created_after_agent_start(self) -> None:
         """No launcher/agent restart: a descriptor built before tmux exists works on a later OPEN."""
         argv = agent.resolve_tmux_tui_command(_bundle(self.socket))
@@ -244,6 +275,20 @@ class ADescriptorThatCannotResolveNeverLoads(unittest.TestCase):
         """The tmux route is the only one that can be handed a keyboard, so it announces both."""
         instance = agent.PtyAgent(agent.validate_bundle(_loadable_bundle()))
         self.assertEqual(instance.modes, ["shell", "harness", "harness_rw"])
+
+    def test_new_harnesses_advertise_both_modes_with_the_same_identity_barriers(self) -> None:
+        for tenant, alias, harness in (("Miguel", "hegel", "muse"), ("Steven", "hades", "grok")):
+            with self.subTest(harness=harness):
+                bundle = agent.validate_bundle(_loadable_bundle(tenant_id=tenant, alias=alias, harness=harness))
+                self.assertEqual(agent.PtyAgent(bundle).modes, ["shell", "harness", "harness_rw"])
+                viewer = agent.resolve_tmux_tui_command(bundle)
+                writer = agent.resolve_tmux_tui_command(bundle, mode="harness_rw")
+                self.assertEqual(viewer[:8], writer[:8])
+                self.assertIn(f"#{{==:#{{@cauce_harness}},{harness}}}", writer[7])
+                self.assertIn(f"#{{==:#{{@cauce_alias}},{alias}}}", writer[7])
+                self.assertIn("attach-session -r ", viewer[8])
+                self.assertNotIn("attach-session -r ", writer[8])
+                self.assertEqual(writer[9], 'run-shell "exit 77"')
 
     def test_control_negativo_a_descriptor_the_resolver_would_refuse_is_rejected_at_load(self) -> None:
         for overrides in (

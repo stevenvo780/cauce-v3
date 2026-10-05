@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { DatabasePool } from '@cauce/store';
+import type { ContextWriteDescriptor, DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/index.js';
 import type {
   AgentFactsProbe, GovernanceBatchWrite,
 } from '../../services/gateway/src/console/agent-documents.routes.js';
+import type { GovernanceWriteOperation } from '../../services/gateway/src/console/governance-write-operation.js';
 import { FixedAuthProvider, fakePool, fakeRepository, grants, noDeliveryWakes, roles, testPrincipal } from './helpers.js';
 
 /**
@@ -64,7 +65,10 @@ interface ProfileState {
   applied_revision: number | null;
 }
 
-function poolDePerfil(state: ProfileState): DatabasePool {
+function poolDePerfil(state: ProfileState, supersedeAfterCommit: boolean): DatabasePool {
+  let reservation: ContextWriteDescriptor | undefined;
+  let jobStatus = 'running';
+  let expectation: { revision: number; generation: string; documents: unknown } | undefined;
   const row = () => ({
     tenant_id: 'Steven', alias: 'zeus', purpose: state.purpose,
     role_summary: state.role_summary, human_brief: state.human_brief,
@@ -79,6 +83,34 @@ function poolDePerfil(state: ProfileState): DatabasePool {
       || normalized.startsWith('INSERT INTO audit_events')) {
       return { rows: [], rowCount: normalized === 'BEGIN' ? null : 1 };
     }
+    if (normalized.includes('FROM jobs')) {
+      const selected = reservation === undefined ? [] : [{ id: reservation.operationId,
+        payload: reservation, status: jobStatus, claim_token: reservation.token, lease_until: null }];
+      return { rows: selected, rowCount: selected.length };
+    }
+    if (normalized.startsWith('INSERT INTO jobs')) {
+      reservation = JSON.parse(String(params[3])) as ContextWriteDescriptor;
+      return { rows: [], rowCount: 1 };
+    }
+    if (normalized.startsWith('UPDATE jobs')) {
+      reservation = JSON.parse(String(params[1])) as ContextWriteDescriptor;
+      if (normalized.includes("status='done'")) jobStatus = 'done';
+      return { rows: [], rowCount: 1 };
+    }
+    if (normalized.startsWith('SELECT enabled,to_jsonb(agent)')) {
+      return { rows: [{ enabled: true, value: { tenant_id: 'Steven', alias: 'zeus', enabled: true } }], rowCount: 1 };
+    }
+    if (normalized.startsWith('SELECT revision,to_jsonb(profile)')) {
+      return { rows: [{ revision: state.revision, value: row() }], rowCount: 1 };
+    }
+    if (normalized.includes('AS exists')) return { rows: [{ exists: false }], rowCount: 1 };
+    if (normalized.startsWith('SELECT revision,generation,documents')) {
+      return { rows: expectation === undefined ? [] : [expectation], rowCount: expectation === undefined ? 0 : 1 };
+    }
+    if (normalized.startsWith('INSERT INTO agent_profile_runtime_expectations')) {
+      expectation = { revision: Number(params[2]), generation: String(params[3]), documents: JSON.parse(String(params[4])) as unknown };
+      return { rows: [], rowCount: 1 };
+    }
     if (normalized.startsWith('SELECT tenant_id,alias,purpose')) {
       return { rows: [row()], rowCount: 1 };
     }
@@ -86,7 +118,12 @@ function poolDePerfil(state: ProfileState): DatabasePool {
       return { rows: [{ enabled: true }], rowCount: 1 };
     }
     if (normalized.startsWith('UPDATE agent_profiles SET applied_revision=')) {
+      if (jobStatus !== 'done') throw new Error('Adoption preceded durable resolution');
       state.applied_revision = Number(params[2]);
+      if (supersedeAfterCommit) {
+        state.purpose = 'Desired de otro editor.';
+        state.revision = 3;
+      }
       return { rows: [row()], rowCount: 1 };
     }
     if (normalized.startsWith('UPDATE agent_profiles SET purpose=')) {
@@ -134,7 +171,7 @@ function poolDePerfil(state: ProfileState): DatabasePool {
   } as unknown as DatabasePool;
 }
 
-async function gatewayCanonico(supersedeAfterBatch = false) {
+async function gatewayCanonico(supersedeAfterCommit = false) {
   const state: ProfileState = {
     purpose: 'Antes.', role_summary: null, human_brief: null,
     responsibilities: [], restrictions: [], tools: [], operating_rules: [],
@@ -162,7 +199,7 @@ async function gatewayCanonico(supersedeAfterBatch = false) {
     }),
   });
   const app = await buildGateway({
-    pool: poolDePerfil(state),
+    pool: poolDePerfil(state, supersedeAfterCommit),
     repository,
     authProvider: new FixedAuthProvider(testPrincipal({
       tenant_id: 'Steven', alias: 'kant', roles: roles('operator'),
@@ -175,6 +212,7 @@ async function gatewayCanonico(supersedeAfterBatch = false) {
   apps.push(app);
 
   let disco = '# Manual humano\n';
+  let writtenOperation: GovernanceWriteOperation | undefined;
   const batches: GovernanceBatchWrite[][] = [];
   const probe: AgentFactsProbe = {
     factsFor: async () => ({
@@ -182,6 +220,7 @@ async function gatewayCanonico(supersedeAfterBatch = false) {
       facts: {
         harness: 'claude', home: '/home/dev',
         generation: 'generation-profile-route-test', containerId: 'ws-zeus-test',
+        writerInstanceId: '00000000-0000-4000-8000-000000000001', features: ['write_quiescence_v1'],
       },
     }),
     readGovernanceDocument: async () => ({
@@ -191,21 +230,30 @@ async function gatewayCanonico(supersedeAfterBatch = false) {
     listMemoryDirectory: async () => ({
       root: '/none', total: 0, observed_at_least: 0, truncated: false, entries: [],
     }),
-    writeGovernanceBatch: async (writes) => {
+    supportsDurableWrites: () => true,
+    writeGovernanceDocumentDurable: async () => { throw new Error('Profile writes must use a batch'); },
+    writeGovernanceBatchDurable: async (writes, _facts, _tenant, _alias, operation) => {
+      writtenOperation = operation;
       batches.push([...writes]);
       const entry = writes[0];
       if (writes.length !== 1 || entry?.mode !== 'write') {
         return { error: 'unknown', reason: 'el test esperaba un único CLAUDE.md' };
       }
       disco = entry.content;
-      if (supersedeAfterBatch) {
-        state.purpose = 'Desired de otro editor.';
-        state.revision = 3;
-      }
       return [{
         path: entry.path, operation: 'replace', sha: sha(entry.content),
         bytes: Buffer.byteLength(entry.content),
       }];
+    },
+    writeStatus: async (tenant, alias, operationId, token, generation, requestId, runtimeGeneration) => {
+      expect(writtenOperation).toMatchObject({ operationId, operationToken: token,
+        operationGeneration: generation, runtimeGeneration });
+      return {
+      operation_id: operationId, operation_generation: generation, request_id: requestId,
+      runtime_generation: runtimeGeneration, writer_instance_id: '00000000-0000-4000-8000-000000000001',
+      tenant_id: tenant, alias, container_id: 'ws-zeus-test', state: 'done',
+      files: [{ path: '/home/dev/.claude/CLAUDE.md', sha: sha(disco), bytes: Buffer.byteLength(disco) }],
+      };
     },
   };
   app.sondaDeDocumentos?.instalar(probe);

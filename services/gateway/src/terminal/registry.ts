@@ -245,6 +245,11 @@ export function parseAgentPresence(value: unknown): AgentPresence {
   if (typeof uid !== 'number' || !Number.isSafeInteger(uid) || uid < 0) {
     throw new Error('agent presence runtime_uid is invalid');
   }
+  const features = record.features ?? [];
+  if (!Array.isArray(features) || features.length > 32
+    || features.some((feature) => typeof feature !== 'string' || feature.length === 0 || feature.length > 128)) {
+    throw new Error('agent presence features are invalid');
+  }
   const modes = record.modes;
   if (!Array.isArray(modes) || modes.some((mode) => typeof mode !== 'string')) {
     throw new Error('agent presence modes are invalid');
@@ -308,6 +313,8 @@ export function parseAgentPresence(value: unknown): AgentPresence {
       ...codexProjectDocumentFields(record, harness),
     } : {}),
     modes: (modes as string[]).slice(0, 8),
+    features: features as string[],
+    ...(typeof record.writer_instance_id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.writer_instance_id) ? { writer_instance_id: record.writer_instance_id } : {}),
     connected_since: stringField(record.connected_since, 'connected_since', 64),
   };
 }

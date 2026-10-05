@@ -50,6 +50,8 @@ export interface RuntimeFacts {
   readonly containerId?: string;
   /** Terminal capabilities published by that same process. */
   readonly modes?: readonly string[];
+  readonly writerInstanceId?: string;
+  readonly features?: readonly string[];
 }
 export interface AgentDocument {
   readonly kind: DocumentKind;

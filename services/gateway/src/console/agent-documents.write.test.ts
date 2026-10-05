@@ -1,3 +1,4 @@
+import { coordinateWriteFixture, contexto } from './agent-profile.fixtures.js';
 import { createHash } from 'node:crypto';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -173,7 +174,7 @@ function sonda(overrides: Partial<AgentFactsProbe> = {}): AgentFactsProbe {
       modified_at: '2026-08-25T00:00:00Z', sha: sha(ANTERIOR),
     }),
     listMemoryDirectory: async () => SIN_LECTURA,
-    writeGovernanceDocumentFenced: async () => ({
+    writeGovernanceDocumentDurable: async () => ({
       sha: sha(NUEVO), bytes: Buffer.byteLength(NUEVO, 'utf8'),
     }),
     ...overrides,
@@ -192,6 +193,10 @@ function servidor(deps: Partial<Parameters<typeof registerAgentDocumentRoutes>[1
     }),
     recordAudit: async (entry) => { filas.push(entry); },
     probe: sonda(),
+    readContext: async () => ({ contexto: contexto({}, 'claude'), exists: false, revision: null, applied_revision: null }),
+    readRuntimeExpectation: async () => undefined,
+    coordinateWrite: coordinateWriteFixture,
+    persistDocumentWrite: async (_client, _document, audit) => { filas.push(audit); },
     ...deps,
   });
   return app;
@@ -216,11 +221,38 @@ afterEach(async () => { await vivo?.close(); vivo = undefined; filas.length = 0;
  * acusa a nadie y el interruptor del runbook no cierra esta puerta.
  */
 describe('el PUT gobernado exige persona con nombre y motivo tecleado', () => {
+
+  it('returns the recovery id even if the pool is unavailable for unknown-effect audit', async () => {
+    vivo = servidor({ recordAudit: async () => { throw new Error('pool unavailable'); },
+      probe: sonda({ writeGovernanceDocumentDurable: async () => ({ sha: 'a'.repeat(64), bytes: 1 }) }),
+    });
+    const response = await vivo.inject({ method: 'PUT', url: ruta(),
+      payload: { content: NUEVO, expected_sha: sha(ANTERIOR), reason: MOTIVO },
+    });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ state: 'effect_unknown', audit_recorded: false });
+    expect(response.json<{ operation_id: string }>().operation_id).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(response.body).not.toContain('pool unavailable');
+    expect(response.json()).not.toHaveProperty('ok', true);
+  });
+
+  it('does not fall back to legacy writes when durable transport is absent', async () => {
+    const legacy = vi.fn(async () => ({ sha: sha(NUEVO), bytes: Buffer.byteLength(NUEVO) }));
+    const probe = sonda({ writeGovernanceDocument: legacy });
+    delete probe.writeGovernanceDocumentDurable;
+    vivo = servidor({ probe });
+    const response = await vivo.inject({ method: 'PUT', url: ruta(),
+      payload: { content: NUEVO, expected_sha: sha(ANTERIOR), reason: MOTIVO },
+    });
+    expect(response.statusCode).toBe(503);
+    expect(legacy).not.toHaveBeenCalled();
+  });
+
   it('la sesión sin atribuir recibe 403 writable_requires_attribution y deja fila', async () => {
-    const writeGovernanceDocumentFenced = vi.fn(async () => ({ sha: sha(NUEVO), bytes: 7 }));
+    const writeGovernanceDocumentDurable = vi.fn(async () => ({ sha: sha(NUEVO), bytes: 7 }));
     vivo = servidor({
       resolveOperator: () => ANONIMO,
-      probe: sonda({ writeGovernanceDocumentFenced }),
+      probe: sonda({ writeGovernanceDocumentDurable }),
     });
     const res = await vivo.inject({
       method: 'PUT', url: ruta(),
@@ -231,7 +263,7 @@ describe('el PUT gobernado exige persona con nombre y motivo tecleado', () => {
     expect(res.json()).toMatchObject({
       error: 'forbidden', reason: 'writable_requires_attribution',
     });
-    expect(writeGovernanceDocumentFenced).not.toHaveBeenCalled();
+    expect(writeGovernanceDocumentDurable).not.toHaveBeenCalled();
     expect(filas).toHaveLength(1);
     expect(unaFila()).toMatchObject({ action: 'agent_document.denied', decision: 'deny' });
     expect(unaFila().metadata).toMatchObject({
@@ -268,8 +300,8 @@ describe('el PUT gobernado exige persona con nombre y motivo tecleado', () => {
     ['motivo de 281 caracteres', 'x'.repeat(281)],
     ['motivo que no es texto', 42],
   ])('%s: 400 sin tocar el disco ni la auditoría', async (_caso, motivo) => {
-    const writeGovernanceDocumentFenced = vi.fn(async () => ({ sha: sha(NUEVO), bytes: 7 }));
-    vivo = servidor({ probe: sonda({ writeGovernanceDocumentFenced }) });
+    const writeGovernanceDocumentDurable = vi.fn(async () => ({ sha: sha(NUEVO), bytes: 7 }));
+    vivo = servidor({ probe: sonda({ writeGovernanceDocumentDurable }) });
     const res = await vivo.inject({
       method: 'PUT', url: ruta(),
       payload: {
@@ -280,7 +312,7 @@ describe('el PUT gobernado exige persona con nombre y motivo tecleado', () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ error: 'invalid_input' });
-    expect(writeGovernanceDocumentFenced).not.toHaveBeenCalled();
+    expect(writeGovernanceDocumentDurable).not.toHaveBeenCalled();
     expect(filas).toEqual([]);
   });
 
@@ -341,7 +373,7 @@ describe('el PUT gobernado audita su éxito y responde con vocabulario honesto',
     const secreto = '# el secreto que no puede viajar a audit_events\n';
     vivo = servidor({
       probe: sonda({
-        writeGovernanceDocumentFenced: async () => ({
+        writeGovernanceDocumentDurable: async () => ({
           sha: sha(secreto), bytes: Buffer.byteLength(secreto, 'utf8'),
         }),
       }),
@@ -367,8 +399,8 @@ describe('cada denegación de estado del PUT deja fila agent_document.denied', (
     ['fichero ya presente', 409, 'conflict', {}, {
       create_if_absent: true, expected_sha: undefined,
     }],
-    ['ACK que no acredita los bytes', 502, 'invalid_ack', {
-      writeGovernanceDocumentFenced: async () => ({ sha: 'd'.repeat(64), bytes: 7 }),
+    ['ACK que no acredita los bytes', 503, 'document_write_unconfirmed', {
+      writeGovernanceDocumentDurable: async () => ({ sha: 'd'.repeat(64), bytes: 7 }),
     }, {}],
   ] as const)('%s', async (_caso, status, error, overrides, payload) => {
     vivo = servidor({ probe: sonda(overrides) });
@@ -380,6 +412,11 @@ describe('cada denegación de estado del PUT deja fila agent_document.denied', (
 
     expect(res.statusCode).toBe(status);
     expect(res.json()).toMatchObject({ error });
+    if (error === 'document_write_unconfirmed') {
+      expect(res.json()).toMatchObject({ state: 'effect_unknown' });
+      expect(res.json<{ operation_id: string }>().operation_id).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(res.json()).not.toHaveProperty('ok', true);
+    }
     expect(filas).toHaveLength(1);
     expect(unaFila()).toMatchObject({
       action: 'agent_document.denied', decision: 'deny',
@@ -447,9 +484,9 @@ describe('cada denegación de estado del PUT deja fila agent_document.denied', (
   });
 
   it('una ruta no escribible deja fila antes de tocar el disco', async () => {
-    const writeGovernanceDocumentFenced = vi.fn(async () => ({ sha: sha(NUEVO), bytes: 7 }));
+    const writeGovernanceDocumentDurable = vi.fn(async () => ({ sha: sha(NUEVO), bytes: 7 }));
     vivo = servidor({
-      probe: sonda({ factsFor: medidos(OPENCLAW), writeGovernanceDocumentFenced }),
+      probe: sonda({ factsFor: medidos(OPENCLAW), writeGovernanceDocumentDurable }),
     });
     const res = await vivo.inject({
       method: 'PUT', url: ruta('identity'),
@@ -458,7 +495,7 @@ describe('cada denegación de estado del PUT deja fila agent_document.denied', (
 
     expect(res.statusCode).toBe(403);
     expect(res.json()).toMatchObject({ error: 'forbidden' });
-    expect(writeGovernanceDocumentFenced).not.toHaveBeenCalled();
+    expect(writeGovernanceDocumentDurable).not.toHaveBeenCalled();
     expect(unaFila().metadata).toMatchObject({ reason: 'forbidden', kind: 'identity' });
   });
 
@@ -489,7 +526,7 @@ describe('el manual de ámbito de usuario de codex no se mide contra el tope de 
     vivo = servidor({
       probe: sonda({
         factsFor: medidos(CODEX),
-        writeGovernanceDocumentFenced: async () => ({
+        writeGovernanceDocumentDurable: async () => ({
           sha: sha(grande), bytes: Buffer.byteLength(grande, 'utf8'),
         }),
       }),
@@ -513,7 +550,7 @@ describe('el manual de ámbito de usuario de codex no se mide contra el tope de 
     vivo = servidor({
       probe: sonda({
         factsFor: medidos(sinConfig),
-        writeGovernanceDocumentFenced: async () => ({
+        writeGovernanceDocumentDurable: async () => ({
           sha: sha(grande), bytes: Buffer.byteLength(grande, 'utf8'),
         }),
       }),
@@ -598,7 +635,7 @@ describe('la cuarentena de contaminación también cierra la escritura', () => {
   ].join('\n');
 
   it('un alias en cuarentena no puede guardar: 409 con el dueño nombrado y fila', async () => {
-    const writeGovernanceDocumentFenced = vi.fn(async () => ({ sha: sha(NUEVO), bytes: 7 }));
+    const writeGovernanceDocumentDurable = vi.fn(async () => ({ sha: sha(NUEVO), bytes: 7 }));
     const telemetry = new ContextContaminationTelemetry();
     vivo = servidor({
       telemetry,
@@ -607,7 +644,7 @@ describe('la cuarentena de contaminación también cierra la escritura', () => {
           text: AJENO, bytes: Buffer.byteLength(AJENO, 'utf8'), truncated: false,
           modified_at: '2026-08-25T00:00:00Z', sha: sha(AJENO),
         }),
-        writeGovernanceDocumentFenced,
+        writeGovernanceDocumentDurable,
       }),
     });
     const res = await vivo.inject({
@@ -623,7 +660,7 @@ describe('la cuarentena de contaminación también cierra la escritura', () => {
     expect(cuerpo.contaminacion.findings[0]).toMatchObject({
       reason: 'foreign_managed_block', owner: 'Steven/argos',
     });
-    expect(writeGovernanceDocumentFenced).not.toHaveBeenCalled();
+    expect(writeGovernanceDocumentDurable).not.toHaveBeenCalled();
     expect(telemetry.snapshot().foreign_managed_block).toBe(1);
     expect(unaFila()).toMatchObject({ action: 'agent_document.denied', decision: 'deny' });
     expect(unaFila().metadata).toMatchObject({
@@ -643,7 +680,7 @@ describe('la cuarentena de contaminación también cierra la escritura', () => {
           text: propio, bytes: Buffer.byteLength(propio, 'utf8'), truncated: false,
           modified_at: '2026-08-25T00:00:00Z', sha: sha(propio),
         }),
-        writeGovernanceDocumentFenced: async () => ({
+        writeGovernanceDocumentDurable: async () => ({
           sha: sha(propio), bytes: Buffer.byteLength(propio, 'utf8'),
         }),
       }),

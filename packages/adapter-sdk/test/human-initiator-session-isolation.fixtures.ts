@@ -105,4 +105,3 @@ export async function waitForRequests(runner: IsolatedCommandRunner, count: numb
     await new Promise<void>((resolve) => { setTimeout(resolve, 5); });
   }
 }
-

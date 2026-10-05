@@ -110,6 +110,14 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | scrypt (`DEFAULT_SCRYPT_COST`, `DEFAULT_SCRYPT_BLOCK_SIZE`, `DEFAULT_SCRYPT_PARALLELISM`, `MAX_MEMORY`=96 MiB) | N/r/p | 32_768 / 8 / 1; clave 32 B, salt 16 B | fijo | — |
 | Contraseña (`MIN_PASSWORD_LENGTH`, `MAX_PASSWORD_LENGTH`) | chars | 12–1_024 | fijo | — |
 | `CAUCE_AUTH_PROVIDER`, `CAUCE_CONSOLE_PASSWORD_FALLBACK` | enum | `mtls` (fallback token-file/none) | env | — |
+| `CAUCE_MCP_PUBLIC_ORIGIN` | origen | sin default; origen HTTPS exacto, sin ruta, query, fragmento ni credenciales; la audiencia MCP deriva `{origen}/mcp` | env público, no secreto | arranque MCP |
+| `CAUCE_MCP_OAUTH_ISSUER` | URL | sin default; emisor HTTPS exacto esperado en el token | env público, no secreto | arranque MCP |
+| `CAUCE_MCP_OAUTH_JWKS_URI` | URL | sin default; endpoint HTTPS fijo de claves públicas, sin query, fragmento ni credenciales | env público, no secreto | arranque MCP |
+| `CAUCE_MCP_OAUTH_PROVIDER` (`gateway/main.ts:configuredLocalOAuth`, `gateway/mcp-configuration.ts`) | enum | ausente = modo externo (issuer/JWKS); `local` = servidor de autorización propio, exige `CAUCE_AUTH_PROVIDER=password` y prohíbe `CAUCE_MCP_OAUTH_JWKS_URI` | env público, no secreto | arranque MCP + gate de despliegue |
+| `CAUCE_MCP_OAUTH_SIGNING_KEY_FILE` (`gateway/main.ts:configuredLocalOAuth`) | ruta en el contenedor | sin default; clave privada EC P-256 PKCS8 sin cifrar del AS local, solo con `CAUCE_MCP_OAUTH_PROVIDER=local` | env del servidor (ruta a secret montado) | arranque MCP |
+| `CAUCE_MCP_OAUTH_SIGNING_KID` (`gateway/main.ts:configuredLocalOAuth`) | string | sin default; `kid` publicado en el JWKS del AS local | env público, no secreto | arranque MCP + gate de despliegue |
+| `CAUCE_MCP_OAUTH_GRANT_TTL_SECONDS` (`gateway/main.ts:configuredLocalOAuth`, `OAUTH_GRANT_TTL_SECONDS`) | s | 28_800 (8 h), rango 300–2_592_000 (30 días); vida fija del grant del AS local desde el consentimiento, independiente de la cookie de consola; el refresh token nunca pasa de ella; solo con `CAUCE_MCP_OAUTH_PROVIDER=local` | env público, no secreto | arranque MCP |
+| `CAUCE_MCP_OAUTH_SIGNING_KEY_PATH` (`deploy/compose.mcp-human-local.yaml`, `deploy/deploy.sh`) | ruta en el host | sin default; origen del secret Compose `mcp_oauth_signing_key` (uid/gid 1000, modo 0400); generarla con `deploy/mcp/generate-oauth-signing-key.sh` | env de despliegue, nunca en `prod.env` | gate de despliegue |
 | OIDC sesión/login/leeway | ms | 8 h / 10 min / 30 s | código | — |
 | JWKS cache/tolerancia | ms/s | 300_000 / 30 | código | — |
 | `SECRET_HANDOFF_MAX_TTL_MS` (`protocol/sealing.ts:23`, `MIN_HANDOFF_TTL_MS`=30_000) | ms | 86_400_000 (24 h) | fijo | — |
@@ -123,6 +131,15 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | Puertos (`PORT`, `CAUCE_HEALTH_PORT`, `CAUCE_CONSOLE_ORIGINS`) | — | datos 8080, health 8081 (≠), consola 8444 | env | e2e |
 | Redacción (`MAX_SCANNED_CHARACTERS`, `MAX_RULE_MATCH_CHARACTERS`, `MAX_SCANNED_VALUE_CHARACTERS`, `MAX_SCANNED_NODES`, `MAX_SCANNED_TOTAL_CHARACTERS`) | chars/nodos | ventana 256 KiB, match 20 KiB, valor 1 MiB, nodos 100 K, total 4 MiB | fijo | e2e redaction |
 | `CAUCE_REDACT_PUBLISH` | bool | true | env | — |
+
+El MCP humano permanece desactivado si ninguna de las dos familias de variables está presente.
+Modo externo: las tres variables `CAUCE_MCP_PUBLIC_ORIGIN`/`CAUCE_MCP_OAUTH_ISSUER`/`CAUCE_MCP_OAUTH_JWKS_URI`.
+Modo local: `CAUCE_MCP_OAUTH_PROVIDER=local` junto con `CAUCE_MCP_PUBLIC_ORIGIN`,
+`CAUCE_MCP_OAUTH_SIGNING_KEY_FILE` y `CAUCE_MCP_OAUTH_SIGNING_KID`, sin `CAUCE_MCP_OAUTH_JWKS_URI`.
+Una configuración parcial, mezclada entre ambos modos o con una URL inválida hace abortar el
+arranque antes de crear el pool PostgreSQL. El despliegue selecciona el overlay Compose
+correspondiente (`deploy/compose.mcp-human.yaml` o `deploy/compose.mcp-human-local.yaml`)
+según `CAUCE_MCP_OAUTH_PROVIDER` en `deploy/deploy.sh`.
 
 ## 7. Retención, GC y poda
 

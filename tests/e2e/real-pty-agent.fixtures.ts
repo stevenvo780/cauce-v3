@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes, randomUUID, X509Certificate } from 'node:crypto';
-import { createServer, type AddressInfo } from 'node:net';
+import { type AddressInfo } from 'node:net';
 import { request as httpsRequest } from 'node:https';
 import { get as httpGet } from 'node:http';
 import { createRequire } from 'node:module';
@@ -19,6 +19,7 @@ import { deriveAliasKey } from '../../services/gateway/src/terminal/tickets.js';
 import { relayInstanceIdFromCertificate } from '../../services/terminal-relay/src/relay-identity.js';
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 import { startTrustedBrowser, type BrowserContext, type BrowserPage, type TrustedBrowser } from './console-functional-browser.fixtures.js';
+import { reserveNamedLoopbackPorts, type NamedLoopbackPortReservations } from './port-reservation.js';
 
 const execute = promisify(execFile);
 const APPROVED_NODE_IMAGE = 'node@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436';
@@ -124,17 +125,6 @@ async function removeOwnedImage(tag: string, id: string): Promise<void> {
   if (current.id !== id || current.owner !== 'real-pty-agent') throw new Error(`refusing to remove image without exact ownership: ${tag}`);
   await execute('docker', ['image', 'rm', tag], { timeout: 15_000, maxBuffer: 64 * 1024 });
   if (await inspectImage(tag)) throw new Error(`owned Python agent image remains after cleanup: ${tag}`);
-}
-
-async function availableLoopbackPort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
-  });
-  const port = (server.address() as AddressInfo).port;
-  await new Promise<void>((resolve, reject) => server.close((error) => { if (error) reject(error); else resolve(); }));
-  return port;
 }
 
 async function dockerExecInput(args: string[], input: string, timeoutMs = 15_000): Promise<void> {
@@ -336,6 +326,7 @@ export async function startRealPtyFixture(options: RealPtyFixtureOptions = {}): 
   let gatewayUrl = '';
   let baseUrl = '';
   let ports: RealPtyFixture['relayPorts'] | undefined;
+  let portReservations: NamedLoopbackPortReservations<'browser' | 'agent' | 'health' | 'gateway' | 'frontend'> | undefined;
   const cleanupErrors: Error[] = [];
   const record = (label: string, error: unknown) => { cleanupErrors.push(new Error(`${label} cleanup failed`, { cause: error })); };
   const cleanup = async () => {
@@ -347,6 +338,9 @@ export async function startRealPtyFixture(options: RealPtyFixtureOptions = {}): 
     }
     if (vite) { try { await vite.close(); } catch (error) { record('Vite server', error); } }
     if (relay) { try { await stopProcess(relay, 'terminal relay'); } catch (error) { record('terminal relay', error); } }
+    if (portReservations) {
+      try { await portReservations.releaseAll(); } catch (error) { record('port reservations', error); }
+    }
     let ownedContainerFound = false;
     try {
       const inspection = await execute('docker', ['inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}}', containerName], { timeout: 15_000, maxBuffer: 64 * 1024 });
@@ -414,8 +408,9 @@ WORKDIR /home/node
     const startedDatabase = database;
     const pkiValue = await makePki(directory);
     relayInstanceId = relayInstanceIdFromCertificate(await readFile(pkiValue.relayClientCert));
-    const allocatedPorts = [await availableLoopbackPort(), await availableLoopbackPort(), await availableLoopbackPort()];
-    if (new Set(allocatedPorts).size !== allocatedPorts.length) throw new Error('relay loopback port allocation collided');
+    portReservations = await reserveNamedLoopbackPorts(['browser', 'agent', 'health', 'gateway', 'frontend'] as const);
+    const allocatedPorts = [portReservations.ports.browser, portReservations.ports.agent, portReservations.ports.health];
+    if (new Set(Object.values(portReservations.ports)).size !== 5) throw new Error('relay loopback port allocation collided');
     const [browserPort, agentPort, healthPort] = allocatedPorts;
     if (browserPort === undefined || agentPort === undefined || healthPort === undefined) throw new Error('relay port allocation was incomplete');
     ports = { browser: browserPort, agent: agentPort, health: healthPort };
@@ -446,8 +441,8 @@ WORKDIR /home/node
       key: await readFile(pkiValue.serverKey), cert: await readFile(pkiValue.serverCert), ca: await readFile(pkiValue.caCert),
       requestCert: true, rejectUnauthorized: true,
     };
-    const gatewayPort = await availableLoopbackPort();
-    const frontendPort = await availableLoopbackPort();
+    const gatewayPort = portReservations.ports.gateway;
+    const frontendPort = portReservations.ports.frontend;
     gatewayUrl = `https://127.0.0.1:${String(gatewayPort)}`;
     const frontendOrigin = `https://localhost:${String(frontendPort)}`;
     app = await buildGateway({
@@ -457,6 +452,7 @@ WORKDIR /home/node
     });
     const registry = new AgentRegistry();
     await app.register(registerTerminalControlPlane, { pool: startedDatabase.pool, authProvider: auth, config, registry });
+    await portReservations.release('gateway');
     await app.listen({ host: '127.0.0.1', port: gatewayPort });
     proxyAgent = new (await import('node:https')).Agent({
       cert: await readFile(pkiValue.consoleClientCert), key: await readFile(pkiValue.consoleClientKey),
@@ -486,12 +482,13 @@ WORKDIR /home/node
         },
       },
     });
+    await portReservations.release('frontend');
     await vite.listen();
     const frontendAddress = vite.httpServer?.address() as AddressInfo | null;
     if (!frontendAddress || typeof frontendAddress === 'string') throw new Error('Vite HTTPS server did not expose its bound address');
     baseUrl = `https://localhost:${String(frontendAddress.port)}`;
     if (baseUrl !== frontendOrigin) throw new Error('Vite HTTPS server did not bind its reserved origin');
-    const trusted = await startTrustedBrowser(pkiValue.caCert, directory);
+    const trusted = await startTrustedBrowser(pkiValue.caCert, directory, [frontendPort, gatewayPort]);
     trustedBrowser = trusted;
     const provision = await execute(join(process.cwd(), 'node_modules/.bin/tsx'), [
       'services/gateway/src/console-user-cli.ts', '--email', OPERATOR_EMAIL, '--name', 'Real PTY E2E operator',
@@ -523,6 +520,11 @@ WORKDIR /home/node
       CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: '150',
     };
     await writePrivate(directory, 'close-spool.json', '', 0o644);
+    await Promise.all([
+      portReservations.release('browser'),
+      portReservations.release('agent'),
+      portReservations.release('health'),
+    ]);
     relay = launchRelay(relayEnv);
     relay.stdout?.on('data', (chunk: Buffer) => { relayLog = boundedAppend(relayLog, chunk); });
     relay.stderr?.on('data', (chunk: Buffer) => { relayLog = boundedAppend(relayLog, chunk); });

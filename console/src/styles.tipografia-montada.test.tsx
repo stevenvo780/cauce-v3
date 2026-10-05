@@ -123,7 +123,7 @@ const VISTAS: readonly { ruta: string; titulo: RegExp; minimo: number; configVie
   { ruta: '/observability', titulo: /Señales y auditoría/i, minimo: 100 },
   { ruta: '/config', titulo: /Ajustes y altas/i, minimo: 150, configView: 'agents' },
   { ruta: '/config', titulo: /Ajustes y altas/i, minimo: 500, configView: 'administration' },
-  { ruta: '/terminal', titulo: /Terminal de agentes/i, minimo: 370 },
+  { ruta: '/terminal', titulo: /Terminal de agentes/i, minimo: 0 },
   { ruta: '/ayuda', titulo: /Ayuda y documentación/i, minimo: 90 },
 ];
 
@@ -148,7 +148,14 @@ describe('ningún texto de las páginas montadas baja del suelo tipográfico', (
           await screen.findByRole('tablist', { name: 'Áreas de configuración' });
         }
       }
-      await waitFor(() => { expect(main.querySelectorAll('*').length).toBeGreaterThanOrEqual(minimo); }, { timeout: 10_000 });
+      if (ruta === '/terminal') {
+        const selector = await within(main).findByRole('combobox', { name: 'Agente' });
+        expect(selector).toBeEnabled();
+        await waitFor(() => { expect(within(selector).getAllByRole('option').length).toBeGreaterThan(1); });
+        expect(within(main).getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/ayuda#terminal');
+      } else {
+        await waitFor(() => { expect(main.querySelectorAll('*').length).toBeGreaterThanOrEqual(minimo); }, { timeout: 10_000 });
+      }
 
       const fallos = textoPorDebajoDelSuelo(main);
       expect(fallos, `${String(fallos.length)} textos por debajo de ${String(SUELO)}px en ${ruta}:\n  ${fallos.slice(0, 25).join('\n  ')}`)

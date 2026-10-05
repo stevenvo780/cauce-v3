@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProfileRevisionEntry } from '@cauce/store';
 import { AuthError } from '../../auth.js';
 import { registerAgentProfileRoutes, type AgentProfileDeps } from '../agent-profile.routes.js';
-import { contexto, preparedRuntime, runtimePreflight, RUNTIME_ADOPTION } from '../agent-profile.fixtures.js';
+import { contexto, preparedRuntime, runtimePreflight, profileWriteFixtureDeps, RUNTIME_ADOPTION } from '../agent-profile.fixtures.js';
 import { registerContextSourcePreviewRoute } from './apply-routes.js';
 import { confirmContextSource, prepareContextSource, snapshotContextSourceDeps, type ContextSourceDeps } from './apply-preview.js';
 
@@ -68,7 +68,7 @@ describe.each(['journal', 'git_authored'])('Git %s preview and the canonical pro
     commit = await fixture();
     journal = vi.fn(async (_tenant, _alias, revision) => revision === 1 ? oldJournal : newJournal);
     apply = vi.fn(preparedRuntime(5).apply);
-    deps = {
+    deps = profileWriteFixtureDeps({
       authorize: vi.fn(async () => actor),
       authorizeTarget: vi.fn(async () => ({ ...target, enabled: true })),
       resolveOperator: vi.fn(async () => operator),
@@ -76,7 +76,9 @@ describe.each(['journal', 'git_authored'])('Git %s preview and the canonical pro
       readContext: vi.fn(async () => ({ contexto: context, exists: true, revision: 4, applied_revision: 3 })),
       prepareRuntime: vi.fn(async () => runtimePreflight((revision) => preparedRuntime(revision, { apply }))),
       replaceProfile: vi.fn<NonNullable<AgentProfileDeps['replaceProfile']>>(async (perfil) => ({ perfil, exists: true, revision: 5, applied_revision: 3 })),
-    };
+    }, operator);
+    Reflect.deleteProperty(deps, 'readRuntimeAdoption');
+    Reflect.deleteProperty(deps, 'markProfileApplied');
     binding = { instance_id: 'fixture', repositoryPath: root };
     captured = snapshotContextSourceDeps({ binding, profile: deps, readProfileRevision: journal });
     deps.contextSource = {
@@ -156,12 +158,18 @@ describe.each(['journal', 'git_authored'])('Git %s preview and the canonical pro
     expect(deps.markProfileApplied).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps a committed source revision pending when the post-CAS audit fails', async () => {
+  it('reports an unconfirmed transaction when the desired audit fails before dispatch', async () => {
     const payload = await body();
     vi.mocked(deps.recordAudit).mockImplementation(async (entry) => {
       if (entry.metadata.revision === 5) throw new Error('synthetic post-CAS failure');
     });
-    expect((await put(payload)).json()).toMatchObject({ state: 'pending', revision: 5 });
+    const response = await put(payload);
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ error: 'profile_write_unconfirmed', state: 'effect_unknown',
+      revision: 5, applied_revision: 3 });
+    expect(response.json<{ operation_id: string }>().operation_id).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(response.json()).not.toHaveProperty('runtime_adoption');
+    expect(response.body).not.toContain('synthetic post-CAS failure');
     expect(deps.replaceProfile).toHaveBeenCalledTimes(1); expect(apply).not.toHaveBeenCalled();
   });
 
@@ -266,8 +274,15 @@ describe.each(['journal', 'git_authored'])('Git %s preview and the canonical pro
     if (kind === 'partial_ack') apply.mockResolvedValue([]);
     if (kind === 'revision_mismatch') vi.mocked(required(deps.replaceProfile)).mockResolvedValue({ perfil: { ...target, ...fields }, exists: true, revision: 6, applied_revision: 3 });
     const response = await put(payload);
-    expect(response.statusCode).toBeGreaterThanOrEqual(400);
-    expect(response.json()).toMatchObject({ state: kind.endsWith('unknown') ? 'effect_unknown' : 'pending' });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ error: 'profile_write_unconfirmed', state: 'effect_unknown',
+      revision: 5, applied_revision: 3 });
+    expect(response.json<{ operation_id: string }>().operation_id).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(response.json()).not.toHaveProperty('runtime_adoption');
+    expect(response.json()).not.toHaveProperty('operation_token');
+    expect(deps.markProfileApplied).toBeUndefined();
+    expect(deps.replaceProfile).toHaveBeenCalledTimes(1);
+    expect(apply).toHaveBeenCalledTimes(kind === 'cas_unknown' || kind === 'revision_mismatch' ? 0 : 1);
     if (kind === 'cas_unknown' || kind === 'revision_mismatch') expect(apply).not.toHaveBeenCalled();
   });
 

@@ -1,25 +1,7 @@
-/**
- * Switching tabs and coming back: the half of the terminal view that only breaks on the SECOND
- * visit.
- *
- * The grid mounts ONE stage at a time (`GridContainer` keys the panel by the visible session),
- * so every return to a tab is a fresh mount: the per-mount guards (`autoOpenedRef`, the request
- * fence, the local error) are born empty again. What must survive is what lives outside that
- * mount — the durable `liveSession.liveTuiAttempted`, the workspace grants and the PTY session
- * manager. Each case here is written so it goes RED if that survival is undone:
- *
- *  · if the auto-open guard went back to being only per-mount, closing the TUI and returning to
- *    the tab would reopen it by itself —the exact bug that was fixed—;
- *  · if a refused auto-open did not mark the tab, coming back would POST again against a gateway
- *    that already said no;
- *  · if the terminal were React state, returning would open a second socket and lose the
- *    scrollback.
- */
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mockMessages } from '../../mocks/data';
 import { server } from '../../mocks/server';
 import { mockTerminalGrant } from '../../mocks/terminal-ticket';
 import { renderWithApi } from '../../test/render';
@@ -87,15 +69,6 @@ function serveSessions(posts: string[], deletes: string[]) {
   );
 }
 
-function contarRefrescosDelFeed(): () => number {
-  let ticks = 0; // the feed poll (2.5 s, paused while a PTY channel is live) is the barrier a sleep only faked
-  server.use(http.get('*/v3/console/messages', () => {
-    ticks += 1;
-    return HttpResponse.json(mockMessages());
-  }));
-  return () => ticks;
-}
-
 /** Two aliases: one that emits its TUI and one that only offers a shell, so it never auto-opens. */
 function serveTwoAgents() {
   enableCapability();
@@ -118,7 +91,7 @@ afterEach(() => {
 });
 
 async function openTui(user: ReturnType<typeof userEvent.setup>): Promise<StubWebSocket> {
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
   await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
   const socket = StubWebSocket.last();
   act(() => {
@@ -130,155 +103,102 @@ async function openTui(user: ReturnType<typeof userEvent.setup>): Promise<StubWe
   return socket;
 }
 
-describe('volver a una pestaña de terminal', () => {
-  it('reengancha la MISMA sesión: ni socket nuevo, ni POST nuevo, ni scrollback perdido', async () => {
+async function select(user: ReturnType<typeof userEvent.setup>, alias: string) {
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Agente' }),
+    screen.getByRole('option', { name: new RegExp(`^${alias} ·`) }));
+}
+
+describe('cambiar el agente seleccionado', () => {
+  it('seleccionar el mismo agente conserva socket, ticket y salida', async () => {
     const user = userEvent.setup();
-    const posts: string[] = [];
-    const deletes: string[] = [];
-    serveTwoAgents();
-    serveSessions(posts, deletes);
+    const posts: string[] = [], deletes: string[] = [];
+    serveTwoAgents(); serveSessions(posts, deletes);
     renderWithApi(<TerminalPage />);
-
     await openTui(user);
-    expect(posts).toEqual(['zeus']);
-
-    await user.click(screen.getByRole('button', { name: /abrir sesión con salva/i }));
-    await screen.findByRole('link', { name: /escribir a salva en mensajes/i });
-    // While the other tab is on screen, the live terminal is not mounted anywhere...
-    expect(document.querySelector('.pty-mount')).toBeNull();
-
-    await user.click(screen.getByRole('tab', { name: /zeus/i }));
-
-    // ...and coming back reattaches the very same node, with the very same output inside.
-    const bar = await screen.findByLabelText('Sesión PTY activa');
-    expect(bar).toHaveTextContent('zeus');
-    expect(bar).toHaveTextContent('harness');
+    await select(user, 'zeus');
     expect(ptySessionText('sid-zeus')).toContain('zeus corriendo');
-    // The socket was never reopened and the single-use ticket was never spent twice.
     expect(StubWebSocket.instances).toHaveLength(1);
     expect(posts).toEqual(['zeus']);
     expect(deletes).toEqual([]);
-  }, 20_000);
+  });
 
-  /**
-   * The regression this view already paid for once: the TUI reopened by itself after the operator
-   * had closed it, because the only guard was a ref that died with the panel. The durable field on
-   * the session is what survives the remount.
-   */
-  it('con la TUI cerrada a mano, ir a otra pestaña y volver NO la reabre sola', async () => {
+  it('devuelve el canal anterior y al regresar abre una intención nueva', async () => {
     const user = userEvent.setup();
-    const posts: string[] = [];
-    const deletes: string[] = [];
-    serveTwoAgents();
-    serveSessions(posts, deletes);
-    const refrescos = contarRefrescosDelFeed();
+    const posts: string[] = [], deletes: string[] = [];
+    serveTwoAgents(); serveSessions(posts, deletes);
     renderWithApi(<TerminalPage />);
+    const old = await openTui(user);
+    await select(user, 'salva');
+    await screen.findByRole('link', { name: /escribir a salva en mensajes/i });
+    expect(deletes).toEqual(['sid-zeus']);
+    expect(old.readyState).toBe(StubWebSocket.CLOSED);
+    await select(user, 'zeus');
+    await waitFor(() => { expect(posts).toEqual(['zeus', 'zeus']); });
+    expect(StubWebSocket.instances).toHaveLength(2);
+    expect(StubWebSocket.last()).not.toBe(old);
+  });
 
+  it('cerrar la TUI no la reabre al volver a elegir el mismo agente', async () => {
+    const user = userEvent.setup();
+    const posts: string[] = [], deletes: string[] = [];
+    serveTwoAgents(); serveSessions(posts, deletes);
+    renderWithApi(<TerminalPage />);
     await openTui(user);
     await user.click(within(await screen.findByLabelText('Sesión PTY activa'))
       .getByRole('button', { name: /cerrar la terminal/i }));
     await waitFor(() => { expect(deletes).toEqual(['sid-zeus']); });
-    await waitFor(() => { expect(screen.getByRole('button', { name: /^Feed$/i })).toHaveAttribute('aria-pressed', 'true'); });
-
-    await user.click(screen.getByRole('button', { name: /abrir sesión con salva/i }));
-    await screen.findByRole('link', { name: /escribir a salva en mensajes/i });
-    await user.click(screen.getByRole('tab', { name: /zeus/i }));
-    await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
-
-    // The panel is alive and keeps refreshing; what it does NOT do is ask for the channel again.
-    const antes = refrescos();
-    await waitFor(() => { expect(refrescos()).toBeGreaterThan(antes + 1); }, { timeout: 12_000 });
+    await select(user, 'zeus');
     expect(posts).toEqual(['zeus']);
-    expect(StubWebSocket.instances).toHaveLength(1);
-    expect(screen.getByRole('button', { name: /^Feed$/i })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByLabelText('Sesión PTY activa')).not.toBeInTheDocument();
-  }, 20_000);
+  });
 
-  it('un 403 en la apertura automática tampoco se reintenta al alternar de pestaña', async () => {
+  it('una negativa permanente no se reintenta por elegir el agente ya visible', async () => {
     const user = userEvent.setup();
     let attempts = 0;
     serveTwoAgents();
     server.use(http.post('*/v3/console/terminal/sessions', () => {
       attempts += 1;
-      return HttpResponse.json({ error: 'forbidden', reason: 'no_grant' }, { status: 403 });
+      return HttpResponse.json({ reason: 'no_grant' }, { status: 403 });
     }));
-    const refrescos = contarRefrescosDelFeed();
     renderWithApi(<TerminalPage />);
-
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-    await waitFor(() => { expect(attempts).toBe(1); });
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }),
+      await screen.findByRole('option', { name: /^zeus ·/ }));
     expect(await screen.findByRole('alert')).toHaveAttribute('data-codigo', 'no_grant');
-
-    await user.click(screen.getByRole('button', { name: /abrir sesión con salva/i }));
-    await screen.findByRole('link', { name: /escribir a salva en mensajes/i });
-    await user.click(screen.getByRole('tab', { name: /zeus/i }));
-    await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
-
-    const antes = refrescos(); // two more feed reloads, instead of a sleep: the remount's effects already ran
-    await waitFor(() => { expect(refrescos()).toBeGreaterThan(antes + 1); }, { timeout: 12_000 });
+    await select(user, 'zeus');
     expect(attempts).toBe(1);
     expect(StubWebSocket.instances).toHaveLength(0);
-  }, 20_000);
-});
+  });
 
-describe('la rejilla de pestañas', () => {
-  it('cambia el panel visible y mantiene cada enlace canónico asociado a su sesión', async () => {
+  it('si falla la devolución conserva el agente anterior y no abre otra reserva', async () => {
     const user = userEvent.setup();
-    serveTwoAgents();
-    serveSessions([], []);
+    const posts: string[] = [], deletes: string[] = [];
+    serveTwoAgents(); serveSessions(posts, deletes);
+    server.use(http.delete('*/v3/console/terminal/sessions/:sid', () =>
+      HttpResponse.json({ reason: 'temporary_failure' }, { status: 503 })));
     renderWithApi(<TerminalPage />);
-
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con salva/i }));
-    expect(await screen.findByRole('link', { name: /escribir a salva en mensajes/i })).toHaveAttribute(
-      'href', '/messages/Isa/salva',
-    );
-
-    await user.click(screen.getByRole('button', { name: /abrir sesión con kant/i }));
-    const otro = await screen.findByRole('link', { name: /escribir a kant en mensajes/i });
-
-    expect(otro).toHaveAttribute('href', '/messages/Steven/kant');
-    expect(screen.queryByRole('link', { name: /escribir a salva en mensajes/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('textbox', { name: /entrada para/i })).not.toBeInTheDocument();
-    expect(document.querySelectorAll('.terminal-session-head')).toHaveLength(1);
-    expect(screen.getAllByRole('tab')).toHaveLength(2);
-    expect(screen.getByRole('tab', { selected: true })).toHaveTextContent('kant');
-  }, 20_000);
-
-  it('cerrar la pestaña activa suelta su plaza contra el servidor y deja la otra al mando', async () => {
-    const user = userEvent.setup();
-    const posts: string[] = [];
-    const deletes: string[] = [];
-    serveTwoAgents();
-    serveSessions(posts, deletes);
-    renderWithApi(<TerminalPage />);
-
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con salva/i }));
-    await screen.findByRole('link', { name: /escribir a salva en mensajes/i });
     await openTui(user);
-    expect(screen.getByRole('tab', { selected: true })).toHaveTextContent('zeus');
+    await select(user, 'salva');
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Agente' })).toHaveValue('Steven:zeus');
+    expect(posts).toEqual(['zeus']);
+    expect(screen.queryByRole('link', { name: /escribir a salva en mensajes/i })).not.toBeInTheDocument();
+  });
 
-    await user.click(screen.getByRole('button', { name: /cerrar sesión zeus/i }));
-
-    // The seat is released server-side: an orphan session would keep spending the operator's cap.
-    await waitFor(() => { expect(deletes).toEqual(['sid-zeus']); });
-    await waitFor(() => { expect(screen.queryByRole('tab', { name: /zeus/i })).not.toBeInTheDocument(); });
-    expect(screen.getByRole('tab', { selected: true })).toHaveTextContent('salva');
-    expect(await screen.findByRole('link', { name: /escribir a salva en mensajes/i })).toBeInTheDocument();
-  }, 20_000);
-
-  it('cerrar la última pestaña devuelve el escenario vacío, no un panel muerto', async () => {
+  it('cada selección conserva su enlace canónico y solo un escenario', async () => {
     const user = userEvent.setup();
-    serveTwoAgents();
-    serveSessions([], []);
+    serveTwoAgents(); serveSessions([], []);
     renderWithApi(<TerminalPage />);
-
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con salva/i }));
-    await screen.findByRole('link', { name: /escribir a salva en mensajes/i });
-
-    await user.click(screen.getByRole('button', { name: /cerrar sesión salva/i }));
-
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }),
+      await screen.findByRole('option', { name: /^salva ·/ }));
+    expect(await screen.findByRole('link', { name: /escribir a salva en mensajes/i }))
+      .toHaveAttribute('href', '/messages/Isa/salva');
+    await select(user, 'kant');
+    expect(await screen.findByRole('link', { name: /escribir a kant en mensajes/i }))
+      .toHaveAttribute('href', '/messages/Steven/kant');
+    expect(screen.queryByRole('link', { name: /escribir a salva en mensajes/i })).not.toBeInTheDocument();
+    expect(document.querySelectorAll('.terminal-session-head')).toHaveLength(1);
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: /cerrar sesión kant/i }));
     expect(await screen.findByText('Ningún agente seleccionado')).toBeInTheDocument();
-    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
-    expect(document.querySelector('.ultimate-terminal-page')).not.toHaveAttribute('data-tui');
-  }, 20_000);
+  });
 });

@@ -28,6 +28,7 @@ function connection(generation = target.generation, containerId = target.contain
     supportsGovernanceWrite: true,
     attachWrite: vi.fn((_id: string, callbacks: { onWriteOk: (body: Record<string, unknown>) => void }) => {
       onWriteOk = callbacks.onWriteOk;
+      return true;
     }),
     detachWrite: vi.fn(), cancelWrite: vi.fn(), sendWrite,
   };
@@ -53,7 +54,8 @@ describe('cercado optativo de la conexión de escritura', () => {
     const result = await requestFileWrite(current.agent, 'Steven', 'zeus', path, content, precondition, 5000, undefined, target);
     expect(result).toMatchObject({ path, operation: 'replace', bytes: content.length });
     expect(current.sendWrite).toHaveBeenCalledOnce();
-    expect(current.sendWrite).toHaveBeenCalledWith(expect.any(String), path, 'replace', precondition.sha256, expect.any(String), content);
+    expect(current.sendWrite).toHaveBeenCalledWith(expect.any(String), path, 'replace', precondition.sha256,
+      expect.any(String), content, undefined);
   });
 
   it('no retargetea a otra ruta', async () => {

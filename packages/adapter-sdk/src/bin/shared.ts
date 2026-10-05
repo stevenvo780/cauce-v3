@@ -88,11 +88,17 @@ export function deliveryHarnesses(options: HarnessAdapterOptions, headlessRunner
   readonly harness: HarnessAdapter; readonly humanHarness?: HarnessAdapter;
 } {
   const harness = new HarnessAdapter(options);
-  if (options.definition.id !== "claude" && options.definition.id !== "codex") return { harness };
-  const { sharedSession, ...headless } = options;
+  const openClaw = options.definition.id === "openclaw";
+  if (options.definition.id !== "claude" && options.definition.id !== "codex" && !openClaw) return { harness };
+  if (openClaw && options.commandOverride !== undefined) return { harness };
+  const { sharedSession, fallbackSessionKey, ...headless } = options;
   void sharedSession;
   return { harness, humanHarness: new HarnessAdapter({ ...headless, runner: headlessRunner,
-    sessionNamespace: `${options.sessionNamespace ?? options.definition.id}:human-initiator-v1` }) };
+    ...(!openClaw && fallbackSessionKey !== undefined ? { fallbackSessionKey } : {}),
+    ...(openClaw ? { canonicalTerminalSession: false } : {}),
+    sessionNamespace: openClaw
+      ? `human-initiator-v1.${options.sessionNamespace ?? options.definition.id}`
+      : `${options.sessionNamespace ?? options.definition.id}:human-initiator-v1` }) };
 }
 
 /**

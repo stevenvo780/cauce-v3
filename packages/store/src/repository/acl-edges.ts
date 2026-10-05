@@ -28,3 +28,6 @@ export function tenantReadableSql(readerExpression: string, ownerExpression: str
     + `${edge('allow_read', readerExpression, ownerExpression)} AND `
     + `${edge('allow_route', ownerExpression, readerExpression)}))`;
 }
+
+export const chainGateOriginTenantSql = `COALESCE(NULLIF(gate.origin->'metadata'->>'bridge_tenant',''),
+  (SELECT root_message.tenant_id FROM messages root_message WHERE root_message.id=gate.root_message_id))`;

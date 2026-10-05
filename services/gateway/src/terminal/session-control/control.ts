@@ -22,11 +22,7 @@ import {
 } from '../types.js';
 import { authorizeTerminalControlActor } from './control-authorization.js';
 
-/**
- * Taking control is the writable action and its reason is hand typed, never generated. Giving it
- * back is not: `beforeunload` has nobody left to type, so a release without a reason carries this
- * one and still leaves the audit trail saying who gave the alias back.
- */
+/** Releases without a reason still record the operator who returned control. */
 const DEFAULT_RELEASE_REASON = 'operator_released';
 
 type TeardownSessionRow = Pick<

@@ -48,7 +48,10 @@ export const FRAME_TAGS = {
   WRITE_BATCH_ERR: 0x5c,
   WRITE_BATCH_CANCEL: 0x5d,
   /** Unambiguous close of a successful read; READ_ERR is already terminal on its own. */
-  READ_DONE: 0x5e
+  READ_DONE: 0x5e,
+  WRITE_STATUS: 0x5f,
+  WRITE_STATUS_OK: 0x60,
+  WRITE_STATUS_ERR: 0x61
 } as const;
 
 export type FrameTag = (typeof FRAME_TAGS)[keyof typeof FRAME_TAGS];

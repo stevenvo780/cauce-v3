@@ -1,6 +1,7 @@
 import type { ChainSilenceSweepResult, DatabasePool } from '@cauce/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DispatcherMetrics } from '../../services/dispatcher/src/metrics.js';
+import { CONTEXT_WRITE_QUARANTINE_KIND } from '../../packages/store/src/repository/agent-context-quarantine.js';
 
 /**
  * Pure-class tests for `services/dispatcher/src/metrics.ts`.
@@ -50,8 +51,8 @@ function stubbedPool(matchers: readonly { match: (sql: string) => boolean; rows:
 }
 
 const sql = {
-  jobs: (s: string): boolean => s.includes('FROM jobs GROUP BY lane,status'),
-  jobOldest: (s: string): boolean => s.includes("FROM jobs WHERE status='queued'"),
+  jobs: (s: string): boolean => s.replace(/\s+/gu, ' ').includes('FROM jobs WHERE kind<>$1 GROUP BY lane,status'),
+  jobOldest: (s: string): boolean => s.includes("FROM jobs WHERE status='queued' AND kind<>$1"),
   deliveries: (s: string): boolean =>
     s.includes('FROM deliveries d JOIN messages m ON m.id=d.message_id GROUP BY m.lane,d.status'),
   deliveryOldest: (s: string): boolean =>
@@ -401,7 +402,7 @@ describe('DispatcherMetrics: render() exposition Prometheus', () => {
       ]}
     ];
     const seenQueries: string[] = [];
-    const query = vi.fn(async <Row>(sqlText: string): Promise<FakeQueryResult<Row>> => {
+    const query = vi.fn(async <Row>(sqlText: string, _params: readonly unknown[] = []): Promise<FakeQueryResult<Row>> => {
       seenQueries.push(sqlText.replace(/\s+/g, ' ').slice(0, 80));
       for (const m of matchersLocal) {
         if (m.match(sqlText)) return { rows: m.rows as readonly Row[], rowCount: m.rows.length };
@@ -412,6 +413,9 @@ describe('DispatcherMetrics: render() exposition Prometheus', () => {
     const { metrics } = makeMetrics({ pool });
     const text = await metrics.render(true);
     expect(seenQueries.length).toBe(10);
+    const quarantineFiltered = query.mock.calls.filter(([sqlText]) => sqlText.includes('kind<>$1'));
+    expect(quarantineFiltered).toHaveLength(4);
+    for (const [, params] of quarantineFiltered) expect(params).toEqual([CONTEXT_WRITE_QUARANTINE_KIND]);
     expect(text).toMatch(/cauce_dispatcher_job_queue_depth\{lane="interactive",status="queued"\} 5/);
     expect(text).toMatch(/cauce_dispatcher_job_queue_depth\{lane="batch",status="queued"\} 3/);
     expect(text).toMatch(/cauce_dispatcher_job_oldest_seconds\{lane="interactive",status="queued"\} 12.5/);

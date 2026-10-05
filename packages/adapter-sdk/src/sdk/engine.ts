@@ -1,3 +1,4 @@
+import { deliveryPhaseObserver, phaseEmitter } from "./openclaw-phases.js";
 import { noticeHistoryFor } from "./notify-history-context.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -50,12 +51,10 @@ import { isConversationStatusRequest, runConversationStatus } from "./engine/con
 import { DEFAULT_NO_PROGRESS_TIMEOUT_MS } from "./message-timeout.js";
 import type { EmissionRuntime } from "./mcp-emission/runtime.js";
 import type { EmissionTurn } from "./mcp-emission/tools.js";
-
 export type {
   EventPublisher,
 } from "./engine/contracts.js";
 export { profileAdoptionFor } from "./engine/contracts.js";
-
 export class AdapterEngine {
   private readonly egressReceipts: AdapterEngineOptions["egressReceipts"];
   private readonly emission: EmissionRuntime | undefined;
@@ -82,7 +81,6 @@ export class AdapterEngine {
   private readonly claimMonitors = new Map<string, ClaimMonitor>();
   private readonly fenced = new Set<string>();
   private readonly renewalDeps: ClaimRenewalDeps;
-
   constructor(options: AdapterEngineOptions) {
     this.egressReceipts = options.egressReceipts;
     this.emission = options.emission;
@@ -128,11 +126,9 @@ export class AdapterEngine {
       emitClaimRenewal: (record, phase) => this.emitClaimRenewal(record, phase),
     };
   }
-
   get epoch(): number {
     return this.store.epoch;
   }
-
   async activateEpoch(epoch: number): Promise<void> {
     if (epoch < this.store.epoch) throw new StaleEpochError(epoch, this.store.epoch);
     const activation = await this.store.activateEpoch(epoch);
@@ -143,7 +139,6 @@ export class AdapterEngine {
       }
     }
   }
-
   handleDelivery(delivery: Delivery): Promise<void> {
     if (delivery.epoch !== this.store.epoch) return this.rejectStale(delivery);
     const active = this.tasks.get(delivery.delivery_id);
@@ -180,7 +175,6 @@ export class AdapterEngine {
       return task;
     }
     const invocation = prepareDeliveryInvocation(delivery, this.harness, this.harnessForDelivery, this.ownTenantId);
-
     this.logger({
       event: 'delivery_start',
       delivery_id: delivery.delivery_id,
@@ -188,7 +182,6 @@ export class AdapterEngine {
       attempt: delivery.attempt,
       timestamp: this.clock.now().toISOString(),
     });
-
     const execution = this.runDelivery(delivery, invocation);
     const task = execution.finally(() => {
       if (this.tasks.get(delivery.delivery_id)?.promise === task) {
@@ -205,12 +198,10 @@ export class AdapterEngine {
     });
     return task;
   }
-
   async cancel(cancel: CancelDelivery): Promise<void> {
     if (cancel.epoch !== this.store.epoch) return;
     this.controllers.get(cancel.delivery_id)?.abort(new AdapterError("CANCELLED", "Cancelled by relay", false));
   }
-
   loseClaim(
     deliveryId: string,
     attempt: number,
@@ -232,7 +223,6 @@ export class AdapterEngine {
       false,
     ));
   }
-
   /**
    * Records a dropped queue heartbeat without confirming or aborting the lease.
    */
@@ -246,7 +236,6 @@ export class AdapterEngine {
       reason: "queue_renewal_not_applied",
     });
   }
-
   confirmClaim(
     deliveryId: string,
     attempt: number,
@@ -365,6 +354,9 @@ export class AdapterEngine {
       if (!acquired) return;
     }
 
+    const onOpenClawPhase = harness.definition.id === "openclaw" ? deliveryPhaseObserver(this.logger, delivery) : undefined;
+    const phase = phaseEmitter(onOpenClawPhase, "engine");
+    phase("invocation_enter");
     const messageType = typeof delivery.body.type === "string"
       ? delivery.body.type
       : "request";
@@ -373,6 +365,7 @@ export class AdapterEngine {
       ...(humanInitiator === undefined ? {} : { human_initiator: humanInitiator }),
       self_alias: delivery.recipient_alias,
       sender_alias: delivery.actor_alias,
+      sender_tenant_id: delivery.tenant_id,
       tenant_id: this.ownTenantId ?? delivery.tenant_id,
       room_id: this.ownRoom ?? delivery.room_id,
       channel: delivery.authenticated_context?.channel
@@ -398,6 +391,7 @@ export class AdapterEngine {
       }
     }
 
+    phase("setup_completed");
     const started = await this.store.transitionAndEnqueue(
       delivery.delivery_id,
       "started",
@@ -409,6 +403,7 @@ export class AdapterEngine {
         executionIntentProtocol: "preinvoke-v1",
       },
     );
+    phase("started_ack_enqueued");
     await this.publishLifecycleEvent(started.event);
     const stopClaimRenewal = startClaimRenewal(
       this.renewalDeps,
@@ -443,8 +438,10 @@ export class AdapterEngine {
           routingTargets: requestContext.routing_targets,
         });
       } else {
+        phase("input_enter");
         turnInput = await materializeTurnInput(delivery, this.store,
           { logger: this.logger, tenantId: this.ownTenantId, fetchSealedSecret: this.sealedSecrets });
+        phase("input_completed");
         const attachments = turnInput.attachments;
         const prompt = turnInput.prompt;
         if (reservation !== undefined) await reservation.wait(controller.signal);
@@ -455,7 +452,9 @@ export class AdapterEngine {
         const emissionSocketPath = emissionTurn === undefined || humanInitiator === undefined || !harness.supportsEmissionEndpoint ? undefined : await this.emission?.endpointFor(emissionTurn);
         const noticeHistory = await noticeHistoryFor(delivery, this.store, this.egressReceipts,
           this.ownTenantId, controller.signal, this.clock.now().getTime());
+        phase("harness_enter");
         output = await harness.execute({
+          ...(onOpenClawPhase === undefined ? {} : { onOpenClawPhase }),
           ...(emissionSocketPath === undefined ? {} : { emissionSocketPath }),
           ...(noticeHistory === undefined ? {} : { noticeHistory }),
           prompt,
@@ -498,6 +497,7 @@ export class AdapterEngine {
           },
           onRuntimeProfileConsumed: (profile) => { consumedProfile = profile; },
         });
+        phase("harness_completed");
         this.logger({ event: "emission_result", delivery_id: delivery.delivery_id,
           attempt: delivery.attempt, reason: emissionTurn?.output === undefined ? "text_fallback" : "mcp_deposit" });
       }
@@ -507,6 +507,7 @@ export class AdapterEngine {
           : new AdapterError("CANCELLED", "Harness execution was cancelled", false);
       }
     } catch (error) {
+      phase("harness_failed");
       executionFailure = error;
     } finally {
       if (emissionTurn !== undefined) {

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { strictEqual } from 'node:assert';
-import type { ConsolePublishIntentCommand, PublishMessage, Tenant } from '@cauce/protocol';
+import { HUMAN_MESSAGE_INITIATOR_CAPABILITY, type ConsolePublishIntentCommand, type PublishMessage, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient, PublishOptions } from '../src/index.js';
 import { createHumanPublishAuthority, createHumanReadAuthority } from '../../../services/gateway/src/human-mcp-authority.js';
 import type { VerifiedOAuthIdentity } from '../../../packages/mcp-fleet-monitor/src/gateway-oauth-identity.js';
@@ -97,9 +97,10 @@ export async function publishHumanRoot(account: HumanFixture): Promise<HumanRece
 
 export { databasePool, getRepository };
 
-export async function finishRoots(roots: readonly { messageId: string; reply: string }[]): Promise<void> {
+export async function finishRoots(roots: readonly { messageId: string; humanId: string; reply: string }[]): Promise<void> {
   const repository = getRepository();
-  const connection = await repository.acquireLease('Steven', 'argos', 'owned-human-receipt-agent', [], 60_000, { resume: true });
+  const connection = await repository.acquireLease('Steven', 'argos', 'owned-human-receipt-agent',
+    [HUMAN_MESSAGE_INITIATOR_CAPABILITY], 60_000, { resume: true });
   if (!connection.acquired || connection.epoch === undefined || connection.connection_token === undefined) {
     throw new Error('fixture agent could not acquire its real delivery lease');
   }
@@ -110,6 +111,7 @@ export async function finishRoots(roots: readonly { messageId: string; reply: st
   for (const root of roots) {
     const delivery = deliveries.find((item) => item.message_id === root.messageId);
     if (!delivery) throw new Error('fixture agent could not claim the durable root delivery');
+    strictEqual(delivery.human_initiator?.human_id, root.humanId);
     const ack = await repository.ackDelivery(delivery.delivery_id, 'Steven', 'argos',
       terminalAck(delivery, { instanceId: 'owned-human-receipt-agent', epoch: connection.epoch }, { reply: root.reply }));
     if (!ack.applied) throw new Error('fixture agent ACK was not applied');

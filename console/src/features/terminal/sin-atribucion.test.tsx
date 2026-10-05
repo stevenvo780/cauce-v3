@@ -32,7 +32,6 @@ const WS_PATH = '/v3/console/terminal/ws';
 const SESION_HARNESS = 'pty-harness-t041';
 const SESION_ESCRIBIBLE = 'pty-rw-t041';
 const SESION_SHELL = 'pty-shell-t041';
-const MOTIVO = 'destrabo a mano la aprobacion colgada de zeus';
 const READY = {
   type: 'ready',
   claim_token: '12345678-1234-4234-8234-123456789abc',
@@ -152,7 +151,7 @@ function servirControl(registro: ControlPedido[], fallo: { status: number; reaso
 
 async function abrirZeus(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   renderWithApi(<TerminalPage />);
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }, { timeout: 5000 }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
   await waitFor(() => {
     expect(StubWebSocket.instances.length).toBeGreaterThan(0);
   }, { timeout: 5000 });
@@ -189,15 +188,6 @@ describe('T041 · la toma de teclado exige persona con nombre', () => {
     servirSesiones(sesiones);
     servirControl(controles, { status: 403, reason: codigo });
     await abrirZeus(user);
-    engancharSocket(StubWebSocket.last());
-    await screen.findByRole('button', { name: /tomar el control/i });
-
-    const abiertos = StubWebSocket.instances.length;
-    await user.type(screen.getByLabelText(/motivo/i), MOTIVO);
-    await user.click(screen.getByRole('button', { name: /tomar el control/i }));
-    await waitFor(() => {
-      expect(StubWebSocket.instances.length).toBeGreaterThan(abiertos);
-    }, { timeout: 5000 });
     const escribible = engancharSocket(StubWebSocket.last());
     await waitFor(() => {
       expect(controles).toHaveLength(1);
@@ -234,7 +224,7 @@ describe('T042 · abrir shell y leer sigue permitido (dejar como está)', () => 
     servirSesiones(sesiones);
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled();
     });
@@ -284,7 +274,7 @@ describe('T042 · abrir shell y leer sigue permitido (dejar como está)', () => 
     servirSesiones([]);
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
     await waitFor(() => {
       expect(StubWebSocket.instances).toHaveLength(1);
     });
@@ -321,7 +311,7 @@ describe('T041 · la caída del relay se anuncia de inmediato', () => {
     servirSesiones(sesiones);
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
     await waitFor(() => {
       expect(StubWebSocket.instances).toHaveLength(1);
     });

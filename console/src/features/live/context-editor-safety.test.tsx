@@ -12,6 +12,74 @@ import { FicherosTab, type BorradorDeFichero } from './FicherosTab';
 import { AgentContextPanel } from './AgentContextPanel';
 import { ApiProvider } from '../../api/context';
 import { CauceApi } from '../../api/client';
+import type { ConsoleAccess } from '../../api/types';
+
+const firstHumanSubject = 'human:a3cabdf488acddadf7ef50397f0266b2d2651aa3eea1492294115d15f0276946';
+const secondHumanSubject = 'human:b29a8cac06d72fc3303ac077e2df9b35f5cbc8c542bb93e7d8ba0a8c6d259c86';
+
+function SharedContextHarness({ api }: { api: CauceApi }) {
+  const [open, setOpen] = useState(true);
+  return <ApiProvider api={api}>
+    <button onClick={() => { setOpen(!open); }}>Abrir o cerrar contexto</button>
+    {open ? <AgentContextPanel tenantId="Steven" alias="kant" /> : null}
+  </ApiProvider>;
+}
+
+it('isolates durable human drafts sharing a technical actor and preserves the same human after remount', async () => {
+  let humanSubject = firstHumanSubject;
+  const api = new CauceApi('http://localhost');
+  server.use(
+    http.get('http://localhost/v3/console/access', () => HttpResponse.json({
+      subject: 'Steven:operator', human_subject: humanSubject,
+      roles: ['operator'], permissions: ['config.write'],
+    })),
+    http.get(RUTA_PERFIL, () => HttpResponse.json(perfilAplicado())),
+  );
+  const user = userEvent.setup();
+  const view = render(<SharedContextHarness api={api} />);
+  await user.type(await screen.findByLabelText(/^Identidad y propósito/i), 'borrador privado del primer humano');
+  const toggle = () => user.click(screen.getByRole('button', { name: 'Abrir o cerrar contexto' }));
+  await toggle();
+  await toggle();
+  await waitFor(() => { expect(screen.getByLabelText(/^Identidad y propósito/i)).toHaveValue('borrador privado del primer humano'); });
+  await toggle();
+  humanSubject = secondHumanSubject;
+  await toggle();
+  await waitFor(() => { expect(screen.getByLabelText(/^Identidad y propósito/i)).toHaveValue(''); });
+  await user.type(screen.getByLabelText(/^Identidad y propósito/i), 'borrador privado del segundo humano');
+  await toggle();
+  humanSubject = firstHumanSubject;
+  await toggle();
+  await waitFor(() => { expect(screen.getByLabelText(/^Identidad y propósito/i)).toHaveValue('borrador privado del primer humano'); });
+  view.rerender(<SharedContextHarness api={new CauceApi('http://localhost')} />);
+  await waitFor(() => { expect(screen.getByLabelText(/^Identidad y propósito/i)).toHaveValue(''); });
+});
+
+it.each([undefined, null, '', 'not-a-human', 'human:ABCDEF', `human:${'A'.repeat(64)}`, `${firstHumanSubject}\n`, '00000000-0000-4000-8000-000000000001'])(
+  'preserves the technical legacy scope without accepting a malformed human subject: %s', async (humanSubject) => {
+    let access: ConsoleAccess = { subject: 'Steven:operator', roles: ['operator'], permissions: ['config.write'] };
+    const api = new CauceApi('http://localhost');
+    server.use(
+      http.get('http://localhost/v3/console/access', () => HttpResponse.json(access)),
+      http.get(RUTA_PERFIL, () => HttpResponse.json(perfilAplicado())),
+    );
+    const user = userEvent.setup();
+    render(<SharedContextHarness api={api} />);
+    await user.type(await screen.findByLabelText(/^Identidad y propósito/i), 'borrador técnico legado');
+    const toggle = () => user.click(screen.getByRole('button', { name: 'Abrir o cerrar contexto' }));
+    await toggle();
+    access = { ...access, human_subject: humanSubject };
+    await toggle();
+    await waitFor(() => { expect(screen.getByLabelText(/^Identidad y propósito/i)).toHaveValue('borrador técnico legado'); });
+    await toggle();
+    access = { roles: [], permissions: [] };
+    await toggle();
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^Identidad y propósito/i)).toHaveValue('');
+      expect(screen.getByLabelText(/^Identidad y propósito/i)).toBeDisabled();
+    });
+  },
+);
 
 function ProfileHarness() {
   const [draft, setDraft] = useState<ProfileDraft>();

@@ -1,26 +1,5 @@
-/**
- * TAKING AND GIVING BACK THE KEYBOARD OF A WRITABLE TUI.
- *
- * Four rules are the feature itself and none of them may be softened here:
- *
- *  1. the reason is TYPED BY A HUMAN, 8..280 characters, with no default and no generated text.
- *     `liveTuiReason` is the sentence the console writes on its own to justify a read-only
- *     observation and it never reaches this write;
- *  2. the button exists only when the GATEWAY says the action is possible — `writable_modes` of
- *     `/targets` — never because `harness_rw` happens to appear in the mode list;
- *  3. before the operator types anything the screen states the consequence: while the control is
- *     held the bus does not deliver to that alias and its messages queue up;
- *  4. giving it back is always reachable, survives an error, and is also fired when the panel
- *     goes away. A hold that outlives the tab is what mutes an alias.
- *
- * And one ORDER, which is not cosmetic: the gateway only accepts a take on a session the relay
- * already redeemed (`consumed_at IS NOT NULL`). Opening the writable session returns the moment
- * the grant exists, which is BEFORE the browser attaches, so posting the take there answered
- * `409 stale_terminal_owner` every single time. The take waits for the attach —the same
- * `ticketConsumido` the session bar paints— and says out loud that it is waiting.
- */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { KeyRound, PauseCircle, Undo2 } from 'lucide-react';
+import { KeyRound, Undo2 } from 'lucide-react';
 import { useApi } from '../../api/context';
 import {
   TerminalApiError,
@@ -37,7 +16,7 @@ import { codigoDeDenegacion, explicarDenegacionPty, type DenegacionExplicada } f
 import { WRITABLE_TUI_MODE } from './fleet';
 import { NegativaPty } from './PtySessionDialog';
 import type { PtyChannelState } from './pty-types';
-import { PTY_REASON_MAX_LENGTH, ptyReasonProblem } from './session';
+import { controlTuiReason } from './session';
 
 /** Close code the relay uses on the browser leg when the operator's hold is no longer theirs. */
 const CIERRE_CONTROL_DEVUELTO = 4410;
@@ -126,12 +105,12 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
   /** The relay redeemed the ticket of the session on screen: the same signal the bar paints. */
   sesionEnganchada: boolean;
   estadoDelCanal?: PtyChannelState;
-  /** Opens the writable session with the SAME hand-typed reason; `undefined` when it was refused. */
+  /** Opens the writable session with its audit reason; undefined when refused. */
   onAbrirEscritura: (motivo: string) => Promise<TerminalSessionGrant | undefined>;
   onControlCambia: (sostenido: boolean) => void;
 }) {
   const api = useApi();
-  const [motivo, setMotivo] = useState('');
+  const motivo = controlTuiReason(alias);
   const [arriendo, setArriendo] = useState<ControlDeTuiTomado>();
   const [fase, setFase] = useState<FaseDeToma>('reposo');
   const [reintentable, setReintentable] = useState(false);
@@ -158,7 +137,6 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
   const estadoRef = useRef(estadoDelCanal);
   estadoRef.current = estadoDelCanal;
 
-  const problema = ptyReasonProblem(motivo);
   const pendiente = fase !== 'reposo';
   const escrituraBloqueada = error !== undefined && !canRetryTake(error);
 
@@ -229,7 +207,6 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
     };
   }, [soltarEnSilencio]);
 
-  if (!puedeEscribir) return null;
 
   /** Read through a call so the narrowing of an earlier check does not survive an `await`. */
   function sigueVivo(): boolean {
@@ -248,8 +225,8 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
     }
   }
 
-  async function tomar(allowBusy = false) {
-    if (problema !== undefined || pendiente || tomandoRef.current || escrituraBloqueada) return;
+  async function tomar(allowBusy = true) {
+    if (pendiente || tomandoRef.current || escrituraBloqueada) return;
     tomandoRef.current = true;
     const escrito = motivo.trim();
     setError(undefined);
@@ -346,17 +323,25 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
     }
   }
 
+  const tomarRef = useRef(tomar);
+  tomarRef.current = tomar;
+  const intentoAutomaticoRef = useRef<string>(undefined);
+  useEffect(() => {
+    if (!puedeEscribir || pidiendoSesion || !sesionEnganchada || grant?.target.mode !== WRITABLE_TUI_MODE) return;
+    const incarnation = JSON.stringify([grant.session_id, grant.request_id, grant.owner_generation, grant.owner_token]);
+    if (intentoAutomaticoRef.current === incarnation) return;
+    intentoAutomaticoRef.current = incarnation;
+    void tomarRef.current();
+  }, [grant?.session_id, grant?.request_id, grant?.owner_generation, grant?.owner_token, grant?.target.mode, pidiendoSesion, puedeEscribir, sesionEnganchada]);
+
+  if (!puedeEscribir) return null;
+
   return (
     <section className="pty-control" aria-label="Control de la TUI" data-sostenido={arriendo ? true : undefined} data-fase={fase === 'reposo' ? undefined : fase}>
-      <p className="pty-control-consecuencia">
-        <PauseCircle size={13} aria-hidden="true" />
-        Mientras alguien tiene el control, el bus no le entrega mensajes a {alias}: quedan en cola y salen en orden en cuanto se devuelva.
-      </p>
-
       {arriendo ? (
         <>
-          <p className="pty-control-estado" role="status">
-            Tenés el teclado de esta TUI. {vencimiento(arriendo)} de {alias}.
+          <p className="pty-control-estado" role="status" title={vencimiento(arriendo)}>
+            Tenés el teclado de esta TUI.
           </p>
           {arriendo.dudoso.length > 0 ? (
             // Wears the amber notice rule the panel already has (`pty-control-perdido`): this is the
@@ -377,47 +362,17 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
         </>
       ) : (
         <>
-          {grant?.target.mode === WRITABLE_TUI_MODE ? (
-            <p className="pty-control-pista">Esta TUI está en solo lectura. Cambiar de pestaña devuelve el control; para usar el teclado, tomalo de nuevo.</p>
-          ) : null}
-          <label className="pty-control-motivo" htmlFor="pty-control-motivo">
-            Motivo de la toma (lo escribís vos y es lo único que queda en la auditoría)
-            <textarea
-              id="pty-control-motivo"
-              value={motivo}
-              onChange={(evento) => { setMotivo(evento.target.value); }}
-              rows={2}
-              maxLength={PTY_REASON_MAX_LENGTH}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="Escribí qué vas a hacer con el teclado de este agente…"
-              aria-describedby="pty-control-pista"
-            />
-          </label>
-          <p className="pty-control-pista" id="pty-control-pista">
-            {problema ?? `Motivo válido · ${String(motivo.trim().length)}/${String(PTY_REASON_MAX_LENGTH)}`}
-          </p>
           <button
             className="button small primary pty-control-tomar"
             type="button"
-            disabled={problema !== undefined || pendiente || pidiendoSesion || escrituraBloqueada}
-            title={escrituraBloqueada ? error.titulo : problema}
+            disabled={pendiente || pidiendoSesion || escrituraBloqueada}
+            title={escrituraBloqueada ? error.titulo : `Usar el teclado de ${alias}; los mensajes del bus quedan en cola mientras tengas el control.`}
             onClick={() => void tomar()}
           >
             <KeyRound size={14} aria-hidden="true" /> {pendiente
               ? ETIQUETA_DE_FASE[fase]
               : escrituraBloqueada ? 'Escritura no disponible' : reintentable ? 'Reintentar la toma' : 'Tomar el control'}
           </button>
-          {error?.codigo === 'agent_busy' ? (
-            <button
-              className="button small secondary"
-              type="button"
-              disabled={problema !== undefined || pendiente || pidiendoSesion}
-              onClick={() => void tomar(true)}
-            >
-              Tomar control durante el turno
-            </button>
-          ) : null}
         </>
       )}
 

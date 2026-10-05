@@ -12,17 +12,17 @@
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
     "portadoresBajos": 0,
-    "pantallasMaximas": 5.92,
+    "pantallasMaximas": 5.9,
     "pantallasMaximasEn": "/accounts",
     "rutas": {
       "/": {
-        "pantallas": 0.87,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/overview": {
-        "pantallas": 2.48,
+        "pantallas": 2.5,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -46,37 +46,37 @@
         "objetoPrincipalBajoElPliegue": 1
       },
       "/accounts": {
-        "pantallas": 5.92,
+        "pantallas": 5.9,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages": {
-        "pantallas": 0.87,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages#herramientas": {
-        "pantallas": 0.87,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis": {
-        "pantallas": 0.87,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": 52,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis?view=context": {
-        "pantallas": 0.87,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/fantasma": {
-        "pantallas": 0.87,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -88,25 +88,25 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 1.58,
+        "pantallas": 1.6,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 4.03,
+        "pantallas": 3.75,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/terminal": {
-        "pantallas": 1.88,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 277,
+        "objetoPrincipalTop": 121,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 2.49,
+        "pantallas": 2.51,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -126,71 +126,71 @@
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
     "portadoresBajos": 0,
-    "pantallasMaximas": 4.68,
+    "pantallasMaximas": 4.66,
     "pantallasMaximasEn": "/accounts",
     "rutas": {
       "/": {
-        "pantallas": 0.87,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/overview": {
-        "pantallas": 1.87,
+        "pantallas": 1.89,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live": {
-        "pantallas": 2.77,
+        "pantallas": 2.81,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": 1009,
         "objetoPrincipalBajoElPliegue": 1
       },
       "/live#cajon": {
-        "pantallas": 2.77,
+        "pantallas": 2.91,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": 1009,
         "objetoPrincipalBajoElPliegue": 1
       },
       "/live#perfil": {
-        "pantallas": 2.77,
+        "pantallas": 2.91,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": 1009,
         "objetoPrincipalBajoElPliegue": 1
       },
       "/accounts": {
-        "pantallas": 4.68,
+        "pantallas": 4.66,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages": {
-        "pantallas": 0.87,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages#herramientas": {
-        "pantallas": 0.87,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis": {
-        "pantallas": 0.87,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": 52,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis?view=context": {
-        "pantallas": 0.87,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/fantasma": {
-        "pantallas": 0.87,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -202,25 +202,25 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 1.43,
+        "pantallas": 1.45,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 3.43,
+        "pantallas": 2.15,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/terminal": {
-        "pantallas": 1.7,
+        "pantallas": 0.94,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 225,
+        "objetoPrincipalTop": 121,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 1.91,
+        "pantallas": 1.93,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -240,17 +240,17 @@
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
     "portadoresBajos": 0,
-    "pantallasMaximas": 3.73,
+    "pantallasMaximas": 3.71,
     "pantallasMaximasEn": "/accounts",
     "rutas": {
       "/": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/overview": {
-        "pantallas": 1.25,
+        "pantallas": 1.31,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -262,67 +262,67 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#cajon": {
-        "pantallas": 2.64,
+        "pantallas": 2.72,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": 966,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#perfil": {
-        "pantallas": 2.64,
+        "pantallas": 2.72,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": 966,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 3.73,
+        "pantallas": 3.71,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages#herramientas": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": 52,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis?view=context": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/fantasma": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/queues": {
-        "pantallas": 0.99,
+        "pantallas": 1.04,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 0.98,
+        "pantallas": 1.04,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 2.18,
+        "pantallas": 2.13,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -330,11 +330,11 @@
       "/terminal": {
         "pantallas": 0.94,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 536,
+        "objetoPrincipalTop": 149,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 1.87,
+        "pantallas": 1.92,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -358,13 +358,13 @@
     "pantallasMaximasEn": "/accounts",
     "rutas": {
       "/": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/overview": {
-        "pantallas": 1.03,
+        "pantallas": 1.09,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -376,67 +376,67 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#cajon": {
-        "pantallas": 2.28,
+        "pantallas": 2.38,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": 854,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#perfil": {
-        "pantallas": 2.28,
+        "pantallas": 2.38,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": 854,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 3.5,
+        "pantallas": 3.53,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages#herramientas": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": 52,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis?view=context": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/fantasma": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/queues": {
-        "pantallas": 0.83,
+        "pantallas": 0.88,
         "foldDesaprovechado": 110,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 0.8,
+        "pantallas": 0.85,
         "foldDesaprovechado": 142,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 2.15,
+        "pantallas": 1.55,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -444,11 +444,11 @@
       "/terminal": {
         "pantallas": 0.94,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 352,
+        "objetoPrincipalTop": 149,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 1.87,
+        "pantallas": 1.92,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -472,13 +472,13 @@
     "pantallasMaximasEn": "/accounts",
     "rutas": {
       "/": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/overview": {
-        "pantallas": 0.96,
+        "pantallas": 1.01,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -502,55 +502,55 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 3.24,
+        "pantallas": 3.27,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages#herramientas": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": 52,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis?view=context": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/fantasma": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/queues": {
-        "pantallas": 0.83,
+        "pantallas": 0.88,
         "foldDesaprovechado": 110,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 0.8,
+        "pantallas": 0.85,
         "foldDesaprovechado": 142,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 2.15,
+        "pantallas": 1.36,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -558,11 +558,11 @@
       "/terminal": {
         "pantallas": 0.94,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 334,
+        "objetoPrincipalTop": 149,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 1.87,
+        "pantallas": 1.92,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -586,13 +586,13 @@
     "pantallasMaximasEn": "/accounts",
     "rutas": {
       "/": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/overview": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -616,55 +616,55 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 3.22,
+        "pantallas": 3.25,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages#herramientas": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": 52,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis?view=context": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/fantasma": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/queues": {
-        "pantallas": 0.83,
+        "pantallas": 0.88,
         "foldDesaprovechado": 110,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 0.8,
+        "pantallas": 0.85,
         "foldDesaprovechado": 142,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 2.15,
+        "pantallas": 1.17,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -672,11 +672,11 @@
       "/terminal": {
         "pantallas": 0.94,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 316,
+        "objetoPrincipalTop": 149,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 1.87,
+        "pantallas": 1.92,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0

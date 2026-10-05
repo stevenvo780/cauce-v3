@@ -63,6 +63,9 @@ TAG_WRITE_BATCH_CANCEL = 0x5D
 # Unambiguous close of a successful read. READ_ERR is already terminal on its own; READ_DONE
 # only appears after READ_OK and all its READ_DATA, even when the index/directive is empty.
 TAG_READ_DONE = 0x5E
+TAG_WRITE_STATUS = 0x5F
+TAG_WRITE_STATUS_OK = 0x60
+TAG_WRITE_STATUS_ERR = 0x61
 
 MAX_FRAME = 65536
 # DATA frames carry the 36 ASCII bytes of the session UUID before the raw bytes.

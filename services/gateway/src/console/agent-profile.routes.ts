@@ -1,9 +1,12 @@
+import { randomUUID } from 'node:crypto';
+import { canonicalProfileRuntimeContract, persistAgentContextReconcileInTransaction, type DatabaseClient } from '@cauce/store';
+import { coordinateContextRequest } from './agent-context-write-coordinator.js';
 import type { AgentProfileSourceGuard, AgentProfileSourceReceipt } from '@cauce/store';
 import { assertSourceApplication, parseSourceConfirmation, type ContextSourceConfirmation } from './context-repository/apply-preview.js';
 import { ContextRepositoryError } from './context-repository/model.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
-  AGENT_PROFILE_LIMITS, AliasSchema, TenantSchema, agentProfileUnits,
+  AGENT_PROFILE_LIMITS, AliasSchema, TenantSchema, agentProfileUnits, canonicallyEqual,
   clampToRoleBriefLimit, ficherosDelArnes, nombresDelArnes,
   measureStrictestUnits,
   type AgentProfile, type ContextoDeAlias, type FicheroGenerado, type PresupuestoDeContexto
@@ -62,6 +65,12 @@ export interface AgentProfileDeps {
     revision: number;
     applied_revision: number | null;
   }>;
+  coordinateWrite?<Value>(input: import('./agent-context-write-coordinator.js').ContextWriteCoordinateInput<Value>): Promise<import('./agent-context-write-coordinator.js').CoordinateResult<Value>>;
+  replaceProfileInTransaction?: (
+    client: DatabaseClient, ...args: Parameters<NonNullable<AgentProfileDeps['replaceProfile']>>
+  ) => ReturnType<NonNullable<AgentProfileDeps['replaceProfile']>>;
+  recordAuditInTransaction?: (client: DatabaseClient, entry: TerminalAuditEntry) => Promise<void>;
+  readWriteExpectation?: (tenantId: string, alias: string) => Promise<Exclude<import('./agent-context-write-coordinator.js').ContextWriteCoordinateInput<unknown>['expectedExpectation'], null> | undefined>;
   contextSource?: {
     instance_id: string | undefined;
     readReceipt(tenantId: string, alias: string, actor: { tenant_id: string; alias: string }, applicationId: string): Promise<AgentProfileSourceReceipt | undefined>;
@@ -164,7 +173,7 @@ export interface PreparedProfileRuntime {
   readonly preview: readonly FicheroDeLaVistaPrevia[];
   /** Live evidence BEFORE the batch; `current` is required for a GET `applied`. */
   readonly verification: ProfileRuntimeVerification;
-  apply(): Promise<readonly ProfileRuntimeAck[]>;
+  apply(operation?: import('./governance-write-operation.js').GovernanceWriteOperation): Promise<readonly ProfileRuntimeAck[]>;
 }
 
 export interface ProfileRuntimePreflight {
@@ -512,7 +521,9 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         message: 'el alias está apagado; su perfil desired no se cambia sin un runtime habilitado',
       });
     }
-    if (deps.replaceProfile === undefined || deps.prepareRuntime === undefined) {
+    const replaceInTransaction = deps.replaceProfileInTransaction?.bind(deps);
+    const recordAuditInTransaction = deps.recordAuditInTransaction?.bind(deps);
+    if (replaceInTransaction === undefined || recordAuditInTransaction === undefined || deps.coordinateWrite === undefined || deps.readWriteExpectation === undefined || deps.prepareRuntime === undefined) {
       return denegar(503, {
         error: 'profile_write_unavailable',
         message: 'este gateway no tiene montada la saga durable de perfil y runtime',
@@ -616,113 +627,74 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         });
       }
     }
-    let desired: Awaited<ReturnType<NonNullable<AgentProfileDeps['replaceProfile']>>>;
-    try {
-      desired = sourceGuard === undefined
-        ? await deps.replaceProfile(profile, expectedRevision, actor)
-        : await deps.replaceProfile(profile, expectedRevision, actor, sourceGuard);
-    } catch (error) {
-      const code = runtimeErrorCode(error);
-      if (source !== undefined && !['not_found', 'disabled', 'conflict'].includes(code ?? '')) {
-        return reply.code(503).send({ error: 'profile_write_unconfirmed', state: 'effect_unknown',
-          message: 'el resultado durable es incierto; releé antes de reintentar' });
-      }
-      const status = code === 'not_found' ? 404 : code === 'disabled' || code === 'conflict' ? 409 : 500;
-      return denegar(status, {
-        error: code ?? 'profile_write_failed',
-        message: runtimeErrorMessage(error, 'no se pudo persistir el perfil desired'),
-      });
-    }
-    if (desired.source_receipt !== undefined) return replay(desired.source_receipt);
-    /* The row goes here and only here: past this point the desired revision EXISTS, so every later
-     * outcome reports how far the runtime got instead of denying a write that did happen. */
-    try {
-      await fila(escritura, 'allow', { revision: desired.revision, bytes: Buffer.byteLength(JSON.stringify(profile), 'utf8') });
-    } catch (error) {
-      if (source === undefined) throw error;
-      return reply.code(503).send({ error: 'profile_audit_unconfirmed', state: 'pending', revision: desired.revision });
-    }
-    if (source !== undefined && desired.revision !== Number(expectedRevision) + 1) {
-      return reply.code(409).send({ error: 'profile_revision_mismatch', state: 'pending', revision: desired.revision });
-    }
-
+    const priorExpectation = await deps.readWriteExpectation(tenantId, alias);
+    const newRevision = expectedRevision === null ? 1
+      : canonicallyEqual(profile, current.contexto.perfil) ? expectedRevision : expectedRevision + 1;
     let prepared: PreparedProfileRuntime;
     try {
-      prepared = preflight.materialize(desired.revision);
+      prepared = preflight.materialize(newRevision);
     } catch (error) {
-      return reply.code(runtimeErrorStatus(error)).send({
-        error: runtimeErrorCode(error) ?? 'runtime_revision_materialization_failed',
-        state: 'pending',
-        message: runtimeErrorMessage(
-          error, 'el perfil desired quedó guardado, pero no se pudo materializar su revisión',
-        ),
-        revision: desired.revision,
-        applied_revision: desired.applied_revision,
-      });
+      return reply.code(runtimeErrorStatus(error)).send({ error: runtimeErrorCode(error) ?? 'runtime_revision_materialization_failed', revision: current.revision });
     }
-    if (prepared.revision !== desired.revision) {
-      return reply.code(502).send({
-        error: 'runtime_revision_mismatch',
-        state: 'pending',
-        message: 'el lote preparado no contiene la revisión durable devuelta por el store',
-        revision: desired.revision,
-        applied_revision: desired.applied_revision,
-      });
-    }
-
-    let acknowledgements: readonly ProfileRuntimeAck[];
+    let fenced;
     try {
-      acknowledgements = await prepared.apply();
+      fenced = await coordinateContextRequest(deps.coordinateWrite.bind(deps), request, reply, {
+        tenantId: profile.tenant_id, alias, expectedRevision, expectedExpectation: priorExpectation ?? null,
+        documents: prepared.verification.documents.map((doc) => ({
+          name: doc.name, path: doc.path, beforeSha: doc.observed_sha, targetSha: doc.expected_sha,
+        })),
+        updateDesired: async (client) => {
+          const desired = await replaceInTransaction(client, profile, expectedRevision, actor, sourceGuard);
+          if (desired.revision !== newRevision || desired.source_receipt !== undefined) throw new Error('profile_revision_mismatch');
+          await recordAuditInTransaction(client, {
+            tenant_id: actor.tenant_id, actor_alias: actor.alias, action: 'agent_profile.write', decision: 'allow',
+            metadata: perfilAuditMetadata(escritura, { revision: newRevision, bytes: Buffer.byteLength(JSON.stringify(profile), 'utf8') }),
+          });
+        },
+        dispatch: async (operation) => {
+          const acknowledgements = await prepared.apply(operation);
+          if (!acksCompletos(prepared, acknowledgements)) throw new Error('runtime_ack_incomplete');
+          return { acknowledgements, verificationAfterApply: appliedRuntimeVerification(
+            prepared.verification, acknowledgements, { requireExactBytes: true }),
+          };
+        },
+        persistTarget: async (client, proof, effect) => {
+          const persisted = {
+            value: effect,
+            expectation: { revision: newRevision, generation: proof.writer.runtimeGeneration,
+              documents: proof.documents.map((doc) => ({ name: doc.name, path: doc.path, sha: doc.sha ?? '' })) },
+            documentRevisions: effect.acknowledgements.map((ack) => ({ path: ack.path,
+              sha256: ack.sha, bytes: ack.bytes, actorTenant: actor.tenant_id, actorAlias: actor.alias })),
+            resultAudit: { tenantId: actor.tenant_id, actorAlias: actor.alias, traceId: randomUUID(),
+              metadata: perfilAuditMetadata(escritura, { revision: newRevision, state: 'pending_session_refresh' }) },
+          };
+          await persistAgentContextReconcileInTransaction(client, {
+            mode: 'reload', tenantId: profile.tenant_id, alias, expectedRevision: newRevision,
+            expectedExpectation: canonicalProfileRuntimeContract(priorExpectation) ?? null, apply: async () => persisted,
+          }, canonicalProfileRuntimeContract(priorExpectation), persisted);
+        },
+      });
     } catch (error) {
-      return reply.code(runtimeErrorStatus(error)).send({
-        error: runtimeErrorCode(error) ?? 'runtime_apply_failed',
-        state: source === undefined ? 'pending' : 'effect_unknown',
-        message: runtimeErrorMessage(error, 'el runtime no acreditó el lote'),
-        revision: desired.revision,
-        applied_revision: desired.applied_revision,
+      return denegar(runtimeErrorStatus(error), { error: runtimeErrorCode(error) ?? 'profile_write_failed', revision: current.revision });
+    }
+    if (fenced.state !== 'committed') {
+      return reply.code(fenced.state === 'not_applied' ? 409 : 503).send({
+        error: 'profile_write_unconfirmed', state: fenced.state, operation_id: fenced.operation_id, revision: newRevision, applied_revision: current.applied_revision,
       });
     }
-    if (!acksCompletos(prepared, acknowledgements)) {
-      return reply.code(502).send({
-        error: 'runtime_ack_incomplete', state: 'pending',
-        message: 'el runtime no acreditó exactamente todos los documentos del perfil',
-        revision: desired.revision, applied_revision: desired.applied_revision,
-      });
-    }
-
-    const verificationAfterApply = appliedRuntimeVerification(
-      prepared.verification,
-      acknowledgements,
-      { requireExactBytes: true },
-    );
-    if (deps.recordRuntimeExpectation !== undefined) {
-      try {
-        await deps.recordRuntimeExpectation(
-          tenantId, alias, desired.revision, verificationAfterApply,
-        );
-      } catch (error) {
-        return reply.code(runtimeErrorCode(error) === 'conflict' ? 409 : 503).send({
-          error: runtimeErrorCode(error) ?? 'runtime_expectation_not_recorded', state: 'pending',
-          message: runtimeErrorMessage(error, 'el runtime se escribió pero no se pudo registrar su expectativa'),
-          revision: desired.revision,
-          applied_revision: desired.applied_revision,
-          acknowledgements,
-          runtime_verification: verificationAfterApply,
-        });
-      }
-    }
+    const { acknowledgements, verificationAfterApply } = fenced.value;
     let adoption: ProfileRuntimeAdoptionAck | undefined;
     let adoptionReason = 'el perfil está en disco, pero la TUI compartida todavía no acreditó recibirlo';
     if (deps.readRuntimeAdoption !== undefined) {
       try {
         adoption = await deps.readRuntimeAdoption(
-          tenantId, alias, desired.revision, verificationAfterApply,
+          tenantId, alias, newRevision, verificationAfterApply,
         );
       } catch (error) {
         adoptionReason = runtimeErrorMessage(error, 'no se pudo leer el ACK de adopción del adaptador');
       }
     }
-    if (!adoptionMatches(adoption, desired.revision, verificationAfterApply)
+    if (!adoptionMatches(adoption, newRevision, verificationAfterApply)
       || deps.markProfileApplied === undefined) {
       return reply.code(202).send({
         ok: true,
@@ -732,8 +704,8 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         message: deps.markProfileApplied === undefined
           ? 'el ACK de sesión no se puede acreditar de forma durable en este gateway'
           : adoptionReason,
-        revision: desired.revision,
-        applied_revision: desired.applied_revision,
+        revision: newRevision,
+        applied_revision: current.applied_revision,
         acknowledgements,
         runtime_verification: verificationAfterApply,
         runtime_adoption: null,
@@ -742,15 +714,15 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
 
     let applied: Awaited<ReturnType<NonNullable<AgentProfileDeps['markProfileApplied']>>>;
     try {
-      applied = await deps.markProfileApplied(tenantId, alias, desired.revision, actor);
+      applied = await deps.markProfileApplied(tenantId, alias, newRevision, actor);
     } catch (error) {
       return reply.code(runtimeErrorCode(error) === 'conflict' ? 409 : 503).send({
         error: runtimeErrorCode(error) ?? 'applied_revision_not_recorded', state: 'pending',
         message: runtimeErrorMessage(error, 'el runtime respondió pero no se pudo registrar su revisión'),
-        revision: desired.revision, applied_revision: desired.applied_revision,
+        revision: newRevision, applied_revision: current.applied_revision,
       });
     }
-    if (applied.revision !== desired.revision || applied.applied_revision !== desired.revision) {
+    if (applied.revision !== newRevision || applied.applied_revision !== newRevision) {
       return reply.code(409).send({
         error: 'profile_superseded_after_runtime_ack', state: 'pending',
         message: 'el runtime aplicó esta revisión, pero ya existe otra desired más nueva',
@@ -763,8 +735,8 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       state: 'applied',
       tenant_id: tenantId,
       alias,
-      revision: desired.revision,
-      applied_revision: desired.revision,
+      revision: newRevision,
+      applied_revision: newRevision,
       acknowledgements,
       runtime_adoption: adoption,
     };

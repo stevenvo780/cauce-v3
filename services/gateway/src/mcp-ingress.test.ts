@@ -56,6 +56,7 @@ function humanOptions() {
         agents: async () => ({ tenant_id: 'TenantA', items: [], total: 0, truncated: false }),
         submit: async () => { throw new Error('Fixture cannot publish'); },
         receipt: async () => { throw new Error('Fixture has no receipts'); },
+        inbox: async () => { throw new Error('Fixture has no inbox'); },
       })),
     },
   } satisfies HumanOptions;
@@ -165,6 +166,26 @@ describe('MCP ingress over native HTTP on the Fastify listener', () => {
     expect(options.operationsFactory.forRequest).not.toHaveBeenCalled();
     const wrongMethod = await send(app, { method: 'POST', url: metadataPath, headers, payload: '{' });
     expect(wrongMethod.statusCode).toBe(405); expect(wrongMethod.headers.allow).toBe('GET');
+  });
+
+  it('serves public metadata to browser clients with credential-free CORS without relaxing /mcp', async () => {
+    const options = humanOptions();
+    const app = await mount(options);
+    const foreign = { host: headers.host, origin: 'https://inspector.example' };
+    const preflight = await send(app, { method: 'OPTIONS', url: metadataPath, headers: { ...foreign, 'access-control-request-method': 'GET' } });
+    expect(preflight.statusCode).toBe(204);
+    expect(preflight.headers['access-control-allow-origin']).toBe('*');
+    expect(preflight.headers['access-control-allow-credentials']).toBeUndefined();
+    const response = await send(app, { url: metadataPath, headers: foreign });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(options.authorization.metadata);
+    expect(response.headers['access-control-allow-origin']).toBe('*');
+    expect((await send(app, { url: metadataPath, headers: { host: headers.host } })).headers['access-control-allow-origin']).toBe('*');
+    expect((await send(app, { url: metadataPath, headers: { ...foreign, host: 'other.example' } })).statusCode).toBe(403);
+    const mcp = await send(app, { method: 'POST', url: '/mcp', headers: { ...headers, origin: 'https://inspector.example' }, payload: rpc('tools/list') });
+    expect(mcp.statusCode).toBe(403);
+    expect(mcp.headers['access-control-allow-origin']).toBeUndefined();
+    expect(options.authorization.authenticateIdentity).not.toHaveBeenCalled();
   });
 
   it('authorizes before JSON, media-type and method handling without accepting cookies as bearer', async () => {
@@ -298,6 +319,7 @@ describe('MCP ingress over native HTTP on the Fastify listener', () => {
         agents: async () => ({ tenant_id: 'TenantA', items: [], total: 0, truncated: false }),
         submit: async () => { throw new Error('Fixture cannot publish'); },
         receipt: async () => { throw new Error('Fixture has no receipts'); },
+        inbox: async () => { throw new Error('Fixture has no inbox'); },
       };
     });
     const app = await mount(options);

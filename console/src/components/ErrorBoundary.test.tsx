@@ -97,15 +97,16 @@ function agenteDePrueba(): FleetAgent {
   };
 }
 
-it('en la terminal del operador, un fallo del grid deja viva la flota de al lado', async () => {
+it('en la terminal del operador, un fallo del grid deja operativo el selector', async () => {
   const agente = agenteDePrueba();
   renderWithApi(
-    <OperatorWorkspace agents={[agente]} initialAgentId={agente.id} adapters={[]} fleetLoading={false} />,
+    <OperatorWorkspace agents={[agente]} initialAgentId={agente.id} fleetLoading={false} />,
   );
 
   await waitFor(() => { expect(screen.getByRole('alert')).toBeInTheDocument(); });
   expect(screen.getByRole('alert')).toHaveTextContent('La terminal del agente');
-  expect(screen.getByRole('button', { name: /abrir sesión con zeus/i })).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Agente' })).toBeEnabled();
+  expect(screen.getByRole('option', { name: /^zeus ·/ })).toHaveValue(agente.id);
 });
 
 it('en el armazón, una vista que revienta no se lleva la navegación y el aviso la nombra', async () => {

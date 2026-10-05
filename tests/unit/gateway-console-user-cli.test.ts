@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DatabasePool } from '@cauce/store';
+import type { DatabaseClient, DatabasePool } from '@cauce/store';
 
 function exigir<T>(valor: T | undefined, que: string): T {
   if (valor === undefined) throw new Error(`se esperaba ${que} y no lo hubo`);
@@ -23,6 +23,14 @@ function createStubPool(impl?: (sql: string, params: unknown[]) => Promise<{ row
   return { query, end, pool };
 }
 
+async function importUnitStoreMock(createPool: (connectionString: string, options?: unknown) => DatabasePool) {
+  return {
+    createPool: vi.fn(createPool),
+    withTransaction: async <T>(pool: DatabasePool, work: (client: DatabaseClient) => Promise<T>): Promise<T> =>
+      work({ query: pool.query.bind(pool), on: vi.fn(), off: vi.fn(), release: vi.fn() } as unknown as DatabaseClient),
+  };
+}
+
 async function importCli(): Promise<unknown> {
   return import('../../services/gateway/src/console-user-cli.js');
 }
@@ -35,7 +43,7 @@ let originalPasswordEnv: string | undefined;
 beforeEach(() => {
   vi.resetModules();
   stub = createStubPool();
-  vi.doMock('@cauce/store', () => ({ createPool: vi.fn(() => stub.pool) }));
+  vi.doMock('@cauce/store', () => importUnitStoreMock((_connectionString) => stub.pool));
   vi.doMock('../../services/gateway/src/password.js', () => ({
     assertPasswordPolicy: vi.fn(),
     hashPassword: vi.fn(async () => 'MOCKED-SCRYPT-HASH'),
@@ -168,8 +176,9 @@ describe('parseArguments — última gana con flags duplicados', () => {
 
     await importCli();
 
-    expect(stub.query).toHaveBeenCalledTimes(1);
-    const call = exigir(stub.query.mock.calls[0], 'una llamada registrada');
+    expect(stub.query).toHaveBeenCalledTimes(2);
+    const call = exigir(stub.query.mock.calls.find(([sql]) => String(sql).startsWith('INSERT INTO console_users')),
+      'el INSERT de la cuenta');
     const params = call[1] as unknown[];
 
     expect(params[7]).toBe('segundo@example.com');
@@ -192,12 +201,13 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
 
     await importCli();
 
-    expect(stub.query).toHaveBeenCalledTimes(1);
-    const call = exigir(stub.query.mock.calls[0], 'una llamada registrada');
+    expect(stub.query).toHaveBeenCalledTimes(2);
+    const call = exigir(stub.query.mock.calls.find(([sql]) => String(sql).startsWith('INSERT INTO console_users')),
+      'el INSERT de la cuenta');
     const sql = String(call[0]);
     const params = call[1] as unknown[];
     expect(sql).toContain('INSERT INTO console_users');
-    expect(sql).toContain('ON CONFLICT (email_normalized) DO UPDATE SET');
+    expect(sql).toContain('ON CONFLICT (email_normalized) DO NOTHING');
 
     expect(params[7]).toBe('User@Example.com'.trim());
     expect(params[0]).toBe('user@example.com');
@@ -208,6 +218,12 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
     expect(params[3]).toBe('operator');
     expect(params[4]).toBe('Steven');
     expect(params[5]).toBe('kant');
+
+    const calls = stub.query.mock.calls as unknown as [unknown, unknown][];
+    expect(calls.some(([statement, rawParams]) => {
+      if (!String(statement).startsWith('INSERT INTO human_tenant_memberships') || !Array.isArray(rawParams)) return false;
+      return rawParams[0] === row.id && rawParams[3] === 'operator';
+    })).toBe(true);
 
     expect(stub.end).toHaveBeenCalledTimes(1);
   });
@@ -236,10 +252,12 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
 
     await importCli();
 
-    expect(stub.query).toHaveBeenCalledTimes(1);
-    const params = exigir(stub.query.mock.calls[0], 'una llamada registrada')[1] as unknown[];
+    expect(stub.query).toHaveBeenCalledTimes(2);
+    const insert = exigir(stub.query.mock.calls.find(([sql]) => String(sql).startsWith('INSERT INTO console_users')),
+      'el INSERT de la cuenta');
+    const params = insert[1] as unknown[];
     expect(params.slice(2, 7)).toEqual([null, null, null, null, null]);
-    const sql = String(exigir(stub.query.mock.calls[0], 'una llamada registrada')[0]);
+    const sql = String(insert[0]);
     expect(sql).toContain("COALESCE($3,split_part($8,'@',1))");
     expect(sql).toContain("COALESCE($4,'operator')");
     expect(sql).toContain("COALESCE($5,'Steven')");
@@ -263,12 +281,15 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
   });
 
   it('cuenta existente: cierra el pool después de guardar', async () => {
-    stub.query.mockResolvedValueOnce({ rows: [{ id: '00000000-0000-4000-8000-000000000005', role: 'reader', tenant_id: 'Equipo', alias: 'salva', active: false }], rowCount: 1 });
+    stub.query.mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [{ id: '00000000-0000-4000-8000-000000000005', role: 'reader', tenant_id: 'Equipo', alias: 'salva', active: false }], rowCount: 1 });
     process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--alias', 'kant'];
 
     await importCli();
 
-    expect(stub.query).toHaveBeenCalledTimes(1);
+    expect(stub.query).toHaveBeenCalledTimes(2);
+    expect(stub.query.mock.calls[0]?.[0]).toContain('ON CONFLICT (email_normalized) DO NOTHING');
+    expect(stub.query.mock.calls[1]?.[0]).toMatch(/^UPDATE console_users SET/);
 
 
     expect(stub.end).toHaveBeenCalledTimes(1);
@@ -315,7 +336,7 @@ describe('desactivación de cuenta (UPDATE active=false)', () => {
       void options;
       return stub.pool;
     });
-    vi.doMock('@cauce/store', () => ({ createPool: createPoolSpy }));
+    vi.doMock('@cauce/store', () => importUnitStoreMock(createPoolSpy));
     stub.query.mockResolvedValueOnce({ rows: [{ id: '00000000-0000-4000-8000-000000000099', role: 'operator', tenant_id: 'Steven', alias: 'kant', active: true }], rowCount: 1 });
     process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--alias', 'kant'];
 
@@ -374,15 +395,21 @@ describe('mantenimiento conservador de una cuenta existente', () => {
       display_name: 'Persona existente', role: 'reader', tenant_id: 'Equipo', alias: 'salva',
       active: false, created_at: new Date(0), updated_at: new Date(1) };
     stub = createStubPool(async (sql, params) => {
-      const conflict = sql.split('DO UPDATE SET')[1] ?? '';
+      if (sql.startsWith('INSERT INTO console_users')) {
+        expect(sql).toContain('ON CONFLICT (email_normalized) DO NOTHING');
+        return { rows: [], rowCount: 0 };
+      }
+      expect(sql).toMatch(/^UPDATE console_users SET/);
+      expect(params).toEqual(['a@b.c', 'MOCKED-SCRYPT-HASH', null, null, null, null, null]);
+      expect(sql).toContain('display_name=COALESCE($3,console_users.display_name)');
+      expect(sql).toContain('role=COALESCE($4,console_users.role)');
+      expect(sql).toContain('tenant_id=COALESCE($5,console_users.tenant_id)');
+      expect(sql).toContain('alias=COALESCE($6,console_users.alias)');
+      expect(sql).toContain('active=COALESCE($7,console_users.active)');
       const changed = { ...account };
-      if (conflict.includes('display_name=EXCLUDED.display_name')) changed.display_name = String(params[2]);
-      if (conflict.includes('role=EXCLUDED.role')) changed.role = String(params[3]);
-      if (conflict.includes('tenant_id=EXCLUDED.tenant_id')) changed.tenant_id = String(params[4]);
-      if (conflict.includes('alias=EXCLUDED.alias')) changed.alias = String(params[5]);
-      if (conflict.includes('active=true')) changed.active = true;
       expect(changed).toEqual(account);
-      return { rows: [changed], rowCount: 1 };
+      return { rows: [{ id: changed.id, role: changed.role, tenant_id: changed.tenant_id,
+        alias: changed.alias, active: changed.active }], rowCount: 1 };
     });
     process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c'];
     await importCli();

@@ -19,6 +19,7 @@ fi
 LOCK_ROOT=${CAUCE_PTY_LOCK_ROOT:-$default_lock_root}
 AGENT_SOURCE="$SCRIPT_ROOT/cauce_pty_agent"
 REAPER_SOURCE="$SCRIPT_ROOT/reap_orphan_agent.py"
+JOURNAL_SOURCE="$SCRIPT_ROOT/launcher_write_journal.py"
 AGENT_VERSION=${CAUCE_PTY_AGENT_VERSION:-1}
 DOCKER_CALL_TIMEOUT=${CAUCE_PTY_DOCKER_TIMEOUT:-30}
 
@@ -74,6 +75,7 @@ command -v timeout >/dev/null 2>&1 || die 'timeout is unavailable' 127
 [[ $DOCKER_CALL_TIMEOUT =~ ^[0-9]{1,4}$ && $DOCKER_CALL_TIMEOUT -ge 1 ]] || die 'docker call timeout is invalid'
 [[ -f $AGENT_SOURCE/__main__.py && -d $AGENT_SOURCE && ! -L $AGENT_SOURCE ]] || die_transient 'PTY agent source is unavailable'
 [[ -f $REAPER_SOURCE && ! -L $REAPER_SOURCE ]] || die_transient 'PTY reaper source is unavailable'
+[[ -f $JOURNAL_SOURCE && ! -L $JOURNAL_SOURCE ]] || die_transient 'PTY journal provisioner is unavailable'
 
 # 1. Alias -> container tuple. Read-only use of the fleet mapping owned by ops/scripts.
 mapping_line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS_ROOT/scripts/container-alias-query.py" "$alias_name") || exit $?
@@ -558,6 +560,17 @@ PYTHON
   printf '%s' "$measured"
 }
 
+governance_journal_dir=''
+prepare_governance_journal() {
+  local mounts
+  mounts=$(docker_control inspect --format '{{json .Mounts}}' "$container_id") || die 'cannot inspect journal state mount'
+  governance_journal_dir=$(docker_control exec -i --user "$runtime_uid:$runtime_gid" "$container_id" \
+    /usr/bin/python3 - "$state_directory" "$container_id" "$mounts" < "$JOURNAL_SOURCE") \
+    || die 'cannot provision the persistent PTY write journal' 78
+  [[ $governance_journal_dir == "$state_directory/pty-governance-journal/$container_id" ]] \
+    || die 'PTY write journal path differs from its state scope' 78
+}
+
 publish_bundle() {
   local shell_candidates harness_command tmux_tui openclaw_tui runtime_facts
   shell_candidates=${CONFIG[SHELL_CANDIDATES]:-'[["/bin/bash","-l"],["/bin/sh","-l"]]'}
@@ -571,7 +584,7 @@ publish_bundle() {
     TMUX_SESSION_FOUND=''
     # shellcheck disable=SC2034  # contract: the PTY suite reads this variable
     TMUX_TARGET_FOUND=''
-    if [[ $harness == codex || $harness == claude ]]; then
+    if [[ $harness == codex || $harness == claude || $harness == muse || $harness == grok ]]; then
       if derive_harness_command; then
         printf 'cauce-pty-launcher: live tmux context measured alias=%s socket=%s measured_session_id=%s\n' \
           "$alias_name" "$TMUX_SOCKET" "$TMUX_SESSION_FOUND" >&2
@@ -641,6 +654,7 @@ publish_bundle() {
   CAUCE_PTY_BUNDLE_TMUX_TUI=$tmux_tui \
   CAUCE_PTY_BUNDLE_OPENCLAW_TUI=$openclaw_tui \
   CAUCE_PTY_BUNDLE_RUNTIME_FACTS=$runtime_facts \
+  CAUCE_PTY_BUNDLE_JOURNAL=$governance_journal_dir \
   CAUCE_PTY_BUNDLE_VERSION=$AGENT_VERSION \
   PYTHONDONTWRITEBYTECODE=1 python3 - > "$local_bundle" <<'PYTHON'
 import json, os, sys
@@ -686,6 +700,7 @@ document = {
     "client_key_pem": read(os.path.join(pki, "client.key")),
     "ca_pem": read(os.path.join(pki, "ca.crt")),
     "agent_version": os.environ["CAUCE_PTY_BUNDLE_VERSION"],
+    "governance_journal_dir": os.environ["CAUCE_PTY_BUNDLE_JOURNAL"],
 }
 server_name = os.environ.get("CAUCE_PTY_BUNDLE_RELAY_SERVER_NAME", "")
 if server_name:
@@ -736,6 +751,7 @@ start_agent() {
   previous_generation=$container_generation
   resolve_runtime_identity
   publish_agent
+  prepare_governance_journal
   publish_bundle
   # Re-verify the incarnation: if the container restarted while we were copying, the published
   # bundle names a generation that no longer exists and no ticket for it can ever verify, so

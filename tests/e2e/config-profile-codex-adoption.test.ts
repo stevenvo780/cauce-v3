@@ -89,9 +89,120 @@ function classifyFailure(value: string): string {
   return 'unspecified';
 }
 
+async function cleanupOnce<T>(
+  state: { attempted: boolean },
+  stop: () => Promise<T>,
+  primaryFailure?: { error: unknown },
+): Promise<T | undefined> {
+  if (state.attempted) return undefined;
+  state.attempted = true;
+  try {
+    return await stop();
+  } catch (cleanupError) {
+    if (primaryFailure !== undefined) {
+      throw new AggregateError([primaryFailure.error, cleanupError],
+        'Codex profile E2E failed and fixture cleanup also failed', { cause: primaryFailure.error });
+    }
+    throw cleanupError;
+  }
+}
+
+describe('cleanup de adopción de perfil', () => {
+  it('conserva el error del test y no reintenta un stop fallido', async () => {
+    const state = { attempted: false };
+    const primary = new Error('synthetic assertion failure');
+    const cleanup = new Error('synthetic cleanup failure');
+    const stop = vi.fn(async () => { throw cleanup; });
+
+    let observedError: unknown;
+    try {
+      await cleanupOnce(state, stop, { error: primary });
+    } catch (error) {
+      observedError = error;
+    }
+    expect(observedError).toBeInstanceOf(AggregateError);
+    expect((observedError as AggregateError).cause).toBe(primary);
+    expect((observedError as AggregateError).errors).toEqual([primary, cleanup]);
+    await expect(cleanupOnce(state, stop, { error: primary })).resolves.toBeUndefined();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+});
+
 describe('adopción real del perfil de Codex', () => {
   it('comprueba el entrypoint compilado y sus dependencias en el namespace aislado', () => {
-    expect(() => assertCodexAdapterBuildAvailable(process.cwd())).not.toThrow();
+    expect(() => { assertCodexAdapterBuildAvailable(process.cwd()); }).not.toThrow();
+  });
+
+  it('clasifica un módulo ausente sin exponer rutas del scratch ni stderr crudo', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'cauce-codex-namespace-negative-'));
+    try {
+      const entry = join(root, 'packages/adapter-sdk/dist/src/bin');
+      const protocol = join(root, 'packages/protocol/dist');
+      await mkdir(entry, { recursive: true, mode: 0o700 });
+      await mkdir(protocol, { recursive: true, mode: 0o700 });
+      await writeFile(join(entry, 'codex.js'), '', { mode: 0o600 });
+      await writeFile(join(entry, 'shared.js'), '', { mode: 0o600 });
+      await writeFile(join(protocol, 'index.js'), '', { mode: 0o600 });
+
+      let observed: unknown;
+      try {
+        assertCodexAdapterBuildAvailable(root);
+      } catch (error) {
+        observed = error;
+      }
+      expect(observed).toBeInstanceOf(Error);
+      const message = observed instanceof Error ? observed.message : '';
+      expect(message).toContain('reason=NAMESPACE_PROBE_NODE_MISSING');
+      expect(message).toContain('exit=1');
+      expect(message).toContain('signal=none');
+      expect(message).toContain('error_name=none');
+      expect(message).toContain('error_code=none');
+      expect(message).not.toContain(root);
+      expect(message).not.toContain('Cannot find module');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('clasifica un error de spawn con stderr nulo sin sustituir el error primario', async () => {
+    const scratch = await mkdtemp(join(tmpdir(), 'cauce-codex-spawn-negative-'));
+    const root = join(scratch, 'root');
+    const bin = join(scratch, 'bin');
+    const previousPath = process.env.PATH;
+    try {
+      const entry = join(root, 'packages/adapter-sdk/dist/src/bin');
+      const protocol = join(root, 'packages/protocol/dist');
+      await mkdir(entry, { recursive: true, mode: 0o700 });
+      await mkdir(protocol, { recursive: true, mode: 0o700 });
+      await mkdir(bin, { recursive: true, mode: 0o700 });
+      await writeFile(join(entry, 'codex.js'), '', { mode: 0o600 });
+      await writeFile(join(entry, 'shared.js'), '', { mode: 0o600 });
+      await writeFile(join(protocol, 'index.js'), '', { mode: 0o600 });
+      const bwrap = join(bin, 'bwrap');
+      await writeFile(bwrap, '#!/cauce-test-missing-interpreter\n', { mode: 0o700 });
+      await chmod(bwrap, 0o700);
+      process.env.PATH = bin;
+
+      let observed: unknown;
+      try {
+        assertCodexAdapterBuildAvailable(root);
+      } catch (error) {
+        observed = error;
+      }
+      expect(observed).toBeInstanceOf(Error);
+      const message = observed instanceof Error ? observed.message : '';
+      expect(message).toContain('exit=none');
+      expect(message).toContain('signal=none');
+      expect(message).toContain('error_name=Error');
+      expect(message).toContain('error_code=ENOENT');
+      expect(message).toContain('reason=NAMESPACE_PROBE_NO_STDERR');
+      expect(message).not.toContain(scratch);
+      expect(message).not.toContain('interpreter');
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      await rm(scratch, { recursive: true, force: true });
+    }
   });
 
   it('rechaza un SDK sin compilar antes de iniciar Docker o crear el wrapper', async () => {
@@ -194,6 +305,8 @@ describe('adopción real del perfil de Codex', () => {
     await dockerRequirement.skipIfUnavailable(skip);
     const fixture = await startCodexProfileAdoptionFixture();
     let cleanup: Awaited<ReturnType<typeof fixture.stop>> | undefined;
+    const cleanupState = { attempted: false };
+    let primaryFailure: { error: unknown } | undefined;
     try {
       const terminal = await waitForTerminalDelivery(fixture);
       if (terminal.status !== 'done') {
@@ -239,6 +352,7 @@ describe('adopción real del perfil de Codex', () => {
       expect(message.rows).toHaveLength(1);
       expect(JSON.stringify(message.rows[0]?.body)).not.toContain(fixture.marker);
 
+      cleanupState.attempted = true;
       cleanup = await fixture.stop();
       expect(cleanup.profileFileShaAfter).toBe(fixture.profileFileShaBefore);
       expect(cleanup.invocationBudgetUsed).toBe(true);
@@ -270,22 +384,27 @@ describe('adopción real del perfil de Codex', () => {
         resources: cleanup.resources,
         diagnostics: cleanup.diagnostics,
       }));
+    } catch (error) {
+      primaryFailure = { error };
+      throw error;
     } finally {
-      if (cleanup === undefined) {
-        const failedCleanup = await fixture.stop();
-        console.info(JSON.stringify({
-          evidence: 'real-codex-profile-e2e-failed-at-runtime',
-          adapterExit: fixture.getAdapterExit(),
-          wrapperInvocationCount: failedCleanup.wrapperInvocationCount,
-          blockedRetryCount: failedCleanup.blockedRetryCount,
-          realCliSpawnRequested: failedCleanup.realCliSpawnRequested,
-          realCliProcessStarted: failedCleanup.realCliProcessStarted,
-          invocationBudgetUsed: failedCleanup.invocationBudgetUsed,
-          adapterStderrBytes: fixture.getAdapterOutputBytes(),
-          diagnostics: failedCleanup.diagnostics,
-          hostCodexProfileUnchanged: failedCleanup.profileFileShaAfter === fixture.profileFileShaBefore,
-          resources: failedCleanup.resources,
-        }));
+      if (!cleanupState.attempted) {
+        const failedCleanup = await cleanupOnce(cleanupState, () => fixture.stop(), primaryFailure);
+        if (failedCleanup !== undefined) {
+          console.info(JSON.stringify({
+            evidence: 'real-codex-profile-e2e-failed-at-runtime',
+            adapterExit: fixture.getAdapterExit(),
+            wrapperInvocationCount: failedCleanup.wrapperInvocationCount,
+            blockedRetryCount: failedCleanup.blockedRetryCount,
+            realCliSpawnRequested: failedCleanup.realCliSpawnRequested,
+            realCliProcessStarted: failedCleanup.realCliProcessStarted,
+            invocationBudgetUsed: failedCleanup.invocationBudgetUsed,
+            adapterStderrBytes: fixture.getAdapterOutputBytes(),
+            diagnostics: failedCleanup.diagnostics,
+            hostCodexProfileUnchanged: failedCleanup.profileFileShaAfter === fixture.profileFileShaBefore,
+            resources: failedCleanup.resources,
+          }));
+        }
       }
     }
   }, 9 * 60_000);

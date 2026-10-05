@@ -182,7 +182,7 @@ describe('human MCP request-key intents on isolated PostgreSQL', () => {
     const originalContext = await publishedContext(receipt.message_id);
     expect(originalContext).toMatchObject({ auth_channel: 'human-mcp', tenant_id: 'Steven', actor_alias: account.alias });
     expect(originalContext.auth_session_id).toEqual(expect.stringMatching(/^human-mcp:/u));
-    await finishRoot(receipt.message_id);
+    await finishRoot(receipt.message_id, account.humanId);
     await databasePool().query('UPDATE console_users SET display_name=$2 WHERE id=$1', [account.humanId, 'Renamed operator']);
     const renewed = await operations(account);
     expect(await renewed.receipt(receipt.message_id)).toMatchObject({ chain_open: false });

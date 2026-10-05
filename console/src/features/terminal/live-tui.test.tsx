@@ -87,7 +87,7 @@ it('transmite la TUI viva del agente en cuanto se elige el alias, sin diálogo y
   renderWithApi(<TerminalPage />);
 
   // Choosing the agent is ALL the operator does: no mode choice, no written motive.
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
   await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -134,7 +134,7 @@ it('CONTROL NEGATIVO: el mismo alias sin el modo harness no abre ninguna sesión
   recordSessions(calls);
   renderWithApi(<TerminalPage />);
 
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
   await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
   // The PTY is still available (it is the same authorised destination): what is missing is the TUI.
   await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
@@ -142,7 +142,7 @@ it('CONTROL NEGATIVO: el mismo alias sin el modo harness no abre ninguna sesión
   expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled();
   // Said TWICE on purpose, like "Sin autoridad": on the fleet list chip and over the open
   // session. Before, the list chip said "PTY online", in green.
-  expect(screen.getAllByText('Sin TUI que emitir')).toHaveLength(2);
+  expect(screen.getAllByText('Sin TUI que emitir')).toHaveLength(1);
   expect(screen.getByText(/no publica el modo harness.*Modos publicados: shell/i)).toBeInTheDocument();
   // Nothing was asked of the gateway and no socket opened: the absence of the mode closes the door.
   expect(calls).toHaveLength(0);
@@ -161,7 +161,7 @@ it('CONTROL NEGATIVO: publica harness pero el agente PTY está offline; no se in
   recordSessions(calls);
   renderWithApi(<TerminalPage />);
 
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
   await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
 
   await waitFor(() => { expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled(); });
@@ -181,7 +181,7 @@ it('un rechazo del gateway no se reintenta en bucle: la apertura automática es 
   }));
   renderWithApi(<TerminalPage />);
 
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
   await waitFor(() => { expect(attempts).toBe(1); });
   // The panel stays alive and keeps refreshing (targets every 15 s, feed every 2.5 s) without asking again.
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
@@ -197,7 +197,7 @@ it('la shell sigue exigiendo motivo escrito a mano aunque la TUI se abra sola', 
   recordSessions(calls, 'harness');
   renderWithApi(<TerminalPage />);
 
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
   await waitFor(() => { expect(calls).toHaveLength(1); });
 
   await user.click(screen.getByRole('button', { name: /^PTY$/i }));
@@ -227,7 +227,7 @@ describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la 
     rechazaSesiones(403, { error: 'forbidden', message: 'se requiere un token CSRF válido' });
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
     const aviso = await screen.findByRole('alert');
     // The wording comes from `TERMINAL_DENY_MESSAGES.csrf_missing`, which is the ONLY place the
@@ -250,7 +250,7 @@ describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la 
     rechazaSesiones(403, { error: 'forbidden', reason: 'attribution_required: falta identidad por persona.' });
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
     const aviso = await screen.findByRole('alert');
     // The raw code is NOT painted: it is translated. It stays available in `data-codigo`, which is
@@ -270,7 +270,7 @@ describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la 
     recordSessions(calls);
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
     await waitFor(() => { expect(calls).toHaveLength(1); });
 
     // The rejection warning is searched for by its text: the `role="alert"` of `.pty-render-error`

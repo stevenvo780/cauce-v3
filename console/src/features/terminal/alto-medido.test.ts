@@ -18,7 +18,7 @@ const HOJA = sinComentarios(leerCss('features/terminal/terminal-panel.css'));
 const BASE = sinComentarios(leerCss('styles/base.css'));
 const FUENTE = readFileSync(resolve(process.cwd(), 'src/features/terminal/TerminalPage.tsx'), 'utf8');
 
-const CAJA = '.ultimate-terminal-page:not([data-tui="abierta"]) .ultimate-terminal-shell';
+const CAJA = '.ultimate-terminal-page.terminal-focused .ultimate-terminal-shell';
 
 function defectosDelAltoMedido(css: string, variable: string): string[] {
   const defectos: string[] = [];
@@ -32,9 +32,10 @@ function defectosDelAltoMedido(css: string, variable: string): string[] {
     }
     if (!alto.includes(`var(${variable}`)) defectos.push(`el alto no lee el tope medido: ${alto}`);
     if (!alto.includes('430px')) defectos.push(`el alto pierde el suelo de 430px: ${alto}`);
-    if (!/grid-template-rows:\s*minmax\(0, 1fr\)/.test(cuerpo)) {
-      defectos.push('la única fila vuelve a ser `auto` y la lista desborda su propio `overflow: hidden`');
-    }
+
+  }
+  if (!cuerpos.some((cuerpo) => /display:\s*flex/.test(cuerpo) && /flex-direction:\s*column/.test(cuerpo))) {
+    defectos.push('la caja pierde la columna flexible y su contenido desborda');
   }
   return defectos;
 }
@@ -57,7 +58,7 @@ describe('el alto de la caja del terminal sale de una medición, no de una suma 
   });
 
   it('CONTROL NEGATIVO — renombrar la variable en la hoja deja de casar con la del componente', () => {
-    const roto = HOJA.replace('var(--terminal-tope,', 'var(--terminal-alto,');
+    const roto = HOJA.replaceAll('var(--terminal-tope,', 'var(--terminal-alto,');
     expect(roto).not.toBe(HOJA);
     expect(roto).not.toContain(`var(${VAR_TOPE_TERMINAL},`);
     expect(defectosDelAltoMedido(roto, VAR_TOPE_TERMINAL)).toContainEqual(
@@ -66,15 +67,15 @@ describe('el alto de la caja del terminal sale de una medición, no de una suma 
   });
 
   it('CONTROL NEGATIVO — marca la vuelta al número fijo, que es el defecto medido', () => {
-    const roto = HOJA.replace(/height:\s*clamp\(430px[^;]*;/, 'height: clamp(430px, calc(100dvh - 396px), 820px);');
+    const roto = HOJA.replace(/height:\s*max\(430px[^;]*;/g, 'height: 820px;');
     expect(roto).not.toBe(HOJA);
     expect(defectosDelAltoMedido(roto, VAR_TOPE_TERMINAL)).toContainEqual(
       expect.stringContaining('no lee el tope medido'),
     );
   });
 
-  it('CONTROL NEGATIVO — marca la fila implícita, que es la que desborda la lista de la flota', () => {
-    const roto = HOJA.replace('grid-template-rows: minmax(0, 1fr);', '');
+  it('CONTROL NEGATIVO — marca la pérdida de la columna flexible del terminal', () => {
+    const roto = HOJA.replaceAll('flex-direction: column;', '');
     expect(roto).not.toBe(HOJA);
     expect(defectosDelAltoMedido(roto, VAR_TOPE_TERMINAL)).toContainEqual(
       expect.stringContaining('desborda'),

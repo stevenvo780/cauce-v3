@@ -105,7 +105,9 @@ export default defineConfig({
     alias: [
       { find: /^@cauce\/protocol$/, replacement: paquete('protocol') },
       { find: /^@cauce\/store$/, replacement: paquete('store') },
-      { find: /^@cauce\/adapter-sdk$/, replacement: paquete('adapter-sdk') }
+      { find: /^@cauce\/adapter-sdk$/, replacement: paquete('adapter-sdk') },
+      { find: /^@cauce\/mcp-fleet-monitor\/gateway-http$/,
+        replacement: resolve(RAIZ, 'packages/mcp-fleet-monitor/src/gateway-http.ts') }
     ]
   },
   test: {

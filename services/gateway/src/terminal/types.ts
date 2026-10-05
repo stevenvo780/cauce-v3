@@ -69,6 +69,8 @@ export interface AgentPresence {
   readonly project_doc_fallback_filenames?: readonly string[];
   readonly modes: readonly string[];
   readonly connected_since: string;
+  readonly writer_instance_id?: string;
+  readonly features?: readonly string[];
 }
 
 export type PtyState = 'online' | 'agent_offline' | 'not_installed' | 'unknown';

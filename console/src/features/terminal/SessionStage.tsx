@@ -53,6 +53,7 @@ import {
 import { readPtySession, subscribePtySession } from './pty-session';
 import { liveTuiGate, terminalChannelGate } from './plugin';
 import {
+  controlTuiReason,
   liveTuiReason,
   ptySecondsLeft,
   sessionDeliveries,
@@ -162,7 +163,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
     : 'Todavía no se pudo leer si hay canal PTY para este alias.';
 
   const targetMode = grant ? grant.target.mode : liveSession.channelMode;
-  const channelIsLiveTui = targetMode === LIVE_TUI_MODE;
+  const channelIsLiveTui = targetMode === LIVE_TUI_MODE || targetMode === WRITABLE_TUI_MODE;
   const escrituraDisponible = (liveTui.status === 'available' || liveTui.status === 'no_tui')
     && ofreceTuiEscribible(channelTarget);
   const soloLectura = terminalEsSoloLectura(targetMode, controlSostenido);
@@ -172,14 +173,24 @@ export function SessionStage({ session, sessionToken, agents, access, capability
 
   /** Automatic opening of the live TUI when the panel is selected and it is available. */
   useEffect(() => {
-    if (!liveTui.enabled) return;
+    if (!liveTui.enabled && !escrituraDisponible) return;
     if (autoOpenedRef.current === liveSession.id) return;
     // Durable guard: survives the panel remount on a tab switch, which `autoOpenedRef` does not.
     if (liveSession.liveTuiAttempted) return;
     if (liveSession.id in grants || liveSession.id in closedChannels) return;
     autoOpenedRef.current = liveSession.id;
-    void requestChannelRef.current(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
-  }, [closedChannels, grants, liveSession.agent.alias, liveSession.id, liveSession.liveTuiAttempted, liveTui.enabled]);
+    const mode = escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE;
+    void requestChannelRef.current(escrituraDisponible ? controlTuiReason(liveSession.agent.alias) : liveTuiReason(liveSession.agent.alias), mode).catch(mostrarError);
+  }, [closedChannels, grants, liveSession.agent.alias, liveSession.id, liveSession.liveTuiAttempted, liveTui.enabled, escrituraDisponible]);
+
+  function mostrarError(error: unknown) {
+    if (!mountedRef.current) return;
+    setRequestError(explicarDenegacionPty({
+      texto: error instanceof Error ? error.message : undefined,
+      estado: error instanceof TerminalApiError ? error.status : undefined,
+      codigo: error instanceof TerminalApiError ? error.code : undefined,
+    }));
+  }
 
   async function requestChannel(reason: string, mode: string): Promise<TerminalSessionGrant | undefined> {
     const permitido = mode === LIVE_TUI_MODE
@@ -251,13 +262,13 @@ export function SessionStage({ session, sessionToken, agents, access, capability
   }
 
   function openLiveTui() {
-    if (!liveTui.enabled) return;
+    if (!liveTui.enabled && !escrituraDisponible) return;
     if (grant !== undefined && !closedChannels[liveSession.id] && grant.target.mode === LIVE_TUI_MODE) {
       onUpdate({ ...liveSession, mode: 'pty' });
       return;
     }
     setRequestError(undefined);
-    void requestChannel(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
+    void requestChannel(escrituraDisponible ? controlTuiReason(liveSession.agent.alias) : liveTuiReason(liveSession.agent.alias), escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE).catch(mostrarError);
   }
 
   /** Reopens the SAME channel that died: a read-only observation never becomes a writable shell. */
@@ -266,7 +277,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
     await onReleaseChannel(liveSession.id);
     setRequestError(undefined);
     if (eraTui) {
-      await requestChannelRef.current(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
+      await requestChannelRef.current(escrituraDisponible ? controlTuiReason(liveSession.agent.alias) : liveTuiReason(liveSession.agent.alias), escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE).catch(mostrarError);
       return;
     }
     setShowPtyDialog(true);
@@ -309,7 +320,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
                  type="button"
                  aria-pressed={liveSession.mode === 'pty' && channelIsLiveTui}
                  data-active={(liveSession.mode === 'pty' && channelIsLiveTui) || undefined}
-                 disabled={!liveTui.enabled || requesting}
+                 disabled={(!liveTui.enabled && !escrituraDisponible) || requesting}
                  onClick={openLiveTui}
                  title={traducirCodigosEnTexto(liveTui.reason)}
                ><MonitorPlay size={14} aria-hidden="true" /> TUI</button>

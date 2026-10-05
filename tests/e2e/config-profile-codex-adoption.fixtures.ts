@@ -1,10 +1,11 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { accessSync, constants, existsSync, realpathSync, readdirSync, statSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import type { AddressInfo } from 'node:net';
+import { promisify } from 'node:util';
 import { CauceRepository, AgentProfileRepository } from '@cauce/store';
 import { ficherosDelArnes, harnessDocumentPaths, type AgentProfile } from '@cauce/protocol';
 import { buildGateway } from '../../services/gateway/src/app.js';
@@ -14,6 +15,111 @@ import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../help
 const SAFE_MARKER_PREFIX = 'CAUCE_PROFILE_ADOPTION_';
 const WRAPPER_INVOCATION_PREFIX = 'wrapper-invocation-';
 const WRAPPER_RETRY_PREFIX = 'retry-blocked-';
+const execFileAsync = promisify(execFile);
+
+async function attemptCleanup(
+  errors: unknown[],
+  name: string,
+  action: () => Promise<unknown>,
+): Promise<boolean> {
+  try {
+    await action();
+    return true;
+  } catch (error) {
+    errors.push(new Error(`Codex adoption cleanup failed: ${name}`, { cause: error }));
+    return false;
+  }
+}
+
+async function assertOwnedContainerAbsent(containerId: string): Promise<void> {
+  try {
+    await execFileAsync('docker', ['inspect', '--format', '{{.Id}}', containerId], {
+      timeout: 10_000, maxBuffer: 4 * 1024,
+    });
+  } catch (error) {
+    const code = error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined;
+    const stderrValue = error !== null && typeof error === 'object' && 'stderr' in error ? error.stderr : undefined;
+    const stderr = typeof stderrValue === 'string' ? stderrValue : '';
+    if ((code === 1 || code === '1')
+        && stderr.includes(containerId) && /no such (?:object|container)/iu.test(stderr)) return;
+    throw new Error('could not verify owned PostgreSQL container removal', { cause: error });
+  }
+  throw new Error('owned PostgreSQL container remains after fixture cleanup');
+}
+
+export interface CodexFixtureCleanupOptions {
+  readonly expectedProfileSha: string;
+  readonly containerId: string | undefined;
+  readonly setupFailure?: { readonly error: unknown };
+  readonly stopAdapter: () => Promise<unknown>;
+  readonly closeGateway: () => Promise<unknown>;
+  readonly closePool: () => Promise<unknown>;
+  readonly stopContainer: () => Promise<unknown>;
+  readonly confirmContainerAbsent: (containerId: string) => Promise<void>;
+  readonly readProfileSha: () => Promise<string>;
+  readonly readEvidence: () => ReturnType<typeof readCodexWrapperEvidence>;
+  readonly removeScratch: () => Promise<unknown>;
+}
+
+export async function cleanupCodexFixture(options: CodexFixtureCleanupOptions): Promise<{
+  profileFileShaAfter: string;
+  wrapperEvidence: ReturnType<typeof readCodexWrapperEvidence>;
+}> {
+  const errors: unknown[] = [];
+  const adapterStopped = await attemptCleanup(errors, 'adapter process', options.stopAdapter);
+  const gatewayClosed = await attemptCleanup(errors, 'gateway', options.closeGateway);
+  const poolClosed = await attemptCleanup(errors, 'PostgreSQL pool', options.closePool);
+  await attemptCleanup(errors, 'PostgreSQL container stop', options.stopContainer);
+  let databaseAbsent = false;
+  if (options.containerId === undefined) {
+    errors.push(new Error('owned PostgreSQL container ID was unavailable for cleanup verification'));
+  } else {
+    try {
+      await options.confirmContainerAbsent(options.containerId);
+      databaseAbsent = true;
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+
+  let profileFileShaAfter = '';
+  try {
+    profileFileShaAfter = await options.readProfileSha();
+    if (options.expectedProfileSha !== profileFileShaAfter) {
+      errors.push(new Error('host Codex profile file changed during the read-only adoption fixture'));
+    }
+  } catch (error) {
+    errors.push(new Error('could not verify the host Codex profile after the fixture', { cause: error }));
+  }
+
+  let wrapperEvidence: ReturnType<typeof readCodexWrapperEvidence> = {
+    wrapperInvocationCount: 0, blockedRetryCount: 0, realCliSpawnRequested: false,
+    realCliProcessStarted: false, invocationBudgetUsed: false,
+  };
+  try {
+    wrapperEvidence = options.readEvidence();
+  } catch (error) {
+    errors.push(new Error('could not read owned wrapper evidence', { cause: error }));
+  }
+
+  if (adapterStopped && gatewayClosed && poolClosed && databaseAbsent) {
+    await attemptCleanup(errors, 'fixture scratch removal', options.removeScratch);
+  } else {
+    errors.push(new Error('fixture scratch retained because child or owned database cleanup was not confirmed'));
+  }
+
+  if (options.setupFailure !== undefined) {
+    if (errors.length > 0) {
+      throw new AggregateError([options.setupFailure.error, ...errors],
+        'Codex profile fixture setup failed and cleanup was incomplete', { cause: options.setupFailure.error });
+    }
+    throw options.setupFailure.error;
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, 'Codex profile fixture cleanup failed', { cause: errors[0] });
+  }
+  return { profileFileShaAfter, wrapperEvidence };
+}
 
 export interface CodexProfileAdoptionFixture {
   readonly database: TestDatabase;
@@ -164,6 +270,32 @@ function namespaceFailureCode(stderr: string): string {
   if (/^(?:node:|Error:|TypeError:|RangeError:|SyntaxError:)/mu.test(stderr)) return 'NODE_PROBE_UNCLASSIFIED';
   if (stderr.trim().length === 0) return 'NAMESPACE_PROBE_NO_STDERR';
   return 'NAMESPACE_PROBE_FAILED';
+}
+
+const SAFE_SPAWN_ERROR_NAMES = new Set(['AbortError', 'Error', 'RangeError', 'TypeError']);
+const SAFE_SPAWN_ERROR_CODES = new Set([
+  'EACCES', 'EAGAIN', 'EBADF', 'ECANCELED', 'EEXIST', 'EINTR', 'EINVAL', 'EIO', 'EISDIR', 'EMFILE',
+  'ENFILE', 'ENOENT', 'ENOMEM', 'ENOSPC', 'ENOTDIR', 'ENOTEMPTY', 'EPERM', 'EPIPE', 'ETIMEDOUT',
+]);
+const SAFE_SIGNAL_NAMES = new Set([
+  'SIGABRT', 'SIGALRM', 'SIGBUS', 'SIGCHLD', 'SIGCONT', 'SIGFPE', 'SIGHUP', 'SIGILL', 'SIGINT',
+  'SIGKILL', 'SIGPIPE', 'SIGQUIT', 'SIGSEGV', 'SIGSTOP', 'SIGTERM', 'SIGTRAP', 'SIGTSTP', 'SIGTTIN',
+  'SIGTTOU', 'SIGUSR1', 'SIGUSR2',
+]);
+
+function safeSpawnErrorField(error: Error | undefined, field: 'name' | 'code'): string {
+  if (error === undefined) return 'none';
+  const value = field === 'name'
+    ? error.name
+    : 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+  if (value === undefined) return 'none';
+  const allowed = field === 'name' ? SAFE_SPAWN_ERROR_NAMES : SAFE_SPAWN_ERROR_CODES;
+  return allowed.has(value) ? value : 'OTHER';
+}
+
+function safeSignalField(signal: string | null): string {
+  if (signal === null) return 'none';
+  return SAFE_SIGNAL_NAMES.has(signal) ? signal : 'OTHER';
 }
 
 function diagnosticSummary(stderr: string): readonly string[] {
@@ -358,7 +490,16 @@ export function assertCodexAdapterBuildAvailable(root: string): void {
     '--', process.execPath, '--input-type=module', '-e', probe,
   ], { encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024 });
   if (result.error !== undefined || result.status !== 0) {
-    throw new Error('Codex adapter build or runtime dependencies are not readable in the isolated E2E namespace');
+    const status = typeof result.status === 'number' ? String(result.status) : 'none';
+    const errorName = safeSpawnErrorField(result.error, 'name');
+    const errorCode = safeSpawnErrorField(result.error, 'code');
+    const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+    const reason = namespaceFailureCode(stderr);
+    throw new Error(
+      `Codex adapter build or runtime dependencies are not readable in the isolated E2E namespace `
+      + `(exit=${status}, signal=${safeSignalField(result.signal)}, error_name=${errorName}, `
+      + `error_code=${errorCode}, reason=${reason})`,
+    );
   }
 }
 
@@ -389,10 +530,12 @@ export async function startCodexProfileAdoptionFixture(
   const { scratch, database } = await startDatabaseWithOwnedScratch(options.startDatabase ?? startTestDatabase);
   let app: Awaited<ReturnType<typeof buildGateway>> | undefined;
   let adapter: ChildProcess | undefined;
+  let databaseContainerId: string | undefined;
   let outputBytes = 0;
   let outputTail = '';
   let closed = false;
   try {
+    databaseContainerId = database.container.getId();
     await resetTestDatabase(database.pool);
     const tenant = 'Steven' as const;
     const alias = `qa_codex_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
@@ -498,35 +641,45 @@ export async function startCodexProfileAdoptionFixture(
       async stop() {
         if (closed) throw new Error('Codex profile fixture cleanup ran more than once');
         closed = true;
-        const cleanupErrors: string[] = [];
-        try { await stopChild(runningAdapter); } catch { cleanupErrors.push('adapter_process'); }
-        try { await app?.close(); } catch { cleanupErrors.push('gateway'); }
-        try { await database.pool.end(); } catch { cleanupErrors.push('postgres_pool'); }
-        try { await database.container.stop(); } catch { cleanupErrors.push('postgres_container'); }
-        let profileFileShaAfter = '';
-        try { profileFileShaAfter = digest(await readFile(profilePath)); }
-        catch { cleanupErrors.push('host_profile_hash'); }
-        const wrapperEvidence = readCodexWrapperEvidence(scratch);
-        try { await rm(scratch, { recursive: true, force: true }); }
-        catch { cleanupErrors.push('fixture_scratch'); }
-        if (profileFileShaBefore !== profileFileShaAfter) {
-          throw new Error('host Codex profile file changed during the read-only adoption fixture');
-        }
-        if (cleanupErrors.length > 0) throw new Error(`Codex profile fixture cleanup failed: ${cleanupErrors.join(',')}`);
+        const runningApp = app;
+        const cleanup = await cleanupCodexFixture({
+          expectedProfileSha: profileFileShaBefore,
+          containerId: databaseContainerId,
+          stopAdapter: () => stopChild(runningAdapter),
+          closeGateway: async () => { if (runningApp !== undefined) await runningApp.close(); },
+          closePool: () => database.pool.end(),
+          stopContainer: () => database.container.stop(),
+          confirmContainerAbsent: assertOwnedContainerAbsent,
+          readProfileSha: async () => digest(await readFile(profilePath)),
+          readEvidence: () => readCodexWrapperEvidence(scratch),
+          removeScratch: () => rm(scratch, { recursive: true, force: true }),
+        });
+        const containerId = databaseContainerId;
+        if (containerId === undefined) throw new Error('owned PostgreSQL container ID was unavailable after cleanup');
         return {
-          profileFileShaAfter,
-          resources: [`testcontainer:${database.container.getId()}`],
+          profileFileShaAfter: cleanup.profileFileShaAfter,
+          resources: [`testcontainer:${containerId}`],
           diagnostics: diagnosticSummary(outputTail),
-          ...wrapperEvidence,
+          ...cleanup.wrapperEvidence,
         };
       },
     };
   } catch (error) {
-    if (adapter !== undefined) await stopChild(adapter).catch(() => undefined);
-    await app?.close().catch(() => undefined);
-    await database.pool.end().catch(() => undefined);
-    await database.container.stop().catch(() => undefined);
-    await rm(scratch, { recursive: true, force: true });
+    const runningAdapter = adapter;
+    const runningApp = app;
+    await cleanupCodexFixture({
+      expectedProfileSha: profileFileShaBefore,
+      containerId: databaseContainerId,
+      setupFailure: { error },
+      stopAdapter: async () => { if (runningAdapter !== undefined) await stopChild(runningAdapter); },
+      closeGateway: async () => { if (runningApp !== undefined) await runningApp.close(); },
+      closePool: () => database.pool.end(),
+      stopContainer: () => database.container.stop(),
+      confirmContainerAbsent: assertOwnedContainerAbsent,
+      readProfileSha: async () => digest(await readFile(profilePath)),
+      readEvidence: () => readCodexWrapperEvidence(scratch),
+      removeScratch: () => rm(scratch, { recursive: true, force: true }),
+    });
     throw error;
   }
 }

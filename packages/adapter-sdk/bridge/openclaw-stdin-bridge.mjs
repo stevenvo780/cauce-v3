@@ -6,6 +6,15 @@ import { delimiter, dirname, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+const PHASE_PREFIX = "@cauce/openclaw-phase/v1 ";
+const phaseStart = performance.now();
+function phase(name) {
+  if (!process.argv.includes("--cauce-phase-observer-v1")) return;
+  try {
+    process.stderr.write(`${PHASE_PREFIX}${JSON.stringify({ phase: name, elapsedMs: performance.now() - phaseStart, utc: new Date().toISOString() })}\n`);
+  } catch { /* Diagnostics cannot change execution. */ }
+}
+
 const MAX_INPUT_BYTES = 1024 * 1024;
 const PROGRESS_MARKER = "<<cauce:progress>>";
 const PROGRESS_POLL_MS = Number.parseInt(process.env.CAUCE_OPENCLAW_PROGRESS_POLL_MS ?? "", 10) || 15_000;
@@ -280,6 +289,7 @@ function describeFailure(error) {
 }
 
 async function main() {
+  phase("bridge_enter");
   const message = await readPrompt();
   const nativeSessionKey = sessionKey(process.argv.slice(2));
   const chunks = [];
@@ -302,12 +312,14 @@ async function main() {
   };
   try {
     const { agentCliCommand, defaultRuntime } = await loadOpenClaw();
+    phase("modules_loaded");
     // From here the turn MAY have side effects: before would lie, after would hide a half-finished
     // turn and retry work already paid for. Via stderr; stdout is the contract.
     process.stderr.write("<<cauce:harness-started>>\n");
     empezado = true;
     const abandon = (reason) => {
       process.stdout.write = originalWrite;
+      phase(reason.startsWith("terminated") ? "bridge_cancelled" : "bridge_timeout");
       process.stderr.write(`openclaw stdin bridge abandoned the run: ${reason}\n`);
       if (emitido) { process.exit(0); return; }
       emitido = true;
@@ -325,19 +337,24 @@ async function main() {
       const timeout = Number.isSafeInteger(hardMs) && hardMs > 0 ? String(Math.ceil(hardMs / 1000)) : "0";
       const request = { message, sessionKey: nativeSessionKey, json: true, deliver: false, timeout };
       try {
+        phase("agent_cli_started");
         returned = await agentCliCommand(request, interceptingRuntime(defaultRuntime));
+        phase("agent_cli_resolved");
       } catch (error) {
         if (!(error instanceof EmbeddedFallbackIntercepted)) throw error;
         const refusal = await embeddedFallbackRefusal(error);
         if (refusal !== undefined) throw new Error(`${refusal}: ${error.message}`);
         process.stderr.write(`openclaw stdin bridge: gateway is down, running the turn embedded: ${error.message}\n`);
+        phase("agent_cli_started");
         returned = await agentCliCommand({ ...request, local: true }, defaultRuntime);
+        phase("agent_cli_resolved");
       }
     } finally {
       clearTimeout(timer);
       stopWatching();
     }
   } catch (error) {
+    phase("bridge_failed");
     if (!empezado) throw error;
     process.stdout.write = originalWrite;
     originalWrite(`${JSON.stringify({
@@ -354,11 +371,13 @@ async function main() {
   }
 
   const result = decodeFinal(Buffer.concat(chunks).toString("utf8"), returned);
+  phase("decode_completed");
   const envelope = {
     result,
     ...(nativeSessionKey === undefined ? {} : { session_id: nativeSessionKey }),
   };
   emitido = true;
+  phase("envelope_flush_requested");
   originalWrite(`${JSON.stringify(envelope)}\n`, () => { process.exit(0); });
   salir(0);
 }

@@ -117,34 +117,29 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra la consola de `fc30f85e`,
-árbol `e61811f259c2a26cd56a3ae1c991f88ea4a82d27`, fuente
-`sha256:b2a1d2fa7c303ec493b2ef48b8a7eb13ead0b1e62945763c642163ec5dea7805` e imagen
-`sha256:d22fe316bec2c69fef2f0a98f08c75099533fe397ea99ae1459f43dd70d3e626`.
-La ventana dejó 9/9 servicios sanos, ocho conservados, HTML, 86 assets y seis recursos PWA
-coincidentes, y backup estricto PASS. Los cinco servicios runtime también usan `fc30f85e`, sin DDL,
-con fuente `sha256:ce2a02df453a829f9378894ee855df2a8b1026af5832a36c543388bd966dc551` e imagen
-`sha256:d0d44532cbe07a9afd2ea77b8472bf299270b92a7065684721ae78ea664bfea6`.
-La sesión pública está verificada y muestra catorce agentes conectados. Evidencia central:
-`/var/log/cauce-v3-release/wave2-2408c138/{runtime,console}/`.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra la consola `fa3c5e1a`, árbol
+`ec5bce02d3f7147f1e6fd45fcf351171c48cb7f5`, fuente
+`sha256:463ae1433becfd833051c69a592d7b596ab19b20944f1b73483b18f92a1872fc` e imagen
+`sha256:8d869066775259bb2d89a9b239b993c76175387d667c75256adf0a999124d252`. La fila registra once
+gates PASS para ese SHA, revisión independiente, controlador exit 0, 9 servicios sanos, ocho
+contenedores preservados y HTML, 87 assets y seis recursos PWA verificados. También acredita la
+sesión autenticada del operador y la toma/devolución del control de TUI sin texto manual. Esto no
+acredita login de TUI de Astra o Hegel, respuesta de un agente, resolución de latencia ni despliegue
+de un chat nuevo. Evidencia: `/var/log/cauce-v3-release/console-tui-fa3c5e1a/`. La fila anterior
+`2d587daa` dejó pendiente la validación autenticada del navegador en aquella verificación.
 
-El nuevo SDK usa release `bus-v3-20261003-unified-fc30f85e`, digest
-`sha256:26fb3280f46474dbde9195547e4ff558eac0ac09c2305b3d51d73ac40f981a60`.
-El registro de esta ventana acredita Argos activo, 1/13, con proceso real y canary mTLS PASS;
-sus dos ventanas de 4200,2 segundos siguen en observación antes de ampliar. Los otros doce
-conservan `bus-v3-20261003-unified-99b567d6`, digest
-`sha256:429f96756fbe95642cd26476c449a7f0f1bd61e55368f851ad209e3e3a7e2681`.
-Los trece canaries y watchdogs del rollout anterior son evidencia histórica, sin inferencia LLM;
-no acreditan aceptación global del nuevo bundle. Astra está excluida del rollout por instrucción
-del dueño y no recibió mutaciones. El endpoint MCP público permanece inactivo, pendiente de OAuth
-e identidad dedicada del gateway; no se activa con el despliegue central. Teléfono real pendiente.
+El runtime sigue en `fc30f85e`, imagen
+`sha256:d0d44532cbe07a9afd2ea77b8472bf299270b92a7065684721ae78ea664bfea6`, fuente
+`sha256:ce2a02df453a829f9378894ee855df2a8b1026af5832a36c543388bd966dc551`, sin DDL y compatible
+hasta `043_blob_tenant_entitlements.sql`. La migración `044` no está promovida. El SDK de PR #78
+tampoco está promovido ni se acredita su adopción por los agentes. La nueva consola no cambia por sí
+sola el runtime ni el estado de los adaptadores.
 
-El SHA central publicado pasó los once gates de tipos, lint, unitarios, matriz completa,
-dependencias, Ops, layout, empaquetado runtime, Testcontainers, bundle SDK y cobertura.
-La matriz completa terminó con 11/11 suites PASS, cero FAIL y sin suites contables omitidas;
-los logs de cada gate y sus metadatos de SHA están en `/tmp/cauce-release-wave3-fc30f85e/`.
-Binding Git permanece apagado. Las mejoras de la siguiente integración siguen pendientes de
-validación y promoción; la existencia de sus fuentes no las acredita como desplegadas.
+La ruta pública `/mcp` sigue respondiendo 404; el servicio MCP no está disponible para clientes
+públicos. La fuente, sus pruebas y el despliegue de la consola no equivalen a publicar ese endpoint.
+La aceptación global de flota continúa pendiente; Astra está excluida por instrucción del dueño.
+Las mejoras de las siguientes integraciones requieren sus propios gates y una promoción; incluir
+sus fuentes no las despliega.
 
 Como evidencia histórica, en una verificación anterior los quince alias completaron una entrega
 real al primer intento y se reiniciaron sus adaptadores y sesiones nativas. La shell y el visor web se probaron en los quince;

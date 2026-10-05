@@ -21,7 +21,7 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
     else if (selected) recoveryButton.current?.focus({ preventScroll: true });
     else if (previous.current) {
       const previousButton = buttons.current.get(previous.current);
-      if (previousButton) previousButton.focus({ preventScroll: true });
+      if (previousButton && !previousButton.disabled) previousButton.focus({ preventScroll: true });
       else searchInput.current?.focus({ preventScroll: true });
     }
     previous.current = selected;
@@ -68,7 +68,7 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
                 </span> : null}
               </div>
               <div className="settings-agent-details">
-                <p>{agent.responsibility ?? 'Responsabilidad sin publicar en esta lectura'}</p>
+                <p className={agent.responsibility ? undefined : 'settings-unpublished'}>{agent.responsibility ?? 'Responsabilidad sin publicar en esta lectura'}</p>
                 <div className="settings-groups" aria-label={`Grupos de ${agent.tenantId}/${agent.alias}`}>
                   {!agent.groupsKnown ? <span>Grupos desconocidos</span>
                     : !agent.groups.length ? <span>Sin membresías registradas</span>

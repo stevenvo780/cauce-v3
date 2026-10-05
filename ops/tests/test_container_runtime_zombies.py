@@ -4,27 +4,20 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "container-runtime"))
+from cauce_container_proc import proc_stat, reap_children  # noqa: E402
 
 
-def count_zombie_processes() -> int:
-    try:
-        result = subprocess.run(
-            ["ps", "aux"],
-            capture_output=True, text=True, check=False, timeout=2
-        )
-        return sum(1 for line in result.stdout.split('\n') if '<defunct>' in line)
-    except Exception:
-        return 0
-
-
-def reap_children() -> None:
+def wait_for_owned_zombie(process: subprocess.Popen) -> None:
+    deadline = time.monotonic() + 5
     while True:
-        try:
-            pid, _ = os.waitpid(-1, os.WNOHANG)
-        except ChildProcessError:
+        state = proc_stat(process.pid)["state"]
+        if state == "Z":
             return
-        if pid == 0:
-            return
+        assert time.monotonic() < deadline, f"Owned child {process.pid} did not exit: {state}"
+        time.sleep(0.01)
 
 
 def test_zombie_creation_without_reap():
@@ -61,27 +54,32 @@ def test_zombie_creation_without_reap():
 
 
 def test_reap_children_function():
-    _parent_pid = os.getpid()
-    zombie_pids = []
-
-    for _i in range(2):
-        proc = subprocess.Popen(
+    processes = [
+        subprocess.Popen(
             ["python3", "-c", "import sys; sys.exit(0)"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        zombie_pids.append(proc.pid)
-
-    time.sleep(0.2)
-
-    zombies_before = count_zombie_processes()
-    reap_children()
-    zombies_after = count_zombie_processes()
-
-    assert zombies_after <= zombies_before, \
-        f"Expected fewer zombies after reap, before={zombies_before}, after={zombies_after}"
-
-    print(f"✓ test_reap_children_function: reaped zombies (before={zombies_before}, after={zombies_after})")
+        for _ in range(2)
+    ]
+    try:
+        for process in processes:
+            wait_for_owned_zombie(process)
+        reap_children()
+        for process in processes:
+            try:
+                os.waitpid(process.pid, os.WNOHANG)
+            except ChildProcessError:
+                continue
+            raise AssertionError(f"Owned child {process.pid} was not reaped")
+        print("✓ test_reap_children_function: both owned children were reaped")
+    finally:
+        for process in processes:
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1)
 
 
 def test_pidfd_persists_after_waitpid():
@@ -119,22 +117,18 @@ def test_can_reap_true_safety():
         stderr=subprocess.DEVNULL,
     )
 
-    _child_pid = proc.pid
-    time.sleep(0.2)
-
     try:
-        reap_children()
-        print("✓ test_can_reap_true_safety: reap_children() executed safely")
-    except Exception as e:
-        raise AssertionError(f"reap_children() raised exception: {e}") from e
-
-    # The key invariant: process.wait() should still work on the Popen object
-    # (though it may get a timeout if the process was already reaped)
-    try:
+        wait_for_owned_zombie(proc)
+        reap_children(protected=proc.pid)
         status = proc.wait(timeout=0.1)
-        print(f"  → process.wait() returned {status} after reap_children()")
-    except subprocess.TimeoutExpired:
-        print("  → process.wait() timed out (process already reaped, this is OK)")
+        assert status == 7, f"Protected Popen exit status was consumed: {status}"
+        print("✓ test_can_reap_true_safety: protected Popen retained exit status 7")
+    finally:
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=1)
 
 
 def main():
@@ -150,10 +144,10 @@ def main():
         test_pidfd_persists_after_waitpid()
         test_can_reap_true_safety()
         print("\n✅ All regression tests passed")
-        print("\nSummary: The fix (can_reap=True in signal_known_tree) is safe:")
-        print("  - Reaps zombies correctly via reap_children()")
+        print("\nSummary: Runtime reap_children() handles owned children:")
+        print("  - Reaps both owned zombies")
         print("  - Maintains pidfd safety (no PID reuse risk)")
-        print("  - Does not interfere with process.poll() in wait_process_tracking()")
+        print("  - Preserves protected Popen exit status")
         return 0
     except AssertionError as e:
         print(f"\n❌ Test failed: {e}", file=sys.stderr)

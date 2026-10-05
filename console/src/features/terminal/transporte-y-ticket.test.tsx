@@ -90,7 +90,7 @@ afterEach(() => {
 
 /** Opens the alias, whose TUI opens on its own, and takes the relay to `ready`. */
 async function abrirTui(user: ReturnType<typeof userEvent.setup>, ready: Record<string, unknown> = READY) {
-  await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
   await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
   const socket = StubWebSocket.last();
   act(() => {
@@ -110,7 +110,7 @@ describe('el ticket de un solo uso, contado sin mentir', () => {
     serveSessions([], { expiresAt: new Date(Date.now() - 5_000).toISOString() });
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
     await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
     // The socket is up but the relay has not authorised: the ticket window is what is ticking.
     act(() => { StubWebSocket.last().acceptOpen(); });
@@ -208,7 +208,7 @@ describe('pedir una sesión nueva después de que el relay cierre el canal', () 
     serveSessions(posts);
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
     await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
     await user.click(screen.getByRole('button', { name: /^PTY$/i }));
     const dialogo = await screen.findByRole('dialog');
@@ -241,7 +241,7 @@ describe('el inspector de la sesión', () => {
     const user = userEvent.setup();
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con kant/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^kant ·/ }));
     const detalles = await screen.findByRole('button', { name: /detalles/i });
     const escenario = document.querySelector('.terminal-active-grid');
     expect(escenario).toHaveAttribute('data-show-inspector', 'false');
@@ -270,7 +270,7 @@ describe('las denegaciones que no traen código', () => {
     )));
     renderWithApi(<TerminalPage />);
 
-    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
     const aviso = await screen.findByRole('alert');
     expect(aviso).toHaveTextContent(/HTTP 503/);

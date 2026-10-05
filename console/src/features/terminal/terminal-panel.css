@@ -22,12 +22,6 @@
 /* --- The page and its counter strip --- */
 .ultimate-terminal-page { --terminal-inset: #080e18; --terminal-raised: #101a2a; --terminal-soft: #bdcbe0; }
 .ultimate-terminal-page .page-header { margin-bottom: var(--space-5); }
-.terminal-overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-2); margin-bottom: var(--space-3); }
-.terminal-overview article { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--space-3); min-width: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md, 12px); background: rgb(13 20 34 / 78%); }
-.terminal-overview article > div { display: grid; min-width: 0; gap: 2px; }
-.terminal-overview article > .badge { grid-column: 2; justify-self: start; }
-.terminal-overview small { color: var(--faint); font-size: var(--tipo-apunte); font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
-.terminal-overview strong { overflow: visible; color: var(--terminal-soft); font-size: var(--tipo-rotulo); text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 .overview-icon { display: grid; width: 31px; height: 31px; place-items: center; border-radius: var(--radius-sm, 8px); background: var(--blue-dim); color: var(--blue); }
 .overview-icon.online { background: var(--mint-dim); color: var(--mint); }
 .terminal-degraded { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); padding: var(--space-3); border: 1px solid #725622; border-radius: var(--radius-md, 12px); background: var(--amber-dim); color: var(--amber); }
@@ -37,26 +31,9 @@
 
 /* --- The box and the fleet rail --- */
 .ultimate-terminal-shell { display: grid; grid-template-columns: minmax(0, 236px) minmax(0, 1fr); position: relative; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); box-shadow: 0 26px 80px rgb(0 0 0 / 30%); }
-.terminal-fleet-sidebar { display: flex; min-width: 0; flex-direction: column; border-right: 1px solid var(--border); background: linear-gradient(180deg, #0e1726, #0a111c); }
-.terminal-fleet-head { display: grid; gap: var(--space-1); padding: var(--space-3) var(--space-4) var(--space-2); }
-.terminal-fleet-head h2 { margin: 0; font-size: var(--tipo-panel); white-space: nowrap; }
-.terminal-fleet-head .eyebrow { margin: 0; white-space: nowrap; }
 .fleet-head-count { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.fleet-health-strip { display: grid; gap: 1px; margin: 0 var(--space-3) var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm, 8px); background: #0a121f; color: var(--muted); font-size: var(--tipo-apunte); }
-.fleet-health-strip > span { display: flex; align-items: center; gap: var(--space-2); }
-.fleet-health-strip svg { color: var(--blue); }
-.fleet-health-strip strong { color: var(--text); }
-.fleet-filters { display: grid; gap: var(--space-2); padding: 0 var(--space-3) var(--space-2); border-bottom: 1px solid var(--border); }
-.terminal-search { display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm, 8px); background: var(--terminal-inset); color: var(--faint); }
-.terminal-search input { min-height: 36px; margin: 0; padding: var(--space-2) 0; border: 0; background: transparent; font-size: var(--tipo-cuerpo); }
-.fleet-filter-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
-.fleet-filter-row label > span { display: flex; align-items: center; gap: var(--space-1); color: var(--faint); font-size: var(--tipo-rotulo); letter-spacing: .05em; text-transform: uppercase; }
-.fleet-filter-row select { min-height: 32px; margin-top: 2px; padding: var(--space-1) var(--space-5) var(--space-1) var(--space-2); font-size: var(--tipo-rotulo); }
-.fleet-list-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-1); color: var(--faint); font-size: var(--tipo-apunte); text-transform: uppercase; white-space: nowrap; }
 .terminal-syncing { display: inline-flex; align-items: center; gap: var(--space-1); }
 .terminal-syncing .spinner { width: 10px; height: 10px; border-width: 1px; }
-.terminal-agent-list { display: grid; align-content: start; gap: 2px; min-height: 0; overflow-y: auto; padding: 0 var(--space-2) var(--space-3); }
-.terminal-agent-list .empty-state { padding: var(--space-4) var(--space-3); font-size: var(--tipo-cuerpo); }
 /*
  * Two lines per agent, not five: the rail measured 161px per row and only TWO of fifteen agents
  * fitted above the fold at 1920x1080. Nothing is lost by folding the rest — lease expiry, epoch
@@ -64,9 +41,6 @@
  * capability chips come back as soon as the search box is used, which is when they explain why
  * a row matched.
  */
-.terminal-agent { display: grid; gap: 2px; width: 100%; padding: var(--space-1) var(--space-2); border: 1px solid transparent; border-radius: var(--radius-sm, 8px); background: transparent; color: var(--text); text-align: left; cursor: pointer; transition: .16s ease; }
-.terminal-agent:hover { border-color: var(--border); background: var(--surface-2); }
-.terminal-agent[data-active="true"] { border-color: #2b685b; background: linear-gradient(100deg, #15352f, #102035); box-shadow: inset 3px 0 var(--mint); }
 .agent-presence { display: grid; width: 18px; height: 18px; flex: none; place-items: center; border-radius: var(--radius-sm, 8px); background: var(--surface-3); color: var(--faint); }
 .agent-presence.online { background: var(--mint-dim); color: var(--mint); }
 .agent-presence.expired { background: var(--red-dim); color: var(--red); }
@@ -144,7 +118,6 @@
 .terminal-pty-capability dl div, .session-facts dl div { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: var(--space-2); padding-bottom: var(--space-2); border-bottom: 1px solid var(--border); }
 .terminal-pty-capability dd, .session-facts dd { margin-top: 0; font-size: var(--tipo-rotulo); }
 .session-facts .inspector-footnote { display: flex; gap: var(--space-1); }
-.terminal-doctrine { display: flex; min-height: 30px; align-items: center; justify-content: center; gap: var(--space-1); padding: var(--space-1) var(--space-3); border-top: 1px solid var(--border); color: var(--faint); font-size: var(--tipo-apunte); text-align: center; }
 .terminal-pty-pane .pty-host { height: min(500px, 57vh); }
 .terminal-channel-unavailable { display: grid; min-height: 430px; place-items: center; align-content: center; padding: var(--space-6); color: var(--faint); text-align: center; }
 .terminal-channel-unavailable h3 { margin: var(--space-3) 0 0; color: var(--text); }
@@ -156,7 +129,6 @@
 
 @media (max-width: 760px) {
   .ultimate-terminal-shell { display: block; min-height: 0; overflow: visible; }
-  .terminal-fleet-sidebar { max-height: 480px; border-right: 0; border-bottom: 1px solid var(--border); }
   .terminal-agent-list { max-height: 270px; }
   .terminal-stage { min-height: 580px; }
   .terminal-session-tabs { min-height: 50px; }
@@ -165,15 +137,12 @@
   .terminal-inspector { display: block; border-top: 1px solid var(--border); }
   .terminal-session-head { align-items: start; flex-direction: column; flex-wrap: nowrap; }
   .session-controls { width: 100%; align-items: stretch; flex-direction: column; justify-content: space-between; }
-  .terminal-overview article { grid-template-columns: auto minmax(0, 1fr) auto; }
   .terminal-degraded { align-items: start; flex-wrap: wrap; }
   .terminal-degraded .button { width: 100%; }
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) .ultimate-terminal-page { --terminal-inset: #f6f8fb; --terminal-raised: #ffffff; --terminal-soft: #34455d; }
-  :root:not([data-theme="dark"]) .terminal-overview article,
-  :root:not([data-theme="dark"]) .terminal-fleet-sidebar,
   :root:not([data-theme="dark"]) .terminal-session-tabs,
   :root:not([data-theme="dark"]) .terminal-session-head,
   :root:not([data-theme="dark"]) .terminal-inspector { background: #f8fafc; }
@@ -182,7 +151,7 @@
   :root:not([data-theme="dark"]) .terminal-agent[data-active="true"] { border-color: #79b5a6; background: linear-gradient(100deg, #dff3ed, #eaf3fb); }
 }
 :root[data-theme="light"] .ultimate-terminal-page { --terminal-inset: #f6f8fb; --terminal-raised: #ffffff; --terminal-soft: #34455d; }
-:root[data-theme="light"] .terminal-overview article, :root[data-theme="light"] .terminal-fleet-sidebar, :root[data-theme="light"] .terminal-session-tabs, :root[data-theme="light"] .terminal-session-head, :root[data-theme="light"] .terminal-inspector { background: #f8fafc; }
+:root[data-theme="light"] .terminal-session-tabs, :root[data-theme="light"] .terminal-session-head, :root[data-theme="light"] .terminal-inspector { background: #f8fafc; }
 :root[data-theme="light"] .fleet-health-strip, :root[data-theme="light"] .terminal-connection-bar { background: #ffffff; }
 :root[data-theme="light"] .terminal-agent[data-active="true"] { border-color: #79b5a6; background: linear-gradient(100deg, #dff3ed, #eaf3fb); }
 
@@ -194,14 +163,11 @@
  * truncated mid-word. With `auto-fit` and a minimum they take the columns that fit and each card
  * keeps the width its text needs.
  */
-.ultimate-terminal-page .terminal-overview { grid-template-columns: repeat(auto-fit, minmax(184px, 1fr)); }
-.ultimate-terminal-page .terminal-overview article > div { min-width: 0; }
 /*
  * And the VALUE wraps instead of being clipped. The base rule above gives it `white-space: nowrap`
  * with an ellipsis, which at 1366px cut a verdict inside 70px. Nothing here is long enough to need
  * clipping: two lines cost 14px and it reads whole.
  */
-.ultimate-terminal-page .terminal-overview strong { overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
 
 /*
  * The left rail is 272px, not 236, and what those pixels cost in columns.
@@ -352,12 +318,7 @@
 .pty-dialog-hint { margin: var(--space-2) 0 0; color: var(--faint); font-size: var(--tipo-apunte); }
 .pty-dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
 
-@media (max-width: 1100px) {
-  .ultimate-terminal-page .terminal-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
 @media (max-width: 760px) {
-  .ultimate-terminal-page .terminal-overview { grid-template-columns: 1fr; }
   .terminal-channel-state { align-items: start; flex-direction: column; gap: var(--space-1); }
   .pty-bar-close { width: 100%; margin-left: 0; justify-content: center; }
   .pty-dialog { padding: var(--space-4); }
@@ -627,11 +588,9 @@
 .terminal-resumen[open] > summary > svg:last-child { transform: rotate(180deg); }
 .terminal-resumen-cifra { color: var(--mint); font-variant-numeric: tabular-nums; }
 .terminal-resumen-panel { position: absolute; z-index: 20; top: calc(100% + 7px); right: 0; width: min(780px, calc(100vw - 72px)); padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
-.terminal-resumen-panel .terminal-overview { margin-bottom: 0; }
 .terminal-resumen-doctrina { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-3) 0 0; color: var(--faint); font-size: var(--tipo-apunte); }
 /* And the grid's foot folds away: its sentence is in the panel above, word for word and from the
    same constant. See `doctrina.ts`. */
-.ultimate-terminal-page[data-tui="abierta"] .terminal-doctrine { display: none; }
 
 /* ── 3. The session header stops repeating what its own tab says ──────────────────────────────
  * It was 73px at 1920 and 123 at 1280 (where it broke into two rows), right under a 53px tab
@@ -854,27 +813,8 @@ main:has(.ultimate-terminal-page[data-tui="abierta"]) {
 
 @media (min-width: 761px) {
   /* 68px, not the 56 of a bare icon strip: what the extra 12px buy is room for the alias below it. */
-  .ultimate-terminal-page[data-flota="plegada"] .ultimate-terminal-shell { grid-template-columns: 68px minmax(0, 1fr); }
-  .ultimate-terminal-page[data-flota="plegada"] .terminal-fleet-head { justify-items: center; padding: var(--space-2) var(--space-1); }
-  .ultimate-terminal-page[data-flota="plegada"] .terminal-fleet-head .eyebrow,
-  .ultimate-terminal-page[data-flota="plegada"] .fleet-head-count,
-  .ultimate-terminal-page[data-flota="plegada"] .fleet-health-strip,
-  .ultimate-terminal-page[data-flota="plegada"] .fleet-filters,
-  .ultimate-terminal-page[data-flota="plegada"] .fleet-list-meta,
-  .ultimate-terminal-page[data-flota="plegada"] .fleet-plegar-rotulo,
-  .ultimate-terminal-page[data-flota="plegada"] .agent-name small,
-  .ultimate-terminal-page[data-flota="plegada"] .agent-name .badge,
-  .ultimate-terminal-page[data-flota="plegada"] .agent-meta,
-  .ultimate-terminal-page[data-flota="plegada"] .agent-capabilities { display: none; }
-  .ultimate-terminal-page[data-flota="plegada"] .fleet-plegar { justify-content: center; padding: var(--space-1); }
-  .ultimate-terminal-page[data-flota="plegada"] .terminal-agent-list { justify-items: center; padding: var(--space-2) var(--space-1); }
-  .ultimate-terminal-page[data-flota="plegada"] .terminal-agent { width: 100%; justify-items: center; padding: var(--space-1); }
-  .ultimate-terminal-page[data-flota="plegada"] .agent-presence { width: 24px; height: 24px; }
   /* Mark above, alias below, truncated to the strip: the whole name stays in the `aria-label` and the title. */
-  .ultimate-terminal-page[data-flota="plegada"] .agent-name { width: 100%; flex-direction: column; }
-  .ultimate-terminal-page[data-flota="plegada"] .agent-name strong { max-width: 100%; font-size: var(--tipo-apunte); text-align: center; }
   /* The empty-state sentence does not fit in the strip: it is hidden, and unfolding brings it back. */
-  .ultimate-terminal-page[data-flota="plegada"] .terminal-agent-list .empty-state { display: none; }
 }
 
 /* At the compact step the box stacks and the rail is a strip across the top: there is no track to
@@ -903,10 +843,7 @@ main:has(.ultimate-terminal-page[data-tui="abierta"]) {
   .ultimate-terminal-page[data-tui="abierta"] .ultimate-terminal-shell { height: auto; display: flex; flex-direction: column; }
   /* The terminal ON TOP: in portrait the list of 14 agents above pushed it to y=1952. */
   .ultimate-terminal-page[data-tui="abierta"] .terminal-grid-wrapper { order: -1; }
-  .ultimate-terminal-page[data-tui="abierta"] .terminal-fleet-sidebar { max-height: 320px; }
   .ultimate-terminal-page[data-tui="abierta"] .page-header { margin-bottom: var(--space-2); }
-  .ultimate-terminal-page[data-tui="abierta"] .terminal-overview { display: flex; flex-wrap: nowrap; overflow-x: auto; }
-  .ultimate-terminal-page[data-tui="abierta"] .terminal-overview article { flex: none; }
   .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head { min-height: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2); }
   .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-avatar { display: none; }
   .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-identity-text .eyebrow { display: none; }
@@ -923,4 +860,32 @@ main:has(.ultimate-terminal-page[data-tui="abierta"]) {
   .terminal-panel { height: auto; }
   .terminal-pty-pane { padding: var(--space-2); }
   .pty-plazas li > button { margin-left: 0; width: 100%; justify-content: center; }
+}
+
+.terminal-focused { display: flex; flex-direction: column; min-height: 0; gap: var(--space-2); }
+.ultimate-terminal-page.terminal-focused .ultimate-terminal-shell { display: flex; flex-direction: column; flex-shrink: 0; height: max(430px, calc(100dvh - var(--terminal-tope, 150px) + var(--space-6))); min-height: 430px; }
+.terminal-focused .terminal-agent-toolbar { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2); border-bottom: 1px solid var(--border); }
+.terminal-focused .terminal-agent-toolbar select { flex: 1; min-width: 0; max-width: none; background: var(--surface); color: var(--text); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.terminal-focused .terminal-grid-wrapper { flex: 1; min-height: 0; }
+.terminal-focused .terminal-session-head { min-height: 0; padding: var(--space-1) var(--space-2); }
+.terminal-focused .session-identity { display: none; }
+.terminal-focused .session-controls { flex: 1; justify-content: flex-end; }
+.terminal-focused .terminal-session-tabs { padding: 0; min-height: 0; }
+.terminal-focused .terminal-session-tab { border: 0; border-radius: 0; background: transparent; }
+.terminal-focused .terminal-panel-title-btn { padding: var(--space-1) var(--space-2); }
+.terminal-focused .terminal-panel-title-btn small { display: none; }
+.terminal-focused .terminal-console { min-height: 0; border: 0; }
+.terminal-focused .terminal-pty-pane { padding: var(--space-1); }
+.terminal-focused .pty-session-bar { margin: 0; padding: var(--space-1); gap: var(--space-2); }
+.terminal-focused .pty-bar-dato, .terminal-focused .pty-bar-feed, .terminal-focused .pty-bar-alias { display: none; }
+.terminal-focused .pty-control { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2); }
+.terminal-focused .pty-control p { margin: 0; }
+.terminal-focused .pty-control .pty-negativa { flex: 1 1 100%; }
+.terminal-focused .terminal-inspector { display: none; }
+.terminal-focused .terminal-active-grid[data-show-inspector="true"] .terminal-inspector { display: block; }
+@media (max-width: 760px) {
+  .terminal-focused .terminal-mode-switch { flex-wrap: nowrap; }
+  .terminal-focused .terminal-agent-toolbar select { max-width: 100%; }
+  .ultimate-terminal-page.terminal-focused .ultimate-terminal-shell { height: max(430px, calc(100dvh - var(--terminal-tope, 140px) + var(--space-4))); }
+  .terminal-focused .pty-bar-countdown { display: none; }
 }

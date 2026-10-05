@@ -10,8 +10,7 @@ import {
   registerAgentProfileRoutes, type AgentProfileDeps, type RespuestaDelPerfil,
 } from './agent-profile.routes.js';
 import {
-  ACTOR, MARK_PROFILE_APPLIED, PERFIL_BODY, PREPARE_RUNTIME, REPLACE_PROFILE, RUNTIME_ADOPTION,
-  contexto,
+  contexto, profileWriteFixtureDeps, PERFIL_BODY, PREPARE_RUNTIME, REPLACE_PROFILE,
 } from './agent-profile.fixtures.js';
 
 /**
@@ -31,23 +30,14 @@ afterEach(async () => { await abierto?.close(); abierto = undefined; });
 
 async function servidor(overrides: Partial<AgentProfileDeps> = {}, sinOperador = false) {
   const auditoria: TerminalAuditEntry[] = [];
-  const replaceProfile = vi.fn(REPLACE_PROFILE);
+  const replaceProfile = vi.fn(overrides.replaceProfile ?? REPLACE_PROFILE);
   const prepareRuntime = vi.fn(PREPARE_RUNTIME);
   const app = Fastify();
-  const deps: AgentProfileDeps = {
-    authorize: async () => ACTOR,
-    authorizeTarget: async (_actor, tenantId, alias) => ({ tenant_id: tenantId, alias, enabled: true }),
-    readContext: async () => ({
-      contexto: contexto(PERFIL_BODY, 'codex'), exists: true, revision: 1, applied_revision: 1,
-    }),
-    resolveOperator: () => OPERADOR,
+  const deps = profileWriteFixtureDeps({
     recordAudit: async (entry) => { auditoria.push(entry); },
-    replaceProfile,
     prepareRuntime,
-    readRuntimeAdoption: RUNTIME_ADOPTION,
-    markProfileApplied: MARK_PROFILE_APPLIED,
-    ...overrides,
-  };
+    ...overrides, replaceProfile,
+  }, OPERADOR);
   if (sinOperador) delete deps.resolveOperator;
   registerAgentProfileRoutes(app, deps);
   await app.ready();
@@ -200,7 +190,7 @@ function sonda(texto: string): AgentFactsProbe & { escrituras: number } {
         }
       : { error: 'not_found' as const, reason: 'no existe' }),
     listMemoryDirectory: async () => ({ error: 'unavailable' as const, reason: 'no aplica' }),
-    writeGovernanceBatch: async () => {
+    writeGovernanceBatchDurable: async () => {
       sondeo.escrituras += 1;
       return { error: 'conflict' as const, reason: 'un perfil en cuarentena no escribe' };
     },
@@ -261,6 +251,7 @@ describe('la guarda de contaminación pone el PUT en cuarentena', () => {
     const telemetry = new ContextContaminationTelemetry();
     const montado = await servidor({
       telemetry,
+      replaceProfile: async (profile) => ({ perfil: profile, exists: true, revision: 1, applied_revision: 1 }),
       readContext: async (tenantId, alias) => ({
         contexto: contextoClaude(tenantId, alias), exists: true, revision: 1, applied_revision: 1,
       }),

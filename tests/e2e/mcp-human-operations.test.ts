@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { HUMAN_MESSAGE_INITIATOR_CAPABILITY } from '@cauce/protocol';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildGateway } from '../../services/gateway/src/app.js';
@@ -142,7 +143,7 @@ describe('human MCP operations over real OAuth, SDK transport and PostgreSQL', (
     ]);
     const listed = await clientA.listTools();
     expect(listed.tools.map((tool) => tool.name).sort()).toEqual([
-      'cauce_agents', 'cauce_receipt', 'cauce_status', 'cauce_submit',
+      'cauce_agents', 'cauce_inbox', 'cauce_receipt', 'cauce_status', 'cauce_submit',
     ]);
     const submitTool = listed.tools.find((tool) => tool.name === 'cauce_submit');
     expect(submitTool).toBeDefined();
@@ -192,11 +193,16 @@ describe('human MCP operations over real OAuth, SDK transport and PostgreSQL', (
     expect(crossTenantOwner.structuredContent, JSON.stringify(crossTenantOwner))
       .toEqual({ status_code: 404, error: 'not_found' });
     const claimInstance = `mcp-human-${randomUUID()}`;
-    const lease = await fixture.repository.acquireLease('Steven', 'mcp_target_steven', claimInstance, [], 60_000);
+    const lease = await fixture.repository.acquireLease('Steven', 'mcp_target_steven', claimInstance,
+      [HUMAN_MESSAGE_INITIATOR_CAPABILITY], 60_000);
     if (!lease.acquired || lease.epoch === undefined) throw new Error('recipient lease was not acquired');
     const claims = await fixture.repository.claimDeliveries('Steven', 'mcp_target_steven', claimInstance, lease.epoch, 5);
     const delivery = claims.find((candidate) => candidate.message_id === receiptAId);
     if (!delivery) throw new Error('published human MCP delivery was not claimed');
+    expect(delivery.human_initiator?.human_id).toBe(stevenA.id);
+    const deliveryB = claims.find((candidate) => candidate.message_id === receiptBId);
+    expect(deliveryB?.human_initiator?.human_id).toBe(stevenB.id);
+    expect(deliveryB?.human_initiator?.human_id).not.toBe(delivery.human_initiator?.human_id);
     const ackBase = { version: '3.0' as const, instance_id: claimInstance, epoch: lease.epoch,
       claim_token: delivery.claim_token, attempt: delivery.attempt, retryable: false };
     await expect(fixture.repository.ackDelivery(delivery.delivery_id, 'Steven', 'mcp_target_steven', {
@@ -216,6 +222,17 @@ describe('human MCP operations over real OAuth, SDK transport and PostgreSQL', (
     expect(hiddenReply.isError).toBe(true);
     expect(hiddenReply.structuredContent).toEqual({ status_code: 404, error: 'not_found' });
     expect(JSON.stringify(hiddenReply)).not.toContain(canonicalReply);
+    const inboxA = parseContent(await call(clientA, 'cauce_inbox', { limit: 10 }));
+    const inboxItems = Array.isArray(inboxA.items) ? inboxA.items as Record<string, unknown>[] : [];
+    expect(inboxItems.find((item) => item.message_id === receiptAId)).toMatchObject({ chain_open: false,
+      deliveries: [{ delivery_id: delivery.delivery_id, status: 'done', reply: canonicalReply, reply_truncated: false }] });
+    expect(JSON.stringify(inboxA)).not.toContain(receiptBId);
+    for (const other of [clientB, clientIsa]) {
+      const page = await call(other, 'cauce_inbox');
+      expect(page.isError, JSON.stringify(page)).not.toBe(true);
+      expect(JSON.stringify(page)).not.toContain(receiptAId);
+      expect(JSON.stringify(page)).not.toContain(canonicalReply);
+    }
 
     const readOnly = await connect(stevenA.subject, ['cauce.read']);
     const publishDenied = await call(readOnly, 'cauce_submit', publishArguments(randomUUID(),
@@ -224,6 +241,7 @@ describe('human MCP operations over real OAuth, SDK transport and PostgreSQL', (
     const publishOnly = await connect(stevenA.subject, ['cauce.publish']);
     const readDenied = await call(publishOnly, 'cauce_status');
     expect(readDenied.isError).toBe(true);
+    expect((await call(publishOnly, 'cauce_inbox')).isError).toBe(true);
     const roleChange = await fixture.pool.query(
       `UPDATE human_tenant_memberships SET role='reader', permissions=ARRAY['read']::text[], revision=revision+1
         WHERE human_id=$1::uuid AND tenant_id=$2`,

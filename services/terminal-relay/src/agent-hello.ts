@@ -51,6 +51,7 @@ export interface AgentHello {
      * without this check would leave the fleet without terminals.
      */
   readonly features: readonly string[];
+  readonly writer_instance_id?: string;
 }
 
 /** The agent declares this when it knows how to answer TAG_READ. Without the flag, it is not asked. */
@@ -61,6 +62,7 @@ export const FEATURE_READ_GOVERNANCE_DONE = 'read_governance_done_v1';
 export const FEATURE_WRITE_GOVERNANCE = 'write_governance_v1';
 /** Full profile: preflight of every file and total rollback inside the pty-agent. */
 export const FEATURE_WRITE_GOVERNANCE_BATCH = 'write_governance_batch_v1';
+export const FEATURE_WRITE_QUIESCENCE = 'write_quiescence_v1';
 /** Lets a single PTY be paused without freezing PONG, reads, or other multiplexed sessions. */
 export const FEATURE_SESSION_OUTPUT_FLOW_CONTROL = 'session_output_flow_control';
 /** Maximum own memory above the Node writable buffer while TLS waits for `drain`. */
@@ -150,6 +152,13 @@ function featuresField(source: Record<string, unknown>): readonly string[] {
   const value: unknown = source.features;
   if (!Array.isArray(value)) return [];
   return (value as readonly unknown[]).filter((entry): entry is string => typeof entry === 'string');
+}
+
+function writerInstanceIdField(source: Record<string, unknown>): string | undefined {
+  const value = source.writer_instance_id;
+  if (typeof value !== 'string') return undefined;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    ? value : undefined;
 }
 
 function codexProjectDocumentFields(
@@ -262,6 +271,9 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
       || (harness === 'openclaw' && openclawWorkspace !== undefined)
       || (harness === 'muse' && museWorkspace !== undefined)
       || (harness === 'hermes' && cwd !== undefined && projectRoot !== undefined));
+  const writerInstanceId = writerInstanceIdField(source);
+  const features = featuresField(source).filter((feature) =>
+    feature !== FEATURE_WRITE_QUIESCENCE || writerInstanceId !== undefined);
   return {
     tenant_id: tenantId,
     alias,
@@ -287,7 +299,8 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
     } : {}),
     agent_version: agentVersion,
     modes,
-    features: featuresField(source)
+    features,
+    ...(writerInstanceId === undefined ? {} : { writer_instance_id: writerInstanceId })
   };
 }
 

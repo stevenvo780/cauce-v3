@@ -17,7 +17,7 @@ const OPERADOR = { operator_id: 'steven@elenxos', attributed: true };
 const MOTIVO = 'recorto las responsabilidades que ya no le tocan';
 
 import {
-  ACTOR, contexto, MARK_PROFILE_APPLIED, PERFIL_BODY, PREPARE_RUNTIME, preparedRuntime,
+  profileWriteFixtureDeps, ACTOR, contexto, MARK_PROFILE_APPLIED, PERFIL_BODY, PREPARE_RUNTIME, preparedRuntime,
   REPLACE_PROFILE, RUNTIME_ADOPTION, RUNTIME_VERIFICATION, runtimePreflight, sha,
 } from './agent-profile.fixtures.js';
 async function servidor(ctx: ContextoDeAlias | (() => Promise<never>), exists = true) {
@@ -325,21 +325,7 @@ describe('la guarda del alias', () => {
 });
 
 function depsDeEscritura(overrides: Partial<AgentProfileDeps> = {}): AgentProfileDeps {
-  const ctx = contexto(PERFIL_BODY, 'codex');
-  return {
-    authorize: async () => ACTOR,
-    recordAudit: async () => undefined,
-    resolveOperator: () => OPERADOR,
-    authorizeTarget: async (_actor, tenantId, alias) => ({ tenant_id: tenantId, alias, enabled: true }),
-    readContext: async () => ({
-      contexto: ctx, exists: true, revision: 1, applied_revision: 1,
-    }),
-    replaceProfile: REPLACE_PROFILE,
-    prepareRuntime: PREPARE_RUNTIME,
-    readRuntimeAdoption: RUNTIME_ADOPTION,
-    markProfileApplied: MARK_PROFILE_APPLIED,
-    ...overrides,
-  };
+  return profileWriteFixtureDeps(overrides, OPERADOR);
 }
 
 async function appDeEscritura(overrides: Partial<AgentProfileDeps> = {}) {
@@ -499,6 +485,25 @@ describe('GET perfil: convergencia medida del runtime', () => {
 });
 
 describe('PUT perfil: desired durable + ACK runtime', () => {
+  it('does not persist desired or dispatch without the durable coordinator', async () => {
+    const replace = vi.fn(REPLACE_PROFILE);
+    const apply = vi.fn(async () => []);
+    const deps = depsDeEscritura({ replaceProfile: replace,
+      prepareRuntime: async () => runtimePreflight((revision) => preparedRuntime(revision, { apply })),
+    });
+    delete deps.coordinateWrite;
+    const app = Fastify();
+    registerAgentProfileRoutes(app, deps);
+    await app.ready(); abierto = app;
+    const response = await app.inject({ method: 'PUT', url: RUTA,
+      payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
+    });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ error: 'profile_write_unavailable' });
+    expect(replace).not.toHaveBeenCalled();
+    expect(apply).not.toHaveBeenCalled();
+  });
+
   it('sólo responde applied cuando CAS, lote completo y applied_revision coinciden', async () => {
     const replaceProfile = vi.fn(REPLACE_PROFILE);
     const readRuntimeAdoption = vi.fn(RUNTIME_ADOPTION);
@@ -565,12 +570,13 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
       payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
 
-    expect(res.statusCode).toBe(409);
+    expect(res.statusCode).toBe(503);
     expect(res.json()).toMatchObject({
-      error: 'conflict', state: 'pending', revision: 2, applied_revision: 1,
-      acknowledgements: [{ name: 'AGENTS.md', generation: 'gen-1' }],
+      error: 'profile_write_unconfirmed', state: 'effect_unknown', revision: 2, applied_revision: 1,
     });
     expect(readRuntimeAdoption).not.toHaveBeenCalled();
+    expect(res.json<{ operation_id: string }>().operation_id).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(res.json()).not.toHaveProperty('ok', true);
     expect(markProfileApplied).not.toHaveBeenCalled();
   });
 
@@ -604,10 +610,12 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
       payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
 
-    expect(res.statusCode).toBe(502);
+    expect(res.statusCode).toBe(503);
     expect(res.json()).toMatchObject({
-      error: 'runtime_ack_incomplete', state: 'pending', revision: 2, applied_revision: 1,
+      error: 'profile_write_unconfirmed', state: 'effect_unknown', revision: 2, applied_revision: 1,
     });
+    expect(res.json<{ operation_id: string }>().operation_id).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(res.json()).not.toHaveProperty('ok', true);
     expect(markProfileApplied).not.toHaveBeenCalled();
   });
 
@@ -643,8 +651,10 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
       method: 'PUT', url: RUTA,
       payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
     });
-    expect(res.statusCode).toBe(409);
-    expect(res.json()).toMatchObject({ state: 'pending', revision: 2, applied_revision: 1 });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ state: 'effect_unknown', revision: 2, applied_revision: 1 });
+    expect(res.json<{ operation_id: string }>().operation_id).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(res.json()).not.toHaveProperty('ok', true);
     expect(markProfileApplied).not.toHaveBeenCalled();
   });
 
@@ -734,7 +744,7 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
 
   it('el tenant objetivo del PUT viene de la ruta canónica, nunca del actor', async () => {
     const autorizado = vi.fn(async () => ({ tenant_id: 'Miguel', alias: 'kant', enabled: true }));
-    const ctx = contexto(PERFIL_BODY, 'codex');
+    const ctx = contexto({ ...PERFIL_BODY, purpose: 'prior purpose' }, 'codex');
     const perfilMiguel = { ...ctx.perfil, tenant_id: 'Miguel', alias: 'kant' };
     const app = await appDeEscritura({
       authorizeTarget: autorizado,

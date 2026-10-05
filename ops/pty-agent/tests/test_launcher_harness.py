@@ -103,14 +103,14 @@ def _fake_docker(
 
 
 class DeriveHarnessCommandTest(unittest.TestCase):
-    def _run(self, **kwargs: object) -> str:
+    def _run(self, expected_harness: str = "claude", **kwargs: object) -> str:
         import tempfile
 
         with tempfile.TemporaryDirectory() as raw:
             tmp = pathlib.Path(raw)
             fake = _fake_docker(tmp, **kwargs)  # type: ignore[arg-type]
             done = subprocess.run(
-                ["bash", "-c", PRELUDE + _window_constant_source() + _function_source() + EPILOGUE],
+                ["bash", "-c", PRELUDE.replace("harness=claude", f"harness={expected_harness}") + _window_constant_source() + _function_source() + EPILOGUE],
                 capture_output=True,
                 text=True,
                 env={"PATH": "/usr/bin:/bin", "FAKE_DOCKER": str(fake)},
@@ -124,6 +124,16 @@ class DeriveHarnessCommandTest(unittest.TestCase):
             self._run(tmux_path="/usr/bin/tmux", session_live=True),
             "DERIVED /usr/bin/tmux $7 $7:agente /workspace/repo",
         )
+
+    def test_new_harnesses_require_their_exact_live_marker(self) -> None:
+        for harness in ("muse", "grok"):
+            with self.subTest(harness=harness):
+                self.assertEqual(self._run(expected_harness=harness, tmux_path="/usr/bin/tmux",
+                                           session_live=True, marker_harness=harness),
+                                 "DERIVED /usr/bin/tmux $7 $7:agente /workspace/repo")
+                self.assertEqual(self._run(expected_harness=harness, tmux_path="/usr/bin/tmux",
+                                           session_live=True, marker_harness="claude"),
+                                 "NO_TUI conflict=1 path=/usr/bin/tmux")
 
     def test_control_negativo_no_session_no_harness(self) -> None:
         self.assertEqual(

@@ -23,6 +23,22 @@ interface RevisionRow {
   created_at: Date;
 }
 
+function revisionForSnapshot(row: Record<string, unknown>): Record<string, unknown> {
+  const operation = row.operation;
+  if (!isRecord(operation) || operation.resource !== 'provider_account' || !isRecord(operation.value)) {
+    return row;
+  }
+  if (!Object.hasOwn(operation.value, 'credential_ref')) return row;
+  const value = Object.fromEntries(
+    Object.entries(operation.value).filter(([key]) => key !== 'credential_ref'),
+  );
+  return { ...row, operation: { ...operation, value } };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 class RollbackResult<T> extends Error {
   constructor(readonly result: T) {
     super('configuration preview rollback');
@@ -146,7 +162,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
       agents: agents.rows, provider_accounts: providerAccounts.rows,
       alias_routing_ceiling: routingCeiling.rows, agent_account_bindings: agentAccountBindings.rows,
       agent_profiles: agentProfiles.rows,
-      revisions: revisions.rows
+      revisions: revisions.rows.map(revisionForSnapshot)
     };
   }
 

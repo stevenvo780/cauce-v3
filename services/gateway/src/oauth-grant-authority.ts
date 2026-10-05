@@ -1,4 +1,4 @@
-import { lockHumanIdentity, lockConsoleHuman, type ConsoleCredentialStampVerifier, type DatabaseClient, type HumanIdentitySnapshot } from '@cauce/store';
+import { lockHumanIdentity, lockConsoleHuman, StoreError, type ConsoleCredentialStampVerifier, type DatabaseClient, type HumanIdentitySnapshot } from '@cauce/store';
 import { isAnyUuid } from '@cauce/protocol';
 import { consoleRoleAuthority } from './console-user-authority.js';
 import { OAuthError, OAUTH_SCOPES, type OAuthAccessIdentity, type OAuthScope, type OAuthStore } from './oauth-authorization-types.js';
@@ -41,14 +41,18 @@ export async function lockOAuthGrant(
     [grantId, userId, issuer, resource],
   )).rows[0];
   if (!original) throw new OAuthError('invalid_grant');
-  const snapshot = await lockHumanIdentity(client, { provider: 'oauth', namespace: issuer, subject: userId }, userId);
-  await lockConsoleHuman(client, userId, { credentialStamp: original.credential_stamp, verifyCredentialStamp });
+  let snapshot: HumanIdentitySnapshot;
+  try {
+    snapshot = await lockHumanIdentity(client, { provider: 'oauth', namespace: issuer, subject: userId }, userId);
+    await lockConsoleHuman(client, userId, { credentialStamp: original.credential_stamp, verifyCredentialStamp });
+  } catch (error) { if (error instanceof StoreError) throw new OAuthError('invalid_grant'); throw error; }
   const grant = (await client.query<OAuthGrantRow>(
     `SELECT g.id, g.human_id, g.client_id, g.redirect_uri, g.scopes, g.expires_at,
       g.binding_id, g.binding_revision::text, g.membership_revision::text, g.tenant_id, g.actor_alias, g.credential_stamp
      FROM cauce_oauth_grants g
      WHERE g.id=$1 AND g.human_id=$2 AND g.issuer=$3 AND g.resource=$4
-       AND g.revoked_at IS NULL AND g.expires_at>clock_timestamp()
+       AND NOT EXISTS (SELECT 1 FROM cauce_oauth_grant_revocations v WHERE v.grant_id=g.id)
+       AND g.expires_at>clock_timestamp()
        AND g.credential_stamp=$5
      FOR SHARE OF g`, [grantId, userId, issuer, resource, original.credential_stamp],
   )).rows[0];

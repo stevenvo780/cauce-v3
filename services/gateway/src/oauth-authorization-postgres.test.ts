@@ -5,7 +5,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { applyMigrations, applyMigrationsThrough, createPool, lockHumanIdentity, resolveHumanIdentity, CauceRepository, withAbortableTransaction,
   type DatabaseClient, type DatabasePool } from '@cauce/store';
 import { waitForBlocked } from '../../../tests/integration/human-identity-resolver-postgres.fixtures.js';
-import { PostgresOAuthStore } from './oauth-authorization-store.js';
+import { OAUTH_GRANT_TTL_SECONDS, PostgresOAuthStore } from './oauth-authorization-store.js';
+import { lockOAuthAccess } from './oauth-grant-authority.js';
 import { hashPassword } from './password.js';
 import { PostgresConsoleUserStore } from './console-users.js';
 import { createConsoleCredentialStamp, verifyConsoleCredentialStamp } from './console-credential-stamp.js';
@@ -13,7 +14,7 @@ import Fastify from 'fastify';
 import { PasswordAuthProvider } from './password-auth.js';
 import { createOAuthPasswordSession } from './oauth-password-session.js';
 import { createHumanMcpOperationsFactory } from './mcp-operations.js';
-import { createHumanPublishAuthority } from './human-mcp-authority.js';
+import { createHumanPublishAuthority, resolveHumanMcpAuthority } from './human-mcp-authority.js';
 import { secretHash, type OAuthAuthorizationRequest, type OAuthPasswordSession } from './oauth-authorization-types.js';
 import { OAuthTokens } from './oauth-tokens.js';
 
@@ -82,15 +83,22 @@ function intercept(pool: DatabasePool, before?: (sql: string, client: DatabaseCl
   } });
 }
 
-async function seed(pool: DatabasePool) {
+async function seed(pool: DatabasePool, binding = true) {
   const userId = randomUUID(); const bindingId = randomUUID(); const alias = `fixture_${userId.slice(0, 8)}`;
   await pool.query('INSERT INTO agents(tenant_id,alias) VALUES ($1,$2)', ['Steven', alias]);
   await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias,active,password_changed_at)
     VALUES ($1,$2,$2,$4,'Fixture','operator','Steven',$3,true,clock_timestamp())`, [userId, `${userId}@example.invalid`, alias, await hashPassword('fixture-only-passphrase', { cost: 1024, blockSize: 8, parallelism: 1 })]);
-  await pool.query(`INSERT INTO human_external_identities(id,human_id,provider,namespace,subject)
-    VALUES ($1,$2::uuid,'oauth',$3,$2::text)`, [bindingId, userId, issuer]);
-  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES ($1,'Steven',$2,'operator',ARRAY['read','route'])`, [userId, alias]);
+  if (binding) {
+    await pool.query(`INSERT INTO human_external_identities(id,human_id,provider,namespace,subject)
+      VALUES ($1,$2::uuid,'oauth',$3,$2::text)`, [bindingId, userId, issuer]);
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
+      VALUES ($1,'Steven',$2,'operator',ARRAY['read','route'])`, [userId, alias]);
+  } else {
+    // Igual que el relleno de 044: membresía desde console_users y ningún vínculo externo.
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions,enabled,revoked_at)
+      SELECT id,tenant_id,alias,role,CASE WHEN role='operator' THEN ARRAY['route','read','control','notify']::text[]
+        ELSE ARRAY['read']::text[] END,active,CASE WHEN active THEN NULL ELSE now() END FROM console_users WHERE id=$1`, [userId]);
+  }
   const user = await new PostgresConsoleUserStore(pool).findById(userId);
   if (!user?.password_changed_at_us) throw new Error('missing fixture credential snapshot');
   const credentialStamp = createConsoleCredentialStamp(key, { userId, passwordHash: user.password_hash, passwordChangedAtUs: user.password_changed_at_us });
@@ -125,6 +133,14 @@ async function authorized(pool: DatabasePool) {
   return { ...f, input, issued };
 }
 
+async function revoked(pool: DatabasePool, grantId: string) {
+  return (await pool.query('SELECT 1 FROM cauce_oauth_grant_revocations WHERE grant_id=$1', [grantId])).rowCount === 1;
+}
+// Acorta sólo la gracia de reutilización del refresh; el resto del SQL del store queda intacto.
+function shortGrace(pool: DatabasePool) {
+  return intercept(pool, async sql => sql.replaceAll("clock_timestamp()-interval '60 seconds'", "clock_timestamp()-interval '200 milliseconds'"));
+}
+
 async function transaction(client: DatabaseClient, work: () => Promise<void>) {
   await client.query('BEGIN');
   try { await work(); await client.query('COMMIT'); }
@@ -148,7 +164,7 @@ function barrier() {
     expect((await pool.query('SELECT version FROM schema_migration_ledger WHERE version=$1', [version])).rowCount).toBe(0);
     await applyMigrations(pool);
     expect(await counts(pool)).toEqual({ requests: '0', grants: '0', codes: '0', tokens: '0' });
-    await pool.query('TRUNCATE cauce_oauth_requests,cauce_oauth_grants,cauce_oauth_codes,cauce_oauth_tokens');
+    await pool.query('TRUNCATE cauce_oauth_requests,cauce_oauth_grants,cauce_oauth_codes,cauce_oauth_tokens,cauce_oauth_refresh_tokens,cauce_oauth_grant_revocations');
     expect(await counts(pool)).toEqual({ requests: '0', grants: '0', codes: '0', tokens: '0' });
     const rows = (await pool.query<{ version: string; source_sha256: string }>('SELECT version,source_sha256 FROM schema_migration_ledger WHERE version=ANY($1)', [[version, previousVersion]])).rows;
     for (const row of rows) {
@@ -166,11 +182,11 @@ function barrier() {
     for (const [column, value] of [['id_hash', 'not-a-hash'], ['challenge', 'short']]) {
       await expect(pool.query(`INSERT INTO cauce_oauth_requests SELECT ${column === 'id_hash' ? '$1' : "repeat('f',64)"},browser_hash,client_id,client_name,redirect_uri,resource,scopes,${column === 'challenge' ? '$1' : 'challenge'},state,created_at,expires_at,NULL FROM cauce_oauth_requests LIMIT 1`, [value])).rejects.toThrow();
     }
-    await expect(pool.query(`INSERT INTO cauce_oauth_grants SELECT gen_random_uuid(),human_id,issuer,resource,client_id,redirect_uri,scopes,binding_id,binding_revision,membership_revision,tenant_id,actor_alias,'invalid',created_at,expires_at,NULL FROM cauce_oauth_grants`)).rejects.toThrow();
+    await expect(pool.query(`INSERT INTO cauce_oauth_grants SELECT gen_random_uuid(),human_id,issuer,resource,client_id,redirect_uri,scopes,binding_id,binding_revision,membership_revision,tenant_id,actor_alias,'invalid',created_at,expires_at FROM cauce_oauth_grants`)).rejects.toThrow();
     await expect(pool.query(`INSERT INTO cauce_oauth_requests SELECT repeat('a',64),browser_hash,client_id,client_name,redirect_uri,resource,scopes,challenge,state,created_at,created_at+interval '5 minutes 1 microsecond',NULL FROM cauce_oauth_requests LIMIT 1`)).rejects.toThrow();
     await expect(pool.query('UPDATE cauce_oauth_grants SET credential_stamp=$1', ['z'.repeat(43)])).rejects.toThrow('immutable');
     await expect(pool.query('UPDATE cauce_oauth_codes SET consumed_at=NULL')).rejects.toThrow('immutable');
-    await expect(pool.query('TRUNCATE cauce_oauth_requests,cauce_oauth_grants,cauce_oauth_codes,cauce_oauth_tokens')).rejects.toThrow('approved');
+    await expect(pool.query('TRUNCATE cauce_oauth_requests,cauce_oauth_grants,cauce_oauth_codes,cauce_oauth_tokens,cauce_oauth_refresh_tokens,cauce_oauth_grant_revocations')).rejects.toThrow('approved');
     await expect(pool.query('DELETE FROM cauce_oauth_grants')).rejects.toThrow('retention');
     expect(await f.store.validate(f.issued.identity)).toBe(true);
   });
@@ -230,7 +246,7 @@ function barrier() {
 
   it('distinguishes the binding-owner FK from namespace, subject and tenant validation under locks', async () => {
     const pool = await database(); const f = await authorized(pool); const other = await seed(pool);
-    const insert = `INSERT INTO cauce_oauth_grants SELECT $1,human_id,issuer,resource,client_id,redirect_uri,scopes,$2,binding_revision,membership_revision,tenant_id,actor_alias,credential_stamp,created_at,expires_at,NULL FROM cauce_oauth_grants WHERE id=$3`;
+    const insert = `INSERT INTO cauce_oauth_grants SELECT $1,human_id,issuer,resource,client_id,redirect_uri,scopes,$2,binding_revision,membership_revision,tenant_id,actor_alias,credential_stamp,created_at,expires_at FROM cauce_oauth_grants WHERE id=$3`;
     await expect(pool.query(insert, [randomUUID(), other.bindingId, f.issued.identity.grantId])).rejects.toMatchObject({ code: '23503' });
     for (const [namespace, subject] of [['https://wrong.example', f.userId], [issuer, 'wrong-subject']]) {
       const wrong = randomUUID();
@@ -246,7 +262,7 @@ function barrier() {
     await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
       VALUES($1,'Isa',$2,'operator',ARRAY['read','route'])`, [f.userId, f.alias]);
     const wrongTenant = randomUUID();
-    await pool.query(`INSERT INTO cauce_oauth_grants SELECT $1,human_id,issuer,resource,client_id,redirect_uri,scopes,binding_id,binding_revision,membership_revision,'Isa',actor_alias,credential_stamp,created_at,expires_at,NULL FROM cauce_oauth_grants WHERE id=$2`, [wrongTenant, f.issued.identity.grantId]);
+    await pool.query(`INSERT INTO cauce_oauth_grants SELECT $1,human_id,issuer,resource,client_id,redirect_uri,scopes,binding_id,binding_revision,membership_revision,'Isa',actor_alias,credential_stamp,created_at,expires_at FROM cauce_oauth_grants WHERE id=$2`, [wrongTenant, f.issued.identity.grantId]);
     const bad = { ...f.issued.identity, grantId: wrongTenant, tokenId: randomUUID() };
     await pool.query(`INSERT INTO cauce_oauth_tokens(id,grant_id,created_at,expires_at) VALUES($1,$2,clock_timestamp(),$3)`, [bad.tokenId, wrongTenant, new Date(bad.expiresAt * 1000)]);
     expect(await f.store.validate(bad)).toBe(false);
@@ -294,6 +310,11 @@ function barrier() {
     const results = await Promise.allSettled([f.store.exchange(input, value => tokens.issue(value), context()), f.store.exchange(input, value => tokens.issue(value), context())]);
     expect(results.filter(value => value.status === 'fulfilled')).toHaveLength(1);
     expect(await counts(pool)).toEqual({ requests: '1', grants: '1', codes: '1', tokens: '1' });
+    // El segundo canje del mismo code es reutilización: revoca el grant y el token que obtuvo el ganador.
+    const winner = results.find(value => value.status === 'fulfilled');
+    if (winner?.status !== 'fulfilled') throw new Error('missing winning exchange');
+    expect(await revoked(pool, winner.value.identity.grantId)).toBe(true);
+    expect(await f.store.validate(winner.value.identity)).toBe(false);
   });
 
   it('publishes and reads a real MCP receipt with the local grant, then blocks a stale stamp before business effects', async () => {
@@ -322,7 +343,7 @@ function barrier() {
     const pool = await database(); const f = await seed(pool); const modified = intercept(pool, async sql => {
       if (kind === 'request') return sql.replace("at+interval '5 minutes'", "at+interval '250 milliseconds'");
       if (kind === 'code') return sql.replace("at+interval '60 seconds'", "at+interval '250 milliseconds'");
-      return sql.replace("at+interval '8 hours'", "at+interval '250 milliseconds'");
+      return sql.replace("date_trunc('second',at)+make_interval(secs=>$14)", "at+make_interval(secs=>$14*0)+interval '250 milliseconds'");
     });
     const store = new PostgresOAuthStore(modified, issuer, verify);
     const request = { ...f.request, idHash: secretHash(randomUUID()) };
@@ -332,7 +353,7 @@ function barrier() {
     const locker = await pool.connect(); const observer = await pool.connect();
     const entered = barrier(); let workerPid = 0;
     const wrapped = intercept(pool, async (sql, client) => {
-      const target = kind === 'request' ? 'FROM cauce_oauth_requests WHERE' : kind === 'code' ? 'SELECT challenge FROM cauce_oauth_codes' : 'FROM cauce_oauth_grants g';
+      const target = kind === 'request' ? 'FROM cauce_oauth_requests WHERE' : kind === 'code' ? 'SELECT challenge,consumed_at' : 'FROM cauce_oauth_grants g';
       if (sql.includes(target) && sql.includes('FOR ')) { workerPid = await pid(client); entered.release(); }
     });
     const table = kind === 'request' ? 'cauce_oauth_requests' : kind === 'code' ? 'cauce_oauth_codes' : 'cauce_oauth_grants';
@@ -417,7 +438,12 @@ function barrier() {
     const issued = await new PostgresOAuthStore(wrapped, issuer, verify).exchange(input, value => tokens.issue(value), { signal: controller.signal, deadlineMs: Date.now() + 10_000 });
     expect(issued.identity.grantId).toBeDefined();
     expect(await counts(pool)).toEqual({ requests: '1', grants: '1', codes: '1', tokens: '1' });
+    expect(await f.store.validate(issued.identity)).toBe(true);
     await expect(f.store.exchange(input, value => tokens.issue(value), context())).rejects.toThrow('invalid_grant');
+    expect(await revoked(pool, issued.identity.grantId)).toBe(true);
+    expect(await f.store.validate(issued.identity)).toBe(false);
+    await expect(f.store.refresh({ tokenHash: secretHash(issued.refreshToken), clientId: f.request.clientId, resource: tokens.resource,
+      scopes: undefined }, value => tokens.issue(value), context())).rejects.toThrow('invalid_grant');
   });
 
   it.each(['down first', 'insert first'])('serializes INSERT/down with locks before checking emptiness: %s', async order => {
@@ -472,10 +498,218 @@ function barrier() {
     } finally { await pool.query('DROP OWNED BY oauth_fixture_runtime'); await pool.query('DROP ROLE oauth_fixture_runtime'); }
   });
 
+  it('creates the local binding at consent and resolves a fresh console user end to end without manual inserts', async () => {
+    const pool = await database(); const f = await seed(pool, false);
+    expect((await pool.query('SELECT 1 FROM human_external_identities WHERE human_id=$1', [f.userId])).rowCount).toBe(0);
+    const approved = await consent(f);
+    if (!approved.code) throw new Error('missing code');
+    const binding = (await pool.query<{ namespace: string; subject: string; enabled: boolean }>(
+      'SELECT namespace,subject,enabled FROM human_external_identities WHERE human_id=$1', [f.userId])).rows;
+    expect(binding).toEqual([{ namespace: issuer, subject: f.userId, enabled: true }]);
+    const issued = await f.store.exchange(exchangeInput(f, approved.code), value => tokens.issue(value), context());
+    expect(issued.identity.subject).toBe(f.userId);
+    expect(await f.store.validate(issued.identity)).toBe(true);
+    const authority = await resolveHumanMcpAuthority({ pool }, issued.identity, new AbortController().signal);
+    expect(authority).toMatchObject({ userId: f.userId, scopes: ['cauce.read', 'cauce.publish'],
+      principal: { tenant_id: 'Steven', alias: f.alias, operator_id: `console:${f.userId}`, channel: 'human-mcp' } });
+    const second = { ...f.request, idHash: secretHash(randomUUID()) };
+    await f.store.createRequest(second, context());
+    expect((await f.store.consent(second.idHash, second.browserHash, f.session, ['cauce.read'], context())).code).toBeDefined();
+    expect((await pool.query('SELECT 1 FROM human_external_identities WHERE human_id=$1', [f.userId])).rowCount).toBe(1);
+  });
+
+  it('refuses consent for a revoked or foreign binding and leaves no grant behind', async () => {
+    const pool = await database(); const revoked = await seed(pool, false); const foreign = await seed(pool, false);
+    await pool.query(`INSERT INTO human_external_identities(human_id,provider,namespace,subject,enabled,revoked_at)
+      VALUES ($1::uuid,'oauth',$2,$1::text,false,clock_timestamp())`, [revoked.userId, issuer]);
+    await pool.query(`INSERT INTO human_external_identities(human_id,provider,namespace,subject)
+      VALUES ($1,'oauth',$2,$3)`, [revoked.userId, issuer, foreign.userId]);
+    for (const f of [revoked, foreign]) await expect(consent(f)).rejects.toThrow('access_denied');
+    expect((await counts(pool))?.grants).toBe('0');
+    expect((await pool.query<{ consumed_at: Date | null }>('SELECT consumed_at FROM cauce_oauth_requests WHERE consumed_at IS NOT NULL')).rowCount).toBe(0);
+    expect((await pool.query('SELECT 1 FROM human_external_identities WHERE human_id=$1', [foreign.userId])).rowCount).toBe(0);
+  });
+
+  it('persists dynamic clients, reads them back and purges only stale never-granted registrations past the soft cap', async () => {
+    const pool = await database(); const f = await seed(pool);
+    const registered = await f.store.registerClient({ clientName: 'Inspector', redirectUris: ['http://localhost/oauth/callback'],
+      grantTypes: ['authorization_code', 'refresh_token'] }, context());
+    expect(registered.clientId).toMatch(/^cauce-dcr-/u);
+    expect(await f.store.registeredClient(registered.clientId, context())).toEqual({ clientId: registered.clientId,
+      clientName: 'Inspector', redirectUris: ['http://localhost/oauth/callback'] });
+    expect(await f.store.registeredClient('cauce-dcr-00000000-0000-4000-8000-000000000000', context())).toBeUndefined();
+    await expect(pool.query("INSERT INTO cauce_oauth_clients(id,client_id,metadata) VALUES (gen_random_uuid(),'https://x.example/c','{}')")).rejects.toThrow();
+    await pool.query(`INSERT INTO cauce_oauth_clients(id,client_id,metadata,created_at)
+      SELECT gen_random_uuid(),'cauce-dcr-'||gen_random_uuid(),'{"redirect_uris":["http://localhost/cb"]}',clock_timestamp()-interval '2 days'
+      FROM generate_series(1,1000)`);
+    const used = (await pool.query<{ client_id: string }>('SELECT client_id FROM cauce_oauth_clients WHERE client_id<>$1 ORDER BY created_at LIMIT 1', [registered.clientId])).rows[0]?.client_id;
+    await consent(f);
+    await pool.query(`INSERT INTO cauce_oauth_grants SELECT gen_random_uuid(),human_id,issuer,resource,$1,redirect_uri,scopes,binding_id,binding_revision,
+      membership_revision,tenant_id,actor_alias,credential_stamp,created_at,expires_at FROM cauce_oauth_grants LIMIT 1`, [used]);
+    await f.store.registerClient({ clientName: null, redirectUris: ['https://app.example/cb'], grantTypes: ['authorization_code'] }, context());
+    const remaining = (await pool.query<{ total: number; kept: boolean; fresh: boolean }>(`SELECT count(*)::int AS total,
+      bool_or(client_id=$1) AS kept,bool_or(client_id=$2) AS fresh FROM cauce_oauth_clients`, [used, registered.clientId])).rows[0];
+    expect(remaining).toEqual({ total: 902, kept: true, fresh: true });
+  });
+
+  it('rotates refresh tokens under grant locks, storing only hashes bounded by the grant', async () => {
+    const pool = await database(); const f = await authorized(pool);
+    const refresh = (token: string, overrides: Partial<{ clientId: string }> = {}) => f.store.refresh({ tokenHash: secretHash(token),
+      clientId: f.request.clientId, resource: tokens.resource, scopes: undefined, ...overrides }, value => tokens.issue(value), context());
+    await expect(refresh(f.issued.refreshToken, { clientId: 'https://other.example/doc' })).rejects.toThrow('invalid_grant');
+    const next = await refresh(f.issued.refreshToken);
+    expect(next.identity.grantId).toBe(f.issued.identity.grantId);
+    expect(next.refreshToken).not.toBe(f.issued.refreshToken);
+    expect(await f.store.validate(next.identity)).toBe(true);
+    const rows = (await pool.query<{ token_hash: string; consumed: boolean; bounded: boolean }>(`SELECT r.token_hash,r.consumed_at IS NOT NULL AS consumed,
+      r.expires_at=g.expires_at AS bounded FROM cauce_oauth_refresh_tokens r JOIN cauce_oauth_grants g ON g.id=r.grant_id ORDER BY r.created_at`)).rows;
+    expect(rows).toEqual([{ token_hash: secretHash(f.issued.refreshToken), consumed: true, bounded: true },
+      { token_hash: secretHash(next.refreshToken), consumed: false, bounded: true }]);
+    const third = await refresh(next.refreshToken);
+    expect(await f.store.validate(third.identity)).toBe(true);
+    await expect(pool.query('UPDATE cauce_oauth_refresh_tokens SET consumed_at=NULL')).rejects.toThrow('immutable');
+    await expect(pool.query('DELETE FROM cauce_oauth_refresh_tokens')).rejects.toThrow('retention');
+  });
+
+  it('rejects a concurrent or retried refresh within the grace window without revoking the grant', async () => {
+    const pool = await database(); const f = await authorized(pool);
+    const refresh = (token: string) => f.store.refresh({ tokenHash: secretHash(token), clientId: f.request.clientId,
+      resource: tokens.resource, scopes: undefined }, value => tokens.issue(value), context());
+    const next = await refresh(f.issued.refreshToken);
+    await expect(refresh(f.issued.refreshToken)).rejects.toThrow('invalid_grant');
+    expect(await revoked(pool, f.issued.identity.grantId)).toBe(false);
+    expect(await f.store.validate(next.identity)).toBe(true);
+    expect(await f.store.validate((await refresh(next.refreshToken)).identity)).toBe(true);
+    // Dos refresh en paralelo con el mismo token, como el SDK MCP 1.29 tras un 401 simultáneo: uno gana y el otro
+    // espera el FOR UPDATE, relee la fila ya rotada y responde invalid_grant sin matar lo que obtuvo el ganador.
+    const other = await authorized(pool);
+    const raced = await Promise.allSettled([1, 2].map(() => other.store.refresh({ tokenHash: secretHash(other.issued.refreshToken),
+      clientId: other.request.clientId, resource: tokens.resource, scopes: undefined }, value => tokens.issue(value), context())));
+    const winner = raced.find(value => value.status === 'fulfilled');
+    if (winner?.status !== 'fulfilled') throw new Error('missing winning refresh');
+    expect(raced.filter(value => value.status === 'rejected')).toHaveLength(1);
+    expect(await revoked(pool, other.issued.identity.grantId)).toBe(false);
+    expect(await other.store.validate(winner.value.identity)).toBe(true);
+    await expect(other.store.refresh({ tokenHash: secretHash(winner.value.refreshToken), clientId: other.request.clientId,
+      resource: tokens.resource, scopes: undefined }, value => tokens.issue(value), context())).resolves.toHaveProperty('refreshToken');
+  });
+
+  it('revokes the whole grant when a rotated refresh token is replayed after the grace window', async () => {
+    const pool = await database(); const f = await authorized(pool);
+    const store = new PostgresOAuthStore(shortGrace(pool), issuer, verify);
+    const refresh = (token: string) => store.refresh({ tokenHash: secretHash(token), clientId: f.request.clientId,
+      resource: tokens.resource, scopes: undefined }, value => tokens.issue(value), context());
+    const next = await refresh(f.issued.refreshToken);
+    await pool.query('SELECT pg_sleep(0.3)');
+    await expect(refresh(f.issued.refreshToken)).rejects.toThrow('invalid_grant');
+    expect(await revoked(pool, f.issued.identity.grantId)).toBe(true);
+    await expect(refresh(next.refreshToken)).rejects.toThrow('invalid_grant');
+    expect(await f.store.validate(next.identity)).toBe(false);
+    await expect(pool.query('DELETE FROM cauce_oauth_grant_revocations')).rejects.toThrow('permanent');
+    await expect(pool.query('UPDATE cauce_oauth_grant_revocations SET revoked_at=clock_timestamp()')).rejects.toThrow('permanent');
+  });
+
+  it.each(['manual', 'reuse'] as const)('commits a %s revocation while an MCP call holds FOR SHARE on the grant', async kind => {
+    const pool = await database(); const f = await authorized(pool);
+    const store = new PostgresOAuthStore(shortGrace(pool), issuer, verify);
+    const next = await store.refresh({ tokenHash: secretHash(f.issued.refreshToken), clientId: f.request.clientId,
+      resource: tokens.resource, scopes: undefined }, value => tokens.issue(value), context());
+    await pool.query('SELECT pg_sleep(0.3)');
+    const holder = await pool.connect();
+    try {
+      // La misma autoridad que retiene una lectura o publicación MCP hasta su COMMIT.
+      await holder.query('BEGIN');
+      await lockOAuthAccess(holder, next.identity, issuer, tokens.resource, verify);
+      const started = Date.now();
+      if (kind === 'manual') await f.store.revoke(f.issued.identity.grantId, f.session, context());
+      else await expect(store.refresh({ tokenHash: secretHash(f.issued.refreshToken), clientId: f.request.clientId,
+        resource: tokens.resource, scopes: undefined }, value => tokens.issue(value), context())).rejects.toThrow('invalid_grant');
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(await revoked(pool, f.issued.identity.grantId)).toBe(true);
+      expect(await f.store.validate(next.identity)).toBe(false);
+      expect((await f.store.grants(f.session, context()))[0]?.revoked).toBe(true);
+    } finally { await holder.query('ROLLBACK'); holder.release(); }
+  });
+
+  it('fixes the grant lifetime from consent, independent of the console cookie, and refresh never outlives it', async () => {
+    const pool = await database(); const f = await seed(pool);
+    const lifetime = async (grantId: string) => (await pool.query<{ seconds: number }>(
+      'SELECT ceil(extract(epoch FROM expires_at-created_at))::int AS seconds FROM cauce_oauth_grants WHERE id=$1', [grantId])).rows[0]?.seconds;
+    const almostExpired = { ...f.session, expiresAt: Math.floor(Date.now() / 1000) + 30 };
+    const approved = await f.store.consent(f.request.idHash, f.request.browserHash, almostExpired, ['cauce.read'], context());
+    if (!approved.code) throw new Error('missing code');
+    const issued = await f.store.exchange(exchangeInput(f, approved.code), value => tokens.issue(value), context());
+    expect(await lifetime(issued.identity.grantId)).toBe(OAUTH_GRANT_TTL_SECONDS.default);
+    const next = await f.store.refresh({ tokenHash: secretHash(issued.refreshToken), clientId: f.request.clientId, resource: tokens.resource,
+      scopes: undefined }, value => tokens.issue(value), context());
+    expect((await pool.query<{ bounded: boolean }>(`SELECT bool_and(r.expires_at=g.expires_at) AS bounded FROM cauce_oauth_refresh_tokens r
+      JOIN cauce_oauth_grants g ON g.id=r.grant_id`)).rows[0]?.bounded).toBe(true);
+    expect(next.identity.expiresAt * 1000).toBeLessThanOrEqual(Date.now() + 5 * 60_000 + 1000);
+    const configured = new PostgresOAuthStore(pool, issuer, verify, { grantTtlSeconds: 300 });
+    const second = { ...f.request, idHash: secretHash(randomUUID()) };
+    await configured.createRequest(second, context());
+    const short = await configured.consent(second.idHash, second.browserHash, f.session, ['cauce.read'], context());
+    if (!short.code) throw new Error('missing code');
+    const shortIssued = await configured.exchange(exchangeInput(f, short.code), value => tokens.issue(value), context());
+    expect(await lifetime(shortIssued.identity.grantId)).toBe(300);
+    await expect(pool.query(`INSERT INTO cauce_oauth_grants SELECT gen_random_uuid(),human_id,issuer,resource,client_id,redirect_uri,scopes,binding_id,
+      binding_revision,membership_revision,tenant_id,actor_alias,credential_stamp,created_at,created_at+interval '30 days 1 second'
+      FROM cauce_oauth_grants LIMIT 1`)).rejects.toThrow();
+  });
+
+  it.each(['revoked grant', 'disabled console user', 'changed password', 'revoked membership', 'revoked binding'] as const)(
+    'refuses refresh for a %s without issuing tokens', async (change) => {
+      const pool = await database(); const f = await authorized(pool);
+      if (change === 'revoked grant') await f.store.revoke(f.issued.identity.grantId, f.session, context());
+      if (change === 'disabled console user') await pool.query('UPDATE console_users SET active=false WHERE id=$1', [f.userId]);
+      if (change === 'changed password') await pool.query('UPDATE console_users SET password_hash=$2 WHERE id=$1', [f.userId, '$scrypt$' + 'refresh-rotation'.repeat(5)]);
+      if (change === 'revoked membership') await pool.query('UPDATE human_tenant_memberships SET enabled=false,revoked_at=clock_timestamp() WHERE human_id=$1', [f.userId]);
+      if (change === 'revoked binding') await pool.query('UPDATE human_external_identities SET enabled=false,revoked_at=clock_timestamp() WHERE id=$1', [f.bindingId]);
+      await expect(f.store.refresh({ tokenHash: secretHash(f.issued.refreshToken), clientId: f.request.clientId, resource: tokens.resource,
+        scopes: undefined }, value => tokens.issue(value), context())).rejects.toThrow('invalid_grant');
+      expect(await counts(pool)).toMatchObject({ tokens: '1' });
+      expect((await pool.query('SELECT 1 FROM cauce_oauth_refresh_tokens WHERE consumed_at IS NOT NULL')).rowCount).toBe(0);
+    },
+  );
+
+  it('purges expired requests, codes and tokens opportunistically on insert without touching live rows or grants', async () => {
+    const pool = await database(); const f = await seed(pool);
+    const short = intercept(pool, async sql => sql.replace("at+interval '5 minutes'", "at+interval '200 milliseconds'")
+      .replace("at+interval '60 seconds'", "at+interval '200 milliseconds'"));
+    const store = new PostgresOAuthStore(short, issuer, verify);
+    const stale = { ...f.request, idHash: secretHash(randomUUID()) };
+    await store.createRequest(stale, context());
+    const expiring = { ...f.request, idHash: secretHash(randomUUID()) };
+    await store.createRequest(expiring, context());
+    await store.consent(expiring.idHash, expiring.browserHash, f.session, ['cauce.read'], context());
+    await pool.query('SELECT pg_sleep(0.3)');
+    const fresh = { ...f.request, idHash: secretHash(randomUUID()) };
+    await f.store.createRequest(fresh, context());
+    expect((await pool.query<{ id_hash: string }>('SELECT id_hash FROM cauce_oauth_requests ORDER BY id_hash')).rows.map(row => row.id_hash).sort())
+      .toEqual([f.request.idHash, fresh.idHash].sort());
+    const approved = await consent(f);
+    expect(await counts(pool)).toEqual({ requests: '2', grants: '2', codes: '1', tokens: '0' });
+    if (!approved.code) throw new Error('missing code');
+    await f.store.exchange(exchangeInput(f, approved.code), value => tokens.issue(value), context());
+    expect(await counts(pool)).toEqual({ requests: '2', grants: '2', codes: '1', tokens: '1' });
+  });
+
   it('drops only empty OAuth tables atomically and preserves the human ledger', async () => {
     const pool = await database(); const client = await pool.connect();
     try { await transaction(client, async () => { await client.query(await readFile(downPath, 'utf8')); }); }
     finally { client.release(); }
     expect((await pool.query("SELECT to_regclass('cauce_oauth_grants') AS oauth,to_regclass('human_external_identities') AS human")).rows[0]).toEqual({ oauth: null, human: 'human_external_identities' });
+    for (const table of ['schema_migrations', 'schema_migration_ledger']) {
+      expect((await pool.query(`SELECT 1 FROM ${table} WHERE version=$1`, [version])).rowCount).toBe(0);
+      expect((await pool.query(`SELECT 1 FROM ${table} WHERE version=$1`, [previousVersion])).rowCount).toBe(1);
+    }
+    await applyMigrations(pool);
+    expect(await counts(pool)).toEqual({ requests: '0', grants: '0', codes: '0', tokens: '0' });
+    expect((await pool.query("SELECT to_regclass('cauce_oauth_refresh_tokens') AS refresh,to_regclass('cauce_oauth_clients') AS clients")).rows[0])
+      .toEqual({ refresh: 'cauce_oauth_refresh_tokens', clients: 'cauce_oauth_clients' });
+    await pool.query("INSERT INTO schema_migrations(version) VALUES ('999_fixture_later.sql')");
+    const later = await pool.connect();
+    try { await expect(transaction(later, async () => { await later.query(await readFile(downPath, 'utf8')); })).rejects.toThrow('later migration'); }
+    finally { later.release(); }
   });
 });

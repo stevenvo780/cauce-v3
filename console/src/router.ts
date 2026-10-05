@@ -97,9 +97,3 @@ export const CONFIG_SIN_LECTURA_REASON =
 
 export const CONFIG_WRITE_NO_ACREDITADO_REASON =
   'No se pudo acreditar config.write; la vista permanece disponible en solo lectura y no permite cambios ni restauraciones.';
-
-/** Navigation availability for the configuration entry, from the control permission. */
-export function configNavAvailability(state: 'allowed' | 'denied' | 'unknown'): NavEntryAvailability {
-  if (state !== 'denied') return { hidden: false, disabled: false };
-  return { hidden: false, disabled: true, reason: CONFIG_SIN_CONTROL_REASON };
-}

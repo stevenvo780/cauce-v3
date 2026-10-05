@@ -38,8 +38,8 @@ CREATE TABLE cauce_oauth_grants (
   actor_alias text NOT NULL,
   credential_stamp text NOT NULL CHECK (credential_stamp ~ '^[A-Za-z0-9_-]{43}$'),
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  expires_at timestamptz NOT NULL CHECK (expires_at>created_at AND expires_at<=created_at+interval '8 hours'),
-  revoked_at timestamptz CHECK (revoked_at>=created_at),
+  -- Vida fija desde el consentimiento (CAUCE_MCP_OAUTH_GRANT_TTL_SECONDS, 300 s a 30 días).
+  expires_at timestamptz NOT NULL CHECK (expires_at>created_at AND expires_at<=created_at+interval '30 days'),
   FOREIGN KEY (binding_id,human_id) REFERENCES human_external_identities(id,human_id) ON DELETE RESTRICT,
   FOREIGN KEY (human_id,tenant_id) REFERENCES human_tenant_memberships(human_id,tenant_id) ON DELETE RESTRICT,
   FOREIGN KEY (tenant_id,actor_alias) REFERENCES agents(tenant_id,alias) ON DELETE RESTRICT
@@ -59,6 +59,30 @@ CREATE TABLE cauce_oauth_tokens (
   expires_at timestamptz NOT NULL CHECK (expires_at>created_at AND expires_at<=created_at+interval '5 minutes'),
   revoked_at timestamptz CHECK (revoked_at>=created_at)
 );
+-- Refresh tokens rotatorios de un solo uso: sólo el hash, nunca más allá de la expiración del grant.
+CREATE TABLE cauce_oauth_refresh_tokens (
+  token_hash text PRIMARY KEY CHECK (token_hash ~ '^[a-f0-9]{64}$'),
+  grant_id uuid NOT NULL REFERENCES cauce_oauth_grants(id) ON DELETE RESTRICT,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  expires_at timestamptz NOT NULL CHECK (expires_at>created_at AND expires_at<=created_at+interval '30 days'),
+  consumed_at timestamptz CHECK (consumed_at>=created_at AND consumed_at<expires_at)
+);
+-- La revocación es una fila aparte y no un UPDATE del grant: el INSERT sólo toma FOR KEY SHARE de la fila
+-- referenciada, compatible con el FOR SHARE que cada llamada MCP retiene, así que ninguna racha de lecturas
+-- ni publicación larga la deja esperando hasta el lock_timeout.
+CREATE TABLE cauce_oauth_grant_revocations (
+  grant_id uuid PRIMARY KEY REFERENCES cauce_oauth_grants(id) ON DELETE RESTRICT,
+  revoked_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+-- Clientes públicos registrados por RFC 7591. No son autoridad: el grant guarda su propio client_id y
+-- redirect_uri; la fila sólo describe redirects permitidos y se purga si nunca obtuvo un grant.
+CREATE TABLE cauce_oauth_clients (
+  id uuid PRIMARY KEY,
+  client_id text COLLATE "C" NOT NULL UNIQUE
+    CHECK (client_id ~ '^cauce-dcr-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
+  metadata jsonb NOT NULL CHECK (jsonb_typeof(metadata)='object' AND octet_length(metadata::text)<=16384),
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
 
 CREATE FUNCTION cauce_oauth_preserve_authority() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE mutable_field text;
@@ -69,8 +93,8 @@ BEGIN
     END IF;
     RETURN OLD;
   END IF;
-  mutable_field := CASE WHEN TG_TABLE_NAME IN ('cauce_oauth_grants','cauce_oauth_tokens')
-                       THEN 'revoked_at' ELSE 'consumed_at' END;
+  -- Los grants no tienen campo mutable: la clave no existe y cualquier cambio de la fila se rechaza.
+  mutable_field := CASE WHEN TG_TABLE_NAME='cauce_oauth_tokens' THEN 'revoked_at' ELSE 'consumed_at' END;
   IF (to_jsonb(NEW)-mutable_field) IS DISTINCT FROM (to_jsonb(OLD)-mutable_field)
      OR ((to_jsonb(OLD)->mutable_field) <> 'null'::jsonb
          AND (to_jsonb(NEW)->mutable_field) IS DISTINCT FROM (to_jsonb(OLD)->mutable_field)) THEN
@@ -86,10 +110,23 @@ CREATE TRIGGER cauce_oauth_code_preserved BEFORE UPDATE OR DELETE ON cauce_oauth
   FOR EACH ROW EXECUTE FUNCTION cauce_oauth_preserve_authority();
 CREATE TRIGGER cauce_oauth_token_preserved BEFORE UPDATE OR DELETE ON cauce_oauth_tokens
   FOR EACH ROW EXECUTE FUNCTION cauce_oauth_preserve_authority();
+CREATE TRIGGER cauce_oauth_refresh_preserved BEFORE UPDATE OR DELETE ON cauce_oauth_refresh_tokens
+  FOR EACH ROW EXECUTE FUNCTION cauce_oauth_preserve_authority();
+CREATE FUNCTION cauce_oauth_revocation_permanent() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'OAuth revocations are permanent';
+END $$;
+CREATE TRIGGER cauce_oauth_revocation_preserved BEFORE UPDATE OR DELETE ON cauce_oauth_grant_revocations
+  FOR EACH ROW EXECUTE FUNCTION cauce_oauth_revocation_permanent();
 CREATE INDEX cauce_oauth_requests_expiry ON cauce_oauth_requests(expires_at);
 CREATE INDEX cauce_oauth_codes_expiry ON cauce_oauth_codes(expires_at);
 CREATE INDEX cauce_oauth_tokens_grant ON cauce_oauth_tokens(grant_id,expires_at);
+CREATE INDEX cauce_oauth_tokens_expiry ON cauce_oauth_tokens(expires_at);
+CREATE INDEX cauce_oauth_refresh_grant ON cauce_oauth_refresh_tokens(grant_id);
+CREATE INDEX cauce_oauth_refresh_expiry ON cauce_oauth_refresh_tokens(expires_at);
 CREATE INDEX cauce_oauth_grants_owner ON cauce_oauth_grants(human_id,issuer,resource,created_at DESC,id DESC);
+CREATE INDEX cauce_oauth_grants_client ON cauce_oauth_grants(client_id);
+CREATE INDEX cauce_oauth_clients_created ON cauce_oauth_clients(created_at);
 
 CREATE FUNCTION cauce_oauth_advance_identity_revision() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE changed boolean;
@@ -116,7 +153,9 @@ BEGIN
   IF EXISTS (SELECT 1 FROM cauce_oauth_requests)
      OR EXISTS (SELECT 1 FROM cauce_oauth_grants)
      OR EXISTS (SELECT 1 FROM cauce_oauth_codes)
-     OR EXISTS (SELECT 1 FROM cauce_oauth_tokens) THEN
+     OR EXISTS (SELECT 1 FROM cauce_oauth_tokens)
+     OR EXISTS (SELECT 1 FROM cauce_oauth_refresh_tokens)
+     OR EXISTS (SELECT 1 FROM cauce_oauth_grant_revocations) THEN
     RAISE EXCEPTION 'OAuth retention requires an approved procedure';
   END IF;
   RETURN NULL;
@@ -128,4 +167,8 @@ CREATE TRIGGER cauce_oauth_grants_no_truncate BEFORE TRUNCATE ON cauce_oauth_gra
 CREATE TRIGGER cauce_oauth_codes_no_truncate BEFORE TRUNCATE ON cauce_oauth_codes
   FOR EACH STATEMENT EXECUTE FUNCTION cauce_oauth_reject_truncate();
 CREATE TRIGGER cauce_oauth_tokens_no_truncate BEFORE TRUNCATE ON cauce_oauth_tokens
+  FOR EACH STATEMENT EXECUTE FUNCTION cauce_oauth_reject_truncate();
+CREATE TRIGGER cauce_oauth_refresh_no_truncate BEFORE TRUNCATE ON cauce_oauth_refresh_tokens
+  FOR EACH STATEMENT EXECUTE FUNCTION cauce_oauth_reject_truncate();
+CREATE TRIGGER cauce_oauth_revocations_no_truncate BEFORE TRUNCATE ON cauce_oauth_grant_revocations
   FOR EACH STATEMENT EXECUTE FUNCTION cauce_oauth_reject_truncate();

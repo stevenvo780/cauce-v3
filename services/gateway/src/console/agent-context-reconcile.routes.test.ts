@@ -1,3 +1,4 @@
+import { coordinateWriteFixture, FIXTURE_WRITE_OPERATION } from './agent-profile.fixtures.js';
 import { createHash } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -154,17 +155,12 @@ function server(overrides: Partial<AgentContextReconcileDeps> = {}): ServerFixtu
       documents: [{ name: 'AGENTS.md', path: PATH, sha: sha('prior expectation') }],
     }),
     deliveryInFlight: async () => ({ count: 0, deliveries: [] }),
-    reconcileRuntime: async (input) => {
-      try {
-        const effect = await input.apply();
-        await recordExpectation(effect.expectation);
-        for (const document of effect.documentRevisions) await recordRevision(document);
-        events.push('audit:result');
-        return { state: 'committed', value: effect.value };
-      } catch {
-        return { state: 'effect_unknown' };
-      }
-    },
+    coordinateWrite: (input) => coordinateWriteFixture(input, async (sql, values) => {
+      if (sql.includes('agent_profile_runtime_expectations')) await recordExpectation({ revision: values[2],
+        generation: values[3], documents: JSON.parse(String(values[4])) as unknown });
+      if (sql.includes('agent_document_revisions')) await recordRevision({ path: values[2], sha256: values[3], bytes: values[4] });
+      if (sql.includes('audit_events')) events.push('audit:result');
+    }, runtime.generation),
     recordAudit: async (entry) => {
       audits.push(entry);
       const phase = Reflect.get(entry.metadata, 'phase');
@@ -293,7 +289,7 @@ describe('context reconciliation', () => {
         modified_at: '2026-09-05T20:00:00.000Z',
       }),
       listMemoryDirectory: async () => ({ error: 'unavailable', reason: 'not used' }),
-      writeGovernanceBatch: async (batch) => {
+      writeGovernanceBatchDurable: async (batch) => {
         writes.push([...batch]);
         const write = batch[0];
         if (batch.length !== 1 || write?.mode !== 'write'
@@ -374,7 +370,7 @@ describe('context reconciliation', () => {
         modified_at: '2026-09-05T20:00:00.000Z',
       }),
       listMemoryDirectory: async () => ({ error: 'unavailable', reason: 'not used' }),
-      writeGovernanceBatch: async (batch) => {
+      writeGovernanceBatchDurable: async (batch) => {
         disk = concurrent;
         const write = batch[0];
         if (write?.precondition.state !== 'present'
@@ -405,7 +401,7 @@ describe('context reconciliation', () => {
 
   it('lets the transactional fence reject work acquired after the snapshot', async () => {
     const fixture = server({
-      reconcileRuntime: async () => {
+      coordinateWrite: async () => {
         throw new ContextReconcileError('delivery_in_flight', 'work acquired before the fence');
       },
     });
@@ -444,9 +440,9 @@ describe('context reconciliation', () => {
 
   it('reports an unknown effect when the atomic post-ACK commit cannot be confirmed', async () => {
     const fixture = server({
-      reconcileRuntime: async (input) => {
-        await input.apply();
-        return { state: 'effect_unknown' };
+      coordinateWrite: async (input) => {
+        await input.dispatch(FIXTURE_WRITE_OPERATION);
+        return { state: 'effect_unknown', operation_id: FIXTURE_WRITE_OPERATION.operationId };
       },
     });
     live.push(fixture.app);
@@ -491,9 +487,9 @@ describe('context reconciliation', () => {
 
   it('reports when only the durable intent survives an unknown-effect audit failure', async () => {
     const fixture = server({
-      reconcileRuntime: async (input) => {
-        await input.apply();
-        return { state: 'effect_unknown' };
+      coordinateWrite: async (input) => {
+        await input.dispatch(FIXTURE_WRITE_OPERATION);
+        return { state: 'effect_unknown', operation_id: FIXTURE_WRITE_OPERATION.operationId };
       },
       recordAudit: async (entry) => {
         if (Reflect.get(entry.metadata, 'phase') === 'effect_unknown') {

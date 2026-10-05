@@ -1,11 +1,9 @@
 import { AlertTriangle, MonitorPlay } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
-import type { AdapterView, ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
+import type { ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { EmptyState, LoadingState } from '../../components/ui';
-import { ControlPlanePanel } from './AdapterInspector';
-import { FleetSidebar } from './FleetSidebar';
 import { GridContainer } from './GridContainer';
 import { PlazasColgadas, type MotivoReconciliacionPlaza } from './PlazasColgadas';
 import {
@@ -29,7 +27,7 @@ import type { TerminalGrantRequestOutcome } from './types';
 interface OperatorWorkspaceProps {
   agents: FleetAgent[];
   initialAgentId?: string;
-  adapters: AdapterView[];
+  toolbar?: ReactNode;
   access?: ConsoleAccess;
   topologyAccess?: TopologySnapshot;
   terminalCapability?: TerminalCapability;
@@ -37,15 +35,9 @@ interface OperatorWorkspaceProps {
   terminalTargets?: TerminalTargetsSnapshot;
   fleetLoading: boolean;
   fleetError?: Error;
-  /**
-   * How many sessions are open: with one open the terminal is the content and the six counters
-   * collapse into a disclosure. This component owns the count, not the page.
-   */
   onSesionesAbiertas?: (cantidad: number) => void;
   /** The page measures this box to write `--terminal-tope`; see `TerminalPage`. */
   cajaRef?: RefObject<HTMLDivElement | null>;
-  flotaPlegada?: boolean;
-  onPlegarFlota?: () => void;
 }
 
 function sessionId(agent: FleetAgent): string {
@@ -171,9 +163,8 @@ function EscenarioVacio({ agents, access, capability, targets, loading, error, o
   return (
     <div className="terminal-stage-empty" data-tono={copia.tono}>
       <span className="terminal-stage-icon"><MonitorPlay size={26} aria-hidden="true" /></span>
-      <p className="eyebrow">{copia.eyebrow}</p>
       <h2>{copia.titulo}</h2>
-      <EmptyState>{copia.cuerpo}</EmptyState>
+      {copia.tono === 'cerrado' ? <EmptyState>{copia.cuerpo}</EmptyState> : null}
       {primero ? (
         <button className="button" type="button" onClick={() => { onOpenAgent(primero); }}>
           <MonitorPlay size={16} aria-hidden="true" /> Abrir la TUI de {primero.alias}
@@ -191,11 +182,12 @@ function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T
   return result;
 }
 
-export function OperatorWorkspace({ agents, initialAgentId, adapters, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError, onSesionesAbiertas, cajaRef, flotaPlegada, onPlegarFlota }: OperatorWorkspaceProps) {
+export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError, onSesionesAbiertas, cajaRef }: OperatorWorkspaceProps) {
   // The session that holds the CSRF token in memory: without it every PTY plane write returns 403.
   const api = useApi();
   const [sessions, setSessions] = useState<OperatorSession[]>([]);
   const [activeId, setActiveId] = useState<string>();
+  const [changingAgent, setChangingAgent] = useState(false);
   const [grants, setGrants] = useState<Record<string, TerminalSessionGrant>>({});
   const [closedChannels, setClosedChannels] = useState<Record<string, true | undefined>>({});
   const [revocationFailures, setRevocationFailures] = useState<Record<string, true | undefined>>({});
@@ -435,6 +427,21 @@ export function OperatorWorkspace({ agents, initialAgentId, adapters, access, to
     if (activeId === id) setActiveId(next[Math.min(index, next.length - 1)]?.id);
   }
 
+  async function selectAgent(agent: FleetAgent) {
+    if (changingAgent || activeSession?.agent.id === agent.id) return;
+    setChangingAgent(true);
+    try {
+      for (const session of sessions) {
+        await releaseChannel(session.id);
+        if ((grantsRef.current[session.id] as TerminalSessionGrant | undefined) !== undefined) return;
+        closeSession(session.id);
+      }
+      openAgent(agent);
+    } finally {
+      if (workspaceMountedRef.current) setChangingAgent(false);
+    }
+  }
+
   function updateSession(updated: OperatorSession) {
     setSessions((current) => current.map((session) => session.id === updated.id ? updated : session));
   }
@@ -463,18 +470,20 @@ export function OperatorWorkspace({ agents, initialAgentId, adapters, access, to
         onCerrar={(id) => { void cerrarPlaza(id); }}
       />
       <div className="ultimate-terminal-shell" data-objeto-principal="escenario" ref={cajaRef}>
-      <ControlPlanePanel adapters={adapters} access={access} capability={terminalCapability} />
-      <FleetSidebar
-        agents={agents}
-        adapters={adapters}
-        activeAgentId={activeSession?.agent.id}
-        onOpenAgent={openAgent}
-        loading={fleetLoading}
-        error={fleetError}
-        targets={terminalTargets}
-        plegada={flotaPlegada}
-        onPlegar={onPlegarFlota}
-      />
+      <div className="terminal-agent-toolbar">
+        <label htmlFor="terminal-agent-select" className="sr-only">Agente</label>
+        <select id="terminal-agent-select" value={activeSession?.agent.id ?? ''} onChange={(event) => {
+          const agent = agents.find((item) => item.id === event.target.value);
+          if (agent) void selectAgent(agent);
+        }} disabled={changingAgent || (fleetLoading && agents.length === 0)}>
+          <option value="">Elegir agente</option>
+          {agents.map((agent) => {
+            const state = fleetTerminalChip(terminalTargets?.items, agent);
+            return <option key={agent.id} value={agent.id} title={state.reason}>{agent.alias} · {agent.tenantId} · {state.label}</option>;
+          })}
+        </select>
+        {toolbar}
+      </div>
       {liveSessions.length === 0 ? (
         <EscenarioVacio
           agents={agents}
