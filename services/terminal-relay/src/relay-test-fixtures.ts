@@ -245,6 +245,8 @@ VbuY1WcOsIxcwvyUBBnxHB0G
 `;
 
 export const SESSION_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+export const AUTHORITY_PROOF = `ac2.YQ.${'A'.repeat(43)}`;
+export const RESUME_TOKEN = `r2.${Buffer.from(JSON.stringify(['r1.' + 'a'.repeat(100), AUTHORITY_PROOF])).toString('base64url')}`;
 export const CLAIM_TOKEN = '12345678-1234-4234-8234-123456789abc';
 export const RELAY_INSTANCE_ID = 'a'.repeat(64);
 const RELAY_BOOT_ID = '11111111-1111-4111-8111-111111111111';
@@ -271,7 +273,8 @@ export function grant(overrides: Partial<TerminalSessionGrant> = {}): TerminalSe
     container: 'claw',
     runtime_user: 'claw',
     session_expires_at: new Date(Date.now() + 60_000).toISOString(),
-    resume_token: 'r'.repeat(100),
+    resume_token: RESUME_TOKEN,
+    authority_proof: AUTHORITY_PROOF,
     claim_token: CLAIM_TOKEN,
     claim_epoch: '1',
     claim_lease_ms: 150_000,
@@ -303,6 +306,9 @@ class ScriptedGateway implements TerminalGatewayClient {
   consume: ConsumeOutcome = { status: 'granted', grant: grant() };
   consumeCalls = 0;
   readonly consumeClaimTokens: string[] = [];
+  readonly consumeProofs: string[] = [];
+  readonly authzProofs: string[] = [];
+  readonly resumeProofs: string[] = [];
   resumeCalls = 0;
   readonly resumeClaims: { token: string; epoch: string | undefined }[] = [];
   resume: ResumeOutcome | undefined;
@@ -313,8 +319,9 @@ class ScriptedGateway implements TerminalGatewayClient {
   readonly closeReports: SessionCloseReport[] = [];
   readonly presence: AgentPresence[][] = [];
 
-  async consumeTicket(_sessionId: string, _ticket: string, claimToken: string): Promise<ConsumeOutcome> {
+  async consumeTicket(_sessionId: string, _ticket: string, claimToken: string, authorityProof: string): Promise<ConsumeOutcome> {
     this.consumeCalls += 1;
+    this.consumeProofs.push(authorityProof);
     this.consumeClaimTokens.push(claimToken);
     await this.consumeGate;
     return this.consume.status === 'granted'
@@ -326,9 +333,11 @@ class ScriptedGateway implements TerminalGatewayClient {
     _sessionId: string,
     _resumeToken: string,
     claimToken: string,
+    authorityProof: string,
     claimEpochValue?: string,
   ): Promise<ResumeOutcome> {
     this.resumeCalls += 1;
+    this.resumeProofs.push(authorityProof);
     this.resumeClaims.push({ token: claimToken, epoch: claimEpochValue });
     if (this.resume !== undefined) {
       return this.resume.status === 'granted'
@@ -354,7 +363,8 @@ class ScriptedGateway implements TerminalGatewayClient {
       : { status: 'unavailable' };
   }
 
-  async authorizeSession(): Promise<AuthzOutcome> {
+  async authorizeSession(_sid: string, _claim: string, _epoch: string, authorityProof: string): Promise<AuthzOutcome> {
+    this.authzProofs.push(authorityProof);
     return this.authz;
   }
 
@@ -586,13 +596,13 @@ export async function connectConsole(
 
 export function attach(client: BrowserClient, overrides: Record<string, unknown> = {}): void {
   client.socket.send(JSON.stringify({
-    type: 'attach', session_id: SESSION_ID, ticket: 'opaque-ticket', cols: 120, rows: 40, ...overrides
+    type: 'attach', session_id: SESSION_ID, ticket: 'opaque-ticket', authority_proof: AUTHORITY_PROOF, cols: 120, rows: 40, ...overrides
   }));
 }
 
 export function resume(client: BrowserClient, overrides: Record<string, unknown> = {}): void {
   client.socket.send(JSON.stringify({
-    type: 'resume', session_id: SESSION_ID, resume_token: 'r'.repeat(100),
+    type: 'resume', session_id: SESSION_ID, resume_token: RESUME_TOKEN, authority_proof: AUTHORITY_PROOF,
     prior_claim_token: CLAIM_TOKEN, prior_claim_epoch: '1',
     after_bytes: 0, cols: 120, rows: 40, ...overrides,
   }));

@@ -1,6 +1,11 @@
 /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { DatabasePool } from '@cauce/store';
-import type { AuthProvider, Principal } from './auth.js';
+import { createHash } from 'node:crypto';
+import type { FastifyInstance } from 'fastify';
+import { vi } from 'vitest';
+import { MtlsAuthProvider, requireOperatorPermission, validatePrincipal, type AuthProvider, type Principal } from './auth.js';
+import { machineAuthorityOrigin, type VerifiedTerminalMachine } from './terminal/authority-continuity.js';
+import { sessionExpiry } from './terminal/helpers.js';
 import type { AgentPresence, TerminalSessionRow } from './terminal/types.js';
 import { instrumentFailurePool } from './test-support/terminal-plugin.js';
 
@@ -26,6 +31,7 @@ interface FakeDatabase {
   pool: DatabasePool;
   clock: { now: () => number };
   sessions: Map<string, TerminalSessionRow>;
+  authorityProofs: Map<string, string>;
   audit: AuditRow[];
   failNextAudit(action: string): void;
   failNestedPoolQueries(): void;
@@ -73,7 +79,7 @@ function fakeDatabase(): FakeDatabase {
 
   const query = async (text: string, values: unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> => {
     const now = clock.now();
-    if (text.includes('clock_timestamp() AS database_now')) {
+    if (text.trim() === 'SELECT clock_timestamp() AS database_now') {
       return { rows: [{ database_now: new Date(now) }], rowCount: 1 };
     }
     if (text.includes('SELECT tenant_id,alias,container_name,runtime_user')) {
@@ -103,8 +109,7 @@ function fakeDatabase(): FakeDatabase {
         string, Buffer, Buffer, string,
       ];
       const operatorOpen = [...sessions.values()].filter((row) =>
-        row.operator_id === operatorId
-          && (attributed || row.console_subject === subject)
+        row.console_subject === subject
           && isOpen(row, ttlSeconds, now)).length;
       if (operatorOpen >= maxSessions) {
         return { rows: [{ reason: 'session_limit', id: null }], rowCount: 1 };
@@ -209,12 +214,11 @@ function fakeDatabase(): FakeDatabase {
     }
     if (text.includes('ORDER BY issued_at DESC') && text.includes('consumed_at IS NULL')
         && text.includes('FOR UPDATE') && text.includes('AND tenant_id=$4')) {
-      const [operatorId, attributed, subject, tenantId, alias, container, mode, reason, cols, rows] = values as [
+      const [, , subject, tenantId, alias, container, mode, reason, cols, rows] = values as [
         string, boolean, string, string, string, string, 'shell' | 'harness', string, number, number,
       ];
       const candidates = [...sessions.values()].filter((row) =>
-        row.operator_id === operatorId
-        && (attributed || row.console_subject === subject)
+        row.console_subject === subject
         && row.tenant_id === tenantId && row.alias === alias && row.container === container
         && row.mode === mode && row.reason === reason && row.cols === cols && row.rows === rows
         && row.consumed_at === null && row.revoked_at === null && row.closed_at === null
@@ -226,9 +230,8 @@ function fakeDatabase(): FakeDatabase {
       const row = sessions.get(values[0] as string);
       return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
     }
-    if (text.includes('FROM terminal_sessions') && text.includes('WHERE operator_id=$1')) {
-      const rows = [...sessions.values()].filter((row) => row.operator_id === values[0]
-        && ((values[2] as boolean) || row.console_subject === values[3]));
+    if (text.includes('FROM terminal_sessions') && text.includes('ORDER BY occupies_slot')) {
+      const rows = [...sessions.values()].filter((row) => row.console_subject === values[3]);
       rows.sort((left, right) => {
       if (text.includes('ORDER BY occupies_slot')) {
           const openOrder = Number(isOpen(right, values[1] as number, now))
@@ -243,10 +246,11 @@ function fakeDatabase(): FakeDatabase {
         : rows;
       return { rows: output, rowCount: output.length };
     }
-    if (text.includes('SET consumed_at=now(), relay_claim_sha256=$2')) {
+    if (text.includes('SET consumed_at=clock_timestamp(), relay_claim_sha256=$2')) {
       const row = sessions.get(values[0] as string);
       if (row?.consumed_at !== null || row.revoked_at !== null || row.closed_at !== null
-          || row.expires_at.getTime() <= now || row.relay_instance_id !== values[5]) {
+          || row.expires_at.getTime() <= now || row.relay_instance_id !== values[5]
+          || (values[6] as Date).getTime() <= now) {
         return { rows: [], rowCount: 0 };
       }
       row.consumed_at = new Date(now);
@@ -254,10 +258,7 @@ function fakeDatabase(): FakeDatabase {
       row.relay_claim_epoch = '1';
       row.relay_claimed_at = new Date(now);
       row.relay_boot_id = values[4] as string;
-      row.relay_claim_expires_at = new Date(now + Math.min(
-        values[2] as number,
-        values[3] as number,
-      ) * 1_000);
+      row.relay_claim_expires_at = new Date(Math.min(now + Math.min(values[2] as number, values[3] as number) * 1_000, (values[6] as Date).getTime()));
       return { rows: [{ ...row, database_now: new Date(now) }], rowCount: 1 };
     }
     if (text.includes('SET relay_claim_expires_at=LEAST')) {
@@ -270,10 +271,13 @@ function fakeDatabase(): FakeDatabase {
           || row.relay_claim_expires_at.getTime() <= now || row.consumed_at === null
           || row.revoked_at !== null || row.closed_at !== null
           || row.relay_instance_id !== values[5] || row.relay_boot_id !== values[6]
-          || row.consumed_at.getTime() + sessionTtlSeconds * 1_000 <= now) {
+          || row.consumed_at.getTime() + sessionTtlSeconds * 1_000 <= now
+          || (values[8] as Date).getTime() <= now) {
         return { rows: [], rowCount: 0 };
       }
-      const sessionExpiresAt = new Date(row.consumed_at.getTime() + sessionTtlSeconds * 1_000);
+      const sessionExpiresAt = new Date(Math.min(
+        (sessionExpiry(row, sessionTtlSeconds, (values[7] as number | null) ?? undefined) ?? row.expires_at).getTime(),
+        (values[8] as Date).getTime()));
       row.relay_claim_expires_at = new Date(Math.min(
         sessionExpiresAt.getTime(),
         now + (values[2] as number) * 1_000,
@@ -290,7 +294,8 @@ function fakeDatabase(): FakeDatabase {
       if (!row?.consumed_at || row.revoked_at !== null || row.closed_at !== null
           || row.consumed_at.getTime() + sessionTtlSeconds * 1_000 <= now
           || (row.relay_claim_expires_at !== null && row.relay_claim_expires_at.getTime() > now)
-          || BigInt(row.relay_claim_epoch) >= 9_223_372_036_854_775_807n) {
+          || BigInt(row.relay_claim_epoch) >= 9_223_372_036_854_775_807n
+          || (values[7] as Date).getTime() <= now) {
         return { rows: [], rowCount: 0 };
       }
       row.relay_claim_sha256 = Buffer.from(values[1] as Buffer);
@@ -299,8 +304,8 @@ function fakeDatabase(): FakeDatabase {
       row.relay_instance_id = values[4] as string;
       row.relay_boot_id = values[5] as string;
       row.relay_claim_expires_at = new Date(Math.min(
-        row.consumed_at.getTime() + sessionTtlSeconds * 1_000,
-        now + (values[2] as number) * 1_000,
+        (sessionExpiry(row, sessionTtlSeconds, (values[6] as number | null) ?? undefined) ?? row.expires_at).getTime(),
+        now + (values[2] as number) * 1_000, (values[7] as Date).getTime(),
       ));
       return { rows: [{ ...row, database_now: new Date(now) }], rowCount: 1 };
     }
@@ -318,8 +323,7 @@ function fakeDatabase(): FakeDatabase {
       const expectedGeneration = values[2] as string;
       if (!row || row.request_id !== values[1]
           || row.browser_owner_generation !== expectedGeneration
-          || row.operator_id !== values[4]
-          || (!(values[5] as boolean) && row.console_subject !== values[6])
+          || row.console_subject !== values[6]
           || row.revoked_at !== null || row.closed_at !== null
           || BigInt(row.browser_owner_generation) >= 9_223_372_036_854_775_807n) {
         return { rows: [], rowCount: 0 };
@@ -328,10 +332,10 @@ function fakeDatabase(): FakeDatabase {
       row.browser_owner_generation = (BigInt(row.browser_owner_generation) + 1n).toString();
       return { rows: [row], rowCount: 1 };
     }
-    if (text.includes('SET revoked_at=now()')) {
+    if (text.includes('SET revoked_at=clock_timestamp()')) {
       const row = sessions.get(values[0] as string);
-      if (!row || row.operator_id !== values[1]
-          || (!(values[2] as boolean) && row.console_subject !== values[3])
+      if (!row
+          || row.console_subject !== values[3]
           || row.request_id !== values[4]
           || row.browser_owner_generation !== values[5]
           || !row.browser_owner_sha256.equals(values[6] as Buffer)
@@ -344,8 +348,7 @@ function fakeDatabase(): FakeDatabase {
     if (text.includes('AS settled') && text.includes('browser_owner_sha256=$7')) {
       const row = sessions.get(values[0] as string);
       const settled = row !== undefined
-        && row.operator_id === values[1]
-        && ((values[2] as boolean) || row.console_subject === values[3])
+        && row.console_subject === values[3]
         && row.request_id === values[4]
         && row.browser_owner_generation === values[5]
         && row.browser_owner_sha256.equals(values[6] as Buffer)
@@ -458,7 +461,7 @@ function fakeDatabase(): FakeDatabase {
         };
       },
     } as unknown as DatabasePool),
-    clock, sessions, audit,
+    clock, sessions, audit, authorityProofs: new Map(),
     failNextAudit: (action) => { failingAuditAction = action; },
     failNestedPoolQueries: () => { rejectNestedPoolQueries = true; },
     rooms: state.rooms,
@@ -466,17 +469,65 @@ function fakeDatabase(): FakeDatabase {
   };
 }
 
-/** The single console certificate in production: Steven:kant, operator, route+read+control. */
-function consoleAuthProvider(overrides: Partial<Principal> = {}): AuthProvider {
-  const actor: Principal = {
+const fixtureIssuedAt = Math.floor(Date.now() / 1000) * 1000 - 3_600_000;
+const fixtureExpiresAt = fixtureIssuedAt + 86_400_000;
+const machineMappings = new WeakMap<MtlsAuthProvider, { principal: Principal; expiresAtMs: number }>();
+
+function consoleAuthProvider(overrides: Partial<Principal> = {}): MtlsAuthProvider {
+  const mapping = { principal: validatePrincipal({
     tenant_id: 'Steven', alias: 'kant', session_id: 'console-session', channel: 'console',
-    roles: ['operator'], permissions: ['route', 'read', 'control'], ...overrides
-  };
-  return {
-    name: 'test-console', mode: 'test',
-    authenticateHttp: async () => actor,
-    authenticateHello: async () => actor
-  };
+    roles: ['operator'], permissions: ['route', 'read', 'control'], ...overrides,
+  }), expiresAtMs: fixtureExpiresAt };
+  const fingerprint = createHash('sha256').update(JSON.stringify([
+    mapping.principal.tenant_id, mapping.principal.alias, mapping.principal.session_id, mapping.principal.channel,
+  ])).digest('hex');
+  const provider = new MtlsAuthProvider({
+    resolve: async () => mapping.principal,
+    resolveFingerprintAuthority: async (value) => {
+      if (value !== fingerprint) throw new Error('fixture certificate identity changed');
+      return mapping;
+    },
+  });
+  // TLS verification is mocked only here; current mapper revalidation remains real.
+  vi.spyOn(provider, 'authenticateHttp').mockImplementation(async () => validatePrincipal(mapping.principal));
+  vi.spyOn(provider, 'verifiedTerminalMachine').mockImplementation(async () => {
+    requireOperatorPermission(mapping.principal, 'control');
+    const verified: VerifiedTerminalMachine = Object.freeze({ authentication: 'mtls',
+      principal: Object.freeze({ tenant_id: mapping.principal.tenant_id, alias: mapping.principal.alias,
+        channel: mapping.principal.channel, session_id: mapping.principal.session_id }),
+      certificateSha256: fingerprint, issuedAtMs: fixtureIssuedAt, expiresAtMs: mapping.expiresAtMs });
+    machineAuthorityOrigin(verified);
+    return verified;
+  });
+  machineMappings.set(provider, mapping);
+  return provider;
+}
+
+function machineMapping(provider: MtlsAuthProvider): { principal: Principal; expiresAtMs: number } {
+  const mapping = machineMappings.get(provider);
+  if (mapping === undefined) throw new Error('unknown fixture mTLS provider');
+  return mapping;
+}
+
+function installAuthorityCarrier(app: FastifyInstance, database: FakeDatabase, provider: AuthProvider): void {
+  app.addHook('onSend', async (_request, reply, payload) => {
+    if (reply.statusCode !== 201 || typeof payload !== 'string') return payload;
+    const body = JSON.parse(payload) as { session_id?: unknown; authority_proof?: unknown };
+    if (typeof body.session_id === 'string' && typeof body.authority_proof === 'string') {
+      database.authorityProofs.set(body.session_id, body.authority_proof);
+    }
+    return payload;
+  });
+  app.addHook('preValidation', async (request) => {
+    const match = /^\/v3\/(?:terminal\/relay|console\/terminal)\/sessions\/([^/]+)\/(consume|resume|authz|owner|extend|control)$/.exec(request.url);
+    if (match === null || request.body === null || typeof request.body !== 'object' || Array.isArray(request.body)) return;
+    const body = request.body as Record<string, unknown>;
+    const sid = match[1];
+    if (sid === undefined) throw new Error('terminal fixture session id is missing');
+    const proof = database.authorityProofs.get(sid);
+    if (proof !== undefined && !('authority_proof' in body)) body.authority_proof = proof;
+  });
+  if (provider instanceof MtlsAuthProvider && !machineMappings.has(provider)) throw new Error('unknown TLS fixture');
 }
 
 function presence(overrides: Partial<AgentPresence> = {}): AgentPresence {
@@ -500,6 +551,8 @@ export {
   RELAY_BOOT_B,
   RELAY_TOKEN,
   consoleAuthProvider,
+  installAuthorityCarrier,
+  machineMapping,
   fakeDatabase,
   isOpen,
   presence,

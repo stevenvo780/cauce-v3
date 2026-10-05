@@ -29,8 +29,81 @@ export interface PtySessionOptions {
   sessionId: string;
   websocketPath: string;
   ticket: string;
+  authorityProof: string;
   readOnly?: boolean;
   onClosed?: (view: PtySessionView) => void;
+}
+
+const MAX_AUTHORITY_RESUME_BYTES = 8_192;
+const MAX_LEGACY_RESUME_BYTES = 1_024;
+
+function canonicalBase64urlBytes(value: string): Uint8Array | undefined {
+  if (!/^[A-Za-z0-9_-]+$/u.test(value)) return undefined;
+  try {
+    const padding = '='.repeat((4 - value.length % 4) % 4);
+    const binary = globalThis.atob(`${value.replaceAll('-', '+').replaceAll('_', '/')}${padding}`);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const canonical = globalThis.btoa(String.fromCharCode(...bytes))
+      .replace(/=+$/u, '').replaceAll('+', '-').replaceAll('/', '_');
+    return canonical === value ? bytes : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function validLegacyResumeToken(value: unknown, sessionId: string): value is string {
+  if (typeof value !== 'string' || value.length < 80 || value.length > MAX_LEGACY_RESUME_BYTES) return false;
+  const parts = value.split('.');
+  if (parts.length !== 3) return false;
+  const [version, encoded, signature] = parts;
+  if (version !== 'r1' || !encoded || !signature) return false;
+  const bytes = canonicalBase64urlBytes(encoded);
+  const signed = canonicalBase64urlBytes(signature);
+  if (!bytes || signed?.byteLength !== 32) return false;
+  let source: string;
+  let payload: unknown;
+  try {
+    source = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    payload = JSON.parse(source) as unknown;
+  } catch {
+    return false;
+  }
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const row = payload as Record<string, unknown>;
+  const keys = Object.keys(row);
+  return keys.join(',') === 'v,sid,op,iat,exp,nonce'
+    && row.v === 1 && row.sid === sessionId
+    && typeof row.op === 'string' && row.op.length > 0 && row.op.length <= 256
+    && typeof row.iat === 'number' && Number.isSafeInteger(row.iat)
+    && typeof row.exp === 'number' && Number.isSafeInteger(row.exp) && row.exp > row.iat
+    && typeof row.nonce === 'string' && /^[A-Za-z0-9_-]{22}$/u.test(row.nonce)
+    && JSON.stringify(payload) === source;
+}
+
+export function resumeTokenMatchesAuthorityProof(
+  value: unknown,
+  sessionId: string,
+  authorityProof: string,
+): value is string {
+  if (typeof value !== 'string' || value.length > MAX_AUTHORITY_RESUME_BYTES) return false;
+  const parts = value.split('.');
+  if (parts.length !== 2) return false;
+  const [version, encoded] = parts;
+  if (version !== 'r2' || !encoded) return false;
+  const bytes = canonicalBase64urlBytes(encoded);
+  if (!bytes) return false;
+  let source: string;
+  let envelope: unknown;
+  try {
+    source = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    envelope = JSON.parse(source) as unknown;
+  } catch {
+    return false;
+  }
+  return Array.isArray(envelope) && envelope.length === 2
+    && typeof envelope[1] === 'string' && envelope[1] === authorityProof
+    && validLegacyResumeToken(envelope[0], sessionId)
+    && JSON.stringify(envelope) === source;
 }
 
 /** Server close codes translated to plain Spanish for the operator. */

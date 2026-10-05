@@ -17,10 +17,12 @@ import {
   PTY_HANDSHAKE_TIMEOUT_MS,
   PTY_RECONNECT_DELAYS_MS,
   PTY_VIEWER_HEARTBEAT_MS,
+  resumeTokenMatchesAuthorityProof,
 } from './pty-session';
 import { installStubWebSocket, StubWebSocket } from './pty-socket-stub';
 
 const SESSION = 'pty-session-1';
+const AUTHORITY_PROOF = 'ac2.fixture.payload.signature';
 const CLAIM_TOKEN = '12345678-1234-4234-8234-123456789abc';
 const CLAIM_EPOCH = '9007199254740993';
 const CLAIM_LEASE_MS = 45_000;
@@ -39,6 +41,7 @@ function open(options: { sessionId?: string; ticket?: string; readOnly?: boolean
     sessionId: options.sessionId ?? SESSION,
     websocketPath: '/v3/console/terminal/ws',
     ticket: options.ticket ?? 'single-use-ticket',
+    authorityProof: AUTHORITY_PROOF,
     readOnly: options.readOnly,
   });
   const socket = StubWebSocket.last();
@@ -59,7 +62,7 @@ it('focuses a visible terminal only after readiness and an explicit writable tra
   expect(focus).not.toHaveBeenCalled();
   socket.emitControl(ready());
   expect(focus).not.toHaveBeenCalled();
-  ensurePtySession({ sessionId: SESSION, ticket: 'single-use-ticket', websocketPath: '/v3/console/terminal/ws', readOnly: false });
+  ensurePtySession({ sessionId: SESSION, ticket: 'single-use-ticket', websocketPath: '/v3/console/terminal/ws', authorityProof: AUTHORITY_PROOF, readOnly: false });
   expect(focus).toHaveBeenCalledOnce();
   wrapper.remove();
 });
@@ -118,8 +121,8 @@ it('devolver y retomar el control no reproduce las teclas pendientes de la toma 
   const socket = open();
   socket.emitControl(ready());
   ptySessionType(SESSION, 'pendiente');
-  ensurePtySession({ sessionId: SESSION, ticket: 'single-use-ticket', websocketPath: '/v3/console/terminal/ws', readOnly: true });
-  ensurePtySession({ sessionId: SESSION, ticket: 'single-use-ticket', websocketPath: '/v3/console/terminal/ws', readOnly: false });
+  ensurePtySession({ sessionId: SESSION, ticket: 'single-use-ticket', websocketPath: '/v3/console/terminal/ws', authorityProof: AUTHORITY_PROOF, readOnly: true });
+  ensurePtySession({ sessionId: SESSION, ticket: 'single-use-ticket', websocketPath: '/v3/console/terminal/ws', authorityProof: AUTHORITY_PROOF, readOnly: false });
   await settle();
   expect(socket.framesOfType('input')).toEqual([]);
   ptySessionType(SESSION, 'nueva');
@@ -133,15 +136,28 @@ function ready(overrides: Record<string, unknown> = {}): Record<string, unknown>
     claim_token: CLAIM_TOKEN,
     claim_epoch: CLAIM_EPOCH,
     claim_lease_ms: CLAIM_LEASE_MS,
+    resume_token: resumeToken(),
     ...overrides,
   };
+}
+
+function base64url(value: string): string {
+  return globalThis.btoa(String.fromCharCode(...new TextEncoder().encode(value)))
+    .replace(/=+$/u, '').replaceAll('+', '-').replaceAll('/', '_');
+}
+
+function resumeToken(proof = AUTHORITY_PROOF, sessionId = SESSION): string {
+  const legacyPayload = JSON.stringify({ v: 1, sid: sessionId, op: 'fixture-operator', iat: 1_750_000_000,
+    exp: 1_750_003_600, nonce: 'A'.repeat(22) });
+  const legacy = `r1.${base64url(legacyPayload)}.${'A'.repeat(43)}`;
+  return `r2.${base64url(JSON.stringify([legacy, proof]))}`;
 }
 
 it('sends attach as the very first frame, carrying the session and the single-use ticket', () => {
   const socket = open();
 
   const first = socket.frames()[0];
-  expect(first).toMatchObject({ type: 'attach', session_id: SESSION, ticket: 'single-use-ticket' });
+  expect(first).toMatchObject({ type: 'attach', session_id: SESSION, ticket: 'single-use-ticket', authority_proof: AUTHORITY_PROOF });
   expect(typeof first.cols).toBe('number');
   expect(typeof first.rows).toBe('number');
   expect(first).not.toHaveProperty('claim_token');
@@ -165,6 +181,7 @@ it('sale de CONNECTING si el upgrade nunca responde y no reutiliza el ticket de 
       sessionId: SESSION,
       websocketPath: '/v3/console/terminal/ws',
       ticket: 'single-use-ticket',
+      authorityProof: AUTHORITY_PROOF,
       onClosed: (view) => closed.push(view.message ?? ''),
     });
     const socket = StubWebSocket.last();
@@ -372,6 +389,7 @@ it('surfaces a revoked permission mid-session and notifies the owner once', () =
     sessionId: SESSION,
     websocketPath: '/v3/console/terminal/ws',
     ticket: 'single-use-ticket',
+    authorityProof: AUTHORITY_PROOF,
     onClosed: (view) => closed.push(view.message ?? ''),
   });
 
@@ -410,8 +428,8 @@ it('reanuda con el fence exacto y conserva como string un epoch mayor a MAX_SAFE
   vi.useFakeTimers();
   try {
     const first = open();
-    const resumeToken = `r1.${'a'.repeat(96)}.${'b'.repeat(43)}`;
-    first.emitControl(ready({ resume_token: resumeToken }));
+    const authorityResume = resumeToken();
+    first.emitControl(ready({ resume_token: authorityResume }));
     first.emitOutput('tres');
 
     first.emitClose(1006, 'network_lost');
@@ -429,7 +447,8 @@ it('reanuda con el fence exacto y conserva como string un epoch mayor a MAX_SAFE
     expect(firstResume).toMatchObject({
       type: 'resume',
       session_id: SESSION,
-      resume_token: resumeToken,
+      resume_token: authorityResume,
+      authority_proof: AUTHORITY_PROOF,
       prior_claim_token: CLAIM_TOKEN,
       prior_claim_epoch: CLAIM_EPOCH,
       after_bytes: 4,
@@ -441,7 +460,7 @@ it('reanuda con el fence exacto y conserva como string un epoch mayor a MAX_SAFE
     resumed.emitControl(ready({
       resumed: true,
       stream_offset: 4,
-      resume_token: resumeToken,
+      resume_token: authorityResume,
       claim_token: 'abcdefab-cdef-4def-8def-abcdefabcdef',
       claim_epoch: '9007199254740994',
     }));
@@ -455,6 +474,7 @@ it('reanuda con el fence exacto y conserva como string un epoch mayor a MAX_SAFE
     third.acceptOpen();
     expect(third.frames()[0]).toMatchObject({
       type: 'resume',
+      authority_proof: AUTHORITY_PROOF,
       prior_claim_token: 'abcdefab-cdef-4def-8def-abcdefabcdef',
       prior_claim_epoch: '9007199254740994',
     });
@@ -463,18 +483,20 @@ it('reanuda con el fence exacto y conserva como string un epoch mayor a MAX_SAFE
   }
 });
 
-it('falla cerrado ante 1006 sin token: nunca reutiliza el ticket para crear otro PTY', () => {
-  vi.useFakeTimers();
-  try {
-    const socket = open();
-    socket.emitControl(ready());
-    socket.emitClose(1006, 'network_lost');
-    vi.advanceTimersByTime(PTY_RECONNECT_DELAYS_MS.reduce((sum, delay) => sum + delay, 0) + 1);
-    expect(StubWebSocket.instances).toHaveLength(1);
-    expect(readPtySession(SESSION)).toMatchObject({ state: 'error', closeCode: 1006 });
-  } finally {
-    vi.useRealTimers();
-  }
+it('rechaza una continuidad r1 que no está ligada al proof original, sin reabrir el ticket', () => {
+  const socket = open();
+  socket.emitControl(ready({ resume_token: `r1.${'a'.repeat(96)}.${'b'.repeat(43)}` }));
+  expect(socket.closeCode).toBe(4400);
+  expect(socket.closeReason).toBe('invalid_ready');
+  expect(StubWebSocket.instances).toHaveLength(1);
+  expect(readPtySession(SESSION)).toMatchObject({ state: 'error', closeCode: 4400 });
+});
+
+it('exige el proof original y la envoltura canónica r2 en cada token de continuidad', () => {
+  expect(resumeTokenMatchesAuthorityProof(resumeToken(), SESSION, AUTHORITY_PROOF)).toBe(true);
+  expect(resumeTokenMatchesAuthorityProof(resumeToken('ac2.other.proof'), SESSION, AUTHORITY_PROOF)).toBe(false);
+  expect(resumeTokenMatchesAuthorityProof(`r2.${'x'.repeat(8_193)}`, SESSION, AUTHORITY_PROOF)).toBe(false);
+  expect(resumeTokenMatchesAuthorityProof('r2.YQ==', SESSION, AUTHORITY_PROOF)).toBe(false);
 });
 
 it('survives reparenting: the live node moves between panels without losing the scrollback', async () => {

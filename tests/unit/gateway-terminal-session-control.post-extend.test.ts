@@ -6,7 +6,7 @@ import {
 } from '../../services/gateway/src/terminal/helpers.js';
 import type { TerminalSessionRow } from '../../services/gateway/src/terminal/types.js';
 import {
-  UUID_OK, buildContext, configBase, makeRow, transactionClient, validExtendSession,
+  UUID_OK, UNIT_ORIGIN, buildContext, configBase, makeRow, transactionClient, validExtendSession,
   type Context,
 } from './gateway-terminal-session-control-fixtures.js';
 
@@ -113,6 +113,8 @@ describe('POST /v3/console/terminal/sessions/:sid/extend', () => {
     expect(update?.text).not.toContain('consumed_at=');
     expect(update?.values[7]).toBe(configBase().sessionTtlSeconds);
     expect(update?.values[8]).toBe(configBase().sessionMaxTotalSeconds);
+    expect(update?.values[9]).toEqual(new Date(UNIT_ORIGIN.expiresAtSeconds * 1000));
+    expect(update?.text).toContain('clock_timestamp()<$10::timestamptz');
     const audit = ctx.recordTransactionalTerminalAudit.mock.calls.at(-1);
     expect(audit?.[1]).toMatchObject({
       action: 'terminal.session.extended',
@@ -131,10 +133,10 @@ describe('POST /v3/console/terminal/sessions/:sid/extend', () => {
       (query) => query.text.includes('UPDATE terminal_sessions SET window_extended_to'),
     );
     expect(update?.text).toContain(
-      'SET window_extended_to=LEAST(now()+make_interval(secs => $8), consumed_at+make_interval(secs => $9))',
+      'SET window_extended_to=LEAST(clock_timestamp()+make_interval(secs => $8), consumed_at+make_interval(secs => $9), $10::timestamptz)',
     );
     expect(update?.text).toContain(
-      `AND LEAST(now()+make_interval(secs => $8), consumed_at+make_interval(secs => $9))>${sessionWindowExpression(8, 9)}`,
+      `AND LEAST(clock_timestamp()+make_interval(secs => $8), consumed_at+make_interval(secs => $9), $10::timestamptz)>${sessionWindowExpression(8, 9)}`,
     );
   });
 

@@ -9,6 +9,7 @@ import {
   claimReady,
   geometriaRemota,
   ptyCloseMessage,
+  resumeTokenMatchesAuthorityProof,
   websocketUrl,
   type PtyEntry,
   type PtySessionOptions,
@@ -85,13 +86,13 @@ function handleControlFrame(
 
   if (payload.type === 'ready') {
     const claim = claimReady(payload);
-    if (claim === undefined) {
+    if (claim === undefined || !resumeTokenMatchesAuthorityProof(
+      payload.resume_token, entry.id, entry.options.authorityProof,
+    )) {
       rejectMalformedReady(entry, publish);
       return;
     }
-    if (typeof payload.resume_token === 'string' && payload.resume_token.length >= 80 && payload.resume_token.length <= 1_024) {
-      entry.resumeToken = payload.resume_token;
-    }
+    entry.resumeToken = payload.resume_token;
     entry.claimToken = claim.claimToken;
     entry.claimEpoch = claim.claimEpoch;
     entry.claimLeaseMs = claim.claimLeaseMs;
@@ -167,6 +168,11 @@ export function openSocket(
   publish: (patch: Partial<PtySessionView>) => void,
   onReady: () => void,
 ): void {
+  if (typeof options.authorityProof !== 'string' || !options.authorityProof.startsWith('ac2.')
+      || new TextEncoder().encode(options.authorityProof).byteLength > 4_096) {
+    publish({ state: 'error', message: 'La prueba de autoridad original de la sesión no está disponible en memoria.' });
+    return;
+  }
   let socket: WebSocket;
   try {
     socket = new WebSocket(websocketUrl(options.websocketPath));
@@ -210,6 +216,7 @@ export function openSocket(
       type: 'resume',
       session_id: options.sessionId,
       resume_token: entry.resumeToken,
+      authority_proof: options.authorityProof,
       prior_claim_token: entry.claimToken,
       prior_claim_epoch: entry.claimEpoch,
       after_bytes: entry.outputBytes,
@@ -219,6 +226,7 @@ export function openSocket(
       type: 'attach',
       session_id: options.sessionId,
       ticket: options.ticket,
+      authority_proof: options.authorityProof,
       cols: entry.terminal.cols,
       rows: entry.terminal.rows,
     }));

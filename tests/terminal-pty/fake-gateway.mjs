@@ -18,8 +18,8 @@
 //   GATEWAY_PORT=0 RELAY_TOKEN=... MASTER_KEY_B64=... node tests/terminal-pty/fake-gateway.mjs
 
 import { Buffer } from 'node:buffer';
-import { createHash, randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
+import { readFileSync, rmSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import process from 'node:process';
@@ -75,16 +75,59 @@ export async function startFakeGateway(options = {}) {
   const audit = [];
   const timers = [];
   const activeRelays = new Map();
+  const authorityProofs = new Map();
+  const authorityIssuedAt = now() - 1;
+  const authorityExpiresAt = authorityIssuedAt + 86_400;
+  const authorityKey = Buffer.from(hkdfSync('sha256', master,
+    Buffer.from('cauce-v3/terminal-authority-continuity/v2'), Buffer.from('gateway-only/authority-continuity'), 32));
+  const resumeKey = Buffer.from(hkdfSync('sha256', master,
+    Buffer.from('cauce-v3/pty-resume/v1'), Buffer.from('resume-token'), 32));
+  function authorityProof(sessionId) {
+    if (!UUID_V4_PATTERN.test(sessionId)) throw new Error('fixture authority session id is invalid');
+    const existing = authorityProofs.get(sessionId);
+    if (existing !== undefined) return existing;
+    const origin = { kind: 'machine', certificateSha256: createHash('sha256').update('terminal-pty-fixture').digest('hex'),
+      principalChannel: 'console', principalSessionId: 'terminal-pty-fixture',
+      actor: { tenantId: operatorTenant, alias: 'kant' }, issuedAtSeconds: authorityIssuedAt, expiresAtSeconds: authorityExpiresAt };
+    const payload = { version: 2, sessionId, requestId: sessionId,
+      semanticDigest: createHash('sha256').update(sessionId).digest('hex'), origin };
+    const input = `ac2.${Buffer.from(JSON.stringify(payload)).toString('base64url')}`;
+    const proof = `${input}.${createHmac('sha256', authorityKey).update(input, 'ascii').digest('base64url')}`;
+    authorityProofs.set(sessionId, proof);
+    return proof;
+  }
+  function validAuthority(sessionId, proof) {
+    const expected = authorityProofs.get(sessionId);
+    return typeof proof === 'string' && Buffer.byteLength(proof, 'utf8') <= 4096
+      && expected !== undefined && Buffer.byteLength(proof, 'utf8') === Buffer.byteLength(expected, 'utf8')
+      && timingSafeEqual(Buffer.from(proof), Buffer.from(expected)) && now() < authorityExpiresAt;
+  }
+  function authorityResumeToken(session) {
+    const payload = { v: 1, sid: session.session_id, op: session.operation, iat: session.consumed_at,
+      exp: session.session_expires_at, nonce: randomBytes(16).toString('base64url') };
+    const input = `r1.${Buffer.from(JSON.stringify(payload)).toString('base64url')}`;
+    const r1 = `${input}.${createHmac('sha256', resumeKey).update(input, 'ascii').digest('base64url')}`;
+    return `r2.${Buffer.from(JSON.stringify([r1, authorityProofs.get(session.session_id)])).toString('base64url')}`;
+  }
+  function claimDeadline(session) {
+    return Math.min(Date.now() + claimLeaseMs, session.session_expires_at * 1000, authorityExpiresAt * 1000);
+  }
+  function publicSession(session) {
+    return Object.fromEntries(Object.entries(session).filter(([key]) => key !== 'resume_token'));
+
+  }
 
   const record = (event, fields) => {
     audit.push({ at: new Date().toISOString(), event, ...fields });
   };
 
+  let generatedTlsDirectory;
   const tls = options.plaintext === true
     ? null
     : { key: options.tls_key, cert: options.tls_cert };
   if (tls && (!tls.key || !tls.cert)) {
     const generated = createSelfSignedCert();
+    generatedTlsDirectory = generated.directory;
     tls.key = generated.key;
     tls.cert = generated.cert;
     tls.ca = generated.cert;
@@ -118,7 +161,7 @@ export async function startFakeGateway(options = {}) {
     if (url.pathname === HARNESS_STATE_PATH && request.method === 'GET') {
       reply(response, 200, {
         agents: [...agents.values()],
-        sessions: [...sessions.values()].map((session) => ({ ...session, ticket_fp: session.ticket_fp })),
+        sessions: [...sessions.values()].map(publicSession),
         grants: [...grants],
         revoked,
         audit,
@@ -207,6 +250,9 @@ export async function startFakeGateway(options = {}) {
       reply(response, 401, { ok: false, error: 'ticket_invalid', reason: verdict.reason });
       return;
     }
+    if (!validAuthority(sessionId, body.authority_proof)) {
+      reply(response, 403, { ok: false, reason: 'authority_invalid' }); return;
+    }
     const payload = verdict.payload;
     const key = `${payload.tgt.tenant}:${payload.tgt.alias}`;
     // No per-person identity yet: an unattributed operator ticket may only reach its own tenant.
@@ -227,7 +273,7 @@ export async function startFakeGateway(options = {}) {
         && existing.relay_instance_id === identity.relay_instance_id
         && existing.relay_boot_id === identity.relay_boot_id;
       if (exactLiveClaim) {
-        existing.claim_expires_at = Date.now() + claimLeaseMs;
+        existing.claim_expires_at = claimDeadline(existing);
         reply(response, 200, relayGrant(existing, { receiptRecovered: true }));
         return;
       }
@@ -242,7 +288,7 @@ export async function startFakeGateway(options = {}) {
       }
       existing.claim_token = claimToken;
       existing.claim_epoch = String(BigInt(existing.claim_epoch) + 1n);
-      existing.claim_expires_at = Date.now() + claimLeaseMs;
+      existing.claim_expires_at = claimDeadline(existing);
       existing.relay_instance_id = identity.relay_instance_id;
       existing.relay_boot_id = identity.relay_boot_id;
       record('terminal.session.takeover', { session_id: sessionId, claim_epoch: existing.claim_epoch });
@@ -265,10 +311,8 @@ export async function startFakeGateway(options = {}) {
       subject: payload.sub,
       operation: payload.op,
       expires_at: payload.exp,
-      session_expires_at: payload.exp + sessionTtlSec,
-      // Opaque continuity credential for the relay contract. The real gateway HMAC-binds this
-      // to sid/operator/expiry; this harness stores and compares an equally unguessable value.
-      resume_token: `r1.${randomBytes(64).toString('base64url')}`,
+      session_expires_at: Math.min(now() + sessionTtlSec, authorityExpiresAt),
+      resume_token: '',
       consumed_at: now(),
       ticket_fp: fingerprint(ticket),
       // Geometry belongs to the session the operator asked for; the real gateway stores it at
@@ -283,6 +327,8 @@ export async function startFakeGateway(options = {}) {
       relay_instance_id: identity.relay_instance_id,
       relay_boot_id: identity.relay_boot_id,
     };
+    session.claim_expires_at = claimDeadline(session);
+    session.resume_token = authorityResumeToken(session);
     sessions.set(sessionId, session);
     record('terminal.session.request', { session_id: sessionId, alias: session.alias, decision: 'allow', reason: body.reason ?? null });
     record('terminal.session.consume', {
@@ -312,9 +358,10 @@ export async function startFakeGateway(options = {}) {
       operator_id: session.operation,
       container: session.container_id,
       runtime_user: session.runtime_user,
-      expires_at: new Date(session.expires_at * 1000).toISOString(),
+      expires_at: new Date(session.session_expires_at * 1000).toISOString(),
       session_expires_at: new Date(session.session_expires_at * 1000).toISOString(),
       resume_token: session.resume_token,
+      authority_proof: authorityProofs.get(session.session_id),
       claim_token: session.claim_token,
       claim_epoch: session.claim_epoch,
       claim_lease_ms: Math.max(1, session.claim_expires_at - Date.now()),
@@ -331,7 +378,9 @@ export async function startFakeGateway(options = {}) {
     const identity = activeRelayIdentity(body, response);
     if (!identity) return;
     const session = sessions.get(sessionId);
-    if (!session || typeof body.resume_token !== 'string' || body.resume_token !== session.resume_token) {
+    if (!session || !validAuthority(sessionId, body.authority_proof)
+        || typeof body.resume_token !== 'string' || Buffer.byteLength(body.resume_token, 'utf8') > 8192
+        || !body.resume_token.startsWith('r2.') || body.resume_token !== session.resume_token) {
       reply(response, 401, { ok: false, reason: 'resume_invalid' });
       return;
     }
@@ -369,7 +418,7 @@ export async function startFakeGateway(options = {}) {
       session.relay_boot_id = identity.relay_boot_id;
       claimTakenOver = true;
     }
-    session.claim_expires_at = Date.now() + claimLeaseMs;
+    session.claim_expires_at = claimDeadline(session);
     record('terminal.session.resume', { session_id: sessionId, alias: session.alias });
     reply(response, 200, relayGrant(session, { claimTakenOver }));
   }
@@ -383,11 +432,14 @@ export async function startFakeGateway(options = {}) {
       reply(response, 403, { ok: false, reason: 'unknown_session' });
       return;
     }
+    if (!validAuthority(sessionId, body.authority_proof)) {
+      reply(response, 403, { ok: false, reason: 'authority_invalid' }); return;
+    }
     if (session.closed_at !== null) {
       reply(response, 403, { ok: false, reason: 'closed' });
       return;
     }
-    if (now() > session.expires_at + clockSkewSec) {
+    if (now() >= session.session_expires_at) {
       reply(response, 403, { ok: false, reason: 'ttl_expired' });
       return;
     }
@@ -406,9 +458,10 @@ export async function startFakeGateway(options = {}) {
       reply(response, 403, { ok: false, reason: 'claim_fenced' });
       return;
     }
-    session.claim_expires_at = Date.now() + claimLeaseMs;
+    session.claim_expires_at = claimDeadline(session);
     reply(response, 200, {
       ok: true,
+      authority_proof: authorityProofs.get(session.session_id),
       expires_at: new Date(session.session_expires_at * 1000).toISOString(),
       claim_epoch: session.claim_epoch,
       claim_lease_ms: claimLeaseMs,
@@ -473,6 +526,7 @@ export async function startFakeGateway(options = {}) {
     ca: tls?.ca,
     ca_path: tls?.cert_path,
     audit,
+    authorityProof,
     get agents() { return [...agents.values()]; },
     get sessions() { return [...sessions.values()]; },
     session: (sessionId) => sessions.get(sessionId),
@@ -487,7 +541,9 @@ export async function startFakeGateway(options = {}) {
     auditOf: (event) => audit.filter((entry) => entry.event === event),
     async close() {
       for (const timer of timers) clearTimer(timer);
-      await new Promise((resolve) => server.close(resolve));
+      await new Promise((resolve, reject) => server.close((error) => { if (error) reject(error); else resolve(); }));
+      authorityProofs.clear();
+      if (generatedTlsDirectory !== undefined) rmSync(generatedTlsDirectory, { recursive: true, force: true });
     },
   };
 }

@@ -11,7 +11,7 @@ import { minutosParaLiberar } from './plazas';
 
 export type MotivoReconciliacionPlaza = 'session_limit' | 'invalid_grant_receipt';
 
-export function PlazasColgadas({ items, aLaVista, topeAlcanzado, motivo, revisando, cerrando, error, onRevisar, onCerrar }: {
+export function PlazasColgadas({ items, aLaVista, topeAlcanzado, motivo, revisando, cerrando, error, errorCierre, onRevisar, onCerrar }: {
   items: TerminalSessionListItem[];
   aLaVista: number;
   topeAlcanzado: boolean;
@@ -19,6 +19,7 @@ export function PlazasColgadas({ items, aLaVista, topeAlcanzado, motivo, revisan
   revisando: boolean;
   cerrando: Record<string, boolean | undefined>;
   error?: string;
+  errorCierre?: string;
   onRevisar: () => void;
   onCerrar: (sessionId: string) => void;
 }) {
@@ -61,9 +62,10 @@ export function PlazasColgadas({ items, aLaVista, topeAlcanzado, motivo, revisan
                 + 'Cerrá una con su aspa y volvé a pedir la que querías: se libera al instante.'
               : 'El tope de sesiones simultáneas es por operador, así que estas cuentan aunque su pestaña ya no exista '
                 + '—otra ventana, un cierre a lo bruto, una recarga a destiempo—. Mientras sigan vivas, abrir otra TUI '
-                + 'devuelve 409. Se sueltan solas al vencer; el botón las suelta ahora.'}
+                + 'devuelve 409. Se sueltan solas al vencer; el botón necesita la prueba original que conserva la pestaña que las abrió.'}
           </p>
           {error ? <p className="notice error" role="alert">{error}</p> : null}
+          {errorCierre ? <p className="notice error" role="alert">{errorCierre}</p> : null}
         </div>
         <button className="button small secondary" type="button" onClick={onRevisar} disabled={revisando}>
           <RefreshCw size={13} aria-hidden="true" /> {revisando ? 'Revisando…' : 'Revisar'}

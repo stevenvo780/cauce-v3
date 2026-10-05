@@ -36,6 +36,23 @@ function mockTerminalTicket(input: {
   return `v1.${encoded}.${structuralSignature}`;
 }
 
+function mockAuthorityProof(input: { sessionId: string; tenantId: string; requestId: string }): string {
+  const origin = {
+    kind: 'human',
+    humanId: '33333333-3333-4333-8333-333333333333',
+    loginSid: 'mock-console-session-1234',
+    actor: { tenantId: input.tenantId, alias: 'test-operator' },
+    credentialStamp: 'A'.repeat(43),
+    issuedAtSeconds: 1_750_000_000,
+    expiresAtSeconds: 1_750_003_600,
+  };
+  const payload = JSON.stringify({ version: 2, sessionId: input.sessionId, requestId: input.requestId,
+    semanticDigest: 'a'.repeat(64), origin });
+  const encoded = globalThis.btoa(String.fromCharCode(...new TextEncoder().encode(payload)))
+    .replace(/=+$/u, '').replaceAll('+', '-').replaceAll('/', '_');
+  return `ac2.${encoded}.${'A'.repeat(43)}`;
+}
+
 export function mockTerminalGrant(input: {
   sessionId: string;
   tenantId: string;
@@ -56,6 +73,8 @@ export function mockTerminalGrant(input: {
   const expiresAt = input.expiresAt ?? new Date(Date.now() + ttlSeconds * 1_000).toISOString();
   return {
     session_id: input.sessionId,
+    authority_proof: mockAuthorityProof({ sessionId: input.sessionId, tenantId: input.tenantId,
+      requestId: input.requestId ?? '11111111-1111-4111-8111-111111111111' }),
     ticket: mockTerminalTicket({
       sessionId: input.sessionId,
       tenantId: input.tenantId,

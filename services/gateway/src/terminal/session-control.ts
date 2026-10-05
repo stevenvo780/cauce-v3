@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
-  withTransaction, type DatabaseClient, type DatabasePool,
+  lockTerminalControlLease, withTransaction, type DatabaseClient, type DatabasePool,
 } from '@cauce/store';
 import { isLiteralTrue } from '@cauce/protocol';
 import { requireOperatorPermission, type Principal } from '../auth.js';
@@ -31,6 +31,9 @@ import {
   type TerminalConflict, type TerminalDenial, type TerminalMode, type TerminalSessionRow,
 } from './types.js';
 
+import { authorityContinuityCommitment, encodeTerminalSubject, issueAuthorityContinuity, type AuthorityContinuityPayload } from './authority-continuity.js';
+import { terminalDatabaseNow, type TerminalSessionAuthority } from './session-authority.js';
+
 const MAX_TERMINAL_CLOCK_SKEW_MS = 5_000;
 
 export class TerminalClockSkewError extends Error {
@@ -54,6 +57,7 @@ export interface SessionRequestBody {
 }
 
 export interface OwnerRotationBody {
+  authority_proof: string;
   request_id: string;
   expected_owner_generation: string;
   owner_token: string;
@@ -65,9 +69,9 @@ export interface DeleteSessionBody {
   owner_token: string;
 }
 
-export type ExtendSessionBody = DeleteSessionBody;
+export interface ExtendSessionBody extends DeleteSessionBody { authority_proof: string }
 
-export interface ControlRequestBody extends DeleteSessionBody {
+export interface ControlRequestBody extends ExtendSessionBody {
   readonly allow_busy?: boolean;
   action: 'take' | 'release';
   reason?: string;
@@ -102,7 +106,7 @@ function terminalAdmissionRequestSha256(input: {
   // explicit ownership endpoint.
   const material = {
     suite: 'cauce-v3-terminal-browser-admission',
-    version: 1,
+    version: 2,
     request_id: input.body.request_id,
     actor: { tenant_id: input.actor.tenant_id, alias: input.actor.alias },
     operator: {
@@ -129,8 +133,7 @@ function terminalAdmissionRequestSha256(input: {
 }
 
 function ticketTtlSeconds(row: Pick<TerminalSessionRow, 'issued_at' | 'expires_at'>): number {
-  const milliseconds = row.expires_at.getTime() - row.issued_at.getTime();
-  const seconds = milliseconds / 1_000;
+  const seconds = Math.floor(row.expires_at.getTime() / 1000) - Math.floor(row.issued_at.getTime() / 1000);
   if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 120) {
     throw new Error('database terminal ticket TTL is invalid');
   }
@@ -138,9 +141,8 @@ function ticketTtlSeconds(row: Pick<TerminalSessionRow, 'issued_at' | 'expires_a
 }
 
 function operatorLockIdentity(operator: ResolvedOperator, consoleSubject: string): string {
-  return operator.attributed
-    ? operator.operator_id
-    : JSON.stringify([operator.operator_id, consoleSubject]);
+  void operator;
+  return consoleSubject;
 }
 
 export interface TerminalSessionControlOptions {
@@ -149,6 +151,7 @@ export interface TerminalSessionControlOptions {
   readonly registry: AgentRegistry;
   readonly grants: GrantStore;
   readonly repository: TerminalControlRepository;
+  readonly authority: TerminalSessionAuthority;
   readonly principal: (request: FastifyRequest) => Promise<Principal>;
   readonly openPredicate: (ttlParameter: number, maxTotalParameter?: number) => string;
   readonly currentCohort: (
@@ -174,7 +177,7 @@ export function registerTerminalSessionControl(
   options: TerminalSessionControlOptions,
 ): void {
   const {
-    pool, config, registry, grants, repository, principal, openPredicate,
+    pool, config, registry, grants, repository, authority: continuity, principal, openPredicate,
     parseSessionRequest, browserOwnerGeneration, replyError, recordTransactionalTerminalAudit,
   } = options;
 
@@ -194,7 +197,8 @@ export function registerTerminalSessionControl(
       requireOperatorPermission(actor, 'control');
       const operator = resolveOperator(request, actor, config);
       const body = parseSessionRequest(request.body);
-      const consoleSubject = subjectFor(actor);
+      const origin = await continuity.capture(request);
+      const consoleSubject = encodeTerminalSubject(origin);
       const redactedAudit: TerminalAuditContext = {
         operator_id: operator.operator_id,
         attributed: operator.attributed,
@@ -337,10 +341,10 @@ export function registerTerminalSessionControl(
         return;
       }
       const observation = resolution.observation;
-      const requestSha256 = terminalAdmissionRequestSha256({
+      const semanticDigest = (admissionOperator: ResolvedOperator) => terminalAdmissionRequestSha256({
         body,
         actor,
-        operator,
+        operator: admissionOperator,
         consoleSubject,
         container: observation.presence.container_id,
         presenceGeneration: observation.presence.generation,
@@ -352,8 +356,24 @@ export function registerTerminalSessionControl(
       const browserOwnerSha256 = ticketSha256(body.owner_token);
       const sessionId = randomUUID();
       let conflict: 'session_limit' | 'container_busy' | 'request_conflict' | undefined;
-      let receipt: { row: TerminalSessionRow; ticket: string; recovered: boolean } | undefined;
+      let receipt: { row: TerminalSessionRow; ticket: string; recovered: boolean; authorityProof: string } | undefined;
+      const continuityPayload = (id: string, admissionOperator = operator): AuthorityContinuityPayload => ({
+        version: 2, sessionId: id, requestId: body.request_id, semanticDigest: semanticDigest(admissionOperator).toString('hex'), origin,
+      });
       await withTransaction(pool, async (admissionClient) => {
+        let deadline = await continuity.lockOrigin(admissionClient, origin);
+        await continuity.lockTarget(admissionClient, origin, placement, repository);
+        const lockedCohort = containerCohort(await loadFleetPlacements(admissionClient), placement.tenant_id, placement.alias);
+        if (JSON.stringify(lockedCohort) !== JSON.stringify(cohort)
+            || !(await cohortRoutingAuthority(admissionClient, actor.tenant_id, actor.alias, lockedCohort)).allowed
+            || !(await grants.allowsCohort(operator.operator_id, lockedCohort, body.mode))) {
+          throw new Error('terminal authority changed');
+        }
+        for (const member of lockedCohort) {
+          if (await repository.authorizeAgentTarget(actor.tenant_id, actor.alias,
+            member.tenant_id, member.alias, 'control', admissionClient) === undefined) throw new Error('terminal target changed');
+        }
+        await lockTerminalControlLease(admissionClient, { tenantId: placement.tenant_id, alias: placement.alias });
         await admissionClient.query(
           `SELECT pg_advisory_xact_lock(hashtextextended('terminal:operator:' || $1, 0))`,
           [operatorLockIdentity(operator, consoleSubject)],
@@ -371,15 +391,18 @@ export function registerTerminalSessionControl(
         // UI fields. Both semantic and owner digests must match. A new logical tab necessarily has
         // another request id, so it can neither adopt nor later revoke this row.
         const recoverable = await admissionClient.query<TerminalSessionRow & { request_unexpired: boolean }>(
-          `SELECT terminal_sessions.*,expires_at>now() AS request_unexpired
+          `SELECT terminal_sessions.*,expires_at>clock_timestamp() AS request_unexpired
              FROM terminal_sessions WHERE request_id=$1 FOR UPDATE`,
           [body.request_id],
         );
         const previous = recoverable.rows[0];
+        if (previous !== undefined) await admissionClient.query(
+          'SELECT id FROM terminal_control_holds WHERE session_id=$1 AND released_at IS NULL ORDER BY id FOR UPDATE', [previous.id],
+        );
+        if (origin.kind === 'machine') deadline = await continuity.lockOrigin(admissionClient, origin);
+        await terminalDatabaseNow(admissionClient, deadline);
         if (previous !== undefined) conflict = 'request_conflict';
-        const exactPrevious = previous?.operator_id === operator.operator_id
-            && (operator.attributed || previous.console_subject === consoleSubject)
-            && previous.console_subject === consoleSubject
+        const exactPrevious = previous?.console_subject === consoleSubject
             && previous.tenant_id === placement.tenant_id
             && previous.alias === body.alias
             && previous.container === observation.presence.container_id
@@ -388,7 +411,7 @@ export function registerTerminalSessionControl(
             && previous.reason === body.reason
             && previous.cols === body.cols
             && previous.rows === body.rows
-            && previous.request_sha256.equals(requestSha256)
+            && previous.request_sha256.equals(authorityContinuityCommitment(continuityPayload(previous.id, { operator_id: previous.operator_id, attributed: previous.attributed })))
             && previous.browser_owner_sha256.equals(browserOwnerSha256)
             && previous.consumed_at === null
             && previous.revoked_at === null
@@ -403,7 +426,7 @@ export function registerTerminalSessionControl(
             v: 1,
             sid: previous.id,
             op: previous.operator_id,
-            sub: previous.console_subject,
+            sub: subjectFor(actor),
             tgt: {
               tenant: previous.tenant_id,
               alias: previous.alias,
@@ -433,7 +456,8 @@ export function registerTerminalSessionControl(
                 source_room_ids: authority.source_room_ids,
               }),
             });
-            receipt = { row: previous, ticket: rebuilt, recovered: true };
+            await terminalDatabaseNow(admissionClient, deadline);
+            receipt = { row: previous, ticket: rebuilt, recovered: true, authorityProof: issueAuthorityContinuity(continuityPayload(previous.id, { operator_id: previous.operator_id, attributed: previous.attributed }), config.ticketKey) };
           }
         }
 
@@ -451,12 +475,15 @@ export function registerTerminalSessionControl(
               || issuedAt.getTime() > localAfterClockQuery + MAX_TERMINAL_CLOCK_SKEW_MS) {
             throw new TerminalClockSkewError();
           }
-          const expiresAt = new Date(issuedAt.getTime() + config.ticketTtlSeconds * 1_000);
+          await terminalDatabaseNow(admissionClient, deadline);
+          const expiresAt = new Date(Math.floor(Math.min(issuedAt.getTime() + config.ticketTtlSeconds * 1_000, deadline.getTime()) / 1000) * 1000);
+          if (expiresAt.getTime() <= issuedAt.getTime()) throw new Error('terminal authority expired');
+          const requestSha256 = authorityContinuityCommitment(continuityPayload(sessionId));
           const payload: TicketPayload = {
             v: 1,
             sid: sessionId,
             op: operator.operator_id,
-            sub: consoleSubject,
+            sub: subjectFor(actor),
             tgt: {
               tenant: placement.tenant_id,
               alias: body.alias,
@@ -539,7 +566,8 @@ export function registerTerminalSessionControl(
                 source_room_ids: authority.source_room_ids,
               }),
             });
-            receipt = { row, ticket, recovered: false };
+            await terminalDatabaseNow(admissionClient, deadline);
+            receipt = { row, ticket, recovered: false, authorityProof: issueAuthorityContinuity(continuityPayload(row.id), config.ticketKey) };
           } else {
             conflict = admission?.reason === 'session_limit' ? 'session_limit' : 'container_busy';
           }
@@ -552,6 +580,7 @@ export function registerTerminalSessionControl(
       return await reply.code(201).send({
         session_id: receipt.row.id,
         ticket: receipt.ticket,
+        authority_proof: receipt.authorityProof,
         websocket_path: terminalRelayWebsocketPath(receipt.row.relay_instance_id),
         expires_at: receipt.row.expires_at.toISOString(),
         ttl_seconds: ticketTtlSeconds(receipt.row),
@@ -577,8 +606,13 @@ export function registerTerminalSessionControl(
       const actor = await principal(request);
       requireOperatorPermission(actor, 'control');
       const operator = resolveOperator(request, actor, config);
-      const consoleSubject = subjectFor(actor);
-      const result = await pool.query<TerminalSessionRow & { occupies_slot: boolean }>(
+      const origin = await continuity.capture(request);
+      const consoleSubject = encodeTerminalSubject(origin);
+      const result = await withTransaction(pool, async (client) => {
+        const deadline = await continuity.lockOrigin(client, origin);
+        await repository.assertPermission(actor.tenant_id, actor.alias, 'control', client, true);
+        await terminalDatabaseNow(client, deadline);
+        return client.query<TerminalSessionRow & { occupies_slot: boolean }>(
         // The endpoint is the operator's escape hatch for slots that remain open after a tab
         // newer closed rows to push a still-open session out of the bounded response. Open rows
         // therefore come first, using the exact same predicate as admission.
@@ -588,7 +622,8 @@ export function registerTerminalSessionControl(
           ORDER BY occupies_slot DESC, issued_at DESC
           LIMIT 100`,
         [operator.operator_id, config.sessionTtlSeconds, operator.attributed, consoleSubject]
-      );
+        );
+      });
       return {
         items: result.rows.map((row) => ({
           session_id: row.id,

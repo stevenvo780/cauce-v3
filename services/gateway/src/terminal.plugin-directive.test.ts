@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { AuthError } from './auth.js';
+import { AuthError, type AuthProvider } from './auth.js';
 import type { RelayFileRead, RuntimeFacts } from './console/agent-documents.js';
 import type { FactsSource, GovernanceReadError } from './console/agent-documents.routes.js';
 import type { AgentDirective } from './console/types-agent-directive.js';
@@ -20,6 +20,7 @@ import {
   RELAY_BOOT_A,
   RELAY_TOKEN,
   consoleAuthProvider,
+  installAuthorityCarrier,
   fakeDatabase,
   type FakeDatabase,
 } from './terminal.plugin.shared.js';
@@ -40,7 +41,7 @@ describe('terminal control plane', () => {
   let relayPeerInstanceId: string;
   let relayBootId: string;
 
-  async function build(overrides: Partial<TerminalConfig> = {}, provider = consoleAuthProvider()): Promise<void> {
+  async function build(overrides: Partial<TerminalConfig> = {}, provider: AuthProvider = consoleAuthProvider()): Promise<void> {
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- The first beforeEach call reaches this helper before app is initialized at runtime.
     if (app !== undefined) await app.close();
     config = {
@@ -58,6 +59,7 @@ describe('terminal control plane', () => {
       ...overrides
     };
     app = Fastify({ logger: false });
+    installAuthorityCarrier(app, database, provider);
     // app.inject has no TLS socket. This test harness supplies the independently authenticated
     // peer identity and envelopes legacy test calls exactly as the real relay client does.
     app.addHook('preValidation', async (request) => {

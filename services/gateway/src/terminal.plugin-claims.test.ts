@@ -1,3 +1,4 @@
+import type { AuthProvider } from './auth.js';
 import { createHash, randomUUID } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,7 +10,7 @@ import { createConsoleSecurityHook } from './console-security.js';
 import type { TerminalConfig } from './terminal/config.js';
 import { registerTerminalControlPlane } from './terminal/plugin.js';
 import { AgentRegistry } from './terminal/registry.js';
-import { deriveAliasKey, issueResumeToken, verifyTicketSignature } from './terminal/tickets.js';
+import { deriveAliasKey, emitAuthorityResumeToken, verifyTicketSignature } from './terminal/tickets.js';
 import { UNATTRIBUTED_OPERATOR, type AgentPresence } from './terminal/types.js';
 import {
   CLAIM_A,
@@ -20,6 +21,7 @@ import {
   RELAY_BOOT_A,
   RELAY_TOKEN,
   consoleAuthProvider,
+  installAuthorityCarrier,
   fakeDatabase,
   presence,
   CLAIM_B,
@@ -43,7 +45,7 @@ describe('terminal control plane', () => {
   let relayPeerInstanceId: string;
   let relayBootId: string;
 
-  async function build(overrides: Partial<TerminalConfig> = {}, provider = consoleAuthProvider()): Promise<void> {
+  async function build(overrides: Partial<TerminalConfig> = {}, provider: AuthProvider = consoleAuthProvider()): Promise<void> {
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- The first beforeEach call reaches this helper before app is initialized at runtime.
     if (app !== undefined) await app.close();
     config = {
@@ -61,6 +63,7 @@ describe('terminal control plane', () => {
       ...overrides
     };
     app = Fastify({ logger: false });
+    installAuthorityCarrier(app, database, provider);
     // app.inject has no TLS socket. This test harness supplies the independently authenticated
     // peer identity and envelopes legacy test calls exactly as the real relay client does.
     app.addHook('preValidation', async (request) => {
@@ -153,6 +156,7 @@ describe('terminal control plane', () => {
     sessionId: string;
     ticket: string;
     resumeToken: string;
+    authorityProof: string;
     sessionExpiresAt: string;
     claimToken: string;
     claimEpoch: string;
@@ -165,6 +169,7 @@ describe('terminal control plane', () => {
     expect(consumed.statusCode).toBe(200);
     const grant = consumed.json<{
       resume_token: string;
+      authority_proof: string;
       session_expires_at: string;
       claim_token: string;
       claim_epoch: string;
@@ -173,6 +178,7 @@ describe('terminal control plane', () => {
       sessionId: issued.session_id,
       ticket: issued.ticket,
       resumeToken: grant.resume_token,
+      authorityProof: grant.authority_proof,
       sessionExpiresAt: grant.session_expires_at,
       claimToken: grant.claim_token,
       claimEpoch: grant.claim_epoch,
@@ -184,9 +190,11 @@ describe('terminal control plane', () => {
     resumeToken: string,
     claimToken = CLAIM_A,
     claimEpoch: string | undefined = '1',
+    authorityProof = database.authorityProofs.get(sessionId),
   ) {
     return relaySessionRequest(sessionId, 'resume', {
       resume_token: resumeToken,
+      authority_proof: authorityProof,
       claim_token: claimToken,
       claim_epoch: claimEpoch,
     });
@@ -218,6 +226,8 @@ describe('terminal control plane', () => {
   it('recovers an exact consume receipt after a lost 200 without mutating twice', async () => {
     await report([presence()]);
     const issued = (await openSession({})).json<{ session_id: string; ticket: string }>();
+    const issuedTicket = database.sessions.get(issued.session_id);
+    if (issuedTicket === undefined) throw new Error('issued session is missing');
     const consume = async () => relaySessionRequest(issued.session_id, 'consume', {
       ticket: issued.ticket, claim_token: CLAIM_A,
     });
@@ -228,7 +238,7 @@ describe('terminal control plane', () => {
       operator_id: UNATTRIBUTED_OPERATOR, container: 'claw', runtime_user: 'claw'
     });
     const consumed = first.json<{ expires_at: string; session_expires_at: string }>();
-    expect(Date.parse(consumed.session_expires_at) - Date.parse(consumed.expires_at))
+    expect(Date.parse(consumed.session_expires_at) - issuedTicket.expires_at.getTime())
       .toBeGreaterThan((config.sessionTtlSeconds - config.ticketTtlSeconds - 5) * 1_000);
     const replay = await consume();
     expect(replay.statusCode).toBe(200);
@@ -440,7 +450,7 @@ describe('terminal control plane', () => {
       ticket: issued.ticket, claim_token: CLAIM_A,
     });
     expect(refused.statusCode).toBe(403);
-    expect(refused.json()).toEqual({ ok: false, reason: 'control_authority_revoked' });
+    expect(refused.json()).toEqual({ error: 'forbidden', message: 'insufficient permissions' });
     expect(database.sessions.get(issued.session_id)?.consumed_at).toBeNull();
   });
 
@@ -470,24 +480,27 @@ describe('terminal control plane', () => {
     expect(database.audit.at(-1)).toMatchObject({ action: 'terminal.session.resume', decision: 'info' });
 
     const otherSid = 'aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff';
-    expect((await resumeSession(otherSid, consumed.resumeToken)).statusCode).toBe(401);
+    expect((await resumeSession(otherSid, consumed.resumeToken, CLAIM_A, '1', consumed.authorityProof)).statusCode).toBe(400);
 
     const expiry = Math.floor(Date.parse(consumed.sessionExpiresAt) / 1_000);
-    const wrongOperator = issueResumeToken(
-      consumed.sessionId, 'another-operator', expiry, MASTER, Math.floor(Date.now() / 1_000),
+    const wrongSid = emitAuthorityResumeToken(otherSid, UNATTRIBUTED_OPERATOR, expiry, MASTER,
+      Math.floor(Date.now() / 1_000), consumed.authorityProof);
+    expect((await resumeSession(consumed.sessionId, wrongSid)).statusCode).toBe(401);
+    const wrongOperator = emitAuthorityResumeToken(
+      consumed.sessionId, 'another-operator', expiry, MASTER, Math.floor(Date.now() / 1_000), consumed.authorityProof,
     );
     expect((await resumeSession(consumed.sessionId, wrongOperator)).statusCode).toBe(401);
 
-    const wrongTtl = issueResumeToken(
-      consumed.sessionId, UNATTRIBUTED_OPERATOR, expiry + 1, MASTER, Math.floor(Date.now() / 1_000),
+    const wrongTtl = emitAuthorityResumeToken(
+      consumed.sessionId, UNATTRIBUTED_OPERATOR, expiry + 1, MASTER, Math.floor(Date.now() / 1_000), consumed.authorityProof,
     );
     expect((await resumeSession(consumed.sessionId, wrongTtl)).statusCode).toBe(401);
 
     const tampered = `${consumed.resumeToken.slice(0, -1)}${consumed.resumeToken.endsWith('A') ? 'B' : 'A'}`;
     expect((await resumeSession(consumed.sessionId, tampered)).statusCode).toBe(401);
-    const expired = issueResumeToken(
+    const expired = emitAuthorityResumeToken(
       consumed.sessionId, UNATTRIBUTED_OPERATOR, Math.floor(Date.now() / 1_000) - 1,
-      MASTER, Math.floor(Date.now() / 1_000) - 10,
+      MASTER, Math.floor(Date.now() / 1_000) - 10, consumed.authorityProof,
     );
     expect((await resumeSession(consumed.sessionId, expired)).statusCode).toBe(401);
   });
@@ -510,7 +523,7 @@ describe('terminal control plane', () => {
     database.rooms['Steven:kant'] = [];
     const noAuthority = await resumeSession(consumed.sessionId, consumed.resumeToken);
     expect(noAuthority.statusCode).toBe(403);
-    expect(noAuthority.json()).toEqual({ ok: false, reason: 'no_routing_authority' });
+    expect(noAuthority.json()).toEqual({ error: 'forbidden', message: 'insufficient permissions' });
     database.rooms['Steven:kant'] = ['grp.steven'];
 
     await grant([]);

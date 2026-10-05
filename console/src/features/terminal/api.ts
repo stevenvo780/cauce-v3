@@ -57,6 +57,7 @@ interface TerminalSessionTargetView {
 export interface TerminalSessionGrant {
   session_id: string;
   ticket: string;
+  authority_proof: string;
   websocket_path: string;
   expires_at: string;
   ttl_seconds: number;
@@ -87,6 +88,7 @@ export interface TerminalSessionOwner {
   request_id: string;
   owner_generation: string;
   owner_token: string;
+  authority_proof: string;
 }
 
 export class TerminalApiError extends Error {
@@ -419,6 +421,65 @@ function canonicalBase64urlBytes(value: string): Uint8Array | undefined {
   }
 }
 
+function validAuthorityOrigin(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const origin = value as Record<string, unknown>;
+  const kind = origin.kind;
+  const keys = kind === 'human'
+    ? ['actor', 'credentialStamp', 'expiresAtSeconds', 'humanId', 'issuedAtSeconds', 'kind', 'loginSid']
+    : kind === 'machine'
+      ? ['actor', 'certificateSha256', 'expiresAtSeconds', 'issuedAtSeconds', 'kind', 'principalChannel', 'principalSessionId']
+      : [];
+  if (keys.length === 0 || !hasExactKeys(origin, keys)) return false;
+  const issuedAt = origin.issuedAtSeconds;
+  const expiresAt = origin.expiresAtSeconds;
+  if (typeof issuedAt !== 'number' || !Number.isSafeInteger(issuedAt) || issuedAt < 0
+      || typeof expiresAt !== 'number' || !Number.isSafeInteger(expiresAt) || expiresAt <= issuedAt) return false;
+  const actor = origin.actor;
+  if (actor === null || typeof actor !== 'object' || Array.isArray(actor)
+      || !hasExactKeys(actor, ['alias', 'tenantId'])) return false;
+  const actorRow = actor;
+  if (boundedOpaque(actorRow.tenantId, 64) === undefined || boundedOpaque(actorRow.alias, 64) === undefined) return false;
+  if (kind === 'human') {
+    const credentialStamp = origin.credentialStamp;
+    const loginSid = origin.loginSid;
+    const stampBytes = typeof credentialStamp === 'string' ? canonicalBase64urlBytes(credentialStamp) : undefined;
+    return isCanonicalUuidV4(origin.humanId)
+      && typeof loginSid === 'string' && /^[A-Za-z0-9_-]{16,128}$/u.test(loginSid)
+      && typeof credentialStamp === 'string' && credentialStamp.length === 43
+      && stampBytes?.byteLength === 32;
+  }
+  return typeof origin.certificateSha256 === 'string' && /^[0-9a-f]{64}$/u.test(origin.certificateSha256)
+    && typeof origin.principalChannel === 'string' && /^[\u0021-\u007e]{1,128}$/u.test(origin.principalChannel)
+    && typeof origin.principalSessionId === 'string' && /^[\u0021-\u007e]{1,256}$/u.test(origin.principalSessionId);
+}
+
+function exactAuthorityProof(value: unknown, sessionId: string, requestId: string): string | undefined {
+  if (typeof value !== 'string' || value.length > 4_096) return undefined;
+  const parts = value.split('.');
+  if (parts.length !== 3) return undefined;
+  const [version, encoded, signature] = parts;
+  if (version !== 'ac2' || !encoded || !signature) return undefined;
+  const payloadBytes = canonicalBase64urlBytes(encoded);
+  const signatureBytes = canonicalBase64urlBytes(signature);
+  if (!payloadBytes || signatureBytes?.byteLength !== 32) return undefined;
+  let payloadText: string;
+  let payload: unknown;
+  try {
+    payloadText = new TextDecoder('utf-8', { fatal: true }).decode(payloadBytes);
+    payload = JSON.parse(payloadText) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  const record = payload as Record<string, unknown>;
+  if (!hasExactKeys(record, ['origin', 'requestId', 'semanticDigest', 'sessionId', 'version'])
+      || record.version !== 2 || record.sessionId !== sessionId || record.requestId !== requestId
+      || typeof record.semanticDigest !== 'string' || !/^[0-9a-f]{64}$/u.test(record.semanticDigest)
+      || !validAuthorityOrigin(record.origin) || JSON.stringify(payload) !== payloadText) return undefined;
+  return value;
+}
+
 interface BrowserTicketClaims {
   sid: string;
   tenant: string;
@@ -508,7 +569,7 @@ function exactTerminalSessionGrant(
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
   if (!hasExactKeys(record, [
-    'session_id', 'ticket', 'websocket_path', 'expires_at', 'ttl_seconds',
+    'session_id', 'ticket', 'authority_proof', 'websocket_path', 'expires_at', 'ttl_seconds',
     'receipt_recovered', 'request_id', 'owner_generation', 'target',
   ])) return undefined;
   const target = record.target;
@@ -519,6 +580,8 @@ function exactTerminalSessionGrant(
   ])) return undefined;
   const sessionId = boundedOpaque(record.session_id, 256);
   const ticket = boundedOpaque(record.ticket, 4_096);
+  const authorityProof = sessionId === undefined ? undefined
+    : exactAuthorityProof(record.authority_proof, sessionId, requested.request_id);
   const websocketPath = boundedOpaque(record.websocket_path, 256);
   const expiresAt = boundedOpaque(record.expires_at, 64);
   const expiry = expiresAt === undefined ? Number.NaN : Date.parse(expiresAt);
@@ -529,7 +592,7 @@ function exactTerminalSessionGrant(
   const cohort = exactGrantCohort(targetRow.shares_container_with, requested);
   const container = targetRow.container === null ? null : boundedOpaque(targetRow.container, 256);
   const runtimeUser = targetRow.runtime_user === null ? null : boundedOpaque(targetRow.runtime_user, 128);
-  if (!sessionId || !ticket || !websocketPath || !/^\/[A-Za-z0-9/_-]+$/u.test(websocketPath)
+  if (!sessionId || !ticket || !authorityProof || !websocketPath || !/^\/[A-Za-z0-9/_-]+$/u.test(websocketPath)
       // The gateway is the authoritative clock for the ticket. The browser only requires a valid
       // ISO: with clock skew or a slow network, deciding locally that it already expired would
       // close a session the server can still accept (the WebSocket checks it when redeeming).
@@ -555,6 +618,7 @@ function exactTerminalSessionGrant(
   return {
     session_id: sessionId,
     ticket,
+    authority_proof: authorityProof,
     websocket_path: websocketPath,
     expires_at: expiresAt,
     ttl_seconds: Number(ttl),
@@ -603,10 +667,17 @@ export function deleteTerminalSession(
 /** Explicit operator takeover for an orphan visible in the exact session inventory. */
 export function rotateTerminalSessionOwner(
   sessionId: string,
-  current: Pick<TerminalSessionOwner, 'request_id' | 'owner_generation'>,
+  current: Pick<TerminalSessionOwner, 'request_id' | 'owner_generation' | 'authority_proof'>,
   ownerToken: string,
   session?: SesionConToken,
 ): Promise<TerminalSessionOwner> {
+  if (exactAuthorityProof(current.authority_proof, sessionId, current.request_id) === undefined) {
+    return Promise.reject(new TerminalApiError(
+      'No se puede transferir la sesión PTY sin la prueba de autoridad original que esta pestaña conserva en memoria.',
+      409,
+      'missing_authority_proof',
+    ));
+  }
   return terminalResponse(
     `/v3/console/terminal/sessions/${encodeURIComponent(sessionId)}/owner`,
     {
@@ -615,6 +686,7 @@ export function rotateTerminalSessionOwner(
         request_id: current.request_id,
         expected_owner_generation: current.owner_generation,
         owner_token: ownerToken,
+        authority_proof: current.authority_proof,
       }),
     },
     session,
@@ -633,7 +705,8 @@ export function rotateTerminalSessionOwner(
         || BigInt(generation) !== BigInt(expected) + 1n) {
       throw new TerminalApiError('El gateway devolvió un takeover PTY ambiguo.', 409, 'invalid_owner_receipt');
     }
-    return { request_id: current.request_id, owner_generation: generation, owner_token: ownerToken };
+    return { request_id: current.request_id, owner_generation: generation, owner_token: ownerToken,
+      authority_proof: current.authority_proof };
   });
 }
 

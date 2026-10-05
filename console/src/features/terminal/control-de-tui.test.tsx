@@ -710,7 +710,7 @@ describe('el contrato de /control, /extend y writable_modes sale del gateway, no
   });
 
   it('los campos del cuerpo de /extend son los del cuerpo con dueño', () => {
-    expect([...CAMPOS_DE_PRORROGA].sort()).toEqual(listaDelGateway(plugin, 'DELETE_SESSION_KEYS'));
+    expect([...CAMPOS_DE_PRORROGA].sort()).toEqual([...listaDelGateway(plugin, 'DELETE_SESSION_KEYS'), 'authority_proof'].sort());
   });
 
   it('el motivo auditado tiene los mismos límites que el del gateway', () => {

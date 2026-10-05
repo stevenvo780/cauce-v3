@@ -1,14 +1,17 @@
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabasePool } from '@cauce/store';
+import { UNATTRIBUTED_OPERATOR } from '../../services/gateway/src/terminal/types.js';
+import { issueAuthorityContinuity } from '../../services/gateway/src/terminal/authority-continuity.js';
 import { GrantStore } from '../../services/gateway/src/terminal/authority.js';
 import { sessionWindowExpression } from '../../services/gateway/src/terminal/helpers.js';
 import { ticketSha256 } from '../../services/gateway/src/terminal/tickets.js';
 import type { TerminalSessionRow } from '../../services/gateway/src/terminal/types.js';
 import {
-  OWNER_TOKEN_OK, REQUEST_ID_OK, UUID_OK, buildContext, configBase, makeRow, stubFleetPool,
+  OWNER_TOKEN_OK, REQUEST_ID_OK, UUID_OK, UNIT_SUBJECT, UNIT_ORIGIN, buildContext, configBase, makeRow, stubFleetPool,
   transactionClient, unattributedConsolePrincipal, validControlRequest, validDeleteSession,
   validSessionBody, type Context,
 } from './gateway-terminal-session-control-fixtures.js';
@@ -106,6 +109,10 @@ function controlPool(
     }),
     connect: vi.fn(async () => transactionClient((text: string, values: unknown[]) => {
       queries.push({ text, values });
+      if (text.includes('AS authority_live FROM clock')) return rows({ taken_at: new Date().toISOString(), authority_live: true });
+      if (text.includes('FROM terminal_control_holds')) return rows(options.hold);
+      if (text.includes('SET revoked_at=clock_timestamp()')) return rows(options.revoked);
+      if (text.includes('FROM terminal_sessions') && !text.includes('INSERT INTO terminal_control_holds')) return rows(options.session);
       if (text.includes('SELECT id FROM deliveries')) return rows(options.busy ? { id: UUID_OK } : undefined);
       if (text.includes('INSERT INTO terminal_control_holds')) {
         if (options.takeConflict === true) {
@@ -121,22 +128,11 @@ function controlPool(
           released_reason: String(values[1]),
         });
       }
-      if (text.includes('SET revoked_at=now()')) return rows(options.revoked);
       return { rows: [], rowCount: 0 };
     })),
     __queries: queries,
   };
   return pool as unknown as DatabasePool & { __queries: RecordedQuery[] };
-}
-
-function auditRows(pool: { __queries: RecordedQuery[] }): Record<string, unknown>[] {
-  return pool.__queries
-    .filter((query) => query.text.includes('INSERT INTO audit_events'))
-    .map((query) => ({
-      action: query.values[2],
-      decision: query.values[3],
-      metadata: JSON.parse(String(query.values[5])) as Record<string, unknown>,
-    }));
 }
 
 function transactionAudits(context: Context): Record<string, unknown>[] {
@@ -202,11 +198,12 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     const owned = pool.__queries.find((query) => query.text.includes('FROM terminal_sessions'));
     expect(owned?.text).toContain('browser_owner_sha256=$7');
     expect(owned?.text).toContain('browser_owner_generation=$6::bigint');
-    expect(owned?.text).toContain('operator_id=$2');
+    expect(owned?.text).toContain('console_subject=$4');
+    expect(owned?.text).not.toContain('operator_id=');
     expect(owned?.text).toContain('consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL');
-    expect(owned?.text).toContain(`${sessionWindowExpression(8, 9)}>now()`);
+    expect(owned?.text).toContain(`${sessionWindowExpression(8, 9)}>clock_timestamp()`);
     expect(owned?.values.slice(0, 6)).toEqual([
-      UUID_OK, 'steven-kant', true, 'Steven:kant', REQUEST_ID_OK, '1',
+      UUID_OK, 'steven-kant', true, UNIT_SUBJECT, REQUEST_ID_OK, '1',
     ]);
     expect(owned?.values[6]).toEqual(ticketSha256(OWNER_TOKEN_OK));
   });
@@ -220,14 +217,14 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
   });
 
   it('responde 403 sin atribución: UNATTRIBUTED_OPERATOR nunca toma el control', async () => {
-    const pool = controlPool({ session: ownedRow() });
+    const pool = controlPool({ session: ownedRow({ operator_id: UNATTRIBUTED_OPERATOR, attributed: false }) });
     ctx = buildContext({ pool, principal: async () => unattributedConsolePrincipal() });
     const response = await control(validControlRequest());
     expect(response.statusCode).toBe(403);
     expect(response.json()).toEqual({
       error: 'forbidden', reason: 'writable_requires_named_operator',
     });
-    expect(auditRows(pool)).toEqual([expect.objectContaining({
+    expect(transactionAudits(ctx)).toEqual([expect.objectContaining({
       action: 'terminal.control_taken', decision: 'deny',
     })]);
   });
@@ -250,7 +247,7 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     expect(response.json()).toMatchObject({
       session_id: UUID_OK, hold_id: HOLD_ID, held_by: 'steven-kant',
     });
-    expect(auditRows(pool)).toEqual([expect.objectContaining({
+    expect(transactionAudits(ctx)).toEqual([expect.objectContaining({
       action: 'terminal.control_taken',
       decision: 'allow',
       metadata: expect.objectContaining({
@@ -270,7 +267,7 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     expect(pool.__queries.some((query) => query.text.includes('INSERT INTO terminal_control_holds'))).toBe(false);
     const takeover = await control({ ...validControlRequest(), allow_busy: true });
     expect(takeover.statusCode).toBe(200);
-    expect(auditRows(pool).at(-1)).toMatchObject({
+    expect(transactionAudits(ctx).at(-1)).toMatchObject({
       action: 'terminal.control_taken', decision: 'allow', metadata: { allow_busy: true },
     });
   });
@@ -283,7 +280,7 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ session_id: UUID_OK, hold_id: HOLD_ID, held_by: 'steven-kant' });
     expect(pool.__queries.filter((query) => query.text.includes('INSERT INTO terminal_control_holds'))).toHaveLength(1);
-    expect(auditRows(pool)).toEqual([expect.objectContaining({
+    expect(transactionAudits(ctx)).toEqual([expect.objectContaining({
       action: 'terminal.control_taken', decision: 'allow', metadata: expect.objectContaining({
         allow_busy: true, operator_reason: 'tomar la TUI para desatascar el turno', mode: 'harness_rw',
       }) as unknown,
@@ -304,14 +301,15 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     const inserted = pool.__queries.find(
       (query) => query.text.includes('INSERT INTO terminal_control_holds'),
     );
-    expect(inserted?.text).toContain(`LEAST(${sessionWindowExpression(7, 8)}, now()+($6||' milliseconds')::interval)`);
+    expect(inserted?.text).toContain(`LEAST(${sessionWindowExpression(7, 8)}, $9::timestamptz+($6||' milliseconds')::interval, $10::timestamptz)`);
     expect(inserted?.text).toContain('consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL');
-    expect(inserted?.text).toContain('FOR UPDATE');
-    expect(inserted?.values.slice(5)).toEqual([
+    expect(pool.__queries.some((query) => query.text.includes('FROM terminal_sessions') && query.text.includes('FOR UPDATE'))).toBe(true);
+    expect(inserted?.values.slice(5, 8)).toEqual([
       String((configBase().controlHoldSeconds ?? 0) * 1_000),
       configBase().sessionTtlSeconds,
       configBase().sessionMaxTotalSeconds,
     ]);
+    expect(inserted?.values[9]).toBe(new Date(UNIT_ORIGIN.expiresAtSeconds * 1000).toISOString());
   });
 
   it('responde 409 stale_terminal_owner si la sesión muere entre el vallado y la toma', async () => {
@@ -320,6 +318,11 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     const response = await control(validControlRequest());
     expect(response.statusCode).toBe(409);
     expect(response.json()).toEqual({ error: 'conflict', reason: 'stale_terminal_owner' });
+    expect(pool.__queries.some((query) => query.text === 'ROLLBACK TO SAVEPOINT terminal_control_take')).toBe(true);
+    expect(transactionAudits(ctx)).toEqual([expect.objectContaining({
+      action: 'terminal.control_taken', decision: 'deny',
+      metadata: expect.objectContaining({ reason: 'stale_terminal_owner' }) as unknown,
+    })]);
   });
 
   it('exige el grant sobre la cohorte ENTERA del contenedor, no sobre un solo miembro', async () => {
@@ -355,15 +358,17 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     });
   });
 
-  it('devolver un arriendo ajeno es 403 control_held', async () => {
-    const pool = controlPool({
-      session: ownedRow(),
-      hold: holdRow({ id: OTHER_HOLD_ID, operator_id: 'otro-operador' }),
-    });
+  it('rechaza devolver con proof de otro humano antes de consultar o mutar arriendos', async () => {
+    const pool = controlPool({ session: ownedRow(), hold: holdRow({ operator_id: 'otro-operador' }) });
     ctx = buildContext({ pool });
-    const response = await control(validControlRequest({ action: 'release' }));
+    const foreign = issueAuthorityContinuity({ version: 2, sessionId: UUID_OK,
+      requestId: REQUEST_ID_OK, semanticDigest: '0'.repeat(64),
+      origin: { ...UNIT_ORIGIN, humanId: randomUUID() } }, configBase().ticketKey);
+    const response = await control(validControlRequest({ action: 'release', authority_proof: foreign }));
     expect(response.statusCode).toBe(403);
-    expect(response.json()).toEqual({ error: 'forbidden', reason: 'control_held' });
+    expect(response.json()).toMatchObject({ error: 'forbidden' });
+    expect(pool.__queries).toHaveLength(0);
+    expect(ctx.recordTransactionalTerminalAudit).not.toHaveBeenCalled();
   });
 
   it('devolver un arriendo de OTRA sesión es 409, nunca un released:true con hold_id null', async () => {
@@ -379,7 +384,7 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     const response = await control(validControlRequest({ action: 'release' }));
     expect(response.statusCode).toBe(409);
     expect(response.json()).toEqual({ error: 'conflict', reason: 'control_held' });
-    expect(auditRows(pool)).toEqual([expect.objectContaining({
+    expect(transactionAudits(ctx)).toEqual([expect.objectContaining({
       action: 'terminal.control_released',
       decision: 'deny',
       metadata: expect.objectContaining({ reason: 'control_held' }) as unknown,
@@ -394,7 +399,7 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     const response = await ctx.app.inject({
       method: 'POST',
       url: `/v3/console/terminal/sessions/${UUID_OK}/control`,
-      payload: { action: 'release', ...validDeleteSession() },
+      payload: validControlRequest({ action: 'release' }),
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ session_id: UUID_OK, hold_id: null, released: true });
@@ -406,7 +411,7 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     const response = await control(validControlRequest({ action: 'release' }));
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ hold_id: HOLD_ID, released: true });
-    expect(auditRows(pool)).toEqual([expect.objectContaining({
+    expect(transactionAudits(ctx)).toEqual([expect.objectContaining({
       action: 'terminal.control_released', decision: 'allow',
     })]);
   });

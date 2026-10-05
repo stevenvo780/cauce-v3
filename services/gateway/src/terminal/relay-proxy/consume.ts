@@ -6,9 +6,10 @@ import {
   sessionExpiry, sessionWindowExpression, type ControlHoldColumns,
 } from '../helpers.js';
 import {
-  deriveAliasKey, issueResumeToken, ticketDigest, ticketSha256,
+  deriveAliasKey, emitAuthorityResumeToken, ticketDigest, ticketSha256,
   verifyTicketSignature, TicketError, type TicketPayload,
 } from '../tickets.js';
+import { terminalDatabaseNow } from '../session-authority.js';
 import type { TerminalSessionRow } from '../types.js';
 import {
   relayClaimState, renewRelayClaim, takeOverExpiredRelayClaim,
@@ -17,7 +18,7 @@ import type { RelayProxyContext } from './context.js';
 
 export function registerRelayConsumeRoute(context: RelayProxyContext): void {
   const {
-    app, pool, config, CONSUME_KEYS, requestRelayIdentity,
+    authority, repository, app, pool, config, CONSUME_KEYS, requestRelayIdentity,
     relayClaimToken, relayClaimEpoch, currentSessionPolicy, sessionActor,
     recordTransactionalTerminalAudit, relayGrant, replyError,
   } = context;
@@ -34,6 +35,8 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
       if (record === undefined || !exactObjectKeys(record, CONSUME_KEYS)) { await invalid(); return; }
       const identity = requestRelayIdentity(request, record);
       if (identity === undefined) { await reply.code(401).send(); return; }
+      const continuity = authority.verify(record.authority_proof);
+      if (continuity.sessionId !== sid) throw new Error('terminal authority is unavailable');
       const ticket = record.ticket;
       const claimToken = relayClaimToken(record.claim_token);
       if (typeof ticket !== 'string' || ticket.length === 0 || ticket.length > 4_096
@@ -51,13 +54,14 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
       let takenOver = false;
       let refusal: { status: 401 | 403 | 409; reason: string; retry_after_ms?: number } | undefined;
       await withTransaction(pool, async (client) => {
+        const authorityExpiresAt = await authority.lockSession(client, continuity, repository);
         const locked = await client.query<LockedSession>(
           `SELECT terminal_sessions.*,
                   consumed_at IS NULL AND revoked_at IS NULL AND closed_at IS NULL
-                    AND expires_at > now() AS ticket_redeemable,
+                    AND expires_at > clock_timestamp() AS ticket_redeemable,
                   consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
-                    AND ${sessionWindowExpression(2, 3)} > now() AS session_recoverable,
-                  now() AS database_now,
+                    AND ${sessionWindowExpression(2, 3)} > clock_timestamp() AS session_recoverable,
+                  clock_timestamp() AS database_now,
                   ${CONTROL_HOLD_COLUMNS}
              FROM terminal_sessions
             WHERE id=$1
@@ -123,19 +127,19 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
             } else if (row.ticket_redeemable) {
               const claimed = await client.query<ClaimedSession>(
                 `UPDATE terminal_sessions
-                    SET consumed_at=now(), relay_claim_sha256=$2, relay_claim_epoch=1,
-                        relay_claimed_at=now(),
+                    SET consumed_at=clock_timestamp(), relay_claim_sha256=$2, relay_claim_epoch=1,
+                        relay_claimed_at=clock_timestamp(),
                         relay_claim_expires_at=LEAST(
-                          now()+make_interval(secs => $3),
-                          now()+make_interval(secs => $4)
+                          clock_timestamp()+make_interval(secs => $3),
+                          clock_timestamp()+make_interval(secs => $4), $7::timestamptz
                         ), relay_boot_id=$5
                   WHERE id=$1 AND consumed_at IS NULL AND revoked_at IS NULL
-                    AND closed_at IS NULL AND expires_at > now()
-                    AND relay_instance_id=$6
-                  RETURNING *,now() AS database_now`,
+                    AND closed_at IS NULL AND expires_at > clock_timestamp()
+                    AND relay_instance_id=$6 AND clock_timestamp()<$7::timestamptz
+                  RETURNING *,clock_timestamp() AS database_now`,
                 [
                   sid, claimSha256, config.claimLeaseSeconds, config.sessionTtlSeconds,
-                  identity.relay_boot_id, identity.relay_instance_id,
+                  identity.relay_boot_id, identity.relay_instance_id, authorityExpiresAt,
                 ],
               );
               session = claimed.rows[0];
@@ -158,6 +162,7 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
                   claimLeaseSeconds: config.claimLeaseSeconds,
                   sessionTtlSeconds: config.sessionTtlSeconds,
                   sessionMaxTotalSeconds: config.sessionMaxTotalSeconds,
+                  authorityExpiresAt,
                 });
                 session = renewed;
                 databaseNow = renewed?.database_now;
@@ -170,6 +175,7 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
                   claimLeaseSeconds: config.claimLeaseSeconds,
                   sessionTtlSeconds: config.sessionTtlSeconds,
                   sessionMaxTotalSeconds: config.sessionMaxTotalSeconds,
+                  authorityExpiresAt,
                 });
                 session = takeover;
                 databaseNow = takeover?.database_now;
@@ -211,6 +217,7 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
             }
           }
         }
+        await terminalDatabaseNow(client, authorityExpiresAt);
       });
       if (session === undefined) {
         if (refusal?.status === 403) {
@@ -226,21 +233,25 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
         }
         return;
       }
-      const expiry = sessionExpiry(session, config.sessionTtlSeconds, config.sessionMaxTotalSeconds)
-        ?? session.expires_at;
+      const expiry = new Date(Math.min((sessionExpiry(session, config.sessionTtlSeconds, config.sessionMaxTotalSeconds)
+        ?? session.expires_at).getTime(), continuity.origin.expiresAtSeconds * 1000));
       if (session.consumed_at === null) {
         throw new Error('database consumed a terminal session without a consumed_at timestamp');
       }
       if (databaseNow === undefined) throw new Error('database omitted terminal claim clock');
-      const resumeToken = issueResumeToken(
+      const resumeToken = emitAuthorityResumeToken(
         session.id,
         session.operator_id,
         Math.floor(expiry.getTime() / 1_000),
         config.ticketKey,
-        Math.floor(session.consumed_at.getTime() / 1_000)
+        Math.floor(session.consumed_at.getTime() / 1_000),
+        record.authority_proof as string
       );
       return await reply.code(200).send({
         ...relayGrant(session, resumeToken, claimToken, databaseNow, identity),
+        expires_at: expiry.toISOString(),
+        session_expires_at: expiry.toISOString(),
+        authority_proof: record.authority_proof,
         receipt_recovered: recovered,
         claim_taken_over: takenOver,
       });

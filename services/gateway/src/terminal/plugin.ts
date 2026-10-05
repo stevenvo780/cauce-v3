@@ -5,7 +5,7 @@ import {
 import {
   AliasSchema, isCanonicalUuidV4, TenantSchema,
 } from '@cauce/protocol';
-import { validatePrincipal, type AuthProvider, type Principal } from '../auth.js';
+import { AuthError, validatePrincipal, type AuthProvider, type Principal } from '../auth.js';
 import {
   type GovernanceRelayClient, type MeasuredFactsSource
 } from '../console/agent-documents.js';
@@ -25,6 +25,9 @@ import {
   registerTerminalSessionControl, TerminalClockSkewError, type ControlRequestBody,
   type DeleteSessionBody, type ExtendSessionBody, type OwnerRotationBody, type SessionRequestBody,
 } from './session-control.js';
+import { PasswordAuthProvider } from '../password-auth.js';
+import { hasCookie, scalarHeaderValue } from '../http-auth-primitives.js';
+import { TerminalSessionAuthority, authorityProof } from './session-authority.js';
 import { isTerminalMode, isWritableMode, type TerminalMode } from './types.js';
 
 /**
@@ -56,11 +59,11 @@ const SESSION_REQUEST_KEYS = [
   'alias', 'cols', 'mode', 'owner_token', 'reason', 'request_id', 'rows', 'tenant_id',
 ] as const;
 const OWNER_ROTATION_KEYS = [
-  'expected_owner_generation', 'owner_token', 'request_id',
+  'authority_proof', 'expected_owner_generation', 'owner_token', 'request_id',
 ] as const;
 const DELETE_SESSION_KEYS = ['owner_generation', 'owner_token', 'request_id'] as const;
 const SESSION_REQUEST_WITH_INITIATOR_KEYS = [...SESSION_REQUEST_KEYS, 'initiator'].sort();
-const CONTROL_KEYS = ['action', 'owner_generation', 'owner_token', 'request_id'] as const;
+const CONTROL_KEYS = ['action', 'authority_proof', 'owner_generation', 'owner_token', 'request_id'] as const;
 const CONTROL_WITH_REASON_KEYS = [...CONTROL_KEYS, 'reason'].sort();
 const CONTROL_WITH_BUSY_KEYS = [...CONTROL_WITH_REASON_KEYS, 'allow_busy'].sort();
 
@@ -167,6 +170,7 @@ export function parseOwnerRotation(value: unknown): OwnerRotationBody {
   return {
     request_id: canonicalUuidV4(body.request_id, 'request_id'),
     expected_owner_generation: generation,
+    authority_proof: authorityProof(body.authority_proof),
     owner_token: canonicalUuidV4(body.owner_token, 'owner_token'),
   };
 }
@@ -193,7 +197,11 @@ export function parseDeleteSession(value: unknown): DeleteSessionBody {
 }
 
 export function parseSessionExtend(value: unknown): ExtendSessionBody {
-  return ownerFencedBody(value, 'terminal session extension');
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid extension');
+  const body = value as Record<string, unknown>;
+  if (!exactObjectKeys(body, [...DELETE_SESSION_KEYS, 'authority_proof'].sort())) throw new Error('invalid extension fields');
+  const { authority_proof, ...owner } = body;
+  return { ...ownerFencedBody(owner, 'terminal session extension'), authority_proof: authorityProof(authority_proof) };
 }
 
 export function parseControlRequest(value: unknown): ControlRequestBody {
@@ -219,6 +227,7 @@ export function parseControlRequest(value: unknown): ControlRequestBody {
     owner_token: body.owner_token,
   }, 'terminal control request');
   return {
+    authority_proof: authorityProof(body.authority_proof),
     action: body.action,
     ...(body.allow_busy === undefined ? {} : { allow_busy: body.allow_busy }),
     ...(reason === undefined ? {} : { reason }),
@@ -261,8 +270,12 @@ export async function registerTerminalControlPlane(
   const registry = options.registry ?? new AgentRegistry();
   const grants = new GrantStore(config.grantsFile, (message) => { app.log.warn(message); });
   const repository = options.repository ?? new CauceRepository(pool);
+  const authority = new TerminalSessionAuthority(authProvider, config.ticketKey);
 
   async function principal(request: FastifyRequest): Promise<Principal> {
+    if (authProvider instanceof PasswordAuthProvider
+        && hasCookie(scalarHeaderValue(request.headers.cookie), authProvider.cookieName)
+        && !authProvider.handles(request)) throw new AuthError();
     return validatePrincipal(await authProvider.authenticateHttp(request));
   }
 
@@ -288,6 +301,7 @@ export async function registerTerminalControlPlane(
     registry,
     grants,
     repository,
+    authority,
     principal,
     openPredicate,
     currentCohort,
@@ -330,6 +344,7 @@ export async function registerTerminalControlPlane(
     registry,
     grants,
     repository,
+    authority,
     relayPeerInstanceId: options.relayPeerInstanceId,
     replyError,
     recordTransactionalTerminalAudit,

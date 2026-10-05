@@ -1,6 +1,6 @@
 import {
   constants, createHash, createPublicKey, timingSafeEqual, verify as verifySignature,
-  type JsonWebKey, type KeyObject, type X509Certificate
+  type JsonWebKey, type KeyObject, X509Certificate
 } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import { readFile } from 'node:fs/promises';
 import type { FastifyRequest } from 'fastify';
@@ -14,6 +14,7 @@ import {
   uniqueCookieValue
 } from './http-auth-primitives.js';
 import { isAuthorizedTlsSocket } from './runtime-guards.js';
+import { machineAuthorityOrigin, type MachineAuthorityOrigin, type VerifiedTerminalMachine } from './terminal/authority-continuity.js';
 
 export type PrincipalRole = 'agent' | 'operator' | 'adapter';
 export type PrincipalPermission = Permission;
@@ -399,9 +400,31 @@ export class JwksJwtAuthProvider implements AuthProvider {
   }
 }
 
+export interface MtlsIdentityAuthority {
+  readonly principal: Principal;
+  readonly expiresAtMs: number;
+}
+
+function immutableMtlsAuthority(value: unknown): MtlsIdentityAuthority {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) || !('expiresAtMs' in value) || !('principal' in value)
+    || typeof value.expiresAtMs !== 'number' || !Number.isSafeInteger(value.expiresAtMs)
+    || !Number.isFinite(new Date(value.expiresAtMs).getTime()) || value.expiresAtMs <= Date.now()
+    || value.principal === null || typeof value.principal !== 'object'
+    || Array.isArray(value.principal)) {
+    throw new AuthError('mTLS authority metadata is invalid or expired');
+  }
+  const principal = validatePrincipal(value.principal as Principal);
+  return Object.freeze({ expiresAtMs: value.expiresAtMs, principal: Object.freeze({ ...principal,
+    roles: Object.freeze(principal.roles), permissions: Object.freeze(principal.permissions),
+    ...(principal.operator_profile === undefined ? {} : { operator_profile: Object.freeze(principal.operator_profile) }),
+  }) });
+}
+
 export interface MtlsIdentityProvider {
   /** Map a certificate already verified by Node TLS to an application principal. */
   resolve(certificate: X509Certificate): Promise<Principal>;
+  resolveAuthority?(certificate: X509Certificate): Promise<MtlsIdentityAuthority>;
+  resolveFingerprintAuthority?(fingerprint: string): Promise<MtlsIdentityAuthority>;
 }
 
 /** Production mTLS provider. It never trusts forwarded certificate headers. */
@@ -423,6 +446,58 @@ export class MtlsAuthProvider implements AuthProvider {
 
   async authenticateHello(request: FastifyRequest): Promise<Principal> {
     return this.authenticateHttp(request);
+  }
+
+  async verifiedTerminalMachine(request: FastifyRequest): Promise<VerifiedTerminalMachine> {
+    const socket = request.raw.socket;
+    if (!isAuthorizedTlsSocket(socket)) throw new AuthError('a verified client certificate is required');
+    const certificate = socket.getPeerX509Certificate();
+    if (!(certificate instanceof X509Certificate)) throw new AuthError('client certificate is missing');
+    const issuedAtMs = Date.parse(certificate.validFrom);
+    const certificateExpiresAtMs = Date.parse(certificate.validTo);
+    if (!Number.isSafeInteger(issuedAtMs) || !Number.isSafeInteger(certificateExpiresAtMs)
+      || issuedAtMs > Date.now() || certificateExpiresAtMs <= Date.now()) {
+      throw new AuthError('client certificate validity is invalid or expired');
+    }
+    if (!this.identityProvider.resolveAuthority) throw new AuthError('mTLS authority metadata is unavailable');
+    const mapping = immutableMtlsAuthority(await this.identityProvider.resolveAuthority(certificate));
+    requireOperatorPermission(mapping.principal, 'control');
+    const expiresAtMs = Math.min(certificateExpiresAtMs, mapping.expiresAtMs);
+    if (expiresAtMs <= Date.now()) throw new AuthError('mTLS authority is expired');
+    const verified = Object.freeze({ authentication: 'mtls' as const,
+      principal: Object.freeze({ tenant_id: mapping.principal.tenant_id, alias: mapping.principal.alias,
+        channel: mapping.principal.channel, session_id: mapping.principal.session_id }),
+      certificateSha256: createHash('sha256').update(certificate.raw).digest('hex'), issuedAtMs, expiresAtMs });
+    try { machineAuthorityOrigin(verified); } catch { throw new AuthError('mTLS terminal identity is invalid'); }
+    return verified;
+  }
+
+  async revalidateTerminalMachine(origin: MachineAuthorityOrigin): Promise<Date> {
+    let normalized: MachineAuthorityOrigin;
+    try {
+      const claimed: { readonly kind: unknown } = origin;
+      if (claimed.kind !== 'machine' || !Number.isSafeInteger(origin.issuedAtSeconds)
+        || !Number.isSafeInteger(origin.expiresAtSeconds)) throw new Error();
+      normalized = machineAuthorityOrigin({ authentication: 'mtls',
+        principal: { tenant_id: origin.actor.tenantId, alias: origin.actor.alias,
+          channel: origin.principalChannel, session_id: origin.principalSessionId },
+        certificateSha256: origin.certificateSha256,
+        issuedAtMs: origin.issuedAtSeconds * 1000, expiresAtMs: origin.expiresAtSeconds * 1000 });
+    } catch { throw new AuthError('mTLS authority origin is invalid'); }
+    if (normalized.issuedAtSeconds * 1000 > Date.now() || normalized.expiresAtSeconds * 1000 <= Date.now()) {
+      throw new AuthError('mTLS authority origin is not live');
+    }
+    if (!this.identityProvider.resolveFingerprintAuthority) throw new AuthError('mTLS authority metadata is unavailable');
+    const mapping = immutableMtlsAuthority(await this.identityProvider.resolveFingerprintAuthority(normalized.certificateSha256));
+    const principal = mapping.principal;
+    if (principal.tenant_id !== normalized.actor.tenantId || principal.alias !== normalized.actor.alias
+      || principal.channel !== normalized.principalChannel || principal.session_id !== normalized.principalSessionId) {
+      throw new AuthError('mTLS authority identity changed');
+    }
+    requireOperatorPermission(principal, 'control');
+    const deadline = Math.min(normalized.expiresAtSeconds * 1000, mapping.expiresAtMs);
+    if (deadline <= Date.now()) throw new AuthError('mTLS authority is expired');
+    return new Date(deadline);
   }
 }
 
@@ -555,20 +630,28 @@ export class HashedMtlsIdentityFileProvider implements MtlsIdentityProvider {
   }
 
   async resolve(certificate: X509Certificate): Promise<Principal> {
-    const fingerprint = certificate.fingerprint256.replaceAll(':', '').toLowerCase();
+    return (await this.resolveAuthority(certificate)).principal;
+  }
+
+  async resolveAuthority(certificate: X509Certificate): Promise<MtlsIdentityAuthority> {
+    return this.resolveFingerprintAuthority(certificate.fingerprint256.replaceAll(':', '').toLowerCase());
+  }
+
+  async resolveFingerprintAuthority(fingerprint: string): Promise<MtlsIdentityAuthority> {
     const presented = hashBuffer(fingerprint, 'certificate fingerprint');
     const identities = await readIdentityFile(this.path);
-    let principal: Principal | undefined;
+    let authority: MtlsIdentityAuthority | undefined;
     for (const identity of identities) {
       if (identity.certificate_sha256 === undefined) continue;
       const expected = hashBuffer(identity.certificate_sha256, 'certificate_sha256');
       if (!timingSafeEqual(presented, expected)) continue;
-      if (parseExpiry(identity.expires_at) <= Date.now()) throw new AuthError('mTLS identity is expired');
+      const expiresAtMs = parseExpiry(identity.expires_at);
+      if (expiresAtMs <= Date.now()) throw new AuthError('mTLS identity is expired');
       if (!identity.principal || typeof identity.principal !== 'object') throw new AuthError('mTLS principal is invalid');
-      if (principal) throw new AuthError('mTLS certificate mapping is ambiguous');
-      principal = validatePrincipal(identity.principal as Principal);
+      if (authority) throw new AuthError('mTLS certificate mapping is ambiguous');
+      authority = immutableMtlsAuthority({ principal: identity.principal as Principal, expiresAtMs });
     }
-    if (!principal) throw new AuthError('mTLS certificate is not provisioned');
-    return principal;
+    if (!authority) throw new AuthError('mTLS certificate is not provisioned');
+    return authority;
   }
 }

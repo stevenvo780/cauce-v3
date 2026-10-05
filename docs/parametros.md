@@ -91,6 +91,7 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | `MAX_FRAME_PAYLOAD_BYTES` (`terminal-relay/.../framing.ts:57`) | bytes | 65_536 | fijo (tag inválido corta TODO) | e2e |
 | `AGENT_STALE_AFTER_MS` (`gateway/terminal/registry.ts:11`) | ms | 45_000 | fijo | — |
 | `MAX_TERMINAL_CLOCK_SKEW_MS` (`session-control.ts:34`) | ms | 5_000 | fijo | — |
+| `MAX_SECONDS` (`terminal/authority-continuity.ts`) | s Unix | 8_640_000_000_000 | límite fijo de representación temporal de la autoridad; no amplía la vigencia original | unit autoridad |
 | `CONTROL_HOLD_MAX_WINDOW_MS` (`store/.../terminal-control-holds.ts:10`) | ms | 12 h | fijo (= migración 040) | — |
 | `MAX_JOURNAL_PAGE` / `MAX_JOURNAL_PATH` / `MAX_JOURNAL_ID` | filas/chars/int | 200 / 4_096 / int64 máx | fijo | — |
 | Ticket ≤4_096 chars, resume 80–1_024, reason 8–280 | chars | — | fijo | — |

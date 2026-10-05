@@ -70,6 +70,7 @@ function dueno(grant: TerminalSessionGrant): TerminalSessionOwner {
     request_id: grant.request_id,
     owner_generation: grant.owner_generation,
     owner_token: grant.owner_token,
+    authority_proof: grant.authority_proof,
   };
 }
 
@@ -267,7 +268,8 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
       );
       const current = grantRef.current;
       const sameOwner = current?.session_id === escribible.session_id && current.request_id === owner.request_id
-        && current.owner_generation === owner.owner_generation && current.owner_token === owner.owner_token;
+        && current.owner_generation === owner.owner_generation && current.owner_token === owner.owner_token
+        && current.authority_proof === owner.authority_proof;
       if (!sigueVivo() || postedGeneration !== takeGenerationRef.current || !sameOwner
         || estadoRef.current === 'closed' || estadoRef.current === 'error') {
         if (revokedGeneration === revokedGenerationRef.current) {

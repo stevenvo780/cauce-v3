@@ -20,7 +20,8 @@ import {
 } from '../../services/gateway/src/terminal/config.js';
 import { registerTerminalControlPlane } from '../../services/gateway/src/terminal/plugin.js';
 import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
-import { deriveAliasKey, verifyTicketSignature } from '../../services/gateway/src/terminal/tickets.js';
+import { decodeTerminalSubject, verifyAuthorityContinuity } from '../../services/gateway/src/terminal/authority-continuity.js';
+import { deriveAliasKey, verifyAuthorityResumeToken, verifyTicketSignature } from '../../services/gateway/src/terminal/tickets.js';
 import { relayInstanceIdFromCertificate } from '../../services/terminal-relay/src/relay-identity.js';
 import { startFakeAgent, type FakeAgentHandle } from '../terminal-pty/fake-pty-agent.mjs';
 import {
@@ -43,7 +44,6 @@ const IMAGE_ID = `sha256:${'a'.repeat(64)}`;
 const databaseRequirement = dockerTestRequirement(
   'password login, CSRF, terminal RBAC, grants, and ticket admission against disposable PostgreSQL',
 );
-
 async function freeLoopbackPort(): Promise<number> {
   const server = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -143,13 +143,11 @@ interface BrowserSession {
   csrf: string;
   body: Record<string, unknown>;
 }
-
 interface LoginResponse {
   status: number;
   cookie: string;
   body: Record<string, unknown>;
 }
-
 async function provision(email: string, alias: string, role: 'operator' | 'reader', password: string): Promise<void> {
   if (database === undefined) throw new Error('disposable database is not initialized');
   await execute(
@@ -168,7 +166,6 @@ async function provision(email: string, alias: string, role: 'operator' | 'reade
     },
   );
 }
-
 async function setup(): Promise<void> {
   if (process.env.CAUCE_TEST_DATABASE_URL !== undefined) {
     throw new Error('remote-console-terminal requires its own Testcontainers database; external database fallback is rejected');
@@ -178,6 +175,7 @@ async function setup(): Promise<void> {
   let directory = '';
   try {
     database = startedDatabase;
+    process.stdout.write(`terminal-e2e-owned ${JSON.stringify({ database_container: startedDatabase.container.getId() })}\n`);
     const suffix = randomBytes(5).toString('hex');
     actorAlias = `ci-operator-${suffix}`;
     targetAlias = `ci-target-${suffix}`;
@@ -221,7 +219,6 @@ async function setup(): Promise<void> {
     if (process.getuid?.() === 0 && relayUid !== undefined && relayGid !== undefined) {
       await Promise.all([tokenFile, registryFile, closeSpoolFile].map((path) => chown(path, relayUid, relayGid)));
     }
-
     await startedDatabase.pool.query(
       `INSERT INTO tenants(id) VALUES($1) ON CONFLICT(id) DO NOTHING`, [FOREIGN_TENANT],
     );
@@ -249,7 +246,6 @@ async function setup(): Promise<void> {
     );
     await provision(operatorEmail, actorAlias, 'operator', OPERATOR_PASSWORD);
     await provision(readerEmail, actorAlias, 'reader', READER_PASSWORD);
-
     const relayIdentityFile = join(directory, 'relay-mtls-identities.json');
     await writeFile(relayIdentityFile, JSON.stringify({ version: 1, identities: [{
       certificate_sha256: RELAY_INSTANCE_ID,
@@ -400,7 +396,6 @@ afterAll(async () => {
     }
   }
 });
-
 async function login(email: string, password: string): Promise<LoginResponse> {
   const response = await httpsRequestBody(`${httpUrl}/v3/auth/login`, {
     method: 'POST',
@@ -412,7 +407,6 @@ async function login(email: string, password: string): Promise<LoginResponse> {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new Error('login returned a non-object response');
   return { status: response.status ?? 0, cookie: cookie.split(';', 1)[0] ?? '', body: body as Record<string, unknown> };
 }
-
 async function authenticated(email: string, password: string): Promise<BrowserSession> {
   const response = await login(email, password);
   expect(response.status).toBe(200);
@@ -423,7 +417,6 @@ async function authenticated(email: string, password: string): Promise<BrowserSe
   if (typeof csrf !== 'string') throw new Error('password login omitted CSRF token');
   return { cookie: response.cookie, csrf, body: response.body };
 }
-
 interface HttpsResponse {
   status: number | undefined;
   headers: import('node:http').IncomingHttpHeaders;
@@ -431,7 +424,6 @@ interface HttpsResponse {
   text(): Promise<string>;
   clone(): { text(): Promise<string> };
 }
-
 async function httpsRequestBody(url: string, options: {
   method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number;
 } = {}): Promise<HttpsResponse> {
@@ -483,7 +475,6 @@ async function responseObject(response: HttpsResponse): Promise<Record<string, u
   }
   return body as Record<string, unknown>;
 }
-
 function sessionPayload(alias = targetAlias, tenantId = TARGET_TENANT) {
   return {
     tenant_id: tenantId,
@@ -496,7 +487,6 @@ function sessionPayload(alias = targetAlias, tenantId = TARGET_TENANT) {
     owner_token: randomUUID(),
   };
 }
-
 async function createSession(
   session: BrowserSession,
   csrf: string | undefined,
@@ -519,7 +509,6 @@ interface TerminalSocketStream {
   nextControl(timeoutMs?: number): Promise<Record<string, unknown>>;
   binaryUntil(value: string, timeoutMs?: number): Promise<string>;
 }
-
 function collectTerminalSocket(socket: WebSocket): TerminalSocketStream {
   const controls: Record<string, unknown>[] = [];
   const waiters: { resolve: (frame: Record<string, unknown>) => void; reject: (error: Error) => void }[] = [];
@@ -557,7 +546,6 @@ function collectTerminalSocket(socket: WebSocket): TerminalSocketStream {
     },
   };
 }
-
 function openRelaySocket(): { socket: WebSocket; stream: TerminalSocketStream } {
   if (tlsMaterial === undefined) throw new Error('test TLS material is unavailable');
   const socket = new WebSocket(
@@ -569,7 +557,6 @@ function openRelaySocket(): { socket: WebSocket; stream: TerminalSocketStream } 
   );
   return { socket, stream: collectTerminalSocket(socket) };
 }
-
 function waitForSocketOpen(socket: WebSocket): Promise<void> {
   return new Promise((resolve, reject) => {
     const finish = (error?: Error) => {
@@ -591,6 +578,15 @@ function waitForSocketOpen(socket: WebSocket): Promise<void> {
     socket.once('close', onClose);
   });
 }
+async function expectHumanSubject(subject: unknown): Promise<void> {
+  expect(typeof subject).toBe('string');
+  if (typeof subject !== 'string' || database === undefined) throw new Error('durable human terminal subject is missing');
+  const human = await database.pool.query<{ id: string }>('SELECT id::text AS id FROM console_users WHERE email=$1', [operatorEmail]);
+  expect(human.rows).toHaveLength(1);
+  expect(decodeTerminalSubject(subject)).toEqual({ kind: 'human', humanId: human.rows[0]?.id,
+    actor: { tenantId: TARGET_TENANT, alias: actorAlias } });
+}
+
 describe('admisión HTTP de terminal: password auth, CSRF, grants y PostgreSQL desechable', () => {
   it('rechaza CSRF ausente antes de admitir una sesión', async () => {
     const session = await authenticated(operatorEmail, OPERATOR_PASSWORD);
@@ -632,11 +628,12 @@ describe('admisión HTTP de terminal: password auth, CSRF, grants y PostgreSQL d
     expect(response.status, await response.clone().text()).toBe(201);
     const body = await response.json() as Record<string, unknown>;
     expect(Object.keys(body).sort()).toEqual([
-      'expires_at', 'owner_generation', 'receipt_recovered', 'request_id', 'session_id', 'target',
+      'authority_proof', 'expires_at', 'owner_generation', 'receipt_recovered', 'request_id', 'session_id', 'target',
       'ticket', 'ttl_seconds', 'websocket_path',
     ]);
     expect(body.session_id).toMatch(/^[0-9a-f-]{36}$/u);
     expect(typeof body.ticket).toBe('string');
+    expect(typeof body.authority_proof === 'string' && body.authority_proof.startsWith('ac2.')).toBe(true);
     expect(body.target).toMatchObject({ tenant_id: TARGET_TENANT, alias: targetAlias, mode: 'shell' });
     if (typeof body.ticket !== 'string' || typeof body.session_id !== 'string') {
       throw new Error('terminal admission response omitted its ticket or session id');
@@ -664,8 +661,8 @@ describe('admisión HTTP de terminal: password auth, CSRF, grants y PostgreSQL d
       tenant_id: TARGET_TENANT,
       alias: targetAlias,
       operator_id: operatorEmail,
-      console_subject: `${TARGET_TENANT}:${actorAlias}`,
     });
+    await expectHumanSubject(stored?.rows[0]?.console_subject);
     expect(stored?.rows[0]?.ticket_sha256).toHaveLength(32);
     const released = await httpsRequestBody(`${httpUrl}/v3/console/terminal/sessions/${body.session_id}`, {
       method: 'DELETE',
@@ -688,20 +685,23 @@ describe('admisión HTTP de terminal: password auth, CSRF, grants y PostgreSQL d
     const admission = await createSession(session, session.csrf, targetAlias, TARGET_TENANT, requestPayload);
     expect(admission.status, await admission.text()).toBe(201);
     const admitted = await responseObject(admission);
-    if (typeof admitted.session_id !== 'string' || typeof admitted.ticket !== 'string') {
+    if (typeof admitted.session_id !== 'string' || typeof admitted.ticket !== 'string' || typeof admitted.authority_proof !== 'string') {
       throw new Error('gateway did not return a terminal session ticket');
     }
-
     const first = openRelaySocket();
     let ready: Record<string, unknown>;
     try {
       await waitForSocketOpen(first.socket);
       first.socket.send(JSON.stringify({
-        type: 'attach', session_id: admitted.session_id, ticket: admitted.ticket, cols: 100, rows: 30,
+        type: 'attach', session_id: admitted.session_id, ticket: admitted.ticket, authority_proof: admitted.authority_proof, cols: 100, rows: 30,
       }));
       ready = await first.stream.nextControl();
       expect(ready).toMatchObject({ type: 'ready', session_id: admitted.session_id, resumed: false });
       expect(typeof ready.resume_token).toBe('string');
+      const continuity = verifyAuthorityContinuity(admitted.authority_proof, TICKET_KEY);
+      expect(continuity.sessionId).toBe(admitted.session_id);
+      expect(verifyAuthorityResumeToken(String(ready.resume_token), TICKET_KEY, admitted.authority_proof))
+        .toMatchObject({ sid: admitted.session_id, op: operatorEmail });
       expect(typeof ready.claim_token).toBe('string');
       expect(typeof ready.claim_epoch).toBe('string');
       first.socket.send(JSON.stringify({ type: 'input', data: 'ping\r' }));
@@ -721,7 +721,7 @@ describe('admisión HTTP de terminal: password auth, CSRF, grants y PostgreSQL d
     try {
       await waitForSocketOpen(second.socket);
       second.socket.send(JSON.stringify({
-        type: 'resume', session_id: admitted.session_id, resume_token: ready.resume_token,
+        type: 'resume', session_id: admitted.session_id, resume_token: ready.resume_token, authority_proof: admitted.authority_proof,
         prior_claim_token: ready.claim_token, prior_claim_epoch: ready.claim_epoch,
         after_bytes: 0, cols: 100, rows: 30,
       }));
@@ -746,7 +746,7 @@ describe('admisión HTTP de terminal: password auth, CSRF, grants y PostgreSQL d
       expect(ownerRow?.rows[0]?.browser_owner_sha256)
         .toEqual(createHash('sha256').update(requestPayload.owner_token, 'utf8').digest());
       expect(ownerRow?.rows[0]?.operator_id).toBe(operatorEmail);
-      expect(ownerRow?.rows[0]?.console_subject).toBe(`${TARGET_TENANT}:${actorAlias}`);
+      await expectHumanSubject(ownerRow?.rows[0]?.console_subject);
       expect(ownerRow?.rows[0]?.attributed).toBe(true);
       expect(ownerRow?.rows[0]?.revoked_at).toBeNull();
       expect(ownerRow?.rows[0]?.closed_at).toBeNull();

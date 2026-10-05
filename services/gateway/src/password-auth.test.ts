@@ -693,3 +693,28 @@ describe('isConsoleSurface clasifica la ruta como la resuelve el router, nunca p
     expect(isConsoleSurface(url)).toBe(esperado);
   });
 });
+
+
+it('exposes the original verified login SID and ignores forged terminal identity in the body', async () => {
+  const test = await fixture();
+  try {
+    const first = await test.login('steven@elenxos.com', PASSWORD);
+    const cookie = cookieFrom(first.headers);
+    const token = cookie.split('=')[1];
+    if (token === undefined) throw new Error('missing session token');
+    const payload = token.split('.')[1];
+    if (payload === undefined) throw new Error('missing session claims');
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { sid: string };
+    const verified = await test.provider.verifiedConsoleSession({
+      headers: { cookie }, body: { loginSid: 'forged-session', humanId: 'forged-human', actorAlias: 'jarvis' },
+    } as unknown as FastifyRequest);
+    expect(verified).toMatchObject({ loginSid: claims.sid,
+      humanId: '11111111-2222-4333-8444-555555555555', tenantId: 'Steven', actorAlias: 'kant' });
+    expect(JSON.stringify(verified)).not.toContain(PASSWORD);
+    const second = await test.login('steven@elenxos.com', PASSWORD);
+    const next = await test.provider.verifiedConsoleSession({ headers: { cookie: cookieFrom(second.headers) } } as unknown as FastifyRequest);
+    expect(next?.loginSid).not.toBe(verified?.loginSid);
+    await expect(test.provider.verifiedConsoleSession({ headers: { cookie: '__Host-cauce_session=invalid' },
+      body: { loginSid: claims.sid } } as unknown as FastifyRequest)).rejects.toThrow(AuthError);
+  } finally { await test.app.close(); }
+});

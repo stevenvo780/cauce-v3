@@ -19,7 +19,7 @@
 // Run: npx vitest run tests/terminal-pty/control-de-tui.test.ts --testTimeout=120000
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { createHash, X509Certificate } from 'node:crypto';
+import { createHash, randomUUID, X509Certificate } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -404,7 +404,7 @@ function driver(circuit: () => Circuit): {
   sockets: WebSocket[];
   agents: FakeAgentHandle[];
   attachAgent(extra?: Partial<FakeAgentOptions>): Promise<FakeAgentHandle>;
-  attach(payload: TicketPayload): Promise<{ socket: WebSocket; stream: BrowserStream }>;
+  attach(payload: TicketPayload, authorityProof?: string): Promise<{ socket: WebSocket; stream: BrowserStream }>;
   readyFrame(socket: WebSocket, stream: BrowserStream, sessionId: string): Promise<Record<string, unknown>>;
   castPath(sessionId: string): string;
   castLines(sessionId: string): [number, string, string][];
@@ -426,7 +426,7 @@ function driver(circuit: () => Circuit): {
       await handle.ready;
       return handle;
     },
-    async attach(payload: TicketPayload) {
+    async attach(payload: TicketPayload, authorityProof = circuit().gateway.authorityProof(payload.sid)) {
       const port = circuit().wsPort;
       const socket = new WebSocket(
         `wss://127.0.0.1:${String(port)}/v3/console/terminal/relays/${relayInstanceId}/ws`,
@@ -435,7 +435,7 @@ function driver(circuit: () => Circuit): {
       const stream = collect(socket);
       await opened(socket);
       socket.send(JSON.stringify({
-        type: 'attach', session_id: payload.sid, ticket: mintTicket(aliasKey, payload),
+        type: 'attach', session_id: payload.sid, authority_proof: authorityProof, ticket: mintTicket(aliasKey, payload),
         cols: 120, rows: 40,
       }));
       return { socket, stream };
@@ -512,6 +512,17 @@ describe.skipIf(relay === null)('taking control of a TUI, with a recording direc
   beforeAll(async () => { circuit = await startCircuit('recorded', true); });
   afterEach(() => drive.cleanup());
   afterAll(() => circuit.stop());
+
+  it('refuses a signed proof from another session before sending OPEN to the agent', async () => {
+    const handle = await drive.attachAgent();
+    const payload = ticketPayload({ mode: 'harness_rw' });
+    circuit.gateway.authorityProof(payload.sid);
+    const foreignProof = circuit.gateway.authorityProof(randomUUID());
+    const { socket } = await drive.attach(payload, foreignProof);
+    expect((await closedWith(socket)).code).toBe(CLOSE_CODE.revoked);
+    expect(handle.sessions).toBe(0);
+    expect(circuit.gateway.auditOf('terminal.session.consume')).toHaveLength(0);
+  });
 
   it('1. opens harness_rw, answers ready, then geometry, and types into the pane', async () => {
     await drive.attachAgent({ geometry: { cols: 120, rows: 40 } });
