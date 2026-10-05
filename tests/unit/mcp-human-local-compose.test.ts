@@ -115,7 +115,8 @@ describe('opt-in human MCP local-provider Compose configuration', () => {
     expect(gatewayEnvironment.CAUCE_MCP_OAUTH_SIGNING_KEY_FILE).toBe('/run/secrets/mcp_oauth_signing_key');
     expect(gatewayEnvironment.CAUCE_MCP_OAUTH_ISSUER).toBeUndefined();
     expect(gatewayEnvironment.CAUCE_MCP_OAUTH_JWKS_URI).toBeUndefined();
-    expect(merged.secrets.mcp_oauth_signing_key).toEqual({ file: fixtureValues.CAUCE_MCP_OAUTH_SIGNING_KEY_PATH });
+    // Compose normaliza cada secreto basado en fichero con un `name` de proyecto; sólo nos importa el `file`.
+    expect(merged.secrets.mcp_oauth_signing_key).toMatchObject({ file: fixtureValues.CAUCE_MCP_OAUTH_SIGNING_KEY_PATH });
     expect(gateway.secrets).toContainEqual(expect.objectContaining({ source: 'mcp_oauth_signing_key', target: 'mcp_oauth_signing_key' }));
 
     gateway.environment = Object.fromEntries(
@@ -140,6 +141,13 @@ describe('opt-in human MCP local-provider Compose configuration', () => {
 
   it('never requires CAUCE_MCP_OAUTH_ISSUER or CAUCE_MCP_OAUTH_JWKS_URI for the local overlay', async () => {
     const rendered = await renderCompose(true, fixtureValues);
-    expect(rendered.stderr).toBe('');
+    // Todo secreto del stack base declara gid/mode/uid (sólo aplican en Swarm); Compose avisa de eso
+    // para los veintitantos secretos preexistentes, ajeno a este overlay. Sólo nos importa que el
+    // overlay local no agregue NINGÚN aviso propio por encima de ese ruido conocido.
+    const unexpectedStderr = rendered.stderr
+      .split('\n')
+      .filter(line => line.length > 0 && !line.includes('is not supported outside Swarm mode and will be ignored'))
+      .join('\n');
+    expect(unexpectedStderr).toBe('');
   });
 });
