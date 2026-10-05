@@ -584,6 +584,28 @@ function barrier() {
     },
   );
 
+  it('purges expired requests, codes and tokens opportunistically on insert without touching live rows or grants', async () => {
+    const pool = await database(); const f = await seed(pool);
+    const short = intercept(pool, async sql => sql.replace("at+interval '5 minutes'", "at+interval '200 milliseconds'")
+      .replace("at+interval '60 seconds'", "at+interval '200 milliseconds'"));
+    const store = new PostgresOAuthStore(short, issuer, verify);
+    const stale = { ...f.request, idHash: secretHash(randomUUID()) };
+    await store.createRequest(stale, context());
+    const expiring = { ...f.request, idHash: secretHash(randomUUID()) };
+    await store.createRequest(expiring, context());
+    await store.consent(expiring.idHash, expiring.browserHash, f.session, ['cauce.read'], context());
+    await pool.query('SELECT pg_sleep(0.3)');
+    const fresh = { ...f.request, idHash: secretHash(randomUUID()) };
+    await f.store.createRequest(fresh, context());
+    expect((await pool.query<{ id_hash: string }>('SELECT id_hash FROM cauce_oauth_requests ORDER BY id_hash')).rows.map(row => row.id_hash).sort())
+      .toEqual([f.request.idHash, fresh.idHash].sort());
+    const approved = await consent(f);
+    expect(await counts(pool)).toEqual({ requests: '2', grants: '2', codes: '1', tokens: '0' });
+    if (!approved.code) throw new Error('missing code');
+    await f.store.exchange(exchangeInput(f, approved.code), value => tokens.issue(value), context());
+    expect(await counts(pool)).toEqual({ requests: '2', grants: '2', codes: '1', tokens: '1' });
+  });
+
   it('drops only empty OAuth tables atomically and preserves the human ledger', async () => {
     const pool = await database(); const client = await pool.connect();
     try { await transaction(client, async () => { await client.query(await readFile(downPath, 'utf8')); }); }

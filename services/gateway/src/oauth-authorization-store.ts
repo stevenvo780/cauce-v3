@@ -54,6 +54,18 @@ async function lockLocalBinding(client: DatabaseClient, issuer: string, userId: 
   catch (error) { if (error instanceof StoreError) throw new OAuthError('access_denied'); throw error; }
 }
 
+// Purga oportunista y acotada de filas vencidas, que el trigger ya permite borrar; los grants no se tocan.
+const PURGE_EXPIRED = Object.freeze({
+  requests: `DELETE FROM cauce_oauth_requests WHERE id_hash IN (SELECT id_hash FROM cauce_oauth_requests
+    WHERE expires_at<clock_timestamp() ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED)`,
+  codes: `DELETE FROM cauce_oauth_codes WHERE code_hash IN (SELECT code_hash FROM cauce_oauth_codes
+    WHERE expires_at<clock_timestamp() ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED)`,
+  tokens: `DELETE FROM cauce_oauth_tokens WHERE id IN (SELECT id FROM cauce_oauth_tokens
+    WHERE expires_at<clock_timestamp() ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED)`,
+  refresh: `DELETE FROM cauce_oauth_refresh_tokens WHERE token_hash IN (SELECT token_hash FROM cauce_oauth_refresh_tokens
+    WHERE expires_at<clock_timestamp() ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED)`,
+});
+
 function signedAccess(grant: OAuthGrantRow, issuer: string, resource: string,
   issue: (input: OAuthTokenInput) => OAuthIssuedToken): OAuthIssuedToken {
   const issued = issue({ grantId: grant.id, userId: grant.human_id, scopes: grant.scopes,
@@ -77,6 +89,8 @@ async function recordAccess(client: DatabaseClient, grant: OAuthGrantRow, issued
      SELECT $1,$2,$3 WHERE $3::timestamptz>clock_timestamp()`, [secretHash(refreshToken), grant.id, grant.expires_at],
   );
   if (stored.rowCount !== 1) throw new OAuthError('invalid_grant');
+  await client.query(PURGE_EXPIRED.tokens);
+  await client.query(PURGE_EXPIRED.refresh);
   await requireOAuthExpiry(client, new Date(Math.min(grant.expires_at.getTime(), issued.identity.expiresAt * 1000)));
   return Object.freeze({ ...issued, refreshToken });
 }
@@ -125,7 +139,7 @@ export class PostgresOAuthStore implements OAuthStore {
        SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,at,at+interval '5 minutes' FROM instant`,
       [request.idHash, request.browserHash, request.clientId, request.clientName, request.redirectUri,
         request.resource, [...request.scopes], request.challenge, request.state],
-    ); });
+    ); await client.query(PURGE_EXPIRED.requests); });
   }
 
   async request(idHash: string, browserHash: string, context: OAuthRequestContext): Promise<OAuthAuthorizationRequest | undefined> {
@@ -167,6 +181,7 @@ export class PostgresOAuthStore implements OAuthStore {
          INSERT INTO cauce_oauth_codes (code_hash,grant_id,challenge,created_at,expires_at)
          SELECT $1,$2,$3,at,at+interval '60 seconds' FROM instant`, [secretHash(code), grantId, request.challenge],
       );
+      await client.query(PURGE_EXPIRED.codes);
       await requireOAuthExpiry(client, new Date(session.expiresAt * 1000));
       return { code, request };
     });
