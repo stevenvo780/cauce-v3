@@ -18,10 +18,13 @@ const pool = (): TestDatabase['pool'] => {
 };
 
 preparePostgresSuite(import.meta.url, async () => {
-  [up, down] = await Promise.all([
+  // 045 depends on 044 and its down refuses while 045 is recorded, so the 044 rollback first removes the empty 045.
+  const [source, own, later] = await Promise.all([
     readFile(new URL(`../../packages/store/migrations/${VERSION}`, import.meta.url), 'utf8'),
     readFile(new URL(`../../packages/store/migrations/down/${VERSION}`, import.meta.url), 'utf8'),
+    readFile(new URL('../../packages/store/migrations/down/045_mcp_oauth_authorization.sql', import.meta.url), 'utf8'),
   ]);
+  up = source; down = `${later}\n${own}`;
   database = await startTestDatabase();
 }, 120_000);
 

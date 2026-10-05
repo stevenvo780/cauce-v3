@@ -13,6 +13,7 @@ import { consoleMessageAuthor } from './console-message-author.js';
 import { createHumanMcpOperationsFactory } from './mcp-operations.js';
 import type { ExternalSubjectResolver } from './human-mcp-authority.js';
 import { fakeRepository } from './test-support/gateway-doubles.js';
+import { OAuthError } from './oauth-authorization-types.js';
 
 const USER_A = '11111111-1111-4111-8111-111111111111';
 const USER_B = '22222222-2222-4222-8222-222222222222';
@@ -262,6 +263,8 @@ describe('human MCP operations phase boundaries', () => {
       [new StoreError('conflict', 'private', 'idempotency_durable_conflict'),
         { status_code: 409, error: 'operation_conflict' }],
       [new Error('private backend detail'), { status_code: 503, error: 'operation_unavailable', safe_to_retry_same_request_key: true }],
+      [new OAuthError('invalid_grant'), { status_code: 401, error: 'unauthorized' }],
+      [new OAuthError('invalid_scope'), { status_code: 403, error: 'forbidden' }],
       [new PublishIntentExpiredError(PREPARED_KEY), { status_code: 410, version: 1,
         error: 'publish_intent_expired', state: 'expired', idempotency_key: PREPARED_KEY, safe_to_resubmit: true }],
       [new PublishIntentRateLimitedError(30), { status_code: 429, version: 1,

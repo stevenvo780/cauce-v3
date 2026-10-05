@@ -1,4 +1,4 @@
-import { OAuthError, httpsUrl } from './oauth-authorization-types.js';
+import { OAuthError, httpsUrl, loopbackRedirect, redirectUrl } from './oauth-authorization-types.js';
 import { createOAuthMetadataFetch, type OAuthMetadataFetch } from './oauth-client-fetch.js';
 
 export interface OAuthClientMetadata {
@@ -57,15 +57,16 @@ export class OAuthClients {
       throw new OAuthError('invalid_client');
     }
     const origin = new URL(clientId).origin;
-    const redirects = doc.redirect_uris.map((value: unknown) => {
-      if (typeof value !== 'string') throw new OAuthError('invalid_client');
-      const redirect = httpsUrl(value, true);
-      if ((redirect.origin !== origin && !this.options.additionalRedirectOrigins?.includes(redirect.origin))
-          || ['code', 'state', 'iss', 'error'].some((key) => redirect.searchParams.has(key))) {
-        throw new OAuthError('invalid_client');
-      }
-      return value;
+    // Un redirect inaceptable se descarta sin invalidar el documento: VS Code mezcla loopback y HTTPS.
+    const redirects = doc.redirect_uris.flatMap((value: unknown) => {
+      if (typeof value !== 'string') return [];
+      try {
+        const redirect = redirectUrl(value);
+        return loopbackRedirect(redirect) || redirect.origin === origin
+          || this.options.additionalRedirectOrigins?.includes(redirect.origin) === true ? [value] : [];
+      } catch { return []; }
     });
+    if (!redirects.length) throw new OAuthError('invalid_client');
     if (doc.client_name !== undefined && (typeof doc.client_name !== 'string' || doc.client_name.length > 200
         || !doc.client_name.length || /\p{C}/u.test(doc.client_name))) throw new OAuthError('invalid_client');
     const client = Object.freeze({ clientId, clientName: typeof doc.client_name === 'string' ? doc.client_name : origin,

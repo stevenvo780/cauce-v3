@@ -43,4 +43,12 @@ describe('CIMD client identity', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
     await expect(new OAuthClients({ fetch: vi.fn(async () => ({ body: 'x'.repeat(16385) })) }).resolve(id)).rejects.toThrow('invalid_client');
   });
+  it('keeps loopback and same-origin redirects and drops the rest instead of rejecting the document', async () => {
+    const native = await new OAuthClients({ fetch: fetchDocument({ ...doc,
+      redirect_uris: ['http://localhost/callback', 'http://127.0.0.1/callback'] }) }).resolve(id);
+    expect(native.redirectUris).toEqual(['http://localhost/callback', 'http://127.0.0.1/callback']);
+    const mixed = await new OAuthClients({ fetch: fetchDocument({ ...doc,
+      redirect_uris: ['http://127.0.0.1:33418/', 'https://client.example/redirect', 'https://other.example/cb', 7, 'http://client.example/cb'] }) }).resolve(id);
+    expect(mixed.redirectUris).toEqual(['http://127.0.0.1:33418/', 'https://client.example/redirect']);
+  });
 });
