@@ -54,7 +54,11 @@ export class StubWebSocket {
 
   /** Control plane: always text JSON. */
   emitControl(payload: Record<string, unknown>): void {
-    this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(payload) }));
+    const request = this.frames().find((frame) => frame.type === 'attach' || frame.type === 'resume');
+    const response = payload.type === 'ready' && !Object.hasOwn(payload, 'resume_token') && request
+      ? { ...payload, resume_token: mockAuthorityResumeToken(request.session_id, request.authority_proof) }
+      : payload;
+    this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(response) }));
   }
 
   emitRawText(raw: string): void {
@@ -87,6 +91,18 @@ export class StubWebSocket {
     if (!socket) throw new Error('No PTY WebSocket was opened');
     return socket;
   }
+}
+
+function base64url(value: string): string {
+  return globalThis.btoa(String.fromCharCode(...new TextEncoder().encode(value)))
+    .replace(/=+$/u, '').replaceAll('+', '-').replaceAll('/', '_');
+}
+
+function mockAuthorityResumeToken(sessionId: unknown, authorityProof: unknown): string {
+  const legacyPayload = JSON.stringify({ v: 1, sid: sessionId, op: 'fixture-operator', iat: 1_750_000_000,
+    exp: 1_750_003_600, nonce: 'A'.repeat(22) });
+  const legacy = `r1.${base64url(legacyPayload)}.${'A'.repeat(43)}`;
+  return `r2.${base64url(JSON.stringify([legacy, authorityProof]))}`;
 }
 
 /**

@@ -197,6 +197,7 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, top
   const [motivoReconciliacionPlaza, setMotivoReconciliacionPlaza] = useState<MotivoReconciliacionPlaza>();
   const [revisandoPlazas, setRevisandoPlazas] = useState(false);
   const [cerrandoPlaza, setCerrandoPlaza] = useState<Record<string, true>>({});
+  const [errorCierrePlaza, setErrorCierrePlaza] = useState<string>();
   const [errorPlazas, setErrorPlazas] = useState<string>();
   const initialAgentOpenedRef = useRef<string | undefined>(undefined);
 
@@ -255,14 +256,24 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, top
   useEffect(() => { void revisarPlazas(); }, [revisarPlazas]);
 
   async function cerrarPlaza(id: string) {
+    setErrorCierrePlaza(undefined);
     setCerrandoPlaza((current) => ({ ...current, [id]: true }));
     try {
       const visible = plazas.find((item) => item.session_id === id);
       if (!visible) throw new Error('la sesión ya no pertenece al inventario visible');
+      const original = Object.values(grantsRef.current).find((grant) => grant.session_id === id);
+      if (original?.request_id !== visible.request_id) {
+        throw new TerminalApiError(
+          'No se puede tomar una sesión colgada sin la prueba de autoridad original que conserva en memoria su pestaña.',
+          409,
+          'missing_authority_proof',
+        );
+      }
       const ownerToken = terminalCapabilityUuid();
       const owner = await rotateTerminalSessionOwner(
         id,
-        { request_id: visible.request_id, owner_generation: visible.owner_generation },
+        { request_id: visible.request_id, owner_generation: visible.owner_generation,
+          authority_proof: original.authority_proof },
         ownerToken,
         apiRef.current,
       );
@@ -270,7 +281,10 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, top
       setPlazas((current) => current.filter((item) => item.session_id !== id));
       setTopeAlcanzado(false);
       setMotivoReconciliacionPlaza(undefined);
-    } catch {
+    } catch (error) {
+      if (error instanceof TerminalApiError && error.code === 'missing_authority_proof') {
+        setErrorCierrePlaza('Esta pestaña no conserva la prueba original para cerrar esa sesión. Volvé a la pestaña que la abrió o esperá a que venza.');
+      }
       await revisarPlazas();
     } finally {
       setCerrandoPlaza((current) => omitKey(current, id));
@@ -466,6 +480,7 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, top
         revisando={revisandoPlazas}
         cerrando={cerrandoPlaza}
         error={errorPlazas}
+        errorCierre={errorCierrePlaza}
         onRevisar={() => { void revisarPlazas(); }}
         onCerrar={(id) => { void cerrarPlaza(id); }}
       />

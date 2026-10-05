@@ -101,7 +101,8 @@ it('releases a late successful take after navigating from the terminal to Feed',
   const releases = controls.filter(call => call.body.action === 'release');
   expect(releases).toHaveLength(1);
   expect(releases[0]).toMatchObject({ sid: WRITABLE_SESSION, body: {
-    request_id: controls[0].body.request_id, owner_generation: controls[0].body.owner_generation, owner_token: controls[0].body.owner_token,
+    request_id: controls[0].body.request_id, owner_generation: controls[0].body.owner_generation,
+    owner_token: controls[0].body.owner_token, authority_proof: controls[0].body.authority_proof,
   } });
 });
 
@@ -140,7 +141,8 @@ it('does not adopt a delayed take after the same session receives a replacement 
   expect(screen.queryByText(/Tenés el teclado/)).not.toBeInTheDocument();
   expect(onControlCambia).not.toHaveBeenCalledWith(true);
   expect(controls.filter(call => call.body.action === 'release')).toEqual([{ sid: WRITABLE_SESSION,
-    body: { action: 'release', request_id: 'old-request', owner_generation: '1', owner_token: 'old-owner' } }]);
+    body: { action: 'release', request_id: 'old-request', owner_generation: '1', owner_token: 'old-owner',
+      authority_proof: old.authority_proof } }]);
 });
 
 it('cleans the old owner without clearing or releasing a newer mounted owner hold', async () => {
@@ -156,9 +158,11 @@ it('cleans the old owner without clearing or releasing a newer mounted owner hol
   await completeTake();
   const releases = controls.filter(call => call.body.action === 'release');
   expect(releases).toHaveLength(1);
-  expect(releases[0].body).toMatchObject({ request_id: 'old-request', owner_generation: '1', owner_token: 'old-owner' });
+  expect(releases[0].body).toMatchObject({ request_id: 'old-request', owner_generation: '1', owner_token: 'old-owner',
+    authority_proof: old.authority_proof });
   expect(screen.getByText(/Tenés el teclado/)).toBeInTheDocument();
   newView.unmount();
   await waitFor(() => { expect(controls.filter(call => call.body.action === 'release')).toHaveLength(2); });
-  expect(controls.at(-1)?.body).toMatchObject({ request_id: 'new-request', owner_generation: '2', owner_token: 'new-owner' });
+  expect(controls.at(-1)?.body).toMatchObject({ request_id: 'new-request', owner_generation: '2', owner_token: 'new-owner',
+    authority_proof: grant('new').authority_proof });
 });

@@ -16,6 +16,7 @@ interface PtyTerminalProps {
   sessionId: string;
   /** Single-use, 30 s grant. It is held in memory only and never persisted. */
   ticket: string;
+  authorityProof: string;
   /** Read-only observation of the agent's TUI: not a single keystroke is sent over this channel. */
   readOnly?: boolean;
   onClosed?: (view: PtySessionView) => void;
@@ -41,7 +42,7 @@ const STATE_LABELS: Readonly<Record<PtySessionView['state'], string>> = {
  * the gap (`flex: 1`) and everything accessory goes below, with a bounded height: what moves
  * is the secondary, not what you are reading.
  */
-export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly, onClosed, onRequestNewSession }: PtyTerminalProps) {
+export default function PtyTerminal({ websocketPath, sessionId, ticket, authorityProof, readOnly, onClosed, onRequestNewSession }: PtyTerminalProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const closedRef = useRef(onClosed);
   closedRef.current = onClosed;
@@ -55,10 +56,11 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly
       sessionId,
       websocketPath,
       ticket,
+      authorityProof,
       readOnly,
       onClosed: (closedView) => closedRef.current?.(closedView),
     });
-  }, [readOnly, sessionId, ticket, websocketPath]);
+  }, [authorityProof, readOnly, sessionId, ticket, websocketPath]);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;

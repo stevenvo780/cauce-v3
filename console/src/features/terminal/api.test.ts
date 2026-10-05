@@ -19,10 +19,12 @@ import {
 const REQUEST_ID = '11111111-1111-4111-8111-111111111111';
 const OWNER_TOKEN = '22222222-2222-4222-8222-222222222222';
 const NEXT_OWNER_TOKEN = '33333333-3333-4333-8333-333333333333';
+const AUTHORITY_PROOF = String(mockTerminalGrant({ sessionId: 'sess-owner', tenantId: 'Steven', alias: 'jarvis', mode: 'shell', requestId: REQUEST_ID }).authority_proof);
 const OWNER: TerminalSessionOwner = {
   request_id: REQUEST_ID,
   owner_generation: '1',
   owner_token: OWNER_TOKEN,
+  authority_proof: AUTHORITY_PROOF,
 };
 
 function sessionInput(overrides: Partial<CreateTerminalSessionInput> = {}): CreateTerminalSessionInput {
@@ -256,18 +258,20 @@ it('rotates browser ownership with an exact CAS request and keeps the raw token 
 
   const owner = await rotateTerminalSessionOwner(
     'sess-owner',
-    { request_id: REQUEST_ID, owner_generation: '1' },
+    { request_id: REQUEST_ID, owner_generation: '1', authority_proof: AUTHORITY_PROOF },
     NEXT_OWNER_TOKEN,
   );
   expect(takeoverBody).toEqual({
     request_id: REQUEST_ID,
     expected_owner_generation: '1',
     owner_token: NEXT_OWNER_TOKEN,
+    authority_proof: AUTHORITY_PROOF,
   });
   expect(owner).toEqual({
     request_id: REQUEST_ID,
     owner_generation: '2',
     owner_token: NEXT_OWNER_TOKEN,
+    authority_proof: AUTHORITY_PROOF,
   });
 });
 
@@ -285,7 +289,7 @@ it.each([
   server.use(http.post('*/v3/console/terminal/sessions/sess-owner/owner', () => HttpResponse.json(receipt)));
   await expect(rotateTerminalSessionOwner(
     'sess-owner',
-    { request_id: REQUEST_ID, owner_generation: '1' },
+    { request_id: REQUEST_ID, owner_generation: '1', authority_proof: AUTHORITY_PROOF },
     NEXT_OWNER_TOKEN,
   )).rejects.toMatchObject({ status: 409, code: 'invalid_owner_receipt' });
 });
@@ -595,11 +599,35 @@ it('demands an empty 204 receipt and refuses a 204 that carries a body', async (
 });
 
 it('demands the exact 200 receipt on a takeover and refuses a 201', async () => {
+  const proof = String(mockTerminalGrant({
+    sessionId: 'sess-201', tenantId: 'Steven', alias: 'jarvis', mode: 'shell', requestId: REQUEST_ID,
+  }).authority_proof);
   server.use(http.post('*/v3/console/terminal/sessions/sess-201/owner', () => HttpResponse.json(
     { session_id: 'sess-201', request_id: REQUEST_ID, owner_generation: '2' }, { status: 201 },
   )));
 
   await expect(rotateTerminalSessionOwner(
-    'sess-201', { request_id: REQUEST_ID, owner_generation: '1' }, NEXT_OWNER_TOKEN,
+    'sess-201', { request_id: REQUEST_ID, owner_generation: '1', authority_proof: proof }, NEXT_OWNER_TOKEN,
   )).rejects.toMatchObject({ status: 409, code: 'invalid_owner_receipt' });
+});
+
+it.each([undefined, 'r1.legacy', `ac2.${'x'.repeat(4_100)}`])('refuses a grant without a strict bounded authority proof: %s', async (proof) => {
+  const grant = mockTerminalGrant({ sessionId: 'sess-proof', tenantId: 'Steven', alias: 'jarvis', mode: 'shell', requestId: REQUEST_ID });
+  if (proof === undefined) delete grant.authority_proof;
+  else grant.authority_proof = proof;
+  server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json(grant, { status: 201 })));
+  await expect(createTerminalSession(sessionInput({ reason: 'validar continuidad' })))
+    .rejects.toMatchObject({ status: 409, code: 'invalid_grant_receipt' });
+});
+
+it('fails closed before owner takeover if the original in-memory proof is absent', async () => {
+  let calls = 0;
+  server.use(http.post('*/v3/console/terminal/sessions/sess-owner/owner', () => {
+    calls += 1;
+    return HttpResponse.json({ session_id: 'sess-owner', request_id: REQUEST_ID, owner_generation: '2' });
+  }));
+  await expect(rotateTerminalSessionOwner('sess-owner', {
+    request_id: REQUEST_ID, owner_generation: '1', authority_proof: '',
+  }, NEXT_OWNER_TOKEN)).rejects.toMatchObject({ status: 409, code: 'missing_authority_proof' });
+  expect(calls).toBe(0);
 });

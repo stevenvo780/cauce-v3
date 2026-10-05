@@ -372,7 +372,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
 });
 
 describe('la salida de la trampa cuando el tope ya está gastado', () => {
-  it('un 409 session_limit nombra las sesiones colgadas y las cierra de un clic', async () => {
+  it('un 409 session_limit nombra las sesiones colgadas y no suplanta su prueba de autoridad', async () => {
     const user = userEvent.setup();
     const borrados: string[] = [];
     servirEntorno([target({ tenant_id: 'Steven', alias: 'zeus' })]);
@@ -410,8 +410,11 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
     expect(tira).not.toHaveTextContent('socrates');
 
     await user.click(within(tira).getByRole('button', { name: /cerrar ahora/i }));
-    await waitFor(() => { expect(borrados).toEqual(['colgada-tales']); });
-    await waitFor(() => { expect(screen.queryByLabelText('Sesiones de terminal que siguen ocupando plaza')).not.toBeInTheDocument(); });
+    await waitFor(() => { expect(borrados).toEqual([]); });
+    expect(await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza'))
+      .toHaveTextContent('tales');
+    expect(await screen.findByText(/Esta pestaña no conserva la prueba original/))
+      .toHaveTextContent('Volvé a la pestaña que la abrió o esperá a que venza');
   });
 
   it.each([
@@ -495,7 +498,7 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
     // Neither the POST nor the reconciliation read authority from an invalid receipt to DELETE.
     expect(borrados).toEqual([]);
     await user.click(within(tira).getByRole('button', { name: /cerrar ahora/i }));
-    await waitFor(() => { expect(borrados).toEqual(['sesion-de-otra-pestana']); });
+    await waitFor(() => { expect(borrados).toEqual([]); });
   });
 });
 
