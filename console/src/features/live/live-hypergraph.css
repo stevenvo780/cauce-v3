@@ -84,7 +84,7 @@
   font-weight: 650;
   pointer-events: none;
 }
-.lhg-mobile-hint { display: block; font-size: 11px; font-weight: 500; }
+.lhg-mobile-hint { display: block; font-size: var(--tipo-apunte); font-weight: 500; }
 
 .lhg-regions {
   position: absolute;
@@ -173,7 +173,7 @@
   border-radius: 999px;
   background: var(--amber-dim);
   color: var(--amber);
-  font-size: 11px;
+  font-size: var(--tipo-apunte);
   font-weight: 750;
   text-align: center;
 }
@@ -199,7 +199,7 @@
   color: var(--text);
 }
 .lhg-human-node span { font-size: 21px; font-weight: 700; }
-.lhg-human-node small { overflow: hidden; max-width: 66px; color: var(--muted); font-size: 10px; text-overflow: ellipsis; }
+.lhg-human-node small { overflow: hidden; max-width: 66px; color: var(--muted); font-size: var(--tipo-apunte); text-overflow: ellipsis; }
 
 .lhg-flow-line { fill: none; stroke: var(--blue); stroke-width: 2.6; stroke-opacity: .9; }
 .lhg-flow-dot { fill: var(--blue); }
@@ -210,7 +210,7 @@
 .lhg-flow.is-dim .lhg-flow-dot { opacity: .18; }
 .lhg-acl-line { fill: none; stroke: var(--violet); stroke-width: 2; stroke-dasharray: 7 6; stroke-opacity: .74; }
 .lhg-acl-line.is-denied { stroke: var(--red); }
-.lhg-acl-label { fill: var(--muted); font-size: 12px; paint-order: stroke; stroke: var(--surface-2); stroke-width: 4px; }
+.lhg-acl-label { fill: var(--muted); font-size: var(--tipo-apunte); paint-order: stroke; stroke: var(--surface-2); stroke-width: 4px; }
 .lhg-origin-line { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 3 5; }
 
 .lhg-summary,

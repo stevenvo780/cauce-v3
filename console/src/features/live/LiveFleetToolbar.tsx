@@ -44,14 +44,11 @@ export function LiveFleetToolbar({
   topologyError,
   recargarTopologia,
 }: LiveFleetToolbarProps) {
+  const feedLabel = feedState === 'error' ? 'Error de lectura' : feedState === 'paused' ? 'En pausa'
+    : feedState === 'stale' ? 'Sin datos actuales' : 'Consulta automática';
+  const feedDescription = feedLabel + (edadSegundos !== null ? ` · hace ${formatDurationSeconds(edadSegundos)}` : '');
   return (
     <div className="live-toolbar">
-      <span className="live-feed-state" data-feed={feedState} title="La actividad se consulta en el intervalo configurado">
-        <span className="live-feed-dot" aria-hidden="true" />
-        {feedState === 'error' ? 'Error de lectura' : feedState === 'paused' ? 'En pausa' : feedState === 'stale' ? 'Sin datos actuales' : 'Consulta automática'}
-        {edadSegundos !== null ? <span> · hace {formatDurationSeconds(edadSegundos)}</span> : null}
-      </span>
-
       <label className="live-search">
         <Search size={15} aria-hidden="true" />
         <span className="sr-only">Buscar un alias</span>
@@ -65,22 +62,26 @@ export function LiveFleetToolbar({
 
       {tenants.length > 1 ? (
         <label className="live-client-filter">
-          Cliente
-          <select value={tenantFilter} onChange={(event) => { setTenantFilter(event.target.value); }}>
+          <span className="sr-only">Cliente</span>
+          <select aria-label="Cliente" value={tenantFilter} onChange={(event) => { setTenantFilter(event.target.value); }}>
             <option value="todos">todos ({tenants.length})</option>
             {tenants.map((tenant) => <option key={tenant} value={tenant}>{tenant}</option>)}
           </select>
         </label>
       ) : tenants.length === 1 ? (
-        <span className="badge badge-info">Vista acotada a {tenants[0]}</span>
+        <span className="badge badge-info live-single-client" title={`Vista acotada a ${tenants[0]}`}>{tenants[0]}</span>
       ) : null}
 
       <button type="button" className="button secondary live-refresh" onClick={refrescarTodo} aria-label="Refrescar ahora" title="Refrescar ahora">
         <RefreshCw size={18} aria-hidden="true" />
+        <span className="live-feed-state" data-feed={feedState} role="status" aria-live="polite" title={feedDescription}>
+          <span className="live-feed-dot" aria-hidden="true" /><span className="sr-only">{feedDescription}</span>
+        </span>
       </button>
       <details className="live-refresh-settings">
         <summary aria-label="Ajustes de refresco" title="Ajustes de refresco"><Settings2 size={18} aria-hidden="true" /></summary>
         <div className="live-refresh-popover">
+          <p className="live-age">{feedDescription}</p>
           <label className="live-refresh-filter">
             Refresco
             <select value={intervalMs} onChange={(event) => { setIntervalMs(Number(event.target.value)); }} aria-label="Intervalo de refresco">

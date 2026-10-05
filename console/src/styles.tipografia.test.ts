@@ -29,6 +29,7 @@ const HOJAS = [
   'features/audit/audit.css',
   'features/help/help.css',
   'features/terminal/terminal-panel.css',
+  'features/terminal/terminal-controls.css',
 ] as const;
 
 const RAIZ_CSS = resolve(process.cwd(), 'src');
@@ -313,6 +314,8 @@ describe('el reparto de hojas está COMPLETO: ninguna se queda sin medir', () =>
   it('CONTROL NEGATIVO — quitar una hoja del reparto hace fallar al guardián', () => {
     const sinTerminal = HOJAS.filter((h) => h !== 'features/terminal/terminal-panel.css');
     expect(hojasSinMedir(sinTerminal, SIN_LETRA)).toEqual(['features/terminal/terminal-panel.css']);
+    const sinControles = HOJAS.filter((h) => h !== 'features/terminal/terminal-controls.css');
+    expect(hojasSinMedir(sinControles, SIN_LETRA)).toEqual(['features/terminal/terminal-controls.css']);
     // And an `@import` counts as coverage: `styles.css` is what covers the three sheets it pulls in.
     expect(hojasSinMedir(HOJAS.filter((h) => h !== 'styles.css'), SIN_LETRA))
       .toEqual(expect.arrayContaining(['styles.css', 'styles/base.css']));
