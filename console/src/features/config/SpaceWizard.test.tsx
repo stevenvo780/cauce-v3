@@ -6,15 +6,33 @@ import { SpaceWizard } from './SpaceWizard';
 
 interface Call { mutation: ConfigMutation; dryRun: boolean }
 
-function renderWizard(outcome: (call: Call) => ConfigChangeOutcome = accept) {
+function renderWizard(outcome: (call: Call) => ConfigChangeOutcome = accept, canWrite = true) {
   const calls: Call[] = [];
-  render(<SpaceWizard canWrite busy={false} onChange={(mutation, dryRun) => {
+  render(<SpaceWizard canWrite={canWrite} busy={false} onChange={(mutation, dryRun) => {
     const call = { mutation, dryRun };
     calls.push(call);
     return Promise.resolve(outcome(call));
   }} />);
   return calls;
 }
+
+it('mantiene la navegación y el reinicio para lectores, pero deja inerte el borrador y las acciones de escritura', async () => {
+  const user = userEvent.setup();
+  const calls = renderWizard(accept, false);
+
+  expect(screen.getByLabelText('Tenant id')).toBeDisabled();
+  expect(screen.getByRole('checkbox', { name: /crear el tenant/i })).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: /3\. membership/i }));
+  expect(screen.getByLabelText('Alias')).toBeDisabled();
+  expect(screen.getByRole('button', { name: /siguiente/i })).toBeEnabled();
+
+  await user.click(screen.getByRole('button', { name: review }));
+  expect(screen.getByRole('button', { name: /previsualizar paso/i })).toBeDisabled();
+  expect(screen.getByRole('button', { name: /aplicar paso/i })).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: /reiniciar wizard/i }));
+  expect(screen.getByLabelText('Tenant id')).toBeDisabled();
+  expect(calls).toHaveLength(0);
+});
 
 function accept({ dryRun }: Call): ConfigChangeOutcome {
   return { ok: true, result: { applied: !dryRun, dry_run: dryRun, revision: dryRun ? 1 : 2, summary: 'mock' } };
