@@ -1,3 +1,4 @@
+import type { AuthProvider } from './auth.js';
 import { createHash, randomUUID } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -20,6 +21,7 @@ import {
   RELAY_BOOT_A,
   RELAY_TOKEN,
   consoleAuthProvider,
+  installAuthorityCarrier,
   fakeDatabase,
   presence,
   type FakeDatabase,
@@ -41,7 +43,7 @@ describe('terminal control plane', () => {
   let relayPeerInstanceId: string;
   let relayBootId: string;
 
-  async function build(overrides: Partial<TerminalConfig> = {}, provider = consoleAuthProvider()): Promise<void> {
+  async function build(overrides: Partial<TerminalConfig> = {}, provider: AuthProvider = consoleAuthProvider()): Promise<void> {
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- The first beforeEach call reaches this helper before app is initialized at runtime.
     if (app !== undefined) await app.close();
     config = {
@@ -59,6 +61,7 @@ describe('terminal control plane', () => {
       ...overrides
     };
     app = Fastify({ logger: false });
+    installAuthorityCarrier(app, database, provider);
     // app.inject has no TLS socket. This test harness supplies the independently authenticated
     // peer identity and envelopes legacy test calls exactly as the real relay client does.
     app.addHook('preValidation', async (request) => {
@@ -190,8 +193,8 @@ describe('terminal control plane', () => {
         owner_generation: first.owner_generation,
       },
     });
-    expect(forbiddenRevoke.statusCode).toBe(409);
-    expect(forbiddenRevoke.json()).toEqual({ error: 'conflict', reason: 'stale_terminal_owner' });
+    expect(forbiddenRevoke.statusCode).toBe(403);
+    expect(forbiddenRevoke.json()).toEqual({ error: 'forbidden', message: 'insufficient permissions' });
     expect(database.sessions.get(first.session_id)?.revoked_at).toBeNull();
 
     const independent = await openSession({ reason: 'tarea del segundo sujeto de consola' });
