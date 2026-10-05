@@ -339,7 +339,7 @@ export function LiveFleetPage() {
     />
   );
   const mapa = (
-    <section className="panel live-mapa" aria-label="Mapa de la flota">
+    <section className="panel live-mapa" aria-label="Mapa de la flota" data-objeto-principal="mapa-de-flota">
       <header className="live-mapa-header">
         <h2 className="live-mapa-titulo">Actividad</h2>
         {capas}

@@ -79,6 +79,7 @@ export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabe
 
   return (
     <Panel
+      className="fleet-activity-panel"
       title="Agentes"
     >
       <label className="activity-search">
@@ -269,21 +270,18 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
         data-clickable={onOpen ? 'true' : undefined}
       >
         <td>
-          {hasItems ? (
-            <button
-              type="button"
-              className="row-toggle"
-              // Expanding the deliveries and opening the drawer are two different actions on the
-              // same row: without stopping the bubble, a click on the arrow would do both.
-              onClick={(event) => { event.stopPropagation(); onToggle(); }}
-              aria-expanded={expanded}
-              aria-label={`Detalle de ${agent.alias}`}
-            >
-              {expanded ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="row-toggle"
+            // Detail expansion must not bubble into the separate agent drawer action.
+            onClick={(event) => { event.stopPropagation(); onToggle(); }}
+            aria-expanded={expanded}
+            aria-label={`Detalle de ${agent.alias}`}
+          >
+            {expanded ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
+          </button>
         </td>
-        <td>
+        <td title={`${agent.tenant_id}:${agent.alias} · ${agent.harness_id ?? 'arnés desconocido'}`}>
           <div className="identity-cell">
             {/* A `<tr>` with `onClick` is an action that only exists for the mouse. The name becomes
                 a real button so the same action is reachable from the keyboard; the row click is
@@ -299,10 +297,10 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
               </button>
             ) : <strong>{agentDisplayName(agent)}</strong>}
           </div>
-          <small className="subline">
+          <small className="sr-only">
             {agent.tenant_id}:{agent.alias} · <Unknown value={agent.harness_id} />
           </small>
-          {agent.registered === false ? <div><Badge tone="unknown">{FLAG_LABEL.unregistered}</Badge></div> : null}
+          {agent.registered === false ? <span className="sr-only">{FLAG_LABEL.unregistered}</span> : null}
         </td>
         <td title={senales.detalle}>
           <Badge tone={senales.estado.tone}>{senales.estado.label}</Badge>
@@ -313,20 +311,20 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
             </div>
           ) : null}
         </td>
-        <td>
+        <td title={`epoch ${String(agent.presence?.epoch ?? 'desconocido')}`}>
           <Badge tone={presenceTone}>{presenceLabel}</Badge>
-          <small className="subline">epoch <Unknown value={agent.presence?.epoch} /></small>
+          <small className="sr-only">epoch <Unknown value={agent.presence?.epoch} /></small>
         </td>
-        <td>
+        <td title={`${String(agent.started ?? 0)} iniciadas · ${String(agent.claimed_not_started ?? 0)} reclamadas · ${String(agent.overdue_in_flight ?? 0)} vencidas`}>
           <strong className="mono">{agent.in_flight ?? 0}</strong>
-          <small className="subline">
+          <small className="sr-only">
             {agent.started ?? 0} iniciadas · {agent.claimed_not_started ?? 0} reclamadas
             {agent.overdue_in_flight ? <span className="overdue-note"> · {agent.overdue_in_flight} vencidas</span> : null}
           </small>
         </td>
-        <td>
+        <td title={`${String(agent.queued_ready ?? 0)} listas · ${String(agent.retrying ?? 0)} en retry`}>
           <strong className="mono">{agent.queued ?? 0}</strong>
-          <small className="subline">
+          <small className="sr-only">
             {agent.queued_ready ?? 0} listas · {agent.retrying ?? 0} en retry
           </small>
         </td>
@@ -334,11 +332,19 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
         <td>{formatAckAge(agent.seconds_since_last_ack, ackLookbackSeconds)}</td>
         <td><Unknown value={agent.acks_recent} /></td>
       </tr>
-      {expanded && hasItems ? (
+      {expanded ? (
         <tr className="row-detail">
           <td />
           <td colSpan={8}>
-            <Desplazable etiqueta={`Entregas en vuelo de ${agent.alias}`}>
+            <dl className="activity-agent-details">
+              <dt>Identidad</dt><dd>{agent.tenant_id}:{agent.alias}</dd>
+              <dt>Arnés</dt><dd><Unknown value={agent.harness_id} /></dd>
+              <dt>Epoch de presencia</dt><dd><Unknown value={agent.presence?.epoch} /></dd>
+              <dt>En vuelo</dt><dd>{agent.started ?? 0} iniciadas · {agent.claimed_not_started ?? 0} reclamadas · {agent.overdue_in_flight ?? 0} vencidas</dd>
+              <dt>Cola</dt><dd>{agent.queued_ready ?? 0} listas · {agent.retrying ?? 0} en retry</dd>
+              <dt>Señales</dt><dd>{senales.detalle}</dd>
+            </dl>
+            {hasItems ? <Desplazable etiqueta={`Entregas en vuelo de ${agent.alias}`}>
               <table>
                 <caption className="sr-only">Entregas en vuelo de {agent.alias}</caption>
                 <thead>
@@ -368,7 +374,7 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
                   })}
                 </tbody>
               </table>
-            </Desplazable>
+            </Desplazable> : null}
             {agent.in_flight_items_truncated ? (
               <p className="notice">
                 Mostrando las {items.length} entregas en vuelo más antiguas de {agent.in_flight} totales; el resto
