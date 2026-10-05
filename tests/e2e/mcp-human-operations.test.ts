@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { HUMAN_MESSAGE_INITIATOR_CAPABILITY } from '@cauce/protocol';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildGateway } from '../../services/gateway/src/app.js';
@@ -192,11 +193,16 @@ describe('human MCP operations over real OAuth, SDK transport and PostgreSQL', (
     expect(crossTenantOwner.structuredContent, JSON.stringify(crossTenantOwner))
       .toEqual({ status_code: 404, error: 'not_found' });
     const claimInstance = `mcp-human-${randomUUID()}`;
-    const lease = await fixture.repository.acquireLease('Steven', 'mcp_target_steven', claimInstance, [], 60_000);
+    const lease = await fixture.repository.acquireLease('Steven', 'mcp_target_steven', claimInstance,
+      [HUMAN_MESSAGE_INITIATOR_CAPABILITY], 60_000);
     if (!lease.acquired || lease.epoch === undefined) throw new Error('recipient lease was not acquired');
     const claims = await fixture.repository.claimDeliveries('Steven', 'mcp_target_steven', claimInstance, lease.epoch, 5);
     const delivery = claims.find((candidate) => candidate.message_id === receiptAId);
     if (!delivery) throw new Error('published human MCP delivery was not claimed');
+    expect(delivery.human_initiator?.human_id).toBe(stevenA.id);
+    const deliveryB = claims.find((candidate) => candidate.message_id === receiptBId);
+    expect(deliveryB?.human_initiator?.human_id).toBe(stevenB.id);
+    expect(deliveryB?.human_initiator?.human_id).not.toBe(delivery.human_initiator?.human_id);
     const ackBase = { version: '3.0' as const, instance_id: claimInstance, epoch: lease.epoch,
       claim_token: delivery.claim_token, attempt: delivery.attempt, retryable: false };
     await expect(fixture.repository.ackDelivery(delivery.delivery_id, 'Steven', 'mcp_target_steven', {

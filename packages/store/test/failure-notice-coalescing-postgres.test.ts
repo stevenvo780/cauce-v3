@@ -338,10 +338,11 @@ describe('coalescencia de avisos de fracaso', () => {
           const client = await pool.connect();
           const wrappedQuery = (async (queryText: string, values?: unknown[]) => {
             if (queryText.includes('WITH picked AS (') && values?.[6] === false) {
+              const barrierParameter = `$${String(values.length + 1)}`;
               queryText = queryText.replace(
                 'WITH picked AS (',
                 `WITH claim_snapshot_barrier AS MATERIALIZED (
-                   SELECT pg_advisory_xact_lock(hashtextextended($8::text,0))
+                   SELECT pg_advisory_xact_lock(hashtextextended(${barrierParameter}::text,0))
                  ), picked AS (`
               ).replace(
                 'WHERE d.recipient_tenant=$1',

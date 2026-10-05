@@ -11,6 +11,7 @@ import {
   Badge, Desplazable, EmptyState, Metric, Panel, Unknown, Time,
 } from '../../components/ui';
 import { useConfigMutation } from '../config/use-config-mutation';
+import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { AccountRoutingDetail } from './AccountRoutingDetail';
 import './licenses.css';
 import { accountConsumption, type AccountConsumption } from './licenses';
@@ -100,6 +101,8 @@ export function AccountsInventory({ config, access, quotas, registry }: {
     describeError: (error, mutation) => describeRegistryError(error, mutation, registry.context),
     redactar: redactPreview,
   });
+  const writeDisabled = !runner.canWrite || runner.busy;
+  const writeProps = { disabled: writeDisabled, ...(!runner.canWrite ? { title: CONFIG_SIN_CONTROL_REASON } : {}) };
 
   const actorTenant = viewerTenant(access.error ? undefined : access.data?.subject);
   const pooled = accounts.available ? accounts.items.filter((item) => item.sharedWithPool === true).length : null;
@@ -219,11 +222,12 @@ export function AccountsInventory({ config, access, quotas, registry }: {
                     <RowAction label={`Detalle de ruteo de ${account.id}`} expanded={detailOpen} onClick={() => { toggleDetail(account.id); }}>
                       {detailOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
                     </RowAction>
-                    <RowAction label={`Editar «${account.id}»`} onClick={() => { editAccount(account); }}>
+                    <RowAction {...writeProps} label={`Editar «${account.id}»`} onClick={() => { editAccount(account); }}>
                       <PencilLine size={15} aria-hidden="true" />
                     </RowAction>
                     <RowAction
                       label={account.enabled === true ? `Deshabilitar «${account.id}»` : `Habilitar «${account.id}»`}
+                      {...writeProps}
                       undoes={account.enabled === true}
                       onClick={() => { editAccount(account, { enabled: account.enabled !== true }); }}
                     >
@@ -231,12 +235,13 @@ export function AccountsInventory({ config, access, quotas, registry }: {
                     </RowAction>
                     <RowAction
                       label={account.sharedWithPool === true ? `Despublicar «${account.id}» del pool` : `Publicar «${account.id}» al pool`}
+                      {...writeProps}
                       undoes={account.sharedWithPool === true}
                       onClick={() => { editAccount(account, { sharedWithPool: account.sharedWithPool !== true }); }}
                     >
                       {account.sharedWithPool === true ? <Lock size={15} aria-hidden="true" /> : <Share2 size={15} aria-hidden="true" />}
                     </RowAction>
-                    <RowAction label={`Retirar o rotar «${account.id}»`} undoes onClick={() => { startDelete(account.id); }}>
+                    <RowAction {...writeProps} label={`Retirar o rotar «${account.id}»`} undoes onClick={() => { startDelete(account.id); }}>
                       <Trash2 size={15} aria-hidden="true" />
                     </RowAction>
                   </span></td>
@@ -267,30 +272,30 @@ export function AccountsInventory({ config, access, quotas, registry }: {
     {form.kind === 'create' ? <Panel title="Alta de cuenta" subtitle="Un alta declara quién paga la suscripción y dónde está su credencial. Todo pasa por dry-run antes de aplicarse.">
       <div className="config-form">
         <label>Id de cuenta <span className="label-hint">global, inmutable, referenciado por los techos</span>
-          <input value={form.draft.id} onChange={(event) => { editDraft({ id: event.target.value }); }} />
+          <input {...writeProps} value={form.draft.id} onChange={(event) => { editDraft({ id: event.target.value }); }} />
         </label>
         <label>Proveedor <span className="label-hint">codex, gemini, minimax…</span>
-          <input value={form.draft.provider} onChange={(event) => { editDraft({ provider: event.target.value }); }} />
+          <input {...writeProps} value={form.draft.provider} onChange={(event) => { editDraft({ provider: event.target.value }); }} />
         </label>
         <label>Id externo de la suscripción <span className="label-hint">uuid, mail u org id. NUNCA el secreto</span>
-          <input value={form.draft.externalAccountId} onChange={(event) => { editDraft({ externalAccountId: event.target.value }); }} />
+          <input {...writeProps} value={form.draft.externalAccountId} onChange={(event) => { editDraft({ externalAccountId: event.target.value }); }} />
         </label>
         <label>Tenant pagador <span className="label-hint">quién paga; inmutable después del alta</span>
-          <input value={form.draft.payerTenant} onChange={(event) => { editDraft({ payerTenant: event.target.value }); }} />
+          <input {...writeProps} value={form.draft.payerTenant} onChange={(event) => { editDraft({ payerTenant: event.target.value }); }} />
         </label>
         <label>Etiqueta <span className="label-hint">opcional</span>
-          <input value={form.draft.label} onChange={(event) => { editDraft({ label: event.target.value }); }} />
+          <input {...writeProps} value={form.draft.label} onChange={(event) => { editDraft({ label: event.target.value }); }} />
         </label>
         <label>Tipo de locator
-          <select value={form.draft.credentialRefKind} onChange={(event) => { editDraft({ credentialRefKind: event.target.value as CredentialRefKind }); }}>
+          <select {...writeProps} value={form.draft.credentialRefKind} onChange={(event) => { editDraft({ credentialRefKind: event.target.value as CredentialRefKind }); }}>
             {CREDENTIAL_REF_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
           </select>
         </label>
         <label className="config-json">Locator de la credencial <span className="label-hint">{CREDENTIAL_REF_HINTS[form.draft.credentialRefKind]}</span>
-          <input value={form.draft.credentialRef} onChange={(event) => { editDraft({ credentialRef: event.target.value }); }} />
+          <input {...writeProps} value={form.draft.credentialRef} onChange={(event) => { editDraft({ credentialRef: event.target.value }); }} />
         </label>
-        <label><input type="checkbox" checked={form.draft.sharedWithPool} onChange={(event) => { editDraft({ sharedWithPool: event.target.checked }); }} /> Publicar al pool <span className="label-hint">habilita que otros tenants la pidan prestada</span></label>
-        <label><input type="checkbox" checked={form.draft.enabled} onChange={(event) => { editDraft({ enabled: event.target.checked }); }} /> Habilitada</label>
+        <label><input {...writeProps} type="checkbox" checked={form.draft.sharedWithPool} onChange={(event) => { editDraft({ sharedWithPool: event.target.checked }); }} /> Publicar al pool <span className="label-hint">habilita que otros tenants la pidan prestada</span></label>
+        <label><input {...writeProps} type="checkbox" checked={form.draft.enabled} onChange={(event) => { editDraft({ enabled: event.target.checked }); }} /> Habilitada</label>
       </div>
       <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="alta de cuenta" />
     </Panel> : null}
@@ -298,10 +303,10 @@ export function AccountsInventory({ config, access, quotas, registry }: {
     {form.kind === 'edit' ? <Panel title={`Edición de «${form.edit.id}»`} subtitle="Sólo la etiqueta, la publicación al pool y el estado son editables: proveedor, id externo, pagador y locator son inmutables porque los techos ya referencian este id.">
       <div className="config-form">
         <label className="config-json">Etiqueta <span className="label-hint">vacío guarda null</span>
-          <input value={form.edit.label} onChange={(event) => { patchEdit({ label: event.target.value }); }} />
+          <input {...writeProps} value={form.edit.label} onChange={(event) => { patchEdit({ label: event.target.value }); }} />
         </label>
-        <label><input type="checkbox" checked={form.edit.sharedWithPool} onChange={(event) => { patchEdit({ sharedWithPool: event.target.checked }); }} /> Publicada al pool</label>
-        <label><input type="checkbox" checked={form.edit.enabled} onChange={(event) => { patchEdit({ enabled: event.target.checked }); }} /> Habilitada</label>
+        <label><input {...writeProps} type="checkbox" checked={form.edit.sharedWithPool} onChange={(event) => { patchEdit({ sharedWithPool: event.target.checked }); }} /> Publicada al pool</label>
+        <label><input {...writeProps} type="checkbox" checked={form.edit.enabled} onChange={(event) => { patchEdit({ enabled: event.target.checked }); }} /> Habilitada</label>
       </div>
       <p className="notice">
         Despublicar del pool falla mientras otro tenant tenga la cuenta en el techo de alguno de sus alias: Postgres lo impide con <code>alias_routing_ceiling_borrow_requires_pool</code>. Hay que revocar antes ese techo, que a su vez cascadea su binding.
@@ -325,6 +330,7 @@ export function AccountsInventory({ config, access, quotas, registry }: {
       <label className="config-json">
         Confirmá escribiendo <strong className="mono">{form.accountId}</strong>
         <input
+          {...writeProps}
           aria-label={`Confirmar borrado de ${form.accountId}`}
           value={form.confirmation}
           onChange={(event) => {
@@ -348,20 +354,23 @@ export function AccountsInventory({ config, access, quotas, registry }: {
  * A row action in the width of an icon: the accessible name carries the verb and the account, and
  * `undoes` tints the direction that takes something away. No click here writes anything —it fills
  * the edit form below, which still goes through its dry-run before applying. */
-function RowAction({ label, onClick, expanded, undoes = false, children }: {
+function RowAction({ label, onClick, expanded, undoes = false, disabled = false, title, children }: {
   label: string;
   onClick: () => void;
   expanded?: boolean;
   undoes?: boolean;
+  disabled?: boolean;
+  title?: string;
   children: ReactNode;
 }) {
   return (
     <button
       className={undoes ? 'button small icon-action is-undo' : 'button small icon-action'}
       type="button"
-      title={label}
+      title={title ?? label}
       aria-label={label}
       aria-expanded={expanded}
+      disabled={disabled}
       onClick={onClick}
     >
       {children}

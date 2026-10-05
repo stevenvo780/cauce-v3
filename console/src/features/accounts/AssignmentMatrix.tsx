@@ -4,6 +4,7 @@ import type { ConfigMutation, ConfigurationSnapshot, ConsoleAccess } from '../..
 import type { Resource } from '../../api/use-resource';
 import { Badge, Desplazable, EmptyState, Panel } from '../../components/ui';
 import { useConfigMutation } from '../config/use-config-mutation';
+import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { MutationBar } from './MutationBar';
 import {
   bindingMutation, ceilingMutation, describeRegistryError, redactPreview,
@@ -67,6 +68,8 @@ export function AssignmentMatrix({ config, access, registry }: {
     describeError: (error, mutation) => describeRegistryError(error, mutation, registry.context),
     redactar: redactPreview,
   });
+  const writeDisabled = !runner.canWrite || runner.busy;
+  const writeProps = { disabled: writeDisabled, ...(!runner.canWrite ? { title: CONFIG_SIN_CONTROL_REASON } : {}) };
 
   const [assignment, setAssignment] = useState<Assignment>({
     agentKey: '', accountId: '', operation: 'grant-ceiling', priority: '100', enabled: true,
@@ -134,7 +137,7 @@ export function AssignmentMatrix({ config, access, registry }: {
     <Panel title="Asignar" subtitle="Cada cambio muestra una vista previa antes de confirmarlo.">
       <div className="config-form assignment-config-form">
         <label>Agente
-          <select value={assignment.agentKey} onChange={(event) => { patch({ agentKey: event.target.value }); }}>
+          <select {...writeProps} value={assignment.agentKey} onChange={(event) => { patch({ agentKey: event.target.value }); }}>
             <option value="">— elegir —</option>
             {agents.items.map((agent) => {
               const key = agentKeyOf(agent.tenantId, agent.alias);
@@ -143,7 +146,7 @@ export function AssignmentMatrix({ config, access, registry }: {
           </select>
         </label>
         <label>Cuenta
-          <select value={assignment.accountId} onChange={(event) => { patch({ accountId: event.target.value }); }}>
+          <select {...writeProps} value={assignment.accountId} onChange={(event) => { patch({ accountId: event.target.value }); }}>
             <option value="">— elegir —</option>
             {accounts.items.map((account) => <option key={account.id} value={account.id}>
               {account.id} · paga {account.payerTenant ?? 'UNKNOWN'}{account.sharedWithPool === true ? ' · en el pool' : ''}
@@ -151,14 +154,14 @@ export function AssignmentMatrix({ config, access, registry }: {
           </select>
         </label>
         <label className="config-json">Operación
-          <select value={assignment.operation} onChange={(event) => { patch({ operation: event.target.value as Operation }); }}>
+          <select {...writeProps} value={assignment.operation} onChange={(event) => { patch({ operation: event.target.value as Operation }); }}>
             {(Object.keys(operationLabels) as Operation[]).map((operation) => <option key={operation} value={operation}>{operationLabels[operation]}</option>)}
           </select>
         </label>
         {needsPriority ? <label>Prioridad <span className="label-hint">0–32767, menor se intenta primero</span>
-          <input value={assignment.priority} onChange={(event) => { patch({ priority: event.target.value }); }} />
+          <input {...writeProps} value={assignment.priority} onChange={(event) => { patch({ priority: event.target.value }); }} />
         </label> : null}
-        {needsPriority ? <label><input type="checkbox" checked={assignment.enabled} onChange={(event) => { patch({ enabled: event.target.checked }); }} /> Binding habilitado</label> : null}
+        {needsPriority ? <label><input {...writeProps} type="checkbox" checked={assignment.enabled} onChange={(event) => { patch({ enabled: event.target.checked }); }} /> Binding habilitado</label> : null}
       </div>
       {assignment.operation === 'revoke-ceiling' ? <p className="notice" role="note">
         <Link2Off size={14} aria-hidden="true" /> Revocar el techo borra en cascada el binding de ese alias hacia esa cuenta: la revocación no depende del orden en que se hagan las cosas.
@@ -214,6 +217,7 @@ export function AssignmentMatrix({ config, access, registry }: {
                         const badge = cellBadge(cell);
                         return <td key={cell.accountId}>
                           <button
+                            {...writeProps}
                             className="button small"
                             type="button"
                             aria-label={`${key} × ${cell.accountId}: ${badge.label}`}

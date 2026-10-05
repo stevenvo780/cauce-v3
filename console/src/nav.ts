@@ -3,11 +3,8 @@ import {
   Settings2, Network, TerminalSquare,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
-import { useConsoleAccess } from './api/console-access';
 import { useTerminalRelayStatus } from './features/terminal/relay-status';
-import { permissionState } from './lib';
 import {
-  configNavAvailability,
   terminalNavAvailability,
   type NavEntryAvailability,
 } from './router';
@@ -45,13 +42,9 @@ export const NAV_ENTRIES: NavEntry[] = [
  * Hook to determine the availability and permissions of each navigation route.
  */
 export function useNavAvailability(): (id: string) => NavEntryAvailability {
-  const access = useConsoleAccess();
   const relay = useTerminalRelayStatus();
   return (id: string): NavEntryAvailability => {
     if (id === 'terminal') return terminalNavAvailability(relay);
-    if (id === 'config') {
-      return configNavAvailability(permissionState(access.error ? undefined : access.data, 'config.write'));
-    }
     return { hidden: false, disabled: false };
   };
 }

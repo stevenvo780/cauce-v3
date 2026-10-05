@@ -276,7 +276,7 @@ it('/fleet/:cliente sin alias conserva la dirección incompleta como 404', async
   expect(window.location.pathname).toBe('/fleet/Steven');
 });
 
-it('deja «Ajustes y altas» inerte, y con el motivo escrito, para quien no tiene config.write', async () => {
+it('deja navegar a «Ajustes y altas» sin config.write para consultar la vista en solo lectura', async () => {
   server.use(
     http.get('http://localhost/v3/console/access', () =>
       HttpResponse.json({
@@ -291,11 +291,10 @@ it('deja «Ajustes y altas» inerte, y con el motivo escrito, para quien no tien
 
   await openTools();
   const entrada = await screen.findByRole('link', { name: /ajustes y altas/i }, { timeout: 10_000 });
-  await waitFor(() => { expect(entrada).toHaveAttribute('aria-disabled', 'true'); });
-  expect(entrada).toHaveAttribute('title', expect.stringContaining('permiso de control'));
+  await waitFor(() => { expect(entrada).not.toHaveAttribute('aria-disabled'); });
 
   await userEvent.click(entrada);
-  expect(window.location.pathname).toBe('/live');
+  expect(window.location.pathname).toBe('/config');
 });
 
 it('deja «Ajustes y altas» navegable para quien SI tiene config.write', async () => {

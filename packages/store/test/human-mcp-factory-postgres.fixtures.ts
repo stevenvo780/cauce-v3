@@ -1,4 +1,6 @@
+import { strictEqual } from 'node:assert';
 import { randomUUID } from 'node:crypto';
+import { HUMAN_MESSAGE_INITIATOR_CAPABILITY } from '@cauce/protocol';
 import { CauceRepository, type DatabaseClient, type DatabasePool } from '../src/index.js';
 import type { VerifiedOAuthIdentity } from '../../../packages/mcp-fleet-monitor/src/gateway-oauth-identity.js';
 import type { McpSubmitCommand } from '../../../packages/mcp-fleet-monitor/src/gateway-operations.js';
@@ -113,10 +115,11 @@ export async function effectCounts(messageId: string, idempotencyKey: string): P
 }
 
 export async function finishHumanMcpRoots(
-  roots: readonly { readonly messageId: string; readonly reply: string }[],
+  roots: readonly { readonly messageId: string; readonly humanId: string; readonly reply: string }[],
 ): Promise<void> {
   const repository = getRepository();
-  const lease = await repository.acquireLease('Steven', 'argos', 'human-mcp-factory-fixture', [], 60_000, { resume: true });
+  const lease = await repository.acquireLease('Steven', 'argos', 'human-mcp-factory-fixture',
+    [HUMAN_MESSAGE_INITIATOR_CAPABILITY], 60_000, { resume: true });
   if (!lease.acquired || lease.epoch === undefined || lease.connection_token === undefined) {
     throw new Error('human MCP recipient agent could not acquire its delivery lease');
   }
@@ -125,6 +128,7 @@ export async function finishHumanMcpRoots(
   for (const root of roots) {
     const delivery = deliveries.find((item) => item.message_id === root.messageId);
     if (!delivery) throw new Error('human MCP fixture could not claim the expected root delivery');
+    strictEqual(delivery.human_initiator?.human_id, root.humanId);
     const ack = await repository.ackDelivery(delivery.delivery_id, 'Steven', 'argos', terminalAck(delivery,
       { instanceId: 'human-mcp-factory-fixture', epoch: lease.epoch }, { reply: root.reply }));
     if (!ack.applied) throw new Error('human MCP fixture ACK was not applied');

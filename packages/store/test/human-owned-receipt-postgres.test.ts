@@ -48,8 +48,8 @@ describe('human-owned durable message reads on PostgreSQL', () => {
     const firstRoot = await publishHumanRoot(first);
     const secondRoot = await publishHumanRoot(second);
     await finishRoots([
-      { messageId: firstRoot.receipt.message_id, reply: `reply-${first.humanId}` },
-      { messageId: secondRoot.receipt.message_id, reply: `reply-${second.humanId}` },
+      { messageId: firstRoot.receipt.message_id, humanId: first.humanId, reply: `reply-${first.humanId}` },
+      { messageId: secondRoot.receipt.message_id, humanId: second.humanId, reply: `reply-${second.humanId}` },
     ]);
     await switchHumanToReader(first);
     await switchHumanToReader(second);

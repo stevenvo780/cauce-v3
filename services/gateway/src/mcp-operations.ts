@@ -31,6 +31,10 @@ function intentScope(userId: string, actor: Principal): string {
     .digest('hex');
 }
 
+function publicationActor(actor: Principal, operatorScope: string): Principal {
+  return Object.freeze({ ...actor, session_id: `human-mcp:${operatorScope}` });
+}
+
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown> : undefined;
@@ -59,8 +63,10 @@ async function guardedOperation<T>(operation: () => Promise<T>, mutating = false
         throw new GatewayOperationError({ status_code: 400, error: 'invalid_request' });
       }
       if (error.code === 'conflict') {
+        const retrySameKey = mutating && error.recoveryReason !== 'idempotency_durable_conflict'
+          && error.message === 'idempotency request is still in progress';
         throw new GatewayOperationError({ status_code: 409, error: 'operation_conflict',
-          ...(mutating ? { safe_to_retry_same_request_key: true } : {}) });
+          ...(retrySameKey ? { safe_to_retry_same_request_key: true } : {}) });
       }
     }
     throw new GatewayOperationError({ status_code: 503, error: 'operation_unavailable',
@@ -150,7 +156,7 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           const humanAccess = { ...access('publish'), coalesceConsolePublishIntents: false };
           const consoleIntentOperatorScope = intentScope(authority.userId, authority.principal);
           const prepared = await prepareConsolePublishOperation(options.repository, {
-            actor: authority.principal,
+            actor: publicationActor(authority.principal, consoleIntentOperatorScope),
             body: { room_id: command.room_id, recipients: command.recipients, body: command.body,
               intent_nonce: command.request_key, lane: 'interactive', priority: 0 },
             interactiveHumanEntry: true, consoleIntentOperatorScope, humanAccess,
@@ -171,7 +177,7 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           } else {
             try {
               receipt = await publishOperation(options.repository, {
-                actor: beforePublish.principal, entry: 'console', authMechanism: 'oauth',
+                actor: publicationActor(beforePublish.principal, consoleIntentOperatorScope), entry: 'console', authMechanism: 'oauth',
                 body: { room_id: command.room_id, recipients: command.recipients, body: command.body,
                   idempotency_key: prepared.idempotency_key, lane: 'interactive', priority: 0 },
                 consoleIntentOperatorScope, humanAccess, priorityLog: options.priorityLog, logRedaction: options.logRedaction,
@@ -184,7 +190,7 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           }
           const beforeConfirm = await authorize('route', 'cauce.publish');
           await confirmConsolePublishOperation(options.repository, {
-            actor: beforeConfirm.principal, consoleIntentOperatorScope, humanAccess,
+            actor: publicationActor(beforeConfirm.principal, consoleIntentOperatorScope), consoleIntentOperatorScope, humanAccess,
             body: { idempotency_key: receipt.idempotency_key, message_id: receipt.message_id,
               causal_hash: receipt.causal_hash },
           }, telemetry);

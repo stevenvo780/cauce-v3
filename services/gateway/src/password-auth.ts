@@ -5,6 +5,8 @@ import {
   type AuthProvider, type Principal
 } from './auth.js';
 import type { ConsoleUser, ConsoleUserStore } from './console-users.js';
+import { createConsoleCredentialStamp, verifyConsoleCredentialStamp } from './console-credential-stamp.js';
+import type { ConsoleCredentialSnapshot } from '@cauce/store';
 import { clearHostSessionCookie, constantTimeText, hostSessionCookie, isHostCookieName, routedPath, scalarHeaderValue, uniqueCookieValue } from './http-auth-primitives.js';
 import { consoleRoleAuthority, consoleUserPrincipal } from './console-user-authority.js';
 import { DECOY_PASSWORD_HASH_PROMISE, MAX_PASSWORD_LENGTH, verifyPassword } from './password.js';
@@ -32,6 +34,7 @@ export interface ConsoleSessionClaims {
   csrf: string;
   iat: number;
   exp: number;
+  credential_stamp?: string;
 }
 
 export type LoginMode = 'password' | 'redirect';
@@ -95,6 +98,10 @@ export function verifyConsoleSession(key: Buffer, token: string, nowMs: number):
   }
   if (typeof claims.iat !== 'number' || !Number.isFinite(claims.iat)) throw new AuthError('emisión del token inválida');
   if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) throw new AuthError('vencimiento del token inválido');
+  if (claims.credential_stamp !== undefined
+      && (typeof claims.credential_stamp !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(claims.credential_stamp))) {
+    throw new AuthError('sello de credenciales inválido');
+  }
   // No clock-skew tolerance for the future: issuer and verifier are THE SAME process.
   if (claims.exp * 1_000 <= nowMs) throw new SessionExpiredError();
   return claims as ConsoleSessionClaims;
@@ -188,6 +195,15 @@ interface LoadedSession {
   principal: Principal;
 }
 
+export interface VerifiedConsoleSession {
+  readonly humanId: string;
+  readonly tenantId: Principal['tenant_id'];
+  readonly actorAlias: string;
+  readonly issuedAtMs: number;
+  readonly expiresAtMs: number;
+  readonly credentialStamp?: string;
+}
+
 export class PasswordAuthProvider implements AuthProvider {
   readonly name = 'console-password';
   readonly mode = 'production' as const;
@@ -259,6 +275,9 @@ export class PasswordAuthProvider implements AuthProvider {
     const user = await this.users.findById(claims.sub);
     // ALWAYS re-read. A signed token is not authority over the current state of the account.
     if (!user?.active) throw new AuthError('la cuenta de consola no está habilitada');
+    if (claims.credential_stamp !== undefined && !this.verifyCredentialStamp(claims.credential_stamp, credentialSnapshot(user))) {
+      throw new SessionExpiredError();
+    }
     // Changing the password invalidates previously issued tokens: revocation without a revocation table.
     if (claims.iat * 1_000 < user.password_changed_at - 1_000) throw new SessionExpiredError();
     const loaded = { claims, user, principal: consoleUserPrincipal(user, `console:${claims.sid}`, 'console') };
@@ -266,9 +285,21 @@ export class PasswordAuthProvider implements AuthProvider {
     return loaded;
   }
 
+  verifyCredentialStamp(stamp: string, current: Readonly<ConsoleCredentialSnapshot>): boolean {
+    return verifyConsoleCredentialStamp(this.signingKey, stamp, current);
+  }
+
   /** `true` when the request carries the console cookie; the rest belongs to the `fallback` (mTLS). */
   handles(request: FastifyRequest): boolean {
     return this.token(request) !== undefined;
+  }
+
+  async verifiedConsoleSession(request: FastifyRequest): Promise<Readonly<VerifiedConsoleSession> | undefined> {
+    if (!this.handles(request)) return undefined;
+    const { claims, user, principal } = await this.load(request);
+    return Object.freeze({ humanId: user.id, tenantId: principal.tenant_id, actorAlias: principal.alias,
+      issuedAtMs: claims.iat * 1000, expiresAtMs: claims.exp * 1000,
+      ...(claims.credential_stamp === undefined ? {} : { credentialStamp: claims.credential_stamp }) });
   }
 
   async authenticateHttp(request: FastifyRequest): Promise<Principal> {
@@ -342,7 +373,8 @@ export class PasswordAuthProvider implements AuthProvider {
       sid: randomUUID(),
       csrf: randomBytes(32).toString('base64url'),
       iat: Math.floor(issuedAtMs / 1_000),
-      exp: Math.floor((issuedAtMs + this.sessionTtlMs) / 1_000)
+      exp: Math.floor((issuedAtMs + this.sessionTtlMs) / 1_000),
+      credential_stamp: createConsoleCredentialStamp(this.signingKey, credentialSnapshot(user))
     };
     return { token: signConsoleSession(this.signingKey, claims), claims };
   }
@@ -421,6 +453,11 @@ export class PasswordAuthProvider implements AuthProvider {
       .code(204)
       .send();
   }
+}
+
+function credentialSnapshot(user: ConsoleUser): Readonly<ConsoleCredentialSnapshot> {
+  const passwordChangedAtUs = user.password_changed_at_us ?? String(Math.trunc(user.password_changed_at * 1_000));
+  return Object.freeze({ userId: user.id, passwordHash: user.password_hash, passwordChangedAtUs });
 }
 
 function isUnsafe(method: string): boolean {

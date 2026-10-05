@@ -9,6 +9,8 @@ import {
 class ReplayConnection extends FakeConnection {
   closeCalls = 0;
   private readonly completions: (() => void)[] = [];
+  private scheduledAcks = 0;
+  private readonly scheduledWaiters = new Map<number, (() => void)[]>();
 
   constructor(private readonly clock: VirtualClock, private readonly delayMs?: number) {
     super();
@@ -33,9 +35,23 @@ class ReplayConnection extends FakeConnection {
         };
         this.completions.push(complete);
         if (this.delayMs === 0) complete();
-        else if (this.delayMs !== undefined) this.clock.setTimer(complete, this.delayMs);
+        else if (this.delayMs !== undefined) {
+          this.clock.setTimer(complete, this.delayMs);
+          this.scheduledAcks += 1;
+          for (const resolve of this.scheduledWaiters.get(this.scheduledAcks) ?? []) resolve();
+          this.scheduledWaiters.delete(this.scheduledAcks);
+        }
       });
     }
+  }
+
+  waitForScheduledAck(count: number): Promise<void> {
+    if (this.scheduledAcks >= count) return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiters = this.scheduledWaiters.get(count) ?? [];
+      waiters.push(resolve);
+      this.scheduledWaiters.set(count, waiters);
+    });
   }
 
   completeLateSends(): void {
@@ -60,6 +76,30 @@ function events(count: number): DeliveryEvent[] {
   });
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = () => { resolvePromise(); };
+  });
+  return { promise, resolve };
+}
+
+async function withWatchdog(promise: Promise<void>, message: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(message));
+        }, 500);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 async function turn(): Promise<void> {
   await new Promise<void>((resolveTurn) => { setImmediate(resolveTurn); });
 }
@@ -69,22 +109,62 @@ test('slow outbox replay drains receipts and sustains heartbeats beyond their de
   const connection = new ReplayConnection(clock, 10_000);
   const connector = new SequenceConnector([connection]);
   const errors: string[] = [];
-  const recovery = t.mock.method(AdapterEngine.prototype, 'recover', async () => undefined);
+  const recoveryFinished = deferred();
+  const recovery = t.mock.method(AdapterEngine.prototype, 'recover', async () => {
+    recoveryFinished.resolve();
+  });
   const context = await makeClient('outbox-slow-live', connector, {
     clock, heartbeatMs: 5_000, heartbeatAckTimeoutMs: 45_000, sendTimeoutMs: 15_000,
     onError: (code) => { errors.push(code); },
   });
-  for (const event of events(8)) await context.store.enqueue(event);
+  const acknowledgeResult = context.store.acknowledgeResult.bind(context.store);
+  let persistedAcks = 0;
+  const persistedWaiters = new Map<number, (() => void)[]>();
+  t.mock.method(context.store, 'acknowledgeResult', async (
+    ...args: Parameters<typeof context.store.acknowledgeResult>
+  ) => {
+    const persisted = await acknowledgeResult(...args);
+    persistedAcks += 1;
+    for (const resolve of persistedWaiters.get(persistedAcks) ?? []) resolve();
+    persistedWaiters.delete(persistedAcks);
+    return persisted;
+  });
+  const waitForPersistedAcks = (count: number): Promise<void> => {
+    if (persistedAcks >= count) return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiters = persistedWaiters.get(count) ?? [];
+      waiters.push(resolve);
+      persistedWaiters.set(count, waiters);
+    });
+  };
+  const replayEvents = events(8);
+  for (const event of replayEvents) await context.store.enqueue(event);
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
   try {
-    await waitUntil(() => connection.sent.some((frame) => frame.type === 'ack'));
+    await withWatchdog(connection.waitForScheduledAck(1), 'the first replay ACK was not scheduled');
     for (let completed = 1; completed <= 8; completed += 1) {
+      const acknowledged = replayEvents[completed - 1];
+      assert.ok(acknowledged, `expected test event for ACK ${String(completed)}`);
       clock.advance(5_000);
       await turn();
       clock.advance(5_000);
-      await waitUntil(() => context.store.pendingEvents().length === 8 - completed,
-        500, 'the receipt persisted while replay is still running');
+      await withWatchdog(waitForPersistedAcks(completed),
+        `ACK ${String(completed)} (${acknowledged.event_id}) did not persist its receipt`);
+      assert.deepEqual(context.store.pendingEvents().map((event) => event.event_id),
+        replayEvents.slice(completed).map((event) => event.event_id),
+        `ACK ${String(completed)} (${acknowledged.event_id}) must remove exactly its durable outbox event`);
+      const sentAcks = connection.sent.filter((frame) => frame.type === 'ack');
+      assert.equal(sentAcks[completed - 1]?.event_id, acknowledged.event_id,
+        `ACK ${String(completed)} must correspond to its scheduled test event`);
+      if (completed < 8) {
+        const nextEvent = replayEvents[completed];
+        assert.ok(nextEvent, `expected test event for ACK ${String(completed + 1)}`);
+        await withWatchdog(connection.waitForScheduledAck(completed + 1),
+          `ACK ${String(completed + 1)} (${nextEvent.event_id}) was not scheduled before advancing virtual time`);
+      } else {
+        await withWatchdog(recoveryFinished.promise, 'outbox recovery did not finish after replay');
+      }
       assert.equal(recovery.mock.callCount(), completed === 8 ? 1 : 0);
       assert.equal(connector.calls, 1);
       assert.deepEqual(errors, []);

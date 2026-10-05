@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { buildPublishReceipt, type ConsolePublishIntentPrepareResult, type PublishMessage, type PublishResult } from '@cauce/protocol';
+import { buildPublishReceipt, publishRequestHash, type ConsolePublishIntentPrepareResult, type PublishMessage, type PublishResult } from '@cauce/protocol';
 import {
   PublishIntentExpiredError, PublishIntentRateLimitedError, PublishIntentReconciliationRequired, StoreError,
   type DatabaseClient, type HumanIdentitySnapshot, type HumanMessageOptions,
@@ -139,9 +139,13 @@ describe('human MCP operations phase boundaries', () => {
     const firstPublish = published[0];
     const secondPublish = published[1];
     if (!firstPublish || !secondPublish) throw new Error('expected two sessions for the same user');
-    const firstCommand = firstPublish[0] as { authenticated_context?: { session_id?: string } };
-    const secondCommand = secondPublish[0] as { authenticated_context?: { session_id?: string } };
-    expect(firstCommand.authenticated_context?.session_id).not.toBe(secondCommand.authenticated_context?.session_id);
+    const firstCommand = firstPublish[0] as PublishMessage;
+    const secondCommand = secondPublish[0] as PublishMessage;
+    const otherHumanCommand = published[2]?.[0] as PublishMessage;
+    expect(firstCommand.authenticated_context?.session_id).toBe(secondCommand.authenticated_context?.session_id);
+    expect(firstCommand.authenticated_context?.session_id).not.toBe(otherHumanCommand.authenticated_context?.session_id);
+    expect(publishRequestHash(firstCommand)).toBe(publishRequestHash(secondCommand));
+    expect(publishRequestHash(firstCommand)).not.toBe(publishRequestHash(otherHumanCommand));
   });
 
   it('rejects extra authority and malformed request keys before any repository call', async () => {
@@ -252,7 +256,11 @@ describe('human MCP operations phase boundaries', () => {
       [new StoreError('fenced', 'private'), { status_code: 403, error: 'forbidden' }],
       [new StoreError('invalid_input', 'private'), { status_code: 400, error: 'invalid_request' }],
       [new StoreError('no_route', 'private'), { status_code: 400, error: 'invalid_request' }],
-      [new StoreError('conflict', 'private'), { status_code: 409, error: 'operation_conflict', safe_to_retry_same_request_key: true }],
+      [new StoreError('conflict', 'private'), { status_code: 409, error: 'operation_conflict' }],
+      [new StoreError('conflict', 'idempotency request is still in progress'),
+        { status_code: 409, error: 'operation_conflict', safe_to_retry_same_request_key: true }],
+      [new StoreError('conflict', 'private', 'idempotency_durable_conflict'),
+        { status_code: 409, error: 'operation_conflict' }],
       [new Error('private backend detail'), { status_code: 503, error: 'operation_unavailable', safe_to_retry_same_request_key: true }],
       [new PublishIntentExpiredError(PREPARED_KEY), { status_code: 410, version: 1,
         error: 'publish_intent_expired', state: 'expired', idempotency_key: PREPARED_KEY, safe_to_resubmit: true }],
