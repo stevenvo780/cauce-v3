@@ -365,6 +365,7 @@ export class AdapterEngine {
       ...(humanInitiator === undefined ? {} : { human_initiator: humanInitiator }),
       self_alias: delivery.recipient_alias,
       sender_alias: delivery.actor_alias,
+      sender_tenant_id: delivery.tenant_id,
       tenant_id: this.ownTenantId ?? delivery.tenant_id,
       room_id: this.ownRoom ?? delivery.room_id,
       channel: delivery.authenticated_context?.channel

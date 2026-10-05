@@ -21,6 +21,7 @@ export interface HarnessRequestContext {
   readonly mcp_emit?: true;
   readonly self_alias: string;
   readonly sender_alias: string;
+  readonly sender_tenant_id?: string;
   readonly tenant_id: string;
   readonly room_id: string;
   readonly channel: string;
