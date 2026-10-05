@@ -4,7 +4,7 @@ import { MAX_GATEWAY_BYTES, type GatewayReader } from './gateway-client.js';
 import { GatewayReadError } from './gateway-projection.js';
 import { MCP_PUBLISH_SCOPE, MCP_READ_SCOPE } from './gateway-authorization.js';
 import {
-  HumanMcpInboxSchema, HumanMcpReceiptSchema, InboxInputSchema, McpSubmitCommandSchema, PublishResultSchema, ReceiptInputSchema,
+  McpConnectionIdentitySchema, HumanMcpInboxSchema, HumanMcpReceiptSchema, InboxInputSchema, McpSubmitCommandSchema, PublishResultSchema, ReceiptInputSchema,
   projectHumanGatewayRead,
   GatewayOperationError, GatewayOperationFailureSchema,
   type GatewayRequestContext,
@@ -26,6 +26,12 @@ export const GATEWAY_TOOLS: Tool[] = [
 ];
 export const HUMAN_GATEWAY_TOOLS: Tool[] = [
   ...GATEWAY_TOOLS,
+  {
+    name: 'cauce_connection_identity',
+    description: 'Read this authorized OAuth connection reference and public client provenance. The reference is owner correlation metadata, not a credential. A shared client does not identify an individual model, conversation or device. Unknown clients have no reference. Reading does not declare a label or authorize a send.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
   {
     name: 'cauce_submit',
     description: 'Publish an explicitly authorized durable message. Use a new UUIDv4 request_key only for a deliberate new send; retries must preserve that key and exact content. A receipt proves publication, not delivery or completion. A failed response may leave the effect unknown: reconcile with the same key, never retry with a new key.',
@@ -88,6 +94,10 @@ export function createGatewayToolServer(source: GatewayReader | GatewayRequestCo
         result = parsed.data;
       } else if (inbox?.success && operations) {
         const parsed = HumanMcpInboxSchema.safeParse(await operations.inbox(inbox.data));
+        if (!parsed.success) return error('gateway_response_invalid');
+        result = parsed.data;
+      } else if (name === 'cauce_connection_identity' && operations?.connectionIdentity) {
+        const parsed = McpConnectionIdentitySchema.safeParse(await operations.connectionIdentity());
         if (!parsed.success) return error('gateway_response_invalid');
         result = parsed.data;
       } else if (name === 'cauce_status') result = await reader.status();

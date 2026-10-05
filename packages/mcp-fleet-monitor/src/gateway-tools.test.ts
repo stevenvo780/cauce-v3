@@ -106,9 +106,9 @@ it('rejects unknown tools before resolving authority', async () => {
   expect(result).toMatchObject({ isError: true, content: [{ text: 'unknown_tool' }] });
   expect(f.forRequest).not.toHaveBeenCalled();
 });
-it('advertises five tools with separate read and publish scopes', async () => {
+it('advertises six tools with separate read and publish scopes', async () => {
   const listed = await (await connect(fixture().context)).listTools();
-  expect(listed.tools.map((tool) => tool.name)).toEqual(['cauce_status', 'cauce_agents', 'cauce_submit', 'cauce_receipt', 'cauce_inbox']);
+  expect(listed.tools.map((tool) => tool.name)).toEqual(['cauce_status', 'cauce_agents', 'cauce_connection_identity', 'cauce_submit', 'cauce_receipt', 'cauce_inbox']);
   for (const tool of listed.tools) {
     expect(tool._meta?.securitySchemes).toEqual([{ type: 'oauth2', scopes: [tool.name === 'cauce_submit' ? 'cauce.publish' : 'cauce.read'] }]);
     expect(tool.inputSchema.additionalProperties).toBe(false);
