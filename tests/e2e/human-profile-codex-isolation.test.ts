@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { HUMAN_MESSAGE_INITIATOR_CAPABILITY } from '@cauce/protocol';
 import { dockerTestRequirement } from '../helpers/postgres.js';
 import { humanHarnessSelector, prepareDeliveryInvocation, sessionFromDelivery } from '../../packages/adapter-sdk/src/sdk/engine/delivery-context.js';
 import { AdapterEngine } from '../../packages/adapter-sdk/src/sdk/engine.js';
@@ -344,7 +345,7 @@ describe('aislamiento de iniciadores humanos y perfil Codex', () => {
     expect(closeCalls).toBe(1);
   });
 
-  it('caracteriza la ruta DevOnly pre-AuthBridge: el subject auditado no crea initiator humano', async ({ skip }) => {
+  it('conserva el initiator Console canónico pese a auditoría ausente, ambigua o body falsificado', async ({ skip }) => {
     await dockerRequirement.skipIfUnavailable(skip);
     const originalAcquire = Reflect.get(CauceRepository.prototype, 'acquireLease');
     const originalClaim = Reflect.get(CauceRepository.prototype, 'claimDeliveries');
@@ -352,7 +353,7 @@ describe('aislamiento de iniciadores humanos y perfil Codex', () => {
       initiators: number; authorAuditRows: number; consoleSubjects: number; humanInitiators: number; deliveries: Delivery[];
     } | undefined;
     CauceRepository.prototype.acquireLease = function (...args) {
-      if (args[3].includes('console_human_scope_v1')) args[3] = [...args[3], 'human_message_initiator_v1'];
+      if (args[3].includes('console_human_scope_v1')) args[3] = [...args[3], HUMAN_MESSAGE_INITIATOR_CAPABILITY];
       return Reflect.apply(originalAcquire, this, args);
     };
     CauceRepository.prototype.claimDeliveries = async function (...args) {
@@ -379,22 +380,37 @@ describe('aislamiento de iniciadores humanos y perfil Codex', () => {
     };
     try {
       const fixture = await startHumanContextFixture();
+      console.info(JSON.stringify({ evidence: 'console-human-ledger-fixture', postgresContainerId: fixture.containerId }));
       await withFixtureCleanup(fixture, async () => {
         expect(observed).toBeDefined();
-        expect(observed?.initiators).toBe(0);
+        const expectedRoots = [
+          ...fixture.publications.map(({ userId, delivery }) => ({ humanId: userId, delivery })),
+          ...[fixture.absent, fixture.ambiguous, fixture.forged]
+            .map((delivery) => ({ humanId: fixture.publications[0].userId, delivery })),
+        ];
+        expect(observed?.deliveries.map(({ message_id }) => message_id).sort())
+          .toEqual(expectedRoots.map(({ delivery }) => delivery.message_id).sort());
+        expect(observed?.initiators).toBe(expectedRoots.length);
+        for (const { humanId, delivery } of expectedRoots) {
+          expect(delivery.human_initiator).toMatchObject({
+            human_id: humanId, tenant_id: 'Isa', root_message_id: delivery.message_id,
+          });
+          expect(delivery.human_initiator?.conversation_id).toBeTruthy();
+        }
         expect(observed?.authorAuditRows).toBe(5);
         expect(observed?.consoleSubjects).toBe(4);
-        expect(observed?.humanInitiators).toBe(0);
+        expect(observed?.humanInitiators).toBe(expectedRoots.length);
         const withConsoleSubject = observed?.deliveries.find((delivery) => delivery.console_human_subject !== undefined);
         if (withConsoleSubject === undefined) throw new Error('Console claim omitted every audited subject');
-        expect(withConsoleSubject).not.toHaveProperty('human_initiator');
+        expect(withConsoleSubject.human_initiator).toBeDefined();
 
         const ordinary = { reserveSession: () => ({}) } as unknown as HarnessAdapter;
         const isolatedHuman = { reserveSession: () => ({}) } as unknown as HarnessAdapter;
         const ordinaryScope = prepareDeliveryInvocation(
           withConsoleSubject, ordinary, humanHarnessSelector(ordinary, isolatedHuman), 'Isa',
         );
-        expect(ordinaryScope.harness).toBe(ordinary);
+        expect(ordinaryScope.selectionError).toBeUndefined();
+        expect(ordinaryScope.harness).toBe(isolatedHuman);
         expect(ordinaryScope.session.sessionKey).toBe(sessionFromDelivery(withConsoleSubject, 'Isa').sessionKey);
         expect(ordinaryScope.session.sessionKey).toMatch(/^auth-v3:/u);
         const oldSharedSession = process.env.CAUCE_SHARED_SESSION;
@@ -403,9 +419,18 @@ describe('aislamiento de iniciadores humanos y perfil Codex', () => {
           const invocation = prepareDeliveryInvocation(
             withConsoleSubject, ordinary, humanHarnessSelector(ordinary, isolatedHuman), 'Isa',
           );
-          expect(invocation.harness).toBe(ordinary);
-          expect(invocation.session.sessionKey).toBe(`shared:${withConsoleSubject.recipient_alias}`);
-          expect(invocation.humanInitiator).toBeUndefined();
+          expect(invocation.selectionError).toBeUndefined();
+          expect(invocation.harness).toBe(isolatedHuman);
+          expect(invocation.session.sessionKey).toBe(ordinaryScope.session.sessionKey);
+          expect(invocation.session.sessionKey).not.toBe(`shared:${withConsoleSubject.recipient_alias}`);
+          expect(invocation.humanInitiator).toEqual(withConsoleSubject.human_initiator);
+          const legacyInvocation = prepareDeliveryInvocation(
+            fixture.legacy, ordinary, humanHarnessSelector(ordinary, isolatedHuman), 'Isa',
+          );
+          expect(fixture.legacy).not.toHaveProperty('human_initiator');
+          expect(legacyInvocation.harness).toBe(ordinary);
+          expect(legacyInvocation.session.sessionKey).toBe(`shared:${fixture.legacy.recipient_alias}`);
+          expect(legacyInvocation.humanInitiator).toBeUndefined();
         } finally {
           restoreEnvironment('CAUCE_SHARED_SESSION', oldSharedSession);
         }
