@@ -46,7 +46,7 @@
 
 .messenger-cuerpo { margin: 0 0 var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 
-.messenger-cuerpo-texto { max-height: 220px; overflow: auto; margin: var(--space-1) 0 0; color: #dae5f5; font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-rotulo); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.messenger-cuerpo-texto { max-height: 220px; overflow: auto; margin: var(--space-1) 0 0; color: var(--text); font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-rotulo); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .messenger-cuerpo-texto[data-recortado] { border-bottom: 1px dashed var(--amber); padding-bottom: var(--space-2); }
 
