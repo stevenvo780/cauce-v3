@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { App } from './App';
@@ -348,13 +348,20 @@ it('conserva el borrador y sus opciones al visitar herramientas, aislado por age
   expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Revisá el trabajo pendiente');
 });
 
-it.each([true, false])('un envío pendiente sobrevive a salir del hilo y volver; éxito=%s', async (success) => {
+it.each([
+  { success: true, editDraft: false }, { success: false, editDraft: false },
+  { success: true, editDraft: true }, { success: false, editDraft: true },
+])('un envío pendiente sobrevive a navegar; éxito=$success, nuevo borrador=$editDraft', async ({ success, editDraft }) => {
   let release: () => void = () => undefined;
   const pending = new Promise<void>((resolve) => { release = resolve; });
   let calls = 0;
+  let publishedInput: Record<string, unknown> | undefined;
   let settled = false;
+  const originalDraft = 'Un único envío pendiente';
+  const nextDraft = 'El próximo mensaje todavía no se envía';
   server.use(http.post('*/v3/console/messages', async ({ request }) => {
     const input = await request.json() as Record<string, unknown>;
+    publishedInput = input;
     calls += 1;
     await pending;
     if (!success) { settled = true; return HttpResponse.json({ error: 'invalid_request', message: 'Intento rechazado' }, { status: 400 }); }
@@ -374,15 +381,29 @@ it.each([true, false])('un envío pendiente sobrevive a salir del hilo y volver;
   renderWithApi(<App />);
   try {
     const input = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
-    await user.type(input, 'Un único envío pendiente');
+    await user.type(input, originalDraft);
     await user.click(screen.getByRole('button', { name: 'Enviar' }));
     await waitFor(() => { expect(calls).toBe(1); });
     await openTools();
     await user.click(screen.getByRole('link', { name: 'Cuentas y cuotas' }));
     await screen.findByRole('heading', { name: 'Cuentas y cuotas' });
     await user.click(screen.getByRole('link', { name: 'Volver a la conversación' }));
-    expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Enviando…' })).toBeDisabled();
+    const pendingInput = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
+    expect(pendingInput).toBeEnabled();
+    expect(pendingInput).toHaveValue(originalDraft);
+    if (editDraft) { await user.clear(pendingInput); await user.type(pendingInput, nextDraft); }
+    const send = screen.getByRole('button', { name: 'Enviando…' });
+    expect(send).toBeDisabled();
+    await user.click(send);
+    await user.click(pendingInput);
+    await user.keyboard('{Enter}');
+    const form = pendingInput.closest('form');
+    if (!form) throw new Error('Missing pending message composer');
+    fireEvent.submit(form);
+    expect(pendingInput).toHaveFocus();
+    expect(pendingInput).toHaveValue(editDraft ? nextDraft : originalDraft);
+    expect(calls).toBe(1);
+    expect(publishedInput).toMatchObject({ body: { text: originalDraft }, recipients: [{ tenant_id: 'Steven', alias: 'argos' }] });
     await openTools();
     await user.click(screen.getByRole('link', { name: 'Cuentas y cuotas' }));
     await screen.findByRole('heading', { name: 'Cuentas y cuotas' });
@@ -391,7 +412,7 @@ it.each([true, false])('un envío pendiente sobrevive a salir del hilo y volver;
     await user.click(screen.getByRole('link', { name: 'Volver a la conversación' }));
     const restored = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
     await waitFor(() => { expect(restored).not.toBeDisabled(); });
-    expect(restored).toHaveValue(success ? '' : 'Un único envío pendiente');
+    expect(restored).toHaveValue(editDraft ? nextDraft : success ? '' : originalDraft);
     expect(calls).toBe(1);
     if (!success) expect(await screen.findByRole('alert')).toHaveTextContent('Intento rechazado');
   } finally { release(); }

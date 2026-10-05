@@ -1,6 +1,6 @@
-import { Pause, Play, Search } from 'lucide-react';
-import type { Dispatch, ReactNode, SetStateAction } from 'react';
-import { Time, Tooltip } from '../../components/ui';
+import { RefreshCw, Search, Settings2 } from 'lucide-react';
+import type { Dispatch, SetStateAction } from 'react';
+import { Time } from '../../components/ui';
 import { formatDurationSeconds } from '../../lib';
 
 const INTERVALS = [
@@ -11,21 +11,8 @@ const INTERVALS = [
   { value: 0, label: 'en pausa' },
 ];
 
-const FEED_HINT: ReactNode = (
-  <>
-    <p>
-      <strong>Esto es polling</strong>, no un canal en vivo: el gateway no publica websocket ni SSE
-      para la consola (<code>/v3/ws</code> es el bus de los agentes, no un canal de lectura).
-    </p>
-    <p>
-      Por eso el intervalo se elige a mano y por eso se muestra la hora del servidor: lo que ves
-      es tan fresco como diga esa hora, ni un segundo más.
-    </p>
-  </>
-);
-
 interface LiveFleetToolbarProps {
-  feedState: 'error' | 'paused' | 'live';
+  feedState: 'error' | 'paused' | 'stale' | 'live';
   intervalMs: number;
   setIntervalMs: Dispatch<SetStateAction<number>>;
   refrescarTodo: () => void;
@@ -57,39 +44,11 @@ export function LiveFleetToolbar({
   topologyError,
   recargarTopologia,
 }: LiveFleetToolbarProps) {
+  const feedLabel = feedState === 'error' ? 'Error de lectura' : feedState === 'paused' ? 'En pausa'
+    : feedState === 'stale' ? 'Sin datos actuales' : 'Consulta automática';
+  const feedDescription = feedLabel + (edadSegundos !== null ? ` · hace ${formatDurationSeconds(edadSegundos)}` : '');
   return (
     <div className="live-toolbar">
-      <Tooltip label={FEED_HINT} focusable={false}>
-        <span className="live-feed-state" data-feed={feedState}>
-          <span className="live-feed-dot" aria-hidden="true" />
-          {feedState === 'error' ? 'Feed caído' : feedState === 'paused' ? 'En pausa' : 'En vivo'}
-        </span>
-      </Tooltip>
-
-      <label className="live-refresh-filter">
-        Refresco
-        <select
-          value={intervalMs}
-          onChange={(event) => { setIntervalMs(Number(event.target.value)); }}
-          aria-label="Intervalo de refresco"
-        >
-          {INTERVALS.map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </select>
-      </label>
-
-      <button type="button" className="button secondary" onClick={refrescarTodo}>
-        {intervalMs <= 0 ? <Play size={15} aria-hidden="true" /> : <Pause size={15} aria-hidden="true" />}
-        <span className="live-refresh-wide">Refrescar ahora</span>
-        <span className="live-refresh-compact">Actualizar</span>
-      </button>
-
-      <span className="muted live-age">
-        Servidor: <Time value={observedAt} />
-        {edadSegundos !== null ? <strong> · hace {formatDurationSeconds(edadSegundos)}</strong> : null}
-      </span>
-
       <label className="live-search">
         <Search size={15} aria-hidden="true" />
         <span className="sr-only">Buscar un alias</span>
@@ -103,29 +62,47 @@ export function LiveFleetToolbar({
 
       {tenants.length > 1 ? (
         <label className="live-client-filter">
-          Cliente
-          <select value={tenantFilter} onChange={(event) => { setTenantFilter(event.target.value); }}>
+          <span className="sr-only">Cliente</span>
+          <select aria-label="Cliente" value={tenantFilter} onChange={(event) => { setTenantFilter(event.target.value); }}>
             <option value="todos">todos ({tenants.length})</option>
             {tenants.map((tenant) => <option key={tenant} value={tenant}>{tenant}</option>)}
           </select>
         </label>
       ) : tenants.length === 1 ? (
-        <span className="badge badge-info">Vista acotada a {tenants[0]}</span>
+        <span className="badge badge-info live-single-client" title={`Vista acotada a ${tenants[0]}`}>{tenants[0]}</span>
       ) : null}
 
+      <button type="button" className="button secondary live-refresh" onClick={refrescarTodo} aria-label="Refrescar ahora" title="Refrescar ahora">
+        <RefreshCw size={18} aria-hidden="true" />
+        <span className="live-feed-state" data-feed={feedState} role="status" aria-live="polite" title={feedDescription}>
+          <span className="live-feed-dot" aria-hidden="true" /><span className="sr-only">{feedDescription}</span>
+        </span>
+      </button>
+      <details className="live-refresh-settings">
+        <summary aria-label="Ajustes de refresco" title="Ajustes de refresco"><Settings2 size={18} aria-hidden="true" /></summary>
+        <div className="live-refresh-popover">
+          <p className="live-age">{feedDescription}</p>
+          <label className="live-refresh-filter">
+            Refresco
+            <select value={intervalMs} onChange={(event) => { setIntervalMs(Number(event.target.value)); }} aria-label="Intervalo de refresco">
+              {INTERVALS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <span className="muted live-age">
+            Servidor: <Time value={observedAt} />
+            {edadSegundos !== null ? <strong> · hace {formatDurationSeconds(edadSegundos)}</strong> : null}
+          </span>
+        </div>
+      </details>
       {activityError ? (
-        <span className="notice error">
+        <span className="notice error" role="alert">
           Última lectura falló: {activityError.message}. Se muestra el snapshot anterior.
         </span>
       ) : null}
-
       {topologyError ? (
-        <span className="notice error">
-          No se pudo leer la topología: {topologyError.message}. Sin ella no hay salas, ni
-          mapa, ni selector de cliente, ni «sin reportar» — no es que no existan.
-          <button type="button" className="button small secondary" onClick={recargarTopologia}>
-            Reintentar la topología
-          </button>
+        <span className="notice error" role="alert">
+          No se pudo leer la topología: {topologyError.message}.
+          <button type="button" className="button small secondary" onClick={recargarTopologia}>Reintentar la topología</button>
         </span>
       ) : null}
     </div>

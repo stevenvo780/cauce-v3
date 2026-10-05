@@ -44,7 +44,6 @@
 
 
 
-
 .messenger-cuerpo { margin: 0 0 var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 
 .messenger-cuerpo-texto { max-height: 220px; overflow: auto; margin: var(--space-1) 0 0; color: #dae5f5; font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-rotulo); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -56,7 +55,6 @@
 .messenger-thread-identity h2 { margin: 0; font-size: var(--tipo-panel); }
 
 .messenger-thread-identity .eyebrow { margin: var(--space-1) 0 0; }
-
 
 .messenger-queue-strip > div { padding: var(--space-2) var(--space-3); background: var(--surface); }
 
@@ -89,7 +87,6 @@
 .messenger-loose-count { border-bottom: 1px dotted currentcolor; cursor: help; }
 
 
-
 .messenger-lane-select { display: block; margin-bottom: var(--space-2); }
 
 .messenger-composer { flex: none; margin-top: auto; }
@@ -101,8 +98,6 @@
 .messenger-room-fixed { margin: 0 0 var(--space-2); color: var(--faint); font-size: var(--tipo-apunte); }
 
 .messenger-room-select { display: block; margin-bottom: var(--space-2); }
-
-
 
 
 
@@ -122,9 +117,7 @@
   :root:not([data-theme="dark"]) .messenger-agent[data-active] { background: #ffffff; }
 }
 
-
 :root[data-theme="light"] .messenger-pill { background: #ffffff; }
-
 
 
 :root[data-theme="light"] .messenger-agent:hover,
@@ -207,9 +200,7 @@
 
 .messenger-thread .chat-delivery-check { display: inline-flex; max-width: 48%; min-width: 0; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: var(--space-1); color: var(--muted); font-size: var(--tipo-apunte); text-align: right; white-space: normal; }
 
-.messenger-thread .chat-delivery-check [data-checks] { color: var(--blue); font-size: var(--tipo-cuerpo); font-weight: 750; letter-spacing: -.12em; }
-
-.messenger-thread .chat-delivery-check-positive [data-checks] { color: var(--mint); }
+.messenger-thread .chat-delivery-check [data-checks] { color: var(--muted); font-size: var(--tipo-cuerpo); font-weight: 750; letter-spacing: -.12em; }
 
 .messenger-thread .chat-delivery-check-danger { color: var(--red); }
 
@@ -227,17 +218,10 @@
 
 .messenger-thread .chat-structured-message dd { min-width: 0; margin: 0; overflow-wrap: anywhere; word-break: break-word; }
 
-.messenger-thread .chat-structured-message details { margin-top: var(--space-2); border-top: 1px solid var(--border); padding-top: var(--space-2); }
-
-.messenger-thread .chat-structured-message summary { width: fit-content; color: var(--muted); cursor: pointer; }
-
-.messenger-thread .chat-structured-message pre { max-height: 220px; overflow: auto; margin: var(--space-2) 0 0; font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-mono); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 
-.messenger-thread .transcript-delivery { border-color: var(--border); background: transparent; }
 
 .messenger-delivery-detail { padding: var(--space-3) var(--space-4) var(--space-1); border-top: 1px solid var(--border); flex: none; padding-inline: var(--space-5); background: var(--surface); }
-
 
 .messenger-composer { padding: var(--space-4) var(--space-5); background: var(--surface); border: 0; }
 
@@ -353,3 +337,10 @@
 .chat-notice-panel h3 { margin: 0; font-size: var(--tipo-cuerpo); }
 .chat-notice-panel p { margin: var(--space-2) 0; overflow-wrap: anywhere; }
 .chat-notice-panel .button { min-height: 40px; }
+
+.chat-message-actions { position: relative; flex: none; margin-left: auto; }
+.chat-message-menu-trigger { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; touch-action: manipulation; }
+.chat-message-menu-trigger:hover, .chat-message-menu-trigger:focus-visible { background: var(--surface); color: var(--text); }
+.chat-message-menu { position: absolute; z-index: 3; right: 0; top: 100%; min-width: 140px; padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); box-shadow: var(--shadow); }
+.chat-message-menu button { width: 100%; min-height: 40px; padding: var(--space-2); border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.messenger-composer .button.primary { touch-action: manipulation; }

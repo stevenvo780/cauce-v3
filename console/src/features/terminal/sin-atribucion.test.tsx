@@ -226,14 +226,14 @@ describe('T042 · abrir shell y leer sigue permitido (dejar como está)', () => 
 
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled();
+      expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled();
     });
     // El botón no nace bloqueado por atribución: el motivo que lleva es el del canal.
-    expect(screen.getByRole('button', { name: /^PTY$/i })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /^Terminal$/i })).toHaveAttribute(
       'title',
       expect.not.stringContaining('persona con nombre') as unknown,
     );
-    await user.click(screen.getByRole('button', { name: /^PTY$/i }));
+    await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
 
     const dialogo = await screen.findByRole('dialog');
     await user.type(within(dialogo).getByRole('textbox'), 'revisar el despliegue de zeus');
@@ -323,7 +323,7 @@ describe('T041 · la caída del relay se anuncia de inmediato', () => {
       expect(ptySessionText(SESION_HARNESS)).toContain('zeus corriendo');
     });
     const barra = await screen.findByLabelText('Sesión PTY activa');
-    expect(within(barra).getByText('POLLING EN PAUSA')).toBeInTheDocument();
+    expect(within(barra).queryByText(/POLLING/)).not.toBeInTheDocument();
     const lecturasAntes = capacidad.lecturas;
     expect(lecturasAntes).toBeGreaterThan(0);
 
@@ -337,7 +337,7 @@ describe('T041 · la caída del relay se anuncia de inmediato', () => {
 
     // E inmediato en pantalla: estado, código y motivo, con su explicación de no-reanudación.
     const estado = await screen.findByText(/código 1001/);
-    expect(estado.textContent).toMatch(/ERROR/);
+    expect(screen.getByLabelText('Conexión: ERROR')).toBeInTheDocument();
     expect(estado.textContent).toMatch(/cerró el canal PTY/);
     expect(estado.textContent).toContain('relay_shutdown');
     expect(await screen.findByRole('button', { name: /pedir sesión nueva/i })).toBeInTheDocument();
@@ -351,9 +351,7 @@ describe('T041 · la caída del relay se anuncia de inmediato', () => {
     });
     expect(StubWebSocket.instances).toHaveLength(1);
 
-    // Y el feed durable vuelve: la barra deja de decir que está en pausa.
-    expect(within(barra).queryByText('POLLING EN PAUSA')).not.toBeInTheDocument();
-    expect(within(barra).getByText('POLLING ACTIVO')).toBeInTheDocument();
+    expect(within(barra).queryByText(/POLLING/)).not.toBeInTheDocument();
 
     // La prueba de que no se esperó al polling: el anuncio llegó sin releer capability.
     expect(capacidad.lecturas).toBe(lecturasAntes);

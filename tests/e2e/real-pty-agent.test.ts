@@ -155,8 +155,8 @@ describe('PTY real Python agent through gateway and relay', () => {
     const selector = page.getByRole('combobox', { name: 'Agente' });
     await selector.waitFor({ state: 'visible', timeout: 25_000 });
     await selector.selectOption(`${active.tenant}:${active.targetAlias}`);
-    await page.getByRole('button', { name: 'PTY', exact: true }).click();
-    await page.getByRole('dialog', { name: new RegExp(`Abrir PTY en ${active.targetAlias}`, 'u') }).waitFor({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await page.getByRole('dialog', { name: new RegExp(`Abrir Terminal en ${active.targetAlias}`, 'u') }).waitFor({ timeout: 10_000 });
     await page.getByLabel('Motivo de la sesión (queda en la auditoría)').fill('Verificación local de resize y cierre desde Chromium móvil.');
     await page.getByRole('button', { name: 'Abrir sesión PTY' }).click();
     await page.locator('.pty-shell[data-state="open"]').waitFor({ state: 'visible', timeout: 30_000 });
@@ -226,7 +226,7 @@ describe('PTY real Python agent through gateway and relay', () => {
         uiDeleteStatus = response.status();
       }
     });
-    await page.getByRole('button', { name: 'Cerrar la terminal' }).click();
+    await page.getByRole('link', { name: 'Conversaciones', exact: true }).click();
     await page.locator('.pty-shell').waitFor({ state: 'hidden', timeout: 20_000 });
     const deleteDeadline = Date.now() + 10_000;
     while (uiDeleteStatus === undefined && Date.now() < deleteDeadline) await new Promise((resolve) => setTimeout(resolve, 50));

@@ -138,7 +138,8 @@ it('🔴 el detalle arranca CERRADO y lo abre el clic del operador', async () =>
   await user.click(within(hilo).getByRole('button', { name: 'Más' }));
   expect(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' })).toBeVisible();
   await user.keyboard('{Escape}');
-  await user.click(within(burbujas(hilo)[0]).getByRole('button', { name: /ver detalle/i }));
+  await user.click(within(burbujas(hilo)[0]).getByRole('button', { name: 'Opciones del mensaje' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
   expect(within(hilo).getByRole('group', { name: /detalle del mensaje seleccionado/i })).toBeVisible();
 }, 25_000);
 
@@ -154,7 +155,8 @@ it('🔴 clicar una burbuja SIN entrega también selecciona: antes no hacía nad
 
   const vieja = burbujas(hilo)[0];
   expect(within(vieja).getByText(/la mas vieja/)).toBeInTheDocument();
-  await user.click(within(vieja).getByRole('button', { name: /ver detalle/i }));
+  await user.click(within(vieja).getByRole('button', { name: 'Opciones del mensaje' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
 
   const detalle = within(hilo).getByRole('group', { name: /detalle del mensaje seleccionado/i });
   expect(within(detalle).getByText('aaaaaaaa-1111-4111-8111-111111111111')).toBeInTheDocument();
@@ -239,7 +241,7 @@ it('🔴 la burbuja recortada lo DICE en vez de parecer un mensaje entero', asyn
     return encontrada;
   });
 
-  expect(recortada).toHaveTextContent(new RegExp(`sólo los primeros ${String(CARACTERES_DE_PREVISUALIZACION)} caracteres`, 'i'));
+  expect(recortada).toHaveTextContent('Vista previa recortada');
   // And the cut is visible in the text itself: before it ended abruptly, mid-word.
   expect(recortada.querySelector('p')?.textContent).toBe(`${RECORTADO}…`);
 }, 25_000);
