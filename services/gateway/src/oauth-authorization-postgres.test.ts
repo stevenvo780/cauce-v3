@@ -611,5 +611,17 @@ function barrier() {
     try { await transaction(client, async () => { await client.query(await readFile(downPath, 'utf8')); }); }
     finally { client.release(); }
     expect((await pool.query("SELECT to_regclass('cauce_oauth_grants') AS oauth,to_regclass('human_external_identities') AS human")).rows[0]).toEqual({ oauth: null, human: 'human_external_identities' });
+    for (const table of ['schema_migrations', 'schema_migration_ledger']) {
+      expect((await pool.query(`SELECT 1 FROM ${table} WHERE version=$1`, [version])).rowCount).toBe(0);
+      expect((await pool.query(`SELECT 1 FROM ${table} WHERE version=$1`, [previousVersion])).rowCount).toBe(1);
+    }
+    await applyMigrations(pool);
+    expect(await counts(pool)).toEqual({ requests: '0', grants: '0', codes: '0', tokens: '0' });
+    expect((await pool.query("SELECT to_regclass('cauce_oauth_refresh_tokens') AS refresh,to_regclass('cauce_oauth_clients') AS clients")).rows[0])
+      .toEqual({ refresh: 'cauce_oauth_refresh_tokens', clients: 'cauce_oauth_clients' });
+    await pool.query("INSERT INTO schema_migrations(version) VALUES ('999_fixture_later.sql')");
+    const later = await pool.connect();
+    try { await expect(transaction(later, async () => { await later.query(await readFile(downPath, 'utf8')); })).rejects.toThrow('later migration'); }
+    finally { later.release(); }
   });
 });
