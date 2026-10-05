@@ -2,10 +2,11 @@
 // Not a test file: not picked up by vitest.
 // Imported by per-route test files to avoid duplicating 200+ lines per file.
 
+import { randomBytes, randomUUID } from 'node:crypto';
 import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { vi } from 'vitest';
 import type { DatabaseClient, DatabasePool } from '@cauce/store';
-import type { Principal } from '../../services/gateway/src/auth.js';
+import { DevOnlyAuthProvider, type Principal } from '../../services/gateway/src/auth.js';
 import type { TerminalConfig } from '../../services/gateway/src/terminal/config.js';
 import {
   browserOwnerGeneration, parseControlRequest, parseDeleteSession, parseOwnerRotation,
@@ -16,6 +17,8 @@ import {
   type ExtendSessionBody, type OwnerRotationBody, type SessionRequestBody,
 } from '../../services/gateway/src/terminal/session-control.js';
 import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
+import { TerminalSessionAuthority } from '../../services/gateway/src/terminal/session-authority.js';
+import { encodeTerminalSubject, issueAuthorityContinuity, type HumanAuthorityOrigin } from '../../services/gateway/src/terminal/authority-continuity.js';
 import type { FleetPlacement, TerminalSessionRow } from '../../services/gateway/src/terminal/types.js';
 
 /**
@@ -42,6 +45,26 @@ export const RELAY_INSTANCE_ID = 'a'.repeat(64);
 export const UUID_OK = '11111111-1111-4111-8111-111111111111';
 export const REQUEST_ID_OK = '22222222-2222-4222-8222-222222222222';
 export const OWNER_TOKEN_OK = '33333333-3333-4333-8333-333333333333';
+const authorityKey = randomBytes(32);
+export const UNIT_ORIGIN: HumanAuthorityOrigin = {
+  kind: 'human', humanId: randomUUID(), loginSid: randomBytes(24).toString('base64url'),
+  actor: { tenantId: 'Steven', alias: 'kant' }, credentialStamp: randomBytes(32).toString('base64url'),
+  issuedAtSeconds: Math.floor(Date.now() / 1000), expiresAtSeconds: Math.floor(Date.now() / 1000) + 86_400,
+};
+export const UNIT_SUBJECT = encodeTerminalSubject(UNIT_ORIGIN);
+export const UNIT_PROOF = issueAuthorityContinuity({ version: 2, sessionId: UUID_OK,
+  requestId: REQUEST_ID_OK, semanticDigest: randomBytes(32).toString('hex'), origin: UNIT_ORIGIN }, authorityKey);
+
+function orchestrationAuthorityStub(): TerminalSessionAuthority {
+  const authority = new TerminalSessionAuthority(DevOnlyAuthProvider.forTests(), authorityKey);
+  vi.spyOn(authority, 'capture').mockResolvedValue(UNIT_ORIGIN);
+  vi.spyOn(authority, 'lockOrigin').mockResolvedValue(new Date(UNIT_ORIGIN.expiresAtSeconds * 1000));
+  vi.spyOn(authority, 'lockTarget').mockResolvedValue(undefined);
+  vi.spyOn(authority, 'lockSession').mockResolvedValue(new Date(UNIT_ORIGIN.expiresAtSeconds * 1000));
+  vi.spyOn(authority, 'lockCleanup').mockResolvedValue(undefined);
+  return authority;
+}
+
 
 export function consolePrincipal(overrides: Partial<Principal> = {}): Principal {
   return {
@@ -65,7 +88,7 @@ export function unattributedConsolePrincipal(): Principal {
 export function configBase(): TerminalConfig {
   return {
     wsPath: '/v3/console/terminal/ws',
-    ticketKey: Buffer.from('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=', 'base64'),
+    ticketKey: authorityKey,
     relayToken: 'relay-token-that-is-long-enough-0123456789',
     relayInstanceIds: new Set([RELAY_INSTANCE_ID]),
     grantsFile: '/tmp/cauce-grants.json',
@@ -98,6 +121,7 @@ export function validSessionBody(overrides: Partial<SessionRequestBody> = {}): S
 
 export function validOwnerRotation(overrides: Partial<OwnerRotationBody> = {}): OwnerRotationBody {
   return {
+    authority_proof: UNIT_PROOF,
     request_id: REQUEST_ID_OK,
     expected_owner_generation: '1',
     owner_token: OWNER_TOKEN_OK,
@@ -115,11 +139,12 @@ export function validDeleteSession(overrides: Partial<DeleteSessionBody> = {}): 
 }
 
 export function validExtendSession(overrides: Partial<ExtendSessionBody> = {}): ExtendSessionBody {
-  return validDeleteSession(overrides);
+  return { ...validDeleteSession(), authority_proof: UNIT_PROOF, ...overrides };
 }
 
 export function validControlRequest(overrides: Partial<ControlRequestBody> = {}): ControlRequestBody {
   return {
+    authority_proof: UNIT_PROOF,
     action: 'take',
     reason: 'tomar la TUI para desatascar el turno',
     request_id: REQUEST_ID_OK,
@@ -130,6 +155,7 @@ export function validControlRequest(overrides: Partial<ControlRequestBody> = {})
 }
 
 export interface ContextOptions {
+  readonly authority?: TerminalSessionAuthority;
   readonly pool?: DatabasePool;
   readonly registry?: AgentRegistry;
   readonly grants?: {
@@ -148,6 +174,7 @@ export interface ContextOptions {
 }
 
 export interface Context {
+  readonly authority: TerminalSessionAuthority;
   readonly app: FastifyInstance;
   readonly pool: DatabasePool;
   readonly registry: AgentRegistry;
@@ -178,8 +205,10 @@ export function buildContext(options: ContextOptions = {}): Context {
   ];
   const app = Fastify({ logger: false });
 
+  const authority = options.authority ?? orchestrationAuthorityStub();
   registerTerminalSessionControl(app, {
     pool,
+    authority,
     config: { ...configBase(), ...options.config },
     registry,
     grants: grants as never,
@@ -198,6 +227,7 @@ export function buildContext(options: ContextOptions = {}): Context {
     recordTransactionalTerminalAudit
   });
   return {
+    authority,
     app,
     pool,
     registry,
@@ -219,12 +249,31 @@ export function transactionClient(
   return {
     query: vi.fn(async (text: string, values: unknown[] = []) => {
       if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [], rowCount: 0 };
-      return handleQuery(text, values);
+      const result = await handleQuery(text, values);
+      if (result.rows.length === 0 && text === 'SELECT clock_timestamp() AS database_now') {
+        return { rows: [{ database_now: new Date() }], rowCount: 1 };
+      }
+      return result;
     }),
     release: vi.fn(),
     on: vi.fn(),
     off: vi.fn(),
   } as unknown as DatabaseClient;
+}
+
+export function admissionTransactionClient(
+  handleQuery: Parameters<typeof transactionClient>[0],
+): DatabaseClient {
+  return transactionClient(async (text, values) => {
+    const result = await handleQuery(text, values);
+    if (result.rows.length !== 0) return result;
+    if (text.includes('FROM agents')) return { rows: [{ tenant_id: 'Steven', alias: 'jarvis',
+      container_name: 'claw', runtime_user: 'claw' }], rowCount: 1 };
+    if (text.includes("'actor'::text AS side")) return { rows: [
+      { side: 'actor', room_id: 'grp.steven' }, { side: 'target', room_id: 'grp.steven' },
+    ], rowCount: 2 };
+    return result;
+  });
 }
 
 export function stubClient(): DatabaseClient {
@@ -260,10 +309,10 @@ export function stubFleetPool(
     query: vi.fn(async (text: string, values: unknown[] = []) => {
       queries.push({ text, values });
       if (text.includes('FROM agents')) {
-        return { rows: placements, rowCount: placements.length };
+        return { rows: [...placements], rowCount: placements.length };
       }
       if (text.includes('FROM terminal_sessions')) {
-        return { rows: selectList, rowCount: selectList.length };
+        return { rows: [...selectList], rowCount: selectList.length };
       }
       if (text.includes("'actor'::text AS side")) {
         return {
@@ -279,7 +328,7 @@ export function stubFleetPool(
       }
       return { rows: [], rowCount: 0 };
     }),
-    connect: vi.fn(async () => stubClient()),
+    connect: vi.fn(async () => transactionClient((text, values) => pool.query(text, values))),
     __queries: queries
   };
   return pool as unknown as DatabasePool & { __queries: typeof queries };
@@ -296,7 +345,7 @@ export function makeRow(overrides: Partial<TerminalSessionRow> & { occupies_slot
     browser_owner_generation: '1',
     operator_id: 'steven-kant',
     attributed: true,
-    console_subject: 'Steven:kant',
+    console_subject: UNIT_SUBJECT,
     tenant_id: 'Steven',
     alias: 'jarvis',
     container: 'claw',
