@@ -8,6 +8,7 @@ import {
   type TurnOutcome,
 } from "@muse-code/sdk";
 import { ProcessExecutionError } from "./errors.js";
+import { childEnvironment } from "./process-runner.js";
 import type { CommandRunRequest, CommandRunResult } from "./types.js";
 import { sanitizeProcessOutput } from "../harnesses/shared/errors.js";
 import { MuseMspSession, type MuseMspTelemetry } from "./muse-msp-session.js";
@@ -200,6 +201,16 @@ export class MuseMspRunner {
       throw new Error("Muse timeout must be a positive safe integer");
     }
     if (request.signal.aborted) return result("", { cancelled: true, harnessStarted: false });
+    for (const key of ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "MUSE_NO_AUTO_UPDATE",
+      "CODEX_HOME", "CLAUDE_CONFIG_DIR", "USERPROFILE"]) {
+      if (request.env !== undefined && Object.hasOwn(request.env, key)) {
+        throw new ProcessExecutionError("RESERVED_ENVIRONMENT_OVERRIDE", "Muse alias environment cannot be overridden", false);
+      }
+    }
+    const environment = {
+      ...childEnvironment(request.env, request.emissionSocketPath, {}),
+      ...hostEnvironment(this.config),
+    };
     const deadline = Date.now() + request.timeoutMs;
     let handshake: ReturnType<typeof spawnMspConnection> | undefined;
     let session: MuseMspSession | undefined;
@@ -213,7 +224,7 @@ export class MuseMspRunner {
         command: this.config.executable,
         args: ["serve", ...(this.config.yolo === true ? ["--disable-sandbox"] : []), "--trust-workspace"],
         cwd: this.config.workspace,
-        env: hostEnvironment(this.config),
+        env: environment,
         shutdownTimeoutMs: 2_000,
       });
       handshake.onServerRequest(async (serverRequest) => {
