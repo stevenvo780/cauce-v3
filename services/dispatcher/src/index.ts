@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { logEvent } from '@cauce/protocol';
 import {
-  CauceRepository, type ChainSilenceSweepOptions, type DatabasePool,
+  CauceRepository, CONTEXT_WRITE_QUARANTINE_KIND, type ChainSilenceSweepOptions, type DatabasePool,
   type ObservabilityRetentionPolicy,
 } from '@cauce/store';
 import { asClaimedJob, createDefaultJobHandlerRegistry, type JobHandlers } from './handlers.js';
@@ -59,6 +59,10 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
   const runClaimedJobs = async (jobs: readonly Readonly<Record<string, unknown>>[]): Promise<void> => {
     for (const job of jobs) {
       const claimed = asClaimedJob(job);
+      if (claimed.kind === CONTEXT_WRITE_QUARANTINE_KIND) {
+        options.metrics?.recordJob(claimed.lane, 'fenced');
+        continue;
+      }
       const handler = Object.hasOwn(handlers, claimed.kind) ? handlers[claimed.kind] : undefined;
       if (!handler) {
         const error = new UnknownJobKindError(claimed.kind);
@@ -164,8 +168,9 @@ async function deadLetterUnknownJob(
     const selected = await client.query<{ tenant_id: string; payload: Record<string, unknown>; attempts: number }>(
       `UPDATE jobs SET status='dead',lease_until=NULL,claim_token=NULL,last_error=$4,updated_at=now()
        WHERE id=$1 AND claimed_by=$2 AND claim_token=$3 AND status='running' AND lease_until>now()
+         AND kind<>$5
        RETURNING tenant_id,payload,attempts`,
-      [id, worker, claimToken, reason.slice(0, 2_000)],
+      [id, worker, claimToken, reason.slice(0, 2_000), CONTEXT_WRITE_QUARANTINE_KIND],
     );
     const row = selected.rows[0];
     if (!row) {
