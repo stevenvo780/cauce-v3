@@ -105,7 +105,7 @@ def load_config(path: Path) -> dict:
     for key in ("workspace", "preview_root", "client_cert", "client_key", "ca_cert"):
         if not isinstance(config[key], str) or not Path(config[key]).is_absolute():
             raise SupervisionError("invalid_configuration")
-    bounds = {"root_limit": (1, 6, 6), "notice_limit": (1, 3, 3),
+    bounds = {"root_limit": (1, 12, 6), "notice_limit": (1, 3, 3),
               "idle_seconds": (480, 3600, 480), "cooldown_seconds": (1200, 86400, 1200),
               "api_timeout": (1, 10, 8), "pass_seconds": (10, 55, 55),
               "heartbeat_seconds": (30, 300, 180)}

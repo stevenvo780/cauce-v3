@@ -331,6 +331,82 @@ class PraxisSupervisionTests(unittest.TestCase):
         self.assertEqual(len(self.engineering_posts()), 0)
         self.assertEqual(len(self.api.posts), 3)
 
+    def test_root_limit_configuration_defaults_to_six_accepts_twelve_and_rejects_thirteen(self):
+        path = self.workspace / "supervision-config.json"
+        for limit, expected in ((None, 6), (12, 12), (13, None)):
+            with self.subTest(limit=limit):
+                config = {**self.config, "issue_count": 37, "roadmap_count": 216}
+                config.pop("root_limit")
+                if limit is not None:
+                    config["root_limit"] = limit
+                path.write_text(json.dumps(config))
+                if expected is None:
+                    with self.assertRaisesRegex(SUP.SupervisionError, "invalid_configuration"):
+                        SUP.load_config(path)
+                else:
+                    self.assertEqual(SUP.load_config(path)["root_limit"], expected)
+
+    def test_extended_budget_preserves_nine_roots_and_publishes_one_earned_continuation(self):
+        self.config["root_limit"] = 12
+        self.assertEqual(self.run_pass()["action"], "root_published")
+        supervisor = self.supervisor()
+        day, yesterday = SUP.STATE.utc_day(NOW), SUP.STATE.utc_day(NOW - 86400)
+        supervisor.state["roots"] = {day: 9, yesterday: 4}
+        supervisor.save()
+        progressed = self.snapshot(NEXT_HEAD)
+        progressed.update(source_hashes={"apps/web/app.js": "b" * 64}, verification_source_current=True,
+                          gate_artifacts=["tests:" + "b" * 64])
+        self.assertEqual(self.run_pass(NOW + 300, progressed, active=1)["action"], "root_pending")
+        self.assertEqual(len(self.engineering_posts()), 1)
+        self.assertEqual(json.loads(self.state_path.read_text())["roots"], {day: 9, yesterday: 4})
+        self.api.receipt = {"chain_open": False, "deliveries": [{"status": "done", "reply": "verified commit"}]}
+        self.assertEqual(self.run_pass(NOW + 600, progressed)["action"], "root_finished_progress")
+        self.assertEqual(self.run_pass(NOW + 1079, progressed)["action"], "idle_observation")
+        self.assertEqual(self.run_pass(NOW + 1080, progressed)["action"], "cooldown")
+        self.assertEqual(self.run_pass(NOW + 1800, progressed)["action"], "root_published")
+        state = json.loads(self.state_path.read_text())
+        self.assertEqual(state["roots"], {day: 10, yesterday: 4})
+        self.assertFalse(state["continuation_earned"])
+        self.assertEqual(len(self.engineering_posts()), 2)
+        self.api.receipt = {"chain_open": True, "deliveries": [{"status": "started", "reply": None}]}
+        self.assertEqual(self.run_pass(NOW + 3300, progressed)["action"], "root_pending")
+        self.assertEqual(json.loads(self.state_path.read_text())["roots"], state["roots"])
+        self.assertEqual(len(self.engineering_posts()), 2)
+
+    def test_extended_budget_retains_activity_readiness_and_progress_guards(self):
+        self.config["root_limit"] = 12
+        snapshot = self.snapshot()
+        day = SUP.STATE.utc_day(NOW)
+        for active, ready, earned, action in ((1, True, True, "active_work"),
+                                              (0, False, True, "actors_unavailable"),
+                                              (0, True, False, "no_new_progress")):
+            with self.subTest(action=action):
+                self.state_path.unlink(missing_ok=True)
+                supervisor = self.supervisor()
+                supervisor.state.update(roots={day: 9}, continuation_earned=earned,
+                                        last_finished={"engineering": snapshot})
+                supervisor.save()
+                self.assertEqual(self.run_pass(snapshot=snapshot, active=active, ready=ready)["action"], action)
+                state = json.loads(self.state_path.read_text())
+                self.assertEqual(state["roots"], {day: 9})
+                self.assertNotIn("active_root", state)
+                self.assertEqual(self.engineering_posts(), [])
+
+    def test_extended_daily_budget_is_exhausted_at_twelve(self):
+        self.config["root_limit"] = 12
+        supervisor = self.supervisor()
+        day = SUP.STATE.utc_day(NOW)
+        supervisor.state["roots"][day] = 12
+        supervisor.state["continuation_earned"] = True
+        supervisor.save()
+        self.assertEqual(self.run_pass()["action"], "root_fuel_exhausted")
+        self.assertEqual(self.run_pass(NOW + 1500)["action"], "root_fuel_exhausted")
+        state = json.loads(self.state_path.read_text())
+        self.assertEqual(state["roots"], {day: 12})
+        self.assertNotIn("active_root", state)
+        self.assertEqual(self.engineering_posts(), [])
+        self.assertEqual(len(self.api.posts), 1)
+
     def test_previous_day_unknown_notices_and_new_notices_share_today_post_budget(self):
         self.api.post_errors = ["transport_unknown"] * 3
         yesterday = self.supervisor()
