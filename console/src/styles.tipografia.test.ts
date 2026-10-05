@@ -23,6 +23,7 @@ const HOJAS = [
   'features/auth/human-profile.css',
   'features/config/config.css',
   'features/config/settings.css',
+  'features/config/AgentRegistryEditor.css',
   'features/config/toggles.css',
   'features/landing/landing.css',
   'features/audit/audit.css',
