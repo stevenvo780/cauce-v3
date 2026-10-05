@@ -6,12 +6,12 @@
 // con fila en agents y enabled=true el alias reclama lease; con enabled=false
 // el lease se rechaza dentro de la transacción (0 filas, sin efectos).
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createComposeTestStack } from './fixtures/compose-test-stack.mjs';
 
 const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const COMPOSE = path.join(ops, 'compose.test.yaml');
+const stack = await createComposeTestStack(ops, 'alta-baja');
 const TENANT = 'Steven';
 const ROOM = 'grp.steven';
 const ALIAS = `t030-${process.pid}-${Date.now().toString(36)}`;
@@ -26,10 +26,7 @@ function quote(value) {
 }
 
 function compose(args, { timeoutMs = 60_000 } = {}) {
-  const result = spawnSync('docker', ['compose', '-f', COMPOSE, ...args], {
-    encoding: 'utf8',
-    timeout: timeoutMs,
-  });
+  const result = stack.compose(args, { timeout: timeoutMs });
   if (result.error) throw new Error(`docker compose ${args.join(' ')}: ${result.error.message}`);
   return result;
 }
@@ -146,5 +143,5 @@ DELETE FROM memberships WHERE tenant_id = ${quote(TENANT)} AND alias = ${quote(A
 DELETE FROM agents WHERE tenant_id = ${quote(TENANT)} AND alias = ${quote(ALIAS)};`]);
     if (cleanup.status !== 0) process.stderr.write(`aviso: limpieza de ${ALIAS} falló:\n${cleanup.stderr}`);
   }
-  // La pila queda levantada a propósito: es compartida con otras suites.
+  await stack.cleanup();
 }

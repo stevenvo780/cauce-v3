@@ -10,23 +10,23 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createComposeTestStack } from './fixtures/compose-test-stack.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ops = path.resolve(here, '..');
-const compose = path.join(ops, 'scripts', 'compose.sh');
-const cli = path.join(ops, 'cli', 'cauce');
+const stack = await createComposeTestStack(ops, 'rescate');
 const SENDER = { tenant: 'Steven', alias: 'kant', room: 'grp.steven' };
 const RECIPIENT = { tenant: 'Steven', alias: 'argos' };
 const ATTEMPT_TIMEOUT_MS = 45_000;
 
 function runCompose(args, { input = undefined, timeout = 60_000 } = {}) {
-  const result = spawnSync(compose, ['test', ...args], { encoding: 'utf8', input, timeout });
+  const result = stack.compose(args, { input, timeout });
   if (result.error) throw new Error(`compose.sh test ${args.join(' ')}: ${result.error.message}`);
   return result;
 }
 
 function runCli(args) {
-  const result = spawnSync(cli, ['pila-test', ...args], { encoding: 'utf8', timeout: 60_000 });
+  const result = spawnSync(stack.cli, ['pila-test', ...args], { encoding: 'utf8', timeout: 60_000, env: stack.env });
   if (result.error) throw new Error(`cauce pila-test ${args.join(' ')}: ${result.error.message}`);
   return result;
 }
@@ -171,6 +171,7 @@ function waitReady(deadlineMs = 180_000) {
   }
 }
 
+try {
 const up = runCompose(['up', '-d', 'gateway', 'dispatcher'], { timeout: 240_000 });
 assert.equal(up.status, 0, `compose up de la pila de pruebas: ${up.stderr.trim().slice(0, 300)}`);
 waitReady();
@@ -222,3 +223,6 @@ assert.equal(despues.status, 0, despues.stderr.trim().slice(0, 300));
 assert.match(despues.stdout, /status=done/);
 
 process.stdout.write(`rescate por CLI ok: atascada=${atasco.delivery_id} clon=${clon} clon_final=done auditoria=delivery.replay/allow\n`);
+} finally {
+  await stack.cleanup();
+}
