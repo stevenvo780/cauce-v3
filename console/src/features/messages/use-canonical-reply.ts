@@ -21,6 +21,9 @@ export interface CanonicalReply {
   reply?: string | null;
 }
 
+const MISSING_REPLY_WINDOW_MS = 120_000;
+const REPLY_POLL_INTERVAL_MS = 2_500;
+
 function terminal(status: DeliveryState | null | undefined): boolean {
   return status === 'done' || status === 'failed' || status === 'dead';
 }
@@ -62,14 +65,28 @@ export function useCanonicalReply(input: {
   const key = active
     ? JSON.stringify([publisherSubject, tenantId, alias, root?.messageId, root?.deliveryId])
     : 'canonical-reply:inactive';
+  const [automaticFailures, setAutomaticFailures] = useState({ key, count: 0 });
+  const currentKey = useRef(key);
+  useEffect(() => { currentKey.current = key; }, [key]);
   const resource = useResource<CanonicalReply | undefined>(key, async () => {
     if (!active || !root) return undefined;
-    return project(await api.getMessage(root.messageId), root, tenantId, alias);
+    try {
+      const reply = project(await api.getMessage(root.messageId), root, tenantId, alias);
+      if (currentKey.current === key) setAutomaticFailures((current) => (
+        current.key === key && current.count === 0 ? current : { key, count: 0 }
+      ));
+      return reply;
+    } catch (error) {
+      if (currentKey.current === key) setAutomaticFailures((current) => ({
+        key, count: Math.min(3, (current.key === key ? current.count : 0) + 1),
+      }));
+      throw error;
+    }
   });
   const reload = resource.reload;
   const [purgedKey, setPurgedKey] = useState<string>();
-  const [automaticFailures, setAutomaticFailures] = useState(0);
   const [unresolvedClose, setUnresolvedClose] = useState({ key, reads: 0 });
+  const [missingReplyWindow, setMissingReplyWindow] = useState<{ key: string; startedAt?: number }>({ key });
   const previousStatus = useRef<DeliveryState | null | undefined>(root?.status);
   const rootTerminal = terminal(root?.status);
 
@@ -80,11 +97,6 @@ export function useCanonicalReply(input: {
       setPurgedKey((current) => current === key ? undefined : current);
     }
   }, [key, resource.data, resource.error]);
-
-  useEffect(() => {
-    if (resource.error) setAutomaticFailures((count) => Math.min(3, count + 1));
-    else if (resource.data) setAutomaticFailures(0);
-  }, [resource.data, resource.error]);
 
   const effectiveStatus = root?.status ?? resource.data?.status;
   const effectiveTerminal = terminal(effectiveStatus);
@@ -108,19 +120,30 @@ export function useCanonicalReply(input: {
   const accessError = resource.error instanceof ApiError && [401, 403, 404].includes(resource.error.status);
   const accessDenied = purgedKey === key || accessError;
   const data = accessDenied ? undefined : resource.data;
+  const waitingForMissingReply = effectiveStatus === 'done' && data !== undefined
+    && data.chainOpen !== true && !data.reply?.trim();
+  useEffect(() => {
+    setMissingReplyWindow((current) => {
+      if (!waitingForMissingReply) return current.key === key && current.startedAt === undefined ? current : { key };
+      return current.key === key && current.startedAt !== undefined ? current : { key, startedAt: Date.now() };
+    });
+  }, [key, waitingForMissingReply]);
+  const withinMissingReplyWindow = waitingForMissingReply && (missingReplyWindow.key !== key
+    || missingReplyWindow.startedAt === undefined || Date.now() - missingReplyWindow.startedAt < MISSING_REPLY_WINDOW_MS);
   const retry = useCallback(() => {
-    setAutomaticFailures(0);
+    setAutomaticFailures({ key, count: 0 });
+    if (waitingForMissingReply) setMissingReplyWindow({ key, startedAt: Date.now() });
     void reload();
-  }, [reload]);
+  }, [key, reload, waitingForMissingReply]);
 
   const rootInProgress = ['pending', 'leased', 'accepted', 'started', 'retry'].includes(effectiveStatus ?? '');
   const unresolvedReads = unresolvedClose.key === key ? unresolvedClose.reads : 0;
   const boundedUnresolvedClose = resource.data?.chainOpen === false && !effectiveTerminal;
-  const shouldPoll = active && !resource.loading && !accessDenied && automaticFailures < 3
+  const shouldPoll = active && !resource.loading && !accessDenied && (automaticFailures.key !== key || automaticFailures.count < 3)
     && (data?.chainOpen === true || (data?.chainOpen !== false && rootInProgress)
-      || (boundedUnresolvedClose && unresolvedReads < 3));
+      || (boundedUnresolvedClose && unresolvedReads < 3) || withinMissingReplyWindow);
   const poll = useCallback(() => { void reload(); }, [reload]);
-  usePolling(poll, shouldPoll ? 2_500 : 0, { pausedWhile: resource.loading });
+  usePolling(poll, shouldPoll ? REPLY_POLL_INTERVAL_MS : 0, { pausedWhile: resource.loading });
 
   const error = resource.error;
   const stale = Boolean(error && data && !(error instanceof ApiError && [401, 403, 404].includes(error.status)));
