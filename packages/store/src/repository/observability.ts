@@ -346,7 +346,7 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
       max_attempts: row.max_attempts,
       available_at: row.available_at,
       last_error: row.last_error,
-      dlq_resolved: row.dlq_resolved === true,
+      dlq_resolved: row.dlq_resolved,
     }]);
     // `failed` counts as dead letter because it already has a reproducible row and must appear in the total.
     const counts = items.reduce<{ pending: number; retrying: number; dead: number }>((value, row) => {
