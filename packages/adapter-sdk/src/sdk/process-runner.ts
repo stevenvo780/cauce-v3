@@ -200,7 +200,8 @@ export class SpawnCommandRunner {
 
       const settle = (): void => {
         if (settled) return;
-        if (phaseFrames !== undefined) stderr = collect(stderr, phaseFrames.finish());
+        if (phaseFrames !== undefined) stderr = collect(stderr, phaseFrames.finish(timedOut || cancelled || outputExceeded));
+        outputExceeded ||= phaseFrames !== undefined && phaseFrames.diagnosticBytes > this.maxOutputBytes;
         settled = true;
         phase("runner_settled");
         clearTimeout(timeout);
