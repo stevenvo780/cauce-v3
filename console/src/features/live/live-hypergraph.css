@@ -1,12 +1,3 @@
-/*
- * Hipergrafo vivo de la sala de máquinas.
- *
- * Reusa los seis matices y los tonos de estado que ya definen `styles.css` y `live.css`, así que
- * el modo claro se hereda sin duplicar paleta. Todo lo que se mueve acá significa algo: el punto
- * que viaja indica el sentido de una delegación real, y el ámbar indica que lleva demasiado.
- * Nada gira por decoración.
- */
-
 .lhg {
   --lhg-0: var(--mint);
   --lhg-1: var(--blue);
@@ -14,111 +5,105 @@
   --lhg-3: var(--amber);
   --lhg-4: var(--lime);
   --lhg-5: #6fd3e8;
-  position: relative;
+  width: 100%;
+  min-width: 0;
+  color: var(--text);
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) .lhg { --lhg-5: #0f7c92; }
 }
 
-/* Gemela del bloque de arriba para el tema claro FORZADO: la consulta de medios no llega
-   cuando el sistema prefiere oscuro y el operador eligió «claro» en la barra superior. */
 :root[data-theme="light"] .lhg { --lhg-5: #0f7c92; }
 
-
-/*
- * En una pantalla angosta el grafo NO se encoge hasta ser ilegible: se desplaza. Un hipergrafo de
- * 15 muñecos reducido a 420 px de ancho no es una versión compacta de la información, es la misma
- * información ilegible, que es peor que una barra de scroll. El `min-width` es el ancho por debajo
- * del cual los nombres dejan de leerse.
- */
-.lhg-scroll {
-  max-width: 100%;
-  overscroll-behavior-x: contain;
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-.lhg-scroll:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-
-/*
- * `min-width: 0` en toda la cadena hasta el contenedor con scroll.
- *
- * Sin esto el `overflow-x: auto` de arriba no sirve para nada: un hijo de grid/flex tiene
- * `min-width: auto`, o sea que se niega a encogerse por debajo de su contenido, y el `min-width`
- * del SVG empuja hacia afuera hasta que **la página entera** scrollea en horizontal. Medido: a
- * 900 px de viewport, `document.scrollWidth > clientWidth`. Que scrollee el grafo es la intención;
- * que scrollee la página es un defecto.
- */
-.lhg,
-.live-page > *,
-.live-page .panel,
-.live-page .panel > * { min-width: 0; }
-
-.lhg-svg {
-  display: block;
+.lhg-viewport {
+  position: relative;
   width: 100%;
-  min-width: 860px;
-  height: auto;
-  max-height: 82vh;
+  min-width: 0;
+  height: min(62svh, 620px);
+  min-height: 420px;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background:
-    radial-gradient(circle at 20% 6%, rgb(122 184 255 / 8%), transparent 46%),
-    radial-gradient(circle at 80% 96%, rgb(99 222 185 / 7%), transparent 44%),
+    radial-gradient(circle at 18% 10%, rgb(122 184 255 / 8%), transparent 45%),
+    radial-gradient(circle at 82% 88%, rgb(99 222 185 / 7%), transparent 42%),
     var(--surface-2);
-  overflow: visible;
+  touch-action: none;
 }
 
-.lhg-empty,
-.lhg-legend,
-.lhg-note {
-  margin: var(--space-3) var(--space-1) 0;
-  color: var(--muted);
+.lhg-flow-canvas,
+.lhg-flow-canvas .react-flow__viewport,
+.lhg-flow-canvas .react-flow__renderer { width: 100%; height: 100%; }
+.lhg-flow-canvas .react-flow__pane { cursor: grab; }
+.lhg-flow-canvas .react-flow__pane:active { cursor: grabbing; }
+.lhg-flow-canvas .react-flow__attribution { display: none; }
+.lhg-flow-canvas .react-flow__edges { overflow: visible; }
+.lhg-flow-canvas .react-flow__nodes { overflow: visible; }
+.lhg-flow-canvas .react-flow__viewport-portal { z-index: 0; pointer-events: none; }
+.lhg-flow-canvas .react-flow__edges { z-index: 1; }
+.lhg-flow-canvas .react-flow__nodes { z-index: 2; }
+.lhg-flow-canvas .react-flow__node { border: 0; background: transparent; box-shadow: none; }
+.lhg-flow-canvas .react-flow__node.selected { box-shadow: none; }
+.lhg-flow-canvas .react-flow__edge { pointer-events: none; }
+.lhg-flow-canvas .react-flow__handle { pointer-events: none; }
+
+.lhg-controls {
+  display: flex;
+  gap: var(--space-2);
+  margin: var(--space-3);
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.lhg-controls .react-flow__controls-button {
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lhg-controls .react-flow__controls-button:focus-visible,
+.lhg-controls .react-flow__controls-button:hover { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+.lhg-layer-badge {
+  margin: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
   font-size: var(--tipo-rotulo);
-  line-height: 1.6;
+  font-weight: 650;
+  pointer-events: none;
+}
+.lhg-mobile-hint { display: block; font-size: 11px; font-weight: 500; }
+
+.lhg-regions {
+  position: absolute;
+  inset: 0 auto auto 0;
+  overflow: visible;
+  pointer-events: none;
 }
 
-/* El hueco del mapa cuando la lectura de la topología FALLÓ lleva su propio botón de reintento
-   dentro: sin este hueco el botón queda pegado al párrafo y se lee como parte de la frase. */
-.lhg-empty p { margin: 0 0 var(--space-2); }
-.lhg-empty strong { color: var(--text); font-weight: 600; }
-
-.lhg-legend strong { color: var(--text); font-weight: 600; }
-.lhg-note { color: var(--faint); }
-
-/* --- Salas ---------------------------------------------------------------- */
-
-.lhg-room-fill {
-  fill: currentColor;
-  opacity: .07;
-  transition: opacity .3s ease;
-}
-
-/*
- * El contorno de sala es CONTEXTO, no el mensaje. Antes era una línea discontinua a 45 % que
- * además se movía, y competía de igual a igual con las flechas de delegación — que son la pregunta
- * que responde esta vista. Ahora es continua, fina y tenue: sigue delimitando la región, pero
- * ninguna región le gana en atención a una entrega en vuelo.
- */
-.lhg-room-line {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.25;
-  stroke-opacity: .3;
-}
-
+.lhg-room-fill { fill: currentColor; opacity: .075; }
+.lhg-room-line { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-opacity: .34; }
 .lhg-room-label {
   fill: var(--muted);
-  /* El lienzo se dibuja a ~0,8 del tamaño del viewBox, así que estos px NO son los px que se ven:
-     hay que compensar o los nombres quedan en 9 px reales, que es donde deja de leerse. */
   font-size: var(--tipo-cuerpo);
-  font-weight: 600;
+  font-weight: 650;
   letter-spacing: .02em;
   paint-order: stroke;
   stroke: var(--surface-2);
   stroke-width: 4px;
   stroke-linejoin: round;
-  pointer-events: none;
 }
 
 .lhg-hue-0 { color: var(--lhg-0); }
@@ -128,289 +113,128 @@
 .lhg-hue-4 { color: var(--lhg-4); }
 .lhg-hue-5 { color: var(--lhg-5); }
 
-/* --- Delegaciones vivas --------------------------------------------------- */
-
-/*
- * Esto es lo ÚNICO que la vista tiene que gritar. Es la respuesta a "quién le está pasando trabajo
- * a quién ahora mismo"; todo lo demás (regiones, nombres, colas) está para poder leerla.
- */
-.lhg-flow { color: var(--blue); }
-
-.lhg-flow-line {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2.6;
-  stroke-opacity: .92;
-  filter: drop-shadow(0 0 4px rgb(122 184 255 / 45%));
-  transition: stroke-opacity .3s ease;
+.lhg-bot {
+  position: relative;
+  width: 178px;
+  height: 118px;
+  padding: 0;
+  overflow: visible;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  transition: opacity .15s ease, border-color .15s ease;
 }
 
-.lhg-flow-dot {
-  fill: currentColor;
-  filter: drop-shadow(0 0 6px currentColor);
-}
-
-/* Ámbar = lleva más de 5 minutos en vuelo. Es un aviso, no un adorno. */
-.lhg-flow.is-slow { color: var(--amber); }
-.lhg-flow.is-slow .lhg-flow-line { stroke-dasharray: 6 5; }
-
-.lhg-flow.is-dim .lhg-flow-line { stroke-opacity: .12; }
-.lhg-flow.is-dim .lhg-flow-dot { opacity: .15; }
-
-/* --- Muñecos -------------------------------------------------------------- */
-
-.lhg-bot { cursor: pointer; }
-.lhg-bot:focus { outline: none; }
-.lhg-bot-hit { fill: transparent; }
-
-.lhg-bot-avatar {
+.lhg-bot-button {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  grid-template-rows: 1fr auto;
+  align-items: center;
   width: 100%;
   height: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.lhg-bot-button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+.lhg-bot.is-active { border-color: var(--blue); }
+.lhg-bot.is-dim { opacity: .3; }
+.lhg-bot.is-unknown { border-style: dashed; }
+
+.lhg-bot-avatar {
+  grid-row: 1 / 3;
   display: grid;
   place-items: center;
-}
-
-.lhg-bot-avatar svg { width: 100%; height: 100%; }
-
-.lhg-bot-name {
-  fill: var(--text);
-  font-size: var(--tipo-cuerpo);
-  font-weight: 600;
-  paint-order: stroke;
-  stroke: var(--surface-2);
-  stroke-width: 4.5px;
-  stroke-linejoin: round;
-  pointer-events: none;
-}
-
-/*
- * Un agente que la topología declara pero la actividad no reporta.
- *
- * NUNCA se pinta como sano — "no informado" no es lo mismo que "bien". Pero antes se comunicaba
- * bajando TODO al 38 % de opacidad, y así `atlas`, `iza`, `seneca` y `midas` sencillamente no se
- * leían: la vista escondía justo a los agentes de los que no se sabe nada. Ahora la marca vive en
- * el contorno (anillo punteado) y en el relleno del muñeco; el NOMBRE se lee igual que el de
- * cualquier otro, porque saber a quién no estás viendo es la mitad del dato.
- */
-.lhg-bot.is-unknown .lhg-bot-avatar { opacity: .62; filter: grayscale(.85); }
-.lhg-bot.is-unknown .lhg-bot-name { fill: var(--muted); }
-
-.lhg-bot-unknown-ring {
-  fill: none;
-  stroke: var(--faint);
-  stroke-width: 1.6;
-  stroke-dasharray: 3 4;
-  opacity: .85;
-}
-
-.lhg-bot.is-active .lhg-bot-name { fill: var(--text); }
-.lhg-bot.is-active .lhg-bot-hit { fill: currentColor; fill-opacity: .07; }
-.lhg-bot.is-dim { opacity: .28; }
-
-.lhg-bot:focus-visible .lhg-bot-hit {
-  fill: none;
-  stroke: var(--blue);
-  stroke-width: 3;
-}
-
-/* Cola pendiente: el número que más rápido delata a un agente que se está quedando atrás. */
-.lhg-bot-queue circle {
-  fill: var(--amber-dim);
-  stroke: var(--amber);
-  stroke-width: 1.5;
-}
-
-.lhg-bot-queue text {
-  fill: var(--amber);
-  font-size: var(--tipo-rotulo);
+  width: 44px;
+  height: 54px;
+  color: var(--muted);
+  font-size: 26px;
   font-weight: 700;
 }
 
-/*
- * `styles.css` ya frena toda animación bajo `prefers-reduced-motion`. Acá hay que NEUTRALIZAR, no
- * solo congelar: un punto detenido a mitad de una flecha se lee como "hay algo trabado ahí", y en
- * esta vista un falso indicio de estado es peor que no animar nada.
- */
+.lhg-bot-avatar .agent-avatar { width: 44px; height: 54px; }
+.lhg-bot-avatar[data-unknown="true"] { opacity: .7; }
+.lhg-bot-name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.lhg-bot-word { align-self: start; color: var(--muted); font-size: var(--tipo-rotulo); }
+.lhg-bot-queue {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  min-width: 21px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--amber);
+  border-radius: 999px;
+  background: var(--amber-dim);
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 750;
+  text-align: center;
+}
 
-/* --- La PALABRA debajo del alias ------------------------------------------
- *
- * Tercer canal, redundante con el relleno y con el anillo, y el único que sobrevive a un monitor
- * mal calibrado, a un daltonismo y a una captura de pantalla en blanco y negro. Existe por una
- * razón medida: el estado NORMAL de esta flota son quince muñecos sin trabajo, y sin la palabra
- * escrita eso se lee como quince muñecos muertos.
- */
-.lhg-bot-word {
-  fill: var(--muted);
+.lhg-hidden-handle,
+.lhg-anchor-handle {
+  width: 8px;
+  height: 8px;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+}
+
+.lhg-anchor { width: 1px; height: 1px; pointer-events: none; }
+.lhg-human-node {
+  display: grid;
+  place-items: center;
+  width: 74px;
+  height: 56px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+.lhg-human-node span { font-size: 21px; font-weight: 700; }
+.lhg-human-node small { overflow: hidden; max-width: 66px; color: var(--muted); font-size: 10px; text-overflow: ellipsis; }
+
+.lhg-flow-line { fill: none; stroke: var(--blue); stroke-width: 2.6; stroke-opacity: .9; }
+.lhg-flow-dot { fill: var(--blue); }
+.lhg-flow.is-slow { color: var(--amber); }
+.lhg-flow.is-slow .lhg-flow-line { stroke: var(--amber); stroke-dasharray: 6 5; }
+.lhg-flow.is-slow .lhg-flow-dot { fill: var(--amber); }
+.lhg-flow.is-dim .lhg-flow-line { stroke-opacity: .16; }
+.lhg-flow.is-dim .lhg-flow-dot { opacity: .18; }
+.lhg-acl-line { fill: none; stroke: var(--violet); stroke-width: 2; stroke-dasharray: 7 6; stroke-opacity: .74; }
+.lhg-acl-line.is-denied { stroke: var(--red); }
+.lhg-acl-label { fill: var(--muted); font-size: 12px; paint-order: stroke; stroke: var(--surface-2); stroke-width: 4px; }
+.lhg-origin-line { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 3 5; }
+
+.lhg-summary,
+.lhg-empty {
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
   font-size: var(--tipo-rotulo);
-  font-weight: 600;
-  letter-spacing: .01em;
-  paint-order: stroke;
-  stroke: var(--surface-2);
-  stroke-width: 4px;
-  stroke-linejoin: round;
-  pointer-events: none;
+  line-height: 1.6;
+}
+.lhg-empty-area { display: grid; align-content: center; min-height: 280px; padding: var(--space-5); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.lhg-empty { margin: 0; }
+.lhg-empty strong { color: var(--text); }
+.lhg-retry { position: absolute; right: var(--space-4); bottom: var(--space-4); min-height: 44px; padding: var(--space-2) var(--space-3); }
+
+@media (max-width: 760px) {
+  .lhg-viewport { height: min(55svh, 450px); min-height: 280px; }
+  .lhg-controls { margin: var(--space-2); gap: var(--space-1); }
+  .lhg-controls .react-flow__controls-button { width: 44px; height: 44px; }
+  .lhg-layer-badge { margin: var(--space-2); padding: var(--space-2); }
+  .lhg-bot { width: 158px; height: 108px; }
+  .lhg-bot-button { grid-template-columns: 42px minmax(0, 1fr); padding: var(--space-2); }
+  .lhg-bot-avatar, .lhg-bot-avatar .agent-avatar { width: 38px; height: 48px; }
 }
 
-.lhg-bot[data-state='down'] .lhg-bot-word,
-.lhg-bot[data-state='blocked'] .lhg-bot-word { fill: var(--red); }
-.lhg-bot[data-state='unknown'] .lhg-bot-word { fill: var(--faint); font-style: italic; }
-.lhg-bot[data-state='thinking'] .lhg-bot-word,
-.lhg-bot[data-state='settled'] .lhg-bot-word { fill: var(--muted); }
-
-/* El anillo del muñeco es el SEGUNDO canal: continuo = conectado, hueco = caído, punteado = sin
-   reportar. Va en el contorno y no en la opacidad, porque bajar la opacidad esconde justo a los
-   agentes de los que no se sabe nada. */
-.lhg-bot[data-state='down'] .lhg-bot-hit {
-  fill: none;
-  stroke: var(--red);
-  stroke-width: 1.6;
-  stroke-dasharray: 5 5;
-  opacity: .8;
-}
-
-/* --- Flechas: el grosor lo pone el componente por volumen ------------------ */
-
-/* `stroke-width` viaja en el atributo `style` del nodo (es un dato, no un estado), así que acá
-   sólo queda lo que no depende del volumen. */
-.lhg-flow-line { transition: stroke-opacity .3s ease, stroke-width .3s ease; }
-
-/* --- Capa de permisos ------------------------------------------------------
- *
- * Violeta, punteada y quieta, para que NUNCA se confunda con una entrega en vuelo: son dos
- * preguntas distintas y no pueden compartir vocabulario visual. Sin animación a propósito — un
- * permiso no está "viajando" a ningún sitio.
- */
-.lhg-flows-acl { color: var(--violet); }
-
-.lhg-flow-acl-line {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-dasharray: 7 6;
-  stroke-opacity: .8;
-}
-
-.lhg-flow-acl.is-denied { color: var(--faint); }
-.lhg-flow-acl.is-denied .lhg-flow-acl-line { stroke-opacity: .45; }
-
-.lhg-flow-acl-label {
-  fill: var(--muted);
-  font-size: var(--tipo-apunte);
-  font-weight: 600;
-  paint-order: stroke;
-  stroke: var(--surface-2);
-  stroke-width: 4px;
-  stroke-linejoin: round;
-  pointer-events: none;
-}
-
-/* --- Nodo persona ----------------------------------------------------------
- *
- * Vive en el pasillo de la izquierda, FUERA de toda región, porque una persona no es miembro de
- * ninguna sala. Sin esto, el trabajo que entra por el puente de Telegram parece un autoenvío: el
- * puente publica con el alias del propio agente, así que la arista sale `from === to` y
- * `delegationEdges()` la descarta entera — y con ella, la procedencia humana del encargo.
- */
-.lhg-human-dot {
-  fill: var(--surface-3);
-  stroke: var(--blue);
-  stroke-width: 1.6;
-  stroke-dasharray: 4 3;
-}
-
-.lhg-human-glyph {
-  fill: var(--blue);
-  font-size: var(--tipo-cuerpo);
-  font-weight: 700;
-  pointer-events: none;
-}
-
-.lhg-human-name {
-  fill: var(--muted);
-  font-size: var(--tipo-rotulo);
-  font-weight: 600;
-  paint-order: stroke;
-  stroke: var(--surface-2);
-  stroke-width: 4px;
-  stroke-linejoin: round;
-  pointer-events: none;
-}
-
-.lhg-human-line {
-  fill: none;
-  stroke: var(--blue);
-  stroke-width: 1.4;
-  stroke-dasharray: 3 5;
-  stroke-opacity: .55;
-}
-
-/*
- * Con `prefers-reduced-motion` el punto NO se esconde: se queda fijo a mitad de la curva, que es
- * lo que el componente ya coloca desde JS (`<animateMotion>` es SMIL y el CSS no lo apaga). Antes
- * la regla era `display: none`, y así una flecha viva y una muerta se veían idénticas justo para
- * quien pidió menos movimiento, no menos información.
- */
 @media (prefers-reduced-motion: reduce) {
-  .lhg-flow-dot { display: inline; }
-}
-
-/* ==========================================================================
-   Tenants, salas y aristas — las tarjetas de `TenantCards` y la lista de `AclEdgeList`
-   ========================================================================== */
-
-.tenant-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--space-3); }
-.tenant-card { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: #0c1422; }
-.tenant-card > header { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4); border-bottom: 1px solid var(--border); background: linear-gradient(90deg, #122238, #0e192a); }
-.tenant-card h3, .tenant-card p { margin: 0; }
-.tenant-card h3 { margin-top: var(--space-1); font-size: var(--tipo-panel); }
-.tenant-card header p { color: var(--faint); font-size: var(--tipo-apunte); font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-.tenant-glyph { display: grid; width: 34px; height: 34px; place-items: center; border-radius: var(--radius-sm); background: var(--mint-dim); color: var(--mint); }
-.room-stack { display: grid; gap: var(--space-2); padding: var(--space-3); }
-.room { padding: var(--space-3); border: 1px solid #1d2d45; border-radius: var(--radius-sm); background: #0f1929; }
-.room > strong { font-size: var(--tipo-rotulo); }
-.member-list { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-2); }
-.member { padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); background: #19354a; color: #9bcff5; font-size: var(--tipo-apunte); }
-.member.disabled { background: var(--red-dim); color: var(--red); text-decoration: line-through; }
-.edge-list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-.edge-list li { display: grid; grid-template-columns: minmax(80px, 1fr) auto minmax(80px, 1fr) auto 2fr; align-items: center; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: #0d1625; font-size: var(--tipo-rotulo); }
-.edge-list li > span:last-child { color: var(--muted); }
-
-@media (max-width: 1100px) {
-  .edge-list li { grid-template-columns: 1fr auto 1fr auto; }
-  .edge-list li > span:last-child { grid-column: 1 / -1; }
-}
-
-@media (max-width: 760px) {
-  .edge-list li { grid-template-columns: 1fr auto 1fr; }
-  .edge-list li .badge { grid-column: 1 / -1; }
-}
-
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .tenant-card { background: #ffffff; }
-  :root:not([data-theme="dark"]) .tenant-card > header { background: linear-gradient(90deg, #eef4fa, #f7fafd); }
-  :root:not([data-theme="dark"]) .room { border-color: #dbe4ef; background: #f8fafd; }
-  :root:not([data-theme="dark"]) .member { background: #e4eefb; color: #1d5f95; }
-  :root:not([data-theme="dark"]) .edge-list li { background: #f8fafd; }
-}
-
-/* Gemela del bloque de arriba para el tema claro FORZADO: la consulta de medios no llega
-   cuando el sistema prefiere oscuro y el operador eligió «claro» en la barra superior. */
-:root[data-theme="light"] .tenant-card { background: #ffffff; }
-:root[data-theme="light"] .tenant-card > header { background: linear-gradient(90deg, #eef4fa, #f7fafd); }
-:root[data-theme="light"] .room { border-color: #dbe4ef; background: #f8fafd; }
-:root[data-theme="light"] .member { background: #e4eefb; color: #1d5f95; }
-:root[data-theme="light"] .edge-list li { background: #f8fafd; }
-
-
-@media (max-width: 760px) {
-  .lhg-scroll {
-    max-height: 15rem;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-  .lhg-empty,
-  .lhg-legend,
-  .lhg-note { margin-top: var(--space-2); }
-  .lhg-note { margin-top: 0; }
-  .lhg-svg { max-height: none; }
+  .lhg-bot, .lhg-flow-line { transition: none; }
 }
