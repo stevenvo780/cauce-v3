@@ -1,3 +1,5 @@
+import { AgentContextWriteCoordinator } from '../console/agent-context-write-coordinator.js';
+import type { DatabasePool } from '@cauce/store';
 import { registerNativeContextRepositoryRoutes } from '../console/context-repository/native-routes.js';
 import { registerContextSourcePreviewRoute } from '../console/context-repository/apply-routes.js';
 import { confirmContextSource, snapshotContextSourceDeps } from '../console/context-repository/apply-preview.js';
@@ -39,7 +41,7 @@ import { publishRouteOptions } from './core/publish.js';
 export { createConsoleRoutes } from './console/access.js';
 
 async function expectativaDeRuntime(
-  pool: ConsoleRoutes['options']['pool'], tenantId: string, alias: string,
+  pool: ConsoleRoutes['options']['pool'], tenantId: string, alias: string, strict = false,
 ): Promise<{
   revision: number;
   generation: string;
@@ -51,11 +53,18 @@ async function expectativaDeRuntime(
     [tenantId, alias],
   );
   const row = result.rows[0];
-  if (row === undefined || !Array.isArray(row.documents)) return undefined;
+  if (row === undefined) return undefined;
+  if (!Array.isArray(row.documents)) {
+    if (strict) throw new StoreError('conflict', 'runtime expectation is invalid');
+    return undefined;
+  }
   const parsed = ProfileRuntimeContractSchema.safeParse({
     revision: Number(row.revision), generation: row.generation, documents: row.documents,
   });
-  if (!parsed.success) return undefined;
+  if (!parsed.success) {
+    if (strict) throw new StoreError('conflict', 'runtime expectation is invalid');
+    return undefined;
+  }
   return parsed.data;
 }
 
@@ -315,6 +324,7 @@ function registerConsoleAgentRoutes(
     );
     const recordRuntimeExpectation = repository.recordProfileRuntimeExpectation.bind(repository);
     const readRuntimeAdoption = repository.readProfileRuntimeAdoption.bind(repository);
+    const coordinator = new AgentContextWriteCoordinator(options.pool, profileProbe);
     const profileDeps: AgentProfileDeps = {
       authorize: autorizarPerfil,
       authorizeTarget: autorizarDestino,
@@ -327,6 +337,11 @@ function registerConsoleAgentRoutes(
       readContext: (tenantId, alias) => perfiles.readContextWithPresence(tenantId, alias),
       replaceProfile: (profile, expectedRevision, actor, source) =>
         perfiles.replace(profile, expectedRevision, actor, source),
+      readWriteExpectation: (tenantId, alias) => expectativaDeRuntime(options.pool, tenantId, alias, true),
+      replaceProfileInTransaction: (client, profile, expectedRevision, actor, source) =>
+        perfiles.replaceInTransaction(client, profile, expectedRevision, actor, source),
+      recordAuditInTransaction: (client, entry) => recordTerminalAudit(client as unknown as DatabasePool, entry),
+      coordinateWrite: (input) => coordinator.coordinate(input),
       prepareRuntime: (tenantId, alias, contexto) =>
         prepareAgentProfileRuntime(profileProbe, tenantId, alias, contexto),
       recordRuntimeExpectation: (tenantId, alias, revision, verification) =>
@@ -369,6 +384,13 @@ function registerConsoleAgentRoutes(
        * with those exact words, which is what the screen already knows how to render.
        */
       probe: profileProbe,
+      readRuntimeExpectation: (tenantId, alias) => expectativaDeRuntime(options.pool, tenantId, alias, true),
+      readContext: (tenantId, alias) => perfiles.readContextWithPresence(tenantId, alias),
+      coordinateWrite: (input) => coordinator.coordinate(input),
+      persistDocumentWrite: async (client, document, audit) => {
+        await new AgentContextRevisionsStore(client as unknown as DatabasePool).recordDocumentRevision(document);
+        await recordTerminalAudit(client as unknown as DatabasePool, audit);
+      },
       resolveOperator: resolveProfileOperator,
       // A denial leaving no audit row is worse than an unavailable route: the write is awaited.
       recordAudit: (entry) => recordTerminalAudit(options.pool, entry),
@@ -409,13 +431,10 @@ function registerConsoleAgentRoutes(
       measureContext: (tenantId, alias) =>
         medirContextoDeGobierno(profileProbe, tenantId, alias),
       readRuntimeExpectation: (tenantId, alias) =>
-        expectativaDeRuntime(options.pool, tenantId, alias),
-      recordRuntimeExpectation: (tenantId, alias, revision, verification) =>
-        recordRuntimeExpectation(
-          tenantId, alias, runtimeContractFromVerification(revision, verification),
-        ),
+        expectativaDeRuntime(options.pool, tenantId, alias, true),
+      coordinateWrite: (input) => coordinator.coordinate(input),
+      fenceRuntime: (input) => repository.reconcileAgentContextRuntime(input),
       deliveryInFlight: (tenantId, alias) => entregaEnVuelo(options.pool, tenantId, alias),
-      recordDocumentRevision: (input) => diario.recordDocumentRevision(input),
       recordAudit: (entry) => recordTerminalAudit(options.pool, entry),
     });
     registerAgentContextReconcileRoutes(app, {
@@ -429,6 +448,7 @@ function registerConsoleAgentRoutes(
       readRuntimeExpectation: (tenantId, alias) =>
         expectativaDeRuntime(options.pool, tenantId, alias),
       deliveryInFlight: (tenantId, alias) => entregaEnVuelo(options.pool, tenantId, alias),
+      coordinateWrite: (input) => coordinator.coordinate(input),
       reconcileRuntime: (input) => repository.reconcileAgentContextRuntime({
         ...input,
         tenantId: input.tenantId,

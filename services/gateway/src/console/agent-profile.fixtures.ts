@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto';
+import type { DatabaseClient } from '@cauce/store';
+import type { ContextWriteCoordinateInput, CoordinateResult } from './agent-context-write-coordinator.js';
 import type {
   AgentProfileDeps, PreparedProfileRuntime, ProfileRuntimePreflight,
 } from './agent-profile.routes.js';
@@ -97,4 +100,64 @@ export const MARK_PROFILE_APPLIED: NonNullable<AgentProfileDeps['markProfileAppl
   revision,
   applied_revision: revision,
 });
+
+
+export const FIXTURE_WRITE_OPERATION = {
+  operationId: randomUUID(), operationToken: randomUUID(), operationGeneration: randomUUID(), runtimeGeneration: 'gen-1',
+};
+
+export async function coordinateWriteFixture<T>(input: ContextWriteCoordinateInput<T>,
+  onQuery: (sql: string, values: readonly unknown[]) => Promise<void> = async () => undefined,
+  runtimeGeneration = 'gen-1',
+): Promise<CoordinateResult<T>> {
+  try {
+    const client = { query: async (sql: string, values: readonly unknown[] = []) => {
+      await onQuery(sql, values);
+      return { rows: [], rowCount: 1 };
+    } } as unknown as DatabaseClient;
+    await input.updateDesired?.(client);
+    const value = await input.dispatch({ ...FIXTURE_WRITE_OPERATION, runtimeGeneration,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+    await input.persistTarget(client, { operationId: FIXTURE_WRITE_OPERATION.operationId,
+      token: FIXTURE_WRITE_OPERATION.operationToken, generation: FIXTURE_WRITE_OPERATION.operationGeneration,
+      writer: { runtimeGeneration, containerId: 'fixture-container', writerInstanceId: randomUUID() },
+      state: 'quiescent', durability: 'post_fsync',
+      documents: input.documents.map((doc) => ({ name: doc.name, path: doc.path, sha: doc.targetSha })),
+    }, value);
+    return { state: 'committed', resolution: 'target', value };
+  } catch {
+    return { state: 'effect_unknown', operation_id: FIXTURE_WRITE_OPERATION.operationId };
+  }
+}
+
+export function profileWriteFixtureDeps(overrides: Partial<AgentProfileDeps>, operator: { operator_id: string; attributed: boolean }): AgentProfileDeps {
+  const ctx = contexto({ ...PERFIL_BODY, purpose: 'prior purpose' }, 'codex');
+  return {
+    authorize: async () => ACTOR,
+    recordAudit: async () => undefined,
+    resolveOperator: () => operator,
+    authorizeTarget: async (_actor, tenantId, alias) => ({ tenant_id: tenantId, alias, enabled: true }),
+    readContext: async () => ({
+      contexto: ctx, exists: true, revision: 1, applied_revision: 1,
+    }),
+    replaceProfile: REPLACE_PROFILE,
+    replaceProfileInTransaction: (_client, profile, revision, actor, source) =>
+      source === undefined
+        ? (overrides.replaceProfile ?? REPLACE_PROFILE)(profile, revision, actor)
+        : (overrides.replaceProfile ?? REPLACE_PROFILE)(profile, revision, actor, source),
+    recordAuditInTransaction: async (_client, entry) => { await overrides.recordAudit?.(entry); },
+    readWriteExpectation: async () => undefined,
+    coordinateWrite: (input) => coordinateWriteFixture(input, async (sql, values) => {
+      if (sql.includes('agent_profile_runtime_expectations')) await overrides.recordRuntimeExpectation?.(input.tenantId, input.alias, Number(values[2]), {
+        state: 'current', generation: String(values[3]), container_id: 'ws-zeus', observed_at: new Date(0).toISOString(),
+        documents: RUNTIME_VERIFICATION.documents,
+      });
+    }),
+    prepareRuntime: PREPARE_RUNTIME,
+    readRuntimeAdoption: RUNTIME_ADOPTION,
+    markProfileApplied: MARK_PROFILE_APPLIED,
+    ...overrides,
+  };
+}
 

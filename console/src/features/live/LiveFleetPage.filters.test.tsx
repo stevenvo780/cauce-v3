@@ -222,7 +222,9 @@ describe('the Client selector', () => {
     const kant = document.querySelector('[data-agent-key="Steven/kant"]');
     expect(kant).not.toBeNull();
     if (!kant) throw new Error('kant node not found');
-    await user.hover(kant);
+    const target = kant.querySelector('button');
+    if (!target) throw new Error('kant action is missing');
+    await user.hover(target);
 
     expect(salva.classList.contains('is-dim')).toBe(false);
     expect(kant.classList.contains('is-dim')).toBe(false);
@@ -262,13 +264,13 @@ describe('the topology is down', () => {
 
     await screen.findByLabelText('Veredicto de la flota');
     await screen.findAllByText(/No se pudo leer la topología/);
-    expect(document.querySelector('.lhg-svg')).toBeNull();
+    expect(document.querySelector('.lhg-viewport')).toBeNull();
 
     falla = false;
     await user.click(screen.getAllByRole('button', { name: /reintentar la topología/i })[0]);
 
     await waitFor(() => {
-      const svg = document.querySelector('.lhg-svg');
+      const svg = document.querySelector('.lhg-viewport');
       expect(svg).not.toBeNull();
       expect(svg?.querySelectorAll('.lhg-bot').length ?? 0).toBeGreaterThan(0);
     });
@@ -293,57 +295,3 @@ describe('the topology is down', () => {
   });
 });
 
-describe('prefers-reduced-motion', () => {
-  function conMatchMedia(reduce: boolean) {
-    // jsdom does not implement matchMedia. Install one that returns what the test needs, and
-    // preserve the real signature (addEventListener included) so we do not green-light a false
-    // positive with a stub more permissive than the browser.
-    window.matchMedia = (query: string) => ({
-      matches: reduce && query.includes('reduce'),
-      media: query,
-      onchange: null,
-      addListener: () => undefined,
-      removeListener: () => undefined,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-      dispatchEvent: () => false,
-    });
-  }
-
-  afterEach(() => {
-    Reflect.deleteProperty(window, 'matchMedia');
-  });
-
-  it('switches SMIL off, which CSS CANNOT switch off', async () => {
-    // A5. `<animateMotion>` is not a CSS animation: `prefers-reduced-motion` does not reach it
-    // from the stylesheet. It has to be asked from JS or the view violates what the rest of the
-    // console already respects.
-    conMatchMedia(true);
-    conActividad(mockActivity());
-    renderWithApi(<LiveFleetPage />);
-
-    await screen.findByLabelText('Veredicto de la flota');
-    await waitFor(() => { expect(document.querySelectorAll('.lhg-flow-line').length).toBeGreaterThan(0); });
-
-    expect(document.querySelectorAll('animateMotion')).toHaveLength(0);
-    // But the dot does NOT disappear: it stays fixed halfway along the curve. A live arrow and
-    // a dead one must remain distinguishable for whoever asked for less motion, not less
-    // information.
-    const puntos = [...document.querySelectorAll('.lhg-flow-dot')];
-    expect(puntos.length).toBeGreaterThan(0);
-    const cx = puntos[0]?.getAttribute('cx');
-    expect(cx).not.toBeNull();
-    expect(Number(cx)).toBeGreaterThan(0);
-    expect(Number(cx)).toBeLessThanOrEqual(4096);
-  });
-
-  it('without the setting on, the dot does travel: that is what conveys the DIRECTION of the delegation', async () => {
-    conMatchMedia(false);
-    conActividad(mockActivity());
-    renderWithApi(<LiveFleetPage />);
-
-    await screen.findByLabelText('Veredicto de la flota');
-    await waitFor(() => { expect(document.querySelectorAll('animateMotion').length).toBeGreaterThan(0); });
-    expect(document.querySelector('.lhg-flow-dot')?.getAttribute('cx')).toBeNull();
-  });
-});

@@ -13,7 +13,7 @@ import { server } from '../../mocks/server';
  * shortcuts panels are duplicated.
  */
 
-const SIN_CONFIG = http.get('http://localhost/v3/console/access', () =>
+const READ_ONLY_ACCESS = http.get('http://localhost/v3/console/access', () =>
   HttpResponse.json({
     subject: 'Miguel:janus', roles: [], permissions: ['message.publish'],
     observed_at: new Date().toISOString(),
@@ -45,24 +45,39 @@ it('la portada NO vuelve a dibujar el menú: el bloque «el resto de la consola�
   }
 });
 
-it('la barra lateral SIGUE negando /config a quien no lo puede abrir, con el motivo a la vista', async () => {
-  server.use(SIN_CONFIG);
+it('sin permiso de escritura, la barra abre /config en solo lectura', async () => {
+  server.use(READ_ONLY_ACCESS);
   window.history.pushState({}, '', '/overview');
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
   await userEvent.click(within(nav).getByRole('button', { name: 'Herramientas' }));
   const lateral = within(nav).getByRole('link', { name: /ajustes y altas/i });
-  await waitFor(() => { expect(lateral).toHaveAttribute('aria-disabled', 'true'); });
-  expect(lateral).toHaveAttribute('title', expect.stringContaining('permiso de control'));
-
+  expect(lateral).not.toHaveAttribute('aria-disabled');
   await userEvent.click(lateral);
-  expect(window.location.pathname).toBe('/overview');
+  expect(window.location.pathname).toBe('/config');
+  await screen.findByRole('heading', { level: 1, name: /ajustes y altas/i });
+  await userEvent.click(screen.getByRole('button', { name: 'Administración avanzada' }));
+  expect(await screen.findByText(/^Solo lectura:/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^Crear$/ })).toBeDisabled();
 });
 
-it('control negativo: con el permiso puesto, esa misma entrada sí navega', async () => {
-  // Without this, disabling the entry ALWAYS would also pass the test above, and the menu would
-  // be broken for the operator who does have the permission.
+it('abrir /config desde la barra no elude la denegación de lectura del servidor', async () => {
+  server.use(READ_ONLY_ACCESS, http.get('http://localhost/v3/console/config', () => HttpResponse.json(
+    { error: 'forbidden', message: 'read permission is required for configuration' }, { status: 403 },
+  )));
+  window.history.pushState({}, '', '/overview');
+  renderWithApi(<App />);
+
+  const nav = await screen.findByRole('navigation', { name: /principal/i });
+  await userEvent.click(within(nav).getByRole('button', { name: 'Herramientas' }));
+  await userEvent.click(within(nav).getByRole('link', { name: /ajustes y altas/i }));
+  expect(window.location.pathname).toBe('/config');
+  expect(await screen.findByText(/necesita permiso de lectura/i)).toBeInTheDocument();
+  expect(screen.queryByRole('list', { name: 'Agentes configurados' })).not.toBeInTheDocument();
+});
+
+it('con el permiso de escritura, esa misma entrada sigue navegando', async () => {
   window.history.pushState({}, '', '/overview');
   renderWithApi(<App />);
 

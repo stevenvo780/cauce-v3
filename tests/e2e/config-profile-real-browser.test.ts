@@ -161,6 +161,10 @@ async function configureMeasuredCodexRuntime(active: RealPtyFixture): Promise<vo
   replacementContainer = { name, id: replacementId };
 
   await docker(['exec', '--user', 'node', name, 'sh', '-lc', 'mkdir -p /tmp/.codex && chmod 700 /tmp/.codex']);
+  const journalDirectory = `/tmp/.codex/pty-governance-journal/${replacementId}`;
+  await docker(['exec', '--user', 'node', name, 'mkdir', '-p', journalDirectory]);
+  await docker(['exec', '--user', 'node', name, 'chmod', '700', journalDirectory]);
+  expect(await docker(['exec', '--user', 'node', name, 'stat', '-c', '%u:%g:%a', journalDirectory])).toBe('1000:1000:700');
   const bundle = JSON.parse(await readFile(join(active.directory, 'agent-bundle.json'), 'utf8')) as Record<string, unknown>;
   expect(bundle.tenant_id).toBe(active.tenant);
   expect(bundle.alias).toBe(active.targetAlias);
@@ -170,6 +174,7 @@ async function configureMeasuredCodexRuntime(active: RealPtyFixture): Promise<vo
     generation: `g${randomBytes(10).toString('hex')}`,
     home: '/tmp',
     harness: 'codex',
+    governance_journal_dir: journalDirectory,
     runtime_facts: { codex_home: '/tmp/.codex' },
   };
   await dockerInput([

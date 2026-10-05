@@ -5,7 +5,9 @@ import {
   registerAgentProfileRoutes, type AgentProfileDeps,
   type RespuestaDelPerfil, type TopeSuperado,
 } from './agent-profile.routes.js';
-import { ACTOR, contexto, PERFIL_BODY, REPLACE_PROFILE } from './agent-profile.fixtures.js';
+import {
+  ACTOR, contexto, PERFIL_BODY, profileWriteFixtureDeps, REPLACE_PROFILE,
+} from './agent-profile.fixtures.js';
 
 const RUTA = '/v3/console/tenants/Steven/agents/zeus/perfil';
 const MOTIVO = 'recorto el perfil para que entre en el tope del arnés';
@@ -124,10 +126,10 @@ describe('la vista previa y la siembra no pueden discrepar', () => {
   it('el PUT sigue negándose con 422 ANTES del CAS durable', async () => {
     const replaceProfile = vi.fn(REPLACE_PROFILE);
     const app = Fastify();
-    registerAgentProfileRoutes(app, {
+    const deps = profileWriteFixtureDeps({
       authorize: async () => ACTOR,
-    recordAudit: async () => undefined,
-    resolveOperator: () => ({ operator_id: 'steven@elenxos', attributed: true }),
+      recordAudit: async () => undefined,
+      resolveOperator: () => ({ operator_id: 'steven@elenxos', attributed: true }),
       authorizeTarget: async (_actor, tenantId, alias) => ({ tenant_id: tenantId, alias, enabled: true }),
       readContext: async () => ({
         contexto: contexto({ purpose: 'x' }, 'codex'), exists: true, revision: 1, applied_revision: 1,
@@ -144,7 +146,9 @@ describe('la vista previa y la siembra no pueden discrepar', () => {
           },
         );
       },
-    });
+    }, { operator_id: 'steven@elenxos', attributed: true });
+    const coordinateWrite = vi.spyOn(deps, 'coordinateWrite');
+    registerAgentProfileRoutes(app, deps);
     await app.ready();
     abierto = app;
 
@@ -158,5 +162,6 @@ describe('la vista previa y la siembra no pueden discrepar', () => {
     });
     expect(res.json<TopeSuperado>().message).toContain('tope medido del alias');
     expect(replaceProfile).not.toHaveBeenCalled();
+    expect(coordinateWrite).not.toHaveBeenCalled();
   });
 });

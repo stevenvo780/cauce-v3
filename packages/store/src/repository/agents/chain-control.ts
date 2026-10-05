@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isRfcUuid, type Origin, type Tenant } from '@cauce/protocol';
 import { type DatabaseClient, withTransaction } from '../../db.js';
-import { hubEdgeExistsSql, tenantReadableSql } from '../acl-edges.js';
+import { chainGateOriginTenantSql, hubEdgeExistsSql, tenantReadableSql } from '../acl-edges.js';
 import { postgresTextSafe } from '../deliveries.js';
 import { StoreError } from '../errors.js';
 import {
@@ -15,8 +15,7 @@ import { maxChainGateQuestionBytes } from './chain-control/policy.js';
 
 export type { AgentOutputRejectionCode } from './chain-control/policy.js';
 
-const gateOriginTenantSql = `COALESCE(NULLIF(gate.origin->'metadata'->>'bridge_tenant',''),
-  (SELECT root_message.tenant_id FROM messages root_message WHERE root_message.id=gate.root_message_id))`;
+const gateOriginTenantSql = chainGateOriginTenantSql;
 
 export abstract class AgentChainControlRepository extends AgentChainMaterializationRepository {
   private async assertChainGateOriginReadable(

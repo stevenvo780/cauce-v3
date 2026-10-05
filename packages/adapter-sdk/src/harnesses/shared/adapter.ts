@@ -1,3 +1,5 @@
+import { OPENCLAW_BRIDGE_PATH } from "../bridge-paths.js";
+import { phaseEmitter } from "../../sdk/openclaw-phases.js";
 import { createHash, randomUUID } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
@@ -72,6 +74,7 @@ export class HarnessAdapter {
   private readonly sessionLocks = new Map<string, Promise<void>>();
   private readonly commandOverride: HarnessCommandOverride | undefined;
   private readonly sessionNamespace: string | undefined;
+  private readonly canonicalTerminalSession: boolean;
   private readonly fallbackSessionKey: string | undefined;
   private readonly resolveCredentialEnv: (() => Promise<Readonly<Record<string, string>>>) | undefined;
   private readonly sharedSession: HarnessAdapterOptions["sharedSession"];
@@ -84,6 +87,7 @@ export class HarnessAdapter {
     this.store = options.store;
     this.commandOverride = options.commandOverride;
     this.sessionNamespace = options.sessionNamespace;
+    this.canonicalTerminalSession = options.canonicalTerminalSession ?? true;
     this.fallbackSessionKey = options.fallbackSessionKey;
     this.resolveCredentialEnv = options.resolveCredentialEnv;
     const environment = options.environment ?? process.env;
@@ -128,6 +132,10 @@ export class HarnessAdapter {
       && this.runner.witnessesHarnessStart === true;
   }
 
+  get supportsEmissionEndpoint(): boolean {
+    return this.sharedSession === undefined && !isSharedSessionRunner(this.runner);
+  }
+
   async execute(request: HarnessExecuteRequest): Promise<StructuredOutput> {
     if (request.context?.message_type === "agent.fanin") {
       throw new AdapterError(
@@ -139,16 +147,17 @@ export class HarnessAdapter {
     const effectiveSessionKey = this.laneSessionKey(request.sessionKey, request.sessionLane);
     if (effectiveSessionKey !== undefined && this.definition.sessionStrategy.kind !== "none") {
       const key = this.sessionStoreKey(effectiveSessionKey);
+      const ownsReservation = request.sessionReservation === undefined;
       const reservation = request.sessionReservation ?? this.reserveResolved(effectiveSessionKey);
       if (reservation.key !== key) {
-        reservation.release();
+        if (ownsReservation) reservation.release();
         throw new Error(`Session reservation mismatch for ${key}`);
       }
       try {
         await reservation.wait(request.signal);
         return await this.executeUnlocked(request, effectiveSessionKey);
       } finally {
-        reservation.release();
+        if (ownsReservation) reservation.release();
       }
     }
     return this.executeUnlocked(request, effectiveSessionKey);
@@ -329,7 +338,9 @@ export class HarnessAdapter {
     request: HarnessExecuteRequest,
     effectiveSessionKey: string | undefined,
   ): Promise<StructuredOutput> {
+    const phase = phaseEmitter(this.definition.id === "openclaw" ? request.onOpenClawPhase : undefined, "adapter");
     const session = await this.resolveSession(effectiveSessionKey, request.sessionOrigin);
+    phase("session_resolved");
     if (request.signal.aborted) throw abortReason(request.signal);
     const sessionContext: HarnessExecutionContext = session.context;
     const attachmentPlan = planAttachments(this.definition.id, request.attachments ?? []);
@@ -362,8 +373,15 @@ export class HarnessAdapter {
       ?? (request.context === undefined ? undefined : this.perfilVivoDelRuntime(request.context));
     let degradation: SharedSessionDegradation | undefined;
     if (!isSharedSessionRunner(this.runner)) request.onEmissionReady?.();
+    const phaseFrames = request.onOpenClawPhase !== undefined && this.definition.id === "openclaw"
+      && this.commandOverride === undefined && invocation.command === process.execPath
+      && invocation.args[0] === OPENCLAW_BRIDGE_PATH;
+    phase("runner_enter");
     const result = await this.runner.run({
+      ...(request.onOpenClawPhase === undefined ? {} : { onOpenClawPhase: request.onOpenClawPhase }),
+      ...(this.sharedSession !== undefined || isSharedSessionRunner(this.runner) || request.emissionSocketPath === undefined ? {} : { emissionSocketPath: request.emissionSocketPath }),
       ...invocation,
+      ...(phaseFrames ? { args: [...invocation.args, "--cauce-phase-observer-v1"], openClawPhaseFrames: true as const } : {}),
       ...workspaceCwd(),
       ...(() => {
         const env = this.definition.id === "openclaw"
@@ -395,6 +413,7 @@ export class HarnessAdapter {
       degradation = isSharedSessionRunner(this.runner) ? this.runner.takeDegradation() : undefined;
     });
 
+    phase("runner_resolved");
     if (degradation?.executionPrevented === true) {
       const shared = this.sharedSession;
       const code = degradation.reason === "prompt_not_dispatched" ? "PROMPT_NOT_DISPATCHED" : "SHARED_TUI_UNAVAILABLE";
@@ -505,6 +524,7 @@ export class HarnessAdapter {
           }),
     });
 
+    phase("decoded_final_valid");
     if (effectiveSessionKey !== undefined) {
       const origin = request.sessionOrigin === undefined
         ? {}
@@ -516,6 +536,7 @@ export class HarnessAdapter {
           ...origin,
         };
         if (this.definition.id === "openclaw"
+          && this.canonicalTerminalSession
           && this.sessionNamespace !== undefined
           && request.sessionLane !== "agent") {
           await this.store.setCanonicalOpenClawTerminalSession(

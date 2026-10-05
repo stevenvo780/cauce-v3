@@ -79,13 +79,13 @@ export function PtySessionDialog({ agent, resolution, pending, error, onCancel, 
       >
         <header>
           <p className="eyebrow">Sesión interactiva</p>
-          <h2 id="pty-dialog-title">Abrir PTY en {agent.alias}</h2>
+          <h2 id="pty-dialog-title">Abrir Terminal en {agent.alias}</h2>
         </header>
 
         <dl className="pty-dialog-facts" id="pty-dialog-scope">
           <div><dt><Container size={13} aria-hidden="true" /> Contenedor</dt><dd className="mono"><Unknown value={target?.container} /></dd></div>
           <div><dt><UserCog size={13} aria-hidden="true" /> Usuario destino</dt><dd className="mono"><Unknown value={target?.runtime_user} /></dd></div>
-          <div><dt><TerminalSquare size={13} aria-hidden="true" /> Modo</dt><dd className="mono">{target?.modes[0] ?? 'shell'}</dd></div>
+          <div><dt><TerminalSquare size={13} aria-hidden="true" /> Modo</dt><dd className="mono">shell · Terminal</dd></div>
         </dl>
 
         {shared.length ? (

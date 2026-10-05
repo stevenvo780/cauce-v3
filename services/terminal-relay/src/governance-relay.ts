@@ -11,6 +11,7 @@ import {
   type GovernanceWriteBatchOutcome, type GovernanceWritePrecondition,
 } from './gateway-client.js';
 import { hasControlCharacter } from './validation.js';
+import { parseGovernanceOperation, requestWriteStatus, type GovernanceOperationDescriptor } from './governance-operation.js';
 
 /**
  * `POST /v3/terminal/relay/read|write` — mTLS gates from the gateway to the governed disk.
@@ -40,6 +41,7 @@ export const GOVERNANCE_READ_PATH = '/v3/terminal/relay/read';
 export const GOVERNANCE_LIST_PATH = '/v3/terminal/relay/list';
 export const GOVERNANCE_WRITE_PATH = '/v3/terminal/relay/write';
 export const GOVERNANCE_WRITE_BATCH_PATH = '/v3/terminal/relay/write-batch';
+export const GOVERNANCE_WRITE_STATUS_PATH = '/v3/terminal/relay/write-status';
 
 /** 256 KiB base64 plus JSON. Nothing above this ceiling is accumulated. */
 const MAX_REQUEST_BYTES = 512 * 1024;
@@ -72,12 +74,20 @@ interface WriteRequest extends ReadRequest {
   readonly expectedTarget?: GovernanceWriteTarget;
   readonly content: Buffer;
   readonly precondition: GovernanceWritePrecondition;
+  readonly operation?: GovernanceOperationDescriptor;
 }
 
 interface WriteBatchRequest {
   readonly tenantId: string;
   readonly alias: string;
   readonly entries: readonly GovernanceWriteBatchEntry[];
+  readonly operation?: GovernanceOperationDescriptor;
+}
+
+export interface WriteStatusRequest {
+  readonly tenantId: string;
+  readonly alias: string;
+  readonly operation: GovernanceOperationDescriptor;
 }
 
 interface RejectedRequest {
@@ -85,6 +95,20 @@ interface RejectedRequest {
 }
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const OPERATION_FIELDS = [
+  'operation_generation', 'operation_id', 'operation_token', 'request_id', 'runtime_generation',
+] as const;
+
+function durableOperationFrom(source: Record<string, unknown>):
+  | { readonly operation: GovernanceOperationDescriptor }
+  | { readonly rejected: string }
+  | undefined {
+  if (!Object.hasOwn(source, 'operation')) return undefined;
+  const operation = parseGovernanceOperation(source.operation);
+  return operation === undefined
+    ? { rejected: 'la identidad de la operación durable está incompleta o no es válida' }
+    : { operation };
+}
 
 function parseObject(raw: string): { readonly value: Record<string, unknown> } | RejectedRequest {
   let parsed: unknown;
@@ -182,10 +206,12 @@ export function parseWriteRequest(raw: string): WriteRequest | { readonly reject
   const parsed = parseObject(raw);
   if ('rejected' in parsed) return parsed;
   const source = parsed.value;
-  const allowed = new Set(['tenant_id', 'alias', 'path', 'content_base64', 'precondition', 'expected_target']);
+  const allowed = new Set(['tenant_id', 'alias', 'path', 'content_base64', 'precondition', 'expected_target', 'operation']);
   if (Object.keys(source).some((key) => !allowed.has(key))) {
     return { rejected: 'el cuerpo trae campos que este protocolo no conoce' };
   }
+  const durable = durableOperationFrom(source);
+  if (durable !== undefined && 'rejected' in durable) return durable;
   const common = parseReadRequest(JSON.stringify({
     tenant_id: source.tenant_id, alias: source.alias, path: source.path,
   }));
@@ -218,11 +244,14 @@ export function parseWriteRequest(raw: string): WriteRequest | { readonly reject
   }
   const record = precondition as Record<string, unknown>;
   if (record.state === 'absent' && Object.keys(record).length === 1) {
-    return { ...common, ...(expectedTarget === undefined ? {} : { expectedTarget }), content, precondition: { state: 'absent' } };
+    return { ...common, ...(expectedTarget === undefined ? {} : { expectedTarget }),
+      ...(durable === undefined ? {} : { operation: durable.operation }), content, precondition: { state: 'absent' } };
   }
   if (record.state === 'present' && Object.keys(record).length === 2
     && typeof record.sha256 === 'string' && SHA256_PATTERN.test(record.sha256)) {
-    return { ...common, ...(expectedTarget === undefined ? {} : { expectedTarget }), content, precondition: { state: 'present', sha256: record.sha256 } };
+    return { ...common, ...(expectedTarget === undefined ? {} : { expectedTarget }),
+      ...(durable === undefined ? {} : { operation: durable.operation }), content,
+      precondition: { state: 'present', sha256: record.sha256 } };
   }
   return { rejected: 'precondition debe ser absent o present con SHA-256 minúscula' };
 }
@@ -232,11 +261,13 @@ export function parseWriteBatchRequest(raw: string): WriteBatchRequest | { reado
   const parsed = parseObject(raw);
   if ('rejected' in parsed) return parsed;
   const source = parsed.value;
-  const allowed = new Set(['tenant_id', 'alias', 'files']);
+  const allowed = new Set(['tenant_id', 'alias', 'files', 'operation']);
   if (Object.keys(source).some((key) => !allowed.has(key))
     || !Array.isArray(source.files) || source.files.length < 1 || source.files.length > 7) {
     return { rejected: 'el lote debe traer entre uno y siete ficheros y ningún campo desconocido' };
   }
+  const durable = durableOperationFrom(source);
+  if (durable !== undefined && 'rejected' in durable) return durable;
 
   const entries: GovernanceWriteBatchEntry[] = [];
   const paths = new Set<string>();
@@ -300,7 +331,31 @@ export function parseWriteBatchRequest(raw: string): WriteBatchRequest | { reado
     tenant_id: source.tenant_id, alias: source.alias, path: first.path,
   }));
   if ('rejected' in common) return common;
-  return { tenantId: common.tenantId, alias: common.alias, entries };
+  return { tenantId: common.tenantId, alias: common.alias, entries,
+    ...(durable === undefined ? {} : { operation: durable.operation }) };
+}
+
+export function parseWriteStatusRequest(raw: string): WriteStatusRequest | RejectedRequest {
+  const parsed = parseObject(raw);
+  if ('rejected' in parsed) return parsed;
+  const source = parsed.value;
+  const expectedKeys = ['alias', 'operation_generation', 'operation_id', 'operation_token',
+    'request_id', 'runtime_generation', 'tenant_id'];
+  const keys = Object.keys(source).sort();
+  if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index])) {
+    return { rejected: 'el cuerpo trae campos que este protocolo no conoce' };
+  }
+  if (typeof source.tenant_id !== 'string' || !TenantSchema.safeParse(source.tenant_id).success) {
+    return { rejected: 'tenant_id es obligatorio' };
+  }
+  if (typeof source.alias !== 'string' || !AliasSchema.safeParse(source.alias).success) {
+    return { rejected: 'alias no tiene forma de alias' };
+  }
+  const operation = parseGovernanceOperation(Object.fromEntries(
+    OPERATION_FIELDS.map((field) => [field, source[field]]),
+  ));
+  if (operation === undefined) return { rejected: 'la identidad de la operación durable está incompleta o no es válida' };
+  return { tenantId: source.tenant_id, alias: source.alias, operation };
 }
 
 /** `body` is `unknown` and not a record: what is served are closed types (`FileReadOutcome`). */
@@ -316,7 +371,7 @@ function send(response: ServerResponse, status: number, body?: unknown): void {
 }
 
 function rejectInvalidRequest(
-  operation: 'read' | 'list' | 'write' | 'write_batch',
+  operation: 'read' | 'list' | 'write' | 'write_batch' | 'write_status',
   response: ServerResponse,
   reason: string,
 ): void {
@@ -338,6 +393,8 @@ async function handle(
       ? 'write'
       : path === GOVERNANCE_WRITE_BATCH_PATH
         ? 'write_batch'
+        : path === GOVERNANCE_WRITE_STATUS_PATH
+          ? 'write_status'
         : undefined;
   if (operation === undefined) {
     request.resume();
@@ -400,6 +457,31 @@ async function handle(
       return;
     }
     await serveDirectory(options, parsed, request, response);
+    return;
+  }
+
+  if (operation === 'write_status') {
+    const parsed = parseWriteStatusRequest(raw);
+    if ('rejected' in parsed) {
+      rejectInvalidRequest(operation, response, parsed.rejected);
+      return;
+    }
+    const connection = options.agents.lookup(parsed.tenantId, parsed.alias);
+    if (!connection) {
+      send(response, 200, { error: 'unavailable', reason: 'no hay ningún pty-agent conectado para ese alias' });
+      return;
+    }
+    const abort = new AbortController();
+    const abortOnClose = (): void => {
+      if (!response.writableEnded) abort.abort();
+    };
+    request.once('aborted', abortOnClose);
+    response.once('close', abortOnClose);
+    const outcome = await requestWriteStatus(connection, parsed.tenantId, parsed.alias,
+      parsed.operation, options.timeoutMs, abort.signal);
+    request.off('aborted', abortOnClose);
+    response.off('close', abortOnClose);
+    send(response, 200, outcome);
     return;
   }
 
@@ -545,6 +627,7 @@ async function serveWrite(
     options.timeoutMs,
     abort.signal,
     parsed.expectedTarget,
+    parsed.operation,
   );
   logOutcome('write', parsed, outcome);
   send(response, 200, outcome);
@@ -582,6 +665,7 @@ async function serveWriteBatch(
   });
   const outcome = await requestFileWriteBatch(
     connection, parsed.tenantId, parsed.alias, parsed.entries, options.timeoutMs, abort.signal,
+    parsed.operation,
   );
   logBatchOutcome(parsed, outcome);
   send(response, 200, outcome);

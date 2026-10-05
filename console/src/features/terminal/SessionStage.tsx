@@ -7,24 +7,10 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import {
-  Activity,
-  Braces,
-  CircleOff,
-  Clock3,
-  ExternalLink,
-  MessageSquareText,
-  MonitorPlay,
-  RefreshCw,
-  ShieldCheck,
-  TerminalSquare,
-} from 'lucide-react';
+import { CircleOff, MonitorPlay, TerminalSquare } from 'lucide-react';
 import { useApi } from '../../api/context';
 import type { ConsoleAccess, TerminalCapability } from '../../api/types';
-import { usePolling } from '../../api/use-polling';
-import { useResource } from '../../api/use-resource';
-import { Badge, LoadingState, Time, Unknown } from '../../components/ui';
-import { AckInspector } from './AckInspector';
+import { LoadingState } from '../../components/ui';
 import {
   TerminalApiError,
   type TerminalSessionGrant,
@@ -33,7 +19,6 @@ import {
 import {
   prorrogarSesion,
 } from './api-control';
-import { LEASE_LABEL, LEASE_TONE } from '../../vocabulario';
 import {
   LIVE_TUI_LABELS,
   LIVE_TUI_MODE,
@@ -56,12 +41,9 @@ import {
   controlTuiReason,
   liveTuiReason,
   ptySecondsLeft,
-  sessionDeliveries,
-  transcriptForSession,
   type OperatorSession,
 } from './session';
 import { ControlDeTui } from './ControlDeTui';
-import { TerminalTranscript } from './TerminalTranscript';
 import { NegativaPty, PtySessionDialog } from './PtySessionDialog';
 import { PtySessionBar } from './PtySessionBar';
 import type { MotivoReconciliacionPlaza } from './PlazasColgadas';
@@ -92,14 +74,10 @@ export function SessionStage({ session, sessionToken, agents, access, capability
   onReconciliarPlazas: (motivo: MotivoReconciliacionPlaza) => void;
 }) {
   const api = useApi();
-  const messages = useResource('terminal-message-feed', () => api.listMessages());
-  const [selectedDeliveryId, setSelectedDeliveryId] = useState<string>();
   const [showPtyDialog, setShowPtyDialog] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [requestError, setRequestError] = useState<DenegacionExplicada>();
-  const [closingChannel, setClosingChannel] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const [showInspector, setShowInspector] = useState(false);
   const [controlSostenido, setControlSostenido] = useState(false);
   const [prorrogando, setProrrogando] = useState(false);
   const [ventanaHasta, setVentanaHasta] = useState<string>();
@@ -119,8 +97,6 @@ export function SessionStage({ session, sessionToken, agents, access, capability
   const liveSession = { ...session, agent: currentAgent };
   const grant = grants[liveSession.id] as TerminalSessionGrant | undefined;
   const ptyChannelLive = liveSession.mode === 'pty' && grant !== undefined && !closedChannels[liveSession.id];
-  /** The terminal is on screen and painting: secondary pieces stop stealing its height. */
-  const mostrandoTui = ptyChannelLive;
 
   const channelSessionId = grant ? grant.session_id : undefined;
   const subscribeChannel = useCallback(
@@ -130,33 +106,17 @@ export function SessionStage({ session, sessionToken, agents, access, capability
   const readChannel = useCallback(() => channelSessionId ? readPtySession(channelSessionId) : undefined, [channelSessionId]);
   const channelView = useSyncExternalStore(subscribeChannel, readChannel);
 
-  usePolling(messages.reload, 2_500, { pausedWhile: messages.loading || ptyChannelLive });
-
   useEffect(() => {
     if (!ptyChannelLive || channelView?.state === 'open') return;
     const interval = window.setInterval(() => { setNow(Date.now()); }, 1_000);
     return () => { window.clearInterval(interval); };
   }, [channelView?.state, ptyChannelLive]);
 
-  const transcript = transcriptForSession(messages.data, liveSession);
-  const deliveries = sessionDeliveries(transcript);
-  const selectedDelivery = deliveries.find((delivery) => (
-    selectedDeliveryId != null && delivery.delivery_id === selectedDeliveryId
-  )) ?? deliveries.at(-1);
-
-  const selectedMessageId = transcript.find((item) => (
-    selectedDelivery?.delivery_id != null && item.delivery?.delivery_id === selectedDelivery.delivery_id
-  ))?.message.message_id ?? undefined;
-  const messagesHref = `/messages/${encodeURIComponent(liveSession.agent.tenantId)}/${encodeURIComponent(liveSession.agent.alias)}`;
   const channel = terminalChannelGate(capability, access, targets, liveSession.agent);
   const channelLabel = channel.status !== 'blocked' ? TERMINAL_ACCESS_LABELS[channel.status] : 'PTY no habilitado';
   const channelTarget = terminalTargetForAgent(targets?.items, liveSession.agent);
   const liveTui = liveTuiGate(capability, access, targets, liveSession.agent);
   const liveTuiLabel = liveTui.status === 'blocked' ? 'TUI no habilitada' : LIVE_TUI_LABELS[liveTui.status];
-
-  const liveTuiDetail = liveTui.reason === channel.reason
-    ? 'Sin canal PTY no hay TUI que emitir: el motivo es el mismo del canal, acá arriba.'
-    : traducirCodigosEnTexto(liveTui.reason);
 
   const channelReason = channel.reason
     ? traducirCodigosEnTexto(channel.reason)
@@ -283,20 +243,10 @@ export function SessionStage({ session, sessionToken, agents, access, capability
     setShowPtyDialog(true);
   }
 
-  async function releaseChannel() {
-    setClosingChannel(true);
-    try {
-      await onReleaseChannel(liveSession.id);
-      onUpdate({ ...liveSession, mode: 'transcript' });
-    } finally {
-      setClosingChannel(false);
-    }
-  }
-
   function selectPtyMode() {
     if (!channel.enabled) return;
     const current = grants[liveSession.id] as TerminalSessionGrant | undefined;
-    if (current !== undefined && !closedChannels[liveSession.id] && current.target.mode !== LIVE_TUI_MODE) {
+    if (current !== undefined && !closedChannels[liveSession.id] && current.target.mode === SHELL_MODE) {
       onUpdate({ ...liveSession, mode: 'pty' });
     } else {
       setRequestError(undefined);
@@ -305,59 +255,28 @@ export function SessionStage({ session, sessionToken, agents, access, capability
   }
 
   return (
-    <div className="terminal-active-grid" id={`terminal-session-${liveSession.id}`} role="tabpanel" data-show-inspector={showInspector} style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+    <div className="terminal-active-grid" id={`terminal-session-${liveSession.id}`} role="tabpanel">
       <section className="terminal-console">
         <header className="terminal-session-head">
-          <div className="session-identity">
-            <span className={`session-avatar ${liveSession.agent.leaseState}`}><Braces size={20} aria-hidden="true" /></span>
-            <div className="session-identity-text"><p className="eyebrow">{liveSession.agent.tenantId} · epoch <Unknown value={liveSession.agent.presence?.epoch} /></p><h2>{liveSession.agent.alias}</h2></div>
-            <Badge tone={LEASE_TONE[liveSession.agent.leaseState]}>{LEASE_LABEL[liveSession.agent.leaseState]}</Badge>
+          <div className="terminal-mode-switch" aria-label="Canal de sesión">
+            <button type="button" aria-pressed={ptyChannelLive && channelIsLiveTui}
+              data-active={(ptyChannelLive && channelIsLiveTui) || undefined}
+              disabled={(!liveTui.enabled && !escrituraDisponible) || requesting}
+              onClick={openLiveTui} title={`${liveTuiLabel}: ${traducirCodigosEnTexto(liveTui.reason)}`}>
+              <MonitorPlay size={15} aria-hidden="true" /> TUI
+            </button>
+            <button type="button" aria-pressed={ptyChannelLive && !channelIsLiveTui}
+              data-active={(ptyChannelLive && !channelIsLiveTui) || undefined}
+              disabled={!channel.enabled || requesting} onClick={selectPtyMode}
+              title={`Shell nueva en el espacio del agente. ${channelReason}`}>
+              <TerminalSquare size={15} aria-hidden="true" /> Terminal
+            </button>
           </div>
-          <div className="session-controls">
-             <div className="terminal-mode-switch" aria-label="Canal de sesión">
-               <button type="button" aria-pressed={liveSession.mode === 'transcript'} data-active={liveSession.mode === 'transcript' || undefined} onClick={() => { onUpdate({ ...liveSession, mode: 'transcript' }); }}><MessageSquareText size={14} aria-hidden="true" /> Feed</button>
-               <button
-                 type="button"
-                 aria-pressed={liveSession.mode === 'pty' && channelIsLiveTui}
-                 data-active={(liveSession.mode === 'pty' && channelIsLiveTui) || undefined}
-                 disabled={(!liveTui.enabled && !escrituraDisponible) || requesting}
-                 onClick={openLiveTui}
-                 title={traducirCodigosEnTexto(liveTui.reason)}
-               ><MonitorPlay size={14} aria-hidden="true" /> TUI</button>
-               <button
-                 type="button"
-                 aria-pressed={liveSession.mode === 'pty' && !channelIsLiveTui}
-                 data-active={(liveSession.mode === 'pty' && !channelIsLiveTui) || undefined}
-                 disabled={!channel.enabled || requesting}
-                 onClick={selectPtyMode}
-                 title={channelReason}
-               ><TerminalSquare size={14} aria-hidden="true" /> PTY</button>
-               <button
-                 type="button"
-                 aria-pressed={showInspector}
-                 data-active={showInspector || undefined}
-                 onClick={() => { setShowInspector(!showInspector); }}
-                 title="Ver detalles / ACK inspector"
-               ><Activity size={14} aria-hidden="true" /> Detalles</button>
-            </div>
-          </div>
+          {grant ? <PtySessionBar agent={liveSession.agent} grant={grant}
+            secondsLeft={ptySecondsLeft(grant.expires_at, now)} readOnly={soloLectura}
+            ticketConsumed={channelView?.ticketConsumido === true} ventanaHasta={ventanaHasta}
+            prorrogando={prorrogando} onProrrogar={() => void prorrogar()} /> : null}
         </header>
-
-        {mostrandoTui ? null : (
-          <>
-            <p className="terminal-channel-state" data-status={channel.status}>
-              <ShieldCheck size={13} aria-hidden="true" />
-              <strong>{channelLabel}</strong>
-              <span>{channelReason}</span>
-            </p>
-
-            <p className="terminal-channel-state terminal-live-tui-state" data-status={liveTui.status}>
-              <MonitorPlay size={13} aria-hidden="true" />
-              <strong>{liveTuiLabel}</strong>
-              <span>{liveTuiDetail}</span>
-            </p>
-          </>
-        )}
 
         {requestError ? (
           <div className="terminal-channel-refusal">
@@ -366,32 +285,10 @@ export function SessionStage({ session, sessionToken, agents, access, capability
           </div>
         ) : null}
 
-        {mostrandoTui ? null : (
-          <div className="terminal-connection-bar" role="status">
-            <span className={`connection-dot ${messages.error ? 'error' : messages.data ? 'open' : 'connecting'}`} aria-hidden="true" />
-            <strong>{messages.error ? 'FEED DEGRADADO' : messages.data ? 'POLLING ACTIVO' : 'CONECTANDO'}</strong>
-            <span>{messages.error?.message ?? 'deliveries + ACK cada 2.5 s'}</span>
-            <button type="button" onClick={messages.reload} disabled={messages.loading}><RefreshCw size={13} aria-hidden="true" /> Sincronizar</button>
-          </div>
-        )}
-
         {liveSession.mode === 'pty' ? (
           <>
             {channel.enabled && grant && channel.websocketPath ? (
              <div className="terminal-pty-pane">
-               <PtySessionBar
-                 agent={liveSession.agent}
-                 grant={grant}
-                 secondsLeft={ptySecondsLeft(grant.expires_at, now)}
-                 readOnly={soloLectura}
-                 ticketConsumed={channelView?.ticketConsumido === true}
-                 feedEnPausa={ptyChannelLive}
-                 closing={closingChannel}
-                 ventanaHasta={ventanaHasta}
-                 prorrogando={prorrogando}
-                 onProrrogar={() => void prorrogar()}
-                 onClose={() => void releaseChannel()}
-               />
                <Suspense fallback={<LoadingState label="Cargando Xterm…" />}>
                  <PtyTerminal
                    websocketPath={grant.websocket_path || channel.websocketPath}
@@ -410,7 +307,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
                   destination state here said "PTY online" over an empty stage. */}
               <h3>{channel.enabled ? 'No hay canal PTY abierto' : channelLabel}</h3>
               <p>{channel.enabled
-                ? 'El canal se cerró o todavía no se pidió. Abrí la TUI en vivo o una shell nueva desde los botones de arriba, o volvé al feed.'
+                ? 'Elegí TUI para la sesión viva o Terminal para abrir una shell en el espacio del agente.'
                 : channelReason}</p>
             </div>
             )}
@@ -420,7 +317,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
             <ControlDeTui
               alias={liveSession.agent.alias}
               grant={grant}
-              puedeEscribir={escrituraDisponible}
+              puedeEscribir={escrituraDisponible && targetMode !== SHELL_MODE}
               codigoDeCierre={channelView?.closeCode}
               pidiendoSesion={requesting}
               sesionEnganchada={channelView?.ticketConsumido === true}
@@ -429,42 +326,8 @@ export function SessionStage({ session, sessionToken, agents, access, capability
               onControlCambia={setControlSostenido}
             />
           </>
-        ) : (
-          <>
-            {messages.loading && !messages.data ? <LoadingState label="Abriendo feed durable de mensajes…" /> : (
-               <TerminalTranscript
-                 key={liveSession.id}
-                 items={transcript}
-                 selectedMessageId={selectedMessageId}
-                 onSelectItem={(item) => {
-                   if (item.delivery?.delivery_id) {
-                     setSelectedDeliveryId(item.delivery.delivery_id);
-                   }
-                 }}
-              />
-            )}
-            <div className="terminal-readonly-actions">
-              <p>Este feed es de observación. La única vista que publica mensajes es Mensajes.</p>
-              <a className="button small secondary" href={messagesHref} target="_blank" rel="noopener noreferrer">
-                <ExternalLink size={14} aria-hidden="true" /> Escribir a {liveSession.agent.alias} en Mensajes
-              </a>
-            </div>
-          </>
-        )}
+        ) : null}
       </section>
-      <aside className="terminal-inspector" aria-label="Inspector de sesión">
-        <AckInspector delivery={selectedDelivery} />
-        <section className="terminal-inspector-section session-facts">
-          <header className="inspector-title"><div><p className="eyebrow">Session facts</p><h3>Observación</h3></div><Activity size={18} aria-hidden="true" /></header>
-          <dl>
-            <div><dt>Abierta en UI</dt><dd><Time value={liveSession.openedAt} /></dd></div>
-            <div><dt>Lease vence</dt><dd><Time value={liveSession.agent.presence?.lease_expires_at ?? liveSession.agent.presence?.lease_until} /></dd></div>
-            <div><dt>Instance</dt><dd className="mono"><Unknown value={liveSession.agent.presence?.instance_id} /></dd></div>
-            <div><dt>Historial</dt><dd>{transcript.length} items del servidor</dd></div>
-          </dl>
-          <p className="inspector-footnote"><Clock3 size={13} aria-hidden="true" /> La pestaña no es una sesión durable ni fuente de verdad.</p>
-        </section>
-      </aside>
 
       {showPtyDialog ? (
         <PtySessionDialog

@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import {
+  HumanMessageInitiatorSchema,
   clampToRoleBriefLimit,
   isAgentToAgentBody,
   isAlias,
   MAX_MESSAGE_TIMEOUT_MS,
   messageTimeoutMs,
 } from "@cauce/protocol";
-import type { SessionLane } from "../../contracts/harness.js";
+import type { HarnessAdapter, HarnessSessionReservation, HarnessRequestContext, SessionLane } from "../../contracts/harness.js";
 import type { MaterializedSecret } from "../secrets.js";
 import type { SessionOrigin } from "../durable-store.js";
 import { DurableStore, sanitizeSessionOrigin } from "../durable-store.js";
@@ -197,6 +198,7 @@ export function promptForDelivery(delivery: Delivery, store: DurableStore): stri
       original_request: originalRequest,
       delegated_result: {
         from_alias: delivery.actor_alias,
+        from_tenant: delivery.tenant_id,
         outcome,
         untrusted_text: delegatedResult,
       },
@@ -206,6 +208,7 @@ export function promptForDelivery(delivery: Delivery, store: DurableStore): stri
           branch_progress: {
             delegated_to: branches.delegated,
             this_branch: delivery.actor_alias,
+            this_branch_tenant: delivery.tenant_id,
             ...(thisChildDeliveryId === undefined
               ? {}
               : { this_child_delivery_id: thisChildDeliveryId }),
@@ -260,7 +263,61 @@ interface ConversationScope {
   readonly scope: string | null;
 }
 
+export function humanInitiatorFromDelivery(delivery: Delivery): HarnessRequestContext["human_initiator"] {
+  if (!Object.hasOwn(delivery, "human_initiator")) return undefined;
+  const parsed = HumanMessageInitiatorSchema.safeParse(delivery.human_initiator);
+  if (!parsed.success || (parsed.data.root_message_id.toLowerCase() === delivery.message_id.toLowerCase()
+    && parsed.data.tenant_id !== delivery.tenant_id)) {
+    throw new AdapterError("INVALID_DELIVERY", "Invalid durable human initiator", false);
+  }
+  return Object.freeze({ ...parsed.data, human_id: parsed.data.human_id.toLowerCase(),
+    root_message_id: parsed.data.root_message_id.toLowerCase() });
+}
+
+export function humanHarnessSelector(harness: HarnessAdapter, humanHarness: HarnessAdapter | undefined): (delivery: Delivery) => HarnessAdapter {
+  return (delivery) => {
+    if (humanInitiatorFromDelivery(delivery) === undefined) return harness;
+    if (humanHarness === undefined) throw new AdapterError(
+      "UNSUPPORTED_HUMAN_ISOLATION", "Human session isolation is unavailable", false);
+    return humanHarness;
+  };
+}
+
+export interface DeliveryHarnessInvocation {
+  readonly harness: HarnessAdapter;
+  readonly session: HarnessSessionRequestScope;
+  readonly reservation?: HarnessSessionReservation;
+  readonly humanInitiator?: NonNullable<HarnessRequestContext["human_initiator"]>;
+  readonly selectionError?: unknown;
+}
+
+export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAdapter,
+  selector: ((delivery: Delivery) => HarnessAdapter) | undefined,
+  ownTenantId: string | undefined): DeliveryHarnessInvocation {
+  try {
+    const humanInitiator = humanInitiatorFromDelivery(delivery);
+    if (humanInitiator !== undefined && selector === undefined) {
+      throw new AdapterError("UNSUPPORTED_HUMAN_ISOLATION", "Human session isolation is unavailable", false);
+    }
+    const selected = selector?.(delivery) ?? harness;
+    const fanin = delivery.body.type === "agent.fanin";
+    const shared = humanInitiator === undefined && process.env.CAUCE_SHARED_SESSION === "1";
+    const lane = shared || humanInitiator !== undefined ? "human" : isAgentToAgentBody(delivery.body) ? "agent" : "human";
+    const session: HarnessSessionRequestScope = fanin ? {} : shared
+      ? { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane }
+      : { ...sessionFromDelivery(delivery, ownTenantId), sessionLane: lane };
+    const reservation = fanin ? undefined : selected.reserveSession(session.sessionKey, lane);
+    return { harness: selected, session, ...(reservation === undefined ? {} : { reservation }),
+      ...(humanInitiator === undefined ? {} : { humanInitiator }) };
+  } catch (selectionError) {
+    return { harness, session: {}, selectionError };
+  }
+}
+
 function conversationScope(delivery: Delivery): ConversationScope | undefined {
+  const human = humanInitiatorFromDelivery(delivery);
+  if (human !== undefined) return { adapter: "human_message_initiator_v1", channel: "human",
+    conversation_id: JSON.stringify([human.tenant_id, human.human_id, human.conversation_id]), scope: null };
   const context = delivery.authenticated_context;
   const origin = context?.origin ?? delivery.origin;
   const channel = context?.channel ?? origin?.channel;

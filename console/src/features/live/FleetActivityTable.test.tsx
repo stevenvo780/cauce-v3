@@ -84,7 +84,8 @@ it('renders agents from GET /v3/console/activity, sorted with the most urgent fi
   await userEvent.keyboard('{Escape}');
   // And the figures moved down to the verdict's text line, in Spanish. The server definition
   // ("leased + accepted + started") is still available: it is in the tooltip.
-  expect(screen.getByText(/en vuelo$/)).toHaveTextContent('50 en vuelo');
+  await userEvent.click(screen.getByTitle('Detalles del estado de la flota'));
+  expect(within(screen.getByRole('region', { name: 'Veredicto de la flota' })).getByText(/en vuelo$/)).toHaveTextContent('50 en vuelo');
 });
 
 it('shows an error state with a working retry button when the request fails', async () => {

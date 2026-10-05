@@ -1,3 +1,4 @@
+import type { HarnessAdapterOptions } from "../contracts/harness.js";
 import { HttpEgressReceiptSource } from "../sdk/egress-receipt-source.js";
 import { readFileSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
@@ -81,6 +82,23 @@ function definitionWithVerifiedBridge(
   const { startWitness: _startWitness, ...withoutWitness } = definition;
   void _startWitness;
   return withoutWitness;
+}
+
+export function deliveryHarnesses(options: HarnessAdapterOptions, headlessRunner: CommandRunner): {
+  readonly harness: HarnessAdapter; readonly humanHarness?: HarnessAdapter;
+} {
+  const harness = new HarnessAdapter(options);
+  const openClaw = options.definition.id === "openclaw";
+  if (options.definition.id !== "claude" && options.definition.id !== "codex" && !openClaw) return { harness };
+  if (openClaw && options.commandOverride !== undefined) return { harness };
+  const { sharedSession, fallbackSessionKey, ...headless } = options;
+  void sharedSession;
+  return { harness, humanHarness: new HarnessAdapter({ ...headless, runner: headlessRunner,
+    ...(!openClaw && fallbackSessionKey !== undefined ? { fallbackSessionKey } : {}),
+    ...(openClaw ? { canonicalTerminalSession: false } : {}),
+    sessionNamespace: openClaw
+      ? `human-initiator-v1.${options.sessionNamespace ?? options.definition.id}`
+      : `${options.sessionNamespace ?? options.definition.id}:human-initiator-v1` }) };
 }
 
 /**
@@ -305,7 +323,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     ? baseRunner
     : await sharedSessionRunner(shared, logger);
   const override = commandOverride(harnessId, definition, runtime);
-  const harness = new HarnessAdapter({
+  const { harness, humanHarness } = deliveryHarnesses({
     definition: definitionWithVerifiedBridge(definition, override, logger),
     runner,
     store,
@@ -319,7 +337,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
         stateDirectory: shared.stateDirectory,
       },
     }),
-  });
+  }, baseRunner);
   const emission = new EmissionRuntime(
     runtime.stateDirectory, runtime.instanceId, emissionGateway(runtime),
     decisionesForwarder(runtime.decisionesUrl, runtime.mutualTls),
@@ -360,6 +378,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     }),
     store,
     harness,
+    ...(humanHarness === undefined ? {} : { humanHarness }),
     onLeaseAcquired: async () => {
       await emission.listen();
       if (canonicalOpenClawTerminalSession) {

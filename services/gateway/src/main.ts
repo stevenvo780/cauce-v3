@@ -1,3 +1,9 @@
+import { createPrivateKey } from 'node:crypto';
+import { OAuthClients } from './oauth-client-metadata.js';
+import { OAuthTokens } from './oauth-tokens.js';
+import { OAUTH_GRANT_TTL_SECONDS, PostgresOAuthStore } from './oauth-authorization-store.js';
+import { createOAuthPasswordSession } from './oauth-password-session.js';
+import type { OAuthAuthorizationServerOptions } from './oauth-authorization-server.js';
 import { configuredContextRepository } from './console/context-repository/binding.js';
 import { readFile } from 'node:fs/promises';
 import { createPool, type DatabasePool } from '@cauce/store';
@@ -199,10 +205,29 @@ function configuredConsoleOrigins(): string[] | undefined {
   return origins.length === 0 ? undefined : origins;
 }
 
-const humanMcp = configuredHumanMcp();
+async function configuredLocalOAuth(pool: DatabasePool, authProvider: AuthProvider): Promise<OAuthAuthorizationServerOptions | undefined> {
+  if (process.env.CAUCE_MCP_OAUTH_PROVIDER !== 'local') return undefined;
+  if (!(authProvider instanceof PasswordAuthProvider)) throw new Error('Local OAuth requires password auth');
+  const issuer = process.env.CAUCE_MCP_PUBLIC_ORIGIN;
+  const keyFile = process.env.CAUCE_MCP_OAUTH_SIGNING_KEY_FILE;
+  const kid = process.env.CAUCE_MCP_OAUTH_SIGNING_KID;
+  if (!issuer || !keyFile || !kid) throw new Error('Local OAuth configuration is incomplete');
+  const grantTtlSeconds = Number(process.env.CAUCE_MCP_OAUTH_GRANT_TTL_SECONDS ?? OAUTH_GRANT_TTL_SECONDS.default);
+  if (!Number.isSafeInteger(grantTtlSeconds) || grantTtlSeconds < OAUTH_GRANT_TTL_SECONDS.min || grantTtlSeconds > OAUTH_GRANT_TTL_SECONDS.max) {
+    throw new Error(`CAUCE_MCP_OAUTH_GRANT_TTL_SECONDS must be between ${String(OAUTH_GRANT_TTL_SECONDS.min)} and ${String(OAUTH_GRANT_TTL_SECONDS.max)}`);
+  }
+  const tokens = new OAuthTokens({ issuer, resource: `${issuer}/mcp`, kid,
+    signingKey: createPrivateKey(await readFile(keyFile)) });
+  const store = new PostgresOAuthStore(pool, issuer, authProvider.verifyCredentialStamp.bind(authProvider), { grantTtlSeconds });
+  await store.ready();
+  return { clients: new OAuthClients(), tokens, store, passwordAuth: authProvider,
+    session: createOAuthPasswordSession({ provider: authProvider }) };
+}
+
 const pool = createPool(databaseUrl);
 const consoleOrigins = configuredConsoleOrigins();
 const authProvider = await configuredAuthProvider(pool);
+const humanMcp = configuredHumanMcp(process.env, await configuredLocalOAuth(pool, authProvider));
 const mtls = usesMtls(authProvider);
 const isolatedHealth = mtls || process.env.NODE_ENV === 'production';
 const https = await configuredHttps(authProvider);

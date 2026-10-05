@@ -1,10 +1,15 @@
 import type { Ack, ProfileRuntimeAdoptionEvidence, ProfileRuntimeContract, Tenant } from '@cauce/protocol';
 import { PROTOCOL_VERSION, SYSTEM_PRINCIPAL_ALIASES } from '@cauce/protocol';
+import {
+  reserveAgentContextWrite, readAgentContextWrite, authorizeAgentContextDispatch, resolveAgentContextWrite, recoverAgentContextWrite,
+  type ReserveContextWriteInput, type ContextWriteDescriptor, type ContextWriterQuiescence,
+  type ContextWriteRecoveryInput, type ContextWriteHistory,
+} from './agent-context-quarantine.js';
 import type { DatabaseClient } from '../db.js';
 import { withTransaction } from '../db.js';
 import {
   canonicalProfileRuntimeContract, reconcileAgentContextWithFence,
-  type AgentContextReconcileFenceInput, type AgentContextReconcileFenceResult,
+  type AgentContextFenceInput, type AgentContextReconcileFenceResult,
 } from './agent-context-reconcile.js';
 import { canonicallyEqual } from './config.js';
 import { DeliveryAcksRepository, type RoutingTarget } from './deliveries.js';
@@ -19,8 +24,30 @@ export type ProfileRuntimeAdoptionAck = ProfileRuntimeAdoptionEvidence & {
 
 export abstract class AgentsRepository extends DeliveryAcksRepository {
 
+  async recoverContextWrite(input: ContextWriteRecoveryInput): Promise<ContextWriteHistory> {
+    return recoverAgentContextWrite(this.pool, input);
+  }
+
+  async reserveContextWrite(input: ReserveContextWriteInput): Promise<ContextWriteDescriptor> {
+    return reserveAgentContextWrite(this.pool, input);
+  }
+  async readContextWrite(tenantId: Tenant, alias: string, operationId: string): Promise<ContextWriteDescriptor | undefined> {
+    return readAgentContextWrite(this.pool, tenantId, alias, operationId);
+  }
+  async authorizeContextWriteDispatch(descriptor: ContextWriteDescriptor, signal?: AbortSignal): Promise<ContextWriteDescriptor> {
+    return authorizeAgentContextDispatch(this.pool, descriptor, signal);
+  }
+  async resolveContextWrite(
+    descriptor: ContextWriteDescriptor,
+    authenticatedProof: (client: DatabaseClient) => Promise<ContextWriterQuiescence>,
+    persistTarget: (client: DatabaseClient, proof: ContextWriterQuiescence) => Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<'target' | 'old'> {
+    return resolveAgentContextWrite(this.pool, descriptor, authenticatedProof, persistTarget, signal);
+  }
+
   async reconcileAgentContextRuntime<Value>(
-    input: AgentContextReconcileFenceInput<Value>,
+    input: AgentContextFenceInput<Value>,
   ): Promise<AgentContextReconcileFenceResult<Value>> {
     return reconcileAgentContextWithFence(this.pool, input);
   }

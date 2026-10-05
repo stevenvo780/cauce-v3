@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -487,6 +488,40 @@ if (args[0] === 'ps') {
     expect(check({ MOCK_PS_FAIL: '1' }).stderr).toContain('no pude enumerar contenedores');
   });
 
+  test('restore directory cleanup ownership begins only after exclusive leaf creation', async () => {
+    const source = await readFile(backup, 'utf8');
+    const start = source.indexOf('create_verify_data_dir() {');
+    const end = source.indexOf('\n}\n', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const helper = source.slice(start, end + 2);
+    expect(helper).toContain('mkdir -m 700 "$verify_candidate"');
+    expect(helper).not.toContain('mkdir -p "$verify_candidate"');
+
+    const directory = await mkdtemp(join(tmpdir(), 'cauce-backup-owned-dir-'));
+    scratch.push(directory);
+    const parent = join(directory, 'verify');
+    await mkdir(parent);
+    await chmod(parent, 0o750);
+    const preservedLeaf = join(parent, '11111111-1111-4111-8111-111111111111');
+    await mkdir(preservedLeaf, { recursive: true });
+    await writeFile(join(preservedLeaf, 'foreign-marker'), 'preserve\n', { mode: 0o600 });
+    const base = `umask 077; RESTORE_VERIFY_DIR='${parent}' DB_BACKUP_DIR='${directory}' restore_run_id='11111111-1111-4111-8111-111111111111' verify_data_dir='' verify_data_dir_owned=0; ${helper}; if create_verify_data_dir; then printf 'created:%s:%s\\n' "$verify_data_dir" "$verify_data_dir_owned"; else printf 'refused:%s:%s\\n' "$verify_data_dir" "$verify_data_dir_owned"; fi`;
+    const collision = spawnSync('bash', ['-c', base], { encoding: 'utf8' });
+    expect(collision.status).toBe(0);
+    expect(collision.stdout).toBe('refused::0\n');
+    expect(await readFile(join(preservedLeaf, 'foreign-marker'), 'utf8')).toBe('preserve\n');
+    expect((await stat(parent)).mode & 0o777).toBe(0o750);
+
+    const createdId = '22222222-2222-4222-8222-222222222222';
+    const created = spawnSync('bash', ['-c', base.replaceAll('11111111-1111-4111-8111-111111111111', createdId)], { encoding: 'utf8' });
+    expect(created.status).toBe(0);
+    expect(created.stdout).toBe(`created:${parent}/${createdId}:1\n`);
+    expect((await stat(parent)).mode & 0o777).toBe(0o750);
+    expect((await stat(join(parent, createdId))).mode & 0o777).toBe(0o700);
+    await rm(join(parent, createdId), { recursive: true });
+  });
+
   test('the host producer publishes a blob restore only after archiving and restoring its named volume', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'cauce-host-backup-producer-'));
     scratch.push(directory);
@@ -495,6 +530,7 @@ if (args[0] === 'ps') {
     const blobRestored = join(directory, 'blob-restored');
     const archiveRoot = join(directory, 'db');
     const statusRoot = join(directory, 'status');
+    const dockerState = join(directory, 'docker-state.json');
     await Promise.all([mkdir(bin), mkdir(blobSource), mkdir(blobRestored), mkdir(statusRoot)]);
     const bytes = Buffer.from('producer blob fixture\n');
     const digest = createHash('sha256').update(bytes).digest('hex');
@@ -508,10 +544,25 @@ const args = process.argv.slice(2);
 fs.appendFileSync(process.env.MOCK_DOCKER_LOG, args.join(' ') + '\n');
 const command = args[0];
 const whole = args.join(' ');
+const statePath = process.env.MOCK_DOCKER_STATE;
+const state = fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, 'utf8') || '{}') : {};
+const save = () => fs.writeFileSync(statePath, JSON.stringify(state));
+const restoreId = 'a'.repeat(64);
 if (command === 'inspect') {
-  process.stdout.write(whole.includes('.State.Running') ? 'true\n' : 'sha256:' + 'a'.repeat(64) + '\n');
+  if (whole.includes('.State.Running')) process.stdout.write('true\n');
+  else if (whole.includes('.Image')) process.stdout.write('sha256:' + 'a'.repeat(64) + '\n');
+  else if (args.includes(restoreId)) {
+    state.restoreInspectCount = (state.restoreInspectCount || 0) + 1;
+    save();
+    const runId = process.env.MOCK_REPLACE_BEFORE_REMOVE === '1' && state.restoreInspectCount > 1
+      ? 'foreign-run-id'
+      : state.runId;
+    process.stdout.write(restoreId + '|' + runId + '|restore|/' + state.name + '\n');
+  } else process.exit(1);
 } else if (command === 'exec') {
-  if (whole.includes('pg_dump')) process.stdout.write('fixture database dump\n');
+  if (whole.includes('PGCONNECT_TIMEOUT=2')) process.stdout.write('1\n');
+  else if (whole.includes('pg_restore') && args.includes(restoreId) && process.env.MOCK_RESTORE_FAIL === '1') process.exit(1);
+  else if (whole.includes('pg_dump')) process.stdout.write('fixture database dump\n');
   else if (whole.includes('to_regclass')) process.stdout.write('t\n');
   else if (whole.includes('HAVING min(bytes)<>max(bytes)')) process.stdout.write('0\n');
   else if (whole.includes('COPY (SELECT sha256')) {
@@ -521,9 +572,40 @@ if (command === 'inspect') {
 } else if (command === 'volume') {
   if (args[1] === 'inspect' && process.env.MOCK_VOLUME_PRESENT === '0') process.exit(1);
   if (args[1] === 'create') process.stdout.write('f'.repeat(64) + '\n');
+  if (args[1] === 'rm' && process.env.MOCK_VOLUME_REMOVE_FAIL === '1') process.exit(1);
+} else if (command === 'ps') {
+  if (args.some((arg) => arg.startsWith('label=cauce.backup.run_id='))) {
+    if (process.env.MOCK_CREATE_AMBIGUOUS === '1') process.stdout.write(restoreId + '\n' + 'b'.repeat(64) + '\n');
+    else if (state.created) process.stdout.write(restoreId + '\n');
+  } else if (args.some((arg) => arg === 'id=' + restoreId) && state.created && !state.removed) {
+    process.stdout.write(restoreId + '\n');
+  }
+} else if (command === 'create') {
+  if (process.env.MOCK_CREATE_COLLISION === '1') {
+    state.foreignId = 'b'.repeat(64);
+    state.foreignName = args[args.indexOf('--name') + 1];
+    state.foreignRunId = 'foreign-run';
+    save();
+    process.exit(1);
+  }
+  if (process.env.MOCK_CREATE_AMBIGUOUS === '1') process.exit(1);
+  state.created = true;
+  state.runId = args.find((arg) => arg.startsWith('cauce.backup.run_id='))?.split('=')[1];
+  state.name = args[args.indexOf('--name') + 1];
+  save();
+  if (process.env.MOCK_CREATE_LOST_RESPONSE === '1') process.exit(1);
+  process.stdout.write(restoreId + '\n');
+} else if (command === 'start') {
+  if (process.env.MOCK_START_FAIL === '1') process.exit(1);
+  if (!state.created || args[1] !== restoreId) process.exit(1);
+  process.stdout.write(restoreId + '\n');
+} else if (command === 'rm') {
+  if (args[args.length - 1] !== restoreId) process.exit(1);
+  if (process.env.MOCK_REMOVE_FAIL === '1') process.exit(1);
+  state.removed = true;
+  save();
 } else if (command === 'run') {
-  if (args.includes('-d')) process.stdout.write('mock-container\n');
-  else if (args.includes('--exclude=./tmp')) {
+  if (args.includes('--exclude=./tmp')) {
     process.exit(spawnSync('tar', ['-C', process.env.MOCK_BLOB_SOURCE, '--exclude=./tmp', '-cf', '-', '.'], { stdio: 'inherit' }).status ?? 1);
   } else if (args.includes('-xf')) {
     process.exit(spawnSync('tar', ['-C', process.env.MOCK_BLOB_RESTORED, '-xf', '-'], { stdio: 'inherit' }).status ?? 1);
@@ -552,6 +634,7 @@ if (command === 'inspect') {
       OFFSITE_KEY: key,
       CAUCE_BACKUP_SKIP_RETENTION: '1',
       MOCK_DOCKER_LOG: join(directory, 'docker.log'),
+      MOCK_DOCKER_STATE: dockerState,
       MOCK_RSYNC_LOG: join(directory, 'rsync.log'),
       MOCK_BLOB_SOURCE: blobSource,
       MOCK_BLOB_RESTORED: blobRestored,
@@ -559,7 +642,12 @@ if (command === 'inspect') {
       MOCK_BLOB_BYTES: String(bytes.length),
       MOCK_VOLUME_PRESENT: '1',
     };
-    const produced = spawnSync(backup, [], { encoding: 'utf8', env });
+    const produce = (overrides: Record<string, string> = {}) => {
+      writeFileSync(env.MOCK_DOCKER_LOG, '');
+      writeFileSync(dockerState, '{}');
+      return spawnSync(backup, [], { encoding: 'utf8', env: { ...env, ...overrides } });
+    };
+    const produced = produce();
     expect(produced.status, produced.stderr).toBe(0);
     const monitored = spawnSync(monitor, [], {
       encoding: 'utf8',
@@ -570,12 +658,53 @@ if (command === 'inspect') {
     expect(producedStatus.blobs?.archive_file).toMatch(/\.dump\.blobs\.tar$/u);
     const dockerLog = await readFile(env.MOCK_DOCKER_LOG, 'utf8');
     expect(dockerLog).toContain('volume create --label cauce.v3.backup-verify=true');
+    expect(dockerLog).toContain('create --name cauce-v3-backup-verify-');
+    expect(dockerLog).toContain('--label cauce.backup.role=restore');
+    expect(dockerLog).toContain('start ' + 'a'.repeat(64));
+    expect(dockerLog).toContain('rm -f ' + 'a'.repeat(64));
+    expect(dockerLog).toContain('ps -aq --no-trunc --filter id=' + 'a'.repeat(64));
+    expect(dockerLog).toContain("-c SELECT 1");
+    expect(dockerLog.indexOf('start ' + 'a'.repeat(64))).toBeGreaterThan(dockerLog.indexOf('create --name'));
+    expect(dockerLog.indexOf('inspect -f {{.Id}}|{{index .Config.Labels "cauce.backup.run_id"}}')).toBeLessThan(dockerLog.indexOf('rm -f ' + 'a'.repeat(64)));
     expect(dockerLog).toContain('volume rm');
     const rsyncLog = await readFile(env.MOCK_RSYNC_LOG, 'utf8');
     expect(rsyncLog).toContain('--ignore-existing');
     expect(rsyncLog).toContain('--checksum --dry-run --itemize-changes');
 
-    const missing = spawnSync(backup, [], { encoding: 'utf8', env: { ...env, MOCK_VOLUME_PRESENT: '0' } });
+    const lostResponse = produce({ MOCK_CREATE_LOST_RESPONSE: '1' });
+    expect(lostResponse.status, lostResponse.stderr).toBe(0);
+    expect(lostResponse.stdout).toContain('recovered verifier identity after an indeterminate create response');
+    const collision = produce({ MOCK_CREATE_COLLISION: '1' });
+    expect(collision.status).toBe(1);
+    expect((await readFile(env.MOCK_DOCKER_LOG, 'utf8')).split('\n').some((line) => line.startsWith('rm '))).toBe(false);
+    expect(collision.stderr).toContain('ownership could not be resolved uniquely');
+    const collisionState = JSON.parse(await readFile(dockerState, 'utf8')) as { foreignId: string; foreignName: string; foreignRunId: string };
+    expect(collisionState.foreignId).toBe('b'.repeat(64));
+    expect(collisionState.foreignName).toMatch(/^cauce-v3-backup-verify-/u);
+    expect(collisionState.foreignRunId).toBe('foreign-run');
+    const ambiguous = produce({ MOCK_CREATE_AMBIGUOUS: '1' });
+    expect(ambiguous.status).toBe(1);
+    expect((await readFile(env.MOCK_DOCKER_LOG, 'utf8')).split('\n').some((line) => line.startsWith('rm '))).toBe(false);
+    const replaced = produce({ MOCK_REPLACE_BEFORE_REMOVE: '1' });
+    expect(replaced.status).toBe(1);
+    expect(replaced.stderr).toContain('ownership changed before cleanup');
+    expect((await readFile(env.MOCK_DOCKER_LOG, 'utf8')).split('\n').some((line) => line.startsWith('rm '))).toBe(false);
+    const startFailure = produce({ MOCK_START_FAIL: '1' });
+    expect(startFailure.status).toBe(1);
+    expect((await readFile(env.MOCK_DOCKER_LOG, 'utf8')).split('\n').some((line) => line === 'rm -f ' + 'a'.repeat(64))).toBe(true);
+    const removalFailure = produce({ MOCK_REMOVE_FAIL: '1' });
+    expect(removalFailure.status).toBe(1);
+    expect(removalFailure.stderr).toContain('could not remove owned verifier by ID');
+    const aggregatedCleanupFailure = produce({ MOCK_REMOVE_FAIL: '1', MOCK_VOLUME_REMOVE_FAIL: '1' });
+    expect(aggregatedCleanupFailure.status).toBe(1);
+    expect(aggregatedCleanupFailure.stderr).toContain('could not remove owned verifier by ID');
+    expect(aggregatedCleanupFailure.stderr).toContain('could not remove isolated blob restore volume');
+    const primaryFailure = produce({ MOCK_REMOVE_FAIL: '1', MOCK_RESTORE_FAIL: '1' });
+    expect(primaryFailure.status).toBe(1);
+    expect(primaryFailure.stderr).toContain('isolated full restore or catalog invariants failed');
+    expect(primaryFailure.stderr).toContain('could not remove owned verifier by ID');
+
+    const missing = produce({ MOCK_VOLUME_PRESENT: '0' });
     expect(missing.status).toBe(1);
     const failedStatus = JSON.parse(await readFile(statusFile, 'utf8')) as ReturnType<typeof validStatus>;
     expect(failedStatus.overall).toBe('failed');

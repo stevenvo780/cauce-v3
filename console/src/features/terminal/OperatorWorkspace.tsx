@@ -1,10 +1,11 @@
 import { AlertTriangle, MonitorPlay } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type RefObject, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
-import type { ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
+import type { ConsoleAccess, TerminalCapability } from '../../api/types';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { EmptyState, LoadingState } from '../../components/ui';
 import { GridContainer } from './GridContainer';
+import { TerminalAgentToolbar } from './TerminalAgentToolbar';
 import { PlazasColgadas, type MotivoReconciliacionPlaza } from './PlazasColgadas';
 import {
   TerminalApiError,
@@ -21,7 +22,7 @@ import { plazasColgadas, plazasOcupadas } from './plazas';
 import { fleetTerminalChip, type FleetAgent } from './fleet';
 import { ultimateTerminalGate, type PluginGate } from './plugin';
 import { closePtySession } from './pty-session';
-import { operatorRouteForAgent, type OperatorSession } from './session';
+import { type OperatorSession } from './session';
 import type { TerminalGrantRequestOutcome } from './types';
 
 interface OperatorWorkspaceProps {
@@ -29,7 +30,6 @@ interface OperatorWorkspaceProps {
   initialAgentId?: string;
   toolbar?: ReactNode;
   access?: ConsoleAccess;
-  topologyAccess?: TopologySnapshot;
   terminalCapability?: TerminalCapability;
   /** Optional: without the server inventory every destination stays UNKNOWN and PTY is closed. */
   terminalTargets?: TerminalTargetsSnapshot;
@@ -44,13 +44,13 @@ function sessionId(agent: FleetAgent): string {
   return `session:${agent.id}`;
 }
 
-function createSession(agent: FleetAgent, sourceRoomId = ''): OperatorSession {
+function createSession(agent: FleetAgent): OperatorSession {
   return {
     id: sessionId(agent),
     agent,
-    sourceRoomId,
+    sourceRoomId: '',
     openedAt: new Date().toISOString(),
-    mode: 'transcript',
+    mode: 'pty',
   };
 }
 
@@ -110,8 +110,7 @@ function copiaDelEscenario(
       tono: 'cerrado',
       eyebrow: 'Canal cerrado',
       titulo: 'Aquí no se puede espejar ninguna TUI',
-      cuerpo: `${gate.reason} Mientras siga así, abrir un alias muestra su feed durable y el motivo escrito, `
-        + 'nunca su terminal.',
+      cuerpo: `${gate.reason} Elegí un agente para consultar el motivo de disponibilidad de su terminal.`,
     };
   }
   if (!targets?.items) {
@@ -182,7 +181,7 @@ function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T
   return result;
 }
 
-export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError, onSesionesAbiertas, cajaRef }: OperatorWorkspaceProps) {
+export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, terminalCapability, terminalTargets, fleetLoading, fleetError, onSesionesAbiertas, cajaRef }: OperatorWorkspaceProps) {
   // The session that holds the CSRF token in memory: without it every PTY plane write returns 403.
   const api = useApi();
   const [sessions, setSessions] = useState<OperatorSession[]>([]);
@@ -292,15 +291,12 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, top
     if (!sessionTokensRef.current.has(id)) {
       sessionTokensRef.current.set(id, ++nextSessionTokenRef.current);
     }
-    const sourceRoomId = operatorRouteForAgent(topologyAccess, access, agent).sourceRoomIds[0] ?? '';
     setSessions((current) => {
       const existing = current.find((session) => session.id === id);
-      if (!existing) return [...current, createSession(agent, sourceRoomId)];
-      if (!sourceRoomId || existing.sourceRoomId === sourceRoomId) return current;
-      return current.map((session) => session.id === id ? { ...session, sourceRoomId } : session);
+      return existing ? current : [...current, createSession(agent)];
     });
     setActiveId(id);
-  }, [access, topologyAccess]);
+  }, []);
 
   useEffect(() => {
     if (!initialAgentId || initialAgentOpenedRef.current === initialAgentId) return;
@@ -470,20 +466,9 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, top
         onCerrar={(id) => { void cerrarPlaza(id); }}
       />
       <div className="ultimate-terminal-shell" data-objeto-principal="escenario" ref={cajaRef}>
-      <div className="terminal-agent-toolbar">
-        <label htmlFor="terminal-agent-select" className="sr-only">Agente</label>
-        <select id="terminal-agent-select" value={activeSession?.agent.id ?? ''} onChange={(event) => {
-          const agent = agents.find((item) => item.id === event.target.value);
-          if (agent) void selectAgent(agent);
-        }} disabled={changingAgent || (fleetLoading && agents.length === 0)}>
-          <option value="">Elegir agente</option>
-          {agents.map((agent) => {
-            const state = fleetTerminalChip(terminalTargets?.items, agent);
-            return <option key={agent.id} value={agent.id} title={state.reason}>{agent.alias} · {agent.tenantId} · {state.label}</option>;
-          })}
-        </select>
-        {toolbar}
-      </div>
+      <TerminalAgentToolbar agents={agents} activeId={activeSession?.agent.id}
+        targets={terminalTargets} disabled={changingAgent || (fleetLoading && agents.length === 0)}
+        onSelect={(agent) => { void selectAgent(agent); }}>{toolbar}</TerminalAgentToolbar>
       {liveSessions.length === 0 ? (
         <EscenarioVacio
           agents={agents}

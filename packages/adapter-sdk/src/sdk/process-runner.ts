@@ -1,4 +1,6 @@
+import { OpenClawPhaseFrames, phaseEmitter } from "./openclaw-phases.js";
 import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
+import { isAbsolute } from "node:path";
 import { closeSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";
 import { ProcessExecutionError } from "./errors.js";
@@ -24,6 +26,8 @@ const SAFE_ENVIRONMENT = [
   "LC_CTYPE",
   "TMPDIR",
   "TEMP",
+  "CODEX_HOME",
+  "CLAUDE_CONFIG_DIR",
   // Non-secret Hermes profile/model discovery only; Hermes resolves authentication from local storage.
   "HERMES_HOME",
   "HERMES_INFERENCE_MODEL",
@@ -37,11 +41,20 @@ const SAFE_ENVIRONMENT = [
 ];
 const SECRET_ENVIRONMENT = /(?:secret|token|password|passwd|api[_-]?key|auth|credential|cookie|session)/iu;
 
-function childEnvironment(additions: Readonly<Record<string, string>> | undefined): NodeJS.ProcessEnv {
+function childEnvironment(additions: Readonly<Record<string, string>> | undefined, endpoint: string | undefined): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const key of SAFE_ENVIRONMENT) {
     const value = process.env[key];
     if (value !== undefined) environment[key] = value;
+  }
+  if (additions !== undefined && Object.hasOwn(additions, "CAUCE_EMISSION_SOCKET_PATH")) {
+    throw new ProcessExecutionError("EMISSION_ENDPOINT_OVERRIDE", "Emission endpoint must come from the owned turn", false);
+  }
+  if (endpoint !== undefined) {
+    if (!isAbsolute(endpoint) || endpoint.includes("\0") || endpoint.trim() !== endpoint) {
+      throw new ProcessExecutionError("INVALID_EMISSION_ENDPOINT", "Emission endpoint is invalid", false);
+    }
+    environment.CAUCE_EMISSION_SOCKET_PATH = endpoint;
   }
   for (const [key, value] of Object.entries(additions ?? {})) {
     if (SECRET_ENVIRONMENT.test(key)) {
@@ -55,7 +68,7 @@ function childEnvironment(additions: Readonly<Record<string, string>> | undefine
 function spawnHarness(request: CommandRunRequest, stdinDescriptor: number | undefined): HarnessChild {
   const options = {
     ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
-    env: childEnvironment(request.env),
+    env: childEnvironment(request.env, request.emissionSocketPath),
     shell: false,
     detached: process.platform !== "win32",
     windowsHide: true,
@@ -157,6 +170,10 @@ export class SpawnCommandRunner {
         }
       }
 
+      const phase = phaseEmitter(request.harness === "openclaw" ? request.onOpenClawPhase : undefined, "cli");
+      const phaseFrames = request.harness === "openclaw" && request.openClawPhaseFrames === true && request.startWitness?.kind === "stderr-marker" && request.startWitness.marker === "<<cauce:harness-started>>"
+        ? new OpenClawPhaseFrames(request.onOpenClawPhase) : undefined;
+      phase("child_spawned");
       this.logger({ event: "spawn", harness: request.harness });
       const pid = child.pid;
       let stdout: Buffer = Buffer.alloc(0);
@@ -183,7 +200,10 @@ export class SpawnCommandRunner {
 
       const settle = (): void => {
         if (settled) return;
+        if (phaseFrames !== undefined) stderr = collect(stderr, phaseFrames.finish(timedOut || cancelled || outputExceeded));
+        outputExceeded ||= phaseFrames !== undefined && phaseFrames.diagnosticBytes > this.maxOutputBytes;
         settled = true;
+        phase("runner_settled");
         clearTimeout(timeout);
         if (reapTimer !== undefined) clearTimeout(reapTimer);
         request.signal.removeEventListener("abort", onAbort);
@@ -246,6 +266,7 @@ export class SpawnCommandRunner {
         timedOut ||= reason === "timeout";
         cancelled ||= reason === "cancel";
         outputExceeded ||= reason === "output";
+        phase(reason === "timeout" ? "runner_timeout" : reason === "cancel" ? "runner_cancelled" : "runner_failed");
         this.logger({ event: "terminate", harness: request.harness, timedOut, cancelled });
         signalProcessGroup(child, pid, "SIGTERM");
         const killTimer = setTimeout(() => { signalProcessGroup(child, pid, "SIGKILL"); }, this.killGraceMs);
@@ -277,8 +298,10 @@ export class SpawnCommandRunner {
         if (witness?.kind === "stdout-first-byte" && chunk.byteLength > 0) noteHarnessStart();
       });
       child.stderr.on("data", (chunk: Buffer) => {
-        noteProgress();
-        stderr = collect(stderr, chunk);
+        const ordinary = phaseFrames?.push(chunk) ?? chunk;
+        if (phaseFrames !== undefined && phaseFrames.diagnosticBytes > this.maxOutputBytes) terminate("output");
+        if (phaseFrames === undefined || ordinary.byteLength > 0) noteProgress();
+        stderr = collect(stderr, ordinary);
         // Search the marker over the accumulated stderr in case it arrives split across reads.
         if (witness?.kind === "stderr-marker" && stderr.includes(witness.marker)) noteHarnessStart();
       });
@@ -287,6 +310,7 @@ export class SpawnCommandRunner {
       request.signal.addEventListener("abort", onAbort, { once: true });
 
       child.once("error", () => {
+        phase("runner_failed");
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
@@ -296,12 +320,14 @@ export class SpawnCommandRunner {
       });
 
       child.once("exit", (code, signal) => {
+        phase("child_exit");
         exitCode = code;
         exitSignal = signal;
         armReap(this.orphanPipeGraceMs);
       });
 
       child.once("close", (code, signal) => {
+        phase("child_close");
         exitCode ??= code;
         exitSignal ??= signal;
         settle();

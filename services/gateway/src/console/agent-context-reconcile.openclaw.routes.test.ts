@@ -1,8 +1,11 @@
+import type { ContextWriteCoordinateInput } from './agent-context-write-coordinator.js';
+import { coordinateWriteFixture } from './agent-profile.fixtures.js';
 import { createHash } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, expect, it, vi } from 'vitest';
 import { conBloqueDePerfil, esFicheroDelAgente, ficherosDelArnes, type ContextoDeAlias } from '@cauce/protocol';
 import { registerAgentContextReconcileRoutes } from './agent-context-reconcile.routes.js';
+import { TerminalRelayFactsProbe } from './agent-documents/relay-probe.js';
 import { prepareAgentProfileRuntime } from './agent-profile-runtime.js';
 import type { AgentFactsProbe, GovernanceBatchWrite } from './agent-documents.routes.js';
 
@@ -39,6 +42,7 @@ function fixture(options: { truncatedMemory?: boolean; changedMemory?: boolean }
       .map(([path, text]) => ({ name: path.slice(ROOT.length + 1), path, sha: sha(text) })),
   };
   disk.set(`${ROOT}/TOOLS.md`, '# Notas locales\nCron corregido por el agente.\n');
+  if (options.truncatedMemory) disk.set(`${ROOT}/MEMORY.md`, 'm'.repeat(256 * 1024 + 1));
   if (options.changedMemory) disk.set(`${ROOT}/MEMORY.md`, 'Recuerdo nuevo no leído\n');
   const before = new Map(disk);
   const writes: GovernanceBatchWrite[][] = [];
@@ -60,7 +64,7 @@ function fixture(options: { truncatedMemory?: boolean; changedMemory?: boolean }
       };
     },
     listMemoryDirectory: async () => ({ error: 'unavailable', reason: 'not used' }),
-    writeGovernanceBatch: async (batch) => {
+    writeGovernanceBatchDurable: async (batch) => {
       writes.push([...batch]);
       if (batch.some((write) => write.precondition.state !== 'present'
         || write.precondition.sha256 !== sha(disk.get(write.path) ?? ''))) {
@@ -78,6 +82,14 @@ function fixture(options: { truncatedMemory?: boolean; changedMemory?: boolean }
   };
   const recordExpectation = vi.fn();
   const app = Fastify();
+  const coordinated = vi.fn();
+  const coordinateWrite = <Value>(input: ContextWriteCoordinateInput<Value>) => {
+    coordinated();
+    return coordinateWriteFixture(input, async (sql, values) => {
+      if (sql.includes('agent_profile_runtime_expectations')) recordExpectation({ revision: values[2], generation: values[3],
+        documents: JSON.parse(String(values[4])) as unknown });
+    }, expectation.generation);
+  };
   registerAgentContextReconcileRoutes(app, {
     authorize: async () => ({ tenant_id: 'Steven', alias: 'kant' }),
     authorizeTarget: async () => ({ tenant_id: 'Miguel', alias: 'iza', enabled: true }),
@@ -86,23 +98,15 @@ function fixture(options: { truncatedMemory?: boolean; changedMemory?: boolean }
     readRuntimeExpectation: async () => expectation,
     prepareRuntime: (tenantId, alias, current) => prepareAgentProfileRuntime(probe, tenantId, alias, current),
     deliveryInFlight: async () => ({ count: 0, deliveries: [] }),
-    reconcileRuntime: async (input) => {
-      try {
-        const effect = await input.apply();
-        recordExpectation(effect.expectation);
-        return { state: 'committed', value: effect.value };
-      } catch {
-        return { state: 'effect_unknown' };
-      }
-    },
+    coordinateWrite,
     recordAudit: vi.fn(async () => undefined),
   });
   live.push(app);
   const preview = async () => app.inject({ method: 'POST', url: `${URL}/preview`, payload: { reason: REASON } });
-  return { app, disk, before, writes, expectation, recordExpectation, preview };
+  return { app, disk, before, writes, expectation, recordExpectation, coordinated, preview, probe, context };
 }
 
-it.each([{ truncatedMemory: false }, { truncatedMemory: true }, { truncatedMemory: true, changedMemory: true }])(
+it.each([{ truncatedMemory: false }])(
   'reconciles five authored documents while preserving seven runtime files: %j', async (options) => {
   const current = fixture(options);
   const preview = await current.preview();
@@ -123,7 +127,8 @@ it.each([{ truncatedMemory: false }, { truncatedMemory: true }, { truncatedMemor
   expect(current.recordExpectation).toHaveBeenCalledOnce();
   const stored: unknown = current.recordExpectation.mock.calls[0]?.[0];
   expect(stored).toEqual({ ...current.expectation, documents: current.expectation.documents
-    .map((document) => ({ ...document, sha: sha(current.disk.get(document.path) ?? '') })) });
+    .map((document) => ({ ...document, sha: sha(current.disk.get(document.path) ?? '') }))
+    .sort((left, right) => left.name.localeCompare(right.name)) });
   expect(applied.json<{ runtime_verification: { documents: unknown[] } }>().runtime_verification.documents).toHaveLength(5);
 });
 
@@ -152,4 +157,34 @@ it('rejects a local edit made after preview without writing or adopting it', asy
   expect(applied.json()).toMatchObject({ error: 'reconcile_snapshot_conflict' });
   expect(current.disk.get(`${ROOT}/TOOLS.md`)).toBe(concurrent);
   expect(current.writes).toHaveLength(0);
+});
+
+it.each([{ truncatedMemory: true }, { truncatedMemory: true, changedMemory: true }])(
+  'rejects an incomplete preserved file before coordinating any write: %j', async (options) => {
+    const current = fixture(options);
+    const response = await current.preview();
+    expect(response.statusCode).toBe(409);
+    expect(current.writes).toHaveLength(0);
+    expect(current.coordinated).not.toHaveBeenCalled();
+    expect(current.recordExpectation).not.toHaveBeenCalled();
+    expect(current.disk).toEqual(current.before);
+  });
+
+it('rejects bytes beyond the real relay probe cap before materializing an OpenClaw write', async () => {
+  const current = fixture();
+  const memory = `${ROOT}/MEMORY.md`;
+  current.disk.set(memory, 'm'.repeat(256 * 1024 + 1));
+  const readFile = vi.fn(async (_tenant: string, _alias: string, path: string) => {
+    const content = current.disk.get(path);
+    if (content === undefined) return { error: 'not_found' as const, reason: 'absent' };
+    return { path, content, sha: sha(content), bytes: Buffer.byteLength(content),
+      truncated: false, modified_at: new Date(0).toISOString() };
+  });
+  const mounted = new TerminalRelayFactsProbe({ factsFor: (tenantId, alias) => current.probe.factsFor(tenantId, alias) }, { readFile });
+  await expect(prepareAgentProfileRuntime(mounted, 'Miguel', 'iza', current.context))
+    .rejects.toMatchObject({ code: 'truncated' });
+  expect(readFile).toHaveBeenCalledWith('Miguel', 'iza', memory, undefined);
+  expect(current.coordinated).not.toHaveBeenCalled();
+  expect(current.writes).toHaveLength(0);
+  expect(current.recordExpectation).not.toHaveBeenCalled();
 });

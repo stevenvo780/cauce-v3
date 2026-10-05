@@ -91,12 +91,14 @@ it('el inspector devuelve el foco al mensaje y usa Más si el mensaje salió de 
   const user = userEvent.setup();
   const input = props();
   const { rerender } = renderWithApi(<ConversationPane {...input} />);
-  const trigger = screen.getByRole('button', { name: /Ver detalle$/ });
+  const trigger = screen.getByRole('button', { name: 'Opciones del mensaje' });
   await user.click(trigger);
+  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
   expect(screen.getByRole('heading', { name: 'Mensaje que elegiste' })).toHaveFocus();
   await user.keyboard('{Escape}');
   expect(trigger).toHaveFocus();
   await user.click(trigger);
+  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
   rerender(<ApiProvider api={testApi}><ConversationPane {...input} page={{ ...input.page, items: [] }} /></ApiProvider>);
   expect(trigger.isConnected).toBe(false);
   expect(screen.getByRole('note')).toHaveTextContent('Mensaje fuera de la ventana actual');
@@ -124,7 +126,8 @@ it.each([
     timeline: [...(inProgress.timeline ?? []), { status, at: terminalAt, attempt: 3 }],
   }] };
   const { rerender } = renderWithApi(<ConversationPane {...input} page={{ items: [initial] }} />);
-  await user.click(screen.getByRole('button', { name: /Ver detalle$/ }));
+  await user.click(screen.getByRole('button', { name: 'Opciones del mensaje' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
   const detail = screen.getByRole('group', { name: 'Detalle del mensaje seleccionado' });
   expect(within(detail).getByText('HECHA / FALLÓ · UNKNOWN')).toBeVisible();
   const composer = screen.getByRole('textbox');
@@ -148,7 +151,7 @@ it('no promete detalles para un mensaje sin identificador', async () => {
   const input = props();
   const items = input.page?.items?.map((item) => ({ ...item, message_id: undefined }));
   await act(async () => { renderWithApi(<ConversationPane {...input} page={{ ...input.page, items }} />); });
-  expect(screen.getByRole('button', { name: /Detalle no disponible: mensaje sin identificador/ })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Opciones del mensaje' })).toBeDisabled();
 });
 
 it('la respuesta tardía de un cuerpo no reemplaza el mensaje que se está leyendo', async () => {
@@ -160,10 +163,12 @@ it('la respuesta tardía de un cuerpo no reemplaza el mensaje que se está leyen
   let resolveBody: (value: Awaited<ReturnType<typeof testApi.getMessage>>) => void = () => undefined;
   vi.spyOn(testApi, 'getMessage').mockImplementation(() => new Promise((resolve) => { resolveBody = resolve; }));
   renderWithApi(<ConversationPane {...input} page={{ items: [{ ...first, body_preview: 'a'.repeat(240) }, second] }} />);
-  const triggers = screen.getAllByRole('button', { name: /Ver detalle$/ });
+  const triggers = screen.getAllByRole('button', { name: 'Opciones del mensaje' });
   await user.click(triggers[0]);
+  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
   await user.click(screen.getByRole('button', { name: 'Ver el mensaje completo' }));
   await user.click(triggers[1]);
+  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
   await act(async () => { resolveBody({ message_id: first.message_id, body: { text: 'Cuerpo tardío del primero' } }); });
   const detail = screen.getByRole('group', { name: 'Detalle del mensaje seleccionado' });
   await waitFor(() => { expect(within(detail).getByText('Segundo mensaje')).toBeVisible(); });
@@ -183,7 +188,7 @@ it('lee y presenta la respuesta canónica solo bajo la raíz propia y el deliver
   };
   const getMessage = vi.spyOn(testApi, 'getMessage').mockResolvedValue({
     message_id: root.message_id,
-    chain_open: true,
+    chain_open: false,
     deliveries: [{
       delivery_id: delivery.delivery_id, tenant_id: delivery.recipient_tenant ?? '',
       alias: delivery.recipient_alias ?? '', status: 'done', reply: '<script>alert("x")</script> resultado',
@@ -191,7 +196,7 @@ it('lee y presenta la respuesta canónica solo bajo la raíz propia y el deliver
   });
   renderWithApi(<ConversationPane {...input} page={{ items: [root] }} />);
   const reply = await screen.findByLabelText(/^Respuesta canónica de /);
-  expect(reply).toHaveTextContent('Respuesta provisional · cadena en curso');
+  expect(reply).not.toHaveTextContent(/provisional|consolidada|Sin respuesta/);
   expect(reply).toHaveTextContent('<script>alert("x")</script> resultado');
   expect(reply.querySelector('script')).toBeNull();
   expect(reply).toHaveAttribute('data-delivery-id', delivery.delivery_id);
@@ -234,10 +239,8 @@ it('actualiza el recibo sin estado con el terminal del feed y relee una vez en g
     deliveries: [{ delivery_id: deliveryId, recipient_tenant: agent.tenantId, recipient_alias: agent.alias, status: 'done' }],
   }] }} /></ApiProvider>);
   await waitFor(() => { expect(getMessage).toHaveBeenCalledTimes(2); });
-  const reply = await screen.findByLabelText(`Respuesta canónica de ${agent.tenantId}:${agent.alias}`);
-  expect(reply).toHaveTextContent('respuesta del gateway anterior');
-  expect(reply).toHaveTextContent('no se demuestra que haya cerrado');
-  expect(within(reply).getByRole('button', { name: 'Releer respuesta' })).toBeVisible();
+  expect(screen.queryByLabelText(`Respuesta canónica de ${agent.tenantId}:${agent.alias}`)).toBeNull();
+  expect(screen.queryByText('respuesta del gateway anterior')).toBeNull();
   await act(async () => { await new Promise((resolve) => { window.setTimeout(resolve, 2_600); }); });
   expect(getMessage).toHaveBeenCalledTimes(2);
 });
@@ -286,10 +289,11 @@ it('muestra aceptación y empieza a leer antes de confirm, con doble submit bloq
   expect(f.publish).toHaveBeenCalledOnce();
   expect(f.confirm).toHaveBeenCalledOnce();
   expect(f.input.onReload).toHaveBeenCalledOnce();
-  expect(screen.getByText(/Mensaje aceptado para entrega ·/)).toHaveTextContent('Confirmación pendiente');
+  expect(screen.queryByText(/Mensaje aceptado para entrega ·/)).toBeNull();
+  expect(screen.queryByText(/ACK llega por polling/i)).toBeNull();
   expect(screen.getByRole('button', { name: 'Confirmando…' })).toBeDisabled();
   expect(screen.getByRole('textbox')).toHaveValue('');
-  expect(screen.getByRole('textbox')).toBeDisabled();
+  expect(screen.getByRole('textbox')).toBeEnabled();
   fireEvent.submit(form);
   expect(f.prepare).toHaveBeenCalledOnce();
   await act(async () => { f.pending.resolve(f.confirmation); });
@@ -459,8 +463,8 @@ it('cierra la selección y descarta el cuerpo completo retenido al cambiar de AP
   });
   const view = renderWithApi(<ConversationPane {...f.input} page={f.page} />);
   await screen.findByText('Respuesta anterior');
-  await user.click(screen.getByText(/Detalles del mensaje/));
-  await user.click(screen.getByRole('button', { name: /Ver detalle$/ }));
+  await user.click(screen.getByRole('button', { name: 'Opciones del mensaje' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
   await user.click(screen.getByRole('button', { name: 'Ver el mensaje completo' }));
   expect(await screen.findByText('Cuerpo completo de la API anterior')).toBeVisible();
   const nextApi = new CauceApi('http://another-api.invalid');
@@ -474,4 +478,30 @@ it('cierra la selección y descarta el cuerpo completo retenido al cambiar de AP
   expect(screen.queryByText('Respuesta anterior')).toBeNull();
   expect(await screen.findByText('Nueva respuesta verificada')).toBeVisible();
   expect(nextRead).toHaveBeenCalledExactlyOnceWith(f.receipt.message_id);
+});
+
+
+it('un solo toque al enviar conserva foco y cerca un segundo submit antes de confirmar', async () => {
+  const user = userEvent.setup();
+  const f = pendingPublish();
+  renderWithApi(<ConversationPane {...f.input} page={{ items: [] }} />);
+  const input = screen.getByRole('textbox');
+  await user.click(input);
+  fireEvent.change(input, { target: { value: 'Ping' } });
+  const send = screen.getByRole('button', { name: 'Enviar' });
+  const pointer = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+  fireEvent(send, pointer);
+  expect(pointer.defaultPrevented).toBe(true);
+  expect(input).toHaveFocus();
+  fireEvent.click(send);
+  await waitFor(() => { expect(f.publish).toHaveBeenCalledOnce(); });
+  expect(input).toHaveFocus();
+  expect(input).toBeEnabled();
+  const form = input.closest('form');
+  if (!form) throw new Error('Missing composer');
+  fireEvent.submit(form);
+  expect(f.prepare).toHaveBeenCalledOnce();
+  await act(async () => { f.pending.resolve(f.confirmation); });
+  expect(input).toHaveFocus();
+  expect(input).not.toHaveAttribute('readonly');
 });

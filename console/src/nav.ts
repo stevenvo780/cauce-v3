@@ -3,11 +3,8 @@ import {
   Settings2, Network, TerminalSquare,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
-import { useConsoleAccess } from './api/console-access';
 import { useTerminalRelayStatus } from './features/terminal/relay-status';
-import { permissionState } from './lib';
 import {
-  configNavAvailability,
   terminalNavAvailability,
   type NavEntryAvailability,
 } from './router';
@@ -37,7 +34,7 @@ export const NAV_ENTRIES: NavEntry[] = [
   { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, que: 'Cada entrega pendiente, en reintento o muerta, con reinyectar y cancelar.' },
   { id: 'observability', label: 'Señales y auditoría', icon: Gauge, que: 'Las señales del gateway, el egress al origen y quién autorizó cada cosa.' },
   { id: 'config', label: 'Ajustes y altas', icon: Settings2, que: 'Tenants, salas, membresías, roles y altas — con reversión por revisión.' },
-  { id: 'terminal', label: 'Terminal de agentes', icon: TerminalSquare, que: 'La terminal de cada bot, con su feed durable aunque el relay PTY no esté.' },
+  { id: 'terminal', label: 'Terminal de agentes', icon: TerminalSquare, que: 'TUI en vivo y Terminal del agente, con permisos y estado del canal.' },
   { id: 'ayuda', label: 'Ayuda', icon: BookOpen, que: 'Qué contesta cada vista, qué significa cada estado de la flota y los atajos de teclado.' },
 ];
 
@@ -45,13 +42,9 @@ export const NAV_ENTRIES: NavEntry[] = [
  * Hook to determine the availability and permissions of each navigation route.
  */
 export function useNavAvailability(): (id: string) => NavEntryAvailability {
-  const access = useConsoleAccess();
   const relay = useTerminalRelayStatus();
   return (id: string): NavEntryAvailability => {
     if (id === 'terminal') return terminalNavAvailability(relay);
-    if (id === 'config') {
-      return configNavAvailability(permissionState(access.error ? undefined : access.data, 'config.write'));
-    }
     return { hidden: false, disabled: false };
   };
 }

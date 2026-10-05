@@ -100,6 +100,7 @@ try:
     key = secure(key_path, mode=0o400).read_text().strip()
     material = {name: secure(pki / name, mode=0o600).read_text() for name in ("client.crt", "client.key", "ca.crt")}
     sys.path.insert(0, str(root / "pty-agent"))
+    from launcher_write_journal import provision_host_journal
     from rollout_pty_lib import ReleaseBundle
     from cauce_pty_agent.runtime_facts import validate_bundle
     from cauce_pty_agent.agent import main
@@ -131,6 +132,8 @@ try:
                           "runtime_uid": uid, "profile": profile, "workspace": workspace,
                           "version": release.release_sha, "status": "ready"}))
         raise SystemExit(0)
+    bundle["governance_journal_dir"] = provision_host_journal(account.pw_dir, alias, bundle["container_id"])
+    validate_bundle(bundle)
     runtime = secure(Path(f"/run/user/{uid}"), directory=True)
     descriptor, drop = tempfile.mkstemp(prefix=f"cauce-pty-{alias}-", suffix=".json", dir=runtime)
     with os.fdopen(descriptor, "w") as stream:

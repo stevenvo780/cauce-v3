@@ -355,6 +355,8 @@ test("two materialized outputs to one alias close only by their exact child deli
 
   const firstPrompt = runner.requests[1]?.stdin ?? "";
   const secondPrompt = runner.requests[2]?.stdin ?? "";
+  assert.match(firstPrompt, /"from_tenant":"Steven"/u);
+  assert.match(firstPrompt, /"this_branch_tenant":"Steven"/u);
   assert.match(firstPrompt, /"still_pending":\["socrates"\]/u);
   assert.match(firstPrompt, new RegExp(`"child_delivery_id":"${secondChild}"`, "u"));
   assert.doesNotMatch(firstPrompt, /"still_pending":\[\]/u);

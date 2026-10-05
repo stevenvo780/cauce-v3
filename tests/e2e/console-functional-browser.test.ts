@@ -107,9 +107,11 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
       const bubble = page.getByText(nonce, { exact: true });
       await bubble.waitFor({ timeout: 20_000 });
       const entry = bubble.locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
-      await entry.getByText(/^Detalles del mensaje/u).click();
-      await entry.locator('.transcript-delivery').click();
-      await entry.getByText('HECHA', { exact: true }).waitFor({ timeout: 35_000 }).catch(async (cause: unknown) => {
+      await entry.getByRole('button', { name: 'Opciones del mensaje', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Ver detalle', exact: true }).click();
+      await page.getByRole('group', { name: 'Detalle del mensaje seleccionado', exact: true }).waitFor({ timeout: 10_000 });
+      await entry.locator('.chat-delivery-check[aria-label="Entrega: Recibido por el agente · ejecución terminada"]')
+        .waitFor({ state: 'visible', timeout: 35_000 }).catch(async (cause: unknown) => {
         const state = await activeFixture.database.pool.query(
           `SELECT message.id,message.auth_channel,delivery.status,delivery.attempt,delivery.last_error,delivery.result
              FROM messages message LEFT JOIN deliveries delivery ON delivery.message_id=message.id
@@ -250,9 +252,12 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
       const message = page.getByText(nonce, { exact: true });
       await message.waitFor({ timeout: 20_000 });
       const entry = message.locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
-      await entry.getByText(/^Detalles del mensaje/u).click();
-      await entry.locator('.transcript-delivery').click();
-      await entry.getByText('HECHA', { exact: true }).waitFor({ timeout: 35_000 });
+      await entry.getByRole('button', { name: 'Opciones del mensaje', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Ver detalle', exact: true }).click();
+      await page.getByRole('group', { name: 'Detalle del mensaje seleccionado', exact: true })
+        .waitFor({ state: 'visible', timeout: 10_000 });
+      await entry.locator('.chat-delivery-check[aria-label="Entrega: Recibido por el agente · ejecución terminada"]')
+        .waitFor({ state: 'visible', timeout: 35_000 });
       const persisted = await activeFixture.database.pool.query<{ id: string; author: { subject_id?: string } | null }>(
         `SELECT message.id,
                 (SELECT author_audit.metadata->'console_author'

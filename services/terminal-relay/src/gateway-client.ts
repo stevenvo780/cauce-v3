@@ -105,6 +105,8 @@ export interface AgentPresence {
   readonly project_doc_fallback_filenames?: readonly string[];
   readonly agent_version: string;
   readonly modes: readonly TerminalMode[];
+  readonly features?: readonly string[];
+  readonly writer_instance_id?: string;
   /** Field name is the gateway's: `parseAgentPresence` rejects the record without it. */
   readonly connected_since: string;
 }

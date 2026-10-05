@@ -406,6 +406,8 @@ async function seed(database: TestDatabase, directory: string) {
     await database.pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory)
       VALUES ($1,$2,'fake',$2,true,$3,'stev',$4,$5) ON CONFLICT (tenant_id,alias) DO NOTHING`, [item.tenant, item.target, `cauce-e2e-${item.target}`, directory, join(directory, item.target)]);
     await database.pool.query("INSERT INTO agent_profiles(tenant_id,alias,role_summary) VALUES ($1,$2,$3) ON CONFLICT (tenant_id,alias) DO NOTHING", [item.tenant, item.target, item.marker]);
+    await database.pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory)
+      VALUES ($1,$2,'fake',$2,true,$3,'stev',$4,$5) ON CONFLICT (tenant_id,alias) DO NOTHING`, [item.tenant, item.operator, `cauce-e2e-${item.operator}`, directory, join(directory, item.operator)]);
     await database.pool.query('INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES ($1,$2,$3,\'operator\') ON CONFLICT DO NOTHING', [item.tenant, item.room, item.operator]);
   }
 }

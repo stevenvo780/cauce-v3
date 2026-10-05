@@ -11,6 +11,7 @@ import {
 } from '../../auth.js';
 import type { ConsolePublishTelemetry } from '../../console-publish-telemetry.js';
 import type { GatewayRepository } from '../../app.js';
+import { consoleHumanAccess, type ConsoleHumanAccess } from '../../console-human-authority.js';
 import { PasswordAuthProvider } from '../../password-auth.js';
 import { logPublishRedaction } from '../publish-redaction.js';
 import { principal, replyError } from '../shared.js';
@@ -50,9 +51,12 @@ export function registerCorePublishRoutes(
 ): CorePublishHandler {
   const publishHandler = async (request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
     const consolePublish = request.routeOptions.url === '/v3/console/messages';
+    let human: ConsoleHumanAccess | undefined;
     try {
       const actor = await principal(request, options.authProvider);
+      if (consolePublish) human = await consoleHumanAccess(options.authProvider, request, reply);
       const receipt = await publishOperation(repository, {
+        ...(human === undefined ? {} : { humanAccess: human.options }),
         actor, body: request.body, entry: consolePublish ? 'console' : 'direct',
         authMechanism: requestAuthMechanism(options.authProvider, request),
         priorityLog: request.log,
@@ -69,13 +73,13 @@ export function registerCorePublishRoutes(
         if (consolePublish) {
           consolePublishTelemetry.record({ operation: 'publish', result: 'expired' });
         }
-        return reply.code(410).send(
+        return await reply.code(410).send(
           ConsolePublishIntentExpiredSchema.parse(error.expiration),
         );
       }
       if (consolePublish) consolePublishTelemetry.record({ operation: 'publish', result: 'error' });
       replyError(reply, error);
-    }
+    } finally { human?.close(); }
   };
   app.post('/v3/messages', publishRouteOptions, publishHandler);
 

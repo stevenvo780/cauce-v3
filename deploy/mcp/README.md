@@ -86,3 +86,25 @@ efímeros y no prueban el proveedor real ni la conexión ChatGPT.
 Para desactivar, detener únicamente este Compose (`docker compose -f deploy/mcp/compose.yaml
 down`), retirar la ruta Caddy dedicada y revocar la identidad gateway/OAuth si deja de usarse.
 No ejecutar un `down` desde el Compose central.
+
+## Clave de firma del MCP humano en modo local (otro subsistema)
+
+Lo de arriba es el puente de solo lectura de este directorio. Esto es distinto: la clave de
+firma del **servidor de autorización OAuth local del gateway** (`CAUCE_MCP_OAUTH_PROVIDER=local`,
+Compose central, overlay `deploy/compose.mcp-human-local.yaml`), para cuando ningún proveedor
+OAuth externo está disponible. Vive en este directorio solo porque ambos nombres empiezan con
+`mcp`; no comparten código, Compose ni activación.
+
+Generar la clave EC P-256 (PKCS8, sin cifrar) con:
+
+```sh
+deploy/mcp/generate-oauth-signing-key.sh /ruta/privada/fuera-del-repo/mcp-oauth-signing-key.pem
+```
+
+El script usa `umask 077`, escribe con permiso `0400` y se niega a sobrescribir una clave
+existente (rotar exige una ruta y un `CAUCE_MCP_OAUTH_SIGNING_KID` nuevos; nunca reutilizar un
+`kid` con material distinto, porque el JWKS publica claves por `kid`). Apuntar
+`CAUCE_MCP_OAUTH_SIGNING_KEY_PATH` del entorno de despliegue a esa ruta: `deploy/deploy.sh` la
+pasa como secreto Compose (`mcp_oauth_signing_key`, montado en `/run/secrets/mcp_oauth_signing_key`,
+uid/gid 1000, modo 0400) y nunca debe copiarse dentro de `prod.env`. Variables relacionadas en
+`docs/parametros.md` §6.

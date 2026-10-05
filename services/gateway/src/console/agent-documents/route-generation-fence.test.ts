@@ -1,3 +1,6 @@
+import { AgentContextWriteCoordinator } from '../agent-context-write-coordinator.js';
+import { contexto } from '../agent-profile.fixtures.js';
+import type { DatabaseClient, DatabasePool, reserveAgentContextWrite, authorizeAgentContextDispatch, resolveAgentContextWrite } from '@cauce/store';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -6,7 +9,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { setupGovernanceRelay } from '../../../../terminal-relay/src/governance-relay.js';
 import {
   registerAgentDocumentRoutes, type AgentFactsProbe, type TerminalAuditEntry,
@@ -16,6 +19,12 @@ import { SondaCompartida, sondaDiferida } from '../sonda-compartida.js';
 import { TerminalRelayFactsProbe } from './relay-probe.js';
 import type { RuntimeFacts } from './catalog.js';
 import { tlsFenceAgentFixture } from './tls-fence-agent.fixtures.js';
+
+const store = vi.hoisted(() => ({ reserve: vi.fn<typeof reserveAgentContextWrite>(),
+  authorize: vi.fn<typeof authorizeAgentContextDispatch>(), resolve: vi.fn<typeof resolveAgentContextWrite>() }));
+vi.mock('@cauce/store', async (original) => ({ ...await original<typeof import('@cauce/store')>(),
+  reserveAgentContextWrite: store.reserve, authorizeAgentContextDispatch: store.authorize, resolveAgentContextWrite: store.resolve,
+}));
 
 const path = '/home/dev/.claude/CLAUDE.md';
 const facts: RuntimeFacts = {
@@ -77,15 +86,36 @@ async function server(options: {
   await new Promise<void>((resolve) => relay?.listen(0, '127.0.0.1', resolve));
   const client = new HttpGovernanceRelayClient({ relayUrl: `https://127.0.0.1:${String((relay.address() as AddressInfo).port)}`,
     token, ca: cert, clientCert: cert, clientKey: key, timeoutMs: 2000 });
-  const measured = options.measured ?? facts;
+  const measured = { ...(options.measured ?? facts), writerInstanceId: fleet.writerInstanceId, features: ['write_quiescence_v1'] };
   const probe = new TerminalRelayFactsProbe({ factsFor: async () => ({ facts: measured, source: 'measured' }) }, client);
   const slot = new SondaCompartida();
   app = Fastify();
+  store.reserve.mockImplementation(async (_pool, input) => {
+    const snapshot = { revision: null, profileSha256: null, agentSha256: 'a'.repeat(64), expectation: null };
+    return { ...input, version: 1, before: snapshot, after: snapshot, dispatch: 'reserved', completion: null };
+  });
+  store.authorize.mockImplementation(async (_pool, input) => ({ ...input, dispatch: 'authorized' }));
+  store.resolve.mockImplementation(async (_pool, input, proof, persist) => {
+    const client = {} as DatabaseClient;
+    const observed = await proof(client);
+    if (!observed.documents.every((doc) => input.documents.some((target) => target.path === doc.path && target.targetSha === doc.sha))) {
+      throw new Error('fixture readback is not target');
+    }
+    await persist(client, observed);
+    return 'target';
+  });
+  const deferred = sondaDiferida(slot);
+  const coordinator = new AgentContextWriteCoordinator({} as DatabasePool, deferred);
   registerAgentDocumentRoutes(app, {
     authorize: async () => ({ tenant_id: 'Steven', alias: 'zeus' }),
     resolveOperator: () => ({ operator_id: 'isolated-operator', attributed: true }),
     authorizeTarget: async (_actor, tenant_id, alias) => ({ tenant_id, alias, enabled: true }),
-    probe: sondaDiferida(slot), recordAudit: async (entry) => { audit.push(entry); },
+    probe: deferred,
+    readContext: async () => ({ contexto: contexto({}, 'claude'), exists: false, revision: null, applied_revision: null }),
+    readRuntimeExpectation: async () => undefined,
+    coordinateWrite: (input) => coordinator.coordinate(input),
+    persistDocumentWrite: async (_client, _document, entry) => { audit.push(entry); },
+    recordAudit: async (entry) => { audit.push(entry); },
   });
   const installed: AgentFactsProbe = options.legacyProbe ? {
     factsFor: probe.factsFor.bind(probe), readGovernanceDocument: probe.readGovernanceDocument.bind(probe),
@@ -119,10 +149,10 @@ describe('PUT HTTP → sonda diferida → relay HTTPS con destino medido', () =>
     ['new-generation', 'container-one'], ['measured-one', 'new-container'],
   ])('rechaza reconexión %s/%s después del preflight sin enviar WRITE', async (generation, containerId) => {
     await server({ replace: { generation, containerId } });
-    expect(await put()).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await put()).toMatchObject({ status: 503, body: { error: 'document_write_unconfirmed', state: 'effect_unknown' } });
     expect(readFileSync(disk, 'utf8')).toBe(before);
     expect(fleet?.writes).toBe(0);
-    expect(audit).toMatchObject([{ action: 'agent_document.denied', decision: 'deny', metadata: { reason: 'conflict' } }]);
+    expect(audit).toMatchObject([{ action: 'agent_document.denied', decision: 'deny', metadata: { reason: 'document_write_unconfirmed' } }]);
   });
 
   it.each([

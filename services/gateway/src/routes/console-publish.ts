@@ -7,6 +7,7 @@ import {
   PublishIntentRateLimitedError,
   PublishIntentReconciliationRequired,
 } from '@cauce/store';
+import { consoleHumanAccess, type ConsoleHumanAccess } from '../console-human-authority.js';
 import type { AuthProvider } from '../auth.js';
 import type { GatewayRepository } from '../app.js';
 import type { ConsolePublishTelemetry } from '../console-publish-telemetry.js';
@@ -41,10 +42,13 @@ export function registerConsolePublishIntentRoutes(
    */
   app.post('/v3/console/publish-intents', publishRouteOptions, async (request, reply) => {
     let operationStarted = false;
+    let human: ConsoleHumanAccess | undefined;
     try {
       const actor = await principal(request, options.authProvider);
+      human = await consoleHumanAccess(options.authProvider, request, reply);
       operationStarted = true;
       const result = await prepareConsolePublishOperation(repository, {
+        ...(human === undefined ? {} : { humanAccess: human.options }),
         actor, body: request.body, priorityLog: request.log,
         interactiveHumanEntry: request.routeOptions.url === '/v3/console/publish-intents',
         logRedaction: (redactionActor, redaction) => { logPublishRedaction(request.log, redactionActor, redaction); },
@@ -53,31 +57,34 @@ export function registerConsolePublishIntentRoutes(
     } catch (error) {
       if (!operationStarted) consolePublishTelemetry.record({ operation: 'prepare', result: 'error' });
       if (error instanceof PublishIntentReconciliationRequired) {
-        return reply.code(409).send(
+        return await reply.code(409).send(
           ConsolePublishIntentReconciliationSchema.parse(error.reconciliation),
         );
       }
       if (error instanceof PublishIntentRateLimitedError) {
         const limited = ConsolePublishIntentRateLimitedSchema.parse(error.rateLimit);
-        return reply.header('Retry-After', String(limited.retry_after_seconds))
+        return await reply.header('Retry-After', String(limited.retry_after_seconds))
           .code(429).send(limited);
       }
       replyError(reply, error);
-    }
+    } finally { human?.close(); }
   });
 
   app.post('/v3/console/publish-intents/confirm', async (request, reply) => {
     let operationStarted = false;
+    let human: ConsoleHumanAccess | undefined;
     try {
       const actor = await principal(request, options.authProvider);
+      human = await consoleHumanAccess(options.authProvider, request, reply);
       operationStarted = true;
       const result = await confirmConsolePublishOperation(repository, {
+        ...(human === undefined ? {} : { humanAccess: human.options }),
         actor, body: request.body,
       }, consolePublishTelemetry);
       return await reply.code(200).send(result);
     } catch (error) {
       if (!operationStarted) consolePublishTelemetry.record({ operation: 'confirm', result: 'error' });
       replyError(reply, error);
-    }
+    } finally { human?.close(); }
   });
 }

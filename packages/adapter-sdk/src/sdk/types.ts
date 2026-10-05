@@ -1,3 +1,4 @@
+import type { OpenClawPhaseObserver, OpenClawPhase, OpenClawPhaseObservation } from "./openclaw-phases.js";
 import type { NotifyKind } from '@cauce/protocol';
 import type { HarnessTimeoutKind } from './message-timeout.js';
 import type {
@@ -257,6 +258,9 @@ type HarnessStartWitness =
 export type HarnessStdinSource = 'pipe' | 'file'; // what backs fd 0; 'file' for CLIs that reopen /dev/stdin (prompt-stdin.ts)
 
 export interface CommandRunRequest extends CommandInvocation {
+  readonly onOpenClawPhase?: OpenClawPhaseObserver;
+  readonly openClawPhaseFrames?: true;
+  readonly emissionSocketPath?: string;
   readonly emissionOutput?: () => StructuredOutput | undefined;
   readonly onEmissionReady?: (correlationId?: string) => void;
   readonly stdin: string;
@@ -345,6 +349,7 @@ export interface FrameValidationIssue {
  */
 export interface AdapterLog {
   event:
+    | 'openclaw_phase'
     | 'delivery_start'
     | 'emission_result'
     | 'delivery_state'
@@ -366,6 +371,11 @@ export interface AdapterLog {
     | 'harness_start_witness_disabled'
     | 'connection_degraded' /** Transport is up but something else is not. */
     | 'internal_error'; // real cause of an INTERNAL
+  phase_name?: OpenClawPhase;
+  transport?: OpenClawPhaseObservation["transport"];
+  elapsed_ms?: number;
+  received_elapsed_ms?: number;
+  phase_timestamp?: string;
   timestamp?: string; // ISO8601, optional for convenience
   delivery_id?: string;
   phase?: DeliveryPhase;

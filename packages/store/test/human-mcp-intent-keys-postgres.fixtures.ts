@@ -1,4 +1,6 @@
+import { strictEqual } from 'node:assert';
 import { randomUUID } from 'node:crypto';
+import { HUMAN_MESSAGE_INITIATOR_CAPABILITY } from '@cauce/protocol';
 import type { HumanGatewayOperations, McpSubmitCommand } from '../../mcp-fleet-monitor/src/gateway-operations.js';
 import type { VerifiedOAuthIdentity } from '../../mcp-fleet-monitor/src/gateway-oauth-identity.js';
 import { createHumanMcpOperationsFactory, type HumanMcpRepository } from '../../../services/gateway/src/mcp-operations.js';
@@ -73,6 +75,7 @@ export async function operations(
     listPresence: (...args) => repository.listPresence(...args),
     listAgents: (...args) => repository.listAgents(...args),
     getHumanMessage: (...args) => repository.getHumanMessage(...args),
+    listHumanInbox: (...args) => repository.listHumanInbox(...args),
   };
   const identity: VerifiedOAuthIdentity = Object.freeze({
     kind: 'oauth', issuer: account.key.namespace, subject: account.key.subject,
@@ -132,10 +135,11 @@ export async function publishedContext(messageId: string): Promise<Record<string
   return result.rows[0];
 }
 
-export async function finishRoot(messageId: string): Promise<void> {
+export async function finishRoot(messageId: string, humanId: string): Promise<void> {
   const repository = getRepository();
   const instanceId = `human-intent-consumer-${randomUUID()}`;
-  const connection = await repository.acquireLease('Steven', 'argos', instanceId, [], 60_000, { resume: true });
+  const connection = await repository.acquireLease('Steven', 'argos', instanceId,
+    [HUMAN_MESSAGE_INITIATOR_CAPABILITY], 60_000, { resume: true });
   if (!connection.acquired || connection.epoch === undefined || connection.connection_token === undefined) {
     throw new Error('fixture agent could not acquire its delivery lease');
   }
@@ -144,6 +148,7 @@ export async function finishRoot(messageId: string): Promise<void> {
   );
   const delivery = deliveries.find((item) => item.message_id === messageId);
   if (!delivery) throw new Error('fixture agent could not claim the root delivery');
+  strictEqual(delivery.human_initiator?.human_id, humanId);
   const ack = await repository.ackDelivery(delivery.delivery_id, 'Steven', 'argos',
     terminalAck(delivery, { instanceId, epoch: connection.epoch }, { reply: 'intent completed' }));
   if (!ack.applied) throw new Error('fixture terminal ACK was not applied');

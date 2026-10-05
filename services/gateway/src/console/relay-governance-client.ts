@@ -1,3 +1,4 @@
+import { governanceOperationPayload, validatedWriteStatus, type GovernanceWriteOperation } from './governance-write-operation.js';
 import { request as httpsRequest, type RequestOptions } from 'node:https';
 import { hasUnsafeTextCodePoint, isStrictUtcIso8601 } from '@cauce/protocol';
 import type {
@@ -406,6 +407,7 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
     content: string,
     precondition: GovernanceWritePrecondition,
     expectedTarget?: GovernanceWriteTarget,
+    operation?: GovernanceWriteOperation,
   ): Promise<RelayFileWrite | GovernanceWriteError> {
     let result: HttpResult;
     try {
@@ -418,17 +420,24 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
         } }),
         content_base64: Buffer.from(content, 'utf8').toString('base64'),
         precondition,
-      });
+        ...(operation === undefined ? {} : { operation: governanceOperationPayload(operation) }),
+      }, operation?.signal);
     } catch (error) {
       return relayCommunicationError(error);
     }
-    return parseHttpResult(result, parseWriteOutcome);
+    return parseHttpResult(result, (body) => {
+      if (operation !== undefined && !this.validDurableReceipt(body, tenantId, alias, operation)) {
+        return { error: 'unknown', reason: 'el ACK no incluye recibo durable exacto' };
+      }
+      return parseWriteOutcome(body);
+    });
   }
 
   async writeFiles(
     tenantId: string,
     alias: string,
     writes: readonly GovernanceBatchWrite[],
+    operation?: GovernanceWriteOperation,
   ): Promise<RelayFileWriteBatch | GovernanceWriteError> {
     let result: HttpResult;
     try {
@@ -443,11 +452,62 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
             : {}),
           precondition: write.precondition,
         })),
-      });
+        ...(operation === undefined ? {} : { operation: governanceOperationPayload(operation) }),
+      }, operation?.signal);
     } catch (error) {
       return relayCommunicationError(error);
     }
-    return parseHttpResult(result, parseWriteBatchOutcome);
+    return parseHttpResult(result, (body) => {
+      if (operation !== undefined && !this.validDurableReceipt(body, tenantId, alias, operation)) {
+        return { error: 'unknown', reason: 'el lote no incluye recibo durable exacto' };
+      }
+      return parseWriteBatchOutcome(body);
+    });
+  }
+
+  async writeFileDurable(
+    tenantId: string, alias: string, path: string, content: string,
+    precondition: GovernanceWritePrecondition, operation: GovernanceWriteOperation,
+    expectedTarget: GovernanceWriteTarget,
+  ): Promise<RelayFileWrite | GovernanceWriteError> {
+    return this.sendFileWrite(tenantId, alias, path, content, precondition, expectedTarget, operation);
+  }
+
+  async writeFilesDurable(
+    tenantId: string, alias: string, writes: readonly GovernanceBatchWrite[], operation: GovernanceWriteOperation,
+  ): Promise<RelayFileWriteBatch | GovernanceWriteError> {
+    return this.writeFiles(tenantId, alias, writes, operation);
+  }
+
+  private validDurableReceipt(body: string, tenantId: string, alias: string, operation: GovernanceWriteOperation): boolean {
+    const parsed = parseRelayObject(body, 'invalid JSON', 'invalid receipt');
+    return parsed.ok && parsed.source.request_id === operation.operationId
+      && validatedWriteStatus(parsed.source.receipt, {
+        tenantId, alias, operationId: operation.operationId, generation: operation.operationGeneration,
+        runtimeGeneration: operation.runtimeGeneration,
+      })?.state === 'done';
+  }
+
+  async writeStatus(
+    tenantId: string, alias: string, operationId: string, operationToken: string,
+    operationGeneration: string, requestId: string, runtimeGeneration: string, signal?: AbortSignal,
+  ): Promise<import('./governance-write-operation.js').RelayWriteStatus | GovernanceReadError> {
+    if (requestId !== operationId) return { error: 'unknown', reason: 'identidad de operación distinta' };
+    let result: HttpResult;
+    try {
+      result = await this.send('/v3/terminal/relay/write-status', {
+        tenant_id: tenantId, alias, ...governanceOperationPayload({
+          operationId, operationToken, operationGeneration, runtimeGeneration,
+        }),
+      }, signal);
+    } catch (error) { return relayCommunicationError(error); }
+    return parseHttpResult<import('./governance-write-operation.js').RelayWriteStatus | GovernanceReadError>(result, (body) => {
+      const parsed = parseRelayObject(body, 'invalid JSON', 'invalid receipt');
+      if (!parsed.ok) return parsed.error;
+      return validatedWriteStatus(parsed.source, { tenantId, alias, operationId,
+        generation: operationGeneration, runtimeGeneration })
+        ?? { error: 'unknown', reason: 'el estado no acredita la operación completa' };
+    });
   }
 
   private async send(

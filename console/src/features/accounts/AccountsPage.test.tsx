@@ -31,6 +31,12 @@ function recordChanges(sink: ChangeRequest[], response?: (input: ChangeRequest) 
   }));
 }
 
+function accessWithoutWrite(unknown = false) {
+  server.use(http.get('http://localhost/v3/console/access', () => unknown
+    ? HttpResponse.json({ error: 'access unavailable' }, { status: 503 })
+    : HttpResponse.json({ subject: 'Steven:kant', roles: ['reader'], permissions: ['config.read'] })));
+}
+
 const ownAccount = {
   id: 'codex-steven', provider: 'codex', payer_tenant_id: 'Steven', label: 'Codex del hub',
   shared_with_pool: true, enabled: true, external_account_id: 'org-9f21',
@@ -41,6 +47,45 @@ const borrowedAccount = {
   shared_with_pool: true, enabled: true, external_account_id: null, credential_ref_kind: null,
   updated_at: '2026-07-20T10:00:00.000Z',
 };
+
+it.each([
+  ['explicitly denied', false],
+  ['unknown after access failure', true],
+] as const)('keeps account and routing data inspectable when config.write is %s without sending a mutation', async (_label, unknown) => {
+  let posts = 0;
+  accessWithoutWrite(unknown);
+  configuration({
+    provider_accounts: [ownAccount],
+    agents: [{ tenant_id: 'Steven', alias: 'kant', harness_id: 'claude-code', enabled: true }],
+    alias_routing_ceiling: [{ tenant_id: 'Steven', alias: 'kant', account_id: 'codex-steven', account_payer_tenant: 'Steven', created_by_tenant: 'Steven' }],
+    agent_account_bindings: [],
+  });
+  server.use(http.post('http://localhost/v3/console/config/changes', () => {
+    posts += 1;
+    return HttpResponse.json({ error: 'unexpected mutation' }, { status: 403 });
+  }));
+
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
+  const inventory = await openInventory(user);
+  const row = (await inventory.findByText('codex-steven')).closest('tr');
+  expect(row).not.toBeNull();
+  if (!row) return;
+
+  expect(within(row).getByRole('button', { name: /detalle de ruteo/i })).toBeEnabled();
+  expect(within(row).getByRole('button', { name: /editar/i })).toBeDisabled();
+  expect(within(row).getByRole('button', { name: /habilitar|deshabilitar/i })).toBeDisabled();
+  await user.click(within(row).getByRole('button', { name: /detalle de ruteo/i }));
+  expect(await inventory.findByRole('heading', { name: /fallback para/i })).toBeInTheDocument();
+  expect(inventory.getByLabelText(/id externo de la suscripción/i)).toBeDisabled();
+
+  await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
+  const cell = await screen.findByRole('button', { name: /Steven\/kant × codex-steven/i });
+  expect(cell).toBeDisabled();
+  expect(screen.getByLabelText('Agente')).toBeDisabled();
+  expect(screen.getByLabelText('Cuenta')).toBeDisabled();
+  expect(posts).toBe(0);
+});
 
 /**
  * Account creation and assignment have write bars with buttons of the same text since the two

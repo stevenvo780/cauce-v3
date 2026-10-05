@@ -54,6 +54,11 @@ export type { HumanMessageOptions, HumanPublishProvenance, PublishOptions, Publi
 export {
   AgentRootLimitError, type MessageReader, type OpenAgentRoot, type OpenAgentRootRecipient,
 } from './messages/agent-roots.js';
+export {
+  HUMAN_INBOX_CHAIN_MESSAGES_PER_ROOT, HUMAN_INBOX_FEED_WINDOW_MS, HUMAN_INBOX_MAX_LIMIT, HUMAN_INBOX_QUESTIONS_PER_ROOT,
+  HUMAN_INBOX_TEXT_CHARS, type HumanInboxChainMessage, type HumanInboxDelivery, type HumanInboxItem, type HumanInboxKey,
+  type HumanInboxPage, type HumanInboxQuery, type HumanInboxQuestion,
+} from './messages/human-inbox.js';
 
 export abstract class MessagesRepository extends MessagePublishingRepository {
   // Reserve one server-generated key for an authenticated console publish meaning.

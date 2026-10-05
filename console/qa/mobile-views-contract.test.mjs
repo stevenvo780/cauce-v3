@@ -43,7 +43,7 @@ test('tab names and selectors agree with source, without claiming mounted UI', a
     const source = await readFile(new URL(`../src/features/${file}`, import.meta.url), 'utf8');
     for (const action of VIEWS.filter((view) => view.path === path).flatMap(({ actions }) => actions).filter(({ role }) => role === 'tab')) assert.ok(source.includes(`label: '${action.name}'`), action.name);
   }
-  for (const [file, selector] of [['messages/AgentRoster.tsx', 'messenger-agent'], ['live/LiveHypergraph.tsx', 'lhg-scroll'], ['live/ContextoTab.tsx', 'contexto-campos'], ['config/ConfigPage.tsx', 'config-area'], ['config/AgentSettings.tsx', 'settings-agent'], ['accounts/ConsumptionSection.tsx', 'quota-provider'], ['audit/AuditPanel.tsx', 'audit-row']]) assert.ok((await readFile(new URL(`../src/features/${file}`, import.meta.url), 'utf8')).includes(selector));
+  for (const [file, selector] of [['messages/AgentRoster.tsx', 'messenger-agent'], ['live/LiveHypergraph.tsx', 'lhg-viewport'], ['live/ContextoTab.tsx', 'contexto-campos'], ['config/ConfigPage.tsx', 'config-area'], ['config/AgentSettings.tsx', 'settings-agent'], ['accounts/ConsumptionSection.tsx', 'quota-provider'], ['audit/AuditPanel.tsx', 'audit-row']]) assert.ok((await readFile(new URL(`../src/features/${file}`, import.meta.url), 'utf8')).includes(selector));
 });
 test('reused GET fixtures cover subviews and reject mutations/undeclared endpoints', async () => {
   const respond = await loadFixtures();

@@ -53,6 +53,7 @@ async function setupSuite(): Promise<void> {
   const startedDatabase = await startTestDatabase();
   let startedApp: Awaited<ReturnType<typeof buildGateway>> | undefined;
   try {
+    await seedAgentAndVisibleChain(startedDatabase);
     // Account creation goes through the production CLI against the ephemeral database. The
     // password travels only via the subprocess environment and is never exposed in argv.
     const cli = await execute(
@@ -77,7 +78,6 @@ async function setupSuite(): Promise<void> {
     provisionStdout = cli.stdout;
 
     await persistDevOnlyCredentialRecord();
-    await seedAgentAndVisibleChain(startedDatabase);
 
     const provider = new PasswordAuthProvider({
       users: new PostgresConsoleUserStore(startedDatabase.pool),

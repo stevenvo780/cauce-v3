@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { HUMAN_MESSAGE_INITIATOR_CAPABILITY } from '@cauce/protocol';
 import { describe, expect, it } from 'vitest';
 import { GatewayOperationError } from '../../../packages/mcp-fleet-monitor/src/gateway-operations.js';
 import {
@@ -118,8 +119,8 @@ describe('human MCP operations factory against durable PostgreSQL identity', () 
     const firstReceipt = await firstOps.submit(humanMcpCommand(randomUUID(), `owner one ${randomUUID()}`));
     const secondReceipt = await secondOps.submit(humanMcpCommand(randomUUID(), `owner two ${randomUUID()}`));
     await finishHumanMcpRoots([
-      { messageId: firstReceipt.message_id, reply: `reply-${first.humanId}` },
-      { messageId: secondReceipt.message_id, reply: `reply-${second.humanId}` },
+      { messageId: firstReceipt.message_id, humanId: first.humanId, reply: `reply-${first.humanId}` },
+      { messageId: secondReceipt.message_id, humanId: second.humanId, reply: `reply-${second.humanId}` },
     ]);
     await makeReader(first);
     await makeReader(second);
@@ -143,7 +144,8 @@ describe('human MCP operations factory against durable PostgreSQL identity', () 
     const account = await seedHumanPublishActor();
     const oldOperations = await openHumanMcpOperations(account, ['cauce.read', 'cauce.publish']);
     const root = await oldOperations.submit(humanMcpCommand(randomUUID(), `alias source ${randomUUID()}`));
-    const replyAgent = await getRepository().acquireLease('Steven', 'argos', 'human-mcp-factory-fixture', [], 60_000, { resume: true });
+    const replyAgent = await getRepository().acquireLease('Steven', 'argos', 'human-mcp-factory-fixture',
+      [HUMAN_MESSAGE_INITIATOR_CAPABILITY], 60_000, { resume: true });
     if (!replyAgent.acquired || replyAgent.epoch === undefined || replyAgent.connection_token === undefined) {
       throw new Error('fixture delivery agent could not acquire its lease');
     }
@@ -151,6 +153,7 @@ describe('human MCP operations factory against durable PostgreSQL identity', () 
       replyAgent.epoch, 10, 30_000, 3, {}, replyAgent.connection_token))
       .find((item) => item.message_id === root.message_id);
     if (!delivery) throw new Error('fixture delivery agent could not claim old root');
+    expect(delivery.human_initiator?.human_id).toBe(account.humanId);
     await getRepository().ackDelivery(delivery.delivery_id, 'Steven', 'argos',
       (await import('./helpers/consumer.js')).terminalAck(delivery,
         { instanceId: 'human-mcp-factory-fixture', epoch: replyAgent.epoch }, { reply: 'root survives alias change' }));

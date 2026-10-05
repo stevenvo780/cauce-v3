@@ -195,10 +195,8 @@ describe('cambiar de conversación y volver a leer', () => {
     const burbujas = hilo.querySelector<HTMLElement>('.terminal-transcript');
     if (!burbujas) throw new Error('el hilo no tiene transcripción');
     await waitFor(() => { expect(within(burbujas).getByText('Verificar estado del adapter Hermes')).toBeInTheDocument(); });
-    // What selects is the delivery row of the bubble, which is what the summary names.
-    const entrega = burbujas.querySelector<HTMLElement>('.transcript-delivery');
-    if (!entrega) throw new Error('la burbuja no trae su entrega');
-    await user.click(entrega);
+    await user.click(within(burbujas).getByRole('button', { name: 'Opciones del mensaje' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
     const detalle = within(hilo).getByRole('group', { name: /detalle del mensaje seleccionado/i });
     expect(detalle).toHaveTextContent(/Mensaje que elegiste/);
 

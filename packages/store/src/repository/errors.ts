@@ -6,7 +6,8 @@ export type StoreRecoveryReason =
   | 'consumer_capacity_missing'
   | 'consumer_capacity_invalid'
   | 'consumer_disabled'
-  | 'idempotency_durable_conflict';
+  | 'idempotency_durable_conflict'
+  | 'context_write_commit_unverified';
 
 export class StoreError extends Error {
   constructor(

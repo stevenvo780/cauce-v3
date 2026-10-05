@@ -1,3 +1,5 @@
+import { runtimeErrorCode, runtimeErrorStatus } from './agent-profile/runtime-errors.js';
+import { coordinateDocumentRequest, replyUnconfirmedDocumentWrite } from './agent-context-write-coordinator.js';
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
@@ -151,6 +153,18 @@ export interface AgentFactsProbe {
     tenantId: string,
     alias: string,
   ): Promise<readonly GovernanceBatchWriteAck[] | GovernanceReadError | { error: 'conflict'; reason: string }>;
+  writeGovernanceDocumentDurable?(
+    ...args: [...Parameters<NonNullable<AgentFactsProbe['writeGovernanceDocument']>>, import('./governance-write-operation.js').GovernanceWriteOperation]
+  ): ReturnType<NonNullable<AgentFactsProbe['writeGovernanceDocument']>>;
+  writeGovernanceBatchDurable?(
+    ...args: [...Parameters<NonNullable<AgentFactsProbe['writeGovernanceBatch']>>, import('./governance-write-operation.js').GovernanceWriteOperation]
+  ): ReturnType<NonNullable<AgentFactsProbe['writeGovernanceBatch']>>;
+  supportsDurableWrites?(): boolean;
+  writeStatus?(
+    tenantId: string, alias: string, operationId: string, operationToken: string,
+    operationGeneration: string, requestId: string, runtimeGeneration: string, signal?: AbortSignal,
+  ): Promise<import('./governance-write-operation.js').RelayWriteStatus | GovernanceReadError>;
+
 }
 
 /** Human behind the request, in the shape the PTY plane resolves it (`terminal/authority.ts`). */
@@ -184,6 +198,12 @@ export interface AgentDocumentsDeps {
   recordAudit: (entry: TerminalAuditEntry) => Promise<void>;
   /** Overridable so a test counts on its own instance instead of the process-wide one. */
   telemetry?: Pick<ContextContaminationTelemetry, 'recordVerdict'>;
+  readRuntimeExpectation?: import('./agent-profile.routes.js').AgentProfileDeps['readWriteExpectation'];
+  readContext?: import('./agent-profile.routes.js').AgentProfileDeps['readContext'];
+  coordinateWrite?: import('./agent-profile.routes.js').AgentProfileDeps['coordinateWrite'];
+  persistDocumentWrite?: (client: import('@cauce/store').DatabaseClient,
+    entry: import('@cauce/store').DocumentRevisionInput, audit: TerminalAuditEntry) => Promise<void>;
+
 }
 
 type AgentDocumentActor = Awaited<ReturnType<AgentDocumentsDeps['authorize']>>;
@@ -577,7 +597,6 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         return reply.code(status).send(cuerpo);
       };
 
-      // Same act of authority as opening a shell there, so the same gate: no person, no write.
       const operador = deps.resolveOperator === undefined
         ? SIN_PERSONA : await deps.resolveOperator(request);
       hechos.operator = operador.operator_id;
@@ -638,8 +657,7 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
           error: 'conflict', message: 'la medición no acredita generación y contenedor del destino',
         });
       }
-      const expectedTarget: GovernanceWriteTarget = { generation, containerId, path: doc.path };
-      if (deps.probe.writeGovernanceDocumentFenced === undefined) {
+      if (deps.probe.writeGovernanceDocumentDurable === undefined) {
         return denegar(503, {
           error: 'unavailable',
           message: 'este gateway sabe leer los ficheros del alias pero no escribirlos: su sonda no '
@@ -728,44 +746,26 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
           });
         }
       }
-
-      const escrito = await deps.probe.writeGovernanceDocumentFenced(
-        doc.path, contenido, precondition, medido.facts, target.tenant_id, target.alias, expectedTarget,
-      );
-      if ('error' in escrito) {
-        if (escrito.error === 'conflict') {
-          return denegar(409, { error: 'conflict', message: escrito.reason });
-        }
-        return denegar(codigoDe(escrito.error), { error: escrito.error, message: escrito.reason });
-      }
-      const raw = Buffer.from(contenido, 'utf8');
-      const expectedAckSha = createHash('sha256').update(raw).digest('hex');
-      if (escrito.sha !== expectedAckSha || escrito.bytes !== raw.byteLength) {
-        return denegar(502, {
-          error: 'invalid_ack',
-          message: 'la sonda respondió, pero su ACK no acredita los bytes solicitados',
+      let fenced;
+      try {
+        fenced = await coordinateDocumentRequest(deps, request, reply, {
+          tenantId: TenantSchema.parse(target.tenant_id), alias: target.alias, kind, path: doc.path,
+          content: contenido, precondition, facts: medido.facts, actor,
+        auditMetadata: (sha, bytes) => documentAuditMetadata(actor, target, medido.facts, { ...hechos, sha_after: sha, bytes }),
         });
+      } catch (error) {
+        return denegar(runtimeErrorStatus(error), { error: runtimeErrorCode(error) ?? 'document_write_unavailable' });
       }
-
-      hechos.sha_after = escrito.sha;
-      hechos.bytes = escrito.bytes;
-      // AFTER the disk mutation: an insert that throws answers 500 over a file already rewritten.
-      await deps.recordAudit({
-        tenant_id: actor.tenant_id,
-        actor_alias: actor.alias,
-        action: 'agent_document.write',
-        decision: 'allow',
-        metadata: documentAuditMetadata(actor, target, medido.facts, hechos),
-      });
-
+      if (fenced.state !== 'committed') {
+        return replyUnconfirmedDocumentWrite(reply, fenced, denegar);
+      }
       return reply.code(202).send({
         ok: true,
         state: ESTADO_TRAS_ESCRIBIR,
         evidence: CONTEXT_APPLY_POLICY[ESTADO_TRAS_ESCRIBIR].evidence,
         message: CONTEXT_APPLY_POLICY[ESTADO_TRAS_ESCRIBIR].message,
         path: doc.path,
-        sha: escrito.sha,
-        bytes: escrito.bytes,
+        sha: fenced.value.sha, bytes: fenced.value.bytes,
       });
   }
 

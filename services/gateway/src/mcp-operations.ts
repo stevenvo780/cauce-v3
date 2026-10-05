@@ -2,10 +2,10 @@ import { createHash } from 'node:crypto';
 import { CanonicalUuidV4Schema, PROTOCOL_VERSION, PublishResultSchema, publishReceiptCausalHash } from '@cauce/protocol';
 import { PublishIntentExpiredError, PublishIntentRateLimitedError, PublishIntentReconciliationRequired, StoreError } from '@cauce/store';
 import {
-  McpSubmitCommandSchema, HumanMcpReceiptSchema,
+  McpSubmitCommandSchema, HumanMcpReceiptSchema, InboxInputSchema,
   GatewayOperationError,
   projectGatewayAgents, projectGatewayStatus,
-  type GatewayOperationsFactory, type HumanMcpReceipt, type McpSubmitCommand, type VerifiedOAuthIdentity,
+  type GatewayOperationsFactory, type HumanMcpInboxQuery, type HumanMcpReceipt, type McpSubmitCommand, type VerifiedOAuthIdentity,
 } from '@cauce/mcp-fleet-monitor/gateway-http';
 import type { GatewayRepository } from './app.js';
 import { AuthError, AuthorizationError, requirePermission, type Principal } from './auth.js';
@@ -13,11 +13,13 @@ import { ConsolePublishTelemetry } from './console-publish-telemetry.js';
 import { prepareConsolePublishOperation, confirmConsolePublishOperation } from './console-publish-operation.js';
 import { createHumanPublishAuthority, createHumanReadAuthority, resolveHumanMcpAuthority,
   type HumanMcpAuthorityOptions } from './human-mcp-authority.js';
+import { humanInboxQuery, projectHumanInbox } from './mcp-inbox-projection.js';
 import { publishOperation, type PublishOperationInput } from './publish-operation.js';
+import { OAuthError } from './oauth-authorization-types.js';
 
 export type HumanMcpRepository = Pick<GatewayRepository,
   'publish' | 'verifyPublishReceipt' | 'prepareConsolePublishIntent' | 'confirmConsolePublishIntent'
-  | 'listPresence' | 'listAgents' | 'getHumanMessage'
+  | 'listPresence' | 'listAgents' | 'getHumanMessage' | 'listHumanInbox'
 >;
 
 export interface HumanMcpOperationsOptions extends HumanMcpAuthorityOptions, Pick<PublishOperationInput, 'priorityLog' | 'logRedaction'> {
@@ -29,6 +31,10 @@ function intentScope(userId: string, actor: Principal): string {
   return createHash('sha256')
     .update(JSON.stringify(['cauce-v3:human-mcp-intent:v1', userId, actor.tenant_id, actor.alias]))
     .digest('hex');
+}
+
+function publicationActor(actor: Principal, operatorScope: string): Principal {
+  return Object.freeze({ ...actor, session_id: `human-mcp:${operatorScope}` });
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -43,6 +49,11 @@ async function guardedOperation<T>(operation: () => Promise<T>, mutating = false
     if (error instanceof GatewayOperationError) throw error;
     if (error instanceof AuthError) throw new GatewayOperationError({ status_code: 401, error: 'unauthorized' });
     if (error instanceof AuthorizationError) throw new GatewayOperationError({ status_code: 403, error: 'forbidden' });
+    // A grant revoked or expired mid-operation is an authority failure, never a retryable outage.
+    if (error instanceof OAuthError) {
+      throw new GatewayOperationError(error.error === 'invalid_grant'
+        ? { status_code: 401, error: 'unauthorized' } : { status_code: 403, error: 'forbidden' });
+    }
     if (error instanceof PublishIntentReconciliationRequired) {
       throw new GatewayOperationError({ ...error.reconciliation, status_code: 409 });
     }
@@ -59,8 +70,10 @@ async function guardedOperation<T>(operation: () => Promise<T>, mutating = false
         throw new GatewayOperationError({ status_code: 400, error: 'invalid_request' });
       }
       if (error.code === 'conflict') {
+        const retrySameKey = mutating && error.recoveryReason !== 'idempotency_durable_conflict'
+          && error.message === 'idempotency request is still in progress';
         throw new GatewayOperationError({ status_code: 409, error: 'operation_conflict',
-          ...(mutating ? { safe_to_retry_same_request_key: true } : {}) });
+          ...(retrySameKey ? { safe_to_retry_same_request_key: true } : {}) });
       }
     }
     throw new GatewayOperationError({ status_code: 503, error: 'operation_unavailable',
@@ -150,7 +163,7 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           const humanAccess = { ...access('publish'), coalesceConsolePublishIntents: false };
           const consoleIntentOperatorScope = intentScope(authority.userId, authority.principal);
           const prepared = await prepareConsolePublishOperation(options.repository, {
-            actor: authority.principal,
+            actor: publicationActor(authority.principal, consoleIntentOperatorScope),
             body: { room_id: command.room_id, recipients: command.recipients, body: command.body,
               intent_nonce: command.request_key, lane: 'interactive', priority: 0 },
             interactiveHumanEntry: true, consoleIntentOperatorScope, humanAccess,
@@ -171,7 +184,7 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           } else {
             try {
               receipt = await publishOperation(options.repository, {
-                actor: beforePublish.principal, entry: 'console', authMechanism: 'oauth',
+                actor: publicationActor(beforePublish.principal, consoleIntentOperatorScope), entry: 'console', authMechanism: 'oauth',
                 body: { room_id: command.room_id, recipients: command.recipients, body: command.body,
                   idempotency_key: prepared.idempotency_key, lane: 'interactive', priority: 0 },
                 consoleIntentOperatorScope, humanAccess, priorityLog: options.priorityLog, logRedaction: options.logRedaction,
@@ -184,7 +197,7 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           }
           const beforeConfirm = await authorize('route', 'cauce.publish');
           await confirmConsolePublishOperation(options.repository, {
-            actor: beforeConfirm.principal, consoleIntentOperatorScope, humanAccess,
+            actor: publicationActor(beforeConfirm.principal, consoleIntentOperatorScope), consoleIntentOperatorScope, humanAccess,
             body: { idempotency_key: receipt.idempotency_key, message_id: receipt.message_id,
               causal_hash: receipt.causal_hash },
           }, telemetry);
@@ -200,12 +213,22 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           active();
           return projectReceipt(row, messageId);
         },
+        async inbox(candidate: HumanMcpInboxQuery) {
+          const parsed = InboxInputSchema.safeParse(candidate);
+          if (!parsed.success) throw new StoreError('invalid_input', 'invalid inbox query');
+          const { userId } = await authorize('read', 'cauce.read');
+          const query = humanInboxQuery(parsed.data, userId);
+          const page = await options.repository.listHumanInbox(query, access('read'));
+          active();
+          return projectHumanInbox(page, query, userId);
+        },
       };
       return Object.freeze({
         status: () => guardedOperation(() => operations.status()),
         agents: () => guardedOperation(() => operations.agents()),
         submit: (command: McpSubmitCommand) => guardedOperation(() => operations.submit(command), true),
         receipt: (messageId: string) => guardedOperation(() => operations.receipt(messageId)),
+        inbox: (query: HumanMcpInboxQuery) => guardedOperation(() => operations.inbox(query)),
       });
       });
     },

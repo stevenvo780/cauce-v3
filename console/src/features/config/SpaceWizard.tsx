@@ -2,6 +2,7 @@ import { ArrowLeft, ArrowRight, Braces, CircleCheck, RotateCcw, Save, SearchChec
 import { useMemo, useState, type ReactNode } from 'react';
 import type { ConfigMutation } from '../../api/types';
 import { Badge, EmptyState, Panel } from '../../components/ui';
+import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
 import './toggles.css';
 
@@ -167,6 +168,7 @@ export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
   const pendingKey = pending?.key;
   const pendingText = pending ? JSON.stringify(pending.mutation, null, 2) : undefined;
   const invalid = stepError(step, draft);
+  const writeControls = { disabled: !canWrite || busy, ...(!canWrite ? { title: CONFIG_SIN_CONTROL_REASON } : {}) };
   // Apply is only enabled against the exact mutation the server already validated in dry-run.
   const applicable = pendingKey !== undefined && validated === pendingKey && !invalid;
   const index = wizardSteps.indexOf(step);
@@ -228,29 +230,29 @@ export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
     </div>
 
     {step === 'tenant' ? <div className="config-form">
-      <label className="config-json casilla"><input type="checkbox" checked={draft.withTenant} onChange={(event) => { edit({ withTenant: event.target.checked }); }} /> Crear el tenant <span className="label-hint">destildá si ya existe; el id se sigue usando en los pasos siguientes</span></label>
-      <label>Tenant id<input value={draft.tenantId} onChange={(event) => { edit({ tenantId: event.target.value }); }} /></label>
-      <label>Display name <span className="label-hint">opcional</span><input value={draft.tenantLabel} onChange={(event) => { edit({ tenantLabel: event.target.value }); }} /></label>
-      <label className="casilla"><input type="checkbox" checked={draft.tenantIsHub} onChange={(event) => { edit({ tenantIsHub: event.target.checked }); }} /> Es hub</label>
+      <label className="config-json casilla"><input {...writeControls} type="checkbox" checked={draft.withTenant} onChange={(event) => { edit({ withTenant: event.target.checked }); }} /> Crear el tenant <span className="label-hint">destildá si ya existe; el id se sigue usando en los pasos siguientes</span></label>
+      <label>Tenant id<input {...writeControls} value={draft.tenantId} onChange={(event) => { edit({ tenantId: event.target.value }); }} /></label>
+      <label>Display name <span className="label-hint">opcional</span><input {...writeControls} value={draft.tenantLabel} onChange={(event) => { edit({ tenantLabel: event.target.value }); }} /></label>
+      <label className="casilla"><input {...writeControls} type="checkbox" checked={draft.tenantIsHub} onChange={(event) => { edit({ tenantIsHub: event.target.checked }); }} /> Es hub</label>
     </div> : null}
 
     {step === 'room' ? <div className="config-form">
-      <label className="config-json casilla"><input type="checkbox" checked={draft.withRoom} onChange={(event) => { edit({ withRoom: event.target.checked }); }} /> Crear el room</label>
-      <label>Room id<input value={draft.roomId} onChange={(event) => { edit({ roomId: event.target.value }); }} /></label>
-      <label>Display name <span className="label-hint">opcional</span><input value={draft.roomLabel} onChange={(event) => { edit({ roomLabel: event.target.value }); }} /></label>
+      <label className="config-json casilla"><input {...writeControls} type="checkbox" checked={draft.withRoom} onChange={(event) => { edit({ withRoom: event.target.checked }); }} /> Crear el room</label>
+      <label>Room id<input {...writeControls} value={draft.roomId} onChange={(event) => { edit({ roomId: event.target.value }); }} /></label>
+      <label>Display name <span className="label-hint">opcional</span><input {...writeControls} value={draft.roomLabel} onChange={(event) => { edit({ roomLabel: event.target.value }); }} /></label>
     </div> : null}
 
     {step === 'membership' ? <div className="config-form">
-      <label className="config-json casilla"><input type="checkbox" checked={draft.withMembership} onChange={(event) => { edit({ withMembership: event.target.checked }); }} /> Crear la membership</label>
-      <label>Alias<input value={draft.alias} onChange={(event) => { edit({ alias: event.target.value }); }} /></label>
-      <label>Rol de permisos <span className="label-hint">route/read/control salen de role_policies; no cambia el contexto</span><input value={draft.role} onChange={(event) => { edit({ role: event.target.value }); }} /></label>
+      <label className="config-json casilla"><input {...writeControls} type="checkbox" checked={draft.withMembership} onChange={(event) => { edit({ withMembership: event.target.checked }); }} /> Crear la membership</label>
+      <label>Alias<input {...writeControls} value={draft.alias} onChange={(event) => { edit({ alias: event.target.value }); }} /></label>
+      <label>Rol de permisos <span className="label-hint">route/read/control salen de role_policies; no cambia el contexto</span><input {...writeControls} value={draft.role} onChange={(event) => { edit({ role: event.target.value }); }} /></label>
     </div> : null}
 
     {step === 'harness' ? <div className="config-form">
-      <label className="config-json casilla"><input type="checkbox" checked={draft.withHarness} onChange={(event) => { edit({ withHarness: event.target.checked }); }} /> Registrar el harness</label>
-      <label>Harness id<input value={draft.harnessId} onChange={(event) => { edit({ harnessId: event.target.value }); }} /></label>
-      <label>Display name<input value={draft.harnessLabel} onChange={(event) => { edit({ harnessLabel: event.target.value }); }} /></label>
-      <label>Capabilities <span className="label-hint">separadas por coma</span><input value={draft.harnessCapabilities} onChange={(event) => { edit({ harnessCapabilities: event.target.value }); }} /></label>
+      <label className="config-json casilla"><input {...writeControls} type="checkbox" checked={draft.withHarness} onChange={(event) => { edit({ withHarness: event.target.checked }); }} /> Registrar el harness</label>
+      <label>Harness id<input {...writeControls} value={draft.harnessId} onChange={(event) => { edit({ harnessId: event.target.value }); }} /></label>
+      <label>Display name<input {...writeControls} value={draft.harnessLabel} onChange={(event) => { edit({ harnessLabel: event.target.value }); }} /></label>
+      <label>Capabilities <span className="label-hint">separadas por coma</span><input {...writeControls} value={draft.harnessCapabilities} onChange={(event) => { edit({ harnessCapabilities: event.target.value }); }} /></label>
       {/* Where did "Command" go. Removing a field without saying so leaves the operator hunting for
           it and thinking the screen broke; saying nobody reads it answers the question at once. */}
       <p className="muted">

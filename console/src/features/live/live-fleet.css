@@ -1,128 +1,68 @@
 .live-page { display: grid; gap: var(--space-4); }
-
-/* --- Cinta de mando: refresco, veredicto y triage ------------------------- */
-
-.live-command-strip {
-  display: grid;
-  gap: var(--space-3);
-  padding-block: var(--space-2);
-  background: var(--bg);
-}
-
-/* One row of two columns: refresh over triage on the left, the verdict spanning both on the right.
-   Three equal columns squeezed the toolbar to 34px and made the strip 385px tall. Sticking it only
-   pays while the band stays a band: measured 244px at 1920, 301px at 1680, 356px at 1440 and 495px
-   at 1101 — 46% of a 1080 viewport, the worst case still above the cut — so anything scrolled to
-   from further down has to clear the band it leaves.
-
-   The verdict's track is capped against the STRIP, not only in rem: at 1101 the content column is
-   777px, a flat 42rem left the toolbar 93px wide and stacked the strip 815px tall — a wall, not a
-   band. With the cap it is 427/338 there and still the measured 672 from 1600 up.
-
-   Everything that depends on the strip being stuck lives INSIDE this query, the header opt-out
-   included: below the cut nothing on /live is sticky, so the global sticky page header is the only
-   thing keeping the route's title reachable while a three-screen table scrolls, exactly as on every
-   other route.
-
-   The band's height cannot be written by hand: the strip grows with the toolbar's notices (activity
-   error, topology error, tenant clipping) and with the verdict's culprits. `LiveFleetPage` MEASURES
-   it and writes it into `--live-cinta-alto`. The fallback is for the browser without
-   `ResizeObserver` and for the first paint before the measurement lands: too much, never too
-   little, because a summary that lands under the band cannot be clicked at all. */
-@media (min-width: 1101px) {
-  .live-command-strip {
-    position: sticky;
-    top: 0;
-    z-index: var(--layer-sticky);
-    align-items: start;
-    grid-template-columns: minmax(0, 1fr) minmax(0, min(42rem, 55%));
-  }
-
-  .live-command-strip > .fleet-verdict { grid-row: span 2; }
-  .live-fold > summary,
-  .live-mapa > summary,
-  .live-leyenda > summary { scroll-margin-block-start: calc(var(--live-cinta-alto, 400px) + var(--space-3)); }
-
-  /* The culprit chip centres the agent's ROW —the map may be folded, its node is not laid out—
-     and centring it in the viewport would leave it under the stuck band: with this margin the
-     centre it lands on is that of the band-free half of the screen. */
-  [data-objeto-principal="tabla-de-flota"] tr[data-agent-key] {
-    scroll-margin-block-start: calc(var(--live-cinta-alto, 400px) + var(--space-3));
-  }
-
-  .live-page .page-header { position: static; }
-}
-
-/* ---------------------------------------------------------------- cabecera y estado del feed */
-
-.live-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
+.live-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.live-heading .page-header { position: static; width: auto; min-width: 0; flex: 0 1 auto; margin: 0; padding: 0; border: 0; }
+.live-heading .eyebrow:empty { display: none; }
+.live-heading .page-header h1 { font-size: var(--tipo-titulo); }
+.live-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: 0; }
 .live-toolbar label { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--tipo-rotulo); }
-.live-toolbar select { padding: var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); }
-.live-toolbar .notice { flex-basis: 100%; }
-.live-toolbar .notice button { margin-left: var(--space-2); vertical-align: middle; }
-
-.live-feed-state { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--tipo-rotulo); font-weight: 600; }
-.live-feed-state .live-feed-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 0 rgb(99 222 185 / 55%); animation: live-ping 2.4s ease-out infinite; }
-.live-feed-state[data-feed='paused'] { color: var(--muted); }
-.live-feed-state[data-feed='paused'] .live-feed-dot { background: var(--faint); animation: none; }
+.live-toolbar select { min-height: 44px; padding: var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); max-width: 100%; }
+.live-toolbar input, .live-toolbar select { margin-top: 0; }
+.live-toolbar .notice { flex-basis: 100%; margin: 0; }
+.live-toolbar .notice button { margin-left: var(--space-2); }
+.live-feed-state { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--tipo-apunte); color: var(--muted); }
+.live-feed-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mint); }
+.live-feed-state[data-feed='paused'] .live-feed-dot { background: var(--faint); }
+.live-feed-state[data-feed='stale'] { color: var(--amber); }
+.live-feed-state[data-feed='stale'] .live-feed-dot { background: var(--amber); }
 .live-feed-state[data-feed='error'] { color: var(--red); }
-.live-feed-state[data-feed='error'] .live-feed-dot { background: var(--red); animation: none; }
-
-@keyframes live-ping {
-  0% { box-shadow: 0 0 0 0 rgb(99 222 185 / 55%); }
-  70% { box-shadow: 0 0 0 9px rgb(99 222 185 / 0%); }
-  100% { box-shadow: 0 0 0 0 rgb(99 222 185 / 0%); }
-}
-
-.live-transport-note { margin: 0; color: var(--faint); font-size: var(--tipo-apunte); }
-
-/* ------------------------------------------------------------------------------- resumen */
-
-.live-tally { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-
-/* The row reads as a legend until something says otherwise: every chip is a filter, and a chip that
-   looks passive is a control nobody finds. */
-.live-tally-rotulo {
-  margin-right: var(--space-1);
-  color: var(--muted);
-  font-size: var(--tipo-apunte);
-  font-weight: 600;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-}
-.live-tally-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--surface-2);
-  font-size: var(--tipo-rotulo);
-  cursor: pointer;
-  transition: border-color .16s ease, background .16s ease, transform .16s ease;
-}
-.live-tally-chip:hover { transform: translateY(-1px); border-color: var(--border-strong); }
+.live-feed-state[data-feed='error'] .live-feed-dot { background: var(--red); }
+.live-search { display: inline-flex; flex: 1 1 160px; align-items: center; gap: var(--space-2); min-width: 0; min-height: 44px; padding: 0 var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--muted); }
+.live-search input { padding: 0; min-height: 44px; height: 44px; width: 100%; min-width: 0; border: none; background: none; color: var(--text); outline: none; }
+.live-search:focus-within { outline: 2px solid var(--blue); outline-offset: 2px; }
+.live-refresh, .live-refresh-settings > summary { display: grid; place-items: center; flex: none; width: 44px; height: 44px; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); cursor: pointer; }
+.live-refresh { position: relative; }
+.live-refresh .live-feed-state { position: absolute; inset: var(--space-1) var(--space-1) auto auto; }
+.live-refresh-settings { position: relative; }
+.live-refresh-settings > summary { list-style: none; }
+.live-refresh-settings > summary::-webkit-details-marker { display: none; }
+.live-refresh-popover { position: absolute; inset-inline-end: 0; top: calc(100% + var(--space-1)); z-index: var(--layer-overlay); display: grid; gap: var(--space-3); width: min(320px, 80vw); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow); }
+.live-age { font-size: var(--tipo-apunte); }
+.live-age strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.fleet-verdict { flex: 0 1 auto; display: grid; gap: var(--space-1); min-width: 0; }
+.fleet-verdict[data-tone='ok'] { --accent: var(--mint); }
+.fleet-verdict[data-tone='alerta'] { --accent: var(--red); }
+.fleet-verdict[data-tone='desconocido'] { --accent: var(--amber); }
+.fleet-verdict-main { display: flex; align-items: center; gap: var(--space-2); }
+.fleet-verdict-light { flex: none; width: 8px; height: 8px; margin-top: var(--space-2); border-radius: 50%; background: var(--accent, var(--faint)); }
+.fleet-verdict-phrase { min-width: 0; overflow-wrap: normal; margin: 0; font-size: var(--tipo-cuerpo); font-weight: 650; }
+.fleet-verdict-support { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--tipo-apunte); }
+.fleet-verdict-counts { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); }
+.fleet-verdict-counts strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.fleet-verdict-culprits { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.fleet-verdict-chip { min-height: 44px; padding: var(--space-2) var(--space-3); border: 1px solid var(--red); border-radius: var(--radius-sm); background: var(--red-dim); color: var(--text); font-size: var(--tipo-apunte); cursor: pointer; }
+.live-mapa { margin: 0; padding: var(--space-3); min-width: 0; overflow: hidden; }
+.live-mapa-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
+.live-mapa-titulo { margin: 0; min-width: 0; font-size: var(--tipo-panel); font-weight: 650; }
+.live-layer-switch { display: inline-flex; flex: none; gap: var(--space-1); padding: var(--space-1); border-radius: var(--radius-sm); background: var(--surface-2); }
+.live-layer-button { min-height: 44px; padding: var(--space-2) var(--space-3); border: none; border-radius: var(--radius-sm); background: none; color: var(--muted); font-size: var(--tipo-rotulo); font-weight: 600; cursor: pointer; }
+.live-layer-button[aria-pressed='true'] { background: var(--surface-3); color: var(--text); }
+.live-empty-calm, .live-mapa-apunte { margin: var(--space-1) 0; color: var(--muted); font-size: var(--tipo-apunte); }
+.live-filter-controls { display: flex; flex-wrap: wrap; align-items: start; gap: var(--space-2); }
+.live-state-filters { flex: 1; min-width: 0; }
+.live-state-filters > summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; color: var(--muted); font-size: var(--tipo-rotulo); }
+.live-tally { display: flex; flex-wrap: wrap; gap: var(--space-2); padding-block: var(--space-2); }
+.live-tally-rotulo { display: none; }
+.live-tally-chip { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 44px; padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); font-size: var(--tipo-rotulo); cursor: pointer; }
 .live-tally-chip[aria-pressed='true'] { border-color: var(--accent, var(--border-strong)); background: var(--surface-3); }
-.live-tally-chip[data-empty='true'] {
-  opacity: 1;
-  color: var(--faint);
-}
+.live-tally-chip[data-empty='true'] { opacity: 1; }
 .live-tally-chip[data-empty='true'] .live-tally-swatch { opacity: .45; }
-.live-tally-chip .live-tally-swatch { width: 12px; height: 12px; border-radius: var(--radius-sm); background: var(--accent, var(--faint)); }
+.live-tally-swatch { width: 8px; height: 8px; border-radius: 50%; background: var(--accent, var(--faint)); }
 .live-tally-chip strong { font-variant-numeric: tabular-nums; }
-
-/* ------------------------------------------------------------------- lista de agentes */
-
+.live-tally-chip.is-unreported { border-style: dashed; color: var(--muted); cursor: default; }
+.live-fold { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.live-fold > summary { min-height: 44px; padding: var(--space-3) var(--space-4); color: var(--text); font-size: var(--tipo-cuerpo); font-weight: 600; cursor: pointer; }
+.live-fold[open] > summary { border-bottom: 1px solid var(--border); }
+.live-fold > *:not(summary) { margin: var(--space-3) var(--space-4); }
 .activity-search {
   display: inline-flex;
   align-items: center;
@@ -172,225 +112,6 @@ table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { whi
 .live-legend-item strong { display: block; font-size: var(--tipo-rotulo); }
 .live-legend-item span { color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.35; }
 
-@media (max-width: 760px) {
-  .live-page > .live-main { gap: 0; }
-  .live-page > .live-main > .page-header { margin-bottom: 0; padding-block: 0; }
-  .live-page .live-command-strip { gap: var(--space-1); }
-  .live-command-strip .live-toolbar { gap: var(--space-1) var(--space-2); padding: var(--space-1) var(--space-2); }
-  .live-command-strip .live-layer-switch { margin-bottom: 0; }
-  .live-main > .live-mapa { margin-bottom: 0; padding: 0 var(--space-1); }
-  .live-tally {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    padding: 0;
-    scrollbar-width: thin;
-  }
-  .live-tally:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-  .live-tally-rotulo,
-  .live-tally-chip { flex: none; }
-  .live-legend { grid-template-columns: 1fr; }
-  .activity-search input { min-width: 0; width: 100%; }
-  .activity-search { display: flex; }
-  .live-toolbar {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: var(--space-1) var(--space-2);
-    padding: var(--space-2);
-  }
-  .live-toolbar > .tooltip-anchor { grid-column: 1; grid-row: 1; }
-  .live-toolbar > .live-refresh-filter { grid-column: 2; grid-row: 1; }
-  .live-toolbar > button { grid-column: 3; grid-row: 1; padding: var(--space-2); white-space: nowrap; }
-  .live-toolbar > .live-age { grid-column: 1 / -1; grid-row: 2; margin: 0; }
-  .live-toolbar > .live-search { grid-column: 1 / 3; grid-row: 3; min-width: 0; }
-  .live-toolbar > .live-search input { width: 100%; min-width: 0; }
-  .live-toolbar > .live-client-filter { grid-column: 3; grid-row: 3; }
-  .live-toolbar > .notice { grid-column: 1 / -1; }
-  .live-refresh-compact { display: inline; }
-  .live-refresh-wide { display: none; }
-}
-
-.live-main > .panel:has(.activity-search) table[data-objeto-principal='tabla-de-flota']
-  > tbody > tr:not(.row-detail) > td {
-  padding-block: var(--space-2);
-}
-
-/* --- La banda de veredicto ------------------------------------------------- */
-
-.fleet-verdict {
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent, var(--faint));
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
-.fleet-verdict[data-tone='ok'] { --accent: var(--mint); }
-.fleet-verdict[data-tone='alerta'] { --accent: var(--red); }
-.fleet-verdict[data-tone='desconocido'] { --accent: var(--amber); }
-
-.fleet-verdict-main { display: flex; align-items: start; gap: var(--space-3); }
-
-.fleet-verdict-light {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  margin-top: var(--space-2);
-  border-radius: 50%;
-  background: var(--accent, var(--faint));
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--faint)) 22%, transparent);
-}
-
-.fleet-verdict-phrase {
-  margin: 0;
-  font-size: 32px;
-  font-weight: 650;
-  line-height: 1.15;
-  letter-spacing: -.01em;
-}
-
-.fleet-verdict-support { margin: var(--space-2) 0 0; color: var(--muted); font-size: var(--tipo-cuerpo); }
-
-.fleet-verdict-culprits { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
-
-.fleet-verdict-chip {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--red);
-  border-radius: var(--radius-pill);
-  background: var(--red-dim);
-  color: var(--text);
-  font-size: var(--tipo-apunte);
-  cursor: pointer;
-}
-
-.fleet-verdict-chip:hover { border-color: var(--border-strong); }
-.fleet-verdict-chip strong { font-weight: 650; }
-
-.fleet-verdict-counts {
-  margin: 0;
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
-  color: var(--muted);
-  font-size: var(--tipo-rotulo);
-}
-
-.fleet-verdict-counts strong { color: var(--text); font-variant-numeric: tabular-nums; }
-
-/* --- Barra superior: lo que se le sumó ------------------------------------- */
-
-.live-age strong { color: var(--text); font-variant-numeric: tabular-nums; }
-.live-refresh-compact { display: none; }
-
-.live-search {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--muted);
-}
-
-.live-search input {
-  width: 150px;
-  min-width: 0;
-  border: none;
-  background: none;
-  color: var(--text);
-  outline: none;
-}
-
-.live-tally-chip.is-unreported {
-  border-style: dashed;
-  color: var(--muted);
-  cursor: default;
-}
-.live-tally-chip.is-unreported .live-tally-swatch { background: var(--faint); }
-
-/* --- Conmutador de capa ---------------------------------------------------- */
-
-.live-layer-switch {
-  display: inline-flex;
-  gap: var(--space-1);
-  margin-bottom: var(--space-3);
-  padding: var(--space-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-}
-
-.live-layer-button {
-  padding: var(--space-2) var(--space-3);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--muted);
-  font-size: var(--tipo-rotulo);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.live-layer-button[aria-pressed='true'] { background: var(--surface-3); color: var(--text); }
-
-/* --- Estado vacío y desplegables --------------------------------------- */
-
-.live-empty-calm {
-  margin: 0 0 var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-  color: var(--muted);
-  font-size: var(--tipo-cuerpo);
-  line-height: 1.55;
-}
-.live-empty-calm strong { color: var(--text); }
-
-.live-fold {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
-.live-fold > summary {
-  padding: var(--space-3) var(--space-4);
-  color: var(--text);
-  font-size: var(--tipo-cuerpo);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.live-fold[open] > summary { border-bottom: 1px solid var(--border); }
-.live-fold > *:not(summary) { margin: var(--space-3) var(--space-4); }
-
-/* The graph starts open; native disclosure preserves the operator’s choice during refreshes. */
-
-.live-mapa > summary { margin-bottom: var(--space-4); cursor: pointer; }
-.live-mapa-rotulo {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2) var(--space-4);
-  width: calc(100% - var(--space-5));
-}
-/* A real `h2`, so the map keeps its place in the heading outline: the UA margin is the only thing
-   that has to go for it to sit where the old `span` sat. */
-.live-mapa-titulo { flex: none; margin: 0; font-size: var(--tipo-panel); font-weight: 650; letter-spacing: -.015em; }
-.live-mapa-apunte {
-  flex: 1 1 320px;
-  min-width: 0;
-  max-width: var(--measure-prose);
-  color: var(--muted);
-  font-size: var(--tipo-rotulo);
-  line-height: 1.5;
-}
-.live-mapa:not([open]) > summary { margin-bottom: 0; }
-
-/* --- La leyenda, plegada ------------------------------------------------- */
-
 .live-leyenda {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -422,7 +143,7 @@ table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { whi
   background: var(--surface-2);
 }
 .rol-medida { font-size: var(--tipo-apunte); color: var(--muted); }
-.rol-medida[data-fuera='si'] { color: var(--danger, #d64545); font-weight: 600; }
+.rol-medida[data-fuera='si'] { color: var(--on-red); font-weight: 600; }
 .rol-portadores { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); color: var(--muted); font-size: var(--tipo-rotulo); }
 .rol-portador {
   min-height: 24px;
@@ -446,37 +167,51 @@ table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { whi
   background: var(--accent, var(--faint));
 }
 
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .live-empty-calm,
-  :root:not([data-theme="dark"]) .live-search,
-  :root:not([data-theme="dark"]) .live-layer-switch { background: #f8fafd; }
-  :root:not([data-theme="dark"]) .live-layer-button[aria-pressed='true'] { background: #e6eef8; }
-}
-
-/* Gemela del bloque de arriba para el tema claro FORZADO: la consulta de medios no llega
-   cuando el sistema prefiere oscuro y el operador eligió «claro» en la barra superior. */
-:root[data-theme="light"] .live-empty-calm,
-:root[data-theme="light"] .live-search,
-:root[data-theme="light"] .live-layer-switch { background: #f8fafd; }
-:root[data-theme="light"] .live-layer-button[aria-pressed='true'] { background: #e6eef8; }
-
-
-.live-search:focus-within { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 @media (max-width: 760px) {
-  .live-page { gap: var(--space-2); }
-  .live-command-strip { gap: var(--space-2); padding-block: 0; }
-  .live-toolbar { gap: var(--space-1) var(--space-2); padding: var(--space-2); }
-  .live-toolbar label { min-width: 0; max-width: 100%; }
-  .live-toolbar select { min-width: 0; max-width: 100%; }
-  .live-age { font-size: var(--tipo-apunte); }
-  .live-search { flex: 0 1 auto; max-width: 100%; min-height: 36px; }
-  .live-search input { width: 110px; font-size: 16px; }
-  .fleet-verdict { gap: var(--space-2); padding: var(--space-3); }
-  .fleet-verdict-phrase { font-size: 24px; }
-  .live-mapa-titulo { flex: 0 1 auto; min-width: 0; }
-  .live-mapa > summary { margin-bottom: 0; }
-  .live-mapa-apunte { margin: var(--space-2) 0 0; }
-  .live-refresh-compact { display: inline; }
-  .live-refresh-wide { display: none; }
+  .live-heading { align-items: center; flex-direction: row; gap: var(--space-2); }
+  .fleet-verdict-phrase { position: absolute; width: 1px; height: 1px; padding: 0; margin: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .fleet-verdict-light { margin: 0; }
+  .live-heading .page-header h1 { font-size: var(--tipo-panel); }
+  .live-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(88px, 100px) 44px 44px; gap: var(--space-1); }
+  .live-toolbar .notice { grid-column: 1 / -1; }
+  .live-search { min-height: 44px; padding: 0 var(--space-2); gap: var(--space-1); }
+  .live-search input { padding: 0; min-height: 44px; height: 44px; width: 100%; font-size: 16px; }
+  .live-client-filter { min-width: 0; }
+  .live-single-client { min-width: 0; max-width: 100%; white-space: normal; }
+  .live-client-filter select { width: 100%; font-size: 16px; }
+  .live-mapa { padding: var(--space-2); }
+  .live-mapa-header { align-items: center; flex-wrap: wrap; }
+  .live-legend { grid-template-columns: 1fr; }
+  .activity-search input { min-width: 0; width: 100%; }
+  .activity-search { display: flex; }
 }
+
+.fleet-verdict-more { position: relative; flex: none; }
+.fleet-verdict-more > summary { display: grid; place-items: center; width: 44px; height: 44px; list-style: none; border-radius: var(--radius-sm); cursor: pointer; }
+.fleet-verdict-more > summary::-webkit-details-marker { display: none; }
+.fleet-verdict-more > summary:hover { background: var(--surface-2); }
+.fleet-verdict-popover { position: absolute; inset-inline-end: 0; top: 100%; z-index: var(--layer-overlay); display: grid; gap: var(--space-2); width: min(360px, 80vw); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow); }
+
+.live-page .live-main > .panel.fleet-activity-panel:has(.activity-search) table[data-objeto-principal='tabla-de-flota'] > tbody > tr[data-agent-key]:not(.row-detail) > td { padding: 0 var(--space-2); }
+table[data-objeto-principal='tabla-de-flota'] > tbody > tr[data-agent-key] > td > .identity-cell > .row-open { min-height: 44px; min-width: 44px; }
+table[data-objeto-principal='tabla-de-flota'] > tbody > tr[data-agent-key] > td > .row-toggle { width: 44px; height: 44px; }
+.activity-agent-details { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-1) var(--space-3); margin: 0 0 var(--space-3); font-size: var(--tipo-rotulo); }
+.activity-agent-details dt { color: var(--muted); }
+.activity-agent-details dd { margin: 0; overflow-wrap: anywhere; }
+
+.live-main > .panel:has(.activity-search) { min-width: 0; padding: var(--space-3); margin-bottom: 0; }
+.live-main > .panel:has(.activity-search) > .panel-header { margin-bottom: var(--space-2); }
+.live-main > .panel:has(.activity-search) .table-wrap { position: relative; }
+.live-main > .panel:has(.activity-search) .activity-search { min-height: 44px; padding: 0 var(--space-2); margin-bottom: var(--space-2); }
+.live-main > .panel:has(.activity-search) .activity-search input { min-height: 44px; padding: 0; margin: 0; }
+.live-page .live-main > .panel.fleet-activity-panel:has(.activity-search) table[data-objeto-principal='tabla-de-flota'] > tbody > tr[data-agent-key] > td:first-child { padding-inline: 0; }
+table[data-objeto-principal='tabla-de-flota'] > thead > tr > th { padding-block: var(--space-1); }
+table[data-objeto-principal='tabla-de-flota'] > tbody > tr[data-agent-key] .badge { min-height: 20px; padding-block: 0; line-height: 18px; }
+table[data-objeto-principal='tabla-de-flota'] > tbody > tr[data-agent-key] > td:nth-child(3) > .badge { display: flex; width: fit-content; }
+table[data-objeto-principal='tabla-de-flota'] > tbody > tr[data-agent-key] > td > .flag-chip-list { margin-top: 0; gap: var(--space-1); }
+@media (min-width: 1101px) {
+  .live-page > .live-main { gap: var(--space-2); }
+}
+
+.live-page .live-main > .panel.fleet-activity-panel table[data-objeto-principal='tabla-de-flota'] > thead > tr > th { padding: var(--space-1) var(--space-2); }

@@ -275,7 +275,7 @@ describe('con el control tomado', () => {
     const socket = await tomarElControl(user, controles);
 
     await screen.findByRole('button', { name: /devolver el control/i });
-    expect(screen.getByText(/Tenés el teclado/)).toHaveAttribute('title', expect.stringContaining('cola'));
+    expect(screen.getByText(/Tenés el teclado/).closest('[role="status"]')).toHaveAttribute('title', expect.stringContaining('cola'));
     await waitFor(() => {
       expect(document.querySelector('.pty-shell[data-read-only]')).toBeNull();
     }, { timeout: 5000 });

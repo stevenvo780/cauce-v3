@@ -153,6 +153,35 @@ describe('quotaSnapshot: la escalera de severidad que ve el operador', () => {
     );
     expect((await snapshot('Steven', 'kant')).collectors[0]?.stale).toBe(true);
   });
+
+  it('una ventana cuyo reinicio ya pasó no declara «sin saldo»', async () => {
+    await repository.recordQuotaSample('Steven', 'quota-collector', muestra('kratos', [
+      { group_key: 'vencida', window_key: '7d', remaining_percent: 0,
+        reset_at: new Date(Date.now() - 3_600_000).toISOString() },
+      { group_key: 'vigente', window_key: '7d', remaining_percent: 0,
+        reset_at: new Date(Date.now() + 3_600_000).toISOString() }
+    ]));
+
+    const vista = await snapshot('Steven', 'kant');
+    expect(grupo(vista, 'claude', 'vencida').severity).toBe('unknown');
+    expect(grupo(vista, 'claude', 'vigente').severity).toBe('exhausted');
+    expect(vista.providers[0]?.severity).toBe('exhausted');
+  });
+
+  it('los proveedores de un recolector rancio no se leen como estado actual', async () => {
+    await repository.recordQuotaSample('Steven', 'quota-collector', muestra('kratos', [
+      { group_key: 'agotado', window_key: 'session', remaining_percent: 0 }
+    ]));
+    await pool.query(
+      `UPDATE quota_collections SET received_at=now()-interval '2 hours',
+         captured_at=now()-interval '2 hours'`
+    );
+
+    const vista = await snapshot('Steven', 'kant');
+    expect(vista.collectors[0]?.stale).toBe(true);
+    expect(grupo(vista, 'claude', 'agotado').severity).toBe('exhausted');
+    expect(vista.providers[0]?.severity).toBe('unknown');
+  });
 });
 
 describe('quotaSnapshot: por qué un grupo quedó sin vincular', () => {

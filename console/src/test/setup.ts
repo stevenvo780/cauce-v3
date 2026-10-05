@@ -59,6 +59,56 @@ import { server } from '../mocks/server';
 
 configure({ asyncUtilTimeout: 5_000 }); // 1 s is the cliff under StrictMode + forked parallelism, not `testTimeout`.
 
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class ResizeObserverShim implements ResizeObserver {
+    private readonly observed = new Set<Element>();
+
+    constructor(private readonly callback: ResizeObserverCallback) {}
+
+    observe(target: Element): void {
+      this.observed.add(target);
+      this.notify(target);
+    }
+
+    unobserve(target: Element): void { this.observed.delete(target); }
+
+    disconnect(): void { this.observed.clear(); }
+
+    private notify(target: Element): void {
+      const rect = target.getBoundingClientRect();
+      const size = { inlineSize: rect.width, blockSize: rect.height };
+      this.callback([{
+        target,
+        contentRect: rect,
+        borderBoxSize: [size],
+        contentBoxSize: [size],
+        devicePixelContentBoxSize: [size],
+      }], this);
+    }
+  };
+}
+
+if (typeof window !== 'undefined' && typeof window.DOMMatrixReadOnly === 'undefined') {
+  class DOMMatrixReadOnlyScaleShim {
+    readonly m22: number;
+
+    constructor(transform = 'none') {
+      const matrix3d = /^matrix3d\(([^)]+)\)$/u.exec(transform);
+      const matrix2d = /^matrix\(([^)]+)\)$/u.exec(transform);
+      const scale = /scale\((?:[^,]+,\s*)?([^)]+)\)/u.exec(transform);
+      if (matrix3d) this.m22 = Number(matrix3d[1].split(',')[5]) || 1;
+      else if (matrix2d) this.m22 = Number(matrix2d[1].split(',')[3]) || 1;
+      else if (scale) this.m22 = Number(scale[1]) || 1;
+      else this.m22 = 1;
+    }
+  }
+
+  Object.defineProperty(window, 'DOMMatrixReadOnly', {
+    configurable: true,
+    value: DOMMatrixReadOnlyScaleShim,
+  });
+}
+
 beforeAll(() => { server.listen({ onUnhandledRequest: 'error' }); });
 afterEach(() => {
   cleanup();
