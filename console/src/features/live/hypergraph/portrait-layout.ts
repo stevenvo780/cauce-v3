@@ -33,7 +33,7 @@ function corners(point: Point): Point[] {
   ];
 }
 
-export function portraitGraph(model: HyperGraphModel, nodes: FleetNode[], edges: FleetEdge[], width: number) {
+export function portraitGraph(model: HyperGraphModel, nodes: FleetNode[], edges: FleetEdge[], width: number, originCount?: number) {
   const columns = portraitColumns(width);
   const stride = (width - 24) / columns;
   const groupedTenants = [...model.tenants].sort((left, right) => right.memberCount - left.memberCount || left.id.localeCompare(right.id));
@@ -43,7 +43,7 @@ export function portraitGraph(model: HyperGraphModel, nodes: FleetNode[], edges:
     || [...left.edges].sort().join('|').localeCompare([...right.edges].sort().join('|'))
     || left.key.localeCompare(right.key));
   const origins = nodes.filter((node) => node.data.kind === 'origin');
-  const originRows = Math.ceil(origins.length / columns);
+  const originRows = Math.ceil((originCount ?? origins.length) / columns);
   const top = 110 + originRows * 54;
   const positions = new Map(sorted.map((node, index) => [node.key, {
     x: 12 + stride * (index % columns + .5),
