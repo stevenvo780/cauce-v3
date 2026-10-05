@@ -13,7 +13,7 @@ import Fastify from 'fastify';
 import { PasswordAuthProvider } from './password-auth.js';
 import { createOAuthPasswordSession } from './oauth-password-session.js';
 import { createHumanMcpOperationsFactory } from './mcp-operations.js';
-import { createHumanPublishAuthority } from './human-mcp-authority.js';
+import { createHumanPublishAuthority, resolveHumanMcpAuthority } from './human-mcp-authority.js';
 import { secretHash, type OAuthAuthorizationRequest, type OAuthPasswordSession } from './oauth-authorization-types.js';
 import { OAuthTokens } from './oauth-tokens.js';
 
@@ -82,15 +82,22 @@ function intercept(pool: DatabasePool, before?: (sql: string, client: DatabaseCl
   } });
 }
 
-async function seed(pool: DatabasePool) {
+async function seed(pool: DatabasePool, binding = true) {
   const userId = randomUUID(); const bindingId = randomUUID(); const alias = `fixture_${userId.slice(0, 8)}`;
   await pool.query('INSERT INTO agents(tenant_id,alias) VALUES ($1,$2)', ['Steven', alias]);
   await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias,active,password_changed_at)
     VALUES ($1,$2,$2,$4,'Fixture','operator','Steven',$3,true,clock_timestamp())`, [userId, `${userId}@example.invalid`, alias, await hashPassword('fixture-only-passphrase', { cost: 1024, blockSize: 8, parallelism: 1 })]);
-  await pool.query(`INSERT INTO human_external_identities(id,human_id,provider,namespace,subject)
-    VALUES ($1,$2::uuid,'oauth',$3,$2::text)`, [bindingId, userId, issuer]);
-  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES ($1,'Steven',$2,'operator',ARRAY['read','route'])`, [userId, alias]);
+  if (binding) {
+    await pool.query(`INSERT INTO human_external_identities(id,human_id,provider,namespace,subject)
+      VALUES ($1,$2::uuid,'oauth',$3,$2::text)`, [bindingId, userId, issuer]);
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
+      VALUES ($1,'Steven',$2,'operator',ARRAY['read','route'])`, [userId, alias]);
+  } else {
+    // Igual que el relleno de 044: membresía desde console_users y ningún vínculo externo.
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions,enabled,revoked_at)
+      SELECT id,tenant_id,alias,role,CASE WHEN role='operator' THEN ARRAY['route','read','control','notify']::text[]
+        ELSE ARRAY['read']::text[] END,active,CASE WHEN active THEN NULL ELSE now() END FROM console_users WHERE id=$1`, [userId]);
+  }
   const user = await new PostgresConsoleUserStore(pool).findById(userId);
   if (!user?.password_changed_at_us) throw new Error('missing fixture credential snapshot');
   const credentialStamp = createConsoleCredentialStamp(key, { userId, passwordHash: user.password_hash, passwordChangedAtUs: user.password_changed_at_us });
@@ -470,6 +477,38 @@ function barrier() {
         tableowner='oauth_fixture_runtime' AS owner FROM pg_tables WHERE tablename='cauce_oauth_grants'`);
       expect(result.rows[0]).toEqual({ insert: true, delete: false, truncate: false, owner: false });
     } finally { await pool.query('DROP OWNED BY oauth_fixture_runtime'); await pool.query('DROP ROLE oauth_fixture_runtime'); }
+  });
+
+  it('creates the local binding at consent and resolves a fresh console user end to end without manual inserts', async () => {
+    const pool = await database(); const f = await seed(pool, false);
+    expect((await pool.query('SELECT 1 FROM human_external_identities WHERE human_id=$1', [f.userId])).rowCount).toBe(0);
+    const approved = await consent(f);
+    if (!approved.code) throw new Error('missing code');
+    const binding = (await pool.query<{ namespace: string; subject: string; enabled: boolean }>(
+      'SELECT namespace,subject,enabled FROM human_external_identities WHERE human_id=$1', [f.userId])).rows;
+    expect(binding).toEqual([{ namespace: issuer, subject: f.userId, enabled: true }]);
+    const issued = await f.store.exchange(exchangeInput(f, approved.code), value => tokens.issue(value), context());
+    expect(issued.identity.subject).toBe(f.userId);
+    expect(await f.store.validate(issued.identity)).toBe(true);
+    const authority = await resolveHumanMcpAuthority({ pool }, issued.identity, new AbortController().signal);
+    expect(authority).toMatchObject({ userId: f.userId, scopes: ['cauce.read', 'cauce.publish'],
+      principal: { tenant_id: 'Steven', alias: f.alias, operator_id: `console:${f.userId}`, channel: 'human-mcp' } });
+    const second = { ...f.request, idHash: secretHash(randomUUID()) };
+    await f.store.createRequest(second, context());
+    expect((await f.store.consent(second.idHash, second.browserHash, f.session, ['cauce.read'], context())).code).toBeDefined();
+    expect((await pool.query('SELECT 1 FROM human_external_identities WHERE human_id=$1', [f.userId])).rowCount).toBe(1);
+  });
+
+  it('refuses consent for a revoked or foreign binding and leaves no grant behind', async () => {
+    const pool = await database(); const revoked = await seed(pool, false); const foreign = await seed(pool, false);
+    await pool.query(`INSERT INTO human_external_identities(human_id,provider,namespace,subject,enabled,revoked_at)
+      VALUES ($1,'oauth',$2,$1::text,false,clock_timestamp())`, [revoked.userId, issuer]);
+    await pool.query(`INSERT INTO human_external_identities(human_id,provider,namespace,subject)
+      VALUES ($1,'oauth',$2,$3)`, [revoked.userId, issuer, foreign.userId]);
+    for (const f of [revoked, foreign]) await expect(consent(f)).rejects.toThrow('access_denied');
+    expect((await counts(pool))?.grants).toBe('0');
+    expect((await pool.query<{ consumed_at: Date | null }>('SELECT consumed_at FROM cauce_oauth_requests WHERE consumed_at IS NOT NULL')).rowCount).toBe(0);
+    expect((await pool.query('SELECT 1 FROM human_external_identities WHERE human_id=$1', [foreign.userId])).rowCount).toBe(0);
   });
 
   it('drops only empty OAuth tables atomically and preserves the human ledger', async () => {

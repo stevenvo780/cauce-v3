@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { lockHumanIdentity, lockConsoleHuman, withAbortableTransaction, type ConsoleCredentialStampVerifier, type DatabasePool, type DatabaseClient } from '@cauce/store';
+import { lockHumanIdentity, lockConsoleHuman, withAbortableTransaction, StoreError, type ConsoleCredentialStampVerifier,
+  type DatabasePool, type DatabaseClient, type HumanIdentitySnapshot } from '@cauce/store';
 import { isAnyUuid } from '@cauce/protocol';
 import { currentOAuthScopes, lockOAuthAccess, lockOAuthGrant, requireOAuthExpiry } from './oauth-grant-authority.js';
 import { oauthContextSignal } from './oauth-request-context.js';
@@ -35,6 +36,19 @@ async function lockSession(client: DatabaseClient, session: OAuthPasswordSession
     await lockConsoleHuman(client, session.userId, { credentialStamp: session.credentialStamp, verifyCredentialStamp });
     await requireOAuthExpiry(client, new Date(session.expiresAt * 1000));
   } catch { throw new OAuthError('access_denied'); }
+}
+
+// El vínculo local se da de alta al consentir: sujeto = id canónico de console_users, nunca un dato del
+// cliente. Un vínculo revocado no se reabre aquí; la fila nueva cae con el ROLLBACK si algo falla después.
+async function lockLocalBinding(client: DatabaseClient, issuer: string, userId: string): Promise<HumanIdentitySnapshot> {
+  if (!isAnyUuid(userId)) throw new OAuthError('access_denied');
+  await client.query(
+    `INSERT INTO human_external_identities (human_id,provider,namespace,subject)
+     SELECT id,'oauth',$2,id::text FROM console_users WHERE id=$1 AND active
+     ON CONFLICT (provider,namespace,subject) DO NOTHING`, [userId, issuer],
+  );
+  try { return await lockHumanIdentity(client, { provider: 'oauth', namespace: issuer, subject: userId }, userId); }
+  catch (error) { if (error instanceof StoreError) throw new OAuthError('access_denied'); throw error; }
 }
 
 export class PostgresOAuthStore implements OAuthStore {
@@ -84,8 +98,7 @@ export class PostgresOAuthStore implements OAuthStore {
 
   async consent(idHash: string, browserHash: string, session: OAuthPasswordSession, selected: readonly OAuthScope[] | undefined, context: OAuthRequestContext) {
     return this.transaction({ ...context, deadlineMs: Math.min(context.deadlineMs, session.expiresAt * 1000) }, async (client) => {
-      const snapshot = selected === undefined ? undefined
-        : await lockHumanIdentity(client, { provider: 'oauth', namespace: this.issuer, subject: session.userId }, session.userId);
+      const snapshot = selected === undefined ? undefined : await lockLocalBinding(client, this.issuer, session.userId);
       await lockSession(client, session, this.verifyCredentialStamp);
       const request = await readRequest(client, idHash, browserHash, true);
       if (request?.resource !== this.resource) throw new OAuthError('invalid_request');

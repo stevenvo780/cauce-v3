@@ -56,6 +56,23 @@ describe('OAuth SQL contracts with an injected database client', () => {
     expect(insert?.[1]?.[12]).toBe(session.credentialStamp);
     expect(insert?.[0]).not.toContain('password_version');
   });
+  it('creates the local binding from the console user inside consent and refuses an unusable binding', async () => {
+    const fake = fixture();
+    await fake.store.consent(request.idHash, request.browserHash, session, ['cauce.read'], context());
+    const statements = fake.query.mock.calls.map(([sql]) => sql);
+    const insert = fake.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO human_external_identities'));
+    expect(insert?.[0]).toContain('FROM console_users WHERE id=$1 AND active');
+    expect(insert?.[0]).toContain('ON CONFLICT (provider,namespace,subject) DO NOTHING');
+    expect(insert?.[1]).toEqual([userId, issuer]);
+    expect(statements.findIndex(sql => sql.includes('INSERT INTO human_external_identities')))
+      .toBeLessThan(statements.findIndex(sql => sql.includes('SELECT human_id')));
+    const missing = fixture(1, request.challenge, true, async () => undefined);
+    missing.query.mockImplementation(async () => ({ rows: [], rowCount: 0 }));
+    await expect(missing.store.consent(request.idHash, request.browserHash, session, ['cauce.read'], context())).rejects.toThrow('access_denied');
+    const denied = fixture();
+    await denied.store.consent(request.idHash, request.browserHash, session, undefined, context());
+    expect(denied.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO human_external_identities'))).toBe(false);
+  });
   it('rejects stale session stamps under locks and rolls back without consuming the request', async () => {
     const fake = fixture();
     await expect(fake.store.consent(request.idHash, request.browserHash,
