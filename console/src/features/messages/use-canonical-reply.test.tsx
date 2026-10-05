@@ -11,6 +11,136 @@ function wrapper({ children }: { children: React.ReactNode }) {
 
 afterEach(() => { vi.useRealTimers(); });
 
+it('usa el estado terminal del detalle exacto aunque el snapshot de la raíz siga accepted', async () => {
+  vi.useFakeTimers();
+  const getMessage = vi.spyOn(testApi, 'getMessage').mockResolvedValue({
+    message_id: 'stale-root', chain_open: false,
+    deliveries: [{ delivery_id: 'stale-delivery', tenant_id: 'tenant-a', alias: 'agent-a', status: 'done', reply: 'final durable' }],
+  });
+  const { result, unmount } = renderHook(() => useCanonicalReply({
+    publisherSubject: 'operator-a', tenantId: 'tenant-a', alias: 'agent-a',
+    root: { messageId: 'stale-root', deliveryId: 'stale-delivery', status: 'accepted' },
+  }), { wrapper });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(result.current.reply).toMatchObject({ status: 'done', chainOpen: false, reply: 'final durable' });
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+  expect(getMessage).toHaveBeenCalledOnce();
+  unmount();
+});
+
+it('mantiene la recuperación de la final ausente cuando el detalle es done y el feed sigue accepted', async () => {
+  vi.useFakeTimers();
+  const detail = (reply: string | null) => ({
+    message_id: 'stale-empty-root', chain_open: false,
+    deliveries: [{ delivery_id: 'stale-empty-delivery', tenant_id: 'tenant-a', alias: 'agent-a', status: 'done' as const, reply }],
+  });
+  const getMessage = vi.spyOn(testApi, 'getMessage')
+    .mockResolvedValueOnce(detail(null)).mockResolvedValueOnce(detail(null)).mockResolvedValueOnce(detail(null))
+    .mockResolvedValue(detail('final tardía'));
+  const { result, unmount } = renderHook(() => useCanonicalReply({
+    publisherSubject: 'operator-a', tenantId: 'tenant-a', alias: 'agent-a',
+    root: { messageId: 'stale-empty-root', deliveryId: 'stale-empty-delivery', status: 'accepted' },
+  }), { wrapper });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await advanceCanonicalReads(2);
+  expect(getMessage).toHaveBeenCalledTimes(3);
+  expect(result.current.reply?.reply).toBeNull();
+  await advanceCanonicalReads(1);
+  expect(result.current.reply).toMatchObject({ status: 'done', chainOpen: false, reply: 'final tardía' });
+  expect(getMessage).toHaveBeenCalledTimes(4);
+  await advanceCanonicalReads(8);
+  expect(getMessage).toHaveBeenCalledTimes(4);
+  unmount();
+});
+
+it('no convierte el detalle started en terminal por un hint done del feed', async () => {
+  vi.useFakeTimers();
+  const getMessage = vi.spyOn(testApi, 'getMessage')
+    .mockResolvedValueOnce({ message_id: 'active-root', chain_open: true,
+      deliveries: [{ delivery_id: 'active-delivery', tenant_id: 'tenant-a', alias: 'agent-a', status: 'started', reply: null }] })
+    .mockResolvedValue({ message_id: 'active-root', chain_open: false,
+      deliveries: [{ delivery_id: 'active-delivery', tenant_id: 'tenant-a', alias: 'agent-a', status: 'done', reply: 'final' }] });
+  const { result, unmount } = renderHook(() => useCanonicalReply({
+    publisherSubject: 'operator-a', tenantId: 'tenant-a', alias: 'agent-a',
+    root: { messageId: 'active-root', deliveryId: 'active-delivery', status: 'done' },
+  }), { wrapper });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(result.current.reply).toMatchObject({ status: 'started', chainOpen: true, reply: null });
+  await advanceCanonicalReads(1);
+  expect(result.current.reply).toMatchObject({ status: 'done', chainOpen: false, reply: 'final' });
+  await advanceCanonicalReads(4);
+  expect(getMessage).toHaveBeenCalledTimes(2);
+  unmount();
+});
+
+it('mantiene UNKNOWN cuando el detalle declara estado null aunque el feed diga done', async () => {
+  vi.useFakeTimers();
+  const getMessage = vi.spyOn(testApi, 'getMessage').mockResolvedValue({
+    message_id: 'unknown-root', chain_open: false,
+    deliveries: [{ delivery_id: 'unknown-delivery', tenant_id: 'tenant-a', alias: 'agent-a', status: null, reply: 'sin terminal probado' }],
+  });
+  const { result, unmount } = renderHook(() => useCanonicalReply({
+    publisherSubject: 'operator-a', tenantId: 'tenant-a', alias: 'agent-a',
+    root: { messageId: 'unknown-root', deliveryId: 'unknown-delivery', status: 'done' },
+  }), { wrapper });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(result.current.reply?.status).toBeNull();
+  await advanceCanonicalReads(6);
+  expect(getMessage).toHaveBeenCalledTimes(3);
+  expect(result.current.reply?.status).toBeNull();
+  unmount();
+});
+
+it.each([
+  { message_id: 'other-root', delivery_id: 'bound-delivery', alias: 'agent-a' },
+  { message_id: 'bound-root', delivery_id: 'other-delivery', alias: 'agent-a' },
+  { message_id: 'bound-root', delivery_id: 'bound-delivery', alias: 'other-agent' },
+])('rechaza un detalle terminal fuera de la raíz, entrega o alias esperado: %j', async (binding) => {
+  vi.spyOn(testApi, 'getMessage').mockResolvedValue({
+    message_id: binding.message_id, chain_open: false,
+    deliveries: [{ delivery_id: binding.delivery_id, tenant_id: 'tenant-a', alias: binding.alias, status: 'done', reply: 'no mezclar' }],
+  });
+  const { result } = renderHook(() => useCanonicalReply({
+    publisherSubject: 'operator-a', tenantId: 'tenant-a', alias: 'agent-a',
+    root: { messageId: 'bound-root', deliveryId: 'bound-delivery', status: 'accepted' },
+  }), { wrapper });
+  await waitFor(() => { expect(result.current.error).toBeInstanceOf(Error); });
+  expect(result.current.reply).toBeUndefined();
+});
+
+it('descarta la final de una lectura pendiente al cambiar humano, tenant, alias y raíz', async () => {
+  let releaseFirst: (() => void) | undefined;
+  const firstRead = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const getMessage = vi.spyOn(testApi, 'getMessage').mockImplementation(async (messageId) => {
+    const second = messageId === 'generation-b';
+    if (!second) await firstRead;
+    return { message_id: messageId, chain_open: false, deliveries: [{
+      delivery_id: second ? 'generation-delivery-b' : 'generation-delivery-a',
+      tenant_id: second ? 'tenant-b' : 'tenant-a', alias: second ? 'agent-b' : 'agent-a',
+      status: 'done', reply: second ? 'final de B' : 'final anterior de A',
+    }] };
+  });
+  const visibleReplies: string[] = [];
+  const { result, rerender } = renderHook(({ second }: { second: boolean }) => {
+    const state = useCanonicalReply({
+      publisherSubject: second ? 'operator-b' : 'operator-a',
+      tenantId: second ? 'tenant-b' : 'tenant-a', alias: second ? 'agent-b' : 'agent-a',
+      root: { messageId: second ? 'generation-b' : 'generation-a',
+        deliveryId: second ? 'generation-delivery-b' : 'generation-delivery-a', status: 'accepted' },
+    });
+    if (typeof state.reply?.reply === 'string') visibleReplies.push(state.reply.reply);
+    return state;
+  }, { wrapper, initialProps: { second: false } });
+  await waitFor(() => { expect(getMessage).toHaveBeenCalledWith('generation-a'); });
+  rerender({ second: true });
+  expect(result.current.reply).toBeUndefined();
+  await act(async () => { releaseFirst?.(); });
+  await waitFor(() => { expect(result.current.reply?.reply).toBe('final de B'); });
+  expect(result.current.reply).toMatchObject({ tenantId: 'tenant-b', alias: 'agent-b', status: 'done' });
+  expect(getMessage.mock.calls.map(([id]) => id)).toEqual(['generation-a', 'generation-b']);
+  expect(visibleReplies).not.toContain('final anterior de A');
+});
+
 it('lee una sola raíz activa, valida delivery y mantiene explícito chain_open ausente', async () => {
   const getMessage = vi.spyOn(testApi, 'getMessage').mockResolvedValue({
     id: 'root-1',
