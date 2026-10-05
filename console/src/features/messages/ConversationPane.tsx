@@ -52,7 +52,6 @@ interface ConversationPaneProps {
   onReload: () => void;
 }
 
-/** Bot detail route, where its terminal lives (durable feed + PTY when it exists). */
 function rutaDeTui(agent: AgenteDeMensajeria): string {
   return `/terminal/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`;
 }
@@ -369,7 +368,7 @@ function ConversationPaneContent({
             className="button small secondary"
             href={rutaDeTui(agent)}
             onClick={(event) => { onNavClick(event, rutaDeTui(agent)); }}
-            title={`Abrir la terminal de ${agent.alias} (feed durable y PTY cuando el servidor lo declara)`}
+            title={`Abrir terminal del agente ${agent.alias}`}
           ><TerminalSquare size={14} aria-hidden="true" /> Abrir TUI</a>
           <button className="button small secondary" type="button" onClick={onReload} disabled={loading}>
             <RefreshCw size={13} aria-hidden="true" /> Sincronizar
