@@ -32,14 +32,22 @@ const WS_PATH = '/v3/console/terminal/ws';
 const SESION_HARNESS = 'pty-harness-t041';
 const SESION_ESCRIBIBLE = 'pty-rw-t041';
 const SESION_SHELL = 'pty-shell-t041';
+let authorityProof = '';
 const READY = {
   type: 'ready',
   claim_token: '12345678-1234-4234-8234-123456789abc',
   claim_epoch: '1',
   claim_lease_ms: 45_000,
 };
-/** El relay sólo ofrece continuidad con resume token; menos de 80 caracteres no vale. */
-const RESUME_TOKEN = `r1.${'a'.repeat(96)}.${'b'.repeat(43)}`;
+
+function resumeToken(proof: string, sessionId: string): string {
+  const encode = (value: string) => globalThis.btoa(String.fromCharCode(...new TextEncoder().encode(value)))
+    .replace(/=+$/u, '').replaceAll('+', '-').replaceAll('/', '_');
+  const legacyPayload = JSON.stringify({ v: 1, sid: sessionId, op: 'fixture-operator', iat: 1_750_000_000,
+    exp: 1_750_003_600, nonce: 'A'.repeat(22) });
+  const legacy = `r1.${encode(legacyPayload)}.${'A'.repeat(43)}`;
+  return `r2.${encode(JSON.stringify([legacy, proof]))}`;
+}
 
 interface SesionPedida {
   mode: string;
@@ -102,18 +110,17 @@ function servirSesiones(registro: SesionPedida[]): void {
       const mode = String(body.mode);
       registro.push({ mode, reason: String(body.reason) });
       const sessionId = mode === WRITABLE_TUI_MODE ? SESION_ESCRIBIBLE : mode === SHELL_MODE ? SESION_SHELL : SESION_HARNESS;
-      return HttpResponse.json(
-        mockTerminalGrant({
-          sessionId,
-          tenantId: TENANT,
-          alias: ALIAS,
-          container: 'ws-zeus',
-          runtimeUser: 'dev',
-          mode,
-          requestId: String(body.request_id),
-        }),
-        { status: 201 },
-      );
+      const grant = mockTerminalGrant({
+        sessionId,
+        tenantId: TENANT,
+        alias: ALIAS,
+        container: 'ws-zeus',
+        runtimeUser: 'dev',
+        mode,
+        requestId: String(body.request_id),
+      });
+      authorityProof = String(grant.authority_proof);
+      return HttpResponse.json(grant, { status: 201 });
     }),
     http.delete('*/v3/console/terminal/sessions/:sid', () => new HttpResponse(null, { status: 204 })),
   );
@@ -161,6 +168,7 @@ let restaurarSocket: () => void;
 
 beforeEach(() => {
   enganchadas.clear();
+  authorityProof = '';
   restaurarSocket = installStubWebSocket();
 });
 
@@ -315,7 +323,10 @@ describe('T041 · la caída del relay se anuncia de inmediato', () => {
     await waitFor(() => {
       expect(StubWebSocket.instances).toHaveLength(1);
     });
-    const socket = engancharSocket(StubWebSocket.last(), { ...READY, resume_token: RESUME_TOKEN });
+    const socket = engancharSocket(StubWebSocket.last(), {
+      ...READY,
+      resume_token: resumeToken(authorityProof, SESION_HARNESS),
+    });
     act(() => {
       socket.emitOutput('zeus corriendo\r\n');
     });
