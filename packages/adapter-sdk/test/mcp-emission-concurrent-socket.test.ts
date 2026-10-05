@@ -277,7 +277,7 @@ test("runtime shutdown rejects an outside root already waiting for its origin", 
 });
 
 
-test("a human cannot downgrade into a shared harness when scoped emission is unavailable", async () => {
+test("a human cannot downgrade into a shared harness when scoped emission is unavailable", async (t) => {
   const f = await socketFixture();
   const store = await DurableStore.open(f.directory);
   let invocations = 0;
@@ -285,16 +285,25 @@ test("a human cannot downgrade into a shared harness when scoped emission is una
     runner: { run: async () => { invocations++; throw new Error("Shared harness must not run"); } },
     sharedSession: { alias: "argos", harness: "claude", stateDirectory: f.directory },
   }, f.runner);
+  const reservation = t.mock.method(adapters.harness, "reserveSession");
   const events: DeliveryEvent[] = [];
   const engine = new AdapterEngine({ store, emission: f.runtime, harness: adapters.harness,
     harnessForDelivery: () => adapters.harness, executionIntentMode: "local-test-only",
     publish: async (event) => { events.push(event); } });
   try {
     await engine.activateEpoch(1);
-    await engine.handleDelivery(humanDelivery());
+    const incoming = humanDelivery();
+    await engine.handleDelivery(incoming);
     assert.equal(invocations, 0);
+    assert.equal(reservation.mock.callCount(), 0);
     assert.equal(events.some((event) => event.phase === "started" || event.execution_started === true), false);
-    assert.equal(events.find((event) => event.phase === "failed")?.error?.code, "UNSUPPORTED_HUMAN_EMISSION_SCOPE");
+    assert.equal(events.find((event) => event.phase === "failed")?.error?.code, "UNSUPPORTED_HUMAN_ISOLATION");
+    const record = store.getDelivery(incoming.delivery_id);
+    assert.ok(record);
+    assert.equal(record.state, "failed");
+    assert.equal(record.lifecycle_event_ids?.started, undefined);
+    assert.equal(record.lifecycle_event_ids?.execution_started, undefined);
+    assert.equal(record.execution_intent_receipt_event_id, undefined);
     assert.equal((await socketExchange(f.runtime.socketPath, "/scope", "GET")).turn_token, null);
   } finally { engine.stop(); await f.close(); }
 });

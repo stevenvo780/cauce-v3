@@ -162,10 +162,12 @@ export async function startConsoleLedgerFixture(options: { sessionTtlMs?: number
   }
 }
 
-export async function consumeConsoleRoots(fixture: Awaited<ReturnType<typeof startConsoleLedgerFixture>>, ids: string[]) {
+export async function consumeConsoleRoots(fixture: Awaited<ReturnType<typeof startConsoleLedgerFixture>>, ids: string[],
+  options: { capabilities?: string[]; requireHumanPrompt?: boolean } = {}) {
   const instance = fixture.instance;
   const lease = await fixture.repository.acquireLease(fixture.tenant, fixture.target, instance,
-    ['human_message_initiator_v1', 'console_human_scope_v1'], 60_000);
+    options.capabilities ?? ['human_message_initiator_v1', 'console_human_scope_v1'], 60_000,
+    options.capabilities === undefined ? undefined : { resume: true });
   if (lease.epoch === undefined) throw new Error('Missing canonical lease epoch');
   const claims = await fixture.repository.claimDeliveries(fixture.tenant, fixture.target, instance, lease.epoch, 100, 30_000);
   const deliveries = ids.map((id): Delivery => {
@@ -180,9 +182,9 @@ export async function consumeConsoleRoots(fixture: Awaited<ReturnType<typeof sta
   const headless: CommandRunner = { run: async (request) => {
     requests.push(request);
     const human = fixture.users.find((user) => request.stdin.includes(user.id));
-    if (human === undefined) throw new Error('Missing trusted human prompt context');
+    if (human === undefined && options.requireHumanPrompt !== false) throw new Error('Missing trusted human prompt context');
     request.onHarnessStart?.();
-    return { stdout: JSON.stringify({ result: JSON.stringify({ reply: `owned output ${human.id}`, messages: [],
+    return { stdout: JSON.stringify({ result: JSON.stringify({ reply: `owned output ${human?.id ?? 'legacy-console'}`, messages: [],
       status: 'done', retryable: false, artifacts: [] }) }), stderr: '', exitCode: 0, signal: null,
       cancelled: false, timedOut: false, harnessStarted: true };
   } };

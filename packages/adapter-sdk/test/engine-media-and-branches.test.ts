@@ -419,27 +419,27 @@ test("un abanico de una sola rama no paga el bloque de branch_progress", async (
  */
 test("sin origin, el carril de agentes es uno por tenant y no uno por remitente", async () => {
   const context = await setup("engine-agent-lane-session");
-  const consolePublish = (id: string, overrides: Partial<Delivery>): Delivery => {
+  const legacyPublish = (id: string, overrides: Partial<Delivery>): Delivery => {
     const { origin: _origin, authenticated_context: _authenticated, ...rest } = delivery(id);
     return {
       ...rest,
-      authenticated_context: { session_id: `delivery:${id}:attempt:1`, channel: "console" },
+      authenticated_context: { session_id: `delivery:${id}:attempt:1`, channel: "mcp" },
       ...overrides,
     };
   };
 
-  await context.engine.handleDelivery(consolePublish("agent-lane-human", {
+  await context.engine.handleDelivery(legacyPublish("agent-lane-human", {
     body: { prompt: "esto lo hacés vos" },
   }));
-  await context.engine.handleDelivery(consolePublish("agent-lane-a", {
+  await context.engine.handleDelivery(legacyPublish("agent-lane-a", {
     actor_alias: "socrates",
     body: { type: "agent.response", text: "rama de socrates" },
   }));
-  await context.engine.handleDelivery(consolePublish("agent-lane-b", {
+  await context.engine.handleDelivery(legacyPublish("agent-lane-b", {
     actor_alias: "seneca",
     body: { type: "agent.response", text: "rama de seneca" },
   }));
-  await context.engine.handleDelivery(consolePublish("agent-lane-c", {
+  await context.engine.handleDelivery(legacyPublish("agent-lane-c", {
     tenant_id: "Miguel",
     actor_alias: "atlas",
     body: { type: "agent.response", text: "rama de atlas" },

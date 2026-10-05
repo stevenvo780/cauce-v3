@@ -249,6 +249,35 @@ test('direct publication and adapters without the capability preserve legacy omi
 });
 
 
+test('console-only capability retains A/B/A isolation without projecting its durable initiator', async () => {
+  const context = current();
+  const sessions = [await context.login(0), await context.login(1), await context.login(0)];
+  const ids: string[] = [];
+  for (const session of sessions) ids.push((await context.publish(session)).receipt.message_id);
+  expect((await context.pool.query('SELECT * FROM human_message_initiators WHERE message_id=ANY($1)', [ids])).rows)
+    .toHaveLength(3);
+  const previous = process.env.CAUCE_SHARED_SESSION;
+  process.env.CAUCE_SHARED_SESSION = '1';
+  try {
+    const consumed = await consumeConsoleRoots(context, ids,
+      { capabilities: ['console_human_scope_v1'], requireHumanPrompt: false });
+    expect(consumed.deliveries.every((delivery) => delivery.human_initiator === undefined)).toBe(true);
+    const subjects = consumed.deliveries.map((delivery) => delivery.console_human_subject);
+    for (const subject of subjects) expect(subject).toMatch(/^human:[a-f0-9]{64}$/u);
+    expect(subjects[0]).not.toBe(subjects[1]); expect(subjects[2]).toBe(subjects[0]);
+    expect(consumed.requests).toHaveLength(3);
+    const nativeIds = consumed.requests.map((request) => request.sessionId);
+    expect(nativeIds[0]).toBeTruthy(); expect(nativeIds[1]).toBeTruthy();
+    expect(nativeIds[0]).not.toBe(nativeIds[1]); expect(nativeIds[2]).toBe(nativeIds[0]);
+    expect(consumed.requests[2]?.args).toContain('--resume');
+    const acknowledgements = await context.pool.query('SELECT delivery_id FROM delivery_acks WHERE delivery_id=ANY($1) AND status=$2 AND applied',
+      [consumed.deliveries.map((delivery) => delivery.delivery_id), 'done']);
+    expect(acknowledgements.rows).toHaveLength(3);
+  } finally {
+    if (previous === undefined) delete process.env.CAUCE_SHARED_SESSION; else process.env.CAUCE_SHARED_SESSION = previous;
+  }
+});
+
 test('absolute password session expiry bounds an in-flight locked transaction', async () => {
   const context = await startConsoleLedgerFixture({ sessionTtlMs: 2500 });
   const blocker = await context.pool.connect();

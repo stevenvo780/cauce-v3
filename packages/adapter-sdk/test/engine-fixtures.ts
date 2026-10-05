@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import {HarnessAdapter, fakeDefinition} from '../src/harnesses/index.js';
 import { DurableStore } from "../src/sdk/durable-store.js";
 import {AdapterEngine} from '../src/sdk/engine.js';
+import { humanHarnessSelector } from '../src/sdk/engine/delivery-context.js';
 import type {CommandRunRequest, CommandRunResult, CommandRunner, Delivery, DeliveryEvent} from '../src/sdk/types.js';
 import { testStateRoot } from "./test-state.js";
 export const root = testStateRoot();
@@ -171,7 +172,7 @@ export class SessionConcurrencyRunner implements CommandRunner {
 export async function setup(
   name: string,
   runner = new ControlledRunner(),
-  options: { ownTenantId?: string } = {},
+  options: { ownTenantId?: string; isolateConsole?: boolean } = {},
 ): Promise<{
   store: DurableStore;
   runner: ControlledRunner;
@@ -185,6 +186,10 @@ export async function setup(
     store,
     executionIntentMode: "local-test-only",
     harness,
+    ...(options.isolateConsole === true ? {
+      harnessForDelivery: humanHarnessSelector(harness,
+        new HarnessAdapter({ definition: fakeDefinition, runner, store })),
+    } : {}),
     publish: async (event) => {
       events.push(event);
     },

@@ -274,9 +274,13 @@ export function humanInitiatorFromDelivery(delivery: Delivery): HarnessRequestCo
     root_message_id: parsed.data.root_message_id.toLowerCase() });
 }
 
+function authenticatedConsoleDelivery(delivery: Delivery): boolean {
+  return delivery.authenticated_context?.channel === "console";
+}
+
 export function humanHarnessSelector(harness: HarnessAdapter, humanHarness: HarnessAdapter | undefined): (delivery: Delivery) => HarnessAdapter {
   return (delivery) => {
-    if (humanInitiatorFromDelivery(delivery) === undefined) return harness;
+    if (humanInitiatorFromDelivery(delivery) === undefined && !authenticatedConsoleDelivery(delivery)) return harness;
     if (humanHarness === undefined) throw new AdapterError(
       "UNSUPPORTED_HUMAN_ISOLATION", "Human session isolation is unavailable", false);
     return humanHarness;
@@ -296,13 +300,18 @@ export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAd
   ownTenantId: string | undefined): DeliveryHarnessInvocation {
   try {
     const humanInitiator = humanInitiatorFromDelivery(delivery);
-    if (humanInitiator !== undefined && selector === undefined) {
+    const consoleHuman = authenticatedConsoleDelivery(delivery);
+    const isolatedHuman = humanInitiator !== undefined || consoleHuman;
+    if (isolatedHuman && selector === undefined) {
       throw new AdapterError("UNSUPPORTED_HUMAN_ISOLATION", "Human session isolation is unavailable", false);
     }
     const selected = selector?.(delivery) ?? harness;
-    const fanin = delivery.body.type === "agent.fanin";
-    const shared = humanInitiator === undefined && process.env.CAUCE_SHARED_SESSION === "1";
-    const lane = shared || humanInitiator !== undefined ? "human" : isAgentToAgentBody(delivery.body) ? "agent" : "human";
+    if (isolatedHuman && !selected.supportsEmissionEndpoint) {
+      throw new AdapterError("UNSUPPORTED_HUMAN_ISOLATION", "Human session isolation is unavailable", false);
+    }
+    const fanin = !consoleHuman && delivery.body.type === "agent.fanin";
+    const shared = !isolatedHuman && process.env.CAUCE_SHARED_SESSION === "1";
+    const lane = shared || isolatedHuman ? "human" : isAgentToAgentBody(delivery.body) ? "agent" : "human";
     const session: HarnessSessionRequestScope = fanin ? {} : shared
       ? { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane }
       : { ...sessionFromDelivery(delivery, ownTenantId), sessionLane: lane };
@@ -323,7 +332,7 @@ function conversationScope(delivery: Delivery): ConversationScope | undefined {
   const channel = context?.channel ?? origin?.channel;
   if (channel === undefined || channel.length === 0) return undefined;
 
-  if (channel === 'console' && !isAgentToAgentBody(delivery.body)) {
+  if (authenticatedConsoleDelivery(delivery) || (channel === 'console' && !isAgentToAgentBody(delivery.body))) {
     const subject = delivery.console_human_subject;
     const identity = typeof subject === 'string' && /^human:[a-f0-9]{64}$/u.test(subject)
       ? subject : `message:${delivery.message_id}`;
