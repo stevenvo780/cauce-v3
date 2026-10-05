@@ -8,6 +8,7 @@ import type {
   DelegationRejectionNotice,
   DeliveryEnvelope,
   DeliveryState,
+  HarnessConsumptionEvidence,
   Origin,
   ProfileRuntimeAdoptionEvidence,
   WsInbound,
@@ -281,14 +282,7 @@ export interface CommandRunRequest extends CommandInvocation {
   readonly onHarnessStart?: () => void;
 }
 
-export interface HarnessConsumptionWitness {
-  readonly version: 1;
-  readonly harness_id: "claude" | "codex" | "muse";
-  readonly native_session_id: string;
-  readonly native_turn_id: string;
-  readonly input_sha256: string;
-  readonly evidence_kind: "canonical_final_response";
-}
+export type HarnessConsumptionWitness = Readonly<HarnessConsumptionEvidence>;
 
 export interface CommandRunResult {
   readonly consumptionWitness?: HarnessConsumptionWitness;
