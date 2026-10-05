@@ -330,6 +330,20 @@ function findInjectedMuseTurn(
   return undefined;
 }
 
+export function museProvesConsumption(
+  entries: readonly MuseLogLine[], key: string, text: string, sessionId: string, promptText: string,
+): boolean {
+  const records = recordsOf(entries);
+  if (!records.some((record) => record.payloadType === "runtime.user_intent.accepted"
+    && record.payload?.intent_id === key && record.sessionId === sessionId
+    && normalizedPrompt(intentText(record) ?? "") === normalizedPrompt(promptText))
+    || records.some((record) => { const event = runEvent(record);
+      return event?.runId === key && event.sessionId !== sessionId; })) return false;
+  const outcome = findMuseOutcome(entries, key);
+  return text.trim().length > 0 && outcome?.kind === "answer"
+    && outcome.text === text && outcome.sessionId === sessionId;
+}
+
 /** The final text of a run: its LAST committed assistant message (earlier ones precede tools). */
 function findMuseOutcome(entries: readonly MuseLogLine[], key: string): TurnOutcome | undefined {
   let text = "";
@@ -462,6 +476,7 @@ export function museTranscript(museData: string): TranscriptReader<MuseLogLine> 
     read: (file, offset) => readJsonlSince<MuseLogLine>(file, offset),
     findInjected: findInjectedMuseTurn,
     findAnswer: findMuseOutcome,
+    provesConsumption: museProvesConsumption,
     lingering: findMuseLingering,
     findEnvelope: findMuseEnvelope,
     lastUserPrompt: lastMusePrompt,

@@ -241,6 +241,7 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
         ...(!terminal || details.retainRequest === true ? { request: existing.request } : {}),
         ...(details.output === undefined ? {} : { output: details.output }),
         ...(details.profileAdoption === undefined ? {} : { profile_adoption: details.profileAdoption }),
+        ...(state !== "done" || details.consumptionWitness === undefined ? {} : { harness_consumption_v1: details.consumptionWitness }),
         ...(details.error === undefined ? {} : { error: details.error }),
         ...(existing.lifecycle_event_ids === undefined
           ? {}
@@ -362,6 +363,7 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
             };
             delete retained.output;
             delete retained.profile_adoption;
+            delete retained.harness_consumption_v1;
             delete retained.delegation_rejections;
             delete retained.delegation_materializations;
             delete retained.error;

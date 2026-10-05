@@ -1,3 +1,4 @@
+import { matchingConsumptionWitness } from "../../shared-session/consumption.js";
 import { OPENCLAW_BRIDGE_PATH } from "../bridge-paths.js";
 import { phaseEmitter } from "../../sdk/openclaw-phases.js";
 import { createHash, randomUUID } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
@@ -377,6 +378,7 @@ export class HarnessAdapter {
       && this.commandOverride === undefined && invocation.command === process.execPath
       && invocation.args[0] === OPENCLAW_BRIDGE_PATH;
     phase("runner_enter");
+    const stdin = protocolPrompt(effectivePrompt, request.origin, invocationContext, request.noticeHistory);
     const result = await this.runner.run({
       ...(request.onOpenClawPhase === undefined ? {} : { onOpenClawPhase: request.onOpenClawPhase }),
       ...(this.sharedSession !== undefined || isSharedSessionRunner(this.runner) || request.emissionSocketPath === undefined ? {} : { emissionSocketPath: request.emissionSocketPath }),
@@ -389,7 +391,7 @@ export class HarnessAdapter {
           : credentialEnv;
         return Object.keys(env).length === 0 ? {} : { env };
       })(),
-      stdin: protocolPrompt(effectivePrompt, request.origin, invocationContext, request.noticeHistory),
+      stdin,
       timeoutMs: request.timeoutMs,
       ...(request.timeoutKind === undefined ? {} : { timeoutKind: request.timeoutKind }),
       signal: request.signal,
@@ -525,6 +527,11 @@ export class HarnessAdapter {
     });
 
     phase("decoded_final_valid");
+    if (result.exitCode === 0 && output.status === "done") {
+      const witness = matchingConsumptionWitness(result.consumptionWitness, this.definition.id,
+        stdin, parsed.nativeSessionId, isSharedSessionRunner(this.runner) ? undefined : session.context.sessionId);
+      if (witness !== undefined) request.onConsumptionWitness?.(witness);
+    }
     if (effectiveSessionKey !== undefined) {
       const origin = request.sessionOrigin === undefined
         ? {}

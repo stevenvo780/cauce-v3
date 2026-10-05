@@ -295,6 +295,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       dispatch,
     );
     if (promptFile !== undefined && harvested.terminalBoundary) await rm(promptFile, { force: true }).catch(() => undefined); // Ambiguous: kept, a queued prompt may read it later.
+    let nativeWitnessVerified = this.options.nativePointer === undefined;
     if (nativeSnapshot !== undefined && harvested.terminalBoundary
       && harvested.result.exitCode === 0 && !harvested.result.timedOut
       && !harvested.result.cancelled && !signalAborted(request.signal)) {
@@ -303,6 +304,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         () => paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(request.signal)),
         request.emissionOutput?.() !== undefined,
       );
+      nativeWitnessVerified = published === "written" || published === "unchanged";
       if (published === "conflict" || published === "unverified") {
         try {
           this.options.onNotice?.("el turno terminó, pero no se pudo acreditar su reanudación durable");
@@ -310,6 +312,12 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       }
     }
     if (harvested.terminalBoundary) await this.disarmPendingQuarantine(pending);
+    if (harvested.result.consumptionWitness !== undefined
+      && (promptFile !== undefined || !nativeWitnessVerified || signalAborted(request.signal)
+        || !await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(request.signal)))) {
+      const { consumptionWitness: _witness, ...withoutWitness } = harvested.result;
+      return withoutWitness;
+    }
     return harvested.result;
   }
 

@@ -98,6 +98,7 @@ export interface TranscriptReader<E> {
   ): InjectedTurn | undefined;
   /** The outcome of that turn, or `undefined` while it is still running. */
   findAnswer(entries: readonly E[], key: string): TurnOutcome | undefined;
+  provesConsumption?(entries: readonly E[], key: string, text: string, sessionId: string, promptText: string): boolean;
   lingering?( // Turns closed, background work still running (grok): outcome so far + progress token.
     entries: readonly E[],
     key: string,
