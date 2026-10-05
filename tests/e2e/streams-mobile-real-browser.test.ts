@@ -190,6 +190,12 @@ async function waitForPtyButton(
   return false;
 }
 
+function isBrowserRequestLike(value: unknown): value is { url(): string; method(): string } {
+  return value !== null && typeof value === 'object'
+    && 'url' in value && typeof value.url === 'function'
+    && 'method' in value && typeof value.method === 'function';
+}
+
 async function expectNoViewportOverflow(page: Awaited<ReturnType<RealPtyFixture['browserPage']>>, width: number): Promise<void> {
   const measurement = await page.evaluate(() => {
     const root = document.documentElement;
@@ -209,38 +215,117 @@ async function expectNoViewportOverflow(page: Awaited<ReturnType<RealPtyFixture[
 }
 
 describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil', () => {
-  it('mantiene el shell disponible al operador y niega al lector el mismo destino sin crear sesiones', async () => {
+  it('permite al operador abrir una shell y niega al lector el mismo destino sin efectos durables nuevos', async () => {
     if (!fixture) throw new Error('real PTY fixture not initialized');
     const active = fixture;
     const reader = await provisionReader(active);
-    const initialSessions = await active.database.pool.query<{ count: number }>(
-      'SELECT count(*)::int AS count FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2',
+    const readOperatorSession = () => active.database.pool.query<{ id: string; reason: string; revoked_at: Date | null; closed_at: Date | null }>(
+      `SELECT id::text AS id, reason, revoked_at, closed_at
+         FROM terminal_sessions
+        WHERE tenant_id=$1 AND alias=$2
+        ORDER BY issued_at DESC
+        LIMIT 1`,
       [active.tenant, active.targetAlias],
     );
-    const initialAudit = await active.database.pool.query<{ count: number }>(
-      "SELECT count(*)::int AS count FROM audit_events WHERE action LIKE 'terminal.session.%'",
-    );
-
+    const verifyOperatorClosure = async (reason: string) => {
+      const revoked = await readOperatorSession();
+      expect(revoked.rows[0]?.revoked_at).toBeInstanceOf(Date);
+      let closed = revoked;
+      const deadline = Date.now() + 15_000;
+      while (closed.rows[0]?.closed_at === null && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        closed = await readOperatorSession();
+      }
+      expect(closed.rows[0]?.reason).toBe(reason);
+      expect(closed.rows[0]?.closed_at).toBeInstanceOf(Date);
+    };
     const operatorPage = await active.browserPage({ width: 1440, height: 900 });
     await login(active, operatorPage, active.operatorEmail, active.operatorPassword);
     await openTerminalFromMenu(operatorPage);
     await waitForOwnTarget(active, operatorPage);
-    await operatorPage.getByText('CONCEDIDO', { exact: true }).waitFor({ state: 'visible', timeout: 25_000 });
-    await operatorPage.getByRole('button', { name: new RegExp(`Abrir sesión con ${active.targetAlias}`, 'u') }).click();
+    const operatorTarget = operatorPage.locator('#terminal-agent-select');
+    await operatorTarget.waitFor({ state: 'visible', timeout: 25_000 });
+    await operatorTarget.selectOption(`${active.tenant}:${active.targetAlias}`);
     const operatorPty = operatorPage.getByRole('button', { name: 'PTY', exact: true });
     await operatorPty.waitFor({ state: 'visible', timeout: 25_000 });
     expect(await waitForPtyButton(operatorPage, true)).toBe(true);
+    await operatorPty.click();
+    const operatorDialog = operatorPage.getByRole('dialog', { name: `Abrir PTY en ${active.targetAlias}` });
+    await operatorDialog.waitFor({ state: 'visible', timeout: 10_000 });
+    await operatorPage.getByLabel('Motivo de la sesión (queda en la auditoría)').fill('Verificación E2E autorizada del canal shell.');
+    await operatorDialog.getByRole('button', { name: 'Abrir sesión PTY' }).click();
+    await operatorPage.locator('.pty-shell[data-state="open"]').waitFor({ state: 'visible', timeout: 30_000 });
+    const operatorPtyBar = operatorPage.getByLabel('Sesión PTY activa');
+    await operatorPtyBar.waitFor({ state: 'visible', timeout: 25_000 });
     await expectNoViewportOverflow(operatorPage, 1440);
     if (artifactDirectory) {
       await mkdir(artifactDirectory, { recursive: true });
       await operatorPage.screenshot({ path: join(artifactDirectory, 'terminal-operator-1440.png') });
     }
+    await operatorPtyBar.getByRole('button', { name: 'Cerrar la terminal' }).click();
+    await operatorPtyBar.waitFor({ state: 'hidden', timeout: 25_000 });
+    await verifyOperatorClosure('Verificación E2E autorizada del canal shell.');
 
+    const mobileOperatorPage = await active.browserPage({ width: 360, height: 800 });
+    await login(active, mobileOperatorPage, active.operatorEmail, active.operatorPassword);
+    await openTerminalFromMenu(mobileOperatorPage);
+    await waitForOwnTarget(active, mobileOperatorPage);
+    const mobileTarget = mobileOperatorPage.locator('#terminal-agent-select');
+    await mobileTarget.waitFor({ state: 'visible', timeout: 25_000 });
+    await mobileTarget.selectOption(`${active.tenant}:${active.targetAlias}`);
+    const mobilePty = mobileOperatorPage.getByRole('button', { name: 'PTY', exact: true });
+    await mobilePty.waitFor({ state: 'visible', timeout: 25_000 });
+    expect(await waitForPtyButton(mobileOperatorPage, true)).toBe(true);
+    await mobilePty.click();
+    const mobileDialog = mobileOperatorPage.getByRole('dialog', { name: `Abrir PTY en ${active.targetAlias}` });
+    await mobileDialog.waitFor({ state: 'visible', timeout: 10_000 });
+    const mobileReason = 'Verificación E2E autorizada desde viewport móvil.';
+    await mobileOperatorPage.getByLabel('Motivo de la sesión (queda en la auditoría)').fill(mobileReason);
+    await mobileDialog.getByRole('button', { name: 'Abrir sesión PTY' }).click();
+    await mobileOperatorPage.locator('.pty-shell[data-state="open"]').waitFor({ state: 'visible', timeout: 30_000 });
+    await mobileOperatorPage.locator('.xterm-helper-textarea').waitFor({ state: 'visible', timeout: 15_000 });
+    const mobileNonce = randomBytes(12).toString('hex');
+    const mobileInput = mobileOperatorPage.locator('.xterm-helper-textarea');
+    await mobileInput.type(`printf 'MOBILE-PTY:${mobileNonce}\\n'`);
+    await mobileInput.press('Enter');
+    const outputDeadline = Date.now() + 15_000;
+    let terminalOutput = '';
+    while (Date.now() < outputDeadline) {
+      terminalOutput = await mobileOperatorPage.locator('.xterm-rows').innerText().catch(() => '');
+      if (terminalOutput.split(`MOBILE-PTY:${mobileNonce}`).length - 1 >= 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(terminalOutput.split(`MOBILE-PTY:${mobileNonce}`).length - 1).toBeGreaterThanOrEqual(2);
+    await expectNoViewportOverflow(mobileOperatorPage, 360);
+    if (artifactDirectory) {
+      await mkdir(artifactDirectory, { recursive: true });
+      await mobileOperatorPage.screenshot({ path: join(artifactDirectory, 'terminal-operator-360.png') });
+    }
+    const mobilePtyBar = mobileOperatorPage.getByLabel('Sesión PTY activa');
+    await mobilePtyBar.getByRole('button', { name: 'Cerrar la terminal' }).click();
+    await mobilePtyBar.waitFor({ state: 'hidden', timeout: 25_000 });
+    await verifyOperatorClosure(mobileReason);
+
+    const baselineSessions = await active.database.pool.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2',
+      [active.tenant, active.targetAlias],
+    );
+    const baselineAudit = await active.database.pool.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM audit_events WHERE action LIKE 'terminal.session.%'",
+    );
     const readerPage = await active.browserPage({ width: 360, height: 800 });
     const readerSessionRequests: string[] = [];
+    const readerSessionResponses: string[] = [];
+    readerPage.on('request', (request) => {
+      if (!isBrowserRequestLike(request)) return;
+      const path = new URL(request.url()).pathname;
+      if (request.method() === 'POST' && path === '/v3/console/terminal/sessions') {
+        readerSessionRequests.push(path);
+      }
+    });
     readerPage.on('response', (response) => {
-      if (response.request().method() === 'POST' && response.url().endsWith('/v3/console/terminal/sessions')) {
-        readerSessionRequests.push(response.url());
+      if (response.request().method() === 'POST' && new URL(response.url()).pathname === '/v3/console/terminal/sessions') {
+        readerSessionResponses.push(response.url());
       }
     });
     await login(active, readerPage, reader.email, reader.password);
@@ -257,8 +342,9 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     expect(linkState.title).toMatch(/no tiene permiso de control/u);
     await readerPage.goto(new URL('/terminal', active.baseUrl).toString(), { waitUntil: 'domcontentloaded' });
     await readerPage.getByRole('heading', { name: 'Terminal de agentes' }).waitFor({ timeout: 20_000 });
-    await readerPage.getByText('DENEGADO', { exact: true }).waitFor({ state: 'visible', timeout: 25_000 });
-    await readerPage.getByRole('button', { name: new RegExp(`Abrir sesión con ${active.targetAlias}`, 'u') }).click();
+    const readerTarget = readerPage.locator('#terminal-agent-select');
+    await readerTarget.waitFor({ state: 'visible', timeout: 25_000 });
+    await readerTarget.selectOption(`${active.tenant}:${active.targetAlias}`);
     const readerPty = readerPage.getByRole('button', { name: 'PTY', exact: true });
     await readerPty.waitFor({ state: 'visible', timeout: 25_000 });
     expect(await waitForPtyButton(readerPage, false)).toBe(true);
@@ -271,6 +357,7 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     }
 
     expect(readerSessionRequests).toEqual([]);
+    expect(readerSessionResponses).toEqual([]);
     const finalSessions = await active.database.pool.query<{ count: number }>(
       'SELECT count(*)::int AS count FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2',
       [active.tenant, active.targetAlias],
@@ -278,8 +365,8 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     const finalAudit = await active.database.pool.query<{ count: number }>(
       "SELECT count(*)::int AS count FROM audit_events WHERE action LIKE 'terminal.session.%'",
     );
-    expect(finalSessions.rows[0]?.count).toBe(initialSessions.rows[0]?.count);
-    expect(finalAudit.rows[0]?.count).toBe(initialAudit.rows[0]?.count);
-    process.stdout.write(`terminal-browser-rbac viewport=1440/360 operator=allowed reader=denied sessionRows=${String(finalSessions.rows[0]?.count)} auditRows=${String(finalAudit.rows[0]?.count)} browser=${active.browserContainer}\n`);
+    expect(finalSessions.rows[0]?.count).toBe(baselineSessions.rows[0]?.count);
+    expect(finalAudit.rows[0]?.count).toBe(baselineAudit.rows[0]?.count);
+    process.stdout.write(`terminal-browser-rbac viewport=1440/360 operator=allowed reader=denied readerSessionPostRequests=${String(readerSessionRequests.length)} readerSessionPostResponses=${String(readerSessionResponses.length)} sessionRows=${String(finalSessions.rows[0]?.count)} auditRows=${String(finalAudit.rows[0]?.count)} browser=${active.browserContainer}\n`);
   }, 180_000);
 });
