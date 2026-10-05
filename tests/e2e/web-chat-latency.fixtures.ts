@@ -14,6 +14,7 @@ import { PostgresConsoleUserStore } from '../../services/gateway/src/console-use
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
 import { hashPassword } from '../../services/gateway/src/password.js';
 import { StoreTelegramIngress } from '../../services/telegram-bridge/src/ingress.js';
+import { humanHarnessSelector } from "../../packages/adapter-sdk/src/sdk/engine/delivery-context.js";
 import { AdapterEngine } from '../../packages/adapter-sdk/src/sdk/engine.js';
 import { DurableStore } from '../../packages/adapter-sdk/src/sdk/durable-store.js';
 import { HarnessAdapter } from '../../packages/adapter-sdk/src/harnesses/shared/adapter.js';
@@ -212,8 +213,11 @@ export async function startChatLatencyFixture() {
       runners.push(runner);
       const store = await DurableStore.open(join(directory ?? '', `adapter-${randomUUID()}`));
       const harness = new HarnessAdapter({ definition: openClawDefinition, runner, store, sessionNamespace: target, environment: {} });
+      const humanHarness = new HarnessAdapter({ definition: openClawDefinition, runner, store,
+        sessionNamespace: `human-initiator-v1.${target}`, canonicalTerminalSession: false, environment: {} });
       const events: DeliveryEvent[] = [];
-      const engine = new AdapterEngine({ store, harness, ownTenantId: tenant, executionIntentMode: 'local-test-only',
+      const engine = new AdapterEngine({ store, harness, harnessForDelivery: humanHarnessSelector(harness, humanHarness),
+        ownTenantId: tenant, executionIntentMode: 'local-test-only',
         publish: async (event) => {
           await repository.ackDelivery(event.delivery_id, tenant, target, { version: '3.0', event_id: event.event_id,
             claim_token: event.claim_token, attempt: event.attempt, status: event.phase, instance_id: instance, epoch,
