@@ -44,6 +44,35 @@ test('mixed stderr preserves ordinary bytes and strips only reserved frames', as
   const result = await new SpawnCommandRunner().run(phaseRequest('mixed'));
   assert.equal(result.stderr, 'ordinary\ntail\n');
 });
+test('reserved prefixes at every forced EOF boundary remain diagnostics', () => {
+  for (let boundary = 1; boundary < FRAME.length; boundary++) {
+    const observations: OpenClawPhaseObservation[] = [];
+    const frames = new OpenClawPhaseFrames((value) => { observations.push(value); });
+    for (const byte of Buffer.from(FRAME.slice(0, boundary))) assert.equal(frames.push(Buffer.from([byte])).length, 0);
+    assert.equal(frames.finish(true).length, 0);
+    assert.equal(frames.diagnosticBytes, boundary);
+    assert.equal(frames.push(Buffer.from(FRAME.slice(0, boundary))).length, 0);
+    assert.equal(frames.finish().toString(), FRAME.slice(0, boundary));
+    assert.equal(frames.diagnosticBytes, boundary);
+    assert.equal(frames.finish().length, 0);
+    assert.equal(frames.diagnosticBytes, boundary);
+    assert.deepEqual(observations, []);
+    assert.equal(frames.push(Buffer.from('ordinary\n')).toString(), 'ordinary\n');
+    assert.equal(frames.push(Buffer.from('@cauce/openclaw-phasX')).toString(), '@cauce/openclaw-phasX');
+    assert.equal(frames.finish().length, 0);
+    assert.equal(frames.diagnosticBytes, boundary);
+  }
+});
+test('EOF prefixes retain the independent diagnostic output bound', async () => {
+  const frame = FRAME + JSON.stringify({ phase: 'agent_cli_started', elapsedMs: 1, utc: '2026-10-04T00:00:00.000Z' }) + '\n';
+  const output = frame + FRAME.slice(0, 10);
+  const request = phaseRequest('mixed', { args: ['--eval', `process.stderr.write(${JSON.stringify(output)});setTimeout(()=>{},650);`] });
+  await assert.rejects(new SpawnCommandRunner({ maxOutputBytes: Buffer.byteLength(frame) }).run(request),
+    (error: unknown) => error instanceof ProcessExecutionError && error.code === 'OUTPUT_LIMIT_AMBIGUOUS');
+  const result = await new SpawnCommandRunner({ maxOutputBytes: Buffer.byteLength(output) }).run(request);
+  assert.equal(result.timedOut, true);
+  assert.equal(result.stderr, '');
+});
 test('diagnostics do not consume the ordinary stderr budget', async () => {
   const ordinary = 'x'.repeat(1000) + '\n';
   const frame = FRAME + JSON.stringify({ phase: 'agent_cli_started', elapsedMs: 1, utc: new Date().toISOString() }) + '\n';

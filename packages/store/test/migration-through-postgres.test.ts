@@ -10,6 +10,9 @@ import {
 
 const version043 = '043_blob_tenant_entitlements.sql';
 const version044 = '044_human_mcp_identity.sql';
+const version045 = '045_mcp_oauth_authorization.sql';
+const oauthTables = ['cauce_oauth_requests', 'cauce_oauth_grants', 'cauce_oauth_codes',
+  'cauce_oauth_tokens', 'cauce_oauth_refresh_tokens', 'cauce_oauth_grant_revocations', 'cauce_oauth_clients'];
 let database: TestDatabase;
 let databaseStarted = false;
 let pool: DatabasePool;
@@ -38,6 +41,7 @@ describe('bounded migration runner', () => {
          JOIN schema_migration_ledger ledger USING(version)
         ORDER BY migration.version`,
     );
+    expect(before.rows.slice(-2).map((row) => row.version)).toEqual([version044, version045]);
     const tablesBefore = await pool.query<{ name: string }>(
       `SELECT tablename AS name FROM pg_tables WHERE schemaname='public' ORDER BY tablename`,
     );
@@ -47,6 +51,10 @@ describe('bounded migration runner', () => {
     );
     await expect(applyMigrationsThrough(pool, version043)).rejects.toThrow(
       /later migration is already applied: 044_human_mcp_identity[.]sql/u,
+    );
+
+    await expect(applyMigrationsThrough(pool, version044)).rejects.toThrow(
+      /later migration is already applied: 045_mcp_oauth_authorization[.]sql/u,
     );
 
     const after = await pool.query<{ version: string; source_sha256: string; source_origin: string }>(
@@ -62,7 +70,7 @@ describe('bounded migration runner', () => {
     expect(tablesAfter.rows).toEqual(tablesBefore.rows);
   });
 
-  it('creates only the requested prefix, then default apply adds 044 and its real backfill', async () => {
+  it('creates only the requested prefix, then default apply adds 044 backfill and 045 OAuth fences', async () => {
     const historical: EmptyTestDatabase = await startEmptyTestDatabase(database.url);
     try {
       await applyMigrationsThrough(historical.pool, version043);
@@ -71,13 +79,15 @@ describe('bounded migration runner', () => {
       expect(cutoffIndex).toBeGreaterThanOrEqual(0);
       const prefix = sources.slice(0, cutoffIndex + 1);
       expect(prefix).toHaveLength(39);
-      expect(sources).toHaveLength(40);
+      expect(sources).toHaveLength(41);
+      expect(sources.slice(cutoffIndex + 1).map((migration) => migration.version)).toEqual([version044, version045]);
       const versions = await historical.pool.query<{ version: string }>(
         'SELECT version FROM schema_migrations ORDER BY version',
       );
       expect(versions.rows.at(-1)?.version).toBe(version043);
       expect(versions.rows.some((row) => row.version === version044)).toBe(false);
       expect(await relationExists(historical.pool, 'human_tenant_memberships')).toBe(false);
+      for (const table of oauthTables) expect(await relationExists(historical.pool, table)).toBe(false);
       await expectExactLedger(historical.pool, prefix);
 
       const humanId = randomUUID();
@@ -94,9 +104,10 @@ describe('bounded migration runner', () => {
       await expectExactLedger(historical.pool, sources);
 
       const finalVersion = await historical.pool.query<{ version: string }>(
-        `SELECT version FROM schema_migrations WHERE version=$1`, [version044],
+        `SELECT version FROM schema_migrations WHERE version=ANY($1::text[]) ORDER BY version`, [[version044, version045]],
       );
-      expect(finalVersion.rows).toEqual([{ version: version044 }]);
+      expect(finalVersion.rows).toEqual([{ version: version044 }, { version: version045 }]);
+      for (const table of oauthTables) expect(await relationExists(historical.pool, table)).toBe(true);
       const membership = await historical.pool.query<{
         human_id: string; tenant_id: string; actor_alias: string; role: string; permissions: string[];
       }>(
@@ -107,6 +118,21 @@ describe('bounded migration runner', () => {
         human_id: humanId, tenant_id: 'Steven', actor_alias: alias, role: 'operator',
         permissions: ['route', 'read', 'control', 'notify'],
       }]);
+      const scopes = await historical.pool.query<{ scopes: string[] }>(
+        "SELECT ARRAY['cauce.read','cauce.publish']::cauce_oauth_scopes AS scopes",
+      );
+      expect(scopes.rows[0]?.scopes).toEqual(['cauce.read', 'cauce.publish']);
+      await expect(historical.pool.query(
+        "SELECT ARRAY['unknown']::cauce_oauth_scopes",
+      )).rejects.toThrow(/cauce_oauth_scopes_check/u);
+      const changed = await historical.pool.query<{ revision: string }>(
+        `UPDATE human_tenant_memberships SET permissions=ARRAY['read']
+          WHERE human_id=$1 RETURNING revision::text`, [humanId],
+      );
+      expect(changed.rows).toEqual([{ revision: '2' }]);
+      await expect(historical.pool.query(
+        'UPDATE human_tenant_memberships SET revision=1 WHERE human_id=$1', [humanId],
+      )).rejects.toThrow('Human identity revision cannot decrease');
     } finally {
       await historical.close();
     }

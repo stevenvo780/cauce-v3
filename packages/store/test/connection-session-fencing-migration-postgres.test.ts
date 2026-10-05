@@ -46,6 +46,7 @@ preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabaseThrough('043_blob_tenant_entitlements.sql');
   databaseStarted = true;
   pool = database.pool;
+  console.info(`[testcontainers] owned schema45-fencing container id=${database.container.getId()}`);
 }, 120_000);
 
 afterAll(async () => {
@@ -93,10 +94,11 @@ afterEach(async () => {
   try {
     const integrity = await inspectMigrationIntegrity(client);
     const latest = integrity.entries.filter((entry) => (
-      entry.version >= version031 && entry.version !== '044_human_mcp_identity.sql'
+      entry.version >= version031
     ));
     const expectedVersions = [version031, ...laterVersions];
-    expect(latest).toHaveLength(expectedVersions.length);
+    const pendingVersions = ['044_human_mcp_identity.sql', '045_mcp_oauth_authorization.sql'];
+    expect(latest.map((entry) => entry.version)).toEqual([...expectedVersions, ...pendingVersions]);
     for (const version of expectedVersions) {
       expect(latest.find((entry) => entry.version === version)).toMatchObject({
         version,
@@ -105,11 +107,11 @@ afterEach(async () => {
         verificationMethod: 'atomic-ledger-v1',
       });
     }
-    expect(integrity.entries.find((entry) => entry.version === '044_human_mcp_identity.sql')).toMatchObject({
-      applied: false,
-      sourceOrigin: 'pending',
-      verificationMethod: 'not-applied',
-    });
+    for (const version of pendingVersions) {
+      expect(integrity.entries.find((entry) => entry.version === version)).toMatchObject({
+        version, applied: false, sourceOrigin: 'pending', verificationMethod: 'not-applied',
+      });
+    }
   } finally {
     client.release();
   }
