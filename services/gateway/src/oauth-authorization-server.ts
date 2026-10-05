@@ -6,7 +6,7 @@ import { createOAuthRequestContext, oauthSessionContext } from './oauth-request-
 import type { OAuthClientMetadata, OAuthClients } from './oauth-client-metadata.js';
 import { clientRegistration, isRegisteredClientId, OAuthRegistrationLimiter, registrationDocument } from './oauth-client-registration.js';
 import { OAuthError, OAUTH_SCOPES, redirectMatches, scopes, secretHash, type OAuthAuthorizationRequest,
-  type OAuthPasswordSession, type OAuthScope, type OAuthStore } from './oauth-authorization-types.js';
+  type OAuthPasswordSession, type OAuthScope, type OAuthStore, type OAuthTokenGrant } from './oauth-authorization-types.js';
 import type { OAuthTokens } from './oauth-tokens.js';
 
 const FLOW_COOKIE = '__Host-cauce_oauth';
@@ -70,6 +70,11 @@ function redirectResult(request: OAuthAuthorizationRequest, issuer: string, code
   return url.href;
 }
 
+function tokenResponse(reply: FastifyReply, issued: OAuthTokenGrant) {
+  return reply.send({ access_token: issued.token, token_type: 'Bearer', refresh_token: issued.refreshToken,
+    expires_in: Math.max(0, issued.identity.expiresAt - Math.floor(Date.now() / 1000)), scope: issued.identity.scopes.join(' ') });
+}
+
 export interface OAuthAuthorizationServerOptions {
   readonly clients: OAuthClients;
   readonly tokens: OAuthTokens;
@@ -120,7 +125,7 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
       issuer: tokens.issuer, authorization_endpoint: `${tokens.issuer}/oauth/authorize`,
       token_endpoint: `${tokens.issuer}/oauth/token`, jwks_uri: `${tokens.issuer}/oauth/jwks`,
       registration_endpoint: `${tokens.issuer}/oauth/register`,
-      response_types_supported: ['code'], grant_types_supported: ['authorization_code'],
+      response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'],
       token_endpoint_auth_methods_supported: ['none'], code_challenge_methods_supported: ['S256'],
       scopes_supported: [...OAUTH_SCOPES], client_id_metadata_document_supported: true,
       authorization_response_iss_parameter_supported: true,
@@ -219,10 +224,20 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
           || request.headers['content-type']?.split(';')[0]?.trim() !== 'application/x-www-form-urlencoded') {
         throw new OAuthError('invalid_client');
       }
-      const body = fields(request.body, ['grant_type', 'code', 'client_id', 'redirect_uri', 'resource', 'code_verifier']);
+      const body = fields(request.body, ['grant_type', 'code', 'client_id', 'redirect_uri', 'resource', 'code_verifier', 'refresh_token', 'scope']);
+      if (body.grant_type === 'refresh_token') {
+        if (body.code !== undefined || body.code_verifier !== undefined || body.redirect_uri !== undefined) throw new OAuthError('invalid_request');
+        if (body.resource !== undefined && body.resource !== tokens.resource) throw new OAuthError('invalid_target');
+        const refresh = text(body.refresh_token, 43);
+        if (!NONCE.test(refresh)) throw new OAuthError('invalid_grant');
+        const refreshed = await store.refresh({ tokenHash: secretHash(refresh), clientId: text(body.client_id), resource: tokens.resource,
+          scopes: body.scope === undefined ? undefined : scopes(body.scope) }, (input) => tokens.issue(input), context(request));
+        return tokenResponse(reply, refreshed);
+      }
+      if (body.grant_type !== 'authorization_code') throw new OAuthError('unsupported_grant_type');
+      if (body.refresh_token !== undefined || body.scope !== undefined) throw new OAuthError('invalid_request');
       const verifier = text(body.code_verifier, 128);
-      if (body.grant_type !== 'authorization_code' || body.resource !== tokens.resource
-          || !/^[A-Za-z0-9._~-]{43,128}$/u.test(verifier) || !NONCE.test(text(body.code, 43))) {
+      if (body.resource !== tokens.resource || !/^[A-Za-z0-9._~-]{43,128}$/u.test(verifier) || !NONCE.test(text(body.code, 43))) {
         throw new OAuthError('invalid_grant');
       }
       const resolved = await client(request, text(body.client_id));
@@ -231,8 +246,7 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
       const issued = await store.exchange({ codeHash: secretHash(text(body.code)), clientId: resolved.clientId,
         redirectUri, resource: tokens.resource, challenge: createHash('sha256').update(verifier).digest('base64url') },
       (input) => tokens.issue(input), context(request));
-      return reply.send({ access_token: issued.token, token_type: 'Bearer',
-        expires_in: Math.max(0, issued.identity.expiresAt - Math.floor(Date.now() / 1000)), scope: issued.identity.scopes.join(' ') });
+      return tokenResponse(reply, issued);
     });
 
     app.get('/oauth/grants', async (request, reply) => {

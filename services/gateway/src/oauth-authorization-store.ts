@@ -2,15 +2,15 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { lockHumanIdentity, lockConsoleHuman, withAbortableTransaction, StoreError, type ConsoleCredentialStampVerifier,
   type DatabasePool, type DatabaseClient, type HumanIdentitySnapshot } from '@cauce/store';
 import { isAnyUuid } from '@cauce/protocol';
-import { currentOAuthScopes, lockOAuthAccess, lockOAuthGrant, requireOAuthExpiry } from './oauth-grant-authority.js';
+import { currentOAuthScopes, lockOAuthAccess, lockOAuthGrant, requireOAuthExpiry, type OAuthGrantRow } from './oauth-grant-authority.js';
 import { oauthContextSignal } from './oauth-request-context.js';
 import { constantTimeText } from './http-auth-primitives.js';
 import type { OAuthClientMetadata } from './oauth-client-metadata.js';
 import { clientRegistration, isRegisteredClientId, REGISTERED_CLIENT_PREFIX, UNNAMED_REGISTERED_CLIENT,
   type OAuthClientRegistration, type OAuthRegisteredClient } from './oauth-client-registration.js';
 import { OAuthError, oauthOrigin, secretHash, scopes, type OAuthAccessIdentity, type OAuthAuthorizationRequest,
-  type OAuthCodeExchange, type OAuthIssuedToken, type OAuthPasswordSession, type OAuthScope,
-  type OAuthStore, type OAuthTokenInput, type OAuthRequestContext } from './oauth-authorization-types.js';
+  type OAuthCodeExchange, type OAuthIssuedToken, type OAuthPasswordSession, type OAuthRefreshExchange, type OAuthScope,
+  type OAuthStore, type OAuthTokenGrant, type OAuthTokenInput, type OAuthRequestContext } from './oauth-authorization-types.js';
 
 interface RequestRow {
   id_hash: string; browser_hash: string; client_id: string; client_name: string;
@@ -54,6 +54,37 @@ async function lockLocalBinding(client: DatabaseClient, issuer: string, userId: 
   catch (error) { if (error instanceof StoreError) throw new OAuthError('access_denied'); throw error; }
 }
 
+function signedAccess(grant: OAuthGrantRow, issuer: string, resource: string,
+  issue: (input: OAuthTokenInput) => OAuthIssuedToken): OAuthIssuedToken {
+  const issued = issue({ grantId: grant.id, userId: grant.human_id, scopes: grant.scopes,
+    expiresAt: grant.expires_at.getTime() / 1000 });
+  if (issued.identity.grantId !== grant.id || issued.identity.subject !== grant.human_id
+      || issued.identity.issuer !== issuer || issued.identity.audience !== resource
+      || !isAnyUuid(issued.identity.tokenId) || !Number.isSafeInteger(issued.identity.expiresAt)
+      || issued.identity.expiresAt * 1000 > grant.expires_at.getTime()) throw new OAuthError('invalid_grant');
+  return issued;
+}
+
+async function recordAccess(client: DatabaseClient, grant: OAuthGrantRow, issued: OAuthIssuedToken): Promise<OAuthTokenGrant> {
+  await client.query(
+    'INSERT INTO cauce_oauth_tokens (id,grant_id,expires_at) VALUES ($1,$2,$3)',
+    [issued.identity.tokenId, grant.id, new Date(issued.identity.expiresAt * 1000)],
+  );
+  // El refresh token vive lo mismo que el grant y sólo se guarda su hash; rota en cada uso.
+  const refreshToken = randomBytes(32).toString('base64url');
+  const stored = await client.query(
+    `INSERT INTO cauce_oauth_refresh_tokens (token_hash,grant_id,expires_at)
+     SELECT $1,$2,$3 WHERE $3::timestamptz>clock_timestamp()`, [secretHash(refreshToken), grant.id, grant.expires_at],
+  );
+  if (stored.rowCount !== 1) throw new OAuthError('invalid_grant');
+  await requireOAuthExpiry(client, new Date(Math.min(grant.expires_at.getTime(), issued.identity.expiresAt * 1000)));
+  return Object.freeze({ ...issued, refreshToken });
+}
+
+async function revokeGrant(client: DatabaseClient, grantId: string): Promise<void> {
+  await client.query('UPDATE cauce_oauth_grants SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1', [grantId]);
+}
+
 export class PostgresOAuthStore implements OAuthStore {
   readonly issuer: string;
   readonly resource: string;
@@ -67,8 +98,10 @@ export class PostgresOAuthStore implements OAuthStore {
     await this.pool.query(`SELECT r.id_hash,r.browser_hash,r.scopes,r.challenge,r.expires_at,r.consumed_at,
       g.id,g.human_id,g.issuer,g.resource,g.binding_id,g.binding_revision,g.membership_revision,
       g.tenant_id,g.actor_alias,g.credential_stamp,g.revoked_at,c.code_hash,c.grant_id,c.challenge,
-      c.expires_at,c.consumed_at,t.id,t.grant_id,t.expires_at,t.revoked_at,k.id,k.client_id,k.metadata,k.created_at
-      FROM cauce_oauth_requests r,cauce_oauth_grants g,cauce_oauth_codes c,cauce_oauth_tokens t,cauce_oauth_clients k LIMIT 0`);
+      c.expires_at,c.consumed_at,t.id,t.grant_id,t.expires_at,t.revoked_at,k.id,k.client_id,k.metadata,k.created_at,
+      f.token_hash,f.grant_id,f.expires_at,f.consumed_at
+      FROM cauce_oauth_requests r,cauce_oauth_grants g,cauce_oauth_codes c,cauce_oauth_tokens t,cauce_oauth_clients k,
+        cauce_oauth_refresh_tokens f LIMIT 0`);
   }
 
   private async transaction<T>(context: OAuthRequestContext, operation: (client: DatabaseClient) => Promise<T>): Promise<T> {
@@ -139,7 +172,7 @@ export class PostgresOAuthStore implements OAuthStore {
     });
   }
 
-  async exchange(input: OAuthCodeExchange, issue: (input: OAuthTokenInput) => OAuthIssuedToken, context: OAuthRequestContext): Promise<OAuthIssuedToken> {
+  async exchange(input: OAuthCodeExchange, issue: (input: OAuthTokenInput) => OAuthIssuedToken, context: OAuthRequestContext): Promise<OAuthTokenGrant> {
     return this.transaction(context, async (client) => {
       const lookup = (await client.query<{ grant_id: string; human_id: string }>(
         `SELECT c.grant_id,g.human_id FROM cauce_oauth_codes c JOIN cauce_oauth_grants g ON g.id=c.grant_id
@@ -155,24 +188,46 @@ export class PostgresOAuthStore implements OAuthStore {
           || grant.client_id !== input.clientId || grant.redirect_uri !== input.redirectUri) {
         throw new OAuthError('invalid_grant');
       }
-      const issued = issue({ grantId: grant.id, userId: grant.human_id, scopes: grant.scopes,
-        expiresAt: grant.expires_at.getTime() / 1000 });
-      if (issued.identity.grantId !== grant.id || issued.identity.subject !== grant.human_id
-          || issued.identity.issuer !== this.issuer || issued.identity.audience !== this.resource
-          || !isAnyUuid(issued.identity.tokenId) || !Number.isSafeInteger(issued.identity.expiresAt)
-          || issued.identity.expiresAt * 1000 > grant.expires_at.getTime()) throw new OAuthError('invalid_grant');
+      const issued = signedAccess(grant, this.issuer, this.resource, issue);
       const consumed = await client.query(
         `UPDATE cauce_oauth_codes SET consumed_at=clock_timestamp() WHERE code_hash=$1
          AND consumed_at IS NULL AND expires_at>clock_timestamp() RETURNING code_hash`, [input.codeHash],
       );
       if (consumed.rowCount !== 1) throw new OAuthError('invalid_grant');
-      await client.query(
-        'INSERT INTO cauce_oauth_tokens (id,grant_id,expires_at) VALUES ($1,$2,$3)',
-        [issued.identity.tokenId, grant.id, new Date(issued.identity.expiresAt * 1000)],
-      );
-      await requireOAuthExpiry(client, new Date(Math.min(grant.expires_at.getTime(), issued.identity.expiresAt * 1000)));
-      return issued;
+      return recordAccess(client, grant, issued);
     });
+  }
+
+  // Un refresh ya rotado que vuelve a aparecer revoca el grant entero (OAuth 2.1 §4.3.1) y la revocación
+  // se confirma antes de responder invalid_grant; todo lo demás pasa por los mismos bloqueos que el código.
+  async refresh(input: OAuthRefreshExchange, issue: (input: OAuthTokenInput) => OAuthIssuedToken, context: OAuthRequestContext): Promise<OAuthTokenGrant> {
+    const result = await this.transaction(context, async (client): Promise<OAuthTokenGrant | undefined> => {
+      const lookup = (await client.query<{ grant_id: string; human_id: string; client_id: string; consumed: boolean }>(
+        `SELECT r.grant_id,g.human_id,g.client_id,r.consumed_at IS NOT NULL AS consumed
+         FROM cauce_oauth_refresh_tokens r JOIN cauce_oauth_grants g ON g.id=r.grant_id
+         WHERE r.token_hash=$1 AND g.issuer=$2 AND g.resource=$3`, [input.tokenHash, this.issuer, this.resource],
+      )).rows[0];
+      if (!lookup || input.resource !== this.resource || lookup.client_id !== input.clientId) throw new OAuthError('invalid_grant');
+      if (lookup.consumed) { await revokeGrant(client, lookup.grant_id); return undefined; }
+      const grant = await lockOAuthGrant(client, lookup.grant_id, this.issuer, this.resource, lookup.human_id, this.verifyCredentialStamp);
+      const token = (await client.query<{ consumed: boolean; live: boolean }>(
+        `SELECT consumed_at IS NOT NULL AS consumed,expires_at>clock_timestamp() AS live
+         FROM cauce_oauth_refresh_tokens WHERE token_hash=$1 AND grant_id=$2 FOR UPDATE`, [input.tokenHash, grant.id],
+      )).rows[0];
+      if (token?.consumed) { await revokeGrant(client, grant.id); return undefined; }
+      if (!token?.live) throw new OAuthError('invalid_grant');
+      if (input.scopes !== undefined && (input.scopes.length !== grant.scopes.length
+          || input.scopes.some((scope) => !grant.scopes.includes(scope)))) throw new OAuthError('invalid_scope');
+      const issued = signedAccess(grant, this.issuer, this.resource, issue);
+      const consumed = await client.query(
+        `UPDATE cauce_oauth_refresh_tokens SET consumed_at=clock_timestamp() WHERE token_hash=$1
+         AND consumed_at IS NULL AND expires_at>clock_timestamp() RETURNING token_hash`, [input.tokenHash],
+      );
+      if (consumed.rowCount !== 1) throw new OAuthError('invalid_grant');
+      return recordAccess(client, grant, issued);
+    });
+    if (!result) throw new OAuthError('invalid_grant');
+    return result;
   }
 
   async validate(identity: OAuthAccessIdentity): Promise<boolean> {

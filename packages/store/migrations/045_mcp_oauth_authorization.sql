@@ -59,6 +59,14 @@ CREATE TABLE cauce_oauth_tokens (
   expires_at timestamptz NOT NULL CHECK (expires_at>created_at AND expires_at<=created_at+interval '5 minutes'),
   revoked_at timestamptz CHECK (revoked_at>=created_at)
 );
+-- Refresh tokens rotatorios de un solo uso: sólo el hash, nunca más allá de la expiración del grant.
+CREATE TABLE cauce_oauth_refresh_tokens (
+  token_hash text PRIMARY KEY CHECK (token_hash ~ '^[a-f0-9]{64}$'),
+  grant_id uuid NOT NULL REFERENCES cauce_oauth_grants(id) ON DELETE RESTRICT,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  expires_at timestamptz NOT NULL CHECK (expires_at>created_at AND expires_at<=created_at+interval '8 hours'),
+  consumed_at timestamptz CHECK (consumed_at>=created_at AND consumed_at<expires_at)
+);
 -- Clientes públicos registrados por RFC 7591. No son autoridad: el grant guarda su propio client_id y
 -- redirect_uri; la fila sólo describe redirects permitidos y se purga si nunca obtuvo un grant.
 CREATE TABLE cauce_oauth_clients (
@@ -95,9 +103,14 @@ CREATE TRIGGER cauce_oauth_code_preserved BEFORE UPDATE OR DELETE ON cauce_oauth
   FOR EACH ROW EXECUTE FUNCTION cauce_oauth_preserve_authority();
 CREATE TRIGGER cauce_oauth_token_preserved BEFORE UPDATE OR DELETE ON cauce_oauth_tokens
   FOR EACH ROW EXECUTE FUNCTION cauce_oauth_preserve_authority();
+CREATE TRIGGER cauce_oauth_refresh_preserved BEFORE UPDATE OR DELETE ON cauce_oauth_refresh_tokens
+  FOR EACH ROW EXECUTE FUNCTION cauce_oauth_preserve_authority();
 CREATE INDEX cauce_oauth_requests_expiry ON cauce_oauth_requests(expires_at);
 CREATE INDEX cauce_oauth_codes_expiry ON cauce_oauth_codes(expires_at);
 CREATE INDEX cauce_oauth_tokens_grant ON cauce_oauth_tokens(grant_id,expires_at);
+CREATE INDEX cauce_oauth_tokens_expiry ON cauce_oauth_tokens(expires_at);
+CREATE INDEX cauce_oauth_refresh_grant ON cauce_oauth_refresh_tokens(grant_id);
+CREATE INDEX cauce_oauth_refresh_expiry ON cauce_oauth_refresh_tokens(expires_at);
 CREATE INDEX cauce_oauth_grants_owner ON cauce_oauth_grants(human_id,issuer,resource,created_at DESC,id DESC);
 CREATE INDEX cauce_oauth_grants_client ON cauce_oauth_grants(client_id);
 CREATE INDEX cauce_oauth_clients_created ON cauce_oauth_clients(created_at);
@@ -127,7 +140,8 @@ BEGIN
   IF EXISTS (SELECT 1 FROM cauce_oauth_requests)
      OR EXISTS (SELECT 1 FROM cauce_oauth_grants)
      OR EXISTS (SELECT 1 FROM cauce_oauth_codes)
-     OR EXISTS (SELECT 1 FROM cauce_oauth_tokens) THEN
+     OR EXISTS (SELECT 1 FROM cauce_oauth_tokens)
+     OR EXISTS (SELECT 1 FROM cauce_oauth_refresh_tokens) THEN
     RAISE EXCEPTION 'OAuth retention requires an approved procedure';
   END IF;
   RETURN NULL;
@@ -139,4 +153,6 @@ CREATE TRIGGER cauce_oauth_grants_no_truncate BEFORE TRUNCATE ON cauce_oauth_gra
 CREATE TRIGGER cauce_oauth_codes_no_truncate BEFORE TRUNCATE ON cauce_oauth_codes
   FOR EACH STATEMENT EXECUTE FUNCTION cauce_oauth_reject_truncate();
 CREATE TRIGGER cauce_oauth_tokens_no_truncate BEFORE TRUNCATE ON cauce_oauth_tokens
+  FOR EACH STATEMENT EXECUTE FUNCTION cauce_oauth_reject_truncate();
+CREATE TRIGGER cauce_oauth_refresh_no_truncate BEFORE TRUNCATE ON cauce_oauth_refresh_tokens
   FOR EACH STATEMENT EXECUTE FUNCTION cauce_oauth_reject_truncate();

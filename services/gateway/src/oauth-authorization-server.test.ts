@@ -16,6 +16,7 @@ const redirectUri = 'https://client.example/callback';
 const userId = '11111111-1111-4111-8111-111111111111';
 const grantId = '22222222-2222-4222-8222-222222222222';
 const code = 'z'.repeat(43);
+const refresh = 'r'.repeat(43);
 const verifier = 'v'.repeat(43);
 const challenge = createHash('sha256').update(verifier).digest('base64url');
 const session = { userId, credentialStamp: 's'.repeat(43), issuedAt: Math.floor(Date.now() / 1000) - 10, expiresAt: Math.floor(Date.now() / 1000) + 3600, csrf: 'c'.repeat(43) };
@@ -31,12 +32,16 @@ async function fixture(authenticated = true, registrationLimiter?: OAuthRegistra
   });
   const exchange = vi.fn<OAuthStore['exchange']>(async (input, issue) => {
     if (input.challenge !== challenge) throw new OAuthError('invalid_grant');
-    return issue({ grantId, userId, scopes: ['cauce.read'], expiresAt: session.expiresAt });
+    return { ...issue({ grantId, userId, scopes: ['cauce.read'], expiresAt: session.expiresAt }), refreshToken: refresh };
+  });
+  const refreshGrant = vi.fn<OAuthStore['refresh']>(async (input, issue) => {
+    if (input.tokenHash !== createHash('sha256').update(refresh).digest('hex')) throw new OAuthError('invalid_grant');
+    return { ...issue({ grantId, userId, scopes: ['cauce.read'], expiresAt: session.expiresAt }), refreshToken: 'n'.repeat(43) };
   });
   const registry = new Map<string, OAuthClientMetadata>();
   const store: OAuthStore = { createRequest: async (value) => { pending = value; },
     request: async (id, browser) => pending?.idHash === id && pending.browserHash === browser ? pending : undefined,
-    consent, exchange, validate: async () => true, grants: async () => [], revoke: vi.fn(async () => undefined),
+    consent, exchange, refresh: refreshGrant, validate: async () => true, grants: async () => [], revoke: vi.fn(async () => undefined),
     registerClient: async (registration) => {
       const registered = { ...registration, clientId: `cauce-dcr-${randomUUID()}`, issuedAt: Math.floor(Date.now() / 1000) };
       registry.set(registered.clientId, { clientId: registered.clientId, clientName: registration.clientName ?? 'Cliente MCP sin nombre',
@@ -58,7 +63,7 @@ async function fixture(authenticated = true, registrationLimiter?: OAuthRegistra
     const id = /request_id=([A-Za-z0-9_-]{43})/u.exec(response.body)?.[1] ?? '';
     return { response, id, cookie: String(response.headers['set-cookie']).split(';')[0] ?? '' };
   }
-  return { app, tokens, store, consent, exchange, login, authorize, start };
+  return { app, tokens, store, consent, exchange, refreshGrant, login, authorize, start };
 }
 
 describe('OAuth HTTP protocol with injected store, without PostgreSQL', () => {
@@ -75,11 +80,11 @@ describe('OAuth HTTP protocol with injected store, without PostgreSQL', () => {
       expect(() => configuredHumanMcp({ ...environment, NODE_TLS_REJECT_UNAUTHORIZED: '0' }, options)).toThrow();
     } finally { await f.app.close(); }
   });
-  it('advertises PKCE S256, no refresh and a public JWKS', async () => {
+  it('advertises PKCE S256, rotating refresh, registration and a public JWKS', async () => {
     const f = await fixture();
     try {
       const response = await f.app.inject('/.well-known/oauth-authorization-server');
-      expect(response.json()).toMatchObject({ issuer, grant_types_supported: ['authorization_code'], code_challenge_methods_supported: ['S256'] });
+      expect(response.json()).toMatchObject({ issuer, grant_types_supported: ['authorization_code', 'refresh_token'], code_challenge_methods_supported: ['S256'] });
       expect(response.json()).toMatchObject({ registration_endpoint: `${issuer}/oauth/register` });
       expect((await f.app.inject('/oauth/jwks')).body).not.toContain('"d":');
     } finally { await f.app.close(); }
@@ -156,7 +161,7 @@ describe('OAuth HTTP protocol with injected store, without PostgreSQL', () => {
       expect(f.consent).not.toHaveBeenCalled();
     } finally { await f.app.close(); }
   });
-  it('exchanges with the actual ES256 signer and never returns a refresh token', async () => {
+  it('exchanges with the actual ES256 signer and returns the rotating refresh token', async () => {
     const f = await fixture();
     try {
       const response = await f.app.inject({ method: 'POST', url: '/oauth/token', headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -165,7 +170,29 @@ describe('OAuth HTTP protocol with injected store, without PostgreSQL', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json<{ access_token: string; token_type: string; scope: string }>();
       expect(f.tokens.verify(body.access_token)).toMatchObject({ subject: userId, grantId, scopes: ['cauce.read'] });
-      expect(body).not.toHaveProperty('refresh_token');
+      expect(body).toMatchObject({ refresh_token: refresh, token_type: 'Bearer' });
+    } finally { await f.app.close(); }
+  });
+  it('refreshes by hash without resolving the client document and rejects mixed or foreign parameters', async () => {
+    const f = await fixture();
+    const post = (values: Record<string, string>) => f.app.inject({ method: 'POST', url: '/oauth/token',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: new URLSearchParams(values).toString() });
+    try {
+      const response = await post({ grant_type: 'refresh_token', refresh_token: refresh, client_id: clientId, resource: f.tokens.resource });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ refresh_token: 'n'.repeat(43), scope: 'cauce.read' });
+      expect(f.tokens.verify(response.json<{ access_token: string }>().access_token)).toMatchObject({ subject: userId, grantId });
+      expect(f.refreshGrant.mock.calls[0]?.[0]).toEqual({ tokenHash: createHash('sha256').update(refresh).digest('hex'),
+        clientId, resource: f.tokens.resource, scopes: undefined });
+      expect((await post({ grant_type: 'refresh_token', refresh_token: refresh, client_id: clientId, scope: 'cauce.read' })).statusCode).toBe(200);
+      expect(f.refreshGrant.mock.calls[1]?.[0].scopes).toEqual(['cauce.read']);
+      expect((await post({ grant_type: 'refresh_token', refresh_token: refresh, client_id: clientId, resource: `${issuer}/other` })).json()).toMatchObject({ error: 'invalid_target' });
+      expect((await post({ grant_type: 'refresh_token', refresh_token: refresh, client_id: clientId, code })).statusCode).toBe(400);
+      expect((await post({ grant_type: 'refresh_token', refresh_token: 'short', client_id: clientId })).json()).toMatchObject({ error: 'invalid_grant' });
+      expect((await post({ grant_type: 'refresh_token', refresh_token: 'x'.repeat(43), client_id: clientId })).json()).toMatchObject({ error: 'invalid_grant' });
+      expect((await post({ grant_type: 'client_credentials', client_id: clientId })).json()).toMatchObject({ error: 'unsupported_grant_type' });
+      expect((await post({ grant_type: 'authorization_code', client_id: clientId, redirect_uri: redirectUri, resource: f.tokens.resource,
+        code, code_verifier: verifier, refresh_token: refresh })).statusCode).toBe(400);
     } finally { await f.app.close(); }
   });
   it('rejects a bearer used as client authentication and JSON token requests', async () => {

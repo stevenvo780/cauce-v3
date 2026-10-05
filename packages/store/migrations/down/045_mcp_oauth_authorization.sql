@@ -1,17 +1,19 @@
 SELECT pg_advisory_xact_lock(783_003_003);
 SELECT pg_advisory_xact_lock(783_003_045);
 LOCK TABLE console_users, human_external_identities, human_tenant_memberships IN SHARE ROW EXCLUSIVE MODE;
-LOCK TABLE cauce_oauth_requests, cauce_oauth_grants, cauce_oauth_codes, cauce_oauth_tokens, cauce_oauth_clients
-  IN ACCESS EXCLUSIVE MODE;
+LOCK TABLE cauce_oauth_requests, cauce_oauth_grants, cauce_oauth_codes, cauce_oauth_tokens,
+  cauce_oauth_refresh_tokens, cauce_oauth_clients IN ACCESS EXCLUSIVE MODE;
 
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM cauce_oauth_requests)
      OR EXISTS (SELECT 1 FROM cauce_oauth_grants)
      OR EXISTS (SELECT 1 FROM cauce_oauth_codes)
-     OR EXISTS (SELECT 1 FROM cauce_oauth_tokens) THEN
+     OR EXISTS (SELECT 1 FROM cauce_oauth_tokens)
+     OR EXISTS (SELECT 1 FROM cauce_oauth_refresh_tokens) THEN
     RAISE EXCEPTION 'OAuth rollback requires an approved data-retention procedure';
   END IF;
 END $$;
+DROP TABLE cauce_oauth_refresh_tokens;
 DROP TABLE cauce_oauth_tokens;
 DROP TABLE cauce_oauth_codes;
 DROP TABLE cauce_oauth_grants;

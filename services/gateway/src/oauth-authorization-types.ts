@@ -123,6 +123,17 @@ export interface OAuthIssuedToken {
   readonly identity: OAuthAccessIdentity;
 }
 
+export interface OAuthTokenGrant extends OAuthIssuedToken {
+  readonly refreshToken: string;
+}
+
+export interface OAuthRefreshExchange {
+  readonly tokenHash: string;
+  readonly clientId: string;
+  readonly resource: string;
+  readonly scopes: readonly OAuthScope[] | undefined;
+}
+
 export interface OAuthRequestContext {
   readonly signal: AbortSignal;
   readonly deadlineMs: number;
@@ -133,7 +144,8 @@ export interface OAuthStore {
   request(idHash: string, browserHash: string, context: OAuthRequestContext): Promise<OAuthAuthorizationRequest | undefined>;
   consent(idHash: string, browserHash: string, session: OAuthPasswordSession,
     selected: readonly OAuthScope[] | undefined, context: OAuthRequestContext): Promise<{ code?: string; request: OAuthAuthorizationRequest }>;
-  exchange(input: OAuthCodeExchange, issue: (input: OAuthTokenInput) => OAuthIssuedToken, context: OAuthRequestContext): Promise<OAuthIssuedToken>;
+  exchange(input: OAuthCodeExchange, issue: (input: OAuthTokenInput) => OAuthIssuedToken, context: OAuthRequestContext): Promise<OAuthTokenGrant>;
+  refresh(input: OAuthRefreshExchange, issue: (input: OAuthTokenInput) => OAuthIssuedToken, context: OAuthRequestContext): Promise<OAuthTokenGrant>;
   validate(identity: OAuthAccessIdentity): Promise<boolean>;
   revoke(grantId: string, session: OAuthPasswordSession, context: OAuthRequestContext): Promise<void>;
   grants(session: OAuthPasswordSession, context: OAuthRequestContext): Promise<readonly OAuthGrantSummary[]>;
