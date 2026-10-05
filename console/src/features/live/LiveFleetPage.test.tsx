@@ -55,8 +55,6 @@ describe('el veredicto', () => {
     const chip = within(banda).getAllByRole('button')[0];
     await user.type(screen.getByRole('searchbox', { name: 'Buscar un alias' }), 'kant');
     await waitFor(() => { expect(document.querySelectorAll('tr[data-agent-key]').length).toBe(1); });
-    // The scroll target has to be the table row: the map ships folded, so its SVG node is not
-    // laid out and scrolling to it moves nothing. jsdom has no scrollIntoView, so it is stubbed.
     const llamados: Element[] = [];
     const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
@@ -73,6 +71,7 @@ describe('el veredicto', () => {
     const fila = llamados[0];
     expect(fila.tagName).toBe('TR');
     expect(fila.closest('table')).not.toBeNull();
+    expect(fila.closest('details')).toHaveAttribute('open');
     expect(fila).toBe(document.querySelector('tr[data-highlighted="true"]'));
     expect(document.querySelectorAll('tr[data-agent-key]').length).toBeGreaterThan(1);
   });
@@ -378,6 +377,7 @@ describe('el cajón', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
+    await user.click(screen.getByText(/^Agentes · /));
     const fila = await screen.findByRole('row', { name: /zeus/i });
     await user.click(fila);
 
@@ -404,6 +404,7 @@ describe('el cajón', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
+    await user.click(screen.getByText(/^Agentes · /));
     await user.click(await screen.findByRole('row', { name: /kant/i }));
     const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
     await user.click(within(cajon).getByRole('tab', { name: 'Conexión' }));
@@ -426,6 +427,7 @@ describe('el cajón', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
+    await user.click(screen.getByText(/^Agentes · /));
     const fila = await screen.findByRole('row', { name: /zeus/i });
     const boton = within(fila).getByRole('button', { name: 'Zeus' });
 
@@ -457,6 +459,7 @@ describe('el cajón', () => {
     preinerte.setAttribute('inert', '');
 
     await screen.findByLabelText('Veredicto de la flota');
+    await user.click(screen.getByText(/^Agentes · /));
     await user.click(await screen.findByRole('row', { name: /zeus/i }));
     const cajon = await screen.findByRole('dialog', { name: /detalle de zeus/i });
     const fondoLive = document.querySelector('.live-main');
@@ -486,6 +489,7 @@ describe('el cajón', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
+    await user.click(screen.getByText(/^Agentes · /));
     const fila = await screen.findByRole('row', { name: /zeus/i });
     const boton = within(fila).getByRole('button', { name: 'Zeus' });
     boton.focus();
@@ -508,6 +512,7 @@ describe('el cajón', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
+    await user.click(screen.getByText(/^Agentes · /));
     await user.click(within(await screen.findByRole('row', { name: /zeus/i })).getByRole('button', { name: 'Zeus' }));
     const cajon = await screen.findByRole('dialog', { name: /detalle de zeus/i });
     const cerrar = within(cajon).getByRole('button', { name: 'Cerrar el detalle' });
@@ -546,6 +551,7 @@ describe('el cajón', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
+    await user.click(screen.getByText(/^Agentes · /));
     await user.click(await screen.findByRole('row', { name: /zeus/i }));
     const cajon = await screen.findByRole('dialog', { name: /detalle de zeus/i });
     await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
@@ -562,6 +568,7 @@ describe('el cajón', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
+    await user.click(screen.getByText(/^Agentes · /));
     await user.click(await screen.findByRole('row', { name: /zeus/i }));
     const cajon = await screen.findByRole('dialog', { name: /detalle de zeus/i });
     await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));

@@ -1,4 +1,5 @@
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithApi } from '../../test/render';
 import { LiveFleetPage } from './LiveFleetPage';
 
@@ -29,6 +30,25 @@ describe('lo que hay por encima de la tabla de flota', () => {
     expect(leyenda).not.toBeNull();
     expect(leyenda).not.toHaveAttribute('open');
     expect(leyenda?.textContent).toContain('Roles declarados');
+  });
+
+  it('la lista secundaria queda cerrada al final y conserva búsqueda y acceso al detalle al abrir', async () => {
+    const user = userEvent.setup();
+    renderWithApi(<LiveFleetPage />);
+    await screen.findByLabelText('Veredicto de la flota');
+    const lista = document.querySelector('details.live-agent-list');
+    expect(lista).not.toHaveAttribute('open');
+    expect(lista?.querySelector('table')).toBeInTheDocument();
+    expect(lista?.parentElement?.lastElementChild).toBe(lista);
+    const summary = screen.getByText('Agentes · 13');
+    summary.focus();
+    expect(summary).toHaveFocus();
+    await user.click(summary);
+    expect(lista).toHaveAttribute('open');
+    await user.type(screen.getByRole('searchbox', { name: 'Buscar un agente por alias' }), 'kant');
+    expect(screen.getAllByRole('row')).toHaveLength(2);
+    await user.click(screen.getByRole('row', { name: /kant/i }));
+    expect(await screen.findByRole('dialog', { name: /detalle de kant/i })).toBeInTheDocument();
   });
 });
 

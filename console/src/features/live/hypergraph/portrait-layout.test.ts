@@ -33,6 +33,15 @@ describe('fleetGeometryReady', () => {
 });
 
 describe('portraitGraph', () => {
+  it('conserva posiciones de agentes entre actividad y ACL sin dibujar orígenes en la capa ACL', () => {
+    const activity = buildFleetGraph({ model, views: [], edges: [], layer: 'ahora', origins: [{ agentKey: 'Steven/kant', adapter: 'console', count: 1 }] });
+    const actual = portraitGraph(model, activity.nodes, activity.edges, 310, 1);
+    const permissions = portraitGraph(model, graph.nodes, graph.edges, 310, 1);
+    expect(permissions.nodes.filter((node) => node.data.kind === 'agent').map((node) => [node.id, node.position])).toEqual(actual.nodes.filter((node) => node.data.kind === 'agent').map((node) => [node.id, node.position]));
+    expect(permissions.nodes.some((node) => node.data.kind === 'origin')).toBe(false);
+    expect(permissions.model.height).toBe(actual.model.height);
+  });
+
   it.each([270, 310, 704])('preserva identidad, membresía y ACL con tarjetas legibles en %ipx', (width) => {
     const compact = portraitGraph(model, graph.nodes, graph.edges, width);
     expect(compact.nodes.map((node) => node.id)).toEqual(graph.nodes.map((node) => node.id));

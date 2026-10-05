@@ -116,11 +116,12 @@ function FleetGraphRegions({ model, portrait }: { model: HyperGraphModel; portra
   );
 }
 
-function FleetGraphMap({ model, nodes, edges, signature, onRetryTopology }: {
+function FleetGraphMap({ model, nodes, edges, signature, originCount, onRetryTopology }: {
   model: HyperGraphModel;
   nodes: FleetNode[];
   edges: FleetEdge[];
   signature: string;
+  originCount: number;
   onRetryTopology?: () => void;
 }) {
   const flow = useReactFlow<FleetNode, FleetEdge>();
@@ -128,7 +129,7 @@ function FleetGraphMap({ model, nodes, edges, signature, onRetryTopology }: {
   const flowHeight = useStore((state) => state.height);
   const viewportReady = useStore((state) => state.panZoom !== null);
   const portrait = flowWidth > 0 && flowWidth <= 760;
-  const displayed = useMemo(() => portrait ? portraitGraph(model, nodes, edges, flowWidth) : { model, nodes, edges }, [portrait, model, nodes, edges, flowWidth]);
+  const displayed = useMemo(() => portrait ? portraitGraph(model, nodes, edges, flowWidth, originCount) : { model, nodes, edges }, [portrait, model, nodes, edges, flowWidth, originCount]);
   const geometryReady = useStore((state) => fleetGeometryReady(displayed.nodes, state.nodeLookup));
   const layoutSignature = `${signature}:${portrait ? String(portraitColumns(flowWidth)) : 'desktop'}`;
   const fittedSignature = useRef<string | null>(null);
@@ -211,6 +212,10 @@ export function LiveHypergraph({
   }), [model, views, edges, serverEdges, origins, layer, focusKey, spotlight,
     thresholds?.stall_after_seconds, onFocus, onOpen, onHover]);
   const signature = useMemo(() => topologySignature(model), [model]);
+  const originCount = useMemo(() => {
+    const targets = new Set(model.nodes.map((node) => `${node.tenants[0] ?? ''}/${node.alias}`));
+    return (origins ?? []).filter((origin) => targets.has(origin.agentKey)).length;
+  }, [model, origins]);
 
   const sinSala = useMemo(() => {
     const visible = new Set(model.nodes.map((node) => `${node.tenants[0] ?? ''}/${node.alias}`));
@@ -243,7 +248,7 @@ export function LiveHypergraph({
   return (
     <div className="lhg" data-layer={layer}>
       <ReactFlowProvider>
-        <FleetGraphMap model={model} nodes={graph.nodes} edges={graph.edges} signature={signature} />
+        <FleetGraphMap model={model} nodes={graph.nodes} edges={graph.edges} signature={signature} originCount={originCount} />
       </ReactFlowProvider>
       <p className="lhg-summary">
         {String(counts.agents)} agentes · {String(counts.rooms)} salas · {layer === 'permisos'

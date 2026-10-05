@@ -30,6 +30,7 @@ describe('who asked for each request', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
+    await user.click(screen.getByText(/^Agentes · /));
     await user.click(await screen.findByRole('row', { name: /kant/i }));
     const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
     await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
@@ -46,6 +47,7 @@ describe('who asked for each request', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
+    await user.click(screen.getByText(/^Agentes · /));
     await user.click(await screen.findByRole('row', { name: /hegel/i }));
     const cajon = await screen.findByRole('dialog', { name: /detalle de hegel/i });
     await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));

@@ -288,6 +288,7 @@ export function LiveFleetPage() {
   }, [reload, recargarTopologia]);
 
   const [culpablePendiente, setCulpablePendiente] = useState<string | null>(null);
+  const activityListRef = useRef<HTMLDetailsElement>(null);
 
   const enfocarCulpable = useCallback((key: string) => {
     setStateFilter(undefined);
@@ -299,6 +300,7 @@ export function LiveFleetPage() {
   useEffect(() => {
     if (culpablePendiente === null) return;
     setCulpablePendiente(null);
+    if (activityListRef.current) activityListRef.current.open = true;
     document.querySelector(`tr[data-agent-key="${cssEscape(culpablePendiente)}"]`)
       ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [culpablePendiente]);
@@ -436,7 +438,10 @@ export function LiveFleetPage() {
           configuracion={configuracion}
           onAbrirPerfil={(key) => { abrirCajon(key, 'rol', 'campos'); }}
         />
-        {tablaActividad}
+        <details className="live-fold live-agent-list" ref={activityListRef}>
+          <summary>Agentes · {String(alcance.length)}</summary>
+          {tablaActividad}
+        </details>
       </div>
 
       {drawer && detail ? (
