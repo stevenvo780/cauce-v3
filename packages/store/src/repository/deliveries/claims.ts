@@ -413,6 +413,9 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
                     AND h.released_at IS NULL AND h.expires_at>now()
                )
                AND (m.auth_channel IS DISTINCT FROM 'human-mcp' OR $8::boolean)
+               ${includeHumanInitiator ? `AND (m.auth_channel IS DISTINCT FROM 'human-mcp' OR EXISTS (
+                 SELECT 1 FROM human_message_initiators initiator WHERE initiator.message_id=m.id
+               ))` : ''}
                AND (m.priority >= $5)=$7::boolean
              ORDER BY (m.lane='interactive') DESC,m.priority DESC,d.available_at,d.created_at
              FOR UPDATE OF d SKIP LOCKED LIMIT 1

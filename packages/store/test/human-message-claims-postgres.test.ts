@@ -6,7 +6,7 @@ import { consoleIntent, HUMAN_PUBLISH_SCOPE, publishCommand, publishOptions,
 import { ackWith, terminalAck } from './helpers/consumer.js';
 import {
   claimConsumer, claims, databasePool, deliverySnapshot, fairnessSnapshot, getRepository,
-  nextClaim, publishRoot, seedHumanPublishActor, waitForLedgerLock, withLedgerView,
+  nextClaim, publishRoot, seedHumanPublishActor, withLedgerView,
 } from './human-message-claims-postgres.fixtures.js';
 
 registerHumanPublishSuite(import.meta.url);
@@ -26,6 +26,20 @@ async function publishConsoleRoot(account: Awaited<ReturnType<typeof seedHumanPu
   if (row === undefined) throw new Error('console root ledger missing');
   return { receipt, initiator: { human_id: account.humanId, tenant_id: 'Steven',
     root_message_id: receipt.message_id, conversation_id: row.conversation_id } };
+}
+
+async function waitForBlockedClaim(blockerPid: number): Promise<number> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await databasePool().query<{ pid: number }>(
+      `SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()
+        AND $1::integer=ANY(pg_blocking_pids(pid))`, [blockerPid],
+    );
+    const row = result.rows[0];
+    if (row !== undefined) return row.pid;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('claim did not block on the owned ledger lock');
 }
 
 describe('human initiator envelopes from real durable publication and claims', () => {
@@ -81,6 +95,45 @@ describe('human initiator envelopes from real durable publication and claims', (
       expect(new Set(isolated.map((delivery) => delivery.human_initiator?.human_id)).size).toBe(2);
     },
   );
+
+  it('retains historical MCP roots without a ledger even when the lease supports human isolation', async () => {
+    const account = await seedHumanPublishActor();
+    const legacyId = randomUUID();
+    await databasePool().query(
+      `WITH historical AS (
+         INSERT INTO messages(id,request_id,trace_id,tenant_id,room_id,actor_alias,body,
+           lane,priority,auth_session_id,auth_channel)
+         VALUES($1,$2,$3,'Steven','grp.steven',$4,'{"text":"historical MCP fixture"}',
+           'interactive',1,$5,'human-mcp') RETURNING id
+       ) INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias)
+         SELECT id,'Steven','argos' FROM historical`,
+      [legacyId, randomUUID(), randomUUID(), account.alias, randomUUID()],
+    );
+    expect((await databasePool().query(
+      'SELECT message_id FROM human_message_initiators WHERE message_id=$1', [legacyId],
+    )).rows).toEqual([]);
+    const before = await deliverySnapshot(legacyId);
+    expect(before).toHaveLength(1);
+    expect(before[0]).toMatchObject({ status: 'pending', attempt: 0, claim_token: null });
+    const root = await publishRoot(account);
+    const ordinary = await getRepository().publish({
+      version: '3.0', request_id: randomUUID(), trace_id: randomUUID(), tenant_id: 'Steven',
+      room_id: 'grp.steven', actor_alias: account.alias,
+      recipients: [{ tenant_id: 'Steven', alias: 'argos' }], body: { text: 'ordinary compatibility' },
+      lane: 'interactive', priority: 1, idempotency_key: randomUUID(),
+    });
+    const target = await claimConsumer();
+    const claimed = await claims(target);
+    expect(claimed.map((delivery) => delivery.message_id).sort())
+      .toEqual([root.receipt.message_id, ordinary.message_id].sort());
+    expect(claimed.find((delivery) => delivery.message_id === root.receipt.message_id)?.human_initiator)
+      .toEqual(root.initiator);
+    expect(Object.hasOwn(claimed.find((delivery) => delivery.message_id === ordinary.message_id) ?? {},
+      'human_initiator')).toBe(false);
+    expect(await deliverySnapshot(legacyId)).toEqual(before);
+    expect(await claims(target)).toEqual([]);
+    expect(await deliverySnapshot(legacyId)).toEqual(before);
+  });
 
   it('keeps the initiating tenant distinct from the cross-tenant receiver', async () => {
     const root = await publishRoot(await seedHumanPublishActor(), 'Isa');
@@ -250,12 +303,14 @@ describe('human initiator claim transaction failure boundaries', () => {
     const controller = new AbortController();
     const reason = new Error('cancelled human initiator claim');
     try {
+      const blockerPid = (await blocker.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
+      if (blockerPid === undefined) throw new Error('owned blocker PID missing');
       await blocker.query('BEGIN');
       await blocker.query('LOCK TABLE human_message_initiators IN ACCESS EXCLUSIVE MODE');
       const settled = claims(target, controller.signal).then(
         () => ({ error: undefined }), (error: unknown) => ({ error }),
       );
-      const pid = await waitForLedgerLock();
+      const pid = await waitForBlockedClaim(blockerPid);
       controller.abort(reason);
       expect((await settled).error).toBe(reason);
       expect(await deliverySnapshot(root.receipt.message_id)).toEqual(before);

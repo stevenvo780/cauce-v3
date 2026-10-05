@@ -84,17 +84,3 @@ export async function withLedgerView<T>(invalidConversation: boolean, work: () =
     await pool.query('ALTER TABLE fixture_human_message_initiators RENAME TO human_message_initiators');
   }
 }
-
-export async function waitForLedgerLock(): Promise<number> {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    const result = await databasePool().query<{ pid: number }>(
-      `SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()
-        AND wait_event_type='Lock' AND query LIKE '%FROM human_message_initiators%'`,
-    );
-    const row = result.rows[0];
-    if (row !== undefined) return row.pid;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('claim did not block on the real ledger read');
-}
