@@ -51,16 +51,17 @@ it('separa humano autenticado y respuesta final escapada, sin filas técnicas pe
 });
 
 it.each([
-  { status: 'pending', events: ['published'], label: 'Publicado · esperando aceptación del agente', checks: 1 },
-  { status: 'accepted', events: ['published', 'accepted'], label: 'Recibido por el agente · entrega aceptada', checks: 2 },
-  { status: 'started', events: ['published', 'accepted', 'started'], label: 'Recibido por el agente · ejecución iniciada', checks: 2 },
-  { status: 'done', events: ['published', 'done'], label: 'Recibido por el agente · ejecución terminada', checks: 2 },
+  { status: 'pending', events: ['published'], label: 'Publicado · esperando aceptación del agente', checks: 0 },
+  { status: 'accepted', events: ['published', 'accepted'], label: 'Recibido por el agente · entrega aceptada', checks: 1 },
+  { status: 'started', events: ['published', 'accepted', 'started'], label: 'Recibido por el agente · ejecución iniciada', checks: 1 },
+  { status: 'done', events: ['published', 'done'], label: 'Recibido por el agente · ejecución terminada', checks: 1 },
 ] as const)('los checks de $status dependen de entrega durable y no afirman lectura', ({ status, events, label, checks }) => {
   const { message, delivery } = fixture();
   render(<TerminalTranscript items={[{ message, delivery: { ...delivery, status, timeline: events.map((status) => ({ status })) }, direction: 'input' }]} onSelectItem={vi.fn()} />);
   const check = screen.getByRole('status', { name: `Entrega: ${label}` });
-  expect(check.querySelector(`[data-checks="${String(checks)}"]`)).toBeInTheDocument();
-  expect(check).toHaveAttribute('title', `${label}. No hay comprobante de lectura.`);
+  if (checks === 0) expect(check.querySelector('[data-checks]')).toBeNull();
+  else expect(check.querySelector(`[data-checks="${String(checks)}"]`)).toBeInTheDocument();
+  expect(check).toHaveAttribute('title', `${label}. Lectura sin comprobar.`);
   expect(check).not.toHaveTextContent(/leído|leyó/);
 });
 
