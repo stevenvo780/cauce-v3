@@ -215,8 +215,6 @@ preparePostgresSuite(import.meta.url, async () => {
 
 beforeEach(async () => {
   await resetTestDatabase(pool);
-  // terminal_sessions predates the shared reset table list and is intentionally independent of
-  // message delivery state. This suite owns its rows, so clear them explicitly between races.
   await pool.query('TRUNCATE TABLE terminal_sessions,console_users CASCADE');
   await pool.query(`
     INSERT INTO agents(
