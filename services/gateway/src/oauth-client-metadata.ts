@@ -7,11 +7,26 @@ export interface OAuthClientMetadata {
   readonly redirectUris: readonly string[];
 }
 
-// a single abusive host (many distinct client_id subdomains or paths) is capped on its own so it
+// a single abusive domain (many distinct client_id subdomains or paths) is capped on its own so it
 // cannot consume the whole process-wide quota; the global cap is raised accordingly so legitimate
-// clients spread across other hosts keep working while one host is under attack.
+// clients spread across other domains keep working while one domain is under attack.
 export const OAUTH_CLIENT_HOST_PENDING_CAP = 8;
 export const OAUTH_CLIENT_GLOBAL_PENDING_CAP = 128;
+
+/**
+ * Approximate registrable domain, without a public-suffix list: the last two labels, or the last three under a
+ * two-letter country TLD whose second level is short (co.uk, com.co). IP literals are kept whole. Wildcard DNS
+ * subdomains of one domain therefore share a single cap.
+ */
+export function clientDomain(hostname: string): string {
+  const host = hostname.endsWith('.') ? hostname.slice(0, -1) : hostname;
+  if (host.startsWith('[') || /^[\d.]+$/u.test(host)) return host;
+  const labels = host.split('.');
+  const tld = labels.at(-1) ?? '';
+  const second = labels.at(-2) ?? '';
+  const keep = labels.length >= 3 && tld.length === 2 && second.length <= 3 ? 3 : 2;
+  return labels.slice(-keep).join('.');
+}
 
 export class OAuthClients {
   private readonly cache = new Map<string, { client: OAuthClientMetadata; expiresAt: number }>();
@@ -41,7 +56,7 @@ export class OAuthClients {
       this.cache.delete(clientId);
       const pending = this.pending.get(clientId);
       if (pending) return await pending;
-      const host = url.hostname;
+      const host = clientDomain(url.hostname);
       if (this.pending.size >= OAUTH_CLIENT_GLOBAL_PENDING_CAP
           || (this.pendingByHost.get(host) ?? 0) >= OAUTH_CLIENT_HOST_PENDING_CAP) {
         throw new OAuthError('invalid_client');

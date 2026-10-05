@@ -38,10 +38,11 @@ async function fixture(authenticated = true, registrationLimiter?: OAuthRegistra
     if (input.tokenHash !== createHash('sha256').update(refresh).digest('hex')) throw new OAuthError('invalid_grant');
     return { ...issue({ grantId, userId, scopes: ['cauce.read'], expiresAt: session.expiresAt }), refreshToken: 'n'.repeat(43) };
   });
+  const revoke = vi.fn<OAuthStore['revoke']>(async () => undefined);
   const registry = new Map<string, OAuthClientMetadata>();
   const store: OAuthStore = { createRequest: async (value) => { pending = value; },
     request: async (id, browser) => pending?.idHash === id && pending.browserHash === browser ? pending : undefined,
-    consent, exchange, refresh: refreshGrant, validate: async () => true, grants: async () => [], revoke: vi.fn(async () => undefined),
+    consent, exchange, refresh: refreshGrant, validate: async () => true, grants: async () => [], revoke,
     registerClient: async (registration) => {
       const registered = { ...registration, clientId: `cauce-dcr-${randomUUID()}`, issuedAt: Math.floor(Date.now() / 1000) };
       registry.set(registered.clientId, { clientId: registered.clientId, clientName: registration.clientName ?? 'Cliente MCP sin nombre',
@@ -50,7 +51,7 @@ async function fixture(authenticated = true, registrationLimiter?: OAuthRegistra
     },
     registeredClient: async (id) => registry.get(id) };
   const clients = new OAuthClients({ fetch: async () => ({ body: JSON.stringify({ client_id: clientId,
-    client_name: '<script>unsafe</script>', redirect_uris: [redirectUri], token_endpoint_auth_method: 'none' }) }) });
+    client_name: '<script>unsafe</script>', redirect_uris: [redirectUri, 'http://127.0.0.1/callback'], token_endpoint_auth_method: 'none' }) }) });
   const login = vi.fn(async (_request, reply: Parameters<import('./password-auth.js').PasswordAuthProvider['login']>[1]) => { await reply.code(200).send({ authenticated: true }); });
   await registerOAuthAuthorizationServer(app, { clients, tokens, store, passwordAuth: { login, verifyCredentialStamp: () => false },
     ...(registrationLimiter === undefined ? {} : { registrationLimiter }),
@@ -63,7 +64,7 @@ async function fixture(authenticated = true, registrationLimiter?: OAuthRegistra
     const id = /request_id=([A-Za-z0-9_-]{43})/u.exec(response.body)?.[1] ?? '';
     return { response, id, cookie: String(response.headers['set-cookie']).split(';')[0] ?? '' };
   }
-  return { app, tokens, store, consent, exchange, refreshGrant, login, authorize, start };
+  return { app, tokens, store, consent, exchange, refreshGrant, login, authorize, start, revoke };
 }
 
 describe('OAuth HTTP protocol with injected store, without PostgreSQL', () => {
@@ -130,9 +131,27 @@ describe('OAuth HTTP protocol with injected store, without PostgreSQL', () => {
       const dcr = created.json<{ client_id: string }>().client_id;
       const native = await f.app.inject(f.authorize({ client_id: dcr, redirect_uri: 'http://127.0.0.1:49152/cb' }));
       expect(native.body).toContain('127.0.0.1:49152 (este equipo)');
-      expect(native.body).toContain(`registro dinámico ${dcr}`);
+      expect(native.body).toContain('Una aplicación de este equipo (Cauce no puede comprobar cuál) recibirá el acceso');
+      expect(native.body).not.toContain(dcr);
       expect(native.body).toContain('&quot;&gt;&lt;img src=x&gt;');
       expect(native.body).not.toContain('<img');
+    } finally { await f.app.close(); }
+  });
+  it('never presents the CIMD host as identity when the code goes to a loopback port anyone on the machine can open', async () => {
+    const f = await fixture();
+    try {
+      const response = await f.app.inject(f.authorize({ redirect_uri: 'http://127.0.0.1:47123/callback' }));
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain('Una aplicación de este equipo (Cauce no puede comprobar cuál) recibirá el acceso');
+      expect(response.body).toContain('127.0.0.1:47123 (este equipo)');
+      expect(response.body).toContain('La aplicación dice ser (no verificado)</dt><dd>&lt;script&gt;unsafe&lt;/script&gt;');
+      expect(response.body).not.toContain('client.example');
+      expect(response.body).not.toContain('Identidad del cliente');
+      const id = /request_id=([A-Za-z0-9_-]{43})/u.exec(response.body)?.[1] ?? '';
+      const cookie = String(response.headers['set-cookie']).split(';')[0] ?? '';
+      const consent = await f.app.inject({ url: `/oauth/continue?request_id=${id}`, headers: { cookie, 'sec-fetch-site': 'same-origin' } });
+      expect(consent.body).toContain('Una aplicación de este equipo (Cauce no puede comprobar cuál) recibirá el acceso');
+      expect(consent.body).not.toContain('client.example');
     } finally { await f.app.close(); }
   });
   it('offers password login when the human session is absent', async () => {
@@ -168,6 +187,31 @@ describe('OAuth HTTP protocol with injected store, without PostgreSQL', () => {
         ...(origin === undefined ? {} : { origin }) }, payload: { request_id: flow.id, csrf: session.csrf, decision: 'deny' } });
       expect(response.statusCode).toBe(403);
       expect(f.consent).not.toHaveBeenCalled();
+    } finally { await f.app.close(); }
+  });
+  it('revokes from the native grants form with the headers a real browser sends under no-referrer', async () => {
+    const f = await fixture();
+    const form = { 'content-type': 'application/x-www-form-urlencoded' };
+    const revoke = (headers: Record<string, string>, csrf = session.csrf) => f.app.inject({ method: 'POST', url: `/oauth/grants/${grantId}/revoke`,
+      headers: { ...form, ...headers }, payload: new URLSearchParams({ csrf }).toString() });
+    try {
+      const page = await f.app.inject({ url: '/oauth/grants', headers: { 'sec-fetch-site': 'none' } });
+      expect(page.statusCode).toBe(200);
+      expect(page.headers['referrer-policy']).toBe('no-referrer');
+      expect((await f.app.inject({ url: '/oauth/grants', headers: { 'sec-fetch-site': 'cross-site' } })).statusCode).toBe(403);
+      const browser = await revoke({ origin: 'null', 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' });
+      expect(browser.statusCode).toBe(303);
+      expect(browser.headers.location).toBe('/oauth/grants');
+      expect(f.revoke).toHaveBeenCalledOnce();
+      expect(f.revoke.mock.calls[0]?.[0]).toBe(grantId);
+      for (const headers of [{ origin: 'null' }, { origin: 'null', 'sec-fetch-site': 'cross-site' }, { origin: 'null', 'sec-fetch-site': 'same-site' },
+        { origin: 'null', 'sec-fetch-site': 'none' }, { origin: 'https://evil.example', 'sec-fetch-site': 'same-origin' }, { 'sec-fetch-site': 'same-origin' }]) {
+        expect((await revoke(headers)).statusCode).toBe(403);
+      }
+      expect((await revoke({ origin: 'null', 'sec-fetch-site': 'same-origin' }, 'wrong')).statusCode).toBe(403);
+      expect((await f.app.inject({ method: 'POST', url: '/oauth/consent', headers: { ...form, origin: 'null', 'sec-fetch-site': 'same-origin' },
+        payload: new URLSearchParams({ request_id: 'x'.repeat(43), csrf: session.csrf, decision: 'deny' }).toString() })).statusCode).toBe(403);
+      expect(f.revoke).toHaveBeenCalledOnce();
     } finally { await f.app.close(); }
   });
   it('rejects wrong CSRF and duplicate form parameters before consent', async () => {
@@ -274,11 +318,11 @@ describe('OAuth dynamic registration and public CORS', () => {
       expect(response.json()).toMatchObject({ error });
     } finally { await f.app.close(); }
   });
-  it('rate-limits registration per remote address with Retry-After', async () => {
+  it('rate-limits registration with one global budget, since behind the proxy every request shares its address', async () => {
     const f = await fixture(true, new OAuthRegistrationLimiter({ capacity: 1, refillMs: 60_000 }));
     try {
-      expect((await f.app.inject(register({ redirect_uris: ['http://localhost/cb'] }))).statusCode).toBe(201);
-      const limited = await f.app.inject(register({ redirect_uris: ['http://localhost/cb'] }));
+      expect((await f.app.inject({ ...register({ redirect_uris: ['http://localhost/cb'] }), remoteAddress: '10.0.0.1' })).statusCode).toBe(201);
+      const limited = await f.app.inject({ ...register({ redirect_uris: ['http://localhost/cb'] }), remoteAddress: '10.0.0.2' });
       expect(limited.statusCode).toBe(429);
       expect(limited.headers['retry-after']).toBe('60');
     } finally { await f.app.close(); }

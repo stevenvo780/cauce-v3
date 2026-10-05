@@ -1,7 +1,7 @@
 import { createPrivateKey } from 'node:crypto';
 import { OAuthClients } from './oauth-client-metadata.js';
 import { OAuthTokens } from './oauth-tokens.js';
-import { PostgresOAuthStore } from './oauth-authorization-store.js';
+import { OAUTH_GRANT_TTL_SECONDS, PostgresOAuthStore } from './oauth-authorization-store.js';
 import { createOAuthPasswordSession } from './oauth-password-session.js';
 import type { OAuthAuthorizationServerOptions } from './oauth-authorization-server.js';
 import { configuredContextRepository } from './console/context-repository/binding.js';
@@ -212,9 +212,13 @@ async function configuredLocalOAuth(pool: DatabasePool, authProvider: AuthProvid
   const keyFile = process.env.CAUCE_MCP_OAUTH_SIGNING_KEY_FILE;
   const kid = process.env.CAUCE_MCP_OAUTH_SIGNING_KID;
   if (!issuer || !keyFile || !kid) throw new Error('Local OAuth configuration is incomplete');
+  const grantTtlSeconds = Number(process.env.CAUCE_MCP_OAUTH_GRANT_TTL_SECONDS ?? OAUTH_GRANT_TTL_SECONDS.default);
+  if (!Number.isSafeInteger(grantTtlSeconds) || grantTtlSeconds < OAUTH_GRANT_TTL_SECONDS.min || grantTtlSeconds > OAUTH_GRANT_TTL_SECONDS.max) {
+    throw new Error(`CAUCE_MCP_OAUTH_GRANT_TTL_SECONDS must be between ${String(OAUTH_GRANT_TTL_SECONDS.min)} and ${String(OAUTH_GRANT_TTL_SECONDS.max)}`);
+  }
   const tokens = new OAuthTokens({ issuer, resource: `${issuer}/mcp`, kid,
     signingKey: createPrivateKey(await readFile(keyFile)) });
-  const store = new PostgresOAuthStore(pool, issuer, authProvider.verifyCredentialStamp.bind(authProvider));
+  const store = new PostgresOAuthStore(pool, issuer, authProvider.verifyCredentialStamp.bind(authProvider), { grantTtlSeconds });
   await store.ready();
   return { clients: new OAuthClients(), tokens, store, passwordAuth: authProvider,
     session: createOAuthPasswordSession({ provider: authProvider }) };

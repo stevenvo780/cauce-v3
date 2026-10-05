@@ -13,6 +13,7 @@ const FLOW_COOKIE = '__Host-cauce_oauth';
 const NONCE = /^[A-Za-z0-9_-]{43}$/u;
 // Sólo endpoints públicos sin cookie: nunca authorize, continue, login, consent ni grants.
 const PUBLIC_CORS = ['/.well-known/oauth-authorization-server', '/oauth/jwks', '/oauth/token', '/oauth/register'];
+const REGISTRATION_BUCKET = 'global';
 
 function fields(value: unknown, allowed: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new OAuthError('invalid_request');
@@ -42,9 +43,14 @@ function escape(value: string): string {
 }
 
 // Lo que el humano debe mirar es dónde acaba el código y qué host respalda al cliente; el nombre es del cliente.
+// Con un redirect loopback el host del client_id no respalda nada: cualquier programa del equipo puede escuchar
+// en ese puerto y presentar el documento CIMD de otro, así que no se muestra como identidad.
 function clientFacts(flow: Pick<OAuthAuthorizationRequest, 'clientId' | 'clientName' | 'redirectUri'>): string {
   const redirect = new URL(flow.redirectUri);
-  const destination = loopbackRedirect(redirect) ? `${redirect.host} (este equipo)` : redirect.origin;
+  if (loopbackRedirect(redirect)) {
+    return `<p><strong>Una aplicación de este equipo (Cauce no puede comprobar cuál) recibirá el acceso.</strong> Autoriza sólo si acabas de iniciar la conexión desde un programa en el que confías.</p><dl><dt>El acceso se entregará en</dt><dd><strong><code>${escape(`${redirect.host} (este equipo)`)}</code></strong></dd><dt>La aplicación dice ser (no verificado)</dt><dd>${escape(flow.clientName)}</dd></dl>`;
+  }
+  const destination = redirect.origin;
   let identity = flow.clientId;
   if (isRegisteredClientId(flow.clientId)) identity = `registro dinámico ${flow.clientId}`;
   else { try { identity = new URL(flow.clientId).host; } catch { /* se muestra el identificador tal cual */ } }
@@ -57,12 +63,20 @@ function page(reply: FastifyReply, body: string, script = '') {
   return reply.type('text/html; charset=utf-8').send(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Autorizar Cauce</title></head><body><main>${body}</main>${script ? `<script nonce="${nonce}">${script}</script>` : ''}</body></html>`);
 }
 
-function sameOrigin(request: FastifyRequest, issuer: string, continuation = false): void {
+// fetch: Origin exacto. continuation: navegación GET desde una página de Cauce. form: POST de un <form> nativo,
+// al que el navegador pone `Origin: null` por Referrer-Policy: no-referrer (Fetch, «serializing a request
+// origin»); sólo vale con Sec-Fetch-Site: same-origin, y el token CSRF de la sesión sigue siendo obligatorio.
+// entry: además admite Sec-Fetch-Site: none (marcador o URL tecleada) para una página sin efectos.
+type SameOriginMode = 'fetch' | 'continuation' | 'form' | 'entry';
+
+function sameOrigin(request: FastifyRequest, issuer: string, mode: SameOriginMode = 'fetch'): void {
   const origin = request.headers.origin;
   const site = request.headers['sec-fetch-site'];
-  if (site === 'cross-site' || (origin !== undefined && origin !== issuer)
-      || (!continuation && origin !== issuer)
-      || (continuation && origin !== issuer && site !== 'same-origin')) throw new OAuthError('access_denied');
+  const navigation = mode === 'continuation' || mode === 'entry';
+  const accepted = origin === issuer
+    || (mode === 'form' && origin === 'null' && site === 'same-origin')
+    || (navigation && origin === undefined && (site === 'same-origin' || (mode === 'entry' && site === 'none')));
+  if (site === 'cross-site' || !accepted) throw new OAuthError('access_denied');
 }
 
 function requestHashes(request: FastifyRequest, id: unknown) {
@@ -157,7 +171,8 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
           || request.headers['content-type']?.split(';')[0]?.trim() !== 'application/json') {
         throw new OAuthError('invalid_client_metadata');
       }
-      if (!limiter.take(request.ip)) {
+      // Detrás de nginx/Caddy request.ip es siempre el proxy: el cupo es global y el límite por IP real va en el borde.
+      if (!limiter.take(REGISTRATION_BUCKET)) {
         reply.header('Retry-After', String(limiter.retryAfterSeconds));
         throw new OAuthError('temporarily_unavailable');
       }
@@ -194,7 +209,7 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
     }
 
     app.get('/oauth/continue', async (request, reply) => {
-      sameOrigin(request, tokens.issuer, true);
+      sameOrigin(request, tokens.issuer, 'continuation');
       const query = fields(request.query, ['request_id']);
       const flow = await pending(request, query.request_id);
       let authenticated: OAuthPasswordSession;
@@ -215,8 +230,8 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
       await options.passwordAuth.login(request, reply);
     });
 
-    async function csrfSession(request: FastifyRequest, value: unknown) {
-      sameOrigin(request, tokens.issuer);
+    async function csrfSession(request: FastifyRequest, value: unknown, mode: SameOriginMode = 'fetch') {
+      sameOrigin(request, tokens.issuer, mode);
       const authenticated = await session(request);
       if (typeof value !== 'string' || !constantTimeText(value, authenticated.csrf)) throw new OAuthError('access_denied');
       return authenticated;
@@ -269,7 +284,7 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
     });
 
     app.get('/oauth/grants', async (request, reply) => {
-      sameOrigin(request, tokens.issuer, true);
+      sameOrigin(request, tokens.issuer, 'entry');
       const authenticated = await session(request);
       const grants = await store.grants(authenticated, context(request, authenticated));
       const items = grants.map((grant) => `<li><p>${escape(grant.clientId)} — ${escape(grant.scopes.join(', '))} — ${escape(grant.expiresAt)}${grant.revoked ? ' — revocada' : ''}</p><form method="post" action="/oauth/grants/${escape(grant.id)}/revoke"><input type="hidden" name="csrf" value="${escape(authenticated.csrf)}"><button>Revocar autorización</button></form></li>`).join('');
@@ -277,7 +292,7 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
     });
     app.post('/oauth/grants/:id/revoke', { bodyLimit: 8192 }, async (request, reply) => {
       const body = fields(request.body, ['csrf']);
-      const authenticated = await csrfSession(request, body.csrf);
+      const authenticated = await csrfSession(request, body.csrf, 'form');
       const params = fields(request.params, ['id']);
       await store.revoke(text(params.id, 36), authenticated, context(request, authenticated));
       return reply.code(303).header('Location', '/oauth/grants').send();
