@@ -3,8 +3,8 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 631,
-    "recorteMaximoEn": "/live",
+    "recorteMaximo": 621,
+    "recorteMaximoEn": "/accounts",
     "recorteMaximoQue": "div.table-wrap",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
@@ -28,22 +28,22 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live": {
-        "pantallas": 3.19,
+        "pantallas": 1.71,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 1244,
-        "objetoPrincipalBajoElPliegue": 1
+        "objetoPrincipalTop": 229,
+        "objetoPrincipalBajoElPliegue": 0
       },
       "/live#cajon": {
-        "pantallas": 3.29,
+        "pantallas": 1.71,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 1244,
-        "objetoPrincipalBajoElPliegue": 1
+        "objetoPrincipalTop": 229,
+        "objetoPrincipalBajoElPliegue": 0
       },
       "/live#perfil": {
-        "pantallas": 3.29,
+        "pantallas": 1.71,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 1244,
-        "objetoPrincipalBajoElPliegue": 1
+        "objetoPrincipalTop": 229,
+        "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
         "pantallas": 5.9,
@@ -117,8 +117,8 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 231,
-    "recorteMaximoEn": "/live",
+    "recorteMaximo": 221,
+    "recorteMaximoEn": "/accounts",
     "recorteMaximoQue": "div.table-wrap",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
@@ -142,22 +142,22 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live": {
-        "pantallas": 2.81,
+        "pantallas": 1.69,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 1009,
-        "objetoPrincipalBajoElPliegue": 1
+        "objetoPrincipalTop": 229,
+        "objetoPrincipalBajoElPliegue": 0
       },
       "/live#cajon": {
-        "pantallas": 2.91,
+        "pantallas": 1.69,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 1009,
-        "objetoPrincipalBajoElPliegue": 1
+        "objetoPrincipalTop": 229,
+        "objetoPrincipalBajoElPliegue": 0
       },
       "/live#perfil": {
-        "pantallas": 2.91,
+        "pantallas": 1.69,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 1009,
-        "objetoPrincipalBajoElPliegue": 1
+        "objetoPrincipalTop": 229,
+        "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
         "pantallas": 4.66,
@@ -231,8 +231,8 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 142,
-    "recorteMaximoEn": "/live",
+    "recorteMaximo": 5,
+    "recorteMaximoEn": "/accounts",
     "recorteMaximoQue": "div.table-wrap",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
@@ -256,21 +256,21 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live": {
-        "pantallas": 2.61,
+        "pantallas": 1.8,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 966,
+        "objetoPrincipalTop": 257,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#cajon": {
-        "pantallas": 2.72,
+        "pantallas": 1.8,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 966,
+        "objetoPrincipalTop": 257,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#perfil": {
-        "pantallas": 2.72,
+        "pantallas": 1.8,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 966,
+        "objetoPrincipalTop": 257,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -370,21 +370,21 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live": {
-        "pantallas": 2.28,
+        "pantallas": 1.8,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 854,
+        "objetoPrincipalTop": 255,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#cajon": {
-        "pantallas": 2.38,
+        "pantallas": 1.8,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 854,
+        "objetoPrincipalTop": 255,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#perfil": {
-        "pantallas": 2.38,
+        "pantallas": 1.8,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 854,
+        "objetoPrincipalTop": 255,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -484,21 +484,21 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live": {
-        "pantallas": 1.91,
+        "pantallas": 1.8,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 797,
+        "objetoPrincipalTop": 255,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#cajon": {
-        "pantallas": 1.97,
+        "pantallas": 1.8,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 854,
+        "objetoPrincipalTop": 255,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#perfil": {
         "pantallas": 1.8,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 797,
+        "objetoPrincipalTop": 255,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -598,21 +598,21 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live": {
-        "pantallas": 1.91,
+        "pantallas": 1.8,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 795,
+        "objetoPrincipalTop": 255,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#cajon": {
         "pantallas": 1.8,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 797,
+        "objetoPrincipalTop": 255,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#perfil": {
         "pantallas": 1.8,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 795,
+        "objetoPrincipalTop": 255,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {

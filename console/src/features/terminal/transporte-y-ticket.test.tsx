@@ -128,7 +128,7 @@ describe('el ticket de un solo uso, contado sin mentir', () => {
     const bar = await screen.findByLabelText('Sesión PTY activa');
     expect(bar).toHaveTextContent('Ticket vence en 0:00');
     expect(bar).not.toHaveTextContent(/Ticket consumido/);
-    expect(bar.querySelector('.pty-bar-countdown')).toHaveAttribute('data-expiring', 'true');
+    expect(within(bar).getByLabelText('Ticket vence en 0:00')).toHaveAttribute('data-expiring', 'true');
   }, 20_000);
 
   /**
@@ -159,33 +159,6 @@ describe('el ticket de un solo uso, contado sin mentir', () => {
     expect(bar).not.toHaveTextContent(/Ticket vence en/);
     // And the reconnection is stated where the transport lives, not hidden behind a fake clock.
     expect(screen.getByText(/reanudando el mismo PTY/i)).toBeInTheDocument();
-  }, 20_000);
-});
-
-describe('el feed durable mientras el canal PTY va y viene', () => {
-  /**
-   * The 2.5 s polling stands down only while the PTY is the live source. When the relay closes the
-   * channel the polling comes back —the panel re-mounts its interval— and the bar kept claiming it
-   * was paused, on the same screen where the connection bar said the opposite.
-   */
-  it('la barra no dice «en pausa» cuando el relay ya cerró el canal y el polling volvió', async () => {
-    const user = userEvent.setup();
-    enableCapability();
-    serveTargets([target()]);
-    serveSessions([]);
-    renderWithApi(<TerminalPage />);
-
-    const socket = await abrirTui(user);
-    const bar = await screen.findByLabelText('Sesión PTY activa');
-    expect(within(bar).getByText('POLLING EN PAUSA')).toBeInTheDocument();
-
-    act(() => { socket.emitClose(4413, 'output_overflow'); });
-    await screen.findByText(/exceso de salida/i);
-
-    // Both statements live on screen at once, so they cannot contradict each other.
-    expect(within(bar).queryByText('POLLING EN PAUSA')).not.toBeInTheDocument();
-    expect(within(bar).getByText('POLLING ACTIVO')).toBeInTheDocument();
-    expect(screen.getByText('POLLING ACTIVO', { selector: '.terminal-connection-bar strong' })).toBeInTheDocument();
   }, 20_000);
 });
 
@@ -220,8 +193,8 @@ describe('pedir una sesión nueva después de que el relay cierre el canal', () 
     renderWithApi(<TerminalPage />);
 
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
-    await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
-    await user.click(screen.getByRole('button', { name: /^PTY$/i }));
+    await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled(); });
+    await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
     const dialogo = await screen.findByRole('dialog');
     await user.type(within(dialogo).getByRole('textbox'), 'revisar el despliegue');
     await user.click(within(dialogo).getByRole('button', { name: /abrir sesión pty/i }));
@@ -244,30 +217,6 @@ describe('pedir una sesión nueva después de que el relay cierre el canal', () 
     expect(within(hueco).queryByRole('heading', { name: 'PTY online' })).not.toBeInTheDocument();
     expect(hueco).toHaveTextContent(/no hay (ningún )?canal PTY abierto/i);
     expect(posts).toHaveLength(1);
-  }, 20_000);
-});
-
-describe('el inspector de la sesión', () => {
-  it('se abre y se cierra con «Detalles», y dice si está desplegado', async () => {
-    const user = userEvent.setup();
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^kant ·/ }));
-    const detalles = await screen.findByRole('button', { name: /detalles/i });
-    const escenario = document.querySelector('.terminal-active-grid');
-    expect(escenario).toHaveAttribute('data-show-inspector', 'false');
-    expect(detalles).toHaveAttribute('aria-pressed', 'false');
-
-    await user.click(detalles);
-    expect(escenario).toHaveAttribute('data-show-inspector', 'true');
-    expect(detalles).toHaveAttribute('aria-pressed', 'true');
-    const inspector = screen.getByRole('complementary', { name: /inspector de sesión/i });
-    expect(within(inspector).getByRole('heading', { name: 'ACK timeline' })).toBeInTheDocument();
-    expect(within(inspector).getByText('Observación')).toBeInTheDocument();
-
-    await user.click(detalles);
-    expect(escenario).toHaveAttribute('data-show-inspector', 'false');
-    expect(detalles).toHaveAttribute('aria-pressed', 'false');
   }, 20_000);
 });
 

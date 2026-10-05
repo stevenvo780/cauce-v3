@@ -1,8 +1,8 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { App } from './App';
-import { renderWithApi } from './test/render';
+import { renderWithApi, testApi } from './test/render';
 import { leerCss } from './test/leer-css';
 import { sinComentarios } from './test/css-parser';
 import './styles.css';
@@ -131,6 +131,20 @@ describe('ningún texto de las páginas montadas baja del suelo tipográfico', (
   for (const { ruta, titulo, minimo, configView } of VISTAS) {
     it(`${ruta}${configView ? ` (${configView})` : ''} — todo el texto llega a ${String(SUELO)}px`, async () => {
       window.history.pushState({}, '', ruta);
+      let releaseFleetLoading: (() => void) | undefined;
+      if (ruta === '/terminal') {
+        const getStatus = testApi.getStatus.bind(testApi);
+        const getTopology = testApi.getTopology.bind(testApi);
+        const fleetLoading = new Promise<void>((resolve) => { releaseFleetLoading = resolve; });
+        vi.spyOn(testApi, 'getStatus').mockImplementation(async () => {
+          await fleetLoading;
+          return getStatus();
+        });
+        vi.spyOn(testApi, 'getTopology').mockImplementation(async () => {
+          await fleetLoading;
+          return getTopology();
+        });
+      }
       renderWithApi(<App />);
 
       // Wait for the navigation and the main content to have mounted after the session.
@@ -148,16 +162,33 @@ describe('ningún texto de las páginas montadas baja del suelo tipográfico', (
           await screen.findByRole('tablist', { name: 'Áreas de configuración' });
         }
       }
+      const typographyRoots = [main];
       if (ruta === '/terminal') {
-        const selector = await within(main).findByRole('combobox', { name: 'Agente' });
-        expect(selector).toBeEnabled();
-        await waitFor(() => { expect(within(selector).getAllByRole('option').length).toBeGreaterThan(1); });
-        expect(within(main).getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/ayuda#terminal');
+        await screen.findByRole('combobox', { name: 'Agente' });
+        const topbar = document.getElementById('terminal-topbar-tools');
+        expect(topbar).not.toBeNull();
+        if (!topbar) throw new Error('terminal topbar host is missing');
+        await waitFor(() => {
+          expect(topbar).toContainElement(screen.getByRole('combobox', { name: 'Agente' }));
+        });
+        const selector = screen.getByRole('combobox', { name: 'Agente' });
+        expect(main).not.toContainElement(selector);
+        expect(selector).toBeDisabled();
+        if (!releaseFleetLoading) throw new Error('fleet loading gate is missing');
+        releaseFleetLoading();
+        await waitFor(() => {
+          expect(selector).toBeEnabled();
+          expect(within(selector).getAllByRole('option').length).toBeGreaterThan(1);
+        });
+        const docs = screen.getByRole('link', { name: 'Docs' });
+        expect(docs).toHaveAttribute('href', '/ayuda#terminal');
+        expect(topbar).toContainElement(docs);
+        typographyRoots.push(topbar);
       } else {
         await waitFor(() => { expect(main.querySelectorAll('*').length).toBeGreaterThanOrEqual(minimo); }, { timeout: 10_000 });
       }
 
-      const fallos = textoPorDebajoDelSuelo(main);
+      const fallos = typographyRoots.flatMap((root) => textoPorDebajoDelSuelo(root));
       expect(fallos, `${String(fallos.length)} textos por debajo de ${String(SUELO)}px en ${ruta}:\n  ${fallos.slice(0, 25).join('\n  ')}`)
         .toEqual([]);
     }, 30_000);
@@ -195,6 +226,15 @@ describe('ningún texto de las páginas montadas baja del suelo tipográfico', (
     expect(fallos.join('\n')).toMatch(/lo decide el navegador/);
 
     caja.remove();
+  });
+
+  it('CONTROL NEGATIVO — mide también los textos del selector y Docs fuera de main', () => {
+    const topbar = document.createElement('div');
+    topbar.innerHTML = '<select><option style="font-size: 11px">agente chico</option></select>'
+      + '<a style="font-size: 12px">Docs</a>';
+    document.body.appendChild(topbar);
+    expect(textoPorDebajoDelSuelo(topbar)).toHaveLength(2);
+    topbar.remove();
   });
 
   /** NEGATIVE CONTROL — and the floor is the one we said: 12px is NOT enough, 12.5 is. */

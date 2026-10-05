@@ -26,6 +26,8 @@ const SAFE_ENVIRONMENT = [
   "LC_CTYPE",
   "TMPDIR",
   "TEMP",
+  "CODEX_HOME",
+  "CLAUDE_CONFIG_DIR",
   // Non-secret Hermes profile/model discovery only; Hermes resolves authentication from local storage.
   "HERMES_HOME",
   "HERMES_INFERENCE_MODEL",

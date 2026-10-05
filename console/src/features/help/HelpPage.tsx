@@ -21,8 +21,8 @@ const DETALLE: Record<string, string> = {
   config: 'Control atómico de topología: tenants, salas, membresías, roles de permisos y ACL, con '
     + 'historial de revisiones y reversión segura. No edita contextos ni el pool de cuentas: esas '
     + 'escrituras pertenecen a Contexto y Cuentas y cuotas.',
-  terminal: 'Consola PTY por agente con feed durable y ACK en sólo lectura. Sus enlaces profundos llevan '
-    + 'a Mensajes para publicar y a Colas para rescatar una entrega.',
+  terminal: 'TUI en vivo del agente y Terminal para una shell nueva en su espacio, con permisos, '
+    + 'usuario destino y control auditado.',
   ayuda: 'Esta página: el mapa de la consola, el vocabulario de estados y los atajos que la interfaz '
     + 'declara por su cuenta.',
 };

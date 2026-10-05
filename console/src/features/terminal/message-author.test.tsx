@@ -16,15 +16,15 @@ const session = { agent: { tenantId: 'Steven', alias: 'kant' } } as OperatorSess
 
 describe('human message provenance', () => {
   it('shows the authenticated profile instead of its technical routing alias', () => {
-    render(<TerminalTranscript items={[{ message: { ...message, author }, direction: 'input', delivery }]} presentation="chat" onSelectItem={vi.fn()} />);
+    render(<TerminalTranscript items={[{ message: { ...message, author }, direction: 'input', delivery }]} onSelectItem={vi.fn()} />);
     expect(screen.getByText('Steven')).toHaveAttribute('title', 'Persona autenticada · identidad técnica: kant');
-    expect(screen.getByText('EN CURSO')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Entrega: Recibido por el agente · ejecución iniciada' })).toBeInTheDocument();
     expect(screen.getByText('Ping')).toBeInTheDocument();
   });
 
   it('uses a generic human label without guessing a name from email or tenant', () => {
     render(<TerminalTranscript items={[{ message: { ...message, author: { ...author, display_name: null } }, direction: 'input' }]} onSelectItem={vi.fn()} />);
-    expect(screen.getByText('Persona autenticada')).toBeInTheDocument();
+    expect(screen.getByText('Persona autenticada', { selector: 'span[title]' })).toBeInTheDocument();
     expect(screen.queryByText('Steven')).not.toBeInTheDocument();
   });
 

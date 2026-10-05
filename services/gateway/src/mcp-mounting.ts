@@ -1,11 +1,12 @@
 import type { ServerOptions as HttpServerOptions } from 'node:http';
 import type { ServerOptions as HttpsServerOptions } from 'node:https';
 import type { FastifyInstance } from 'fastify';
-import type { DatabasePool } from '@cauce/store';
+import { lockHumanIdentity, resolveHumanIdentity, type DatabasePool } from '@cauce/store';
 import type { HumanMcpRepository } from './mcp-operations.js';
 import { createHumanMcpOperationsFactory } from './mcp-operations.js';
 import type { ConsolePublishTelemetry } from './console-publish-telemetry.js';
 import type { configuredHumanMcp } from './mcp-configuration.js';
+import { registerOAuthAuthorizationServer } from './oauth-authorization-server.js';
 import { registerMcpIngress } from './mcp-ingress.js';
 import { logPublishRedaction } from './routes/publish-redaction.js';
 
@@ -39,7 +40,12 @@ export async function registerHumanMcp(
   app.server.maxConnections = 64;
   const operationsFactory = createHumanMcpOperationsFactory({
     repository, pool, telemetry, priorityLog: app.log,
+    ...(configuration.oauth === undefined ? {} : { identityStore: {
+      resolve: (key, signal) => resolveHumanIdentity(pool, key, signal), lock: lockHumanIdentity,
+      verifyCredentialStamp: configuration.oauth.passwordAuth.verifyCredentialStamp.bind(configuration.oauth.passwordAuth),
+    } }),
     logRedaction: (actor, redaction) => { logPublishRedaction(app.log, actor, redaction); },
   });
+  if (configuration.oauth !== undefined) await registerOAuthAuthorizationServer(app, configuration.oauth);
   await app.register(registerMcpIngress, { ...configuration, operationsFactory });
 }

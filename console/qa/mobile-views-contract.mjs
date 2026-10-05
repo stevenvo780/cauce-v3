@@ -13,7 +13,7 @@ export const VIEWS = [
   { ...view('conversation-context', '/messages/Steven/kant?view=context', '.agent-context-panel .contexto-campos'),
     ready: ['.agent-context-panel .perfil-tab .perfil-editor', '.agent-context-panel .ficheros-lista li'] },
   view('overview', '/overview', '.landing-alertas'),
-  { ...view('live', '/live', '.lhg-scroll'), graph: true },
+  { ...view('live', '/live', '.lhg-viewport'), graph: true },
   ...[
     ['Ahora', '.live-detail dl', ['.live-reason']],
     ['Conexión', '.live-detail dl', ['.live-detail dd:last-of-type .chip']],

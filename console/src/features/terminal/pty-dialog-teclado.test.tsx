@@ -60,7 +60,7 @@ async function abrirDialogoPty() {
   const user = userEvent.setup();
   renderWithApi(<div className="app-shell"><TerminalPage /></div>);
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
-  const boton = await screen.findByRole('button', { name: /^PTY$/i });
+  const boton = await screen.findByRole('button', { name: /^Terminal$/i });
   await waitFor(() => { expect(boton).toBeEnabled(); });
   await user.click(boton);
   const dialogo = await screen.findByRole('dialog');

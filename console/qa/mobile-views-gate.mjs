@@ -28,7 +28,7 @@ export function measureView(primarySelector) {
     }
     primary = { top: rect.top, height: rect.height, visibleHeight: Math.max(0, end - top), visibleWidth: Math.max(0, right - left), painted: true };
   }
-  const graph = document.querySelector('details.live-mapa');
+  const graph = document.querySelector('.live-mapa .lhg-viewport');
   const modal = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].find(painted);
   const interactionRoot = modal ?? document.querySelector('main');
   const scrolls = [interactionRoot, ...interactionRoot?.querySelectorAll('*') ?? []].filter(Boolean).filter((element) => painted(element)
@@ -37,10 +37,10 @@ export function measureView(primarySelector) {
     contentTop, contentBottom, primary,
     clientWidth: document.documentElement.clientWidth, visualWidth: viewport?.width, visualHeight: viewport?.height, visualScale: viewport?.scale,
     overflow: Math.max(0, document.documentElement.scrollWidth - window.innerWidth, document.body.scrollWidth - window.innerWidth),
-    graphOpen: !!graph?.open,
+    graphOpen: !!graph && painted(graph),
     graphNodes: [...document.querySelectorAll('.lhg-bot')].filter((node) => {
       const rect = node.getBoundingClientRect();
-      const clip = document.querySelector('.lhg-scroll')?.getBoundingClientRect();
+      const clip = graph?.getBoundingClientRect();
       return painted(node) && clip && rect.width > 0 && rect.height > 0
         && rect.bottom > Math.max(contentTop, clip.top) && rect.top < Math.min(contentBottom, clip.bottom)
         && rect.right > Math.max(0, clip.left) && rect.left < Math.min(window.innerWidth, clip.right);

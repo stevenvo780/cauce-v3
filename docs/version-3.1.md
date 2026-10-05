@@ -117,29 +117,22 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra la consola `fa3c5e1a`, árbol
-`ec5bce02d3f7147f1e6fd45fcf351171c48cb7f5`, fuente
-`sha256:463ae1433becfd833051c69a592d7b596ab19b20944f1b73483b18f92a1872fc` e imagen
-`sha256:8d869066775259bb2d89a9b239b993c76175387d667c75256adf0a999124d252`. La fila registra once
-gates PASS para ese SHA, revisión independiente, controlador exit 0, 9 servicios sanos, ocho
-contenedores preservados y HTML, 87 assets y seis recursos PWA verificados. También acredita la
-sesión autenticada del operador y la toma/devolución del control de TUI sin texto manual. Esto no
-acredita login de TUI de Astra o Hegel, respuesta de un agente, resolución de latencia ni despliegue
-de un chat nuevo. Evidencia: `/var/log/cauce-v3-release/console-tui-fa3c5e1a/`. La fila anterior
-`2d587daa` dejó pendiente la validación autenticada del navegador en aquella verificación.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra runtime y consola `71df5bc9`, con
+imágenes `sha256:eb71a3418564e0316a9e6ada45632dc824165809d93a12e7e959a13a5a35e2fe` y
+`sha256:df3eb08dca45ce99955fb0caa66815347500a115bebe885e41ed45348edfdbf5`. La fila describe
+OAuth MCP local, registro dinámico de clientes, refresh e inbox; migraciones 044 y 045 aplicadas
+con backup previo, nueve servicios sanos, catorce leases y transcripción conservada. También
+registra una emisión a Zeus y la lectura de su respuesta con `cauce_receipt` y `cauce_inbox`.
+El informe citado está en `ws-zeus:/workspace/MCP-OAUTH-INFORME-2026-10-05.md`.
 
-El runtime sigue en `fc30f85e`, imagen
-`sha256:d0d44532cbe07a9afd2ea77b8472bf299270b92a7065684721ae78ea664bfea6`, fuente
-`sha256:ce2a02df453a829f9378894ee855df2a8b1026af5832a36c543388bd966dc551`, sin DDL y compatible
-hasta `043_blob_tenant_entitlements.sql`. La migración `044` no está promovida. El SDK de PR #78
-tampoco está promovido ni se acredita su adopción por los agentes. La nueva consola no cambia por sí
-sola el runtime ni el estado de los adaptadores.
+La promoción registra el endpoint público `https://consola.humanizar.tech/mcp` con OAuth local.
+La conexión y el consentimiento de un cliente externo deben verificarse aparte. El SDK con
+`human_message_initiator_v1` está activado sólo en Zeus; el resto de la flota conserva el anterior.
+La aceptación global de flota sigue pendiente, con Astra excluida por instrucción del dueño.
 
-La ruta pública `/mcp` sigue respondiendo 404; el servicio MCP no está disponible para clientes
-públicos. La fuente, sus pruebas y el despliegue de la consola no equivalen a publicar ese endpoint.
-La aceptación global de flota continúa pendiente; Astra está excluida por instrucción del dueño.
-Las mejoras de las siguientes integraciones requieren sus propios gates y una promoción; incluir
-sus fuentes no las despliega.
+Esta fila no acredita el rediseño posterior del chat, grafo y terminal, una lectura humana de
+mensajes, la TUI real de Hegel ni la corrección de latencia web. Los candidatos posteriores requieren
+revisión y gates de su fuente exacta antes de promocionarse; incluir fuentes no las despliega.
 
 Como evidencia histórica, en una verificación anterior los quince alias completaron una entrega
 real al primer intento y se reiniciaron sus adaptadores y sesiones nativas. La shell y el visor web se probaron en los quince;
@@ -156,8 +149,8 @@ conservan sus versiones anteriores para reversión.
 Cinco canaries históricos del SDK previo acreditaron `mcp_deposit` y ACK final para el SDK MCP
 simplificado, y la cadena Zeus→Argos→Astra completó delegación, respuestas y síntesis final. Esa
 evidencia histórica no reemplaza los 13 canaries de control mTLS del SDK unificado ni acredita
-inferencias LLM. El endpoint MCP público sigue inactivo, pendiente de OAuth e identidad dedicada del
-gateway. El formato de texto sigue disponible.
+inferencias LLM. La promoción MCP local registrada arriba tampoco demuestra adopción global
+del SDK ni conexión de cada cliente externo. El formato de texto sigue disponible.
 El detalle pendiente vive en [v3.1-pendientes](v3.1-pendientes.md); lo que queda por comprobar por
 efecto después de una ventana de despliegue está en `docs/v3.1-pendientes.md` §1, «Deuda de
 despliegue».

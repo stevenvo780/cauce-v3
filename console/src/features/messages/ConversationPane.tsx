@@ -419,7 +419,6 @@ function ConversationPaneContent({
           <LoadingState label="Abriendo el feed durable de mensajes…" />
         ) : (
           <TerminalTranscript
-            presentation="chat"
             key={agent.id}
             items={hilo}
             selectedMessageId={elegidoPorElOperador?.message.message_id ?? undefined}
@@ -579,11 +578,14 @@ function ConversationPaneContent({
           rows={1}
           maxLength={8_000}
           placeholder="Escribí un mensaje…"
-          disabled={!puedeEnviar || enviando}
+          disabled={!puedeEnviar}
         />
         <div className="composer-footer">
           <span><kbd>Enter</kbd> enviar · <kbd>Shift</kbd> + <kbd>Enter</kbd> nueva línea</span>
-          <button className="button primary" type="submit" disabled={!puedeEnviar || enviando || !draft.trim()}>
+          <button className="button primary" type="submit" disabled={!puedeEnviar || enviando || !draft.trim()}
+            onPointerDown={(event) => {
+              if (event.button === 0 && document.activeElement?.matches('.messenger-composer textarea')) event.preventDefault();
+            }}>
             <Send size={15} aria-hidden="true" /><span>{enviando ? confirmandoPublicacion || aviso?.tone === 'success' ? 'Confirmando…' : 'Enviando…' : 'Enviar'}</span>
           </button>
         </div>

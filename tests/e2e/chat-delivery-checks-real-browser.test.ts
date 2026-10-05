@@ -126,16 +126,19 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
       await page.goto(`${activeFixture.baseUrl}/messages/${tenant.tenant}/${tenant.target}`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('heading', { name: tenant.target, exact: true }).waitFor({ timeout: 20_000 });
       await page.getByLabel(`Mensaje para ${tenant.target}`).fill(nonce);
+      await page.evaluate(() => document.querySelector<HTMLTextAreaElement>('.messenger-composer textarea')?.focus());
       await page.getByRole('button', { name: 'Enviar', exact: true }).click();
+      expect(await page.evaluate(() => document.activeElement?.matches('.messenger-composer textarea'))).toBe(true);
 
       const bubble = page.getByText(nonce, { exact: true });
       await bubble.waitFor({ state: 'visible', timeout: 20_000 });
       const entry = bubble.locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
-      await entry.locator('.chat-delivery-check[aria-label="Entrega: El agente terminó; respuesta recibida"]')
+      await entry.locator('.chat-delivery-check[aria-label="Entrega: Recibido por el agente · ejecución terminada"]')
         .waitFor({ state: 'visible', timeout: 35_000 });
       const reply = page.locator('.transcript-entry.output[data-reply-to] .canonical-reply');
       await reply.getByText(new RegExp(`respuesta sintética ${tenant.tenant}`)).waitFor({ state: 'visible', timeout: 20_000 });
-      expect(await page.getByText(/ACK llega por polling/i).count()).toBe(0);
+      expect(await page.getByText(/ACK llega por polling|Respuesta provisional|Sin respuesta canónica/i).count()).toBe(0);
+      expect(await page.locator('.transcript-entry details, .transcript-delivery').count()).toBe(0);
       expect(await page.getByText(/Mensaje aceptado para entrega/i).count()).toBe(0);
       expect(await entry.locator('.chat-delivery-check').innerText()).toBe('✓✓');
       expect(await reply.innerText()).toContain(`respuesta sintética ${tenant.tenant}`);
@@ -171,11 +174,14 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
       await probe.getByText('Solicitud para comprobar la disponibilidad del agente.').waitFor({ timeout: 15_000 });
       await probe.getByText('Plazo').waitFor({ state: 'visible' });
       await probe.getByText('90 segundos').waitFor({ state: 'visible' });
-      const technicalJson = probe.locator('pre');
-      await technicalJson.waitFor({ state: 'hidden' });
-      await probe.getByText('Detalle técnico').press('Enter');
+      expect(await probe.locator('pre, details').count()).toBe(0);
+      const probeEntry = probe.locator('xpath=ancestor::article');
+      await probeEntry.getByRole('button', { name: 'Opciones del mensaje' }).click();
+      await page.getByRole('menuitem', { name: 'Ver detalle' }).click();
+      const technicalJson = page.getByRole('group', { name: 'Detalle del mensaje seleccionado' }).locator('.messenger-cuerpo-texto');
       await technicalJson.waitFor({ state: 'visible' });
-      expect(await technicalJson.innerText()).toBe(JSON.stringify({ type: 'system.gate.probe', ...probeBody }, null, 2));
+      expect(JSON.parse(await technicalJson.innerText())).toEqual({ type: 'system.gate.probe', ...probeBody });
+      await page.getByRole('button', { name: 'Cerrar detalle' }).click();
       await page.getByText('Tipo: __proto__', { exact: true }).waitFor({ state: 'visible' });
       expect(await hasHorizontalOverflow(page)).toBe(false);
       if (artifacts) await page.screenshot({ path: join(artifacts, `chat-probe-${String(width)}.png`) });

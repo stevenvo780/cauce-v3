@@ -333,14 +333,9 @@ const OBJETIVOS = {
 };
 
 const PENDIENTES = {
-  '1440./live.pantallas': 2.66,
-  '1440./live#cajon.pantallas': 2.66,
-  '1440./live#perfil.pantallas': 2.66,
   '1440./accounts.pantallas': 3.66,
   '1920./accounts.pantallas': 3.39,
   '2560./accounts.pantallas': 3.34,
-  '360./live.objetoPrincipalBajoElPliegue': 1,
-  '760./live.objetoPrincipalBajoElPliegue': 1,
 };
 
 function revisarObjetivos(resumen) {

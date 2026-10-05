@@ -34,7 +34,7 @@ export const NAV_ENTRIES: NavEntry[] = [
   { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, que: 'Cada entrega pendiente, en reintento o muerta, con reinyectar y cancelar.' },
   { id: 'observability', label: 'Señales y auditoría', icon: Gauge, que: 'Las señales del gateway, el egress al origen y quién autorizó cada cosa.' },
   { id: 'config', label: 'Ajustes y altas', icon: Settings2, que: 'Tenants, salas, membresías, roles y altas — con reversión por revisión.' },
-  { id: 'terminal', label: 'Terminal de agentes', icon: TerminalSquare, que: 'La terminal de cada bot, con su feed durable aunque el relay PTY no esté.' },
+  { id: 'terminal', label: 'Terminal de agentes', icon: TerminalSquare, que: 'TUI en vivo y Terminal del agente, con permisos y estado del canal.' },
   { id: 'ayuda', label: 'Ayuda', icon: BookOpen, que: 'Qué contesta cada vista, qué significa cada estado de la flota y los atajos de teclado.' },
 ];
 

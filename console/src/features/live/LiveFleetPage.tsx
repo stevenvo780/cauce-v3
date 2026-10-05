@@ -32,7 +32,6 @@ import { LiveHypergraph, type HypergraphLayer } from './LiveHypergraph';
 import { LiveFleetToolbar } from './LiveFleetToolbar';
 import { LiveFleetTally } from './LiveFleetTally';
 import { LiveFleetLegend } from './LiveFleetLegend';
-import { useCompactLayout } from '../../hooks/use-compact-layout';
 import './live.css';
 import './live-hypergraph.css';
 
@@ -46,8 +45,6 @@ const STALE_FACTOR = 3;
  */
 const SIN_SALA = '__sin_sala__';
 
-const VAR_CINTA_ALTO = '--live-cinta-alto';
-
 interface TooltipTarget {
   anchor: DOMRect;
   view: LiveAgentView | null;
@@ -55,9 +52,6 @@ interface TooltipTarget {
 }
 
 export function LiveFleetPage() {
-  const graphFirst = useCompactLayout();
-  const [mapOpenOverride, setMapOpenOverride] = useState<boolean | null>(null);
-  const mapOpen = mapOpenOverride ?? graphFirst;
   const api = useApi();
   const activity = useResource('live-fleet-activity', () => api.getFleetActivity());
   const topology = useResource('live-topology', () => api.getTopology());
@@ -67,7 +61,7 @@ export function LiveFleetPage() {
   const [hovered, setHovered] = useState<string>();
   const [stateFilter, setStateFilter] = useState<LiveState>();
   const [query, setQuery] = useState('');
-  const [tenantFilter, setTenantFilter] = useState('todos');
+  const [requestedTenantFilter, setTenantFilter] = useState('todos');
   const [layer, setLayer] = useState<HypergraphLayer>('ahora');
   const [tip, setTip] = useState<TooltipTarget | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -140,6 +134,8 @@ export function LiveFleetPage() {
     for (const tenant of topology.data?.tenants ?? []) if (tenant.id) vistos.add(tenant.id);
     return [...vistos].sort();
   }, [views, topology.data]);
+
+  const tenantFilter = tenants.includes(requestedTenantFilter) ? requestedTenantFilter : 'todos';
 
   const alcance = useMemo(
     () => (tenantFilter === 'todos' ? views : views.filter((view) => view.tenantId === tenantFilter)),
@@ -268,7 +264,7 @@ export function LiveFleetPage() {
   );
 
   const detail = views.find((view) => view.key === drawer?.key);
-  const feedState = activity.error ? 'error' : intervalMs <= 0 ? 'paused' : 'live';
+  const feedState = activity.error ? 'error' : intervalMs <= 0 ? 'paused' : verdict.tone === 'desconocido' ? 'stale' : 'live';
   const edadSegundos = observedAt ? Math.max(0, (now - Date.parse(observedAt)) / 1000) : null;
 
   const abrirCajon = useCallback((
@@ -281,6 +277,7 @@ export function LiveFleetPage() {
 
   const cerrarCajon = useCallback(() => {
     setDrawer(null);
+    setSelected(undefined);
     escribirQuery(undefined);
   }, []);
 
@@ -289,22 +286,6 @@ export function LiveFleetPage() {
     void reload();
     void recargarTopologia();
   }, [reload, recargarTopologia]);
-
-  const observadorDeCinta = useRef<ResizeObserver | null>(null);
-  const medirCinta = useCallback((cinta: HTMLDivElement | null) => {
-    observadorDeCinta.current?.disconnect();
-    observadorDeCinta.current = null;
-    const pagina = cinta?.closest('.live-page');
-    if (!cinta || !(pagina instanceof HTMLElement)) return;
-    const anotar = () => {
-      const alto = Math.ceil(cinta.getBoundingClientRect().height);
-      if (alto > 0) pagina.style.setProperty(VAR_CINTA_ALTO, `${String(alto)}px`);
-    };
-    anotar();
-    if (typeof ResizeObserver !== 'function') return;
-    observadorDeCinta.current = new ResizeObserver(anotar);
-    observadorDeCinta.current.observe(cinta);
-  }, []);
 
   const [culpablePendiente, setCulpablePendiente] = useState<string | null>(null);
 
@@ -358,15 +339,11 @@ export function LiveFleetPage() {
     />
   );
   const mapa = (
-    <details className="panel live-mapa" open={mapOpen}>
-      <summary onClick={(event) => {
-        event.preventDefault();
-        setMapOpenOverride(!mapOpen);
-      }}>
-        <div className="live-mapa-rotulo">
-          <h2 className="live-mapa-titulo">Quién le habla a quién, ahora</h2>
-        </div>
-      </summary>
+    <section className="panel live-mapa" aria-label="Mapa de la flota" data-objeto-principal="mapa-de-flota">
+      <header className="live-mapa-header">
+        <h2 className="live-mapa-titulo">Actividad</h2>
+        {capas}
+      </header>
 
       {fueraDeAlcance > 0 ? (
         <p className="notice" data-testid="aviso-recorte">
@@ -378,13 +355,7 @@ export function LiveFleetPage() {
       ) : null}
 
       {layer === 'ahora' && edgesEnAlcance.length === 0 && alcance.length > 0 ? (
-        <p className="live-empty-calm">
-          <strong>{tenantFilter === 'todos' ? 'La flota está libre.' : `Nadie de ${tenantFilter} tiene trabajo entre manos.`}</strong>
-          {' '}Nadie tiene trabajo entre manos ahora mismo — eso no es una avería.
-          {tenantFilter === 'todos' && typeof snapshot?.totals?.in_flight === 'number'
-            ? ` Hay ${String(snapshot.totals.in_flight)} en vuelo y ${String(snapshot.totals.queued ?? 0)} esperando turno.`
-            : null}
-        </p>
+        <p className="live-empty-calm">No hay delegaciones entre agentes en este momento.</p>
       ) : null}
 
       <LiveHypergraph
@@ -406,10 +377,7 @@ export function LiveFleetPage() {
           setTip(key && anchor ? { anchor, view, alias } : null);
         }}
       />
-      <p className="live-mapa-apunte">
-        «Ahora» muestra entregas en vuelo; «Permisos» muestra quién puede hablarle a quién.
-      </p>
-    </details>
+    </section>
   );
   const tablaActividad = (
     <FleetActivityTable
@@ -427,69 +395,40 @@ export function LiveFleetPage() {
     <div className={`live-page${drawer && detail ? ' has-drawer' : ''}`
       + (drawer && detail && (drawer.tab === 'rol' || drawer.tab === 'ficheros') ? ' cajon-ancho' : '')}>
       <div className="live-main">
-        <PageHeader
-          eyebrow="Flota"
-          title="La flota ahora"
-          description={tenantFilter === 'todos'
-            ? `Los ${String(alcance.length)} alias que podés ver, qué tienen entre manos y quién se lo pidió.`
-            : `Los ${String(alcance.length)} alias de ${tenantFilter}, qué tienen entre manos y quién se lo pidió.`
-              + ' Todo lo de abajo —veredicto, cinta, mapa y lista— está acotado a este cliente.'}
+        <div className="live-heading">
+          <PageHeader eyebrow="" title="La flota ahora" description={tenantFilter === 'todos'
+            ? `Los ${String(alcance.length)} alias que podés ver, su actividad y permisos.`
+            : `Los ${String(alcance.length)} alias de ${tenantFilter}, su actividad y permisos.`} />
+          {veredictoFlota}
+        </div>
+        <LiveFleetToolbar
+          feedState={feedState}
+          intervalMs={intervalMs}
+          setIntervalMs={setIntervalMs}
+          refrescarTodo={refrescarTodo}
+          observedAt={observedAt}
+          edadSegundos={edadSegundos}
+          query={query}
+          setQuery={setQuery}
+          tenants={tenants}
+          tenantFilter={tenantFilter}
+          setTenantFilter={setTenantFilter}
+          activityError={activity.error}
+          topologyError={topology.error}
+          recargarTopologia={recargarTopologia}
         />
-
-        {graphFirst ? (
-          <>
-            <div className="live-command-strip" ref={medirCinta}>
-              <LiveFleetToolbar
-                feedState={feedState}
-                intervalMs={intervalMs}
-                setIntervalMs={setIntervalMs}
-                refrescarTodo={refrescarTodo}
-                observedAt={observedAt}
-                edadSegundos={edadSegundos}
-                query={query}
-                setQuery={setQuery}
-                tenants={tenants}
-                tenantFilter={tenantFilter}
-                setTenantFilter={setTenantFilter}
-                activityError={activity.error}
-                topologyError={topology.error}
-                recargarTopologia={recargarTopologia}
-              />
-              {capas}
-            </div>
-            {mapa}
+        {mapa}
+        <div className="live-filter-controls">
+          <details className="live-state-filters">
+            <summary>Filtrar por estado</summary>
             {resumenTriage}
-            {tablaActividad}
-            {veredictoFlota}
-          </>
-        ) : (
-          <>
-            <div className="live-command-strip" ref={medirCinta}>
-              <LiveFleetToolbar
-                feedState={feedState}
-                intervalMs={intervalMs}
-                setIntervalMs={setIntervalMs}
-                refrescarTodo={refrescarTodo}
-                observedAt={observedAt}
-                edadSegundos={edadSegundos}
-                query={query}
-                setQuery={setQuery}
-                tenants={tenants}
-                tenantFilter={tenantFilter}
-                setTenantFilter={setTenantFilter}
-                activityError={activity.error}
-                topologyError={topology.error}
-                recargarTopologia={recargarTopologia}
-              />
-              {veredictoFlota}
-              {resumenTriage}
-            </div>
-            {capas}
-            {tablaActividad}
-            {mapa}
-          </>
-        )}
-
+          </details>
+          {stateFilter ? (
+            <button type="button" className="button small secondary" onClick={() => { setStateFilter(undefined); }}>
+              {LIVE_STATE_META[stateFilter].label} · Quitar filtro
+            </button>
+          ) : null}
+        </div>
         <LiveFleetLegend
           snapshot={snapshot}
           topologiaEnAlcance={topologiaEnAlcance}
@@ -497,6 +436,7 @@ export function LiveFleetPage() {
           configuracion={configuracion}
           onAbrirPerfil={(key) => { abrirCajon(key, 'rol', 'campos'); }}
         />
+        {tablaActividad}
       </div>
 
       {drawer && detail ? (

@@ -2,18 +2,21 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { EmptyState, Panel } from '../../components/ui';
 import { AgentContextPanel } from '../live/AgentContextPanel';
+import { AgentRegistryEditor } from './AgentRegistryEditor';
 import { filterSettingsAgents, settingsAgents } from './settings-model';
-
 export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string>();
   const [dirty, setDirty] = useState(false);
+  const [reloadedSnapshot, setReloadedSnapshot] = useState<ConfigurationSnapshot>();
   const heading = useRef<HTMLHeadingElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const recoveryButton = useRef<HTMLButtonElement>(null);
   const buttons = useRef(new Map<string, HTMLButtonElement>());
   const previous = useRef<string | undefined>(undefined);
-  const agents = useMemo(() => settingsAgents(snapshot), [snapshot]);
+  const activeSnapshot = typeof reloadedSnapshot?.revision === 'number'
+    && (typeof snapshot.revision !== 'number' || reloadedSnapshot.revision > snapshot.revision) ? reloadedSnapshot : snapshot;
+  const agents = useMemo(() => settingsAgents(activeSnapshot), [activeSnapshot]);
   const visible = filterSettingsAgents(agents, query);
   const current = agents.find((agent) => agent.key === selected);
   useEffect(() => {
@@ -26,7 +29,6 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
     }
     previous.current = selected;
   }, [current?.registered, selected]);
-
   if (current?.registered) return <section className="settings-context" aria-label={`Contexto de ${current.tenantId}/${current.alias}`}>
     <div className="settings-context-heading">
       <h2 ref={heading} tabIndex={-1}>{current.name} · Contexto</h2>
@@ -36,7 +38,6 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
     </div>
     <AgentContextPanel key={current.key} tenantId={current.tenantId} alias={current.alias} onDirtyChange={setDirty} />
   </section>;
-
   return <>
     {selected ? <div className="notice" role="alert">
       <p>El agente seleccionado ya no aparece en el registro de esta lectura. Su borrador sigue conservado en esta pestaña.</p>
@@ -49,23 +50,21 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
       <label className="settings-search">Buscar agente o grupo
         <input ref={searchInput} type="search" value={query} onChange={(event) => { setQuery(event.target.value); }} />
       </label>
-      {!Array.isArray(snapshot.agents) ? <p className="notice" role="note">
+      {!Array.isArray(activeSnapshot.agents) ? <p className="notice" role="note">
         Registro de agentes desconocido: el servidor no lo publica. Las membresías no acreditan un perfil editable.
       </p> : null}
-      {!agents.length ? <EmptyState>{Array.isArray(snapshot.agents) && Array.isArray(snapshot.memberships)
+      {!agents.length ? <EmptyState>{Array.isArray(activeSnapshot.agents) && Array.isArray(activeSnapshot.memberships)
         ? 'No hay agentes registrados ni miembros en esta lectura.'
         : 'No hay un inventario completo de agentes en esta lectura.'}</EmptyState>
         : !visible.length ? <EmptyState>No hay agentes que coincidan con la búsqueda.</EmptyState>
           : <ul className="settings-agents" aria-label="Agentes configurados">
-            {visible.map((agent) => <li key={agent.key} className="settings-agent">
+          {visible.map((agent) => <li key={agent.key} className="settings-agent">
               <div className="settings-agent-identity">
                 <strong>{agent.name}</strong>
                 <span>{agent.tenantId} / {agent.alias}</span>
                 <span>Arnés declarado: {agent.harness ?? 'desconocido'}</span>
                 {agent.enabled === false ? <span className="notice">Registro deshabilitado</span> : null}
-                {!agent.registered ? <span id={`context-unavailable-${encodeURIComponent(agent.key)}`}>
-                  Contexto no disponible: solo aparece como miembro, sin registro editable de agente.
-                </span> : null}
+              {!agent.registered && <span id={`context-unavailable-${encodeURIComponent(agent.key)}`}>Contexto no disponible: solo aparece como miembro, sin registro editable de agente.</span>}
               </div>
               <div className="settings-agent-details">
                 <p className={agent.responsibility ? undefined : 'settings-unpublished'}>{agent.responsibility ?? 'Responsabilidad sin publicar en esta lectura'}</p>
@@ -81,11 +80,12 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
               <button type="button" className="button secondary"
                 aria-label={`Abrir contexto de ${agent.tenantId}/${agent.alias}`}
                 ref={(button) => { if (button) buttons.current.set(agent.key, button); else buttons.current.delete(agent.key); }}
-                disabled={!agent.registered}
+                disabled={!agent.registered} title={agent.registered ? undefined : 'No hay registro de agente en esta lectura'}
                 aria-describedby={!agent.registered ? `context-unavailable-${encodeURIComponent(agent.key)}` : undefined}
-                title={agent.registered ? undefined : 'No hay registro de agente en esta lectura'}
                 onClick={() => { setSelected(agent.key); setDirty(false); }}
               >Abrir contexto</button>
+              {agent.registered ? <AgentRegistryEditor key={agent.key} snapshot={activeSnapshot} onReloaded={setReloadedSnapshot}
+                tenantId={agent.tenantId} alias={agent.alias} /> : null}
             </li>)}
           </ul>}
       <p className="settings-source">El registro describe la configuración guardada. El arnés en ejecución,

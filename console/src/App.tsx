@@ -271,6 +271,9 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
           <span className="brand-mark" aria-hidden="true"><Activity size={22} /></span>
           <div><strong>Cauce</strong><small>Tu equipo de agentes</small></div>
         </div>
+        <ConsoleNavigation key={path} id={NAV_ID} rail={rail} routeId={notFoundPath ? '' : routeId} />
+        <AccountMenu routeKey={`${routeId}/${params.join('/')}`} gate={gate} />
+        {navigationHint.hint}
         {collapsible ? (
           <button
             type="button"
@@ -283,16 +286,13 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
             title={`${rail ? 'Desplegar' : 'Plegar'} barra lateral (${SIDEBAR_SHORTCUT})`}
           >
             {rail ? <PanelLeftOpen size={18} aria-hidden={true} /> : <PanelLeftClose size={18} aria-hidden={true} />}
-            <span>{rail ? 'Desplegar barra lateral' : 'Plegar barra lateral'}</span>
           </button>
         ) : null}
-        <ConsoleNavigation key={path} id={NAV_ID} rail={rail} routeId={notFoundPath ? '' : routeId} />
-        <AccountMenu routeKey={`${routeId}/${params.join('/')}`} gate={gate} />
-        {navigationHint.hint}
       </aside>
       <div className="workspace">
-        {routeId !== 'messages' ? <header className="topbar">
+        {routeId !== 'messages' ? <header className="topbar" data-route={routeId}>
           <a className="back-to-chat" aria-label="Volver a la conversación" href={lastConversation.current} onClick={(event) => { onNavClick(event, lastConversation.current); }}><ArrowLeft size={16} aria-hidden="true" /><span>Volver a la conversación</span></a>
+          {routeId === 'terminal' ? <div id="terminal-topbar-tools" className="terminal-topbar-tools" /> : null}
         </header> : null}
         <main id="main-content" data-route={routeId} ref={mainRef} tabIndex={-1}>
           {import.meta.env.VITE_USE_MOCKS === 'true' || gate.status === 'unmanaged' ? <div className="shell-notices">
