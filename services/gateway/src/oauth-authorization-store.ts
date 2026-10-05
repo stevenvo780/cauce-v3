@@ -95,27 +95,40 @@ async function recordAccess(client: DatabaseClient, grant: OAuthGrantRow, issued
   return Object.freeze({ ...issued, refreshToken });
 }
 
+// INSERT y no UPDATE: sólo toma FOR KEY SHARE del grant, así que no espera al FOR SHARE de las llamadas MCP en vuelo.
 async function revokeGrant(client: DatabaseClient, grantId: string): Promise<void> {
-  await client.query('UPDATE cauce_oauth_grants SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1', [grantId]);
+  await client.query('INSERT INTO cauce_oauth_grant_revocations (grant_id) VALUES ($1) ON CONFLICT (grant_id) DO NOTHING', [grantId]);
 }
+
+// Un refresh recién rotado que vuelve dentro de esta ventana es el SDK MCP refrescando en paralelo o reintentando
+// una respuesta perdida: se rechaza sin revocar. Pasada la ventana, la reutilización revoca el grant entero.
+const REFRESH_REUSE_GRACE = "interval '60 seconds'";
+
+/** Vida del grant desde el consentimiento; el refresh nunca la alarga. */
+export const OAUTH_GRANT_TTL_SECONDS = Object.freeze({ default: 28_800, min: 300, max: 2_592_000 });
 
 export class PostgresOAuthStore implements OAuthStore {
   readonly issuer: string;
   readonly resource: string;
+  private readonly grantTtlSeconds: number;
 
-  constructor(private readonly pool: DatabasePool, issuer: string, private readonly verifyCredentialStamp: ConsoleCredentialStampVerifier) {
+  constructor(private readonly pool: DatabasePool, issuer: string, private readonly verifyCredentialStamp: ConsoleCredentialStampVerifier,
+    options: { grantTtlSeconds?: number } = {}) {
     this.issuer = oauthOrigin(issuer);
     this.resource = `${this.issuer}/mcp`;
+    this.grantTtlSeconds = options.grantTtlSeconds ?? OAUTH_GRANT_TTL_SECONDS.default;
+    if (!Number.isSafeInteger(this.grantTtlSeconds) || this.grantTtlSeconds < OAUTH_GRANT_TTL_SECONDS.min
+        || this.grantTtlSeconds > OAUTH_GRANT_TTL_SECONDS.max) throw new Error('OAuth grant lifetime is invalid');
   }
 
   async ready(): Promise<void> {
     await this.pool.query(`SELECT r.id_hash,r.browser_hash,r.scopes,r.challenge,r.expires_at,r.consumed_at,
       g.id,g.human_id,g.issuer,g.resource,g.binding_id,g.binding_revision,g.membership_revision,
-      g.tenant_id,g.actor_alias,g.credential_stamp,g.revoked_at,c.code_hash,c.grant_id,c.challenge,
+      g.tenant_id,g.actor_alias,g.credential_stamp,v.grant_id,v.revoked_at,c.code_hash,c.grant_id,c.challenge,
       c.expires_at,c.consumed_at,t.id,t.grant_id,t.expires_at,t.revoked_at,k.id,k.client_id,k.metadata,k.created_at,
       f.token_hash,f.grant_id,f.expires_at,f.consumed_at
-      FROM cauce_oauth_requests r,cauce_oauth_grants g,cauce_oauth_codes c,cauce_oauth_tokens t,cauce_oauth_clients k,
-        cauce_oauth_refresh_tokens f LIMIT 0`);
+      FROM cauce_oauth_requests r,cauce_oauth_grants g,cauce_oauth_grant_revocations v,cauce_oauth_codes c,
+        cauce_oauth_tokens t,cauce_oauth_clients k,cauce_oauth_refresh_tokens f LIMIT 0`);
   }
 
   private async transaction<T>(context: OAuthRequestContext, operation: (client: DatabaseClient) => Promise<T>): Promise<T> {
@@ -165,16 +178,18 @@ export class PostgresOAuthStore implements OAuthStore {
       if (granted === undefined || !snapshot) return { request };
       const grantId = randomUUID();
       const code = randomBytes(32).toString('base64url');
+      // Plazo fijo desde el consentimiento, no lo que le quede a la cookie de consola: la autoridad se
+      // revalida en cada uso (sello de credencial, cuenta, vínculo y membresía).
       await client.query(
         `WITH instant AS MATERIALIZED (SELECT clock_timestamp() AS at)
          INSERT INTO cauce_oauth_grants
          (id,human_id,issuer,resource,client_id,redirect_uri,scopes,binding_id,binding_revision,
           membership_revision,tenant_id,actor_alias,credential_stamp,created_at,expires_at)
          SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,at,
-           LEAST(to_timestamp($14),at+interval '8 hours') FROM instant`,
+           at+make_interval(secs=>$14) FROM instant`,
         [grantId, session.userId, this.issuer, this.resource, request.clientId, request.redirectUri, [...granted],
           snapshot.bindingId, snapshot.bindingRevision, snapshot.membership.revision,
-          snapshot.membership.tenantId, snapshot.membership.actorAlias, session.credentialStamp, session.expiresAt],
+          snapshot.membership.tenantId, snapshot.membership.actorAlias, session.credentialStamp, this.grantTtlSeconds],
       );
       await client.query(
         `WITH instant AS MATERIALIZED (SELECT clock_timestamp() AS at)
@@ -187,18 +202,23 @@ export class PostgresOAuthStore implements OAuthStore {
     });
   }
 
+  // Un code ya canjeado que vuelve a aparecer revoca el grant y todo lo emitido con él (OAuth 2.1 §4.1.3);
+  // la revocación se confirma antes de responder invalid_grant, igual que la reutilización de un refresh.
   async exchange(input: OAuthCodeExchange, issue: (input: OAuthTokenInput) => OAuthIssuedToken, context: OAuthRequestContext): Promise<OAuthTokenGrant> {
-    return this.transaction(context, async (client) => {
-      const lookup = (await client.query<{ grant_id: string; human_id: string }>(
-        `SELECT c.grant_id,g.human_id FROM cauce_oauth_codes c JOIN cauce_oauth_grants g ON g.id=c.grant_id
-         WHERE c.code_hash=$1 AND c.consumed_at IS NULL AND c.expires_at>clock_timestamp()`, [input.codeHash],
+    const result = await this.transaction(context, async (client): Promise<OAuthTokenGrant | undefined> => {
+      const lookup = (await client.query<{ grant_id: string; human_id: string; consumed: boolean }>(
+        `SELECT c.grant_id,g.human_id,c.consumed_at IS NOT NULL AS consumed
+         FROM cauce_oauth_codes c JOIN cauce_oauth_grants g ON g.id=c.grant_id
+         WHERE c.code_hash=$1 AND (c.consumed_at IS NOT NULL OR c.expires_at>clock_timestamp())`, [input.codeHash],
       )).rows[0];
       if (!lookup || input.resource !== this.resource) throw new OAuthError('invalid_grant');
+      if (lookup.consumed) { await revokeGrant(client, lookup.grant_id); return undefined; }
       const grant = await lockOAuthGrant(client, lookup.grant_id, this.issuer, this.resource, lookup.human_id, this.verifyCredentialStamp);
-      const code = (await client.query<{ challenge: string }>(
-        `SELECT challenge FROM cauce_oauth_codes WHERE code_hash=$1 AND grant_id=$2
-         AND consumed_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE`, [input.codeHash, grant.id],
+      const code = (await client.query<{ challenge: string; consumed: boolean }>(
+        `SELECT challenge,consumed_at IS NOT NULL AS consumed FROM cauce_oauth_codes WHERE code_hash=$1 AND grant_id=$2
+         AND (consumed_at IS NOT NULL OR expires_at>clock_timestamp()) FOR UPDATE`, [input.codeHash, grant.id],
       )).rows[0];
+      if (code?.consumed) { await revokeGrant(client, grant.id); return undefined; }
       if (!code || !constantTimeText(code.challenge, input.challenge)
           || grant.client_id !== input.clientId || grant.redirect_uri !== input.redirectUri) {
         throw new OAuthError('invalid_grant');
@@ -211,25 +231,36 @@ export class PostgresOAuthStore implements OAuthStore {
       if (consumed.rowCount !== 1) throw new OAuthError('invalid_grant');
       return recordAccess(client, grant, issued);
     });
+    if (!result) throw new OAuthError('invalid_grant');
+    return result;
   }
 
-  // Un refresh ya rotado que vuelve a aparecer revoca el grant entero (OAuth 2.1 §4.3.1) y la revocación
-  // se confirma antes de responder invalid_grant; todo lo demás pasa por los mismos bloqueos que el código.
+  // Un refresh ya rotado que vuelve a aparecer pasada la gracia revoca el grant entero (OAuth 2.1 §4.3.1) y la
+  // revocación se confirma antes de responder invalid_grant; todo lo demás pasa por los mismos bloqueos que el código.
   async refresh(input: OAuthRefreshExchange, issue: (input: OAuthTokenInput) => OAuthIssuedToken, context: OAuthRequestContext): Promise<OAuthTokenGrant> {
     const result = await this.transaction(context, async (client): Promise<OAuthTokenGrant | undefined> => {
-      const lookup = (await client.query<{ grant_id: string; human_id: string; client_id: string; consumed: boolean }>(
-        `SELECT r.grant_id,g.human_id,g.client_id,r.consumed_at IS NOT NULL AS consumed
+      const lookup = (await client.query<{ grant_id: string; human_id: string; client_id: string; consumed: boolean; recent: boolean }>(
+        `SELECT r.grant_id,g.human_id,g.client_id,r.consumed_at IS NOT NULL AS consumed,
+           COALESCE(r.consumed_at>clock_timestamp()-${REFRESH_REUSE_GRACE},false) AS recent
          FROM cauce_oauth_refresh_tokens r JOIN cauce_oauth_grants g ON g.id=r.grant_id
          WHERE r.token_hash=$1 AND g.issuer=$2 AND g.resource=$3`, [input.tokenHash, this.issuer, this.resource],
       )).rows[0];
       if (!lookup || input.resource !== this.resource || lookup.client_id !== input.clientId) throw new OAuthError('invalid_grant');
-      if (lookup.consumed) { await revokeGrant(client, lookup.grant_id); return undefined; }
+      if (lookup.consumed) {
+        if (lookup.recent) throw new OAuthError('invalid_grant');
+        await revokeGrant(client, lookup.grant_id); return undefined;
+      }
       const grant = await lockOAuthGrant(client, lookup.grant_id, this.issuer, this.resource, lookup.human_id, this.verifyCredentialStamp);
-      const token = (await client.query<{ consumed: boolean; live: boolean }>(
-        `SELECT consumed_at IS NOT NULL AS consumed,expires_at>clock_timestamp() AS live
+      const token = (await client.query<{ consumed: boolean; recent: boolean; live: boolean }>(
+        `SELECT consumed_at IS NOT NULL AS consumed,COALESCE(consumed_at>clock_timestamp()-${REFRESH_REUSE_GRACE},false) AS recent,
+           expires_at>clock_timestamp() AS live
          FROM cauce_oauth_refresh_tokens WHERE token_hash=$1 AND grant_id=$2 FOR UPDATE`, [input.tokenHash, grant.id],
       )).rows[0];
-      if (token?.consumed) { await revokeGrant(client, grant.id); return undefined; }
+      // Quien esperaba este FOR UPDATE tras el COMMIT del ganador es el refresh concurrente: dentro de la gracia.
+      if (token?.consumed) {
+        if (token.recent) throw new OAuthError('invalid_grant');
+        await revokeGrant(client, grant.id); return undefined;
+      }
       if (!token?.live) throw new OAuthError('invalid_grant');
       if (input.scopes !== undefined && (input.scopes.length !== grant.scopes.length
           || input.scopes.some((scope) => !grant.scopes.includes(scope)))) throw new OAuthError('invalid_scope');
@@ -258,8 +289,9 @@ export class PostgresOAuthStore implements OAuthStore {
     await this.transaction({ ...context, deadlineMs: Math.min(context.deadlineMs, session.expiresAt * 1000) }, async (client) => {
       await lockSession(client, session, this.verifyCredentialStamp);
       await client.query(
-        `UPDATE cauce_oauth_grants SET revoked_at=COALESCE(revoked_at,clock_timestamp())
-         WHERE id=$1 AND human_id=$2 AND issuer=$3 AND resource=$4`,
+        `INSERT INTO cauce_oauth_grant_revocations (grant_id)
+         SELECT id FROM cauce_oauth_grants WHERE id=$1 AND human_id=$2 AND issuer=$3 AND resource=$4
+         ON CONFLICT (grant_id) DO NOTHING`,
         [grantId, session.userId, this.issuer, this.resource],
       );
     });
@@ -302,13 +334,15 @@ export class PostgresOAuthStore implements OAuthStore {
   async grants(session: OAuthPasswordSession, context: OAuthRequestContext) {
     return this.transaction({ ...context, deadlineMs: Math.min(context.deadlineMs, session.expiresAt * 1000) }, async (client) => {
       await lockSession(client, session, this.verifyCredentialStamp);
-      const result = await client.query<{ id: string; client_id: string; scopes: OAuthScope[]; expires_at: Date; revoked_at: Date | null }>(
-        `SELECT id,client_id,scopes,expires_at,revoked_at FROM cauce_oauth_grants
-         WHERE human_id=$1 AND issuer=$2 AND resource=$3 ORDER BY created_at DESC,id DESC LIMIT 100`,
+      const result = await client.query<{ id: string; client_id: string; scopes: OAuthScope[]; expires_at: Date; revoked: boolean }>(
+        `SELECT g.id,g.client_id,g.scopes,g.expires_at,
+           EXISTS (SELECT 1 FROM cauce_oauth_grant_revocations v WHERE v.grant_id=g.id) AS revoked
+         FROM cauce_oauth_grants g
+         WHERE g.human_id=$1 AND g.issuer=$2 AND g.resource=$3 ORDER BY g.created_at DESC,g.id DESC LIMIT 100`,
         [session.userId, this.issuer, this.resource],
       );
       return result.rows.map((row) => ({ id: row.id, clientId: row.client_id, scopes: row.scopes,
-        expiresAt: row.expires_at.toISOString(), revoked: row.revoked_at !== null }));
+        expiresAt: row.expires_at.toISOString(), revoked: row.revoked }));
     });
   }
 }

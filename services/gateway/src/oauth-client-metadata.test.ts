@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { OAuthMetadataFetch } from './oauth-client-fetch.js';
-import { OAUTH_CLIENT_HOST_PENDING_CAP, OAuthClients } from './oauth-client-metadata.js';
+import { clientDomain, OAUTH_CLIENT_GLOBAL_PENDING_CAP, OAUTH_CLIENT_HOST_PENDING_CAP, OAuthClients } from './oauth-client-metadata.js';
 
 const id = 'https://client.example/metadata.json';
 const doc = { client_id: id, client_name: 'Fixture client', redirect_uris: ['https://client.example/callback'],
@@ -64,6 +64,29 @@ describe('CIMD client identity', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(otherHostSettled).toBe(false);
+    expect(warm).toHaveLength(OAUTH_CLIENT_HOST_PENDING_CAP);
+  });
+  it.each([['s0.evil.example', 'evil.example'], ['a.b.evil.example.', 'evil.example'], ['evil.example', 'evil.example'],
+    ['x.evil.co.uk', 'evil.co.uk'], ['s1.evil.com.co', 'evil.com.co'], ['s2.ev.com', 'ev.com'], ['203.0.113.7', '203.0.113.7'],
+    ['[2001:db8::1]', '[2001:db8::1]'], ['localhost', 'localhost']])('groups %s under the approximate registrable domain %s', (host, domain) => {
+    expect(clientDomain(host)).toBe(domain);
+  });
+  it('caps wildcard subdomains of one domain together so they cannot fill the global quota', async () => {
+    const hung: OAuthMetadataFetch = () => new Promise(() => { /* never settles: keeps the slot occupied */ });
+    const clients = new OAuthClients({ fetch: hung });
+    const warm = Array.from({ length: OAUTH_CLIENT_HOST_PENDING_CAP },
+      (_, index) => clients.resolve(`https://s${String(index)}.evil.example/p.json`));
+    let rejected = 0;
+    for (let index = 0; index < OAUTH_CLIENT_GLOBAL_PENDING_CAP; index += 1) {
+      clients.resolve(`https://t${String(index)}.evil.example/p${String(index)}.json`).catch(() => { rejected += 1; });
+    }
+    await new Promise(resolve => { setTimeout(resolve, 0); });
+    expect(rejected).toBe(OAUTH_CLIENT_GLOBAL_PENDING_CAP);
+    let otherSettled = false;
+    clients.resolve('https://claude.ai/oauth/client.json').then(() => { otherSettled = true; }, () => { otherSettled = true; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(otherSettled).toBe(false);
     expect(warm).toHaveLength(OAUTH_CLIENT_HOST_PENDING_CAP);
   });
 });

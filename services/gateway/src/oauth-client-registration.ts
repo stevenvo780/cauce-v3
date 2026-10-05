@@ -64,7 +64,11 @@ export function registrationDocument(client: OAuthRegisteredClient) {
     token_endpoint_auth_method: 'none' };
 }
 
-/** Per-address token bucket; bounded so an address flood cannot grow it without limit. */
+/**
+ * Token bucket per key; bounded so a key flood cannot grow it without limit. The gateway keys it globally
+ * (60 registrations, one more every 2 s): behind nginx/Caddy request.ip is the proxy, so per-address limiting
+ * belongs at the edge and the durable cap in the store bounds what gets through.
+ */
 export class OAuthRegistrationLimiter {
   private readonly buckets = new Map<string, { tokens: number; at: number }>();
   private readonly capacity: number;
@@ -72,8 +76,8 @@ export class OAuthRegistrationLimiter {
   private readonly now: () => number;
 
   constructor(options: { capacity?: number; refillMs?: number; now?: () => number } = {}) {
-    this.capacity = options.capacity ?? 10;
-    this.refillMs = options.refillMs ?? 30_000;
+    this.capacity = options.capacity ?? 60;
+    this.refillMs = options.refillMs ?? 2_000;
     this.now = options.now ?? Date.now;
     if (!Number.isSafeInteger(this.capacity) || this.capacity < 1 || !Number.isSafeInteger(this.refillMs) || this.refillMs < 1) {
       throw new Error('OAuth registration limit is invalid');

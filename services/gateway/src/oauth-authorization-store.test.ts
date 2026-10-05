@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type { DatabasePool } from '@cauce/store';
 import { describe, expect, it, vi } from 'vitest';
-import { PostgresOAuthStore } from './oauth-authorization-store.js';
+import { OAUTH_GRANT_TTL_SECONDS, PostgresOAuthStore } from './oauth-authorization-store.js';
 import { secretHash, type OAuthAuthorizationRequest, type OAuthIssuedToken, type OAuthTokenInput } from './oauth-authorization-types.js';
 
 const issuer = 'https://cauce.example';
@@ -22,7 +22,8 @@ function issue(input: OAuthTokenInput): OAuthIssuedToken {
     audience: request.resource, grantId: input.grantId, tokenId, expiresAt: Math.floor(Date.now() / 1000) + 300, scopes: input.scopes } };
 }
 
-function fixture(consumeCount = 1, challenge = request.challenge, sessionActive = true, hook?: (sql: string) => Promise<void>, refreshConsumed = false) {
+function fixture(consumeCount = 1, challenge = request.challenge, sessionActive = true, hook?: (sql: string) => Promise<void>,
+  refreshConsumed: boolean | 'recent' = false, codeConsumed = false, grantTtlSeconds?: number) {
   const query = vi.fn(async (sql: string, _values?: readonly unknown[]) => {
     await hook?.(sql);
     let rows: Record<string, unknown>[] = [];
@@ -33,22 +34,24 @@ function fixture(consumeCount = 1, challenge = request.challenge, sessionActive 
     else if (sql.includes('FROM console_users')) rows = [{ id: userId, active: true, role: 'operator', tenant_id: 'Steven', alias: 'kant', display_name: 'Fixture', password_hash: 'fixture-hash', password_changed_at_us: '10000000000', password_changed_at: new Date(0) }];
     else if (sql.includes('FROM human_external_identities')) rows = [{ id: bindingId, human_id: userId, revision: '2', enabled: true, revoked_at: null }];
     else if (sql.includes('FROM human_tenant_memberships')) rows = [{ tenant_id: 'Steven', actor_alias: 'kant', role: 'operator', permissions: ['read', 'route'], enabled: true, revision: '3', revoked_at: null }];
-    else if (sql.includes('SELECT c.grant_id')) rows = [{ grant_id: grantId, human_id: userId }];
-    else if (sql.includes('FROM cauce_oauth_refresh_tokens r')) rows = [{ grant_id: grantId, human_id: userId, client_id: request.clientId, consumed: refreshConsumed }];
+    else if (sql.includes('SELECT c.grant_id')) rows = [{ grant_id: grantId, human_id: userId, consumed: codeConsumed }];
+    else if (sql.includes('FROM cauce_oauth_refresh_tokens r')) rows = [{ grant_id: grantId, human_id: userId, client_id: request.clientId,
+      consumed: refreshConsumed !== false, recent: refreshConsumed === 'recent' }];
     else if (sql.includes('FROM cauce_oauth_refresh_tokens WHERE')) rows = [{ consumed: false, live: true }];
     else if (sql.includes('SELECT credential_stamp')) rows = [{ credential_stamp: stamp }];
     else if (sql.includes('AS valid')) rows = [{ valid: true }];
     else if (sql.includes('FROM cauce_oauth_grants g')) rows = [{ id: grantId, human_id: userId, client_id: request.clientId,
       redirect_uri: request.redirectUri, scopes: ['cauce.read'], expires_at: new Date(session.expiresAt * 1000), binding_id: bindingId,
       binding_revision: '2', membership_revision: '3', tenant_id: 'Steven', actor_alias: 'kant', credential_stamp: stamp }];
-    else if (sql.includes('SELECT challenge FROM cauce_oauth_codes')) rows = [{ challenge }];
+    else if (sql.includes('SELECT challenge,consumed_at')) rows = [{ challenge, consumed: false }];
     return { rows, rowCount: /UPDATE cauce_oauth_(codes|requests|refresh_tokens)/u.test(sql) ? consumeCount
       : sql.includes('INSERT INTO cauce_oauth_refresh_tokens') ? 1 : rows.length };
   });
   const release = vi.fn();
   const client = Object.assign(new EventEmitter(), { query, release });
   const pool = { query, connect: vi.fn(async () => client) } as unknown as DatabasePool;
-  return { query, release, client, store: new PostgresOAuthStore(pool, issuer, value => sessionActive && value === stamp) };
+  return { query, release, client, store: new PostgresOAuthStore(pool, issuer, value => sessionActive && value === stamp,
+    grantTtlSeconds === undefined ? {} : { grantTtlSeconds }) };
 }
 
 describe('OAuth SQL contracts with an injected database client', () => {
@@ -141,10 +144,38 @@ describe('OAuth SQL contracts with an injected database client', () => {
     await expect(fake.store.consent(request.idHash, request.browserHash, session, ['cauce.read'], context())).rejects.toThrow('access_denied');
     await expect(fake.store.revoke(grantId, session, context())).rejects.toThrow('access_denied');
   });
-  it('scopes revocation to the current human, issuer and resource', async () => {
+  it('scopes revocation to the current human, issuer and resource with an insert that never waits on grant row locks', async () => {
     const fake = fixture();
     await fake.store.revoke(grantId, session, context());
-    expect(fake.query.mock.calls.find(([sql]) => sql.includes('UPDATE cauce_oauth_grants'))?.[1]).toEqual([grantId, userId, issuer, request.resource]);
+    const revocation = fake.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO cauce_oauth_grant_revocations'));
+    expect(revocation?.[1]).toEqual([grantId, userId, issuer, request.resource]);
+    expect(revocation?.[0]).toContain('ON CONFLICT (grant_id) DO NOTHING');
+    expect(fake.query.mock.calls.some(([sql]) => sql.includes('UPDATE cauce_oauth_grants'))).toBe(false);
+  });
+  it('fixes the grant lifetime from consent instead of inheriting the console session', async () => {
+    const fake = fixture();
+    await fake.store.consent(request.idHash, request.browserHash, { ...session, expiresAt: Math.floor(Date.now() / 1000) + 60 }, ['cauce.read'], context());
+    const insert = fake.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO cauce_oauth_grants'));
+    expect(insert?.[0]).toContain('at+make_interval(secs=>$14)');
+    expect(insert?.[0]).not.toContain('to_timestamp');
+    expect(insert?.[1]?.[13]).toBe(OAUTH_GRANT_TTL_SECONDS.default);
+    const configured = fixture(1, request.challenge, true, undefined, false, false, 3600);
+    await configured.store.consent(request.idHash, request.browserHash, session, ['cauce.read'], context());
+    expect(configured.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO cauce_oauth_grants'))?.[1]?.[13]).toBe(3600);
+    for (const grantTtlSeconds of [299, 2_592_001, 1.5]) {
+      expect(() => fixture(1, request.challenge, true, undefined, false, false, grantTtlSeconds)).toThrow('OAuth grant lifetime is invalid');
+    }
+  });
+  it('commits the grant revocation before rejecting a replayed authorization code', async () => {
+    const fake = fixture(1, request.challenge, true, undefined, false, true); const signer = vi.fn(issue);
+    await expect(fake.store.exchange(exchange, signer, context())).rejects.toThrow('invalid_grant');
+    const statements = fake.query.mock.calls.map(([sql]) => sql);
+    expect(statements.find(sql => sql.includes('SELECT c.grant_id'))).toContain('c.consumed_at IS NOT NULL OR');
+    const revocation = fake.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO cauce_oauth_grant_revocations'));
+    expect(revocation?.[1]).toEqual([grantId]);
+    expect(statements.indexOf(revocation?.[0] ?? '')).toBeLessThan(statements.indexOf('COMMIT'));
+    expect(signer).not.toHaveBeenCalled();
+    expect(statements.some(sql => sql.includes('INSERT INTO cauce_oauth_tokens'))).toBe(false);
   });
 });
 
@@ -168,8 +199,19 @@ describe('OAuth refresh rotation with an injected database client', () => {
     const fake = fixture(1, request.challenge, true, undefined, true);
     await expect(fake.store.refresh(refresh, issue, context())).rejects.toThrow('invalid_grant');
     const statements = fake.query.mock.calls.map(([sql]) => sql);
-    expect(statements.findIndex(sql => sql.includes('UPDATE cauce_oauth_grants SET revoked_at'))).toBeLessThan(statements.indexOf('COMMIT'));
+    const revocation = statements.findIndex(sql => sql.includes('INSERT INTO cauce_oauth_grant_revocations'));
+    expect(revocation).toBeGreaterThan(-1);
+    expect(revocation).toBeLessThan(statements.indexOf('COMMIT'));
     expect(statements.some(sql => sql.includes('INSERT INTO cauce_oauth_tokens'))).toBe(false);
+  });
+  it('rejects a refresh token rotated within the grace window without revoking the grant', async () => {
+    const fake = fixture(1, request.challenge, true, undefined, 'recent'); const signer = vi.fn(issue);
+    await expect(fake.store.refresh(refresh, signer, context())).rejects.toThrow('invalid_grant');
+    const statements = fake.query.mock.calls.map(([sql]) => sql);
+    expect(statements.find(sql => sql.includes('FROM cauce_oauth_refresh_tokens r'))).toContain("clock_timestamp()-interval '60 seconds'");
+    expect(statements.some(sql => sql.includes('cauce_oauth_grant_revocations'))).toBe(false);
+    expect(statements).not.toContain('COMMIT');
+    expect(signer).not.toHaveBeenCalled();
   });
   it.each([{ clientId: 'https://other.example/doc' }, { resource: `${issuer}/other` }, { scopes: ['cauce.read', 'cauce.publish'] as const }])(
     'rejects refresh with a changed binding %j and never signs', async (override) => {

@@ -30,4 +30,14 @@ describe('RFC 7591 public client registration', () => {
     expect(limiter.retryAfterSeconds).toBe(1);
     expect(() => new OAuthRegistrationLimiter({ capacity: 0 })).toThrow();
   });
+  it('defaults to a global budget of 60 registrations refilled one every 2 s', () => {
+    let now = 0;
+    const limiter = new OAuthRegistrationLimiter({ now: () => now });
+    expect(Array.from({ length: 61 }, () => limiter.take('global')).filter(Boolean)).toHaveLength(60);
+    expect(limiter.retryAfterSeconds).toBe(2);
+    now = 1999;
+    expect(limiter.take('global')).toBe(false);
+    now = 3999;
+    expect([limiter.take('global'), limiter.take('global')]).toEqual([true, false]);
+  });
 });

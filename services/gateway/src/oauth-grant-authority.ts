@@ -51,7 +51,8 @@ export async function lockOAuthGrant(
       g.binding_id, g.binding_revision::text, g.membership_revision::text, g.tenant_id, g.actor_alias, g.credential_stamp
      FROM cauce_oauth_grants g
      WHERE g.id=$1 AND g.human_id=$2 AND g.issuer=$3 AND g.resource=$4
-       AND g.revoked_at IS NULL AND g.expires_at>clock_timestamp()
+       AND NOT EXISTS (SELECT 1 FROM cauce_oauth_grant_revocations v WHERE v.grant_id=g.id)
+       AND g.expires_at>clock_timestamp()
        AND g.credential_stamp=$5
      FOR SHARE OF g`, [grantId, userId, issuer, resource, original.credential_stamp],
   )).rows[0];
