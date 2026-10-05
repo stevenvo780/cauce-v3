@@ -4,8 +4,12 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { DatabasePool } from '@cauce/store';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { AuthProvider, Principal } from '../../services/gateway/src/auth.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
+import { createConsoleCredentialStamp } from '../../services/gateway/src/console-credential-stamp.js';
+import type { ConsoleUser } from '../../services/gateway/src/console-users.js';
+import { PasswordAuthProvider, signConsoleSession } from '../../services/gateway/src/password-auth.js';
+import { MemoryConsoleUserStore } from '../../services/gateway/src/test-support/console-users.js';
 import type { TerminalConfig } from '../../services/gateway/src/terminal/config.js';
 import { registerTerminalControlPlane } from '../../services/gateway/src/terminal/plugin.js';
 import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
@@ -28,25 +32,57 @@ const MASTER = Buffer.from('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=', 'base
 const RELAY_TOKEN = 'relay-token-that-is-long-enough-0123456789';
 const RELAY_INSTANCE_ID = 'a'.repeat(64);
 
-function consolePrincipal(overrides: Partial<Principal> = {}): Principal {
-  return {
-    tenant_id: 'Steven', alias: 'kant', session_id: 'console-session', channel: 'console',
-    roles: ['operator'], permissions: ['route', 'read', 'control'], ...overrides
+const HUMAN_ID = '11111111-1111-4111-8111-111111111111';
+const PASSWORD_KEY = Buffer.alloc(32, 19);
+const PASSWORD_HASH = 'unit-test-password-hash';
+const PASSWORD_CHANGED_US = '0';
+
+function authFixture() {
+  const user: ConsoleUser = {
+    id: HUMAN_ID, email: 'operator@example.test', display_name: 'Operator', role: 'operator',
+    tenant_id: 'Steven', alias: 'kant', active: true, password_hash: PASSWORD_HASH,
+    password_changed_at: 0, password_changed_at_us: PASSWORD_CHANGED_US,
   };
+  const users = new MemoryConsoleUserStore([user]);
+  const provider = new PasswordAuthProvider({ users, signingKey: PASSWORD_KEY });
+  const issuedAt = Math.floor(Date.now() / 1_000);
+  const credentialStamp = createConsoleCredentialStamp(PASSWORD_KEY, {
+    userId: user.id, passwordHash: user.password_hash, passwordChangedAtUs: PASSWORD_CHANGED_US,
+  });
+  const token = signConsoleSession(PASSWORD_KEY, {
+    iss: 'cauce-v3-gateway', aud: 'cauce-v3-console', sub: user.id,
+    sid: `unit-session-${randomUUID()}`, csrf: randomUUID() + randomUUID(),
+    iat: issuedAt, exp: issuedAt + 3_600, credential_stamp: credentialStamp,
+  });
+  return { provider, cookie: `${provider.cookieName}=${token}` };
 }
 
-function authProvider(): AuthProvider {
-  return {
-    name: 'test-plugin', mode: 'test',
-    authenticateHttp: async () => consolePrincipal(),
-    authenticateHello: async () => consolePrincipal(),
-  };
-}
+type TrackedPool = DatabasePool & { query: ReturnType<typeof vi.fn>; connect: ReturnType<typeof vi.fn> };
 
-function emptyPool(): DatabasePool {
+function emptyPool(): TrackedPool {
+  const query = vi.fn(async (text: string) => {
+    if (text.includes('FROM console_users WHERE id=$1 FOR SHARE')) return { rows: [{
+      id: HUMAN_ID, active: true, role: 'operator', tenant_id: 'Steven', alias: 'kant',
+      password_changed_at: new Date(0), password_hash: PASSWORD_HASH,
+      password_changed_at_us: PASSWORD_CHANGED_US,
+    }], rowCount: 1 };
+    if (text.includes('FROM human_tenant_memberships')) return { rows: [{
+      tenant_id: 'Steven', actor_alias: 'kant', role: 'operator', permissions: ['control'],
+      enabled: true, revision: '1', revoked_at: null,
+    }], rowCount: 1 };
+    if (text.includes('AS database_now')) return { rows: [{ database_now: new Date() }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  });
+  const client = {
+    query,
+    release: () => undefined,
+    on: () => undefined,
+    off: () => undefined,
+  };
   return {
-    query: async () => ({ rows: [], rowCount: 0 })
-  } as unknown as DatabasePool;
+    query,
+    connect: vi.fn(async () => client),
+  } as unknown as TrackedPool;
 }
 
 function pluginConfig(grantsFile: string): TerminalConfig {
@@ -87,15 +123,21 @@ describe('registerTerminalControlPlane: rutas registradas', () => {
   let directory: string;
   let grantsFile: string;
   let app: FastifyInstance;
+  let cookie: string;
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-plugin-'));
     grantsFile = join(directory, 'grants.json');
     await writeFile(grantsFile, JSON.stringify({ version: 1, grants: [] }));
+    const auth = authFixture();
+    cookie = auth.cookie;
     app = Fastify({ logger: false });
+    app.addHook('onRequest', async (request) => {
+      request.headers.cookie ??= cookie;
+    });
     await app.register(registerTerminalControlPlane, {
       pool: emptyPool(),
-      authProvider: authProvider(),
+      authProvider: auth.provider,
       config: pluginConfig(grantsFile),
       registry: new AgentRegistry(),
       repository: {
@@ -151,15 +193,23 @@ describe('registerTerminalControlPlane: validación de body', () => {
   let directory: string;
   let grantsFile: string;
   let app: FastifyInstance;
+  let cookie: string;
+  let pool: TrackedPool;
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-plugin-validate-'));
     grantsFile = join(directory, 'grants.json');
     await writeFile(grantsFile, JSON.stringify({ version: 1, grants: [] }));
+    const auth = authFixture();
+    cookie = auth.cookie;
     app = Fastify({ logger: false });
+    app.addHook('onRequest', async (request) => {
+      request.headers.cookie ??= cookie;
+    });
+    pool = emptyPool();
     await app.register(registerTerminalControlPlane, {
-      pool: emptyPool(),
-      authProvider: authProvider(),
+      pool,
+      authProvider: auth.provider,
       config: pluginConfig(grantsFile),
       registry: new AgentRegistry(),
       repository: {
@@ -313,7 +363,7 @@ describe('registerTerminalControlPlane: validación de body', () => {
   it('POST /v3/console/terminal/sessions/:sid/control: exige acción y razón escrita a mano', async () => {
     const url = '/v3/console/terminal/sessions/11111111-1111-4111-8111-111111111111/control';
     const fence = {
-      request_id: randomUUID(), owner_generation: '1', owner_token: randomUUID(),
+      request_id: randomUUID(), owner_generation: '1', owner_token: randomUUID(), authority_proof: 'ac2.invalid',
     };
     const noAction = await app.inject({ method: 'POST', url, payload: { ...fence, action: 'grab', reason: 'una razón larga' } });
     expect(noAction.statusCode).toBe(400);
@@ -386,12 +436,12 @@ describe('registerTerminalControlPlane: validación de body', () => {
     const missing = await app.inject({ method: 'POST', url, payload: { request_id: randomUUID() } });
     expect(missing.statusCode).toBe(400);
     expect(missing.json()).toEqual({
-      error: 'invalid_request', message: 'terminal session extension has unexpected or missing fields'
+      error: 'invalid_request', message: 'invalid extension fields'
     });
     const badGeneration = await app.inject({
       method: 'POST',
       url,
-      payload: { request_id: randomUUID(), owner_generation: '0', owner_token: randomUUID() },
+      payload: { request_id: randomUUID(), owner_generation: '0', owner_token: randomUUID(), authority_proof: 'ac2.invalid' },
     });
     expect(badGeneration.statusCode).toBe(400);
     expect(badGeneration.json()).toEqual({
@@ -417,12 +467,37 @@ describe('registerTerminalControlPlane: validación de body', () => {
         expected_owner_generation: 'not-a-number',
         owner_token: randomUUID(),
         request_id: randomUUID(),
+        authority_proof: 'ac2.invalid',
       }
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({
       error: 'invalid_request', message: 'expected_owner_generation is invalid'
     });
+  });
+
+  it.each([
+    {
+      route: 'control', url: '/v3/console/terminal/sessions/11111111-1111-4111-8111-111111111111/control',
+      payload: { action: 'take', reason: 'retomar control', request_id: randomUUID(), owner_generation: '1', owner_token: randomUUID() },
+    },
+    {
+      route: 'extend', url: '/v3/console/terminal/sessions/11111111-1111-4111-8111-111111111111/extend',
+      payload: { request_id: randomUUID(), owner_generation: '1', owner_token: randomUUID() },
+    },
+    {
+      route: 'owner', url: '/v3/console/terminal/sessions/11111111-1111-4111-8111-111111111111/owner',
+      payload: { request_id: randomUUID(), expected_owner_generation: '1', owner_token: randomUUID() },
+    },
+  ])('rechaza proof ausente o inválido en $route antes de SQL', async ({ url, payload }) => {
+    const missing = await app.inject({ method: 'POST', url, payload });
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json()).toMatchObject({ error: 'invalid_request' });
+    const invalid = await app.inject({ method: 'POST', url, payload: { ...payload, authority_proof: 'ac2.invalid' } });
+    expect(invalid.statusCode).toBe(403);
+    expect(invalid.json()).toMatchObject({ error: 'forbidden' });
+    expect(pool.query.mock.calls).toHaveLength(0);
+    expect(pool.connect.mock.calls).toHaveLength(0);
   });
 
   it('DELETE /v3/console/terminal/sessions/:sid: rechaza un body con campos faltantes', async () => {
@@ -455,6 +530,51 @@ describe('registerTerminalControlPlane: validación de body', () => {
     const response = await app.inject({ method: 'GET', url: '/v3/console/terminal/sessions' });
     expect(response.statusCode).toBe(200);
     expect(response.json<{ items: unknown[] }>()).toEqual({ items: [] });
+  });
+});
+
+describe('registerTerminalControlPlane: DevOnly no es autoridad de continuidad', () => {
+  let directory: string;
+  let app: FastifyInstance;
+  let pool: TrackedPool;
+
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-plugin-devonly-'));
+    const grantsFile = join(directory, 'grants.json');
+    await writeFile(grantsFile, JSON.stringify({ version: 1, grants: [] }));
+    const query = vi.fn(async () => ({ rows: [], rowCount: 0 }));
+    const connect = vi.fn(async () => ({ query, release: () => undefined, on: () => undefined, off: () => undefined }));
+    pool = { query, connect } as unknown as TrackedPool;
+    app = Fastify({ logger: false });
+    await app.register(registerTerminalControlPlane, {
+      pool,
+      authProvider: DevOnlyAuthProvider.forTests(),
+      config: pluginConfig(grantsFile),
+      registry: new AgentRegistry(),
+      repository: {
+        assertPermission: async () => undefined,
+        authorizeAgentTarget: async () => undefined,
+      },
+      governanceRelay: { readFile: async () => ({ error: 'unavailable' as const, reason: 'stub' }) },
+      relayPeerInstanceId: () => RELAY_INSTANCE_ID,
+    });
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  it('rechaza una sesión DevOnly antes de consultar SQL', async () => {
+    const response = await app.inject({
+      method: 'GET', url: '/v3/console/terminal/sessions',
+      headers: { 'x-cauce-tenant': 'Steven', 'x-cauce-alias': 'kant' },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: 'forbidden' });
+    expect(pool.query.mock.calls).toHaveLength(0);
+    expect(pool.connect.mock.calls).toHaveLength(0);
   });
 });
 
@@ -526,7 +646,7 @@ describe('POST /v3/terminal/relay/sessions/:sid/close: fila agregada de entrada'
     app = Fastify({ logger: false });
     await app.register(registerTerminalControlPlane, {
       pool: closePool(mode),
-      authProvider: authProvider(),
+      authProvider: authFixture().provider,
       config: pluginConfig(grantsFile),
       registry,
       repository: {
