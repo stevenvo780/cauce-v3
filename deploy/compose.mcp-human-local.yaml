@@ -1,0 +1,16 @@
+services:
+  gateway:
+    environment:
+      CAUCE_MCP_PUBLIC_ORIGIN: ${CAUCE_MCP_PUBLIC_ORIGIN:?required}
+      CAUCE_MCP_OAUTH_PROVIDER: local
+      CAUCE_MCP_OAUTH_SIGNING_KEY_FILE: /run/secrets/mcp_oauth_signing_key
+      CAUCE_MCP_OAUTH_SIGNING_KID: ${CAUCE_MCP_OAUTH_SIGNING_KID:?required}
+    secrets:
+      - source: mcp_oauth_signing_key
+        target: mcp_oauth_signing_key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+secrets:
+  mcp_oauth_signing_key:
+    file: ${CAUCE_MCP_OAUTH_SIGNING_KEY_PATH:?required}
