@@ -14,6 +14,7 @@ import { prepareConsolePublishOperation, confirmConsolePublishOperation } from '
 import { createHumanPublishAuthority, createHumanReadAuthority, resolveHumanMcpAuthority,
   type HumanMcpAuthorityOptions } from './human-mcp-authority.js';
 import { publishOperation, type PublishOperationInput } from './publish-operation.js';
+import { OAuthError } from './oauth-authorization-types.js';
 
 export type HumanMcpRepository = Pick<GatewayRepository,
   'publish' | 'verifyPublishReceipt' | 'prepareConsolePublishIntent' | 'confirmConsolePublishIntent'
@@ -47,6 +48,11 @@ async function guardedOperation<T>(operation: () => Promise<T>, mutating = false
     if (error instanceof GatewayOperationError) throw error;
     if (error instanceof AuthError) throw new GatewayOperationError({ status_code: 401, error: 'unauthorized' });
     if (error instanceof AuthorizationError) throw new GatewayOperationError({ status_code: 403, error: 'forbidden' });
+    // A grant revoked or expired mid-operation is an authority failure, never a retryable outage.
+    if (error instanceof OAuthError) {
+      throw new GatewayOperationError(error.error === 'invalid_grant'
+        ? { status_code: 401, error: 'unauthorized' } : { status_code: 403, error: 'forbidden' });
+    }
     if (error instanceof PublishIntentReconciliationRequired) {
       throw new GatewayOperationError({ ...error.reconciliation, status_code: 409 });
     }
