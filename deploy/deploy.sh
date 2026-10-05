@@ -12,9 +12,16 @@ BACKUP_STATUS_FILE="${CAUCE_DEPLOY_BACKUP_STATUS_FILE:-/var/log/cauce-v3-backup/
 BACKUP_MAX_AGE_HOURS="${CAUCE_DEPLOY_BACKUP_MAX_AGE_HOURS:-24}"
 BACKUP_MONITOR="${CAUCE_DEPLOY_BACKUP_MONITOR:-$REPO/ops/scripts/host-backup-monitor.sh}"
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$REPO/deploy/compose.yaml" -f "$REPO/deploy/compose.postgres.yaml" --project-directory "$REPO/deploy")
+SNAPSHOT_READY=0
 
-die() { echo "deploy: $*" >&2; exit 1; }
+die() {
+  if [ "${MCP_HUMAN_ENABLED:-0}" = 1 ] && [ "${SNAPSHOT_READY:-0}" = 1 ]; then
+    deployment_failed "$*"
+  fi
+  echo "deploy: $*" >&2; exit 1
+}
 env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -1 | tr -d '\r'; }
+env_declarations() { grep -Ec "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*[=:]" "$ENV_FILE" || true; }
 profile_enabled() {
   local wanted="$1" profile
   local -a configured_profiles=()
@@ -30,10 +37,118 @@ confirmar() {
   if [ "${CAUCE_DEPLOY_CONFIRMADO:-}" = "si" ]; then echo "confirmado por el dueño (entorno): $1"; return 0; fi
   read -r -p "$1 (si/NO) " ok; [ "$ok" = "si" ]
 }
+prepare_terminal() {
+  TERMINAL_ENABLED="$(env_value CAUCE_TERMINAL_ENABLED)"
+  TERMINAL_ENABLED="${TERMINAL_ENABLED:-0}"
+  case "$TERMINAL_ENABLED" in
+    0)
+      profile_enabled terminal && die "el perfil terminal esta activo pero CAUCE_TERMINAL_ENABLED=0"
+      INSTANCE_ID="$(env_value CAUCE_TERMINAL_RELAY_INSTANCE_ID)"
+      [[ $INSTANCE_ID =~ ^[0-9a-f]{64}$ ]] || INSTANCE_ID="$(printf '0%.0s' {1..64})"
+      export CAUCE_GATEWAY_RELAY_CLIENT_CERT_PATH=/dev/null
+      export CAUCE_GATEWAY_RELAY_CLIENT_KEY_PATH=/dev/null
+      ;;
+    1)
+      profile_enabled terminal || die "CAUCE_TERMINAL_ENABLED=1 exige el perfil terminal"
+      INSTANCE_ID="$(env_value CAUCE_TERMINAL_RELAY_INSTANCE_ID)"
+      [[ $INSTANCE_ID =~ ^[0-9a-f]{64}$ ]] \
+        || die "CAUCE_TERMINAL_RELAY_INSTANCE_ID ausente o invalido en $ENV_FILE (dossier B2)"
+      CLIENT_CERT="$(env_value CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH)"
+      [ -r "$CLIENT_CERT" ] || die "no puedo leer CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH ($CLIENT_CERT)"
+      [ "$(openssl x509 -in "$CLIENT_CERT" -outform DER | sha256sum | awk '{print $1}')" = "$INSTANCE_ID" ] \
+        || die "CAUCE_TERMINAL_RELAY_INSTANCE_ID no es el sha256 del DER de $CLIENT_CERT"
+      ;;
+    *) die "CAUCE_TERMINAL_ENABLED debe ser 0 o 1" ;;
+  esac
+  export CAUCE_TERMINAL_RELAY_INSTANCE_ID="$INSTANCE_ID"
+}
+deployment_failed() {
+  local exit_status="${2:-1}"
+  echo "deploy: $1" >&2
+  if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
+    local -a recovery=(env -u CAUCE_MCP_PUBLIC_ORIGIN -u CAUCE_MCP_OAUTH_ISSUER -u CAUCE_MCP_OAUTH_JWKS_URI
+      "CAUCE_TERMINAL_RELAY_INSTANCE_ID=$INSTANCE_ID" "CAUCE_BLOB_API_ENABLED=$BLOB_API_ENABLED")
+    if [ "$TERMINAL_ENABLED" = 0 ]; then
+      recovery+=(CAUCE_GATEWAY_RELAY_CLIENT_CERT_PATH=/dev/null CAUCE_GATEWAY_RELAY_CLIENT_KEY_PATH=/dev/null)
+    fi
+    recovery+=("${COMPOSE[@]}")
+    echo "Rollback MCP manual: solo despues de verificar/restaurar esquema, BD y volumen segun el error; restaura el archivo completo (flag y configuracion incluidos):" >&2
+    printf 'cp -a %q %q\n' "$ENV_FILE.pre-deploy-$STAMP" "$ENV_FILE" >&2
+    printf '%q ' "${recovery[@]}" >&2; printf 'config\n' >&2
+    printf '%q ' "${recovery[@]}" >&2; printf 'up -d --wait --wait-timeout 300 --remove-orphans\n' >&2
+  fi
+  exit "$exit_status"
+}
+deployment_error() {
+  local failure_status="$?"
+  trap - ERR
+  deployment_failed "comando fallido antes del migrator; pins pueden haber cambiado; snapshot previo: $ENV_FILE.pre-deploy-$STAMP" "$failure_status"
+}
 
 [ "${CAUCE_FASE3_CON_DUENO:-}" = "si" ] || die "FASE 3 solo con el dueño presente (exporta CAUCE_FASE3_CON_DUENO=si)"
 [ "$(id -u)" = 0 ] || die "necesita root (lee $ENV_FILE y reescribe pins)"
 [ -r "$ENV_FILE" ] || die "no puedo leer $ENV_FILE"
+MCP_DECLARATIONS="$(env_declarations CAUCE_MCP_HUMAN_ENABLED)"
+[ "$MCP_DECLARATIONS" -le 1 ] || die "CAUCE_MCP_HUMAN_ENABLED esta duplicado en $ENV_FILE"
+MCP_HUMAN_ENABLED=0
+if [ "$MCP_DECLARATIONS" -eq 1 ]; then
+  MCP_HUMAN_ENABLED="$(env_value CAUCE_MCP_HUMAN_ENABLED)"
+fi
+[ "$MCP_HUMAN_ENABLED" = 0 ] || [ "$MCP_HUMAN_ENABLED" = 1 ] \
+  || die "CAUCE_MCP_HUMAN_ENABLED debe ser 0 o 1 en $ENV_FILE"
+if [ "${CAUCE_MCP_HUMAN_ENABLED+x}" = x ] \
+   && [ "$CAUCE_MCP_HUMAN_ENABLED" != "$MCP_HUMAN_ENABLED" ]; then
+  die "CAUCE_MCP_HUMAN_ENABLED del entorno contradice el archivo de la instancia"
+fi
+if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
+  MCP_NAMES=(CAUCE_MCP_HUMAN_ENABLED CAUCE_MCP_PUBLIC_ORIGIN CAUCE_MCP_OAUTH_ISSUER CAUCE_MCP_OAUTH_JWKS_URI)
+  MCP_EXPECTED=("$MCP_HUMAN_ENABLED")
+  for name in CAUCE_MCP_PUBLIC_ORIGIN CAUCE_MCP_OAUTH_ISSUER CAUCE_MCP_OAUTH_JWKS_URI; do
+    [ "$(env_declarations "$name")" -eq 1 ] \
+      || die "$name debe declararse una sola vez en $ENV_FILE"
+    value="$(env_value "$name")"
+    [[ "$value" =~ [^[:space:]] ]] || die "$name no puede estar vacio en $ENV_FILE"
+    if [ "${!name+x}" = x ] && [ "${!name}" != "$value" ]; then
+      die "$name del entorno contradice el archivo de la instancia"
+    fi
+    unset "$name"
+    MCP_EXPECTED+=("$value")
+  done
+  MCP_RENDERED="$(env -u CAUCE_MCP_HUMAN_ENABLED -u CAUCE_MCP_PUBLIC_ORIGIN \
+    -u CAUCE_MCP_OAUTH_ISSUER -u CAUCE_MCP_OAUTH_JWKS_URI \
+    docker compose --env-file "$ENV_FILE" --project-name cauce-deploy-mcp-config \
+      --project-directory "$REPO/deploy" -f - config --format json 2>/dev/null <<'YAML' | python3 -c '
+import json, sys
+try:
+    values = json.load(sys.stdin)["services"]["mcp-config"]["environment"]
+    for name in ("CAUCE_MCP_HUMAN_ENABLED", "CAUCE_MCP_PUBLIC_ORIGIN", "CAUCE_MCP_OAUTH_ISSUER", "CAUCE_MCP_OAUTH_JWKS_URI"):
+        value = values[name]
+        if not isinstance(value, str) or any(character in value for character in "\r\n\0"):
+            raise ValueError()
+        print(value)
+except (ValueError, KeyError, TypeError):
+    raise SystemExit(1)
+'
+services:
+  mcp-config:
+    image: scratch
+    environment:
+      CAUCE_MCP_HUMAN_ENABLED: ${CAUCE_MCP_HUMAN_ENABLED-0}
+      CAUCE_MCP_PUBLIC_ORIGIN: ${CAUCE_MCP_PUBLIC_ORIGIN-}
+      CAUCE_MCP_OAUTH_ISSUER: ${CAUCE_MCP_OAUTH_ISSUER-}
+      CAUCE_MCP_OAUTH_JWKS_URI: ${CAUCE_MCP_OAUTH_JWKS_URI-}
+YAML
+  )" || die "configuracion MCP ambigua o dotenv invalido en $ENV_FILE"
+  mapfile -t MCP_VALUES <<< "$MCP_RENDERED"
+  for index in 0 1 2 3; do
+    [ "${MCP_VALUES[$index]:-}" = "${MCP_EXPECTED[$index]}" ] \
+      || die "${MCP_NAMES[$index]} debe ser literal y coincidir con Compose en $ENV_FILE"
+  done
+  prepare_terminal
+  [ -r "$REPO/deploy/compose.mcp-human.yaml" ] || die "no puedo leer deploy/compose.mcp-human.yaml"
+  COMPOSE+=(-f "$REPO/deploy/compose.mcp-human.yaml")
+  "${COMPOSE[@]}" config >/dev/null || die "el compose MCP no renderiza con $ENV_FILE"
+fi
 REGISTRY="${REGISTRY%/}"
 [[ "$REGISTRY" =~ ^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$ ]] || die "CAUCE_DEPLOY_REGISTRY invalido"
 [[ "$EXPECTED_GIT_REF" =~ ^[a-zA-Z0-9][a-zA-Z0-9._/-]*$ ]] || die "CAUCE_DEPLOY_EXPECTED_GIT_REF invalido"
@@ -213,29 +328,7 @@ fi
 
 # Both images come from deploy/Dockerfile: `runtime` is NOT the last stage (console is), so the
 # target is explicit; the console stage bakes the relay instance id into its nginx route at build.
-TERMINAL_ENABLED="$(env_value CAUCE_TERMINAL_ENABLED)"
-TERMINAL_ENABLED="${TERMINAL_ENABLED:-0}"
-case "$TERMINAL_ENABLED" in
-  0)
-    profile_enabled terminal && die "el perfil terminal esta activo pero CAUCE_TERMINAL_ENABLED=0"
-    INSTANCE_ID="$(env_value CAUCE_TERMINAL_RELAY_INSTANCE_ID)"
-    [[ $INSTANCE_ID =~ ^[0-9a-f]{64}$ ]] || INSTANCE_ID="$(printf '0%.0s' {1..64})"
-    export CAUCE_GATEWAY_RELAY_CLIENT_CERT_PATH=/dev/null
-    export CAUCE_GATEWAY_RELAY_CLIENT_KEY_PATH=/dev/null
-    ;;
-  1)
-    profile_enabled terminal || die "CAUCE_TERMINAL_ENABLED=1 exige el perfil terminal"
-    INSTANCE_ID="$(env_value CAUCE_TERMINAL_RELAY_INSTANCE_ID)"
-    [[ $INSTANCE_ID =~ ^[0-9a-f]{64}$ ]] \
-      || die "CAUCE_TERMINAL_RELAY_INSTANCE_ID ausente o invalido en $ENV_FILE (dossier B2)"
-    CLIENT_CERT="$(env_value CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH)"
-    [ -r "$CLIENT_CERT" ] || die "no puedo leer CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH ($CLIENT_CERT)"
-    [ "$(openssl x509 -in "$CLIENT_CERT" -outform DER | sha256sum | awk '{print $1}')" = "$INSTANCE_ID" ] \
-      || die "CAUCE_TERMINAL_RELAY_INSTANCE_ID no es el sha256 del DER de $CLIENT_CERT"
-    ;;
-  *) die "CAUCE_TERMINAL_ENABLED debe ser 0 o 1" ;;
-esac
-export CAUCE_TERMINAL_RELAY_INSTANCE_ID="$INSTANCE_ID"
+[ "$MCP_HUMAN_ENABLED" = 1 ] || prepare_terminal
 docker build -f deploy/Dockerfile --target runtime --build-arg "CAUCE_SCHEMA_COMPATIBLE_THROUGH=$LAST_MIGRATION" --label "org.opencontainers.image.revision=$REV" -t "$RUNTIME_TAG" .
 docker build -f deploy/Dockerfile --target console --build-arg "CAUCE_TERMINAL_RELAY_INSTANCE_ID=$INSTANCE_ID" \
   --label "org.opencontainers.image.revision=$REV" -t "$CONSOLE_TAG" .
@@ -248,10 +341,14 @@ echo "runtime: $RUNTIME_DIGEST"
 echo "console: $CONSOLE_DIGEST"
 
 cp -a "$ENV_FILE" "$ENV_FILE.pre-deploy-$STAMP"
+if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
+  SNAPSHOT_READY=1
+  trap deployment_error ERR
+fi
 sed -i "s|^CAUCE_RUNTIME_IMAGE=.*|CAUCE_RUNTIME_IMAGE=$RUNTIME_DIGEST|" "$ENV_FILE"
 sed -i "s|^CAUCE_CONSOLE_IMAGE=.*|CAUCE_CONSOLE_IMAGE=$CONSOLE_DIGEST|" "$ENV_FILE"
 
-"${COMPOSE[@]}" config >/dev/null || die "el compose canonico no renderiza con $ENV_FILE"
+"${COMPOSE[@]}" config >/dev/null || deployment_failed "el compose canonico no renderiza con $ENV_FILE"
 
 confirmar "¿Migrar hasta $LAST_MIGRATION (bundle de packages/store/migrations, una transaccion) y desplegar $REV?" || die "abortado por el dueño"
 check_blob_migration_window
@@ -268,12 +365,13 @@ if docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
 else
   echo "PostgreSQL nuevo: la comprobacion de sesiones previas no aplica antes del primer migrator."
 fi
-"${COMPOSE[@]}" run --rm -T migrator || die "migracion fallida; $ENV_FILE apunta a los digests nuevos (runtime=$RUNTIME_DIGEST console=$CONSOLE_DIGEST). Comprueba el esquema antes de restaurar pins anteriores: con 043 aplicada, el gateway viejo con API de blobs=1 es incompatible. Snapshot previo: $ENV_FILE.pre-deploy-$STAMP"
-"${COMPOSE[@]}" up -d --wait --wait-timeout 300 --remove-orphans || die "up fallo; no levantes el gateway anterior con API de blobs=1 si 043 esta aplicada. Para revertir, restaura juntos BD y volumen del snapshot previo a 043, verifica esquema anterior y despues los pins de $ENV_FILE.pre-deploy-$STAMP"
+if [ "$MCP_HUMAN_ENABLED" = 1 ]; then trap - ERR; fi
+"${COMPOSE[@]}" run --rm -T migrator || deployment_failed "migracion fallida; $ENV_FILE apunta a los digests nuevos (runtime=$RUNTIME_DIGEST console=$CONSOLE_DIGEST). Comprueba el esquema antes de restaurar pins anteriores: con 043 aplicada, el gateway viejo con API de blobs=1 es incompatible. Snapshot previo: $ENV_FILE.pre-deploy-$STAMP"
+"${COMPOSE[@]}" up -d --wait --wait-timeout 300 --remove-orphans || deployment_failed "up fallo; no levantes el gateway anterior con API de blobs=1 si 043 esta aplicada. Para revertir, restaura juntos BD y volumen del snapshot previo a 043, verifica esquema anterior y despues los pins de $ENV_FILE.pre-deploy-$STAMP"
 CAUCE_ENV_FILE="$ENV_FILE" "$REPO/deploy/refresh-observability.sh" \
-  || die "no se pudieron refrescar los bind mounts de observabilidad"
+  || deployment_failed "no se pudieron refrescar los bind mounts de observabilidad"
 CAUCE_ENV_FILE="$ENV_FILE" "$REPO/deploy/smoke.sh" \
-  || die "SMOKE ROJO: la BD puede estar en $LAST_MIGRATION. No levantes gateway viejo con API de blobs=1 sobre 043; para revertir, restaura juntos BD y volumen previos a 043, verifica esquema y despues los pins de $ENV_FILE.pre-deploy-$STAMP"
+  || deployment_failed "SMOKE ROJO: la BD puede estar en $LAST_MIGRATION. No levantes gateway viejo con API de blobs=1 sobre 043; para revertir, restaura juntos BD y volumen previos a 043, verifica esquema y despues los pins de $ENV_FILE.pre-deploy-$STAMP"
 
 echo "| $STAMP | $REV | $RUNTIME_DIGEST | $CONSOLE_DIGEST | smoke OK |" >> "$HISTORY_FILE"
 echo "== deploy $REV COMPLETO. Registra el resultado en $HISTORY_FILE. =="
