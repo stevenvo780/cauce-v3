@@ -34,6 +34,7 @@ import {
   type OpenChainGate,
 } from './contracts.js';
 import { DeliveryClaimsRepository } from './claims.js';
+import { withValidatedHarnessConsumption } from './harness-consumption.js';
 import {
   appliedAckResult, deriveAckTransition, isExactRepeatedAck, validateAckRequest,
   type AckTransition, type RepeatedAckRow
@@ -42,6 +43,7 @@ import {
 type AckDeliveryRow = DeliveryRow & LateResultRow & {
   claim_live: boolean;
   execution_started: boolean;
+  recipient_harness: string | null;
 };
 
 interface TerminalAckEffects {
@@ -78,9 +80,11 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
                 d.late_result_at,d.cancelled_at,
                 (d.ack_deadline_at>now()) AS claim_live,
                 (d.execution_started_at IS NOT NULL) AS execution_started,
+                 consumer.harness_id AS recipient_harness,
                  m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,m.body,m.lane,m.priority,m.origin,
                  m.auth_session_id,m.auth_channel
          FROM deliveries d JOIN messages m ON m.id=d.message_id
+         LEFT JOIN agents consumer ON consumer.tenant_id=d.recipient_tenant AND consumer.alias=d.recipient_alias
          WHERE d.id=$1 AND d.recipient_tenant=$2 AND d.recipient_alias=$3 FOR UPDATE OF d`,
         [deliveryId, tenantId, alias]
       );
@@ -90,7 +94,9 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       const outputs = agentOutputEntries(safeAckResult);
       const notifications = agentNotifyEntries(safeAckResult);
       const runtimeAdoption = profileRuntimeAdoptionEvidence(safeAckResult);
-      const persistedResult = sanitizedAckResult(safeAckResult);
+      const persistedResult = withValidatedHarnessConsumption(
+        sanitizedAckResult(safeAckResult), row.recipient_harness, ack.status,
+      );
       const storedResult = withoutInlineArtifactBytes(persistedResult);
       const repeated = await client.query<RepeatedAckRow>(
         `SELECT delivery_id,status,instance_id,epoch,claim_token,attempt,applied

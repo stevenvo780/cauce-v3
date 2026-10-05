@@ -44,6 +44,7 @@ import { assertHumanMessageRoot, lockHumanMessageRoute, withHumanMessageTransact
 import type { HumanMessageOptions } from './messages/contracts.js';
 import type { MessageListRow } from './visibility-rows.js';
 import { MESSAGE_AUTHOR_SQL, withMessageAuthor } from './messages/author.js';
+import { withValidatedConsumptionTimeline } from './messages/harness-consumption.js';
 
 export {
   PublishIntentExpiredError,
@@ -569,7 +570,12 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
                 'timeline',(SELECT COALESCE(jsonb_agg(event ORDER BY at),'[]'::jsonb) FROM (
                   SELECT jsonb_build_object('status','published','at',m.created_at,'attempt',0) AS event,m.created_at AS at
                   UNION ALL
-                  SELECT jsonb_build_object('status',a.status,'at',a.created_at,'attempt',d.attempt,
+                  SELECT jsonb_build_object('status',a.status,'at',a.created_at,'attempt',a.attempt,
+                    'applied',a.applied,
+                    'harness_consumption',CASE WHEN a.applied AND a.status='done'
+                      AND a.attempt=d.attempt AND a.claim_token=d.claim_token
+                      AND a.instance_id=d.consumer_instance_id AND a.epoch=d.consumer_epoch
+                      THEN a.payload#>'{result,harness_consumption_v1}' ELSE NULL END,
                     'detail',CASE WHEN a.applied THEN NULL ELSE 'duplicate_or_out_of_order' END),a.created_at
                   FROM delivery_acks a WHERE a.delivery_id=d.id
                 ) timeline_events)
@@ -592,6 +598,8 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
               )))
        GROUP BY m.id ORDER BY m.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
     );
-    return { items: result.rows.map(withMessageAuthor), next_cursor: null };
+    return { items: result.rows.map((row) => withMessageAuthor({
+      ...row, deliveries: withValidatedConsumptionTimeline(row.deliveries),
+    })), next_cursor: null };
   }
 }

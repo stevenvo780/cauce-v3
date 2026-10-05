@@ -1,4 +1,5 @@
 import type { CapabilityState } from './system';
+import type { HarnessConsumptionEvidence } from '@cauce/protocol';
 
 export type DeliveryState =
   | 'pending'
@@ -17,6 +18,8 @@ export interface TimelineEvent {
   at?: string | null;
   attempt?: number | null;
   detail?: string | null;
+  applied?: boolean;
+  harness_consumption?: HarnessConsumptionEvidence | null;
 }
 
 export interface DeliveryView {
