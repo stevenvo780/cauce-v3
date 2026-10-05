@@ -31,6 +31,7 @@ export interface TerminalSessionGrant {
   readonly session_expires_at: string;
   /** Gateway-signed continuity credential. It never reaches the pty-agent or persistent browser storage. */
   readonly resume_token: string;
+  readonly authority_proof: string;
   /** Capability-like ownership fence; memory/0600 spool only, never logs. */
   readonly claim_token: string;
   /** PostgreSQL bigint as canonical decimal text. */
@@ -112,14 +113,15 @@ export interface AgentPresence {
 }
 
 export interface TerminalGatewayClient {
-  consumeTicket(sessionId: string, ticket: string, claimToken: string): Promise<ConsumeOutcome>;
+  consumeTicket(sessionId: string, ticket: string, claimToken: string, authorityProof: string): Promise<ConsumeOutcome>;
   resumeSession(
     sessionId: string,
     resumeToken: string,
     claimToken: string,
+    authorityProof: string,
     claimEpoch?: string,
   ): Promise<ResumeOutcome>;
-  authorizeSession(sessionId: string, claimToken: string, claimEpoch: string): Promise<AuthzOutcome>;
+  authorizeSession(sessionId: string, claimToken: string, claimEpoch: string, authorityProof: string): Promise<AuthzOutcome>;
   reportClose(sessionId: string, report: SessionCloseReport): Promise<void>;
   publishPresence(agents: readonly AgentPresence[]): Promise<void>;
 }
@@ -141,6 +143,19 @@ interface HttpsTerminalGatewayClientOptions {
   readonly clientCert: Buffer;
   readonly clientKey: Buffer;
   readonly identity: RelayProcessIdentity;
+}
+
+export const MAX_AUTHORITY_PROOF_BYTES = 4096;
+export const MAX_AUTHORITY_RESUME_BYTES = 8192;
+
+export function isAuthorityProof(value: unknown): value is string {
+  return typeof value === 'string' && Buffer.byteLength(value, 'utf8') <= MAX_AUTHORITY_PROOF_BYTES
+    && /^ac2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/.test(value);
+}
+
+export function isAuthorityResumeToken(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 80
+    && Buffer.byteLength(value, 'utf8') <= MAX_AUTHORITY_RESUME_BYTES && /^r2\.[A-Za-z0-9_-]+$/.test(value);
 }
 
 const CLAIM_EPOCH_PATTERN = /^[1-9][0-9]{0,18}$/;
@@ -203,7 +218,7 @@ export function parseSessionGrant(body: string): TerminalSessionGrant | undefine
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
   const source = parsed as Record<string, unknown>;
   const baseKeys = [
-    'alias', 'claim_epoch', 'claim_lease_ms', 'claim_lease_ttl_ms', 'claim_taken_over',
+    'alias', 'authority_proof', 'claim_epoch', 'claim_lease_ms', 'claim_lease_ttl_ms', 'claim_taken_over',
     'claim_token', 'cols', 'container', 'expires_at', 'mode', 'ok', 'operator_id',
     'relay_boot_id', 'relay_instance_id', 'resume_token', 'rows', 'runtime_user',
     'session_expires_at', 'tenant_id',
@@ -228,6 +243,7 @@ export function parseSessionGrant(body: string): TerminalSessionGrant | undefine
   const cols = integerField(source, 'cols');
   const rows = integerField(source, 'rows');
   const resumeToken = stringField(source, 'resume_token');
+  const authorityProof = source.authority_proof;
   const rawClaimToken = stringField(source, 'claim_token');
   const rawClaimEpoch = claimEpoch(source.claim_epoch);
   const rawClaimLeaseMs = claimLeaseMs(source.claim_lease_ms);
@@ -236,7 +252,7 @@ export function parseSessionGrant(body: string): TerminalSessionGrant | undefine
   const relayBootId = stringField(source, 'relay_boot_id');
   if (!tenantId || !alias || !operatorId || !container || !runtimeUser || !expiresAt
       || !ticketExpiresAt || !resumeToken) return undefined;
-  if (resumeToken.length < 80 || resumeToken.length > 1_024) return undefined;
+  if (!isAuthorityResumeToken(resumeToken) || !isAuthorityProof(authorityProof)) return undefined;
   if (mode !== 'shell' && mode !== 'harness' && mode !== 'harness_rw') return undefined;
   if (cols === undefined || rows === undefined) return undefined;
   if (Number.isNaN(Date.parse(expiresAt)) || Number.isNaN(Date.parse(ticketExpiresAt))) return undefined;
@@ -254,6 +270,7 @@ export function parseSessionGrant(body: string): TerminalSessionGrant | undefine
     runtime_user: runtimeUser,
     session_expires_at: expiresAt,
     resume_token: resumeToken,
+    authority_proof: authorityProof,
     claim_token: rawClaimToken,
     claim_epoch: rawClaimEpoch,
     claim_lease_ms: rawClaimLeaseMs,
@@ -286,13 +303,14 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
     this.identity = options.identity;
   }
 
-  async consumeTicket(sessionId: string, ticket: string, claimToken: string): Promise<ConsumeOutcome> {
+  async consumeTicket(sessionId: string, ticket: string, claimToken: string, authorityProof: string): Promise<ConsumeOutcome> {
+    if (!isAuthorityProof(authorityProof)) return { status: 'forbidden' };
     let result: HttpResult;
     try {
       result = await this.send(
         'POST',
         `/v3/terminal/relay/sessions/${encodeURIComponent(sessionId)}/consume`,
-        this.identified({ ticket, claim_token: claimToken }),
+        this.identified({ ticket, claim_token: claimToken, authority_proof: authorityProof }),
       );
     } catch (error) {
       logEvent('terminal_relay_consume_unreachable', { session_id: sessionId, error: errorLabel(error) });
@@ -309,20 +327,21 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
       return { status: 'unavailable' };
     }
     const grant = parseSessionGrant(result.body);
-    if (!grant || !this.ownsGrant(grant)) {
+    if (grant?.authority_proof !== authorityProof || !this.ownsGrant(grant)) {
       logEvent('terminal_relay_grant_malformed', { session_id: sessionId });
       return { status: 'unavailable' };
     }
     return { status: 'granted', grant };
   }
 
-  async authorizeSession(sessionId: string, claimToken: string, claimEpochValue: string): Promise<AuthzOutcome> {
+  async authorizeSession(sessionId: string, claimToken: string, claimEpochValue: string, authorityProof: string): Promise<AuthzOutcome> {
+    if (!isAuthorityProof(authorityProof)) return { status: 'revoked' };
     let result: HttpResult;
     try {
       result = await this.send(
         'POST',
         `/v3/terminal/relay/sessions/${encodeURIComponent(sessionId)}/authz`,
-        this.identified({ claim_token: claimToken, claim_epoch: claimEpochValue }),
+        this.identified({ claim_token: claimToken, claim_epoch: claimEpochValue, authority_proof: authorityProof }),
       );
     } catch {
       return { status: 'unreachable' };
@@ -339,11 +358,12 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
           const relayBootId = stringField(source, 'relay_boot_id');
           const expiresAt = stringField(source, 'expires_at');
           const exactKeys = [
-            'claim_epoch', 'claim_lease_ms', 'claim_lease_ttl_ms', 'expires_at', 'ok',
+            'authority_proof', 'claim_epoch', 'claim_lease_ms', 'claim_lease_ttl_ms', 'expires_at', 'ok',
             'relay_boot_id', 'relay_instance_id',
           ];
           if (Object.keys(source).sort().every((key, index) => key === exactKeys[index])
               && Object.keys(source).length === exactKeys.length
+              && source.authority_proof === authorityProof && isAuthorityProof(authorityProof)
               && source.ok === true && expiresAt !== undefined && !Number.isNaN(Date.parse(expiresAt))
               && epoch !== undefined && leaseMs !== undefined && leaseTtlMs !== undefined
               && leaseMs <= leaseTtlMs
@@ -372,14 +392,17 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
     sessionId: string,
     resumeToken: string,
     claimToken: string,
+    authorityProof: string,
     claimEpochValue?: string,
   ): Promise<ResumeOutcome> {
+    if (!isAuthorityProof(authorityProof) || !isAuthorityResumeToken(resumeToken)) return { status: 'resume_invalid' };
     let result: HttpResult;
     try {
       result = await this.send(
         'POST', `/v3/terminal/relay/sessions/${encodeURIComponent(sessionId)}/resume`,
         {
           resume_token: resumeToken,
+          authority_proof: authorityProof,
           claim_token: claimToken,
           ...(claimEpochValue === undefined ? {} : { claim_epoch: claimEpochValue }),
           relay_instance_id: this.identity.relayInstanceId,
@@ -398,7 +421,7 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
     if (result.status === 403) return { status: 'forbidden' };
     if (result.status !== 200) return { status: 'unavailable' };
     const grant = parseSessionGrant(result.body);
-    if (!grant || !this.ownsGrant(grant)) return { status: 'unavailable' };
+    if (grant?.authority_proof !== authorityProof || !this.ownsGrant(grant)) return { status: 'unavailable' };
     return { status: 'granted', grant };
   }
 
