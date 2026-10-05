@@ -78,12 +78,16 @@ test("a rejected exact renewal aborts the active harness before another attempt 
 
 test("an unconfirmed renewal watchdog aborts the harness before the claim deadline", async () => {
   const name = "renewal-unconfirmed";
+  const clock = new ManualTimerClock();
   const connection = new FakeConnection(1);
   const runner = new BlockingRunner();
+  const renewalMs = escala(100);
+  const watchdogMs = escala(1_000);
   const context = await makeClient(name, new ScriptedConnector(connection), {
     runner,
-    claimRenewalMs: escala(100),
-    claimWatchdogMs: escala(1_000),
+    clock,
+    claimRenewalMs: renewalMs,
+    claimWatchdogMs: watchdogMs,
   });
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
@@ -94,7 +98,36 @@ test("an unconfirmed renewal watchdog aborts the harness before the claim deadli
     connection.push(input);
 
     await waitUntil(() => runner.started, "the blocking harness to start");
-    await waitUntil(() => startedAcks(connection).length >= 2, "a second started ACK, i.e. one claim renewal");
+    assert.equal(
+      clock.scheduledAt(watchdogMs),
+      1,
+      "the unconfirmed watchdog must be armed when the harness starts",
+    );
+
+    clock.fire(renewalMs);
+    await waitUntil(() => context.store.pendingEvents().some(
+      (event) => event.claim_renewal === true && event.execution_started !== true,
+    ), "a durable unconfirmed claim renewal");
+    const renewal = context.store.pendingEvents().find(
+      (event) => event.claim_renewal === true && event.execution_started !== true,
+    );
+    assert.ok(renewal, "Expected a durable claim-renewal event");
+    await waitUntil(() => connection.sent.some(
+      (frame) => frame.type === "ack"
+        && frame.event_id === renewal.event_id,
+    ), "the exact renewal ACK to be sent");
+    const renewalAck = connection.sent.find(
+      (frame) => frame.type === "ack"
+        && frame.event_id === renewal.event_id,
+    );
+    assert.ok(renewalAck, "Expected the exact renewal ACK");
+    if (renewalAck.type !== "ack") throw new Error("Expected the exact renewal ACK");
+    assert.notEqual(renewalAck.execution_started, true, "the renewal is not an execution-intent confirmation");
+    assert.ok(context.store.pendingEvents().some(
+      (event) => event.event_id === renewal.event_id && event.claim_renewal === true,
+    ), "the renewal remains pending until the gateway confirms it");
+
+    assert.equal(clock.fire(watchdogMs), 1, "the armed watchdog fires once without a renewal receipt");
     await waitUntil(() => runner.aborted, escala(3_000), "the harness aborted by the unconfirmed watchdog");
 
     assert.ok(
