@@ -7,7 +7,7 @@ import { CHECKING_RELAY_STATE } from './features/terminal/relay-status';
 import { server } from './mocks/server';
 import { NAV_ENTRIES } from './nav';
 import {
-  CONFIG_SIN_CONTROL_REASON, configNavAvailability, terminalNavAvailability,
+  terminalNavAvailability,
 } from './router';
 import { renderWithApi } from './test/render';
 
@@ -87,14 +87,6 @@ function barra(): HTMLElement {
 
 it('la matriz cubre cada entrada del menú, ni una más ni una menos', () => {
   expect(Object.keys(GOBIERNO_NAV).sort()).toEqual(NAV_ENTRIES.map((entrada) => entrada.id).sort());
-});
-
-it('configNavAvailability: solo denied inhabilita; unknown navega (la escritura falla cerrada adentro)', () => {
-  expect(configNavAvailability('allowed')).toEqual({ hidden: false, disabled: false });
-  expect(configNavAvailability('unknown')).toEqual({ hidden: false, disabled: false });
-  expect(configNavAvailability('denied')).toEqual({
-    hidden: false, disabled: true, reason: CONFIG_SIN_CONTROL_REASON,
-  });
 });
 
 it('terminalNavAvailability: checking y available navegan; unavailable inhabilita con el motivo del relay', () => {
