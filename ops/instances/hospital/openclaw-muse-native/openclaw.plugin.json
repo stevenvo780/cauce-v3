@@ -1,0 +1,12 @@
+{
+  "id": "hospital-muse-native",
+  "name": "Hospital Muse native CLI backend",
+  "description": "Registers the Hospital Muse CLI backend with native context compaction.",
+  "activation": { "onStartup": true },
+  "cliBackends": ["muse-cli"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
