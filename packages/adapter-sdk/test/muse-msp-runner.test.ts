@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { createUuidV7Mint } from "@muse-code/sdk";
 import { DurableStore } from "../src/sdk/durable-store.js";
@@ -337,6 +337,9 @@ interface MuseFixtureState {
   readonly turns: readonly { commandId: string; reasoningEffort: string; model: string }[];
   readonly reads: number;
   readonly pages: number;
+  readonly capabilityRequests: readonly (readonly string[])[];
+  readonly openings: readonly { method: string; sessionId: string; endpoint: string | null;
+    command?: string; binary?: string; toolNames: readonly string[] }[];
 }
 
 async function stateOf(config: MuseRunnerConfig): Promise<MuseFixtureState> {
@@ -625,4 +628,58 @@ test("Muse MSP refuses environment overrides of configured alias identity", asyn
     (error: unknown) => error instanceof ProcessExecutionError && error.code === "RESERVED_ENVIRONMENT_OVERRIDE");
   }
   await assert.rejects(readFile(capture), { code: "ENOENT" });
+});
+
+function scopedExecute(config: MuseRunnerConfig, sessionId: string, endpoint: string, resumeSession = false) {
+  return new MuseMspRunner(config).run({ harness: "muse", command: fakeMuse, args: [], stdin: "Synthetic scoped task",
+    sessionId, emissionSocketPath: endpoint, resumeSession, timeoutMs: 5_000, signal: new AbortController().signal });
+}
+
+test("Muse scoped calls register required Cauce MCP for start, resume and conflict recovery", async () => {
+  const config = await scenarioFixture("session-mcp-registry", {});
+  const a = mintId(), b = mintId();
+  const endpoints = ['A1', 'B', 'A2', 'A3'].map(label => resolve(config.workspace, `${label}.sock`));
+  for (const [index, sessionId] of [a, b, a, a].entries()) {
+    const endpoint = endpoints[index]; assert.ok(endpoint);
+    const output = await scopedExecute(config, sessionId, endpoint, index === 2);
+    assert.equal(parseMuseMspOutput(output.stdout).nativeSessionId, sessionId);
+  }
+  const state = await stateOf(config);
+  assert.equal(state.turns.length, 4);
+  assert.deepEqual(state.capabilityRequests, [['sessionMcp'], ['sessionMcp'], ['sessionMcp'], ['sessionMcp']]);
+  assert.deepEqual(state.openings.map(row => row.method), ['session/start', 'session/start', 'session/resume', 'session/start', 'session/resume']);
+  assert.deepEqual(state.openings.map(row => row.endpoint), [...endpoints, endpoints[3]]);
+  for (const row of state.openings) {
+    assert.equal(row.command, process.execPath);
+    assert.equal(row.binary, fileURLToPath(new URL('../src/bin/cauce-mcp.js', import.meta.url)));
+    assert.ok(row.toolNames.includes('cauce_reply'));
+    assert.ok(row.toolNames.includes('cauce_status'));
+  }
+});
+
+for (const [name, scenario, code] of [
+  ['grant-absent', { missingSessionMcp: true }, 'MUSE_MCP_CAPABILITY_REQUIRED'],
+  ['registry-failure', { mcpRegistryFailure: true }, 'MUSE_PREFLIGHT_FAILED'],
+  ['binary-missing', { mcpMissingBinary: true }, 'MUSE_PREFLIGHT_FAILED'],
+] as const) {
+  test(`Muse scoped ${name} refuses a turn`, async () => {
+    const config = await scenarioFixture(`mcp-${name}`, scenario);
+    await assert.rejects(scopedExecute(config, mintId(), resolve(config.workspace, 'owned.sock')),
+      (error: unknown) => error instanceof ProcessExecutionError && error.code === code && !error.retryable);
+    const state = await stateOf(config);
+    assert.equal(state.turns.length, 0);
+    assert.equal(state.openings.length, 0);
+  });
+}
+
+test("Muse scoped resume registry failure cannot reuse the earlier endpoint", async () => {
+  const config = await scenarioFixture('mcp-resume-failure', {});
+  const id = mintId();
+  await scopedExecute(config, id, resolve(config.workspace, 'A.sock'));
+  await writeFile(resolve(config.workspace, 'fake-muse-scenario.json'), JSON.stringify({ mcpRegistryFailure: true }));
+  await assert.rejects(scopedExecute(config, id, resolve(config.workspace, 'B.sock'), true),
+    (error: unknown) => error instanceof ProcessExecutionError && error.code === 'MUSE_PREFLIGHT_FAILED');
+  const state = await stateOf(config);
+  assert.equal(state.turns.length, 1);
+  assert.deepEqual(state.openings.map(row => row.endpoint), [resolve(config.workspace, 'A.sock')]);
 });
