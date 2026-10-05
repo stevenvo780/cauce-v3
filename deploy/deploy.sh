@@ -122,7 +122,16 @@ if [ "$MCP_HUMAN_ENABLED" = 1 ] && [ "$MCP_PROVIDER" = local ]; then
     [ "${!name+x}" != x ] \
       || die "$name del entorno no se admite con CAUCE_MCP_OAUTH_PROVIDER=local"
   done
-  [ "${CAUCE_AUTH_PROVIDER:-}" = password ] \
+  AUTH_PROVIDER_DECLARATIONS="$(env_declarations CAUCE_AUTH_PROVIDER)"
+  [ "$AUTH_PROVIDER_DECLARATIONS" -le 1 ] || die "CAUCE_AUTH_PROVIDER esta duplicado en $ENV_FILE"
+  AUTH_PROVIDER=""
+  [ "$AUTH_PROVIDER_DECLARATIONS" -eq 0 ] || AUTH_PROVIDER="$(env_value CAUCE_AUTH_PROVIDER)"
+  if [ "${CAUCE_AUTH_PROVIDER+x}" = x ]; then
+    [ -z "$AUTH_PROVIDER" ] || [ "$CAUCE_AUTH_PROVIDER" = "$AUTH_PROVIDER" ] \
+      || die "CAUCE_AUTH_PROVIDER del entorno contradice el archivo de la instancia"
+    AUTH_PROVIDER="$CAUCE_AUTH_PROVIDER"
+  fi
+  [ "$AUTH_PROVIDER" = password ] \
     || die "CAUCE_MCP_OAUTH_PROVIDER=local exige CAUCE_AUTH_PROVIDER=password"
   MCP_SIGNING_KEY_PATH="${CAUCE_MCP_OAUTH_SIGNING_KEY_PATH:-}"
   [ -n "$MCP_SIGNING_KEY_PATH" ] \

@@ -558,6 +558,21 @@ describe('deploy human MCP local overlay selection', () => {
     expect(result.stderr).toContain('CAUCE_MCP_OAUTH_PROVIDER=local exige CAUCE_AUTH_PROVIDER=password');
   });
 
+  it('reads CAUCE_AUTH_PROVIDER=password from the instance file, not only the shell', () => {
+    const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + localConfiguration + 'CAUCE_AUTH_PROVIDER=password\n', {
+      environment: { CAUCE_MCP_OAUTH_SIGNING_KEY_PATH: localAmbient.CAUCE_MCP_OAUTH_SIGNING_KEY_PATH },
+    });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it('rejects a shell CAUCE_AUTH_PROVIDER contradicting the one declared in the instance file', () => {
+    const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + localConfiguration + 'CAUCE_AUTH_PROVIDER=password\n', {
+      provider: 'local', environment: { CAUCE_AUTH_PROVIDER: 'oidc' },
+    });
+    expectUnchanged(result);
+    expect(result.stderr).toContain('CAUCE_AUTH_PROVIDER del entorno contradice');
+  });
+
   it('rejects local mode without CAUCE_MCP_OAUTH_SIGNING_KEY_PATH exported before changes', () => {
     const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + localConfiguration, {
       provider: 'local', environment: { CAUCE_MCP_OAUTH_SIGNING_KEY_PATH: '' },
