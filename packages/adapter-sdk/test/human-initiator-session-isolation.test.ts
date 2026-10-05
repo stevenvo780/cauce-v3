@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sessionFromDelivery, prepareDeliveryInvocation } from "../src/sdk/engine/delivery-context.js";
+import { sessionFromDelivery, prepareDeliveryInvocation, humanHarnessSelector } from "../src/sdk/engine/delivery-context.js";
 import type { Delivery } from "../src/sdk/types.js";
 import { HUMAN_A, HUMAN_B, humanDelivery, isolatedEngine, waitForRequests, IsolatedCommandRunner } from "./human-initiator-session-isolation.fixtures.js";
 
@@ -235,4 +235,84 @@ test("concurrent socket emission rejects ambiguity and never deposits in another
   assert.equal(turnA.output, undefined);
   assert.equal(turnB.output, undefined);
   context.headless.release(); await Promise.all(work);
+});
+
+function consoleDelivery(subject = "a"): Delivery {
+  const { human_initiator, ...legacy } = humanDelivery();
+  void human_initiator;
+  return { ...legacy, console_human_subject: `human:${subject.repeat(64)}`,
+    authenticated_context: { channel: "console", session_id: `console:${subject}` } };
+}
+
+test("authenticated console humans without initiators bypass shared TTY and resume their own native sessions", async (t) => {
+  const context = await isolatedEngine(t);
+  const { AdapterEngine } = await import("../src/sdk/engine.js");
+  const previous = process.env.CAUCE_SHARED_SESSION;
+  process.env.CAUCE_SHARED_SESSION = "1";
+  t.after(() => {
+    if (previous === undefined) delete process.env.CAUCE_SHARED_SESSION;
+    else process.env.CAUCE_SHARED_SESSION = previous;
+  });
+  const engine = new AdapterEngine({ store: context.store, emission: context.emission,
+    harness: context.adapters.harness, ownTenantId: "Steven",
+    harnessForDelivery: humanHarnessSelector(context.adapters.harness, context.adapters.humanHarness),
+    executionIntentMode: "local-test-only", publish: async (event) => { context.events.push(event); } });
+  t.after(() => { engine.stop(); });
+  await engine.activateEpoch(1);
+  for (const subject of ["a", "b", "a"]) await engine.handleDelivery(consoleDelivery(subject));
+  assert.equal(context.manual.requests.length, 0);
+  assert.equal(context.headless.requests.length, 3);
+  const [a, b, again] = context.headless.requests;
+  assert.ok(a && b && again);
+  assert.notEqual(a.args.at(-1), b.args.at(-1));
+  assert.equal(a.args.at(-1), again.args.at(-1));
+  assert.ok(again.args.includes("--resume"));
+  assert.equal(context.events.filter((event) => event.phase === "done").length, 3);
+});
+
+test("console isolation requires a supported dedicated harness and a selector before reservation", async (t) => {
+  const context = await isolatedEngine(t);
+  const input = consoleDelivery();
+  for (const selector of [undefined, humanHarnessSelector(context.adapters.harness, undefined)]) {
+    const invocation = prepareDeliveryInvocation(input, context.adapters.harness, selector, "Steven");
+    assert.ok(invocation.selectionError);
+    assert.equal(invocation.reservation, undefined);
+  }
+  assert.equal(context.headless.requests.length + context.manual.requests.length, 0);
+});
+
+test("body tags cannot evade authenticated console isolation or grant it to manual MCP", async (t) => {
+  const context = await isolatedEngine(t);
+  const selector = humanHarnessSelector(context.adapters.harness, context.adapters.humanHarness);
+  const authenticated = consoleDelivery();
+  for (const type of ["agent-output", "agent.fanin"]) {
+    const spoofed = { ...authenticated, body: { ...authenticated.body, type } };
+    const selected = prepareDeliveryInvocation(spoofed, context.adapters.harness, selector, "Steven");
+    try {
+      assert.equal(selected.harness, context.adapters.humanHarness);
+      assert.equal(selected.session.sessionKey, sessionFromDelivery(authenticated, "Steven").sessionKey);
+      assert.equal(selected.session.sessionLane, "human");
+      assert.ok(selected.reservation);
+    } finally { selected.reservation?.release(); }
+  }
+  const { human_initiator, ...manual } = humanDelivery();
+  const forged = { ...manual, body: { ...manual.body, human_initiator,
+    authenticated_context: authenticated.authenticated_context, console_human_subject: authenticated.console_human_subject } };
+  const legacy = prepareDeliveryInvocation(forged, context.adapters.harness, selector, "Steven");
+  try { assert.equal(legacy.harness, context.adapters.harness); }
+  finally { legacy.reservation?.release(); }
+});
+
+test("a custom selector cannot send console or durable human turns into a shared harness", async (t) => {
+  const context = await isolatedEngine(t);
+  assert.equal(context.adapters.harness.supportsEmissionEndpoint, false);
+  for (const input of [consoleDelivery(), humanDelivery()]) {
+    const invocation = prepareDeliveryInvocation(input, context.adapters.harness,
+      () => context.adapters.harness, "Steven");
+    try {
+      assert.ok(invocation.selectionError);
+      assert.equal(invocation.reservation, undefined);
+    } finally { invocation.reservation?.release(); }
+  }
+  assert.equal(context.manual.requests.length, 0);
 });

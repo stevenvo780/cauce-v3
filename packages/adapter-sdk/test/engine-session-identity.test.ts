@@ -27,7 +27,7 @@ test("two authenticated conversations never share a session, whatever the untrus
  * part of it: two different tenants on the same surface do not touch each other.
  */
 test("originless publishes are isolated per authenticated tenant", async () => {
-  const context = await setup("engine-console-tenant");
+  const context = await setup("engine-console-tenant", new ControlledRunner(), { isolateConsole: true });
   const steven = originless(delivery("console-tenant-a"), "console-steven");
   const pablo: Delivery = {
     ...originless(delivery("console-tenant-b"), "console-pablo"),
@@ -39,7 +39,7 @@ test("originless publishes are isolated per authenticated tenant", async () => {
 });
 
 test("console keeps one session per audited human across re-login", async () => {
-  const context = await setup("engine-console-relogin");
+  const context = await setup("engine-console-relogin", new ControlledRunner(), { isolateConsole: true });
   const subject = `human:${'a'.repeat(64)}`;
   await context.engine.handleDelivery({ ...originless(delivery("console-login-a"), "sid-primer-login"), console_human_subject: subject });
   await context.engine.handleDelivery({ ...originless(delivery("console-login-b"), "sid-segundo-login"), console_human_subject: subject });
@@ -47,7 +47,7 @@ test("console keeps one session per audited human across re-login", async () => 
 });
 
 test("console separates audited humans sharing an alias and ignores body identity", async () => {
-  const context = await setup("engine-console-distinct-humans");
+  const context = await setup("engine-console-distinct-humans", new ControlledRunner(), { isolateConsole: true });
   for (const subject of ['a', 'b']) {
     await context.engine.handleDelivery({
       ...originless(delivery(`human-${subject}`), 'same-sid'),
@@ -59,7 +59,7 @@ test("console separates audited humans sharing an alias and ignores body identit
 });
 
 test("console without audited identity isolates publications even with a declared origin", async () => {
-  const context = await setup("engine-console-unverified");
+  const context = await setup("engine-console-unverified", new ControlledRunner(), { isolateConsole: true });
   for (const id of ['fallback-a', 'fallback-b']) {
     await context.engine.handleDelivery({ ...delivery(id), authenticated_context: { session_id: 'same-sid', channel: 'console' } });
   }

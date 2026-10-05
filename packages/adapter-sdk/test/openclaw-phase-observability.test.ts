@@ -6,6 +6,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { OpenClawApiRunner } from '../src/sdk/openclaw-api-runner.js';
 import { AdapterEngine } from '../src/sdk/engine.js';
+import { humanHarnessSelector } from '../src/sdk/engine/delivery-context.js';
 import { DurableStore } from '../src/sdk/durable-store.js';
 import { HarnessAdapter } from '../src/harnesses/shared/adapter.js';
 import { openClawDefinition } from '../src/harnesses/openclaw.js';
@@ -174,7 +175,10 @@ test('concurrent Engine closures correlate stages and keep started ACK before ru
   const events: DeliveryEvent[] = [];
   const harness = new HarnessAdapter({ definition: openClawDefinition, runner: new SpawnCommandRunner(), store,
     resolveCredentialEnv: async () => ({ CAUCE_OPENCLAW_DIST_DIR: modules }), sessionNamespace: 'phase-test' });
+  const humanHarness = new HarnessAdapter({ definition: openClawDefinition, runner: new SpawnCommandRunner(), store,
+    resolveCredentialEnv: async () => ({ CAUCE_OPENCLAW_DIST_DIR: modules }), sessionNamespace: 'phase-test' });
   const engine = new AdapterEngine({ harness, store, ownTenantId: 'Steven', executionIntentMode: 'local-test-only',
+    harnessForDelivery: humanHarnessSelector(harness, humanHarness),
     publish: async (event) => { events.push(event); }, logger: (entry) => { observations.push(entry); } });
   await engine.activateEpoch(1);
   const a = { ...delivery('phase-a'), console_human_subject: `human:${'a'.repeat(64)}` };

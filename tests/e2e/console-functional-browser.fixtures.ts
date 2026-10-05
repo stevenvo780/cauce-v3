@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { Agent as HttpsAgent } from 'node:https';
 import { createServer as createTcpServer } from 'node:net';
 import { buildGateway } from '../../services/gateway/src/app.js';
@@ -404,7 +404,7 @@ async function seed(database: TestDatabase, directory: string) {
     await database.pool.query('INSERT INTO tenants(id) VALUES ($1) ON CONFLICT DO NOTHING', [item.tenant]);
     await database.pool.query('INSERT INTO rooms(id,tenant_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [item.room, item.tenant]);
     await database.pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory)
-      VALUES ($1,$2,'fake',$2,true,$3,'stev',$4,$5) ON CONFLICT (tenant_id,alias) DO NOTHING`, [item.tenant, item.target, `cauce-e2e-${item.target}`, directory, join(directory, item.target)]);
+      VALUES ($1,$2,'codex',$2,true,$3,'stev',$4,$5) ON CONFLICT (tenant_id,alias) DO NOTHING`, [item.tenant, item.target, `cauce-e2e-${item.target}`, directory, join(directory, item.target)]);
     await database.pool.query("INSERT INTO agent_profiles(tenant_id,alias,role_summary) VALUES ($1,$2,$3) ON CONFLICT (tenant_id,alias) DO NOTHING", [item.tenant, item.target, item.marker]);
     await database.pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory)
       VALUES ($1,$2,'fake',$2,true,$3,'stev',$4,$5) ON CONFLICT (tenant_id,alias) DO NOTHING`, [item.tenant, item.operator, `cauce-e2e-${item.operator}`, directory, join(directory, item.operator)]);
@@ -540,12 +540,16 @@ export async function startBoundedAdapter(fixture: Fixture, tenant: FunctionalTe
   const tls = fixture.pki.adapterCerts[index];
   if (!tls) throw new Error(`no TLS material for ${tenant.tenant}`);
   const capture = join(fixture.directory, `${tenant.tenant}-captured-prompt.txt`);
-  const harness = join(fixture.directory, `${tenant.tenant}-bounded-harness.mjs`);
-  await writeFile(harness, `#!/usr/bin/env node\nimport { appendFile } from 'node:fs/promises';\nconst chunks=[]; for await (const item of process.stdin) chunks.push(Buffer.from(item));\nconst prompt=Buffer.concat(chunks).toString('utf8');\nawait appendFile(${JSON.stringify(capture)}, prompt+'\\n---TURN---\\n', {mode:0o600});\nconst humanMarker=/UI-HUMAN-[A-Z0-9-]+/u.exec(prompt)?.[0];\nconst reply=${JSON.stringify(`respuesta sintética ${tenant.tenant}`)}+(humanMarker ? ' '+humanMarker : '');\nprocess.stdout.write(JSON.stringify({reply,messages:[],status:'done',retryable:false,artifacts:[]})+'\\n');\n`);
+  const harness = join(fixture.directory, `${tenant.tenant}-codex-shim.mjs`);
+  const home = join(fixture.directory, `${tenant.tenant}-adapter-home`);
+  const codexHome = join(fixture.directory, `${tenant.tenant}-codex-home`);
+  await Promise.all([mkdir(home, { mode: 0o700 }), mkdir(codexHome, { mode: 0o700 })]);
+  await writeFile(harness, `#!/usr/bin/env node\nimport { randomUUID } from 'node:crypto';\nimport { appendFile } from 'node:fs/promises';\nconst args=process.argv.slice(2);\nconst resumeIndex=args.indexOf('resume');\nconst resumedId=resumeIndex<0?null:args[resumeIndex+2]||null;\nif(resumeIndex>=0&&!resumedId){process.stderr.write('FIXTURE_CODEX_RESUME_ID_MISSING\\n');process.exit(86);}\nconst chunks=[];for await(const item of process.stdin){chunks.push(Buffer.from(item));if(Buffer.concat(chunks).length>1048576){process.stderr.write('FIXTURE_CODEX_PROMPT_LIMIT\\n');process.exit(86);}}\nconst prompt=Buffer.concat(chunks).toString('utf8');\nconst contextMatch=/--- BEGIN TRUSTED DELIVERY CONTEXT ---\\n([\\s\\S]*?)\\n--- END TRUSTED DELIVERY CONTEXT ---/u.exec(prompt);\nlet context;try{context=JSON.parse(contextMatch?.[1]??'null');}catch{context=null;}\nif(!context||typeof context!=='object'||Array.isArray(context)){process.stderr.write('FIXTURE_CODEX_CONTEXT_MISSING\\n');process.exit(86);}\nawait appendFile(${JSON.stringify(capture)},prompt+'\\n---TURN---\\n',{mode:0o600});\nconst humanMarker=/UI-HUMAN-[A-Z0-9-]+/u.exec(prompt)?.[0];\nconst reply=${JSON.stringify(`respuesta sintética ${tenant.tenant}`)}+(humanMarker?' '+humanMarker:'');\nconst threadId=resumedId??randomUUID();\nconst result=JSON.stringify({reply,messages:[],notify:[],status:'done',retryable:false,artifacts:[]});\nprocess.stdout.write(JSON.stringify({type:'thread.started',thread_id:threadId})+'\\n');\nprocess.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:result}})+'\\n');\n`);
   await chmod(harness, 0o700);
-  const child = spawn(process.execPath, ['packages/adapter-sdk/dist/src/bin/fake.js'], {
+  const child = spawn(process.execPath, ['packages/adapter-sdk/dist/src/bin/codex.js'], {
     cwd: process.cwd(), env: {
-      PATH: process.env.PATH, NODE_ENV: 'test',
+      PATH: process.env.PATH ?? '/usr/bin:/bin', NODE_ENV: 'test', HOME: home, CODEX_HOME: codexHome,
+      XDG_CONFIG_HOME: join(home, '.config'), XDG_DATA_HOME: join(home, '.local', 'share'),
       CAUCE_TENANT: tenant.tenant, CAUCE_ROOM: tenant.room, CAUCE_ALIAS: tenant.target,
       CAUCE_INSTANCE_ID: `ui-e2e-${tenant.tenant.toLowerCase()}`, CAUCE_STATE_DIR: join(fixture.directory, `${tenant.tenant}-state`),
       CAUCE_RELAY_URL: `${fixture.gatewayUrl.replace('https:', 'wss:')}/v3/ws`, CAUCE_ENVIRONMENT: 'test',

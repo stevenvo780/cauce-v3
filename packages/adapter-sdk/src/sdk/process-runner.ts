@@ -41,10 +41,14 @@ const SAFE_ENVIRONMENT = [
 ];
 const SECRET_ENVIRONMENT = /(?:secret|token|password|passwd|api[_-]?key|auth|credential|cookie|session)/iu;
 
-function childEnvironment(additions: Readonly<Record<string, string>> | undefined, endpoint: string | undefined): NodeJS.ProcessEnv {
+export function childEnvironment(
+  additions: Readonly<Record<string, string>> | undefined,
+  endpoint: string | undefined,
+  inheritedEnvironment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const key of SAFE_ENVIRONMENT) {
-    const value = process.env[key];
+    const value = inheritedEnvironment[key];
     if (value !== undefined) environment[key] = value;
   }
   if (additions !== undefined && Object.hasOwn(additions, "CAUCE_EMISSION_SOCKET_PATH")) {
