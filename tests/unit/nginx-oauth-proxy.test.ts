@@ -16,7 +16,7 @@ const metadata = '/.well-known/oauth-authorization-server';
 const selectors = [`= ${metadata}`, '^~ /oauth/'];
 const owner = randomUUID();
 const suite = 'nginx-oauth-proxy';
-type Container = { name: string; id?: string };
+interface Container { name: string; id?: string }
 const containers: Container[] = [];
 let root: string | undefined;
 let upstream: Server | undefined;
@@ -117,8 +117,10 @@ function lostCreateFixture(foreign?: 'name' | 'owner' | 'suite') {
       state.created = true; throw lost;
     }
     if (args[0] === 'inspect') {
-      expect(args.at(-1)).toBe(resources[0]?.name);
-      return JSON.stringify({ Id: id, Name: foreign === 'name' ? '/unrelated' : `/${resources[0]?.name}`,
+      const container = resources[0];
+      if (container === undefined) throw new Error('Missing synthetic container');
+      expect(args.at(-1)).toBe(container.name);
+      return JSON.stringify({ Id: id, Name: foreign === 'name' ? '/unrelated' : `/${container.name}`,
         Config: { Labels: { 'cauce.test.owner': foreign === 'owner' ? 'unrelated' : owner,
           'cauce.test.suite': foreign === 'suite' ? 'unrelated' : suite } } });
     }
