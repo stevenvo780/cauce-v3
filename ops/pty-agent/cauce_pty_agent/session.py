@@ -30,7 +30,7 @@ from .framing import (
     verify_ticket,
 )
 from .openclaw_input import OpenClawInput
-from .tmux import resolve_openclaw_tui_command, resolve_tmux_tui_command
+from .tmux import LIVE_TMUX_HARNESSES, resolve_openclaw_tui_command, resolve_tmux_tui_command
 
 MAX_SESSIONS = 2
 # A TUI over the network is unusable if every keystroke echo becomes its own packet, so output is
@@ -464,7 +464,9 @@ class SessionMixin:
         for session_id, expiry in list(self.tombstones.items()):
             if now >= expiry:
                 del self.tombstones[session_id]
-        if self.bundle.get("openclaw_tui") is not None and now >= self.next_dynamic_capability_check:
+        dynamic_tui = self.bundle.get("openclaw_tui") is not None \
+            or self.bundle.get("harness") in LIVE_TMUX_HARNESSES
+        if dynamic_tui and now >= self.next_dynamic_capability_check:
             self.next_dynamic_capability_check = now + DYNAMIC_CAPABILITY_CHECK_INTERVAL
             if self._advertised_modes() != self.modes:
                 # Reconnecting withdraws/publishes the capability through a fresh HELLO. Keeping

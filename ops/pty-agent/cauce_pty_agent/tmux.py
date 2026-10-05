@@ -4,6 +4,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 from typing import Any
 
 from .framing import PermanentError
@@ -13,6 +14,7 @@ TMUX_SOCKET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 TMUX_IDENTITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 # The only producer of this window name is packages/adapter-sdk/src/shared-session/types.ts.
 TMUX_TUI_WINDOW = "agente"
+LIVE_TMUX_HARNESSES = frozenset({"muse", "grok"})
 MAX_SESSION_STORE_BYTES = 1 << 20
 
 
@@ -123,6 +125,20 @@ def resolve_tmux_tui_command(bundle: dict[str, Any], mode: str = "harness") -> l
         config["path"], "-L", config["socket"],
         "if-shell", "-F", "-t", target, conditions, attach, 'run-shell "exit 77"',
     ]
+
+
+def tmux_tui_available(bundle: dict[str, Any]) -> bool:
+    command = resolve_tmux_tui_command(bundle)
+    if command is None:
+        return False
+    try:
+        observed = subprocess.run(
+            [*command[:8], "display-message -p ready", "display-message -p unavailable"],
+            capture_output=True, text=True, timeout=2.0, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return observed.returncode == 0 and observed.stdout == "ready\n"
 
 
 def resolve_openclaw_tui_command(bundle: dict[str, Any]) -> list[str] | None:
