@@ -19,6 +19,18 @@ function fixture(human = true) {
   return { message, delivery, canonical };
 }
 
+it.each(['', '   ', ' '.repeat(240)])('no dibuja una burbuja vacía para un preview sin texto (%j)', (body_preview) => {
+  const { message, delivery } = fixture();
+  const { container } = render(<TerminalTranscript items={[{
+    message: { ...message, body_preview }, delivery, direction: 'input',
+  }]} onSelectItem={vi.fn()} />);
+  const entry = container.querySelector('.transcript-entry');
+  expect(entry).not.toBeNull();
+  expect(entry).toHaveTextContent('Mensaje sin contenido textual.');
+  expect(entry?.querySelector('p')).not.toBeEmptyDOMElement();
+  expect(entry?.querySelector('.transcript-truncado')).toBeNull();
+});
+
 it('separa humano autenticado y respuesta final escapada, sin filas técnicas permanentes', async () => {
   const { message, delivery, canonical } = fixture();
   const select = vi.fn();
