@@ -4,7 +4,7 @@ import type {InboxRecord} from '../src/sdk/durable-store.js';
 import {DEFAULT_QUEUE_WAIT_TIMEOUT_MS} from '../src/sdk/engine/contracts.js';
 import {startClaimRenewal} from '../src/sdk/engine/claim-renewal.js';
 import {AdapterError} from '../src/sdk/errors.js';
-import {BlockingRunner, FakeConnection, HARNESS_TIMEOUT_MS, ImmediateTimerClock, ManualTimerClock, ScriptedConnector, claimDeadline, escala, makeClient, renewableDelivery, startedAcks, waitUntil, waitUntilTimestamp} from './client-fixtures.js';
+import {BlockingRunner, FakeConnection, HARNESS_TIMEOUT_MS, ImmediateTimerClock, ManualTimerClock, ScriptedConnector, VirtualClock, claimDeadline, escala, makeClient, renewableDelivery, startedAcks, waitUntil} from './client-fixtures.js';
 test("a rejected exact renewal aborts the active harness before another attempt can run", async () => {
   const connection = new FakeConnection(1);
   const runner = new BlockingRunner();
@@ -78,12 +78,16 @@ test("a rejected exact renewal aborts the active harness before another attempt 
 
 test("an unconfirmed renewal watchdog aborts the harness before the claim deadline", async () => {
   const name = "renewal-unconfirmed";
+  const clock = new ManualTimerClock();
   const connection = new FakeConnection(1);
   const runner = new BlockingRunner();
+  const renewalMs = escala(100);
+  const watchdogMs = escala(1_000);
   const context = await makeClient(name, new ScriptedConnector(connection), {
     runner,
-    claimRenewalMs: escala(100),
-    claimWatchdogMs: escala(1_000),
+    clock,
+    claimRenewalMs: renewalMs,
+    claimWatchdogMs: watchdogMs,
   });
   const stop = new AbortController();
   const running = context.client.run(stop.signal);
@@ -94,7 +98,36 @@ test("an unconfirmed renewal watchdog aborts the harness before the claim deadli
     connection.push(input);
 
     await waitUntil(() => runner.started, "the blocking harness to start");
-    await waitUntil(() => startedAcks(connection).length >= 2, "a second started ACK, i.e. one claim renewal");
+    assert.equal(
+      clock.scheduledAt(watchdogMs),
+      1,
+      "the unconfirmed watchdog must be armed when the harness starts",
+    );
+
+    clock.fire(renewalMs);
+    await waitUntil(() => context.store.pendingEvents().some(
+      (event) => event.claim_renewal === true && event.execution_started !== true,
+    ), "a durable unconfirmed claim renewal");
+    const renewal = context.store.pendingEvents().find(
+      (event) => event.claim_renewal === true && event.execution_started !== true,
+    );
+    assert.ok(renewal, "Expected a durable claim-renewal event");
+    await waitUntil(() => connection.sent.some(
+      (frame) => frame.type === "ack"
+        && frame.event_id === renewal.event_id,
+    ), "the exact renewal ACK to be sent");
+    const renewalAck = connection.sent.find(
+      (frame) => frame.type === "ack"
+        && frame.event_id === renewal.event_id,
+    );
+    assert.ok(renewalAck, "Expected the exact renewal ACK");
+    if (renewalAck.type !== "ack") throw new Error("Expected the exact renewal ACK");
+    assert.notEqual(renewalAck.execution_started, true, "the renewal is not an execution-intent confirmation");
+    assert.ok(context.store.pendingEvents().some(
+      (event) => event.event_id === renewal.event_id && event.claim_renewal === true,
+    ), "the renewal remains pending until the gateway confirms it");
+
+    assert.equal(clock.fire(watchdogMs), 1, "the armed watchdog fires once without a renewal receipt");
     await waitUntil(() => runner.aborted, escala(3_000), "the harness aborted by the unconfirmed watchdog");
 
     assert.ok(
@@ -123,25 +156,51 @@ test("applied and duplicate renewal receipts each extend the claim watchdog", as
     await t.test(variant.receipt, async () => {
       const connection = new FakeConnection(1);
       const runner = new BlockingRunner();
+      const clock = new VirtualClock();
+      const renewalMs = 100;
+      const watchdogMs = 1_000;
       const context = await makeClient(
         variant.name,
         new ScriptedConnector(connection),
-        { runner, claimRenewalMs: escala(100), claimWatchdogMs: escala(1_000) },
+        { runner, clock, claimRenewalMs: renewalMs, claimWatchdogMs: watchdogMs },
       );
       const stop = new AbortController();
       const running = context.client.run(stop.signal);
       try {
         await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"), "the HELLO frame on the wire");
-        const input = renewableDelivery(variant.name, variant.suffix, claimDeadline());
+        const input = renewableDelivery(
+          variant.name,
+          variant.suffix,
+          clock.now().getTime() + escala(30_000),
+        );
         connection.push(input);
 
         await waitUntil(() => runner.started, "the blocking harness to start");
-        await waitUntil(() => startedAcks(connection).length >= 2, "a second started ACK, i.e. one claim renewal");
-        const originalWatchdogStartedAt = Date.now();
-        await waitUntilTimestamp(originalWatchdogStartedAt + escala(400));
-        const renewal = startedAcks(connection).at(-1);
-        assert.ok(renewal, "Expected a renewable started ACK");
+        assert.equal(clock.scheduledIn(watchdogMs), 1, "Expected one armed claim watchdog");
+        const previousDeadline = clock.now().getTime() + watchdogMs;
+        clock.advance(renewalMs);
+        await waitUntil(() => context.store.pendingEvents().some(
+          (event) => event.claim_renewal === true && event.execution_started !== true,
+        ), "a pending claim renewal on the manual clock");
+        const renewal = context.store.pendingEvents().find(
+          (event) => event.claim_renewal === true && event.execution_started !== true,
+        );
+        assert.ok(renewal, "Expected a pending claim renewal, not the execution-intent ACK");
+        await waitUntil(() => connection.sent.some(
+          (frame) => frame.type === "ack" && frame.event_id === renewal.event_id,
+        ), "the exact renewal ACK to be sent");
+        const renewalAck = connection.sent.find(
+          (frame) => frame.type === "ack" && frame.event_id === renewal.event_id,
+        );
+        assert.ok(renewalAck, "Expected the ACK for this exact renewal event");
+        if (renewalAck.type !== "ack") throw new Error("Expected the exact renewal ACK");
+        assert.equal(renewalAck.delivery_id, renewal.delivery_id);
+        assert.equal(renewalAck.attempt, renewal.attempt);
+        assert.equal(renewalAck.claim_token, renewal.claim_token);
+        assert.equal(renewalAck.status, "started");
+        assert.notEqual(renewalAck.execution_started, true);
 
+        clock.advance(400);
         connection.push({
           type: "ack_result",
           event_id: renewal.event_id,
@@ -154,14 +213,16 @@ test("applied and duplicate renewal receipts each extend the claim watchdog", as
         });
         await waitUntil(() => !context.store.pendingEvents().some(
           (event) => event.event_id === renewal.event_id,
-        ), "the renewal ACK drained by its receipt");
-
-        await waitUntilTimestamp(originalWatchdogStartedAt + escala(1_100));
+        ), "the exact renewal event drained by its receipt");
+        assert.equal(clock.scheduledIn(watchdogMs), 1, "the receipt must rearm exactly one watchdog");
+        clock.advance(600);
         assert.equal(
           runner.aborted,
           false,
-          `${variant.receipt} must keep the blocked harness alive past the original watchdog`,
+          `${variant.receipt} must keep the harness alive after the previous watchdog's deadline`,
         );
+        assert.ok(clock.now().getTime() >= previousDeadline, "the virtual clock passed the old watchdog deadline");
+        assert.equal(clock.scheduledIn(watchdogMs - 600), 1, "the renewed watchdog deadline is still ahead");
 
         runner.complete();
         await waitUntil(() => connection.sent.some(

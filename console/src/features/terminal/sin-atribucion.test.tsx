@@ -1,17 +1,3 @@
-/**
- * T041 · La sesión sin atribución no toma el teclado; T042 · la shell y la lectura siguen.
- *
- * El gateway niega con 403 `writable_requires_attribution` / `writable_requires_named_operator`
- * la toma de teclado (`POST .../control` acción `take`) cuando la sesión no acredita a una
- * persona con nombre. La consola traduce esas dos negativas al castellano operativo, no entrega
- * el teclado y no manda ni una tecla. En cambio, abrir una shell y leer (TUI de solo lectura,
- * feed, inventario) SIGUE permitido por decisión del dueño (T042 = dejar como está): la consola
- * no inventa una puerta propia sobre la shell.
- *
- * Y la caída del relay (reinicio: cierra con 1001 `relay_shutdown` por diseño) se anuncia DE
- * INMEDIATO en la consola —estado ERROR con código y motivo, sin reintento silencioso y con el
- * polling de vuelta—, no se opera a ciegas esperando al siguiente polling de 30 s.
- */
 import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';

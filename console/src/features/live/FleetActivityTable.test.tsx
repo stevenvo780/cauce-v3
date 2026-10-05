@@ -64,6 +64,11 @@ const BASE: FleetActivitySnapshot = {
   ],
 };
 
+async function abrirListaAgentes() {
+  const user = userEvent.setup();
+  await user.click(await screen.findByText(/^Agentes ·/u));
+}
+
 function mockActivityOnce(snapshot: FleetActivitySnapshot) {
   server.use(http.get('http://localhost/v3/console/activity', () => HttpResponse.json(snapshot)));
 }
@@ -71,6 +76,7 @@ function mockActivityOnce(snapshot: FleetActivitySnapshot) {
 it('renders agents from GET /v3/console/activity, sorted with the most urgent first', async () => {
   mockActivityOnce(BASE);
   renderWithApi(<LiveFleetPage />);
+  await abrirListaAgentes();
 
   const rows = await screen.findAllByRole('row');
   // The first data row (after the header) must be the stalled one, not the alphabetical one.
@@ -99,6 +105,7 @@ it('shows an error state with a working retry button when the request fails', as
 it('makes the saturated agent stand out visually with its own badge and highlight class, distinct from a healthy one', async () => {
   mockActivityOnce(BASE);
   renderWithApi(<LiveFleetPage />);
+  await abrirListaAgentes();
 
   const jarvisRow = await screen.findByRole('row', { name: /jarvis/i });
   // Saturation is a SIGNAL, not an eighth state: the state says "Trabajando" — the same word as
@@ -119,6 +126,7 @@ it('makes the saturated agent stand out visually with its own badge and highligh
 it('makes the stalled (incident) agent stand out even harder, and stacks its flags instead of hiding any of them', async () => {
   mockActivityOnce(BASE);
   renderWithApi(<LiveFleetPage />);
+  await abrirListaAgentes();
 
   const midasRow = await screen.findByRole('row', { name: /midas/i });
   /*
@@ -158,6 +166,7 @@ it('makes the stalled (incident) agent stand out even harder, and stacks its fla
 it('never renders a null seconds_since_last_ack as zero or a dash: it reads as an explicit ACK gap', async () => {
   mockActivityOnce(BASE);
   renderWithApi(<LiveFleetPage />);
+  await abrirListaAgentes();
 
   const midasRow = await screen.findByRole('row', { name: /midas/i });
   const ackCell = within(midasRow).getAllByRole('cell')[7];

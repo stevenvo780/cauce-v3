@@ -23,6 +23,8 @@ export function FleetGraphNode({ data }: NodeProps<FleetNode>) {
     );
   }
 
+  const compact = data.compact === true;
+  const rooms = typeof data.roomNames === 'string' ? data.roomNames : '';
   const view = data.view;
   const state = data.state;
   const label = state === 'unknown' ? 'Sin reportar' : LIVE_STATE_META[state].label;
@@ -40,7 +42,7 @@ export function FleetGraphNode({ data }: NodeProps<FleetNode>) {
 
   return (
     <article
-      className={`lhg-bot${data.dim ? ' is-dim' : ''}${data.selected ? ' is-active' : ''}${view ? '' : ' is-unknown'}`}
+      className={`lhg-bot${compact ? ' lhg-bot-compact' : ''}${data.dim ? ' is-dim' : ''}${data.selected ? ' is-active' : ''}${view ? '' : ' is-unknown'}`}
       data-agent-key={data.agentKey}
       data-state={state}
     >
@@ -48,7 +50,7 @@ export function FleetGraphNode({ data }: NodeProps<FleetNode>) {
       <button
         type="button"
         className="lhg-bot-button nodrag nopan"
-        aria-label={description}
+        aria-label={compact ? `${data.tenantId}/${description}; salas: ${rooms}` : description}
         onFocus={(event) => { hover(event.currentTarget); }}
         onBlur={clear}
         onMouseEnter={(event) => { hover(event.currentTarget); }}
@@ -60,6 +62,7 @@ export function FleetGraphNode({ data }: NodeProps<FleetNode>) {
         </span>
         <span className="lhg-bot-name">{data.alias}</span>
         <span className="lhg-bot-word">{label}</span>
+        {compact ? <span className="lhg-bot-rooms" title={rooms}>{rooms}</span> : null}
         {view && view.queued > 0 ? <span className="lhg-bot-queue">{view.queued > 99 ? '99+' : view.queued}</span> : null}
       </button>
       <Handle type="source" position={Position.Right} className="lhg-hidden-handle" />

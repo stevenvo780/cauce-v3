@@ -100,6 +100,7 @@ async function abrirHistorialDeKant() {
   const user = userEvent.setup();
   renderWithApi(<LiveFleetPage />);
   await screen.findByLabelText('Veredicto de la flota');
+  await user.click(await screen.findByText(/^Agentes ·/u));
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
   await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));

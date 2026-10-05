@@ -1,9 +1,9 @@
 import type { DeliveryView } from '../../api/types';
 
 export function MessageDeliveryCheck({ delivery }: { delivery: DeliveryView }) {
-  const status = delivery.status ?? [...(delivery.timeline ?? [])].reverse()
+  const events = (delivery.timeline ?? []).filter((event) => event.detail !== 'duplicate_or_out_of_order');
+  const status = delivery.status ?? [...events].reverse()
     .find((event) => event.status !== 'published')?.status;
-  const events = delivery.timeline ?? [];
   const received = ['accepted', 'started', 'done'].includes(status ?? '')
     || events.some((event) => ['accepted', 'started', 'done'].includes(event.status));
   const published = events.some((event) => event.status === 'published');
