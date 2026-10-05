@@ -36,27 +36,150 @@ set -u
 umask 077
 
 restore_container=""
+restore_container_name=""
+restore_run_id=""
 verify_data_dir=""
+verify_data_dir_owned=0
 restore_blob_volume=""
 blob_partial=""
 manifest_partial=""
-cleanup() {
-  if [ -n "$restore_container" ]; then
-    docker rm -f "$restore_container" >/dev/null 2>&1 || true
+cleanup_failed=0
+cleanup_errors=""
+
+record_cleanup_error() {
+  case ";$cleanup_errors;" in
+    *";$1;"*) return ;;
+  esac
+  cleanup_failed=1
+  if [ -n "$cleanup_errors" ]; then
+    cleanup_errors="$cleanup_errors; $1"
+  else
+    cleanup_errors=$1
+  fi
+}
+
+restore_container_is_owned() {
+  [ -n "$restore_container" ] \
+    && printf '%s\n' "$restore_container" | grep -Eq '^[a-f0-9]{64}$' \
+    && [ -n "$restore_run_id" ] \
+    && [ -n "$restore_container_name" ] \
+    && metadata=$(docker inspect -f '{{.Id}}|{{index .Config.Labels "cauce.backup.run_id"}}|{{index .Config.Labels "cauce.backup.role"}}|{{.Name}}' "$restore_container" 2>/dev/null) \
+    && [ "$metadata" = "$restore_container|$restore_run_id|restore|/$restore_container_name" ]
+}
+
+discover_restore_container() {
+  candidates=$(docker ps -aq --no-trunc \
+    --filter "label=cauce.backup.run_id=$restore_run_id" \
+    --filter 'label=cauce.backup.role=restore' 2>>"$tmperr") || return 1
+  candidate_count=$(printf '%s\n' "$candidates" | sed '/^$/d' | wc -l | tr -d ' ')
+  [ "$candidate_count" = 1 ] || return 1
+  candidate_id=$(printf '%s\n' "$candidates" | sed -n '1p')
+  printf '%s\n' "$candidate_id" | grep -Eq '^[a-f0-9]{64}$' || return 1
+  restore_container=$candidate_id
+  if restore_container_is_owned; then
+    return 0
+  fi
+  restore_container=""
+  return 1
+}
+
+create_restore_container() {
+  restore_container_name="cauce-v3-backup-verify-$restore_run_id"
+  created_id=$(docker create --name "$restore_container_name" \
+    --label "cauce.backup.run_id=$restore_run_id" \
+    --label 'cauce.backup.role=restore' "$@" \
+    -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=cauce_restore \
+    -e POSTGRES_USER=postgres "$restore_image" 2>>"$tmperr")
+  create_rc=$?
+  if [ "$create_rc" -eq 0 ] \
+     && printf '%s\n' "$created_id" | grep -Eq '^[a-f0-9]{64}$'; then
+    restore_container=$created_id
+    if restore_container_is_owned; then
+      return 0
+    fi
     restore_container=""
   fi
-  if [ -n "$verify_data_dir" ]; then
-    rm -rf "$verify_data_dir" 2>/dev/null || true
-    verify_data_dir=""
+  if discover_restore_container; then
+    log "[db] recovered verifier identity after an indeterminate create response"
+    return 0
+  fi
+  if [ "$create_rc" -eq 0 ]; then
+    record_cleanup_error "created verifier identity could not be authenticated"
+  else
+    record_cleanup_error "verifier create failed and ownership could not be resolved uniquely"
+  fi
+  return 1
+}
+
+create_verify_data_dir() {
+  verify_parent=${RESTORE_VERIFY_DIR:-$DB_BACKUP_DIR/.restore-verify}
+  mkdir -p "$verify_parent" || return 1
+  verify_candidate="$verify_parent/$restore_run_id"
+  if mkdir -m 700 "$verify_candidate" 2>/dev/null; then
+    verify_data_dir=$verify_candidate
+    verify_data_dir_owned=1
+    return 0
+  fi
+  return 1
+}
+
+cleanup() {
+  if [ -n "$restore_container" ]; then
+    if restore_container_is_owned; then
+      if docker rm -f "$restore_container" >/dev/null 2>>"$tmperr"; then
+        if remaining=$(docker ps -aq --no-trunc --filter "id=$restore_container" 2>>"$tmperr"); then
+          if [ -z "$remaining" ]; then
+            restore_container=""
+            restore_container_name=""
+          else
+            record_cleanup_error "owned verifier removal was not confirmed by ID"
+          fi
+        else
+          record_cleanup_error "owned verifier removal was not confirmed by ID"
+        fi
+      else
+        record_cleanup_error "could not remove owned verifier by ID"
+      fi
+    else
+      record_cleanup_error "verifier ownership changed before cleanup; resource was preserved"
+    fi
+  fi
+  if [ -n "$verify_data_dir" ] && [ "$verify_data_dir_owned" -eq 1 ]; then
+    if rm -rf "$verify_data_dir" 2>/dev/null; then
+      verify_data_dir=""
+      verify_data_dir_owned=0
+    else
+      record_cleanup_error "could not remove this run's restore directory"
+    fi
   fi
   if printf '%s\n' "$restore_blob_volume" | grep -Eq '^[a-f0-9]{64}$'; then
-    docker volume rm "$restore_blob_volume" >/dev/null 2>&1 || true
-    restore_blob_volume=""
+    if docker volume rm "$restore_blob_volume" >/dev/null 2>>"$tmperr"; then
+      restore_blob_volume=""
+    else
+      record_cleanup_error "could not remove isolated blob restore volume"
+    fi
   fi
-  [ -z "$blob_partial" ] || rm -f "$blob_partial" 2>/dev/null || true
-  [ -z "$manifest_partial" ] || rm -f "$manifest_partial" 2>/dev/null || true
+  if [ -n "$blob_partial" ]; then
+    if rm -f "$blob_partial" 2>/dev/null; then blob_partial=""; else record_cleanup_error "could not remove partial blob archive"; fi
+  fi
+  if [ -n "$manifest_partial" ]; then
+    if rm -f "$manifest_partial" 2>/dev/null; then manifest_partial=""; else record_cleanup_error "could not remove partial blob manifest"; fi
+  fi
+  [ "$cleanup_failed" -eq 0 ]
 }
-trap cleanup EXIT
+
+# shellcheck disable=SC2329
+cleanup_on_exit() {
+  exit_status=$?
+  trap - EXIT
+  cleanup || true
+  if [ "$cleanup_failed" -ne 0 ]; then
+    err "cleanup failed: $cleanup_errors"
+    [ "$exit_status" -ne 0 ] || exit_status=1
+  fi
+  exit "$exit_status"
+}
+trap cleanup_on_exit EXIT
 trap 'exit 130' HUP INT TERM
 
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -68,6 +191,9 @@ json_escape() {
 }
 
 run_start=$(ts)
+restore_run_id=$(uuidgen | tr 'A-F' 'a-f') || { err "cannot generate verifier identity"; exit 2; }
+printf '%s\n' "$restore_run_id" | grep -Eq '^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$' \
+  || { err "generated verifier identity is invalid"; exit 2; }
 
 STATUS_DIR=${STATUS_DIR:-/var/log/cauce-v3-backup}
 STATUS_FILE="$STATUS_DIR/status.json"
@@ -249,9 +375,7 @@ EOF
 
 log "=== starting (db retention=${DB_RETENTION_DAYS}d, ut-nexus enabled=${UT_NEXUS_ENABLED}) ==="
 
-# ---------------------------------------------------------------------------
 # 1. Cauce V3 Postgres
-# ---------------------------------------------------------------------------
 log "[db] checking container $CAUCE_DB_CONTAINER"
 if [ "$(docker inspect -f '{{.State.Running}}' "$CAUCE_DB_CONTAINER" 2>/dev/null)" = "true" ]; then
   mkdir -p "$DB_BACKUP_DIR" && chmod 700 "$DB_BACKUP_DIR"
@@ -270,26 +394,26 @@ if [ "$(docker inspect -f '{{.State.Running}}' "$CAUCE_DB_CONTAINER" 2>/dev/null
     # A catalog listing proves only that the archive header is readable. Restore the entire dump
     # into an isolated, networkless, tmpfs-backed PostgreSQL container before publishing it.
     restore_image=$(docker inspect -f '{{.Image}}' "$CAUCE_DB_CONTAINER" 2>>"$tmperr" || true)
-    restore_container="cauce-v3-backup-verify-${stamp}-$$"
     printf '%s\n' "$restore_image" | grep -Eq '^sha256:[0-9a-f]{64}$' || restore_image=""
     RESTORE_TMPFS_BYTES=2147483648
     tmp_size=$(wc -c <"$tmp" | tr -d ' ')
     if [ "${tmp_size:-0}" -ge $((RESTORE_TMPFS_BYTES / 2)) ]; then # restored cluster needs more room than its compressed dump; past half the tmpfs budget, verify on disk instead
-      verify_data_dir="${RESTORE_VERIFY_DIR:-$DB_BACKUP_DIR/.restore-verify}/$stamp-$$"
-      mkdir -p "$verify_data_dir" && chmod 700 "$verify_data_dir"
+      if ! create_verify_data_dir; then
+        restore_status=failed
+        restore_detail="could not exclusively create this run's restore directory"
+      fi
       set -- -v "$verify_data_dir:/var/lib/postgresql/data:rw"
       log "[db] dump is $tmp_size bytes (>= half of the $RESTORE_TMPFS_BYTES-byte verify tmpfs); verifying restore on disk at $verify_data_dir"
     else
       set -- --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,size=$RESTORE_TMPFS_BYTES
     fi
-    if [ -n "$restore_image" ] \
-       && docker run -d --name "$restore_container" --network none \
-            "$@" \
-            -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=cauce_restore \
-            -e POSTGRES_USER=postgres "$restore_image" >/dev/null 2>>"$tmperr"
+    if [ -n "$restore_image" ] && [ "$restore_status" != failed ] \
+       && create_restore_container --network none "$@" \
+       && docker start "$restore_container" >/dev/null 2>>"$tmperr"
     then
       attempt=0
-      until docker exec "$restore_container" pg_isready -U postgres -d cauce_restore >/dev/null 2>>"$tmperr"; do
+      until docker exec -e PGCONNECT_TIMEOUT=2 "$restore_container" psql -X -w -h 127.0.0.1 -U postgres -d cauce_restore \
+          -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>>"$tmperr"; do
         attempt=$((attempt + 1))
         if [ "$attempt" -ge 60 ]; then break; fi
         sleep 1
@@ -340,7 +464,16 @@ if [ "$(docker inspect -f '{{.State.Running}}' "$CAUCE_DB_CONTAINER" 2>/dev/null
         rm -f "$final.blobs.tar" "$final.blobs.tar.sha256" "$final.blobs.tsv"
       fi
     fi
-    cleanup
+    cleanup || true
+    if [ "$cleanup_failed" -ne 0 ]; then
+      restore_status=failed
+      if [ -n "$restore_detail" ]; then
+        restore_detail="$restore_detail; cleanup failed: $cleanup_errors"
+      else
+        restore_detail="cleanup failed: $cleanup_errors"
+      fi
+      overall_rc=1
+    fi
 
     mv "$tmp" "$final" # keep the dump even on a failed restore check: pg_restore --list already proved the archive header readable above; only the status differs below
     (cd "$DB_BACKUP_DIR" && sha256sum "$(basename "$final")" >"$(basename "$final").sha256")

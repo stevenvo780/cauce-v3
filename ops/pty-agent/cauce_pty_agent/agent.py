@@ -10,6 +10,7 @@ import ssl
 import struct
 import tempfile
 import time
+import uuid
 from typing import Any
 
 from .framing import (
@@ -35,6 +36,7 @@ from .framing import (
     TAG_WRITE_BATCH_DATA,
     TAG_WRITE_CANCEL,
     TAG_WRITE_DATA,
+    TAG_WRITE_STATUS,
     FrameDecoder,
     PermanentError,
     ProtocolError,
@@ -47,6 +49,7 @@ from .framing import (
 from .governance_paths import FEATURES, GovernancePathsMixin
 from .governance_read import GovernanceReadMixin
 from .governance_write import GovernanceWrite, GovernanceWriteBatch, GovernanceWriteMixin
+from .governance_write_journal import GovernanceWriteJournal
 from .input_barrier import InputBarrier
 from .runtime_facts import load_bundle
 from .session import (
@@ -79,6 +82,11 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
             "generation": bundle["generation"],
             "runtime_uid": bundle["runtime_uid"],
         }
+        self.writer_instance_id = str(uuid.uuid4()) if bundle.get("governance_journal_dir") else None
+        self.governance_write_journal = (
+            GovernanceWriteJournal(bundle["governance_journal_dir"], self.identity, self.writer_instance_id)
+            if self.writer_instance_id else None
+        )
         self.input_barrier = InputBarrier(bundle)
         self.modes = self._advertised_modes()
         self.sessions: dict[str, PtySession] = {}
@@ -102,6 +110,12 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
         if openclaw_ready or resolve_tmux_tui_command(self.bundle, mode="harness_rw") is not None:
             modes.append("harness_rw")
         return modes
+
+    def _features(self) -> list[str]:
+        features = list(FEATURES)
+        if self.governance_write_journal is not None:
+            features.append("write_quiescence_v1")
+        return features
 
     # -- connection lifecycle ------------------------------------------------------------------
 
@@ -233,7 +247,8 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
             # agent treats an unknown tag as a protocol violation and drops the connection (see
             # `_dispatch`), so without this declaration deploying the relay before the agent would
             # leave terminals down across the whole fleet.
-            "features": list(FEATURES),
+            "features": self._features(),
+            **({"writer_instance_id": self.writer_instance_id} if self.writer_instance_id else {}),
         }))
         while not self.stopping:
             self._pump_writes()
@@ -341,6 +356,8 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
             self._on_write_cancel(document)
         elif tag == TAG_WRITE_BATCH:
             self._on_write_batch(document)
+        elif tag == TAG_WRITE_STATUS:
+            self._on_write_status(document)
         elif tag == TAG_WRITE_BATCH_CANCEL:
             self._on_write_batch_cancel(document)
         elif tag == TAG_RESIZE:

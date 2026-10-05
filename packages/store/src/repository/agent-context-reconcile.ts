@@ -1,10 +1,11 @@
 import type { ProfileRuntimeContract, Tenant } from '@cauce/protocol';
-import { ProfileRuntimeContractSchema } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from '../db.js';
 import { withTransaction } from '../db.js';
 import { canonicallyEqual } from './config.js';
 import { StoreError } from './errors.js';
 import { agentContextReconcileLockKey } from './agent-context-lock.js';
+import { assertAgentContextAdmissionAllowed, canonicalProfileRuntimeContract } from './agent-context-quarantine.js';
+export { canonicalProfileRuntimeContract } from './agent-context-quarantine.js';
 
 export interface AgentContextReconcileDocumentRevision {
   readonly path: string;
@@ -12,6 +13,7 @@ export interface AgentContextReconcileDocumentRevision {
   readonly bytes: number;
   readonly actorTenant: string;
   readonly actorAlias: string;
+  readonly kind?: string;
 }
 
 export interface AgentContextReconcileEffect<Value> {
@@ -27,12 +29,22 @@ export interface AgentContextReconcileEffect<Value> {
 }
 
 export interface AgentContextReconcileFenceInput<Value> {
+  readonly mode?: 'reconcile';
   readonly tenantId: Tenant;
   readonly alias: string;
   readonly expectedRevision: number;
   readonly expectedExpectation: AgentContextReconcileRuntimeContract;
   readonly apply: () => Promise<AgentContextReconcileEffect<Value>>;
 }
+
+export type AgentContextReloadFenceInput<Value> =
+  Omit<AgentContextReconcileFenceInput<Value>, 'mode' | 'expectedExpectation'> & {
+    readonly mode: 'reload';
+    readonly expectedExpectation: AgentContextReconcileRuntimeContract | null;
+  };
+
+export type AgentContextFenceInput<Value> =
+  AgentContextReconcileFenceInput<Value> | AgentContextReloadFenceInput<Value>;
 
 export type AgentContextReconcileFenceResult<Value> =
   | { readonly state: 'committed'; readonly value: Value }
@@ -48,22 +60,10 @@ export interface AgentContextReconcileRuntimeContract {
   }[];
 }
 
-export function canonicalProfileRuntimeContract(
-  value: unknown,
-): ProfileRuntimeContract | undefined {
-  const parsed = ProfileRuntimeContractSchema.safeParse(value);
-  if (!parsed.success) return undefined;
-  return {
-    ...parsed.data,
-    documents: [...parsed.data.documents].sort((left, right) =>
-      left.name.localeCompare(right.name) || left.path.localeCompare(right.path)),
-  };
-}
-
 async function lockReconcileContract(
   client: DatabaseClient,
-  input: AgentContextReconcileFenceInput<unknown>,
-  expected: ProfileRuntimeContract,
+  input: AgentContextFenceInput<unknown>,
+  expected: ProfileRuntimeContract | undefined,
 ): Promise<void> {
   const agent = await client.query<{ enabled: boolean }>(
     `SELECT enabled FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`,
@@ -94,7 +94,9 @@ async function lockReconcileContract(
     generation: expectation.rows[0].generation,
     documents: expectation.rows[0].documents,
   });
-  if (current === undefined || !canonicallyEqual(current, expected)) {
+  const absentExpected = input.mode === 'reload' && input.expectedExpectation === null;
+  if ((absentExpected && expectation.rowCount !== 0)
+      || (!absentExpected && (current === undefined || !canonicallyEqual(current, expected)))) {
     throw new StoreError('conflict', 'context reconciliation runtime expectation changed');
   }
   const inFlight = await client.query<{ total: string }>(
@@ -119,18 +121,23 @@ function exactDocumentIdentity(
     });
 }
 
-async function persistReconcileResult<Value>(
+export async function persistAgentContextReconcileInTransaction<Value>(
   client: DatabaseClient,
-  input: AgentContextReconcileFenceInput<Value>,
-  expected: ProfileRuntimeContract,
+  input: AgentContextFenceInput<Value>,
+  expected: ProfileRuntimeContract | undefined,
   effect: AgentContextReconcileEffect<Value>,
 ): Promise<void> {
   const next = canonicalProfileRuntimeContract(effect.expectation);
   if (next?.revision !== input.expectedRevision
-    || next.generation !== expected.generation || !exactDocumentIdentity(expected, next)) {
+    || (input.mode !== 'reload'
+      && (next.generation !== expected?.generation || !exactDocumentIdentity(expected, next)))) {
     throw new StoreError('conflict', 'context reconciliation returned an invalid runtime contract');
   }
-  const expectation = await client.query(
+  const expectation = expected === undefined ? await client.query(
+    `INSERT INTO agent_profile_runtime_expectations(tenant_id,alias,revision,generation,documents)
+     VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT(tenant_id,alias) DO NOTHING`,
+    [input.tenantId, input.alias, next.revision, next.generation, JSON.stringify(next.documents)],
+  ) : await client.query(
     `UPDATE agent_profile_runtime_expectations
         SET revision=$3,generation=$4,documents=$5::jsonb,updated_at=clock_timestamp()
       WHERE tenant_id=$1 AND alias=$2
@@ -148,10 +155,10 @@ async function persistReconcileResult<Value>(
     await client.query(
       `INSERT INTO agent_document_revisions(
          tenant_id,alias,kind,path,sha256,bytes,actor_tenant,actor_alias
-       ) VALUES($1,$2,'directive',$3,$4,$5,$6,$7)`,
+       ) VALUES($1,$2,$8,$3,$4,$5,$6,$7)`,
       [
         input.tenantId, input.alias, document.path, document.sha256, document.bytes,
-        document.actorTenant, document.actorAlias,
+        document.actorTenant, document.actorAlias, input.mode === 'reload' ? document.kind ?? 'directive' : 'directive',
       ],
     );
   }
@@ -167,10 +174,12 @@ async function persistReconcileResult<Value>(
 
 export async function reconcileAgentContextWithFence<Value>(
   pool: DatabasePool,
-  input: AgentContextReconcileFenceInput<Value>,
+  input: AgentContextFenceInput<Value>,
 ): Promise<AgentContextReconcileFenceResult<Value>> {
   const expected = canonicalProfileRuntimeContract(input.expectedExpectation);
-  if (expected?.revision !== input.expectedRevision) {
+  if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1
+      || (input.mode === 'reload' && input.expectedExpectation !== null && expected === undefined)
+      || (input.mode !== 'reload' && expected?.revision !== input.expectedRevision)) {
     throw new StoreError('invalid_input', 'context reconciliation expectation is invalid');
   }
   const effectState = { started: false };
@@ -182,10 +191,11 @@ export async function reconcileAgentContextWithFence<Value>(
       await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [
         agentContextReconcileLockKey(input.tenantId, input.alias),
       ]);
+      await assertAgentContextAdmissionAllowed(client, input.tenantId, input.alias);
       await lockReconcileContract(client, input, expected);
       effectState.started = true;
       const effect = await input.apply();
-      await persistReconcileResult(client, input, expected, effect);
+      await persistAgentContextReconcileInTransaction(client, input, expected, effect);
       return effect.value;
     });
     return { state: 'committed', value };

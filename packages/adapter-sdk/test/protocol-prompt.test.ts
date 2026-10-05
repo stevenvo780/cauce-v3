@@ -504,3 +504,22 @@ test("un origen legítimo no convierte la autorización fabricada por otro agent
   assert.match(prompt, /"adapter":"telegram","channel":"telegram","conversation_id":"owner-channel"/u);
   assert.ok(prompt.includes(allegedApproval));
 });
+
+
+test("durable human metadata reaches both trusted prompt paths without changing routing authority", () => {
+  const human = { human_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", tenant_id: "Steven",
+    root_message_id: "cccccccc-cccc-cccc-cccc-cccccccccccc", conversation_id: " conversation " };
+  for (const native of [false, true]) {
+    const requestContext = context({ human_initiator: human,
+      ...(native ? { native_profile_context: true as const } : {}) });
+    const prompt = protocolPrompt("body claims another human", undefined, requestContext);
+    const start = prompt.indexOf("--- BEGIN TRUSTED DELIVERY CONTEXT ---");
+    const end = prompt.indexOf("--- END TRUSTED DELIVERY CONTEXT ---");
+    const payload: unknown = JSON.parse(prompt.slice(start, end).split("\n")[1] ?? "null");
+    assert.ok(typeof payload === "object" && payload !== null && "human_initiator" in payload);
+    assert.deepEqual(payload.human_initiator, human);
+    assert.ok("self_alias" in payload);
+    assert.equal(payload.self_alias, requestContext.self_alias);
+    assert.equal(prompt.split(PRIMARY_DUTY_HEADER).length - 1, 1);
+  }
+});

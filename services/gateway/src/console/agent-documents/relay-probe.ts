@@ -1,3 +1,4 @@
+import type { GovernanceWriteOperation } from '../governance-write-operation.js';
 import { createHash } from 'node:crypto';
 import { hasUnsafeTextCodePoint, isStrictUtcIso8601 } from '@cauce/protocol';
 import type {
@@ -101,6 +102,13 @@ export interface GovernanceRelayClient {
     alias: string,
     writes: readonly GovernanceBatchWrite[],
   ): Promise<RelayFileWriteBatch | GovernanceWriteError>;
+  writeFileDurable?: (tenantId: string, alias: string, path: string, content: string,
+    precondition: GovernanceWritePrecondition, operation: GovernanceWriteOperation,
+    expectedTarget: GovernanceWriteTarget) => Promise<RelayFileWrite | GovernanceWriteError>;
+  writeFilesDurable?: (tenantId: string, alias: string, writes: readonly GovernanceBatchWrite[],
+    operation: GovernanceWriteOperation) => Promise<RelayFileWriteBatch | GovernanceWriteError>;
+  writeStatus?: NonNullable<AgentFactsProbe['writeStatus']>;
+
 }
 
 /** Where measured facts come from. Injected so the probe is not tied to the store. */
@@ -115,6 +123,12 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
   constructor(facts: MeasuredFactsSource, relay: GovernanceRelayClient) {
     this.facts = facts;
     this.relay = relay;
+  }
+
+  supportsDurableWrites(): boolean {
+    return typeof this.relay.writeFileDurable === 'function'
+      && typeof this.relay.writeFilesDurable === 'function'
+      && typeof this.relay.writeStatus === 'function';
   }
 
   async factsFor(tenantId: string, alias: string): Promise<{ facts: RuntimeFacts; source: FactsSource } | undefined> {
@@ -214,6 +228,7 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
     tenantId: string,
     alias: string,
     expectedTarget?: GovernanceWriteTarget,
+    operation?: GovernanceWriteOperation,
   ): Promise<{ sha: string; bytes: number } | GovernanceWriteError> {
     const kind = documentForPathKind(facts, path);
     if (kind === undefined) {
@@ -236,7 +251,11 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
 
     let answer: RelayFileWrite | GovernanceWriteError;
     try {
-      if (expectedTarget !== undefined) {
+      if (operation !== undefined) {
+        if (this.relay.writeFileDurable === undefined || expectedTarget === undefined
+          || operation.runtimeGeneration !== facts.generation) return { error: 'unavailable', reason: 'escritor durable no disponible' };
+        answer = await this.relay.writeFileDurable(tenantId, alias, path, contenido, precondition, operation, expectedTarget);
+      } else if (expectedTarget !== undefined) {
         if (this.relay.writeFileFenced === undefined) {
           return { error: 'unavailable', reason: 'el relay no publica escritura cercada' };
         }
@@ -265,8 +284,9 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
     facts: RuntimeFacts,
     tenantId: string,
     alias: string,
+    operation?: GovernanceWriteOperation,
   ): Promise<readonly GovernanceBatchWriteAck[] | GovernanceWriteError> {
-    if (writes.length === 0 || writes.length > 7 || this.relay.writeFiles === undefined) {
+    if (writes.length === 0 || writes.length > 7 || (operation === undefined ? this.relay.writeFiles === undefined : this.relay.writeFilesDurable === undefined)) {
       return { error: 'unavailable', reason: 'el relay no publica el lote gobernado del perfil' };
     }
     const seen = new Set<string>();
@@ -286,7 +306,14 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
 
     let answer: RelayFileWriteBatch | GovernanceWriteError;
     try {
-      answer = await this.relay.writeFiles(tenantId, alias, writes);
+      if (operation !== undefined && operation.runtimeGeneration !== facts.generation) return { error: 'unknown', reason: 'generación durable distinta' };
+      if (operation === undefined) {
+        if (this.relay.writeFiles === undefined) return { error: 'unavailable', reason: 'no hay lote legacy' };
+        answer = await this.relay.writeFiles(tenantId, alias, writes);
+      } else {
+        if (this.relay.writeFilesDurable === undefined) return { error: 'unavailable', reason: 'no hay lote durable' };
+        answer = await this.relay.writeFilesDurable(tenantId, alias, writes, operation);
+      }
     } catch (error) {
       return { error: 'unknown', reason: `el lote falló: ${error instanceof Error ? error.message : 'sin detalle'}` };
     }
@@ -323,6 +350,28 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
       acknowledgements.push(file);
     }
     return acknowledgements;
+  }
+
+  async writeGovernanceDocumentDurable(
+    path: string, content: string, precondition: GovernanceWritePrecondition, facts: RuntimeFacts,
+    tenantId: string, alias: string, operation: GovernanceWriteOperation,
+  ): Promise<{ sha: string; bytes: number } | GovernanceWriteError> {
+    if (!facts.generation || !facts.containerId) return { error: 'unknown', reason: 'destino incompleto' };
+    return this.writeDocument(path, content, precondition, facts, tenantId, alias,
+      { generation: facts.generation, containerId: facts.containerId, path }, operation);
+  }
+
+  async writeGovernanceBatchDurable(
+    writes: readonly GovernanceBatchWrite[], facts: RuntimeFacts, tenantId: string, alias: string,
+    operation: GovernanceWriteOperation,
+  ): Promise<readonly GovernanceBatchWriteAck[] | GovernanceWriteError> {
+    return this.writeGovernanceBatch(writes, facts, tenantId, alias, operation);
+  }
+
+  async writeStatus(...args: Parameters<NonNullable<AgentFactsProbe['writeStatus']>>): ReturnType<NonNullable<AgentFactsProbe['writeStatus']>> {
+    if (this.relay.writeStatus === undefined) return { error: 'unavailable', reason: 'status no disponible' };
+    try { return await this.relay.writeStatus(...args); }
+    catch { return { error: 'unknown', reason: 'status durable no confirmado' }; }
   }
 
   async listMemoryDirectory(

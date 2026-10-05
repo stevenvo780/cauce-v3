@@ -1,4 +1,4 @@
-import { createHash, X509Certificate } from 'node:crypto';
+import { createHash, randomUUID, X509Certificate } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
@@ -17,6 +17,7 @@ interface PendingWrite {
   readonly bytes: number;
   readonly chunks: number;
   readonly data: Buffer[];
+  readonly request: Record<string, unknown>;
 }
 
 const sha = (content: Buffer): string => createHash('sha256').update(content).digest('hex');
@@ -36,6 +37,8 @@ export async function tlsFenceAgentFixture(options: {
   const sockets: TLSSocket[] = [];
   let writes = 0;
   let reads = 0;
+  const writerInstanceId = randomUUID();
+  const receipts = new Map<string, Record<string, unknown>>();
 
   async function reconnect(generation = 'measured-one', containerId = 'container-one'): Promise<void> {
     const socket = connect({ ...material, host: '127.0.0.1', port: (listener.address() as AddressInfo).port });
@@ -49,13 +52,23 @@ export async function tlsFenceAgentFixture(options: {
         image_id: 'isolated-image', runtime_user: 'dev', runtime_uid: 1000,
         harness: 'claude', home: '/home/dev', runtime_facts_observed: true,
         agent_version: 'isolated-fixture', modes: ['shell', 'harness'],
-        features: ['read_governance', 'write_governance_v1'],
+        writer_instance_id: writerInstanceId,
+        features: ['read_governance', 'write_governance_v1', 'write_quiescence_v1'],
       })));
       socket.on('data', (chunk: Buffer) => {
         for (const frame of decoder.push(chunk)) {
           if (frame.tag === FRAME_TAGS.HELLO_ACK) {
             const ack = decodeJsonFrame(frame.payload);
             if (ack.ok === true) resolve(); else reject(new Error('HELLO rechazado'));
+          } else if (frame.tag === FRAME_TAGS.WRITE_STATUS) {
+            const request = decodeJsonFrame(frame.payload);
+            const stored = receipts.get(String(request.operation_id));
+            socket.write(encodeJsonFrame(FRAME_TAGS.WRITE_STATUS_OK, stored ?? {
+              operation_id: request.operation_id, operation_generation: request.operation_generation,
+              request_id: request.request_id, runtime_generation: request.runtime_generation,
+              writer_instance_id: writerInstanceId, tenant_id: 'Miguel', alias: 'kant', container_id: containerId,
+              state: 'unknown', files: [],
+            }));
           } else if (frame.tag === FRAME_TAGS.READ) {
             reads += 1;
             const request = decodeJsonFrame(frame.payload);
@@ -70,7 +83,7 @@ export async function tlsFenceAgentFixture(options: {
             writes += 1;
             const request = decodeJsonFrame(frame.payload);
             pending = {
-              id: String(request.request_id), path: String(request.path), operation: String(request.operation),
+              request, id: String(request.request_id), path: String(request.path), operation: String(request.operation),
               expectedSha: String(request.expected_sha), contentSha: String(request.content_sha),
               bytes: Number(request.bytes), chunks: Number(request.chunks), data: [],
             };
@@ -88,9 +101,16 @@ export async function tlsFenceAgentFixture(options: {
               }));
             } else {
               writeFileSync(options.disk, content);
+              const receipt = {
+                operation_id: pending.request.operation_id, operation_generation: pending.request.operation_generation,
+                request_id: pending.id, runtime_generation: pending.request.runtime_generation,
+                writer_instance_id: writerInstanceId, tenant_id: 'Miguel', alias: 'kant', container_id: containerId,
+                state: 'done', files: [{ path: pending.path, sha: sha(content), bytes: content.length }],
+              };
+              receipts.set(String(pending.request.operation_id), receipt);
               socket.write(encodeJsonFrame(FRAME_TAGS.WRITE_OK, {
                 request_id: pending.id, path: pending.path, operation: pending.operation,
-                sha: sha(content), bytes: content.length,
+                sha: sha(content), bytes: content.length, receipt,
               }));
             }
             pending = undefined;
@@ -101,7 +121,7 @@ export async function tlsFenceAgentFixture(options: {
   }
 
   return {
-    leg, reconnect,
+    leg, reconnect, writerInstanceId,
     get writes() { return writes; },
     get reads() { return reads; },
     async close() {

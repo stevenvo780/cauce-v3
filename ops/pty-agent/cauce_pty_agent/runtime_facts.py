@@ -19,6 +19,7 @@ BUNDLE_KEYS = (
     "runtime_gid", "home", "shell_candidates", "harness", "relay_host", "relay_port",
     "alias_key_hex", "client_cert_pem", "client_key_pem", "ca_pem", "agent_version",
 )
+OPTIONAL_BUNDLE_KEYS = frozenset(("governance_journal_dir",))
 RUNTIME_FACT_KEYS = frozenset((
     "codex_home", "claude_config_dir", "openclaw_workspace", "muse_workspace", "cwd", "workspace_root",
     "project_root", "project_doc_max_bytes", "project_doc_fallback_filenames",
@@ -112,6 +113,18 @@ def validate_bundle(document: dict[str, Any]) -> dict[str, Any]:
     for key in ("client_cert_pem", "client_key_pem", "ca_pem"):
         if not isinstance(document.get(key), str) or "-----BEGIN" not in document[key]:
             raise PermanentError(f"bundle field is invalid: {key}")
+    if "governance_journal_dir" in document:
+        path = document["governance_journal_dir"]
+        if (not isinstance(path, str) or not os.path.isabs(path) or os.path.normpath(path) != path
+                or os.path.realpath(path) != path):
+            raise PermanentError("bundle field is invalid: governance_journal_dir")
+        try:
+            info = os.lstat(path)
+        except OSError:
+            raise PermanentError("bundle field is invalid: governance_journal_dir") from None
+        if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700):
+            raise PermanentError("bundle field is invalid: governance_journal_dir")
     return document
 
 

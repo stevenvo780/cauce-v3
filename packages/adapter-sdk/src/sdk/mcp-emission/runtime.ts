@@ -26,7 +26,15 @@ const MAX_REMEMBERED_CALLS = 256;
 export class EmissionRuntime {
   readonly socketPath: string;
   private server: Server | undefined;
+  private closing = false;
+  private readonly endpoints = new Map<EmissionTurn, {
+    readonly server: Server; readonly path: string; readonly ino: number; readonly dev: number;
+    readonly onAbort: () => void;
+  }>();
+  private readonly endpointCreations = new Map<EmissionTurn, Promise<string>>();
+  private readonly endpointClosures = new Map<EmissionTurn, Promise<void>>();
   private readonly turns = new Set<EmissionTurn>();
+  private readonly scopedTurns = new WeakSet<EmissionTurn>();
   private tail: Promise<unknown> = Promise.resolve();
   private deliveriesInFlight: (() => number) | undefined; // Unset means unknown: never publish a root blind.
   private lastPromptOrigin: (() => Promise<PromptOrigin | undefined>) | undefined; // Unset: no human TUI to speak for.
@@ -59,14 +67,22 @@ export class EmissionRuntime {
   }
 
   /** cauce_send with no turn of its own: a root only when nothing is in flight and a human typed the last prompt. */
-  private async sendWithoutTurn(args: Record<string, unknown>, scope: EmissionCallScope | undefined, busy: boolean, inFlight: number | undefined): Promise<unknown> {
+  private assertOutsideDeliveryAvailable(): void {
+    if (this.closing) throw new Error("Emission runtime is closing; nothing was sent");
+    const inFlight = this.deliveriesInFlight?.();
+    if (this.turns.size > 0 || (inFlight ?? 0) > 0) throw new Error("Hay una entrega de Cauce en curso en este adaptador; no se envió nada. Reintentá cauce_send cuando termine.");
+    if (inFlight === undefined) throw new Error("Este adaptador no tiene una terminal compartida con un humano: fuera de una entrega no se envía nada.");
+  }
+
+  private async sendWithoutTurn(args: Record<string, unknown>, scope: EmissionCallScope | undefined): Promise<unknown> {
     if ((scope?.token ?? null) !== null) throw new Error("El turno de esta llamada ya cerró; no se envió nada.");
-    if (busy) throw new Error("Hay una entrega de Cauce en curso en este adaptador; no se envió nada. Reintentá cauce_send cuando termine.");
+    this.assertOutsideDeliveryAvailable();
     if (this.outsideRefusal !== undefined) throw new Error(`${this.outsideRefusal}; no se envió nada.`);
-    if (inFlight === undefined || this.identity === undefined || this.lastPromptOrigin === undefined) {
+    if (this.identity === undefined || this.lastPromptOrigin === undefined) {
       throw new Error("Este adaptador no tiene una terminal compartida con un humano: fuera de una entrega no se envía nada.");
     }
     const origin = await this.lastPromptOrigin().catch(() => undefined);
+    this.assertOutsideDeliveryAvailable();
     if (origin === "cauce") {
       throw new Error("Lo último que entró en esta terminal fue un pedido de Cauce, no de tu humano: fuera de una entrega"
         + " sólo se envía lo que pide una persona en la TUI. No se envió nada.");
@@ -78,6 +94,7 @@ export class EmissionRuntime {
   }
 
   begin(options: Omit<EmissionTurnOptions, "persist" | "gateway" | "instanceId">): EmissionTurn {
+    if (this.closing) throw new Error("Emission runtime is closing");
     const turn = new EmissionTurn({ ...options, gateway: this.gateway, instanceId: this.instanceId,
       persist: async (state, correlationId) => {
         const { delivery } = options;
@@ -99,25 +116,103 @@ export class EmissionRuntime {
     return turn;
   }
 
-  end(turn: EmissionTurn): void { turn.close(); this.turns.delete(turn); }
+  end(turn: EmissionTurn): void {
+    turn.close(); this.turns.delete(turn);
+    this.closeEndpoint(turn);
+  }
+
+  endpointFor(turn: EmissionTurn): Promise<string> {
+    this.scopedTurns.add(turn);
+    const pending = this.endpointCreations.get(turn);
+    if (pending !== undefined) return pending;
+    const creation = this.createEndpoint(turn);
+    this.endpointCreations.set(turn, creation);
+    void creation.finally(() => { this.endpointCreations.delete(turn); }).catch(() => undefined);
+    return creation;
+  }
+
+  private ownsTurn(turn: EmissionTurn): boolean {
+    return !this.closing && this.turns.has(turn) && !turn.options.signal.aborted && turn.options.isCurrent();
+  }
+
+  private async createEndpoint(turn: EmissionTurn): Promise<string> {
+    if (!this.ownsTurn(turn)) throw new Error("Emission turn is not owned");
+    const known = this.endpoints.get(turn);
+    if (known !== undefined) return known.path;
+    const path = join(this.stateDirectory, `e-${randomUUID()}.sock`);
+    if (Buffer.byteLength(path) > 107) throw new Error("Emission endpoint exceeds Unix socket path limit");
+    const server = this.socketServer(turn);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(path, () => { server.removeListener("error", reject); resolve(); });
+      });
+      await chmod(path, 0o600);
+      const metadata = await lstat(path);
+      if (!metadata.isSocket() || metadata.uid !== process.getuid?.()) throw new Error("Emission endpoint ownership differs");
+      const onAbort = (): void => { this.closeEndpoint(turn); };
+      this.endpoints.set(turn, { server, path, ino: metadata.ino, dev: metadata.dev, onAbort });
+      turn.options.signal.addEventListener("abort", onAbort, { once: true });
+      if (!this.ownsTurn(turn)) {
+        await this.releaseEndpoint(turn);
+        throw new Error("Emission turn closed before endpoint activation");
+      }
+      return path;
+    } catch (error) {
+      server.closeAllConnections();
+      if (server.listening) await new Promise<void>((resolve) => { server.close(() => { resolve(); }); });
+      throw error;
+    }
+  }
+
+  private closeEndpoint(turn: EmissionTurn): void {
+    const endpoint = this.endpoints.get(turn);
+    if (endpoint === undefined) return;
+    this.endpoints.delete(turn);
+    turn.options.signal.removeEventListener("abort", endpoint.onAbort);
+    const closing = (async () => {
+      endpoint.server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => endpoint.server.close((error) => {
+        if (error) reject(error); else resolve();
+      }));
+      try {
+        const metadata = await lstat(endpoint.path);
+        if (metadata.ino !== endpoint.ino || metadata.dev !== endpoint.dev || !metadata.isSocket()
+            || metadata.uid !== process.getuid?.()) throw new Error("Emission endpoint replaced before cleanup");
+        await unlink(endpoint.path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    })();
+    this.endpointClosures.set(turn, closing);
+    void closing.catch(() => undefined);
+  }
+
+  async releaseEndpoint(turn: EmissionTurn): Promise<void> {
+    this.closeEndpoint(turn);
+    await this.endpointClosures.get(turn);
+    this.endpointClosures.delete(turn);
+  }
 
   private currentTurn(): EmissionTurn | undefined {
-    const [turn] = this.turns;
-    return this.turns.size === 1 && turn?.available ? turn : undefined;
+    const legacy = [...this.turns].filter((turn) => !this.scopedTurns.has(turn));
+    const [turn] = legacy;
+    return legacy.length === 1 && turn?.available ? turn : undefined;
   }
 
   call(name: string, args: unknown, scope?: EmissionCallScope): Promise<EmissionToolResult> {
     // Capture the scope before queueing: an old request must never mutate a later turn.
     const turn = scope === undefined ? this.currentTurn() : scope.turn;
-    const inFlight = this.deliveriesInFlight?.();
-    const busy = this.turns.size > 0 || (inFlight ?? 0) > 0;
     const operation = this.tail.then(async (): Promise<EmissionToolResult> => {
       try {
+        if (scope?.turn !== undefined && (!scope.turn.available || scope.token !== scope.turn.token)) {
+          throw new Error("The MCP call does not own an active turn; nothing was deposited");
+        }
         const parsed = toolArguments(name, args);
         let value: unknown;
         if (name === "cauce_queue") value = await this.gateway("GET", "/v3/agent/queue");
         else if (name === "cauce_result") value = await readResult(this.gateway, parsed);
-        else if (name === "cauce_send" && turn === undefined) value = await this.sendWithoutTurn(parsed, scope, busy, inFlight);
+        else if (name === "cauce_send" && turn === undefined) value = await this.sendWithoutTurn(parsed, scope);
         else {
           if (turn === undefined) throw new Error("No unique active turn; wait for a Cauce delivery");
           if (scope !== undefined && scope.token !== turn.token) throw new Error("The MCP call belongs to a different turn; nothing was deposited");
@@ -133,6 +228,7 @@ export class EmissionRuntime {
   }
 
   async listen(): Promise<void> {
+    if (this.closing) throw new Error("Emission runtime is closing");
     if (this.server !== undefined) return;
     await prepareStateDirectory(this.stateDirectory);
     try {
@@ -147,8 +243,18 @@ export class EmissionRuntime {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
+    const server = this.socketServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(this.socketPath, () => { server.removeListener("error", reject); resolve(); });
+    });
+    this.server = server;
+    await chmod(this.socketPath, 0o600);
+  }
+
+  private socketServer(boundTurn?: EmissionTurn): Server {
     const server = createServer((incoming, response) => {
-      const turn = this.currentTurn();
+      const turn = boundTurn ?? this.currentTurn();
       void (async () => {
         if (incoming.method === "GET" && incoming.url === "/scope") {
           response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ turn_token: turn?.token ?? null }));
@@ -179,24 +285,23 @@ export class EmissionRuntime {
       })().catch(() => { if (!response.headersSent) response.writeHead(400); response.end(); });
     });
     server.requestTimeout = 30_000;
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(this.socketPath, () => { server.removeListener("error", reject); resolve(); });
-    });
-    this.server = server;
-    await chmod(this.socketPath, 0o600);
+    return server;
   }
 
   async close(): Promise<void> {
-    for (const turn of this.turns) turn.close();
-    this.turns.clear();
+    this.closing = true;
     const server = this.server;
     this.server = undefined;
-    if (server === undefined) return;
-    server.closeAllConnections();
-    await new Promise<void>((resolve, reject) => server.close((error) => {
+    server?.closeAllConnections();
+    const globalClosed = server === undefined ? Promise.resolve() : new Promise<void>((resolve, reject) => server.close((error) => {
       if (error) reject(error); else resolve();
     }));
+    void globalClosed.catch(() => undefined);
+    for (const turn of this.turns) this.end(turn);
+    await Promise.allSettled(this.endpointCreations.values());
+    await Promise.all(this.endpointClosures.values());
+    this.endpointClosures.clear();
+    await globalClosed;
   }
 }
 
