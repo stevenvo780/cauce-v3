@@ -464,10 +464,12 @@ class RolloutPtyTest(unittest.TestCase):
 
     def test_default_mode_gate_requires_real_tui_for_every_declared_harness(self) -> None:
         modes = rollout.parse_modes([], self.fleet)
-        for alias in ("argos", "janus", "iza"):
+        for alias in ("argos", "janus", "iza", "hegel"):
             self.assertEqual(modes[alias], frozenset(("shell", "harness")))
         overridden = rollout.parse_modes(["iza=shell"], self.fleet)
         self.assertEqual(overridden["iza"], frozenset(("shell",)))
+        muse_override = rollout.parse_modes(["hegel=shell"], self.fleet)
+        self.assertEqual(muse_override["hegel"], frozenset(("shell",)))
 
     def test_fleet_compensation_rolls_back_only_current_updates_in_reverse_order(self) -> None:
         server = FakeTransport()

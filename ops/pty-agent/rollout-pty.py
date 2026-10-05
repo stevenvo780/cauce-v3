@@ -188,7 +188,7 @@ def parse_targets(values: Sequence[str], managers: Sequence[str]) -> dict[str, s
 def parse_modes(values: Sequence[str], fleet: Fleet) -> dict[str, frozenset[str]]:
     result = {
         alias: frozenset(("shell", "harness"))
-        if entry.get("harness") in {"claude", "codex", "openclaw", "hermes"}
+        if entry.get("harness") in {"claude", "codex", "openclaw", "hermes", "muse"}
         else frozenset(("shell",))
         for alias, entry in fleet.aliases.items()
     }
