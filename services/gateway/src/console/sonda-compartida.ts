@@ -120,6 +120,27 @@ export function sondaDiferida(hueco: SondaCompartida): AgentFactsProbe {
       }
       return actual.writeGovernanceBatch(writes, facts, tenantId, alias);
     },
+    writeGovernanceDocumentDurable: (...args) => {
+      const current = hueco.actual();
+      return current.writeGovernanceDocumentDurable?.(...args)
+        ?? Promise.resolve({ error: 'unavailable', reason: 'no hay escritor durable' });
+    },
+    writeGovernanceBatchDurable: (...args) => {
+      const current = hueco.actual();
+      return current.writeGovernanceBatchDurable?.(...args)
+        ?? Promise.resolve({ error: 'unavailable', reason: 'no hay lote durable' });
+    },
+    supportsDurableWrites: () => {
+      const current = hueco.actual();
+      return current.writeGovernanceDocumentDurable !== undefined
+        && current.writeGovernanceBatchDurable !== undefined && current.writeStatus !== undefined
+        && current.supportsDurableWrites?.() !== false;
+    },
+    writeStatus: (...args) => {
+      const current = hueco.actual();
+      return current.writeStatus?.(...args)
+        ?? Promise.resolve({ error: 'unavailable', reason: 'no hay journal durable' });
+    },
   };
 }
 

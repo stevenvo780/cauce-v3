@@ -37,10 +37,6 @@ function basename(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1);
 }
 
-function isAgentOwnedDocument(harness: string, name: string): boolean {
-  return harness === 'openclaw' && (name === 'MEMORY.md' || name === 'HEARTBEAT.md');
-}
-
 function projectionError(error: unknown): ProfileRuntimeError {
   if (error instanceof ErrorDeTopeDelArnes) {
     const traducido = new ProfileRuntimeError('too_large', error.message);
@@ -165,17 +161,12 @@ export async function prepareAgentProfileRuntime(
       }
       throw new ProfileRuntimeError(read.error, read.reason);
     }
-    if (read.truncated && !isAgentOwnedDocument(harness, name)) {
+    if (read.truncated) {
       throw new ProfileRuntimeError(
         'truncated', `${name} llegó truncado; un prefijo nunca se usa para reemplazar el fichero`,
       );
     }
-    /*
-     * MEMORY/HEARTBEAT belong to the agent and may grow beyond the transport cap: attesting
-     * presence, SHA and size is enough to preserve them. The name enters `existing` with an empty
-     * marker so the generator emits `only-if-missing`; that prefix is never composed nor written.
-     */
-    existing.set(name, read.truncated ? '' : read.text);
+    existing.set(name, read.text);
     observed.set(name, { sha: read.sha, bytes: read.bytes });
     preconditions.set(name, { state: 'present', sha256: read.sha });
   }
@@ -265,12 +256,15 @@ export async function prepareAgentProfileRuntime(
       harness,
       preview,
       verification,
-      async apply(): Promise<readonly ProfileRuntimeAck[]> {
+      async apply(operation?: import('./governance-write-operation.js').GovernanceWriteOperation): Promise<readonly ProfileRuntimeAck[]> {
         if (consumed) {
           throw new ProfileRuntimeError('conflict', 'la foto de runtime sólo se puede aplicar una vez');
         }
         consumed = true;
-        if (probe.writeGovernanceBatch === undefined) {
+        if (operation !== undefined && operation.runtimeGeneration !== generation) {
+          throw new ProfileRuntimeError('conflict', 'la generación cambió antes del lote durable');
+        }
+        if (operation === undefined ? probe.writeGovernanceBatch === undefined : probe.writeGovernanceBatchDurable === undefined) {
           throw new ProfileRuntimeError('unavailable', 'la sonda no anuncia escritura gobernada por lote');
         }
         if (generation === null) {
@@ -278,7 +272,16 @@ export async function prepareAgentProfileRuntime(
             'unavailable', 'el lote no se escribe sin una generación medida que pueda cercar su ACK',
           );
         }
-        const batch = await probe.writeGovernanceBatch(writes, measured.facts, tenantId, alias);
+        const writeBatch = probe.writeGovernanceBatch?.bind(probe);
+        const writeDurable = probe.writeGovernanceBatchDurable?.bind(probe);
+        let batch;
+        if (operation === undefined) {
+          if (writeBatch === undefined) throw new ProfileRuntimeError('unavailable', 'no hay lote legacy');
+          batch = await writeBatch(writes, measured.facts, tenantId, alias);
+        } else {
+          if (writeDurable === undefined) throw new ProfileRuntimeError('unavailable', 'no hay lote durable');
+          batch = await writeDurable(writes, measured.facts, tenantId, alias, operation);
+        }
         if (isFailure(batch)) throw new ProfileRuntimeError(batch.error, batch.reason);
         if (batch.length !== writes.length) {
           throw new ProfileRuntimeError('invalid_ack', 'el lote no acreditó todas sus escrituras');

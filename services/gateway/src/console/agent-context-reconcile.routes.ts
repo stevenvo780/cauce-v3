@@ -1,3 +1,5 @@
+import { canonicalProfileRuntimeContract, persistAgentContextReconcileInTransaction } from '@cauce/store';
+import { coordinateContextRequest } from './agent-context-write-coordinator.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AliasSchema, TenantSchema, type ContextoDeAlias } from '@cauce/protocol';
 import type { DocumentOperator, TerminalAuditEntry } from './agent-documents.routes.js';
@@ -58,7 +60,7 @@ export interface AgentContextReconcileDeps {
     tenantId: string, alias: string,
   ): Promise<ContextReconcileExpectation | undefined>;
   deliveryInFlight(tenantId: string, alias: string): Promise<DeliveriesInFlight>;
-  reconcileRuntime<Value>(input: {
+  reconcileRuntime?<Value>(input: {
     readonly tenantId: string;
     readonly alias: string;
     readonly expectedRevision: number;
@@ -82,6 +84,7 @@ export interface AgentContextReconcileDeps {
     }>;
   }): Promise<{ readonly state: 'committed'; readonly value: Value }
     | { readonly state: 'effect_unknown' }>;
+  coordinateWrite?: import('./agent-profile.routes.js').AgentProfileDeps['coordinateWrite'];
   recordAudit(entry: TerminalAuditEntry): Promise<void>;
 }
 
@@ -333,13 +336,16 @@ export function registerAgentContextReconcileRoutes(
 
     let fenced;
     try {
-      fenced = await deps.reconcileRuntime({
+      if (deps.coordinateWrite === undefined) throw new Error('durable context coordinator unavailable');
+      fenced = await coordinateContextRequest(deps.coordinateWrite.bind(deps), request, reply, {
         tenantId: caller.target.tenant_id,
         alias: caller.target.alias,
         expectedRevision: current.revision,
         expectedExpectation: current.expectation,
-        apply: async () => {
-          const acknowledgements: readonly ProfileRuntimeAck[] = await current.prepared.apply();
+        documents: current.prepared.verification.documents.map((doc) => ({ name: doc.name,
+          path: doc.path, beforeSha: doc.observed_sha, targetSha: doc.expected_sha })),
+        dispatch: async (operation) => {
+          const acknowledgements: readonly ProfileRuntimeAck[] = await current.prepared.apply(operation);
           if (!acksCompletos(current.prepared, acknowledgements)) {
             throw new ContextReconcileError(
               'runtime_ack_incomplete', 'runtime did not acknowledge the exact document batch',
@@ -403,9 +409,27 @@ export function registerAgentContextReconcileRoutes(
             },
           };
         },
+        persistTarget: async (client, proof, effect) => {
+          const verifiedEffect = { ...effect, expectation: { ...effect.expectation,
+            documents: effect.expectation.documents.map((doc) => {
+              const actual = proof.documents.find((observed) => observed.name === doc.name && observed.path === doc.path);
+              if (actual?.sha === undefined || actual.sha === null) throw new Error('missing reconciled document proof');
+              return { name: doc.name, path: doc.path, sha: actual.sha };
+            }),
+          } };
+          const expected = canonicalProfileRuntimeContract(current.expectation);
+          if (expected === undefined) throw new Error('invalid reconciliation expectation');
+          await persistAgentContextReconcileInTransaction(client, {
+            mode: 'reconcile', tenantId: caller.target.tenant_id, alias: caller.target.alias, expectedRevision: current.revision,
+            expectedExpectation: expected, apply: async () => verifiedEffect,
+          }, expected, verifiedEffect);
+        },
       });
     } catch (error) {
       return deny(caller, reply, error);
+    }
+    if (fenced.state === 'not_applied') {
+      return reply.code(409).send({ error: 'context_write_not_applied', state: 'not_applied', operation_id: fenced.operation_id });
     }
     if (fenced.state === 'effect_unknown') {
       let auditRecorded = true;
@@ -421,17 +445,17 @@ export function registerAgentContextReconcileRoutes(
       if (!auditRecorded) {
         return reply.code(503).send({
           error: 'context_reconcile_effect_unknown_audit_failed',
-          state: 'effect_unknown',
+          state: 'effect_unknown', operation_id: fenced.operation_id,
           message: 'el efecto es incierto y sólo consta la intención durable; releé antes de reintentar',
         });
       }
       return reply.code(503).send({
         error: 'context_reconcile_effect_unknown',
-        state: 'effect_unknown',
+        state: 'effect_unknown', operation_id: fenced.operation_id,
         message: 'el efecto del runtime no pudo confirmarse; releé la vista previa antes de reintentar',
       });
     }
-    const { documents, verification } = fenced.value;
+    const { documents, verification } = fenced.value.value;
     const response: ContextReconcileApplyResponse = {
       ok: true,
       state: 'pending_session_refresh',
