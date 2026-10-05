@@ -4,13 +4,14 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import signal
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
 import unittest
 import uuid
+from builtins import BaseExceptionGroup
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
