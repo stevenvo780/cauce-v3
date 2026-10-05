@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { createUuidV7Mint } from "@muse-code/sdk";
 import { DurableStore } from "../src/sdk/durable-store.js";
@@ -508,4 +509,120 @@ test("Muse recovers the exact durable answer when its live message was lost", as
   assert.equal(state.turns.length, 1);
   assert.equal(state.reads, 2);
   assert.equal(state.pages, 1);
+});
+
+async function environmentFixture(name: string) {
+  const { config } = await fixture(name);
+  const capture = resolve(config.dataHome, "captured-environment.jsonl");
+  const executable = resolve(config.workspace, "capture-muse.mjs");
+  await writeFile(executable, `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(capture)}, JSON.stringify({
+  endpoint: process.env.CAUCE_EMISSION_SOCKET_PATH ?? null,
+  marker: process.env.CAUCE_SCOPE_LABEL ?? null,
+  home: process.env.HOME, configHome: process.env.XDG_CONFIG_HOME,
+  dataHome: process.env.XDG_DATA_HOME, noUpdate: process.env.MUSE_NO_AUTO_UPDATE,
+  cwd: process.cwd(), codexHome: process.env.CODEX_HOME ?? null,
+  claudeHome: process.env.CLAUDE_CONFIG_DIR ?? null,
+  userProfilePresent: process.env.USERPROFILE !== undefined,
+  turnTokenPresent: process.env.CAUCE_TURN_TOKEN !== undefined,
+}) + '\\n');
+await import(${JSON.stringify(pathToFileURL(fakeMuse).href)});
+`, { mode: 0o755 });
+  return { config: { ...config, executable }, capture };
+}
+
+test("Muse MSP binds each headless host to its owned emission endpoint", async () => {
+  const { config, capture } = await environmentFixture("owned-endpoints");
+  const runner = new MuseMspRunner(config);
+  const tasks = ['A', 'B'].map((marker) => ({ marker, sessionId: mintId(), endpoint: resolve(config.workspace, `${marker}.sock`) }));
+  const outputs = await Promise.all(tasks.map(async ({ marker, sessionId, endpoint }) => {
+    const output = await runner.run({ harness: "muse", command: "caller-must-not-select-an-executable", args: [],
+      stdin: "Synthetic task", sessionId, timeoutMs: 5_000, signal: new AbortController().signal,
+      cwd: "/caller-must-not-select-a-workspace", env: { CAUCE_SCOPE_LABEL: marker, PATH: "/caller-must-not-control-path" }, emissionSocketPath: endpoint });
+    return parseMuseMspOutput(output.stdout);
+  }));
+  assert.deepEqual(outputs.map((output) => output.nativeSessionId), tasks.map((task) => task.sessionId));
+  assert.notEqual(outputs[0]?.nativeSessionId, outputs[1]?.nativeSessionId);
+  const captures = (await readFile(capture, "utf8")).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.equal(captures.length, 2);
+  for (const task of tasks) {
+    const child = captures.find((row) => row.marker === task.marker);
+    assert.ok(child);
+    assert.equal(child.endpoint, task.endpoint);
+    assert.equal(child.home, resolve(config.configHome, ".."));
+    assert.equal(child.configHome, config.configHome);
+    assert.equal(child.dataHome, config.dataHome);
+    assert.equal(child.noUpdate, "1");
+    assert.equal(child.cwd, config.workspace);
+    assert.equal(child.codexHome, null);
+    assert.equal(child.claudeHome, null);
+    assert.equal(child.userProfilePresent, false);
+    assert.equal(child.turnTokenPresent, false);
+  }
+});
+
+test("Muse MSP rejects invalid owned endpoints before starting a host", async () => {
+  const { config, capture } = await environmentFixture("invalid-endpoints");
+  for (const endpoint of ["", "relative.sock", " /tmp/owned.sock", "/tmp/owned.sock ", "/tmp/owned\0.sock"]) {
+    await assert.rejects(new MuseMspRunner(config).run({ harness: "muse", command: fakeMuse, args: [], stdin: "Synthetic task",
+      sessionId: mintId(), emissionSocketPath: endpoint, timeoutMs: 5_000, signal: new AbortController().signal }),
+    (error: unknown) => error instanceof ProcessExecutionError && error.code === "INVALID_EMISSION_ENDPOINT");
+  }
+  await assert.rejects(readFile(capture), { code: "ENOENT" });
+});
+
+test("Muse MSP rejects caller-owned endpoint and secret-like environment keys", async () => {
+  const { config, capture } = await environmentFixture("rejected-environment");
+  const undefinedEndpoint: Record<string, string> = {};
+  Object.defineProperty(undefinedEndpoint, "CAUCE_EMISSION_SOCKET_PATH", { value: undefined });
+  const attempts: readonly { env: Readonly<Record<string, string>>; code: string }[] = [
+    { env: { CAUCE_EMISSION_SOCKET_PATH: "/tmp/caller.sock" }, code: "EMISSION_ENDPOINT_OVERRIDE" },
+    { env: undefinedEndpoint, code: "EMISSION_ENDPOINT_OVERRIDE" },
+    { env: { CAUCE_TURN_TOKEN: "synthetic-denied" }, code: "SECRET_ENV_REJECTED" },
+    { env: { CAUCE_PASSWORD: "synthetic-denied" }, code: "SECRET_ENV_REJECTED" },
+  ];
+  for (const { env, code } of attempts) {
+    await assert.rejects(new MuseMspRunner(config).run({ harness: "muse", command: fakeMuse, args: [], stdin: "Synthetic task",
+      sessionId: mintId(), env, timeoutMs: 5_000, signal: new AbortController().signal }),
+    (error: unknown) => error instanceof ProcessExecutionError && error.code === code);
+  }
+  await assert.rejects(readFile(capture), { code: "ENOENT" });
+});
+
+test("Muse MSP does not inherit parent turn scope or foreign alias profiles", async () => {
+  const { config, capture } = await environmentFixture("parent-environment");
+  const keys = ['CAUCE_EMISSION_SOCKET_PATH', 'CAUCE_TURN_TOKEN', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'USERPROFILE'];
+  const previous = keys.map((key) => process.env[key]);
+  try {
+    for (const key of keys) process.env[key] = "/synthetic/parent-scope";
+    await new MuseMspRunner(config).run({ harness: "muse", command: fakeMuse, args: [], stdin: "Synthetic task",
+      sessionId: mintId(), timeoutMs: 5_000, signal: new AbortController().signal });
+    const child = JSON.parse((await readFile(capture, "utf8")).trim()) as Record<string, unknown>;
+    assert.equal(child.endpoint, null);
+    assert.equal(child.marker, null);
+    assert.equal(child.codexHome, null);
+    assert.equal(child.claudeHome, null);
+    assert.equal(child.userProfilePresent, false);
+    assert.equal(child.turnTokenPresent, false);
+    assert.equal(child.home, resolve(config.configHome, ".."));
+    assert.equal(child.configHome, config.configHome);
+    assert.equal(child.dataHome, config.dataHome);
+  } finally {
+    for (const [index, key] of keys.entries()) {
+      const original = previous[index];
+      if (original === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = original;
+    }
+  }
+});
+
+test("Muse MSP refuses environment overrides of configured alias identity", async () => {
+  const { config, capture } = await environmentFixture("reserved-environment");
+  for (const key of ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'MUSE_NO_AUTO_UPDATE', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'USERPROFILE']) {
+    await assert.rejects(new MuseMspRunner(config).run({ harness: "muse", command: fakeMuse, args: [], stdin: "Synthetic task",
+      sessionId: mintId(), env: { [key]: "/synthetic/foreign" }, timeoutMs: 5_000, signal: new AbortController().signal }),
+    (error: unknown) => error instanceof ProcessExecutionError && error.code === "RESERVED_ENVIRONMENT_OVERRIDE");
+  }
+  await assert.rejects(readFile(capture), { code: "ENOENT" });
 });
