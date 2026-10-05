@@ -15,6 +15,12 @@ interface StructuredBody {
   value: Record<string, unknown>;
 }
 
+function previewText(preview: string | null | undefined, truncated: boolean): string {
+  if (typeof preview !== 'string') return 'Contenido no incluido por el servidor.';
+  if (preview.trim().length === 0) return 'Mensaje sin contenido textual.';
+  return `${preview}${truncated ? '…' : ''}`;
+}
+
 function structuredBody(preview: string | null | undefined): StructuredBody | undefined {
   if (typeof preview !== 'string') return undefined;
   try {
@@ -116,7 +122,8 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, can
       <div className="terminal-transcript" aria-label="Historial de la sesión">
         {items.map((item, index) => {
           const { message, direction, delivery } = item;
-          const recortado = previsualizacionRecortada(message.body_preview);
+          const hasTextPreview = typeof message.body_preview === 'string' && message.body_preview.trim().length > 0;
+          const recortado = hasTextPreview && previsualizacionRecortada(message.body_preview);
           const estructura = structuredBody(message.body_preview);
           const author = humanAuthor(message);
           const authorLabel = author?.display_name ?? (author ? 'Persona autenticada' : message.actor_alias ?? 'Emisor sin dato');
@@ -159,7 +166,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, can
                 </header>
                 {estructura
                   ? <StructuredMessage body={estructura} />
-                  : <p>{message.body_preview ?? 'Contenido no incluido por el servidor.'}{recortado ? '…' : null}</p>}
+                  : <p>{previewText(message.body_preview, recortado)}</p>}
                 {!humanChat ? response : null}
                 {recortado ? <p className="transcript-truncado"><Scissors size={12} aria-hidden="true" /><span>Vista previa recortada</span></p> : null}
               </article>
