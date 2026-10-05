@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import pathlib
@@ -12,6 +13,12 @@ import ssl
 import stat
 import subprocess
 import tempfile
+
+LOCK_SPEC = importlib.util.spec_from_file_location("identity_registry_lock", pathlib.Path(__file__).with_name("identity-registry-lock.py"))
+LOCK_MODULE = importlib.util.module_from_spec(LOCK_SPEC)
+LOCK_SPEC.loader.exec_module(LOCK_MODULE)
+RegistryLock = LOCK_MODULE.RegistryLock
+
 
 ALIAS = 'praxis-supervisor'
 PRINCIPAL = {'tenant_id': 'Hospital', 'alias': ALIAS, 'session_id': ALIAS,
@@ -65,15 +72,19 @@ def verify_owned_leaf(key: pathlib.Path, certificate: pathlib.Path) -> None:
 
 def replace_owned_record(registry: pathlib.Path, expected: dict, replacement: dict,
                          metadata: os.stat_result) -> None:
-    latest_bytes = registry.read_bytes()
+    with RegistryLock(registry) as lock:
+        _replace_owned_record_locked(lock, expected, replacement)
+
+
+def _replace_owned_record_locked(lock: RegistryLock, expected: dict, replacement: dict) -> None:
+    latest_bytes, metadata = lock.read()
     latest = json.loads(latest_bytes)
     own = validate_record(latest)
     if own != expected:
         raise ValueError('supervision authority changed during renewal')
     own.update(replacement)
-    if registry.read_bytes() != latest_bytes:
-        raise ValueError('identity registry changed during renewal')
-    atomic_json(registry, latest, metadata.st_uid, metadata.st_gid, 0o400)
+    validate_record(latest)
+    lock.replace(latest, latest_bytes, metadata)
 
 
 def maintain_identity() -> int:
@@ -93,10 +104,8 @@ def maintain_identity() -> int:
     private_path(certificate)
     if folder.is_symlink() or folder.stat().st_uid != 0 or folder.stat().st_mode & 0o077:
         raise ValueError('identity directory must be private and owner-managed')
-    registry_meta = private_path(registry, 0o400)
-    with (registry.parent / '.mtls_identities.json.lock').open('a+') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        document = json.loads(registry.read_text())
+    with RegistryLock(registry) as lock:
+        document = json.loads(lock.read()[0])
         record = validate_record(document)
         expected_record = dict(record)
         temporary = folder / 'client-renewed.crt'
@@ -132,12 +141,14 @@ def maintain_identity() -> int:
             verify_owned_leaf(key, temporary)
             record['certificate_sha256'] = hashlib.sha256(ssl.PEM_cert_to_DER_cert(temporary.read_text())).hexdigest()
             record['expires_at'] = expiry(temporary).strftime('%Y-%m-%dT%H:%M:%SZ')
-            replace_owned_record(registry, expected_record, record, registry_meta)
+            _replace_owned_record_locked(lock, expected_record, record)
             os.chmod(temporary, stat.S_IMODE(certificate.stat().st_mode))
             os.replace(temporary, certificate)
         metadata = {'alias': ALIAS, 'cert_sha256': hashlib.sha256(certificate.read_bytes()).hexdigest(),
                     'expires_at': expiry(certificate).isoformat()}
+        lock.validate()
         atomic_json(folder / 'identity.json', metadata, 0, 0, 0o600)
+        lock.validate()
         print(json.dumps({'action': 'renewed' if remaining < dt.timedelta(days=2) else 'current',
                           'alias': ALIAS, 'expires_at': metadata['expires_at'], 'other_identities_changed': False}))
     return 0

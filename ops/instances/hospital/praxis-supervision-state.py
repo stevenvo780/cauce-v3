@@ -200,8 +200,34 @@ def auth_resume_event(goal_hash: str, now: float) -> dict:
             "nonce": str(uuid.uuid4()), "created_at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat().replace("+00:00", "Z")}
 
 
+def resumable_reservation(root: object, goal_hash: str) -> bool:
+    if not isinstance(root, dict) or "message_id" in root or root.get("error") != "unauthorized":
+        return False
+    attempts = root.get("attempts")
+    payload, baseline = root.get("payload"), root.get("baseline")
+    if (type(attempts) is not int or not 1 <= attempts < 3 or not isinstance(payload, dict)
+            or not isinstance(baseline, dict) or baseline.get("goal_sha256") != goal_hash):
+        return False
+    body = payload.get("body")
+    key = payload.get("idempotency_key")
+    prefix = f"praxis-engineering:{goal_hash[:16]}:"
+    if (not isinstance(body, dict) or body.get("type") != "praxis.supervision.continue"
+            or not isinstance(key, str) or not key.startswith(prefix)
+            or payload.get("room_id") != "grp.hospital"
+            or payload.get("recipients") != [{"tenant_id": "Hospital", "alias": "operador"}]):
+        return False
+    try:
+        nonce = uuid.UUID(key[len(prefix):])
+        return nonce.version == 4 and str(nonce) == key[len(prefix):]
+    except ValueError:
+        return False
+
+
 def consume_auth_resume(state: dict, path: Path, goal_hash: str, now: float) -> bool:
-    if state.get("phase") != "circuit_paused" or state.get("pause_reason") != "unauthorized" or state.get("active_root"):
+    if state.get("phase") != "circuit_paused" or state.get("pause_reason") != "unauthorized":
+        return False
+    root = state.get("active_root")
+    if root is not None and not resumable_reservation(root, goal_hash):
         return False
     if not path.exists() and not path.is_symlink():
         return False
@@ -234,8 +260,11 @@ def consume_auth_resume(state: dict, path: Path, goal_hash: str, now: float) -> 
               "failed_root": state.get("last_finished", {}).get("root")}
     state.setdefault("auth_resume_nonces", []).append(value["nonce"])
     state.setdefault("auth_recoveries", []).append(record)
-    state["phase"] = "observing"
-    state["continuation_earned"] = True
+    if root is not None:
+        record["reserved_key"] = root["payload"]["idempotency_key"]
+        record["reservation_error"] = root.pop("error")
+    state["phase"] = "root_reserved" if root is not None else "observing"
+    state["continuation_earned"] = root is None
     state.pop("backoff_until", None)
     return True
 

@@ -140,6 +140,105 @@ class AuthRecoveryTests(unittest.TestCase):
         self.assertFalse(SUP.STATE.apply_auth_resume_control(supervisor.state, path, self.fixture.config["goal_sha256"], NOW))
         self.assertEqual(supervisor.state["auth_resume_rejection"]["code"], "untrusted_control_file")
 
+    def reserve_unauthorized(self):
+        self.fixture.api.post_errors = ["unauthorized"]
+        self.assertEqual(self.fixture.run_pass()["action"], "unauthorized")
+        return json.loads(self.fixture.state_path.read_text())
+
+    def test_resume_reconciles_original_post401_reservation_and_receipt(self):
+        before = self.reserve_unauthorized()
+        original = copy.deepcopy(before["active_root"])
+        _, event = self.event(NOW + 1500)
+        self.fixture.run_pass(NOW + 1500)
+        after = json.loads(self.fixture.state_path.read_text())
+        self.assertIn("message_id", after["active_root"])
+        self.assertEqual(after["active_root"]["payload"], original["payload"])
+        self.assertEqual(after["active_root"]["message_id"], self.fixture.api.keys[original["payload"]["idempotency_key"]])
+        self.assertEqual(after["active_root"]["attempts"], 2)
+        self.assertEqual(self.fixture.engineering_posts(), [original["payload"], original["payload"]])
+        self.assertEqual(after["roots"], before["roots"])
+        self.assertEqual(after["notices"], before["notices"])
+        self.assertEqual(after["auth_resume_nonces"], [event["nonce"]])
+        self.assertFalse(after["continuation_earned"])
+        self.fixture.run_pass(NOW + 1800)
+        self.assertEqual(len(self.fixture.engineering_posts()), 2)
+
+    def test_resumed_reservation_waits_for_runtime_revalidation_without_losing_nonce(self):
+        before = self.reserve_unauthorized()
+        _, event = self.event(NOW + 1500)
+        supervisor = self.fixture.supervisor(NOW + 1500)
+        supervisor.runtime_reader = lambda: {**self.fixture.runtime(active=1), "observed_at": NOW + 1500}
+        self.assertEqual(supervisor.pass_once(self.fixture.runtime(), self.fixture.snapshot())["action"], "active_work")
+        deferred = json.loads(self.fixture.state_path.read_text())
+        self.assertEqual(deferred["active_root"]["payload"], before["active_root"]["payload"])
+        self.assertEqual(deferred["roots"], before["roots"])
+        self.assertEqual(deferred["auth_resume_nonces"], [event["nonce"]])
+        self.assertEqual(len(self.fixture.engineering_posts()), 1)
+        self.fixture.run_pass(NOW + 1800)
+        final = json.loads(self.fixture.state_path.read_text())
+        self.assertIn("message_id", final["active_root"])
+        self.assertEqual(final["auth_resume_nonces"], [event["nonce"]])
+        self.assertEqual(len(final["auth_recoveries"]), 1)
+
+    def test_resumed_reservation_cannot_post_after_stale_runtime_read(self):
+        before = self.reserve_unauthorized()
+        _, event = self.event(NOW + 1500)
+        supervisor = self.fixture.supervisor(NOW + 1500)
+        supervisor.runtime_reader = lambda: {**self.fixture.runtime(), "observed_at": NOW}
+        with self.assertRaisesRegex(SUP.SupervisionError, "stale_runtime_snapshot"):
+            supervisor.pass_once(self.fixture.runtime(), self.fixture.snapshot())
+        after = json.loads(self.fixture.state_path.read_text())
+        self.assertEqual(after["active_root"]["payload"], before["active_root"]["payload"])
+        self.assertEqual(after["roots"], before["roots"])
+        self.assertEqual(after["auth_resume_nonces"], [event["nonce"]])
+        self.assertEqual(len(self.fixture.engineering_posts()), 1)
+
+    def test_reserved_resume_preserves_retry_deadline_and_attempt_ceiling(self):
+        before = self.reserve_unauthorized()
+        self.event(NOW + 10)
+        self.fixture.run_pass(NOW + 10)
+        deferred = json.loads(self.fixture.state_path.read_text())
+        self.assertEqual(deferred["active_root"]["retry_after"], before["active_root"]["retry_after"])
+        self.assertEqual(deferred["active_root"]["attempts"], 1)
+        self.assertEqual(len(self.fixture.engineering_posts()), 1)
+        self.fixture.run_pass(NOW + 1500)
+        self.assertEqual(len(self.fixture.engineering_posts()), 2)
+        supervisor = self.fixture.supervisor(NOW + 2000)
+        supervisor.state.update(phase="circuit_paused", pause_reason="unauthorized")
+        supervisor.state["active_root"].pop("message_id")
+        supervisor.state["active_root"].update(error="unauthorized", attempts=3)
+        supervisor.save()
+        path, _ = self.event(NOW + 2000)
+        snapshot = copy.deepcopy(supervisor.state)
+        self.assertFalse(SUP.STATE.consume_auth_resume(supervisor.state, path, self.fixture.config["goal_sha256"], NOW + 2000))
+        self.assertEqual(supervisor.state, snapshot)
+
+    def test_repeated_nonce_cannot_resume_another_reserved_post401(self):
+        self.reserve_unauthorized()
+        _, event = self.event(NOW + 1500)
+        self.fixture.api.post_errors = ["unauthorized"]
+        self.fixture.run_pass(NOW + 1500)
+        self.fixture.run_pass(NOW + 3000)
+        state = json.loads(self.fixture.state_path.read_text())
+        self.assertEqual(state["phase"], "circuit_paused")
+        self.assertEqual(state.get("auth_resume_nonces"), [event["nonce"]])
+        self.assertEqual(len(self.fixture.engineering_posts()), 2)
+
+    def test_reserved_resume_never_adopts_receipts_other_errors_or_foreign_goal(self):
+        original = self.reserve_unauthorized()
+        path, _ = self.event(NOW + 1500)
+        for field, value in [("message_id", None), ("message_id", str(uuid.uuid4())),
+                             ("error", "transport_unknown"), ("attempts", 0), ("attempts", True)]:
+            with self.subTest(field=field, value=value):
+                state = copy.deepcopy(original)
+                state["active_root"][field] = value
+                before = copy.deepcopy(state)
+                self.assertFalse(SUP.STATE.consume_auth_resume(state, path, self.fixture.config["goal_sha256"], NOW + 1500))
+                self.assertEqual(state, before)
+        state = copy.deepcopy(original)
+        state["active_root"]["baseline"]["goal_sha256"] = "f" * 64
+        self.assertFalse(SUP.STATE.consume_auth_resume(state, path, self.fixture.config["goal_sha256"], NOW + 1500))
+
     def synthetic_wrapper(self, exit_code):
         root = self.fixture.directory
         binary = root / "bin"
