@@ -1,0 +1,11 @@
+[Unit]
+Description=Vigencia de la identidad dedicada mientras sigue la supervisión
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1day
+Persistent=true
+Unit=praxis-supervision-identity.service
+
+[Install]
+WantedBy=timers.target
