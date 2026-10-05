@@ -73,6 +73,57 @@ test("child inherits only Hermes discovery configuration, not parent secrets", (
   for (const key of secretLikeKeys) assert.equal(received[key], null, `${key} leaked to the child`);
 });
 
+test("child inherits CODEX_HOME and CLAUDE_CONFIG_DIR from the adapter env, not an unrelated var", () => {
+  const runnerModule = new URL("../src/sdk/process-runner.js", import.meta.url).href;
+  const inspectedKeys = ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "GROK_HOME", ...secretLikeKeys];
+  const childProbe = `
+    const keys = ${JSON.stringify(inspectedKeys)};
+    process.stdout.write(JSON.stringify(Object.fromEntries(keys.map((key) => [key, process.env[key] ?? null]))));
+  `;
+  const isolatedParent = `
+    const { SpawnCommandRunner } = await import(${JSON.stringify(runnerModule)});
+    const result = await new SpawnCommandRunner().run({
+      command: process.execPath,
+      args: ["--input-type=module", "--eval", ${JSON.stringify(childProbe)}],
+      harness: "codex",
+      stdin: "",
+      timeoutMs: 2_000,
+      signal: new AbortController().signal,
+    });
+    if (result.exitCode !== 0) {
+      process.stderr.write(result.stderr);
+      process.exit(1);
+    }
+    process.stdout.write(result.stdout);
+  `;
+  // Mirrors a container where several aliases share $HOME but each adapter process (the main
+  // harness AND, with this fix, the headless human/MCP harness) resolves a distinct credential
+  // home for its own alias, e.g. CLAUDE_CONFIG_DIR=/home/dev/.local/share/cauce-v3/config/kratos/.claude.
+  const codexHome = "/home/dev/.local/share/cauce-v3/config/atlas/.codex";
+  const claudeConfigDir = "/home/dev/.local/share/cauce-v3/config/kratos/.claude";
+  const parentEnvironment: NodeJS.ProcessEnv = {
+    CODEX_HOME: codexHome,
+    CLAUDE_CONFIG_DIR: claudeConfigDir,
+    // Not a credential-home variable for any harness kind: must not leak just because it
+    // resembles one.
+    GROK_HOME: "/home/dev/.local/share/cauce-v3/config/kratos/.grok",
+  };
+  for (const key of secretLikeKeys) parentEnvironment[key] = "blocked-parent-value";
+
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", isolatedParent], {
+    encoding: "utf8",
+    env: parentEnvironment,
+    timeout: 5_000,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const received = JSON.parse(result.stdout) as Record<string, string | null>;
+  assert.equal(received.CODEX_HOME, codexHome);
+  assert.equal(received.CLAUDE_CONFIG_DIR, claudeConfigDir);
+  assert.equal(received.GROK_HOME, null, "GROK_HOME leaked despite not being allowlisted");
+  for (const key of secretLikeKeys) assert.equal(received[key], null, `${key} leaked to the child`);
+});
+
 test("request.env rejects every secret-like key", async () => {
   const runner = new SpawnCommandRunner();
 
