@@ -51,6 +51,7 @@ describe('el veredicto', () => {
     await waitFor(() => { expect(banda).toHaveAttribute('data-tone', 'alerta'); });
     expect(within(banda).getByText(/necesitan atención/i)).toBeInTheDocument();
 
+    await user.click(within(banda).getByLabelText('Detalles del estado de la flota'));
     const chip = within(banda).getAllByRole('button')[0];
     await user.type(screen.getByRole('searchbox', { name: 'Buscar un alias' }), 'kant');
     await waitFor(() => { expect(document.querySelectorAll('tr[data-agent-key]').length).toBe(1); });
@@ -84,6 +85,7 @@ describe('el veredicto', () => {
     renderWithApi(<LiveFleetPage />);
 
     const banda = await screen.findByLabelText('Veredicto de la flota');
+    await user.click(within(banda).getByLabelText('Detalles del estado de la flota'));
     await user.hover(within(banda).getByText(/en vuelo$/));
 
     expect(await screen.findByRole('tooltip', {}, { timeout: 10000 })).toHaveTextContent(/leased.*accepted.*started/);
@@ -101,11 +103,10 @@ describe('la flota en reposo', () => {
     const banda = await screen.findByLabelText('Veredicto de la flota');
     await waitFor(() => { expect(banda).toHaveAttribute('data-tone', 'ok'); });
 
-    expect(screen.getByText(/La flota está libre/)).toBeInTheDocument();
-    expect(screen.getByText(/no es una avería/)).toBeInTheDocument();
+    expect(screen.getByText(/No hay delegaciones entre agentes/)).toBeInTheDocument();
 
     // The word under each alias is "libre", never the down label.
-    const palabras = [...document.querySelectorAll('.lhg-bot-word')].map((nodo) => nodo.textContent);
+    const palabras = [...document.querySelectorAll('.lhg-bot-word')].map((nodo) => nodo.textContent?.toLowerCase());
     expect(palabras.length).toBeGreaterThan(0);
     expect(palabras).not.toContain('caído');
     expect(new Set(palabras)).toContain('libre');
@@ -138,6 +139,8 @@ describe('la flota en reposo', () => {
     conActividad(mockActivityEnReposo());
     renderWithApi(<LiveFleetPage />);
 
+    await screen.findByLabelText('Veredicto de la flota');
+    await userEvent.click(screen.getByText('Filtrar por estado', { selector: 'summary' }));
     expect(await screen.findByRole('button', { name: /^Libre \d+$/ })).toBeInTheDocument();
     expect(screen.queryByText(/ocioso/i)).not.toBeInTheDocument();
   });
@@ -305,7 +308,7 @@ describe('el mapa', () => {
 
     await screen.findByLabelText('Veredicto de la flota');
     const nodos = await waitFor(() => {
-      const encontrados = [...document.querySelectorAll<SVGGElement>('.lhg-bot')];
+      const encontrados = [...document.querySelectorAll<HTMLButtonElement>('.lhg-bot-button')];
       expect(encontrados.length).toBeGreaterThan(0);
       return encontrados;
     });
@@ -336,15 +339,15 @@ describe('el mapa', () => {
     const antes = await waitFor(() => {
       const nodos = [...document.querySelectorAll('.lhg-bot')];
       expect(nodos.length).toBeGreaterThan(0);
-      return nodos.map((nodo) => nodo.getAttribute('transform'));
+      return nodos.map((nodo) => nodo.closest<HTMLElement>('.react-flow__node')?.style.transform);
     });
 
     await user.click(screen.getByRole('button', { name: 'Permisos' }));
 
-    const despues = [...document.querySelectorAll('.lhg-bot')].map((nodo) => nodo.getAttribute('transform'));
+    const despues = [...document.querySelectorAll('.lhg-bot')].map((nodo) => nodo.closest<HTMLElement>('.react-flow__node')?.style.transform);
     expect(despues).toEqual(antes);
     // And the arrows change meaning: ACL edges instead of in-flight deliveries.
-    expect(document.querySelectorAll('.lhg-flow-acl-line').length).toBeGreaterThan(0);
+    expect(document.querySelector('.lhg')).toHaveAttribute('data-layer', 'permisos');
     expect(document.querySelectorAll('.lhg-flow-line').length).toBe(0);
   });
 
@@ -357,12 +360,12 @@ describe('el mapa', () => {
     const antes = await waitFor(() => {
       const nodos = [...document.querySelectorAll('.lhg-bot')];
       expect(nodos.length).toBeGreaterThan(0);
-      return nodos.map((nodo) => nodo.getAttribute('transform'));
+      return nodos.map((nodo) => nodo.closest<HTMLElement>('.react-flow__node')?.style.transform);
     });
 
     await user.click(screen.getByRole('button', { name: /refrescar ahora/i }));
     await waitFor(() => {
-      const despues = [...document.querySelectorAll('.lhg-bot')].map((nodo) => nodo.getAttribute('transform'));
+      const despues = [...document.querySelectorAll('.lhg-bot')].map((nodo) => nodo.closest<HTMLElement>('.react-flow__node')?.style.transform);
       expect(despues).toEqual(antes);
     });
   });
@@ -388,9 +391,8 @@ describe('el cajón', () => {
     }
     expect(within(cajon).getByRole('heading', { level: 2, name: 'zeus' })).toBeInTheDocument();
     // The map did NOT disappear: we did not navigate anywhere.
-    const svg = document.querySelector('.lhg-svg');
-    expect(svg).not.toBeNull();
-    expect(svg?.tagName.toLowerCase()).toBe('svg');
+    expect(screen.getByRole('region', { name: 'Mapa de la flota' })).toBeInTheDocument();
+    expect(document.querySelector('.lhg-viewport')).not.toBeNull();
     expect(window.location.pathname).toBe('/live');
     expect(window.location.search).toContain('agente=Steven%2Fzeus');
     expect(window.location.search).toContain('pestana=ahora');

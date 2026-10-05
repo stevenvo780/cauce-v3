@@ -27,8 +27,7 @@ export function LiveFleetTally({
     <div
       className="live-tally"
       role="group"
-      aria-label="Filtrar la flota por estado; desplaza horizontalmente para ver todos los estados"
-      tabIndex={0}
+      aria-label="Filtrar la flota por estado"
     >
       <span className="live-tally-rotulo" aria-hidden="true">Filtrar por estado</span>
       {TALLY_ORDER.map((state) => {
