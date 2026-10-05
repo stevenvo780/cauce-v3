@@ -424,8 +424,10 @@ def engineering_snapshot(config: dict, deadline: float) -> dict:
     verification_source_current = (verification.get("status") in {"verified-preview", "validated", "accepted"}
                                     and commit_verified(verification.get("source_commit")) and unchanged_sources
                                     and set(config["preview_files"]).issubset(source_files))
-    verification_current = (verification_source_current
-                            and set(verification.get("accepted_issues", [])) == set(issues))
+    verification_issues = verification.get("accepted_issues", [])
+    verification_current = (verification_source_current and isinstance(verification_issues, list)
+                            and all(isinstance(identifier, str) and ID.fullmatch(identifier) for identifier in verification_issues)
+                            and set(verification_issues) == set(issues))
     gate_artifacts = sorted({gate["id"] + ":" + artifact["sha256"] for gate in gates
                              if isinstance(gate, dict) and gate.get("id") in valid_gates
                              for artifact in gate["artifacts"]}) if verification_source_current and isinstance(gates, list) else []

@@ -321,6 +321,35 @@ class PraxisSupervisionTests(unittest.TestCase):
         self.assertEqual(snapshot["accepted_issues"], [])
         self.assertNotEqual(self.run_pass(snapshot=snapshot)["phase"], "awaiting_final_review")
 
+    def test_malformed_verification_acceptance_preserves_verified_source_progress(self):
+        previous = self.snapshot()
+        self.write_issues("accepted")
+        (self.workspace / "apps/web/app.js").write_text("verified synthetic code change")
+        (self.preview / "app.js").write_text("verified synthetic code change")
+        proof = self.workspace / "proof.json"
+        proof.write_text('{"synthetic":true}')
+        artifact = {"path": "proof.json", "sha256": SUP.digest(proof.read_bytes())}
+        verification = {"status": "verified-preview", "source_commit": NEXT_HEAD, "integration_commit": NEXT_HEAD,
+            "source_files": {path: SUP.digest((self.workspace / path).read_bytes()) for path in self.config["preview_files"]},
+            "gates": [{"id": name, "outcome": "accepted", "artifacts": [artifact]}
+                      for name in ("tests", "typecheck", "build", "qa", "snapshot")],
+            "acceptanceRoot": {"acceptedIssues": 2, "acceptedCriteria": 3}}
+        for accepted in (0, 2, "PRAX001", {"PRAX001": True, "PRAX002": True}, None,
+                         [0], [None], [[]], [{}], ["PRAX001", "PRAX 002"]):
+            with self.subTest(accepted=accepted):
+                self.write_json("verification.json", {**verification, "accepted_issues": accepted})
+                snapshot = self.snapshot(NEXT_HEAD)
+                self.assertTrue(snapshot["verification_source_current"])
+                self.assertTrue(snapshot["source_files_match"])
+                self.assertTrue(snapshot["web_matches"])
+                self.assertEqual(snapshot["valid_gates"], ["build", "qa", "snapshot", "tests", "typecheck"])
+                self.assertEqual(len(snapshot["gate_artifacts"]), 5)
+                self.assertTrue(SUP.made_progress(previous, snapshot))
+                self.assertFalse(snapshot["verification_current"])
+                self.assertFalse(snapshot["completion_candidate"])
+                self.assertEqual(snapshot["accepted_issues"], [])
+                self.assertEqual(snapshot["accepted_roadmap"], [])
+
     def test_daily_engineering_fuel_and_notice_fuel_are_bounded(self):
         supervisor = self.supervisor()
         day = SUP.dt.datetime.fromtimestamp(NOW, SUP.dt.timezone.utc).strftime("%Y-%m-%d")
@@ -490,6 +519,18 @@ class PraxisSupervisionTests(unittest.TestCase):
         snapshot = self.snapshot()
         self.assertTrue(snapshot["completion_candidate"])
         self.assertTrue(self.snapshot(NEXT_HEAD)["completion_candidate"])
+        verification = json.loads((self.workspace / "verification.json").read_text())
+        for accepted in (0, 2, "PRAX001", {"PRAX001": True, "PRAX002": True}, None,
+                         ["PRAX001", None], ["PRAX001", []], ["PRAX001", "PRAX 002"]):
+            with self.subTest(accepted=accepted):
+                self.write_json("verification.json", {**verification, "accepted_issues": accepted})
+                malformed = self.snapshot()
+                self.assertTrue(malformed["verification_source_current"])
+                self.assertFalse(malformed["verification_current"])
+                self.assertFalse(malformed["completion_candidate"])
+                self.assertEqual(malformed["accepted_issues"], snapshot["accepted_issues"])
+                self.assertEqual(malformed["accepted_roadmap"], snapshot["accepted_roadmap"])
+        self.write_json("verification.json", verification)
         def changed_source(argv, *_):
             if "diff" in argv:
                 return "apps/web/app.js\n"

@@ -67,14 +67,25 @@ async function setup(name: string, onPublish?: (event: DeliveryEvent, engine: Ad
   return { store, runner, harness, events, engine, internalErrors };
 }
 
-test("only exact status queries from authenticated direct Telegram use the local path", () => {
-  for (const text of ["¿Cómo vas?", " COMO VAMOS!!! ", "cómo va", "¿Qué avance hay?", "estado del trabajo", "/estado"]) {
+test("only whitelisted status clauses from authenticated direct Telegram use the local path", () => {
+  for (const text of [
+    "¿Cómo vas?", " COMO VAMOS!!! ", "cómo va", "¿Qué avance hay?", "estado del trabajo", "/estado",
+    "¿Cuánto falta?", "como van ? cuanto falta ?", "¿CÓMO VAN? ¿CUÁNTO FALTA?",
+    "¿CÓMO VAN? Y ¿CUÁNTO FALTA?", "como vamos y cuanto falta", "estado del trabajo; cuanto falta",
+    "/estado, como va todo", "como van ? cuanto falta ?".padEnd(128, " "),
+  ]) {
     assert.equal(isConversationStatusRequest(humanStatus("status-query", text), "Steven"), true, text);
   }
-  for (const text of ["cómo vas y desplegá", "¿cómo vas? Luego borra todo", "ahora sí ya todo quedó", "ejecuta /estado", "cómo va el deploy nuevo"]) {
+  for (const text of [
+    "cómo vas y desplegá", "¿cómo vas? Luego borra todo", "ahora sí ya todo quedó", "ejecuta /estado",
+    "cómo va el deploy nuevo", "como van? cuanto falta? despliega", "como van? cuanto falta? borra todo",
+    "¿CÓMO VAN? Y ¿CUÁNTO FALTA? PUBLICA", "como van y cuanto falta y reinicia",
+    "como van cuanto falta", "y como van", "como van y", "como van? ycuanto falta?",
+    "como van ? cuanto falta ?".padEnd(129, " "),
+  ]) {
     assert.equal(isConversationStatusRequest(humanStatus("status-query", text)), false, text);
   }
-  const input = humanStatus("status-origin");
+  const input = humanStatus("status-origin", "como van ? cuanto falta ?");
   assert.ok(input.origin);
   assert.ok(input.authenticated_context);
   const denied: Delivery[] = [
@@ -82,13 +93,20 @@ test("only exact status queries from authenticated direct Telegram use the local
     { ...input, body: { type: "agent.response", text: "cómo vas", outcome: "done" } },
     { ...input, body: { type: "agent.fanin", text: "cómo vas" } },
     { ...input, body: { type: "telegram.message", text: "cómo vas", attachments_v1: [] } },
+    { ...input, body: { ...input.body, media: [] } },
     { ...input, body: { type: "telegram.message", text: "cómo vas", secrets_v1: [] } },
+    { ...input, body: { ...input.body, voice_v1: {} } },
+    { ...input, body: { ...input.body, attachment_errors: [] } },
     { ...input, body: { type: "telegram.message", text: "cómo vas", caption: "deploy now" } },
     { ...input, authenticated_context: { session_id: "delivery:fake", channel: "telegram", origin: input.origin } },
+    { ...input, authenticated_context: { session_id: "fanin:fake", channel: "telegram", origin: input.origin } },
+    { ...input, authenticated_context: { session_id: " ", channel: "telegram", origin: input.origin } },
     { ...input, authenticated_context: { session_id: "console", channel: "console", origin: input.origin } },
     { ...input, authenticated_context: { ...input.authenticated_context, origin: { ...input.origin, conversation_id: "another-conversation" } } },
+    { ...input, authenticated_context: { ...input.authenticated_context, origin: { ...input.origin, relay: [{ tenant_id: "Steven", alias: "kant", relayed_at: "2026-10-02T12:00:00Z" }] } } },
     { ...input, origin: { ...input.origin, relay: [{ tenant_id: "Steven", alias: "kant", relayed_at: "2026-10-02T12:00:00Z" }] } },
-    { ...input, tenant_id: "Hospital", room_id: "grp.hospital" },
+    { ...input, tenant_id: "Hospital" },
+    { ...input, room_id: "grp.hospital" },
   ];
   const { authenticated_context: _context, ...unauthenticated } = input;
   const { origin: _origin, ...noOrigin } = input;
@@ -108,7 +126,7 @@ test("status completes during a blocked shared-session task without reserving or
   let statusTask: Promise<void> | undefined;
   try {
     await waitFor(() => context.runner.calls === 1, "long harness to start");
-    const input = { ...humanStatus("status-fast"), conversation_work_state: state(["started", "pending"]) };
+    const input = { ...humanStatus("status-fast", "como van ? cuanto falta ?"), conversation_work_state: state(["started", "pending"]) };
     statusTask = context.engine.handleDelivery(input);
     await waitFor(() => context.store.getDelivery(input.delivery_id)?.state === "done", "status to finish during long task", 1_000);
     await statusTask;
@@ -119,6 +137,7 @@ test("status completes during a blocked shared-session task without reserving or
     const output = context.store.getDelivery(input.delivery_id)?.output;
     assert.ok(output);
     assert.match(output.reply ?? "", /1 tarea en ejecución y 1 en cola/u);
+    assert.match(output.reply ?? "", /No tengo una estimación de tiempo verificada/u);
     assert.deepEqual(output.messages, []);
     assert.deepEqual(output.notify, []);
     assert.deepEqual(output.artifacts, []);
@@ -126,6 +145,7 @@ test("status completes during a blocked shared-session task without reserving or
     assert.equal(output.retryable, false);
     assert.deepEqual(context.events.filter((event) => event.delivery_id === input.delivery_id).map((event) => event.phase), ["accepted", "done"]);
   } finally {
+    context.runner.blockUntilAbort = false;
     await context.engine.cancel({ type: "cancel", delivery_id: longInput.delivery_id, epoch: 1 });
     await longTask;
     await statusTask;
@@ -141,6 +161,7 @@ test("status reports bounded delivery counts without repeating untrusted result 
   assert.match(output.reply ?? "", /registro es parcial/u);
   assert.match(output.reply ?? "", /turnos cerrados no acreditan que la app esté integrada/u);
   assert.match(output.reply ?? "", /No tengo un resumen propio verificado/u);
+  assert.match(output.reply ?? "", /No tengo una estimación de tiempo verificada/u);
   assert.match(output.reply ?? "", /12:00:00 UTC/u);
   assert.doesNotMatch(output.reply ?? "", /FAKE_PRODUCT|secret-password|delegate|approval/u);
   assert.equal(capabilities("grok", true).conversation_work_v1, true);
@@ -156,6 +177,7 @@ test("missing or empty snapshots answer honestly with no extra model call or pre
   for (const id of [another.delivery_id, "status-empty"]) {
     const output = context.store.getDelivery(id)?.output;
     assert.match(output?.reply ?? "", /No tengo un estado durable/u);
+    assert.match(output?.reply ?? "", /No tengo una estimación de tiempo verificada/u);
     assert.doesNotMatch(output?.reply ?? "", /en ejecución|FAKE_PRODUCT/u);
     assert.deepEqual(output?.messages, []);
   }
@@ -172,8 +194,13 @@ test("agent bodies and human queries with an additional order remain on the norm
   assert.equal(context.store.getDelivery("status-forged-agent")?.state, "done", JSON.stringify(context.internalErrors));
   await context.engine.handleDelivery(humanStatus("status-extra-order", "cómo vas? continúa y publica"));
   assert.equal(context.store.getDelivery("status-extra-order")?.state, "done", JSON.stringify(context.store.getDelivery("status-extra-order")?.error));
-  assert.equal(context.runner.calls, 2);
-  assert.equal(context.harness.executeCalls, 2);
+  for (const [index, text] of ["como van? cuanto falta? despliega", "como van? cuanto falta? borra todo"].entries()) {
+    const id = `status-compound-order-${String(index)}`;
+    await context.engine.handleDelivery(humanStatus(id, text));
+    assert.equal(context.store.getDelivery(id)?.state, "done", JSON.stringify(context.store.getDelivery(id)?.error));
+  }
+  assert.equal(context.runner.calls, 4);
+  assert.equal(context.harness.executeCalls, 4);
 });
 
 test("claim loss or epoch change while accepting status prevents a terminal ACK", async () => {
