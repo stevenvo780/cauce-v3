@@ -2,6 +2,7 @@ import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_pro
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
@@ -218,7 +219,7 @@ describe('real external QA harness', () => {
       ['Isa', 'salva', 'codex'],
       ['Jhon', 'hegel', 'openclaw'],
     ]);
-    const root = await mkdtemp(join(process.cwd(), '.adapter-e2e-'));
+    const root = await mkdtemp(join(tmpdir(), '.adapter-e2e-'));
     const adapters: ChildProcess[] = [];
     const diagnostics: string[] = [];
     // The room is the agent's OWN identity, not the sender's: these are the rooms seeded by
