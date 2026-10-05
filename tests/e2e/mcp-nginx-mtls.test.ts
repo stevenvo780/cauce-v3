@@ -97,8 +97,15 @@ describe('MCP mounted through the pinned Nginx mTLS ingress', () => {
       headers: { host: 'untrusted.invalid' },
     });
     expect(wrongHost.status).toBe(403);
-    const wrongOrigin = await fixture.requestNginx(fixture.primaryOrigin, '/.well-known/oauth-protected-resource/mcp', {
+    // RFC 9728 metadata is public and credential-free CORS; the protected resource keeps its Origin check.
+    const foreignMetadata = await fixture.requestNginx(fixture.primaryOrigin, '/.well-known/oauth-protected-resource/mcp', {
       headers: { origin: 'https://untrusted.invalid' },
+    });
+    expect(foreignMetadata.status).toBe(200);
+    expect(foreignMetadata.headers['access-control-allow-origin']).toBe('*');
+    expect(foreignMetadata.headers['access-control-allow-credentials']).toBeUndefined();
+    const wrongOrigin = await fixture.requestNginx(fixture.primaryOrigin, '/mcp', {
+      method: 'POST', headers: { origin: 'https://untrusted.invalid' }, body: '{',
     });
     expect(wrongOrigin.status).toBe(403);
   }, 15_000);
