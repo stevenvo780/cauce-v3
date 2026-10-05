@@ -5,7 +5,7 @@ import { CauceRepository, type DatabasePool } from '../src/index.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 
-let database: TestDatabase;
+let database: TestDatabase | undefined;
 let pool: DatabasePool;
 let repository: CauceRepository;
 const instance = 'consumption-adapter';
@@ -35,9 +35,12 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool === undefined) return;
-  await pool.end();
-  await database.container.stop();
+  if (database === undefined) return;
+  try {
+    await database.pool.end();
+  } finally {
+    await database.container.stop();
+  }
 });
 
 async function claim(): Promise<{ delivery: DeliveryEnvelope; epoch: number }> {
