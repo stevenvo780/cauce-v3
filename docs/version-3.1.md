@@ -117,8 +117,10 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) es `60788e41`, desplegada el
-8 de septiembre. El smoke final pasó con nueve servicios sanos, quince arriendos vigentes
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `da8d921bc` el 2 de octubre,
+con resultado «smoke OK». No acredita las capacidades posteriores ni otra instancia.
+
+En el despliegue histórico del 8 de septiembre, el smoke final pasó con nueve servicios sanos, quince arriendos vigentes
 y una entrega nueva `done` con ACK aplicado. La espera inicial terminó antes de que llegara
 tráfico; el chequeo posterior usó la entrega real y las mismas imágenes.
 

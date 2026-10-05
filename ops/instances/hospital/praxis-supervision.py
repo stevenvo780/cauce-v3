@@ -195,9 +195,12 @@ def run_command(command: list[str], deadline: float, input_text: str | None = No
     timeout = min(8, deadline - time.monotonic())
     if timeout <= 0:
         raise SupervisionError("pass_timeout")
+    environment = {"PATH": "/usr/bin:/bin"}
+    if command[:2] == ["git", "-C"]:
+        environment.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="safe.directory", GIT_CONFIG_VALUE_0=command[2])
     try:
         result = subprocess.run(command, input=input_text, text=True, capture_output=True,
-                                timeout=timeout, check=True, env={"PATH": "/usr/bin:/bin"})
+                                timeout=timeout, check=True, env=environment)
         return result.stdout
     except (subprocess.SubprocessError, OSError) as error:
         raise SupervisionError("observation_unavailable") from error
@@ -510,7 +513,7 @@ class Supervisor:
         if not seed.get("body_sha256") and not isinstance(seed.get("body"), dict):
             raise SupervisionError("invalid_bootstrap_receipt")
         body_hash = seed.get("body_sha256") or digest(canonical(seed.get("body")))
-        binding = STATE.causal_binding(seed, body_hash)
+        binding = STATE.causal_binding(seed, body_hash, STATE.seed_body_type(seed))
         try:
             message_id = str(uuid.UUID(seed["message_id"]))
             key = seed["idempotency_key"]
@@ -578,7 +581,7 @@ class Supervisor:
                 raise ApiError("invalid_receipt")
             if receipt.get("tenant_id") != "Hospital" or receipt.get("actor_alias") != "praxis-supervisor":
                 raise ApiError("invalid_receipt")
-            reserved.update(STATE.causal_binding(receipt, digest(canonical(reserved["payload"]["body"]))))
+            reserved.update(STATE.causal_binding(receipt, digest(canonical(reserved["payload"]["body"])), reserved["payload"]["body"]["type"]))
             reserved["message_id"] = message_id
             reserved.pop("error", None)
         except (SupervisionError, ValueError) as error:

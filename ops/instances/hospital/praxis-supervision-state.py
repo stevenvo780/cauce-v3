@@ -126,7 +126,19 @@ def reserve_notice_post(state: dict, now: float, limit: int) -> bool:
     return True
 
 
-def causal_binding(receipt: dict, body_hash: str) -> dict:
+def seed_body_type(seed: dict) -> str:
+    body = seed.get("body")
+    encoded = body.get("type") if isinstance(body, dict) else None
+    declared = seed.get("body_type")
+    if declared and encoded and declared != encoded:
+        raise SupervisionError("invalid_bootstrap_type")
+    expected = declared or encoded
+    if expected not in {"request", "praxis.supervision.continue"}:
+        raise SupervisionError("invalid_bootstrap_type")
+    return expected
+
+
+def causal_binding(receipt: dict, body_hash: str, body_type: str) -> dict:
     try:
         request_id = str(uuid.UUID(receipt["request_id"]))
         delivery_ids = receipt["delivery_ids"]
@@ -139,7 +151,7 @@ def causal_binding(receipt: dict, body_hash: str) -> dict:
     except (KeyError, ValueError, TypeError, AttributeError) as error:
         raise SupervisionError("invalid_causal_binding") from error
     return {"request_id": request_id, "trace_id": trace_id, "delivery_ids": delivery_ids,
-            "body_sha256": body_hash}
+            "body_sha256": body_hash, "body_type": body_type}
 
 
 def receipt_matches(receipt: dict, root: dict) -> bool:
@@ -147,7 +159,9 @@ def receipt_matches(receipt: dict, root: dict) -> bool:
     if not isinstance(deliveries, list) or len(deliveries) != 1:
         return False
     body = receipt.get("body")
-    if not isinstance(body, dict) or body.get("type") != "praxis.supervision.continue":
+    expected_type = root.get("body_type")
+    if (expected_type not in {"request", "praxis.supervision.continue"}
+            or not isinstance(body, dict) or body.get("type") != expected_type):
         return False
     if (receipt.get("request_id") != root.get("request_id") or receipt.get("trace_id") != root.get("trace_id")
             or not root.get("body_sha256") or digest(canonical(body)) != root["body_sha256"]):

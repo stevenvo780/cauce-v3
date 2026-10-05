@@ -443,6 +443,36 @@ class PraxisSupervisionTests(unittest.TestCase):
         self.assertEqual(self.api.gets, [message_id, message_id])
         self.assertEqual(sum(json.loads(self.state_path.read_text())["roots"].values()), 1)
 
+    def test_historical_request_seed_is_pinned_and_type_change_is_rejected(self):
+        path = self.directory / "bootstrap-root.json"
+        message_id = str(uuid.uuid4())
+        body = {"type": "request", "text": "original owner engineering request"}
+        binding = {"request_id": str(uuid.uuid4()), "trace_id": "trace-historical",
+                   "delivery_ids": [str(uuid.uuid4())]}
+        seed = {"message_id": message_id, "idempotency_key": "historical-seed", "head": HEAD,
+                "published_at": SUP.dt.datetime.fromtimestamp(NOW, SUP.dt.timezone.utc).isoformat(),
+                "body_type": "request", "body_sha256": SUP.digest(SUP.canonical(body)), **binding}
+        path.write_text(json.dumps(seed))
+        self.api.bindings[message_id] = {**binding, "body": body}
+        self.config["bootstrap_receipt_path"] = str(path)
+        self.assertEqual(self.run_pass()["action"], "root_pending")
+        self.assertEqual(json.loads(self.state_path.read_text())["active_root"]["body_type"], "request")
+        self.api.bindings[message_id]["body"] = {**body, "type": "praxis.supervision.continue"}
+        self.assertEqual(self.run_pass(NOW + 300)["action"], "causal_receipt_mismatch")
+        self.assertEqual(json.loads(self.state_path.read_text())["active_root"]["body_type"], "request")
+        self.assertEqual(self.engineering_posts(), [])
+
+    def test_bootstrap_types_are_closed_and_new_publication_type_is_fixed(self):
+        for body_type in ("agent.response", "praxis.supervision.notice", "unknown"):
+            with self.subTest(body_type=body_type), self.assertRaisesRegex(SUP.SupervisionError, "invalid_bootstrap_type"):
+                SUP.STATE.seed_body_type({"body_type": body_type})
+        with self.assertRaisesRegex(SUP.SupervisionError, "invalid_bootstrap_type"):
+            SUP.STATE.seed_body_type({"body_type": "request", "body": {"type": "praxis.supervision.continue"}})
+        self.config["body_type"] = "request"
+        self.run_pass()
+        self.assertEqual(self.engineering_posts()[0]["body"]["type"], "praxis.supervision.continue")
+        self.assertEqual(json.loads(self.state_path.read_text())["active_root"]["body_type"], "praxis.supervision.continue")
+
     def test_causal_receipt_request_trace_body_or_recipient_mismatch_preserves_root(self):
         for field in ("request_id", "trace_id", "body", "recipient"):
             with self.subTest(field=field):
