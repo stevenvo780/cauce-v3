@@ -343,7 +343,7 @@ function barrier() {
     const pool = await database(); const f = await seed(pool); const modified = intercept(pool, async sql => {
       if (kind === 'request') return sql.replace("at+interval '5 minutes'", "at+interval '250 milliseconds'");
       if (kind === 'code') return sql.replace("at+interval '60 seconds'", "at+interval '250 milliseconds'");
-      return sql.replace('at+make_interval(secs=>$14)', "at+interval '250 milliseconds'");
+      return sql.replace("date_trunc('second',at)+make_interval(secs=>$14)", "at+make_interval(secs=>$14*0)+interval '250 milliseconds'");
     });
     const store = new PostgresOAuthStore(modified, issuer, verify);
     const request = { ...f.request, idHash: secretHash(randomUUID()) };
@@ -634,7 +634,7 @@ function barrier() {
   it('fixes the grant lifetime from consent, independent of the console cookie, and refresh never outlives it', async () => {
     const pool = await database(); const f = await seed(pool);
     const lifetime = async (grantId: string) => (await pool.query<{ seconds: number }>(
-      'SELECT extract(epoch FROM expires_at-created_at)::int AS seconds FROM cauce_oauth_grants WHERE id=$1', [grantId])).rows[0]?.seconds;
+      'SELECT ceil(extract(epoch FROM expires_at-created_at))::int AS seconds FROM cauce_oauth_grants WHERE id=$1', [grantId])).rows[0]?.seconds;
     const almostExpired = { ...f.session, expiresAt: Math.floor(Date.now() / 1000) + 30 };
     const approved = await f.store.consent(f.request.idHash, f.request.browserHash, almostExpired, ['cauce.read'], context());
     if (!approved.code) throw new Error('missing code');

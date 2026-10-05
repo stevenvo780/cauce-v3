@@ -179,14 +179,15 @@ export class PostgresOAuthStore implements OAuthStore {
       const grantId = randomUUID();
       const code = randomBytes(32).toString('base64url');
       // Plazo fijo desde el consentimiento, no lo que le quede a la cookie de consola: la autoridad se
-      // revalida en cada uso (sello de credencial, cuenta, vínculo y membresía).
+      // revalida en cada uso (sello de credencial, cuenta, vínculo y membresía). En segundos enteros, como el
+      // exp del JWT, para que el refresh token copie la expiración exacta al volver de JavaScript.
       await client.query(
         `WITH instant AS MATERIALIZED (SELECT clock_timestamp() AS at)
          INSERT INTO cauce_oauth_grants
          (id,human_id,issuer,resource,client_id,redirect_uri,scopes,binding_id,binding_revision,
           membership_revision,tenant_id,actor_alias,credential_stamp,created_at,expires_at)
          SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,at,
-           at+make_interval(secs=>$14) FROM instant`,
+           date_trunc('second',at)+make_interval(secs=>$14) FROM instant`,
         [grantId, session.userId, this.issuer, this.resource, request.clientId, request.redirectUri, [...granted],
           snapshot.bindingId, snapshot.bindingRevision, snapshot.membership.revision,
           snapshot.membership.tenantId, snapshot.membership.actorAlias, session.credentialStamp, this.grantTtlSeconds],

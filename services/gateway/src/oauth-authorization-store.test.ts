@@ -156,7 +156,7 @@ describe('OAuth SQL contracts with an injected database client', () => {
     const fake = fixture();
     await fake.store.consent(request.idHash, request.browserHash, { ...session, expiresAt: Math.floor(Date.now() / 1000) + 60 }, ['cauce.read'], context());
     const insert = fake.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO cauce_oauth_grants'));
-    expect(insert?.[0]).toContain('at+make_interval(secs=>$14)');
+    expect(insert?.[0]).toContain("date_trunc('second',at)+make_interval(secs=>$14)");
     expect(insert?.[0]).not.toContain('to_timestamp');
     expect(insert?.[1]?.[13]).toBe(OAUTH_GRANT_TTL_SECONDS.default);
     const configured = fixture(1, request.challenge, true, undefined, false, false, 3600);
