@@ -5,6 +5,7 @@ services:
       CAUCE_MCP_OAUTH_PROVIDER: local
       CAUCE_MCP_OAUTH_SIGNING_KEY_FILE: /run/secrets/mcp_oauth_signing_key
       CAUCE_MCP_OAUTH_SIGNING_KID: ${CAUCE_MCP_OAUTH_SIGNING_KID:?required}
+      CAUCE_MCP_OAUTH_GRANT_TTL_SECONDS: ${CAUCE_MCP_OAUTH_GRANT_TTL_SECONDS:-28800}
     secrets:
       - source: mcp_oauth_signing_key
         target: mcp_oauth_signing_key

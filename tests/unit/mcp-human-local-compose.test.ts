@@ -113,6 +113,7 @@ describe('opt-in human MCP local-provider Compose configuration', () => {
     expect(gatewayEnvironment.CAUCE_MCP_OAUTH_PROVIDER).toBe('local');
     expect(gatewayEnvironment.CAUCE_MCP_OAUTH_SIGNING_KID).toBe(fixtureValues.CAUCE_MCP_OAUTH_SIGNING_KID);
     expect(gatewayEnvironment.CAUCE_MCP_OAUTH_SIGNING_KEY_FILE).toBe('/run/secrets/mcp_oauth_signing_key');
+    expect(gatewayEnvironment.CAUCE_MCP_OAUTH_GRANT_TTL_SECONDS).toBe('28800');
     expect(gatewayEnvironment.CAUCE_MCP_OAUTH_ISSUER).toBeUndefined();
     expect(gatewayEnvironment.CAUCE_MCP_OAUTH_JWKS_URI).toBeUndefined();
     // Compose normaliza cada secreto basado en fichero con un `name` de proyecto; sólo nos importa el `file`.
@@ -121,7 +122,8 @@ describe('opt-in human MCP local-provider Compose configuration', () => {
 
     gateway.environment = Object.fromEntries(
       Object.entries(gatewayEnvironment).filter(([name]) => name !== 'CAUCE_MCP_PUBLIC_ORIGIN' && name !== 'CAUCE_MCP_OAUTH_PROVIDER'
-        && name !== 'CAUCE_MCP_OAUTH_SIGNING_KID' && name !== 'CAUCE_MCP_OAUTH_SIGNING_KEY_FILE'),
+        && name !== 'CAUCE_MCP_OAUTH_SIGNING_KID' && name !== 'CAUCE_MCP_OAUTH_SIGNING_KEY_FILE'
+        && name !== 'CAUCE_MCP_OAUTH_GRANT_TTL_SECONDS'),
     );
     gateway.secrets = (gateway.secrets ?? []).filter(secret => secret.source !== 'mcp_oauth_signing_key');
     delete (merged.secrets as Record<string, unknown>).mcp_oauth_signing_key;
