@@ -129,4 +129,3 @@ CREATE TRIGGER cauce_oauth_codes_no_truncate BEFORE TRUNCATE ON cauce_oauth_code
   FOR EACH STATEMENT EXECUTE FUNCTION cauce_oauth_reject_truncate();
 CREATE TRIGGER cauce_oauth_tokens_no_truncate BEFORE TRUNCATE ON cauce_oauth_tokens
   FOR EACH STATEMENT EXECUTE FUNCTION cauce_oauth_reject_truncate();
-

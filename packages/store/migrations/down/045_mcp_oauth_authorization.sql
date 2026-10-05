@@ -22,4 +22,3 @@ DROP TRIGGER cauce_oauth_binding_revision ON human_external_identities;
 DROP TRIGGER cauce_oauth_membership_revision ON human_tenant_memberships;
 DROP FUNCTION cauce_oauth_advance_identity_revision();
 ALTER TABLE human_external_identities DROP CONSTRAINT human_external_identity_oauth_owner;
-
