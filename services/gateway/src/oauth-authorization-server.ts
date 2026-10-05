@@ -3,13 +3,16 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { PasswordAuthProvider } from './password-auth.js';
 import { constantTimeText, hostSessionCookie, uniqueCookieValue } from './http-auth-primitives.js';
 import { createOAuthRequestContext, oauthSessionContext } from './oauth-request-context.js';
-import { OAuthClients } from './oauth-client-metadata.js';
-import { OAuthError, OAUTH_SCOPES, scopes, secretHash, type OAuthAuthorizationRequest,
+import type { OAuthClientMetadata, OAuthClients } from './oauth-client-metadata.js';
+import { clientRegistration, isRegisteredClientId, OAuthRegistrationLimiter, registrationDocument } from './oauth-client-registration.js';
+import { OAuthError, OAUTH_SCOPES, redirectMatches, scopes, secretHash, type OAuthAuthorizationRequest,
   type OAuthPasswordSession, type OAuthScope, type OAuthStore } from './oauth-authorization-types.js';
 import type { OAuthTokens } from './oauth-tokens.js';
 
 const FLOW_COOKIE = '__Host-cauce_oauth';
 const NONCE = /^[A-Za-z0-9_-]{43}$/u;
+// Sólo endpoints públicos sin cookie: nunca authorize, continue, login, consent ni grants.
+const PUBLIC_CORS = ['/.well-known/oauth-authorization-server', '/oauth/jwks', '/oauth/token', '/oauth/register'];
 
 function fields(value: unknown, allowed: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new OAuthError('invalid_request');
@@ -73,16 +76,24 @@ export interface OAuthAuthorizationServerOptions {
   readonly store: OAuthStore;
   readonly session: (request: FastifyRequest) => Promise<OAuthPasswordSession>;
   readonly passwordAuth: Pick<PasswordAuthProvider, 'login' | 'verifyCredentialStamp'>;
+  readonly registrationLimiter?: OAuthRegistrationLimiter;
 }
 
 export async function registerOAuthAuthorizationServer(app: FastifyInstance, options: OAuthAuthorizationServerOptions): Promise<void> {
   await app.register(async (app) => {
     const { clients, tokens, store, session } = options;
+    const limiter = options.registrationLimiter ?? new OAuthRegistrationLimiter();
     const lifetimes = new WeakMap<FastifyRequest, ReturnType<typeof createOAuthRequestContext>>();
     function context(request: FastifyRequest, authenticated?: OAuthPasswordSession) {
       const lifetime = lifetimes.get(request);
       if (!lifetime) throw new OAuthError('access_denied');
       return authenticated ? oauthSessionContext(lifetime.context, authenticated) : lifetime.context;
+    }
+    async function client(request: FastifyRequest, clientId: string): Promise<OAuthClientMetadata> {
+      if (!isRegisteredClientId(clientId)) return clients.resolve(clientId);
+      const registered = await store.registeredClient(clientId, context(request));
+      if (!registered) throw new OAuthError('invalid_client');
+      return registered;
     }
     app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string', bodyLimit: 8192 }, (_request, body, done) => {
       try { done(null, form(String(body))); } catch { done(new OAuthError('invalid_request')); }
@@ -91,23 +102,44 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
       lifetimes.set(request, createOAuthRequestContext(request, reply));
       reply.header('Cache-Control', 'no-store').header('Referrer-Policy', 'no-referrer')
         .header('X-Content-Type-Options', 'nosniff').header('X-Frame-Options', 'DENY');
+      if (request.routeOptions.url !== undefined && PUBLIC_CORS.includes(request.routeOptions.url)) {
+        reply.header('Access-Control-Allow-Origin', '*').header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+          .header('Access-Control-Allow-Headers', 'Content-Type, MCP-Protocol-Version').header('Access-Control-Max-Age', '600');
+      }
     });
     app.addHook('onResponse', async request => { lifetimes.get(request)?.close(); });
     app.setErrorHandler(async (error, _request, reply) => {
       const code = error instanceof OAuthError ? error.error : 'server_error';
-      await reply.code(code === 'invalid_client' ? 401 : code === 'access_denied' ? 403 : code === 'server_error' ? 503 : 400)
+      const unavailable = code === 'server_error' || code === 'temporarily_unavailable';
+      await reply.code(code === 'invalid_client' ? 401 : code === 'access_denied' ? 403
+        : unavailable ? (reply.getHeader('retry-after') === undefined ? 503 : 429) : 400)
         .send({ error: code, iss: tokens.issuer });
     });
 
     app.get('/.well-known/oauth-authorization-server', async () => ({
       issuer: tokens.issuer, authorization_endpoint: `${tokens.issuer}/oauth/authorize`,
       token_endpoint: `${tokens.issuer}/oauth/token`, jwks_uri: `${tokens.issuer}/oauth/jwks`,
+      registration_endpoint: `${tokens.issuer}/oauth/register`,
       response_types_supported: ['code'], grant_types_supported: ['authorization_code'],
       token_endpoint_auth_methods_supported: ['none'], code_challenge_methods_supported: ['S256'],
       scopes_supported: [...OAUTH_SCOPES], client_id_metadata_document_supported: true,
       authorization_response_iss_parameter_supported: true,
     }));
     app.get('/oauth/jwks', async () => tokens.jwks());
+    for (const path of PUBLIC_CORS) app.options(path, async (_request, reply) => reply.code(204).send());
+
+    app.post('/oauth/register', { bodyLimit: 8192 }, async (request, reply) => {
+      if (request.headers.authorization !== undefined
+          || request.headers['content-type']?.split(';')[0]?.trim() !== 'application/json') {
+        throw new OAuthError('invalid_client_metadata');
+      }
+      if (!limiter.take(request.ip)) {
+        reply.header('Retry-After', String(limiter.retryAfterSeconds));
+        throw new OAuthError('temporarily_unavailable');
+      }
+      const registered = await store.registerClient(clientRegistration(request.body), context(request));
+      return reply.code(201).send(registrationDocument(registered));
+    });
 
     app.get('/oauth/authorize', async (request, reply) => {
       const query = fields(form((request.raw.url ?? '').split('?')[1] ?? ''), [
@@ -117,17 +149,17 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
           || query.resource !== tokens.resource || !NONCE.test(text(query.code_challenge, 43))) {
         throw new OAuthError('invalid_request');
       }
-      const client = await clients.resolve(text(query.client_id));
+      const resolved = await client(request, text(query.client_id));
       const redirectUri = text(query.redirect_uri);
-      if (!client.redirectUris.includes(redirectUri)) throw new OAuthError('invalid_request');
+      if (!redirectMatches(resolved.redirectUris, redirectUri)) throw new OAuthError('invalid_request');
       const id = randomBytes(32).toString('base64url');
       const browser = randomBytes(32).toString('base64url');
       await store.createRequest({ idHash: secretHash(id), browserHash: secretHash(browser),
-        clientId: client.clientId, clientName: client.clientName, redirectUri, resource: tokens.resource,
+        clientId: resolved.clientId, clientName: resolved.clientName, redirectUri, resource: tokens.resource,
         scopes: scopes(query.scope), challenge: text(query.code_challenge),
         state: query.state === undefined ? null : text(query.state, 512) }, context(request));
       reply.header('Set-Cookie', hostSessionCookie(FLOW_COOKIE, browser, 300, 'Strict'));
-      return page(reply, `<h1>Conectar con Cauce</h1><p>Aplicación: ${escape(client.clientName)}</p><p>Identidad del cliente: ${escape(client.clientId)}</p><a href="/oauth/continue?request_id=${id}">Continuar en Cauce</a>`);
+      return page(reply, `<h1>Conectar con Cauce</h1><p>Aplicación: ${escape(resolved.clientName)}</p><p>Identidad del cliente: ${escape(resolved.clientId)}</p><a href="/oauth/continue?request_id=${id}">Continuar en Cauce</a>`);
     });
 
     async function pending(request: FastifyRequest, id: unknown) {
@@ -193,10 +225,10 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
           || !/^[A-Za-z0-9._~-]{43,128}$/u.test(verifier) || !NONCE.test(text(body.code, 43))) {
         throw new OAuthError('invalid_grant');
       }
-      const client = await clients.resolve(text(body.client_id));
+      const resolved = await client(request, text(body.client_id));
       const redirectUri = text(body.redirect_uri);
-      if (!client.redirectUris.includes(redirectUri)) throw new OAuthError('invalid_grant');
-      const issued = await store.exchange({ codeHash: secretHash(text(body.code)), clientId: client.clientId,
+      if (!redirectMatches(resolved.redirectUris, redirectUri)) throw new OAuthError('invalid_grant');
+      const issued = await store.exchange({ codeHash: secretHash(text(body.code)), clientId: resolved.clientId,
         redirectUri, resource: tokens.resource, challenge: createHash('sha256').update(verifier).digest('base64url') },
       (input) => tokens.issue(input), context(request));
       return reply.send({ access_token: issued.token, token_type: 'Bearer',

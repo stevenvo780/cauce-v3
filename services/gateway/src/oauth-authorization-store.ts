@@ -5,6 +5,9 @@ import { isAnyUuid } from '@cauce/protocol';
 import { currentOAuthScopes, lockOAuthAccess, lockOAuthGrant, requireOAuthExpiry } from './oauth-grant-authority.js';
 import { oauthContextSignal } from './oauth-request-context.js';
 import { constantTimeText } from './http-auth-primitives.js';
+import type { OAuthClientMetadata } from './oauth-client-metadata.js';
+import { clientRegistration, isRegisteredClientId, REGISTERED_CLIENT_PREFIX, UNNAMED_REGISTERED_CLIENT,
+  type OAuthClientRegistration, type OAuthRegisteredClient } from './oauth-client-registration.js';
 import { OAuthError, oauthOrigin, secretHash, scopes, type OAuthAccessIdentity, type OAuthAuthorizationRequest,
   type OAuthCodeExchange, type OAuthIssuedToken, type OAuthPasswordSession, type OAuthScope,
   type OAuthStore, type OAuthTokenInput, type OAuthRequestContext } from './oauth-authorization-types.js';
@@ -64,8 +67,8 @@ export class PostgresOAuthStore implements OAuthStore {
     await this.pool.query(`SELECT r.id_hash,r.browser_hash,r.scopes,r.challenge,r.expires_at,r.consumed_at,
       g.id,g.human_id,g.issuer,g.resource,g.binding_id,g.binding_revision,g.membership_revision,
       g.tenant_id,g.actor_alias,g.credential_stamp,g.revoked_at,c.code_hash,c.grant_id,c.challenge,
-      c.expires_at,c.consumed_at,t.id,t.grant_id,t.expires_at,t.revoked_at
-      FROM cauce_oauth_requests r,cauce_oauth_grants g,cauce_oauth_codes c,cauce_oauth_tokens t LIMIT 0`);
+      c.expires_at,c.consumed_at,t.id,t.grant_id,t.expires_at,t.revoked_at,k.id,k.client_id,k.metadata,k.created_at
+      FROM cauce_oauth_requests r,cauce_oauth_grants g,cauce_oauth_codes c,cauce_oauth_tokens t,cauce_oauth_clients k LIMIT 0`);
   }
 
   private async transaction<T>(context: OAuthRequestContext, operation: (client: DatabaseClient) => Promise<T>): Promise<T> {
@@ -190,6 +193,40 @@ export class PostgresOAuthStore implements OAuthStore {
         [grantId, session.userId, this.issuer, this.resource],
       );
     });
+  }
+
+  // Purga oportunista: sólo con más de 1000 registros y sólo clientes de más de un día que nunca
+  // obtuvieron un grant; el tope duro acota el crecimiento si el limitador por dirección no basta.
+  async registerClient(registration: OAuthClientRegistration, context: OAuthRequestContext): Promise<OAuthRegisteredClient> {
+    const clientId = `${REGISTERED_CLIENT_PREFIX}${randomUUID()}`;
+    return this.transaction(context, async (client) => {
+      let total = Number((await client.query<{ total: string }>('SELECT count(*)::text AS total FROM cauce_oauth_clients')).rows[0]?.total);
+      if (total >= 1000) {
+        total -= (await client.query(`DELETE FROM cauce_oauth_clients WHERE id IN (SELECT k.id FROM cauce_oauth_clients k
+          WHERE k.created_at<clock_timestamp()-interval '1 day'
+            AND NOT EXISTS (SELECT 1 FROM cauce_oauth_grants g WHERE g.client_id=k.client_id)
+          ORDER BY k.created_at LIMIT 100 FOR UPDATE SKIP LOCKED)`)).rowCount ?? 0;
+      }
+      if (!Number.isSafeInteger(total) || total >= 10_000) throw new OAuthError('temporarily_unavailable');
+      const metadata = { ...(registration.clientName === null ? {} : { client_name: registration.clientName }),
+        redirect_uris: registration.redirectUris, grant_types: registration.grantTypes,
+        response_types: ['code'], token_endpoint_auth_method: 'none' };
+      const created = (await client.query<{ issued_at: string }>(
+        `INSERT INTO cauce_oauth_clients (id,client_id,metadata) VALUES ($1,$2,$3::jsonb)
+         RETURNING floor(extract(epoch FROM created_at))::text AS issued_at`, [randomUUID(), clientId, JSON.stringify(metadata)],
+      )).rows[0];
+      return Object.freeze({ ...registration, clientId, issuedAt: Number(created?.issued_at) });
+    });
+  }
+
+  async registeredClient(clientId: string, context: OAuthRequestContext): Promise<OAuthClientMetadata | undefined> {
+    if (!isRegisteredClientId(clientId)) return undefined;
+    const row = await this.transaction(context, async client => (await client.query<{ metadata: unknown }>(
+      'SELECT metadata FROM cauce_oauth_clients WHERE client_id=$1', [clientId])).rows[0]);
+    if (!row) return undefined;
+    const registration = clientRegistration(row.metadata);
+    return Object.freeze({ clientId, clientName: registration.clientName ?? UNNAMED_REGISTERED_CLIENT,
+      redirectUris: registration.redirectUris });
   }
 
   async grants(session: OAuthPasswordSession, context: OAuthRequestContext) {

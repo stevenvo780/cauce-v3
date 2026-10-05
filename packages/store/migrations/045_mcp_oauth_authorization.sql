@@ -59,6 +59,15 @@ CREATE TABLE cauce_oauth_tokens (
   expires_at timestamptz NOT NULL CHECK (expires_at>created_at AND expires_at<=created_at+interval '5 minutes'),
   revoked_at timestamptz CHECK (revoked_at>=created_at)
 );
+-- Clientes públicos registrados por RFC 7591. No son autoridad: el grant guarda su propio client_id y
+-- redirect_uri; la fila sólo describe redirects permitidos y se purga si nunca obtuvo un grant.
+CREATE TABLE cauce_oauth_clients (
+  id uuid PRIMARY KEY,
+  client_id text COLLATE "C" NOT NULL UNIQUE
+    CHECK (client_id ~ '^cauce-dcr-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
+  metadata jsonb NOT NULL CHECK (jsonb_typeof(metadata)='object' AND octet_length(metadata::text)<=16384),
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
 
 CREATE FUNCTION cauce_oauth_preserve_authority() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE mutable_field text;
@@ -90,6 +99,8 @@ CREATE INDEX cauce_oauth_requests_expiry ON cauce_oauth_requests(expires_at);
 CREATE INDEX cauce_oauth_codes_expiry ON cauce_oauth_codes(expires_at);
 CREATE INDEX cauce_oauth_tokens_grant ON cauce_oauth_tokens(grant_id,expires_at);
 CREATE INDEX cauce_oauth_grants_owner ON cauce_oauth_grants(human_id,issuer,resource,created_at DESC,id DESC);
+CREATE INDEX cauce_oauth_grants_client ON cauce_oauth_grants(client_id);
+CREATE INDEX cauce_oauth_clients_created ON cauce_oauth_clients(created_at);
 
 CREATE FUNCTION cauce_oauth_advance_identity_revision() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE changed boolean;

@@ -502,13 +502,35 @@ function barrier() {
   it('refuses consent for a revoked or foreign binding and leaves no grant behind', async () => {
     const pool = await database(); const revoked = await seed(pool, false); const foreign = await seed(pool, false);
     await pool.query(`INSERT INTO human_external_identities(human_id,provider,namespace,subject,enabled,revoked_at)
-      VALUES ($1,'oauth',$2,$1::text,false,clock_timestamp())`, [revoked.userId, issuer]);
+      VALUES ($1::uuid,'oauth',$2,$1::text,false,clock_timestamp())`, [revoked.userId, issuer]);
     await pool.query(`INSERT INTO human_external_identities(human_id,provider,namespace,subject)
       VALUES ($1,'oauth',$2,$3)`, [revoked.userId, issuer, foreign.userId]);
     for (const f of [revoked, foreign]) await expect(consent(f)).rejects.toThrow('access_denied');
     expect((await counts(pool))?.grants).toBe('0');
     expect((await pool.query<{ consumed_at: Date | null }>('SELECT consumed_at FROM cauce_oauth_requests WHERE consumed_at IS NOT NULL')).rowCount).toBe(0);
     expect((await pool.query('SELECT 1 FROM human_external_identities WHERE human_id=$1', [foreign.userId])).rowCount).toBe(0);
+  });
+
+  it('persists dynamic clients, reads them back and purges only stale never-granted registrations past the soft cap', async () => {
+    const pool = await database(); const f = await seed(pool);
+    const registered = await f.store.registerClient({ clientName: 'Inspector', redirectUris: ['http://localhost/oauth/callback'],
+      grantTypes: ['authorization_code', 'refresh_token'] }, context());
+    expect(registered.clientId).toMatch(/^cauce-dcr-/u);
+    expect(await f.store.registeredClient(registered.clientId, context())).toEqual({ clientId: registered.clientId,
+      clientName: 'Inspector', redirectUris: ['http://localhost/oauth/callback'] });
+    expect(await f.store.registeredClient('cauce-dcr-00000000-0000-4000-8000-000000000000', context())).toBeUndefined();
+    await expect(pool.query("INSERT INTO cauce_oauth_clients(id,client_id,metadata) VALUES (gen_random_uuid(),'https://x.example/c','{}')")).rejects.toThrow();
+    await pool.query(`INSERT INTO cauce_oauth_clients(id,client_id,metadata,created_at)
+      SELECT gen_random_uuid(),'cauce-dcr-'||gen_random_uuid(),'{"redirect_uris":["http://localhost/cb"]}',clock_timestamp()-interval '2 days'
+      FROM generate_series(1,1000)`);
+    const used = (await pool.query<{ client_id: string }>('SELECT client_id FROM cauce_oauth_clients WHERE client_id<>$1 ORDER BY created_at LIMIT 1', [registered.clientId])).rows[0]?.client_id;
+    await consent(f);
+    await pool.query(`INSERT INTO cauce_oauth_grants SELECT gen_random_uuid(),human_id,issuer,resource,$1,redirect_uri,scopes,binding_id,binding_revision,
+      membership_revision,tenant_id,actor_alias,credential_stamp,created_at,expires_at,NULL FROM cauce_oauth_grants LIMIT 1`, [used]);
+    await f.store.registerClient({ clientName: null, redirectUris: ['https://app.example/cb'], grantTypes: ['authorization_code'] }, context());
+    const remaining = (await pool.query<{ total: number; kept: boolean; fresh: boolean }>(`SELECT count(*)::int AS total,
+      bool_or(client_id=$1) AS kept,bool_or(client_id=$2) AS fresh FROM cauce_oauth_clients`, [used, registered.clientId])).rows[0];
+    expect(remaining).toEqual({ total: 902, kept: true, fresh: true });
   });
 
   it('drops only empty OAuth tables atomically and preserves the human ledger', async () => {
