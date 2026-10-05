@@ -270,7 +270,7 @@ describe('PTY real Python agent through gateway and relay', () => {
     expect(durable.rows[0]?.revoked_at, `session=${live.id} DELETE=${String(uiDeleteStatus)} durable=${JSON.stringify(durable.rows)}`).toBeInstanceOf(Date);
     expect(durable.rows[0]?.closed_at, `session=${live.id} DELETE=${String(uiDeleteStatus)} durable=${JSON.stringify(durable.rows)}`).toBeInstanceOf(Date);
     const revokeAudit = await active.database.pool.query<{ decision: string; session_id: string }>(
-      "SELECT decision,metadata->>'session_id' AS session_id FROM audit_events WHERE action='terminal.session.revoked' AND metadata->>'session_id'=$1",
+      "SELECT decision,metadata->>'session_id' AS session_id FROM audit_events WHERE action='terminal.session.revoked' AND metadata->>'session_id'=$1 AND metadata->>'reason'='operator_revoked'",
       [live.id],
     );
     expect(revokeAudit.rows).toEqual([{ decision: 'info', session_id: live.id }]);
