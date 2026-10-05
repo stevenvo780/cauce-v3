@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { DatabasePool } from '@cauce/store';
 import {
   basesEfimerasCaducadas, creacionDeBaseEfimera, crearBaseEfimera, nombreEfimero,
+  startTestCaseDatabase, type TestDatabase,
 } from '../helpers/postgres.js';
 
 /*
@@ -88,6 +89,30 @@ describe('la poda de sobras efímeras', () => {
 
 describe('crearBaseEfimera contra otra corrida en vuelo', () => {
   const servidor = 'postgresql://cauce@127.0.0.1:5432/cauce_test';
+
+  it('rechaza un destino productivo antes de abrir una conexión', async () => {
+    const { pool } = poolFalso([]); let opened = false;
+    await expect(crearBaseEfimera('postgresql://cauce@127.0.0.1:5432/cauce', () => {
+      opened = true; return pool;
+    })).rejects.toThrow('Rechazado antes de abrir la conexión');
+    expect(opened).toBe(false);
+  });
+
+  it('el aislamiento por caso no poda ninguna base ajena, incluso caducada', async () => {
+    const vieja = nombreEfimero(process.pid + 1, Date.now() - 7 * HORA_MS);
+    const { consultas, pool } = poolFalso([vieja]);
+    const caso = await crearBaseEfimera(servidor, () => pool, { pruneExpired: false });
+    expect(borradas(consultas)).toEqual([]);
+    expect(consultas.some(consulta => consulta.texto.includes('FROM pg_database'))).toBe(false);
+    await caso.soltar();
+    expect(borradas(consultas)).toEqual([new URL(caso.url).pathname.slice(1)]);
+  });
+
+  it.each([servidor, 'postgresql://cauce@127.0.0.1:5432/cauce'])('rechaza servidores no registrados aunque su URL sea %s', async (url) => {
+    const { pool } = poolFalso([]);
+    await expect(startTestCaseDatabase({ pool, url } as TestDatabase))
+      .rejects.toThrow('unchanged server created by startTestDatabase');
+  });
 
   it('no borra la base recién creada por otro proceso', async () => {
     const ajenaJoven = nombreEfimero(process.pid + 1, Date.now() - 2_000);

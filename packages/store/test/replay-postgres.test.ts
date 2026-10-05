@@ -4,19 +4,22 @@ import { requireValue } from './helpers.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage } from '@cauce/protocol';
 import { DurableStore } from '../../adapter-sdk/src/sdk/durable-store.js';
 import type { Delivery } from '../../adapter-sdk/src/sdk/types.js';
-import { CauceRepository, type DatabasePool } from '../src/index.js';
+import { CauceRepository, withTransaction, type DatabasePool } from '../src/index.js';
 import {
-  resetTestDatabase, startTestDatabase, type TestDatabase
+  resetTestDatabase, startTestDatabase, startTestCaseDatabase, type TestDatabase, type EmptyTestDatabase
 } from '../../../tests/helpers/postgres.js';
+
+import { seedIdentity, lineageRoot, attachLineageClient, lineageClientProjection } from './human-message-lineage-postgres.fixtures.js';
 
 let database: TestDatabase;
 let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
+let currentCase: EmptyTestDatabase | undefined;
 
 function command(): PublishMessage {
   return {
@@ -80,6 +83,9 @@ preparePostgresSuite(import.meta.url, async () => {
 }, 120_000);
 
 beforeEach(async () => {
+  currentCase = await startTestCaseDatabase(database);
+  pool = currentCase.pool;
+  repository = new CauceRepository(pool);
   await resetTestDatabase(pool);
   await pool.query(`
     UPDATE acl_edges SET enabled=true,allow_route=true,allow_read=true,allow_control=true;
@@ -92,9 +98,12 @@ beforeEach(async () => {
   `);
 });
 
+afterEach(async () => { await currentCase?.close(); currentCase = undefined; });
+
 afterAll(async () => {
   if (!databaseStarted) return;
-  await pool.end();
+  await currentCase?.close();
+  await database.pool.end();
   await database.container.stop();
 });
 
@@ -105,6 +114,9 @@ describe('transactional manual delivery replay', () => {
       const durableStore = await DurableStore.open(stateDirectory);
       const lease = await repository.acquireLease('Isa', 'salva', 'replay-consumer', [], 60_000);
       const published = await repository.publish(command());
+      const human = await seedIdentity(pool);
+      const root = await lineageRoot(pool, human.humanId, published.message_id);
+      const clientProjection = await attachLineageClient(pool, root);
       const originalDeliveryId = requireValue(published.delivery_ids[0], 'published.delivery_ids');
       let terminalClaim: DeliveryEnvelope | undefined;
 
@@ -268,6 +280,10 @@ describe('transactional manual delivery replay', () => {
         id: replayedMessageId, request_id: replayedRequestId, ...replayedContext
       } = replayedMessage;
       expect(replayedMessageId).not.toBe(originalMessageId);
+      await withTransaction(pool, async client => {
+        expect(await lineageClientProjection(client, String(replayedMessageId))).toEqual(clientProjection);
+      });
+      expect((await pool.query('SELECT * FROM human_message_client_provenance')).rowCount).toBe(1);
       expect(replayedRequestId).not.toBe(originalRequestId);
       expect(replayedContext).toEqual(originalContext);
       expect((await pool.query<{ body_equal: boolean; origin_equal: boolean }>(

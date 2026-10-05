@@ -5,12 +5,47 @@ import {
   humanLineageConsensus, loadDeliveryHumanLineage, loadFaninHumanLineage,
   loadHumanMessageLineage, preserveHumanMessageLineage,
 } from '../src/repository/human-message-lineage.js';
-import { claim, claimFanin, command, pool, registerAgentOutputSuite, repository, terminalAck } from './agent-output-postgres-helpers.js';
-import { HumanLineageRepository, lineageBranch, lineageMessage, lineageRoot, seedIdentity } from './human-message-lineage-postgres.fixtures.js';
+import { claim, claimFanin, command, pool, database, registerAgentOutputSuite, repository, terminalAck } from './agent-output-postgres-helpers.js';
+import { HumanLineageRepository, lineageBranch, lineageMessage, lineageRoot, seedIdentity,
+  attachLineageClient, lineageClientProjection } from './human-message-lineage-postgres.fixtures.js';
+import { startTestCaseDatabase, startTestDatabaseThrough } from '../../../tests/helpers/postgres.js';
 
 registerAgentOutputSuite(import.meta.url);
 
 describe('durable human message lineage on PostgreSQL', () => {
+  it('isolates protected history between cases and only removes the database it created', async () => {
+    const human = await seedIdentity(pool); const root = await lineageRoot(pool, human.humanId);
+    await attachLineageClient(pool, root);
+    for (const table of ['human_message_client_provenance', 'human_oauth_client_delegations', 'human_client_delegation_operations']) {
+      await expect(pool.query(`TRUNCATE ${table} CASCADE`)).rejects.toThrow('permanent');
+    }
+    const next = await startTestCaseDatabase(database);
+    const name = new URL(next.url).pathname.slice(1);
+    try {
+      expect((await next.pool.query('SELECT * FROM human_message_client_provenance')).rowCount).toBe(0);
+      expect((await pool.query('SELECT * FROM human_message_client_provenance')).rowCount).toBe(1);
+      await next.close(); await next.close();
+      expect((await database.pool.query('SELECT datname FROM pg_database WHERE datname=$1', [name])).rowCount).toBe(0);
+      expect((await pool.query('SELECT * FROM human_message_client_provenance')).rowCount).toBe(1);
+    } finally { await next.close(); }
+  });
+
+  it('preserves the exact historical migration cutoff and rejects a changed server URL', async () => {
+    const historical = await startTestDatabaseThrough('044_human_mcp_identity.sql');
+    const originalUrl = historical.url;
+    try {
+      historical.url = originalUrl.replace(/\/[^/]+$/u, '/cauce');
+      await expect(startTestCaseDatabase(historical)).rejects.toThrow('unchanged server');
+      historical.url = originalUrl;
+      const next = await startTestCaseDatabase(historical);
+      try {
+        expect((await next.pool.query<{ version: string }>('SELECT max(version) AS version FROM schema_migrations')).rows[0]?.version)
+          .toBe('044_human_mcp_identity.sql');
+        expect((await next.pool.query<{ name: string | null }>("SELECT to_regclass('human_message_client_provenance') AS name")).rows[0]?.name).toBeNull();
+      } finally { await next.close(); }
+    } finally { await historical.pool.end(); await historical.container.stop(); }
+  });
+
   it('copies into the durable target tenant without creating cross-tenant permissions', async () => {
     const human = await seedIdentity(pool);
     const root = await lineageRoot(pool, human.humanId);
@@ -102,6 +137,7 @@ describe('durable human message lineage on PostgreSQL', () => {
     const human = await seedIdentity(pool);
     const claimed = await claim(command(), 'Steven', 'argos', 'lineage-output');
     const root = await lineageRoot(pool, human.humanId, claimed.delivery.message_id);
+    const clientProjection = await attachLineageClient(pool, root);
     const ack = terminalAck(claimed.delivery, 'lineage-output', claimed.epoch, [{ to: 'kant', body: 'ordinary delegation' }]);
     await repository.ackDelivery(claimed.delivery.delivery_id, 'Steven', 'argos', ack);
     await repository.ackDelivery(claimed.delivery.delivery_id, 'Steven', 'argos', ack);
@@ -139,6 +175,7 @@ describe('durable human message lineage on PostgreSQL', () => {
     await withTransaction(pool, async (client) => {
       for (const id of [leaf.message_id, continuation.message_id, response.message_id, fanin.message_id]) {
         expect(await loadHumanMessageLineage(client, id)).toEqual({ ...root, messageId: id });
+        expect(await lineageClientProjection(client, id)).toEqual(clientProjection);
       }
     });
     await withTransaction(pool, async (client) => {
@@ -146,6 +183,7 @@ describe('durable human message lineage on PostgreSQL', () => {
         expect(await loadHumanMessageLineage(client, child.produced_message_id)).toEqual({
           ...root, messageId: child.produced_message_id,
         });
+        expect(await lineageClientProjection(client, child.produced_message_id)).toEqual(clientProjection);
       }
     });
   });

@@ -354,23 +354,26 @@ async function clonarPlantilla(
 export async function crearBaseEfimera(
   servidor: string,
   abrirAdmin: (servidor: string) => DatabasePool = createPool,
-  opciones: { plantilla?: boolean } = {},
+  opciones: { plantilla?: boolean; pruneExpired?: boolean } = {},
 ): Promise<{ url: string; soltar: () => Promise<void>; tirarConexiones: () => Promise<void> }> {
+  assertTestDatabaseUrl(servidor);
   const conPlantilla = opciones.plantilla ?? false; // decidido por quien conoce la suite
   if (conPlantilla) await asegurarPlantilla(servidor, abrirAdmin);
   const nombre = nombreEfimero();
   const admin = abrirAdmin(servidor);
   try {
     await waitForDatabase(admin);
-    const efimeras = await admin.query<{ datname: string }>(
-      `SELECT d.datname FROM pg_database d WHERE d.datname LIKE $1`,
-      [`${PREFIJO_EFIMERA}%`],
-    );
-    const caducadas = basesEfimerasCaducadas(
-      efimeras.rows.map((fila) => fila.datname), Date.now(),
-    );
-    for (const vieja of caducadas) {
-      await admin.query(`DROP DATABASE IF EXISTS ${vieja} WITH (FORCE)`).catch(() => undefined);
+    if (opciones.pruneExpired !== false) {
+      const efimeras = await admin.query<{ datname: string }>(
+        `SELECT d.datname FROM pg_database d WHERE d.datname LIKE $1`,
+        [`${PREFIJO_EFIMERA}%`],
+      );
+      const caducadas = basesEfimerasCaducadas(
+        efimeras.rows.map((fila) => fila.datname), Date.now(),
+      );
+      for (const vieja of caducadas) {
+        await admin.query(`DROP DATABASE IF EXISTS ${vieja} WITH (FORCE)`).catch(() => undefined);
+      }
     }
     if (conPlantilla) {
       await clonarPlantilla(admin, nombre, () => asegurarPlantilla(servidor, abrirAdmin));
@@ -437,6 +440,38 @@ export function startTestDatabaseThrough(version: string): Promise<TestDatabase>
   return startTestDatabaseAt(version);
 }
 
+const ownedTestServers = new WeakMap<DatabasePool, { url: string; migrationThrough: string | undefined }>();
+function ownTestServer(database: TestDatabase, migrationThrough?: string): TestDatabase {
+  ownedTestServers.set(database.pool, { url: database.url, migrationThrough });
+  return database;
+}
+
+export async function startTestCaseDatabase(database: TestDatabase): Promise<EmptyTestDatabase> {
+  const server = ownedTestServers.get(database.pool);
+  if (server === undefined || server.url !== database.url) {
+    throw new Error('case database requires an unchanged server created by startTestDatabase');
+  }
+  const serverUrl = server.url;
+  assertTestDatabaseUrl(serverUrl);
+  const { url, soltar } = await crearBaseEfimera(serverUrl, createPool, { pruneExpired: false });
+  const pool = createPool(url);
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closing ??= pool.end().finally(soltar);
+    return closing;
+  };
+  try {
+    await waitForDatabase(pool);
+    if (server.migrationThrough === undefined) await applyMigrations(pool);
+    else await applyMigrationsThrough(pool, server.migrationThrough);
+    await guardarSemillaDeCatalogo(pool);
+    return { pool, url, close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
 async function startTestDatabaseAt(migrationThrough?: string): Promise<TestDatabase> {
   /*
    * External database support via CAUCE_TEST_DATABASE_URL for environments where the Docker
@@ -459,7 +494,7 @@ async function startTestDatabaseAt(migrationThrough?: string): Promise<TestDatab
       if (migrationThrough === undefined) await applyMigrations(pool);
       else await applyMigrationsThrough(pool, migrationThrough);
       await guardarSemillaDeCatalogo(pool);
-      return { container: contenedorDesacoplado(soltar, tirarConexiones), pool, url };
+      return ownTestServer({ container: contenedorDesacoplado(soltar, tirarConexiones), pool, url }, migrationThrough);
     } catch (error) {
       await pool.end();
       await soltar();
@@ -501,7 +536,7 @@ async function startTestDatabaseAt(migrationThrough?: string): Promise<TestDatab
     if (migrationThrough === undefined) await applyMigrations(pool);
     else await applyMigrationsThrough(pool, migrationThrough);
     await guardarSemillaDeCatalogo(pool);
-    return { container, pool, url };
+    return ownTestServer({ container, pool, url }, migrationThrough);
   } catch (error) {
     await pool.end();
     await container.stop();

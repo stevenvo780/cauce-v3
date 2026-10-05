@@ -1,11 +1,11 @@
 import { preparePostgresSuite } from './postgres-suite.js';
 import { randomUUID } from 'node:crypto';
 import { requireValue } from './helpers.js';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
-import { CauceRepository, StoreError, type DatabasePool } from '../src/index.js';
+import { CauceRepository, StoreError, withTransaction, type DatabasePool } from '../src/index.js';
 import {
-  resetTestDatabase, startTestDatabase, type TestDatabase
+  resetTestDatabase, startTestDatabase, startTestCaseDatabase, type TestDatabase, type EmptyTestDatabase
 } from '../../../tests/helpers/postgres.js';
 import {
   ackWith as applyTerminalAck, consumer as leaseConsumer, nextDelivery as claimNext,
@@ -25,6 +25,9 @@ let database: TestDatabase;
 let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
+let currentCase: EmptyTestDatabase | undefined;
+
+import { seedIdentity, lineageRoot, attachLineageClient, lineageClientProjection } from './human-message-lineage-postgres.fixtures.js';
 
 const telegramOrigin = (conversation: string) => ({
   adapter: 'telegram',
@@ -154,6 +157,9 @@ preparePostgresSuite(import.meta.url, async () => {
 }, 180_000);
 
 beforeEach(async () => {
+  currentCase = await startTestCaseDatabase(database);
+  pool = currentCase.pool;
+  repository = new CauceRepository(pool);
   await resetTestDatabase(pool);
   await pool.query(`
     UPDATE acl_edges SET enabled=true,allow_route=true,allow_read=true,allow_control=true;
@@ -164,9 +170,12 @@ beforeEach(async () => {
   `);
 });
 
+afterEach(async () => { await currentCase?.close(); currentCase = undefined; });
+
 afterAll(async () => {
   if (!databaseStarted) return;
-  await pool.end();
+  await currentCase?.close();
+  await database.pool.end();
   await database.container.stop();
 });
 
@@ -618,7 +627,10 @@ describe('gate resuelto -> reanuda', () => {
   it('emite UNA entrega de reanudación al agente que preguntó y libera la cadena', async () => {
     await setCaps({ human_gate_enabled: true, delegation_caps_enabled: true });
     const argos = await consumer('Steven', 'argos');
-    await repository.publish(command());
+    const published = await repository.publish(command());
+    const human = await seedIdentity(pool);
+    const root = await lineageRoot(pool, human.humanId, published.message_id);
+    const clientProjection = await attachLineageClient(pool, root);
     await ackWith(argos, await nextDelivery(argos), [{ to: '@human', body: '¿aprobás?' }]);
 
     const gateId = requireValue((await pool.query<{ id: string }>(
@@ -638,6 +650,9 @@ describe('gate resuelto -> reanuda', () => {
     const resume = await nextDelivery(argos, (item) => item.body.type === 'agent.message');
     expect(String(resume.body.text)).toContain('Sí, aprobado');
     expect(String(resume.body.text)).toContain('¿aprobás?');
+    await withTransaction(pool, async client => {
+      expect(await lineageClientProjection(client, resume.message_id)).toEqual(clientProjection);
+    });
 
     // The chain accepts delegations again, with its root and budget intact.
     const afterResume = await ackWith(argos, resume, [{ to: 'socrates', body: 'seguimos' }]);
@@ -645,6 +660,11 @@ describe('gate resuelto -> reanuda', () => {
     const materialized = (await materializations()).filter((row) => row.status === 'materialized');
     expect(materialized).toHaveLength(1);
     expect(materialized[0]?.target_alias).toBe('socrates');
+    const child = await pool.query<{ produced_message_id: string }>(
+      "SELECT produced_message_id FROM agent_output_materializations WHERE status='materialized'");
+    await withTransaction(pool, async client => {
+      expect(await lineageClientProjection(client, requireValue(child.rows[0], 'child').produced_message_id)).toEqual(clientProjection);
+    });
     // The resume did NOT consume a hop: the child of the resumed branch is born at the same hop
     // it would have been born at without a gate.
     expect(materialized[0]?.hop_count).toBe(1);
