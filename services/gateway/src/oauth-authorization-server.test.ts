@@ -363,6 +363,17 @@ describe('OAuth request logging', () => {
         expect(output).toContain('no-such-route');
       } finally { await app.close(); }
     });
+  it.each(['access_token', 'refresh_token', 'code', 'code_verifier'])('redacts a bearer-like %s query outside /oauth, such as on /mcp', async (key) => {
+    let output = '';
+    const stream = new Writable({ write(chunk: Buffer, _encoding, done) { output += chunk.toString(); done(); } });
+    const app = await buildTestGateway({ logger: { stream } });
+    try {
+      await app.inject(`/mcp?${key}=SECRET.JWT.VALUE`);
+      expect(output).not.toContain('SECRET.JWT.VALUE');
+      expect(output).toContain('/mcp');
+      expect(output).toContain(key);
+    } finally { await app.close(); }
+  });
   it('keeps route, method and request IDs without logging opaque OAuth query values', async () => {
     let output = '';
     const stream = new Writable({ write(chunk: Buffer, _encoding, done) { output += chunk.toString(); done(); } });

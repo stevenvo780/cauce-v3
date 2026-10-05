@@ -1,7 +1,8 @@
 import type { FastifyRequest } from 'fastify';
 import { routedPath } from './http-auth-primitives.js';
 
-const sensitive = new Set(['state', 'code', 'code_verifier', 'code_challenge', 'request_id', 'csrf', 'client_id', 'redirect_uri']);
+const sensitive = new Set(['state', 'code', 'code_verifier', 'code_challenge', 'request_id', 'csrf', 'client_id', 'redirect_uri',
+  'access_token', 'refresh_token', 'id_token', 'client_secret']);
 
 function redactQuery(path: string, query: string): boolean {
   const params = new URLSearchParams(query);
