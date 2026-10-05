@@ -130,7 +130,7 @@ describe('cleanup de adopción de perfil', () => {
 
 describe('adopción real del perfil de Codex', () => {
   it('comprueba el entrypoint compilado y sus dependencias en el namespace aislado', () => {
-    expect(() => assertCodexAdapterBuildAvailable(process.cwd())).not.toThrow();
+    expect(() => { assertCodexAdapterBuildAvailable(process.cwd()); }).not.toThrow();
   });
 
   it('rechaza un SDK sin compilar antes de iniciar Docker o crear el wrapper', async () => {
