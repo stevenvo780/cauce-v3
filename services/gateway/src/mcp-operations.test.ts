@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { buildPublishReceipt, type ConsolePublishIntentPrepareResult, type PublishMessage, type PublishResult } from '@cauce/protocol';
+import { buildPublishReceipt, publishRequestHash, type ConsolePublishIntentPrepareResult, type PublishMessage, type PublishResult } from '@cauce/protocol';
 import {
   PublishIntentExpiredError, PublishIntentRateLimitedError, PublishIntentReconciliationRequired, StoreError,
   type DatabaseClient, type HumanIdentitySnapshot, type HumanMessageOptions,
@@ -139,9 +139,13 @@ describe('human MCP operations phase boundaries', () => {
     const firstPublish = published[0];
     const secondPublish = published[1];
     if (!firstPublish || !secondPublish) throw new Error('expected two sessions for the same user');
-    const firstCommand = firstPublish[0] as { authenticated_context?: { session_id?: string } };
-    const secondCommand = secondPublish[0] as { authenticated_context?: { session_id?: string } };
-    expect(firstCommand.authenticated_context?.session_id).not.toBe(secondCommand.authenticated_context?.session_id);
+    const firstCommand = firstPublish[0] as PublishMessage;
+    const secondCommand = secondPublish[0] as PublishMessage;
+    const otherHumanCommand = published[2]?.[0] as PublishMessage;
+    expect(firstCommand.authenticated_context?.session_id).toBe(secondCommand.authenticated_context?.session_id);
+    expect(firstCommand.authenticated_context?.session_id).not.toBe(otherHumanCommand.authenticated_context?.session_id);
+    expect(publishRequestHash(firstCommand)).toBe(publishRequestHash(secondCommand));
+    expect(publishRequestHash(firstCommand)).not.toBe(publishRequestHash(otherHumanCommand));
   });
 
   it('rejects extra authority and malformed request keys before any repository call', async () => {
