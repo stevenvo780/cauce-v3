@@ -36,36 +36,48 @@ export async function assertAgentRegistryGeometry(page: BrowserPage, evidenceDir
   await writeFile(`${evidenceDirectory}/geometry-${viewportName}.json`, JSON.stringify(geometry, null, 2) + '\n', { mode: 0o600 });
   expect(geometry.document).toBeLessThanOrEqual(geometry.viewport);
   expect(geometry.editor).not.toBeNull();
+  if (geometry.editor === null) throw new Error('No se encontró el editor de la identidad objetivo.');
   expect(geometry.card).not.toBeNull();
+  if (geometry.card === null) throw new Error('No se encontró la tarjeta de la identidad objetivo.');
   if (viewportName === 'desktop' || viewportName === 'desktop-closed') {
     expect(geometry.grid).not.toBeNull();
+    if (geometry.grid === null) throw new Error('No se encontró la cuadrícula de agentes.');
     expect(geometry.card).not.toBeNull();
     expect(geometry.open).toBe(viewportName === 'desktop');
     if (viewportName === 'desktop') {
-      expect(geometry.card!.width).toBeGreaterThan(geometry.grid!.width * 0.65);
+      expect(geometry.card.width).toBeGreaterThan(geometry.grid.width * 0.65);
       const siblings = geometry.cards.filter((item, index) => item && index !== geometry.cardIndex);
       expect(siblings.length).toBeGreaterThan(0);
-      for (const sibling of siblings) expect(sibling!.width).toBeLessThan(geometry.grid!.width * 0.65);
+      for (const sibling of siblings) {
+        if (sibling === null) throw new Error('Una tarjeta vecina no tiene medidas.');
+        expect(sibling.width).toBeLessThan(geometry.grid.width * 0.65);
+      }
     } else {
-      expect(geometry.card!.width).toBeLessThan(geometry.grid!.width * 0.65);
+      expect(geometry.card.width).toBeLessThan(geometry.grid.width * 0.65);
     }
   }
   if (geometry.open) {
     expect(geometry.controls.length).toBeGreaterThan(0);
     for (const item of geometry.controls) {
       expect(item.label).not.toBeNull();
+      if (item.label === null) throw new Error('Un control no tiene etiqueta contenedora.');
       expect(item.control).not.toBeNull();
-      expect(item.control!.left).toBeGreaterThanOrEqual(item.label!.left - 0.5);
-      expect(item.control!.right).toBeLessThanOrEqual(item.label!.right + 0.5);
+      if (item.control === null) throw new Error('Una etiqueta no contiene el control esperado.');
+      expect(item.control.left).toBeGreaterThanOrEqual(item.label.left - 0.5);
+      expect(item.control.right).toBeLessThanOrEqual(item.label.right + 0.5);
     }
     expect(geometry.checkboxes).toHaveLength(3);
     for (const item of geometry.checkboxes) {
-      expect(item.label!.height).toBeGreaterThanOrEqual(44);
-      expect(item.input!.width).toBeGreaterThanOrEqual(18);
-      expect(item.input!.width).toBeLessThanOrEqual(24);
-      expect(item.input!.height).toBeGreaterThanOrEqual(18);
-      expect(item.input!.height).toBeLessThanOrEqual(24);
-      expect(item.textLeft).toBeGreaterThanOrEqual(item.input!.right - 1);
+      expect(item.label).not.toBeNull();
+      if (item.label === null) throw new Error('Una casilla no tiene etiqueta contenedora.');
+      expect(item.input).not.toBeNull();
+      if (item.input === null) throw new Error('Una etiqueta no contiene su casilla.');
+      expect(item.label.height).toBeGreaterThanOrEqual(44);
+      expect(item.input.width).toBeGreaterThanOrEqual(18);
+      expect(item.input.width).toBeLessThanOrEqual(24);
+      expect(item.input.height).toBeGreaterThanOrEqual(18);
+      expect(item.input.height).toBeLessThanOrEqual(24);
+      expect(item.textLeft).toBeGreaterThanOrEqual(item.input.right - 1);
     }
   }
 }
