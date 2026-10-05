@@ -50,7 +50,7 @@ const RECORTADO = CUERPO_LARGO.slice(0, CARACTERES_DE_PREVISUALIZACION);
  * the newest message, also without delivery. Without that shape the bug does not reproduce:
  * with a thread where everything has delivery, the old code passed green.
  */
-function feedDeArgos({ recorte = false }: { recorte?: boolean } = {}) {
+function feedDeArgos({ recorte = false, newestPreview }: { recorte?: boolean; newestPreview?: string } = {}) {
   const items = [
     {
       message_id: 'aaaaaaaa-1111-4111-8111-111111111111', request_id: 'aaaaaaaa-1111-4111-8111-999999999999',
@@ -71,7 +71,7 @@ function feedDeArgos({ recorte = false }: { recorte?: boolean } = {}) {
     {
       message_id: 'cccccccc-3333-4333-8333-333333333333', request_id: 'cccccccc-3333-4333-8333-999999999999',
       trace_id: 'trace-salida-nueva', tenant_id: 'Steven', room_id: 'grp.steven', actor_alias: 'argos',
-      body_preview: recorte ? RECORTADO : 'la mas nueva: censo terminado', lane: 'batch' as const, created_at: iso(-30_000),
+      body_preview: newestPreview ?? (recorte ? RECORTADO : 'la mas nueva: censo terminado'), lane: 'batch' as const, created_at: iso(-30_000),
       deliveries: [],
     },
   ];
@@ -86,6 +86,14 @@ async function abrirArgos(user: ReturnType<typeof userEvent.setup>) {
 
 function burbujas(hilo: HTMLElement): HTMLElement[] {
   return [...hilo.querySelectorAll<HTMLElement>('.transcript-entry')];
+}
+
+async function abrirDetalleDe(user: ReturnType<typeof userEvent.setup>, hilo: HTMLElement, contenido: string) {
+  const burbuja = burbujas(hilo).find((element) => element.textContent.includes(contenido));
+  if (!burbuja) throw new Error(`No se encontró la burbuja: ${contenido}`);
+  await user.click(within(burbuja).getByRole('button', { name: 'Opciones del mensaje' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
+  return within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -112,9 +120,7 @@ it('🔴 el detalle abre en el ÚLTIMO mensaje del hilo, no en el primero sin en
   renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
-  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
-  await user.click(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' }));
-  const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
+  const detalle = await abrirDetalleDe(user, hilo, 'la mas nueva: censo terminado');
 
   // The bug: it opened on `aaaaaaaa…`, the OLDEST, because that was the first item without delivery.
   expect(within(detalle).getByText('cccccccc-3333-4333-8333-333333333333')).toBeInTheDocument();
@@ -135,12 +141,23 @@ it('🔴 el detalle arranca CERRADO y lo abre el clic del operador', async () =>
 
   const hilo = await abrirArgos(user);
   expect(within(hilo).queryByRole('group', { name: /detalle del mensaje seleccionado/i })).toBeNull();
-  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
-  expect(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' })).toBeVisible();
-  await user.keyboard('{Escape}');
-  await user.click(within(burbujas(hilo)[0]).getByRole('button', { name: 'Opciones del mensaje' }));
+  expect(within(hilo).queryByRole('button', { name: 'Ver detalle del último mensaje' })).toBeNull();
+  const vieja = burbujas(hilo).at(0);
+  if (vieja === undefined) throw new Error('Falta la burbuja antigua');
+  await user.click(within(vieja).getByRole('button', { name: 'Opciones del mensaje' }));
   await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
   expect(within(hilo).getByRole('group', { name: /detalle del mensaje seleccionado/i })).toBeVisible();
+}, 25_000);
+
+it('muestra un texto explícito en el inspector si el preview del mensaje solo tiene espacios', async () => {
+  const user = userEvent.setup();
+  feedDeArgos({ newestPreview: '   ' });
+  renderRouted(MessagesPage);
+
+  const hilo = await abrirArgos(user);
+  const detalle = await abrirDetalleDe(user, hilo, 'Mensaje sin contenido textual.');
+  expect(within(detalle).getByLabelText('Cuerpo del mensaje').querySelector('pre'))
+    .toHaveTextContent('Mensaje sin contenido textual.');
 }, 25_000);
 
 it('🔴 clicar una burbuja SIN entrega también selecciona: antes no hacía nada', async () => {
@@ -149,11 +166,9 @@ it('🔴 clicar una burbuja SIN entrega también selecciona: antes no hacía nad
   renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
-  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
-  await user.click(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' }));
-  await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
-
-  const vieja = burbujas(hilo)[0];
+  await abrirDetalleDe(user, hilo, 'la mas nueva: censo terminado');
+  const vieja = burbujas(hilo).at(0);
+  if (vieja === undefined) throw new Error('Falta la burbuja antigua');
   expect(within(vieja).getByText(/la mas vieja/)).toBeInTheDocument();
   await user.click(within(vieja).getByRole('button', { name: 'Opciones del mensaje' }));
   await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
@@ -257,9 +272,7 @@ it('🔴 «Ver el mensaje completo» pide el cuerpo al servidor y lo pinta enter
   renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
-  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
-  await user.click(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' }));
-  const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
+  const detalle = await abrirDetalleDe(user, hilo, RECORTADO);
   await user.click(await within(detalle).findByRole('button', { name: /ver el mensaje completo/i }));
 
   await waitFor(() => { expect(pedido).toBe('cccccccc-3333-4333-8333-333333333333'); });
@@ -276,9 +289,7 @@ it('🔴 informa el 404 del cuerpo sin inventar su causa y conserva la vista pre
   renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
-  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
-  await user.click(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' }));
-  const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
+  const detalle = await abrirDetalleDe(user, hilo, RECORTADO);
   await user.click(await within(detalle).findByRole('button', { name: /ver el mensaje completo/i }));
 
   const aviso = await within(detalle).findByRole('alert');

@@ -458,8 +458,9 @@ it('abre la configuración desde el chat y conserva borrador con Atrás, Adelant
   renderWithApi(<App />);
   const input = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
   await user.type(input, 'Borrador antes de configurar');
-  await user.click(screen.getByRole('button', { name: 'Más' }));
-  await user.click(screen.getByRole('button', { name: 'Ver detalle del último mensaje' }));
+  const hilo = await screen.findByRole('region', { name: /conversación con argos/i });
+  await user.click(within(hilo).getByRole('button', { name: 'Opciones del mensaje' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
   expect(screen.getByRole('heading', { name: 'Mensaje que elegiste' })).toHaveFocus();
   await user.click(screen.getByRole('button', { name: 'Más' }));
   await user.click(screen.getByRole('link', { name: 'Configurar agente' }));

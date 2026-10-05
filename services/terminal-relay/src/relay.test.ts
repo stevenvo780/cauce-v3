@@ -14,7 +14,7 @@ import {
   MAX_COLS, MAX_ROWS, MIN_COLS, MIN_ROWS
 } from './sessions.js';
 import {
-  AGENT_FINGERPRINT,
+  AGENT_FINGERPRINT, AUTHORITY_PROOF, RESUME_TOKEN,
   CLAIM_TOKEN,
   FakePtyAgent,
   grant,
@@ -119,7 +119,7 @@ describe('relay configuration and identity registry', () => {
 
   it('acota la geometría del attach igual que un resize y rechaza valores no enteros', () => {
     const request = (cols: unknown, rows: unknown) => Buffer.from(JSON.stringify({
-      type: 'attach', session_id: SESSION_ID, ticket: 'opaque-ticket', cols, rows
+      type: 'attach', session_id: SESSION_ID, ticket: 'opaque-ticket', authority_proof: AUTHORITY_PROOF, cols, rows
     }));
     expect(parseAttachRequest(request(1, 1), false)).toMatchObject({ cols: MIN_COLS, rows: MIN_ROWS });
     expect(parseAttachRequest(request(9_999, 9_999), false)).toMatchObject({ cols: MAX_COLS, rows: MAX_ROWS });
@@ -129,7 +129,7 @@ describe('relay configuration and identity registry', () => {
 
   it('requires a complete canonical prior fence on resume and keeps bigint epochs as text', () => {
     const request = (overrides: Record<string, unknown> = {}) => Buffer.from(JSON.stringify({
-      type: 'resume', session_id: SESSION_ID, resume_token: 'r'.repeat(100),
+      type: 'resume', session_id: SESSION_ID, resume_token: RESUME_TOKEN, authority_proof: AUTHORITY_PROOF,
       prior_claim_token: CLAIM_TOKEN, prior_claim_epoch: '9007199254740994',
       after_bytes: 0, cols: 80, rows: 24, ...overrides,
     }));
@@ -373,7 +373,7 @@ async function gatewayStub(
   return {
     identity,
     answer(next: StubbedResponse) { response = next; },
-    authorize: () => gateway.authorizeSession(SESSION_ID, CLAIM_TOKEN, '7'),
+    authorize: () => gateway.authorizeSession(SESSION_ID, CLAIM_TOKEN, '7', AUTHORITY_PROOF),
     async close() {
       await new Promise<void>((resolve) => { server.close(() => { resolve(); }); });
       await rm(fixture.directory, { recursive: true, force: true });
@@ -416,7 +416,7 @@ describe('periodic authorization outcomes', () => {
       stub.answer({
         status: 200,
         body: JSON.stringify({
-          ok: true,
+          ok: true, authority_proof: AUTHORITY_PROOF,
           expires_at: new Date(Date.now() + 30_000).toISOString(),
           claim_epoch: '7',
           claim_lease_ms: 150_000,

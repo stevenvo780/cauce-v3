@@ -8,6 +8,7 @@ import {
   type ControlHoldColumns,
 } from '../helpers.js';
 import { ticketSha256 } from '../tickets.js';
+import { terminalDatabaseNow } from '../session-authority.js';
 import type { TerminalSessionRow } from '../types.js';
 import {
   relayClaimState, renewRelayClaim, type RenewedRelayClaim,
@@ -29,7 +30,7 @@ function sessionWindowCeiling(config: TerminalConfig, log: FastifyBaseLogger): n
 
 export function registerRelayAuthorizationRoute(context: RelayProxyContext): void {
   const {
-    app, pool, config, AUTHZ_KEYS, requestRelayIdentity,
+    authority, repository, app, pool, config, AUTHZ_KEYS, requestRelayIdentity,
     relayClaimToken, relayClaimEpoch, currentSessionPolicy, recordTransactionalTerminalAudit,
     databaseClaimEpoch, boundedMilliseconds, replyError,
   } = context;
@@ -46,6 +47,8 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
       }
       const identity = requestRelayIdentity(request, record);
       if (identity === undefined) { await reply.code(401).send(); return; }
+      const continuity = authority.verify(record.authority_proof);
+      if (continuity.sessionId !== request.params.sid) throw new Error('terminal authority is unavailable');
       const claimToken = relayClaimToken(record.claim_token);
       const claimEpoch = relayClaimEpoch(record.claim_epoch);
       if (claimToken === undefined || claimEpoch === undefined) {
@@ -61,11 +64,12 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
       let renewed: RenewedRelayClaim | undefined;
       let refusal = 'unknown_session';
       await withTransaction(pool, async (client) => {
+        const authorityExpiresAt = await authority.lockSession(client, continuity, repository);
         const locked = await client.query<LockedAuthzSession>(
-          `SELECT terminal_sessions.*,now() AS database_now,
+          `SELECT terminal_sessions.*,clock_timestamp() AS database_now,
                   LEAST(GREATEST(consumed_at + make_interval(secs => $2), COALESCE(window_extended_to, 'epoch'::timestamptz)), consumed_at + make_interval(secs => $3)) AS session_expires_at,
                   consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
-                    AND LEAST(GREATEST(consumed_at + make_interval(secs => $2), COALESCE(window_extended_to, 'epoch'::timestamptz)), consumed_at + make_interval(secs => $3))>now() AS session_unexpired,
+                    AND LEAST(GREATEST(consumed_at + make_interval(secs => $2), COALESCE(window_extended_to, 'epoch'::timestamptz)), consumed_at + make_interval(secs => $3))>clock_timestamp() AS session_unexpired,
                   ${CONTROL_HOLD_COLUMNS}
              FROM terminal_sessions WHERE id=$1 FOR UPDATE`,
           [request.params.sid, config.sessionTtlSeconds, sessionMaxTotalSeconds],
@@ -97,6 +101,7 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
                   claimLeaseSeconds: config.claimLeaseSeconds,
                   sessionTtlSeconds: config.sessionTtlSeconds,
                   sessionMaxTotalSeconds,
+                  authorityExpiresAt,
                 });
                 if (renewed === undefined) refusal = 'claim_fenced';
               }
@@ -117,6 +122,7 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
             });
           }
         }
+        await terminalDatabaseNow(client, authorityExpiresAt);
       });
       if (renewed === undefined) {
         await reply.code(403).send(refusal === CONTROL_RELEASED
@@ -128,6 +134,7 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
       if (claimExpiresAt === null) throw new Error('database terminal claim lease is invalid');
       return {
         ok: true,
+        authority_proof: record.authority_proof,
         expires_at: renewed.session_expires_at.toISOString(),
         claim_epoch: databaseClaimEpoch(renewed.relay_claim_epoch),
         claim_lease_ms: boundedMilliseconds(

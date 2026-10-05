@@ -1,6 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
+import { TerminalSessionAuthority } from '../../services/gateway/src/terminal/session-authority.js';
 import type { FastifyInstance } from 'fastify';
-import { UUID_OK, buildContext, type Context } from './gateway-terminal-session-control-fixtures.js';
+import { UUID_OK, configBase, validSessionBody, buildContext, type Context } from './gateway-terminal-session-control-fixtures.js';
 
 describe('registerTerminalSessionControl: rutas registradas', () => {
   let ctx: Context;
@@ -64,5 +66,18 @@ describe('registerTerminalSessionControl: rutas registradas', () => {
       ctx.app, 'POST', `/v3/console/terminal/sessions/${UUID_OK}/extend`, {}
     );
     expect(observed.registered).toBe(true);
+  });
+});
+
+describe('the test authority boundary never enables DevOnly production authority', () => {
+  let ctx: Context;
+  afterEach(async () => { await ctx.close(); });
+  it('denies the actual DevOnly authority before SQL or audit', async () => {
+    ctx = buildContext({ authority: new TerminalSessionAuthority(DevOnlyAuthProvider.forTests(), configBase().ticketKey) });
+    const response = await ctx.app.inject({ method: 'POST', url: '/v3/console/terminal/sessions', payload: validSessionBody() });
+    expect(response.statusCode).toBe(403);
+    expect(vi.mocked(ctx.pool).query.mock.calls).toHaveLength(0);
+    expect(vi.mocked(ctx.pool).connect.mock.calls).toHaveLength(0);
+    expect(ctx.recordTransactionalTerminalAudit).not.toHaveBeenCalled();
   });
 });

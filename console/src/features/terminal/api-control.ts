@@ -15,10 +15,10 @@ import {
 type SesionConToken = Pick<CauceApi, 'csrfForMutation'>;
 
 /** The body `parseControlRequest` accepts. `reason` is the fifth key and only a take carries it. */
-export const CAMPOS_DE_CONTROL = ['action', 'owner_generation', 'owner_token', 'request_id'] as const;
+export const CAMPOS_DE_CONTROL = ['action', 'authority_proof', 'owner_generation', 'owner_token', 'request_id'] as const;
 
 /** The owner-fenced body of `/extend`, identical to the one that releases a session. */
-export const CAMPOS_DE_PRORROGA = ['owner_generation', 'owner_token', 'request_id'] as const;
+export const CAMPOS_DE_PRORROGA = ['authority_proof', 'owner_generation', 'owner_token', 'request_id'] as const;
 
 /**
  * Receipt of a taken hold. While it lives, the bus keeps the alias's deliveries pending. Every
@@ -56,6 +56,7 @@ function cuerpoConDueno(owner: TerminalSessionOwner): Record<string, string> {
     request_id: owner.request_id,
     owner_generation: owner.owner_generation,
     owner_token: owner.owner_token,
+    authority_proof: owner.authority_proof,
   };
 }
 

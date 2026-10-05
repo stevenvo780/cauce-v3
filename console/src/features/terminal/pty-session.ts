@@ -47,6 +47,7 @@ export {
   PTY_VIEWER_HEARTBEAT_MS,
   esRespuestaTecnicaDelTerminal,
   ptyCloseMessage,
+  resumeTokenMatchesAuthorityProof,
   websocketUrl,
 } from './pty-types';
 

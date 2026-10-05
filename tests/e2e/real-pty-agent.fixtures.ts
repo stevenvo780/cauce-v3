@@ -65,7 +65,7 @@ export interface RealPtyFixture {
   gatewayUrl: string;
   baseUrl: string;
   browserContainer: string;
-  browserPage(viewport: { width: number; height: number }): Promise<BrowserPage>;
+  browserPage(viewport: { width: number; height: number }, device?: { isMobile?: boolean; hasTouch?: boolean }): Promise<BrowserPage>;
   relayPorts: { browser: number; agent: number; health: number };
   relayInstanceId: string;
   agentContainer: string;
@@ -81,7 +81,7 @@ export interface RealPtyFixture {
   agentLog: () => string;
   login(): Promise<BrowserSession>;
   request(path: string, options?: { method?: string; headers?: Record<string, string>; body?: unknown }): Promise<HttpResult>;
-  connect(ticket: string, sessionId: string, cols: number, rows: number): Promise<PtySocket>;
+  connect(ticket: string, sessionId: string, authorityProof: string, cols: number, rows: number): Promise<PtySocket>;
   waitForTarget(cookie: string, timeoutMs?: number): Promise<void>;
   close(): Promise<void>;
 }
@@ -569,11 +569,14 @@ WORKDIR /home/node
     agent.stderr?.on('data', (chunk: Buffer) => { agentLog = boundedAppend(agentLog, chunk); });
 
     const relayPorts = ports;
+    process.stdout.write(`terminal-e2e-owned ${JSON.stringify({ database_container: startedDatabase.container.getId(),
+      agent_container: containerName, agent_container_id: agentContainerId, agent_image: agentImage, agent_image_id: imageId,
+      browser_container: trustedBrowser.container })}\n`);
     return {
       database: startedDatabase, app, directory, gatewayUrl, baseUrl, browserContainer: trustedBrowser.container,
-      browserPage: async (viewport) => {
+      browserPage: async (viewport, device = {}) => {
         if (!trustedBrowser) throw new Error('trusted Chromium fixture is not initialized');
-        const context = await trustedBrowser.browser.newContext({ viewport, ignoreHTTPSErrors: false, serviceWorkers: 'block' });
+        const context = await trustedBrowser.browser.newContext({ viewport, ignoreHTTPSErrors: false, serviceWorkers: 'block', ...device });
         browserContexts.push(context);
         return await context.newPage();
       },
@@ -593,7 +596,7 @@ WORKDIR /home/node
         return { cookie: setCookie.split(';', 1)[0] ?? '', csrf: value.csrf_token };
       },
       request: (path, options = {}) => requestGateway(gatewayUrl, proxyAgent, path, options),
-      connect: async (ticket, sessionId, cols, rows) => {
+      connect: async (ticket, sessionId, authorityProof, cols, rows) => {
         const { WebSocket } = await import('ws');
         const socket = new WebSocket(`wss://127.0.0.1:${String(relayPorts.browser)}/v3/console/terminal/relays/${relayInstanceId}/ws`, [], {
           cert: await readFile(pkiValue.consoleClientCert), key: await readFile(pkiValue.consoleClientKey), ca: await readFile(pkiValue.caCert),
@@ -662,7 +665,7 @@ WORKDIR /home/node
           },
           get closeCode() { return closeCode; },
         };
-        socket.send(JSON.stringify({ type: 'attach', session_id: sessionId, ticket, cols, rows }));
+        socket.send(JSON.stringify({ type: 'attach', session_id: sessionId, ticket, authority_proof: authorityProof, cols, rows }));
         return client;
       },
       waitForTarget: async (cookie, timeoutMs = 30_000) => {

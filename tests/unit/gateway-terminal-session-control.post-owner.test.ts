@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UUID_OK, buildContext, type Context, consolePrincipal, validOwnerRotation } from './gateway-terminal-session-control-fixtures.js';
 
 describe('POST /v3/console/terminal/sessions/:sid/owner: pre-validación', () => {
@@ -38,4 +38,13 @@ describe('POST /v3/console/terminal/sessions/:sid/owner: pre-validación', () =>
     expect(response.statusCode).toBe(403);
     expect(response.json()).toMatchObject({ error: 'forbidden' });
   });
+  it.each([undefined, 'ac2.' + 'x'.repeat(4096), 'ac2.invalid'])('rejects missing, oversized or invalid proof before SQL', async (proof) => {
+    const response = await ctx.app.inject({ method: 'POST', url: `/v3/console/terminal/sessions/${UUID_OK}/owner`,
+      payload: { ...validOwnerRotation(), authority_proof: proof } });
+    expect(response.statusCode).toBeGreaterThanOrEqual(400);
+    expect(vi.mocked(ctx.pool).query.mock.calls).toHaveLength(0);
+    expect(vi.mocked(ctx.pool).connect.mock.calls).toHaveLength(0);
+    expect(ctx.recordTransactionalTerminalAudit).not.toHaveBeenCalled();
+  });
+
 });

@@ -20,6 +20,7 @@ interface InstrumentedPool {
 interface BrokenClientTestDatabase {
   pool: object;
   sessions: ReadonlyMap<string, { browser_owner_generation: string }>;
+  authorityProofs: ReadonlyMap<string, string>;
   audit: readonly { action: string }[];
 }
 
@@ -82,6 +83,7 @@ export function registerBrokenClientTest(
       session_id: string; request_id: string; owner_generation: string;
     }>();
     const payload = {
+      authority_proof: database.authorityProofs.get(issued.session_id),
       request_id: issued.request_id,
       expected_owner_generation: issued.owner_generation,
       owner_token: crypto.randomUUID(),

@@ -1,206 +1,110 @@
-import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import {
-  StoreError, currentControlHold, releaseControlHold, releaseSessionControlHolds, takeControlHold,
+  withTransaction, StoreError, takeControlHoldWithinTransaction, releaseSessionControlHolds,
   TerminalAgentBusyError, type DatabaseClient,
 } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
-import type { Principal } from '../../auth.js';
 import {
-  recordTerminalAudit, terminalAuditMetadata, terminalSessionAuditContext,
-  type TerminalAuditEntry,
+  terminalAuditMetadata, terminalSessionAuditContext, type TerminalAuditEntry,
 } from '../audit.js';
-import {
-  resolveOperator, writableModeRequiresAttribution, type ResolvedOperator,
-} from '../authority.js';
-import {
-  cohortLabels, ownedLiveSessionQuery, subjectFor, type OwnedTerminalSession,
-} from '../helpers.js';
+import { writableModeRequiresAttribution } from '../authority.js';
+import { cohortLabels, ownedLiveSessionQuery } from '../helpers.js';
+import { terminalDatabaseNow } from '../session-authority.js';
+import { encodeTerminalSubject } from '../authority-continuity.js';
 import type { TerminalSessionControlOptions } from '../session-control.js';
-import {
-  UNATTRIBUTED_OPERATOR,
-  type TerminalConflict, type TerminalDenial, type TerminalSessionRow,
-} from '../types.js';
+import { UNATTRIBUTED_OPERATOR, type TerminalSessionRow } from '../types.js';
 import { authorizeTerminalControlActor } from './control-authorization.js';
 
-/** Releases without a reason still record the operator who returned control. */
-const DEFAULT_RELEASE_REASON = 'operator_released';
+type TeardownSessionRow = Pick<TerminalSessionRow,
+  'id' | 'tenant_id' | 'alias' | 'mode' | 'trace_id' | 'operator_id' | 'attributed' | 'container'>;
 
-type TeardownSessionRow = Pick<
-  TerminalSessionRow,
-  'id' | 'tenant_id' | 'alias' | 'mode' | 'trace_id' | 'operator_id' | 'attributed' | 'container'
->;
-
-/**
- * Taking and giving back the control of a writable TUI. While the hold is live the deliveries of
- * the alias stay `pending`: `claimOne` does not select them, so nothing is lost and nothing is
- * reordered. The hold is bounded twice — by `controlHoldSeconds` and by the session window — so a
- * browser that dies without releasing can never mute an alias beyond its own session.
- */
-export function registerTerminalControlRoute(
-  app: FastifyInstance,
-  options: TerminalSessionControlOptions,
-): void {
-  const {
-    pool, config, grants, repository, principal, currentCohort, parseControlRequest, replyError,
-  } = options;
-
-  async function auditControl(
-    actor: Principal,
-    row: TerminalSessionRow,
-    action: 'terminal.control_taken' | 'terminal.control_released',
-    decision: 'allow' | 'deny' | 'info',
-    extra: Record<string, unknown>,
-  ): Promise<void> {
-    await recordTerminalAudit(pool, {
-      tenant_id: actor.tenant_id,
-      actor_alias: actor.alias,
-      action,
-      decision,
-      ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-      metadata: terminalAuditMetadata(
-        terminalSessionAuditContext(
-          row,
-          cohortLabels(await currentCohort(row.tenant_id, row.alias)),
-        ),
-        { session_id: row.id, ...extra },
-      ),
-    });
-  }
-
-  async function takeHold(
-    reply: FastifyReply,
-    actor: Principal,
-    operator: ResolvedOperator,
-    session: OwnedTerminalSession,
-    holdReason: string,
-    allowBusy: boolean,
-  ): Promise<void> {
-    let hold;
-    try {
-      hold = await takeControlHold(pool, {
-        tenantId: session.tenant_id,
-        alias: session.alias,
-        sessionId: session.id,
-        operatorId: operator.operator_id,
-        reason: holdReason,
-        allowBusy,
-        windowMs: Math.max(1, (config.controlHoldSeconds ?? 0) * 1_000),
-        sessionTtlSeconds: config.sessionTtlSeconds,
-        sessionMaxTotalSeconds: config.sessionMaxTotalSeconds ?? null,
-      });
-    } catch (error) {
-      if (error instanceof TerminalAgentBusyError) {
-        await auditControl(actor, session, 'terminal.control_taken', 'deny', { reason: 'agent_busy' });
-        await reply.code(409).send({ error: 'conflict', reason: 'agent_busy' });
-        return;
-      }
-      if (error instanceof StoreError && error.code === 'not_found') {
-        // The session died between the owner fence and the take; the browser must re-open.
-        await reply.code(409).send({ error: 'conflict', reason: 'stale_terminal_owner' });
-        return;
-      }
-      if (!(error instanceof StoreError) || error.code !== 'conflict') throw error;
-      const live = await currentControlHold(pool, session.tenant_id, session.alias);
-      await reply.code(409).send({
-        error: 'conflict',
-        reason: 'control_held',
-        held_by: live?.operator_id ?? null,
-        expires_at: live?.expires_at.toISOString() ?? null,
-      });
-      return;
-    }
-    await auditControl(actor, session, 'terminal.control_taken', 'allow', {
-      operator_reason: holdReason,
-      allow_busy: allowBusy,
-      hold_id: hold.id,
-      expires_at: hold.expires_at.toISOString(),
-    });
-    await reply.code(200).send({
-      session_id: session.id,
-      hold_id: hold.id,
-      held_by: hold.operator_id,
-      expires_at: hold.expires_at.toISOString(),
-    });
-  }
-
+export function registerTerminalControlRoute(app: FastifyInstance, options: TerminalSessionControlOptions): void {
+  const { pool, config, grants, repository, authority, principal, currentCohort,
+    parseControlRequest, replyError, recordTransactionalTerminalAudit } = options;
   app.post<{ Params: { sid: string } }>('/v3/console/terminal/sessions/:sid/control', async (request, reply) => {
     try {
       const actor = await authorizeTerminalControlActor(request, reply, { principal, repository });
       if (actor === undefined) return;
       if (config.writableTuiEnabled !== true) {
-        await reply.code(403).send({ error: 'forbidden', reason: 'writable_tui_disabled' });
-        return;
+        await reply.code(403).send({ error: 'forbidden', reason: 'writable_tui_disabled' }); return;
       }
-      const operator = resolveOperator(request, actor, config);
       if (!UUID_ANY_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
       const body = parseControlRequest(request.body);
-      const query = ownedLiveSessionQuery({
-        sessionId: request.params.sid,
-        body,
-        operator,
-        consoleSubject: subjectFor(actor),
-        config,
+      const proof = await authority.browserProof(request, body.authority_proof);
+      if (proof.sessionId !== request.params.sid) throw new Error('terminal authority is unavailable');
+      const outcome = await withTransaction(pool, async (client) => {
+        const deadline = await authority.lockSession(client, proof, repository);
+        const owned = ownedLiveSessionQuery({ sessionId: request.params.sid, body,
+          operator: { operator_id: actor.operator_id ?? UNATTRIBUTED_OPERATOR, attributed: true },
+          consoleSubject: encodeTerminalSubject(proof.origin), config, lock: true });
+        const row = (await client.query<TerminalSessionRow>(owned.text, owned.values)).rows[0];
+        if (row === undefined) return { status: 409, body: { error: 'conflict', reason: 'stale_terminal_owner' } };
+        const cohort = await currentCohort(row.tenant_id, row.alias, client);
+        const audit = async (action: 'terminal.control_taken' | 'terminal.control_released', metadata: Record<string, unknown>, decision: 'allow' | 'deny' = 'allow') => {
+          await recordTransactionalTerminalAudit(client, { tenant_id: actor.tenant_id, actor_alias: actor.alias,
+            action, decision, ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
+            metadata: terminalAuditMetadata(terminalSessionAuditContext(row, cohortLabels(cohort)),
+              { session_id: row.id, ...metadata }) });
+        };
+        const deny = async (status: 403 | 409, reason: string, extra: Record<string, unknown> = {}) => {
+          await audit(body.action === 'take' ? 'terminal.control_taken' : 'terminal.control_released', { reason }, 'deny');
+          await terminalDatabaseNow(client, deadline);
+          return { status, body: { error: status === 403 ? 'forbidden' : 'conflict', reason, ...extra } };
+        };
+        if (row.mode !== 'harness_rw') return deny(409, 'no_recognized_mode');
+        if (body.action === 'release') {
+          const live = (await client.query<{ id: string; session_id: string }>(
+            `SELECT id,session_id FROM terminal_control_holds WHERE tenant_id=$1 AND alias=$2
+             AND released_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE`, [row.tenant_id, row.alias],
+          )).rows[0];
+          if (live === undefined) return { status: 200, body: { session_id: row.id, hold_id: null, released: true } };
+          if (live.session_id !== row.id) return deny(409, 'control_held');
+          const reason = body.reason ?? 'operator_released';
+          await releaseSessionControlHolds(client, row.id, reason);
+          await audit('terminal.control_released', { hold_id: live.id, reason });
+          await terminalDatabaseNow(client, deadline);
+          return { status: 200, body: { session_id: row.id, hold_id: live.id, released: true } };
+        }
+        if (row.operator_id === UNATTRIBUTED_OPERATOR || writableModeRequiresAttribution(row.mode, row.attributed)) {
+          return deny(403, row.operator_id === UNATTRIBUTED_OPERATOR ? 'writable_requires_named_operator' : 'writable_requires_attribution');
+        }
+        if (!(await grants.allowsCohort(row.operator_id, cohort, row.mode))) {
+          return deny(403, 'no_grant_for_operator');
+        }
+        if (body.reason === undefined) throw new Error('taking control requires a typed reason');
+        await client.query('SAVEPOINT terminal_control_take');
+        let hold;
+        try { hold = await takeControlHoldWithinTransaction(client, { tenantId: row.tenant_id, alias: row.alias,
+          sessionId: row.id, operatorId: row.operator_id, reason: body.reason, allowBusy: body.allow_busy === true,
+          windowMs: Math.max(1, (config.controlHoldSeconds ?? 0) * 1000), sessionTtlSeconds: config.sessionTtlSeconds,
+          sessionMaxTotalSeconds: config.sessionMaxTotalSeconds ?? null }, deadline);
+          await client.query('RELEASE SAVEPOINT terminal_control_take');
+        } catch (error) {
+          await client.query('ROLLBACK TO SAVEPOINT terminal_control_take');
+          await client.query('RELEASE SAVEPOINT terminal_control_take');
+          if (error instanceof TerminalAgentBusyError) return deny(409, 'agent_busy');
+          if (error instanceof StoreError && error.code === 'not_found') return deny(409, 'stale_terminal_owner');
+          if (!(error instanceof StoreError) || error.code !== 'conflict') throw error;
+          const live = (await client.query<{ operator_id: string; expires_at: Date }>(
+            `SELECT operator_id,expires_at FROM terminal_control_holds WHERE tenant_id=$1 AND alias=$2
+             AND released_at IS NULL AND expires_at>clock_timestamp()`, [row.tenant_id, row.alias],
+          )).rows[0];
+          return deny(409, 'control_held', { held_by: live?.operator_id ?? null, expires_at: live?.expires_at.toISOString() ?? null });
+        }
+        await audit('terminal.control_taken', { operator_reason: body.reason, allow_busy: body.allow_busy === true,
+          hold_id: hold.id, expires_at: hold.expires_at.toISOString() });
+        await terminalDatabaseNow(client, deadline);
+        return { status: 200, body: { session_id: row.id, hold_id: hold.id,
+          held_by: hold.operator_id, expires_at: hold.expires_at.toISOString() } };
       });
-      const owned = await pool.query<OwnedTerminalSession>(query.text, query.values);
-      const row = owned.rows[0];
-      if (row === undefined) {
-        await reply.code(409).send({ error: 'conflict', reason: 'stale_terminal_owner' });
-        return;
+      await reply.code(outcome.status).send(outcome.body);
+    } catch (error) {
+      if (error instanceof TerminalAgentBusyError) { await reply.code(409).send({ error: 'conflict', reason: 'agent_busy' }); return; }
+      if (error instanceof StoreError && error.code === 'conflict') {
+        await reply.code(409).send({ error: 'conflict', reason: 'control_held' }); return;
       }
-      const action = body.action === 'take' ? 'terminal.control_taken' : 'terminal.control_released';
-      const deny = async (
-        status: 403 | 409, reason: TerminalDenial | TerminalConflict,
-      ): Promise<void> => {
-        await auditControl(actor, row, action, 'deny', { reason });
-        await reply.code(status).send(
-          status === 403 ? { error: 'forbidden', reason } : { error: 'conflict', reason },
-        );
-      };
-      if (row.mode !== 'harness_rw') {
-        await deny(409, 'no_recognized_mode');
-        return;
-      }
-      if (body.action === 'release') {
-        const releaseReason = body.reason ?? DEFAULT_RELEASE_REASON;
-        const live = await currentControlHold(pool, row.tenant_id, row.alias);
-        // `beforeunload` retries this: a hold already gone is a success, another session's is not.
-        if (live === undefined) {
-          await reply.code(200).send({ session_id: row.id, hold_id: null, released: true });
-          return;
-        }
-        if (live.session_id !== row.id || live.operator_id !== operator.operator_id) {
-          await deny(live.session_id === row.id ? 403 : 409, 'control_held');
-          return;
-        }
-        const released = await releaseControlHold(
-          pool, { tenantId: row.tenant_id, alias: row.alias, holdId: live.id }, releaseReason,
-        );
-        await auditControl(actor, row, action, 'allow', {
-          hold_id: released.id, reason: releaseReason,
-        });
-        await reply.code(200).send({
-          session_id: row.id, hold_id: released.id, released: true,
-        });
-        return;
-      }
-      if (operator.operator_id === UNATTRIBUTED_OPERATOR) {
-        await deny(403, 'writable_requires_named_operator');
-        return;
-      }
-      if (writableModeRequiresAttribution(row.mode, operator.attributed)) {
-        await deny(403, 'writable_requires_attribution');
-        return;
-      }
-      const cohort = await currentCohort(row.tenant_id, row.alias);
-      // Re-read from disk over the WHOLE container cohort, like gate 5 of POST /sessions. A '*'
-      // grant can never satisfy it: the parser refuses a wildcard carrying a writable mode.
-      if (!(await grants.allowsCohort(operator.operator_id, cohort, row.mode))) {
-        await deny(403, 'no_grant_for_operator');
-        return;
-      }
-      if (body.reason === undefined) throw new Error('taking control requires a typed reason');
-      await takeHold(reply, actor, operator, row, body.reason, body.allow_busy === true);
-    } catch (error) { replyError(reply, error); }
+      replyError(reply, error);
+    }
   });
 }
 

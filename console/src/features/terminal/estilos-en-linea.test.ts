@@ -19,7 +19,7 @@ afterEach(() => {
 
 function abrirSesion(sessionId: string): StubWebSocket {
   restaurarSocket = installStubWebSocket();
-  ensurePtySession({ sessionId, websocketPath: '/v3/console/terminal/stream', ticket: 'ticket-de-prueba' });
+  ensurePtySession({ sessionId, websocketPath: '/v3/console/terminal/stream', ticket: 'ticket-de-prueba', authorityProof: 'ac2.fixture.payload.signature' });
   abiertas.push(sessionId);
   const socket = StubWebSocket.last();
   socket.acceptOpen();

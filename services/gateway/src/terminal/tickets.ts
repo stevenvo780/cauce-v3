@@ -1,5 +1,6 @@
 import { createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
 import { isTerminalMode, type TerminalMode } from './types.js';
+import { AUTHORITY_CONTINUITY_MAX_BYTES } from './authority-continuity.js';
 
 /**
  * PTY attach ticket. Frozen wire contract shared by three implementations: this gateway,
@@ -278,4 +279,62 @@ export function verifyResumeTokenSignature(token: string, master: Buffer): Resum
     exp: record.exp,
     nonce: record.nonce
   };
+}
+
+export const AUTHORITY_RESUME_MAX_BYTES = 8192;
+const LEGACY_RESUME_MAX_BYTES = 1024;
+
+function boundedAuthorityProof(value: unknown): string {
+  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > AUTHORITY_CONTINUITY_MAX_BYTES) {
+    throw new TicketError('malformed', 'authority proof is invalid');
+  }
+  const [version, payload, signature, extra] = value.split('.');
+  if (version !== 'ac2' || !payload || !signature || extra !== undefined
+    || fromBase64url(signature).length !== 32) {
+    throw new TicketError('malformed', 'authority proof is invalid');
+  }
+  fromBase64url(payload);
+  return value;
+}
+
+export function emitAuthorityResumeToken(
+  sessionId: string, operatorId: string, expiresAtSeconds: number, master: Buffer,
+  issuedAtSeconds: number, authorityProof: string,
+): string {
+  const proof = boundedAuthorityProof(authorityProof);
+  const legacy = issueResumeToken(sessionId, operatorId, expiresAtSeconds, master, issuedAtSeconds);
+  if (legacy.length > LEGACY_RESUME_MAX_BYTES) throw new TicketError('malformed', 'resume credential is too large');
+  const token = `r2.${base64url(Buffer.from(JSON.stringify([legacy, proof]), 'utf8'))}`;
+  if (token.length > AUTHORITY_RESUME_MAX_BYTES) throw new TicketError('malformed', 'authority resume token is too large');
+  return token;
+}
+
+export function verifyAuthorityResumeToken(
+  token: string, master: Buffer, authorityProof: string,
+): ResumeTokenPayload {
+  const expectedProof = boundedAuthorityProof(authorityProof);
+  if (Buffer.byteLength(token, 'utf8') > AUTHORITY_RESUME_MAX_BYTES) {
+    throw new TicketError('malformed', 'authority resume token is too large');
+  }
+  const [version, encoded, extra] = token.split('.');
+  if (version !== 'r2' || !encoded || extra !== undefined) {
+    throw new TicketError('malformed', 'resume token is not an r2 token');
+  }
+  const bytes = fromBase64url(encoded);
+  let tuple: unknown;
+  try { tuple = JSON.parse(bytes.toString('utf8')) as unknown; }
+  catch { throw new TicketError('malformed', 'authority resume payload is not JSON'); }
+  if (!Array.isArray(tuple) || tuple.length !== 2 || typeof tuple[0] !== 'string' || typeof tuple[1] !== 'string'
+    || Buffer.from(JSON.stringify(tuple), 'utf8').compare(bytes) !== 0) {
+    throw new TicketError('malformed', 'authority resume payload is not canonical');
+  }
+  const legacy: string = tuple[0]; const proof = boundedAuthorityProof(tuple[1]);
+  if (legacy.length < 80 || legacy.length > LEGACY_RESUME_MAX_BYTES) {
+    throw new TicketError('malformed', 'resume credential is invalid');
+  }
+  const supplied = Buffer.from(proof, 'utf8'); const expected = Buffer.from(expectedProof, 'utf8');
+  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+    throw new TicketError('signature_invalid', 'authority resume proof does not match');
+  }
+  return verifyResumeTokenSignature(legacy, master);
 }

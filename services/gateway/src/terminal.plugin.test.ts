@@ -1,3 +1,4 @@
+import type { AuthProvider } from './auth.js';
 import { createHash, randomUUID } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,6 +11,7 @@ import type { TerminalConfig } from './terminal/config.js';
 import { registerTerminalControlPlane } from './terminal/plugin.js';
 import { AGENT_STALE_AFTER_MS, AgentRegistry } from './terminal/registry.js';
 import { deriveAliasKey, verifyTicketSignature } from './terminal/tickets.js';
+import { encodeTerminalSubject, verifyAuthorityContinuity } from './terminal/authority-continuity.js';
 import { UNATTRIBUTED_OPERATOR, type AgentPresence } from './terminal/types.js';
 import {
   CLAIM_A,
@@ -20,6 +22,8 @@ import {
   RELAY_BOOT_A,
   RELAY_TOKEN,
   consoleAuthProvider,
+  installAuthorityCarrier,
+  machineMapping,
   fakeDatabase,
   presence,
   RELAY_BOOT_B,
@@ -42,7 +46,7 @@ describe('terminal control plane', () => {
   let relayPeerInstanceId: string;
   let relayBootId: string;
 
-  async function build(overrides: Partial<TerminalConfig> = {}, provider = consoleAuthProvider()): Promise<void> {
+  async function build(overrides: Partial<TerminalConfig> = {}, provider: AuthProvider = consoleAuthProvider()): Promise<void> {
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- The first beforeEach call reaches this helper before app is initialized at runtime.
     if (app !== undefined) await app.close();
     config = {
@@ -60,6 +64,7 @@ describe('terminal control plane', () => {
       ...overrides
     };
     app = Fastify({ logger: false });
+    installAuthorityCarrier(app, database, provider);
     // app.inject has no TLS socket. This test harness supplies the independently authenticated
     // peer identity and envelopes legacy test calls exactly as the real relay client does.
     app.addHook('preValidation', async (request) => {
@@ -199,6 +204,40 @@ describe('terminal control plane', () => {
   afterEach(async () => {
     await app.close();
     await rm(directory, { recursive: true, force: true });
+  });
+
+  it('denies a generic provider even when its principal has control permission', async () => {
+    await build({}, { name: 'generic-test', mode: 'test',
+      authenticateHttp: async () => ({ tenant_id: 'Steven', alias: 'kant', session_id: 'generic',
+        channel: 'console', roles: ['operator'], permissions: ['read', 'route', 'control'] }),
+      authenticateHello: async () => { throw new Error('not used'); } });
+    await report([presence()]);
+    expect((await openSession({})).statusCode).toBe(403);
+    expect(database.sessions.size).toBe(0);
+  });
+
+  it('revalidates the original machine mapping before renewing a relay claim', async () => {
+    const provider = consoleAuthProvider();
+    await build({}, provider);
+    const consumed = await issueAndConsume();
+    const row = database.sessions.get(consumed.sessionId);
+    if (row === undefined) throw new Error('consumed session is missing');
+    const deadline = row.relay_claim_expires_at?.getTime();
+    const malformed = await relaySessionRequest(consumed.sessionId, 'authz', {
+      claim_token: consumed.claimToken, claim_epoch: consumed.claimEpoch, authority_proof: null });
+    expect(malformed.statusCode).toBe(403);
+    expect(row.relay_claim_expires_at?.getTime()).toBe(deadline);
+    const mapping = machineMapping(provider);
+    const original = mapping.principal;
+    mapping.principal = { ...original, permissions: ['read'] };
+    const authz = () => relaySessionRequest(consumed.sessionId, 'authz', {
+      claim_token: consumed.claimToken, claim_epoch: consumed.claimEpoch });
+    expect((await authz()).statusCode).toBe(403);
+    expect(row.relay_claim_expires_at?.getTime()).toBe(deadline);
+    mapping.principal = original;
+    mapping.expiresAtMs = Date.now() - 1;
+    expect((await authz()).statusCode).toBe(401);
+    expect(row.relay_claim_expires_at?.getTime()).toBe(deadline);
   });
 
   it('lists only control-visible aliases with an explicit PTY state and never leaks another tenant', async () => {
@@ -356,9 +395,13 @@ describe('terminal control plane', () => {
     const response = await openSession({});
     expect(response.statusCode).toBe(201);
     const body = response.json<{
-      session_id: string; ticket: string; websocket_path: string; ttl_seconds: number;
+      session_id: string; ticket: string; authority_proof: string; websocket_path: string; ttl_seconds: number;
       target: Record<string, unknown>;
     }>();
+    const authority = verifyAuthorityContinuity(body.authority_proof, MASTER);
+    expect(authority.origin.kind).toBe('machine');
+    expect(authority.origin.actor).toEqual({ tenantId: 'Steven', alias: 'kant' });
+    expect(database.sessions.get(body.session_id)?.console_subject).toBe(encodeTerminalSubject(authority.origin));
     expect(body.ttl_seconds).toBe(30);
     expect(body.websocket_path).toBe(`/v3/console/terminal/relays/${RELAY_A}/ws`);
     expect(body.target).toEqual({
@@ -524,9 +567,11 @@ describe('terminal control plane', () => {
   ])(
     'applies the inclusive PostgreSQL clock boundary at $clockOffsetMs ms',
     async ({ clockOffsetMs, accepted }) => {
-      await build({ ticketTtlSeconds: 3, sessionTtlSeconds: 3 });
+      const provider = consoleAuthProvider();
+      await build({ ticketTtlSeconds: 3, sessionTtlSeconds: 3 }, provider);
       const gatewayNow = 1_800_000_000_000;
       const databaseNow = gatewayNow + clockOffsetMs;
+      machineMapping(provider).expiresAtMs = gatewayNow + 86_400_000;
       const localClock = vi.spyOn(Date, 'now').mockReturnValue(gatewayNow);
       try {
         database.clock.now = () => databaseNow;

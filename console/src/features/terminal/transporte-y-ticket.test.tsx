@@ -21,14 +21,22 @@ import { TerminalPage } from './TerminalPage';
 
 const WS_PATH = '/v3/console/terminal/ws';
 const SID = 'sid-zeus';
-/** The relay only offers continuity with a resume token; below 80 chars it is not accepted. */
-const RESUME_TOKEN = `r1.${'a'.repeat(96)}.${'b'.repeat(43)}`;
 const READY = {
   type: 'ready',
   claim_token: '12345678-1234-4234-8234-123456789abc',
   claim_epoch: '1',
   claim_lease_ms: 45_000,
 };
+let authorityProof = '';
+
+function resumeForProof(proof: string): string {
+  const payload = JSON.stringify({ v: 1, sid: SID, op: 'fixture-operator', iat: 1_750_000_000,
+    exp: 1_750_003_600, nonce: 'A'.repeat(22) });
+  const encoded = (value: string) => globalThis.btoa(String.fromCharCode(...new TextEncoder().encode(value)))
+    .replace(/=+$/u, '').replaceAll('+', '-').replaceAll('/', '_');
+  const legacy = `r1.${encoded(payload)}.${'A'.repeat(43)}`;
+  return `r2.${encoded(JSON.stringify([legacy, proof]))}`;
+}
 
 function target(overrides: Partial<TerminalTarget> & Pick<TerminalTarget, 'tenant_id' | 'alias'> = {
   tenant_id: 'Steven', alias: 'zeus',
@@ -62,7 +70,7 @@ function serveSessions(record: { mode: string }[], options: { expiresAt?: string
     http.post('*/v3/console/terminal/sessions', async ({ request }) => {
       const body = await request.json() as Record<string, unknown>;
       record.push({ mode: String(body.mode) });
-      return HttpResponse.json(mockTerminalGrant({
+      const grant = mockTerminalGrant({
         sessionId: SID,
         tenantId: String(body.tenant_id),
         alias: String(body.alias),
@@ -71,7 +79,9 @@ function serveSessions(record: { mode: string }[], options: { expiresAt?: string
         mode: String(body.mode),
         requestId: String(body.request_id),
         ...(options.expiresAt ? { expiresAt: options.expiresAt } : {}),
-      }), { status: 201 });
+      });
+      authorityProof = String(grant.authority_proof);
+      return HttpResponse.json(grant, { status: 201 });
     }),
     http.delete('*/v3/console/terminal/sessions/:sid', () => new HttpResponse(null, { status: 204 })),
   );
@@ -89,13 +99,13 @@ afterEach(() => {
 });
 
 /** Opens the alias, whose TUI opens on its own, and takes the relay to `ready`. */
-async function abrirTui(user: ReturnType<typeof userEvent.setup>, ready: Record<string, unknown> = READY) {
+async function abrirTui(user: ReturnType<typeof userEvent.setup>, ready?: Record<string, unknown>) {
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
   await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
   const socket = StubWebSocket.last();
   act(() => {
     socket.acceptOpen();
-    socket.emitControl(ready);
+    socket.emitControl(ready ?? { ...READY, resume_token: resumeForProof(authorityProof) });
     socket.emitOutput('zeus corriendo pnpm test\r\n');
   });
   await waitFor(() => { expect(ptySessionText(SID)).toContain('zeus corriendo'); });
@@ -134,14 +144,15 @@ describe('el ticket de un solo uso, contado sin mentir', () => {
     serveSessions([]);
     renderWithApi(<TerminalPage />);
 
-    const socket = await abrirTui(user, { ...READY, resume_token: RESUME_TOKEN });
+    const socket = await abrirTui(user);
     expect(await screen.findByLabelText('Sesión PTY activa')).toHaveTextContent(/Ticket consumido · sesión activa/);
 
     act(() => { socket.emitClose(1006, 'network_lost'); });
     await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(2); });
     const resumed = StubWebSocket.last();
     act(() => { resumed.acceptOpen(); });
-    expect(resumed.frames()[0]).toMatchObject({ type: 'resume', resume_token: RESUME_TOKEN });
+    expect(resumed.frames()[0]).toMatchObject({ type: 'resume', authority_proof: authorityProof });
+    expect(String(resumed.frames()[0]?.resume_token)).toMatch(/^r2\./u);
 
     const bar = screen.getByLabelText('Sesión PTY activa');
     expect(bar).toHaveTextContent(/Ticket consumido/);

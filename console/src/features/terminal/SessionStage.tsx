@@ -294,6 +294,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
                    websocketPath={grant.websocket_path || channel.websocketPath}
                    sessionId={grant.session_id}
                    ticket={grant.ticket}
+                   authorityProof={grant.authority_proof}
                    readOnly={soloLectura}
                    onClosed={() => { onChannelClosed(liveSession.id); }}
                    onRequestNewSession={() => { void pedirCanalNuevo(); }}

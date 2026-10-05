@@ -75,6 +75,14 @@ function historial(hilo: HTMLElement): HTMLElement {
   return caja;
 }
 
+async function abrirDetalleDe(user: ReturnType<typeof userEvent.setup>, hilo: HTMLElement, contenido: string) {
+  const bubble = within(historial(hilo)).getByText(contenido, { exact: true }).closest('article');
+  if (!bubble) throw new Error(`No se encontró la burbuja: ${contenido}`);
+  await user.click(within(bubble).getByRole('button', { name: 'Opciones del mensaje' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
+  return within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
+}
+
 function notaQueDice(hilo: HTMLElement, texto: RegExp): boolean {
   return within(hilo).getAllByRole('note').some((nota) => texto.test(nota.textContent));
 }
@@ -524,9 +532,7 @@ it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del p
   renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
-  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
-  await user.click(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' }));
-  const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
+  const detalle = await abrirDetalleDe(user, hilo, 'Verificar estado del adapter Hermes');
 
   const campo = (etiqueta: string) => {
     const el = within(detalle).getByText(etiqueta).closest('div');
@@ -577,9 +583,7 @@ it('la entrega hermana se lista en el detalle pero NO se convierte en una burbuj
   renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
-  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
-  await user.click(within(hilo).getByRole('button', { name: 'Ver detalle del último mensaje' }));
-  await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
+  await abrirDetalleDe(user, hilo, 'Verificar estado del adapter Hermes');
   const burbujas = within(historial(hilo)).getAllByText('Verificar estado del adapter Hermes');
   expect(burbujas).toHaveLength(1);
   // El otro mensaje del feed, que va a Miguel:kratos, sigue fuera de este hilo.

@@ -3,8 +3,10 @@ import { withTransaction } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import { terminalAuditMetadata, terminalSessionAuditContext } from '../audit.js';
 import { resolveOperator } from '../authority.js';
-import { cohortLabels, operatorScopePredicate, subjectFor } from '../helpers.js';
+import { cohortLabels, operatorScopePredicate } from '../helpers.js';
 import type { TerminalSessionControlOptions } from '../session-control.js';
+import { terminalDatabaseNow } from '../session-authority.js';
+import { encodeTerminalSubject } from '../authority-continuity.js';
 import { ticketSha256 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
 import { authorizeTerminalControlActor } from './control-authorization.js';
@@ -24,7 +26,7 @@ export function registerTerminalBrowserOwnerRoutes(
   options: TerminalSessionControlOptions,
 ): void {
   const {
-    pool, config, repository, principal, currentCohort, parseOwnerRotation, parseDeleteSession,
+    pool, config, repository, authority, principal, currentCohort, parseOwnerRotation, parseDeleteSession,
     browserOwnerGeneration, replyError, recordTransactionalTerminalAudit,
   } = options;
 
@@ -33,12 +35,16 @@ export function registerTerminalBrowserOwnerRoutes(
       const actor = await authorizeTerminalControlActor(request, reply, { principal, repository });
       if (actor === undefined) return;
       const operator = resolveOperator(request, actor, config);
-      const consoleSubject = subjectFor(actor);
+      const origin = await authority.capture(request);
+      const consoleSubject = encodeTerminalSubject(origin);
       if (!UUID_ANY_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
       const body = parseOwnerRotation(request.body);
+      const proof = await authority.browserProof(request, body.authority_proof);
+      if (proof.sessionId !== request.params.sid) throw new Error('terminal authority is unavailable');
       let row: TerminalSessionRow | undefined;
       try {
         row = await withTransaction(pool, async (ownerClient) => {
+          const deadline = await authority.lockSession(ownerClient, proof, repository);
           const rotated = await ownerClient.query<TerminalSessionRow>(
             `UPDATE terminal_sessions
                 SET browser_owner_sha256=$4,
@@ -46,7 +52,7 @@ export function registerTerminalBrowserOwnerRoutes(
               WHERE id=$1 AND request_id=$2 AND browser_owner_generation=$3::bigint
                 AND ${operatorScopePredicate(5, 6, 7)}
                 AND browser_owner_generation<9223372036854775807
-                AND revoked_at IS NULL AND closed_at IS NULL
+                AND revoked_at IS NULL AND closed_at IS NULL AND clock_timestamp()<$8::timestamptz
               RETURNING *`,
             [
               request.params.sid,
@@ -56,6 +62,7 @@ export function registerTerminalBrowserOwnerRoutes(
               operator.operator_id,
               operator.attributed,
               consoleSubject,
+              deadline,
             ],
           );
           const rotatedRow = rotated.rows[0];
@@ -80,6 +87,7 @@ export function registerTerminalBrowserOwnerRoutes(
               reason: 'operator_owner_takeover',
             }),
           });
+          await terminalDatabaseNow(ownerClient, deadline);
           return rotatedRow;
         });
       } catch (error) {
@@ -102,7 +110,8 @@ export function registerTerminalBrowserOwnerRoutes(
       const actor = await authorizeTerminalControlActor(request, reply, { principal, repository });
       if (actor === undefined) return;
       const operator = resolveOperator(request, actor, config);
-      const consoleSubject = subjectFor(actor);
+      const origin = await authority.capture(request);
+      const consoleSubject = encodeTerminalSubject(origin);
       if (!UUID_ANY_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
       const body = parseDeleteSession(request.body);
       // Revocation is a flag, not a socket kill: terminal-relay revalidates every few seconds
@@ -110,8 +119,9 @@ export function registerTerminalBrowserOwnerRoutes(
       let outcome: { row: TerminalSessionRow | undefined; settled: boolean } | undefined;
       try {
         outcome = await withTransaction(pool, async (releaseClient) => {
+          await authority.lockCleanup(releaseClient, origin, request.params.sid, repository);
           const revoked = await releaseClient.query<TerminalSessionRow>(
-            `UPDATE terminal_sessions SET revoked_at=now()
+            `UPDATE terminal_sessions SET revoked_at=clock_timestamp()
               WHERE id=$1 AND ${operatorScopePredicate(2, 3, 4)}
                 AND request_id=$5
                 AND browser_owner_generation=$6::bigint

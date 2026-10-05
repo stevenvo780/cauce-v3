@@ -321,7 +321,6 @@ function ConversationPaneContent({
     detailTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setMensajeElegido(item.message.message_id);
     setSelectedSnapshot(item);
-    // Clicking a bubble IS asking for its detail: opening it here is not "auto-opening".
     setDetalleAbierto(true);
     detailHeading.current?.focus({ preventScroll: true });
   }
@@ -340,6 +339,12 @@ function ConversationPaneContent({
   const idSeleccionado = mensajeSeleccionado?.message_id ?? undefined;
   const cuerpoEntero = idSeleccionado ? cuerpos[idSeleccionado] : undefined;
   const recorteSeleccionado = previsualizacionRecortada(mensajeSeleccionado?.body_preview);
+  const previewSeleccionado = textoDelCuerpo(mensajeSeleccionado?.body_preview);
+  const textoPreviewSeleccionado = previewSeleccionado?.trim()
+    ? previewSeleccionado
+    : mensajeSeleccionado?.body_preview == null
+      ? 'Contenido no incluido por el servidor.'
+      : 'Mensaje sin contenido textual.';
 
   if (contextOpen) return <AgentSettingsView tenantId={agent.tenantId} alias={agent.alias} conversationPath={conversationPath} />;
 
@@ -369,10 +374,6 @@ function ConversationPaneContent({
           <button className="button small secondary" type="button" onClick={onReload} disabled={loading}>
             <RefreshCw size={13} aria-hidden="true" /> Sincronizar
           </button>
-          {itemSeleccionado ? <button className="button small secondary" type="button"
-            disabled={!hilo.at(-1)?.message.message_id} onClick={() => { const last = hilo.at(-1); if (last) elegir(last); }}>
-            Ver detalle del último mensaje
-          </button> : null}
           <p className="messenger-room-fixed">Room de origen: <span className="mono">{roomOrigen || 'UNKNOWN'}</span> · derivado de tu topología, no escrito a mano.</p>
           <label className="messenger-lane-select" htmlFor={`messenger-lane-${agent.id}`}>Carril
             <select id={`messenger-lane-${agent.id}`} value={lane} disabled={enviando}
@@ -478,7 +479,7 @@ function ConversationPaneContent({
               <pre className="messenger-cuerpo-texto">{cuerpoEntero.texto}</pre>
             ) : (
               <pre className="messenger-cuerpo-texto" data-recortado={recorteSeleccionado || undefined}>
-                {mensajeSeleccionado.body_preview ?? 'Contenido no incluido por el servidor.'}{recorteSeleccionado ? '…' : ''}
+                {textoPreviewSeleccionado}{recorteSeleccionado ? '…' : ''}
               </pre>
             )}
             {cuerpoEntero?.estado === 'fallo' ? (

@@ -11,7 +11,7 @@ import {
   DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
   MAX_CLAIM_LEASE_MS,
   claimEpoch,
-  isClaimToken,
+  isClaimToken, isAuthorityProof, isAuthorityResumeToken,
   type ConsumeOutcome,
   type ResumeOutcome,
   type TerminalGatewayClient,
@@ -46,6 +46,7 @@ const WS_OPEN = 1;
 interface InitialAttachRequest {
   readonly type: 'attach';
   readonly session_id: string;
+  readonly authority_proof: string;
   readonly ticket: string;
   readonly cols: number;
   readonly rows: number;
@@ -54,6 +55,7 @@ interface InitialAttachRequest {
 interface ResumeAttachRequest {
   readonly type: 'resume';
   readonly session_id: string;
+  readonly authority_proof: string;
   readonly resume_token: string;
   readonly prior_claim_token: string;
   readonly prior_claim_epoch: string;
@@ -78,22 +80,24 @@ export function parseAttachRequest(data: RawData, isBinary: boolean): AttachRequ
   if (source.type !== 'attach' && source.type !== 'resume') return undefined;
   const sessionId = source.session_id;
   if (typeof sessionId !== 'string' || !isSessionId(sessionId)) return undefined;
+  const authorityProof = source.authority_proof;
+  if (!isAuthorityProof(authorityProof)) return undefined;
   const geometry = clampTerminalGeometry(source.cols, source.rows);
   if (geometry === undefined) return undefined;
   if (source.type === 'attach') {
     const ticket = source.ticket;
     if (typeof ticket !== 'string' || ticket.length === 0 || ticket.length > 4_096) return undefined;
-    return { type: 'attach', session_id: sessionId, ticket, ...geometry };
+    return { type: 'attach', session_id: sessionId, ticket, authority_proof: authorityProof, ...geometry };
   }
   const resumeToken = source.resume_token;
   const priorClaimToken = source.prior_claim_token;
   const priorClaimEpoch = claimEpoch(source.prior_claim_epoch);
   const afterBytes = source.after_bytes;
-  if (typeof resumeToken !== 'string' || resumeToken.length < 80 || resumeToken.length > 1_024 ||
+  if (!isAuthorityResumeToken(resumeToken) ||
       !isClaimToken(priorClaimToken) || priorClaimEpoch === undefined ||
       typeof afterBytes !== 'number' || !Number.isSafeInteger(afterBytes) || afterBytes < 0) return undefined;
   return {
-    type: 'resume', session_id: sessionId, resume_token: resumeToken,
+    type: 'resume', session_id: sessionId, resume_token: resumeToken, authority_proof: authorityProof,
     prior_claim_token: priorClaimToken, prior_claim_epoch: priorClaimEpoch,
     after_bytes: afterBytes, ...geometry
   };
@@ -466,18 +470,19 @@ export class BrowserLeg {
       let outcome: ConsumeOutcome | ResumeOutcome;
       try {
         outcome = attach.type === 'attach'
-          ? await this.gateway.consumeTicket(attach.session_id, attach.ticket, claimToken)
+          ? await this.gateway.consumeTicket(attach.session_id, attach.ticket, claimToken, attach.authority_proof)
           : await this.gateway.resumeSession(
             attach.session_id,
             attach.resume_token,
             claimToken,
+            attach.authority_proof,
             exactEpoch,
           );
       } catch {
         outcome = { status: 'unavailable' };
       }
       if (outcome.status === 'granted') {
-        if (outcome.grant.claim_token === claimToken
+        if (outcome.grant.authority_proof === attach.authority_proof && outcome.grant.claim_token === claimToken
             && (exactEpoch === undefined || outcome.grant.claim_epoch === exactEpoch)) {
           this.retainedClaims.delete(attach.session_id);
           return { status: 'granted', grant: outcome.grant, requestStartedAt };

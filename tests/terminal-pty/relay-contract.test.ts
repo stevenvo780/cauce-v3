@@ -9,6 +9,8 @@ import { request as httpsRequest } from 'node:https';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { createSelfSignedCert, type SelfSignedCert } from './certs.mjs';
+import { verifyAuthorityContinuity } from '../../services/gateway/src/terminal/authority-continuity.js';
+import { verifyAuthorityResumeToken } from '../../services/gateway/src/terminal/tickets.js';
 import { startFakeGateway, type FakeGatewayHandle } from './fake-gateway.mjs';
 import {
   deriveAliasKey, mintTicket, ticketPayload as protocolTicketPayload,
@@ -75,7 +77,12 @@ async function callGateway(
   options: { body?: unknown; token?: string | null } = {},
 ): Promise<JsonResponse> {
   const url = new URL(path, gateway.url);
-  const payload = options.body === undefined ? undefined : Buffer.from(JSON.stringify(options.body), 'utf8');
+  let body = options.body;
+  const match = /\/sessions\/([^/]+)\/(consume|authz|resume)$/.exec(path);
+  const sid = match?.[1];
+  if (sid !== undefined && body !== null && typeof body === 'object' && !Array.isArray(body)
+      && !('authority_proof' in body)) body = { ...body, authority_proof: gateway.authorityProof(sid) };
+  const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body), 'utf8');
   const token = options.token === undefined ? gateway.token : options.token;
   const headers: Record<string, string> = { accept: 'application/json' };
   if (token !== null) headers.authorization = `Bearer ${token}`;
@@ -134,6 +141,60 @@ describe('fake gateway: the /v3/terminal/relay contract', () => {
     });
     return gateway;
   }
+
+  it('echoes the immutable canonical authority and keeps both carriers out of state and audit', async () => {
+    const gateway = await gatewayWith();
+    const payload = ticketPayload();
+    const proof = gateway.authorityProof(payload.sid);
+    const authority = verifyAuthorityContinuity(proof, Buffer.from(MASTER_KEY_B64, 'base64'));
+    expect(authority.sessionId).toBe(payload.sid);
+    expect(authority.origin.kind).toBe('machine');
+    const admitted = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`,
+      { body: claimed(mintTicket(aliasKey, payload)) });
+    expect(admitted.status).toBe(200);
+    expect(admitted.body.authority_proof === proof).toBe(true);
+    const token = admitted.body.resume_token;
+    if (typeof token !== 'string') throw new Error('fixture resume credential is missing');
+    const resume = verifyAuthorityResumeToken(token, Buffer.from(MASTER_KEY_B64, 'base64'), proof);
+    expect(resume.sid).toBe(payload.sid);
+    expect(resume.op).toBe(payload.op);
+    const live = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/authz`,
+      { body: authorized() });
+    expect(live.status).toBe(200);
+    expect(live.body.authority_proof === proof).toBe(true);
+    const state = await callGateway(gateway, 'GET', '/__harness/state');
+    expect(JSON.stringify(state.body).includes(proof)).toBe(false);
+    expect(JSON.stringify(state.body).includes(token)).toBe(false);
+    expect(JSON.stringify(gateway.audit).includes(proof)).toBe(false);
+    expect(JSON.stringify(gateway.audit).includes(token)).toBe(false);
+  });
+
+  it('denies changed or oversized proofs and legacy resume without renewing the claim', async () => {
+    const gateway = await gatewayWith();
+    const payload = ticketPayload();
+    const proof = gateway.authorityProof(payload.sid);
+    const admitted = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`,
+      { body: claimed(mintTicket(aliasKey, payload)) });
+    expect(admitted.status).toBe(200);
+    const session = gateway.session(payload.sid);
+    if (session === undefined) throw new Error('fixture consumed session is missing');
+    const deadline = session.claim_expires_at;
+    for (const wrong of [gateway.authorityProof(randomUUID()), 'ac2.' + 'x'.repeat(4096), null]) {
+      const refused = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/authz`,
+        { body: { ...authorized(), authority_proof: wrong } });
+      expect(refused.status).toBe(403);
+      expect(session.claim_expires_at).toBe(deadline);
+    }
+    const wrapped = admitted.body.resume_token;
+    if (typeof wrapped !== 'string') throw new Error('fixture resume credential is missing');
+    const envelope: unknown = JSON.parse(Buffer.from(wrapped.slice(3), 'base64url').toString('utf8'));
+    if (!Array.isArray(envelope) || typeof envelope[0] !== 'string') throw new Error('fixture r2 envelope is invalid');
+    const legacy = envelope[0];
+    const refused = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/resume`,
+      { body: identified({ resume_token: legacy, claim_token: CLAIM_TOKEN, claim_epoch: '1', authority_proof: proof }) });
+    expect(refused.status).toBe(401);
+    expect(session.claim_expires_at).toBe(deadline);
+  });
 
   it('rejects every endpoint without the relay bearer token', async () => {
     const gateway = await gatewayWith();

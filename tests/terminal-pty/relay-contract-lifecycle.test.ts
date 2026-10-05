@@ -535,7 +535,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     const socket = openBrowserSocket();
     const stream = collect(socket);
     await once(socket, 'open');
-    socket.send(JSON.stringify({ type: 'attach', session_id: payload.sid, ticket: mintTicket(aliasKey, payload), cols: 120, rows: 32 }));
+    socket.send(JSON.stringify({ type: 'attach', session_id: payload.sid, authority_proof: gateway.authorityProof(payload.sid), ticket: mintTicket(aliasKey, payload), cols: 120, rows: 32 }));
     expect(await stream.nextControl()).toMatchObject({ type: 'ready', relay_instance_id: relayInstanceId });
     socket.send(JSON.stringify({ type: 'input', data: 'ping\r' }));
     expect(await stream.nextBinaryUntil((text) => text.includes('pong-1'))).toContain('pong-1');
@@ -574,7 +574,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     const firstStream = collect(first);
     await once(first, 'open');
     first.send(JSON.stringify({
-      type: 'attach', session_id: payload.sid, ticket: mintTicket(aliasKey, payload), cols: 120, rows: 32,
+      type: 'attach', session_id: payload.sid, authority_proof: gateway.authorityProof(payload.sid), ticket: mintTicket(aliasKey, payload), cols: 120, rows: 32,
     }));
     const ready = await firstStream.nextControl();
     expect(ready).toMatchObject({ type: 'ready', resumed: false, stream_offset: 0 });
@@ -597,7 +597,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     const resumedStream = collect(resumed);
     await Promise.all([once(resumed, 'open'), once(replay, 'open')]);
     const resumeFrame = JSON.stringify({
-      type: 'resume', session_id: payload.sid, resume_token: resumeToken,
+      type: 'resume', session_id: payload.sid, authority_proof: gateway.authorityProof(payload.sid), resume_token: resumeToken,
       prior_claim_token: priorClaimToken, prior_claim_epoch: priorClaimEpoch,
       after_bytes: 0, cols: 100, rows: 30,
     });
@@ -630,7 +630,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     await once(socket, 'open');
     const payload = ticketPayload();
     socket.send(JSON.stringify({
-      type: 'attach', session_id: payload.sid, ticket: mintTicket(otherAliasKey, payload), cols: 80, rows: 24,
+      type: 'attach', session_id: payload.sid, authority_proof: gateway.authorityProof(payload.sid), ticket: mintTicket(otherAliasKey, payload), cols: 80, rows: 24,
     }));
     expect(await closeCode(socket)).toBe(CLOSE_CODE.ticket_invalid);
   });
@@ -649,7 +649,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     const payload = ticketPayload();
     const socket = openBrowserSocket();
     await once(socket, 'open');
-    socket.send(JSON.stringify({ type: 'attach', session_id: payload.sid, ticket: mintTicket(aliasKey, payload), cols: 80, rows: 24 }));
+    socket.send(JSON.stringify({ type: 'attach', session_id: payload.sid, authority_proof: gateway.authorityProof(payload.sid), ticket: mintTicket(aliasKey, payload), cols: 80, rows: 24 }));
     expect(await closeCode(socket)).toBe(CLOSE_CODE.agent_offline);
   });
 
@@ -659,7 +659,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     const socket = openBrowserSocket();
     const stream = collect(socket);
     await once(socket, 'open');
-    socket.send(JSON.stringify({ type: 'attach', session_id: payload.sid, ticket: mintTicket(aliasKey, payload), cols: 80, rows: 24 }));
+    socket.send(JSON.stringify({ type: 'attach', session_id: payload.sid, authority_proof: gateway.authorityProof(payload.sid), ticket: mintTicket(aliasKey, payload), cols: 80, rows: 24 }));
     await stream.nextControl();
     gateway.setGrants([]);
     expect(await closeCode(socket, 30_000)).toBe(CLOSE_CODE.revoked);
@@ -673,7 +673,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     const socket = openBrowserSocket();
     const stream = collect(socket);
     await once(socket, 'open');
-    socket.send(JSON.stringify({ type: 'attach', session_id: payload.sid, ticket: mintTicket(aliasKey, payload), cols: 80, rows: 24 }));
+    socket.send(JSON.stringify({ type: 'attach', session_id: payload.sid, authority_proof: gateway.authorityProof(payload.sid), ticket: mintTicket(aliasKey, payload), cols: 80, rows: 24 }));
     await stream.nextControl();
     gateway.goDown();
     expect([CLOSE_CODE.revoked, CLOSE_CODE.internal_error]).toContain(await closeCode(socket, 30_000));
@@ -686,7 +686,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     const socket = openBrowserSocket();
     const stream = collect(socket);
     await once(socket, 'open');
-    socket.send(JSON.stringify({ type: 'attach', session_id: payload.sid, ticket: mintTicket(aliasKey, payload), cols: 80, rows: 24 }));
+    socket.send(JSON.stringify({ type: 'attach', session_id: payload.sid, authority_proof: gateway.authorityProof(payload.sid), ticket: mintTicket(aliasKey, payload), cols: 80, rows: 24 }));
     await stream.nextControl();
     const storm = setInterval(() => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: 'input', data: 'flood\r' }));

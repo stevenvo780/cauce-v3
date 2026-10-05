@@ -208,6 +208,7 @@ export class TerminalSession {
     return grant.tenant_id === this.grant.tenant_id && grant.alias === this.grant.alias &&
       grant.container === this.grant.container && grant.runtime_user === this.grant.runtime_user &&
       grant.mode === this.grant.mode && grant.operator_id === this.grant.operator_id &&
+      grant.authority_proof === this.grant.authority_proof &&
       grant.session_expires_at === this.grant.session_expires_at &&
       grant.claim_token === this.claimToken && grant.claim_epoch === this.claimEpochValue &&
       grant.relay_instance_id === this.grant.relay_instance_id &&
@@ -669,7 +670,7 @@ export class TerminalSession {
       const outcome = await this.gateway.authorizeSession(
         this.sessionId,
         this.claimToken,
-        this.claimEpochValue,
+        this.claimEpochValue, this.grant.authority_proof,
       );
       if (this.isSessionClosed()) return;
       if (outcome.status === 'allow') {
