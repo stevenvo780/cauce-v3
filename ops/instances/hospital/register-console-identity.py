@@ -4,13 +4,16 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import json
-import os
 import ssl
-import stat
 import subprocess
-import tempfile
 from pathlib import Path
+
+LOCK_SPEC = importlib.util.spec_from_file_location("identity_registry_lock", Path(__file__).with_name("identity-registry-lock.py"))
+LOCK_MODULE = importlib.util.module_from_spec(LOCK_SPEC)
+LOCK_SPEC.loader.exec_module(LOCK_MODULE)
+RegistryLock = LOCK_MODULE.RegistryLock
 
 
 def certificate_fingerprint(path: Path) -> tuple[str, str]:
@@ -31,14 +34,18 @@ def certificate_fingerprint(path: Path) -> tuple[str, str]:
 
 
 def register(registry: Path, certificate: Path) -> None:
-    if registry.is_symlink() or certificate.is_symlink():
+    with RegistryLock(registry) as lock:
+        _register_locked(lock, certificate)
+        lock.validate()
+
+
+def _register_locked(lock: RegistryLock, certificate: Path) -> None:
+    if certificate.is_symlink():
         raise ValueError("identity paths cannot be symlinks")
-    metadata = registry.stat()
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or stat.S_IMODE(metadata.st_mode) != 0o400:
-        raise ValueError("identity registry must be a private single-link regular file")
-    document = json.loads(registry.read_text(encoding="utf-8"))
+    original, metadata = lock.read()
+    document = json.loads(original)
     identities = document.get("identities") if isinstance(document, dict) else None
-    if document.get("version") != 1 or not isinstance(identities, list):
+    if not isinstance(document, dict) or document.get("version") != 1 or not isinstance(identities, list):
         raise ValueError("identity registry is invalid")
     fingerprint, expires_at = certificate_fingerprint(certificate)
     principal = {
@@ -75,18 +82,7 @@ def register(registry: Path, certificate: Path) -> None:
             str(item.get("principal", {}).get("alias", "")),
         )
     )
-    body = json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"
-    descriptor, temporary = tempfile.mkstemp(prefix=".mtls-identities-", dir=registry.parent)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(body)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chown(temporary, metadata.st_uid, metadata.st_gid)
-        os.chmod(temporary, 0o400)
-        os.replace(temporary, registry)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
+    lock.replace(document, original, metadata)
 
 
 def main() -> int:
