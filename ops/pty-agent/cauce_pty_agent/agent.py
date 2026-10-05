@@ -62,7 +62,7 @@ from .session import (
     SessionMixin,
     _cloexec,
 )
-from .tmux import resolve_openclaw_tui_command, resolve_tmux_tui_command
+from .tmux import LIVE_TMUX_HARNESSES, resolve_openclaw_tui_command, resolve_tmux_tui_command, tmux_tui_available
 
 BACKOFF_MIN = 1.0
 BACKOFF_MAX = 30.0
@@ -103,6 +103,8 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
         self.stopping = False
 
     def _advertised_modes(self) -> list[str]:
+        if self.bundle.get("harness") in LIVE_TMUX_HARNESSES:
+            return ["shell", "harness", "harness_rw"] if tmux_tui_available(self.bundle) else ["shell"]
         static_or_tmux = any((self.bundle.get("harness_command"), self.bundle.get("tmux_tui")))
         openclaw_ready = self.bundle.get("openclaw_tui") is not None \
             and resolve_openclaw_tui_command(self.bundle) is not None

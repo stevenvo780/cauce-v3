@@ -277,9 +277,17 @@ class ADescriptorThatCannotResolveNeverLoads(unittest.TestCase):
         self.assertEqual(instance.modes, ["shell", "harness", "harness_rw"])
 
     def test_new_harnesses_advertise_both_modes_with_the_same_identity_barriers(self) -> None:
+        socket = f"cauce-pty-test-presence-{os.getpid()}-{uuid.uuid4().hex[:10]}"
+        self.addCleanup(lambda: subprocess.run([TMUX, "-L", socket, "kill-server"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False))
         for tenant, alias, harness in (("Miguel", "hegel", "muse"), ("Steven", "hades", "grok")):
             with self.subTest(harness=harness):
-                bundle = agent.validate_bundle(_loadable_bundle(tenant_id=tenant, alias=alias, harness=harness))
+                subprocess.run([TMUX, "-L", socket, "new-session", "-d", "-s", f"cauce-{alias}",
+                                "-n", "agente", "sleep 30"], check=True, env=dict(os.environ, TERM="xterm"))
+                for option, value in (("@cauce_alias", alias), ("@cauce_harness", harness)):
+                    subprocess.run([TMUX, "-L", socket, "set-option", "-t", f"cauce-{alias}", option, value], check=True)
+                bundle = agent.validate_bundle(_loadable_bundle(tenant_id=tenant, alias=alias, harness=harness,
+                    tmux_tui={"path": TMUX, "socket": socket}))
                 self.assertEqual(agent.PtyAgent(bundle).modes, ["shell", "harness", "harness_rw"])
                 viewer = agent.resolve_tmux_tui_command(bundle)
                 writer = agent.resolve_tmux_tui_command(bundle, mode="harness_rw")
