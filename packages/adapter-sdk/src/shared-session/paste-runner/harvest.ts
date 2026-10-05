@@ -198,11 +198,14 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           if (request.signal.aborted) continue;
           if (outcome !== undefined) {
             const sessionId = injectedTurn.sessionId;
-            const canonical = port.isConversation === undefined || await port.isConversation(injectedTurn.file);
-            const witness = outcome.kind === "answer" && sessionId !== undefined && canonical
-              && port.provesConsumption?.(slice.entries, injectedTurn.key, outcome.text, sessionId, promptText) === true
-              ? consumptionWitness(this.options.harness, sessionId, injectedTurn.key, request.stdin) : undefined;
-            if (request.signal.aborted) continue;
+            const witnessed = await beforeAbort(async () => {
+              const canonical = port.isConversation === undefined || await port.isConversation(injectedTurn.file);
+              return outcome.kind === "answer" && sessionId !== undefined && canonical
+                && port.provesConsumption?.(slice.entries, injectedTurn.key, outcome.text, sessionId, promptText) === true
+                ? consumptionWitness(this.options.harness, sessionId, injectedTurn.key, request.stdin) : undefined;
+            }, request.signal);
+            if (witnessed.aborted) continue;
+            const witness = witnessed.value;
             return { result: { ...this.settledResult(outcome, sessionId, request),
               ...(witness === undefined ? {} : { consumptionWitness: witness }) }, terminalBoundary: true };
           }

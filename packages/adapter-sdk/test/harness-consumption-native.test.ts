@@ -10,6 +10,7 @@ import { claudeTranscript, claudeProvesConsumption, type TranscriptEntry } from 
 import { codexProvesConsumption, codexTranscript } from "../src/shared-session/rollout.js";
 import { museProvesConsumption, museTranscript, type MuseLogLine } from "../src/shared-session/muse.js";
 import { PasteSessionRunner } from "../src/shared-session/paste-runner.js";
+import { beforeDeadline } from "../src/shared-session/paste-runner/runtime.js";
 import { transcriptDirectory } from "../src/shared-session/session.js";
 import { FakeTmux, assistantEntry, claudeRunner, envelopeText, freshState, userEntry } from "./shared-session-fixtures.js";
 import { MuseLog, museWorkspace } from "./muse-shared-session-fixtures.js";
@@ -113,6 +114,36 @@ test("shared Muse emits receipt from committed final text and same intent run te
     transcript: museTranscript(museData), tmux, sleep: () => Promise.resolve(), acquireTimeoutMs: 30,
     turnTimeoutMs: 2_000, injectTimeoutMs: 20, settleMs: 0, pollMs: 1, readyTimeoutMs: 30 });
   assert.deepEqual((await runner.run(request("muse"))).consumptionWitness, consumptionWitness("muse", log.sessionId, "intent-A", "input A"));
+});
+
+test("abort during canonical inspection settles without releasing inspection or emitting receipt", async () => {
+  const { home } = await freshState("receipt-canonical-abort");
+  const codexHome = join(home, ".codex"), directory = join(codexHome, "sessions");
+  await mkdir(directory, { recursive: true });
+  const sid = randomUUID(), turn = randomUUID(), file = join(directory, `rollout-now-${sid}.jsonl`);
+  await appendFile(file, line("session_meta", { id: sid, source: "cli" }) + "\n");
+  let enteredInspection: () => void = () => { throw new Error("inspection not ready"); };
+  let releaseInspection: () => void = () => { throw new Error("inspection not ready"); };
+  const entered = new Promise<void>(resolve => { enteredInspection = resolve; });
+  const inspected = new Promise<boolean>(resolve => { releaseInspection = () => { resolve(true); }; });
+  const transcript = { ...codexTranscript(codexHome), isConversation: () => { enteredInspection(); return inspected; } };
+  const tmux = new FakeTmux(); tmux.sessionName = "cauce-socrates"; tmux.paneStartCommand = "exec codex"; tmux.paneContent = "› ";
+  tmux.onSubmit = async text => { await appendFile(file, [
+    line("response_item", { type: "message", role: "user", content: [{ type: "input_text", text }],
+      internal_chat_message_metadata_passthrough: { turn_id: turn } }),
+    line("event_msg", { type: "task_complete", turn_id: turn, last_agent_message: envelopeText("answer") }),
+  ].join("\n") + "\n"); };
+  const runner = new PasteSessionRunner({ alias: "socrates", harness: "codex", workspace: "/workspace",
+    transcript, tmux, sleep: () => Promise.resolve(), acquireTimeoutMs: 30, turnTimeoutMs: 2_000,
+    injectTimeoutMs: 20, settleMs: 0, pollMs: 1, readyTimeoutMs: 30, cancelDrainTimeoutMs: 20 });
+  const controller = new AbortController(); const running = runner.run({ ...request("codex"), signal: controller.signal });
+  try {
+    assert.equal((await beforeDeadline(entered, Date.now() + 2_000)).completed, true);
+    controller.abort();
+    const cancelled = await beforeDeadline(running, Date.now() + 2_000);
+    assert.equal(cancelled.completed, true); assert.equal(cancelled.value?.cancelled, true);
+    assert.equal(cancelled.value.consumptionWitness, undefined);
+  } finally { controller.abort(); releaseInspection(); await running; }
 });
 
 

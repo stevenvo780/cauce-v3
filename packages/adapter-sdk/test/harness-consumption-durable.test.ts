@@ -13,7 +13,7 @@ const sid = "00000000-0000-4000-8000-000000000001";
 async function setup(name: string, options: { noProof?: boolean; wrongInput?: boolean; foreignSid?: boolean;
   nonzero?: boolean; failed?: boolean; beforeReturn?: (engine: AdapterEngine) => Promise<void> } = {}) {
   const store = await storeFor(name); await store.activateEpoch(1);
-  const events: DeliveryEvent[] = []; let calls = 0; let engine: AdapterEngine;
+  const events: DeliveryEvent[] = []; let calls = 0;
   let observed: HarnessConsumptionWitness | undefined;
   const runner = { run: async (request: CommandRunRequest): Promise<CommandRunResult> => {
     calls += 1;
@@ -28,7 +28,7 @@ async function setup(name: string, options: { noProof?: boolean; wrongInput?: bo
       ...(options.noProof || witness === undefined ? {} : { consumptionWitness: witness }) };
   } };
   const harness = new HarnessAdapter({ definition: codexDefinition, runner, store });
-  engine = new AdapterEngine({ store, harness, executionIntentMode: "local-test-only",
+  const engine = new AdapterEngine({ store, harness, executionIntentMode: "local-test-only",
     publish: async (event) => { events.push(event); observed = event.harness_consumption_v1 ?? observed; } });
   return { store, engine, events, calls: () => calls, proof: () => observed };
 }
@@ -85,7 +85,7 @@ test("client sends receipt as ACK result and unconfirmed replay keeps the same p
   try {
     await waitUntil(() => connection.sent.some((frame) => frame.type === "ack" && frame.event_id === terminal.event.event_id), "receipt ACK");
     const ack = connection.sent.find((frame) => frame.type === "ack" && frame.event_id === terminal.event.event_id);
-    assert.ok(ack && ack.type === "ack");
+    assert.ok(ack?.type === "ack");
     assert.deepEqual(ack.result?.harness_consumption_v1, witness);
     connection.push({ type: "ack_result", event_id: ack.event_id, delivery_id: ack.delivery_id,
       attempt: ack.attempt, claim_token: ack.claim_token, status: "done", applied: false, receipt: "superseded" });
