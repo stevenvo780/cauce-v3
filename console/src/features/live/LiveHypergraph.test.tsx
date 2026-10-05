@@ -16,7 +16,7 @@ describe('LiveHypergraph viewport', () => {
   });
 
   it('encuadra tras medir el canvas y conserva el zoom manual al refrescar actividad', async () => {
-    const originalBounds = Reflect.get(HTMLElement.prototype, 'getBoundingClientRect') as (this: HTMLElement) => DOMRect;
+    const originalBounds: (this: HTMLElement) => DOMRect = Reflect.get(HTMLElement.prototype, 'getBoundingClientRect');
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function bounds(this: HTMLElement) {
       if (this.classList.contains('lhg-viewport') || this.classList.contains('react-flow')) {
         return new DOMRect(0, 0, 390, 320);
@@ -25,7 +25,7 @@ describe('LiveHypergraph viewport', () => {
         const size = this.classList.contains('react-flow__node-anchor') ? 1 : 178;
         return new DOMRect(0, 0, size, size === 1 ? 1 : 118);
       }
-      return Reflect.apply(originalBounds, this, []) as DOMRect;
+      return Reflect.apply(originalBounds, this, []);
     });
     const activity = mockActivity();
     const projected = buildLiveViews(activity, {}, Date.now());
@@ -35,7 +35,8 @@ describe('LiveHypergraph viewport', () => {
         <LiveHypergraph topology={topology} views={projected.views} edges={projected.edges} />
       </div>,
     );
-    const viewport = document.querySelector('.react-flow__viewport') as HTMLElement;
+    const viewport = document.querySelector<HTMLElement>('.react-flow__viewport');
+    if (!viewport) throw new Error('ReactFlow viewport should be mounted');
 
     await waitFor(() => { expect(viewport.style.transform).toContain('scale(1)'); });
     expect(screen.getByText('Vista ampliada · arrastra para explorar')).toBeInTheDocument();

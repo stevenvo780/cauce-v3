@@ -10,10 +10,9 @@ import type { AgentNodeData, FleetNode } from './fleet-graph-model';
 describe('FleetGraphNode', () => {
   it('anuncia el estado medido, enfoca con teclado y abre el drawer con tap/click', async () => {
     const view = buildLiveViews(mockActivity(), {}, Date.now()).views[0];
-    if (!view) throw new Error('mock activity must include an agent view');
     const onFocus = vi.fn();
     const onOpen = vi.fn();
-    const onHover = vi.fn();
+    const onHover = vi.fn<NonNullable<AgentNodeData['onHover']>>();
     const data: AgentNodeData = {
       kind: 'agent', agentKey: view.key, tenantId: view.tenantId, alias: view.alias,
       state: view.state, view, dim: false, selected: false, onFocus, onOpen, onHover,
@@ -34,7 +33,7 @@ describe('FleetGraphNode', () => {
 
     button.focus();
     expect(onFocus).toHaveBeenCalledWith(view.key);
-    expect(onHover).toHaveBeenCalledWith(view.key, expect.objectContaining({ width: expect.any(Number) }), view, view.alias);
+    expect(onHover.mock.calls[0]).toMatchObject([view.key, { width: 0, height: 0 }, view, view.alias]);
     await user.click(button);
     expect(onOpen).toHaveBeenCalledWith(view);
   });

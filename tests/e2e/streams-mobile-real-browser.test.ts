@@ -228,7 +228,7 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
       if (!id) throw new Error('opened terminal session id was not captured');
       let closed = await readOperatorSession(id);
       const deadline = Date.now() + 15_000;
-      while ((!closed.rows[0]?.revoked_at || !closed.rows[0]?.closed_at) && Date.now() < deadline) {
+      while ((!closed.rows[0]?.revoked_at || !closed.rows[0].closed_at) && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 200));
         closed = await readOperatorSession(id);
       }

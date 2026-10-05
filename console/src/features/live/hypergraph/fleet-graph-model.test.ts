@@ -49,11 +49,9 @@ describe('buildFleetGraph', () => {
       model, views: [], edges: [], layer: 'ahora',
       serverEdges: [{ from_tenant: 'Steven', from_alias: 'kant', to_tenant: 'Steven', to_alias: 'zeus', in_flight: 2, total_window: 9 }],
     });
-    const flow = graph.edges[0];
+    const [flow] = graph.edges;
 
-    expect(flow?.data?.kind).toBe('flow');
-    expect((flow?.data as { aggregate: { inFlight: number } }).aggregate.inFlight).toBe(2);
-    expect((flow?.data as { slow: boolean }).slow).toBe(false);
+    expect(flow.data).toMatchObject({ kind: 'flow', aggregate: { inFlight: 2 }, slow: false });
   });
 
   it('representa ACLs solo en permisos con anclas de tenant que no se cuentan como agentes', () => {

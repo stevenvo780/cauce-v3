@@ -93,12 +93,12 @@ if (typeof window !== 'undefined' && typeof window.DOMMatrixReadOnly === 'undefi
     readonly m22: number;
 
     constructor(transform = 'none') {
-      const matrix3d = transform.match(/^matrix3d\(([^)]+)\)$/u);
-      const matrix2d = transform.match(/^matrix\(([^)]+)\)$/u);
-      const scale = transform.match(/scale\([^,)]*(?:,\s*([^)]+))?\)/u);
-      if (matrix3d) this.m22 = Number(matrix3d[1]?.split(',')[5]) || 1;
-      else if (matrix2d) this.m22 = Number(matrix2d[1]?.split(',')[3]) || 1;
-      else if (scale) this.m22 = Number(scale[1] ?? scale[0]?.slice(6, -1)) || 1;
+      const matrix3d = /^matrix3d\(([^)]+)\)$/u.exec(transform);
+      const matrix2d = /^matrix\(([^)]+)\)$/u.exec(transform);
+      const scale = /scale\((?:[^,]+,\s*)?([^)]+)\)/u.exec(transform);
+      if (matrix3d) this.m22 = Number(matrix3d[1].split(',')[5]) || 1;
+      else if (matrix2d) this.m22 = Number(matrix2d[1].split(',')[3]) || 1;
+      else if (scale) this.m22 = Number(scale[1]) || 1;
       else this.m22 = 1;
     }
   }

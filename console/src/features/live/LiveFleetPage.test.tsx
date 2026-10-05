@@ -106,7 +106,7 @@ describe('la flota en reposo', () => {
     expect(screen.getByText(/No hay delegaciones entre agentes/)).toBeInTheDocument();
 
     // The word under each alias is "libre", never the down label.
-    const palabras = [...document.querySelectorAll('.lhg-bot-word')].map((nodo) => nodo.textContent?.toLowerCase());
+    const palabras = [...document.querySelectorAll('.lhg-bot-word')].map((nodo) => nodo.textContent.toLowerCase());
     expect(palabras.length).toBeGreaterThan(0);
     expect(palabras).not.toContain('caído');
     expect(new Set(palabras)).toContain('libre');

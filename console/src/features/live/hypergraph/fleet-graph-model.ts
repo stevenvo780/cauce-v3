@@ -198,7 +198,7 @@ export function buildFleetGraph(input: FleetGraphInput): FleetGraph {
         slow: typeof stallAfter === 'number' && aggregate.oldestSeconds !== null && aggregate.oldestSeconds > stallAfter,
         dim: filterActive && !focusNeighbor && !spotlightNeighbor,
       },
-      ariaLabel: `${aggregate.from} a ${aggregate.to}, ${aggregate.inFlight} en vuelo${aggregate.totalFromServer ? `, ${aggregate.total} en la ventana` : ''}`,
+      ariaLabel: `${aggregate.from} a ${aggregate.to}, ${String(aggregate.inFlight)} en vuelo${aggregate.totalFromServer ? `, ${String(aggregate.total)} en la ventana` : ''}`,
     };
   });
 
@@ -213,13 +213,13 @@ export function buildFleetGraph(input: FleetGraphInput): FleetGraph {
     lastY = person.y;
     const [tenantId, ...aliasParts] = person.agentKey.split('/');
     const targetAlias = aliasParts.join('/');
-    const target = modelNodeByAgent.get(pairKey(tenantId ?? '', targetAlias));
+    const target = modelNodeByAgent.get(pairKey(tenantId, targetAlias));
     if (!target) continue;
     const id = `origin:${encodeURIComponent(person.agentKey)}:${encodeURIComponent(person.adapter)}`;
     nodes.push({
       id, type: 'fleet', position: { x: -66, y: person.y }, origin: [0.5, 0.5],
       draggable: false, connectable: false, selectable: false, deletable: false, focusable: false,
-      ariaRole: 'img', ariaLabel: `Persona por ${person.adapter}, ${person.count} encargos en vuelo hacia ${targetAlias}`,
+      ariaRole: 'img', ariaLabel: `Persona por ${person.adapter}, ${String(person.count)} encargos en vuelo hacia ${targetAlias}`,
       data: { kind: 'origin', agentKey: person.agentKey, adapter: person.adapter, count: person.count },
       width: 74, height: 56,
     });

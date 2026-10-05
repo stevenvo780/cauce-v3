@@ -5,7 +5,7 @@ export function MessageDeliveryCheck({ delivery }: { delivery: DeliveryView }) {
     .find((event) => event.status !== 'published')?.status;
   const events = delivery.timeline ?? [];
   const received = ['accepted', 'started', 'done'].includes(status ?? '')
-    || events.some((event) => ['accepted', 'started', 'done'].includes(event.status ?? ''));
+    || events.some((event) => ['accepted', 'started', 'done'].includes(event.status));
   const published = events.some((event) => event.status === 'published');
   const failed = status === 'failed' || status === 'dead';
   const checks = received ? 2 : published ? 1 : 0;

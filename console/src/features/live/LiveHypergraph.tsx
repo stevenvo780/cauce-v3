@@ -242,7 +242,7 @@ export function LiveHypergraph({
           ? 'La capa Permisos muestra aristas ACL entre tenants; no representa actividad y deniega por defecto los cruces no declarados.'
           : 'La capa Ahora muestra delegaciones con entregas reales en vuelo. Cada región representa una sala; un agente en varias regiones es un puente.'}
         {' '}Arrastra el fondo para desplazar. Pellizca en móvil para acercar. Usa Acercar mapa, Alejar mapa o Encuadrar todos los elementos.
-        {sinSala.length > 0 ? ` ${sinSala.length} agentes sin sala declarada aparecen en la lista inferior.` : ''}
+        {sinSala.length > 0 ? ` ${String(sinSala.length)} agentes sin sala declarada aparecen en la lista inferior.` : ''}
       </p>
     </div>
   );
