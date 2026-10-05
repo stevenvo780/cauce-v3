@@ -17,6 +17,8 @@ const read = (path, fallback) => {
 };
 const scenario = read(join(process.cwd(), "fake-muse-scenario.json"), {});
 const state = read(statePath, { sessions: {}, turns: [], hostEnv: [], events: [], reads: 0, pages: 0 });
+state.openings ??= [];
+state.capabilityRequests ??= [];
 state.hostEnv.push({ home, configHome, dataHome, codexHome: process.env.CODEX_HOME ?? null, args: launchArgs });
 let submitted = false;
 function persist() { writeFileSync(statePath, JSON.stringify(state)); }
@@ -155,21 +157,49 @@ function finish(p) {
 }
 
 const lines = createInterface({ input: process.stdin });
-lines.on("line", (line) => {
+async function registerMcp(method, params) {
+  const server = params.config?.mcpServers?.cauce;
+  if (!server) { state.openings.push({ method, sessionId: params.sessionId, endpoint: null, toolNames: [] }); persist(); return; }
+  if (server.transport !== "stdio" || server.mode !== "required" || server.framing !== "lineDelimitedJson"
+    || server.command !== process.execPath || server.args?.length !== 2) throw new Error("invalid MCP registration");
+  const [{ Client }, { StdioClientTransport }] = await Promise.all([
+    import("@modelcontextprotocol/sdk/client/index.js"),
+    import("@modelcontextprotocol/sdk/client/stdio.js"),
+  ]);
+  const client = new Client({ name: "fake-muse-native-client", version: "1.0.0" });
+  const transport = new StdioClientTransport({ command: server.command,
+    args: scenario.mcpMissingBinary ? [join(process.cwd(), "absent-cauce-mcp.js")] : server.args,
+    stderr: "pipe", env: { PATH: process.env.PATH, HOME: home, CAUCE_EMISSION_SOCKET_PATH: server.args[1] } });
+  try {
+    if (scenario.mcpRegistryFailure) throw new Error("synthetic registry failure");
+    await client.connect(transport);
+    const { tools } = await client.listTools();
+    state.openings.push({ method, sessionId: params.sessionId, endpoint: server.args[1],
+      command: server.command, binary: server.args[0], toolNames: tools.map(tool => tool.name) });
+    persist();
+  } finally { await client.close(); }
+}
+
+lines.on("line", async (line) => {
   const frame = JSON.parse(line);
   if (frame.id === undefined) return;
   const p = frame.params ?? {};
   switch (frame.method) {
-    case "initialize":
+    case "initialize": {
       if (scenario.brokenHandshake) { process.stdout.write("invalid-json\n"); break; }
+      const requested = p.capabilities?.requestedCapabilities ?? [];
+      state.capabilityRequests.push(requested); persist();
       response(frame.id, {
-        experimentalApi: false, grantedCapabilities: [], museHome: join(dataHome, "muse"),
+        experimentalApi: false, grantedCapabilities: !scenario.missingSessionMcp && requested.includes("sessionMcp") ? ["sessionMcp"] : [], museHome: join(dataHome, "muse"),
         platformFamily: "unix", platformOs: "linux",
         schema: { fingerprint: "sha256:7469c9e352e67def4a59df7e439984d7194fa351e1c8b7abb34060fd977ced81", version: "1" },
         serverInfo: { name: "fake-muse", version: "1.4.1" }, sessionDurability: "durable", userAgent: "fake-muse",
       });
       break;
+    }
     case "session/start":
+      try { await registerMcp(frame.method, p); }
+      catch { error(frame.id, -32030, "commandRejected", "mcp_startup_failed"); break; }
       if (state.sessions[p.sessionId]) { error(frame.id, -32030, "commandRejected", "session_id_conflict"); break; }
       state.sessions[p.sessionId] = {
         workspaceRoot: p.workspaceRoot, modelId: p.modelId ?? null, approvalMode: p.approvalMode, turnCount: 0,
@@ -178,6 +208,8 @@ lines.on("line", (line) => {
       response(frame.id, { session: opened(p.sessionId), viewCursor: head(p.sessionId) });
       break;
     case "session/resume":
+      try { await registerMcp(frame.method, p); }
+      catch { error(frame.id, -32030, "commandRejected", "mcp_startup_failed"); break; }
       if (!state.sessions[p.sessionId]) { error(frame.id, -32020, "sessionNotFound", "missing"); break; }
       response(frame.id, { session: opened(p.sessionId), viewCursor: head(p.sessionId),
         history: { mode: "none", noneReason: "excluded", items: null, snapshot: null }, pendingRequests: [],

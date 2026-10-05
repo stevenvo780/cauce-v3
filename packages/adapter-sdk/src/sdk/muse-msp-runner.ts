@@ -1,6 +1,8 @@
 import { constants } from "node:fs";
 import { access, lstat, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { SessionConfig } from "@muse-code/sdk/dist/src/msp.js";
 import {
   MspError,
   readSessionDurability,
@@ -147,6 +149,19 @@ async function validateWorkspace(config: MuseRunnerConfig): Promise<void> {
   await access(config.executable, constants.X_OK);
 }
 
+async function sessionMcpConfig(endpoint: string | undefined): Promise<SessionConfig | undefined> {
+  if (endpoint === undefined) return undefined;
+  const binary = fileURLToPath(new URL("../bin/cauce-mcp.js", import.meta.url));
+  try {
+    if (!(await stat(binary)).isFile()) throw new Error("MCP entrypoint is not a file");
+    await access(binary, constants.R_OK);
+  } catch {
+    throw new ProcessExecutionError("MUSE_MCP_UNAVAILABLE", "Cauce MCP entrypoint is unavailable", false);
+  }
+  return { mcpServers: { cauce: { transport: "stdio", command: process.execPath,
+    args: [binary, endpoint], framing: "lineDelimitedJson", mode: "required" } } };
+}
+
 function terminalResult(sessionId: string, text: string, outcome: TurnOutcome): CommandRunResult {
   if (outcome.kind === "terminalUnknown") {
     throw new ProcessExecutionError(
@@ -220,6 +235,8 @@ export class MuseMspRunner {
     let preflightPhase = "workspace";
     try {
       await bounded(validateWorkspace(this.config), deadline, request.signal);
+      const mcpConfig = await bounded(sessionMcpConfig(request.emissionSocketPath), deadline, request.signal);
+      const sessionConfig = mcpConfig === undefined ? {} : { config: mcpConfig };
       handshake = spawnMspConnection({
         command: this.config.executable,
         args: ["serve", ...(this.config.yolo === true ? ["--disable-sandbox"] : []), "--trust-workspace"],
@@ -239,8 +256,13 @@ export class MuseMspRunner {
       preflightPhase = "initialize";
       const connection = await bounded(Promise.race([handshake.initialize({
         clientInfo: { name: "cauce_muse", version: "0.2.0" },
-        capabilities: { userInputDialogs: false },
+        capabilities: { userInputDialogs: false,
+          ...(mcpConfig === undefined ? {} : { requestedCapabilities: ["sessionMcp"] }),
+        },
       }), protocolFailure]), Math.min(deadline, Date.now() + 5_000), request.signal);
+      if (mcpConfig !== undefined && !connection.initializeResult.grantedCapabilities.includes("sessionMcp")) {
+        throw new ProcessExecutionError("MUSE_MCP_CAPABILITY_REQUIRED", "Muse host did not grant session MCP registration", false);
+      }
       const version = connection.initializeResult.serverInfo.version;
       const fingerprint = connection.initializeResult.schema.fingerprint;
       this.telemetry({
@@ -269,13 +291,14 @@ export class MuseMspRunner {
       if (request.resumeSession) {
         resumeAttempted = true;
         opening = await session.preflight(connection.connection.command("session/resume", {
-          sessionId, excludeItems: true,
+          sessionId, excludeItems: true, ...sessionConfig,
         }), wait, "session/resume", SESSION_OPEN_BUDGET_MS);
       } else {
         try {
           opening = await session.preflight(connection.connection.command("session/start", {
             sessionId,
             workspaceRoot: this.config.workspace,
+            ...sessionConfig,
             approvalMode: this.config.approvalMode,
             ...(this.config.model === undefined ? {} : { modelId: this.config.model }),
           }), wait, "session/start", SESSION_OPEN_BUDGET_MS);
@@ -284,7 +307,7 @@ export class MuseMspRunner {
             || error.data.reason !== "session_id_conflict") throw error;
           resumeAttempted = true;
           opening = await session.preflight(connection.connection.command("session/resume", {
-            sessionId, excludeItems: true,
+            sessionId, excludeItems: true, ...sessionConfig,
           }), wait, "session/resume", SESSION_OPEN_BUDGET_MS);
         }
       }
