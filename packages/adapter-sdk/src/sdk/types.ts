@@ -193,6 +193,7 @@ export interface DeliveryEvent {
   readonly output?: StructuredOutput;
   /** Adapter-generated proof that this exact turn consumed the contracted runtime profile. */
   readonly profile_adoption?: ProfileRuntimeAdoptionEvidence;
+  readonly harness_consumption_v1?: HarnessConsumptionWitness;
   readonly error?: AdapterErrorPayload;
 }
 
@@ -280,7 +281,17 @@ export interface CommandRunRequest extends CommandInvocation {
   readonly onHarnessStart?: () => void;
 }
 
+export interface HarnessConsumptionWitness {
+  readonly version: 1;
+  readonly harness_id: "claude" | "codex" | "muse";
+  readonly native_session_id: string;
+  readonly native_turn_id: string;
+  readonly input_sha256: string;
+  readonly evidence_kind: "canonical_final_response";
+}
+
 export interface CommandRunResult {
+  readonly consumptionWitness?: HarnessConsumptionWitness;
   readonly stdout: string;
   readonly stderr: string;
   readonly exitCode: number | null;

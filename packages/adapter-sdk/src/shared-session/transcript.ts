@@ -264,6 +264,19 @@ export function indexByUuid(
   return byUuid;
 }
 
+export function claudeProvesConsumption(
+  entries: readonly TranscriptEntry[], key: string, text: string, sessionId: string, promptText: string,
+): boolean {
+  const byUuid = indexByUuid(entries);
+  const input = byUuid.get(key);
+  if (input?.type !== "user" || input.isSidechain === true || input.sessionId !== sessionId
+    || !matchesInjectedPrompt(userText(input), promptText)) return false;
+  return entries.some((entry) => entry.type === "assistant" && entry.isSidechain !== true
+    && entry.sessionId === sessionId && stopReason(entry) === "end_turn"
+    && stripJsonFence(assistantText(entry) ?? "") === text && text.trim().length > 0
+    && descendsFrom(byUuid, entry, key));
+}
+
 /**
  * The final answer of the turn we injected.
  */
@@ -328,6 +341,7 @@ export function claudeTranscript(
         ? { key: found.uuid }
         : { key: found.uuid, sessionId: found.sessionId };
     },
+    provesConsumption: claudeProvesConsumption,
     findAnswer: (entries, key) => {
       const answer = findFinalAssistant(entries, key);
       if (answer === undefined) return undefined;

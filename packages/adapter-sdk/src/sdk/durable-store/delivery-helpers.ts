@@ -32,6 +32,7 @@ export function lifecycleEventFor(
     ...(record.origin === undefined ? {} : { origin: record.origin }),
     ...(record.output === undefined ? {} : { output: record.output }),
     ...(record.profile_adoption === undefined ? {} : { profile_adoption: record.profile_adoption }),
+    ...(phase !== "done" || record.harness_consumption_v1 === undefined ? {} : { harness_consumption_v1: record.harness_consumption_v1 }),
     ...(record.error === undefined ? {} : { error: record.error }),
   };
 }

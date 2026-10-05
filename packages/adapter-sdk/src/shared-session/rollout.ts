@@ -170,6 +170,21 @@ function lastCodexPrompt(entries: readonly RolloutLine[]): string | undefined { 
   return undefined;
 }
 
+export function codexProvesConsumption(
+  entries: readonly RolloutLine[], key: string, text: string, _sessionId: string, promptText: string,
+): boolean {
+  if (text.trim().length === 0 || !entries.some((entry) => {
+    const payload = messagePayload(entry, "user");
+    return payload !== undefined && messageTurnId(payload) === key
+      && submitted(messageText(payload)) === submitted(promptText);
+  })) return false;
+  return entries.some((line) => {
+    const payload = eventPayload(line);
+    return payload?.turn_id === key && payload.type === "task_complete"
+      && (asText(payload.last_agent_message) ?? finalAnswerOf(entries, key)) === text;
+  });
+}
+
 /**
  * Identifies the turn's outcome in the rollout from its turn_id.
  */
@@ -271,6 +286,7 @@ export function codexTranscript(codexHome: string): TranscriptReader<RolloutLine
     read: (file, offset) => readJsonlSince<RolloutLine>(file, offset),
     findInjected: findInjectedRolloutTurn,
     findAnswer: findRolloutOutcome,
+    provesConsumption: codexProvesConsumption,
     otherConversationActive: async (changed, own) => {
       for (const file of changed) {
         if (file !== own && await rolloutSource(file) === "cli") return true;

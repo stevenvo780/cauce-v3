@@ -1,3 +1,4 @@
+import { consumptionWitness } from "../consumption.js";
 import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { signalAborted } from "../../runtime-state.js";
 import {
@@ -196,7 +197,14 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           const outcome = port.findAnswer(slice.entries, injectedTurn.key);
           if (request.signal.aborted) continue;
           if (outcome !== undefined) {
-            return { result: this.settledResult(outcome, injectedTurn.sessionId, request), terminalBoundary: true };
+            const sessionId = injectedTurn.sessionId;
+            const canonical = port.isConversation === undefined || await port.isConversation(injectedTurn.file);
+            const witness = outcome.kind === "answer" && sessionId !== undefined && canonical
+              && port.provesConsumption?.(slice.entries, injectedTurn.key, outcome.text, sessionId, promptText) === true
+              ? consumptionWitness(this.options.harness, sessionId, injectedTurn.key, request.stdin) : undefined;
+            if (request.signal.aborted) continue;
+            return { result: { ...this.settledResult(outcome, sessionId, request),
+              ...(witness === undefined ? {} : { consumptionWitness: witness }) }, terminalBoundary: true };
           }
           const pendingWork = port.lingering?.(slice.entries, injectedTurn.key);
           if (pendingWork !== undefined && lingering?.progress !== pendingWork.progress) {

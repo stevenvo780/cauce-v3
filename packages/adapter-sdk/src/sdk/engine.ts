@@ -17,6 +17,7 @@ import type {
   Clock,
   Delivery,
   DeliveryEvent,
+  HarnessConsumptionWitness,
   StructuredOutput,
 } from "./types.js";
 import { systemClock } from "./backoff.js";
@@ -417,6 +418,7 @@ export class AdapterEngine {
 
     let output: StructuredOutput | undefined;
     let consumedProfile: RuntimeProfileMeasurement | undefined;
+    let consumption: HarnessConsumptionWitness | undefined;
     let executionFailure: unknown;
     let turnInput: TurnInput | undefined;
     let emissionTurn: EmissionTurn | undefined;
@@ -498,6 +500,10 @@ export class AdapterEngine {
             });
           },
           onRuntimeProfileConsumed: (profile) => { consumedProfile = profile; },
+          onConsumptionWitness: (witness) => {
+            if (!controller.signal.aborted && delivery.epoch === this.store.epoch
+              && !this.fenced.has(delivery.delivery_id)) consumption = witness;
+          },
         });
         phase("harness_completed");
         this.logger({ event: "emission_result", delivery_id: delivery.delivery_id,
@@ -538,14 +544,6 @@ export class AdapterEngine {
         return;
       }
 
-      // Local attachments are inlined to `data:` HERE, at the only point where the turn becomes
-      // an ACK: the envelope is already validated, this is what will actually travel, and it
-      // passes once per delivery. The parser is NOT the place —it's pure, synchronous, and runs
-      // over candidates that are often discarded—; the full reason is in `artifact-inliner.ts`.
-      //
-      // Placed before the 'failed'/'done' fork on purpose: a failed turn also persists and
-      // publishes its `output`, and the screenshot explaining WHY it failed is exactly what must
-      // be visible. `inlineLocalArtifacts` never throws and returns the envelope intact on failure.
       output = await inlineWithoutSecrets(output, turnInput?.secrets, this.logger, delivery);
 
       if (output.status === "failed") {
@@ -562,6 +560,8 @@ export class AdapterEngine {
         {
           output,
           ...(profileAdoption === undefined ? {} : { profileAdoption }),
+          ...(consumption === undefined || delivery.epoch !== this.store.epoch || this.fenced.has(delivery.delivery_id)
+            ? {} : { consumptionWitness: consumption }),
           retainRequest: output.messages.length > 0
             || (messageType === "agent.response" && this.store.continuationSource(delivery) !== undefined),
           attempt: delivery.attempt,

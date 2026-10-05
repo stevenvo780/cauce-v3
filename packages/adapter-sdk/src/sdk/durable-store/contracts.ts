@@ -4,7 +4,7 @@ import type {
   DelegationRejectionNotice,
   ProfileRuntimeAdoptionEvidence,
 } from "@cauce/protocol";
-import type { Delivery, DeliveryEvent, StructuredOutput } from "../types.js";
+import type { Delivery, DeliveryEvent, HarnessConsumptionWitness, StructuredOutput } from "../types.js";
 
 export type InboxState = "accepted" | "started" | "done" | "failed";
 
@@ -27,6 +27,7 @@ export interface InboxRecord {
   readonly request?: Delivery;
   readonly output?: StructuredOutput;
   readonly profile_adoption?: ProfileRuntimeAdoptionEvidence;
+  readonly harness_consumption_v1?: HarnessConsumptionWitness;
   /** Exact store-side outcome of this turn's StructuredOutput.messages. */
   readonly delegation_rejections?: readonly DelegationRejectionNotice[];
   readonly delegation_materializations?: readonly DelegationMaterializationNotice[];
@@ -180,6 +181,7 @@ export interface EventDeliveryFeedback {
 export interface DeliveryTransitionDetails {
   readonly output?: StructuredOutput;
   readonly profileAdoption?: ProfileRuntimeAdoptionEvidence;
+  readonly consumptionWitness?: HarnessConsumptionWitness;
   readonly error?: InboxRecord["error"];
   readonly retainRequest?: boolean;
   readonly attempt?: number;

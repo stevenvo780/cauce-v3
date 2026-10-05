@@ -5,6 +5,7 @@ import type { DeliveryEnvelope, ProfileRuntimeContract } from "@cauce/protocol";
 import type { DurableStore, SessionOrigin } from "../sdk/durable-store.js";
 import type {
   CommandRunner,
+  HarnessConsumptionWitness,
   HarnessAttachment,
   HarnessCommandOverride,
   HarnessDefinition,
@@ -127,6 +128,7 @@ export interface HarnessExecuteRequest {
    * before calling `execute`.
    */
   readonly onHarnessStart?: () => void;
+  readonly onConsumptionWitness?: (witness: HarnessConsumptionWitness) => void;
   /**
    * Called only after a real harness run returned valid structured output. The engine still has to
    * match this measurement against the delivery's trusted runtime contract before emitting it.

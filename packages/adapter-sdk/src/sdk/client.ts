@@ -453,7 +453,6 @@ export class AdapterClient {
         : 'Local transport validation refused the entry',
     });
   }
-
   private sendEvent(event: DeliveryEvent, deadline?: SendDeadline): Promise<void> {
     const detail = clampAckDetail(
       event.error?.message ?? (event.output?.status === 'failed' ? event.output.reply ?? undefined : undefined),
@@ -472,11 +471,12 @@ export class AdapterClient {
       ...(event.execution_started === true ? { execution_started: true } : {}),
       ...(detail === undefined ? {} : { error: detail }),
       ...(event.error === undefined ? {} : { error_code: event.error.code }),
-      ...(event.output === undefined && event.profile_adoption === undefined
+      ...(event.output === undefined && event.profile_adoption === undefined && event.harness_consumption_v1 === undefined
         ? {}
         : {
             result: {
               ...(event.output === undefined ? {} : { output: event.output }),
+              ...(event.harness_consumption_v1 === undefined ? {} : { harness_consumption_v1: event.harness_consumption_v1 }),
               ...(event.profile_adoption === undefined
                 ? {}
                 : { profile_adoption: event.profile_adoption }),
