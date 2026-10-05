@@ -3,6 +3,10 @@ import { logEvent } from '@cauce/protocol';
 import type { AgentConnection, AgentGovernanceBatchEntry } from './agent-leg.js';
 import { MAX_GOVERNANCE_BYTES, type GovernanceReadCode } from './governance-read.js';
 import { integerField, stringField } from './validation.js';
+import {
+  parseGovernanceOperation, parseWriteFileAcks, parseWriteReceipt,
+  type GovernanceOperationDescriptor, type GovernanceWriteReceipt,
+} from './governance-operation.js';
 
 type GovernanceWriteOperation = 'replace' | 'create';
 
@@ -28,7 +32,9 @@ interface GovernanceWriteFailure {
   readonly reason: string;
 }
 
-export type FileWriteOutcome = GovernanceFileWrite | GovernanceWriteFailure;
+export type FileWriteOutcome = GovernanceFileWrite
+  | (GovernanceFileWrite & { readonly request_id: string; readonly receipt: GovernanceWriteReceipt })
+  | GovernanceWriteFailure;
 
 const READ_CODES: readonly GovernanceReadCode[] = [
   'not_found', 'permission_denied', 'invalid_path', 'symlink_detected',
@@ -36,6 +42,18 @@ const READ_CODES: readonly GovernanceReadCode[] = [
 ];
 const WRITE_CODES: readonly GovernanceWriteFailure['error'][] = [...READ_CODES, 'conflict'];
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+function receiptMatchesFiles(
+  receipt: GovernanceWriteReceipt,
+  files: readonly { readonly path: string; readonly sha: string | null; readonly bytes: number }[],
+): boolean {
+  if (receipt.files.length !== files.length) return false;
+  const receipts = new Map(receipt.files.map((file) => [file.path, file]));
+  return receipts.size === files.length && files.every((file) => {
+    const recorded = receipts.get(file.path);
+    return recorded?.sha === file.sha && recorded.bytes === file.bytes;
+  });
+}
 
 function normalizeWriteCode(value: string): GovernanceWriteFailure['error'] {
   return WRITE_CODES.includes(value as GovernanceWriteFailure['error'])
@@ -57,6 +75,7 @@ export async function requestFileWrite(
   timeoutMs = 5_000,
   signal?: AbortSignal,
   expectedTarget?: GovernanceWriteTarget,
+  durableOperation?: GovernanceOperationDescriptor,
 ): Promise<FileWriteOutcome> {
   if (!connection.alive) {
     return { error: 'unavailable', reason: 'el pty-agent de ese alias no está conectado' };
@@ -72,6 +91,13 @@ export async function requestFileWrite(
   if (!connection.supportsGovernanceWrite) {
     return { error: 'unavailable', reason: 'el pty-agent de ese alias no sabe escribir ficheros de gobierno' };
   }
+  if (durableOperation !== undefined && (parseGovernanceOperation(durableOperation) === undefined
+    || durableOperation.runtime_generation !== connection.hello.generation)) {
+    return { error: 'conflict', reason: 'la identidad de la operación durable no es válida' };
+  }
+  if (durableOperation !== undefined && !connection.supportsWriteQuiescence) {
+    return { error: 'unavailable', reason: 'el pty-agent no acredita estado durable de escritura' };
+  }
   if (content.byteLength > MAX_GOVERNANCE_BYTES) {
     return { error: 'too_large', reason: 'el contenido se pasa del tope de gobierno' };
   }
@@ -82,7 +108,7 @@ export async function requestFileWrite(
     return { error: 'unavailable', reason: 'la petición de escritura fue cancelada' };
   }
 
-  const requestId = randomUUID();
+  const requestId = durableOperation?.request_id ?? randomUUID();
   const operation: GovernanceWriteOperation = precondition.state === 'present' ? 'replace' : 'create';
   const expectedSha = precondition.state === 'present' ? precondition.sha256 : undefined;
   const contentSha = createHash('sha256').update(content).digest('hex');
@@ -108,7 +134,7 @@ export async function requestFileWrite(
     }, timeoutMs);
     timer.unref();
 
-    connection.attachWrite(requestId, {
+    if (!connection.attachWrite(requestId, {
       onWriteOk(body) {
         const answeredPath = stringField(body, 'path');
         const answeredOperation = stringField(body, 'operation');
@@ -119,6 +145,15 @@ export async function requestFileWrite(
           finish({ error: 'unknown', reason: 'el ACK del agente no acredita la escritura solicitada' });
           return;
         }
+        if (durableOperation !== undefined) {
+          const receipt = parseWriteReceipt(body.receipt, connection, tenantId, alias, durableOperation);
+          if (receipt === undefined || !receiptMatchesFiles(receipt, [{ path, sha: contentSha, bytes: content.byteLength }])) {
+            finish({ error: 'unknown', reason: 'el recibo durable no acredita la escritura solicitada' });
+            return;
+          }
+          finish({ path, operation, sha: contentSha, bytes: content.byteLength, request_id: requestId, receipt });
+          return;
+        }
         finish({ path, operation, sha: contentSha, bytes: content.byteLength });
       },
       onWriteErr(failure) {
@@ -127,10 +162,14 @@ export async function requestFileWrite(
       onAgentGone(reason) {
         finish({ error: 'unavailable', reason: `el pty-agent se desconectó: ${reason}` });
       }
-    });
+    })) {
+      clearTimeout(timer);
+      resolve({ error: 'conflict', reason: 'ya hay una escritura con esta identidad durable' });
+      return;
+    }
     signal?.addEventListener('abort', aborted, { once: true });
 
-    if (!connection.sendWrite(requestId, path, operation, expectedSha, contentSha, content)) {
+    if (!connection.sendWrite(requestId, path, operation, expectedSha, contentSha, content, durableOperation)) {
       finish({ error: 'unavailable', reason: 'la cola hacia el pty-agent está congestionada' }, true);
     }
   });
@@ -160,6 +199,7 @@ interface GovernanceBatchFileAck {
 
 export type GovernanceWriteBatchOutcome =
   | { readonly files: readonly GovernanceBatchFileAck[] }
+  | { readonly files: readonly GovernanceBatchFileAck[]; readonly request_id: string; readonly receipt: GovernanceWriteReceipt }
   | GovernanceWriteFailure;
 
 const MAX_GOVERNANCE_BATCH_FILES = 7;
@@ -175,7 +215,8 @@ export async function requestFileWriteBatch(
   alias: string,
   entries: readonly GovernanceWriteBatchEntry[],
   timeoutMs = 5_000,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  durableOperation?: GovernanceOperationDescriptor
 ): Promise<GovernanceWriteBatchOutcome> {
   if (!connection.alive) {
     return { error: 'unavailable', reason: 'el pty-agent de ese alias no está conectado' };
@@ -185,6 +226,13 @@ export async function requestFileWriteBatch(
   }
   if (!connection.supportsGovernanceWriteBatch) {
     return { error: 'unavailable', reason: 'el pty-agent de ese alias no soporta perfiles atómicos' };
+  }
+  if (durableOperation !== undefined && (parseGovernanceOperation(durableOperation) === undefined
+    || durableOperation.runtime_generation !== connection.hello.generation)) {
+    return { error: 'conflict', reason: 'la identidad de la operación durable no es válida' };
+  }
+  if (durableOperation !== undefined && !connection.supportsWriteQuiescence) {
+    return { error: 'unavailable', reason: 'el pty-agent no acredita estado durable de escritura' };
   }
   if (entries.length < 1 || entries.length > MAX_GOVERNANCE_BATCH_FILES) {
     return { error: 'too_large', reason: 'el perfil debe contener entre uno y siete ficheros' };
@@ -225,7 +273,7 @@ export async function requestFileWriteBatch(
     return { error: 'unavailable', reason: 'la petición de perfil fue cancelada' };
   }
 
-  const requestId = randomUUID();
+  const requestId = durableOperation?.request_id ?? randomUUID();
   return new Promise<GovernanceWriteBatchOutcome>((resolve) => {
     let settled = false;
     const finish = (outcome: GovernanceWriteBatchOutcome, cancelAgent = false): void => {
@@ -246,12 +294,20 @@ export async function requestFileWriteBatch(
     }, timeoutMs);
     timer.unref();
 
-    connection.attachWrite(requestId, {
+    if (!connection.attachWrite(requestId, {
       onWriteOk(body) {
         const rawFiles: unknown = body.files;
         if (!Array.isArray(rawFiles) || rawFiles.length !== wireEntries.length) {
           finish({ error: 'unknown', reason: 'el ACK del agente no acredita todos los ficheros del perfil' });
           return;
+        }
+        let durableReceipt: GovernanceWriteReceipt | undefined;
+        if (durableOperation !== undefined) {
+          durableReceipt = parseWriteReceipt(body.receipt, connection, tenantId, alias, durableOperation);
+          if (parseWriteFileAcks(rawFiles) === undefined || durableReceipt === undefined) {
+            finish({ error: 'unknown', reason: 'el recibo durable no acredita el perfil solicitado' });
+            return;
+          }
         }
         const acknowledgements: GovernanceBatchFileAck[] = [];
         for (let index = 0; index < wireEntries.length; index += 1) {
@@ -291,7 +347,18 @@ export async function requestFileWriteBatch(
           }
           acknowledgements.push({ path: requested.path, operation, sha, bytes });
         }
-        finish({ files: acknowledgements });
+        if (durableOperation !== undefined && (durableReceipt === undefined
+          || !receiptMatchesFiles(durableReceipt, acknowledgements))) {
+          finish({ error: 'unknown', reason: 'el recibo durable no coincide con los ficheros del perfil' });
+          return;
+        }
+        if (durableOperation === undefined) {
+          finish({ files: acknowledgements });
+        } else if (durableReceipt === undefined) {
+          finish({ error: 'unknown', reason: 'el recibo durable no coincide con los ficheros del perfil' });
+        } else {
+          finish({ files: acknowledgements, request_id: requestId, receipt: durableReceipt });
+        }
       },
       onWriteErr(failure) {
         finish({ error: normalizeWriteCode(failure.code), reason: failure.reason });
@@ -299,10 +366,14 @@ export async function requestFileWriteBatch(
       onAgentGone(reason) {
         finish({ error: 'unavailable', reason: `el pty-agent se desconectó: ${reason}` });
       },
-    });
+    })) {
+      clearTimeout(timer);
+      resolve({ error: 'conflict', reason: 'ya hay una escritura con esta identidad durable' });
+      return;
+    }
     signal?.addEventListener('abort', aborted, { once: true });
 
-    if (!connection.sendGovernanceWriteBatch(requestId, wireEntries)) {
+    if (!connection.sendGovernanceWriteBatch(requestId, wireEntries, durableOperation)) {
       finish({ error: 'unavailable', reason: 'la cola hacia el pty-agent está congestionada' }, true);
     }
   });
