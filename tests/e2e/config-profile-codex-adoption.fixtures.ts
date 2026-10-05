@@ -272,6 +272,32 @@ function namespaceFailureCode(stderr: string): string {
   return 'NAMESPACE_PROBE_FAILED';
 }
 
+const SAFE_SPAWN_ERROR_NAMES = new Set(['AbortError', 'Error', 'RangeError', 'TypeError']);
+const SAFE_SPAWN_ERROR_CODES = new Set([
+  'EACCES', 'EAGAIN', 'EBADF', 'ECANCELED', 'EEXIST', 'EINTR', 'EINVAL', 'EIO', 'EISDIR', 'EMFILE',
+  'ENFILE', 'ENOENT', 'ENOMEM', 'ENOSPC', 'ENOTDIR', 'ENOTEMPTY', 'EPERM', 'EPIPE', 'ETIMEDOUT',
+]);
+const SAFE_SIGNAL_NAMES = new Set([
+  'SIGABRT', 'SIGALRM', 'SIGBUS', 'SIGCHLD', 'SIGCONT', 'SIGFPE', 'SIGHUP', 'SIGILL', 'SIGINT',
+  'SIGKILL', 'SIGPIPE', 'SIGQUIT', 'SIGSEGV', 'SIGSTOP', 'SIGTERM', 'SIGTRAP', 'SIGTSTP', 'SIGTTIN',
+  'SIGTTOU', 'SIGUSR1', 'SIGUSR2',
+]);
+
+function safeSpawnErrorField(error: Error | undefined, field: 'name' | 'code'): string {
+  if (error === undefined) return 'none';
+  const value = field === 'name'
+    ? error.name
+    : 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+  if (value === undefined) return 'none';
+  const allowed = field === 'name' ? SAFE_SPAWN_ERROR_NAMES : SAFE_SPAWN_ERROR_CODES;
+  return allowed.has(value) ? value : 'OTHER';
+}
+
+function safeSignalField(signal: string | null): string {
+  if (signal === null) return 'none';
+  return SAFE_SIGNAL_NAMES.has(signal) ? signal : 'OTHER';
+}
+
 function diagnosticSummary(stderr: string): readonly string[] {
   const allowedEvents = new Set([
     'delivery_start', 'delivery_state', 'delivery_end', 'claim_renewal_start', 'claim_renewal_end',
@@ -464,7 +490,16 @@ export function assertCodexAdapterBuildAvailable(root: string): void {
     '--', process.execPath, '--input-type=module', '-e', probe,
   ], { encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024 });
   if (result.error !== undefined || result.status !== 0) {
-    throw new Error('Codex adapter build or runtime dependencies are not readable in the isolated E2E namespace');
+    const status = typeof result.status === 'number' ? String(result.status) : 'none';
+    const errorName = safeSpawnErrorField(result.error, 'name');
+    const errorCode = safeSpawnErrorField(result.error, 'code');
+    const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+    const reason = namespaceFailureCode(stderr);
+    throw new Error(
+      `Codex adapter build or runtime dependencies are not readable in the isolated E2E namespace `
+      + `(exit=${status}, signal=${safeSignalField(result.signal)}, error_name=${errorName}, `
+      + `error_code=${errorCode}, reason=${reason})`,
+    );
   }
 }
 

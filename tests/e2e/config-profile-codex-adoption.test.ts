@@ -133,6 +133,78 @@ describe('adopción real del perfil de Codex', () => {
     expect(() => { assertCodexAdapterBuildAvailable(process.cwd()); }).not.toThrow();
   });
 
+  it('clasifica un módulo ausente sin exponer rutas del scratch ni stderr crudo', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'cauce-codex-namespace-negative-'));
+    try {
+      const entry = join(root, 'packages/adapter-sdk/dist/src/bin');
+      const protocol = join(root, 'packages/protocol/dist');
+      await mkdir(entry, { recursive: true, mode: 0o700 });
+      await mkdir(protocol, { recursive: true, mode: 0o700 });
+      await writeFile(join(entry, 'codex.js'), '', { mode: 0o600 });
+      await writeFile(join(entry, 'shared.js'), '', { mode: 0o600 });
+      await writeFile(join(protocol, 'index.js'), '', { mode: 0o600 });
+
+      let observed: unknown;
+      try {
+        assertCodexAdapterBuildAvailable(root);
+      } catch (error) {
+        observed = error;
+      }
+      expect(observed).toBeInstanceOf(Error);
+      const message = observed instanceof Error ? observed.message : '';
+      expect(message).toContain('reason=NAMESPACE_PROBE_NODE_MISSING');
+      expect(message).toContain('exit=1');
+      expect(message).toContain('signal=none');
+      expect(message).toContain('error_name=none');
+      expect(message).toContain('error_code=none');
+      expect(message).not.toContain(root);
+      expect(message).not.toContain('Cannot find module');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('clasifica un error de spawn con stderr nulo sin sustituir el error primario', async () => {
+    const scratch = await mkdtemp(join(tmpdir(), 'cauce-codex-spawn-negative-'));
+    const root = join(scratch, 'root');
+    const bin = join(scratch, 'bin');
+    const previousPath = process.env.PATH;
+    try {
+      const entry = join(root, 'packages/adapter-sdk/dist/src/bin');
+      const protocol = join(root, 'packages/protocol/dist');
+      await mkdir(entry, { recursive: true, mode: 0o700 });
+      await mkdir(protocol, { recursive: true, mode: 0o700 });
+      await mkdir(bin, { recursive: true, mode: 0o700 });
+      await writeFile(join(entry, 'codex.js'), '', { mode: 0o600 });
+      await writeFile(join(entry, 'shared.js'), '', { mode: 0o600 });
+      await writeFile(join(protocol, 'index.js'), '', { mode: 0o600 });
+      const bwrap = join(bin, 'bwrap');
+      await writeFile(bwrap, '#!/cauce-test-missing-interpreter\n', { mode: 0o700 });
+      await chmod(bwrap, 0o700);
+      process.env.PATH = bin;
+
+      let observed: unknown;
+      try {
+        assertCodexAdapterBuildAvailable(root);
+      } catch (error) {
+        observed = error;
+      }
+      expect(observed).toBeInstanceOf(Error);
+      const message = observed instanceof Error ? observed.message : '';
+      expect(message).toContain('exit=none');
+      expect(message).toContain('signal=none');
+      expect(message).toContain('error_name=Error');
+      expect(message).toContain('error_code=ENOENT');
+      expect(message).toContain('reason=NAMESPACE_PROBE_NO_STDERR');
+      expect(message).not.toContain(scratch);
+      expect(message).not.toContain('interpreter');
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      await rm(scratch, { recursive: true, force: true });
+    }
+  });
+
   it('rechaza un SDK sin compilar antes de iniciar Docker o crear el wrapper', async () => {
     const root = await mkdtemp(join(tmpdir(), 'cauce-codex-build-preflight-'));
     let databaseStartRequested = false;
