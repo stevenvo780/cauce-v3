@@ -39,7 +39,18 @@ def command_identity(command: list[str]) -> dict:
         if owner.st_uid != os.geteuid():
             raise SupervisionError("git_workspace_owner_mismatch")
         return {}
-    return {"user": owner.st_uid, "group": owner.st_gid, "extra_groups": []}
+    if command[2] != "/opt/hospital-agent/runtime/praxis/operator" or owner.st_uid != 1000:
+        raise SupervisionError("git_workspace_requires_actor_isolation")
+    return {}
+
+
+def isolated_command(command: list[str]) -> list[str]:
+    if command[:2] != ["git", "-C"] or os.geteuid() != 0:
+        return command
+    command_identity(command)
+    return ["docker", "exec", "-u", "1000:1000", "hospital-agent-openclaw-operator-gateway-1",
+            "git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C",
+            "/home/node/.openclaw/workspace/praxis", *command[3:]]
 
 
 def trusted_file(path: Path, directory: bool = False) -> None:
@@ -182,3 +193,59 @@ def receipt_matches(receipt: dict, root: dict) -> bool:
     return (all(isinstance(row, dict) and row.get("tenant_id") == "Hospital" and row.get("alias") == "operador"
                 for row in deliveries)
             and [row.get("delivery_id") for row in deliveries] == root.get("delivery_ids"))
+
+
+def auth_resume_event(goal_hash: str, now: float) -> dict:
+    if not re.fullmatch(r"[a-f0-9]{64}", goal_hash):
+        raise SupervisionError("invalid_goal_digest")
+    return {"schema_version": 1, "goal_sha256": goal_hash, "reason": "provider_reauthenticated",
+            "nonce": str(uuid.uuid4()), "created_at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat().replace("+00:00", "Z")}
+
+
+def consume_auth_resume(state: dict, path: Path, goal_hash: str, now: float) -> bool:
+    if state.get("phase") != "circuit_paused" or state.get("pause_reason") != "unauthorized" or state.get("active_root"):
+        return False
+    if not path.exists() and not path.is_symlink():
+        return False
+    trusted_file(path.parent, directory=True)
+    trusted_file(path)
+    if stat.S_IMODE(path.lstat().st_mode) != 0o600:
+        raise SupervisionError("untrusted_resume_mode")
+    value = json.loads(read_bytes(path, 8192))
+    required = {"schema_version", "goal_sha256", "reason", "nonce", "created_at"}
+    try:
+        if (not isinstance(value, dict) or set(value) != required or type(value["schema_version"]) is not int
+                or value["schema_version"] != 1 or value["goal_sha256"] != goal_hash
+                or value["reason"] != "provider_reauthenticated"):
+            raise ValueError("invalid resume scope")
+        nonce = uuid.UUID(value["nonce"])
+        if nonce.version != 4 or str(nonce) != value["nonce"]:
+            raise ValueError("invalid resume nonce")
+        created = dt.datetime.fromisoformat(value["created_at"].replace("Z", "+00:00"))
+        if not created.tzinfo:
+            raise ValueError("invalid resume timestamp")
+        consumed = state.get("auth_resume_nonces", [])
+        if value["nonce"] in consumed:
+            return False
+        if not 0 <= now - created.timestamp() <= 86400:
+            raise ValueError("expired resume event")
+    except (ValueError, TypeError, KeyError, AttributeError) as error:
+        raise SupervisionError("invalid_auth_resume") from error
+    record = {"nonce": value["nonce"], "created_at": value["created_at"], "consumed_at": now,
+              "pause_reason": state["pause_reason"], "backoff_until": state.get("backoff_until"),
+              "failed_root": state.get("last_finished", {}).get("root")}
+    state.setdefault("auth_resume_nonces", []).append(value["nonce"])
+    state.setdefault("auth_recoveries", []).append(record)
+    state["phase"] = "observing"
+    state["continuation_earned"] = True
+    state.pop("backoff_until", None)
+    return True
+
+
+def apply_auth_resume_control(state: dict, path: Path, goal_hash: str, now: float) -> bool:
+    try:
+        return consume_auth_resume(state, path, goal_hash, now)
+    except (SupervisionError, OSError, ValueError, TypeError, AttributeError, RecursionError) as error:
+        code = error.code if isinstance(error, SupervisionError) else "invalid_auth_resume"
+        state["auth_resume_rejection"] = {"code": code, "observed_at": now}
+        return False

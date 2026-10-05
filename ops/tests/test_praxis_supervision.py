@@ -66,10 +66,10 @@ class PraxisSupervisionTests(unittest.TestCase):
         with mock.patch.object(SUP.STATE.os, "geteuid", return_value=0), \
                 mock.patch.object(SUP.STATE.Path, "stat", return_value=mock.Mock(st_uid=1000, st_gid=1000)), \
                 mock.patch.object(SUP.subprocess, "run", return_value=mock.Mock(stdout="synthetic")) as execute:
-            SUP.run_command(["git", "-C", str(self.workspace), "status", "--porcelain"], time.monotonic() + 5)
-        self.assertEqual(execute.call_args.kwargs["user"], 1000)
-        self.assertEqual(execute.call_args.kwargs["group"], 1000)
-        self.assertEqual(execute.call_args.kwargs["extra_groups"], [])
+            SUP.run_command(["git", "-C", "/opt/hospital-agent/runtime/praxis/operator", "status", "--porcelain"], time.monotonic() + 5)
+        self.assertEqual(execute.call_args.args[0][:5], ["docker", "exec", "-u", "1000:1000", "hospital-agent-openclaw-operator-gateway-1"])
+        self.assertIn("/home/node/.openclaw/workspace/praxis", execute.call_args.args[0])
+        self.assertNotIn("user", execute.call_args.kwargs)
         self.assertNotIn("GIT_CONFIG_VALUE_0", execute.call_args.kwargs["env"])
 
     def setUp(self):

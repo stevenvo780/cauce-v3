@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { escenariosA } from "./container-supervisor-escenarios-a.mjs";
 import { escenariosB } from "./container-supervisor-escenarios-b.mjs";
+import { prepareSupervisorOps } from "./container-supervisor-fixtures.mjs";
 
 const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const supervisor = path.join(ops, "scripts/container-adapter-supervisor.sh");
@@ -41,6 +42,7 @@ const pkiRoot = path.join(temporary, "pki");
 const mountSourceRoot = path.join(temporary, "persistent");
 const lockRoot = path.join(temporary, "locks");
 const binRoot = path.join(temporary, "bin");
+const fixtureOps = path.join(temporary, "ops");
 const log = path.join(temporary, "docker.jsonl");
 const imageId = `sha256:${"a".repeat(64)}`;
 const firstId = "1".repeat(64);
@@ -178,6 +180,7 @@ function environment(statePath) {
     ...process.env,
     PATH: `${binRoot}:${process.env.PATH ?? ""}`,
     CAUCE_CONTAINER_TEST_MODE: "1",
+    CAUCE_CONTAINER_OPS_ROOT: fixtureOps,
     CAUCE_ALLOW_ROOT_TEST_MODE: "1",
     CAUCE_CONTAINER_CONFIG_ROOT: configRoot,
     CAUCE_CONTAINER_BUNDLE_ROOT: bundleRoot,
@@ -498,6 +501,7 @@ async function writableFixture() {
 }
 
 try {
+  await prepareSupervisorOps(ops, fixtureOps);
   await Promise.all([configRoot, path.join(release, "packages/adapter-sdk/dist/src/bin"),
     path.join(release2, "packages/adapter-sdk/dist/src/bin"), pkiRoot, mountSourceRoot, lockRoot, binRoot]
     .map((directory) => mkdir(directory, { recursive: true, mode: 0o700 })));

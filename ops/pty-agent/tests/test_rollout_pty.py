@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -103,7 +104,34 @@ class FakeTransport(rollout.Transport):
 class RolloutPtyTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.bundle = rollout.ReleaseBundle.from_ops_root(OPS_ROOT)
+        temporary = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(temporary.cleanup)
+        cls.ops_root = pathlib.Path(temporary.name)
+        for relative in rollout.RELEASE_FILES:
+            destination = cls.ops_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if relative != "container-aliases.json":
+                shutil.copyfile(OPS_ROOT / relative, destination)
+        aliases = {}
+        for alias, harness, manager in (
+            ("argos", "openclaw", "local"), ("iza", "openclaw", "local"),
+            ("janus", "openclaw", "local"), ("midas", "openclaw", "server2"),
+            ("salva", "codex", "server2"), ("zeus", "claude", "local"),
+        ):
+            aliases[alias] = {
+                "tenant": "Fixture", "room": "grp.fixture", "membershipRole": "agent",
+                "container": f"fixture-{alias}", "systemdUser": "stev",
+                "user": "dev", "home": "/home/dev", "harness": harness,
+                "stateDirectory": f"/home/dev/.local/state/cauce-v3/{alias}",
+                "dockerHost": manager,
+            }
+            if harness == "openclaw":
+                aliases[alias]["workspace"] = "/home/dev/clawd"
+        (cls.ops_root / "container-aliases.json").write_bytes(rollout.canonical_json({
+            "schemaVersion": 2, "systemPrincipals": {}, "aliases": aliases,
+            "historicalAliases": {"ficticio": {"expectedEnabled": False}},
+        }))
+        cls.bundle = rollout.ReleaseBundle.from_ops_root(cls.ops_root)
         cls.fleet = rollout.Fleet.load(cls.bundle.files["container-aliases.json"])
 
     def worker(self, manager: str = "server") -> tuple[tempfile.TemporaryDirectory[str], TestWorker, FakeRunner]:
@@ -138,7 +166,7 @@ class RolloutPtyTest(unittest.TestCase):
         )
         self.assertEqual(
             self.bundle.mapping_sha,
-            rollout.sha256((OPS_ROOT / "container-aliases.json").read_bytes()),
+            rollout.sha256((self.ops_root / "container-aliases.json").read_bytes()),
         )
 
     def test_sudo_ssh_transport_enters_the_real_user_bus_without_inheriting_root_home(self) -> None:
@@ -284,14 +312,20 @@ class RolloutPtyTest(unittest.TestCase):
         arguments = types.SimpleNamespace(
             command="status", manager=targets, preflight_only=False, retire_historical=False,
         )
-        with mock.patch.object(rollout, "ProcessTransport", side_effect=transport):
+        with (
+            mock.patch.object(rollout, "ProcessTransport", side_effect=transport),
+            mock.patch.object(rollout, "__file__", str(self.ops_root / "pty-agent/rollout-pty.py")),
+        ):
             result = rollout.controller(arguments)
         self.assertEqual(constructed, [(manager, f"ssh:{manager}") for manager in self.fleet.managers])
         self.assertEqual(set(result["inventory"]), set(self.fleet.managers))
 
         arguments.manager = targets[:-1]
         constructed.clear()
-        with mock.patch.object(rollout, "ProcessTransport", side_effect=transport):
+        with (
+            mock.patch.object(rollout, "ProcessTransport", side_effect=transport),
+            mock.patch.object(rollout, "__file__", str(self.ops_root / "pty-agent/rollout-pty.py")),
+        ):
             with self.assertRaisesRegex(rollout.RolloutError, "exactamente"):
                 rollout.controller(arguments)
         self.assertEqual(constructed, [])

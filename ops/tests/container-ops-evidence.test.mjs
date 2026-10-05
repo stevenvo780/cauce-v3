@@ -5,8 +5,16 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { prepareOperationsOps } from "./container-supervisor-fixtures.mjs";
 
-const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const sourceOps = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const publishedCheck = spawnSync("python3", [path.join(sourceOps, "scripts/container_ops_digest.py"),
+  "--rootless", "--check"], { encoding: "utf8" });
+assert.equal(publishedCheck.status, 0, `${publishedCheck.stdout} ${publishedCheck.stderr}`);
+const temporaryOps = await mkdtemp(path.join(os.tmpdir(), "cauce-ops-evidence-"));
+const ops = path.join(temporaryOps, "ops");
+try {
+prepareOperationsOps(sourceOps, ops);
 const digestScript = path.join(ops, "scripts/container_ops_digest.py");
 const sources = spawnSync("python3", ["-c", [
   "import importlib.util, json, sys",
@@ -49,14 +57,14 @@ for (const required of [
   assert(covered.has(required), `operational digest must cover ${required}`);
 }
 
-// 2. The checked-in OPERATIONS.sha256 must match the current operational inputs.
+// 2. The fixture OPERATIONS.sha256 must match its operational inputs.
 const check = spawnSync("python3", [digestScript, "--rootless", "--check"], { encoding: "utf8" });
 assert.equal(check.status, 0, `${check.stdout} ${check.stderr}`);
 
 // Mutating the evidence test itself in an isolated mirror must move the system
 // operational digest. This proves the guard cannot be weakened without evidence.
 const mutationCheck = spawnSync("python3", ["-c", [
-  "import importlib.util, pathlib, shutil, sys, tempfile",
+  "import importlib.util, pathlib, shutil, subprocess, sys, tempfile",
   "source = pathlib.Path(sys.argv[1]).resolve()",
   "spec = importlib.util.spec_from_file_location('container_ops_digest', source / 'scripts/container_ops_digest.py')",
   "module = importlib.util.module_from_spec(spec)",
@@ -78,6 +86,10 @@ const mutationCheck = spawnSync("python3", ["-c", [
   "    evidence.write_bytes(evidence.read_bytes() + b'\\n// isolated mutation\\n')",
   "    after = module.operational_digest(root, generated, rootless=True)",
   "    assert before != after, 'evidence-test mutation must change operations digest'",
+  "    check = subprocess.run([sys.executable, str(root / 'scripts/container_ops_digest.py'),",
+  "                            '--rootless', '--check'], capture_output=True, text=True)",
+  "    assert check.returncode != 0, 'mutated evidence must fail the published digest check'",
+  "    assert 'OPERATIONS.sha256 differs' in check.stderr, check.stderr",
   "print('evidence-test-mutation-moves-digest')",
 ].join("\n"), ops], { encoding: "utf8" });
 assert.equal(mutationCheck.status, 0, mutationCheck.stderr);
@@ -180,11 +192,11 @@ try {
   assert.equal(generated.status, 0, generated.stderr);
   for (const name of (await readdir(rootless)).filter((entry) => entry !== "configs")) {
     assert.equal(await readFile(path.join(regeneratedRootless, name), "utf8"), await readFile(path.join(rootless, name), "utf8"),
-      `checked-in rootless output is stale: ${name}`);
+      `regenerated rootless output differs from fixture: ${name}`);
   }
   for (const name of await readdir(path.join(rootless, "configs"))) {
     assert.equal(await readFile(path.join(regeneratedRootless, "configs", name), "utf8"),
-      await readFile(path.join(rootless, "configs", name), "utf8"), `checked-in rootless config is stale: ${name}`);
+      await readFile(path.join(rootless, "configs", name), "utf8"), `regenerated rootless config differs from fixture: ${name}`);
   }
 } finally {
   await rm(regeneratedRootless, { recursive: true, force: true });
@@ -277,3 +289,6 @@ try {
 }
 
 process.stdout.write("container operational digest tests passed\n");
+} finally {
+  await rm(temporaryOps, { recursive: true, force: true });
+}

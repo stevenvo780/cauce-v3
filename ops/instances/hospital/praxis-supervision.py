@@ -89,20 +89,6 @@ class ApiError(SupervisionError):
     pass
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def load_config(path: Path) -> dict:
     trusted_file(path)
     config = json.loads(read_bytes(path, 64_000))
@@ -197,7 +183,7 @@ def run_command(command: list[str], deadline: float, input_text: str | None = No
         raise SupervisionError("pass_timeout")
     environment = {"PATH": "/usr/bin:/bin"}
     try:
-        result = subprocess.run(command, input=input_text, text=True, capture_output=True,
+        result = subprocess.run(STATE.isolated_command(command), input=input_text, text=True, capture_output=True,
                                 timeout=timeout, check=True, env=environment, **STATE.command_identity(command))
         return result.stdout
     except (subprocess.SubprocessError, OSError) as error:
@@ -639,6 +625,8 @@ class Supervisor:
         if engineering["goal_sha256"] != self.config["goal_sha256"]:
             return self.pause("foreign_goal")
         self.adopt_bootstrap(engineering)
+        if STATE.apply_auth_resume_control(self.state, self.path.parent / "RESUME.json", self.config["goal_sha256"], self.post_clock()):
+            self.save()
         not_after = self.config.get("certificate_not_after")
         if isinstance(not_after, (int, float)):
             if self.now >= not_after:
