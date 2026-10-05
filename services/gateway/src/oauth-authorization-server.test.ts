@@ -114,6 +114,27 @@ describe('OAuth HTTP protocol with injected store, without PostgreSQL', () => {
       expect(response.body).not.toContain(' checked');
     } finally { await f.app.close(); }
   });
+  it('leads consent with the escaped redirect destination and client host, marking the client as unverified', async () => {
+    const f = await fixture();
+    try {
+      const flow = await f.start();
+      const response = await f.app.inject({ url: `/oauth/continue?request_id=${flow.id}`, headers: { cookie: flow.cookie, 'sec-fetch-site': 'same-origin' } });
+      expect(response.body).toContain('<strong><code>https://client.example</code></strong>');
+      expect(response.body).toContain('<strong><code>client.example</code></strong>');
+      expect(response.body).toContain('no verificado');
+      expect(response.body).toContain('&lt;script&gt;unsafe&lt;/script&gt;');
+      expect(response.body).not.toContain('<script>unsafe');
+      expect(response.body).not.toMatch(/<h1>[^<]*unsafe/u);
+      const created = await f.app.inject({ method: 'POST', url: '/oauth/register', headers: { 'content-type': 'application/json' },
+        payload: JSON.stringify({ client_name: '"><img src=x>', redirect_uris: ['http://127.0.0.1/cb'] }) });
+      const dcr = created.json<{ client_id: string }>().client_id;
+      const native = await f.app.inject(f.authorize({ client_id: dcr, redirect_uri: 'http://127.0.0.1:49152/cb' }));
+      expect(native.body).toContain('127.0.0.1:49152 (este equipo)');
+      expect(native.body).toContain(`registro dinámico ${dcr}`);
+      expect(native.body).toContain('&quot;&gt;&lt;img src=x&gt;');
+      expect(native.body).not.toContain('<img');
+    } finally { await f.app.close(); }
+  });
   it('offers password login when the human session is absent', async () => {
     const f = await fixture(false);
     try {

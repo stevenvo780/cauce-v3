@@ -5,7 +5,7 @@ import { constantTimeText, hostSessionCookie, uniqueCookieValue } from './http-a
 import { createOAuthRequestContext, oauthSessionContext } from './oauth-request-context.js';
 import type { OAuthClientMetadata, OAuthClients } from './oauth-client-metadata.js';
 import { clientRegistration, isRegisteredClientId, OAuthRegistrationLimiter, registrationDocument } from './oauth-client-registration.js';
-import { OAuthError, OAUTH_SCOPES, redirectMatches, scopes, secretHash, type OAuthAuthorizationRequest,
+import { OAuthError, OAUTH_SCOPES, loopbackRedirect, redirectMatches, scopes, secretHash, type OAuthAuthorizationRequest,
   type OAuthPasswordSession, type OAuthScope, type OAuthStore, type OAuthTokenGrant } from './oauth-authorization-types.js';
 import type { OAuthTokens } from './oauth-tokens.js';
 
@@ -39,6 +39,16 @@ function form(value: string): Record<string, string> {
 
 function escape(value: string): string {
   return value.replace(/[&<>"']/gu, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char);
+}
+
+// Lo que el humano debe mirar es dónde acaba el código y qué host respalda al cliente; el nombre es del cliente.
+function clientFacts(flow: Pick<OAuthAuthorizationRequest, 'clientId' | 'clientName' | 'redirectUri'>): string {
+  const redirect = new URL(flow.redirectUri);
+  const destination = loopbackRedirect(redirect) ? `${redirect.host} (este equipo)` : redirect.origin;
+  let identity = flow.clientId;
+  if (isRegisteredClientId(flow.clientId)) identity = `registro dinámico ${flow.clientId}`;
+  else { try { identity = new URL(flow.clientId).host; } catch { /* se muestra el identificador tal cual */ } }
+  return `<p><strong>Cliente no verificado:</strong> Cauce no ha comprobado quién lo publica.</p><dl><dt>El acceso se entregará en</dt><dd><strong><code>${escape(destination)}</code></strong></dd><dt>Identidad del cliente</dt><dd><strong><code>${escape(identity)}</code></strong></dd><dt>Nombre declarado por el cliente (no verificado)</dt><dd>${escape(flow.clientName)}</dd></dl>`;
 }
 
 function page(reply: FastifyReply, body: string, script = '') {
@@ -164,7 +174,7 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
         scopes: scopes(query.scope), challenge: text(query.code_challenge),
         state: query.state === undefined ? null : text(query.state, 512) }, context(request));
       reply.header('Set-Cookie', hostSessionCookie(FLOW_COOKIE, browser, 300, 'Strict'));
-      return page(reply, `<h1>Conectar con Cauce</h1><p>Aplicación: ${escape(resolved.clientName)}</p><p>Identidad del cliente: ${escape(resolved.clientId)}</p><a href="/oauth/continue?request_id=${id}">Continuar en Cauce</a>`);
+      return page(reply, `<h1>Conectar un cliente MCP con Cauce</h1>${clientFacts({ ...resolved, redirectUri })}<a href="/oauth/continue?request_id=${id}">Continuar en Cauce</a>`);
     });
 
     async function pending(request: FastifyRequest, id: unknown) {
@@ -185,7 +195,7 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
           `document.getElementById('login').addEventListener('submit',async(e)=>{e.preventDefault();const f=new FormData(e.currentTarget);const r=await fetch('/oauth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(f))});if(r.ok){location.assign('/oauth/continue?request_id='+encodeURIComponent(f.get('request_id')))}else{document.getElementById('result').textContent='No se pudo iniciar sesión. Comprueba tus datos y vuelve a intentarlo.'}});`);
       }
       const choices = flow.flow.scopes.map((scope) => `<label><input type="checkbox" name="${scope === 'cauce.read' ? 'read' : 'publish'}" value="yes">${scope === 'cauce.read' ? 'Leer tus mensajes y respuestas' : 'Publicar mensajes como tú'}</label>`).join('');
-      return page(reply, `<h1>Permisos para ${escape(flow.flow.clientName)}</h1><p>Cliente: ${escape(flow.flow.clientId)}</p><p>Estos permisos siguen sujetos a tu cuenta, membresía y ACL de Cauce.</p><form id="consent" method="post" action="/oauth/consent"><input type="hidden" name="request_id" value="${flow.id}"><input type="hidden" name="csrf" value="${escape(authenticated.csrf)}">${choices}<button name="decision" value="approve">Autorizar los permisos seleccionados</button><button name="decision" value="deny">Cancelar</button></form><p id="result" role="status"></p><a href="/oauth/grants">Ver y revocar autorizaciones</a>`,
+      return page(reply, `<h1>Permisos para un cliente MCP no verificado</h1>${clientFacts(flow.flow)}<p>Estos permisos siguen sujetos a tu cuenta, membresía y ACL de Cauce.</p><form id="consent" method="post" action="/oauth/consent"><input type="hidden" name="request_id" value="${flow.id}"><input type="hidden" name="csrf" value="${escape(authenticated.csrf)}">${choices}<button name="decision" value="approve">Autorizar los permisos seleccionados</button><button name="decision" value="deny">Cancelar</button></form><p id="result" role="status"></p><a href="/oauth/grants">Ver y revocar autorizaciones</a>`,
         `document.getElementById('consent').addEventListener('submit',async(e)=>{e.preventDefault();const f=new FormData(e.currentTarget);if(e.submitter){f.set('decision',e.submitter.value)}try{const r=await fetch('/oauth/consent',{method:'POST',redirect:'error',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(f)});if(!r.ok){throw new Error()}const result=await r.json();location.assign(result.redirect_uri)}catch{document.getElementById('result').textContent='No se pudo completar la autorización. Vuelve a iniciarla desde el cliente.'}});`);
     });
 
