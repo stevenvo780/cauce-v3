@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildPublishReceipt, publishRequestHash, type ConsolePublishIntentPrepareResult, type PublishMessage, type PublishResult } from '@cauce/protocol';
 import {
   PublishIntentExpiredError, PublishIntentRateLimitedError, PublishIntentReconciliationRequired, StoreError,
-  type DatabaseClient, type HumanIdentitySnapshot, type HumanMessageOptions,
+  type DatabaseClient, type HumanIdentitySnapshot, type HumanInboxPage, type HumanInboxQuery, type HumanMessageOptions,
 } from '@cauce/store';
 import { GatewayOperationError, type McpSubmitCommand } from '@cauce/mcp-fleet-monitor/gateway-http';
 import type { VerifiedOAuthIdentity } from '../../../packages/mcp-fleet-monitor/src/gateway-oauth-identity.js';
@@ -322,4 +322,68 @@ describe('human MCP operations phase boundaries', () => {
     vi.spyOn(state.repository, 'getHumanMessage').mockResolvedValue({ ...detail, deliveries: [] });
     expect(await failureOf(ownerOps.receipt(MESSAGE_ID))).toEqual({ status_code: 409, error: 'operation_conflict' });
   });
+
+  it('reads only the authorized human inbox through a re-locked read authority and projects it closed', async () => {
+    const state = setup();
+    const inboxPage: HumanInboxPage = { withheld: 1, next: { at: '2026-10-03T12:00:00.123456Z', id: MESSAGE_ID }, items: [{
+      key: { at: '2026-10-03T12:00:00.123456Z', id: MESSAGE_ID }, messageId: MESSAGE_ID,
+      createdAt: '2026-10-03T12:00:00.123456Z', lastActivityAt: '2026-10-03T12:00:01.000000Z', roomId: 'grp.steven',
+      from: { tenantId: 'Steven', alias: 'kant' }, text: 'own root', chainOpen: false, questions: [], chainMessages: [],
+      chainMessagesTruncated: false, deliveries: [{ deliveryId: DELIVERY_ID, tenantId: 'Steven', alias: 'jarvis', status: 'done',
+        attempt: 1, terminalAt: '2026-10-03T12:00:01.000000+00:00', reply: 'canonical answer' }],
+    }] };
+    const queries: HumanInboxQuery[] = [];
+    vi.spyOn(state.repository, 'listHumanInbox').mockImplementation(async (query, access) => {
+      queries.push(query);
+      const client = { query: async () => ({ rows: [], rowCount: 0 }) } as unknown as DatabaseClient;
+      const owner = await access.humanAuthority(client);
+      if (owner.humanId !== USER_A) throw new StoreError('not_found', 'not owned');
+      return inboxPage;
+    });
+    const ops = await state.factory.forRequest(identity(SUBJECT_A, ['cauce.read']), new AbortController().signal);
+    const first = await ops.inbox({ limit: 1 });
+    expect(first).toMatchObject({ withheld: 1, items: [{ message_id: MESSAGE_ID, chain_open: false,
+      deliveries: [{ delivery_id: DELIVERY_ID, reply: 'canonical answer', reply_truncated: false }] }] });
+    expect(queries[0]).toEqual({ mode: 'recent', limit: 1, openOnly: false });
+    const cursor = first.next_cursor;
+    if (cursor === null) throw new Error('expected a next cursor');
+    await ops.inbox({ cursor, limit: 1 });
+    expect(queries[1]).toEqual({ mode: 'recent', limit: 1, openOnly: false,
+      after: { at: '2026-10-03T12:00:00.123456Z', id: MESSAGE_ID } });
+
+    const other = await state.factory.forRequest(identity(SUBJECT_B, ['cauce.read']), new AbortController().signal);
+    expect(await failureOf(other.inbox({ cursor }))).toEqual({ status_code: 400, error: 'invalid_request' });
+    expect(await failureOf(other.inbox({}))).toEqual({ status_code: 404, error: 'not_found' });
+    expect(queries).toHaveLength(3);
+
+    state.subjects.set(SUBJECT_A, { userId: USER_A, status: 'revoked' });
+    expect(await failureOf(ops.inbox({}))).toEqual({ status_code: 401, error: 'unauthorized' });
+    expect(queries).toHaveLength(3);
+  });
+
+  it('requires the read scope and maps inbox failures without private detail', async () => {
+    const publishOnly = await operations(SUBJECT_A, ['cauce.publish']);
+    expect(await failureOf(publishOnly.ops.inbox({}))).toEqual({ status_code: 403, error: 'forbidden' });
+    expect(callsOf(publishOnly.repository, 'listHumanInbox')).toEqual([]);
+    const bad = await operations(SUBJECT_A, ['cauce.read']);
+    expect(await failureOf(bad.ops.inbox({ limit: 0 }))).toEqual({ status_code: 400, error: 'invalid_request' });
+    expect(await failureOf(bad.ops.inbox({ cursor: 'abc', since: '2026-10-03T00:00:00Z' })))
+      .toEqual({ status_code: 400, error: 'invalid_request' });
+    expect(callsOf(bad.repository, 'listHumanInbox')).toEqual([]);
+    const cases: readonly [Error, Record<string, unknown>][] = [
+      [new StoreError('invalid_input', 'private'), { status_code: 400, error: 'invalid_request' }],
+      [new StoreError('forbidden', 'private'), { status_code: 403, error: 'forbidden' }],
+      [new StoreError('conflict', 'private'), { status_code: 409, error: 'operation_conflict' }],
+      [new Error('private backend detail'), { status_code: 503, error: 'operation_unavailable' }],
+    ];
+    for (const [error, expected] of cases) {
+      const state = setup();
+      vi.spyOn(state.repository, 'listHumanInbox').mockRejectedValue(error);
+      const ops = await state.factory.forRequest(identity(SUBJECT_A, ['cauce.read']), new AbortController().signal);
+      const failure = await failureOf(ops.inbox({ since: new Date().toISOString() }));
+      expect(failure).toEqual(expected);
+      expect(JSON.stringify(failure)).not.toContain('private');
+    }
+  });
 });
+

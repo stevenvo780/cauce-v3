@@ -46,11 +46,21 @@ const AGENT_ROOT_AUDIT = `audit.trace_id=m.trace_id AND audit.message_id=m.id
   AND audit.decision='allow' AND audit.metadata->>'agent_root'='true'`;
 const OPEN_STATES = `('pending','retry','leased','accepted','started')`;
 const UUID_TEXT = `'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'`;
-const CHAIN_TYPES = [...RESERVED_INTERNAL_MESSAGE_TYPES];
+export const CHAIN_TYPES: readonly string[] = [...RESERVED_INTERNAL_MESSAGE_TYPES];
 // Only store-written internal messages can name a root: a client body carrying `correlation` never holds a slot.
 const CHAIN_ROOT_OF_OPEN = `CASE WHEN om.body->>'type'=ANY($3::text[])
   AND (om.body->'correlation'->>'root_message_id') ~ ${UUID_TEXT}
   THEN (om.body->'correlation'->>'root_message_id')::uuid ELSE om.id END`;
+
+/** Whether the chain of `root` still runs: its own open deliveries, an open internal hop or an open gate. */
+export function chainOpenSql(root: string, chainTypes: string): string {
+  return `(EXISTS (SELECT 1 FROM deliveries own WHERE own.message_id=${root} AND own.status IN ${OPEN_STATES})
+    OR EXISTS (SELECT 1 FROM messages cm JOIN deliveries cd ON cd.message_id=cm.id
+               WHERE cm.body->'correlation'->>'root_message_id'=${root}::text
+                 AND cm.body->>'type'=ANY(${chainTypes}) AND cd.status IN ${OPEN_STATES})
+    OR EXISTS (SELECT 1 FROM agent_chain_gates gate
+               WHERE gate.root_message_id=${root} AND gate.status='open'))`;
+}
 
 /**
  * Agent roots of the actor whose chain is still running: the root's own deliveries, every
@@ -128,12 +138,7 @@ async function loadSenderView(
   const head = await pool.query<{ probe: boolean; agent_root: boolean; chain_open: boolean }>(
     `SELECT m.body->>'type' IS NOT DISTINCT FROM $2 AS probe,
             EXISTS (SELECT 1 FROM audit_events audit WHERE ${AGENT_ROOT_AUDIT}) AS agent_root,
-            (EXISTS (SELECT 1 FROM deliveries own WHERE own.message_id=m.id AND own.status IN ${OPEN_STATES})
-             OR EXISTS (SELECT 1 FROM messages cm JOIN deliveries cd ON cd.message_id=cm.id
-                        WHERE cm.body->'correlation'->>'root_message_id'=m.id::text
-                          AND cm.body->>'type'=ANY($3::text[]) AND cd.status IN ${OPEN_STATES})
-             OR EXISTS (SELECT 1 FROM agent_chain_gates gate
-                        WHERE gate.root_message_id=m.id AND gate.status='open')) AS chain_open
+            ${chainOpenSql('m.id', '$3::text[]')} AS chain_open
      FROM messages m WHERE m.id=$1::uuid`,
     [messageId, SYSTEM_GATE_PROBE_MESSAGE_TYPE, CHAIN_TYPES],
   );

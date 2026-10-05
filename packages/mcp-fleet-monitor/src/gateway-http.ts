@@ -11,7 +11,8 @@ export { createHumanGatewayAuthorization, type HumanGatewayAuthorization } from 
 export { type VerifiedOAuthIdentity, type OAuthIdentityVerifierConfiguration } from './gateway-oauth-identity.js';
 export {
   GatewayOperationError, GatewayOperationFailureSchema, McpSubmitCommandSchema, HumanMcpReceiptSchema,
-  type GatewayOperationsFactory, type HumanMcpReceipt, type McpSubmitCommand,
+  HUMAN_MCP_INBOX_MAX_BYTES, HUMAN_MCP_INBOX_TEXT_BYTES, HUMAN_MCP_INBOX_UNTRUSTED_FIELDS, HumanMcpInboxSchema, InboxInputSchema,
+  type GatewayOperationsFactory, type HumanMcpInbox, type HumanMcpInboxQuery, type HumanMcpReceipt, type McpSubmitCommand,
 } from './gateway-operations.js';
 export { projectGatewayAgents, projectGatewayStatus } from './gateway-projection.js';
 

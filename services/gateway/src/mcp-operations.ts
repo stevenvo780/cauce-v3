@@ -2,10 +2,10 @@ import { createHash } from 'node:crypto';
 import { CanonicalUuidV4Schema, PROTOCOL_VERSION, PublishResultSchema, publishReceiptCausalHash } from '@cauce/protocol';
 import { PublishIntentExpiredError, PublishIntentRateLimitedError, PublishIntentReconciliationRequired, StoreError } from '@cauce/store';
 import {
-  McpSubmitCommandSchema, HumanMcpReceiptSchema,
+  McpSubmitCommandSchema, HumanMcpReceiptSchema, InboxInputSchema,
   GatewayOperationError,
   projectGatewayAgents, projectGatewayStatus,
-  type GatewayOperationsFactory, type HumanMcpReceipt, type McpSubmitCommand, type VerifiedOAuthIdentity,
+  type GatewayOperationsFactory, type HumanMcpInboxQuery, type HumanMcpReceipt, type McpSubmitCommand, type VerifiedOAuthIdentity,
 } from '@cauce/mcp-fleet-monitor/gateway-http';
 import type { GatewayRepository } from './app.js';
 import { AuthError, AuthorizationError, requirePermission, type Principal } from './auth.js';
@@ -13,11 +13,12 @@ import { ConsolePublishTelemetry } from './console-publish-telemetry.js';
 import { prepareConsolePublishOperation, confirmConsolePublishOperation } from './console-publish-operation.js';
 import { createHumanPublishAuthority, createHumanReadAuthority, resolveHumanMcpAuthority,
   type HumanMcpAuthorityOptions } from './human-mcp-authority.js';
+import { humanInboxQuery, projectHumanInbox } from './mcp-inbox-projection.js';
 import { publishOperation, type PublishOperationInput } from './publish-operation.js';
 
 export type HumanMcpRepository = Pick<GatewayRepository,
   'publish' | 'verifyPublishReceipt' | 'prepareConsolePublishIntent' | 'confirmConsolePublishIntent'
-  | 'listPresence' | 'listAgents' | 'getHumanMessage'
+  | 'listPresence' | 'listAgents' | 'getHumanMessage' | 'listHumanInbox'
 >;
 
 export interface HumanMcpOperationsOptions extends HumanMcpAuthorityOptions, Pick<PublishOperationInput, 'priorityLog' | 'logRedaction'> {
@@ -206,12 +207,22 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           active();
           return projectReceipt(row, messageId);
         },
+        async inbox(candidate: HumanMcpInboxQuery) {
+          const parsed = InboxInputSchema.safeParse(candidate);
+          if (!parsed.success) throw new StoreError('invalid_input', 'invalid inbox query');
+          const { userId } = await authorize('read', 'cauce.read');
+          const query = humanInboxQuery(parsed.data, userId);
+          const page = await options.repository.listHumanInbox(query, access('read'));
+          active();
+          return projectHumanInbox(page, query, userId);
+        },
       };
       return Object.freeze({
         status: () => guardedOperation(() => operations.status()),
         agents: () => guardedOperation(() => operations.agents()),
         submit: (command: McpSubmitCommand) => guardedOperation(() => operations.submit(command), true),
         receipt: (messageId: string) => guardedOperation(() => operations.receipt(messageId)),
+        inbox: (query: HumanMcpInboxQuery) => guardedOperation(() => operations.inbox(query)),
       });
       });
     },
