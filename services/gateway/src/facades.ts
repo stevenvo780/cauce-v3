@@ -78,7 +78,7 @@ export function visibleQueue(value: Row, principal: Principal): Row {
   const items = parsed.filter((item) => queueRowVisible(item, principal));
   const counts = items.reduce<{ pending: number; retrying: number; dead: number }>((result, row) => {
     if (row.state === 'retry') result.retrying += 1;
-    else if (row.state === 'dead' || row.state === 'failed') result.dead += 1;
+    else if ((row.state === 'dead' || row.state === 'failed') && row.dlq_resolved !== true) result.dead += 1;
     else if (VISIBLE_PENDING_STATES.some((state) => state === String(row.state))) result.pending += 1;
     return result;
   }, { pending: 0, retrying: 0, dead: 0 });

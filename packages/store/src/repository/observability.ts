@@ -305,7 +305,8 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
       `WITH visible_deliveries AS MATERIALIZED (
          SELECT d.id AS delivery_id,d.message_id,d.recipient_tenant AS tenant_id,d.recipient_alias,
                 m.tenant_id AS message_tenant_id,m.actor_alias,m.lane,d.status AS state,
-                d.attempt AS attempts,d.max_attempts,d.available_at,d.last_error,d.created_at
+                d.attempt AS attempts,d.max_attempts,d.available_at,d.last_error,d.created_at,
+                EXISTS (SELECT 1 FROM dead_letters dl WHERE dl.delivery_id=d.id AND dl.resolved_at IS NOT NULL) AS dlq_resolved
          FROM deliveries d JOIN messages m ON m.id=d.message_id
          WHERE EXISTS (SELECT 1 FROM memberships source_member
                        WHERE source_member.tenant_id=$1 AND source_member.room_id=m.room_id
@@ -320,13 +321,13 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
        ), totals AS (
          SELECT count(*) FILTER (WHERE state IN ('pending','leased','accepted','started')) AS pending,
                 count(*) FILTER (WHERE state = 'retry') AS retrying,
-                count(*) FILTER (WHERE state IN ('dead','failed')) AS dead,
+                count(*) FILTER (WHERE state IN ('dead','failed') AND NOT dlq_resolved) AS dead,
                 count(*) AS visible
          FROM visible_deliveries
        )
        SELECT sample.delivery_id,sample.message_id,sample.tenant_id,sample.recipient_alias,
               sample.message_tenant_id,sample.actor_alias,sample.lane,sample.state,
-              sample.attempts,sample.max_attempts,sample.available_at,sample.last_error,
+              sample.attempts,sample.max_attempts,sample.available_at,sample.last_error,sample.dlq_resolved,
               totals.pending AS total_pending,totals.retrying AS total_retrying,
               totals.dead AS total_dead,totals.visible AS total_visible
        FROM totals LEFT JOIN sample ON true
@@ -345,11 +346,12 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
       max_attempts: row.max_attempts,
       available_at: row.available_at,
       last_error: row.last_error,
+      dlq_resolved: row.dlq_resolved === true,
     }]);
     // `failed` counts as dead letter because it already has a reproducible row and must appear in the total.
     const counts = items.reduce<{ pending: number; retrying: number; dead: number }>((value, row) => {
       if (row.state === 'retry') value.retrying += 1;
-      if (row.state === 'dead' || row.state === 'failed') value.dead += 1;
+      if ((row.state === 'dead' || row.state === 'failed') && !row.dlq_resolved) value.dead += 1;
       if (['pending', 'leased', 'accepted', 'started'].includes(row.state)) value.pending += 1;
       return value;
     }, { pending: 0, retrying: 0, dead: 0 });

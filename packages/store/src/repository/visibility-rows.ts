@@ -70,4 +70,6 @@ export type QueueSnapshotItem = {
   max_attempts: number;
   available_at: Date | null;
   last_error: string | null;
+  /** True when its dead letter was already resolved: still listed, no longer counted as dead. */
+  dlq_resolved: boolean;
 };
