@@ -36,16 +36,14 @@ def command_identity(command: list[str]) -> dict:
     if owner.st_uid == 0:
         raise SupervisionError("git_workspace_requires_unprivileged_owner")
     if os.geteuid() != 0:
-        if owner.st_uid != os.geteuid():
-            raise SupervisionError("git_workspace_owner_mismatch")
-        return {}
+        raise SupervisionError("git_requires_actor_isolation")
     if command[2] != "/opt/hospital-agent/runtime/praxis/operator" or owner.st_uid != 1000:
         raise SupervisionError("git_workspace_requires_actor_isolation")
     return {}
 
 
 def isolated_command(command: list[str]) -> list[str]:
-    if command[:2] != ["git", "-C"] or os.geteuid() != 0:
+    if command[:2] != ["git", "-C"]:
         return command
     command_identity(command)
     return ["docker", "exec", "-u", "1000:1000", "hospital-agent-openclaw-operator-gateway-1",

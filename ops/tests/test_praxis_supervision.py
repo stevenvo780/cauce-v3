@@ -62,6 +62,14 @@ class FakeApi:
 
 
 class PraxisSupervisionTests(unittest.TestCase):
+    def test_non_root_git_observation_fails_before_any_subprocess(self):
+        with mock.patch.object(SUP.STATE.os, "geteuid", return_value=1000), \
+                mock.patch.object(SUP.STATE.Path, "stat", return_value=mock.Mock(st_uid=1000, st_gid=1000)), \
+                mock.patch.object(SUP.subprocess, "run") as execute:
+            with self.assertRaisesRegex(SUP.SupervisionError, "git_requires_actor_isolation"):
+                SUP.run_command(["git", "-C", "/opt/hospital-agent/runtime/praxis/operator", "status", "--porcelain"], time.monotonic() + 5)
+            execute.assert_not_called()
+
     def test_git_helpers_cannot_inherit_host_root_identity(self):
         with mock.patch.object(SUP.STATE.os, "geteuid", return_value=0), \
                 mock.patch.object(SUP.STATE.Path, "stat", return_value=mock.Mock(st_uid=1000, st_gid=1000)), \
