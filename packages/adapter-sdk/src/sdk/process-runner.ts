@@ -26,6 +26,13 @@ const SAFE_ENVIRONMENT = [
   "LC_CTYPE",
   "TMPDIR",
   "TEMP",
+  // Non-secret credential-home paths (where claude/codex look for their own already-logged-in
+  // storage), not the credentials themselves. Aliases sharing a container's $HOME set one of
+  // these per alias to isolate their config/session registry; the shared-session TUI pane
+  // already receives it (sharedSessionPaneEnvironment). Without it here, the headless human
+  // (MCP) harness would run under a DIFFERENT credential/config than the alias's main harness.
+  "CODEX_HOME",
+  "CLAUDE_CONFIG_DIR",
   // Non-secret Hermes profile/model discovery only; Hermes resolves authentication from local storage.
   "HERMES_HOME",
   "HERMES_INFERENCE_MODEL",
