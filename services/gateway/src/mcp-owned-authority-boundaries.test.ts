@@ -153,6 +153,7 @@ describe('human MCP authority boundaries', () => {
     const prepare = vi.spyOn(repository, 'prepareConsolePublishIntent');
     const publish = vi.spyOn(repository, 'publish');
     const getMessage = vi.spyOn(repository, 'getHumanMessage');
+    const inbox = vi.spyOn(repository, 'listHumanInbox');
     const state = setup(repository);
     const legacyFactory = createHumanMcpOperationsFactory({
       repository,
@@ -169,6 +170,8 @@ describe('human MCP authority boundaries', () => {
     expect(prepare).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
     expect(getMessage).not.toHaveBeenCalled();
+    expect(await failureOf(ops.inbox({}))).toEqual({ status_code: 401, error: 'unauthorized' });
+    expect(inbox).not.toHaveBeenCalled();
   });
 
   it('threads one composed signal and trusted callback through prepare, publish, verify, and confirm', async () => {
@@ -311,6 +314,12 @@ describe('human MCP authority boundaries', () => {
       deliveries: [{ delivery_id: DELIVERY_ID, tenant_id: 'Steven', alias: 'argos', reply: 'canonical reply' }] });
     expect(JSON.stringify(projected)).not.toContain(privateMarker);
     expect(JSON.stringify(projected)).not.toContain(USER_A);
+    vi.spyOn(state.repository, 'listHumanInbox').mockImplementation(async (_query, access) => {
+      expect(await access.humanAuthority(client())).toMatchObject({ humanId: USER_A, tenantId: 'Steven', actorAlias: 'kant' });
+      return { items: [], withheld: 0 };
+    });
+    expect(await ops.inbox({})).toEqual({ items: [], next_cursor: null, withheld: 0,
+      untrusted_fields: ['items[].text', 'items[].deliveries[].reply', 'items[].questions[].question', 'items[].chain_messages[].text'] });
     expect(state.seenSubjects.length).toBeGreaterThan(0);
     expect(state.seenSubjects.every((subject) => subject === SUBJECT_A)).toBe(true);
   });

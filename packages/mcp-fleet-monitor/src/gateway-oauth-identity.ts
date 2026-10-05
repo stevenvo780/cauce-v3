@@ -10,6 +10,9 @@ export interface VerifiedOAuthIdentity {
   readonly audience: string;
   readonly expiresAt: number;
   readonly scopes: readonly string[];
+  readonly authorizationServer?: 'local';
+  readonly grantId?: string;
+  readonly tokenId?: string;
 }
 
 export interface OAuthIdentityVerifierConfiguration {

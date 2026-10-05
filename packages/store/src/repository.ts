@@ -3,6 +3,9 @@ import { BlobsRepository } from './repository/blobs.js';
 export { type BlobRecord, type BlobRegistration } from './repository/blobs.js';
 export {
   AgentRootLimitError, PublishIntentExpiredError, PublishIntentReconciliationRequired,
+  HUMAN_INBOX_CHAIN_MESSAGES_PER_ROOT, HUMAN_INBOX_FEED_WINDOW_MS, HUMAN_INBOX_MAX_LIMIT, HUMAN_INBOX_QUESTIONS_PER_ROOT,
+  HUMAN_INBOX_TEXT_CHARS, type HumanInboxChainMessage, type HumanInboxDelivery, type HumanInboxItem, type HumanInboxKey,
+  type HumanInboxPage, type HumanInboxQuery, type HumanInboxQuestion,
   type HumanMessageOptions, type HumanPublishProvenance, type MessageReader,
   type OpenAgentRoot, type OpenAgentRootRecipient, type PublishOptions, type PublishResult
 } from './repository/messages.js';
