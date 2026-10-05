@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { OAuthClients } from './oauth-client-metadata.js';
+import type { OAuthMetadataFetch } from './oauth-client-fetch.js';
+import { OAUTH_CLIENT_HOST_PENDING_CAP, OAuthClients } from './oauth-client-metadata.js';
 
 const id = 'https://client.example/metadata.json';
 const doc = { client_id: id, client_name: 'Fixture client', redirect_uris: ['https://client.example/callback'],
@@ -50,5 +51,19 @@ describe('CIMD client identity', () => {
     const mixed = await new OAuthClients({ fetch: fetchDocument({ ...doc,
       redirect_uris: ['http://127.0.0.1:33418/', 'https://client.example/redirect', 'https://other.example/cb', 7, 'http://client.example/cb'] }) }).resolve(id);
     expect(mixed.redirectUris).toEqual(['http://127.0.0.1:33418/', 'https://client.example/redirect']);
+  });
+  it('caps in-flight resolutions per client host without starving other hosts', async () => {
+    const hung: OAuthMetadataFetch = () => new Promise(() => { /* never settles: keeps the slot occupied */ });
+    const clients = new OAuthClients({ fetch: hung });
+    const warm = Array.from({ length: OAUTH_CLIENT_HOST_PENDING_CAP },
+      (_, index) => clients.resolve(`https://client.example/metadata-${String(index)}.json`));
+    await expect(clients.resolve('https://client.example/metadata-overflow.json')).rejects.toThrow('invalid_client');
+    let otherHostSettled = false;
+    const otherHost = clients.resolve('https://other.example/metadata.json');
+    otherHost.then(() => { otherHostSettled = true; }, () => { otherHostSettled = true; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(otherHostSettled).toBe(false);
+    expect(warm).toHaveLength(OAUTH_CLIENT_HOST_PENDING_CAP);
   });
 });

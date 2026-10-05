@@ -1,4 +1,4 @@
-import { lookup } from 'node:dns/promises';
+import { Resolver as CaresResolver } from 'node:dns/promises';
 import { request as httpsRequest, type RequestOptions } from 'node:https';
 import { BlockList, isIP } from 'node:net';
 import type { IncomingMessage } from 'node:http';
@@ -28,23 +28,53 @@ export interface OAuthMetadataResponse {
 }
 
 export type OAuthMetadataFetch = (url: string) => Promise<OAuthMetadataResponse>;
-type Resolver = (hostname: string) => Promise<readonly { address: string; family: number }[]>;
+type Resolver = (hostname: string, signal: AbortSignal) => Promise<readonly { address: string; family: number }[]>;
 type Transport = (url: URL, options: RequestOptions, callback: (response: IncomingMessage) => void) => ReturnType<typeof httpsRequest>;
 
-export function createOAuthMetadataFetch(options: { resolve?: Resolver; transport?: Transport } = {}): OAuthMetadataFetch {
-  const resolve = options.resolve ?? ((hostname: string) => lookup(hostname, { all: true, verbatim: true }));
+const RESOLVER_QUERY_TIMEOUT_MS = 1500;
+const RESOLVER_QUERY_TRIES = 2;
+
+// c-ares (dns.promises.Resolver) resolves off the libuv threadpool, unlike dns.lookup's getaddrinfo.
+// resolver.cancel() on abort frees the in-flight query instead of leaving it to run to completion.
+const resolveWithCAres: Resolver = async (hostname, signal) => {
+  const resolver = new CaresResolver({ timeout: RESOLVER_QUERY_TIMEOUT_MS, tries: RESOLVER_QUERY_TRIES });
+  const cancel = () => { resolver.cancel(); };
+  if (signal.aborted) cancel(); else signal.addEventListener('abort', cancel, { once: true });
+  try {
+    const [v4, v6] = await Promise.allSettled([resolver.resolve4(hostname), resolver.resolve6(hostname)]);
+    const addresses: { address: string; family: number }[] = [];
+    if (v4.status === 'fulfilled') for (const address of v4.value) addresses.push({ address, family: 4 });
+    if (v6.status === 'fulfilled') for (const address of v6.value) addresses.push({ address, family: 6 });
+    if (!addresses.length) throw (v4.status === 'rejected' ? v4.reason : v6.status === 'rejected' ? v6.reason : new OAuthError('invalid_client'));
+    return addresses;
+  } finally {
+    signal.removeEventListener('abort', cancel);
+  }
+};
+
+export function createOAuthMetadataFetch(options: { resolve?: Resolver; transport?: Transport; timeoutMs?: number } = {}): OAuthMetadataFetch {
+  const resolve = options.resolve ?? resolveWithCAres;
   const transport = options.transport ?? httpsRequest;
+  const timeoutMs = options.timeoutMs ?? 3000;
   return async (value) => {
     const url = httpsUrl(value);
     if (isIP(url.hostname) || url.hostname.includes(':') || !url.hostname.includes('.')
         || url.hostname.endsWith('.')) throw new OAuthError('invalid_client');
-    const signal = AbortSignal.timeout(3000);
-    const addresses = await Promise.race([
-      resolve(url.hostname),
-      new Promise<never>((_resolve, reject) => {
-        signal.addEventListener('abort', () => { reject(new OAuthError('invalid_client')); }, { once: true });
-      }),
-    ]);
+    const signal = AbortSignal.timeout(timeoutMs);
+    const lookup = resolve(url.hostname, signal);
+    // the dedicated abort listener below may lose the race against `lookup` settling with its own
+    // reason first (a resolver that reacts to the signal itself); either way normalize to invalid_client
+    // here instead of leaking that reason, and consume it so losing the race never surfaces as unhandled.
+    lookup.catch(() => undefined);
+    let addresses: readonly { address: string; family: number }[];
+    try {
+      addresses = await Promise.race([
+        lookup,
+        new Promise<never>((_resolve, reject) => {
+          signal.addEventListener('abort', () => { reject(new OAuthError('invalid_client')); }, { once: true });
+        }),
+      ]);
+    } catch { throw new OAuthError('invalid_client'); }
     signal.throwIfAborted();
     if (!addresses.length || addresses.length > 16
         || addresses.some((item) => !publicOAuthAddress(item.address) || isIP(item.address) !== item.family)) {
