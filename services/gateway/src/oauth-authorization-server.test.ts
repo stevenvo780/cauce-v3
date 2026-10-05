@@ -21,8 +21,8 @@ const verifier = 'v'.repeat(43);
 const challenge = createHash('sha256').update(verifier).digest('base64url');
 const session = { userId, credentialStamp: 's'.repeat(43), issuedAt: Math.floor(Date.now() / 1000) - 10, expiresAt: Math.floor(Date.now() / 1000) + 3600, csrf: 'c'.repeat(43) };
 
-async function fixture(authenticated = true, registrationLimiter?: OAuthRegistrationLimiter) {
-  const app = Fastify();
+async function fixture(authenticated = true, registrationLimiter?: OAuthRegistrationLimiter, stream?: Writable) {
+  const app = stream === undefined ? Fastify() : Fastify({ logger: { stream } });
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const tokens = new OAuthTokens({ issuer, resource: `${issuer}/mcp`, signingKey: privateKey, kid: 'fixture' });
   let pending: OAuthAuthorizationRequest | undefined;
@@ -300,6 +300,32 @@ describe('OAuth dynamic registration and public CORS', () => {
         const response = await f.app.inject({ method: 'OPTIONS', url });
         expect(response.headers['access-control-allow-origin']).toBeUndefined();
       }
+    } finally { await f.app.close(); }
+  });
+});
+
+describe('OAuth error handling', () => {
+  it('logs unexpected server errors without row detail and maps Fastify client errors to 4xx', async () => {
+    let output = '';
+    const stream = new Writable({ write(chunk: Buffer, _encoding, done) { output += chunk.toString(); done(); } });
+    const f = await fixture(true, undefined, stream);
+    f.store.createRequest = async () => {
+      throw Object.assign(new Error('relation "cauce_oauth_requests" does not exist'), { code: '42P01', detail: 'Failing row contains (SECRET_ROW_VALUE)' });
+    };
+    try {
+      const failed = await f.app.inject(f.authorize());
+      expect(failed.statusCode).toBe(503);
+      expect(failed.json()).toEqual({ error: 'server_error', iss: issuer });
+      expect(output).toContain('oauth server error');
+      expect(output).toContain('cauce_oauth_requests');
+      expect(output).toContain('42P01');
+      expect(output).not.toContain('SECRET_ROW_VALUE');
+      const malformed = await f.app.inject({ method: 'POST', url: '/oauth/register', headers: { 'content-type': 'application/json' }, payload: '{bad' });
+      expect(malformed.statusCode).toBe(400);
+      expect(malformed.json()).toMatchObject({ error: 'invalid_request' });
+      const large = await f.app.inject({ method: 'POST', url: '/oauth/token', headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: `code=${'x'.repeat(9000)}` });
+      expect(large.statusCode).toBe(413);
+      expect(output.match(/oauth server error/gu)).toHaveLength(1);
     } finally { await f.app.close(); }
   });
 });

@@ -123,8 +123,17 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
       }
     });
     app.addHook('onResponse', async request => { lifetimes.get(request)?.close(); });
-    app.setErrorHandler(async (error, _request, reply) => {
-      const code = error instanceof OAuthError ? error.error : 'server_error';
+    app.setErrorHandler(async (error, request, reply) => {
+      const failure: Error & { statusCode?: unknown; code?: unknown } = error instanceof Error ? error : new Error('non-Error thrown');
+      const status = typeof failure.statusCode === 'number' ? failure.statusCode : 500;
+      const client = !(failure instanceof OAuthError) && status >= 400 && status < 500;
+      const code = failure instanceof OAuthError ? failure.error : client ? 'invalid_request' : 'server_error';
+      if (code === 'server_error') {
+        // Sólo nombre, código y mensaje: el detail de PostgreSQL puede traer valores de la fila.
+        request.log[failure.name === 'AbortError' ? 'warn' : 'error']({ err: { type: failure.name, code: failure.code,
+          message: failure.message, stack: failure.stack } }, 'oauth server error');
+      }
+      if (client && status === 413) { await reply.code(413).send({ error: code, iss: tokens.issuer }); return; }
       const unavailable = code === 'server_error' || code === 'temporarily_unavailable';
       await reply.code(code === 'invalid_client' ? 401 : code === 'access_denied' ? 403
         : unavailable ? (reply.getHeader('retry-after') === undefined ? 503 : 429) : 400)
