@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AgentProfileRepository, type AgentProfileSourceGuard } from './agent-profile.js';
 import type { DatabasePool } from './db.js';
+import { agentContextReconcileLockKey } from './repository/agent-context-lock.js';
+import { CONTEXT_WRITE_QUARANTINE_KIND } from './repository/agent-context-quarantine.js';
 
 const actor = { tenant_id: 'Steven', alias: 'operator' };
 const profile = { tenant_id: 'Steven', alias: 'helper', purpose: 'version from Git', role_summary: null,
@@ -37,8 +39,12 @@ describe.each([journalGuard, authoredGuard])('Git source guard in the existing p
     expect(result.revision).toBe(5);
     const sql = queries.map((row) => row.sql);
     expect(sql[0]).toBe('BEGIN');
-    expect(sql[1]).toContain('FROM agents');
-    expect(sql[2]).toMatch(/FROM agent_profiles.*FOR UPDATE/u);
+    expect(sql[1]).toContain('pg_advisory_xact_lock_shared');
+    expect(queries[1]?.params).toEqual([agentContextReconcileLockKey('Steven', 'helper')]);
+    expect(sql[2]).toContain('FROM jobs WHERE tenant_id=$1 AND kind=$2');
+    expect(queries[2]?.params).toEqual(['Steven', CONTEXT_WRITE_QUARANTINE_KIND]);
+    expect(sql[3]).toContain('FROM agents');
+    expect(sql[4]).toMatch(/FROM agent_profiles.*FOR UPDATE/u);
     expect(sql.findIndex((value) => value.includes('FROM agent_profile_revisions')))
       .toBeLessThan(sql.findIndex((value) => value.startsWith('UPDATE agent_profiles')));
     const audit = queries.find((row) => row.sql.startsWith('INSERT INTO audit_events'));
