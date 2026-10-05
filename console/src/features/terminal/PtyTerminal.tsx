@@ -1,4 +1,4 @@
-import { ArrowDownToLine, KeyRound } from 'lucide-react';
+import { ArrowDownToLine, KeyRound, Circle, Eye } from 'lucide-react';
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import {
   attachPtySession,
@@ -71,12 +71,11 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly
   return (
     <div className="pty-shell" data-read-only={readOnly ? true : undefined} data-state={view.state}>
       <div className="pty-status" role="status">
-        <span>
-          <span className={`connection-dot ${view.state}`} aria-hidden="true" /> Conexión: {STATE_LABELS[view.state]}
-          {readOnly ? ' · SOLO LECTURA' : ''}
-          {view.message ? ` · ${view.message}` : ''}
-          {view.closeCode !== undefined ? ` (código ${String(view.closeCode)})` : ''}
+        <span className="terminal-channel-state-icon" title={`Conexión: ${STATE_LABELS[view.state]}`} aria-label={`Conexión: ${STATE_LABELS[view.state]}`}>
+          <Circle size={13} className={`connection-dot ${view.state}`} aria-hidden="true" />
         </span>
+        {readOnly ? <span title="Solo lectura" aria-label="Solo lectura"><Eye size={13} aria-hidden="true" /></span> : null}
+        {view.message ? <span>{view.message}{view.closeCode !== undefined ? ` (código ${String(view.closeCode)})` : ''}</span> : null}
         {finished && onRequestNewSession ? (
           <button type="button" onClick={onRequestNewSession} title="El ticket es de un solo uso; se pide una sesión nueva con motivo y auditoría.">
             <KeyRound size={12} aria-hidden="true" /> Pedir sesión nueva

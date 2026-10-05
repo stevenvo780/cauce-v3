@@ -340,8 +340,8 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
     <section className="pty-control" aria-label="Control de la TUI" data-sostenido={arriendo ? true : undefined} data-fase={fase === 'reposo' ? undefined : fase}>
       {arriendo ? (
         <>
-          <p className="pty-control-estado" role="status" title={vencimiento(arriendo)}>
-            Tenés el teclado de esta TUI.
+          <p className="pty-control-estado" role="status" title={`Tenés el teclado de esta TUI. ${vencimiento(arriendo)}`}>
+            <KeyRound size={14} aria-hidden="true" /><span className="sr-only">Tenés el teclado de esta TUI.</span>
           </p>
           {arriendo.dudoso.length > 0 ? (
             // Wears the amber notice rule the panel already has (`pty-control-perdido`): this is the
@@ -357,7 +357,7 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
             onClick={() => void devolver()}
             title="Suelta el teclado y el bus vuelve a entregarle a este alias."
           >
-            <Undo2 size={14} aria-hidden="true" /> Devolver el control
+            <Undo2 size={14} aria-hidden="true" /><span className="sr-only">Devolver el control</span>
           </button>
         </>
       ) : (
@@ -369,9 +369,9 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
             title={escrituraBloqueada ? error.titulo : `Usar el teclado de ${alias}; los mensajes del bus quedan en cola mientras tengas el control.`}
             onClick={() => void tomar()}
           >
-            <KeyRound size={14} aria-hidden="true" /> {pendiente
+            <KeyRound size={14} aria-hidden="true" /> <span className="sr-only">{pendiente
               ? ETIQUETA_DE_FASE[fase]
-              : escrituraBloqueada ? 'Escritura no disponible' : reintentable ? 'Reintentar la toma' : 'Tomar el control'}
+              : escrituraBloqueada ? 'Escritura no disponible' : reintentable ? 'Reintentar la toma' : 'Tomar el control'}</span>
           </button>
         </>
       )}

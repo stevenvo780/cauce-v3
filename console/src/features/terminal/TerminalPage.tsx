@@ -10,6 +10,7 @@ import { buildFleetAgents, fleetAgentId } from './fleet';
 import { OperatorWorkspace } from './OperatorWorkspace';
 import { deriveTerminalRelayState, TERMINAL_RELAY_SIN_COMPROBAR_TITULO, TerminalRelayBoundary, useTerminalCapability } from './relay-status';
 import './terminal-panel.css';
+import './terminal-controls.css';
 
 export const VAR_TOPE_TERMINAL = '--terminal-tope';
 export const VAR_TOPE_PAGINA = '--shell-tope';
@@ -110,7 +111,6 @@ function TerminalPageContent({ params }: TerminalPageProps) {
               </button>
             </>}
             access={access.error ? undefined : access.data}
-            topologyAccess={topology.error ? undefined : topology.data}
             terminalCapability={capability.error ? undefined : capability.data}
             terminalTargets={targets.error ? undefined : targets.data}
             fleetLoading={fleetLoading}
