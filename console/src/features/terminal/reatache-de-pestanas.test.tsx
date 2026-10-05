@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -129,7 +129,7 @@ describe('cambiar el agente seleccionado', () => {
     renderWithApi(<TerminalPage />);
     const old = await openTui(user);
     await select(user, 'salva');
-    await screen.findByRole('link', { name: /escribir a salva en mensajes/i });
+    await screen.findByRole('button', { name: /^TUI$/i });
     expect(deletes).toEqual(['sid-zeus']);
     expect(old.readyState).toBe(StubWebSocket.CLOSED);
     await select(user, 'zeus');
@@ -138,18 +138,17 @@ describe('cambiar el agente seleccionado', () => {
     expect(StubWebSocket.last()).not.toBe(old);
   });
 
-  it('cerrar la TUI no la reabre al volver a elegir el mismo agente', async () => {
+  it('cerrar una pestaña revoca el canal y reabrir crea otra intención', async () => {
     const user = userEvent.setup();
     const posts: string[] = [], deletes: string[] = [];
     serveTwoAgents(); serveSessions(posts, deletes);
     renderWithApi(<TerminalPage />);
     await openTui(user);
-    await user.click(within(await screen.findByLabelText('Sesión PTY activa'))
-      .getByRole('button', { name: /cerrar la terminal/i }));
+    await user.click(screen.getByRole('button', { name: /Cerrar sesión zeus/i }));
     await waitFor(() => { expect(deletes).toEqual(['sid-zeus']); });
-    await select(user, 'zeus');
-    expect(posts).toEqual(['zeus']);
     expect(screen.queryByLabelText('Sesión PTY activa')).not.toBeInTheDocument();
+    await select(user, 'zeus');
+    await waitFor(() => { expect(posts).toEqual(['zeus', 'zeus']); });
   });
 
   it('una negativa permanente no se reintenta por elegir el agente ya visible', async () => {
@@ -184,18 +183,15 @@ describe('cambiar el agente seleccionado', () => {
     expect(screen.queryByRole('link', { name: /escribir a salva en mensajes/i })).not.toBeInTheDocument();
   });
 
-  it('cada selección conserva su enlace canónico y solo un escenario', async () => {
+  it('cada selección conserva tenant y alias y solo un escenario', async () => {
     const user = userEvent.setup();
     serveTwoAgents(); serveSessions([], []);
     renderWithApi(<TerminalPage />);
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }),
       await screen.findByRole('option', { name: /^salva ·/ }));
-    expect(await screen.findByRole('link', { name: /escribir a salva en mensajes/i }))
-      .toHaveAttribute('href', '/messages/Isa/salva');
+    expect(screen.getByRole('combobox', { name: 'Agente' })).toHaveValue('Isa:salva');
     await select(user, 'kant');
-    expect(await screen.findByRole('link', { name: /escribir a kant en mensajes/i }))
-      .toHaveAttribute('href', '/messages/Steven/kant');
-    expect(screen.queryByRole('link', { name: /escribir a salva en mensajes/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Agente' })).toHaveValue('Steven:kant');
     expect(document.querySelectorAll('.terminal-session-head')).toHaveLength(1);
     expect(screen.getAllByRole('tab')).toHaveLength(1);
     await user.click(screen.getByRole('button', { name: /cerrar sesión kant/i }));

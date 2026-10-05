@@ -1,12 +1,3 @@
-/**
- * The live TUI: what depends on the harness mode the gateway publishes.
- *
- * Each positive case goes with its NEGATIVE CONTROL in the same run: the fixture changes ONE
- * thing only (the `harness` mode the gateway publishes) and everything else stays identical.
- * Without that pair, a test that sees the TUI does not prove the TUI depends on the TUI: it
- * may be passing for another reason. The strong assertion is not "it shows", it is "it shows,
- * and without the published mode it does not".
- */
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
@@ -22,7 +13,6 @@ import { TerminalPage } from './TerminalPage';
 const PTY_SESSION_ID = 'pty-tui-1';
 const WS_PATH = '/v3/console/terminal/ws';
 const DA_PRIMARIA = '\x1b[?1;2c'; // the terminal's own DA reply: the only data read-only lets through
-/** A real chunk of Claude Code's TUI, as tmux paints it. */
 const TUI_FRAME = '[2J[H> zeus esta corriendo pnpm test --run\r\n  esc to interrupt\r\n';
 
 function target(overrides: Partial<TerminalTarget> & Pick<TerminalTarget, 'tenant_id' | 'alias'>): TerminalTarget {
@@ -52,7 +42,6 @@ function enableCapability() {
 
 interface SessionCall { mode: unknown; reason: unknown; alias: unknown }
 
-/** Records EVERY session POST: the negative control relies on the count staying at zero. */
 function recordSessions(calls: SessionCall[], mode = 'harness') {
   server.use(
     http.post('*/v3/console/terminal/sessions', async ({ request }) => {
@@ -85,13 +74,10 @@ it('transmite la TUI viva del agente en cuanto se elige el alias, sin diálogo y
   serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })]);
   recordSessions(calls);
   renderWithApi(<TerminalPage />);
-
-  // Choosing the agent is ALL the operator does: no mode choice, no written motive.
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
   await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  // The requested channel is the TUI's, not a new shell, and the motive is audited the same.
   expect(calls).toHaveLength(1);
   expect(calls[0].mode).toBe('harness');
   expect(String(calls[0].reason)).toMatch(/TUI en vivo de zeus \(solo lectura\)/i);
@@ -114,10 +100,8 @@ it('transmite la TUI viva del agente en cuanto se elige el alias, sin diálogo y
   await waitFor(() => { expect(ptySessionText(PTY_SESSION_ID)).toContain('zeus esta corriendo pnpm test'); });
 
   const bar = screen.getByLabelText('Sesión PTY activa');
-  expect(bar).toHaveTextContent(/TUI en vivo · solo lectura/i);
-  expect(bar).toHaveTextContent('harness');
-
-  // Read-only FOR REAL: a keystroke through xterm's real path does not produce an input frame.
+  expect(within(bar).getByLabelText('Solo lectura')).toBeInTheDocument();
+  expect(within(bar).getByLabelText('TUI en vivo')).toBeInTheDocument();
   act(() => { ptySessionType(PTY_SESSION_ID, 'rm -rf /\r'); });
   act(() => { ptySessionType(PTY_SESSION_ID, DA_PRIMARIA); }); // a DA reply DOES cross the read-only channel
   await new Promise((resolve) => setTimeout(resolve, 30)); // keystrokes coalesce behind an 8 ms timer
@@ -129,25 +113,20 @@ it('CONTROL NEGATIVO: el mismo alias sin el modo harness no abre ninguna sesión
   const user = userEvent.setup();
   const calls: SessionCall[] = [];
   enableCapability();
-  // The only change versus the case above: the gateway publishes only `shell`.
   serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell'] })]);
   recordSessions(calls);
   renderWithApi(<TerminalPage />);
 
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
-  await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
-  // The PTY is still available (it is the same authorised destination): what is missing is the TUI.
-  await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
+  await screen.findByRole('button', { name: /^TUI$/i });
+  await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled(); });
 
   expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled();
-  // Said TWICE on purpose, like "Sin autoridad": on the fleet list chip and over the open
-  // session. Before, the list chip said "PTY online", in green.
-  expect(screen.getAllByText('Sin TUI que emitir')).toHaveLength(1);
-  expect(screen.getByText(/no publica el modo harness.*Modos publicados: shell/i)).toBeInTheDocument();
-  // Nothing was asked of the gateway and no socket opened: the absence of the mode closes the door.
+  expect(screen.getByRole('button', { name: /^TUI$/i })).toHaveAttribute('title', expect.stringContaining('Sin TUI que emitir'));
+  expect(screen.getByRole('button', { name: /^TUI$/i })).toHaveAttribute('title', expect.stringMatching(/no publica el modo harness.*Modos publicados: shell/i));
   expect(calls).toHaveLength(0);
   expect(StubWebSocket.instances).toHaveLength(0);
-  expect(screen.getByRole('button', { name: /^Feed$/i })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.queryByRole('button', { name: /^Feed$/i })).not.toBeInTheDocument();
 });
 
 it('CONTROL NEGATIVO: publica harness pero el agente PTY está offline; no se inventa una TUI', async () => {
@@ -162,10 +141,10 @@ it('CONTROL NEGATIVO: publica harness pero el agente PTY está offline; no se in
   renderWithApi(<TerminalPage />);
 
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
-  await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
+  await screen.findByRole('button', { name: /^TUI$/i });
 
   await waitFor(() => { expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled(); });
-  expect(screen.getByText('TUI no habilitada')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^TUI$/i })).toHaveAttribute('title', expect.stringContaining('TUI no habilitada'));
   expect(calls).toHaveLength(0);
   expect(StubWebSocket.instances).toHaveLength(0);
 });
@@ -183,7 +162,6 @@ it('un rechazo del gateway no se reintenta en bucle: la apertura automática es 
 
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
   await waitFor(() => { expect(attempts).toBe(1); });
-  // The panel stays alive and keeps refreshing (targets every 15 s, feed every 2.5 s) without asking again.
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
   expect(attempts).toBe(1);
   expect(StubWebSocket.instances).toHaveLength(0);
@@ -200,21 +178,12 @@ it('la shell sigue exigiendo motivo escrito a mano aunque la TUI se abra sola', 
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
   await waitFor(() => { expect(calls).toHaveLength(1); });
 
-  await user.click(screen.getByRole('button', { name: /^PTY$/i }));
+  await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
   const dialog = await screen.findByRole('dialog');
   expect(within(dialog).getByRole('button', { name: /abrir sesión pty/i })).toBeDisabled();
   expect(within(dialog).getByText(/al menos 8 caracteres/i)).toBeInTheDocument();
 });
 
-/**
- * The 403 was swallowed by the interface.
- *
- * With kant: two 403 with the CSRF-missing message in a row
- * and the panel kept saying "PTY ONLINE / ok" and "TUI EN VIVO". Zero visible change and zero
- * warning — text nodes were searched for `/403|denegad|permiso|no autoriz|error/` and none new
- * appeared. The TUI opens with one click, with no dialog, and the only place this error was
- * painted was... inside the dialog. The operator clicked and nothing happened.
- */
 describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la culpa', () => {
   function rechazaSesiones(status: number, cuerpo: Record<string, unknown>) {
     server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json(cuerpo, { status })));
@@ -230,16 +199,10 @@ describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la 
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
     const aviso = await screen.findByRole('alert');
-    // The wording comes from `TERMINAL_DENY_MESSAGES.csrf_missing`, which is the ONLY place the
-    // Spanish of the PTY-plane negatives lives. What the test pins down are the three facts,
-    // not a hand-copied sentence: what is missing, that it is the console's fault, and that it
-    // is not your permission.
     expect(aviso).toHaveTextContent(/token CSRF/i);
     expect(aviso).toHaveTextContent(/es la consola/i);
     expect(aviso).toHaveTextContent(/no es tu permiso ni el alias/i);
-    // And it is marked as a console bug, which is what decides the color and the tone.
     expect(aviso).toHaveAttribute('data-consola', 'true');
-    // The deployment is not blamed and the operator is not sent to inspect containers.
     expect(screen.queryByText(/no está desplegado en este stack/i)).not.toBeInTheDocument();
   });
 
@@ -253,8 +216,6 @@ describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la 
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
 
     const aviso = await screen.findByRole('alert');
-    // The raw code is NOT painted: it is translated. It stays available in `data-codigo`, which is
-    // what is pasted into a report. This is the rule `denegaciones.test.tsx` guards for all eight.
     expect(aviso).toHaveAttribute('data-codigo', 'attribution_required');
     expect(aviso).not.toHaveTextContent('attribution_required');
     expect(aviso).toHaveTextContent(/persona con nombre/i);
@@ -272,10 +233,27 @@ describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la 
 
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
     await waitFor(() => { expect(calls).toHaveLength(1); });
-
-    // The rejection warning is searched for by its text: the `role="alert"` of `.pty-render-error`
-    // (xterm does not mount in jsdom) is another card and has nothing to do with this.
     expect(screen.queryByText(/rechazó la apertura de sesión|falta el token CSRF|No se pudo abrir el canal/i))
       .not.toBeInTheDocument();
   });
+});
+
+it('Terminal pide una shell nueva aunque la TUI actual tenga teclado', async () => {
+  const user = userEvent.setup();
+  const calls: SessionCall[] = [];
+  enableCapability();
+  serveTargets([target({ tenant_id: 'Steven', alias: 'zeus',
+    modes: ['shell', 'harness', 'harness_rw'], writable_modes: ['harness_rw'] })]);
+  recordSessions(calls, 'harness_rw');
+  renderWithApi(<TerminalPage />);
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }),
+    await screen.findByRole('option', { name: /^zeus ·/ }));
+  await waitFor(() => { expect(calls).toHaveLength(1); });
+  expect(calls[0].mode).toBe('harness_rw');
+  await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByRole('heading', { name: 'Abrir Terminal en zeus' })).toBeInTheDocument();
+  expect(within(dialog).getByRole('button', { name: /abrir sesión pty/i })).toBeDisabled();
+  await user.click(within(dialog).getByRole('button', { name: 'Cancelar' }));
+  expect(calls).toHaveLength(1);
 });

@@ -70,10 +70,10 @@ describe('destinos que el servidor publica a medias', () => {
 
     // The TUI is offered —the server publishes `harness`— and it is what got asked for.
     await waitFor(() => { expect(posts).toBe(1); });
-    const pty = screen.getByRole('button', { name: /^PTY$/i });
+    const pty = screen.getByRole('button', { name: /^Terminal$/i });
     expect(pty).toBeDisabled();
     expect(pty).toHaveAttribute('title', expect.stringContaining('no publica el modo shell'));
-    expect(screen.getByText(/no convierte una TUI de solo lectura en una terminal interactiva/i)).toBeInTheDocument();
+    expect(pty).toHaveAttribute('title', expect.stringMatching(/no convierte una TUI de solo lectura en una terminal interactiva/i));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   }, 20_000);
 
@@ -93,9 +93,9 @@ describe('destinos que el servidor publica a medias', () => {
     renderWithApi(<TerminalPage />);
 
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
-    await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
+    await screen.findByRole('button', { name: /^TUI$/i });
 
-    await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeDisabled(); });
+    await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeDisabled(); });
     expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled();
     expect(screen.getAllByText(/no publicó una medición verificable/i).length).toBeGreaterThan(0);
     // Nothing was asked of the gateway and no socket opened on an unmeasured destination.

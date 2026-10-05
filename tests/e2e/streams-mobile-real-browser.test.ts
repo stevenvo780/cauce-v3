@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startRealPtyFixture, type RealPtyFixture } from './real-pty-agent.fixtures.js';
-
 const execute = promisify(execFile);
 const artifactDirectory = process.env.CAUCE_E2E_ARTIFACT_DIR;
 let fixture: RealPtyFixture | undefined;
@@ -19,11 +18,9 @@ interface ContainerEvidence {
   readonly networkMode: string;
   readonly owner: string;
 }
-
 beforeAll(async () => {
   fixture = await startRealPtyFixture();
 }, 10 * 60_000);
-
 async function inspectContainer(reference: string): Promise<ContainerEvidence> {
   const format = '{{.Id}}|{{.Name}}|{{json .Mounts}}|{{json .HostConfig.Binds}}|{{json .NetworkSettings.Networks}}|{{json .NetworkSettings.Ports}}|{{.HostConfig.NetworkMode}}|{{index .Config.Labels "cauce.e2e.owner"}}';
   const { stdout } = await execute('docker', ['inspect', '--format', format, reference], { timeout: 15_000, maxBuffer: 64 * 1024 });
@@ -183,7 +180,7 @@ async function waitForPtyButton(
   const deadline = Date.now() + 25_000;
   while (Date.now() < deadline) {
     const state = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent.trim() === 'PTY')?.disabled);
+      .find((button) => button.textContent.trim() === 'Terminal')?.disabled);
     if (state !== undefined && state === !enabled) return true;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
@@ -219,23 +216,24 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     if (!fixture) throw new Error('real PTY fixture not initialized');
     const active = fixture;
     const reader = await provisionReader(active);
-    const readOperatorSession = () => active.database.pool.query<{ id: string; reason: string; revoked_at: Date | null; closed_at: Date | null }>(
+    const readOperatorSession = (id?: string) => active.database.pool.query<{ id: string; reason: string; revoked_at: Date | null; closed_at: Date | null }>(
       `SELECT id::text AS id, reason, revoked_at, closed_at
          FROM terminal_sessions
-        WHERE tenant_id=$1 AND alias=$2
+        WHERE tenant_id=$1 AND alias=$2 AND ($3::uuid IS NULL OR id=$3::uuid)
         ORDER BY issued_at DESC
         LIMIT 1`,
-      [active.tenant, active.targetAlias],
+      [active.tenant, active.targetAlias, id ?? null],
     );
-    const verifyOperatorClosure = async (reason: string) => {
-      const revoked = await readOperatorSession();
-      expect(revoked.rows[0]?.revoked_at).toBeInstanceOf(Date);
-      let closed = revoked;
+    const verifyOperatorClosure = async (reason: string, id: string) => {
+      if (!id) throw new Error('opened terminal session id was not captured');
+      let closed = await readOperatorSession(id);
       const deadline = Date.now() + 15_000;
-      while (closed.rows[0]?.closed_at === null && Date.now() < deadline) {
+      while ((!closed.rows[0]?.revoked_at || !closed.rows[0]?.closed_at) && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 200));
-        closed = await readOperatorSession();
+        closed = await readOperatorSession(id);
       }
+      expect(closed.rows[0]?.id).toBe(id);
+      expect(closed.rows[0]?.revoked_at).toBeInstanceOf(Date);
       expect(closed.rows[0]?.reason).toBe(reason);
       expect(closed.rows[0]?.closed_at).toBeInstanceOf(Date);
     };
@@ -246,11 +244,11 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     const operatorTarget = operatorPage.locator('#terminal-agent-select');
     await operatorTarget.waitFor({ state: 'visible', timeout: 25_000 });
     await operatorTarget.selectOption(`${active.tenant}:${active.targetAlias}`);
-    const operatorPty = operatorPage.getByRole('button', { name: 'PTY', exact: true });
+    const operatorPty = operatorPage.getByRole('button', { name: 'Terminal', exact: true });
     await operatorPty.waitFor({ state: 'visible', timeout: 25_000 });
     expect(await waitForPtyButton(operatorPage, true)).toBe(true);
     await operatorPty.click();
-    const operatorDialog = operatorPage.getByRole('dialog', { name: `Abrir PTY en ${active.targetAlias}` });
+    const operatorDialog = operatorPage.getByRole('dialog', { name: `Abrir Terminal en ${active.targetAlias}` });
     await operatorDialog.waitFor({ state: 'visible', timeout: 10_000 });
     await operatorPage.getByLabel('Motivo de la sesión (queda en la auditoría)').fill('Verificación E2E autorizada del canal shell.');
     await operatorDialog.getByRole('button', { name: 'Abrir sesión PTY' }).click();
@@ -262,9 +260,10 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
       await mkdir(artifactDirectory, { recursive: true });
       await operatorPage.screenshot({ path: join(artifactDirectory, 'terminal-operator-1440.png') });
     }
-    await operatorPtyBar.getByRole('button', { name: 'Cerrar la terminal' }).click();
+    const operatorSessionId = (await readOperatorSession()).rows[0]?.id ?? '';
+    await operatorPage.getByRole('link', { name: 'Conversaciones', exact: true }).click();
     await operatorPtyBar.waitFor({ state: 'hidden', timeout: 25_000 });
-    await verifyOperatorClosure('Verificación E2E autorizada del canal shell.');
+    await verifyOperatorClosure('Verificación E2E autorizada del canal shell.', operatorSessionId);
 
     const mobileOperatorPage = await active.browserPage({ width: 360, height: 800 });
     await login(active, mobileOperatorPage, active.operatorEmail, active.operatorPassword);
@@ -273,11 +272,11 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     const mobileTarget = mobileOperatorPage.locator('#terminal-agent-select');
     await mobileTarget.waitFor({ state: 'visible', timeout: 25_000 });
     await mobileTarget.selectOption(`${active.tenant}:${active.targetAlias}`);
-    const mobilePty = mobileOperatorPage.getByRole('button', { name: 'PTY', exact: true });
+    const mobilePty = mobileOperatorPage.getByRole('button', { name: 'Terminal', exact: true });
     await mobilePty.waitFor({ state: 'visible', timeout: 25_000 });
     expect(await waitForPtyButton(mobileOperatorPage, true)).toBe(true);
     await mobilePty.click();
-    const mobileDialog = mobileOperatorPage.getByRole('dialog', { name: `Abrir PTY en ${active.targetAlias}` });
+    const mobileDialog = mobileOperatorPage.getByRole('dialog', { name: `Abrir Terminal en ${active.targetAlias}` });
     await mobileDialog.waitFor({ state: 'visible', timeout: 10_000 });
     const mobileReason = 'Verificación E2E autorizada desde viewport móvil.';
     await mobileOperatorPage.getByLabel('Motivo de la sesión (queda en la auditoría)').fill(mobileReason);
@@ -302,9 +301,10 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
       await mobileOperatorPage.screenshot({ path: join(artifactDirectory, 'terminal-operator-360.png') });
     }
     const mobilePtyBar = mobileOperatorPage.getByLabel('Sesión PTY activa');
-    await mobilePtyBar.getByRole('button', { name: 'Cerrar la terminal' }).click();
+    const mobileSessionId = (await readOperatorSession()).rows[0]?.id ?? '';
+    await mobileOperatorPage.getByRole('link', { name: 'Conversaciones', exact: true }).click();
     await mobilePtyBar.waitFor({ state: 'hidden', timeout: 25_000 });
-    await verifyOperatorClosure(mobileReason);
+    await verifyOperatorClosure(mobileReason, mobileSessionId);
 
     const baselineSessions = await active.database.pool.query<{ count: number }>(
       'SELECT count(*)::int AS count FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2',
@@ -345,11 +345,11 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     const readerTarget = readerPage.locator('#terminal-agent-select');
     await readerTarget.waitFor({ state: 'visible', timeout: 25_000 });
     await readerTarget.selectOption(`${active.tenant}:${active.targetAlias}`);
-    const readerPty = readerPage.getByRole('button', { name: 'PTY', exact: true });
+    const readerPty = readerPage.getByRole('button', { name: 'Terminal', exact: true });
     await readerPty.waitFor({ state: 'visible', timeout: 25_000 });
     expect(await waitForPtyButton(readerPage, false)).toBe(true);
     const ptyDisabled = await readerPage.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent.trim() === 'PTY')?.disabled);
+      .find((button) => button.textContent.trim() === 'Terminal')?.disabled);
     expect(ptyDisabled).toBe(true);
     await expectNoViewportOverflow(readerPage, 360);
     if (artifactDirectory) {

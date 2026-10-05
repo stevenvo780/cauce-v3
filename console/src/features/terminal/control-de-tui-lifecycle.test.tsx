@@ -92,10 +92,10 @@ async function openPageAndTake(controls: ControlCall[]) {
   return { user, socket };
 }
 
-it('releases a late successful take after navigating from the terminal to Feed', async () => {
+it('releases a late successful take after leaving the terminal tab', async () => {
   const { controls, completeTake } = arrange();
   const { user } = await openPageAndTake(controls);
-  await user.click(screen.getByRole('button', { name: /^Feed$/ }));
+  await user.click(screen.getByRole('button', { name: /Cerrar sesión zeus/i }));
   expect(screen.queryByLabelText('Control de la TUI')).not.toBeInTheDocument();
   await completeTake();
   const releases = controls.filter(call => call.body.action === 'release');

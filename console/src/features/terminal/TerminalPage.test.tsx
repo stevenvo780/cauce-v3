@@ -81,8 +81,8 @@ afterEach(() => {
 /** Drives the UI from the fleet list up to a live PTY socket. */
 async function openPtyChannel(user: ReturnType<typeof userEvent.setup>, alias: string, reason: string) {
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: new RegExp(`^${alias} ·`, 'i') }));
-  await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
-  await user.click(screen.getByRole('button', { name: /^PTY$/i }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
 
   const dialog = await screen.findByRole('dialog');
   await user.type(within(dialog).getByRole('textbox'), reason);
@@ -92,12 +92,14 @@ async function openPtyChannel(user: ReturnType<typeof userEvent.setup>, alias: s
   return StubWebSocket.last();
 }
 
-it('abre el agente seleccionado, deja el feed en solo lectura y deriva cada escritura a su única vista', async () => {
+it('abre el agente sin leer Feed ni escribir mensajes, replay o cancel', async () => {
   const user = userEvent.setup();
+  let messageGets = 0;
   let messagePosts = 0;
   let replayPosts = 0;
   let cancelPosts = 0;
   server.use(
+    http.get('*/v3/console/messages', () => { messageGets += 1; return HttpResponse.json({ items: [] }); }),
     http.post('*/v3/console/messages', () => { messagePosts += 1; return new HttpResponse(null, { status: 500 }); }),
     http.post('*/v3/console/deliveries/:deliveryId/replay', () => { replayPosts += 1; return new HttpResponse(null, { status: 500 }); }),
     http.post('*/v3/console/deliveries/:deliveryId/cancel', () => { cancelPosts += 1; return new HttpResponse(null, { status: 500 }); }),
@@ -119,15 +121,12 @@ it('abre el agente seleccionado, deja el feed en solo lectura y deriva cada escr
   expect(listed.length).toBeGreaterThan(1);
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^argos ·/ }));
 
-  const messages = await screen.findByRole('link', { name: /escribir a argos en mensajes/i });
-  expect(messages).toHaveAttribute('href', '/messages/Steven/argos');
-  expect(messages).toHaveAttribute('target', '_blank');
-  expect(await screen.findByRole('link', { name: /gestionar en queues/i, hidden: true })).toHaveAttribute(
-    'href', '/queues?delivery=4b981ddd-f311-494e-887c-83fd5e11be90',
-  );
+  expect(await screen.findByRole('button', { name: /^Terminal$/i })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: /^Feed$/i })).not.toBeInTheDocument();
   expect(screen.queryByRole('textbox', { name: /entrada para/i })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /replay/i, hidden: true })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /cancelar/i, hidden: true })).not.toBeInTheDocument();
+  expect(messageGets).toBe(0);
   expect(messagePosts).toBe(0);
   expect(replayPosts).toBe(0);
   expect(cancelPosts).toBe(0);
@@ -139,12 +138,10 @@ it('abre automáticamente el agente pedido por el deep-link sin una segunda vist
   renderWithApi(<TerminalPage params={['Steven', 'kant']} />);
 
   expect(await screen.findByRole('tab', { name: /kant/i })).toHaveAttribute('aria-selected', 'true');
-  expect(screen.getByRole('link', { name: /escribir a kant en mensajes/i })).toHaveAttribute(
-    'href', '/messages/Steven/kant',
-  );
+  expect(screen.getByRole('combobox', { name: 'Agente' })).toHaveValue('Steven:kant');
 });
 
-it('keeps the durable feed operational on a real PTY 501 and disables only PTY', async () => {
+it('keeps the agent selector available on PTY 501 and fails closed without Feed', async () => {
   const user = userEvent.setup();
   server.use(
     http.get('http://localhost/v3/console/access', () => HttpResponse.json({
@@ -155,14 +152,8 @@ it('keeps the durable feed operational on a real PTY 501 and disables only PTY',
   renderWithApi(<TerminalPage />);
 
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^argos ·/ }));
-  expect(await screen.findByRole('link', { name: /escribir a argos en mensajes/i })).toHaveAttribute(
-    'href', '/messages/Steven/argos',
-  );
-  expect(screen.getByRole('button', { name: /^PTY$/i })).toBeDisabled();
-  expect(screen.getByRole('button', { name: /^Feed$/i })).toHaveAttribute('aria-pressed', 'true');
-  expect(screen.getByText(/4 ACK/i)).toBeInTheDocument();
-  // The label of the "Your terminal permission" card, in Spanish: it used to be `connectState`
-  // in capitals, i.e. the raw RBAC value.
+  expect(await screen.findByRole('button', { name: /^Terminal$/i })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: /^Feed$/i })).not.toBeInTheDocument();
   expect(screen.getByRole('link', { name: 'Docs' })).toBeInTheDocument();
 });
 
@@ -247,7 +238,7 @@ it('disables PTY for a denied destination and shows the server motive, not an em
 
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^salva ·/ }));
 
-  const ptyButton = await screen.findByRole('button', { name: /^PTY$/i });
+  const ptyButton = await screen.findByRole('button', { name: /^Terminal$/i });
   await waitFor(() => { expect(ptyButton).toBeDisabled(); });
   // The server's reason brings the code INSIDE the prose. It is translated, and what the
   // server did say in Spanish is preserved. See `denegaciones.ts`.
@@ -268,7 +259,7 @@ it('states not_installed explicitly rather than leaving the operator on a spinne
 
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^argos ·/ }));
 
-  await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeDisabled(); });
+  await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeDisabled(); });
   expect(screen.getAllByText('Agente PTY no instalado')).toHaveLength(1);
   expect(screen.getByRole('option', { name: /^argos ·.*Agente PTY no instalado/ })).toBeInTheDocument();
   expect(screen.getByText(/no está instalado en ctrl-infra/i)).toBeInTheDocument();
@@ -289,8 +280,8 @@ it('refuses to confirm without a written motive and spells out who shares the co
   renderWithApi(<TerminalPage />);
 
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^jarvis ·/ }));
-  await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
-  await user.click(screen.getByRole('button', { name: /^PTY$/i }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
 
   const dialog = await screen.findByRole('dialog');
   // The blast radius is stated in plain words: this is not "the terminal of jarvis".
@@ -324,7 +315,7 @@ it('sends attach as the first frame and renders binary PTY output', async () => 
     type: 'attach', session_id: PTY_SESSION_ID, ticket: expect.stringMatching(/^v1\./u) as unknown,
   });
   // Until the relay authorises, what is ticking is the single-use ticket window.
-  expect(screen.getByLabelText('Sesión PTY activa')).toHaveTextContent(/Ticket vence en \d+:\d\d/);
+  expect(within(screen.getByLabelText('Sesión PTY activa')).getByLabelText(/Ticket vence en \d+:\d\d/)).toBeInTheDocument();
 
   act(() => {
     socket.emitControl({
@@ -335,24 +326,12 @@ it('sends attach as the first frame and renders binary PTY output', async () => 
   });
   await waitFor(() => { expect(ptySessionText(PTY_SESSION_ID)).toContain('claw@claw:~$ id -un'); });
 
-  // The permanent bar states who, where, as whom and how long is left.
   const bar = screen.getByLabelText('Sesión PTY activa');
-  expect(bar).toHaveTextContent('jarvis');
-  expect(bar).toHaveTextContent('claw');
-  expect(bar).toHaveTextContent('shell');
-  // The ticket is spent once the relay is ready; the bar says so instead of freezing at 0:00.
-  expect(bar).toHaveTextContent(/Ticket consumido · sesión activa/);
-  /*
-   * The button is called "Cerrar la terminal" and NOT "Cerrar sesion": at the top right, in the
-   * console bar, there is another "Cerrar sesion" that logs you out of the application. The
-   * check is double on purpose — the right label AND the absence of the ambiguous one inside
-   * the bar — because without the second half this case would pass green again the day someone
-   * undoes the change.
-   */
-  expect(within(bar).getByRole('button', { name: /cerrar la terminal/i })).toBeInTheDocument();
-  expect(within(bar).queryByRole('button', { name: /^cerrar sesión$/i })).not.toBeInTheDocument();
-  // An open PTY is the live source, so the redundant 2.5 s feed polling stands down.
-  expect(within(bar).getByText('POLLING EN PAUSA')).toBeInTheDocument();
+  expect(within(bar).getByLabelText('Terminal · shell nueva')).toHaveAttribute('title', expect.stringContaining('jarvis'));
+  expect(within(bar).getByLabelText('Usuario destino: claw')).toBeInTheDocument();
+  expect(within(bar).getByLabelText('Ticket consumido · sesión activa')).toBeInTheDocument();
+  expect(within(bar).queryByRole('button', { name: /cerrar/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^Feed$/i })).not.toBeInTheDocument();
 });
 
 it('fences two confirmations in the same render to one PTY reservation POST', async () => {
@@ -381,7 +360,7 @@ it('fences two confirmations in the same render to one PTY reservation POST', as
   renderWithApi(<TerminalPage />);
 
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^jarvis ·/ }));
-  await user.click(await screen.findByRole('button', { name: /^PTY$/i }));
+  await user.click(await screen.findByRole('button', { name: /^Terminal$/i }));
   const dialog = await screen.findByRole('dialog');
   await user.type(within(dialog).getByRole('textbox'), 'verificar carrera de reserva');
   const confirm = within(dialog).getByRole('button', { name: /abrir sesión pty/i });
@@ -456,12 +435,12 @@ it('releases the grant server-side when the operator closes the session', async 
     });
   });
 
-  await user.click(within(screen.getByLabelText('Sesión PTY activa')).getByRole('button', { name: /cerrar la terminal/i }));
+  await user.click(screen.getByRole('button', { name: /Cerrar sesión jarvis/i }));
 
   await waitFor(() => { expect(deleted).toBe(PTY_SESSION_ID); });
   expect(socket.closeCode).toBeUndefined();
   deletion.resolve();
-  await waitFor(() => { expect(screen.getByRole('button', { name: /^Feed$/i })).toHaveAttribute('aria-pressed', 'true'); });
+  await waitFor(() => { expect(screen.queryByLabelText('Sesión PTY activa')).not.toBeInTheDocument(); });
   expect(socket.closeCode).toBe(1000);
 }, 20_000);
 
@@ -488,7 +467,7 @@ it('closes the local socket and offers retry when server-side revocation fails',
     });
   });
 
-  await user.click(within(screen.getByLabelText('Sesión PTY activa')).getByRole('button', { name: /cerrar la terminal/i }));
+  await user.click(screen.getByRole('button', { name: /Cerrar sesión jarvis/i }));
   const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent(/No se confirmó la revocación/i);
   expect(socket.closeCode).toBe(1000);
@@ -507,8 +486,8 @@ it('surfaces a 409 conflict from the gateway without opening any socket', async 
   renderWithApi(<TerminalPage />);
 
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^jarvis ·/ }));
-  await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
-  await user.click(screen.getByRole('button', { name: /^PTY$/i }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
   const dialog = await screen.findByRole('dialog');
   await user.type(within(dialog).getByRole('textbox'), 'intento contra un agente caido');
   await user.click(within(dialog).getByRole('button', { name: /abrir sesión pty/i }));
@@ -566,3 +545,18 @@ it.each([502, 503, 504])(
   },
   20_000,
 );
+
+
+it('monta el selector en la barra global y lo retira al salir de Terminales', async () => {
+  const host = document.createElement('div');
+  host.id = 'terminal-topbar-tools';
+  document.body.appendChild(host);
+  try {
+    const view = renderWithApi(<TerminalPage />);
+    const selector = await within(host).findByRole('combobox', { name: 'Agente' });
+    expect(selector).toBeInTheDocument();
+    expect(view.container.querySelector('#terminal-agent-select')).toBeNull();
+    view.unmount();
+    expect(host).toBeEmptyDOMElement();
+  } finally { host.remove(); }
+});
