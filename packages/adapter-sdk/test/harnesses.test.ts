@@ -14,6 +14,7 @@ import type {
   SafeRunnerLog,
 } from "../src/sdk/types.js";
 import { HARNESS_DEFINITIONS, HarnessAdapter } from "../src/harnesses/index.js";
+import { HERMES_BRIDGE_PATH } from "../src/harnesses/bridge-paths.js";
 import { testStateRoot } from "./test-state.js";
 
 const stateRoot = testStateRoot();
@@ -355,7 +356,10 @@ test("Hermes remains explicitly stateless", async () => {
     timeoutMs: 2_000,
     signal: new AbortController().signal,
   });
-  assert.equal(runner.requests[0]?.args.some((argument) => argument.includes("session")), false);
+  assert.deepEqual(runner.requests[0]?.args, [
+    fixture(definition),
+    HERMES_BRIDGE_PATH,
+  ]);
 });
 
 test("timeout terminates the complete POSIX process group", async () => {
