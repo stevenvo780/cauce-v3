@@ -16,10 +16,11 @@ import {
   type HumanOrigin,
   type LiveAgentView,
 } from './agent-state';
-import { layoutHypergraph, type HyperGraphModel } from './hypergraph/hypergraph-layout';
+import { aclCaption, layoutHypergraph, type HyperGraphModel } from './hypergraph/hypergraph-layout';
 import type { FleetDelegationEdge } from '../../api/types';
 import { FleetGraphEdge } from './hypergraph/FleetGraphEdge';
 import { FleetGraphNode } from './hypergraph/FleetGraphNode';
+import { fleetGeometryReady, portraitColumns, portraitGraph } from './hypergraph/portrait-layout';
 import {
   buildFleetGraph,
   topologySignature,
@@ -89,7 +90,7 @@ function FleetGraphControls() {
   );
 }
 
-function FleetGraphRegions({ model }: { model: HyperGraphModel }) {
+function FleetGraphRegions({ model, portrait }: { model: HyperGraphModel; portrait: boolean }) {
   return (
     <ViewportPortal>
       <svg
@@ -104,9 +105,9 @@ function FleetGraphRegions({ model }: { model: HyperGraphModel }) {
             <g className={`lhg-room lhg-hue-${String(room.hue)}`} key={room.key}>
               <path className="lhg-room-fill" d={room.outline} />
               <path className="lhg-room-line" d={room.outline} />
-              <text className="lhg-room-label" x={room.labelAnchor.x} y={room.labelAnchor.y} textAnchor="middle">
+              {!portrait ? <text className="lhg-room-label" x={room.labelAnchor.x} y={room.labelAnchor.y} textAnchor="middle">
                 #{room.roomLabel ?? 'sala sin nombre'}
-              </text>
+              </text> : null}
             </g>
           ))}
         </g>
@@ -126,26 +127,28 @@ function FleetGraphMap({ model, nodes, edges, signature, onRetryTopology }: {
   const flowWidth = useStore((state) => state.width);
   const flowHeight = useStore((state) => state.height);
   const viewportReady = useStore((state) => state.panZoom !== null);
+  const portrait = flowWidth > 0 && flowWidth <= 760;
+  const displayed = useMemo(() => portrait ? portraitGraph(model, nodes, edges, flowWidth) : { model, nodes, edges }, [portrait, model, nodes, edges, flowWidth]);
+  const geometryReady = useStore((state) => fleetGeometryReady(displayed.nodes, state.nodeLookup));
+  const layoutSignature = `${signature}:${portrait ? String(portraitColumns(flowWidth)) : 'desktop'}`;
   const fittedSignature = useRef<string | null>(null);
   useEffect(() => {
-    const nodes = flow.getNodes();
-    const knownDimensions = nodes.length > 0 && nodes.every((node) =>
-      (node.measured?.width ?? node.width ?? 0) > 0 && (node.measured?.height ?? node.height ?? 0) > 0);
-    if (!viewportReady || flowWidth <= 0 || flowHeight <= 0 || !knownDimensions || signature === fittedSignature.current) return;
-    const firstAgent = flowWidth <= 760 ? nodes.find((node) => node.data.kind === 'agent') : undefined;
-    const initialView = firstAgent
-      ? flow.setCenter(firstAgent.position.x, firstAgent.position.y, { duration: 0, zoom: 1 })
+    if (layoutSignature === fittedSignature.current || !viewportReady || flowWidth <= 0 || flowHeight <= 0 || !geometryReady) return;
+    let cancelled = false;
+    const initialView = portrait
+      ? flow.setViewport({ x: 0, y: 0, zoom: 1 }, { duration: 0 })
       : flow.fitView({ duration: 0, padding: .12 });
     void initialView.then((fitted) => {
-      if (fitted) fittedSignature.current = signature;
+      if (fitted && !cancelled) fittedSignature.current = layoutSignature;
     });
-  }, [flow, flowHeight, flowWidth, signature, viewportReady]);
+    return () => { cancelled = true; };
+  }, [flow, flowHeight, flowWidth, geometryReady, layoutSignature, portrait, viewportReady]);
 
   return (
-    <div className="lhg-viewport" aria-label="Mapa interactivo de agentes y salas">
+    <div className="lhg-viewport" data-portrait={portrait || undefined} style={portrait ? { height: displayed.model.height } : undefined} aria-label="Mapa interactivo de agentes y salas">
       <ReactFlow<FleetNode, FleetEdge>
-        nodes={nodes}
-        edges={edges}
+        nodes={displayed.nodes}
+        edges={displayed.edges}
         nodeTypes={NODE_TYPES}
         edgeTypes={EDGE_TYPES}
         nodeOrigin={[.5, .5]}
@@ -168,11 +171,21 @@ function FleetGraphMap({ model, nodes, edges, signature, onRetryTopology }: {
         aria-label="Mapa interactivo de salas, agentes y conexiones"
         proOptions={{ hideAttribution: true }}
       >
-        <FleetGraphRegions model={model} />
+        <FleetGraphRegions model={displayed.model} portrait={portrait} />
         <FleetGraphControls />
+        {portrait && edges.some((edge) => edge.data?.kind === 'acl') ? (
+          <Panel position="bottom-left" className="lhg-acl-details">
+            <details>
+              <summary>{String(displayed.model.arcs.length)} relaciones ACL</summary>
+              <ul aria-label="Relaciones ACL entre tenants">
+                {displayed.model.arcs.map((arc) => <li key={arc.key}><strong>{arc.fromTenant} → {arc.toTenant}</strong><span>{aclCaption(arc)}</span></li>)}
+              </ul>
+            </details>
+          </Panel>
+        ) : null}
         <Panel position="top-left" className="lhg-layer-badge" aria-live="polite">
           <span>{edges.some((edge) => edge.data?.kind === 'acl') ? 'Permisos entre tenants' : 'Actividad en vuelo'}</span>
-          {flowWidth > 0 && flowWidth <= 760 ? <span className="lhg-mobile-hint">Vista ampliada · arrastra para explorar</span> : null}
+          {flowWidth > 0 && flowWidth <= 760 ? <span className="lhg-mobile-hint">Arrastra o pellizca para explorar</span> : null}
         </Panel>
       </ReactFlow>
       {onRetryTopology ? <button type="button" className="lhg-retry" onClick={onRetryTopology}>Reintentar topología</button> : null}
