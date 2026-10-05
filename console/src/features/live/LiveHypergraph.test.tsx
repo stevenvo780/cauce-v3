@@ -11,7 +11,7 @@ describe('LiveHypergraph viewport', () => {
   it('distingue relaciones ACL de conexiones activas al mostrar la capa Permisos', () => {
     render(<LiveHypergraph topology={topology} views={[]} edges={[]} layer="permisos" />);
 
-    expect(screen.getByText(/relaciones ACL/u)).toBeInTheDocument();
+    expect(document.querySelector('.lhg-summary')).toHaveTextContent(/relaciones ACL/u);
     expect(screen.queryByText(/conexiones activas/u)).not.toBeInTheDocument();
   });
 
@@ -22,8 +22,7 @@ describe('LiveHypergraph viewport', () => {
         return new DOMRect(0, 0, 390, 320);
       }
       if (this.classList.contains('react-flow__node')) {
-        const size = this.classList.contains('react-flow__node-anchor') ? 1 : 178;
-        return new DOMRect(0, 0, size, size === 1 ? 1 : 118);
+        return new DOMRect(0, 0, Number.parseFloat(this.style.width), Number.parseFloat(this.style.height));
       }
       return Reflect.apply(originalBounds, this, []);
     });
@@ -39,7 +38,11 @@ describe('LiveHypergraph viewport', () => {
     if (!viewport) throw new Error('ReactFlow viewport should be mounted');
 
     await waitFor(() => { expect(viewport.style.transform).toContain('scale(1)'); });
-    expect(screen.getByText('Vista ampliada · arrastra para explorar')).toBeInTheDocument();
+    expect(screen.getByText('Arrastra o pellizca para explorar')).toBeInTheDocument();
+    expect(viewport.style.transform).toBe('translate(0px,0px) scale(1)');
+    const cards = [...document.querySelectorAll<HTMLElement>('.react-flow__node-fleet')];
+    expect(cards.length).toBeGreaterThan(10);
+    for (const card of cards) expect(card.style.width).toBe('128px');
     const fittedTransform = viewport.style.transform;
     await user.click(screen.getByRole('button', { name: 'Acercar mapa' }));
     await waitFor(() => { expect(viewport.style.transform).not.toBe(fittedTransform); });
