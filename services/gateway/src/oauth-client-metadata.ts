@@ -7,9 +7,16 @@ export interface OAuthClientMetadata {
   readonly redirectUris: readonly string[];
 }
 
+// a single abusive host (many distinct client_id subdomains or paths) is capped on its own so it
+// cannot consume the whole process-wide quota; the global cap is raised accordingly so legitimate
+// clients spread across other hosts keep working while one host is under attack.
+export const OAUTH_CLIENT_HOST_PENDING_CAP = 8;
+export const OAUTH_CLIENT_GLOBAL_PENDING_CAP = 128;
+
 export class OAuthClients {
   private readonly cache = new Map<string, { client: OAuthClientMetadata; expiresAt: number }>();
   private readonly pending = new Map<string, Promise<OAuthClientMetadata>>();
+  private readonly pendingByHost = new Map<string, number>();
   private readonly fetch: OAuthMetadataFetch;
   private readonly now: () => number;
 
@@ -34,10 +41,19 @@ export class OAuthClients {
       this.cache.delete(clientId);
       const pending = this.pending.get(clientId);
       if (pending) return await pending;
-      if (this.pending.size >= 32) throw new OAuthError('invalid_client');
+      const host = url.hostname;
+      if (this.pending.size >= OAUTH_CLIENT_GLOBAL_PENDING_CAP
+          || (this.pendingByHost.get(host) ?? 0) >= OAUTH_CLIENT_HOST_PENDING_CAP) {
+        throw new OAuthError('invalid_client');
+      }
+      this.pendingByHost.set(host, (this.pendingByHost.get(host) ?? 0) + 1);
       const loading = this.load(clientId);
       this.pending.set(clientId, loading);
-      try { return await loading; } finally { this.pending.delete(clientId); }
+      try { return await loading; } finally {
+        this.pending.delete(clientId);
+        const remaining = (this.pendingByHost.get(host) ?? 1) - 1;
+        if (remaining > 0) this.pendingByHost.set(host, remaining); else this.pendingByHost.delete(host);
+      }
     } catch { throw new OAuthError('invalid_client'); }
   }
 
