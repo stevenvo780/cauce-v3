@@ -1,3 +1,4 @@
+import { schemaBarrierReply } from '../../../tests/helpers/schema-barrier.js';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -23,7 +24,8 @@ const failingPool = {
 } as unknown as DatabasePool;
 
 const idleClient = {
-  query: async () => ({ rows: [], rowCount: 0 }),
+  query: async (sql: string, params: readonly unknown[] = []) =>
+    schemaBarrierReply(sql, params) ?? { rows: [], rowCount: 0 },
   on: () => idleClient,
   off: () => idleClient,
   release: () => undefined,
