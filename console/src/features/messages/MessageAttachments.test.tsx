@@ -51,7 +51,7 @@ it('usa el índice original al filtrar adjuntos históricos nulos y revoca la UR
   expect(getAttachment).toHaveBeenCalledWith('message-image', 1, expect.any(Object));
   expect(screen.getByRole('button', { name: 'Ampliar imagen: foto.png' })).toBeVisible();
   expect(dialog).toHaveAttribute('aria-modal', 'true');
-  expect(screen.getByRole('button', { name: 'Cerrar vista previa' })).toHaveFocus();
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Cerrar vista previa' })).toHaveFocus(); });
   fireEvent.keyDown(dialog, { key: 'Tab' });
   expect(screen.getByRole('button', { name: 'Cerrar vista previa' })).toHaveFocus();
   fireEvent.keyDown(dialog, { key: 'Escape' });
