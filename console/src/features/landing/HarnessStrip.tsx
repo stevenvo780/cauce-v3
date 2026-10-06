@@ -1,7 +1,7 @@
 import { Bot, ChevronDown } from 'lucide-react';
 import type { AdapterView } from '../../api/types';
 import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
-import { Notice } from '../../components/form-kit';
+import { Notice } from '../../components/kit';
 import { safeCapabilityState } from '../../lib';
 import { CAPABILITY_LABEL, CAPABILITY_TONE } from '../../vocabulario';
 

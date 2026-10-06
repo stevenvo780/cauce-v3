@@ -4,7 +4,8 @@ import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import type { FleetWorkState, QuotaSeverity } from '../../api/types';
 import { cn } from '../../cn';
-import { LoadingState, Metric, PageHeader, RefreshButton, Time, Unknown } from '../../components/ui';
+import { Kpi, KpiGrid } from '../../components/kit';
+import { LoadingState, PageHeader, RefreshButton, Time, Unknown } from '../../components/ui';
 import { onNavClick } from '../../router';
 import { useFleet } from '../../shell/fleet-context';
 import { TONE_CLASS, type Tone } from '../../status-tone';
@@ -68,12 +69,12 @@ export function LandingPage() {
 
       <Atencion asentadas={asentadas} resumen={resumen} />
 
-      <div className="metrics-grid">
-        <Metric label="Agentes en línea" value={status.data?.online} tone="positive" detail={ALCANCE_DE_LA_CIFRA.leases} />
-        <Metric label="En vuelo" value={totals?.in_flight} detail="tomadas por un agente" />
-        <Metric label="Esperando turno" value={esperando} tone={esperando ? 'warning' : 'neutral'} detail={`según ${ALCANCE_DE_LA_CIFRA.actividad}`} />
-        <Metric label="Entregas muertas" value={muertas} tone={muertas ? 'danger' : 'neutral'} detail="nadie las va a contestar" />
-      </div>
+      <KpiGrid label="Cifras de la flota" className="mb-6">
+        <Kpi label="Agentes en línea" value={status.data?.online} tone="positive" detail={ALCANCE_DE_LA_CIFRA.leases} />
+        <Kpi label="En vuelo" value={totals?.in_flight} detail="tomadas por un agente" />
+        <Kpi label="Esperando turno" value={esperando} tone={esperando ? 'warning' : 'neutral'} detail={`según ${ALCANCE_DE_LA_CIFRA.actividad}`} />
+        <Kpi label="Entregas muertas" value={muertas} tone={muertas ? 'danger' : 'neutral'} detail="nadie las va a contestar" />
+      </KpiGrid>
 
       {asentadas ? (
         <section aria-label="El detalle de lo que ya se leyó" className="mb-4 grid gap-4 min-[1100px]:grid-cols-3 min-[761px]:max-[1099px]:grid-cols-2">

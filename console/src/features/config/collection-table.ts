@@ -38,7 +38,49 @@ const ETIQUETAS: Record<string, string> = {
   account_label: 'Cuenta', window_key: 'Ventana', group_key: 'Grupo',
   max_priority: 'Prioridad máxima', rank: 'Orden', notes: 'Notas', reason: 'Motivo',
   expires_at: 'Vence', paused_until: 'Pausada hasta', paused_reason: 'Motivo de la pausa',
+  progress_relay_enabled: 'Relé de progreso', progress_relay_max_events: 'Eventos por relé',
+  cycle_cut_enabled: 'Corte de ciclos', failure_coalesce_enabled: 'Agrupar fallos',
+  failure_coalesce_window_seconds: 'Ventana de agrupación', delegation_caps_enabled: 'Topes de delegación',
+  max_fanout_per_turn: 'Abanico por turno', max_edge_repeats_per_root: 'Repeticiones de arista',
+  max_delegations_per_root: 'Delegaciones por raíz', human_gate_enabled: 'Compuerta humana',
 };
+
+const segundosALegible = (valor: unknown): string | undefined => {
+  if (typeof valor !== 'number' || !Number.isFinite(valor)) return undefined;
+  if (valor >= 3600 && valor % 3600 === 0) return `${String(valor / 3600)} h`;
+  if (valor >= 60 && valor % 60 === 0) return `${String(valor / 60)} min`;
+  return `${String(valor)} s`;
+};
+
+const numero = (valor: unknown): string | undefined => (typeof valor === 'number' && Number.isFinite(valor) ? String(valor) : undefined);
+
+/**
+ * Secondary fields printed under the flag that governs them instead of as a column of their own:
+ * a limit that only matters while its flag is on reads as one fact, and eleven columns do not fit
+ * a desktop. The raw values stay reachable in "Ver crudo".
+ */
+const CAMPOS_PLEGADOS: Record<string, Record<string, readonly { campo: string; formato: (valor: unknown) => string | undefined }[]>> = {
+  chain_policies: {
+    progress_relay_enabled: [{ campo: 'progress_relay_max_events', formato: (v) => { const n = numero(v); return n && `hasta ${n} eventos`; } }],
+    failure_coalesce_enabled: [{ campo: 'failure_coalesce_window_seconds', formato: (v) => { const t = segundosALegible(v); return t && `ventana de ${t}`; } }],
+    delegation_caps_enabled: [
+      { campo: 'max_fanout_per_turn', formato: (v) => { const n = numero(v); return n && `${n} por turno`; } },
+      { campo: 'max_edge_repeats_per_root', formato: (v) => { const n = numero(v); return n && `${n} por arista`; } },
+      { campo: 'max_delegations_per_root', formato: (v) => { const n = numero(v); return n && `${n} por raíz`; } },
+    ],
+  },
+};
+
+function plegadosDe(coleccion: string): Record<string, readonly { campo: string; formato: (valor: unknown) => string | undefined }[]> {
+  return Object.hasOwn(CAMPOS_PLEGADOS, coleccion) ? CAMPOS_PLEGADOS[coleccion] : {};
+}
+
+/** The folded values of a column for one row, in reading order; empty when nothing folds into it or its flag is off. */
+export function detalleDeColumna(coleccion: string, columna: string, fila: Record<string, unknown>): string[] {
+  const plegados = plegadosDe(coleccion);
+  if (!Object.hasOwn(plegados, columna) || fila[columna] === false) return [];
+  return plegados[columna].map((parte) => parte.formato(fila[parte.campo])).filter((parte): parte is string => parte !== undefined);
+}
 
 /**
  * Columns merged into one identity column to improve readability of edges and relations.
@@ -119,7 +161,13 @@ export function columnasDe(clave: string, filas: readonly Record<string, unknown
   const orden = fundir && fusion
     ? [fusion.clave, ...presentes.filter((campo) => !fusion.campos.includes(campo)), ...extra]
     : [...presentes, ...extra];
-  return orden.map((campo) => ({
+  // A folded field only disappears while the flag it folds under is also a column: otherwise it
+  // would vanish with nothing showing it.
+  const plegados = plegadosDe(clave);
+  const ocultos = new Set(Object.entries(plegados)
+    .filter(([padre]) => orden.includes(padre))
+    .flatMap(([, partes]) => partes.map((parte) => parte.campo)));
+  return orden.filter((campo) => !ocultos.has(campo)).map((campo) => ({
     clave: campo,
     etiqueta: fundir && campo === fusion?.clave
       ? fusion.etiqueta

@@ -17,7 +17,7 @@ export function GeneralSection({ ctx, onIr }: { ctx: ConfigWrites; onIr: (seccio
   const snapshot = ctx.config.data;
   return <div className="grid gap-4">
     <ConfigSectionHeader seccion="general" />
-    <dl aria-label="Resumen de la configuración" className="m-0 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-3 lg:grid-cols-5">
+    <dl aria-label="Resumen de la configuración" className="m-0 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line max-sm:[&>div:last-child]:col-span-2 sm:max-lg:[&>div:last-child]:col-span-2 sm:grid-cols-3 lg:grid-cols-5">
       {RESUMEN.map((entrada) => {
         const filas = snapshot?.[entrada.clave];
         return <div key={entrada.clave} className="grid content-start gap-0.5 bg-surface">

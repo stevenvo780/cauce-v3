@@ -2,13 +2,12 @@ import { Dialog } from '@base-ui/react/dialog';
 import { Braces } from 'lucide-react';
 import { Fragment, useRef } from 'react';
 import { cn } from '../../cn';
-import { Button, SectionCard } from '../../components/form-kit';
+import { Button, CARD_TABLE, Notice, Outcome, PREVIEW, SCROLL, SectionCard } from '../../components/kit';
 import { Badge, Desplazable, EmptyState, Unknown } from '../../components/ui';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
-import { Aviso, PREVIEW, TABLA } from './config-ui';
 import type { ConfigCollection } from './collections';
 import {
-  accionDeRol, claveDeFila, columnaNumerica, columnasDe, esColumnaDeFecha, esColumnaFundida,
+  accionDeRol, claveDeFila, columnaNumerica, columnasDe, detalleDeColumna, esColumnaDeFecha, esColumnaFundida,
   esColumnaLarga, identidadFundida, motivoSinCambioDeRol, resumirTextoLargo, rolesDisponibles,
   type AccionDeRol, type ColumnaTabla,
 } from './collection-table';
@@ -63,7 +62,7 @@ export function CollectionTable({
   const avisoDeInterruptor = control.avisoDe(key);
   const confirmandoAqui = control.confirmacion?.interruptor.coleccion === key;
 
-  return <SectionCard title={title}
+  return <SectionCard level={3} title={title}
     actions={rows ? <span className="text-xs text-muted tabular-nums">{filas.length} {filas.length === 1 ? 'fila' : 'filas'}</span> : undefined}>
     {/* Clave ausente y lista vacía NO son lo mismo: un gateway anterior a una migración no publica
         su tabla, y decir «sin registros» ahí sería mentir. */}
@@ -73,19 +72,19 @@ export function CollectionTable({
           {/* El desenlace de un interruptor se anuncia acá arriba, en un `role="status"` que el
               lector de pantalla lee solo: el interruptor moviéndose es una señal visual, y sin esto
               quien no ve la pantalla no se entera de que la escritura llegó. */}
-          {avisoDeInterruptor ? <Aviso role="status" tone={avisoDeInterruptor.tone === 'parcial' ? 'parcial' : 'success'}>{avisoDeInterruptor.text}</Aviso> : null}
+          {avisoDeInterruptor ? <Outcome role="status" tone={avisoDeInterruptor.tone === 'parcial' ? 'parcial' : 'success'}>{avisoDeInterruptor.text}</Outcome> : null}
 
           {confirmandoAqui ? <ConfirmarQuitarControl control={control} busy={busy} /> : null}
 
           {/* El aviso de la tabla, UNA vez y arriba. No se esconden las columnas: el servidor las
               publica, y esconder un dato que existe es la otra forma de mentir sobre lo que hay
               configurado. */}
-          {inertesPresentes.length ? <p className="m-0 rounded-lg border border-line bg-subtle px-3 py-2 text-[13px] text-fg-2" role="note">
+          {inertesPresentes.length ? <Notice role="note">
             Las columnas marcadas «declarativo» no configuran por sí solas el runtime.
             Cada una indica sus lectores y de dónde sale el valor en ejecución.
-          </p> : null}
+          </Notice> : null}
 
-          <Desplazable etiqueta={title} className="max-w-full overflow-x-auto rounded-lg border border-line"><table className={TABLA}><thead><tr>
+          <Desplazable etiqueta={title} className={SCROLL}><table className={CARD_TABLE}><thead><tr>
             {columnas.map((columna) => {
               const inerte = motivoInerte(key, columna.clave);
               return <th
@@ -142,12 +141,12 @@ export function CollectionTable({
             pendiente={pendiente} busy={busy} onConfirmar={onConfirmar} onCancelar={onCancelar}
           /> : null}
 
-          {aviso ? <Aviso tone={aviso.tone}>{aviso.text}</Aviso> : null}
+          {aviso ? <Outcome tone={aviso.tone}>{aviso.text}</Outcome> : null}
 
           {/* El JSON crudo no se borra: es la única forma de ver un campo que la tabla no tiene
               columna para mostrar. Lo que cambia es que ya no es lo primero que se ve. */}
           <details className="text-[13px]">
-            <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver crudo ({filas.length} filas tal cual las publica el servidor)</summary>
+            <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver crudo ({filas.length} {filas.length === 1 ? 'fila' : 'filas'} tal cual {filas.length === 1 ? 'la publica' : 'las publica'} el servidor)</summary>
             <ul className="m-0 mt-2 grid max-h-80 list-none gap-1.5 overflow-auto p-0">
               {filas.map((fila, indice) => <li key={claveDeFila(key, fila, indice)} className="rounded-md bg-subtle p-2"><code className="text-xs break-all">{JSON.stringify(fila)}</code></li>)}
             </ul>
@@ -226,7 +225,11 @@ function Celda({
   }
 
   if (typeof valor === 'boolean') {
-    return <Badge tone={valor ? 'online' : 'offline'}>{valor ? 'Sí' : 'No'}</Badge>;
+    const detalle = detalleDeColumna(coleccion, columna.clave, fila);
+    return <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5">
+      <Badge tone={valor ? 'online' : 'offline'}>{valor ? 'Sí' : 'No'}</Badge>
+      {detalle.length ? <span className="text-xs text-muted">{detalle.join(' · ')}</span> : null}
+    </span>;
   }
   if (esColumnaDeFecha(columna.clave)) return <FechaRelativa value={valor} />;
   if (Array.isArray(valor)) {

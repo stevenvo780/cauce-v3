@@ -5,7 +5,7 @@ import { useApi } from '../../api/context';
 import type { AgentDocumentContent, AgentDocumentItem, AgentDocumentKind } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import { cn } from '../../cn';
-import { Button, Notice } from '../../components/form-kit';
+import { Button, Notice } from '../../components/kit';
 import { EmptyState } from '../../components/ui';
 import type { PermissionState } from '../../lib';
 import {

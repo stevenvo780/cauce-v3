@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import { ContextoContaminadoError } from '../../api/client/agent-client';
-import { Button, Notice, SectionCard } from '../../components/form-kit';
+import { Button, Notice, SectionCard } from '../../components/kit';
 import { ReasonField } from './context-ui';
 import { problemaDeMotivo } from './ficheros-motivo';
 import { CONTAMINACION_ILEGIBLE, contaminacionDe, type ContaminacionDeContexto } from './perfil';

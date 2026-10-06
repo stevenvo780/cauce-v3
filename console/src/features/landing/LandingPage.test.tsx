@@ -45,7 +45,7 @@ it('resume la consola entera: deja lo que exige atención antes de las métricas
   // The actionable alert band comes before the aggregate metrics so an operator can reach the
   // actual incident without scrolling past four large cards.
   const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
-  const numeros = screen.getByText('99').closest('.metrics-grid');
+  const numeros = screen.getByRole('group', { name: /cifras de la flota/i });
   expect(numeros).not.toBeNull();
   if (numeros) {
     // `compareDocumentPosition` with FOLLOWING = the alert band is before the numbers.
@@ -185,7 +185,7 @@ it('las cifras que no cuadran declaran de qué lectura sale cada una', async () 
   renderLanding();
   const tiras = await screen.findByRole('region', { name: /el detalle de lo que ya se leyó/i });
 
-  const enLinea = screen.getByText('Agentes en línea').closest('.metric');
+  const enLinea = screen.getByText('Agentes en línea').closest('article');
   const flota = within(tiras).getByRole('heading', { name: /flota por estado/i }).closest('article');
   const porEstado = [...(flota?.querySelectorAll('[data-cifra]') ?? [])]
     .reduce((suma, celda) => suma + Number(celda.textContent), 0);
@@ -194,7 +194,7 @@ it('las cifras que no cuadran declaran de qué lectura sale cada una', async () 
   expect(enLinea?.textContent).toContain(ALCANCE_DE_LA_CIFRA.leases);
   expect(flota?.textContent).toContain(ALCANCE_DE_LA_CIFRA.actividad);
 
-  const esperando = screen.getByText('Esperando turno').closest('.metric');
+  const esperando = screen.getByText('Esperando turno').closest('article');
   const colas = within(tiras).getByRole('heading', { name: /colas por carril/i }).closest('article');
   expect(esperando?.textContent).toContain('29');
   expect(colas?.querySelector('dl > div')?.textContent).toBe('Pendientes4');

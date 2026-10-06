@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { cn } from '../../cn';
 import { PageHeader } from '../../components/ui';
 import { NAV_ENTRIES } from '../../nav';
@@ -11,24 +11,17 @@ const TITULO = 'Ayuda y documentación';
 /** What each view is FOR, beyond the one-line `que` the menu already carries. Keyed by route id so
     a view that changes its address or its name cannot leave the help pointing at nothing. */
 const DETALLE: Record<string, string> = {
-  overview: 'Resumen ejecutivo de la flota, estado de colas, consumo de cuotas y alertas operativas prioritarias.',
+  overview: 'Resumen de la flota: colas, consumo de cuotas y alertas prioritarias.',
   live: 'La oficina en vivo y el cajón de cada agente. «Contexto» es el único lugar para modificar '
     + 'su perfil canónico y su manual; «Ficheros» es un visor de lo materializado.',
-  accounts: 'Único lugar para registrar o retirar cuentas de proveedores y modificar sus techos y '
-    + 'bindings de fallback, además de consultar límites y consumo.',
-  messages: 'Único lugar para redactar y publicar mensajes durables. Muestra el estado de sus entregas '
-    + 'y deriva cualquier rescate operativo a Colas.',
-  queues: 'Único lugar para reinyectar, cancelar o resolver entregas, con confirmación, recibo exacto '
-    + 'y relectura ante un resultado incierto.',
-  observability: 'Eventos auditables del bus, métricas del gateway, egress hacia clientes y trazas de '
-    + 'auditoría firmadas.',
-  config: 'Control atómico de topología: tenants, salas, membresías, roles de permisos y ACL, con '
-    + 'historial de revisiones y reversión segura. No edita contextos ni el pool de cuentas: esas '
-    + 'escrituras pertenecen a Contexto y Cuentas y cuotas.',
-  terminal: 'TUI en vivo del agente y Terminal para una shell nueva en su espacio, con permisos, '
-    + 'usuario destino y control auditado.',
-  ayuda: 'Esta página: el mapa de la consola, el vocabulario de estados y los atajos que la interfaz '
-    + 'declara por su cuenta.',
+  accounts: 'Alta y baja de cuentas de proveedores, techos, fallback, límites y consumo.',
+  messages: 'Redactar y publicar mensajes durables, con el estado de sus entregas.',
+  queues: 'Reinyectar, cancelar o resolver entregas, con confirmación y recibo exacto.',
+  observability: 'Eventos auditables del bus, métricas del gateway, egress y trazas de auditoría firmadas.',
+  config: 'Topología (tenants, salas, membresías, roles y ACL) con historial de revisiones y reversión. '
+    + 'No edita contextos ni cuentas: eso vive en Contexto y Cuentas y cuotas.',
+  terminal: 'TUI en vivo del agente y shell nueva en su espacio, con permisos y control auditado.',
+  ayuda: 'Esta página: mapa de la consola, estados y atajos.',
 };
 
 const CONCEPTOS: readonly [string, string][] = [
@@ -59,12 +52,35 @@ const ATAJOS: readonly [string[], string][] = [
 ];
 
 const SECCIONES = [
-  { id: 'mapa', titulo: 'Mapa de vistas de la consola' },
-  { id: 'terminal', titulo: 'Terminal de agentes' },
-  { id: 'conceptos', titulo: 'Contexto, capacidades y permisos' },
-  { id: 'estados', titulo: 'Estados de la flota y ciclo de entrega' },
-  { id: 'atajos', titulo: 'Atajos de teclado y navegación' },
+  { id: 'mapa', titulo: 'Mapa de vistas de la consola', corto: 'Vistas' },
+  { id: 'terminal', titulo: 'Terminal de agentes', corto: 'Terminal' },
+  { id: 'conceptos', titulo: 'Contexto, capacidades y permisos', corto: 'Conceptos' },
+  { id: 'estados', titulo: 'Estados de la flota y ciclo de entrega', corto: 'Estados' },
+  { id: 'atajos', titulo: 'Atajos de teclado y navegación', corto: 'Atajos' },
 ] as const;
+
+/** The section whose heading last crossed the top band of the viewport; only a reading aid, so it
+    stays on the first one where IntersectionObserver is missing. */
+function useSeccionActiva(): string {
+  const [activa, setActiva] = useState<string>(SECCIONES[0].id);
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return undefined;
+    const visibles = new Set<string>();
+    const observer = new IntersectionObserver((entradas) => {
+      for (const entrada of entradas) {
+        if (entrada.isIntersecting) visibles.add(entrada.target.id); else visibles.delete(entrada.target.id);
+      }
+      const primera = SECCIONES.find((seccion) => visibles.has(seccion.id));
+      if (primera) setActiva(primera.id);
+    }, { rootMargin: '0px 0px -60% 0px' });
+    for (const seccion of SECCIONES) {
+      const nodo = document.getElementById(seccion.id);
+      if (nodo) observer.observe(nodo);
+    }
+    return () => { observer.disconnect(); };
+  }, []);
+  return activa;
+}
 
 function Pill({ tono, children }: { tono: Tone; children: ReactNode }) {
   return (
@@ -77,17 +93,18 @@ function Pill({ tono, children }: { tono: Tone; children: ReactNode }) {
 
 function Seccion({ id, titulo, children }: { id: string; titulo: string; children: ReactNode }) {
   return (
-    <section id={id} aria-labelledby={`${id}-titulo`} className="scroll-mt-6 rounded-xl border border-line bg-surface p-5 shadow-card max-[760px]:p-4">
-      <h2 id={`${id}-titulo`} className="m-0 mb-3 text-[15px] font-semibold tracking-tight">{titulo}</h2>
+    <section id={id} aria-labelledby={`${id}-titulo`} className="scroll-mt-6 rounded-xl border border-line bg-surface p-5 shadow-card max-[760px]:p-3.5">
+      <h2 id={`${id}-titulo`} className="m-0 mb-2 text-[15px] font-semibold tracking-tight">{titulo}</h2>
       {children}
     </section>
   );
 }
 
 /** Term on the left, definition on the right; stacks on a phone. */
-const FILA = 'grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)] items-baseline gap-x-4 gap-y-1 py-2.5 max-[760px]:grid-cols-1';
+const FILA = 'grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)] items-baseline gap-x-4 gap-y-0.5 py-2 max-[760px]:grid-cols-1';
 
 export function HelpPage() {
+  const activa = useSeccionActiva();
   return (
     <div className="mx-auto w-full max-w-5xl">
       <PageHeader
@@ -97,14 +114,16 @@ export function HelpPage() {
           + 'qué significa cada estado de la flota y qué atajos de teclado declara la interfaz.'}
       />
       <div className="grid items-start gap-4 min-[1000px]:grid-cols-[13rem_minmax(0,1fr)] min-[1000px]:gap-8">
-        <nav aria-label="En esta página" className="-mx-4 flex gap-1 overflow-x-auto px-4 min-[1000px]:sticky min-[1000px]:top-6 min-[1000px]:mx-0 min-[1000px]:grid min-[1000px]:overflow-visible min-[1000px]:px-0">
+        <nav aria-label="En esta página" className="flex flex-wrap gap-1 min-[1000px]:sticky min-[1000px]:top-6 min-[1000px]:grid min-[1000px]:gap-0.5">
           {SECCIONES.map((seccion) => (
             <a
               key={seccion.id}
               href={`#${seccion.id}`}
-              className="shrink-0 rounded-md px-2.5 py-1.5 text-[13px] text-muted no-underline transition-colors hover:bg-subtle hover:text-fg max-[999px]:border max-[999px]:border-line max-[999px]:bg-surface"
+              aria-current={activa === seccion.id ? 'location' : undefined}
+              className="rounded-md px-1.5 py-1.5 text-xs text-muted no-underline min-[1000px]:text-[13px] transition-colors hover:bg-subtle hover:text-fg aria-[current]:font-medium aria-[current]:text-fg max-[999px]:border max-[999px]:border-line max-[999px]:bg-surface min-[1000px]:px-2.5 min-[1000px]:aria-[current]:bg-muted-bg"
             >
-              {seccion.titulo}
+              <span className="min-[1000px]:hidden">{seccion.corto}</span>
+              <span className="max-[999px]:hidden">{seccion.titulo}</span>
             </a>
           ))}
         </nav>
@@ -125,11 +144,11 @@ export function HelpPage() {
           </Seccion>
 
           <Seccion id="terminal" titulo="Terminal de agentes">
-            <div className="grid max-w-prose gap-2 text-[13px] leading-relaxed text-fg-2 [&_p]:m-0">
-              <p>Elegí un agente en la barra lateral. Su TUI se abre con teclado cuando el servidor autoriza el control; no hace falta escribir una justificación. La apertura y la toma quedan auditadas con tu identidad.</p>
-              <p>Mientras tenés el control, los mensajes nuevos del bus quedan en cola; un turno que ya estaba en marcha puede terminar. Devolver el control, cambiar de agente o cerrar la vista libera el teclado y permite continuar las entregas. La sesión tiene una ventana limitada; Prorrogar la extiende.</p>
-              <p>Si el destino sólo permite observar, la terminal indica «Solo lectura». Si falta autoridad o conexión, muestra el motivo real. Una shell es una sesión aparte; no reemplaza la TUI del agente.</p>
-            </div>
+            <ul className="m-0 grid max-w-prose list-disc gap-1.5 pl-4 text-[13px] leading-relaxed text-fg-2">
+              <li>Elegí un agente en la barra lateral: su TUI se abre con teclado cuando el servidor autoriza el control, sin justificación. Abrirla y tomarla queda auditado con tu identidad.</li>
+              <li>Mientras tenés el control, los mensajes nuevos del bus quedan en cola; un turno ya en marcha puede terminar. Devolver el control, cambiar de agente o cerrar la vista libera el teclado. La sesión tiene una ventana limitada; Prorrogar la extiende.</li>
+              <li>Si el destino sólo permite observar, la terminal indica «Solo lectura»; si falta autoridad o conexión, muestra el motivo real. Una shell es una sesión aparte y no reemplaza la TUI.</li>
+            </ul>
           </Seccion>
 
           <Seccion id="conceptos" titulo="Contexto, capacidades y permisos">

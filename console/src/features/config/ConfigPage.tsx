@@ -3,7 +3,7 @@ import { ShieldOff } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { ConsoleAccessBoundary } from '../../api/console-access';
 import type { ConsoleAccess } from '../../api/types';
-import { LinkButton, Notice } from '../../components/form-kit';
+import { LinkButton, Notice } from '../../components/kit';
 import { ErrorState, LoadingState, PageHeader, RefreshButton } from '../../components/ui';
 import { cn } from '../../cn';
 import type { permissionState } from '../../lib';
@@ -28,7 +28,7 @@ export function ConfigPage() {
   return <ConsoleAccessBoundary><ConfigPageContent /></ConsoleAccessBoundary>;
 }
 
-const NAV_TAB = 'cursor-pointer whitespace-nowrap rounded-md border-0 bg-transparent px-3 py-2 text-left text-[13px] font-medium text-fg-2 outline-none transition-colors '
+const NAV_TAB = 'cursor-pointer whitespace-nowrap rounded-md border-0 bg-transparent px-2.5 py-2 md:px-3 text-left text-[13px] font-medium text-fg-2 outline-none transition-colors '
   + 'hover:bg-subtle hover:text-fg focus-visible:outline-2 focus-visible:outline-brand data-[active]:bg-muted-bg data-[active]:text-fg';
 
 function seccionPedida(search: string): ConfigSectionId {
@@ -71,7 +71,7 @@ function ConfigPageContent() {
       eyebrow="Configuración"
       title="Ajustes"
       description="Topología, agentes, permisos y cambios versionados. El contexto de cada agente se edita en su propia página."
-      actions={<RefreshButton onClick={config.reload} loading={config.loading} />}
+      actions={<RefreshButton onClick={config.reload} loading={config.loading} compact />}
     />
 
     {/* Without permission, NOTHING is hidden: the tables look the same and the buttons stay inert with the
@@ -89,7 +89,7 @@ function ConfigPageContent() {
       orientation={ancha ? 'vertical' : 'horizontal'}
       className="grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-[13rem_minmax(0,1fr)] md:items-start md:gap-6">
       <Tabs.List aria-label="Secciones de ajustes" activateOnFocus
-        className={cn('flex gap-1 overflow-x-auto max-md:border-b max-md:border-line max-md:pb-2', 'md:sticky md:top-4 md:flex-col md:overflow-visible')}>
+        className={cn('flex gap-1 max-md:flex-wrap max-md:border-b max-md:border-line max-md:pb-2', 'md:sticky md:top-4 md:flex-col')}>
         {CONFIG_SECTIONS.map((section) => <Tabs.Tab key={section.id} value={section.id} className={NAV_TAB}>{section.label}</Tabs.Tab>)}
       </Tabs.List>
       {CONFIG_SECTIONS.map((section) => <Tabs.Panel key={section.id} value={section.id} className="min-w-0 outline-none">

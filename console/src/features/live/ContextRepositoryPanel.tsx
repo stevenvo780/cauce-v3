@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import type { ContextRepositoryInspection, JournalVerification } from '../../api/client/context-repository-client';
-import { Button, Notice, SectionCard } from '../../components/form-kit';
+import { Button, Notice, SectionCard } from '../../components/kit';
 import { ContextRepositoryApply } from './ContextRepositoryApply';
 import { NativeContextRepositoryPanel } from './NativeContextRepositoryPanel';
 import { CAMPOS_DEL_PERFIL, ETIQUETAS } from './perfil';

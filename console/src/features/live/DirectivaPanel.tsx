@@ -3,7 +3,7 @@ import { useApi } from '../../api/context';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { useResource, type Resource } from '../../api/use-resource';
 import { cn } from '../../cn';
-import { Button, Notice } from '../../components/form-kit';
+import { Button, Notice } from '../../components/kit';
 import { EmptyState } from '../../components/ui';
 import { selectAgentRegistryEntry } from './agent-registry-entry';
 import { ubicacionDeclarada } from './capas-pendientes';

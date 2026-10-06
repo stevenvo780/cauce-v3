@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import type { ContextSourcePreview } from '../../api/client/context-repository-client';
 import { CAMPOS_DEL_PERFIL, ETIQUETAS, esPerfilAplicado } from './perfil';
-import { Button, Notice } from '../../components/form-kit';
+import { Button, Notice } from '../../components/kit';
 import { ReasonField } from './context-ui';
 import { problemaDeMotivo } from './ficheros-motivo';
 import { pendingProfileReceipt, profileIsAdopted } from './profile-save-receipt';

@@ -72,6 +72,13 @@ const EXPLICACION_DE_CAMPO: Record<string, Record<string, string>> = {
     allow_notify: 'Un agente con este rol puede escribirle a una conversación humana sin que nadie '
       + 'se lo haya preguntado.',
   },
+  chain_policies: {
+    progress_relay_enabled: 'Reenvía al origen avisos intermedios de una cadena de delegaciones, hasta el tope de eventos.',
+    cycle_cut_enabled: 'Corta una delegación que vuelve a un agente que ya participó en la misma cadena.',
+    failure_coalesce_enabled: 'Pliega los avisos repetidos del mismo fracaso dentro de la ventana, en vez de uno por reintento.',
+    delegation_caps_enabled: 'Aplica los topes de abanico por turno, repeticiones de arista y delegaciones por raíz.',
+    human_gate_enabled: 'Activa la compuerta humana de las cadenas: las que quedan abiertas esperan la decisión de una persona.',
+  },
   tenants: {
     enabled: 'Apagar un cliente lo saca del enrutado entero: sus agentes dejan de recibir entregas.',
   },

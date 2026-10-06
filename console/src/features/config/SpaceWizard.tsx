@@ -1,11 +1,11 @@
 import { ArrowLeft, ArrowRight, Braces, CircleCheck, RotateCcw, Save, SearchCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { ConfigMutation } from '../../api/types';
-import { Button } from '../../components/form-kit';
+import { Button, Outcome, PREVIEW } from '../../components/kit';
 import { Badge, EmptyState } from '../../components/ui';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
-import { Aviso, CHECK_LABEL, FORM_GRID, HINT, PREVIEW } from './config-ui';
+import { CHECK_LABEL, FORM_GRID, HINT } from './config-ui';
 
 type SpaceStep = 'tenant' | 'room' | 'membership' | 'harness';
 type WizardStep = SpaceStep | 'review';
@@ -274,7 +274,7 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
         <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver la mutación del paso pendiente</summary>
         <pre className={`${PREVIEW} mt-2`} aria-label="Mutación pendiente del wizard">{pendingText}</pre>
       </details> : null}
-      {plan.length > 0 && !pending ? <Aviso tone="success">Espacio completo: los {plan.length} pasos quedaron aplicados.</Aviso> : null}
+      {plan.length > 0 && !pending ? <Outcome tone="success">Espacio completo: los {plan.length} pasos quedaron aplicados.</Outcome> : null}
       <div className="flex flex-wrap gap-2">
         <Button disabled={!canWrite || busy || !pending || Boolean(invalid)} onClick={() => void run(true)}><SearchCheck size={16} aria-hidden="true" />Previsualizar paso</Button>
         <Button variant="primary" disabled={!canWrite || busy || !applicable} onClick={() => void run(false)}><Save size={16} aria-hidden="true" />Aplicar paso</Button>
@@ -283,8 +283,8 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
       {preview ? <pre className={PREVIEW} aria-label="Dry-run del wizard">{preview}</pre> : null}
     </> : null}
 
-    {invalid ? <Aviso tone="error">{invalid}</Aviso> : null}
-    {notice ? <Aviso tone={notice.tone}>{notice.text}</Aviso> : null}
+    {invalid ? <Outcome tone="error">{invalid}</Outcome> : null}
+    {notice ? <Outcome tone={notice.tone}>{notice.text}</Outcome> : null}
 
     {step === 'review' ? null : <div className="flex flex-wrap gap-2">
       <Button size="sm" disabled={index === 0} onClick={() => { setStep(wizardSteps[index - 1]); }}><ArrowLeft size={14} aria-hidden="true" />Atrás</Button>

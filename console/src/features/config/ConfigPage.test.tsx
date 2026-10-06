@@ -229,7 +229,7 @@ it('FAMILIA 8: la página se llama IGUAL que su entrada de menú, y no hay antet
   const titulo = await screen.findByRole('heading', { level: 1 });
 
   expect(titulo).toHaveTextContent(/^Ajustes$/);
-  expect(document.querySelector('.eyebrow')).toHaveTextContent('Configuración');
+  expect(titulo.closest('header')).toHaveTextContent(/^Configuración/);
   expect(document.body.textContent).not.toMatch(/atomic control plane/i);
 });
 
@@ -299,31 +299,20 @@ it.each([
   });
 });
 
-it('FAMILIA 8: las columnas de números se marcan para alinearse a la derecha, y sólo ellas', async () => {
+it('la política de cadena muestra etiquetas en español y pliega los topes bajo su interruptor', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1 });
   await irA(user, AVISOS);
 
   const heading = await screen.findByRole('heading', { name: /política de cadena/i });
-  const panel = heading.closest('section');
-  expect(panel).not.toBeNull();
-  const tabla = panel?.querySelector('table');
+  const tabla = heading.closest('section')?.querySelector('table');
   expect(tabla).not.toBeNull();
-  if (tabla) {
-    const cabeceras = Array.from(tabla.querySelectorAll('th'));
-    const numerica = cabeceras.find((th) => /progress_relay_max_events/i.test(th.textContent));
-    const texto = cabeceras.find((th) => /^\s*id\s*$/i.test(th.textContent));
+  const cabeceras = Array.from(tabla?.querySelectorAll('th') ?? []).map((th) => th.textContent);
 
-    expect(numerica, 'no está la columna numérica del fixture').toBeDefined();
-    expect(numerica).toHaveAttribute('data-numero', 'true');
-    if (numerica) {
-      const celda = tabla.querySelectorAll('tbody tr td')[cabeceras.indexOf(numerica)];
-      expect(celda).toHaveAttribute('data-numero', 'true');
-      expect(celda).toHaveTextContent('8');
-    }
-
-    expect(texto, 'no está la columna de texto del fixture').toBeDefined();
-    expect(texto).not.toHaveAttribute('data-numero');
-  }
+  expect(cabeceras.join(' ')).not.toMatch(/_/);
+  expect(cabeceras.some((texto) => /relé de progreso/i.test(texto))).toBe(true);
+  expect(cabeceras.some((texto) => /eventos por relé/i.test(texto))).toBe(false);
+  expect(tabla).toHaveTextContent('hasta 8 eventos');
+  expect(tabla).toHaveTextContent('6 por turno · 3 por arista · 64 por raíz');
 });
