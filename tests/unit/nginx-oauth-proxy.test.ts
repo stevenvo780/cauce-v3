@@ -210,7 +210,7 @@ async function startProxy(image: string, directory: string, gatewayPort: number,
     '--user', `${String(uid)}:${String(gid)}`, '--mount', `type=bind,src=${configPath},dst=/etc/nginx/conf.d/default.conf,readonly`,
     '--mount', `type=bind,src=${directory},dst=/tmp/fixture,readonly`,
     '--tmpfs', `/tmp:rw,noexec,nosuid,size=16m,uid=${String(uid)},gid=${String(gid)},mode=0700`,
-    '--tmpfs', `/var/cache/nginx:rw,noexec,nosuid,size=8m,uid=${String(uid)},gid=${String(gid)},mode=0755`,
+    '--tmpfs', `/var/cache/nginx:rw,noexec,nosuid,size=32m,uid=${String(uid)},gid=${String(gid)},mode=0755`,
     '--tmpfs', `/var/run:rw,noexec,nosuid,size=8m,uid=${String(uid)},gid=${String(gid)},mode=0755`,
     '--tmpfs', `/var/log/nginx:rw,noexec,nosuid,size=8m,uid=${String(uid)},gid=${String(gid)},mode=0755`,
     '--entrypoint', 'sleep', image, '300']);
@@ -328,6 +328,25 @@ describe.sequential('OAuth through real pinned Nginx with fixture mTLS', () => {
     const before = seen.length; const body = 'x'.repeat(8193);
     const result = await send(origin, '/oauth/token', 'POST', { 'content-length': String(Buffer.byteLength(body)) }, body);
     expect(result.status).toBe(413); expect(seen).toHaveLength(before); expect(result.headers['cache-control']).toContain('no-store');
+  });
+
+  it.each(['/v3/console/messages', '/v3/console/publish-intents'])('forwards the full attachment envelope and bounds the next byte: %s', async path => {
+    const { MAX_PUBLISH_BODY_BYTES } = await import('@cauce/protocol');
+    const body = 'x'.repeat(MAX_PUBLISH_BODY_BYTES);
+    const headers = { 'content-length': String(body.length), 'x-cauce-operator': 'spoofed', 'content-type': 'application/json' };
+    expect((await send(origin, path, 'POST', headers, body)).status).toBe(200);
+    expect(seen.at(-1)).toMatchObject({ path, method: 'POST', body, peer: 'oauth-proxy-fixture' });
+    expect(seen.at(-1)?.headers['x-cauce-operator']).toBeUndefined();
+    const before = seen.length;
+    expect((await send(origin, path, 'POST', { ...headers, 'content-length': String(body.length + 1) }, body + 'x')).status).toBe(413);
+    expect(seen).toHaveLength(before);
+  });
+
+  it.each(['/v3/console/publish-intents/confirm', '/v3/console/messages/other'])('retains the smaller limit outside publish routes: %s', async path => {
+    const before = seen.length;
+    const body = 'x'.repeat(1_048_577);
+    expect((await send(origin, path, 'POST', { 'content-length': String(body.length) }, body)).status).toBe(413);
+    expect(seen).toHaveLength(before);
   });
 
   it('rejects an untrusted upstream CA without accepting SPA as success', async () => {
