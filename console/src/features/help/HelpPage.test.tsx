@@ -1,7 +1,8 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { expect, it } from 'vitest';
 import { HelpPage } from './HelpPage';
 import { NAV_ENTRIES } from '../../nav';
+import { LIVE_STATE_META, LIVE_STATES } from '../live/agent-state';
 
 /**
  * The help is a hand-written map of the console, so nothing keeps it honest except a test: a route
@@ -11,37 +12,47 @@ import { NAV_ENTRIES } from '../../nav';
 
 it('describe TODAS las vistas del menú, con la dirección real de cada una', () => {
   render(<HelpPage />);
-  const texto = document.body.textContent;
+  const mapa = screen.getByRole('region', { name: /mapa de vistas/i });
 
   for (const entrada of NAV_ENTRIES) {
-    expect(texto).toContain(`${entrada.label} (/${entrada.id})`);
+    const enlace = within(mapa).getByRole('link', { name: new RegExp(`^${entrada.label} /${entrada.id}$`) });
+    expect(enlace).toHaveAttribute('href', `/${entrada.id}`);
   }
 });
 
 it('documenta el atajo que la consola declara en su propia barra lateral', () => {
-  // `App.tsx` publishes `aria-keyshortcuts="Alt+Shift+B"` on the toggle: a shortcut announced by the interface and ab
+  // `AppShell` publishes `aria-keyshortcuts="Alt+Shift+B"` on the toggle: a shortcut announced by the interface and absent here would be a lie.
   render(<HelpPage />);
-  const atajos = screen.getByRole('heading', { name: /atajos de teclado/i }).closest('.panel');
+  const atajos = screen.getByRole('region', { name: /atajos de teclado/i });
 
-  expect(atajos).not.toBeNull();
-  expect(atajos?.textContent).toMatch(/Alt \+ Shift \+ B/);
-  expect(atajos?.textContent).toMatch(/barra lateral/i);
+  expect(atajos.textContent).toMatch(/Alt \+ Shift \+ B/);
+  expect(atajos.textContent).toMatch(/barra lateral/i);
+  expect(atajos.querySelectorAll('kbd').length).toBeGreaterThanOrEqual(7);
 });
 
-it('abre con su propio encabezado, igual que su entrada de ruta', () => {
+it('abre con su propio encabezado y un índice que apunta a cada sección', () => {
   render(<HelpPage />);
 
   expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Ayuda y documentación$/);
-  expect(screen.getByRole('heading', { name: /mapa de vistas/i })).toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: /estados de la flota/i })).toBeInTheDocument();
+  const indice = screen.getByRole('navigation', { name: /en esta página/i });
+  for (const enlace of within(indice).getAllByRole('link')) {
+    const destino = enlace.getAttribute('href')?.slice(1) ?? '';
+    expect(document.getElementById(destino), `la sección ${destino} no existe`).not.toBeNull();
+  }
+});
+
+it('nombra los estados de la flota con las palabras que muestra la consola, no con sus enums', () => {
+  render(<HelpPage />);
+  const estados = screen.getByRole('region', { name: /estados de la flota/i });
+
+  for (const estado of LIVE_STATES) expect(estados).toHaveTextContent(LIVE_STATE_META[estado].label);
+  expect(estados.textContent).not.toMatch(/in_flight|degraded|down \/ off/);
 });
 
 it('separa el contexto declarado de capacidades y permisos, con un solo lugar de edición', () => {
   render(<HelpPage />);
-  const seccion = screen.getByRole('heading', { name: /contexto, capacidades y permisos/i })
-    .closest('.panel');
+  const seccion = screen.getByRole('region', { name: /contexto, capacidades y permisos/i });
 
-  expect(seccion).not.toBeNull();
   expect(seccion).toHaveTextContent(/herramientas declaradas/i);
   expect(seccion).toHaveTextContent(/no habilita un binario ni un MCP/i);
   expect(seccion).toHaveTextContent(/membresías, roles de permisos, ACL y RBAC/i);

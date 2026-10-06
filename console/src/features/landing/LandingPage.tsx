@@ -1,214 +1,252 @@
-import { AlertTriangle, CheckCircle2, CircleHelp, Gauge } from 'lucide-react';
+import { ArrowUpRight, CheckCircle2, CircleHelp, TriangleAlert } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
+import type { FleetWorkState, QuotaSeverity } from '../../api/types';
+import { cn } from '../../cn';
 import { LoadingState, Metric, PageHeader, RefreshButton, Time, Unknown } from '../../components/ui';
 import { onNavClick } from '../../router';
+import { useFleet } from '../../shell/fleet-context';
+import { TONE_CLASS, type Tone } from '../../status-tone';
 import { HarnessStrip } from './HarnessStrip';
 import {
   agruparAlertas, ALCANCE_DE_LA_CIFRA, conteoPorEstado, desgloseDeColas, GRUPOS_DE_COLA,
   puedeDecirSinIncidencias, resumenPortada, ROTULO_DE_COLA, saldosPorProveedor,
   type ConteoDeEstado, type DesgloseDeColas, type SaldoDeProveedor,
 } from './landing';
-import './landing.css';
+
+const SEVERIDAD_TONO: Record<QuotaSeverity, Tone> = {
+  ok: 'ok', warn: 'warn', critical: 'danger', exhausted: 'danger', unknown: 'neutral',
+};
+const ESTADO_TONO: Record<FleetWorkState, Tone> = {
+  idle: 'neutral', queued: 'info', working: 'ok', saturated: 'ok', stalled: 'danger',
+};
+const ALERTA_TONO: Record<'danger' | 'warning', Tone> = { danger: 'danger', warning: 'warn' };
+
+const NOTAS = `Ninguna cifra se calcula en el navegador, y una lectura que no llegó se declara en vez de pasar por «todo bien». Cada bloque enlaza a su vista completa.`;
 
 /**
- * **The landing page.** What you see when entering the console, and the only thing worth reading
- * to know whether there is anything to do.
- *
- * Two decisions that are NOT stylistic:
- *
- * 1. **The landing summarizes; `/live` remains the live view.** The hypergraph and the agent
- *    table are not duplicated here: totals and the link go here.
- * 2. **A source that did not answer is NOT painted as "all clear".** `resumenPortada()` separates
- *    "no incidents" from "I could not read it", and the top banner only says *no incidents* when
- *    all four reads have arrived.
+ * The landing summarizes; `/live` stays the live view. A source that did not answer is NOT painted
+ * as "all clear": the verdict only speaks once the four reads have settled, with data or with error.
  */
-
 export function LandingPage() {
   const api = useApi();
-  const status = useResource('status', () => api.getStatus());
-  const queues = useResource('queues', () => api.getQueues());
+  const fleet = useFleet();
+  const { status, queues, activity } = fleet;
   const quotas = useResource('quotas', () => api.getQuotas());
-  const activity = useResource('activity', () => api.getFleetActivity());
   const adapters = useResource('adapters', () => api.listAdapters());
 
-  function recargarTodo() {
-    void status.reload();
-    void queues.reload();
-    void quotas.reload();
-    void activity.reload();
-    void adapters.reload();
-  }
-
   const cargando = status.loading || queues.loading || quotas.loading || activity.loading || adapters.loading;
-  /**
-   * A read that has NOT yet returned is not a read that failed. Without this distinction, the
-   * banner announces "4 sources did not answer" on the first blink of every load: a serious
-   * warning that fires every time and, by repeating falsely, stops being read exactly when it
-   * is true. The banner waits for all four to settle —with data or with error— before speaking.
-   */
   const asentadas = [status, queues, quotas, activity]
     .every((recurso) => recurso.data !== undefined || recurso.error !== undefined);
   const resumen = resumenPortada({
-    status: status.data,
-    queues: queues.data,
-    quotas: quotas.data,
-    activity: activity.data,
+    status: status.data, queues: queues.data, quotas: quotas.data, activity: activity.data,
   });
   const totals = activity.data?.totals;
-  const colas = desgloseDeColas(queues.data);
-  const saldos = saldosPorProveedor(quotas.data);
-  const flota = conteoPorEstado(totals);
+  const muertas = queues.data?.dead;
+  const esperando = totals?.queued;
 
   return (
     <>
       <PageHeader
         eyebrow="Portada"
         title="Cauce en una pantalla"
-        description="El resumen de conjunto: flota, colas, cuotas y lo que exige atención. Cada bloque enlaza a su vista completa; ningún número se sintetiza en el navegador, y una lectura que no llegó se declara como tal en vez de pasar por «todo bien»."
-        actions={<RefreshButton onClick={recargarTodo} loading={cargando} />}
+        description={`El resumen de conjunto: flota, colas, cuotas y lo que exige atención. ${NOTAS}`}
+        notes={(
+          <>
+            <p className="m-0"><strong className="text-fg">Agentes en línea</strong> cuenta {ALCANCE_DE_LA_CIFRA.leases}; «Flota por estado» cuenta los que vio {ALCANCE_DE_LA_CIFRA.actividad}. Son lecturas distintas y no tienen por qué dar el mismo número.</p>
+            <p className="m-0"><strong className="text-fg">Esperando turno</strong> lo cuenta {ALCANCE_DE_LA_CIFRA.actividad}; las cifras de colas las cuenta el servidor sobre {ALCANCE_DE_LA_CIFRA.colaEntera}. El desglose por carril es la muestra que trajo la página, no la cola.</p>
+            <p className="m-0"><strong className="text-fg">Saldo</strong> es {ALCANCE_DE_LA_CIFRA.peorVentana}: la que deja al proveedor sin turno y la que manda el color. «Trabajando» junta los que van sobrados y los saturados.</p>
+          </>
+        )}
+        actions={<RefreshButton loading={cargando} onClick={() => {
+          fleet.reload();
+          void quotas.reload();
+          void adapters.reload();
+        }} />}
       />
 
-
-      <section className="landing-alertas" aria-label="Lo que exige atención">
-        {!asentadas ? <LoadingState label="Leyendo flota, colas y cuotas…" /> : null}
-
-        {asentadas && resumen.alertas.length === 0 && puedeDecirSinIncidencias(resumen) ? (
-          <p className="landing-veredicto" data-tono="ok">
-            <CheckCircle2 size={18} aria-hidden="true" />
-            <span>Sin incidencias: ninguna entrega muerta, ningún ACK vencido, ningún agente detenido y ninguna cuenta sin saldo.</span>
-          </p>
-        ) : null}
-
-        {/* One row per VIEW, not one per finding: four alerts resolved under "The fleet now"
-            were four identical bands with four links to the same place. */}
-        {asentadas ? agruparAlertas(resumen.alertas).map((grupo) => (
-          <p className="landing-alerta" data-tono={grupo.tono} key={grupo.ruta}>
-            <AlertTriangle size={18} aria-hidden="true" />
-            <span>
-              <strong>
-                {grupo.alertas.length === 1
-                  ? grupo.alertas[0].titulo
-                  : `${String(grupo.alertas.length)} cosas que atender en ${grupo.rutaLabel}`}
-              </strong>
-              {grupo.alertas.length === 1 ? (
-                <small title={grupo.alertas[0].fuente}>{grupo.alertas[0].detalle}</small>
-              ) : (
-                <small>
-                  {grupo.alertas.map((alerta, indice) => (
-                    // The endpoint route goes to the `title=`: it is needed to cross-check a doubtful
-                    // number, and is not needed for anything else.
-                    <span key={alerta.id}>
-                      {indice > 0 ? <span aria-hidden="true"> · </span> : null}
-                      <span title={`${alerta.detalle} · ${alerta.fuente}`}>{alerta.titulo}</span>
-                    </span>
-                  ))}
-                </small>
-              )}
-            </span>
-            {/* The destination is already in the alert context. Repeating the literal nav label
-                here turned these CTAs into a second partial copy of the menu. The accessible name
-                keeps the destination and adds the action, so in a link list it stays unambiguous
-                without repeating the same name as the navigation entry. */}
-            <a
-              href={grupo.ruta}
-              aria-label={`Revisar ${grupo.alertas.length === 1 ? 'alerta' : 'alertas'} en ${grupo.rutaLabel}`}
-              onClick={(event) => { onNavClick(event, grupo.ruta); }}
-            >Revisar</a>
-          </p>
-        )) : null}
-
-        {asentadas && resumen.fuentesAusentes.length > 0 ? (
-          <p className="landing-alerta" data-tono="desconocido">
-            <CircleHelp size={18} aria-hidden="true" />
-            <span>
-              <strong>{resumen.fuentesAusentes.length === 1 ? 'Una fuente no contestó' : `${String(resumen.fuentesAusentes.length)} fuentes no contestaron`}</strong>
-              <small>
-                Sin leer: {resumen.fuentesAusentes.join(', ')}. Lo de arriba es lo que sí se pudo comprobar, no el estado completo.
-              </small>
-            </span>
-          </p>
-        ) : null}
-      </section>
-
+      <Atencion asentadas={asentadas} resumen={resumen} />
 
       <div className="metrics-grid">
         <Metric label="Agentes en línea" value={status.data?.online} tone="positive" detail={ALCANCE_DE_LA_CIFRA.leases} />
         <Metric label="En vuelo" value={totals?.in_flight} detail="tomadas por un agente" />
-        <Metric label="Esperando turno" value={totals?.queued} tone="warning" detail={`según ${ALCANCE_DE_LA_CIFRA.actividad}`} />
-        <Metric label="Entregas muertas" value={queues.data?.dead} tone="danger" detail="nadie las va a contestar" />
+        <Metric label="Esperando turno" value={esperando} tone={esperando ? 'warning' : 'neutral'} detail={`según ${ALCANCE_DE_LA_CIFRA.actividad}`} />
+        <Metric label="Entregas muertas" value={muertas} tone={muertas ? 'danger' : 'neutral'} detail="nadie las va a contestar" />
       </div>
+
       {asentadas ? (
-        <section className="landing-tiras" aria-label="El detalle de lo que ya se leyó">
-          <article className="panel landing-tira">
-            <h2>Colas por carril</h2>
-            <TiraDeColas colas={colas} />
-          </article>
-          <article className="panel landing-tira">
-            <h2>Saldo por proveedor</h2>
-            <TiraDeSaldos saldos={saldos} />
-          </article>
-          <article className="panel landing-tira">
-            <h2>Flota por estado</h2>
-            <TiraDeFlota flota={flota} />
-          </article>
+        <section aria-label="El detalle de lo que ya se leyó" className="mb-4 grid gap-4 min-[1100px]:grid-cols-3 min-[761px]:max-[1099px]:grid-cols-2">
+          <Tarjeta titulo="Colas por carril" ruta="/queues" enlace="Ver detalle de las colas">
+            <TiraDeColas colas={desgloseDeColas(queues.data)} />
+          </Tarjeta>
+          <Tarjeta titulo="Saldo por proveedor" ruta="/accounts" enlace="Ver detalle de las cuentas">
+            <TiraDeSaldos saldos={saldosPorProveedor(quotas.data)} />
+          </Tarjeta>
+          <Tarjeta titulo="Flota por estado" ruta="/live" enlace="Ver la flota en la oficina" className="min-[761px]:max-[1099px]:col-span-2">
+            <TiraDeFlota flota={conteoPorEstado(totals)} />
+          </Tarjeta>
         </section>
       ) : null}
 
-      <div className="observation-line">
-        <Gauge size={16} aria-hidden="true" />
-        Flota observada: <Time value={activity.data?.observed_at} />
+      <p className="mb-4 text-xs text-muted">
+        Última lectura: flota <Time value={activity.data?.observed_at} relativo />
         <span aria-hidden="true"> · </span>
-        Colas: <Time value={queues.data?.observed_at} />
+        colas <Time value={queues.data?.observed_at} relativo />
         <span aria-hidden="true"> · </span>
-        Cuotas: <Time value={quotas.data?.observed_at} />
-      </div>
+        cuotas <Time value={quotas.data?.observed_at} relativo />
+      </p>
 
       <HarnessStrip adapters={adapters.data?.items ?? []} error={adapters.data ? undefined : adapters.error} />
     </>
   );
 }
 
-function SinLectura({ fuente }: { fuente: string }) {
-  return <p className="landing-tira-nota" data-sin-lectura="true">{fuente} no contestó: acá no va un cero.</p>;
+function Atencion({ asentadas, resumen }: { asentadas: boolean; resumen: ReturnType<typeof resumenPortada> }) {
+  const grupos = agruparAlertas(resumen.alertas);
+  const ausentes = resumen.fuentesAusentes;
+  const sano = asentadas && puedeDecirSinIncidencias(resumen);
+  return (
+    <section aria-label="Lo que exige atención" className="mb-4 overflow-hidden rounded-xl border border-line bg-surface shadow-card">
+      {!asentadas ? <LoadingState label="Leyendo flota, colas y cuotas…" /> : (
+        <ul className="m-0 grid list-none divide-y divide-line p-0">
+          {sano ? (
+            <Fila tono="ok" icono={<CheckCircle2 size={16} aria-hidden="true" />}
+              titulo="Sin incidencias: ninguna entrega muerta, ningún ACK vencido, ningún agente detenido y ninguna cuenta sin saldo." />
+          ) : null}
+          {/* One row per VIEW, not per finding: four alerts under «Oficina» were four links to one place. */}
+          {grupos.map((grupo) => {
+            const unica = grupo.alertas.length === 1 ? grupo.alertas[0] : undefined;
+            return (
+              <Fila
+                key={grupo.ruta}
+                tono={ALERTA_TONO[grupo.tono]}
+                icono={<TriangleAlert size={16} aria-hidden="true" />}
+                titulo={unica ? unica.titulo : `${String(grupo.alertas.length)} cosas que atender en ${grupo.rutaLabel}`}
+                detalle={unica ? unica.detalle : grupo.alertas.map((alerta) => alerta.titulo).join(' · ')}
+                // The endpoint path is for cross-checking a doubtful number, not for reading.
+                pista={unica?.fuente ?? grupo.alertas.map((alerta) => `${alerta.detalle} · ${alerta.fuente}`).join('\n')}
+                ruta={grupo.ruta}
+                enlace={`Revisar ${unica ? 'alerta' : 'alertas'} en ${grupo.rutaLabel}`}
+              />
+            );
+          })}
+          {ausentes.length > 0 ? (
+            <Fila tono="neutral" icono={<CircleHelp size={16} aria-hidden="true" />}
+              titulo={ausentes.length === 1 ? 'Una fuente no contestó' : `${String(ausentes.length)} fuentes no contestaron`}
+              detalle={`Sin leer: ${ausentes.join(', ')}. Lo de arriba es lo que sí se pudo comprobar, no el estado completo.`} />
+          ) : null}
+        </ul>
+      )}
+    </section>
+  );
 }
+
+function Fila({ tono, icono, titulo, detalle, pista, ruta, enlace }: {
+  tono: Tone;
+  icono: ReactNode;
+  titulo: string;
+  detalle?: string;
+  pista?: string;
+  ruta?: string;
+  enlace?: string;
+}) {
+  return (
+    <li className="flex items-start gap-3 px-4 py-3" data-tono={tono}>
+      <span className={cn('mt-0.5 grid size-7 shrink-0 place-items-center rounded-full', TONE_CLASS[tono].pill)}>{icono}</span>
+      <div className="min-w-0 flex-1" title={pista}>
+        <p className="m-0 text-[13px] font-medium text-fg">{titulo}</p>
+        {detalle ? <p className="m-0 mt-0.5 text-xs text-muted">{detalle}</p> : null}
+      </div>
+      {ruta ? (
+        <a
+          href={ruta}
+          aria-label={enlace}
+          onClick={(event) => { onNavClick(event, ruta); }}
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-brand-ink no-underline hover:bg-subtle"
+        >
+          Revisar <ArrowUpRight size={14} aria-hidden="true" />
+        </a>
+      ) : null}
+    </li>
+  );
+}
+
+function Tarjeta({ titulo, ruta, enlace, className, children }: {
+  titulo: string; ruta: string; enlace: string; className?: string; children: ReactNode;
+}) {
+  return (
+    <article className={cn('grid min-w-0 content-start gap-3 rounded-xl border border-line bg-surface p-4 shadow-card', className)}>
+      <header className="flex items-center justify-between gap-2">
+        <h2 className="m-0 text-sm font-semibold tracking-tight">{titulo}</h2>
+        <a
+          href={ruta}
+          aria-label={enlace}
+          title={enlace}
+          onClick={(event) => { onNavClick(event, ruta); }}
+          className="grid size-7 place-items-center rounded-md text-muted no-underline hover:bg-subtle hover:text-fg"
+        >
+          <ArrowUpRight size={16} aria-hidden="true" />
+        </a>
+      </header>
+      {children}
+    </article>
+  );
+}
+
+const COLUMNA_CORTA = { pendientes: 'Pend.', retry: 'Reint.', revision: 'DLQ' } as const;
+const NOTA = 'm-0 text-xs text-muted';
+
+function SinLectura({ fuente }: { fuente: string }) {
+  return <p className={cn(NOTA, 'text-warn-ink')} data-sin-lectura="true">{fuente} no contestó: acá no va un cero.</p>;
+}
+
+function Barra({ parte, tono }: { parte: number; tono: Tone }) {
+  return (
+    <span className="block h-1.5 overflow-hidden rounded-full bg-muted-bg max-[760px]:hidden" aria-hidden="true">
+      <i className={cn('block h-full rounded-full', TONE_CLASS[tono].dot)} style={{ inlineSize: `${String(Math.min(100, Math.max(0, parte)))}%` }} />
+    </span>
+  );
+}
+
+const FILA = 'grid grid-cols-[minmax(0,1fr)_72px_auto] items-center gap-3 text-[13px] max-[760px]:grid-cols-[minmax(0,1fr)_auto]';
 
 function TiraDeColas({ colas }: { colas?: DesgloseDeColas }) {
   if (!colas) return <SinLectura fuente="Colas y DLQ" />;
   return (
     <>
-      <dl className="landing-cifras">
+      <dl className="m-0 grid grid-cols-3 gap-2">
         {GRUPOS_DE_COLA.map((grupo) => (
-          <div key={grupo}>
-            <dt>{ROTULO_DE_COLA[grupo]}</dt>
-            <dd><Unknown value={colas.totalesDelServidor[grupo]} /></dd>
+          <div key={grupo} className="min-w-0 rounded-lg bg-subtle px-3 py-2">
+            <dt className="truncate text-xs">{ROTULO_DE_COLA[grupo]}</dt>
+            <dd className="text-lg font-semibold tabular-nums"><Unknown value={colas.totalesDelServidor[grupo]} /></dd>
           </div>
         ))}
       </dl>
       {colas.carrilesDeLaPagina.length > 0 ? (
-        <table className="landing-tabla">
-          <thead>
-            <tr>
-              <th scope="col">Carril</th>
-              {GRUPOS_DE_COLA.map((grupo) => <th scope="col" key={grupo}>{ROTULO_DE_COLA[grupo]}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {colas.carrilesDeLaPagina.map((carril) => (
-              <tr key={carril.lane ?? 'sin-carril'}>
-                <th scope="row"><Unknown value={carril.lane} /></th>
-                {GRUPOS_DE_COLA.map((grupo) => <td key={grupo}>{carril.cuenta[grupo]}</td>)}
+        <div className="overflow-x-auto rounded-lg border border-line">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Carril</th>
+                {GRUPOS_DE_COLA.map((grupo) => (
+                  <th scope="col" key={grupo} className="px-2 text-right" title={ROTULO_DE_COLA[grupo]} aria-label={ROTULO_DE_COLA[grupo]}>{COLUMNA_CORTA[grupo]}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {colas.carrilesDeLaPagina.map((carril) => (
+                <tr key={carril.lane ?? 'sin-carril'}>
+                  <th scope="row" className="bg-transparent font-normal text-fg-2 [tr:last-child>&]:border-b-0"><Unknown value={carril.lane} /></th>
+                  {GRUPOS_DE_COLA.map((grupo) => <td key={grupo} className="px-2 text-right tabular-nums">{carril.cuenta[grupo]}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : null}
-      <p className="landing-tira-nota">
-        Las tres cifras de arriba las cuenta el servidor de colas sobre {ALCANCE_DE_LA_CIFRA.colaEntera};
-        «Esperando turno» de la cabecera lo cuenta {ALCANCE_DE_LA_CIFRA.actividad}, que es otra
-        lectura y no tiene por qué dar el mismo número. El desglose por carril cuenta las
-        {' '}{colas.enPagina} entregas que trajo la página
-        {colas.recortada ? ', que el servidor declara recortada' : ''}: es una muestra, no la cola.
+      <p className={NOTA}>
+        Carriles de {colas.enPagina} entregas{colas.recortada ? ' (muestra recortada por el servidor)' : ''}; los totales de arriba son de {ALCANCE_DE_LA_CIFRA.colaEntera}.
       </p>
     </>
   );
@@ -223,63 +261,54 @@ function tituloDelSaldo(saldo: SaldoDeProveedor): string {
 
 function TiraDeSaldos({ saldos }: { saldos?: SaldoDeProveedor[] }) {
   if (!saldos) return <SinLectura fuente="Consumo de cuotas" />;
-  if (saldos.length === 0) return <p className="landing-tira-nota">El recolector devolvió cero proveedores.</p>;
+  if (saldos.length === 0) return <p className={NOTA}>El recolector devolvió cero proveedores.</p>;
   return (
     <>
-      <ul className="landing-lista">
+      <ul className="m-0 grid list-none gap-3 p-0">
         {saldos.map((saldo) => (
           <li
             key={`${saldo.host ?? ''}/${saldo.proveedor ?? ''}`}
+            className={FILA}
             data-severidad={saldo.severidad}
             data-conflicto={saldo.conflicto ? 'true' : undefined}
           >
-            <span className="landing-lista-rotulo">
-              <Unknown value={saldo.proveedor} />
-              <small>
+            <span className="flex min-w-0 items-baseline gap-2" data-rotulo>
+              <span className="shrink-0 font-medium"><Unknown value={saldo.proveedor} /></span>
+              <small className="min-w-0 truncate">
                 <Unknown value={saldo.host} />
                 {saldo.conflicto && saldo.efectivo !== undefined ? ` · efectivo ${String(saldo.efectivo)} %` : null}
               </small>
             </span>
-            <span className="landing-barra" aria-hidden="true">
-              <i style={{ inlineSize: `${String(saldo.restante ?? 0)}%` }} />
-            </span>
-            <span className="landing-lista-cifra" title={tituloDelSaldo(saldo)}>
+            <Barra parte={saldo.restante ?? 0} tono={SEVERIDAD_TONO[saldo.severidad]} />
+            <span className="text-right font-semibold tabular-nums" title={tituloDelSaldo(saldo)} data-cifra>
               {saldo.restante === undefined ? <Unknown value={undefined} /> : `${String(saldo.restante)} %`}
             </span>
           </li>
         ))}
       </ul>
-      <p className="landing-tira-nota">
-        Cada cifra es {ALCANCE_DE_LA_CIFRA.peorVentana}, la que lo deja sin turno y la que va con el
-        color; el peor, primero. El porcentaje efectivo que publica el servidor mira el conjunto
-        entero y se anota junto al proveedor cuando los dos no cuentan lo mismo.
-      </p>
+      <p className={NOTA}>Cada cifra es {ALCANCE_DE_LA_CIFRA.peorVentana}; el peor, primero.</p>
     </>
   );
 }
 
 function TiraDeFlota({ flota }: { flota?: ConteoDeEstado[] }) {
   if (!flota) return <SinLectura fuente="Actividad de la flota" />;
-  if (flota.length === 0) return <p className="landing-tira-nota">El servidor no desglosó la flota por estado.</p>;
+  if (flota.length === 0) return <p className={NOTA}>El servidor no desglosó la flota por estado.</p>;
   return (
     <>
-      <ul className="landing-lista">
+      <ul className="m-0 grid list-none gap-3 p-0">
         {flota.map((fila) => (
-          <li key={fila.label}>
-            <span className="landing-lista-rotulo">{fila.label}</span>
-            <span className="landing-barra" aria-hidden="true">
-              <i style={{ inlineSize: `${String(Math.round(fila.parte * 100))}%` }} />
+          <li key={fila.label} className={FILA}>
+            <span className="flex items-center gap-2">
+              <span className={cn('size-2 rounded-full', TONE_CLASS[ESTADO_TONO[fila.estados[0]]].dot)} aria-hidden="true" />
+              {fila.label}
             </span>
-            <span className="landing-lista-cifra">{fila.valor}</span>
+            <Barra parte={Math.round(fila.parte * 100)} tono={ESTADO_TONO[fila.estados[0]]} />
+            <span className="text-right font-semibold tabular-nums" data-cifra>{fila.valor}</span>
           </li>
         ))}
       </ul>
-      <p className="landing-tira-nota">
-        Los agentes que vio {ALCANCE_DE_LA_CIFRA.actividad}, por estado; «Agentes en línea» de la
-        cabecera cuenta {ALCANCE_DE_LA_CIFRA.leases}, que es otra lectura y no tiene por qué dar el
-        mismo número. «Trabajando» junta los que van sobrados y los saturados: la consola los llama
-        igual y separarlos acá sería inventar una palabra.
-      </p>
+      <p className={NOTA}>Agentes que vio {ALCANCE_DE_LA_CIFRA.actividad}, por estado.</p>
     </>
   );
 }

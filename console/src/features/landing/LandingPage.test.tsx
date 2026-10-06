@@ -1,10 +1,20 @@
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { expect, it } from 'vitest';
 import { ALCANCE_DE_LA_CIFRA } from './landing';
 import { LandingPage } from './LandingPage';
-import { renderWithApi } from '../../test/render';
+import { ApiProvider } from '../../api/context';
+import { FleetProvider } from '../../shell/fleet';
+import { renderWithApi, testApi } from '../../test/render';
 import { server } from '../../mocks/server';
+
+/** The landing as the shell mounts it: fed by the shared fleet poller. */
+function renderLanding() {
+  return renderWithApi(<LandingPage />, {
+    wrapper: ({ children }) => <ApiProvider api={testApi}><FleetProvider>{children}</FleetProvider></ApiProvider>,
+  });
+}
 
 /** The four landing-page readings, all healthy. The starting point for the two controls. */
 function todoSano() {
@@ -26,7 +36,7 @@ function todoSano() {
 }
 
 it('resume la consola entera: deja lo que exige atención antes de las métricas', async () => {
-  renderWithApi(<LandingPage />);
+  renderLanding();
 
   expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
   // The aggregate metrics, with their real snapshot number (mockStatus.online = 99).
@@ -44,7 +54,7 @@ it('resume la consola entera: deja lo que exige atención antes de las métricas
 });
 
 it('no imprime rutas de endpoint en la pantalla del operador: van al title=', async () => {
-  renderWithApi(<LandingPage />);
+  renderLanding();
 
   const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
   await within(banda).findByText(/entrega muerta en la DLQ/i);
@@ -73,12 +83,12 @@ it('agrupa los avisos por la vista que los resuelve: una fila por destino, no un
       agents: [],
     })),
   );
-  renderWithApi(<LandingPage />);
+  renderLanding();
 
   const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
-  // Seven findings —three in "The fleet now", four in "Accounts and quotas"— and TWO rows.
-  await within(banda).findByText(/cosas que atender en La flota ahora/i);
-  const filas = banda.querySelectorAll('.landing-alerta');
+  // Seven findings —three in "Oficina", four in "Accounts and quotas"— and TWO rows.
+  await within(banda).findByText(/cosas que atender en Oficina/i);
+  const filas = banda.querySelectorAll('li');
   expect(filas.length).toBeLessThanOrEqual(3);
   const enlaces = within(banda).getAllByRole('link').map((enlace) => enlace.getAttribute('href'));
   // Not a single repeated destination: that was what made four identical bands point at the same place.
@@ -86,7 +96,7 @@ it('agrupa los avisos por la vista que los resuelve: una fila por destino, no un
 });
 
 it('los arneses siguen estando, plegados: es lo que era la vista «Adapters»', async () => {
-  renderWithApi(<LandingPage />);
+  renderLanding();
 
   const tira = await screen.findByText(/arneses declarados/i);
   expect(tira).toBeInTheDocument();
@@ -97,12 +107,12 @@ it('los arneses siguen estando, plegados: es lo que era la vista «Adapters»', 
 
 it('escribe las alertas que el snapshot acredita, con su enlace a la vista que las resuelve', async () => {
   // The demo snapshot ships 1 dead letter, so the DLQ alert must surface.
-  renderWithApi(<LandingPage />);
+  renderLanding();
 
   const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
   const dlq = await within(banda).findByText(/entrega muerta en la DLQ/i);
   expect(dlq).toBeInTheDocument();
-  expect(within(banda).getByRole('link', { name: /revisar alerta en queues & dlq/i })).toHaveAttribute('href', '/queues');
+  expect(within(banda).getByRole('link', { name: /revisar alerta en colas y dlq/i })).toHaveAttribute('href', '/queues');
 });
 
 /**
@@ -117,7 +127,7 @@ it('con una fuente caída NO dice «sin incidencias»: lo declara ausente', asyn
   // not arrive. The 503 goes FIRST: `server.use()` prepends and the first in the list wins, so
   // putting it after `todoSano()` would leave it ineffective.
   server.use(http.get('http://localhost/v3/console/quotas', () => HttpResponse.json({ error: 'boom' }, { status: 503 })), ...todoSano());
-  renderWithApi(<LandingPage />);
+  renderLanding();
 
   const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
   expect(await within(banda).findByText(/una fuente no contestó/i)).toBeInTheDocument();
@@ -127,7 +137,7 @@ it('con una fuente caída NO dice «sin incidencias»: lo declara ausente', asyn
 
 it('con TODO sano y leído entero sí se permite decir «sin incidencias»', async () => {
   server.use(...todoSano());
-  renderWithApi(<LandingPage />);
+  renderLanding();
 
   const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
   expect(await within(banda).findByText(/^Sin incidencias/)).toBeInTheDocument();
@@ -135,7 +145,7 @@ it('con TODO sano y leído entero sí se permite decir «sin incidencias»', asy
 });
 
 it('llena el pliegue con lo que ya había leído: colas por carril, saldo por proveedor y flota por estado', async () => {
-  renderWithApi(<LandingPage />);
+  renderLanding();
 
   const tiras = await screen.findByRole('region', { name: /el detalle de lo que ya se leyó/i });
   await within(tiras).findByRole('heading', { name: /colas por carril/i });
@@ -151,55 +161,60 @@ it('llena el pliegue con lo que ya había leído: colas por carril, saldo por pr
 });
 
 it('el saldo lo manda la peor ventana: el proveedor agotado va primero y a cero, aunque publique 100 % efectivo', async () => {
-  renderWithApi(<LandingPage />);
+  renderLanding();
 
   const tiras = await screen.findByRole('region', { name: /el detalle de lo que ya se leyó/i });
   const saldos = within(tiras).getByRole('heading', { name: /saldo por proveedor/i }).closest('article');
-  const filas = [...(saldos?.querySelectorAll('.landing-lista li') ?? [])];
-  expect(filas.map((fila) => fila.querySelector('.landing-lista-rotulo > span')?.textContent))
+  const filas = [...(saldos?.querySelectorAll('li[data-severidad]') ?? [])];
+  expect(filas.map((fila) => fila.querySelector('[data-rotulo] > span')?.textContent))
     .toEqual(['codex', 'claude', 'antigravity', 'opencode']);
 
   const codex = filas[0];
-  expect(codex.querySelector('.landing-lista-cifra')?.textContent).toBe('0 %');
+  expect(codex.querySelector('[data-cifra]')?.textContent).toBe('0 %');
   expect(codex.getAttribute('data-severidad')).toBe('exhausted');
   expect(codex.getAttribute('data-conflicto')).toBe('true');
   expect(codex.textContent).toMatch(/efectivo 100 %/);
-  expect(codex.querySelector('.landing-lista-cifra')?.getAttribute('title'))
+  expect(codex.querySelector('[data-cifra]')?.getAttribute('title'))
     .toMatch(/effective_remaining_percent = 100 %/);
   expect(filas[1].getAttribute('data-conflicto')).toBeNull();
   expect(saldos?.textContent).toContain(ALCANCE_DE_LA_CIFRA.peorVentana);
 });
 
 it('las cifras que no cuadran declaran de qué lectura sale cada una', async () => {
-  renderWithApi(<LandingPage />);
+  const user = userEvent.setup();
+  renderLanding();
   const tiras = await screen.findByRole('region', { name: /el detalle de lo que ya se leyó/i });
 
   const enLinea = screen.getByText('Agentes en línea').closest('.metric');
   const flota = within(tiras).getByRole('heading', { name: /flota por estado/i }).closest('article');
-  const porEstado = [...(flota?.querySelectorAll('.landing-lista-cifra') ?? [])]
+  const porEstado = [...(flota?.querySelectorAll('[data-cifra]') ?? [])]
     .reduce((suma, celda) => suma + Number(celda.textContent), 0);
   expect(enLinea?.textContent).toContain('99');
   expect(porEstado).toBe(15);
   expect(enLinea?.textContent).toContain(ALCANCE_DE_LA_CIFRA.leases);
   expect(flota?.textContent).toContain(ALCANCE_DE_LA_CIFRA.actividad);
-  expect(flota?.textContent).toContain(ALCANCE_DE_LA_CIFRA.leases);
 
   const esperando = screen.getByText('Esperando turno').closest('.metric');
   const colas = within(tiras).getByRole('heading', { name: /colas por carril/i }).closest('article');
   expect(esperando?.textContent).toContain('29');
-  expect(colas?.querySelector('.landing-cifras div')?.textContent).toBe('Pendientes4');
+  expect(colas?.querySelector('dl > div')?.textContent).toBe('Pendientes4');
   expect(esperando?.textContent).toContain(ALCANCE_DE_LA_CIFRA.actividad);
   expect(colas?.textContent).toContain(ALCANCE_DE_LA_CIFRA.colaEntera);
-  expect(colas?.textContent).toContain(ALCANCE_DE_LA_CIFRA.actividad);
+
+  // The long-form scope notes live behind the page help, not on the page.
+  await user.click(screen.getByRole('button', { name: /qué es «cauce en una pantalla»/i }));
+  const ayuda = await screen.findByRole('dialog');
+  expect(ayuda.textContent).toContain(ALCANCE_DE_LA_CIFRA.leases);
+  expect(ayuda.textContent).toContain(ALCANCE_DE_LA_CIFRA.peorVentana);
 });
 
 it('una tira cuya fuente no contestó lo dice: no dibuja una barra a cero', async () => {
   server.use(http.get('http://localhost/v3/console/quotas', () => HttpResponse.json({ error: 'boom' }, { status: 503 })));
-  renderWithApi(<LandingPage />);
+  renderLanding();
 
   const tiras = await screen.findByRole('region', { name: /el detalle de lo que ya se leyó/i });
   const saldos = within(tiras).getByRole('heading', { name: /saldo por proveedor/i }).closest('article');
   expect(saldos?.textContent).toMatch(/Consumo de cuotas no contestó/i);
-  expect(saldos?.querySelector('.landing-barra')).toBeNull();
+  expect(saldos?.querySelector('[data-severidad]')).toBeNull();
   expect(within(tiras).getByRole('heading', { name: /flota por estado/i })).toBeInTheDocument();
 });

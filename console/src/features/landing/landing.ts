@@ -84,7 +84,7 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
       detalle: 'Cada una es un encargo que nadie va a contestar hasta que alguien la reinyecte.',
       fuente: 'GET /v3/console/queues → dead',
       ruta: '/queues',
-      rutaLabel: 'Queues & DLQ',
+      rutaLabel: 'Colas y DLQ',
     });
   }
 
@@ -98,7 +98,7 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
       detalle: 'El agente que las tomó dejó pasar el plazo para acusar recibo.',
       fuente: 'GET /v3/console/activity → totals.overdue_in_flight',
       ruta: '/live',
-      rutaLabel: 'La flota ahora',
+      rutaLabel: 'Oficina',
     });
   }
 
@@ -108,10 +108,10 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
       id: 'agentes-detenidos',
       tono: 'danger',
       titulo: `${String(detenidos)} ${detenidos === 1 ? 'agente trabado' : 'agentes trabados'}`,
-      detalle: 'Tomaron trabajo y dejaron de acusar recibo. En «La flota ahora» son los que salen como «Trabado».',
+      detalle: 'Tomaron trabajo y dejaron de acusar recibo. En «Oficina» son los que salen como «Trabado».',
       fuente: 'GET /v3/console/activity → totals.by_state.stalled',
       ruta: '/live',
-      rutaLabel: 'La flota ahora',
+      rutaLabel: 'Oficina',
     });
   }
 
@@ -120,11 +120,11 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
     alertas.push({
       id: 'cola-sin-consumidor',
       tono: 'danger',
-      titulo: `${String(sinConsumidor)} ${sinConsumidor === 1 ? 'alias con cola y sin quien la consuma' : 'alias con cola y sin quien la consuma'}`,
+      titulo: `${String(sinConsumidor)} alias con cola y sin quien la consuma`,
       detalle: 'Libre y sordo se ven igual desde afuera; esto los separa.',
       fuente: 'GET /v3/console/activity → totals.flagged.queued_without_consumer',
       ruta: '/live',
-      rutaLabel: 'La flota ahora',
+      rutaLabel: 'Oficina',
     });
   }
 

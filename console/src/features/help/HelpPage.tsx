@@ -1,14 +1,18 @@
-import { PageHeader, PageShell, Panel } from '../../components/ui';
+import { Fragment, type ReactNode } from 'react';
+import { cn } from '../../cn';
+import { PageHeader } from '../../components/ui';
 import { NAV_ENTRIES } from '../../nav';
-import './help.css';
+import { onNavClick } from '../../router';
+import { TONE_CLASS, STATE_TONE, type Tone } from '../../status-tone';
+import { LIVE_STATE_META, LIVE_STATES } from '../live/agent-state';
 
 const TITULO = 'Ayuda y documentación';
 
 /** What each view is FOR, beyond the one-line `que` the menu already carries. Keyed by route id so
     a view that changes its address or its name cannot leave the help pointing at nothing. */
 const DETALLE: Record<string, string> = {
-  '': 'Resumen ejecutivo de la flota, estado de colas, consumo de cuotas y alertas operativas prioritarias.',
-  live: 'Hipergrafo en tiempo real y cajón de cada agente. «Contexto» es el único lugar para modificar '
+  overview: 'Resumen ejecutivo de la flota, estado de colas, consumo de cuotas y alertas operativas prioritarias.',
+  live: 'La oficina en vivo y el cajón de cada agente. «Contexto» es el único lugar para modificar '
     + 'su perfil canónico y su manual; «Ficheros» es un visor de lo materializado.',
   accounts: 'Único lugar para registrar o retirar cuentas de proveedores y modificar sus techos y '
     + 'bindings de fallback, además de consultar límites y consumo.',
@@ -38,12 +42,13 @@ const CONCEPTOS: readonly [string, string][] = [
     + 'el control vive en «Contexto», no en este visor.'],
 ];
 
-const ESTADOS: readonly [string, string][] = [
-  ['in_flight', 'El agente está ejecutando un turno de procesamiento activo.'],
-  ['idle', 'El agente está conectado y listo para recibir turnos de ejecución.'],
-  ['degraded', 'El arnés del agente reporta limitaciones o fallas parciales.'],
-  ['down / off', 'El agente no tiene presencia activa en el bus.'],
-  ['fenced', 'La entrega fue revocada por expiración de lease o desconexión concurrente.'],
+/** Delivery lifecycle, in the order a delivery travels it. Labels match the ones the queues print. */
+const ENTREGAS: readonly { etiqueta: string; tono: Tone; detalle: string }[] = [
+  { etiqueta: 'Pendiente', tono: 'info', detalle: 'En la cola; todavía ningún agente la tomó.' },
+  { etiqueta: 'En curso', tono: 'info', detalle: 'Un agente la tomó con un lease y está trabajando en ella.' },
+  { etiqueta: 'Hecha', tono: 'ok', detalle: 'El agente la cerró bien.' },
+  { etiqueta: 'En reintento', tono: 'warn', detalle: 'Falló y el bus la vuelve a intentar sola.' },
+  { etiqueta: 'Muerta', tono: 'danger', detalle: 'Agotó los reintentos: nadie la va a contestar hasta que alguien la reinyecte.' },
 ];
 
 const ATAJOS: readonly [string[], string][] = [
@@ -53,71 +58,134 @@ const ATAJOS: readonly [string[], string][] = [
   [['Ctrl', 'Clic'], 'Abre enlaces en una pestaña independiente. En macOS, Cmd + Clic.'],
 ];
 
-function Definiciones({ entradas }: { entradas: readonly [string, string][] }) {
+const SECCIONES = [
+  { id: 'mapa', titulo: 'Mapa de vistas de la consola' },
+  { id: 'terminal', titulo: 'Terminal de agentes' },
+  { id: 'conceptos', titulo: 'Contexto, capacidades y permisos' },
+  { id: 'estados', titulo: 'Estados de la flota y ciclo de entrega' },
+  { id: 'atajos', titulo: 'Atajos de teclado y navegación' },
+] as const;
+
+function Pill({ tono, children }: { tono: Tone; children: ReactNode }) {
   return (
-    <dl className="help-lista">
-      {entradas.map(([termino, detalle]) => (
-        <div key={termino}>
-          <dt>{termino}</dt>
-          <dd>{detalle}</dd>
-        </div>
-      ))}
-    </dl>
+    <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap', TONE_CLASS[tono].pill)}>
+      <span className={cn('size-1.5 rounded-full', TONE_CLASS[tono].dot)} aria-hidden="true" />
+      {children}
+    </span>
   );
 }
 
+function Seccion({ id, titulo, children }: { id: string; titulo: string; children: ReactNode }) {
+  return (
+    <section id={id} aria-labelledby={`${id}-titulo`} className="scroll-mt-6 rounded-xl border border-line bg-surface p-5 shadow-card max-[760px]:p-4">
+      <h2 id={`${id}-titulo`} className="m-0 mb-3 text-[15px] font-semibold tracking-tight">{titulo}</h2>
+      {children}
+    </section>
+  );
+}
+
+/** Term on the left, definition on the right; stacks on a phone. */
+const FILA = 'grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)] items-baseline gap-x-4 gap-y-1 py-2.5 max-[760px]:grid-cols-1';
+
 export function HelpPage() {
   return (
-    <PageShell kind="documento">
+    <div className="mx-auto w-full max-w-5xl">
       <PageHeader
         eyebrow="Referencia"
         title={TITULO}
         description={'Guía de referencia para operadores: qué contesta cada vista de la consola, '
           + 'qué significa cada estado de la flota y qué atajos de teclado declara la interfaz.'}
       />
-
-      <section id="terminal">
-        <details>
-          <summary>Terminal de agentes</summary>
-          <p>Elegí un agente en el selector superior. Su TUI se abre con teclado cuando el servidor autoriza el control; no hace falta escribir una justificación. La apertura y la toma quedan auditadas con tu identidad.</p>
-          <p>Mientras tenés el control, los mensajes nuevos del bus quedan en cola; un turno que ya estaba en marcha puede terminar. Devolver el control, cambiar de agente o cerrar la vista libera el teclado y permite continuar las entregas. La sesión tiene una ventana limitada; Prorrogar la extiende.</p>
-          <p>Si el destino sólo permite observar, la terminal indica «Solo lectura». Si falta autoridad o conexión, muestra el motivo real. Una shell es una sesión aparte; no reemplaza la TUI del agente.</p>
-        </details>
-      </section>
-
-      <Panel title="Mapa de vistas de la consola" subtitle="Cada entrada del menú y lo que resuelve.">
-        <dl className="help-lista help-mapa">
-          {NAV_ENTRIES.map((entrada) => (
-            <div key={entrada.id}>
-              <dt>{entrada.label} (<code>/{entrada.id}</code>)</dt>
-              <dd>{DETALLE[entrada.id] ?? entrada.que}</dd>
-            </div>
+      <div className="grid items-start gap-4 min-[1000px]:grid-cols-[13rem_minmax(0,1fr)] min-[1000px]:gap-8">
+        <nav aria-label="En esta página" className="-mx-4 flex gap-1 overflow-x-auto px-4 min-[1000px]:sticky min-[1000px]:top-6 min-[1000px]:mx-0 min-[1000px]:grid min-[1000px]:overflow-visible min-[1000px]:px-0">
+          {SECCIONES.map((seccion) => (
+            <a
+              key={seccion.id}
+              href={`#${seccion.id}`}
+              className="shrink-0 rounded-md px-2.5 py-1.5 text-[13px] text-muted no-underline transition-colors hover:bg-subtle hover:text-fg max-[999px]:border max-[999px]:border-line max-[999px]:bg-surface"
+            >
+              {seccion.titulo}
+            </a>
           ))}
-        </dl>
-      </Panel>
+        </nav>
 
-      <Panel title="Contexto, capacidades y permisos">
-        <Definiciones entradas={CONCEPTOS} />
-      </Panel>
+        <div className="grid min-w-0 gap-4">
+          <Seccion id="mapa" titulo="Mapa de vistas de la consola">
+            <ul className="m-0 grid list-none divide-y divide-line p-0">
+              {NAV_ENTRIES.map((entrada) => (
+                <li key={entrada.id} className={FILA}>
+                  <a href={`/${entrada.id}`} onClick={(event) => { onNavClick(event, `/${entrada.id}`); }} className="flex flex-wrap items-baseline gap-x-2 text-[13px] font-medium text-fg no-underline hover:text-brand-ink">
+                    {entrada.label}
+                    <code className="font-mono text-xs font-normal text-muted">/{entrada.id}</code>
+                  </a>
+                  <span className="text-[13px] text-fg-2">{DETALLE[entrada.id] ?? entrada.que}</span>
+                </li>
+              ))}
+            </ul>
+          </Seccion>
 
-      <Panel title="Estados de la flota y ciclo de entrega">
-        <Definiciones entradas={ESTADOS} />
-      </Panel>
-
-      <Panel title="Atajos de teclado y navegación">
-        <dl className="help-lista help-atajos">
-          {ATAJOS.map(([teclas, detalle]) => (
-            <div key={teclas.join('+')}>
-              <dt>
-                {teclas.map((tecla, indice) => (
-                  <span key={tecla}>{indice > 0 ? ' + ' : ''}<kbd>{tecla}</kbd></span>
-                ))}
-              </dt>
-              <dd>{detalle}</dd>
+          <Seccion id="terminal" titulo="Terminal de agentes">
+            <div className="grid max-w-prose gap-2 text-[13px] leading-relaxed text-fg-2 [&_p]:m-0">
+              <p>Elegí un agente en la barra lateral. Su TUI se abre con teclado cuando el servidor autoriza el control; no hace falta escribir una justificación. La apertura y la toma quedan auditadas con tu identidad.</p>
+              <p>Mientras tenés el control, los mensajes nuevos del bus quedan en cola; un turno que ya estaba en marcha puede terminar. Devolver el control, cambiar de agente o cerrar la vista libera el teclado y permite continuar las entregas. La sesión tiene una ventana limitada; Prorrogar la extiende.</p>
+              <p>Si el destino sólo permite observar, la terminal indica «Solo lectura». Si falta autoridad o conexión, muestra el motivo real. Una shell es una sesión aparte; no reemplaza la TUI del agente.</p>
             </div>
-          ))}
-        </dl>
-      </Panel>
-    </PageShell>
+          </Seccion>
+
+          <Seccion id="conceptos" titulo="Contexto, capacidades y permisos">
+            <dl className="m-0 block divide-y divide-line">
+              {CONCEPTOS.map(([termino, detalle]) => (
+                <div key={termino} className={FILA}>
+                  <dt className="text-[13px] font-medium text-fg">{termino}</dt>
+                  <dd className="text-[13px] text-fg-2">{detalle}</dd>
+                </div>
+              ))}
+            </dl>
+          </Seccion>
+
+          <Seccion id="estados" titulo="Estados de la flota y ciclo de entrega">
+            <h3 className="m-0 mb-1 text-xs font-medium text-muted">Un agente</h3>
+            <dl className="m-0 block divide-y divide-line">
+              {LIVE_STATES.map((estado) => (
+                <div key={estado} className={FILA}>
+                  <dt><Pill tono={STATE_TONE[estado]}>{LIVE_STATE_META[estado].label}</Pill></dt>
+                  <dd className="text-[13px] text-fg-2">{LIVE_STATE_META[estado].hint}</dd>
+                </div>
+              ))}
+            </dl>
+            <h3 className="m-0 mt-4 mb-1 text-xs font-medium text-muted">Una entrega</h3>
+            <dl className="m-0 block divide-y divide-line">
+              {ENTREGAS.map((entrega) => (
+                <div key={entrega.etiqueta} className={FILA}>
+                  <dt><Pill tono={entrega.tono}>{entrega.etiqueta}</Pill></dt>
+                  <dd className="text-[13px] text-fg-2">{entrega.detalle}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="m-0 mt-3 text-xs text-muted">
+              Si el lease vence o hay un consumidor concurrente, la entrega queda revocada (<em>fenced</em>) y su resultado tardío se descarta.
+            </p>
+          </Seccion>
+
+          <Seccion id="atajos" titulo="Atajos de teclado y navegación">
+            <dl className="m-0 block divide-y divide-line">
+              {ATAJOS.map(([teclas, detalle]) => (
+                <div key={teclas.join('+')} className={FILA}>
+                  <dt className="flex flex-wrap items-center gap-1 text-fg">
+                    {teclas.map((tecla, indice) => (
+                      <Fragment key={tecla}>
+                        {indice > 0 ? <span className="text-muted">{' + '}</span> : null}
+                        <kbd>{tecla}</kbd>
+                      </Fragment>
+                    ))}
+                  </dt>
+                  <dd className="text-[13px] text-fg-2">{detalle}</dd>
+                </div>
+              ))}
+            </dl>
+          </Seccion>
+        </div>
+      </div>
+    </div>
   );
 }
