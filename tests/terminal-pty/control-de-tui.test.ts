@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 
+import { reserveNamedLoopbackPorts, type NamedLoopbackPortReservations } from '../e2e/port-reservation.js';
 import { createSelfSignedCert, type SelfSignedCert } from './certs.mjs';
 import { startFakeGateway, type FakeGatewayAuditEntry, type FakeGatewayHandle } from './fake-gateway.mjs';
 import { startFakeAgent, type FakeAgentHandle, type FakeAgentOptions } from './fake-pty-agent.mjs';
@@ -326,77 +327,96 @@ async function startCircuit(label: string, recordingConfigured: boolean): Promis
   const gateway = await startFakeGateway({
     master_key_b64: MASTER_KEY_B64, relay_token: RELAY_TOKEN, relay_instance_id: relayInstanceId,
   });
-  let stopped = false;
-  const gatewayCa = gateway.ca_path;
-  if (isRoot && gatewayCa !== undefined) {
-    chmodSync(path.dirname(gatewayCa), 0o755);
-    chmodSync(gatewayCa, 0o644);
+  let ports: NamedLoopbackPortReservations<'browser' | 'agent' | 'health'> | undefined;
+  let child: ChildProcess | undefined;
+  try {
+    const gatewayCa = gateway.ca_path;
+    if (isRoot && gatewayCa !== undefined) {
+      chmodSync(path.dirname(gatewayCa), 0o755);
+      chmodSync(gatewayCa, 0o644);
+    }
+    const directory = mkdtempSync(path.join(workDirectory, `${label}-`));
+    chmodSync(directory, 0o777);
+    const tokenFile = path.join(directory, 'relay_token');
+    const registryFile = path.join(directory, 'pty_agent_identities.json');
+    const spoolFile = path.join(directory, 'close-reports.json');
+    const recordingDir = path.join(directory, 'recordings');
+    writeFileSync(tokenFile, `${gateway.token}\n`);
+    writeFileSync(registryFile, JSON.stringify({
+      version: 1,
+      agents: [{
+        fingerprint_sha256: new X509Certificate(tls.cert).fingerprint256,
+        tenant_id: TENANT,
+        alias: ALIAS,
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      }],
+    }));
+    writeFileSync(spoolFile, '');
+    chmodSync(tokenFile, 0o644);
+    chmodSync(registryFile, 0o644);
+    chmodSync(spoolFile, 0o666);
+
+    ports = await reserveNamedLoopbackPorts(['browser', 'agent', 'health'] as const);
+    const { browser: wsPort, agent: agentPort, health: healthPort } = ports.ports;
+    await ports.releaseAll();
+    child = spawn(launch.command, launch.args, {
+      cwd: fileURLToPath(repoRoot),
+      env: {
+        ...process.env,
+        CAUCE_TERMINAL_RELAY_BROWSER_PORT: String(wsPort),
+        CAUCE_TERMINAL_RELAY_AGENT_PORT: String(agentPort),
+        CAUCE_TERMINAL_RELAY_HEALTH_PORT: String(healthPort),
+        CAUCE_TERMINAL_RELAY_TLS_CERT_FILE: tls.cert_path,
+        CAUCE_TERMINAL_RELAY_TLS_KEY_FILE: tls.key_path,
+        CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE: tls.cert_path,
+        CAUCE_TERMINAL_RELAY_AGENT_CA_FILE: tls.cert_path,
+        CAUCE_TERMINAL_RELAY_CONSOLE_CN: 'localhost',
+        CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE: registryFile,
+        CAUCE_TERMINAL_GATEWAY_URL: gateway.url,
+        CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile,
+        CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE: tls.cert_path,
+        CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE: tls.key_path,
+        CAUCE_TERMINAL_RELAY_INSTANCE_ID: relayInstanceId,
+        CAUCE_TERMINAL_CLOSE_SPOOL_FILE: spoolFile,
+        ...(gatewayCa === undefined ? {} : { NODE_EXTRA_CA_CERTS: gatewayCa }),
+        ...(recordingConfigured ? { CAUCE_TERMINAL_RECORDING_DIR: recordingDir } : {}),
+        CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC: '65536',
+        CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS: '5',
+        CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS: '5',
+        CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: '150',
+      },
+      stdio: ['ignore', 'inherit', 'inherit'],
+    });
+    await waitForPort(wsPort, child);
+    const relayChild = child;
+    let stopped = false;
+    const circuit: Circuit = {
+      gateway, wsPort, agentPort, spoolFile, recordingDir,
+      async stop() {
+        if (stopped) return;
+        stopped = true;
+        await stopChild(relayChild);
+        await gateway.close();
+      },
+    };
+    live.push(circuit);
+    return circuit;
+  } catch (error) {
+    const cleanup = await Promise.allSettled([
+      ...(child === undefined ? [] : [stopChild(child)]),
+      ...(ports === undefined ? [] : [ports.releaseAll()]),
+      gateway.close(),
+    ]);
+    const cleanupErrors: unknown[] = [];
+    for (const result of cleanup) {
+      if (result.status === 'rejected') cleanupErrors.push(result.reason);
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError([error, ...cleanupErrors],
+        'terminal circuit setup failed and cleanup was incomplete', { cause: error });
+    }
+    throw error;
   }
-  const directory = mkdtempSync(path.join(workDirectory, `${label}-`));
-  chmodSync(directory, 0o777);
-  const tokenFile = path.join(directory, 'relay_token');
-  const registryFile = path.join(directory, 'pty_agent_identities.json');
-  const spoolFile = path.join(directory, 'close-reports.json');
-  const recordingDir = path.join(directory, 'recordings');
-  writeFileSync(tokenFile, `${gateway.token}\n`);
-  writeFileSync(registryFile, JSON.stringify({
-    version: 1,
-    agents: [{
-      fingerprint_sha256: new X509Certificate(tls.cert).fingerprint256,
-      tenant_id: TENANT,
-      alias: ALIAS,
-      expires_at: new Date(Date.now() + 3_600_000).toISOString(),
-    }],
-  }));
-  writeFileSync(spoolFile, '');
-  chmodSync(tokenFile, 0o644);
-  chmodSync(registryFile, 0o644);
-  chmodSync(spoolFile, 0o666);
-  // Browser 18100-18199, agent 18300-18399, health 18600-18699: three blocks this file owns.
-  // relay-contract-lifecycle.test.ts takes 18700-18899 for its browser leg, and sharing that
-  // block is a flake waiting for the day vitest.config.ts stops serializing these files.
-  const wsPort = 18_100 + Math.floor(Math.random() * 100);
-  const agentPort = wsPort + 200;
-  const child = spawn(launch.command, launch.args, {
-    cwd: fileURLToPath(repoRoot),
-    env: {
-      ...process.env,
-      CAUCE_TERMINAL_RELAY_BROWSER_PORT: String(wsPort),
-      CAUCE_TERMINAL_RELAY_AGENT_PORT: String(agentPort),
-      CAUCE_TERMINAL_RELAY_HEALTH_PORT: String(wsPort + 500),
-      CAUCE_TERMINAL_RELAY_TLS_CERT_FILE: tls.cert_path,
-      CAUCE_TERMINAL_RELAY_TLS_KEY_FILE: tls.key_path,
-      CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE: tls.cert_path,
-      CAUCE_TERMINAL_RELAY_AGENT_CA_FILE: tls.cert_path,
-      CAUCE_TERMINAL_RELAY_CONSOLE_CN: 'localhost',
-      CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE: registryFile,
-      CAUCE_TERMINAL_GATEWAY_URL: gateway.url,
-      CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile,
-      CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE: tls.cert_path,
-      CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE: tls.key_path,
-      CAUCE_TERMINAL_RELAY_INSTANCE_ID: relayInstanceId,
-      CAUCE_TERMINAL_CLOSE_SPOOL_FILE: spoolFile,
-      ...(gatewayCa === undefined ? {} : { NODE_EXTRA_CA_CERTS: gatewayCa }),
-      ...(recordingConfigured ? { CAUCE_TERMINAL_RECORDING_DIR: recordingDir } : {}),
-      CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC: '65536',
-      CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS: '5',
-      CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS: '5',
-      CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: '150',
-    },
-    stdio: ['ignore', 'inherit', 'inherit'],
-  });
-  await waitForPort(wsPort, child);
-  const circuit: Circuit = {
-    gateway, wsPort, agentPort, spoolFile, recordingDir,
-    async stop() {
-      if (stopped) return;
-      stopped = true;
-      await stopChild(child);
-      await gateway.close();
-    },
-  };
-  live.push(circuit);
-  return circuit;
 }
 
 /** Everything a block needs to drive one circuit; the sockets and agents it opens are its own. */
@@ -511,7 +531,9 @@ describe.skipIf(relay === null)('taking control of a TUI, with a recording direc
 
   beforeAll(async () => { circuit = await startCircuit('recorded', true); });
   afterEach(() => drive.cleanup());
-  afterAll(() => circuit.stop());
+  afterAll(async () => {
+    if (circuit !== undefined) await circuit.stop();
+  });
 
   it('refuses a signed proof from another session before sending OPEN to the agent', async () => {
     const handle = await drive.attachAgent();
@@ -695,7 +717,7 @@ describe.skipIf(relay === null)('taking control of a TUI with no recording direc
   });
   afterAll(async () => {
     for (const handle of drive.agents.splice(0)) handle.destroy();
-    await circuit.stop();
+    if (circuit !== undefined) await circuit.stop();
   });
 
   it('6. refuses to open harness_rw and says why, while a plain shell still opens', async () => {
