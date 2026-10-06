@@ -1,3 +1,4 @@
+import { supervisionNoticeEffectAllowed } from '../../supervision-notice.js';
 import { type AgentEgressRow, toAgentEgressItem } from './egress-state.js';
 import { randomUUID } from 'node:crypto';
 import {
@@ -468,6 +469,7 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
       };
       await client.query('SAVEPOINT cauce_notify');
       try {
+        if (!await supervisionNoticeEffectAllowed(client, row, entry)) request.forcedDenial = 'invalid_output';
         const verdict = await this.authorizeAndEmitNotification(client, context, request);
         await client.query('RELEASE SAVEPOINT cauce_notify');
         if (verdict.duplicate) continue;

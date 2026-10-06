@@ -1,10 +1,12 @@
 import type { ProfileRuntimeContract, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import {
+  AGENT_BEHAVIOR_POLICY_V1_CAPABILITY,
   HUMAN_MESSAGE_INITIATOR_CAPABILITY,
   HUMAN_PRIORITY_FLOOR, isLiteralTrue, PROTOCOL_VERSION,
 } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withAbortableTransaction, withTransaction } from '../../db.js';
+import { readAgentBehaviorPolicy } from '../../agent-behavior-policy.js';
 import { agentContextReconcileLockKey } from '../agent-context-lock.js';
 import { assertAgentContextAdmissionAllowed } from '../agent-context-quarantine.js';
 import { StoreError } from '../errors.js';
@@ -285,6 +287,8 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       );
       if (lease.rowCount !== 1) throw new StoreError('fenced', 'delivery claim rejected by lease fencing');
       const capabilities = lease.rows[0]?.capabilities;
+      const includeBehaviorPolicy = Array.isArray(capabilities)
+        && capabilities.includes(AGENT_BEHAVIOR_POLICY_V1_CAPABILITY);
       const includeHumanInitiator = Array.isArray(capabilities)
         && capabilities.includes(HUMAN_MESSAGE_INITIATOR_CAPABILITY);
       const includeRoutingTargets = Array.isArray(capabilities)
@@ -513,11 +517,22 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       }
       const humanProjections = await projectHumanClientProvenance(client, claimedRows,
         Array.isArray(capabilities) ? capabilities.filter((value): value is string => typeof value === 'string') : [], tenantId);
+      const behaviorPolicies = new Map<string, Awaited<ReturnType<typeof readAgentBehaviorPolicy>>>();
+      if (includeBehaviorPolicy) {
+        for (const row of claimedRows) {
+          if (!behaviorPolicies.has(row.room_id)) {
+            behaviorPolicies.set(row.room_id, await readAgentBehaviorPolicy(client, {
+              tenant_id: tenantId, room_id: row.room_id, alias,
+            }));
+          }
+        }
+      }
       return claimedRows.map((row) => {
         if (row.claim_token === null || row.ack_deadline_at === null) {
           throw new StoreError('conflict', 'claimed delivery is missing its fencing fields');
         }
         const workState = workStates.get(row.id);
+        const behaviorPolicy = behaviorPolicies.get(row.room_id);
 
         const consoleAuthor = includeConsoleHumanScope && row.auth_channel === 'console'
           ? messageAuthor(row.author) : undefined;
@@ -541,6 +556,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
           ...humanProjections.get(row.id),
           ...(consoleAuthor === undefined ? {} : { console_human_subject: consoleAuthor.subject_id }),
           ...(workState === undefined ? {} : { conversation_work_state: workState }),
+          ...(behaviorPolicy === undefined ? {} : { behavior_policy: behaviorPolicy }),
           ...(routingTargets === undefined ? {} : { routing_targets: routingTargets }),
           ...(selfRole === undefined ? {} : { self_role: selfRole }),
           ...(profileRuntimeContract === undefined

@@ -1,3 +1,4 @@
+import { authenticatedGateProbe, gateProbeRuntimeActor } from '../../system-gate-probe.js';
 import type { PublishMessage, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import {
   PublishResultSchema,
@@ -128,6 +129,10 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
       : withAbortableTransaction(this.pool, options.signal, work);
   }
 
+  async resolveSystemGateProbeActor(tenant: Tenant, room: string): Promise<string> {
+    return withTransaction(this.pool, (client) => gateProbeRuntimeActor(client, tenant, room));
+  }
+
   async publish(input: PublishMessage, options: PublishOptions = {}): Promise<PublishResult> {
     const author = requireConsoleAuthor(options.consoleAuthor, options.requirePreparedConsoleIntent === true);
     if (options.requirePreparedConsoleIntent === true) {
@@ -146,13 +151,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
     if (input.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE) {
       const recipient = input.recipients[0];
       const gateAuthorized = isSystemGateProbeBody(input.body)
-        && input.tenant_id === 'Steven'
-        && input.room_id === 'grp.steven'
-        && input.actor_alias === 'kant'
-        && input.authenticated_context?.session_id === 'gate-probe'
-        && input.authenticated_context.channel === 'gate'
-        && input.authenticated_context.origin === undefined
-        && input.origin === undefined
+        && authenticatedGateProbe(input, options)
         && input.recipients.length === 1
         && input.lane === 'interactive'
         && input.priority === -100
@@ -170,7 +169,14 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
     }
     const work = async (client: DatabaseClient): Promise<PublishResult> => {
       const human = await humanPublicationAuthority(client, input, options);
-      await assertPublishRoute(client, input, human !== undefined);
+      const probe = input.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE;
+      if (probe) {
+        await gateProbeRuntimeActor(client, input.tenant_id, input.room_id, input.actor_alias);
+        for (const recipient of input.recipients) {
+          await gateProbeRuntimeActor(client, recipient.tenant_id, undefined, recipient.alias);
+        }
+      }
+      await assertPublishRoute(client, input, human !== undefined || probe);
 
       if (options.requirePreparedConsoleIntent === true) {
         await lockConsolePublishIntents(client, input.tenant_id, input.actor_alias);

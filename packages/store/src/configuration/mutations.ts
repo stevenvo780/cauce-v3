@@ -1,3 +1,4 @@
+import { behaviorPolicyMutation } from '../agent-behavior-policy.js';
 import type { ConfigMutation, Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 import { egressDestinationColumns, type EgressDestinationRow } from '../repository/egress-destinations.js';
@@ -25,6 +26,7 @@ export abstract class ConfigurationMutations {
     client: DatabaseClient,
     mutation: ConfigMutation
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
+    if (mutation.resource === 'agent_behavior_policy') return behaviorPolicyMutation(client, mutation);
     if (mutation.resource === 'tenant') return tenantMutation(client, mutation);
     if (mutation.resource === 'room') return roomMutation(client, mutation);
     if (mutation.resource === 'membership') return membershipMutation(client, mutation);

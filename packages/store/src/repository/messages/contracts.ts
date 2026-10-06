@@ -47,7 +47,15 @@ export interface HumanMessageOptions {
   readonly coalesceConsolePublishIntents?: boolean;
 }
 
+export interface SystemGateProbeAuthority {
+  readonly tenant_id: Tenant;
+  readonly alias: 'gate-probe';
+  readonly session_id: 'gate-probe';
+  readonly channel: 'gate';
+}
+
 export interface PublishOptions extends Partial<HumanMessageOptions> {
+  readonly systemGateProbeAuthority?: SystemGateProbeAuthority;
   /** Console-only gate. Machine endpoints deliberately leave it disabled. */
   readonly requirePreparedConsoleIntent?: boolean;
   readonly consoleIntentOperatorScope?: string;
