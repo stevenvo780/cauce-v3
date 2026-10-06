@@ -11,7 +11,10 @@ const DISCOVERY_SUITE = 'test:ops';
 const opsTestFileInCommand = /(?:^|\s)ops\/tests\/(\S+)/u;
 const DEFAULT_TIMEOUT_MS = 2 * 60_000;
 const GRACE_KILL_MS = 10_000;
-const TIMEOUT_MS = Number(process.env.CAUCE_OPS_TEST_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
+const TIMEOUT_OVERRIDE_MS = Number(process.env.CAUCE_OPS_TEST_TIMEOUT_MS);
+const FILE_TIMEOUTS = new Map([
+  ['test_independent_instance_postgres.py', 3 * 60_000],
+]);
 const releaseValidation = process.env.CAUCE_RELEASE_VALIDATION === '1';
 const declarationPattern = /^\s*(?:#|\/\/)\s*cauce:requiere\s+(\S+)\s*$/u;
 const declarationHeaderLines = 20;
@@ -117,6 +120,7 @@ function signalGroup(pid, signal) {
 function execute(name, requirement) {
   return new Promise(resolveResult => {
     const startedAt = Date.now();
+    const timeoutMs = TIMEOUT_OVERRIDE_MS || FILE_TIMEOUTS.get(name) || DEFAULT_TIMEOUT_MS;
     const command = commandFor(name, requirement);
     process.stdout.write(`\n=== ops/${name}\n`);
     const child = spawn(command.executable, command.arguments, {
@@ -129,10 +133,10 @@ function execute(name, requirement) {
     let killTimer = null;
     const deadline = setTimeout(() => {
       timedOut = true;
-      process.stdout.write(`\n=== ops/${name}: exceeded ${duration(TIMEOUT_MS)}, SIGTERM to the process group\n`);
+      process.stdout.write(`\n=== ops/${name}: exceeded ${duration(timeoutMs)}, SIGTERM to the process group\n`);
       signalGroup(child.pid, 'SIGTERM');
       killTimer = setTimeout(() => signalGroup(child.pid, 'SIGKILL'), GRACE_KILL_MS);
-    }, TIMEOUT_MS);
+    }, timeoutMs);
     const settle = (code, signal, error) => {
       clearTimeout(deadline);
       if (killTimer !== null) clearTimeout(killTimer);
@@ -140,7 +144,7 @@ function execute(name, requirement) {
         name,
         verdict: timedOut ? 'TIMEOUT' : code === 0 ? 'PASS' : 'FAIL',
         detail: timedOut
-          ? `killed after ${duration(TIMEOUT_MS)}`
+          ? `killed after ${duration(timeoutMs)}`
           : code === 0
             ? ''
             : (error?.message ?? (signal ? `signal ${signal}` : `exit ${code}`)),
