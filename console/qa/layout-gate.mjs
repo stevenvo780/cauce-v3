@@ -206,13 +206,21 @@ async function medirEstadosDeLive(pagina, viewport, medidas, sinMedir, origin) {
 
 /**
  * `networkidle` costs a second per route here and can never settle on its own: the console polls on
- * a timer, so the gate would wait for a quiet network that this page never has. The layout is
- * settled once `main` is painted and the transitions are off.
+ * a timer, so the gate would wait for a quiet network that this page never has. `/live` paints its
+ * shell before its activity snapshot, so that route waits for its data-backed layout or visible error.
  */
 async function medirRuta(pagina, ruta, origin) {
   await pagina.goto(origin + ruta, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await pagina.locator('main').waitFor({ state: 'visible', timeout: 15000 });
   await pagina.addStyleTag({ content: SIN_MOVIMIENTO });
+  if (ruta === '/live') {
+    const estado = pagina.locator('main .live-main, main .state-card.state-error').first();
+    await estado.waitFor({ state: 'visible', timeout: 30000 });
+    const error = pagina.locator('main .state-card.state-error');
+    if (await error.isVisible()) {
+      throw new Error(`Live activity failed before layout measurement: ${(await error.innerText()).trim()}`);
+    }
+  }
   await pagina.waitForTimeout(700);
   return pagina.evaluate(medirEnLaPagina);
 }
