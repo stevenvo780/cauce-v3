@@ -143,6 +143,7 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
             stdout: activeFixture.prompts[`${tenant.tenant}:stdout`] ?? '',
             stderr: activeFixture.prompts[`${tenant.tenant}:stderr`] ?? '',
             child: activeFixture.adapters[index],
+            gateway: activeFixture.gatewayDiagnostics,
           });
         });
       const reply = page.locator('.transcript-entry.output[data-reply-to] .canonical-reply');

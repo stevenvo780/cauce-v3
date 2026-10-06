@@ -11,6 +11,7 @@ interface Input {
   stdout: string;
   stderr: string;
   child: Pick<ChildProcess, 'pid' | 'exitCode' | 'signalCode' | 'killed'> | undefined;
+  gateway?: ChatLatencyCapture;
 }
 const MESSAGE = `m.tenant_id=$1 AND d.recipient_tenant=$1 AND d.recipient_alias=$2
   AND (CASE WHEN $3='text' THEN m.body->>'text' ELSE m.body->'attachments_v1'->0->>'name' END)=$4`;
@@ -95,6 +96,64 @@ const NUMBERS = new Set(['attempt', 'attempts', 'last_ack_rank', 'consumer_epoch
 const TIMES = new Set(['available_at', 'terminal_at', 'ack_deadline_at', 'claim_expires_at', 'lease_until', 'last_heartbeat_at', 'expires_at']);
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/u;
+const CHAT_PHASES = new Set(['publish_receipt_verified', 'publish_http_reply_completed',
+  'drain_started', 'drain_joined', 'drain_finished', 'delivery_claim_entered',
+  'delivery_claim_result', 'delivery_frame_queued', 'delivery_frame_not_queued']);
+const CHAT_STATUSES = new Set(['empty', 'returned', 'queued', 'not_queued', 'fenced', 'cancelled', 'error']);
+
+export class ChatLatencyCapture {
+  private partial = '';
+  private readonly events: Record<string, unknown>[] = [];
+  private discarded = 0;
+
+  write(chunk: string): void {
+    if (chunk.length + this.partial.length > 32_768) { this.partial = ''; this.discarded += 1; return; }
+    const lines = (this.partial + chunk).split('\n');
+    this.partial = lines.pop() ?? '';
+    for (const line of lines) {
+      let value: unknown;
+      try { value = JSON.parse(line); } catch { continue; }
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+      const row = value as Record<string, unknown>;
+      if (row.event !== 'chat_latency' || row.version !== 1
+          || typeof row.phase !== 'string' || !CHAT_PHASES.has(row.phase)) continue;
+      const event: Record<string, unknown> = { event: 'chat_latency', version: 1, phase: row.phase };
+      for (const key of ['message_id', 'delivery_id', 'request_id', 'operation_id']) {
+        if (typeof row[key] === 'string' && UUID.test(row[key])) event[key] = row[key];
+      }
+      for (const key of ['at', 'wake_claim_started_at', 'wake_claim_finished_at']) {
+        if (typeof row[key] === 'string' && TIMESTAMP.test(row[key]) && Number.isFinite(Date.parse(row[key]))) event[key] = row[key];
+      }
+      for (const key of ['elapsed_ms', 'wake_claim_elapsed_ms', 'round', 'attempt', 'claimed_count']) {
+        const number = row[key];
+        if (typeof number === 'number' && Number.isFinite(number) && number >= 0 && number <= 86_400_000
+            && (key.endsWith('_ms') || Number.isSafeInteger(number))
+            && (key !== 'round' || number < 16) && (key !== 'attempt' || number >= 1)) event[key] = number;
+      }
+      if (typeof row.status === 'string' && CHAT_STATUSES.has(row.status)) event.status = row.status;
+      this.events.push(event);
+      if (this.events.length > 256) { this.events.shift(); this.discarded += 1; }
+    }
+  }
+
+  forDeliveryRows(rows: readonly Record<string, unknown>[]): Record<string, unknown> {
+    const messages = new Set(rows.map(row => row.message_id));
+    const deliveries = new Set(rows.map(row => row.delivery_id));
+    const matches = (event: Record<string, unknown>) => {
+      const hasMessage = typeof event.message_id === 'string';
+      const hasDelivery = typeof event.delivery_id === 'string';
+      return (hasMessage || hasDelivery) && (!hasMessage || messages.has(event.message_id))
+        && (!hasDelivery || deliveries.has(event.delivery_id));
+    };
+    const operations = new Set(this.events.filter(matches).map(event => event.operation_id)
+      .filter((id): id is string => typeof id === 'string'));
+    return { status: 'OBSERVED_PARTIAL_CAPTURE', discarded: this.discarded,
+      events: this.events.filter(event => {
+        if (typeof event.message_id === 'string' || typeof event.delivery_id === 'string') return matches(event);
+        return typeof event.operation_id === 'string' && operations.has(event.operation_id);
+      }) };
+  }
+}
 
 function safeRow(row: Record<string, unknown>): Record<string, unknown> {
   const output: Record<string, unknown> = {};
@@ -146,12 +205,14 @@ export async function browserDeliveryFailure(cause: unknown, input: Input): Prom
   const { tenant, target, room } = input.tenant;
   const values = [tenant, target, input.selector.kind, input.selector.value, input.instanceId];
   const sql: Record<string, unknown> = {};
+  let deliveryRows: Record<string, unknown>[] = [];
   await Promise.all(Object.entries(QUERIES).map(async ([name, text]) => {
     const params = name === 'consumer' ? [tenant, target, input.instanceId, room]
       : name === 'contextLocks' ? [`agent-context-reconcile:${tenant}:${target}`]
       : ['holds', 'context'].includes(name) ? [tenant, target] : name === 'wakes' ? values.slice(0, 4) : values;
     try {
       const result = await input.pool.query({ text, values: params, query_timeout: 1500 });
+      if (name === 'deliveries') deliveryRows = result.rows.slice(0, 8).map(safeRow);
       sql[name] = { status: 'OBSERVED', rows: result.rows.slice(0, 8).map(safeRow) };
     } catch (error) { sql[name] = { status: 'UNKNOWN', errorCode: errorCode(error) }; }
   }));
@@ -159,6 +220,7 @@ export async function browserDeliveryFailure(cause: unknown, input: Input): Prom
   const diagnostic = {
     version: 1, eligibility: 'PARTIAL_OBSERVATIONS_NOT_ADMISSION_PROOF', sql,
     sdk: { stdout: sdkEvents(input.stdout, target), stderr: sdkEvents(input.stderr, target) },
+    gateway: input.gateway?.forDeliveryRows(deliveryRows) ?? { status: 'UNKNOWN' },
     child: child === undefined ? { status: 'UNKNOWN' } : {
       pid: child.pid ?? null, exitCode: child.exitCode, signalCode: child.signalCode, killed: child.killed,
       status: 'EXIT_FIELDS_ONLY_NOT_LIVENESS_PROOF',

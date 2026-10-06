@@ -13,6 +13,7 @@ import { PostgresConsoleUserStore } from '../../services/gateway/src/console-use
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 import { observeUiBootstrap } from './ui-bootstrap-diagnostics.js';
+import { ChatLatencyCapture } from './browser-delivery-diagnostics.js';
 import { isolatedBrowserNetwork, publishBrowserCdp } from './ui-bootstrap-network.js';
 import { browserExec as exec, browserDocker as docker, browserErrorStderr as errorStderr, browserErrorStdout as errorStdout, ownedBrowserLifecycle, browserResourcesRetained, BrowserResourcesRetained } from './browser-owned-lifecycle.js';
 
@@ -49,7 +50,7 @@ export const isaSecondHuman: FunctionalTenant = {
 interface Identity { tenant_id: string; alias: string; session_id: string; channel: string; roles: string[]; permissions: string[] }
 interface Pki { ca: { key: string; cert: string }; server: { key: string; cert: string }; consoleClient: { key: string; cert: string }; adapterCerts: { key: string; cert: string }[]; identityPath: string }
 export interface BrowserRuntime { image: string; imageId: string; owned: boolean; playwrightVersion: string }
-interface Fixture { database: TestDatabase; directory: string; browserRuntime: BrowserRuntime; baseUrl: string; gatewayUrl: string; pki: Pki; app: Awaited<ReturnType<typeof buildGateway>>; vite: ViteServer; browser: ConnectedBrowser; browserContainer: string; contexts: BrowserContext[]; adapters: ChildProcess[]; prompts: Record<string, string>; close(): Promise<void> }
+interface Fixture { database: TestDatabase; directory: string; browserRuntime: BrowserRuntime; baseUrl: string; gatewayUrl: string; pki: Pki; app: Awaited<ReturnType<typeof buildGateway>>; vite: ViteServer; browser: ConnectedBrowser; browserContainer: string; contexts: BrowserContext[]; adapters: ChildProcess[]; prompts: Record<string, string>; gatewayDiagnostics: ChatLatencyCapture; close(): Promise<void> }
 
 async function inspectImage(image: string): Promise<string | undefined> {
   try { return (await docker(['image', 'inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}}', image])).stdout.trim(); }
@@ -354,6 +355,7 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
   const contexts: Fixture['contexts'] = [];
   const adapters: Fixture['adapters'] = [];
   const prompts: Record<string, string> = {};
+  const gatewayDiagnostics = new ChatLatencyCapture();
   try {
     const runtime = await prepareBrowserRuntime(directory);
     browserRuntime = runtime;
@@ -380,7 +382,7 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
       fallback: new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(pki.identityPath)),
     });
     await auth.ready();
-    app = await buildGateway({ pool: database.pool, authProvider: auth, https: {
+    app = await buildGateway({ pool: database.pool, authProvider: auth, logger: { level: 'info', stream: gatewayDiagnostics }, https: {
       key: await readFile(pki.server.key), cert: await readFile(pki.server.cert), ca: await readFile(pki.ca.cert), requestCert: true, rejectUnauthorized: true,
     }, consoleOrigins: [`https://localhost:${String(frontendPort)}`] });
     await app.listen({ host: '127.0.0.1', port: 0 });
@@ -403,7 +405,7 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
     browser = activeBrowser;
     closeBrowserContainer = isolatedBrowser.closeContainer;
     const fixture: Fixture = {
-      database, directory, browserRuntime: runtime, baseUrl: `https://localhost:${String(address.port)}`, gatewayUrl: `https://localhost:${String(gatewayAddress.port)}`, pki, app, vite, browser: activeBrowser, browserContainer: activeBrowserContainer, contexts, adapters, prompts,
+      database, directory, browserRuntime: runtime, baseUrl: `https://localhost:${String(address.port)}`, gatewayUrl: `https://localhost:${String(gatewayAddress.port)}`, pki, app, vite, browser: activeBrowser, browserContainer: activeBrowserContainer, contexts, adapters, prompts, gatewayDiagnostics,
       close: async () => {
         const cleanupErrors: Error[] = [];
         for (const [index, context] of contexts.entries()) await attemptCleanup(cleanupErrors, `browser context ${String(index)}`, () => context.close());
