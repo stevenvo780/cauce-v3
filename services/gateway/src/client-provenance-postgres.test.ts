@@ -148,9 +148,10 @@ describe('durable human client provenance', () => {
     const client = await pool.connect();
     try {
       const root = (await client.query<{ conversation_id: string }>('SELECT * FROM human_message_initiators WHERE message_id=$1', [receipt.message_id])).rows[0];
+      if (!root) throw new Error('missing root initiator');
       const child = await lineageMessage(client);
       await putHumanMessageInitiator(client, { messageId: child, messageTenantId: 'Steven', humanId: owner.humanId,
-        tenantId: 'Steven', rootMessageId: receipt.message_id, conversationId: root?.conversation_id as string });
+        tenantId: 'Steven', rootMessageId: receipt.message_id, conversationId: root.conversation_id });
       const rows = [{ id: randomUUID(), message_id: child }];
       expect((await projectHumanClientProvenance(client, rows, [], 'Steven')).size).toBe(0);
       const projection = (await projectHumanClientProvenance(client, rows, [HUMAN_CLIENT_PROVENANCE_CAPABILITY,
