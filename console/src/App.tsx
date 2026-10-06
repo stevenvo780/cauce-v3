@@ -5,6 +5,7 @@ import {
 import { ConsoleAccessProvider } from './api/console-access';
 import { CSPProvider } from '@base-ui/react/csp-provider';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { StateCard } from './components/kit';
 import { ConversationDrafts, ConversationDraftStore } from './features/messages/conversation-drafts';
 import { AuthGate, UnmanagedAuthBanner } from './features/auth/AuthGate';
 import { AccountMenu } from './features/auth/AccountMenu';
@@ -120,9 +121,9 @@ export const ROUTE_ALIAS_TABLE: Readonly<Record<string, string>> = ROUTE_ALIASES
  */
 function RouteNotFound({ path }: { path: string }) {
   return (
-    <div className="state-card" role="alert">
-      <div className="state-card-texto">
-        <h1>{NOT_FOUND_TITLE}</h1>
+    <StateCard role="alert">
+      <div className="grid gap-1">
+        <h1 className="m-0 text-base font-semibold">{NOT_FOUND_TITLE}</h1>
         <p>
           La consola no declara <code>{path}</code>. No se mostró otra vista en su lugar porque eso
           ocultaría un enlace roto.
@@ -133,7 +134,7 @@ function RouteNotFound({ path }: { path: string }) {
           <a href="/live" onClick={(event) => { onNavClick(event, '/live'); }}>Abrir la flota</a>
         </p>
       </div>
-    </div>
+    </StateCard>
   );
 }
 
@@ -248,7 +249,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
           tabIndex={-1}
           className={fullBleed
             ? 'flex min-h-0 w-full flex-1 flex-col max-[760px]:pb-[calc(56px+env(safe-area-inset-bottom))] max-[760px]:has-[[data-keyboard-open]]:pb-0'
-            : 'mx-auto w-full max-w-[1400px] flex-1 px-4 pt-4 pb-[calc(72px+env(safe-area-inset-bottom))] min-[761px]:px-8 min-[761px]:pt-6 min-[761px]:pb-10'}
+            : 'mx-auto w-full max-w-[1680px] flex-1 px-4 pt-4 pb-[calc(72px+env(safe-area-inset-bottom))] min-[761px]:px-8 min-[761px]:pt-6 min-[761px]:pb-10'}
         >
           {notFoundPath
             ? <RouteNotFound path={notFoundPath} />

@@ -1,5 +1,6 @@
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Component, Fragment, type ErrorInfo, type ReactNode } from 'react';
+import { Button, StateCard } from './kit';
 
 export interface ErrorBoundaryProps {
   /** What is inside, said as the operator would name it: it becomes the panel's heading. */
@@ -52,17 +53,17 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     const { error, route, attempt } = this.state;
     if (!error) return <Fragment key={attempt}>{this.props.children}</Fragment>;
     return (
-      <div className="state-card state-error" role="alert">
+      <StateCard tone="danger" role="alert">
         <AlertTriangle aria-hidden="true" />
-        <div className="state-card-texto">
-          <h2>{this.props.label} no se pudo dibujar</h2>
+        <div className="grid gap-1">
+          <h2 className="m-0 text-sm font-semibold">{this.props.label} no se pudo dibujar</h2>
           <p>Tipo de fallo: {error.name}</p>
           <p>Ruta: {route}</p>
-          <button type="button" className="button secondary" onClick={this.retry}>
+          <Button className="justify-self-start" onClick={this.retry}>
             <RefreshCw size={16} aria-hidden="true" /> Reintentar esta vista
-          </button>
+          </Button>
         </div>
-      </div>
+      </StateCard>
     );
   }
 }

@@ -5,5 +5,4 @@
 @import './styles/theme.css';
 @import './styles/base.css' layer(legacy);
 @import './styles/components.css' layer(legacy);
-@import './styles/responsive.css' layer(legacy);
 @import './styles/orb.css' layer(components);

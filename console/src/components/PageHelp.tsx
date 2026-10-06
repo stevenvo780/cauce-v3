@@ -19,7 +19,7 @@ export function PageHelp({ title, description, children }: {
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-scrim" />
-        <Dialog.Popup className="page-help-modal fixed top-1/2 left-1/2 z-50 max-h-[85dvh] w-[min(92vw,560px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-line bg-surface p-5 shadow-pop">
+        <Dialog.Popup className="fixed top-1/2 left-1/2 z-50 max-h-[85dvh] w-[min(92vw,560px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-line bg-surface p-5 shadow-pop">
           <div className="mb-2 flex items-start justify-between gap-4">
             <Dialog.Title className="m-0 text-base font-semibold">{title}</Dialog.Title>
             <Dialog.Close aria-label="Cerrar" className="grid size-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted hover:bg-subtle hover:text-fg">

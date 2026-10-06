@@ -1,67 +1,5 @@
-/* ==========================================================================
-   Base & Layout (tokens, reset, tipografía, shell de la app)
-   ========================================================================== */
-
-/* THE BREAKPOINT SCALE. Three steps, and a fourth width needs a measurement of its own before it
-   may exist. A media query cannot read a custom property, so the scale is declared here in words
-   and enforced by `styles.breakpoints.test.ts`.
-
-     compact   @media (max-width: 760px)    bottom nav bar, everything in one column
-     medium    @media (max-width: 1100px)   icon rail, two columns
-     wide      no query at all              full sidebar
-
-   Their complements are `min-width: 761px` and `min-width: 1101px`; `src/breakpoints.ts` exports
-   the two strings the shell also matches from JavaScript. `qa/layout-gate.mjs` measures
-   360/760/1100/1440/1920/2560, so a step outside the scale can never be checked at its own edge.
-
-   Four widths survive outside it and none is a viewport step: they are widths at which a piece of
-   CONTENT stops fitting, each with its measurement written beside the rule — the drawer's 1479 in
-   `features/live/live-drawer.css`, the 720 of the quota header in `features/accounts/licenses.css`,
-   and the 640 and 460 of the two headers at the end of `responsive.css`. The test carries the same
-   list; a fifth needs a measurement first. */
-
-:root {
-  font-family: var(--font-sans);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  --radius: 12px;
-  --radius-pill: 999px;
-  /* Alto de barra de navegación inferior en viewport móvil. */
-  --nav-inferior-alto: 56px;
-
-  /* THE SPACING SCALE. It rules the whole console, not only new rules: every padding, margin and
-     gap of every sheet comes from here, and `styles.espaciado.test.ts` fails on a raw px that is
-     not on it. A measurement that has to stay off the scale carries its number beside the rule. */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
-  --space-7: 48px;
-
-  /* Content measure. A table and a paragraph do not read at the same width, so one cap cannot
-     serve both: prose keeps its measure while the shell grows with the monitor. */
-  --measure-prose: 760px;
-  --shell-max: 2076px;
-
-  /* Stacking order. Every new z-index comes from here; two raw values already tie. */
-  --layer-raised: 1;
-  --layer-sticky: 10;
-  --layer-nav: 20;
-  --layer-overlay: 60;
-  --layer-modal: 70;
-  --layer-dialog: 90;
-  --layer-skip: 100;
-
-  /* Escala tipográfica unificada */
-  --tipo-titulo: 26px;
-  --tipo-panel: 17px;
-  --tipo-cuerpo: 14px;
-  --tipo-rotulo: 13px;
-  --tipo-apunte: 12.5px;
-  --tipo-mono: 13px;
-}
+/* Document base: the page itself, focus, motion. Tokens live in theme.css; breakpoints in
+   src/breakpoints.ts (compact <=760px, medium <=1100px, wide above). */
 
 html { background: var(--c-canvas); }
 body {
@@ -72,6 +10,8 @@ body {
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
 button, input, select, textarea { font: inherit; }
@@ -81,34 +21,7 @@ h1, h2, h3, p { overflow-wrap: break-word; }
 :focus-visible { outline: 2px solid var(--c-brand); outline-offset: 2px; }
 /* Focus moved by a route change or by opening a thread is an announcement, not keyboard travel. */
 main:focus, main:focus-visible, [tabindex='-1']:focus { outline: none; }
-.sr-only { position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; }
-.eyebrow { margin: 0; color: var(--c-brand-ink); font-size: 12px; font-weight: 600; letter-spacing: .02em; }
-.section-header { margin: var(--space-6) 0 var(--space-4); }
-.section-header h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -.01em; }
-.section-header p { max-width: var(--measure-prose); margin: var(--space-1) 0 0; color: var(--c-muted); }
 
-/* ==========================================================================
-   Reglas de más de una ruta
-
-   Every route past the landing page is its own lazily loaded chunk with its own sheet
-   (`App.tsx`, `deferredPage`), so a class two chunks paint cannot live in either one's sheet:
-   /accounts writes `.config-*` without loading `config.css`, /messages renders
-   `TerminalTranscript` without loading `terminal-panel.css`, and /ayuda writes `<kbd>` without a
-   sheet of its own. These are the rules that answer for both, and the only reason they are global.
-   ========================================================================== */
-
-.observation-line { display: flex; align-items: center; gap: var(--space-2); margin: calc(var(--space-2) * -1) 0 var(--space-5); color: var(--muted); font-size: var(--tipo-rotulo); }
-
-.capabilities { margin-top: var(--space-4); }
-.capabilities > p { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); color: var(--faint); font-size: var(--tipo-apunte); font-weight: 700; text-transform: uppercase; }
-
-
-/* --- Formularios de configuración: /config y /accounts --- */
-.config-form { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: var(--space-3); }
-.config-json { grid-column: 1 / -1; }
-.config-json textarea, .config-preview, .config-records code { font-family: var(--font-mono); }
-.config-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.config-preview { max-height: 440px; overflow: auto; margin: var(--space-4) 0 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--c-subtle); color: var(--text-2); font-size: var(--tipo-rotulo); white-space: pre-wrap; }
-.config-records { display: grid; gap: var(--space-2); max-height: 350px; overflow: auto; margin: 0; padding: 0; list-style: none; }
-.config-records li { padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--c-subtle); }
-.config-records code { color: var(--text-2); font-size: var(--tipo-apunte); overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

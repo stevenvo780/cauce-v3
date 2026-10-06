@@ -1,34 +1,6 @@
-/* Shared classes still written by feature markup. Each one is a thin alias of the design system
-   (tokens + Tailwind utilities); a view that moves to the React primitives stops needing it. */
+/* Rules for what feature markup cannot style per element: native tables, form controls, definition
+   lists and a few utility classes shared by the table views. Everything else is Tailwind in JSX. */
 
-.button {
-  @apply inline-flex min-h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-line bg-surface px-3 text-[13px] font-medium text-fg no-underline shadow-card transition-colors;
-  &:hover:not(:disabled) { @apply bg-subtle; }
-  &:disabled, &[aria-disabled='true'] { @apply cursor-not-allowed opacity-50 shadow-none; }
-  &.primary { @apply border-transparent bg-brand text-on-brand; }
-  &.primary:hover:not(:disabled) { @apply bg-brand-hover; }
-  &.secondary { @apply bg-surface text-fg; }
-  &.small { @apply min-h-7 px-2 text-xs; }
-}
-
-.panel {
-  @apply mb-4 rounded-xl border border-line bg-surface p-5 shadow-card;
-}
-.panel-header { @apply mb-4 flex flex-col gap-1; }
-.panel-header h2 { @apply m-0 text-[15px] font-semibold tracking-tight; }
-.panel-header p { @apply m-0 max-w-prose text-[13px] text-muted; }
-
-.metrics-grid { @apply mb-4 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr))]; }
-.metric { @apply m-0 rounded-xl border border-line bg-surface p-4 text-left shadow-card; }
-.metric p { @apply m-0 text-xs font-medium text-muted; }
-.metric strong { @apply mt-1 block text-2xl font-semibold tracking-tight tabular-nums text-fg; }
-.metric span { @apply mt-1 block text-xs text-muted; }
-.metric-positive strong { @apply text-ok-ink; }
-.metric-warning strong { @apply text-warn-ink; }
-.metric-danger strong { @apply text-danger-ink; }
-button.metric { @apply cursor-pointer font-[inherit] transition-colors hover:border-line-strong; }
-
-.table-wrap { @apply overflow-x-auto rounded-lg border border-line; }
 table { @apply w-full border-collapse text-[13px]; }
 th { @apply border-b border-line bg-subtle px-3 py-2 text-left text-xs font-medium whitespace-nowrap text-muted; }
 td { @apply border-b border-line px-3 py-2.5 align-top; }
@@ -41,8 +13,6 @@ tr.row-detail > td { @apply bg-subtle; }
 tbody tr.row-detail:hover td { @apply bg-subtle; }
 .row-toggle { @apply inline-flex cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-1.5 py-1 text-muted hover:bg-muted-bg hover:text-fg; }
 
-.identity-cell, .inline-icon { @apply flex items-center gap-2; }
-.icon-box { @apply grid size-8 shrink-0 place-items-center rounded-md bg-brand-soft text-brand-ink; }
 .mono { @apply font-mono text-[12.5px]; }
 small, .subline { @apply text-xs text-muted; }
 .subline { @apply mt-0.5 block; }
@@ -50,37 +20,12 @@ small, .subline { @apply text-xs text-muted; }
 .error-copy { @apply text-danger-ink; }
 .unknown { @apply text-muted italic; }
 
-.badge {
-  @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] font-medium whitespace-nowrap;
-  @apply bg-muted-bg text-fg-2;
-}
-.badge-online, .badge-done { @apply bg-ok-soft text-ok-ink; }
-.badge-running, .badge-info { @apply bg-info-soft text-info-ink; }
-.badge-warning { @apply bg-warn-soft text-warn-ink; }
-.badge-danger { @apply bg-danger-soft text-danger-ink; }
-.badge-offline, .badge-unknown { @apply bg-muted-bg text-muted; }
-
-.chip-list, .flag-chip-list { @apply flex flex-wrap gap-1.5; }
-.chip, .window-count-chip { @apply inline-flex items-center gap-1 rounded-md border border-line bg-subtle px-2 py-0.5 text-xs text-fg-2; }
-
-.empty-state { @apply m-0 rounded-lg border border-dashed border-line-strong p-6 text-center text-[13px] text-muted; }
-.state-card { @apply flex items-start gap-3 rounded-xl border border-line bg-surface p-4 text-[13px]; }
-.state-card p { @apply m-0; }
-.state-card-texto { @apply grid gap-1; }
-.state-card-lento { @apply text-xs text-muted; }
-.state-error { @apply border-danger/40 bg-danger-soft text-danger-ink; }
-.spinner { @apply size-4 shrink-0 animate-spin rounded-full border-2 border-line-strong border-t-brand; }
-
-.explain-grid, .trust-grid { @apply grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr))]; }
-.explain-grid article, .trust-grid article { @apply rounded-lg border border-line bg-subtle p-3; }
-.explain-grid svg, .trust-grid svg { @apply text-brand; }
-.explain-grid strong, .trust-grid strong { @apply mt-1 block text-[13px]; }
-.explain-grid p, .trust-grid p { @apply m-0 text-xs text-muted; }
+.chip-list { @apply flex flex-wrap gap-1.5; }
+.chip { @apply inline-flex items-center gap-1 rounded-md border border-line bg-subtle px-2 py-0.5 text-xs text-fg-2; }
 
 label { @apply grid gap-1.5 text-[13px] font-medium text-fg-2; }
-.label-hint { @apply text-xs font-normal text-muted; }
 input:not([type='checkbox'], [type='radio'], [type='range']), select, textarea {
-  @apply w-full rounded-md border border-line-strong bg-surface px-2.5 py-1.5 text-[13px] font-normal text-fg transition-colors outline-none;
+  @apply w-full min-w-0 rounded-md border border-line-strong bg-surface px-2.5 py-1.5 text-[13px] font-normal text-fg transition-colors outline-none;
   &:focus-visible { @apply border-brand ring-3 ring-brand/20; }
   &::placeholder { @apply text-muted; }
   &:disabled { @apply cursor-not-allowed opacity-60; }
@@ -89,39 +34,14 @@ input:not([type='checkbox'], [type='radio'], [type='range']), select { @apply mi
 textarea { @apply min-h-24 resize-y leading-relaxed; }
 input[type='checkbox'], input[type='radio'] { @apply size-4 accent-brand; }
 
-.notice, .trust-callout { @apply flex items-start gap-2 rounded-lg border border-line bg-subtle px-3 py-2.5 text-[13px] text-fg-2; }
-.notice.success { @apply border-ok/30 bg-ok-soft text-ok-ink; }
-.notice.error { @apply border-danger/30 bg-danger-soft text-danger-ink; }
-.notice.parcial { @apply border-warn/40 bg-warn-soft text-warn-ink; }
-.trust-callout svg { @apply mt-0.5 shrink-0 text-brand; }
-
-.permission-line { @apply flex flex-wrap items-center gap-2 text-xs; }
 dl { @apply m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]; }
 dt { @apply text-muted; }
 dd { @apply m-0 min-w-0 break-words; }
-
-.timeline { @apply m-0 grid list-none gap-3 p-0; }
-.timeline li { @apply relative flex gap-3; }
-.timeline-node { @apply mt-1 size-2.5 shrink-0 rounded-full bg-brand; }
-.timeline-missing .timeline-node { @apply bg-line-strong; }
-.timeline li > div { @apply min-w-0; }
-.timeline time, .timeline small { @apply text-xs text-muted; }
-
-.search-field { @apply relative flex items-center; }
-.search-field svg { @apply pointer-events-none absolute left-2.5 text-muted; }
-.search-field input { @apply pl-8; }
-.auto-refresh-toggle { @apply inline-flex items-center gap-2 text-[13px] font-normal; }
-.overdue-note { @apply text-xs text-warn-ink; }
-
-.sparkline { @apply block h-6 w-24 text-brand; }
-.sparkline-empty { @apply text-xs text-muted; }
 
 .tooltip-anchor { @apply cursor-help underline decoration-line-strong decoration-dotted underline-offset-2; }
 .tooltip-anchor:not([tabindex]) { @apply cursor-default; }
 .tooltip-bubble { @apply z-50 max-w-72 rounded-lg border border-line bg-surface p-2.5 text-xs text-fg shadow-pop; }
 .tooltip-bubble strong { @apply block text-[13px]; }
 .tooltip-bubble p { @apply mt-1 mb-0 text-muted; }
-.tooltip-bubble .tooltip-foot { @apply mt-2 border-t border-line pt-2; }
-.tooltip-bubble .tooltip-warn { @apply text-warn-ink; }
 
 kbd { @apply rounded border border-b-2 border-line-strong bg-subtle px-1 font-mono text-[11px] text-fg-2; }
