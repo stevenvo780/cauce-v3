@@ -153,7 +153,20 @@ export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescrip
         }
         cid = current.id;
         await verifyNetwork();
-        if (current.state.Status === 'running') await docker(['stop', '--time', '5', cid], { timeout: 15_000 });
+        if (current.state.Status === 'running') {
+          try {
+            await docker(['stop', '--time', '5', cid], { timeout: 15_000 });
+          } catch (error) {
+            if (!absentContainer(error, cid)) throw error;
+            let remaining: Container | undefined;
+            try {
+              remaining = await inspect();
+            } catch {
+              throw error;
+            }
+            if (remaining !== undefined) throw error;
+          }
+        }
         if (current.state.Status === 'created' && current.state.Pid === 0) {
           try { await docker(['rm', cid], { timeout: 15_000 }); }
           catch (error) {

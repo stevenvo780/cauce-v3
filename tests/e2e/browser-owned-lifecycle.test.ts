@@ -36,6 +36,9 @@ function daemon() {
   let foreignNetwork = false;
   let changeNetworkAfterCreate = false;
   let linger = false;
+  let stopBehavior = 'normal';
+  let stopFailure: Error | undefined;
+  let inspectFailureAfterStop = false;
   let ticks = 0;
   const commands: string[][] = [];
   const view = () => ({ id: cid, name: `/${descriptor.name}`, image: descriptor.imageId, owner, cohort: 'ui-functional',
@@ -47,6 +50,10 @@ function daemon() {
     expect(options?.timeout).toBeLessThanOrEqual(15_000);
     if (args[0] === 'network' && args[1] === 'inspect') return { stdout: JSON.stringify({ id: foreignNetwork ? 'foreign-network-id' : descriptor.networkId, name: descriptor.networkName, internal: true, owner: descriptor.networkOwner }) };
     if (args[0] === 'inspect') {
+      if (inspectFailureAfterStop) {
+        inspectFailureAfterStop = false;
+        throw new Error('original CID inspection failure');
+      }
       if (!visible) throw Object.assign(new Error('own absence'), { code: 1, stderr: `Error: No such object: ${args.at(-1) ?? ''}` });
       return { stdout: JSON.stringify(view()) };
     }
@@ -61,7 +68,22 @@ function daemon() {
       state = 'running';
       return { stdout: descriptor.name };
     }
-    if (args[0] === 'stop') { state = exitedBeforeRemoval ? 'exited' : 'removing'; removing = true; return { stdout: cid }; }
+    if (args[0] === 'stop') {
+      if (stopBehavior !== 'normal') {
+        if (stopBehavior === 'not-found-removed') visible = false;
+        if (stopBehavior === 'not-found-foreign-owner') owner = 'foreign';
+        if (stopBehavior === 'inspect-fails') inspectFailureAfterStop = true;
+        const reference = stopBehavior === 'not-found-wrong-reference' ? 'f'.repeat(64) : cid;
+        stopFailure = Object.assign(new Error('original synthetic stop failure'), {
+          code: stopBehavior === 'unknown' ? 125 : 1,
+          stderr: stopBehavior === 'unknown' ? 'Error response from daemon: operation denied'
+            : `Error response from daemon: No such container: ${reference}`,
+        });
+        if (stopBehavior === 'not-found-present') state = 'running';
+        throw stopFailure;
+      }
+      state = exitedBeforeRemoval ? 'exited' : 'removing'; removing = true; return { stdout: cid };
+    }
     if (args[0] === 'rm') { visible = false; return { stdout: cid }; }
     throw new Error('unexpected Docker operation');
   };
@@ -70,7 +92,8 @@ function daemon() {
     lateCreate: () => { visible = true; }, foreign: () => { owner = 'foreign'; }, visible: () => visible,
     stayRemoving: () => { linger = true; }, elapsed: () => ticks,
     foreignNetworkAfterCreate: () => { changeNetworkAfterCreate = true; }, foreignNetworkNow: () => { foreignNetwork = true; },
-    exitBeforeAutoRemove: () => { exitedBeforeRemoval = true; } };
+    exitBeforeAutoRemove: () => { exitedBeforeRemoval = true; },
+    stopWith: (behavior: string) => { stopBehavior = behavior; }, stopFailure: () => stopFailure };
 }
 
 it('retains an absent namespace when the daemon creates after CLI cancellation and first cleanup inspection', async () => {
@@ -184,4 +207,32 @@ it('waits for auto-removal in exited state without racing another rm', async () 
   expect(fake.commands.filter((args) => args[0] === 'rm')).toEqual([]);
   expect(fake.visible()).toBe(false);
   expect(owned.retained()).toBe(false);
+});
+
+it('reconciles stop 404 only after the known CID is confirmed absent', async () => {
+  const fake = daemon(); fake.stopWith('not-found-removed');
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  await owned.start(); await owned.close();
+  const inspectionsAfterStop = fake.commands.filter((args) => args[0] === 'inspect' && args.at(-1) === cid);
+  expect(inspectionsAfterStop.length).toBeGreaterThanOrEqual(2);
+  expect(fake.commands.filter((args) => args[0] === 'stop')).toEqual([['stop', '--time', '5', cid]]);
+  expect(fake.visible()).toBe(false);
+  expect(owned.retained()).toBe(false);
+});
+
+it.each([
+  ['unknown stop error', 'unknown'],
+  ['No such container for another reference', 'not-found-wrong-reference'],
+  ['the known CID still present', 'not-found-present'],
+  ['the known CID identity changed', 'not-found-foreign-owner'],
+  ['inspection after stop fails', 'inspect-fails'],
+])('retains resources when stop reconciliation is unsafe: %s', async (_label, behavior) => {
+  const fake = daemon(); fake.stopWith(behavior);
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  await owned.start();
+  const error = await owned.close().catch((failure: unknown) => failure);
+  expect(browserResourcesRetained(error)).toBe(true);
+  expect((error as Error).cause).toBe(fake.stopFailure());
+  expect(owned.retained()).toBe(true);
+  expect(fake.commands.filter((args) => args[0] === 'stop')).toEqual([['stop', '--time', '5', cid]]);
 });
