@@ -18,8 +18,6 @@ import re
 import stat
 import sys
 
-from instance_namespace import environment_prefix
-
 ALIAS = re.compile(r"[a-z][a-z0-9-]*\Z")
 FD_ENV = "CAUCE_ALIAS_LOCK_FD"
 LEGACY_FD_ENV = "CAUCE_ALIAS_LEGACY_LOCK_FD"
@@ -28,6 +26,13 @@ ALIAS_ENV = "CAUCE_ALIAS_LOCK_ALIAS"
 
 class LockError(RuntimeError):
     pass
+
+
+def lock_prefix() -> str:
+    if not os.environ.get("CAUCE_INSTALLATION_ID"):
+        return "cauce-v3"
+    from instance_namespace import environment_prefix
+    return environment_prefix()
 
 
 def mkdir_private_at(name: str, directory_fd: int) -> None:
@@ -122,7 +127,7 @@ def open_root_directory(root: pathlib.Path, *, create: bool) -> int:
 
 
 def open_private_directory(root_fd: int, *, create: bool) -> int:
-    name = f"{environment_prefix()}-alias-locks-{os.geteuid()}"
+    name = f"{lock_prefix()}-alias-locks-{os.geteuid()}"
     created = False
     if create:
         try:
@@ -200,7 +205,7 @@ def open_locks(root: pathlib.Path, alias: str) -> tuple[int, int]:
         # The old supervisor locked this root-level inode. Hold it throughout one transition
         # release so an already-running pre-patch unit and the descriptor-safe implementation
         # cannot both mutate the same alias.
-        legacy_fd = open_regular_lock(root_fd, f"{environment_prefix()}-container-{alias}.lock", "legacy alias")
+        legacy_fd = open_regular_lock(root_fd, f"{lock_prefix()}-container-{alias}.lock", "legacy alias")
         directory_fd = open_private_directory(root_fd, create=True)
     except Exception:
         if legacy_fd is not None:
@@ -233,7 +238,7 @@ def verify_inherited(root: pathlib.Path, alias: str) -> None:
     root_fd = open_root_directory(root, create=False)
     try:
         legacy_named = os.stat(
-            f"{environment_prefix()}-container-{alias}.lock", dir_fd=root_fd, follow_symlinks=False
+            f"{lock_prefix()}-container-{alias}.lock", dir_fd=root_fd, follow_symlinks=False
         )
         directory_fd = open_private_directory(root_fd, create=False)
     finally:

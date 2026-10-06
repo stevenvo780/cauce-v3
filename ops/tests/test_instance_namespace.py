@@ -92,6 +92,27 @@ class InstanceNamespaceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("invalid instance selection", result.stderr)
 
+    def test_installed_cli_uses_distribution_selector(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = pathlib.Path(directory)
+            installed = home / "bin"
+            installed.mkdir()
+            cli = installed / "cauce"
+            cli.write_bytes((OPS / "cli/cauce").read_bytes())
+            getent = installed / "getent"
+            getent.write_text("#!/bin/sh\nprintf 'fixture:x:1000:1000::%s:/bin/bash\\n' \"$CAUCE_TEST_OPERATOR_HOME\"\n")
+            getent.chmod(0o755)
+            distribution = home / ".local/share/cauce-v3"
+            distribution.mkdir(parents=True)
+            (distribution / "ops").symlink_to(OPS, target_is_directory=True)
+            environment = {**os.environ, "CAUCE_TEST_OPERATOR_HOME": str(home), "PATH": str(installed) + ":" + os.environ["PATH"]}
+            environment.pop("CAUCE_INSTALLATION_ID", None)
+            environment.pop("CAUCE_INSTANCE_CONFIG", None)
+            result = subprocess.run(["bash", str(cli), "--instance-config", "/absent/config.json", "operador", "on"], env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("invalid instance selection", result.stderr)
+            self.assertNotIn("can't open file", result.stderr)
+
     def test_installation_without_descriptor_rejects_before_operating(self):
         environment = {**os.environ, "CAUCE_INSTALLATION_ID": "empresa-a"}
         environment.pop("CAUCE_INSTANCE_CONFIG", None)

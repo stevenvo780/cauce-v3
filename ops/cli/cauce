@@ -18,7 +18,11 @@ if [[ ${1:-} == --instance-config || ${1:-} == --descriptor ]]; then
 fi
 if [[ -n ${instance_config:-} ]]; then
   selector_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
-  instance_values=$(python3 "$selector_dir/instance-selection.py" "$instance_config") || exit $?
+  selector_script=$selector_dir/instance-selection.py
+  [[ -f $selector_script ]] || selector_script=$selector_dir/.cauce-instance/ops/cli/instance-selection.py
+  [[ -f $selector_script ]] || selector_script=$OPS/cli/instance-selection.py
+  [[ -f $selector_script ]] || { printf 'falta el selector de instancia; actualiza la distribución de Cauce\n' >&2; exit 2; }
+  instance_values=$(python3 "$selector_script" "$instance_config") || exit $?
   mapfile -t selection <<<"$instance_values"
   [[ ${#selection[@]} == 8 ]] || { printf 'selector de instancia incompleto\n' >&2; exit 2; }
   OPS=${selection[0]}

@@ -24,6 +24,7 @@ done
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 ops_root=${CAUCE_CONTAINER_OPS_ROOT:-$(cd -- "$script_dir/.." && pwd -P)}
+code_root=${CAUCE_CONTAINER_CODE_ROOT:-$ops_root}
 
 read_metadata() {
   python3 - "$ops_root" "$alias_name" "$script_dir" <<'PY'
@@ -111,7 +112,7 @@ container_id=${container_ids[0]}
 
 if [[ $mode == provision ]]; then
   lock_root=${CAUCE_CONTAINER_LOCK_ROOT:-/run/lock}
-  lock_helper="$ops_root/scripts/alias-lock-exec.py"
+  lock_helper="$code_root/scripts/alias-lock-exec.py"
   [[ -f $lock_helper && ! -L $lock_helper ]] \
     || { printf 'provision-hermes-runtime: helper de lock no disponible\n' >&2; exit 73; }
   # Exactly the same descriptor-owned lock as container-adapter-supervisor.sh. Provision cannot
@@ -509,7 +510,7 @@ fi
 verify >/dev/null
 INNER
 
-runtime_verifier="$ops_root/scripts/verify-hermes-runtime.py"
+runtime_verifier="$code_root/scripts/verify-hermes-runtime.py"
 [[ -f $runtime_verifier && ! -L $runtime_verifier ]] \
   || { printf 'provision-hermes-runtime: verificador inmutable no disponible\n' >&2; exit 78; }
 docker exec -i --user 0 "$container_id" /usr/bin/python3 - \
