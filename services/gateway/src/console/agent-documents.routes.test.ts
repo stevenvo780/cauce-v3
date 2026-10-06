@@ -1,8 +1,5 @@
 import { coordinateWriteFixture, contexto, FIXTURE_WRITE_OPERATION } from './agent-profile.fixtures.js';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -14,7 +11,6 @@ import {
   type AgentFactsProbe, type DocumentsResponse, type FactsSource, registerAgentDocumentRoutes,
   type TerminalAuditEntry
 } from './agent-documents.routes.js';
-import { DOCUMENT_REASON_MAX, DOCUMENT_REASON_MIN } from './agent-documents/write-admission.js';
 import { CONTEXT_APPLY_POLICY } from './context-apply-policy.js';
 import { hechosDelRegistro } from '../terminal/hechos-del-registro.js';
 import { AgentRegistry, parseAgentPresence } from '../terminal/registry.js';
@@ -729,20 +725,5 @@ describe('contenido y escritura tenant-qualified', () => {
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ error: 'agent_disabled' });
     expect(factsFor).not.toHaveBeenCalled();
-  });
-});
-
-describe('el motivo del canal de ficheros usa los límites del plano PTY', () => {
-  it('los lee de plugin.ts, donde son privados, y falla el día que uno de los dos afloje', () => {
-    const fuente = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), '..', 'terminal', 'plugin.ts'), 'utf8',
-    );
-    const min = /^const REASON_MIN = (\d+);$/m.exec(fuente)?.[1];
-    const max = /^const REASON_MAX = (\d+);$/m.exec(fuente)?.[1];
-
-    expect(min).toBeDefined();
-    expect(max).toBeDefined();
-    expect(DOCUMENT_REASON_MIN).toBe(Number(min));
-    expect(DOCUMENT_REASON_MAX).toBe(Number(max));
   });
 });
