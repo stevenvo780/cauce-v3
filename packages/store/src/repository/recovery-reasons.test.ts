@@ -1,10 +1,13 @@
+import { schemaBarrierReply } from '../../../../tests/helpers/schema-barrier.js';
 import { describe, expect, it, vi } from 'vitest';
 import { publishRequestHash, type PublishMessage } from '@cauce/protocol';
 import { CauceRepository, StoreError, type DatabasePool } from '../index.js';
 import { CONTEXT_WRITE_QUARANTINE_KIND } from './agent-context-quarantine.js';
 
 function repositoryFor(rowsFor: (sql: string) => Record<string, unknown>[]) {
-  const query = vi.fn(async (sql: string, _params: readonly unknown[] = []) => {
+  const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
+    const schema = schemaBarrierReply(sql, params);
+    if (schema) return schema;
     const rows = rowsFor(sql);
     return { rows, rowCount: rows.length };
   });

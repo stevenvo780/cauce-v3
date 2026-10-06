@@ -1,3 +1,4 @@
+import { schemaBarrierReply } from '../../../tests/helpers/schema-barrier.js';
 import type { DatabasePool } from '@cauce/store';
 import { describe, expect, it } from 'vitest';
 import { runDispatcher } from '../src/index.js';
@@ -20,8 +21,10 @@ function stubPool(poisoned: readonly PoisonablePhase[]): {
   attempts: PoisonablePhase[];
 } {
   const attempts: PoisonablePhase[] = [];
-  const query = async (statement: unknown): Promise<{ rows: never[]; rowCount: number }> => {
+  const query = async (statement: unknown, params: readonly unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> => {
     if (typeof statement === 'string') {
+      const schema = schemaBarrierReply(statement, params);
+      if (schema) return schema;
       for (const phase of Object.keys(phaseStatements) as PoisonablePhase[]) {
         if (!phaseStatements[phase].test(statement)) continue;
         attempts.push(phase);
@@ -162,8 +165,12 @@ function recordingPool(): { pool: DatabasePool; statements: RecordedStatement[] 
   const statements: RecordedStatement[] = [];
   const query = async (
     sql: unknown, params: readonly unknown[] = [],
-  ): Promise<{ rows: never[]; rowCount: number }> => {
-    if (typeof sql === 'string') statements.push({ sql, params });
+  ): Promise<{ rows: unknown[]; rowCount: number }> => {
+    if (typeof sql === 'string') {
+      statements.push({ sql, params });
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
+    }
     return { rows: [], rowCount: 0 };
   };
   const client = { query, on: () => client, off: () => client, release: () => undefined };
