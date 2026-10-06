@@ -1,10 +1,7 @@
 import type { TerminalTarget } from './api';
 import { countLiveTuiTargets, countOnlinePtyTargets, type FleetAgent } from './fleet';
 
-/**
- * One-line fleet summary. A count the inventory does not back is left out, never shown as zero:
- * an unpublished inventory is UNKNOWN, not "no terminals".
- */
+/** One-line fleet summary; a count the inventory does not back is UNKNOWN, never zero. */
 export function resumenDeFlota(agents: readonly FleetAgent[], targets: TerminalTarget[] | null | undefined): string {
   const enLinea = agents.filter((agent) => agent.leaseState === 'online').length;
   const tui = countLiveTuiTargets(targets);

@@ -15,29 +15,17 @@ import { actionsFor, mutationText, parseMutation, rollbackPolicy } from './mutat
 import { useConfigMutation, useRevisionEncadenada } from './use-config-mutation';
 import { useInterruptores } from './use-interruptores';
 
-/**
- * What a table-action notice is true for: the collection where the operator clicked AND the snapshot revision under
- * which it holds. Without the revision, the notice outlived what disproved it: it kept asserting "the tables are at
- * revision 2" after another write—the onboarding, the wizard, the raw editor, a rollback—moved them to 3.
- */
+/** A table-action notice holds only for its collection AND the snapshot revision it was produced under. */
 export function alcanceDeAccion(coleccion: string, revision: number | undefined): string {
   return `${coleccion}@${String(revision ?? 'UNKNOWN')}`;
 }
 
-/**
- * The action awaiting confirmation PLUS the revision on which it was requested. A pending confirmation describes the
- * row AS IT STOOD: if the snapshot moved underneath (another operator, or the "Refresh" button itself), what the
- * operator read in the `<pre>` is no longer what is there, and sending it anyway with the new revision applies an
- * unsigned mutation.
- */
+/** The pending confirmation plus the revision it was requested on; a moved snapshot invalidates it. */
 interface AccionPendienteVigente extends AccionPendiente {
   revision: number | undefined;
 }
 
-/**
- * The revision the snapshot has AFTER a write. If the reread arrived, the revision it brought is what the screen is
- * painting; if it did not, the snapshot stayed where it was.
- */
+/** Revision after a write: the reread one if it arrived, else unchanged. */
 function revisionTrasEscribir(recarga: EstadoRecarga | undefined, actual: number | undefined): number | undefined {
   if (recarga?.releido) return recarga.revision;
   return actual;
@@ -51,9 +39,7 @@ export function useConfigWrites() {
   const [action, setAction] = useState<ConfigAction>('create');
   const [editor, setEditor] = useState(() => mutationText('acl_edge', 'create'));
   const [pendiente, setPendiente] = useState<AccionPendienteVigente>();
-  // Navigating and reading remain available under RBAC `unknown`, but writing fails closed. A reload error also
-  // invalidates a previous ALLOW: keeping it would enable mutations precisely when we can no longer attest that
-  // `config.write` is still in force.
+  // Navigating stays available under RBAC `unknown`, but writing fails closed; a reload error invalidates a prior ALLOW.
   const estadoPermisoDeEscritura = access.error
     ? 'unknown'
     : permissionState(access.data, 'config.write');
@@ -71,12 +57,7 @@ export function useConfigWrites() {
     fallback: 'Cambio rechazado: UNKNOWN',
     ...(motivoDeSoloLectura === undefined ? {} : { bloqueo: `Cambio bloqueado. ${motivoDeSoloLectura}` }),
   };
-  /**
-   * One channel per control that writes, because their outcomes are different assertions. The audit trail and the
-   * table actions paint theirs NEXT TO the button that fired it; the raw editor's live inside a `<details>` closed by
-   * default, where a failing rollback looked EXACTLY like a working one. All three share the same write path AND the
-   * same chained revision: what a write leaves chained is true of the server, not of the control that fired it.
-   */
+  /** One channel per writing control; all share one write path and one chained revision. */
   const canalEditor = useConfigMutation({ ...escritura, canal: 'editor' });
   const canalRollback = useConfigMutation({ ...escritura, canal: 'rollback' });
   const canalAccion = useConfigMutation({ ...escritura, canal: 'row-action' });
@@ -84,14 +65,7 @@ export function useConfigWrites() {
   const snapshotRevision = typeof config.data?.revision === 'number' ? config.data.revision : undefined;
   const groups = useMemo(() => configCollections(config.data), [config.data]);
   const politicasDeRol = config.data?.role_policies ?? undefined;
-  /**
-   * The switches in the tables. They write through the SAME `change()` as the raw editor, the wizard, and the
-   * onboarding—that is, `POST /v3/console/config/changes` with `expected_revision`—so there is no second write path
-   * that can lag behind the first. What the hook adds is optimistic behavior and, above all, REVERSION when the
-   * server rejects.
-   *
-   * `camino: 'directo'`: a switch does not preview anything, so a 409 cannot redirect to "back to preview".
-   */
+  /** Switch writes: same `change()` path as the raw editor; `camino: 'directo'` (no preview, so a 409 cannot go back to it); reverts on rejection. */
   const interruptores = useInterruptores(
     (mutation) => canalAccion.change(mutation, false, 'directo'),
     snapshotRevision,
@@ -128,11 +102,7 @@ export function useConfigWrites() {
     canalEditor.clear();
   }
 
-  /**
-   * Rereads the snapshot and WAITS for the data. It is called after every write and every revision conflict: without
-   * waiting, the screen would assert "reloaded" without having verified it, and on a 409 it would keep sending the
-   * stale revision on every retry—a loop the operator cannot escape.
-   */
+  /** Rereads the snapshot and WAITS for the data, so a 409 retry never resends the stale revision. */
   async function releer(): Promise<EstadoRecarga> {
     const resultado = await config.reload();
     if (resultado.error) return { releido: false, motivo: resultado.error.message };

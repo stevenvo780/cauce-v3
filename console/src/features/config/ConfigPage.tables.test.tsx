@@ -300,7 +300,6 @@ it('FAMILIA 7: la confirmación es un diálogo de verdad — el foco entra, ESC 
 
   const dialogo = screen.getByRole('dialog');
   await waitFor(() => { expect(dialogo.contains(document.activeElement)).toBe(true); });
-  // The page behind is out of the accessibility tree while the dialog is open.
   expect(screen.queryByRole('button', { name: 'Actualizar' })).not.toBeInTheDocument();
 
   await user.keyboard('{Escape}');

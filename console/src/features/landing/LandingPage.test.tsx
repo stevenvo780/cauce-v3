@@ -112,11 +112,7 @@ it('escribe las alertas que el snapshot acredita, con su enlace a la vista que l
   expect(within(banda).getByRole('link', { name: /revisar alerta en colas y dlq/i })).toHaveAttribute('href', '/queues');
 });
 
-/**
- * The negative control of the screen, not of the function: a landing page that lost a reading
- * must NOT read like a healthy fleet. Without this test, `resumenPortada` could be separating
- * the two cases correctly and the screen still paint them identically.
- */
+/** Negative control of the screen: a landing that lost a reading must not read like a healthy fleet. */
 it('con una fuente caída NO dice «sin incidencias»: lo declara ausente', async () => {
   // Everything else healthy on purpose. This is the only way for the test to bite: with even one
   // live alert in the band the reassuring phrase would not draw the same and the failure would

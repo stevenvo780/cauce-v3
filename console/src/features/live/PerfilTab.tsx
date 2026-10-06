@@ -29,9 +29,6 @@ import {
 
 const OUTCOME_TONE: Record<ProfileOutcome['tone'], NoticeTone> = { error: 'danger', parcial: 'warn', success: 'ok' };
 
-/**
- * Editor and preview of the agent profile and directive fields.
- */
 
 interface PerfilTabProps {
   tenantId: string;

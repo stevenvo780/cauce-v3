@@ -9,7 +9,6 @@ function Fact({ icon: Icon, label, title, className, words, expiring, children }
   label: string;
   title?: string;
   className?: string;
-  /** Also say it as text, for what the operator must be able to read without hovering. */
   words?: boolean;
   expiring?: boolean;
   children?: string;

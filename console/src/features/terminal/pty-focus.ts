@@ -9,7 +9,6 @@ function focusIsFree(entry: PtyEntry): boolean {
   return !active || active === document.body || entry.container.contains(active) || active.closest(`[${YIELDS_FOCUS_ATTRIBUTE}]`) !== null;
 }
 
-/** Called after an explicit take/reattach, never an authority to enable input. */
 export function focusWritablePty(entry: PtyEntry): void {
   if (entry.readOnly || entry.view.state !== 'open') return;
   // The detached holder is only visibility:hidden, so it still has boxes: it is excluded by identity.

@@ -8,8 +8,6 @@ import { LIVE_STATE_META, LIVE_STATES } from '../live/agent-state';
 
 const TITULO = 'Ayuda y documentación';
 
-/** What each view is FOR, beyond the one-line `que` the menu already carries. Keyed by route id so
-    a view that changes its address or its name cannot leave the help pointing at nothing. */
 const DETALLE: Record<string, string> = {
   overview: 'Resumen de la flota: colas, consumo de cuotas y alertas prioritarias.',
   live: 'La oficina en vivo y el cajón de cada agente. «Contexto» es el único lugar para modificar '
@@ -59,8 +57,6 @@ const SECCIONES = [
   { id: 'atajos', titulo: 'Atajos de teclado y navegación', corto: 'Atajos' },
 ] as const;
 
-/** The section whose heading last crossed the top band of the viewport; only a reading aid, so it
-    stays on the first one where IntersectionObserver is missing. */
 function useSeccionActiva(): string {
   const [activa, setActiva] = useState<string>(SECCIONES[0].id);
   useEffect(() => {
@@ -100,7 +96,6 @@ function Seccion({ id, titulo, children }: { id: string; titulo: string; childre
   );
 }
 
-/** Term on the left, definition on the right; stacks on a phone. */
 const FILA = 'grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)] items-baseline gap-x-4 gap-y-0.5 py-2 max-[760px]:grid-cols-1';
 
 export function HelpPage() {

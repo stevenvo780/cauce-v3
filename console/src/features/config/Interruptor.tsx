@@ -16,15 +16,7 @@ const SWITCH = 'relative h-5 w-9 shrink-0 cursor-pointer appearance-none rounded
   + 'aria-busy:border-warn aria-busy:before:animate-pulse aria-busy:before:bg-warn aria-invalid:border-danger '
   + 'motion-reduce:transition-none motion-reduce:before:transition-none motion-reduce:before:animate-none';
 
-/**
- * **The switch.** A real `<input type="checkbox" role="switch">`, not a painted `<div>`: tab
- * reaches it, the spacebar toggles it, a screen reader announces it as "switch, on/off", and the
- * browser already knows how to do all of that without a single line of JavaScript.
- *
- * The `aria-label` names the row and the corresponding permission for accessibility.
- *
- * `aria-busy` while the write is in flight.
- */
+/** Real `<input type="checkbox" role="switch">`; `aria-label` names the row and permission; `aria-busy` while the write is in flight. */
 export function InterruptorDeCelda({ interruptor, control, soloLectura, busy }: {
   interruptor: Interruptor;
   control: ControlDeInterruptores;

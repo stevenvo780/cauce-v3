@@ -87,10 +87,7 @@ it.each([
   expect(posts).toBe(0);
 });
 
-/**
- * Account creation and assignment have write bars with buttons of the same text since the two
- * halves share screen. This helper scopes to the account form.
- */
+/** Scopes to the account form: creation and assignment bars share button texts. */
 function accountActions() {
   return within(screen.getByRole('group', { name: /acciones de (alta|edición) de cuenta/i }));
 }
@@ -99,9 +96,6 @@ function deleteActions() {
   return within(screen.getByRole('group', { name: /acciones de retiro o rotación de cuenta/i }));
 }
 
-/**
- * Explicitly opens the Inventory tab in Cuentas y cuotas.
- */
 async function openInventory(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
   await user.click(screen.getByRole('tab', { name: 'Inventario' }));

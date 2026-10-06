@@ -29,8 +29,6 @@ async function agentLink(alias: string) {
 it('provides basic accessible landmarks and identity guidance', async () => {
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
-  // The console no longer renders before knowing who you are: until /v3/auth/session responds
-  // only the verification screen exists, so the landmarks appear after the await.
   expect(await screen.findByRole('navigation', { name: /principal/i })).toBeInTheDocument();
   expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
   expect(screen.getByRole('link', { name: /saltar al contenido/i })).toHaveAttribute('href', '#main-content');
@@ -546,7 +544,6 @@ it.each([1280, 390])('el chat a %i conserva una sola cabecera y el borrador al u
   expect(screen.getAllByRole('heading', { level: 2, name: 'argos' })).toHaveLength(1);
   expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
   expect(screen.getByRole('heading', { name: 'argos', level: 2 })).toBeVisible();
-  // The account lives in the sidebar on wide screens and behind «Más» on phones; never twice.
   if (width <= 760) {
     expect(screen.queryByRole('button', { name: /^Cuenta de/ })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Más' }));

@@ -37,10 +37,7 @@ interface FicherosTabProps {
   configWritePermission?: PermissionState;
 }
 
-/**
- * Every governed file of the alias. Only the site manual (`directive`) is ever offered for
- * editing, and only with an accredited `config.write`; the rest opens in a read-only viewer.
- */
+/** Every governed file of the alias; only `directive` is editable, with an accredited `config.write`. */
 export function FicherosTab({
   tenantId, alias, borradores, onBorrador, onApplied,
   mutationBlocked = false, configWritePermission = 'unknown',
@@ -505,11 +502,7 @@ function Editor({
   );
 }
 
-/**
- * The gap, stated in plain language and right in this view. Without it a locked `mcp` reads as
- * "the console does not reach there yet" when it is a measured decision, and what is truly
- * missing —the channel to the disk— is visible nowhere at all.
- */
+/** The gap stated in this view: a locked `mcp` is a measured decision, not a missing console feature. */
 function HuecoDeclarado() {
   return (
     <details className="rounded-lg border border-line px-3 py-2 text-[13px]">

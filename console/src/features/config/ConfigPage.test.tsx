@@ -192,8 +192,7 @@ describe('llegar a /config por URL directa sin permiso de lectura', () => {
   }
 
   it('nombra el permiso que el servidor exige —LECTURA—, y no que no se pudo leer Cauce', async () => {
-    // El GET exige `read` (gateway: requirePermission(actor,'read')). Mandar a pedir «control»
-    // devolvía al operador con el permiso equivocado y sin la vista.
+    // The GET requires `read`; asking for «control» sent the operator back with the wrong permission.
     servir403();
     renderWithApi(<ConfigPage />);
 

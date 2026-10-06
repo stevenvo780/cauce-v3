@@ -8,9 +8,6 @@ export { formatDurationSeconds } from '../../lib';
 /** Same tone vocabulary already used by <Badge>; no new one is added. */
 export type BadgeTone = 'online' | 'done' | 'running' | 'warning' | 'danger' | 'offline' | 'unknown' | 'info';
 
-/**
- * Readable labels for the fleet's work states.
- */
 export const WORK_STATE_LABEL: Record<FleetWorkState, string> = {
   idle: 'Libre',
   queued: 'Recibiendo',
@@ -27,9 +24,6 @@ const WORK_STATE_TONE: Record<FleetWorkState, BadgeTone> = {
   stalled: 'danger',
 };
 
-/**
- * Labels for activity signals and fleet anomalies.
- */
 export const FLAG_LABEL: Record<FleetActivityFlag, string> = {
   saturated: 'Saturado',
   ack_stalled: 'Sin ACK',
@@ -52,9 +46,6 @@ export const FLAG_TONE: Record<FleetActivityFlag, BadgeTone> = {
   claimed_not_started: 'danger',
 };
 
-/**
- * Consolidated live-state mapping for the fleet's agents.
- */
 export type EstadosVivos = ReadonlyMap<string, LiveState>;
 
 /** Badge tone per state. Derived from the `tone` of `LIVE_STATE_META`, without inventing any. */

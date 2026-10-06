@@ -6,15 +6,7 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import type { QuotaSnapshot } from '../../api/types';
 
-/**
- * "Accounts and quotas" is ONE view with two sources: `/v3/console/quotas` (consumption) and `/v3/console/config`
- * (inventory and routing). These tests exist above all so it does not get split in two again: each half has an
- * assertion here that fails if someone moves it to another route or deletes it "because it was already on the other
- * screen".
- *
- * They are mounted against `AccountsPage` —the real container, with its tabs— and NOT against `ConsumptionSection`
- * alone: a test that renders the section on its own would keep passing the day someone took it out of the page.
- */
+/** Mounted against `AccountsPage`, not `ConsumptionSection` alone: quota and inventory must stay one view with two sources. */
 
 const ACCOUNTS_HEADING = 'Cuentas y cuotas';
 
@@ -118,13 +110,7 @@ function panel(name: string): HTMLElement {
   return screen.getByRole('region', { name });
 }
 
-/**
- * Metric labels repeat panel titles ("Proveedores"): the search must be scoped.
- *
- * And since the view has tabs, TWO strips of metrics are mounted at once —consumption and inventory— with the
- * inactive one in `hidden`. Searching for the first one in the document would always read the same one: the search
- * runs inside the open panel.
- */
+/** Metric labels repeat panel titles; search inside the open panel, since the hidden tab strip is mounted too. */
 function metrics(): HTMLElement {
   const visible = Array.from(document.querySelectorAll('[role="tabpanel"]'))
     .find((p) => !p.hasAttribute('hidden'));

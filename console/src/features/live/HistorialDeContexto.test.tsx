@@ -5,14 +5,7 @@ import { server } from '../../mocks/server';
 import { abrirContexto } from './context-test-utils';
 import { RUTA_PERFIL, ackAplicado, perfilAplicado } from './perfil-fixtures';
 
-/**
- * THE CONTEXT JOURNAL AND ITS RESTORE, tested from the context page.
- *
- * Where it lives is half the task: a loose component test would go green with the panel detached
- * from the page, which is how a screen ends up existing with no way to reach it. And the
- * restore is only worth anything if it ends in the canonical PUT —CAS, governed batch, ACK and a
- * hand-typed reason—, so it is followed to the end instead of stopping at the draft.
- */
+/** The context journal and its restore, tested from the context page and followed to the canonical PUT. */
 
 const RUTA_REVISIONES = '*/v3/console/tenants/:tenantId/agents/:alias/perfil/revisions';
 const RUTA_REVISIONES_FICHERO = '*/v3/console/tenants/:tenantId/agents/:alias/documents/:kind/revisions';

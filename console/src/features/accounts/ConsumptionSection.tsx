@@ -44,7 +44,6 @@ export function ConsumptionSection({ quotas, config, registry }: {
     () => orphans(accounts, snapshot, bindings, agents),
     [accounts, snapshot, bindings, agents],
   );
-  // `ok: false` indicates that the provider's CLI did not respond.
   const failedProbes = useMemo(
     () => (snapshot?.providers ?? []).filter((provider) => provider.ok === false),
     [snapshot],
@@ -318,8 +317,7 @@ function CollectorRow({ collector, thresholds }: {
   collector: QuotaCollector;
   thresholds: QuotaThresholds | null | undefined;
 }) {
-  /* A sample with `stale:false` and older than `stale_after_seconds` is not fresh either: `freshness()` applies
-   * both conditions. With NEITHER flag NOR age nothing is decided: UNKNOWN, because not knowing is not fresh. */
+  /* `freshness()` applies both `stale` and age; with neither flag nor age the sample is UNKNOWN, not fresh. */
   const undecidable = (collector.stale === null || collector.stale === undefined)
     && (collector.age_seconds === null || collector.age_seconds === undefined);
   const state = freshness(collector, thresholds);

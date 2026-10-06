@@ -17,14 +17,7 @@ import {
 } from './historial-de-contexto';
 import type { PerfilRevision, TramoDeRevisiones } from './perfil';
 
-/**
- * The read side of the context journal: what each version of the profile said, which governance
- * file was rewritten for it, and the way back to a past version.
- *
- * This panel does not write. A restore only loads the SEVEN authored fields of a revision into
- * the canonical draft; from there the only save available is the profile PUT with its CAS, its
- * governed batch, its hand-typed reason and the runtime ACK.
- */
+/** Read side of the context journal; a restore only loads the authored fields into the canonical draft and never writes. */
 
 type Diario = 'perfil' | AgentDocumentKind;
 

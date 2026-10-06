@@ -1,14 +1,7 @@
 import type { ConfigMutation } from '../../api/types';
 
-/**
- * Rendering of config collections as tables and construction of mutations.
- */
 
-/**
- * Column order for collections with a known shape (the SELECT in
- * `packages/store/src/configuration.ts`). The rest are derived from the rows: a collection the
- * server adds tomorrow still renders as a table, with the server's field names.
- */
+/** Column order for collections with a known shape; the rest derive from the rows. */
 const COLUMNAS_FIJAS: Record<string, readonly string[]> = {
   tenants: ['id', 'display_name', 'is_hub', 'enabled', 'created_at'],
   rooms: ['tenant_id', 'id', 'display_name', 'enabled', 'created_at'],
@@ -16,10 +9,6 @@ const COLUMNAS_FIJAS: Record<string, readonly string[]> = {
   acl_edges: ['from_tenant', 'to_tenant', 'enabled', 'allow_route', 'allow_read', 'allow_control', 'created_at'],
 };
 
-/**
- * Spanish label for each column.
- * Columns not listed are shown with their original column name.
- */
 const ETIQUETAS: Record<string, string> = {
   id: 'Id', tenant_id: 'Tenant', room_id: 'Room', alias: 'Alias', role: 'Rol de permisos',
   display_name: 'Nombre', is_hub: 'Hub', enabled: 'Habilitado',
@@ -82,9 +71,6 @@ export function detalleDeColumna(coleccion: string, columna: string, fila: Recor
   return plegados[columna].map((parte) => parte.formato(fila[parte.campo])).filter((parte): parte is string => parte !== undefined);
 }
 
-/**
- * Columns merged into one identity column to improve readability of edges and relations.
- */
 const IDENTIDAD_FUNDIDA: Record<string, { clave: string; etiqueta: string; campos: readonly string[]; union: string }> = {
   acl_edges: { clave: '__arista', etiqueta: 'Arista', campos: ['from_tenant', 'to_tenant'], union: ' → ' },
 };

@@ -9,11 +9,7 @@ import { renderWithApi } from '../../test/render';
 import { MessagesPage } from './MessagesPage';
 import { openConversationInfo } from './chat-test-utils';
 
-/**
- * The header used to say the lease word while the sidebar said the live state, so the same agent
- * read «Caído» in one place and «Trabajando» in the other. Both now read the same live state; the
- * lease stays as secondary detail, spelled with the shared vocabulary.
- */
+/** Header and sidebar read the same live state; the lease stays as secondary detail. */
 
 afterEach(() => { window.history.pushState({}, '', '/'); });
 
