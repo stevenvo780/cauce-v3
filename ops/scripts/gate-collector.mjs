@@ -154,7 +154,11 @@ function consumerLeaseIds(alias) {
     throw new Error('CAUCE_INSTALLATION_ID must be a canonical installation identifier');
   }
   const prefix = installation === undefined ? '' : `${installation}-`;
-  return [`systemd-${prefix}${alias}`, `systemd-container-${prefix}${alias}`];
+  const ids = [`systemd-${prefix}${alias}`, `systemd-container-${prefix}${alias}`];
+  if (ids.some((id) => id.length > 128)) {
+    throw new Error('consumer instance identifier exceeds protocol limit of 128 characters');
+  }
+  return ids;
 }
 
 function gateSourceRoom() {
