@@ -102,3 +102,36 @@ test('static MCP locations do not add a listener or replace the other API and SP
   expectDirective(locationBody('/assets/'), 'try_files', '$uri =404');
   expectDirective(locationBody('/'), 'try_files', '$uri $uri/ /index.html');
 });
+
+test('only the SPA document enables its microphone and local media previews', () => {
+  const spa = locationBody('/');
+  assert.ok(values(spa, 'add_header').includes('Permissions-Policy "camera=(), microphone=(self), geolocation=()" always'));
+  const csp = /add_header Content-Security-Policy "([^"]+)" always;/u.exec(spa)?.[1];
+  assert.ok(csp);
+  assert.match(csp, /img-src 'self' data: blob:;/u);
+  assert.match(csp, /media-src 'self' blob:;/u);
+  for (const unchanged of ["script-src 'self';", "style-src 'self';", "connect-src 'self' wss:;", "frame-ancestors 'none';"]) {
+    assert.ok(csp.includes(unchanged));
+  }
+  const server = config.slice(0, config.indexOf('  location '));
+  for (const body of [server, locationBody('/assets/'), locationBody('^~ /oauth/'), locationBody('= /.well-known/oauth-authorization-server')]) {
+    assert.ok(values(body, 'add_header').includes('Permissions-Policy "camera=(), microphone=(), geolocation=()" always'));
+    assert.doesNotMatch(body, /microphone=\(self\)|blob:|media-src/u);
+  }
+  for (const route of routes) assert.deepEqual(values(locationBody(`= ${route}`), 'add_header'), []);
+});
+
+test('large ACKs use only the two exact runtime routes with the existing verified TLS upstream', () => {
+  const selector = '~ ^/v3/(ack|deliveries/[^/]+/ack)$';
+  const body = locationBody(selector);
+  expectDirective(body, 'client_max_body_size', '13595484');
+  const pattern = new RegExp(selector.slice(2), 'u');
+  for (const path of ['/v3/ack', '/v3/deliveries/20000000-0000-4000-8000-000000000001/ack']) assert.ok(pattern.test(path));
+  for (const path of ['/v3/ack/', '/v3/ack/extra', '/v3/acks', '/v3/query', '/v3/heartbeat', '/v3/deliveries//ack', '/v3/deliveries/id/ack/', '/v3/deliveries/id/other/ack']) assert.ok(!pattern.test(path));
+  for (const directive of ['proxy_pass', 'proxy_ssl_server_name', 'proxy_ssl_name', 'proxy_ssl_verify',
+    'proxy_ssl_trusted_certificate', 'proxy_ssl_certificate', 'proxy_ssl_certificate_key', 'proxy_set_header']) {
+    assert.deepEqual(values(body, directive), values(locationBody('/v3/'), directive));
+  }
+  assert.deepEqual(values(locationBody('/v3/'), 'client_max_body_size'), []);
+  expectDirective(locationBody('~ ^/v3/console/(messages|publish-intents)$'), 'client_max_body_size', '13595484');
+});
