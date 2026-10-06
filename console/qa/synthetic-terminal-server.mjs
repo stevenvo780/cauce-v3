@@ -5,7 +5,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { WebSocketServer } from 'ws';
-import { mockTerminalGrant } from '../src/mocks/terminal-ticket.ts';
+import { mockAuthorityResumeToken, mockTerminalGrant } from '../src/mocks/terminal-ticket.ts';
 
 export async function syntheticTerminalServer(upstream) {
   assert(['127.0.0.1', 'localhost', '[::1]'].includes(upstream.hostname));
@@ -41,7 +41,9 @@ export async function syntheticTerminalServer(upstream) {
       if (!['harness', 'harness_rw'].includes(body.mode)) return denied('synthetic_fixture_disallows_shell');
       if (scenario.disabled && body.mode === 'harness_rw') return denied('writable_tui_disabled');
       const grant = { ...mockTerminalGrant({ sessionId: randomUUID(), tenantId: body.tenant_id, alias: body.alias, mode: body.mode, requestId: body.request_id, ttlSeconds: 30 }), websocket_path: `${prefix}/stream` };
-      sessions.set(grant.session_id, { grant, owner: body, held: false, frames: [], output: Buffer.alloc(0), epoch: 0, resume: 'synthetic-resume-'.repeat(8) });
+      sessions.set(grant.session_id, { grant, owner: body, held: false, frames: [], output: Buffer.alloc(0), epoch: 0,
+        // The console only accepts a resume token wrapped with the authority proof of this very grant.
+        resume: mockAuthorityResumeToken(grant.session_id, grant.authority_proof) });
       return reply(201, grant);
     }
     const id = request.url.slice(`${prefix}/sessions/`.length).split('/')[0];

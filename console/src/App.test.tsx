@@ -10,6 +10,22 @@ async function openTools() {
   if (button.getAttribute('aria-expanded') !== 'true') await userEvent.click(button);
 }
 
+/** jsdom has no layout: the shell reads the viewport through matchMedia only. */
+function mockViewport(width: number) {
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    matches: query.includes('1100px') ? width <= 1100 : query.includes('760px') && width <= 760,
+    media: query, onchange: null,
+    addEventListener: () => undefined, removeEventListener: () => undefined,
+    addListener: () => undefined, removeListener: () => undefined, dispatchEvent: () => false,
+  }));
+}
+
+/** The roster lives in the sidebar: each agent is a link whose target depends on the section. */
+async function agentLink(alias: string) {
+  const roster = await screen.findByRole('list', { name: 'Agentes' });
+  return within(roster).findByRole('link', { name: new RegExp(`^${alias}\\b`) });
+}
+
 it('provides basic accessible landmarks and identity guidance', async () => {
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
@@ -18,7 +34,7 @@ it('provides basic accessible landmarks and identity guidance', async () => {
   expect(await screen.findByRole('navigation', { name: /principal/i })).toBeInTheDocument();
   expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
   expect(screen.getByRole('link', { name: /saltar al contenido/i })).toHaveAttribute('href', '#main-content');
-  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: 'Oficina' }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.getByRole('main')).not.toHaveFocus();
   expect(screen.getByRole('button', { name: 'Gestión' })).toHaveAttribute('aria-expanded', 'false');
   await userEvent.click(screen.getByRole('button', { name: /^Cuenta de/ }));
@@ -43,7 +59,8 @@ it('redirige el detalle legado de Fleet a la única Terminal y conserva el agent
   renderWithApi(<App />);
 
   expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' }, { timeout: 10_000 })).toBeInTheDocument();
-  expect(await screen.findByRole('tab', { name: /kant/i })).toHaveAttribute('aria-selected', 'true');
+  expect(await screen.findByRole('heading', { level: 2, name: /^kant/ })).toBeInTheDocument();
+  expect(await agentLink('kant')).toHaveAttribute('aria-current', 'page');
   await waitFor(() => { expect(window.location.pathname).toBe('/terminal/Steven/kant'); });
   expect(screen.queryByRole('link', { name: /volver a fleet/i })).not.toBeInTheDocument();
 });
@@ -53,7 +70,8 @@ it('abre /terminal/:tenant/:alias directamente sin reescribir su ruta canónica'
   renderWithApi(<App />);
 
   expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' }, { timeout: 10_000 })).toBeInTheDocument();
-  expect(await screen.findByRole('tab', { name: /kant/i })).toHaveAttribute('aria-selected', 'true');
+  expect(await screen.findByRole('heading', { level: 2, name: /^kant/ })).toBeInTheDocument();
+  expect(await agentLink('kant')).toHaveAttribute('aria-current', 'page');
   expect(window.location.pathname).toBe('/terminal/Steven/kant');
 });
 
@@ -102,8 +120,8 @@ it('la barra y las páginas activas comparten una sola consulta de acceso', asyn
     .toBeInTheDocument();
   await waitFor(() => { expect(accessReads).toBe(1); });
   await openTools();
-  await user.click(screen.getByRole('link', { name: /ajustes y altas/i }));
-  expect(await screen.findByRole('heading', { level: 1, name: /ajustes y altas/i }, { timeout: 10_000 }))
+  await user.click(screen.getByRole('link', { name: 'Ajustes' }));
+  expect(await screen.findByRole('heading', { level: 1, name: 'Ajustes' }, { timeout: 10_000 }))
     .toBeInTheDocument();
   expect(accessReads).toBe(1);
 });
@@ -198,10 +216,10 @@ it('navega dentro de la aplicación sin recargar la página al hacer clic en el 
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i }, { timeout: 10_000 });
   await openTools();
-  await user.click(screen.getByRole('link', { name: /^queues & dlq$/i }));
+  await user.click(screen.getByRole('link', { name: 'Colas y DLQ' }));
 
   expect(window.location.pathname).toBe('/queues');
-  expect(await screen.findByRole('heading', { level: 1, name: /colas y dlq operativo/i }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /colas y dlq/i }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.getByRole('main')).toHaveFocus();
 });
 
@@ -211,7 +229,7 @@ it('conserva el href real que permite abrir una ruta en otra pestaña', async ()
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i }, { timeout: 10_000 });
   await openTools();
-  expect(screen.getByRole('link', { name: /^queues & dlq$/i })).toHaveAttribute('href', '/queues');
+  expect(screen.getByRole('link', { name: 'Colas y DLQ' })).toHaveAttribute('href', '/queues');
   expect(window.location.pathname).toBe('/accounts');
 });
 
@@ -248,14 +266,14 @@ it('redirige /fleet y /topology a la vista que las absorbió, reescribiendo la b
   window.history.pushState({}, '', '/fleet');
   const primera = renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: 'Oficina' }, { timeout: 10_000 })).toBeInTheDocument();
   expect(window.location.pathname).toBe('/live');
   primera.unmount();
 
   window.history.pushState({}, '', '/topology');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: 'Oficina' }, { timeout: 10_000 })).toBeInTheDocument();
   expect(window.location.pathname).toBe('/live');
 });
 
@@ -263,7 +281,7 @@ it('/activity sigue llegando a la vista viva, como antes', async () => {
   window.history.pushState({}, '', '/activity');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: 'Oficina' }, { timeout: 10_000 })).toBeInTheDocument();
   expect(window.location.pathname).toBe('/live');
 });
 
@@ -290,7 +308,7 @@ it('deja navegar a «Ajustes» sin config.write para consultar la vista en solo 
   renderWithApi(<App />);
 
   await openTools();
-  const entrada = await screen.findByRole('link', { name: /ajustes y altas/i }, { timeout: 10_000 });
+  const entrada = await screen.findByRole('link', { name: 'Ajustes' }, { timeout: 10_000 });
   await waitFor(() => { expect(entrada).not.toHaveAttribute('aria-disabled'); });
 
   await userEvent.click(entrada);
@@ -311,7 +329,7 @@ it('deja «Ajustes» navegable para quien SI tiene config.write', async () => {
   renderWithApi(<App />);
 
   await openTools();
-  const entrada = await screen.findByRole('link', { name: /ajustes y altas/i }, { timeout: 10_000 });
+  const entrada = await screen.findByRole('link', { name: 'Ajustes' }, { timeout: 10_000 });
   await waitFor(() => { expect(entrada).not.toHaveAttribute('aria-disabled'); });
   await userEvent.click(entrada);
   expect(window.location.pathname).toBe('/config');
@@ -325,26 +343,30 @@ it('la raíz abre las conversaciones', async () => {
   await waitFor(() => { expect(window.location.pathname).toBe('/messages'); });
 });
 
-it('conserva el borrador y sus opciones al visitar herramientas, aislado por agente', async () => {
+async function pickLane(user: ReturnType<typeof userEvent.setup>, lane: RegExp) {
+  await user.click(screen.getByRole('button', { name: 'Opciones de la conversación' }));
+  await user.click(await screen.findByRole('menuitemradio', { name: lane }));
+}
+
+it('conserva el borrador y su carril al visitar herramientas, aislado por agente', async () => {
   window.history.pushState({}, '', '/messages/Steven/argos');
   const user = userEvent.setup();
   renderWithApi(<App />);
   const input = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
   await user.type(input, 'Revisá el trabajo pendiente');
-  await user.click(screen.getByRole('button', { name: 'Más' }));
-  await user.selectOptions(screen.getByLabelText('Carril'), 'batch');
+  await pickLane(user, /^Batch/);
   await openTools();
   await user.click(screen.getByRole('link', { name: 'Cuentas y cuotas' }));
   await screen.findByRole('heading', { name: 'Cuentas y cuotas' });
-  await user.click(screen.getByRole('link', { name: 'Volver a la conversación' }));
+  await user.click(await agentLink('argos'));
   expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Revisá el trabajo pendiente');
-  expect(screen.getByText(/Envío en segundo plano/)).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Más' }));
-  expect(screen.getByLabelText('Carril')).toHaveValue('batch');
+  expect(screen.getByText('Batch')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Opciones de la conversación' }));
+  expect(await screen.findByRole('menuitemradio', { name: /^Batch/ })).toBeChecked();
   await user.keyboard('{Escape}');
-  await user.click(screen.getByRole('button', { name: /conversación con kratos,/i }));
+  await user.click(await agentLink('kratos'));
   expect(await screen.findByRole('textbox', { name: 'Mensaje para kratos' })).toHaveValue('');
-  await user.click(screen.getByRole('button', { name: /conversación con argos,/i }));
+  await user.click(await agentLink('argos'));
   expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Revisá el trabajo pendiente');
 });
 
@@ -387,7 +409,7 @@ it.each([
     await openTools();
     await user.click(screen.getByRole('link', { name: 'Cuentas y cuotas' }));
     await screen.findByRole('heading', { name: 'Cuentas y cuotas' });
-    await user.click(screen.getByRole('link', { name: 'Volver a la conversación' }));
+    await user.click(await agentLink('argos'));
     const pendingInput = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
     expect(pendingInput).toBeEnabled();
     expect(pendingInput).toHaveValue(originalDraft);
@@ -409,7 +431,7 @@ it.each([
     await screen.findByRole('heading', { name: 'Cuentas y cuotas' });
     release();
     await waitFor(() => { expect(settled).toBe(true); });
-    await user.click(screen.getByRole('link', { name: 'Volver a la conversación' }));
+    await user.click(await agentLink('argos'));
     const restored = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
     await waitFor(() => { expect(restored).not.toBeDisabled(); });
     expect(restored).toHaveValue(editDraft ? nextDraft : success ? '' : originalDraft);
@@ -422,11 +444,11 @@ it('el foco sigue la selección y vuelve al agente al cerrar la conversación', 
   window.history.pushState({}, '', '/messages');
   const user = userEvent.setup();
   renderWithApi(<App />);
-  const agent = await screen.findByRole('button', { name: /conversación con argos,/i });
-  await user.click(agent);
+  await user.click(await agentLink('argos'));
   expect(await screen.findByRole('heading', { name: 'argos', level: 2 })).toHaveFocus();
+  expect(await agentLink('argos')).toHaveAttribute('aria-current', 'page');
   await user.click(screen.getByRole('link', { name: 'Volver a los agentes' }));
-  expect(await screen.findByRole('button', { name: /conversación con argos,/i })).toHaveFocus();
+  expect(await agentLink('argos')).toHaveFocus();
 });
 
 it('el grupo Gestión se pliega y despliega sin perder el foco', async () => {
@@ -441,16 +463,30 @@ it('el grupo Gestión se pliega y despliega sin perder el foco', async () => {
   expect(toggle).toHaveFocus();
 });
 
-it('un agente desconocido conserva su aviso, oculta el roster móvil y permite volver', async () => {
+it('un agente desconocido conserva su aviso, permite volver y no pinta la lista de chats encima', async () => {
   window.history.pushState({}, '', '/messages/Steven/fantasma');
   const user = userEvent.setup();
   renderWithApi(<App />);
   const missing = await screen.findByText(/El servidor no observa a/);
-  expect(missing.closest('.messenger-empty')).toHaveAttribute('data-state', 'missing');
-  expect(missing.closest('.messenger-shell')).toHaveAttribute('data-conversacion', 'abierta');
-  await user.click(screen.getByRole('link', { name: 'Volver a los agentes' }));
+  expect(missing.closest('section')).toHaveAttribute('data-state', 'missing');
+  expect(missing.closest('[data-conversacion]')).toHaveAttribute('data-conversacion', 'abierta');
+  await user.click(screen.getByRole('link', { name: 'Volver a los chats' }));
   expect(window.location.pathname).toBe('/messages');
-  expect(await screen.findByRole('button', { name: /conversación con argos,/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: '¿Con quién trabajamos hoy?' })).toBeInTheDocument();
+  expect(await agentLink('argos')).toBeInTheDocument();
+});
+
+it('en el móvil, un agente desconocido oculta la lista de chats y /messages la muestra', async () => {
+  mockViewport(390);
+  window.history.pushState({}, '', '/messages/Steven/fantasma');
+  renderWithApi(<App />);
+  expect(await screen.findByText(/El servidor no observa a/)).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { level: 1, name: 'Chats' })).toBeNull();
+  expect(screen.queryByRole('list', { name: 'Agentes' })).toBeNull();
+
+  await userEvent.click(screen.getByRole('link', { name: 'Volver a los chats' }));
+  expect(await screen.findByRole('heading', { level: 1, name: 'Chats' })).toBeInTheDocument();
+  expect(await agentLink('argos')).toBeInTheDocument();
 });
 
 it('abre la configuración desde el chat y conserva borrador con Atrás, Adelante y Volver', async () => {
@@ -460,27 +496,27 @@ it('abre la configuración desde el chat y conserva borrador con Atrás, Adelant
   const input = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
   await user.type(input, 'Borrador antes de configurar');
   const hilo = await screen.findByRole('region', { name: /conversación con argos/i });
-  await user.click(within(hilo).getByRole('button', { name: 'Opciones del mensaje' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
+  await user.click((await within(hilo).findAllByRole('button', { name: 'Opciones del mensaje' }))[0]);
+  await user.click(await screen.findByRole('menuitem', { name: 'Ver detalle' }));
   expect(screen.getByRole('heading', { name: 'Mensaje que elegiste' })).toHaveFocus();
-  await user.click(screen.getByRole('button', { name: 'Más' }));
-  await user.click(screen.getByRole('link', { name: 'Configurar agente' }));
+  await user.click(screen.getByRole('button', { name: 'Opciones de la conversación' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Perfil y contexto' }));
   expect(window.location.search).toBe('?view=context');
-  expect(await screen.findByRole('heading', { name: 'Configuración de argos' })).toHaveFocus();
+  expect(await screen.findByRole('heading', { name: 'Perfil y contexto de argos' })).toHaveFocus();
   window.history.back();
   await waitFor(() => { expect(window.location.search).toBe(''); });
   expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Borrador antes de configurar');
-  expect(screen.getByRole('button', { name: 'Más' })).toHaveFocus();
+  expect(screen.getByRole('button', { name: 'Opciones de la conversación' })).toHaveFocus();
   window.history.forward();
-  expect(await screen.findByRole('heading', { name: 'Configuración de argos' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'Perfil y contexto de argos' })).toBeInTheDocument();
   expect(window.location.search).toBe('?view=context');
   await user.click(screen.getByRole('link', { name: 'Volver a la conversación' }));
   expect(window.location.search).toBe('');
   expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Borrador antes de configurar');
-  expect(screen.getByRole('button', { name: 'Más' })).toHaveFocus();
+  expect(screen.getByRole('button', { name: 'Opciones de la conversación' })).toHaveFocus();
   await user.click(screen.getByRole('textbox', { name: 'Mensaje para argos' }));
-  await user.click(screen.getByRole('button', { name: 'Más' }));
-  await user.click(screen.getByRole('button', { name: /^Sincronizar$/ }));
+  await user.click(screen.getByRole('button', { name: 'Opciones de la conversación' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Sincronizar' }));
   await user.keyboard('{Escape}');
   await user.click(screen.getByRole('textbox', { name: 'Mensaje para argos' }));
   await waitFor(() => { expect(screen.getByRole('textbox', { name: 'Mensaje para argos' })).toHaveFocus(); });
@@ -489,35 +525,40 @@ it('abre la configuración desde el chat y conserva borrador con Atrás, Adelant
 it('las identidades del hilo y el indicador de trabajo proceden de datos reales', async () => {
   window.history.pushState({}, '', '/messages/Steven/argos');
   renderWithApi(<App />);
-  const row = await screen.findByRole('button', { name: /conversación con argos,/i });
-  await waitFor(() => { expect(row.querySelector('.chat-avatar')).toHaveAttribute('data-working', 'true'); });
+  const row = await agentLink('argos');
+  await waitFor(() => { expect(row).toHaveTextContent(/delegando · 1 en curso/i); });
   const conversation = await screen.findByRole('region', { name: 'Conversación con argos' });
-  expect(conversation.querySelector('.transcript-direction')).toHaveTextContent(/kant.*hacia.*argos/);
+  const sent = await waitFor(() => {
+    const message = conversation.querySelector('article[data-direction="input"]');
+    if (!message) throw new Error('el hilo todavía no tiene mensajes enviados');
+    return message;
+  });
+  expect(sent).toHaveTextContent(/kant.*hacia.*argos/);
 });
 
 it.each([1280, 390])('el chat a %i conserva una sola cabecera y el borrador al usar cuenta y tema', async (width) => {
-  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
-    matches: query.includes('1100px') ? width <= 1100 : query.includes('760px') && width <= 760,
-    media: query, onchange: null,
-    addEventListener: () => undefined, removeEventListener: () => undefined,
-    addListener: () => undefined, removeListener: () => undefined, dispatchEvent: () => false,
-  }));
+  mockViewport(width);
   window.history.pushState({}, '', '/messages/Steven/argos');
   const user = userEvent.setup();
   renderWithApi(<App />);
   const composer = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
   await user.type(composer, 'Borrador que conserva su destino');
-  expect(document.querySelector('.topbar')).toBeNull();
-  expect(document.querySelector('.chat-page-heading')).toBeNull();
+  expect(screen.getAllByRole('heading', { level: 2, name: 'argos' })).toHaveLength(1);
+  expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
   expect(screen.getByRole('heading', { name: 'argos', level: 2 })).toBeVisible();
+  // The account lives in the sidebar on wide screens and behind «Más» on phones; never twice.
+  if (width <= 760) {
+    expect(screen.queryByRole('button', { name: /^Cuenta de/ })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Más' }));
+  }
   const trigger = screen.getByRole('button', { name: /^Cuenta de/ });
-  expect(trigger.closest('.sidebar')).not.toBeNull();
   expect(screen.getAllByRole('button', { name: /^Cuenta de/ })).toHaveLength(1);
   expect(screen.queryByRole('button', { name: 'Cerrar sesión' })).toBeNull();
   await user.click(trigger);
   await user.click(screen.getByRole('button', { name: 'Oscuro' }));
   await user.keyboard('{Escape}');
   expect(trigger).toHaveFocus();
+  if (width <= 760) await user.keyboard('{Escape}');
   expect(composer).toHaveValue('Borrador que conserva su destino');
   expect(window.location.pathname).toBe('/messages/Steven/argos');
   expect(screen.getByRole('link', { name: 'Volver a los agentes' })).toBeInTheDocument();
@@ -535,7 +576,6 @@ it('MOCK y ausencia de login permanecen visibles con la cuenta cerrada en un cha
     expect(screen.getByText('MOCK API')).toBeVisible();
     expect(screen.getByText('Esta consola no tiene login de usuario.')).toBeVisible();
     expect(screen.queryByRole('dialog', { name: 'Cuenta y apariencia' })).toBeNull();
-    expect(document.querySelector('.topbar')).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Cuenta y apariencia' }));
     expect(screen.getByRole('group', { name: 'Tema de la consola' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Cerrar sesión' })).toBeNull();

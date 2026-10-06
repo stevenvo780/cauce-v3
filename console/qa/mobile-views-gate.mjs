@@ -7,7 +7,7 @@ export function measureView(primarySelector) {
   const viewport = window.visualViewport;
   const contentTop = viewport?.offsetTop ?? 0;
   const bottom = contentTop + (viewport?.height ?? window.innerHeight);
-  const nav = document.querySelector('.sidebar');
+  const nav = document.querySelector('nav[aria-label="Navegación principal"]');
   const navBox = nav?.getBoundingClientRect();
   const contentBottom = navBox && getComputedStyle(nav).position === 'fixed' && navBox.width >= window.innerWidth - 1
     ? Math.min(bottom, navBox.top) : bottom;
@@ -28,8 +28,9 @@ export function measureView(primarySelector) {
     }
     primary = { top: rect.top, height: rect.height, visibleHeight: Math.max(0, end - top), visibleWidth: Math.max(0, right - left), painted: true };
   }
-  const graph = document.querySelector('.live-mapa .lhg-viewport');
-  const modal = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].find(painted);
+  const canvas = document.querySelector('[data-objeto-principal="oficina"] canvas');
+  const canvasBox = canvas?.getBoundingClientRect();
+  const modal = [...document.querySelectorAll('[role="dialog"]')].find(painted);
   const interactionRoot = modal ?? document.querySelector('main');
   const scrolls = [interactionRoot, ...interactionRoot?.querySelectorAll('*') ?? []].filter(Boolean).filter((element) => painted(element)
     && /auto|scroll/.test(getComputedStyle(element).overflowX) && element.scrollWidth > element.clientWidth + 1);
@@ -37,14 +38,8 @@ export function measureView(primarySelector) {
     contentTop, contentBottom, primary,
     clientWidth: document.documentElement.clientWidth, visualWidth: viewport?.width, visualHeight: viewport?.height, visualScale: viewport?.scale,
     overflow: Math.max(0, document.documentElement.scrollWidth - window.innerWidth, document.body.scrollWidth - window.innerWidth),
-    graphOpen: !!graph && painted(graph),
-    graphNodes: [...document.querySelectorAll('.lhg-bot')].filter((node) => {
-      const rect = node.getBoundingClientRect();
-      const clip = graph?.getBoundingClientRect();
-      return painted(node) && clip && rect.width > 0 && rect.height > 0
-        && rect.bottom > Math.max(contentTop, clip.top) && rect.top < Math.min(contentBottom, clip.bottom)
-        && rect.right > Math.max(0, clip.left) && rect.left < Math.min(window.innerWidth, clip.right);
-    }).length,
+    officeCanvas: !!canvas && painted(canvas) && canvasBox.width > 0 && canvasBox.height > 0
+      && canvasBox.bottom > contentTop && canvasBox.top < contentBottom,
     internalScrollWithoutKeyboard: scrolls.filter((element) => !(element.tabIndex >= 0 && !element.matches(':disabled') && !element.closest('[inert], [hidden]'))
       && ![...element.querySelectorAll('button, a[href], input, select, textarea, [tabindex]')].some((control) =>
         painted(control) && control.tabIndex >= 0 && !control.matches(':disabled') && !control.closest('[inert], [hidden]'))).length,
@@ -178,72 +173,21 @@ export async function runGate() {
             throw new Error(`Accounts refresh control is clipped or not painted: ${JSON.stringify(result.refreshButton)}`);
           }
         }
-        if (view.id === 'config-agents' && viewport.width === 360 && colorScheme === 'light') {
-          const search = page.getByRole('searchbox', { name: 'Buscar agente o grupo' });
-          await search.fill('kant');
-          await page.getByRole('button', { name: 'Abrir contexto de Steven/kant', exact: true }).click();
-          await page.locator('.agent-context-panel .perfil-editor').waitFor({ state: 'visible' });
-          const purpose = page.getByRole('textbox', { name: 'Propósito' });
-          const editable = await purpose.isEnabled();
-          if (editable) {
-            const initialValue = await purpose.inputValue();
-            await purpose.fill(`${initialValue} `);
-            await purpose.fill(initialValue);
-          }
-          result.interaction = { flow: 'filter agent, open context, inspect canonical profile field', editable, submission: 'none' };
-          await page.screenshot({ path: resolve(output, '360-light-config-agents-flow.png'), fullPage: false, timeout: 10000 });
-        }
-        if (view.id === 'live' && viewport.width === 360) {
-          const capas = page.getByRole('group', { name: 'Capa del mapa' });
-          const visible = await Promise.all(['Ahora', 'Permisos'].map(async (name) => {
-            const box = await capas.getByRole('button', { name, exact: true }).boundingBox();
-            return box !== null && box.y >= 0 && box.y + box.height <= viewport.height;
-          }));
-          result.layerControlsVisible = visible.every(Boolean);
-          if (!result.layerControlsVisible) throw new Error('Ahora and Permisos must both be visible in the first mobile viewport');
-        }
         if (viewport.width === 360 && colorScheme === 'light' && view.id === 'queues') {
-          const deliveries = page.locator('#view-panel-entregas .queues-conteo');
-          const before = await deliveries.textContent();
+          const rows = page.locator('#view-panel-entregas tbody tr');
+          const before = await rows.count();
           const pending = page.getByRole('button', { name: /Pendientes/ }).first();
           await pending.click();
           if (await pending.getAttribute('aria-pressed') !== 'true') throw new Error('Pending delivery filter did not activate');
-          const after = await deliveries.textContent();
-          if (before === after || !after?.toLocaleLowerCase().includes('pendientes')) throw new Error('Pending filter did not update delivery table status');
-          result.interaction = { flow: 'filter pending deliveries and verify table status', before, after, submission: 'none' };
+          const after = await rows.count();
+          if (!(after > 0 && after < before)) throw new Error(`Pending filter did not narrow the delivery table (${String(before)} -> ${String(after)} rows)`);
+          result.interaction = { flow: 'filter pending deliveries and verify table rows', before, after, submission: 'none' };
           await page.screenshot({ path: resolve(output, '360-light-queues-flow.png'), fullPage: false, timeout: 10000 });
         }
-        if (viewport.width === 360 && colorScheme === 'light' && view.id === 'accounts-asignaciones') {
-          const form = page.locator('#view-panel-asignaciones .assignment-config-form');
-          await form.getByLabel('Agente').selectOption({ label: 'Steven/kant' });
-          await form.locator('label').filter({ hasText: /^Cuenta/ }).locator('select').selectOption('codex-steven');
-          const labels = await form.getByLabel('Operación').locator('option').allTextContents();
-          if (labels.some((label) => /alias_routing_ceiling|agent_account_binding/.test(label))) {
-            throw new Error('Backend operation names are visible to operators');
-          }
-          const matrix = page.getByRole('group', { name: 'Matriz de techo y fallback por agente y cuenta' });
-          const columns = await matrix.locator('thead th').allTextContents();
-          if (!columns.some((column) => column.includes('Agente')) || columns.length < 4) {
-            throw new Error(`Assignment matrix columns are missing: ${JSON.stringify(columns)}`);
-          }
-          const beforeScroll = await matrix.evaluate((node) => node.scrollLeft);
-          await matrix.focus();
-          await matrix.press('End');
-          const afterScroll = await matrix.evaluate((node) => node.scrollLeft);
-          if (afterScroll <= beforeScroll) throw new Error('Assignment matrix cannot be horizontally reached and scrolled by keyboard');
-          const lastColumnVisible = await matrix.locator('thead th').last().evaluate((node) => {
-            const box = node.getBoundingClientRect();
-            const viewport = node.closest('[role="group"]')?.getBoundingClientRect();
-            return !!viewport && box.left >= viewport.left - 1 && box.right <= viewport.right + 1;
-          });
-          if (!lastColumnVisible) throw new Error('End did not reveal the last account column');
-          result.interaction = { flow: 'select agent and account; inspect assignment matrix columns and keyboard-scroll to the final account', agent: 'Steven/kant', account: 'codex-steven', columns: columns.length, keyboardScroll: afterScroll, lastColumnVisible, submission: 'none' };
-          await page.screenshot({ path: resolve(output, '360-light-accounts-assignments-flow.png'), fullPage: false, timeout: 10000 });
-        }
-        if (view.graph) {
+        if (view.office) {
           const reloaded = await page.reload({ waitUntil: 'networkidle' });
           assertSuccessfulResponse(reloaded?.status(), `${view.path} reload`);
-          await page.locator('.lhg-bot').first().waitFor({ state: 'attached' });
+          await page.locator('[data-objeto-principal="oficina"] canvas').first().waitFor({ state: 'visible' });
           await resetScroll(page);
           result.reloadMetrics = await page.evaluate(measureView, view.primary);
           result.failures.push(...[...viewportFailures(result.reloadMetrics, viewport), ...failuresFor(result.reloadMetrics, view)].map((failure) => `reload: ${failure}`));

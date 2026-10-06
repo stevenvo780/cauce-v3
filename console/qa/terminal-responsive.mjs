@@ -33,10 +33,6 @@ function measure() {
     }
   }
   const ratio = Math.max(0, visible.right - visible.left) * Math.max(0, visible.bottom - visible.top) / (box.width * box.height);
-  const title = rect(document.querySelector('.page-title h1'));
-  const eyebrow = rect(document.querySelector('.page-title > .eyebrow'));
-  const overlap = Math.max(0, Math.min(title.right, eyebrow.right) - Math.max(title.left, eyebrow.left))
-    * Math.max(0, Math.min(title.bottom, eyebrow.bottom) - Math.max(title.top, eyebrow.top));
   const covered = [];
   for (const x of [box.left + 2, (box.left + box.right) / 2, box.right - 2]) {
     for (const y of [box.top + 2, (box.top + box.bottom) / 2, box.bottom - 2]) {
@@ -44,14 +40,26 @@ function measure() {
       if (!hit || !screen.contains(hit)) covered.push({ x, y, covering: hit?.className ?? null });
     }
   }
-  const header = document.querySelector('.page-header');
-  const actions = [...header.querySelectorAll('button, summary')].filter(el => el.getClientRects().length);
+  // The stage header holds three groups (agent identity, view switch, actions): none may sit on another.
+  const header = document.querySelector('[data-objeto-principal="escenario"] header');
+  const groups = [...header.children].filter(el => el.getClientRects().length).map(rect);
+  let overlap = 0;
+  for (let i = 0; i < groups.length; i += 1) {
+    for (let j = i + 1; j < groups.length; j += 1) {
+      const a = groups[i];
+      const b = groups[j];
+      overlap += Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left))
+        * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+    }
+  }
+  const actions = [...header.querySelectorAll('button')].filter(el => el.getClientRects().length);
+  const narrow = [...document.querySelectorAll('[role="status"], [role="alert"], p')].find(el => /^Caben \d+ columnas/.test(el.textContent.trim()));
   return {
-    screen: box, visible, visibleRatio: ratio, clips, title, eyebrow, headerOverlap: overlap, covered,
+    screen: box, visible, visibleRatio: ratio, clips, headerOverlap: overlap, covered,
     horizontalOverflow: document.documentElement.scrollWidth - innerWidth,
     headerActionOverflow: actions.map(rect).filter(r => r.left < 0 || r.right > innerWidth),
     geometry: window.__ptyFalsa.ultimaGeometria,
-    narrowWarning: document.querySelector('.pty-estrecho')?.textContent ?? null,
+    narrowWarning: narrow?.textContent.trim() ?? null,
   };
 }
 
@@ -80,7 +88,6 @@ try {
     results.push(result);
     try {
       await page.goto(new URL('/terminal/Steven/kant', origin).href);
-      await page.getByText('MOCK API', { exact: true }).waitFor();
       await page.waitForFunction(() => navigator.serviceWorker.controller?.scriptURL.endsWith('/mockServiceWorker.js') && window.__ptyFalsa?.ultimaGeometria?.cols > 0);
       result.mock = await page.evaluate(() => ({ worker: navigator.serviceWorker.controller.scriptURL, fakePty: Boolean(window.__ptyFalsa) }));
       await page.locator('.xterm-screen').waitFor();
@@ -95,7 +102,7 @@ try {
         'terminal is not clipped by ancestors': state.visibleRatio >= 0.98,
         'terminal is not covered after scrolling into view': state.covered.length === 0,
         'terminal provides at least twelve readable rows': state.geometry.rows >= 12,
-        'title and subtitle do not overlap': state.headerOverlap === 0,
+        'header groups do not overlap': state.headerOverlap === 0,
         'header actions fit viewport': state.headerActionOverflow.length === 0,
         'document has no horizontal overflow': state.horizontalOverflow === 0,
         'API stayed mocked': diagnostics.api.length > 0 && diagnostics.api.every(r => r.mocked && r.status < 400) && diagnostics.blocked.length === 0,

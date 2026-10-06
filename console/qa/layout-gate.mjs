@@ -26,7 +26,23 @@ const ALIAS_MEDIDO = 'Steven/jarvis';
    with a conversation open, so it is measured through the deep link the roster itself navigates to. */
 const HILO = `/messages/${ALIAS_MEDIDO}`;
 
-const ROUTES = ['/', '/overview', '/live', '/accounts', '/messages', HILO, `${HILO}?view=context`, '/messages/Steven/fantasma', '/queues', '/observability', '/config', '/terminal', '/ayuda'];
+/* Bare /terminal is the agent picker; the stage with its header, mode switch and pane only exists
+   with an agent open, so it is measured through the deep link the picker itself navigates to. */
+const TERMINAL_AGENTE = `/terminal/${ALIAS_MEDIDO}`;
+
+const ROUTES = ['/', '/overview', '/live', '/accounts', '/messages', HILO, `${HILO}?view=context`, '/messages/Steven/fantasma', '/queues', '/observability', '/config', '/terminal', TERMINAL_AGENTE, '/ayuda'];
+
+/** What a route paints once its data landed. The console polls on a timer, so a quiet network never
+    comes: without this the gate would measure a loading frame and record it as the layout. */
+const LISTO = {
+  '/live': 'main [data-objeto-principal="oficina"], main [role="alert"]',
+  [HILO]: 'main [data-objeto-principal="hilo"] [data-thread-scroll]',
+  [`${HILO}?view=context`]: 'main section[aria-label^="Perfil y contexto"] textarea',
+  '/messages/Steven/fantasma': 'main [data-state="missing"]',
+  '/terminal': 'main [data-objeto-principal="escenario"] h2',
+  [TERMINAL_AGENTE]: 'main [data-objeto-principal="escenario"] h2',
+};
+const LISTO_POR_DEFECTO = 'main h1';
 
 /** The narrow widths are the shipped breakpoints; 1440 is the laptop, 1920 and 2560 the desks. */
 const VIEWPORTS = [360, 760, 1100, 1440, 1920, 2560];
@@ -41,7 +57,6 @@ const TOLERANCIA = {
   recorteSinTeclado: 8,
   enlacesSinNombre: 0,
   solapesDeRotulo: 0,
-  portadoresBajos: 0,
   pantallasMaximas: 0.1,
 };
 
@@ -54,10 +69,9 @@ const TOLERANCIA_RUTA = {
   objetoPrincipalBajoElPliegue: 0,
 };
 
-/** Drawer states, measured apart from the plain route: the fleet table is only clipped once the
-    drawer takes its share of the width, and Perfil is the tab that takes the most. */
-const CAJON = '/live#cajon';
-const PERFIL = '/live#perfil';
+/** The agent sheet of the office, measured apart from the plain route: it overlays the fleet table
+    and is the one state of /live that opens on top of the page. */
+const HOJA = '/live#hoja';
 
 const SIN_MOVIMIENTO = '*,*::before,*::after{animation:none!important;transition:none!important}';
 
@@ -70,16 +84,21 @@ function medirEnLaPagina() {
   const main = document.querySelector('main');
   window.scrollTo(0, 0);
   if (main) main.scrollTop = 0;
-  const barra = document.querySelector('.sidebar');
+  // The wide shell has a left <aside>; on phones the navigation is a fixed bar along the bottom.
+  const navegacion = document.querySelector('nav[aria-label="Navegación principal"]');
+  const barra = document.querySelector('aside') ?? navegacion;
   const ancho = window.innerWidth;
   const caja = (nodo) => (nodo ? nodo.getBoundingClientRect() : null);
   const cajaMain = caja(main);
   const cajaBarra = caja(barra);
 
   // A link whose label is display:none contributes no innerText, which is exactly what a screen
-  // reader gets: the icon is aria-hidden and title is undefined for every enabled entry.
-  const enlaces = Array.from(document.querySelectorAll('.sidebar nav a'));
-  const nombres = enlaces.map((enlace) => {
+  // reader gets: the icon is aria-hidden and title is undefined for every enabled entry. Links of a
+  // collapsed group are not painted and take no part: nobody can reach them either.
+  const pintado = (nodo) => nodo.getClientRects().length > 0;
+  const enlaces = Array.from(document.querySelectorAll('nav[aria-label="Navegación principal"] a')).filter(pintado);
+  const agentes = Array.from(document.querySelectorAll('aside ul[aria-label="Agentes"] a')).filter(pintado);
+  const nombres = [...enlaces, ...agentes].map((enlace) => {
     const etiqueta = enlace.getAttribute('aria-label') ?? '';
     const visible = enlace.innerText ?? '';
     const titulo = enlace.getAttribute('title') ?? '';
@@ -141,10 +160,10 @@ function medirEnLaPagina() {
   // The dead band BELOW the content, the one `hueco` never saw. A collapsed `details` still reports
   // a box for its hidden content, so only what is actually painted counts towards the bottom.
   let fondo = 0;
-  const pintado = (nodo) => !nodo.checkVisibility
+  const visible = (nodo) => !nodo.checkVisibility
     || nodo.checkVisibility({ contentVisibilityAuto: true, opacityProperty: true, visibilityProperty: true });
   for (const nodo of (main ? main.querySelectorAll('*') : [])) {
-    if (!pintado(nodo)) continue;
+    if (!visible(nodo)) continue;
     const r = nodo.getBoundingClientRect();
     if (r.width > 0 && r.height > 0 && r.bottom > fondo) fondo = r.bottom;
   }
@@ -170,75 +189,40 @@ function medirEnLaPagina() {
     enlacesSinNombre: nombres.filter((nombre) => nombre === '').length,
     enlacesTotales: enlaces.length,
     solapesDeRotulo: solapes,
-    portadoresBajos: 0,
   };
 }
 
-/** Drives the two clicked states of /live. A state that cannot be reached is recorded and the run
-    continues: losing one state must not cost the other five viewports. */
-async function medirEstadosDeLive(pagina, viewport, medidas, sinMedir, origin) {
-  const medir = async (etiqueta, accion) => {
-    try {
-      await accion();
-      await pagina.waitForTimeout(700);
-      medidas.push({ ruta: etiqueta, viewport, ...(await pagina.evaluate(medirEnLaPagina)) });
-      return true;
-    } catch (error) {
-      sinMedir.push(`${String(viewport)}px ${etiqueta}: ${String(error.message).split('\n')[0]}`);
-      return false;
-    }
-  };
-
-  const abrir = (pestana) => async () => {
-    await pagina.goto(`${origin}/live?agente=${encodeURIComponent(ALIAS_MEDIDO)}&pestana=${pestana}`, {
+/** Opens the agent sheet of /live. A state that cannot be reached is recorded and the run continues:
+    losing it must not cost the other five viewports. */
+async function medirHojaDeLive(pagina, viewport, medidas, sinMedir, origin) {
+  try {
+    await pagina.goto(`${origin}/live?agente=${encodeURIComponent(ALIAS_MEDIDO)}`, {
       waitUntil: 'domcontentloaded', timeout: 30000,
     });
     await pagina.addStyleTag({ content: SIN_MOVIMIENTO });
-    await pagina.locator('.agent-drawer').waitFor({ state: 'visible', timeout: 5000 });
-  };
-  const abierto = await medir(CAJON, abrir('ahora'));
-  if (!abierto) {
-    sinMedir.push(`${String(viewport)}px ${PERFIL}: not attempted, the drawer never opened`);
-    return;
+    await pagina.locator('[role="dialog"]:visible').first().waitFor({ state: 'visible', timeout: 15000 });
+    await pagina.waitForTimeout(700);
+    medidas.push({ ruta: HOJA, viewport, ...(await pagina.evaluate(medirEnLaPagina)) });
+  } catch (error) {
+    sinMedir.push(`${String(viewport)}px ${HOJA}: ${String(error.message).split('\n')[0]}`);
   }
-  await medir(PERFIL, abrir('perfil'));
 }
 
 /**
  * `networkidle` costs a second per route here and can never settle on its own: the console polls on
- * a timer, so the gate would wait for a quiet network that this page never has. `/live` paints its
- * shell before its activity snapshot, so that route waits for its data-backed layout or visible error.
+ * a timer, so the gate would wait for a quiet network that this page never has. Each route waits for
+ * what its data paints (`LISTO`); `/live` also fails loudly when it paints an error instead.
  */
 async function medirRuta(pagina, ruta, origin) {
   await pagina.goto(origin + ruta, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await pagina.locator('main').waitFor({ state: 'visible', timeout: 15000 });
   await pagina.addStyleTag({ content: SIN_MOVIMIENTO });
-  if (ruta === '/live') {
-    const estado = pagina.locator('main .live-main, main .state-card.state-error').first();
-    await estado.waitFor({ state: 'visible', timeout: 30000 });
-    const error = pagina.locator('main .state-card.state-error');
-    if (await error.isVisible()) {
-      throw new Error(`Live activity failed before layout measurement: ${(await error.innerText()).trim()}`);
-    }
+  await pagina.locator(LISTO[ruta] ?? LISTO_POR_DEFECTO).first().waitFor({ state: 'visible', timeout: 30000 });
+  if (ruta === '/live' && await pagina.locator('main [role="alert"]').first().isVisible()) {
+    throw new Error(`Live activity failed before layout measurement: ${(await pagina.locator('main [role="alert"]').first().innerText()).trim()}`);
   }
   await pagina.waitForTimeout(700);
   return pagina.evaluate(medirEnLaPagina);
-}
-
-async function medirPortadores(pagina) {
-  const summary = pagina.locator('details.live-fold > summary').filter({ hasText: 'Roles declarados' });
-  // A collapsed ancestor renders its children unreachable; the click would time out and take the
-  // whole viewport's remaining budgets down with it.
-  await summary.evaluate((nodo) => {
-    for (let padre = nodo.parentElement; padre; padre = padre.parentElement) {
-      if (padre.tagName === 'DETAILS' && padre !== nodo.parentElement) padre.open = true;
-    }
-  });
-  await summary.click();
-  return pagina.locator('.rol-portador').evaluateAll((botones) => botones.filter((boton) => {
-    const caja = boton.getBoundingClientRect();
-    return caja.width > 0 && caja.height > 0 && (caja.width < 24 || caja.height < 24);
-  }).length);
 }
 
 async function medirViewport(navegador, viewport, origin) {
@@ -249,16 +233,9 @@ async function medirViewport(navegador, viewport, origin) {
   try {
     for (const ruta of ROUTES) {
       const t0 = Date.now();
-      const medida = { ruta, viewport, ...(await medirRuta(pagina, ruta, origin)), portadoresBajos: 0 };
-      if (ruta === '/live') medida.portadoresBajos = await medirPortadores(pagina);
-      medidas.push(medida);
+      medidas.push({ ruta, viewport, ...(await medirRuta(pagina, ruta, origin)) });
       process.stderr.write(`  ${String(viewport)}px ${ruta} ${String(Date.now() - t0)}ms\n`);
-      if (ruta === '/live') await medirEstadosDeLive(pagina, viewport, medidas, sinMedir, origin);
-      if (ruta === '/messages') {
-        await pagina.getByRole('button', { name: 'Herramientas', exact: true }).click();
-        medidas.push({ ruta: '/messages#herramientas', viewport, ...await pagina.evaluate(medirEnLaPagina), portadoresBajos: 0 });
-        await pagina.getByRole('button', { name: 'Cerrar herramientas' }).click();
-      }
+      if (ruta === '/live') await medirHojaDeLive(pagina, viewport, medidas, sinMedir, origin);
     }
   } finally {
     await contexto.close();
@@ -305,7 +282,6 @@ function resumir(medidas) {
       recorteSinTecladoQue: peorSinTeclado.recorteSinTecladoSelector,
       enlacesSinNombre: Math.max(...delViewport.map((m) => m.enlacesSinNombre)),
       solapesDeRotulo: Math.max(...delViewport.map((m) => m.solapesDeRotulo)),
-      portadoresBajos: Math.max(...delViewport.map((m) => m.portadoresBajos)),
       pantallasMaximas: peorPantallas.pantallas,
       pantallasMaximasEn: peorPantallas.ruta,
       rutas: Object.fromEntries(delViewport.map((m) => [m.ruta, {
@@ -333,17 +309,17 @@ const DONDE = {
     them. PENDIENTES lists what misses them today, with the value measured when it was recorded: an
     unrecorded miss fails, and so does an entry that now passes and must therefore be deleted. */
 const OBJETIVOS = {
-  pantallas: { rutas: ['/live', '/accounts', CAJON, PERFIL], viewports: [1440, 1920, 2560], tope: 2, margen: 0.2 },
+  pantallas: { rutas: ['/live', '/accounts', HOJA], viewports: [1440, 1920, 2560], tope: 2, margen: 0.2 },
   foldDesaprovechado: { rutas: ['/'], viewports: VIEWPORTS, tope: Math.round(ALTO * 0.4), margen: 8 },
   objetoPrincipalBajoElPliegue: {
-    rutas: ['/live', HILO, '/terminal'], viewports: VIEWPORTS, tope: 0, margen: 0,
+    rutas: ['/live', HILO, '/terminal', TERMINAL_AGENTE], viewports: VIEWPORTS, tope: 0, margen: 0,
   },
 };
 
 const PENDIENTES = {
-  '1440./accounts.pantallas': 3.66,
-  '1920./accounts.pantallas': 3.39,
-  '2560./accounts.pantallas': 3.34,
+  '1440./accounts.pantallas': 2.53,
+  '1920./accounts.pantallas': 2.51,
+  '2560./accounts.pantallas': 2.51,
 };
 
 function revisarObjetivos(resumen) {
@@ -483,14 +459,14 @@ function compararRutas(viewport, rutas, grabadas, peores, mejores) {
 }
 
 function imprimirTabla(medidas) {
-  const cabecera = ['ruta', 'ancho', 'main', 'hueco', 'fold libre', 'desborde', 'recorte', 'recortado en', 'sin teclado', 'inalcanzable en', 'pantallas', 'objeto top', 'bajo pliegue', 'sin nombre', 'solapes', 'portadores bajos'];
+  const cabecera = ['ruta', 'ancho', 'main', 'hueco', 'fold libre', 'desborde', 'recorte', 'recortado en', 'sin teclado', 'inalcanzable en', 'pantallas', 'objeto top', 'bajo pliegue', 'sin nombre', 'solapes'];
   const filas = medidas.map((m) => [
     m.ruta, m.viewport, m.anchoMain, m.hueco, m.foldDesaprovechado, m.desborde, m.recorte, m.recorteSelector || '-',
     m.recorteSinTeclado, m.recorteSinTecladoSelector || '-',
     m.pantallas,
     m.objetoPrincipalTop === null ? '-' : m.objetoPrincipalTop,
     m.objetoPrincipalTop === null ? '-' : m.objetoPrincipalBajoElPliegue,
-    m.enlacesSinNombre, m.solapesDeRotulo, m.portadoresBajos,
+    m.enlacesSinNombre, m.solapesDeRotulo,
   ].map(String));
   const anchos = cabecera.map((titulo, i) => Math.max(titulo.length, ...filas.map((f) => f[i].length)));
   const esNumero = (celda) => /^-?\d+(\.\d+)?$/.test(celda);

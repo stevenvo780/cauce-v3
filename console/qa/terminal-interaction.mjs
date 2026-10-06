@@ -9,7 +9,7 @@ const output = resolve(process.env.CAUCE_QA_ARTIFACTS ?? 'artifacts/terminal-int
 await mkdir(output, { recursive: true });
 const fixture = await syntheticTerminalServer(new URL(process.env.CAUCE_QA_ORIGIN ?? 'http://127.0.0.1:4198'));
 const browser = await chromium.launch({ executablePath: process.env.CAUCE_QA_BROWSER || undefined });
-const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, permissions: ['clipboard-read', 'clipboard-write'] });
 await context.addInitScript(() => { window.__qaNativeSocket = window.WebSocket; });
 const report = { scope: 'Real Chromium DOM input → native local WebSocket → Python raw PTY byte recorder. Synthetic authorization only; no shell and no live gateway.', checks: [], errors: [], blocked: [] };
 const check = (name, passed, details) => {
@@ -34,7 +34,7 @@ await context.tracing.start({ screenshots: true, snapshots: true });
 const page = await context.newPage();
 page.on('pageerror', error => report.errors.push(error.message));
 const focus = () => page.evaluate(() => ({ tag: document.activeElement?.tagName, className: document.activeElement?.className }));
-const terminal = () => page.locator('.pty-mount .xterm-screen');
+const terminal = () => page.locator('.xterm-screen');
 const key = async (session, name, expected, action) => {
   const before = session.frames.filter(frame => frame.type === 'input').length;
   const outputOffset = session.output.length;
@@ -57,7 +57,10 @@ try {
     dispatchEvent(new PopStateEvent('popstate'));
   });
   await terminal().waitFor();
-  const readonly = [...fixture.sessions.values()].find(session => session.grant.target.mode === 'harness');
+  // The TUI opens in the writable mode straight away, and stays read-only until the keyboard is taken.
+  assert(await waitUntil(() => [...fixture.sessions.values()].some(session => session.grant.target.mode === 'harness_rw')), 'the writable TUI session was never requested');
+  const writable = [...fixture.sessions.values()].find(session => session.grant.target.mode === 'harness_rw');
+  const readonly = writable;
   await waitUntil(() => readonly.output.length > 0);
   await terminal().click();
   await page.keyboard.press('ArrowDown');
@@ -67,12 +70,11 @@ try {
   check('readonly DOM key sends no input', !readonly.frames.some(frame => frame.type === 'input'));
   check('readonly resize does not resize remote PTY', readonly.frames.filter(frame => frame.type === 'resize').length === readonlyResizes);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.getByRole('button', { name: 'Tomar el control', exact: true }).click();
+  // Attaching takes the keyboard by itself; the fixture answers «agent busy» once, so the retry is explicit.
   await page.getByRole('button', { name: 'Reintentar la toma', exact: true }).waitFor();
-  const writable = [...fixture.sessions.values()].find(session => session.grant.target.mode === 'harness_rw');
   await waitUntil(() => writable.output.length > 0);
   await page.getByRole('button', { name: 'Reintentar la toma', exact: true }).click();
-  await page.locator('.pty-control[data-sostenido]').waitFor();
+  await page.locator('[data-sostenido]').waitFor();
   await key(writable, 'ArrowDown after explicit retry without clicking terminal', '\x1b[B', () => page.keyboard.press('ArrowDown'));
   check('retry reuses ready session', [...fixture.sessions.values()].filter(session => session.grant.target.mode === 'harness_rw').length === 1);
   // Continue coverage even when the focus regression above fails; this click is recorded separately.
@@ -109,45 +111,41 @@ try {
   check('keys during resume are discarded, not sent or replayed', writable.frames.filter(frame => frame.type === 'input').length === reconnectInputCount && !writable.output.subarray(reconnectOffset).toString().includes('KEY 1b4f52'));
   await key(writable, 'key after reconnect', 'r', () => page.keyboard.press('r'));
   check('reconnect resumes without ticket replay', fixture.journal.filter(event => event.ws?.session_id === writable.grant.session_id && event.ws.type === 'attach').length === 1 && fixture.journal.some(event => event.ws?.type === 'resume'));
-  const tabs = await page.getByRole('tab').allTextContents();
-  report.tabs = tabs;
   await writeFile(`${output}/before-tab.aria.txt`, await page.locator('body').ariaSnapshot());
   await page.screenshot({ path: `${output}/writable.png` });
   // Switching real fleet selection unmounts SessionStage and must release the hold.
-  await page.getByRole('button', { name: /argos/i }).first().click();
+  await page.getByRole('link', { name: /^argos/ }).click();
   await waitUntil(() => !writable.held);
   check('switching agent explicitly releases hold', !writable.held);
-  const search = page.getByRole('textbox', { name: 'Buscar agente o capacidad', exact: true });
+  const search = page.getByRole('searchbox', { name: 'Buscar agente', exact: true });
   await search.focus();
   const epochBeforeHiddenResume = writable.epoch;
   writable.socket.terminate();
   await waitUntil(() => writable.epoch > epochBeforeHiddenResume);
   await new Promise(resolve => setTimeout(resolve, 150));
   check('hidden reconnect does not steal search focus', await search.evaluate(element => element === document.activeElement));
-  await page.getByRole('tab', { name: /kant/i }).click();
-  check('return keeps session readonly until explicit take', !writable.held && await page.locator('.pty-control[data-sostenido]').count() === 0);
-  check('return explains explicit reacquisition', await page.getByText(/Cambiar de pestaña devuelve el control/).isVisible());
+  await page.getByRole('link', { name: /^kant/ }).click();
+  // Opening an agent again asks for a new session and takes the keyboard on its own, with its audit.
+  await page.locator('[data-sostenido]').waitFor();
+  const reopened = [...fixture.sessions.values()].filter(session => session.grant.target.mode === 'harness_rw').at(-1);
+  check('return reopens the TUI and takes the keyboard on its own', reopened !== writable && reopened.held);
   await terminal().click();
-  const beforeReturn = writable.frames.filter(frame => frame.type === 'input').length;
-  await page.keyboard.press('F4');
-  await new Promise(resolve => setTimeout(resolve, 100));
-  check('returned readonly terminal blocks browser key', writable.frames.filter(frame => frame.type === 'input').length === beforeReturn);
-  await page.getByRole('button', { name: 'Tomar el control', exact: true }).click();
-  await page.locator('.pty-control[data-sostenido]').waitFor();
-  await key(writable, 'key after explicit reacquisition', 't', () => page.keyboard.press('t'));
+  await key(reopened, 'key after automatic reacquisition', 't', () => page.keyboard.press('t'));
   await page.getByRole('button', { name: 'Devolver el control', exact: true }).click();
+  await waitUntil(() => !reopened.held);
+  check('giving the keyboard back releases the hold', !reopened.held);
   fixture.scenario.disabled = true;
   await page.getByRole('button', { name: 'Tomar el control', exact: true }).click();
   await page.getByText('La escritura sobre la TUI está apagada en este gateway', { exact: true }).waitFor();
-  check('disabled switch has explicit reason and grants no control', !writable.held);
+  check('disabled switch has explicit reason and grants no control', !reopened.held);
   check('disabled switch does not offer retry', await page.getByRole('button', { name: 'Reintentar la toma', exact: true }).count() === 0);
   check('disabled switch action is unavailable', await page.getByRole('button', { name: 'Escritura no disponible', exact: true }).isDisabled());
   await page.screenshot({ path: `${output}/disabled.png` });
-  await page.getByRole('tab', { name: /argos/i }).click();
+  await page.getByRole('link', { name: /^argos/ }).click();
   const takesBeforeDenial = fixture.journal.filter(event => event.path?.endsWith('/control') && event.body.action === 'take').length;
-  await page.getByRole('button', { name: 'Tomar el control', exact: true }).click();
+  // Opening argos asks for a writable session on its own; the gateway refuses it, and says why.
   await page.getByText('La escritura sobre la TUI está apagada en este gateway', { exact: true }).waitFor();
-  check('disabled session admission explains actual reason and blocks retry', await page.getByRole('button', { name: 'Escritura no disponible', exact: true }).isDisabled() && await page.getByRole('button', { name: 'Reintentar la toma', exact: true }).count() === 0);
+  check('disabled session admission explains the actual reason and offers neither a take nor a retry', await page.getByRole('button', { name: /Tomar el control|Reintentar la toma/ }).count() === 0 && await page.locator('[data-sostenido]').count() === 0);
   check('denied admission never posts control take', fixture.journal.filter(event => event.path?.endsWith('/control') && event.body.action === 'take').length === takesBeforeDenial);
   check('refused batch never reappears in PTY output', !writable.output.toString().includes('KEY 1b4f51'));
   await page.screenshot({ path: `${output}/disabled-admission.png` });

@@ -21,7 +21,7 @@
 import { http, HttpResponse } from 'msw';
 /* The constant, not a copy of the literal: that copy is exactly what was wrong (see below). */
 import { LIVE_TUI_MODE, WRITABLE_TUI_MODE } from '../features/terminal/fleet';
-import { mockTerminalGrant } from './terminal-ticket';
+import { mockAuthorityResumeToken, mockTerminalGrant } from './terminal-ticket';
 
 const RUTA_WS = '/v3/console/terminal/stream';
 const TENANT = 'Steven';
@@ -87,6 +87,26 @@ export const terminalDemoHandlers = [
   }),
 
   http.delete('*/v3/console/terminal/sessions/:id', () => new HttpResponse(null, { status: 204 })),
+
+  /* The keyboard hold of the writable TUI: taking it mutes the alias, releasing gives it back. */
+  http.post('*/v3/console/terminal/sessions/:id/control', async ({ params, request }) => {
+    const cuerpo = await request.json().catch(() => ({})) as Record<string, unknown>;
+    const holdId = '55555555-5555-4555-8555-555555555555';
+    if (cuerpo.action === 'release') {
+      return HttpResponse.json({ session_id: params.id, released: true, hold_id: holdId });
+    }
+    return HttpResponse.json({
+      session_id: params.id, hold_id: holdId, held_by: `${TENANT}:${ALIAS}`,
+      expires_at: new Date(Date.now() + 120_000).toISOString(),
+    });
+  }),
+
+  http.post('*/v3/console/terminal/sessions/:id/extend', async ({ params, request }) => {
+    const cuerpo = await request.json().catch(() => ({})) as Record<string, unknown>;
+    return HttpResponse.json({
+      session_id: params.id, request_id: cuerpo.request_id, expires_at: new Date(Date.now() + 300_000).toISOString(),
+    });
+  }),
 ];
 
 /**
@@ -116,14 +136,19 @@ export function instalarPtyDeMentira(): void {
       setTimeout(() => {
         this.readyState = 1;
         this.onopen?.(new Event('open'));
-        setTimeout(() => this.onmessage?.(new MessageEvent('message', { data: JSON.stringify({
-          type: 'ready',
-          claim_token: DEMO_CLAIM_TOKEN,
-          claim_epoch: DEMO_CLAIM_EPOCH,
-          claim_lease_ms: DEMO_CLAIM_LEASE_MS,
-        }) })), 10);
-        setTimeout(() => { this.escupir(); }, 40);
       }, 10);
+    }
+
+    /** The relay answers the client's attach or resume: `ready` carries a token bound to its authority proof. */
+    private aceptar(trama: Record<string, unknown>): void {
+      setTimeout(() => this.onmessage?.(new MessageEvent('message', { data: JSON.stringify({
+        type: 'ready',
+        claim_token: DEMO_CLAIM_TOKEN,
+        claim_epoch: DEMO_CLAIM_EPOCH,
+        claim_lease_ms: DEMO_CLAIM_LEASE_MS,
+        resume_token: mockAuthorityResumeToken(trama.session_id, trama.authority_proof),
+      }) })), 10);
+      setTimeout(() => { this.escupir(); }, 40);
     }
 
     private escupir(): void {
@@ -140,7 +165,8 @@ export function instalarPtyDeMentira(): void {
     send(raw: string): void {
       let trama: Record<string, unknown>;
       try { trama = JSON.parse(raw) as Record<string, unknown>; } catch { return; }
-      if (trama.type === 'attach' || trama.type === 'resize') {
+      if (trama.type === 'attach' || trama.type === 'resume') this.aceptar(trama);
+      if (trama.type === 'attach' || trama.type === 'resume' || trama.type === 'resize') {
         if (typeof trama.cols === 'number' && typeof trama.rows === 'number') {
           PtyFalsa.ultimaGeometria = { cols: trama.cols, rows: trama.rows };
         }

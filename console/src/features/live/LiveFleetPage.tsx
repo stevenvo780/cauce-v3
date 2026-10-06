@@ -1,4 +1,5 @@
-import { RefreshCw } from 'lucide-react';
+import { Menu } from '@base-ui/react/menu';
+import { Check, ChevronDown, Pause, RefreshCw, Timer } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ErrorState, LoadingState } from '../../components/ui';
 import { PageHelp } from '../../components/PageHelp';
@@ -6,6 +7,7 @@ import { cn } from '../../cn';
 import { redirect, useRouteSearch } from '../../router';
 import { useFleet } from '../../shell/fleet-context';
 import { STATE_TONE, TONE_CLASS } from '../../status-tone';
+import { MENU_ITEM, MENU_POPUP } from '../messages/MessageActions';
 import { OfficeCanvas, type OfficeAgent } from '../office/OfficeCanvas';
 import { ORDEN_VIVO } from './activity';
 import { AgentSheet } from './AgentSheet';
@@ -16,9 +18,16 @@ import {
 import { FleetActivityTable } from './FleetActivityTable';
 import { projectLiveFleet } from './live-projection';
 
-/** The shared poller reads activity every 5 s; three missed reads and the picture stops proving anything. */
+/** Three missed reads and the picture stops proving anything; never less than this window. */
 const STALE_AFTER_MS = 15_000;
 const PROBLEMS: ReadonlySet<LiveState> = new Set(['down', 'blocked']);
+/** Poll periods the operator can pick; 0 pauses the shared activity poll. */
+const REFRESH_OPTIONS = [
+  { ms: 2_000, label: '2 s' },
+  { ms: 5_000, label: '5 s' },
+  { ms: 15_000, label: '15 s' },
+  { ms: 0, label: 'En pausa' },
+] as const;
 
 function usePulses(snapshot: ReturnType<typeof projectLiveFleet>['snapshot']): PulseMap {
   const memory = useRef<FleetMemory>({});
@@ -41,6 +50,46 @@ function usePulses(snapshot: ReturnType<typeof projectLiveFleet>['snapshot']): P
   return pulses;
 }
 
+function RefreshInterval({ value, onChange }: { value: number; onChange: (ms: number) => void }) {
+  const current = REFRESH_OPTIONS.find((option) => option.ms === value);
+  const text = current ? (current.ms === 0 ? current.label : `Cada ${current.label}`) : `Cada ${String(value / 1000)} s`;
+  return (
+    <Menu.Root>
+      <Menu.Trigger
+        aria-label={`Frecuencia de lectura: ${text.toLowerCase()}`}
+        title="Cada cuánto se lee la flota"
+        className={cn(
+          'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border bg-surface px-2 text-xs hover:bg-subtle data-[popup-open]:bg-subtle',
+          value === 0 ? 'border-warn/40 text-warn-ink' : 'border-line text-fg-2',
+        )}
+      >
+        {value === 0 ? <Pause size={13} aria-hidden="true" /> : <Timer size={13} aria-hidden="true" />}
+        {text}
+        <ChevronDown size={12} aria-hidden="true" />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner align="end" sideOffset={6} className="z-50">
+          <Menu.Popup className={cn(MENU_POPUP, 'w-44')}>
+            <Menu.Group>
+              <Menu.GroupLabel className="px-2.5 py-1 text-[11px] font-medium text-muted">Leer la flota</Menu.GroupLabel>
+              <Menu.RadioGroup value={String(value)} onValueChange={(next: string) => { onChange(Number(next)); }}>
+                {REFRESH_OPTIONS.map((option) => (
+                  <Menu.RadioItem key={option.ms} value={String(option.ms)} closeOnClick className={MENU_ITEM}>
+                    <span className="grid size-[15px] place-items-center">
+                      <Menu.RadioItemIndicator><Check size={14} aria-hidden="true" /></Menu.RadioItemIndicator>
+                    </span>
+                    {option.ms === 0 ? option.label : `Cada ${option.label}`}
+                  </Menu.RadioItem>
+                ))}
+              </Menu.RadioGroup>
+            </Menu.Group>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
+
 function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -52,7 +101,8 @@ function useNow(): number {
 
 export function LiveFleetPage() {
   const fleet = useFleet();
-  const { activity, topology } = fleet;
+  const { activity, topology, activityIntervalMs } = fleet;
+  const staleAfterMs = activityIntervalMs === 0 ? STALE_AFTER_MS : Math.max(STALE_AFTER_MS, activityIntervalMs * 3);
   const now = useNow();
   const search = useRouteSearch();
   const selectedKey = new URLSearchParams(search).get('agente');
@@ -70,8 +120,8 @@ export function LiveFleetPage() {
   const estados = useMemo(() => new Map(views.map((view) => [view.key, view.state])), [views]);
   const observedAt = snapshot?.observed_at ?? undefined;
   const verdict = useMemo(
-    () => fleetVerdict(views, { error: activity.error, observedAt, nowMs: now, staleAfterMs: STALE_AFTER_MS }),
-    [views, activity.error, observedAt, now],
+    () => fleetVerdict(views, { error: activity.error, observedAt, nowMs: now, staleAfterMs }),
+    [views, activity.error, observedAt, now, staleAfterMs],
   );
 
   const highlight = useMemo(
@@ -163,9 +213,10 @@ export function LiveFleetPage() {
             )}
           </p>
           <div className="ml-auto flex items-center gap-2 text-xs text-muted">
-            <span className="hidden tabular-nums sm:inline" title="La flota se lee sola cada 5 s">
+            <span className="hidden tabular-nums sm:inline">
               {age === null ? 'sin lectura' : `hace ${humanSeconds(age)}`}
             </span>
+            <RefreshInterval value={activityIntervalMs} onChange={fleet.setActivityIntervalMs} />
             <button
               type="button"
               onClick={fleet.reload}

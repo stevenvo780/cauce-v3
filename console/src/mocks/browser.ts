@@ -1,13 +1,15 @@
 import { setupWorker } from 'msw/browser';
+import { chatDemoHandlers } from './chat-demo';
 import { handlers } from './handlers';
 import { instalarPtyDeMentira, terminalDemoHandlers } from './terminal-demo';
 
 /*
- * The terminal bench ones go FIRST: MSW keeps the first matching handler, and `handlers.ts`
- * answers `capability.available:false` —which the view tests assert—. Here, in the browser, the
- * opposite is needed in order to look at the PTY. See `terminal-demo.ts`.
+ * The demo ones go FIRST: MSW keeps the first matching handler, and `handlers.ts` answers
+ * `capability.available:false` —which the view tests assert— and two bare messages. Here, in the
+ * browser, the opposite is needed in order to look at the PTY and at a conversation with something
+ * in it. See `terminal-demo.ts` and `chat-demo.ts`.
  */
-export const worker = setupWorker(...terminalDemoHandlers, ...handlers);
+export const worker = setupWorker(...terminalDemoHandlers, ...chatDemoHandlers, ...handlers);
 
 /*
  * The fake PTY is installed AFTER `worker.start()`, not before: MSW mounts its own `WebSocket`

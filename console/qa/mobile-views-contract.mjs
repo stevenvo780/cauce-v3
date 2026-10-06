@@ -4,36 +4,32 @@ export const VIEWPORTS = [
 ];
 export const BUDGET = { maxPrimaryTopRatio: 0.5, minVisiblePixels: 120, documentOverflow: 0 };
 const tab = (name) => ({ role: 'tab', name });
-const button = (name) => ({ role: 'button', name });
 const view = (id, path, primary, actions = []) => ({ id, path, primary, actions });
+/** The roster of the phone: bare /messages shows the agent list instead of an empty thread. */
+const CHATS = 'section[aria-label="Conversaciones"] ul[aria-label="Agentes"]';
+const PERFIL = 'section[aria-label^="Perfil y contexto"]';
+const ESCENARIO = '[data-objeto-principal="escenario"]';
+const SECCIONES_DE_AJUSTES = ['General', 'Espacios y salas', 'Agentes', 'Arneses', 'Acceso y roles', 'Avanzado'];
+
 export const VIEWS = [
-  view('entry', '/', '.messenger-agent'),
-  view('messages', '/messages', '.messenger-agent'),
-  view('conversation', '/messages/Steven/kant', '.messenger-thread-scroll'),
-  { ...view('conversation-context', '/messages/Steven/kant?view=context', '.agent-context-panel .contexto-campos'),
-    ready: ['.agent-context-panel .perfil-tab .perfil-editor', '.agent-context-panel .ficheros-lista li'] },
-  view('overview', '/overview', '.landing-alertas'),
-  { ...view('live', '/live', '.lhg-viewport'), graph: true },
-  ...[
-    ['Ahora', '.live-detail dl', ['.live-reason']],
-    ['Conexión', '.live-detail dl', ['.live-detail dd:last-of-type .chip']],
-    ['Entregas', '.drawer-delivery', ['.drawer-delivery dl']],
-    ['Contexto', '.contexto-campos', ['.perfil-tab .perfil-editor', '.ficheros-lista li']],
-    ['Ficheros', '.ficheros-lista li', ['.ficheros-lista li']],
-  ].map(([name, primary, ready], index) => ({
-    ...view(`live-${index}`, '/live?agente=Steven%2Fkant&pestana=ahora', `.agent-drawer-body ${primary}`, [tab(name)]),
-    ready: ready.map((selector) => `.agent-drawer-body ${selector}`),
-  })),
-  ...[['Consumo', 'consumo', '.quota-provider'], ['Inventario', 'inventario', '.panel'], ['Asignaciones', 'asignaciones', '.assignment-config-form']].map(([name, id, selector]) =>
-    view(`accounts-${id}`, '/accounts', `#view-panel-${id} ${selector}`, [tab(name)])),
+  view('entry', '/', CHATS),
+  view('messages', '/messages', CHATS),
+  view('conversation', '/messages/Steven/kant', '[data-objeto-principal="hilo"] [data-thread-scroll]'),
+  { ...view('conversation-context', '/messages/Steven/kant?view=context', `${PERFIL} [role="tabpanel"]`),
+    ready: [`${PERFIL} textarea`, `${PERFIL} [role="tab"]`] },
+  view('overview', '/overview', 'section[aria-label="Lo que exige atención"]'),
+  { ...view('live', '/live', '[data-objeto-principal="oficina"]'), office: true },
+  { ...view('live-sheet', '/live?agente=Steven%2Fkant', '[role="dialog"]'),
+    ready: ['[role="dialog"] h2'] },
+  ...[['Consumo', 'consumo'], ['Inventario', 'inventario'], ['Asignaciones', 'asignaciones']].map(([name, id]) =>
+    view(`accounts-${id}`, '/accounts', `#view-panel-${id}`, [tab(name)])),
   view('queues', '/queues', '#view-panel-entregas tbody tr'),
-  view('observability-signals', '/observability', '#view-panel-senales .metrics-grid', [tab('Señales y relays')]),
-  view('observability-audit', '/observability', '#view-panel-auditoria .search-field', [tab('Auditoría')]),
-  view('config-agents', '/config', '.settings-page input[type="search"]'),
-  ...['Espacios y miembros', 'Permisos', 'Agentes', 'Avisos y cadena', 'Historial y JSON', 'Otros'].map((name, index) =>
-    view(`config-${index}`, '/config', '.config-area', [button('Administración avanzada'), tab(name)])),
-  view('terminal', '/terminal', '.ultimate-terminal-shell'),
-  view('help', '/ayuda', '.help-lista'),
+  view('observability-signals', '/observability', '#view-panel-senales', [tab('Señales y relays')]),
+  view('observability-audit', '/observability', '#view-panel-auditoria', [tab('Auditoría')]),
+  ...SECCIONES_DE_AJUSTES.map((name, index) => view(`config-${index}`, '/config', 'main [role="tabpanel"]', [tab(name)])),
+  view('terminal', '/terminal', `${ESCENARIO} ul[aria-label="Agentes"]`),
+  view('terminal-stage', '/terminal/Steven/kant', ESCENARIO),
+  view('help', '/ayuda', 'main h2'),
 ];
 
 export function assertSuccessfulResponse(status, target) {
@@ -58,7 +54,7 @@ export function failuresFor(metrics, view) {
     if (usable <= 0 || top < metrics.contentTop - 1 || top > metrics.contentTop + usable * BUDGET.maxPrimaryTopRatio) failures.push('primary object exceeds first-screen budget');
     if (height <= 0 || visibleHeight < Math.min(height, BUDGET.minVisiblePixels) - 1 || visibleWidth <= 0) failures.push('primary object clipped or below fold');
   }
-  if (view.graph && (!metrics.graphOpen || !metrics.graphNodes)) failures.push('graph must be open with nodes on arrival');
+  if (view.office && !metrics.officeCanvas) failures.push('office must be painted on arrival');
   if (metrics.internalScrollWithoutKeyboard) failures.push('internal horizontal scroll is not keyboard reachable');
   return failures;
 }
