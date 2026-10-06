@@ -2,6 +2,9 @@ import type { Connection, FoldedItem, TurnOutcome } from "@muse-code/sdk";
 
 export type MuseWait = <T>(promise: Promise<T>, budgetMs?: number) => Promise<T>;
 
+export class MuseDeadlineError extends Error {}
+export class MuseAbortError extends Error {}
+
 export class MuseMspFault extends Error {
   constructor(readonly code: string, message: string) {
     super(message);
@@ -50,8 +53,10 @@ export interface MuseView {
   readonly viewCursor: string;
 }
 
-export async function readMuseView(connection: Connection, sessionId: string, wait: MuseWait): Promise<MuseView> {
-  const read = await wait(connection.request("session/read", { sessionId, excludeItems: false }), 5_000);
+export async function readMuseView(
+  connection: Connection, sessionId: string, wait: MuseWait, readBudgetMs = 5_000,
+): Promise<MuseView> {
+  const read = await wait(connection.request("session/read", { sessionId, excludeItems: false }), readBudgetMs);
   const session = museObject(read.session);
   if (session.sessionId !== sessionId) {
     throw new MuseMspFault("MUSE_FOREIGN_VIEW", "Muse read returned another session");
