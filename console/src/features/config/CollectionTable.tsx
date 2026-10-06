@@ -1,9 +1,11 @@
+import { Dialog } from '@base-ui/react/dialog';
 import { Braces } from 'lucide-react';
-import { Fragment, useEffect, useRef, type KeyboardEvent } from 'react';
-import { createPortal } from 'react-dom';
+import { Fragment, useRef } from 'react';
+import { cn } from '../../cn';
+import { Button, SectionCard } from '../../components/form-kit';
+import { Badge, Desplazable, EmptyState, Unknown } from '../../components/ui';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { Badge, Desplazable, EmptyState, Panel, Unknown } from '../../components/ui';
+import { Aviso, PREVIEW, TABLA } from './config-ui';
 import type { ConfigCollection } from './collections';
 import {
   accionDeRol, claveDeFila, columnaNumerica, columnasDe, esColumnaDeFecha, esColumnaFundida,
@@ -16,7 +18,6 @@ import {
 } from './Interruptor';
 import { esCampoConmutable, explicacionDeCampo, interruptorDeFila } from './interruptores';
 import type { ControlDeInterruptores } from './use-interruptores';
-import './toggles.css';
 
 /** Which ROLE change of which row is awaiting the "Confirm". Only one at a time. */
 export interface AccionPendiente {
@@ -62,7 +63,8 @@ export function CollectionTable({
   const avisoDeInterruptor = control.avisoDe(key);
   const confirmandoAqui = control.confirmacion?.interruptor.coleccion === key;
 
-  return <Panel title={title} subtitle="Configuración guardada en la última lectura">
+  return <SectionCard title={title}
+    actions={rows ? <span className="text-xs text-muted tabular-nums">{filas.length} {filas.length === 1 ? 'fila' : 'filas'}</span> : undefined}>
     {/* Clave ausente y lista vacía NO son lo mismo: un gateway anterior a una migración no publica
         su tabla, y decir «sin registros» ahí sería mentir. */}
     {!rows ? <EmptyState>UNKNOWN: este gateway no publica esta colección ({key}).</EmptyState>
@@ -71,29 +73,26 @@ export function CollectionTable({
           {/* El desenlace de un interruptor se anuncia acá arriba, en un `role="status"` que el
               lector de pantalla lee solo: el interruptor moviéndose es una señal visual, y sin esto
               quien no ve la pantalla no se entera de que la escritura llegó. */}
-          {avisoDeInterruptor ? <p
-            className={avisoDeInterruptor.tone === 'parcial' ? 'notice parcial' : 'notice success'}
-            role="status"
-          >{avisoDeInterruptor.text}</p> : null}
+          {avisoDeInterruptor ? <Aviso role="status" tone={avisoDeInterruptor.tone === 'parcial' ? 'parcial' : 'success'}>{avisoDeInterruptor.text}</Aviso> : null}
 
           {confirmandoAqui ? <ConfirmarQuitarControl control={control} busy={busy} /> : null}
 
-          {/* El aviso de la tabla, UNA vez y arriba. Marcar columna por columna contesta «¿esta
-              sirve?» pero no «¿qué hago entonces?», y esa segunda pregunta es la que trae al
-              operador hasta acá. No se esconden las columnas: el servidor las publica, y esconder
-              un dato que existe es la otra forma de mentir sobre lo que hay configurado. */}
-          {inertesPresentes.length ? <p className="notice config-inertes" role="note">
+          {/* El aviso de la tabla, UNA vez y arriba. No se esconden las columnas: el servidor las
+              publica, y esconder un dato que existe es la otra forma de mentir sobre lo que hay
+              configurado. */}
+          {inertesPresentes.length ? <p className="m-0 rounded-lg border border-line bg-subtle px-3 py-2 text-[13px] text-fg-2" role="note">
             Las columnas marcadas «declarativo» no configuran por sí solas el runtime.
             Cada una indica sus lectores y de dónde sale el valor en ejecución.
           </p> : null}
 
-          <Desplazable etiqueta={title}><table><thead><tr>
+          <Desplazable etiqueta={title} className="max-w-full overflow-x-auto rounded-lg border border-line"><table className={TABLA}><thead><tr>
             {columnas.map((columna) => {
               const inerte = motivoInerte(key, columna.clave);
               return <th
                 key={columna.clave}
                 data-numero={numericas.has(columna.clave) ? 'true' : undefined}
                 data-inerte={inerte === undefined ? undefined : 'true'}
+                className={cn(numericas.has(columna.clave) && 'text-right', inerte !== undefined && 'opacity-70')}
               >
                 <CabeceraConAyuda
                   etiqueta={columna.etiqueta}
@@ -108,20 +107,22 @@ export function CollectionTable({
           </tr></thead><tbody>
             {filas.map((fila, indice) => {
               const filaId = claveDeFila(key, fila, indice);
-// One failure per row: the global `busy` serializes writes, so two toggles of the same row
-                // cannot be rejected at the same time.
+              // One failure per row: the global `busy` serializes writes, so two toggles of the same
+              // row cannot be rejected at the same time.
               const fallo = columnas
                 .map((columna) => control.fallo(`${key}|${filaId}|${columna.clave}`))
                 .find((encontrado) => encontrado !== undefined);
               return <Fragment key={filaId}>
                 <tr>
-                  {/* La celda de una columna inerte se apaga con el mismo `data-inerte` que su
-                      cabecera: el valor sigue legible —es lo que hay declarado— pero deja de
-                      competir por la atención con las columnas que sí gobiernan algo. */}
+                  {/* A column that configures nothing dims its cells with the same `data-inerte` as its
+                      header: the value stays readable —it is what is declared— but stops competing
+                      with the columns that do govern something. */}
                   {columnas.map((columna) => <td
                     key={columna.clave}
+                    data-label={columna.etiqueta}
                     data-numero={numericas.has(columna.clave) ? 'true' : undefined}
                     data-inerte={motivoInerte(key, columna.clave) === undefined ? undefined : 'true'}
+                    className={cn(numericas.has(columna.clave) && 'text-right tabular-nums', motivoInerte(key, columna.clave) !== undefined && 'opacity-60')}
                   >
                     <Celda
                       coleccion={key} columna={columna} fila={fila} filaId={filaId} indice={indice}
@@ -141,21 +142,18 @@ export function CollectionTable({
             pendiente={pendiente} busy={busy} onConfirmar={onConfirmar} onCancelar={onCancelar}
           /> : null}
 
-          {aviso ? <p
-            className={aviso.tone === 'error' ? 'notice error' : aviso.tone === 'parcial' ? 'notice parcial' : 'notice success'}
-            role={aviso.tone === 'success' ? 'status' : 'alert'}
-          >{aviso.text}</p> : null}
+          {aviso ? <Aviso tone={aviso.tone}>{aviso.text}</Aviso> : null}
 
           {/* El JSON crudo no se borra: es la única forma de ver un campo que la tabla no tiene
               columna para mostrar. Lo que cambia es que ya no es lo primero que se ve. */}
-          <details className="config-raw">
-            <summary><Braces size={13} aria-hidden="true" /> Ver crudo ({filas.length} filas tal cual las publica el servidor)</summary>
-            <ul className="config-records">
-              {filas.map((fila, indice) => <li key={claveDeFila(key, fila, indice)}><code>{JSON.stringify(fila)}</code></li>)}
+          <details className="text-[13px]">
+            <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver crudo ({filas.length} filas tal cual las publica el servidor)</summary>
+            <ul className="m-0 mt-2 grid max-h-80 list-none gap-1.5 overflow-auto p-0">
+              {filas.map((fila, indice) => <li key={claveDeFila(key, fila, indice)} className="rounded-md bg-subtle p-2"><code className="text-xs break-all">{JSON.stringify(fila)}</code></li>)}
             </ul>
           </details>
         </>}
-  </Panel>;
+  </SectionCard>;
 }
 
 function Celda({
@@ -175,7 +173,7 @@ function Celda({
   // The merged identity column: `From` + `To` are read as a single edge.
   if (esColumnaFundida(coleccion, columna.clave)) {
     const arista = identidadFundida(coleccion, fila);
-    return arista === undefined ? <Unknown value={null} /> : <span className="mono">{arista}</span>;
+    return arista === undefined ? <Unknown value={null} /> : <span className="font-mono text-[12.5px]">{arista}</span>;
   }
 
   const valor = fila[columna.clave];
@@ -207,6 +205,7 @@ function Celda({
         value={actual}
         disabled={soloLectura || busy || motivo !== undefined}
         title={motivo ?? (soloLectura ? CONFIG_SIN_CONTROL_REASON : undefined)}
+        className="max-w-40 !min-h-8 !py-1"
         onChange={(event) => {
           const accion = accionDeRol(fila, event.target.value);
           if (accion) onPedir({ coleccion, filaId, accion });
@@ -215,7 +214,7 @@ function Celda({
         {actual === '' ? <option value="">UNKNOWN</option> : null}
         {opciones.map((rol) => <option key={rol} value={rol}>{rol}</option>)}
       </select>
-      {motivo ? <span className="unknown">{motivo}</span> : null}
+      {motivo ? <span className="mt-1 block max-w-64 text-xs font-medium text-muted italic">{motivo}</span> : null}
     </>;
   }
 
@@ -223,7 +222,7 @@ function Celda({
   // of "Agent registry" off-screen. It is shown summarized; the full text lives in the `title`,
   // in "View raw", and as a diagnostic projection in the single "Context" tab. It is not editable here.
   if (esColumnaLarga(columna.clave) && typeof valor === 'string' && valor.trim() !== '') {
-    return <span className="config-resumen" title={valor}>{resumirTextoLargo(valor)}</span>;
+    return <span className="block max-w-80 truncate" title={valor}>{resumirTextoLargo(valor)}</span>;
   }
 
   if (typeof valor === 'boolean') {
@@ -232,15 +231,15 @@ function Celda({
   if (esColumnaDeFecha(columna.clave)) return <FechaRelativa value={valor} />;
   if (Array.isArray(valor)) {
     // An empty list is a known datum —"has none"—, not UNKNOWN.
-    return valor.length ? <span>{valor.map((item) => String(item)).join(', ')}</span> : <span className="unknown">(vacío)</span>;
+    return valor.length ? <span>{valor.map((item) => String(item)).join(', ')}</span> : <span className="text-muted italic">(vacío)</span>;
   }
   if (valor !== null && typeof valor === 'object') return <code>{JSON.stringify(valor)}</code>;
   return <Unknown value={valor} />;
 }
 
 /**
- * Modal confirmation dialog carrying the exact mutation for non-boolean changes (role).
- * Mounted as a modal with `inert` on the background, a focus trap, and ESC support.
+ * Confirmation carrying the exact mutation, for changes that are not a boolean flip (role).
+ * Focus entry, Escape and the inert background come from the dialog primitive.
  */
 function ConfirmacionDeAccion({ pendiente, busy, onConfirmar, onCancelar }: {
   pendiente: AccionPendiente;
@@ -248,52 +247,24 @@ function ConfirmacionDeAccion({ pendiente, busy, onConfirmar, onCancelar }: {
   onConfirmar: () => void;
   onCancelar: () => void;
 }) {
-  const dialogo = useRef<HTMLDivElement>(null);
   const confirmar = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    const abridor = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    // `inert` on the shell —not on `body`, where this dialog lives— is what actually disables the
-    // header and the side bar: no mouse, no tab, no screen reader.
-    const fondo = document.querySelector('.app-shell');
-    fondo?.setAttribute('inert', '');
-    confirmar.current?.focus();
-    return () => {
-      fondo?.removeAttribute('inert');
-      abridor?.focus();
-    };
-  }, []);
-
-  const atraparFoco = useFocusTrap(dialogo);
-  // ESC cancels, and the tab wraps inside the dialog instead of going to the background.
-  const teclado = (evento: KeyboardEvent<HTMLDivElement>) => {
-    if (evento.key === 'Escape') { evento.stopPropagation(); onCancelar(); return; }
-    atraparFoco(evento);
-  };
-
-  return createPortal(
-    <div className="config-modal-fondo" onMouseDown={(evento) => { if (evento.target === evento.currentTarget) onCancelar(); }}>
-      <div
-        className="config-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="config-modal-titulo"
-        ref={dialogo}
-        onKeyDown={teclado}
-      >
-        <div className="config-modal-cuerpo">
-          <p id="config-modal-titulo">Confirmá el cambio: <strong>{pendiente.accion.descripcion}</strong>.</p>
-          <details className="config-modal-detalle">
-            <summary><Braces size={13} aria-hidden="true" /> Ver la mutación exacta que se va a enviar</summary>
-            <pre className="config-preview" aria-label="Mutación a aplicar">{JSON.stringify(pendiente.accion.mutation, null, 2)}</pre>
+  return (
+    <Dialog.Root open onOpenChange={(abierto) => { if (!abierto) onCancelar(); }}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 z-50 bg-scrim" />
+        <Dialog.Popup initialFocus={confirmar}
+          className="fixed top-1/2 left-1/2 z-50 grid max-h-[85dvh] w-[min(92vw,560px)] -translate-x-1/2 -translate-y-1/2 gap-3 overflow-y-auto rounded-xl border border-line bg-surface p-5 shadow-pop">
+          <Dialog.Title className="m-0 text-[15px] font-normal">Confirmá el cambio: <strong>{pendiente.accion.descripcion}</strong>.</Dialog.Title>
+          <details className="text-[13px]">
+            <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver la mutación exacta que se va a enviar</summary>
+            <pre className={cn(PREVIEW, 'mt-2')} aria-label="Mutación a aplicar">{JSON.stringify(pendiente.accion.mutation, null, 2)}</pre>
           </details>
-        </div>
-        <div className="config-modal-pie config-actions">
-          <button className="button primary" type="button" ref={confirmar} disabled={busy} onClick={onConfirmar}>Confirmar</button>
-          <button className="button small" type="button" disabled={busy} onClick={onCancelar}>Cancelar</button>
-        </div>
-      </div>
-    </div>,
-    document.body,
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button size="sm" disabled={busy} onClick={onCancelar}>Cancelar</Button>
+            <Button variant="primary" ref={confirmar} disabled={busy} onClick={onConfirmar}>Confirmar</Button>
+          </div>
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

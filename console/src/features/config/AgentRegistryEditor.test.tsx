@@ -5,7 +5,7 @@ import { server } from '../../mocks/server';
 import { ConsoleAccessBoundary } from '../../api/console-access';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { renderWithApi } from '../../test/render';
-import { AgentSettings } from './AgentSettings';
+import { AgentesSection } from './AgentesSection';
 
 const fullAgent = {
   tenant_id: 'A', alias: 'one', display_name: 'Agente uno', harness_id: 'codex', enabled: true,
@@ -24,7 +24,7 @@ function receipt(body: ChangeBody, applied: boolean, revision: number, mutation 
 }
 
 function renderSettings(initial = snapshot) {
-  renderWithApi(<ConsoleAccessBoundary><AgentSettings snapshot={initial} /></ConsoleAccessBoundary>);
+  renderWithApi(<ConsoleAccessBoundary><AgentesSection snapshot={initial} /></ConsoleAccessBoundary>);
 }
 
 function registryAccess() {
@@ -141,7 +141,8 @@ it('does not offer registry editing for a membership-only identity', async () =>
     })),
   );
   renderSettings({ revision: 2, agents: [], memberships: [{ tenant_id: 'A', alias: 'member', room_id: 'grp.a' }], rooms: [] });
-  expect(await screen.findByRole('button', { name: 'Abrir contexto de A/member' })).toBeDisabled();
+  expect(await screen.findByText(/Contexto no disponible: solo aparece como miembro/)).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Perfil y contexto de A/member' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Editar registro de A/member' })).not.toBeInTheDocument();
 });
 

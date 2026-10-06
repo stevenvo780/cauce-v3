@@ -4,7 +4,8 @@ import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { useConfigMutation, useRevisionEncadenada, type ConfigMutationRunner } from './use-config-mutation';
-import './AgentRegistryEditor.css';
+import { Button, Notice } from '../../components/form-kit';
+import { CHECK_LABEL, HINT, PREVIEW } from './config-ui';
 
 type AgentRow = Record<string, unknown> & { tenant_id: string; alias: string };
 
@@ -134,11 +135,11 @@ export function AgentRegistryEditor({ tenantId, alias, snapshot, onReloaded }: {
     ? freshSnapshot.agents?.find((row) => row.tenant_id === tenantId && row.alias === alias)
     : snapshot.agents?.find((row) => row.tenant_id === tenantId && row.alias === alias);
   if (!agent) return null;
-  return <div className="agent-registry-editor" data-open={String(open)}>
-    <button type="button" className="button secondary"
+  return <div className="min-w-0" data-open={String(open)}>
+    <Button size="sm"
       aria-label={`${open ? 'Cerrar' : 'Editar'} registro de ${tenantId}/${alias}`}
       onClick={() => { setOpen((value) => !value); runner.clear(); }}
-    >{open ? 'Cerrar registro' : 'Editar registro'}</button>
+    >{open ? 'Cerrar registro' : 'Editar registro'}</Button>
     {open ? <AgentRegistryForm agent={agent as AgentRow} runner={runner} onClose={() => { setOpen(false); runner.clear(); }} /> : null}
   </div>;
 }
@@ -198,15 +199,15 @@ function AgentRegistryForm({
 
   const originalName = typeof agent.display_name === 'string' ? agent.display_name : '';
   const originalHarness = typeof agent.harness_id === 'string' ? agent.harness_id : '';
-  return <section className="settings-context" aria-label={`Registro de ${agent.tenant_id}/${agent.alias}`}>
-    <div className="settings-context-heading">
-      <h3>Registro · {agent.tenant_id}/{agent.alias}</h3>
-      <button type="button" className="button secondary" onClick={onClose}>Cerrar editor</button>
+  return <section aria-label={`Registro de ${agent.tenant_id}/${agent.alias}`} className="mt-3 grid gap-3 rounded-lg border border-line bg-subtle p-4">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h4 className="m-0 text-sm font-semibold">Registro · {agent.tenant_id}/{agent.alias}</h4>
+      <Button size="sm" onClick={onClose}>Cerrar editor</Button>
     </div>
-    <p className="settings-source">Identidad fija desde la fila seleccionada. Los permisos se vuelven a decidir en el servidor.</p>
-    {!runner.canWrite ? <p className="notice" role="note">Edición de registro en solo lectura: falta permiso acreditado de configuración.</p> : null}
-    {serverRefreshNotice ? <p className="notice" role="note">{serverRefreshNotice}</p> : null}
-    <div className="config-form agent-registry-form">
+    <p className={HINT}>Identidad fija desde la fila seleccionada. Los permisos se vuelven a decidir en el servidor.</p>
+    {!runner.canWrite ? <Notice role="note">Edición de registro en solo lectura: falta permiso acreditado de configuración.</Notice> : null}
+    {serverRefreshNotice ? <Notice role="note">{serverRefreshNotice}</Notice> : null}
+    <div className="grid gap-3 sm:grid-cols-2">
       <label>Nombre visible
         <input maxLength={128} value={draft.displayName}
           onChange={(event) => { update({ displayName: event.target.value }); }} disabled={disabled} />
@@ -215,9 +216,9 @@ function AgentRegistryForm({
         <input value={draft.harnessId} placeholder="Sin cambio" pattern="[a-z][a-z0-9_-]{0,63}"
           onChange={(event) => { update({ harnessId: event.target.value, clearHarness: false }); }} disabled={disabled} />
       </label>
-      <label className="casilla agent-registry-checkbox"><input type="checkbox" checked={draft.clearHarness}
+      <label className={CHECK_LABEL}><input type="checkbox" checked={draft.clearHarness} className="mt-0.5"
         onChange={(event) => { update({ clearHarness: event.target.checked }); }} disabled={disabled} />
-        Quitar arnés {originalHarness ? <span className="label-hint">{originalHarness}</span> : null}
+        Quitar arnés {originalHarness ? <span className={HINT}>{originalHarness}</span> : null}
       </label>
       <label>Estado del registro
         <select value={draft.enabled} onChange={(event) => { update({ enabled: event.target.value }); }} disabled={disabled}>
@@ -230,7 +231,7 @@ function AgentRegistryForm({
         <input type="number" min={1} max={100} step={1} value={draft.capacity}
           onChange={(event) => { update({ capacity: event.target.value, noCapacityLimit: false }); }} disabled={disabled} />
       </label>
-      <label className="casilla agent-registry-checkbox"><input type="checkbox" checked={draft.noCapacityLimit}
+      <label className={CHECK_LABEL}><input type="checkbox" checked={draft.noCapacityLimit} className="mt-0.5"
         onChange={(event) => { update({ noCapacityLimit: event.target.checked, ...(event.target.checked ? { capacity: '' } : {}) }); }} disabled={disabled} />
         Sin límite (enviar null)
       </label>
@@ -246,27 +247,23 @@ function AgentRegistryForm({
       <label>Directorio de estado
         <input value={draft.stateDirectory} onChange={(event) => { update({ stateDirectory: event.target.value, clearPlacement: false }); }} disabled={disabled} />
       </label>
-      <label className="casilla agent-registry-checkbox"><input type="checkbox" checked={draft.clearPlacement}
+      <label className={`${CHECK_LABEL} sm:col-span-2`}><input type="checkbox" checked={draft.clearPlacement} className="mt-0.5"
         onChange={(event) => { update({ clearPlacement: event.target.checked }); }} disabled={disabled} />
         Quitar placement completo (enviar null en los cuatro campos)
       </label>
     </div>
-    {formError ? <p className="notice error" role="alert">{formError}</p> : null}
-    {runner.notice ? <p className={`notice ${runner.notice.tone === 'error' ? 'error' : ''}`}
-      role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</p> : null}
-    <div className="settings-context-heading">
-      <span>Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}</span>
-      <div>
-        <button type="button" className="button secondary" onClick={() => { void preview(); }} disabled={disabled}>
-          Previsualizar cambio
-        </button>{' '}
-        <button type="button" className="button primary" onClick={() => { void apply(); }}
-          disabled={disabled || !mutation || !runner.isValidated(mutation)}>
-          Aplicar cambio
-        </button>
+    {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
+    {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
+      role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <span className="text-xs text-muted">Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}</span>
+      <div className="flex gap-2">
+        <Button onClick={() => { void preview(); }} disabled={disabled}>Previsualizar cambio</Button>
+        <Button variant="primary" onClick={() => { void apply(); }}
+          disabled={disabled || !mutation || !runner.isValidated(mutation)}>Aplicar cambio</Button>
       </div>
     </div>
-    {runner.preview ? <pre className="config-preview" aria-label="Preview del registro de agente">{runner.preview}</pre> : null}
-    {originalName && draft.displayName.trim() === '' ? <p className="settings-source">Nombre actual «{originalName}»; vacío lo quita del registro.</p> : null}
+    {runner.preview ? <pre className={PREVIEW} aria-label="Preview del registro de agente">{runner.preview}</pre> : null}
+    {originalName && draft.displayName.trim() === '' ? <p className={HINT}>Nombre actual «{originalName}»; vacío lo quita del registro.</p> : null}
   </section>;
 }
