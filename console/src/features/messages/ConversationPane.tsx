@@ -1,31 +1,28 @@
-import { ArrowDownToLine, ArrowLeft, RefreshCw, Settings2, TerminalSquare, X } from 'lucide-react';
+import { ArrowDown } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
 import { useApi } from '../../api/context';
 import { ApiError } from '../../api/client';
-import type { JobLane, MessagePage } from '../../api/types';
-import { AgentAvatar } from '../../components/AgentAvatar';
-import { useConversationDraft } from './conversation-drafts';
-import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
-import { compactId, safeJobLane } from '../../lib';
-import { LEASE_LABEL, LEASE_TONE } from '../../vocabulario';
-import { onNavClick, useRouteSearch } from '../../router';
-import { queueDeliveryPath } from '../deliveries/delivery-links';
-import { deliveryPolicy } from '../deliveries/delivery-policy';
-import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada, textoDelCuerpo } from '../terminal/cuerpo-del-mensaje';
-import { fleetAgentId } from '../terminal/fleet';
+import type { MessagePage } from '../../api/types';
+import { EmptyState, LoadingState } from '../../components/ui';
+import { compactId } from '../../lib';
+import { useRouteSearch } from '../../router';
+import type { LiveAgentView } from '../live/agent-state';
+import { textoDelCuerpo } from '../terminal/cuerpo-del-mensaje';
 import { transcriptForSession, type OperatorRoute, type OperatorSession, type TranscriptItem } from '../terminal/session';
-import { TerminalTranscript } from '../terminal/TerminalTranscript';
-import { estaPegadoAlFinal, irAlFinal } from './desplazamiento';
-import { publishDurably } from './durable-publish';
-import { ConversationMenu } from './ConversationMenu';
-import { ConversationNotices } from './ConversationNotices';
 import { AgentSettingsView } from './AgentSettingsView';
-import { MessageTimeline } from './MessageTimeline';
-import { useCanonicalReply, type CanonicalReplyRoot } from './use-canonical-reply';
-import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
-import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
 import { snapshotAttachments } from './chat-attachments';
 import { ChatAttachmentsComposer } from './chat-attachments-composer';
+import { ChatHeader } from './ChatHeader';
+import type { FullBody } from './ChatMessage';
+import { ChatThread } from './ChatThread';
+import { useConversationDraft } from './conversation-drafts';
+import { ConversationNotices } from './ConversationNotices';
+import { estaPegadoAlFinal, irAlFinal } from './desplazamiento';
+import { publishDurably } from './durable-publish';
+import { MessageDetail } from './MessageDetail';
+import { LIMITE_MENSAJES, type SaludDeCola } from './queue-health';
+import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
+import { useCanonicalReply, type CanonicalReplyRoot } from './use-canonical-reply';
 
 const apiDraftScopes = new WeakMap<object, number>();
 let nextApiDraftScope = 0;
@@ -41,6 +38,8 @@ function conversationDraftKey(api: object, subject: string | null | undefined, a
 
 interface ConversationPaneProps {
   agent: AgenteDeMensajeria;
+  /** The same live view the sidebar reads; absent when activity does not report the agent. */
+  live?: LiveAgentView;
   page?: MessagePage;
   loading: boolean;
   error?: Error;
@@ -54,18 +53,9 @@ interface ConversationPaneProps {
   onReload: () => void;
 }
 
-function rutaDeTui(agent: AgenteDeMensajeria): string {
-  return `/terminal/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`;
-}
-
-/** What the console knows about the full body of a message: nothing, requesting it, the text, or a failure. */
-type CuerpoEntero =
-  | { estado: 'pidiendo' }
-  | { estado: 'listo'; texto: string }
-  | { estado: 'fallo'; motivo: string };
-
 /**
- * Conversation panel with an agent: history, delivery state and message composer.
+ * Conversation with one agent: thread, delivery state and composer. Remounted per human, agent and
+ * API so a draft, a selection or a late receipt never follows the operator into another scope.
  */
 export function ConversationPane(props: ConversationPaneProps) {
   const api = useApi();
@@ -74,13 +64,14 @@ export function ConversationPane(props: ConversationPaneProps) {
 }
 
 function ConversationPaneContent({
-  agent, page, loading, error, route, canPublish, publisherSubject, publisherHumanSubject, salud, queueError, onQueueReload, onReload,
+  agent, live, page, loading, error, route, canPublish, publisherSubject, publisherHumanSubject, salud, queueError, onQueueReload, onReload,
 }: ConversationPaneProps) {
   const api = useApi();
   const search = useRouteSearch();
   const contextOpen = new URLSearchParams(search).get('view') === 'context';
   const conversationPath = `/messages/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`;
   const moreTrigger = useRef<HTMLButtonElement>(null);
+  const composerInput = useRef<HTMLTextAreaElement | null>(null);
   const detailTrigger = useRef<HTMLElement | null>(null);
   const detailHeading = useRef<HTMLHeadingElement>(null);
   const wasContextOpen = useRef(contextOpen);
@@ -93,17 +84,15 @@ function ConversationPaneContent({
   const [form, updateForm] = useConversationDraft(draftKey);
   const { text: draft, files: archivos, roomId: roomElegido, lane, sending: enviando, notice: aviso } = form;
   const setDraft = (text: string) => { updateForm((current) => ({ ...current, text })); };
-  const setRoomElegido = (roomId: string) => { updateForm((current) => ({ ...current, roomId })); };
-  const setLane = (lane: JobLane) => { updateForm((current) => ({ ...current, lane })); };
   const setAviso = (notice: typeof aviso) => { updateForm((current) => ({ ...current, notice })); };
   const [mensajeElegido, setMensajeElegido] = useState<string>();
   const [selectedSnapshot, setSelectedSnapshot] = useState<TranscriptItem>();
   const submissions = useRef(new Set<string>());
   const [receiptRoot, setReceiptRoot] = useState<{ key: string; root: CanonicalReplyRoot }>();
-  const [cuerpos, setCuerpos] = useState<Record<string, CuerpoEntero>>({});
+  const [cuerpos, setCuerpos] = useState<Record<string, FullBody>>({});
   const [confirmandoPublicacion, setConfirmandoPublicacion] = useState(false);
-  /** The detail is born closed and is opened by the operator or by clicking a bubble. */
   const [detalleAbierto, setDetalleAbierto] = useState(false);
+  const [detailFocusRequest, setDetailFocusRequest] = useState(0);
 
   const sesion: OperatorSession = useMemo(() => ({
     id: `messenger:${agent.id}`, agent, sourceRoomId: '', openedAt: new Date(0).toISOString(), mode: 'transcript',
@@ -121,39 +110,23 @@ function ConversationPaneContent({
   const roomOrigen = roomElegido ?? (route.sourceRoomIds.length === 1 ? route.sourceRoomIds[0] : '');
   const needsRoomChoice = route.sourceRoomIds.length > 1 || roomUnavailable;
   const puedeEnviar = canPublish && route.allowed && Boolean(roomOrigen) && !roomUnavailable;
-  /*
-   * The lease warning is a WARNING, not a hint about what to write. It lived in the textarea's
-   * `placeholder`, so it erased itself at the first keystroke —exactly when it starts to matter—
-   * and no screen reader announced it as anything. `note` and not `alert` for the same reason
-   * `MutationBar` uses it: this is derived in the browser, not a refusal from the server.
-   */
+  // A warning, not a hint: it must survive typing, so it never lives in the placeholder.
   const avisoDeLease = agent.leaseState === 'online' ? undefined
     : agent.leaseState === 'expired'
       ? `El lease de ${agent.alias} está vencido: Cauce encola el mensaje igual y se lo entrega cuando el agente vuelva a reclamar.`
       : `El servidor no informa el lease de ${agent.alias} (sin dato, que no es lo mismo que vencido): Cauce encola el mensaje igual.`;
-  // The ITEM is selected, not the loose delivery: the detail has to be able to say the room, the lane, the actor and the trace of the MESSAGE, and those fields do not live in the delivery.
-  const selectedInWindow = hilo.find((item) => (
-    mensajeElegido != null && item.message.message_id === mensajeElegido
-  ));
+  // The ITEM is selected, not the delivery: room, lane, actor and trace live on the message.
+  const selectedInWindow = hilo.find((item) => mensajeElegido != null && item.message.message_id === mensajeElegido);
   useEffect(() => {
-    // Retain the latest observed delivery and timeline when polling moves this message out of the window.
+    // Keeps the last observed delivery when polling moves the message out of the window.
     if (selectedInWindow) setSelectedSnapshot(selectedInWindow);
   }, [selectedInWindow]);
   const elegidoPorElOperador = selectedInWindow ?? selectedSnapshot;
   const itemSeleccionado = elegidoPorElOperador ?? hilo.at(-1);
-  const seleccionada = itemSeleccionado?.delivery;
-  const rutaDeEntregaSeleccionada = queueDeliveryPath(seleccionada?.delivery_id);
-  const mensajeSeleccionado = itemSeleccionado?.message;
-  // SIBLING deliveries of the same publish: the complete fan-out. The previous flat list showed all of them and the
-  // thread-by-pair had left them out, so from here it was impossible to know who else the same message went to or how it went.
-  const hermanas = (mensajeSeleccionado?.deliveries ?? []).filter((entrega) => (
-    fleetAgentId(entrega.recipient_tenant ?? '', entrega.recipient_alias ?? '') !== agent.id
-  ));
   const totalVisible = (page?.items ?? []).length;
 
   const mensajePropio = (item: TranscriptItem | undefined) => Boolean(
-    replySubject && item?.message.author?.kind === 'human'
-      && item.message.author.subject_id === replySubject,
+    replySubject && item?.message.author?.kind === 'human' && item.message.author.subject_id === replySubject,
   );
   const deliveryDelAgente = (item: TranscriptItem | undefined) => {
     const delivery = item?.delivery;
@@ -183,15 +156,8 @@ function ConversationPaneContent({
   const canonical = useCanonicalReply({ publisherSubject: replySubject, tenantId: agent.tenantId, alias: agent.alias, root: candidateRoot });
 
   /*
-   * --------------------------------------------------- THE THREAD STARTS AT THE END
-   *
-   * A messenger opens at the last thing said. This one used to open at the first: see `desplazamiento.ts`, where
-   * the measurement lives. There is ONE single scrolling box —`.messenger-thread-scroll`, which wraps the transcript
-   * and nothing else— precisely so "go to the end" has a single destination: before, the transcript had its own
-   * `max-height` with scroll INSIDE the page's scroll, and neither of them started where it was needed.
-   *
-   * The message detail stays OUTSIDE the box on purpose: if it were inside, "go to the end" would land at the foot of
-   * the detail and not at the last bubble.
+   * One scroll box wraps the thread and nothing else, so "go to the end" has one destination. It
+   * opens at the end and follows new messages only while the operator is watching the end.
    */
   const cajaRef = useRef<HTMLDivElement | null>(null);
   const pegadoRef = useRef(true);
@@ -209,16 +175,26 @@ function ConversationPaneContent({
   }, [hilo.length]);
 
   const ultimoId = hilo.at(-1)?.message.message_id;
+  const typingKey = `${String(live?.state)}:${String(hilo.at(-1)?.delivery?.status)}`;
   useEffect(() => {
-    // On mount (or when changing agent, which remounts by the `key`) and every time a new message arrives, BUT only if
-    // the operator was watching the end: dragging them from where they were reading would be the opposite bug.
     if (contextOpen) return;
     const caja = cajaRef.current;
     if (!caja) return;
     if (!pegadoRef.current) { caja.scrollTop = scrollPosition.current; return; }
     irAlFinal(caja, false);
     setVistosHastaAqui(hilo.length);
-  }, [canonical.reply?.chainOpen, canonical.reply?.messageId, canonical.reply?.reply, contextOpen, ultimoId, hilo.length]);
+  }, [canonical.reply?.chainOpen, canonical.reply?.messageId, canonical.reply?.reply, contextOpen, ultimoId, hilo.length, typingKey]);
+
+  const contenidoRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    // Late content (media, a reply, a notice) must not leave a reader who was at the end above it.
+    const caja = cajaRef.current;
+    const contenido = contenidoRef.current;
+    if (!caja || !contenido || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => { if (pegadoRef.current) irAlFinal(caja, false); });
+    observer.observe(contenido);
+    return () => { observer.disconnect(); };
+  }, [contextOpen]);
 
   function alDesplazar() {
     const caja = cajaRef.current;
@@ -232,7 +208,7 @@ function ConversationPaneContent({
 
   const nuevosSinVer = Math.max(0, hilo.length - vistosHastaAqui);
 
-  /** Requests the full body of a message. The 240-char trimming is done by the server, not the view. */
+  /** The 240-character cut is the server's; the whole body is requested on demand. */
   const pedirCuerpo = useCallback(async (messageId: string) => {
     setCuerpos((previo) => ({ ...previo, [messageId]: { estado: 'pidiendo' } }));
     try {
@@ -240,9 +216,7 @@ function ConversationPaneContent({
       const texto = textoDelCuerpo(detalle.body);
       setCuerpos((previo) => ({
         ...previo,
-        [messageId]: texto === undefined
-          ? { estado: 'fallo', motivo: 'El servidor devolvió el mensaje sin cuerpo.' }
-          : { estado: 'listo', texto },
+        [messageId]: texto === undefined ? { estado: 'fallo', motivo: 'El servidor devolvió el mensaje sin cuerpo.' } : { estado: 'listo', texto },
       }));
     } catch (causa) {
       const motivo = causa instanceof ApiError && (causa.status === 404 || causa.status === 501)
@@ -271,7 +245,7 @@ function ConversationPaneContent({
         recipients: [{ tenant_id: agent.tenantId, alias: agent.alias }],
         body: { text: texto, ...(attachments.length ? { attachments_v1: attachments } : {}) },
         lane,
-        // The SAME priority per lane the previous form published: interactive 10, batch 0. It is not a new constant —it was the one that was already there and got lost in the redesign.
+        // The per-lane priority the publish form always used: interactive 10, batch 0.
         priority: lane === 'interactive' ? 10 : 0,
       } satisfies Omit<Parameters<typeof api.publishMessage>[0], 'idempotency_key'>;
       const { receipt: resultado, reconciled, journalStatus } = await publishDurably({
@@ -317,13 +291,13 @@ function ConversationPaneContent({
     }
   }
 
-  function elegir(item: TranscriptItem) {
+  function elegir(item: TranscriptItem, opener?: HTMLElement | null) {
     if (!item.message.message_id) return;
-    detailTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    detailTrigger.current = opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setMensajeElegido(item.message.message_id);
     setSelectedSnapshot(item);
     setDetalleAbierto(true);
-    detailHeading.current?.focus({ preventScroll: true });
+    setDetailFocusRequest((request) => request + 1);
   }
 
   function closeDetail() {
@@ -335,232 +309,100 @@ function ConversationPaneContent({
 
   useEffect(() => {
     if (detalleAbierto) detailHeading.current?.focus({ preventScroll: true });
-  }, [detalleAbierto, mensajeElegido]);
-
-  const idSeleccionado = mensajeSeleccionado?.message_id ?? undefined;
-  const cuerpoEntero = idSeleccionado ? cuerpos[idSeleccionado] : undefined;
-  const recorteSeleccionado = previsualizacionRecortada(mensajeSeleccionado?.body_preview);
-  const previewSeleccionado = textoDelCuerpo(mensajeSeleccionado?.body_preview);
-  const textoPreviewSeleccionado = previewSeleccionado?.trim()
-    ? previewSeleccionado
-    : mensajeSeleccionado?.body_preview == null
-      ? 'Contenido no incluido por el servidor.'
-      : 'Mensaje sin contenido textual.';
+  }, [detalleAbierto, detailFocusRequest]);
 
   if (contextOpen) return <AgentSettingsView tenantId={agent.tenantId} alias={agent.alias} conversationPath={conversationPath} />;
 
+  const state = live?.state ?? (agent.leaseState === 'online' ? 'idle' : 'down');
+  const seed = `${agent.tenantId}/${agent.alias}`;
   return (
-    <section className="messenger-thread" data-objeto-principal="hilo" aria-label={`Conversación con ${agent.alias}`}>
-      <header className="messenger-thread-head">
-        <div className="messenger-thread-identity">
-          <a className="chat-back" href="/messages" onClick={(event) => { onNavClick(event, '/messages'); }} aria-label="Volver a los agentes"><ArrowLeft size={20} aria-hidden="true" /></a>
-          <AgentAvatar alias={agent.alias} tenantId={agent.tenantId} state={agent.leaseState} working={(salud?.enCurso ?? 0) > 0} />
-          <div>
-            <h2 tabIndex={-1}>{agent.alias}</h2>
-            <p className="chat-agent-subtitle">{agent.tenantId}</p>
-          </div>
-          <Badge tone={LEASE_TONE[agent.leaseState]}>{LEASE_LABEL[agent.leaseState]}</Badge>
-        </div>
-        <ConversationMenu triggerRef={moreTrigger}>
-          <a className="button small secondary" href={`${conversationPath}?view=context`}
-            onClick={(event) => { onNavClick(event, `${conversationPath}?view=context`); }}>
-            <Settings2 size={14} aria-hidden="true" /> Configurar agente
-          </a>
-          <a
-            className="button small secondary"
-            href={rutaDeTui(agent)}
-            onClick={(event) => { onNavClick(event, rutaDeTui(agent)); }}
-            title={`Abrir terminal del agente ${agent.alias}`}
-          ><TerminalSquare size={14} aria-hidden="true" /> Abrir TUI</a>
-          <button className="button small secondary" type="button" onClick={onReload} disabled={loading}>
-            <RefreshCw size={13} aria-hidden="true" /> Sincronizar
-          </button>
-          <p className="messenger-room-fixed">Room de origen: <span className="mono">{roomOrigen || 'UNKNOWN'}</span> · derivado de tu topología, no escrito a mano.</p>
-          <label className="messenger-lane-select" htmlFor={`messenger-lane-${agent.id}`}>Carril
-            <select id={`messenger-lane-${agent.id}`} value={lane} disabled={enviando}
-              onChange={(event) => { setLane(event.target.value === 'batch' ? 'batch' : 'interactive'); }}>
-              <option value="interactive">interactive · prioridad 10</option>
-              <option value="batch">batch · prioridad 0</option>
-            </select>
-          </label>
-          <details className="chat-agent-details">
-            <summary>Estado y detalles del agente{(salud?.muertas ?? 0) > 0 || (salud?.reintentos ?? 0) > 0 ? ' · Hay entregas que necesitan atención' : ''}</summary>
-            <p className="chat-agent-runtime">Epoch {agent.presence?.epoch ?? 'UNKNOWN'} · lease <Time value={agent.presence?.lease_expires_at ?? agent.presence?.lease_until} /></p>
-            <dl className="messenger-queue-strip" aria-label={`Cola de ${agent.alias}`}>
-              <div><dt>En cola</dt><dd>{textoDeCifra(salud?.pendientes)}</dd></div>
-              <div><dt>En curso</dt><dd>{textoDeCifra(salud?.enCurso)}</dd></div>
-              <div><dt>Reintentos</dt><dd>{textoDeCifra(salud?.reintentos)}</dd></div>
-              <div data-alarm={(salud?.muertas ?? 0) > 0 || undefined}>
-                <dt>Muertas</dt>
-                <dd>{salud?.muertasTruncadas && salud.muertas !== undefined ? '≥ ' : ''}{textoDeCifra(salud?.muertas)}</dd>
-              </div>
-            </dl>
-            <p className="messenger-window-note">Hilo filtrado sobre los {totalVisible} mensajes que el servidor publica para tu identidad (tope {LIMITE_MENSAJES}, sin filtro por par).</p>
-          </details>
-          {aviso?.tone === 'success' ? <details className="chat-agent-details">
-            <summary>Recibo del último envío</summary>
-            <p className="notice success">{aviso.text}</p>
-            <p>La publicación durable no demuestra lectura ni ejecución. El estado actual aparece junto al mensaje.</p>
-          </details> : null}
-        </ConversationMenu>
-      </header>
+    <section className="relative flex min-h-0 flex-1 flex-col bg-surface" data-objeto-principal="hilo" aria-label={`Conversación con ${agent.alias}`}>
+      <ChatHeader agent={agent} state={state} reason={live?.reason} salud={salud} lane={lane} sending={enviando} loading={loading}
+        roomId={roomOrigen} totalVisible={totalVisible} receipt={aviso?.tone === 'success' ? aviso.text : undefined}
+        moreTriggerRef={moreTrigger} onReload={onReload}
+        onLaneChange={(next) => { updateForm((current) => ({ ...current, lane: next })); }} />
 
       <ConversationNotices health={salud} queueError={queueError} feedError={page ? error : undefined}
         leaseWarning={avisoDeLease} leaseExpired={agent.leaseState === 'expired'}
         topologyWarning={fueraDeLaTopologia(agent) ? motivoDeAgenteSuelto(agent) : undefined}
         onQueueReload={onQueueReload} fallbackFocusRef={moreTrigger} />
 
-      {/* Thread filtered over the server's message window. */}
-      <div className="messenger-thread-scroll" ref={cajaRef} onScroll={alDesplazar}>
-        {totalVisible >= LIMITE_MENSAJES ? <p className="messenger-window-note" data-truncated role="note">
-          Ventana llena: el servidor devuelve como máximo {LIMITE_MENSAJES} mensajes de TODA la flota y este hilo se filtra sobre ellos. Puede haber historia anterior que no entra.
-        </p> : null}
-        {error && !page ? (
-          <div role="alert"><EmptyState>No se pudo leer el feed de mensajes: {error.message}</EmptyState></div>
-        ) : loading && !page ? (
-          <LoadingState label="Abriendo el feed durable de mensajes…" />
-        ) : (
-          <TerminalTranscript
-            key={agent.id}
-            items={hilo}
-            selectedMessageId={elegidoPorElOperador?.message.message_id ?? undefined}
-            onSelectItem={elegir}
-            canonicalReply={canonical.reply}
-            canonicalReplyStale={canonical.stale}
-            onCanonicalReplyRetry={canonical.retry}
-          />
-        )}
-      </div>
+      <div className="relative flex min-h-0 flex-1">
+        <div className="relative flex min-w-0 flex-1 flex-col">
+          <div ref={cajaRef} onScroll={alDesplazar} data-thread-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <div ref={contenidoRef} className="mx-auto w-full max-w-3xl px-4 pt-6 pb-6 min-[761px]:px-6">
+              {totalVisible >= LIMITE_MENSAJES ? (
+                <p role="note" data-truncated className="m-0 mb-4 rounded-lg bg-subtle px-3 py-2 text-center text-xs text-muted">
+                  Ventana llena: el servidor devuelve como máximo {LIMITE_MENSAJES} mensajes de toda la flota y este hilo se filtra sobre ellos. Puede haber historia anterior que no entra.
+                </p>
+              ) : null}
+              {error && !page ? (
+                <div role="alert"><EmptyState>No se pudo leer el feed de mensajes: {error.message}</EmptyState></div>
+              ) : loading && !page ? (
+                <LoadingState label="Abriendo la conversación…" />
+              ) : (
+                <ChatThread
+                  key={agent.id}
+                  items={hilo}
+                  ownSubject={replySubject}
+                  alias={agent.alias}
+                  seed={seed}
+                  agentState={state}
+                  selectedMessageId={elegidoPorElOperador?.message.message_id ?? undefined}
+                  fullBodies={cuerpos}
+                  onSelectItem={elegir}
+                  onExpand={(messageId) => { void pedirCuerpo(messageId); }}
+                  canonicalReply={canonical.reply}
+                  canonicalReplyStale={canonical.stale}
+                  onCanonicalReplyRetry={canonical.retry}
+                  onSuggestion={puedeEnviar ? (text) => { setDraft(text); composerInput.current?.focus(); } : undefined}
+                />
+              )}
+              {canonical.error ? (
+                <p role="status" className="m-0 mt-4 flex flex-wrap items-center gap-2 text-xs text-muted">
+                  {canonical.accessDenied ? 'La respuesta canónica ya no está disponible para esta identidad o destinatario.'
+                    : canonical.stale ? 'No se pudo actualizar la respuesta canónica; se conserva el último dato como desactualizado.'
+                      : 'No se pudo leer la respuesta canónica.'}
+                  <button className="button small secondary" type="button" onClick={canonical.retry}>Releer respuesta</button>
+                </p>
+              ) : null}
+            </div>
+          </div>
 
-      {canonical.error ? <p className="messenger-cuerpo-aviso" role="status">
-        {canonical.accessDenied ? 'La respuesta canónica ya no está disponible para esta identidad o destinatario.'
-          : canonical.stale ? 'No se pudo actualizar la respuesta canónica; se conserva el último dato como desactualizado.'
-            : 'No se pudo leer la respuesta canónica.'}
-        <button className="button small secondary" type="button" onClick={canonical.retry}>Releer respuesta</button>
-      </p> : null}
-
-      {/*
-        "Go to the end", with the count of what arrived while the operator was reading above. It only appears when
-        needed: if they are already at the bottom, a button that goes nowhere.
-      */}
-      {!pegado && hilo.length > 0 ? (
-        <div className="messenger-al-final">
-          <button className="button small" type="button" onClick={() => { alFinal(true); }}>
-            <ArrowDownToLine size={14} aria-hidden="true" />
-            {nuevosSinVer > 0 ? `Ir al último · ${String(nuevosSinVer)} nuevo${nuevosSinVer === 1 ? '' : 's'}` : 'Ir al último'}
-          </button>
+          <div className="relative">
+            {!pegado && hilo.length > 0 ? (
+              <button type="button" onClick={() => { alFinal(true); }}
+                aria-label={nuevosSinVer > 0 ? `Ir al último · ${String(nuevosSinVer)} nuevo${nuevosSinVer === 1 ? '' : 's'}` : 'Ir al último'}
+                className="absolute bottom-full left-1/2 z-10 mb-1 flex h-9 min-w-9 -translate-x-1/2 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-line bg-surface px-2.5 text-xs font-medium text-fg-2 shadow-pop hover:text-fg">
+                <ArrowDown size={15} aria-hidden="true" />
+                {nuevosSinVer > 0 ? `${String(nuevosSinVer)} nuevo${nuevosSinVer === 1 ? '' : 's'}` : null}
+              </button>
+            ) : null}
+            <ChatAttachmentsComposer
+              agentId={agent.id} agentAlias={agent.alias} canPublish={canPublish} route={route}
+              roomChoiceRequired={needsRoomChoice} roomId={roomOrigen} roomUnavailable={roomUnavailable}
+              lane={lane} text={draft} files={archivos} sending={enviando} confirming={confirmandoPublicacion}
+              notice={aviso} onSubmit={(event) => { void enviar(event); }} onTextChange={setDraft}
+              onRoomChange={(roomId) => { updateForm((current) => ({ ...current, roomId })); }}
+              onFilesChange={(files) => { updateForm((current) => ({ ...current, files })); }}
+              inputRef={composerInput}
+            />
+          </div>
         </div>
-      ) : null}
 
-      {detalleAbierto && mensajeSeleccionado ? (
-        <section className="messenger-delivery-detail" role="group" aria-label="Detalle del mensaje seleccionado"
-          onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); closeDetail(); } }}>
-          <header className="chat-inspector-head">
-            <h3 ref={detailHeading} tabIndex={-1}>{elegidoPorElOperador ? 'Mensaje que elegiste' : 'Último mensaje del hilo'}</h3>
-            <button className="button small secondary" type="button" onClick={closeDetail} aria-label="Cerrar detalle"><X size={16} aria-hidden="true" /></button>
-          </header>
-          {mensajeElegido && !hilo.some((item) => item.message.message_id === mensajeElegido)
-            ? <p className="messenger-window-note" role="note">Mensaje fuera de la ventana actual; se muestra el último detalle recibido.</p> : null}
-          <p className="eyebrow">
-            {seleccionada
-              ? <>
-                Entrega {compactId(seleccionada.delivery_id)} → {seleccionada.recipient_tenant ?? 'UNKNOWN'}:{seleccionada.recipient_alias ?? 'UNKNOWN'}
-                {rutaDeEntregaSeleccionada ? <>{' '}· <a
-                  href={rutaDeEntregaSeleccionada}
-                  onClick={(event) => { onNavClick(event, rutaDeEntregaSeleccionada); }}
-                  aria-label={`Gestionar delivery ${seleccionada.delivery_id ?? 'UNKNOWN'} en Colas`}
-                >Gestionar en Colas</a></> : null}
-              </>
-              : <>Mensaje {compactId(mensajeSeleccionado.message_id)} · sin entrega para este par</>}
-          </p>
-
-          <section className="messenger-cuerpo" aria-label="Cuerpo del mensaje">
-            <p className="eyebrow">Cuerpo</p>
-            {cuerpoEntero?.estado === 'listo' ? (
-              <pre className="messenger-cuerpo-texto">{cuerpoEntero.texto}</pre>
-            ) : (
-              <pre className="messenger-cuerpo-texto" data-recortado={recorteSeleccionado || undefined}>
-                {textoPreviewSeleccionado}{recorteSeleccionado ? '…' : ''}
-              </pre>
-            )}
-            {cuerpoEntero?.estado === 'fallo' ? (
-              <p className="messenger-cuerpo-aviso" role="alert">{cuerpoEntero.motivo}</p>
-            ) : null}
-            {recorteSeleccionado && cuerpoEntero?.estado !== 'listo' ? (
-              <p className="messenger-cuerpo-aviso">
-                La lista publica sólo los primeros {CARACTERES_DE_PREVISUALIZACION} caracteres de cada mensaje
-                (<span className="mono">left(body,{CARACTERES_DE_PREVISUALIZACION})</span> en el servidor).{' '}
-                <button
-                  className="button small secondary"
-                  type="button"
-                  disabled={!idSeleccionado || cuerpoEntero?.estado === 'pidiendo'}
-                  onClick={() => idSeleccionado && void pedirCuerpo(idSeleccionado)}
-                >{cuerpoEntero?.estado === 'pidiendo' ? 'Pidiendo…' : 'Ver el mensaje completo'}</button>
-              </p>
-            ) : null}
-          </section>
-
-          <dl className="messenger-message-meta">
-            <div><dt>Room</dt><dd><Unknown value={mensajeSeleccionado.room_id} /></dd></div>
-            <div><dt>Carril</dt><dd><Unknown value={safeJobLane(mensajeSeleccionado.lane)} /></dd></div>
-            <div><dt>Actor verificado</dt><dd><Unknown value={mensajeSeleccionado.actor_alias} /></dd></div>
-            <div><dt>Tenant de origen</dt><dd><Unknown value={mensajeSeleccionado.tenant_id} /></dd></div>
-            <div><dt>Publicado</dt><dd><Time value={mensajeSeleccionado.created_at} /></dd></div>
-            {/* Integers and selectable: a trimmed trace is no use for searching the chain. */}
-            <div><dt>Trace</dt><dd className="mono">{mensajeSeleccionado.trace_id ?? 'UNKNOWN'}</dd></div>
-            <div><dt>Message id</dt><dd className="mono">{mensajeSeleccionado.message_id ?? 'UNKNOWN'}</dd></div>
-            {seleccionada ? (
-              <>
-                <div><dt>Tenant destino</dt><dd><Unknown value={seleccionada.recipient_tenant} /></dd></div>
-                <div><dt>Delivery id</dt><dd className="mono">{seleccionada.delivery_id ?? 'UNKNOWN'}</dd></div>
-              </>
-            ) : null}
-          </dl>
-          {seleccionada ? <MessageTimeline events={seleccionada.timeline} /> : null}
-          <section className="messenger-fanout" aria-label="Entregas hermanas del mismo publish">
-            <p className="eyebrow">Fan-out del publish</p>
-            {hermanas.length === 0 ? (
-              <p className="messenger-fanout-none">
-                {mensajeSeleccionado.deliveries == null ? 'El servidor no incluyó las entregas de este mensaje.'
-                  : `El servidor devolvió ${String(mensajeSeleccionado.deliveries.length)} entrega(s) para el mensaje; ninguna otra entrega fuera de este hilo.`}
-              </p>
-            ) : (
-              <ul className="messenger-fanout-list">
-                {hermanas.map((entrega, indice) => {
-                  const policy = deliveryPolicy(entrega.status);
-                  const queuePath = queueDeliveryPath(entrega.delivery_id);
-                  return <li key={entrega.delivery_id ?? indice}>
-                    <strong>{entrega.recipient_tenant ?? 'UNKNOWN'}:{entrega.recipient_alias ?? 'UNKNOWN'}</strong>
-                    <Badge tone={policy.tone}>
-                      <Unknown
-                        value={policy.known ? policy.label : undefined}
-                        motivo={entrega.status && !policy.known
-                          ? `El servidor mandó un estado que esta consola no conoce: ${entrega.status}`
-                          : undefined}
-                      />
-                    </Badge>
-                    <span className="mono">{compactId(entrega.delivery_id)}</span>
-                    <span>intento {entrega.attempt ?? 'UNKNOWN'}</span>
-                    {queuePath ? <a
-                      href={queuePath}
-                      onClick={(event) => { onNavClick(event, queuePath); }}
-                      aria-label={`Gestionar delivery ${entrega.delivery_id ?? 'UNKNOWN'} en Colas`}
-                    >Gestionar en Colas</a> : null}
-                  </li>;
-                })}
-              </ul>
-            )}
-          </section>
-        </section>
-      ) : null}
-
-      <ChatAttachmentsComposer
-        agentId={agent.id} agentAlias={agent.alias} canPublish={canPublish} route={route}
-        roomChoiceRequired={needsRoomChoice} roomId={roomOrigen} roomUnavailable={roomUnavailable}
-        lane={lane} text={draft} files={archivos} sending={enviando} confirming={confirmandoPublicacion}
-        notice={aviso} onSubmit={(event) => { void enviar(event); }} onTextChange={setDraft} onRoomChange={setRoomElegido}
-        onFilesChange={(files) => { updateForm((current) => ({ ...current, files })); }}
-      />
+        {detalleAbierto && itemSeleccionado ? (
+          <MessageDetail
+            item={itemSeleccionado}
+            chosen={Boolean(elegidoPorElOperador)}
+            outOfWindow={Boolean(mensajeElegido && !hilo.some((item) => item.message.message_id === mensajeElegido))}
+            agentId={agent.id}
+            fullBody={itemSeleccionado.message.message_id ? cuerpos[itemSeleccionado.message.message_id] : undefined}
+            headingRef={detailHeading}
+            onFetchBody={(messageId) => { void pedirCuerpo(messageId); }}
+            onClose={closeDetail}
+          />
+        ) : null}
+      </div>
     </section>
   );
 }

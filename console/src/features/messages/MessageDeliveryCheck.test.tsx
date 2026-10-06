@@ -34,7 +34,7 @@ it('conserva el recibo aplicado anterior cuando un intento posterior falla', () 
   render(<MessageDeliveryCheck delivery={{ status: 'failed', timeline }} />);
   const receipt = screen.getByRole('status', { name: 'Entrega: La ejecución falló' });
   expect(receipt.querySelector('[data-checks="1"]')).toBeInTheDocument();
-  expect(receipt).toHaveClass('chat-delivery-check-danger');
+  expect(receipt).toHaveAttribute('data-failed', 'true');
 });
 
 it('un ACK rechazado aislado no inventa publicación ni recepción', () => {

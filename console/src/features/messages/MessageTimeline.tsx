@@ -1,22 +1,15 @@
 import type { TimelineEvent } from '../../api/types';
+import { cn } from '../../cn';
 import { Badge, Time } from '../../components/ui';
 import { DELIVERY_POLICY, deliveryPolicy } from '../deliveries/delivery-policy';
 
 const ordered = ['published', 'accepted', 'started'] as const;
 
 function timelinePolicy(status: unknown) {
-  if (status === 'published') return { label: 'PUBLICADA', tone: 'info' as const, className: 'published' };
-  if (status === 'done / failed') return {
-    label: `${DELIVERY_POLICY.done.label} / ${DELIVERY_POLICY.failed.label}`,
-    tone: 'unknown' as const,
-    className: 'unknown',
-  };
+  if (status === 'published') return { label: 'PUBLICADA', tone: 'info' as const, known: true };
+  if (status === 'done / failed') return { label: `${DELIVERY_POLICY.done.label} / ${DELIVERY_POLICY.failed.label}`, tone: 'unknown' as const, known: false };
   const policy = deliveryPolicy(status);
-  return {
-    label: policy.label,
-    tone: policy.tone,
-    className: policy.known ? policy.state : 'unknown',
-  };
+  return { label: policy.label, tone: policy.tone, known: policy.known };
 }
 
 export function MessageTimeline({ events = [] }: { events?: TimelineEvent[] | null }) {
@@ -28,19 +21,18 @@ export function MessageTimeline({ events = [] }: { events?: TimelineEvent[] | nu
   ];
 
   return (
-    <ol className="timeline" aria-label="Timeline publish a resultado terminal">
-      {steps.map(({ label, event }) => (
-        <li key={label} className={event ? `timeline-${timelinePolicy(event.status).className}` : 'timeline-missing'}>
-          <span className="timeline-node" aria-hidden="true" />
-          <div>
-            <Badge tone={event ? timelinePolicy(event.status).tone : 'unknown'}>
-              {event ? timelinePolicy(event.status).label : `${timelinePolicy(label).label} · UNKNOWN`}
-            </Badge>
+    <ol className="m-0 grid list-none gap-2 border-l border-line p-0 pl-4" aria-label="Timeline publish a resultado terminal">
+      {steps.map(({ label, event }) => {
+        const policy = timelinePolicy(event ? event.status : label);
+        return (
+          <li key={label} className="relative flex flex-wrap items-center gap-2 text-xs text-muted" data-missing={event ? undefined : true}>
+            <span className={cn('absolute top-1.5 -left-[21px] size-2 rounded-full ring-2 ring-surface', event && policy.known ? 'bg-brand' : 'bg-line-strong')} aria-hidden="true" />
+            <Badge tone={event ? policy.tone : 'unknown'}>{event ? policy.label : `${policy.label} · UNKNOWN`}</Badge>
             <Time value={event?.at} />
             {event?.attempt ? <small>Intento {event.attempt}</small> : null}
-          </div>
-        </li>
-      ))}
+          </li>
+        );
+      })}
     </ol>
   );
 }

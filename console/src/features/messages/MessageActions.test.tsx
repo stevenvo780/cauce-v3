@@ -1,21 +1,32 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { MessageActions } from './MessageActions';
 
-it('el menú nace cerrado, Escape devuelve foco y fuera lo descarta', async () => {
+it('el menú nace cerrado, Escape devuelve el foco y fuera lo descarta', async () => {
   const user = userEvent.setup();
   render(<><MessageActions disabled={false} onDetail={vi.fn()} /><button>Fuera</button></>);
   const trigger = screen.getByRole('button', { name: 'Opciones del mensaje' });
   expect(screen.queryByRole('menu')).toBeNull();
   await user.click(trigger);
-  expect(screen.getByRole('menuitem', { name: 'Ver detalle' })).toHaveFocus();
+  expect(await screen.findByRole('menuitem', { name: 'Ver detalle' })).toBeVisible();
   await user.keyboard('{Escape}');
-  expect(screen.queryByRole('menu')).toBeNull();
+  await waitFor(() => { expect(screen.queryByRole('menu')).toBeNull(); });
   expect(trigger).toHaveFocus();
   await user.click(trigger);
-  fireEvent.pointerDown(screen.getByRole('button', { name: 'Fuera' }));
-  expect(screen.queryByRole('menu')).toBeNull();
+  await screen.findByRole('menu');
+  await user.click(screen.getByRole('button', { name: 'Fuera', hidden: true }));
+  await waitFor(() => { expect(screen.queryByRole('menu')).toBeNull(); });
+});
+
+it('«Ver detalle» entrega el disparador para que el detalle devuelva el foco ahí', async () => {
+  const user = userEvent.setup();
+  const onDetail = vi.fn();
+  render(<MessageActions disabled={false} onDetail={onDetail} />);
+  const trigger = screen.getByRole('button', { name: 'Opciones del mensaje' });
+  await user.click(trigger);
+  await user.click(await screen.findByRole('menuitem', { name: 'Ver detalle' }));
+  await waitFor(() => { expect(onDetail).toHaveBeenCalledExactlyOnceWith(trigger); });
 });
 
 it('la relectura pendiente está detrás del menú y se ejecuta sólo al pedirla', async () => {
@@ -25,7 +36,7 @@ it('la relectura pendiente está detrás del menú y se ejecuta sólo al pedirla
   expect(screen.queryByRole('menuitem', { name: 'Releer respuesta' })).toBeNull();
   expect(retry).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Opciones del mensaje' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Releer respuesta' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Releer respuesta' }));
   expect(retry).toHaveBeenCalledOnce();
-  expect(screen.queryByRole('menu')).toBeNull();
+  await waitFor(() => { expect(screen.queryByRole('menu')).toBeNull(); });
 });

@@ -24,9 +24,13 @@ export function MessageDeliveryCheck({ delivery }: { delivery: DeliveryView }) {
   const label = (!failed && read ? 'Leído por el agente · respuesta nativa comprobada' : undefined)
     ?? (status ? labels.get(status) : undefined)
     ?? (published ? 'Publicado · esperando aceptación del agente' : 'Estado de entrega no disponible');
-  return <span className={failed ? 'chat-delivery-check chat-delivery-check-danger' : 'chat-delivery-check'}
-    role="status" aria-label={`Entrega: ${label}`} title={`${label}. ${read ? 'Lectura comprobada.' : 'Lectura sin comprobar.'}`}>
-    <span aria-hidden="true" data-checks={checks || undefined}>{checks === 2 ? '✓✓' : checks === 1 ? '✓' : '◷'}</span>
-    {failed ? <span>{label}</span> : null}
+  const retrying = !failed && status === 'retry';
+  return <span className={failed ? 'inline-flex items-center gap-1 text-danger-ink' : retrying ? 'inline-flex items-center gap-1 text-warn-ink' : 'inline-flex items-center gap-1'}
+    role="status" aria-label={`Entrega: ${label}`} title={`${label}. ${read ? 'Lectura comprobada.' : 'Lectura sin comprobar.'}`}
+    data-failed={failed || undefined}>
+    <span aria-hidden="true" data-checks={checks || undefined} className={checks ? 'font-semibold tracking-[-0.15em] text-brand-ink' : undefined}>
+      {checks === 2 ? '✓✓' : checks === 1 ? '✓' : '◷'}
+    </span>
+    {failed ? <span>{label}</span> : retrying ? <span>En reintento</span> : null}
   </span>;
 }

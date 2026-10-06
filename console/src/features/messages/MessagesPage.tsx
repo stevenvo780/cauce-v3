@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { EmptyState, LoadingState } from '../../components/ui';
 import { LogoMark } from '../../components/brand/Logo';
@@ -11,10 +11,7 @@ import { onNavClick } from '../../router';
 import { fleetAgentId } from '../terminal/fleet';
 import { operatorRouteForAgent } from '../terminal/session';
 import { ConversationPane } from './ConversationPane';
-import './messages.css';
 import { useConversationViewport } from './use-conversation-viewport';
-
-export const VAR_TOPE_MENSAJERIA = '--messenger-tope';
 
 interface MessagesPageProps {
   /** Segments past the route id: `/messages/:tenant/:alias` is the open conversation. */
@@ -31,7 +28,7 @@ export function MessagesPage({ params }: MessagesPageProps = {}) {
 function MessagesPageContent({ params }: MessagesPageProps) {
   const fleet = useFleet();
   const access = useConsoleAccess();
-  const { agents, salud, topology, messages, activity, queues } = fleet;
+  const { agents, salud, live, topology, messages, activity, queues } = fleet;
   const phone = useMediaQuery(BOTTOM_BAR_VIEWPORT);
 
   const pedido = params?.length === 2 ? { tenantId: params[0], alias: params[1] } : undefined;
@@ -45,38 +42,7 @@ function MessagesPageContent({ params }: MessagesPageProps) {
   const flotaCargando = fleet.loading;
   const flotaError = fleet.error;
 
-  /*
-   * -------------------------------------------------- THE COMPOSER, ALSO ON DESKTOP
-   *
-   * Measured in production at 1280x900: the `textarea` was at y=1546 and the "Send" button at
-   * y=1633, i.e. 646 px BELOW the fold, with `position: static` on the composer. The phone fix
-   * (commit c2a75d0) does not touch this case: its `position: fixed` lives inside the 760 px
-   * cutoff. Here the composer anchors to the bottom of the PANEL, and for that the panel needs
-   * a height: `.messenger-shell` grew with its content, so `margin-top: auto` pushed nothing.
-   *
-   * The height is MEASURED, not hand-written, because it depends on what is above —the page
-   * header, the description, and the permission chip occupy different amounts by width and by
-   * server text—, and a fixed number in the sheet would push the button off again as soon as
-   * someone adds a line. The block's real top is written to the document and the sheet subtracts.
-   */
   const envolturaRef = useRef<HTMLDivElement | null>(null);
-  const medirElTope = useCallback(() => {
-    const envoltura = envolturaRef.current;
-    if (!envoltura) return;
-    // `+ scrollY` so it is the top within the DOCUMENT and not the viewport: without it the
-    // measurement would change with every scroll and the panel would stretch and shrink while the operator reads.
-    const tope = Math.round(envoltura.getBoundingClientRect().top + window.scrollY);
-    envoltura.style.setProperty(VAR_TOPE_MENSAJERIA, `${String(tope)}px`);
-  }, []);
-  // No dependency list on purpose: what sits ABOVE the block changes height with the text the
-  // server returns (the permission chip, the description), so it is re-measured on every paint.
-  // The `resize` listener, on the other hand, is registered once.
-  useEffect(medirElTope);
-  useEffect(() => {
-    window.addEventListener('resize', medirElTope);
-    return () => { window.removeEventListener('resize', medirElTope); };
-  }, [medirElTope]);
-
   useConversationViewport(envolturaRef);
 
   const lastSelected = useRef<string | undefined>(undefined);
@@ -90,25 +56,30 @@ function MessagesPageContent({ params }: MessagesPageProps) {
       const focusOnExpandedDialogTrigger = activeElement?.getAttribute('aria-haspopup') === 'dialog'
         && activeElement.getAttribute('aria-expanded') === 'true';
       if (!focusInsideDialog && !focusOnExpandedDialogTrigger) {
-        root?.querySelector<HTMLElement>('.messenger-thread h2')?.focus({ preventScroll: true });
+        root?.querySelector<HTMLElement>('[data-objeto-principal="hilo"] h2')?.focus({ preventScroll: true });
       }
     } else if (!requestedId && lastSelected.current) {
       const previous = lastSelected.current;
       lastSelected.current = undefined;
-      const button = Array.from(root?.querySelectorAll<HTMLButtonElement>('[data-agent-id]') ?? [])
+      const button = Array.from(document.querySelectorAll<HTMLElement>('[data-agent-id]'))
         .find((candidate) => candidate.dataset.agentId === previous);
       button?.focus({ preventScroll: true });
     }
   }, [seleccionado, requestedId]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col" ref={envolturaRef} data-conversacion={seleccionado || pedido ? 'abierta' : undefined}>
+    <div
+      ref={envolturaRef}
+      data-conversacion={seleccionado || pedido ? 'abierta' : undefined}
+      className="flex min-h-0 flex-col bg-surface h-[calc(var(--messenger-viewport-height,100dvh)_-_var(--messenger-top,0px))] max-[760px]:h-[calc(var(--messenger-viewport-height,100dvh)_-_var(--messenger-top,0px)_-_var(--messenger-navigation-height,calc(56px_+_env(safe-area-inset-bottom))))]"
+    >
       {seleccionado ? (
         <ConversationPane
           /* Keyed by human and agent: switching agents must remount, or the previous draft,
              selection and scroll position would follow the operator into another thread. */
           key={`${accesoVerificado?.human_subject ?? accesoVerificado?.subject ?? ''}:${seleccionado.id}`}
           agent={seleccionado}
+          live={live.get(seleccionado.id)}
           page={messages.data}
           loading={messages.loading}
           error={messages.error}
@@ -134,8 +105,8 @@ function MessagesPageContent({ params }: MessagesPageProps) {
             <EmptyState>No se pudo comprobar este agente: {flotaError.message}</EmptyState>
           ) : pedido ? (
             <p className="m-0 max-w-md text-muted">
-              El servidor no observa a <strong className="text-fg">{pedido.tenantId}:{pedido.alias}</strong> en topología,
-              presencia, registro ni mensajes. Cauce no inventa un agente que no existe.
+              El servidor no observa a <strong className="text-fg">{pedido.tenantId}:{pedido.alias}</strong> en la topología, la presencia,
+              ni en el registro de agentes ni en los mensajes. Cauce no inventa un agente que no existe.
             </p>
           ) : (
             <p className="m-0 max-w-md text-muted">Elegí un agente en la barra lateral para retomar una conversación, compartir una idea o darle una tarea.</p>
