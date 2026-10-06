@@ -14,8 +14,8 @@ import {
 
 type SesionConToken = Pick<CauceApi, 'csrfForMutation'>;
 
-/** The body `parseControlRequest` accepts. `reason` is the fifth key and only a take carries it. */
-export const CAMPOS_DE_CONTROL = ['action', 'authority_proof', 'owner_generation', 'owner_token', 'request_id'] as const;
+/** The body `parseControlRequest` accepts; `allow_busy` is an optional take-only key. */
+export const CAMPOS_DE_CONTROL = ['action', 'authority_proof', 'request_id', 'owner_generation', 'owner_token'] as const;
 
 /** The owner-fenced body of `/extend`, identical to the one that releases a session. */
 export const CAMPOS_DE_PRORROGA = ['authority_proof', 'owner_generation', 'owner_token', 'request_id'] as const;
@@ -71,17 +71,16 @@ function texto(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
-/** Takes the keyboard: `reason` is what the operator typed, never a default nor a generated one. */
+/** Takes the keyboard for the exact owner-fenced session. */
 export async function tomarControlDeTui(
   sessionId: string,
   owner: TerminalSessionOwner,
-  reason: string,
   session?: SesionConToken,
   allowBusy = false,
 ): Promise<ControlDeTuiTomado> {
   const body = await terminalRequest<unknown>(rutaDeSesion(sessionId, 'control'), {
     method: 'POST',
-    body: JSON.stringify({ action: 'take', reason, ...(allowBusy ? { allow_busy: true } : {}), ...cuerpoConDueno(owner) }),
+    body: JSON.stringify({ action: 'take', ...(allowBusy ? { allow_busy: true } : {}), ...cuerpoConDueno(owner) }),
   }, session);
   const legible = body !== null && typeof body === 'object' && !Array.isArray(body);
   const record = legible ? body as Record<string, unknown> : {};

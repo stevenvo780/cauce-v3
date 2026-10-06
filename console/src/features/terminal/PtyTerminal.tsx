@@ -79,7 +79,7 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, authorit
         {readOnly ? <span title="Solo lectura" aria-label="Solo lectura"><Eye size={13} aria-hidden="true" /></span> : null}
         {view.message ? <span>{view.message}{view.closeCode !== undefined ? ` (código ${String(view.closeCode)})` : ''}</span> : null}
         {finished && onRequestNewSession ? (
-          <button type="button" onClick={onRequestNewSession} title="El ticket es de un solo uso; se pide una sesión nueva con motivo y auditoría.">
+          <button type="button" onClick={onRequestNewSession} title="Abrir una sesión nueva">
             <KeyRound size={12} aria-hidden="true" /> Pedir sesión nueva
           </button>
         ) : null}

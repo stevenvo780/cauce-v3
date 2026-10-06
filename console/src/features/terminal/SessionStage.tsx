@@ -37,12 +37,7 @@ import {
 } from './denegaciones';
 import { readPtySession, subscribePtySession } from './pty-session';
 import { liveTuiGate, terminalChannelGate } from './plugin';
-import {
-  controlTuiReason,
-  liveTuiReason,
-  ptySecondsLeft,
-  type OperatorSession,
-} from './session';
+import { ptySecondsLeft, type OperatorSession } from './session';
 import { ControlDeTui } from './ControlDeTui';
 import { NegativaPty, PtySessionDialog } from './PtySessionDialog';
 import { PtySessionBar } from './PtySessionBar';
@@ -140,7 +135,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
     if (liveSession.id in grants || liveSession.id in closedChannels) return;
     autoOpenedRef.current = liveSession.id;
     const mode = escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE;
-    void requestChannelRef.current(escrituraDisponible ? controlTuiReason(liveSession.agent.alias) : liveTuiReason(liveSession.agent.alias), mode).catch(mostrarError);
+    void requestChannelRef.current(mode).catch(mostrarError);
   }, [closedChannels, grants, liveSession.agent.alias, liveSession.id, liveSession.liveTuiAttempted, liveTui.enabled, escrituraDisponible]);
 
   function mostrarError(error: unknown) {
@@ -152,7 +147,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
     }));
   }
 
-  async function requestChannel(reason: string, mode: string): Promise<TerminalSessionGrant | undefined> {
+  async function requestChannel(mode: string): Promise<TerminalSessionGrant | undefined> {
     const permitido = mode === LIVE_TUI_MODE
       ? liveTui.enabled
       : mode === WRITABLE_TUI_MODE ? escrituraDisponible : channel.enabled;
@@ -173,7 +168,6 @@ export function SessionStage({ session, sessionToken, agents, access, capability
         tenant_id: liveSession.agent.tenantId,
         alias: liveSession.agent.alias,
         mode,
-        reason,
         cols: DEFAULT_COLS,
         rows: DEFAULT_ROWS,
       });
@@ -228,7 +222,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
       return;
     }
     setRequestError(undefined);
-    void requestChannel(escrituraDisponible ? controlTuiReason(liveSession.agent.alias) : liveTuiReason(liveSession.agent.alias), escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE).catch(mostrarError);
+    void requestChannel(escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE).catch(mostrarError);
   }
 
   /** Reopens the SAME channel that died: a read-only observation never becomes a writable shell. */
@@ -237,7 +231,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
     await onReleaseChannel(liveSession.id);
     setRequestError(undefined);
     if (eraTui) {
-      await requestChannelRef.current(escrituraDisponible ? controlTuiReason(liveSession.agent.alias) : liveTuiReason(liveSession.agent.alias), escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE).catch(mostrarError);
+      await requestChannelRef.current(escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE).catch(mostrarError);
       return;
     }
     setShowPtyDialog(true);
@@ -323,7 +317,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
               pidiendoSesion={requesting}
               sesionEnganchada={channelView?.ticketConsumido === true}
               estadoDelCanal={channelView?.state}
-              onAbrirEscritura={(razon) => requestChannelRef.current(razon, WRITABLE_TUI_MODE)}
+              onAbrirEscritura={() => requestChannelRef.current(WRITABLE_TUI_MODE)}
               onControlCambia={setControlSostenido}
             />
           </>
@@ -337,7 +331,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
           pending={requesting}
           {...(requestError ? { error: requestError } : {})}
           onCancel={() => { setShowPtyDialog(false); }}
-          onConfirm={(reason) => void requestChannel(reason, SHELL_MODE)}
+          onConfirm={() => void requestChannel(SHELL_MODE)}
         />
       ) : null}
     </div>
