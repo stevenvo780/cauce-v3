@@ -9,7 +9,7 @@ import { EmptyState, Time } from '../../components/ui';
 import { compactId } from '../../lib';
 import { previsualizacionRecortada } from './cuerpo-del-mensaje';
 import type { TranscriptItem } from './session';
-import { humanAuthor } from './message-author';
+import { humanAuthor, messageAuthorPresentation } from './message-author';
 import type { CanonicalReply } from '../messages/use-canonical-reply';
 
 interface StructuredBody {
@@ -131,7 +131,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, can
           const recortado = hasTextPreview && previsualizacionRecortada(message.body_preview);
           const estructura = structuredBody(message.body_preview);
           const author = humanAuthor(message);
-          const authorLabel = author?.display_name ?? (author ? 'Persona autenticada' : message.actor_alias ?? 'Emisor sin dato');
+          const { label: authorLabel, title: authorTitle, clientDeclarationNotice } = messageAuthorPresentation(message);
           const humanChat = direction === 'input' && author !== undefined;
           const matchingReply = canonicalReply && delivery !== undefined
             && canonicalReply.messageId === message.message_id
@@ -159,7 +159,8 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, can
                 <header>
                   <span className="transcript-direction">
                     <AgentAvatar alias={authorLabel} tenantId={message.tenant_id ?? ''} />
-                    <span title={author ? `Persona autenticada · identidad técnica: ${message.actor_alias ?? 'sin dato'}` : 'Identidad técnica; autor humano no registrado'}>{authorLabel}</span>
+                    <span title={authorTitle}>{authorLabel}</span>
+                    {clientDeclarationNotice && <span className="sr-only">{clientDeclarationNotice}</span>}
                     {humanChat ? <span className="sr-only">Persona autenticada</span> : <>
                       <ArrowRight size={14} aria-hidden="true" /><span className="sr-only">hacia</span>
                       <span>{direction === 'input' ? delivery?.recipient_alias ?? 'Destino sin dato' : message.room_id ?? 'Sala sin dato'}</span>
