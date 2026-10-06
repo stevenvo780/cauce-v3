@@ -15,6 +15,8 @@ export interface ReplyMediaSource {
   attempt: number;
 }
 
+const FILE_ACTION = 'inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-xs text-fg hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-60';
+
 function detectedKind(blob: Blob, fallback: MessageMediaKind): MessageMediaKind {
   return blob.type ? messageMediaKind(blob.type) : fallback === 'image' ? 'document' : fallback;
 }
@@ -152,52 +154,52 @@ export function MessageMedia({
     }
   };
 
-  const icon = attachment.mediaKind === 'image' ? <Image size={18} aria-hidden="true" />
-    : attachment.mediaKind === 'audio' ? <Music2 size={18} aria-hidden="true" />
-      : attachment.mediaKind === 'video' ? <Video size={18} aria-hidden="true" />
-        : <FileText size={18} aria-hidden="true" />;
+  const icon = attachment.mediaKind === 'image' ? <Image size={16} aria-hidden="true" />
+    : attachment.mediaKind === 'audio' ? <Music2 size={16} aria-hidden="true" />
+      : attachment.mediaKind === 'video' ? <Video size={16} aria-hidden="true" />
+        : <FileText size={16} aria-hidden="true" />;
   const playable = kind === 'audio' || kind === 'video';
   const canPreviewImage = kind === 'image';
 
-  return <li className="chat-message-file">
-    <div className="chat-message-file-heading">
-      {icon}
-      <span className="chat-message-file-label"><strong>{attachment.name}</strong><small>
+  return <li className="grid w-full max-w-sm min-w-0 gap-2 rounded-xl border border-line bg-surface p-2.5 text-left">
+    <div className="flex min-w-0 items-center gap-2.5">
+      <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted-bg text-muted">{icon}</span>
+      <span className="grid min-w-0"><strong className="text-[13px] font-medium [overflow-wrap:anywhere]">{attachment.name}</strong><small className="text-[11px] text-muted">
         {attachment.size === undefined ? 'Tamaño no disponible' : `${new Intl.NumberFormat('es', { maximumFractionDigits: 1 }).format(attachment.size / 1_000)} kB`}
       </small></span>
     </div>
     {resource && playable ? kind === 'audio'
-      ? <audio controls preload="none" src={resource.url} aria-label={`Audio: ${attachment.name}`} />
-      : <video controls playsInline preload="metadata" src={resource.url} aria-label={`Video: ${attachment.name}`} /> : null}
-    {resource && canPreviewImage ? <button type="button" className="chat-message-image-preview"
+      ? <audio className="block w-full" controls preload="none" src={resource.url} aria-label={`Audio: ${attachment.name}`} />
+      : <video className="block max-h-72 w-full rounded-lg bg-subtle object-contain" controls playsInline preload="metadata" src={resource.url} aria-label={`Video: ${attachment.name}`} /> : null}
+    {resource && canPreviewImage ? <button type="button" className="block w-fit max-w-full cursor-zoom-in overflow-hidden rounded-lg border-0 bg-transparent p-0"
       aria-label={`Ampliar imagen: ${attachment.name}`} onClick={openImage}>
-      <img src={resource.url} alt={`Vista previa: ${attachment.name}`} loading="lazy" />
+      <img className="block max-h-48 max-w-[min(100%,16rem)] object-contain" src={resource.url} alt={`Vista previa: ${attachment.name}`} loading="lazy" />
     </button> : null}
-    <div className="chat-message-file-actions">
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
       {((!resource && attachment.mediaKind !== 'document') || canPreviewImage)
-        ? <button type="button" className="chat-message-file-action" disabled={!messageId || loading}
+        ? <button type="button" className={FILE_ACTION} disabled={!messageId || loading}
           onClick={() => { void activatePreview(); }}>
-          {loading ? <LoaderCircle size={16} aria-hidden="true" /> : null}
+          {loading ? <LoaderCircle size={14} aria-hidden="true" className="animate-spin" /> : null}
           {canPreviewImage ? 'Vista previa' : attachment.mediaKind === 'image' ? 'Vista previa' : 'Cargar reproductor'}
         </button> : null}
-      <button type="button" className="chat-message-file-action" disabled={!messageId || loading}
+      <button type="button" className={FILE_ACTION} disabled={!messageId || loading}
         onClick={() => { void download(); }}>
-        {loading ? <LoaderCircle size={16} aria-hidden="true" /> : <Download size={16} aria-hidden="true" />}
+        {loading ? <LoaderCircle size={14} aria-hidden="true" className="animate-spin" /> : <Download size={14} aria-hidden="true" />}
         Descargar
       </button>
-      {error ? <button type="button" className="chat-message-file-action" disabled={!messageId || loading}
+      {error ? <button type="button" className={FILE_ACTION} disabled={!messageId || loading}
         onClick={() => { void (attachment.mediaKind === 'image' ? activatePreview() : download()); }}>
-        <RotateCw size={16} aria-hidden="true" /> Reintentar
+        <RotateCw size={14} aria-hidden="true" /> Reintentar
       </button> : null}
-      {loading ? <span role="status">Cargando archivo…</span> : null}
-      {error ? <span role="status">No se pudo cargar el archivo.</span> : null}
+      {loading ? <span className="text-[11px] text-muted" role="status">Cargando archivo…</span> : null}
+      {error ? <span className="text-[11px] text-danger-ink" role="status">No se pudo cargar el archivo.</span> : null}
     </div>
-    {expanded && resource && canPreviewImage ? <div className="chat-media-backdrop" onClick={closeImage}>
-      <div className="chat-media-dialog" role="dialog" aria-modal="true" aria-label={`Vista previa: ${attachment.name}`}
+    {expanded && resource && canPreviewImage ? <div className="fixed inset-0 z-[1000] grid place-items-center bg-scrim p-4" onClick={closeImage}>
+      <div className="relative grid max-h-full w-[min(100%,70rem)] place-items-center outline-none" role="dialog" aria-modal="true" aria-label={`Vista previa: ${attachment.name}`}
         onClick={(event) => { event.stopPropagation(); }} onKeyDown={onDialogKeyDown} tabIndex={-1}>
-        <button type="button" ref={closeButton} className="chat-media-close" aria-label="Cerrar vista previa"
-          onClick={closeImage}><X size={20} aria-hidden="true" /></button>
-        <img src={resource.url} alt={attachment.name} />
+        <button type="button" ref={closeButton} aria-label="Cerrar vista previa" onClick={closeImage}
+          className="absolute top-2 right-2 z-10 grid size-10 cursor-pointer place-items-center rounded-full border border-line bg-surface text-fg shadow-pop"><X size={18} aria-hidden="true" /></button>
+        <img className="block max-h-[calc(100dvh-2rem)] max-w-full rounded-lg object-contain" src={resource.url} alt={attachment.name} />
       </div>
     </div> : null}
   </li>;

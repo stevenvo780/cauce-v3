@@ -1,6 +1,7 @@
 import { Mic, Square, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import './chat-voice-recorder.css';
+
+export const ICON_BUTTON = 'grid size-9 shrink-0 cursor-pointer place-items-center rounded-full border-0 bg-transparent text-fg-2 transition-colors hover:bg-subtle hover:text-fg disabled:cursor-not-allowed disabled:opacity-40 touch-manipulation';
 
 const AUDIO_BITRATE = 32_000;
 const MAX_RECORDING_MS = 20 * 60 * 1_000;
@@ -231,20 +232,22 @@ export function ChatVoiceRecorder({ disabled, availableBytes, onFile, onRecordin
   const capabilityError = voiceRecordingUnavailableReason();
   const cannotRecord = disabled || availableBytes <= 0 || Boolean(capabilityError);
 
-  return <div className="chat-voice-recorder">
+  return <div className="relative flex min-w-0 shrink-0 items-center gap-1">
     {recording ? <>
-      <span className="chat-voice-duration" role="timer" aria-label={`Duración ${formatDuration(elapsedMs)}`}>{formatDuration(elapsedMs)}</span>
-      <button className="button secondary composer-voice-stop" type="button" onClick={finishRecording} aria-label="Finalizar nota de voz">
-        <Square size={15} aria-hidden="true" /><span>Finalizar</span>
+      <span className="flex items-center gap-1.5 px-1.5 text-xs text-danger-ink tabular-nums" role="timer" aria-label={`Duración ${formatDuration(elapsedMs)}`}>
+        <span className="size-2 animate-pulse rounded-full bg-danger" aria-hidden="true" />{formatDuration(elapsedMs)}
+      </span>
+      <button className={ICON_BUTTON} type="button" onClick={finishRecording} aria-label="Finalizar nota de voz" title="Finalizar">
+        <Square size={15} aria-hidden="true" />
       </button>
-      <button className="button secondary composer-voice-cancel" type="button" onClick={() => { cancelRecording(); }} aria-label="Cancelar grabación">
-        <X size={16} aria-hidden="true" /><span>Cancelar</span>
+      <button className={ICON_BUTTON} type="button" onClick={() => { cancelRecording(); }} aria-label="Cancelar grabación" title="Cancelar">
+        <X size={16} aria-hidden="true" />
       </button>
-    </> : <button className="button secondary composer-voice-start" type="button" disabled={cannotRecord}
+    </> : <button className={ICON_BUTTON} type="button" disabled={cannotRecord}
       title={capabilityError ?? (availableBytes <= 0 ? 'No queda espacio para adjuntar audio.' : 'Grabar nota de voz')}
       aria-label="Grabar nota de voz" onClick={() => { void startRecording(); }}>
       <Mic size={18} aria-hidden="true" />
     </button>}
-    {error ? <span className="chat-voice-error" role="alert">{error}</span> : null}
+    {error ? <span className="absolute bottom-[calc(100%+6px)] left-0 z-10 w-[min(260px,calc(100vw-110px))] rounded-lg border border-line bg-surface p-2 text-xs text-danger-ink shadow-pop" role="alert">{error}</span> : null}
   </div>;
 }

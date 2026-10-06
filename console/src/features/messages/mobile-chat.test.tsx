@@ -2,14 +2,12 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { leerCss } from '../../test/leer-css';
-import { bloqueMedia, declaraciones, sinComentarios, valor } from '../../test/css-parser';
 import { useConversationViewport } from './use-conversation-viewport';
 
 function ViewportHarness() {
   const ref = useRef<HTMLDivElement>(null);
   useConversationViewport(ref);
-  return <div ref={ref} data-testid="shell"><form className="messenger-composer"><textarea aria-label="Mensaje" /></form><button>Salir</button></div>;
+  return <div ref={ref} data-testid="shell"><form data-chat-composer><textarea aria-label="Mensaje" /></form><button>Salir</button></div>;
 }
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -43,17 +41,4 @@ it('la reducción sin foco no finge teclado y limpia listeners al desmontar', as
   unmount();
   expect(remove).toHaveBeenCalledWith('resize', expect.any(Function));
   expect(remove).toHaveBeenCalledWith('scroll', expect.any(Function));
-});
-
-it('presupuesta una cabecera y una fila de escritura compactas sin ocultar avisos', () => {
-  const mobile = bloqueMedia(sinComentarios(leerCss('features/messages/messages.css')), '@media (max-width: 760px)');
-  expect(valor(declaraciones(mobile, '.messenger-thread-head'), 'height')).toBe('56px');
-  expect(valor(declaraciones(mobile, '.messenger-composer textarea'), 'height')).toBe('44px');
-  expect(valor(declaraciones(mobile, '.composer-input-row'), 'display')).toBe('flex');
-  expect(valor(declaraciones(mobile, '.messenger-composer .composer-footer > span'), 'display')).toBe('none');
-  const notices = sinComentarios(leerCss('features/messages/messages.css'));
-  expect(valor(declaraciones(notices, '.chat-notice-bar'), 'display')).toBe('flex');
-  expect(valor(declaraciones(notices, '.chat-notice-summary'), 'overflow')).toBeUndefined();
-  expect(valor(declaraciones(notices, '.chat-notice-panel'), 'overflow-y')).toBe('auto');
-  expect(valor(declaraciones(mobile, '.composer-blocked'), 'display')).not.toBe('none');
 });
