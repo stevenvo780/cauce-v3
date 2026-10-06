@@ -8,12 +8,6 @@ export type GovernanceWritePrecondition =
   | { readonly state: 'present'; readonly sha256: string }
   | { readonly state: 'absent' };
 
-/**
- * The same bounds the PTY plane applies to its operator reason (`REASON_MIN`/`REASON_MAX`, still
- * private inside `services/gateway/src/terminal/plugin.ts`). Writing a file into the container and
- * opening a shell in it are the same act of authority, so they ask for the same explanation.
- * `agent-documents.routes.test.ts` reads that file and fails if the two ever diverge.
- */
 export const DOCUMENT_REASON_MIN = 8;
 export const DOCUMENT_REASON_MAX = 280;
 
