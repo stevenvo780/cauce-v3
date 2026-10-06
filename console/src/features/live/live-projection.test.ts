@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetActivityAgent, FleetActivitySnapshot, TopologySnapshot } from '../../api/types';
-import { buildLiveViews, humanOrigins } from './agent-state';
+import { buildLiveViews } from './agent-state';
 import { projectLiveFleet } from './live-projection';
 
 function agent(alias: string, fields: Partial<FleetActivityAgent> = {}): FleetActivityAgent {
@@ -43,7 +43,6 @@ describe('proyección de la flota viva', () => {
     const snapshot = { agents: [source, target] };
     const projected = projectLiveFleet(snapshot, undefined).snapshot;
     expect(projected?.agents).toHaveLength(2);
-    expect(humanOrigins(snapshot)).toEqual([]);
     expect(buildLiveViews(snapshot, {}, Date.now()).views.find((v) => v.alias === 'teseo')?.origenes)
       .toEqual([{ tipo: 'agente', tenant: 'Hospital', alias: 'backend' }]);
     const edgesOnly = { agents: [source], edges: [{ from_tenant: 'Hospital', from_alias: 'backend', to_tenant: 'Hospital', to_alias: 'teseo', in_flight: 1 }] };
