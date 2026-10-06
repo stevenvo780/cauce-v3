@@ -117,22 +117,28 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra runtime y consola `71df5bc9`, con
-imágenes `sha256:eb71a3418564e0316a9e6ada45632dc824165809d93a12e7e959a13a5a35e2fe` y
-`sha256:df3eb08dca45ce99955fb0caa66815347500a115bebe885e41ed45348edfdbf5`. La fila describe
-OAuth MCP local, registro dinámico de clientes, refresh e inbox; migraciones 044 y 045 aplicadas
-con backup previo, nueve servicios sanos, catorce leases y transcripción conservada. También
-registra una emisión a Zeus y la lectura de su respuesta con `cauce_receipt` y `cauce_inbox`.
-El informe citado está en `ws-zeus:/workspace/MCP-OAUTH-INFORME-2026-10-05.md`.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `2729f23b`, el 5 de octubre a las
+20:09, hora de Colombia. La promoción actualizó seis aplicaciones centrales y conservó tres
+contenedores de infraestructura; los nueve quedaron sanos. El runtime usa la imagen
+`sha256:7452d8e6d6b61d9bec5702bebd09efcd04d8e2397e34d2dab6907605801062c5` y la consola
+`sha256:434a1d18c093e689eebdcff87c4574964ca52317b9f8945dfcc1bfa180794aa6`. El esquema 045
+se conservó sin DDL ni migraciones. La consola deriva del paquete original: mantiene los bytes
+con nueve permisos públicos corregidos de 0640 a 0644; no acredita nuevos gates del parche
+durable de Dockerfile pendiente. La verificación posterior acreditó 93 recursos por HTTPS con
+HTTP 200, SHA, tamaño y MIME correctos.
 
-La promoción registra el endpoint público `https://consola.humanizar.tech/mcp` con OAuth local.
-La conexión y el consentimiento de un cliente externo deben verificarse aparte. El SDK con
-`human_message_initiator_v1` está activado sólo en Zeus; el resto de la flota conserva el anterior.
-La aceptación global de flota sigue pendiente, con Astra excluida por instrucción del dueño.
+La sesión Steven recargada mostró el grafo primero y la lista cerrada al final. Se comprobó un
+ping canónico de Zeus y su shell; el control se devolvió y la shell se cerró. El journal de Main
+`f3e5bf6e` cambia sólo documentación y no supone otra promoción. El candidato posterior sigue
+sin desplegar; sus gates deben corresponder a su fuente exacta.
 
-Esta fila no acredita el rediseño posterior del chat, grafo y terminal, una lectura humana de
-mensajes, la TUI real de Hegel ni la corrección de latencia web. Los candidatos posteriores requieren
-revisión y gates de su fuente exacta antes de promocionarse; incluir fuentes no las despliega.
+La promoción anterior `71df5bc9` registró OAuth local en `https://consola.humanizar.tech/mcp`
+y el SDK con `human_message_initiator_v1` activado sólo en Zeus. La conexión y el consentimiento
+de cada cliente externo y la adopción del SDK requieren evidencia propia. La aceptación global
+de flota sigue pendiente, con Astra excluida por instrucción del dueño.
+
+La promoción actual no acredita la lectura nativa de mensajes, la corrección de latencia de
+Jarvis, el teclado físico móvil ni la TUI real de Hegel. Incluir fuentes no las despliega.
 
 Como evidencia histórica, en una verificación anterior los quince alias completaron una entrega
 real al primer intento y se reiniciaron sus adaptadores y sesiones nativas. La shell y el visor web se probaron en los quince;

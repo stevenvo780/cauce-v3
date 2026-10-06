@@ -67,7 +67,7 @@
 .agent-registry-create-actions { margin-top: var(--space-3); }
 .agent-registry-create-actions > div { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 
-@media (max-width: 480px) {
+@media (max-width: 760px) {
   .agent-registry-create-backdrop { align-items: start; padding: var(--space-2); }
   .agent-registry-create { width: 100%; max-height: calc(100dvh - 16px); padding: var(--space-3); }
   .agent-registry-create-form { grid-template-columns: minmax(0, 1fr); }
