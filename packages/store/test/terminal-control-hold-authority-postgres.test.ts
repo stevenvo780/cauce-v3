@@ -17,7 +17,6 @@ const identity = { tenantId: 'Steven', alias: 'argos' };
 preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
   pool = database.pool;
-  console.info(`control-hold-authority container ${database.container.getId()}`);
 }, 120_000);
 
 beforeEach(async () => {
@@ -45,7 +44,7 @@ async function seed(ttlSeconds = 900): Promise<ControlHoldTake> {
        clock_timestamp(),$1,$4,$4,1,$5)`,
     [id, identity.tenantId, identity.alias, randomBytes(32), 'a'.repeat(64)],
   );
-  return { ...identity, sessionId: id, operatorId: 'steven', reason: 'operator typing',
+  return { ...identity, sessionId: id, operatorId: 'steven',
     windowMs: 60_000, sessionTtlSeconds: ttlSeconds, sessionMaxTotalSeconds: null };
 }
 
@@ -210,6 +209,9 @@ describe('terminal hold authority deadline in the caller transaction', () => {
     const input = await seed(30);
     await expect(takeControlHold(pool, { ...input, tenantId: 'Miguel' })).rejects.toMatchObject({ code: 'not_found' });
     const hold = await takeControlHold(pool, input);
+    expect(hold).not.toHaveProperty('reason');
+    const compatibility = await pool.query<{ reason: string }>('SELECT reason FROM terminal_control_holds WHERE id=$1', [hold.id]);
+    expect(compatibility.rows[0]?.reason).toBe('');
     const end = (await pool.query<{ deadline: Date }>(
       'SELECT consumed_at+interval \'30 seconds\' AS deadline FROM terminal_sessions WHERE id=$1', [input.sessionId],
     )).rows[0]?.deadline;

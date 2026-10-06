@@ -322,6 +322,20 @@ describe('fencing y resolución multi-relay', () => {
       .toBeUndefined();
   });
 
+  it('never infers missing installation from empty or unrelated relay snapshots', () => {
+    const now = Date.now();
+    const registry = new AgentRegistry();
+    expect(registry.resolve('Steven', 'zeus', now)).toEqual({ status: 'unknown' });
+    registry.observe(RELAY, [], now);
+    expect(registry.resolve('Steven', 'zeus', now)).toEqual({ status: 'unknown' });
+    registry.observe(RELAY_B, [presencia({ alias: 'another' })], now);
+    expect(registry.resolve('Steven', 'zeus', now)).toEqual({ status: 'unknown' });
+    expect(registry.resolve('Steven', 'zeus', now + AGENT_STALE_AFTER_MS + 1)).toEqual({ status: 'unknown' });
+    expect(registry.state('Steven', 'zeus', now)).toBe('unknown');
+    const restarted = new AgentRegistry();
+    expect(restarted.resolve('Steven', 'another', now)).toEqual({ status: 'unknown' });
+  });
+
   it('trata cada presencia como snapshot completo y marca ausencias offline inmediatamente', () => {
     const registry = new AgentRegistry();
     registry.observe(RELAY, [presencia()]);

@@ -49,7 +49,6 @@ export interface SessionRequestBody {
   mode: TerminalMode;
   /** TUI-09: `auto` marks a viewer the console opened by itself; a writable mode refuses it. */
   initiator: 'operator' | 'auto';
-  reason: string;
   cols: number;
   rows: number;
   request_id: string;
@@ -74,7 +73,6 @@ export interface ExtendSessionBody extends DeleteSessionBody { authority_proof: 
 export interface ControlRequestBody extends ExtendSessionBody {
   readonly allow_busy?: boolean;
   action: 'take' | 'release';
-  reason?: string;
 }
 
 function terminalRelayWebsocketPath(relayInstanceId: string): string {
@@ -125,7 +123,6 @@ function terminalAdmissionRequestSha256(input: {
       mode: input.body.mode,
       relay_instance_id: input.relayInstanceId,
     },
-    reason: input.body.reason,
     cols: input.body.cols,
     rows: input.body.rows,
   };
@@ -220,7 +217,6 @@ export function registerTerminalSessionControl(
           trace_id: traceId,
           metadata: terminalAuditMetadata(redactedAudit, {
             reason,
-            operator_reason: body.reason,
           }),
         });
         await reply.code(status).send(status === 404
@@ -286,7 +282,6 @@ export function registerTerminalSessionControl(
           trace_id: traceId,
           metadata: terminalAuditMetadata(audit, {
             reason,
-            operator_reason: body.reason,
             ...extra,
           }),
         });
@@ -408,7 +403,6 @@ export function registerTerminalSessionControl(
             && previous.container === observation.presence.container_id
             && previous.relay_instance_id === observation.relay_instance_id
             && previous.mode === body.mode
-            && previous.reason === body.reason
             && previous.cols === body.cols
             && previous.rows === body.rows
             && previous.request_sha256.equals(authorityContinuityCommitment(continuityPayload(previous.id, { operator_id: previous.operator_id, attributed: previous.attributed })))
@@ -449,7 +443,6 @@ export function registerTerminalSessionControl(
               ...(previous.trace_id === null ? {} : { trace_id: previous.trace_id }),
               metadata: terminalAuditMetadata(audit, {
                 session_id: previous.id,
-                operator_reason: previous.reason,
                 initiator: body.initiator,
                 ticket_sha256: ticketDigest(rebuilt),
                 receipt_recovered: true,
@@ -508,9 +501,9 @@ export function registerTerminalSessionControl(
            SELECT CASE
              WHEN (SELECT count(*) FROM terminal_sessions
                     WHERE ${operatorScopePredicate(1, 6, 7)}
-                      AND ${openPredicate(3, 25)}) >= $4 THEN 'session_limit'
+                      AND ${openPredicate(3, 24)}) >= $4 THEN 'session_limit'
              WHEN EXISTS (SELECT 1 FROM terminal_sessions
-                    WHERE container=$2 AND ${openPredicate(3, 25)}) THEN 'container_busy'
+                    WHERE container=$2 AND ${openPredicate(3, 24)}) THEN 'container_busy'
              ELSE 'ok'
            END AS reason
          ), inserted AS (
@@ -520,7 +513,7 @@ export function registerTerminalSessionControl(
              issued_at, expires_at, request_id, request_sha256, browser_owner_sha256,
              browser_owner_generation, relay_instance_id, relay_boot_id
            )
-           SELECT $5,$1,$6,$7,$8,$9,$2,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,1,$24,NULL
+           SELECT $5,$1,$6,$7,$8,$9,$2,$10,$11,$12,$13,$14,'',$15,$16,$17,$18,$19,$20,$21,$22,1,$23,NULL
              FROM decision WHERE reason='ok'
            RETURNING id
          )
@@ -531,7 +524,7 @@ export function registerTerminalSessionControl(
               config.maxSessionsPerOperator, sessionId, operator.attributed,
               consoleSubject, placement.tenant_id, body.alias,
               observation.presence.generation, observation.presence.image_id,
-              observation.presence.runtime_user, body.mode, ticketSha256(ticket), body.reason,
+              observation.presence.runtime_user, body.mode, ticketSha256(ticket),
               body.cols, body.rows, traceId, issuedAt.toISOString(), expiresAt.toISOString(),
               body.request_id, requestSha256, browserOwnerSha256,
               observation.relay_instance_id,
@@ -557,7 +550,6 @@ export function registerTerminalSessionControl(
                 image_id: observation.presence.image_id,
                 generation: observation.presence.generation,
                 runtime_user: observation.presence.runtime_user,
-                operator_reason: body.reason,
                 initiator: body.initiator,
                 cols: body.cols,
                 rows: body.rows,

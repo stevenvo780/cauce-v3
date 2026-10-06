@@ -23,12 +23,13 @@ import {
   RELAY_TOKEN,
   consoleAuthProvider,
   installAuthorityCarrier,
+  installLegacyAdmission,
   machineMapping,
   fakeDatabase,
   presence,
   RELAY_BOOT_B,
   type FakeDatabase,
-} from './terminal.plugin.shared.js';
+} from './terminal/plugin-test-fixtures.js';
 
 describe('terminal control plane', () => {
   let directory: string;
@@ -136,7 +137,7 @@ describe('terminal control plane', () => {
       headers: { origin: ORIGIN, ...headers },
       payload: {
         tenant_id: 'Steven', alias: 'jarvis', mode: 'shell',
-        reason: 'revisar el harness colgado', cols: 120, rows: 40,
+        cols: 120, rows: 40,
         request_id: randomUUID(), owner_token: randomUUID(), ...body
       }
     });
@@ -202,6 +203,7 @@ describe('terminal control plane', () => {
   });
 
   afterEach(async () => {
+    for (const entry of database.audit) expect(entry.metadata).not.toHaveProperty('operator_reason');
     await app.close();
     await rm(directory, { recursive: true, force: true });
   });
@@ -265,7 +267,7 @@ describe('terminal control plane', () => {
     const argos = body.items.find((item) => item.alias === 'argos');
     // argos shares ctrl-infra with kant and no agent was ever reported there.
     expect(argos).toMatchObject({
-      pty_state: 'not_installed', authorized: false,
+      pty_state: 'unknown', authorized: false,
       shares_container_with: [{ tenant_id: 'Steven', alias: 'kant' }]
     });
     const iza = body.items.find((item) => item.alias === 'iza');
@@ -308,14 +310,14 @@ describe('terminal control plane', () => {
       expectAuthorizedState(
         await jarvis(),
         'unknown',
-        'El estado del agente PTY es desconocido: el terminal-relay todavía no publicó un snapshot verificable.',
+        'El estado del agente PTY es desconocido: su presencia en el terminal-relay no está comprobada.',
       );
 
       await report([]);
       expectAuthorizedState(
         await jarvis(),
-        'not_installed',
-        'El agente PTY figura como no instalado: el terminal-relay nunca registró este destino en claw.',
+        'unknown',
+        'El estado del agente PTY es desconocido: su presencia en el terminal-relay no está comprobada.',
       );
 
       await report([presence()]);
@@ -390,7 +392,7 @@ describe('terminal control plane', () => {
     });
   });
 
-  it('issues a verifiable ticket, records the operator reason and audits the allow', async () => {
+  it('issues a verifiable ticket without an operator reason and audits the allow', async () => {
     await report([presence()]);
     const response = await openSession({});
     expect(response.statusCode).toBe(201);
@@ -418,8 +420,11 @@ describe('terminal control plane', () => {
     expect(allow?.metadata).toMatchObject({
       operator_id: UNATTRIBUTED_OPERATOR, attributed: false, target_alias: 'jarvis', container: 'claw',
       image_id: 'sha256:c0ffee', generation: 'gen-7', mode: 'shell',
-      operator_reason: 'revisar el harness colgado', cols: 120, rows: 40
+      cols: 120, rows: 40
     });
+    expect(allow?.metadata).not.toHaveProperty('operator_reason');
+    expect(database.sessions.get(body.session_id)?.reason).toBe('');
+    expect(body).not.toHaveProperty('reason');
     // Only the truncated digest of the ticket is ever persisted in the audit trail.
     expect(allow?.metadata.ticket_sha256).toMatch(/^[0-9a-f]{16}$/);
     expect(JSON.stringify(allow?.metadata)).not.toContain(body.ticket);
@@ -467,13 +472,25 @@ describe('terminal control plane', () => {
     ]);
   });
 
+  it('fails closed when an old admission with reason is retried under the new contract', async () => {
+    await report([presence()]);
+    const requestId = randomUUID(); const ownerToken = randomUUID();
+    const opened = await openSession({ request_id: requestId, owner_token: ownerToken });
+    expect(opened.statusCode).toBe(201);
+    const { session_id } = opened.json<{ session_id: string }>();
+    installLegacyAdmission(database, session_id);
+    const retried = await openSession({ request_id: requestId, owner_token: ownerToken });
+    expect(retried.statusCode).toBe(409);
+    expect(retried.json()).toEqual({ error: 'conflict', reason: 'request_conflict' });
+    expect(database.sessions.size).toBe(1);
+  });
+
   it('never coalesces a new browser admission merely because every visible field is identical', async () => {
     await report([presence()]);
     const first = await openSession({});
     expect(first.statusCode).toBe(201);
 
-    // A remount/reopen has a fresh request id even when the human entered the same reason and
-    // dimensions. It must collide with the live container instead of adopting the first SID.
+    // A remount/reopen has a fresh request id even with identical dimensions. It must collide with the live container instead of adopting the first SID.
     const remount = await openSession({});
     expect(remount.statusCode).toBe(409);
     expect(remount.json()).toEqual({ error: 'conflict', reason: 'container_busy' });
@@ -494,7 +511,7 @@ describe('terminal control plane', () => {
     const altered = await openSession({
       request_id: requestId,
       owner_token: ownerToken,
-      reason: 'la misma solicitud con semantica alterada',
+      cols: 121,
     });
     expect(altered.statusCode).toBe(409);
     expect(altered.json()).toEqual({ error: 'conflict', reason: 'request_conflict' });
@@ -625,7 +642,7 @@ describe('terminal control plane', () => {
     expect(response.json()).toEqual({ ok: false, reason: 'session_expired' });
   });
 
-  it('refuses a reason shorter than eight characters', async () => {
+  it('rejects the legacy reason field', async () => {
     await report([presence()]);
     const response = await openSession({ reason: 'corto' });
     expect(response.statusCode).toBe(400);
@@ -775,7 +792,7 @@ describe('terminal control plane', () => {
     await build({ maxSessionsPerOperator: 1 });
     await report([presence()]);
     expect((await openSession({})).statusCode).toBe(201);
-    const second = await openSession({ reason: 'una segunda tarea diferente' });
+    const second = await openSession({});
     expect(second.statusCode).toBe(409);
     expect(second.json()).toEqual({ error: 'conflict', reason: 'session_limit' });
   });

@@ -23,7 +23,7 @@ import {
   installAuthorityCarrier,
   fakeDatabase,
   type FakeDatabase,
-} from './terminal.plugin.shared.js';
+} from './terminal/plugin-test-fixtures.js';
 
 describe('terminal control plane', () => {
   let directory: string;
@@ -122,7 +122,7 @@ describe('terminal control plane', () => {
       headers: { origin: ORIGIN, ...headers },
       payload: {
         tenant_id: 'Steven', alias: 'jarvis', mode: 'shell',
-        reason: 'revisar el harness colgado', cols: 120, rows: 40,
+        cols: 120, rows: 40,
         request_id: randomUUID(), owner_token: randomUUID(), ...body
       }
     });
@@ -147,6 +147,7 @@ describe('terminal control plane', () => {
   });
 
   afterEach(async () => {
+    for (const entry of database.audit) expect(entry.metadata).not.toHaveProperty('operator_reason');
     await app.close();
     await rm(directory, { recursive: true, force: true });
   });

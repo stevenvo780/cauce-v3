@@ -132,7 +132,6 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
                   session_id: row.id,
                   image_id: row.image_id,
                   generation: row.generation,
-                  operator_reason: row.reason,
                   close_reason: reason,
                   exit_code: exitCode,
                   bytes_in: counterValue(row.bytes_in),
