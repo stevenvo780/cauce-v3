@@ -170,16 +170,16 @@ export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, Termina
   },
   request_conflict: {
     titulo: 'El reintento ya no coincide con la reserva original',
-    porQue: 'Ese identificador de apertura ya existe, pero cambió el destino, el motivo, la geometría '
+    porQue: 'Ese identificador de apertura ya existe, pero cambió el destino, el modo, la geometría '
       + 'o la capacidad dueña. El gateway no mezcla ambas operaciones ni entrega la reserva anterior.',
     quienLoLevanta: 'Vos: cerrá esta pestaña y abrí una intención nueva. Si fue sólo una pérdida de red, '
       + 'reintentá sin editar nada para conservar la misma identidad de la operación.',
   },
   not_installed: {
-    titulo: 'Ese contenedor nunca tuvo agente PTY',
-    porQue: 'No es que se haya caído: el gateway no vio jamás un agente PTY para ese alias. Es una instalación que '
-      + 'falta, no una avería.',
-    quienLoLevanta: `${DUENO_DEL_BUS}: hay que instalar el agente PTY en ese contenedor.`,
+    titulo: 'La conexión del agente PTY no está comprobada',
+    porQue: 'El estado heredado no acredita una presencia del agente PTY. No se puede concluir si está instalado '
+      + 'o si la conexión está caída.',
+    quienLoLevanta: 'Vos: sincronizá el inventario o comprobá la presencia del agente en ese contenedor.',
   },
 };
 

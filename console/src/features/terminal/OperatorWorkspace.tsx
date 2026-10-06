@@ -72,7 +72,7 @@ interface WorkspaceTerminalIntent {
 
 function terminalRequestInputKey(input: Omit<CreateTerminalSessionInput, 'request_id' | 'owner_token'>): string {
   return JSON.stringify([
-    input.tenant_id, input.alias, input.mode, input.reason, input.cols, input.rows,
+    input.tenant_id, input.alias, input.mode, input.cols, input.rows,
   ]);
 }
 
@@ -110,7 +110,7 @@ function copiaDelEscenario(
       tono: 'cerrado',
       eyebrow: 'Canal cerrado',
       titulo: 'Aquí no se puede espejar ninguna TUI',
-      cuerpo: `${gate.reason} Elegí un agente para consultar el motivo de disponibilidad de su terminal.`,
+      cuerpo: `${gate.reason} Elegí un agente para consultar el estado de su terminal.`,
     };
   }
   if (!targets?.items) {
@@ -128,7 +128,7 @@ function copiaDelEscenario(
       eyebrow: 'Sin TUI que espejar',
       titulo: 'Ningún alias está emitiendo su TUI ahora mismo',
       cuerpo: 'El canal está abierto y el inventario llegó, pero ningún destino publica el modo harness en este '
-        + 'momento. Cada alias de la flota lleva su motivo escrito; abrí uno para leerlo entero.',
+        + 'momento. Abrí un alias para consultar el estado observado de su terminal.',
     };
   }
   return {

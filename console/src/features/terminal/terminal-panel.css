@@ -123,7 +123,7 @@
 .agent-pty-state[data-status="denied"] { border-color: #6d3038; background: var(--red-dim); color: var(--red); }
 .agent-pty-state[data-status="offline"] { border-color: #725622; background: var(--amber-dim); color: var(--amber); }
 
-.agent-pty-state[data-status="not_installed"], .agent-pty-state[data-status="unknown"], .agent-pty-state[data-status="no_tui"] { border-color: var(--border-strong); background: var(--surface-2); }
+.agent-pty-state[data-status="unknown"], .agent-pty-state[data-status="no_tui"] { border-color: var(--border-strong); background: var(--surface-2); }
 
 .terminal-stage-empty { display: flex; min-width: 0; min-height: 0; align-items: center; justify-content: center; flex-direction: column; overflow-y: auto; padding: var(--space-7); text-align: center; }
 .terminal-stage-empty .eyebrow { margin: 0 0 var(--space-1); }
@@ -165,8 +165,6 @@
 .pty-control-consecuencia { display: flex; align-items: start; gap: var(--space-2); margin: 0; padding: var(--space-2); border-radius: var(--radius-sm, 8px); background: var(--amber-dim); color: var(--amber); font-size: var(--tipo-apunte); line-height: 1.55; }
 .pty-control-consecuencia svg { flex: none; margin-top: 2px; }
 .pty-control-estado { margin: 0; color: var(--text); font-size: var(--tipo-rotulo); line-height: 1.5; }
-.pty-control-motivo { display: grid; gap: var(--space-1); color: var(--muted); font-size: var(--tipo-apunte); }
-.pty-control-motivo textarea { width: 100%; padding: var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm, 8px); background: var(--surface); color: var(--text); font-family: inherit; font-size: var(--tipo-rotulo); line-height: 1.5; resize: vertical; }
 .pty-control-pista { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); }
 .pty-control-perdido { margin: 0; color: var(--amber); font-size: var(--tipo-apunte); line-height: 1.5; }
 .pty-control-tomar, .pty-control-devolver { justify-self: start; }
@@ -191,10 +189,6 @@
 .pty-dialog-shared { display: flex; align-items: start; gap: var(--space-2); margin: 0 0 var(--space-3); padding: var(--space-3); border: 1px solid #6d3038; border-radius: var(--radius-md, 12px); background: var(--red-dim); color: var(--red); font-size: var(--tipo-rotulo); line-height: 1.55; }
 .pty-dialog-shared strong { color: var(--text); }
 .pty-dialog-solo { margin: 0 0 var(--space-3); color: var(--faint); font-size: var(--tipo-apunte); }
-.pty-dialog-reason { display: block; color: var(--faint); font-size: var(--tipo-apunte); letter-spacing: .05em; text-transform: uppercase; }
-.pty-dialog-reason textarea { min-height: 78px; width: 100%; margin-top: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid #2a4565; border-radius: var(--radius-sm, 8px); background: #070d16; color: var(--text); font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-cuerpo); text-transform: none; letter-spacing: normal; resize: vertical; }
-.pty-dialog-reason textarea:focus { border-color: var(--blue); }
-.pty-dialog-hint { margin: var(--space-2) 0 0; color: var(--faint); font-size: var(--tipo-apunte); }
 .pty-dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
 
 @media (max-width: 760px) {
@@ -209,15 +203,12 @@
   :root:not([data-theme="dark"]) .terminal-channel-state,
   :root:not([data-theme="dark"]) .pty-session-bar,
   :root:not([data-theme="dark"]) .pty-dialog { background: #f8fafc; }
-  :root:not([data-theme="dark"]) .agent-pty-state[data-status="not_installed"],
   :root:not([data-theme="dark"]) .agent-pty-state[data-status="unknown"],
   :root:not([data-theme="dark"]) .agent-pty-state[data-status="no_tui"] { background: #eef2f7; }
-  :root:not([data-theme="dark"]) .pty-dialog-reason textarea { background: #ffffff; }
   :root:not([data-theme="dark"]) .pty-dialog-backdrop { background: rgb(23 35 51 / 45%); }
 }
 :root[data-theme="light"] .terminal-channel-state, :root[data-theme="light"] .pty-session-bar, :root[data-theme="light"] .pty-dialog { background: #f8fafc; }
-:root[data-theme="light"] .agent-pty-state[data-status="not_installed"], :root[data-theme="light"] .agent-pty-state[data-status="unknown"], :root[data-theme="light"] .agent-pty-state[data-status="no_tui"] { background: #eef2f7; }
-:root[data-theme="light"] .pty-dialog-reason textarea { background: #ffffff; }
+:root[data-theme="light"] .agent-pty-state[data-status="unknown"], :root[data-theme="light"] .agent-pty-state[data-status="no_tui"] { background: #eef2f7; }
 :root[data-theme="light"] .pty-dialog-backdrop { background: rgb(23 35 51 / 45%); }
 
 .ultimate-terminal-page .terminal-session-tabs { padding-right: 176px; }

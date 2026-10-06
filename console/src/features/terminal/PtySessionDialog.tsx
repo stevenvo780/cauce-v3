@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
@@ -11,7 +11,6 @@ import { Unknown } from '../../components/ui';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import type { DenegacionExplicada } from './denegaciones';
 import type { FleetAgent, TerminalTargetResolution } from './fleet';
-import { ptyReasonProblem, PTY_REASON_MAX_LENGTH } from './session';
 
 export function NegativaPty({ negativa }: { negativa: DenegacionExplicada }) {
   return (
@@ -34,13 +33,11 @@ export function PtySessionDialog({ agent, resolution, pending, error, onCancel, 
   pending: boolean;
   error?: DenegacionExplicada;
   onCancel: () => void;
-  onConfirm: (reason: string) => void;
+  onConfirm: () => void;
 }) {
-  const [reason, setReason] = useState('');
-  const reasonRef = useRef<HTMLTextAreaElement>(null);
   const dialogo = useRef<HTMLDivElement>(null);
+  const abrirRef = useRef<HTMLButtonElement>(null);
   const target = resolution.target;
-  const problem = ptyReasonProblem(reason);
   const shared = target?.shares_container_with ?? [];
   const sharedLabels = shared.map((identity) =>
     identity.tenant_id === target?.tenant_id ? identity.alias : `${identity.tenant_id}:${identity.alias}`);
@@ -53,7 +50,7 @@ export function PtySessionDialog({ agent, resolution, pending, error, onCancel, 
     const abridor = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const fondo = document.querySelector('.app-shell');
     fondo?.setAttribute('inert', '');
-    reasonRef.current?.focus();
+    abrirRef.current?.focus();
     return () => {
       fondo?.removeAttribute('inert');
       abridor?.focus();
@@ -100,33 +97,16 @@ export function PtySessionDialog({ agent, resolution, pending, error, onCancel, 
           <p className="pty-dialog-solo">El servidor no reporta otros agentes en este contenedor.</p>
         )}
 
-        <label className="pty-dialog-reason" htmlFor="pty-dialog-reason">
-          Motivo de la sesión (queda en la auditoría)
-          <textarea
-            id="pty-dialog-reason"
-            ref={reasonRef}
-            value={reason}
-            onChange={(event) => { setReason(event.target.value); }}
-            rows={3}
-            maxLength={PTY_REASON_MAX_LENGTH}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="Escribí por qué necesitás esta shell…"
-            aria-describedby="pty-dialog-reason-hint"
-          />
-        </label>
-        <p className="pty-dialog-hint" id="pty-dialog-reason-hint">{problem ?? `Motivo válido · ${String(reason.trim().length)}/${String(PTY_REASON_MAX_LENGTH)}`}</p>
-
         {error ? <NegativaPty negativa={error} /> : null}
 
         <div className="pty-dialog-actions">
           <button className="button secondary" type="button" onClick={onCancel} disabled={pending}>Cancelar</button>
           <button
+            ref={abrirRef}
             className="button primary"
             type="button"
-            disabled={Boolean(problem) || pending}
-            title={problem}
-            onClick={() => { onConfirm(reason.trim()); }}
+            disabled={pending}
+            onClick={onConfirm}
           >
             <TerminalSquare size={15} aria-hidden="true" /> {pending ? 'Solicitando…' : 'Abrir sesión PTY'}
           </button>

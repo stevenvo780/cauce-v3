@@ -150,7 +150,7 @@ export function adapterBreakdownText(adapters: AdapterView[]): string {
 }
 
 /** Explicit PTY states. There is no implicit "available": absent data is UNKNOWN. */
-export type TerminalAccessStatus = 'allowed' | 'denied' | 'offline' | 'not_installed' | 'unknown';
+export type TerminalAccessStatus = 'allowed' | 'denied' | 'offline' | 'unknown';
 
 export interface TerminalTargetResolution {
   status: TerminalAccessStatus;
@@ -163,8 +163,7 @@ export const TERMINAL_ACCESS_LABELS: Readonly<Record<TerminalAccessStatus, strin
   allowed: 'PTY online',
   denied: 'Sin autoridad',
   offline: 'Agente PTY offline',
-  not_installed: 'Agente PTY no instalado',
-  unknown: 'PTY desconocido',
+  unknown: 'Conexión sin comprobar',
 };
 
 /** Resolves a destination by exact tenant:alias identity; a bare alias never matches. */
@@ -191,10 +190,17 @@ export function resolveTerminalTarget(targets: TerminalTarget[] | null | undefin
   const placeholderReason = target.reason.trim().length === 0 || /^\s*ok\.?\s*$/iu.test(target.reason);
   if (target.pty_state === 'not_installed') {
     return {
-      status: 'not_installed',
+      status: 'unknown',
+      reason: 'Presencia no observada del agente PTY para este destino; conexión e instalación quedan sin comprobar.',
+      target,
+    };
+  }
+  if (target.pty_state === 'unknown') {
+    return {
+      status: 'unknown',
       reason: placeholderReason
-        ? 'El agente PTY figura como no instalado: el terminal-relay nunca registró este destino.'
-        : target.reason,
+        ? 'No se observó presencia del agente PTY para este destino; conexión e instalación quedan sin comprobar.'
+        : `${target.reason} Presencia no observada: conexión e instalación quedan sin comprobar.`,
       target,
     };
   }
@@ -207,15 +213,7 @@ export function resolveTerminalTarget(targets: TerminalTarget[] | null | undefin
       target,
     };
   }
-  if (target.pty_state === 'online') return { status: 'allowed', reason: target.reason, target };
-  if (placeholderReason) {
-    return {
-      status: 'unknown',
-      reason: 'El estado del agente PTY es desconocido: el terminal-relay no publicó una medición verificable.',
-      target,
-    };
-  }
-  return { status: 'unknown', reason: `No se pudo determinar el estado del agente PTY de ${agent.alias}. ${target.reason}`, target };
+  return { status: 'allowed', reason: target.reason, target };
 }
 
 /** How many destinations the server reports as reachable. UNKNOWN inventory stays UNKNOWN. */

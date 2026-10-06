@@ -16,7 +16,6 @@ import { codigoDeDenegacion, explicarDenegacionPty, type DenegacionExplicada } f
 import { WRITABLE_TUI_MODE } from './fleet';
 import { NegativaPty } from './PtySessionDialog';
 import type { PtyChannelState } from './pty-types';
-import { controlTuiReason } from './session';
 
 /** Close code the relay uses on the browser leg when the operator's hold is no longer theirs. */
 const CIERRE_CONTROL_DEVUELTO = 4410;
@@ -39,7 +38,7 @@ const ETIQUETA_DE_FASE: Readonly<Record<FaseDeToma, string>> = {
 const NO_SE_ABRIO: DenegacionExplicada = {
   titulo: 'La consola no llegó a abrir la sesión con teclado',
   porQue: 'El pedido de sesión escribible no quedó adoptado por esta pestaña: o el gateway lo rechazó '
-    + '—su motivo se pinta aparte—, o ya había otra reserva en vuelo para este panel. No se tomó ningún '
+    + '—la explicación del gateway se conserva—, o ya había otra reserva en vuelo para este panel. No se tomó ningún '
     + 'control: el bus le sigue entregando a este alias.',
   quienLoLevanta: 'Vos: esperá a que termine la reserva en curso y volvé a pedir la toma.',
   linea: 'La consola no llegó a abrir la sesión con teclado y no se tomó ningún control.',
@@ -54,7 +53,7 @@ function sinEnganche(motivo: ResultadoDeEspera): DenegacionExplicada {
   return {
     titulo: 'La sesión con teclado no llegó a engancharse: seguís sin el teclado',
     porQue: `${porQue} Estás sobre una sesión escribible en solo lectura: nadie quedó silenciado y el bus le sigue entregando a este alias.`,
-    quienLoLevanta: 'Vos: reintentá la toma con el mismo motivo. Si vuelve a fallar, cerrá la terminal y '
+    quienLoLevanta: 'Vos: reintentá la toma de esta misma sesión. Si vuelve a fallar, cerrá la terminal y '
       + 'revisá que el agente PTY del contenedor siga conectado.',
     linea: 'La sesión con teclado no llegó a engancharse; no se tomó el control y el alias sigue recibiendo.',
   };
@@ -106,12 +105,11 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
   /** The relay redeemed the ticket of the session on screen: the same signal the bar paints. */
   sesionEnganchada: boolean;
   estadoDelCanal?: PtyChannelState;
-  /** Opens the writable session with its audit reason; undefined when refused. */
-  onAbrirEscritura: (motivo: string) => Promise<TerminalSessionGrant | undefined>;
+  /** Opens the writable session; undefined when refused. */
+  onAbrirEscritura: () => Promise<TerminalSessionGrant | undefined>;
   onControlCambia: (sostenido: boolean) => void;
 }) {
   const api = useApi();
-  const motivo = controlTuiReason(alias);
   const [arriendo, setArriendo] = useState<ControlDeTuiTomado>();
   const [fase, setFase] = useState<FaseDeToma>('reposo');
   const [reintentable, setReintentable] = useState(false);
@@ -229,7 +227,6 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
   async function tomar(allowBusy = true) {
     if (pendiente || tomandoRef.current || escrituraBloqueada) return;
     tomandoRef.current = true;
-    const escrito = motivo.trim();
     setError(undefined);
     setPerdido(false);
     let postedGeneration: number | undefined;
@@ -242,7 +239,7 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
       let escribible = reusable;
       if (escribible === undefined) {
         setFase('abriendo');
-        escribible = await onAbrirEscritura(escrito);
+        escribible = await onAbrirEscritura();
       }
       if (!sigueVivo()) return;
       if (escribible === undefined) {
@@ -264,7 +261,7 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
       const owner = dueno(escribible);
       const takeApi = apiRef.current;
       const tomado = await tomarControlDeTui(
-        escribible.session_id, owner, escrito, takeApi, allowBusy,
+        escribible.session_id, owner, takeApi, allowBusy,
       );
       const current = grantRef.current;
       const sameOwner = current?.session_id === escribible.session_id && current.request_id === owner.request_id

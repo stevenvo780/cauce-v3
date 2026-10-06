@@ -74,8 +74,6 @@ export interface CreateTerminalSessionInput {
   tenant_id: string;
   alias: string;
   mode: string;
-  /** Hand-written operator justification; audited server-side. */
-  reason: string;
   cols: number;
   rows: number;
   /** Stable across retries of one logical tab; new after an explicit close/reopen. */
@@ -360,7 +358,6 @@ export function createTerminalSession(
     tenant_id: input.tenant_id,
     alias: input.alias,
     mode: input.mode,
-    reason: input.reason,
     cols: input.cols,
     rows: input.rows,
     request_id: input.request_id,
