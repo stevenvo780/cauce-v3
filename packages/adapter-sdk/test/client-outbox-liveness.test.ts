@@ -3,7 +3,7 @@ import test from 'node:test';
 import { AdapterEngine } from '../src/sdk/engine.js';
 import type { ClientFrame, DeliveryEvent } from '../src/sdk/types.js';
 import {
-  FakeConnection, SequenceConnector, VirtualClock, makeClient, waitUntil,
+  FakeConnection, SequenceConnector, VirtualClock, escala, makeClient, waitUntil,
 } from './client-fixtures.js';
 
 class ReplayConnection extends FakeConnection {
@@ -92,7 +92,7 @@ async function withWatchdog(promise: Promise<void>, message: string): Promise<vo
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
           reject(new Error(message));
-        }, 500);
+        }, escala(500));
       }),
     ]);
   } finally {
@@ -216,7 +216,7 @@ test('a closed replay cannot recover or append its old snapshot to a new generat
   try {
     await waitUntil(() => first.sent.some((frame) => frame.type === 'ack'));
     first.end();
-    await waitUntil(() => clock.scheduledIn(1) > 0, 500, 'reconnect without waiting for the old send');
+    await waitUntil(() => clock.scheduledIn(1) > 0, escala(500), 'reconnect without waiting for the old send');
     assert.equal(recovery.mock.callCount(), 0);
     clock.advance(1);
     await waitUntil(() => context.store.pendingEvents().length === 0);

@@ -230,11 +230,22 @@ def resumable_reservation(root: object, goal_hash: str) -> bool:
         return False
     body = payload.get("body")
     key = payload.get("idempotency_key")
-    prefix = f"praxis-engineering:{goal_hash[:16]}:"
     if (not isinstance(body, dict) or body.get("type") != "praxis.supervision.continue"
-            or not isinstance(key, str) or not key.startswith(prefix)
+            or not isinstance(key, str)
             or payload.get("room_id") != "grp.hospital"
             or payload.get("recipients") != [{"tenant_id": "Hospital", "alias": "operador"}]):
+        return False
+    if root.get("purpose") == "visual_review":
+        supervision = body.get("supervision")
+        cohort, review = root.get("review_cohort"), baseline.get("qa_review")
+        return (isinstance(supervision, dict) and supervision.get("version") == 2
+                and supervision.get("goal_sha256") == goal_hash and supervision.get("purpose") == "visual_review"
+                and isinstance(cohort, str) and re.fullmatch(r"[a-f0-9]{64}", cohort) is not None
+                and isinstance(review, dict) and review.get("cohort_sha256") == cohort
+                and supervision.get("visual_review") == review
+                and key == f"praxis-visual-review:{goal_hash[:16]}:{cohort}")
+    prefix = f"praxis-engineering:{goal_hash[:16]}:"
+    if not key.startswith(prefix):
         return False
     try:
         nonce = uuid.UUID(key[len(prefix):])
@@ -305,7 +316,7 @@ def resume_measured_progress(state: dict, engineering: dict, now: float, made_pr
     if (state.get("phase") != "circuit_paused" or state.get("active_root")
             or state.get("pause_reason") not in {"no_measured_progress", "no_new_progress"}
             or engineering.get("goal_sha256") != state.get("goal_sha256")
-            or engineering.get("verified_engineering") is not True):
+            or engineering.get("verified_engineering") is not True or visual_review_pending(engineering)):
         return False
     previous = state.get("progress_pause_baseline", state.get("last_finished", {}).get("engineering"))
     if not isinstance(previous, dict) or not made_progress(previous, engineering):
@@ -317,4 +328,98 @@ def resume_measured_progress(state: dict, engineering: dict, now: float, made_pr
     state["phase"] = "observing"
     state["continuation_earned"] = True
     state.pop("progress_pause_baseline", None)
+    return True
+
+
+def visual_review_pending(engineering: dict) -> bool:
+    return (engineering.get("verified_engineering") is True and engineering.get("qa_executed") is True
+            and engineering.get("gate_rejections", {}).get("qa") == "independent_visual_review_pending"
+            and isinstance(engineering.get("qa_review"), dict))
+
+
+def preserve_progress_baseline(state: dict, root: dict) -> None:
+    baseline = root.get("baseline")
+    if root.get("purpose") == "visual_review" or not isinstance(baseline, dict):
+        return
+    state["progress_pause_baseline"] = baseline
+    state["progress_pause_binding"] = {"root": root.get("message_id"), "goal_sha256": state["goal_sha256"],
+        "baseline_sha256": digest(canonical(baseline)),
+        **{key: root[key] for key in ("request_id", "trace_id", "delivery_ids", "body_sha256", "body_type") if key in root}}
+
+
+def recover_reviewed_progress(state: dict, engineering: dict, now: float, made_progress) -> bool:
+    pending = state.get("pending_visual_review")
+    current = engineering.get("qa_review")
+    baseline = state.get("progress_pause_baseline")
+    if (state.get("phase") != "waiting_visual_review" or state.get("active_root") or not isinstance(pending, dict)
+            or not isinstance(current, dict) or pending.get("cohort_sha256") != current.get("cohort_sha256")
+            or "qa" not in engineering.get("valid_gates", []) or not isinstance(baseline, dict)
+            or not made_progress(baseline, engineering)):
+        return False
+    state.setdefault("progress_recoveries", []).append({"at": now, "reason": "visual_review_completed",
+        "root": state.get("progress_pause_binding", {}).get("root"), "cohort_sha256": current["cohort_sha256"],
+        "baseline_sha256": digest(canonical(baseline)), "evidence_sha256": digest(canonical(engineering))})
+    state["phase"], state["continuation_earned"] = "observing", True
+    state["idle_since"], state["cooldown_until"] = now, now + state.get("review_cooldown_seconds", 1200)
+    state.pop("pending_visual_review", None)
+    return True
+
+
+def classify_reviewed_without_progress(state: dict, engineering: dict) -> bool:
+    pending, current = state.get("pending_visual_review"), engineering.get("qa_review")
+    if (state.get("phase") != "waiting_visual_review" or not isinstance(pending, dict) or not isinstance(current, dict)
+            or pending.get("cohort_sha256") != current.get("cohort_sha256") or "qa" not in engineering.get("valid_gates", [])):
+        return False
+    state["phase"], state["pause_reason"], state["continuation_earned"] = "circuit_paused", "no_measured_progress", False
+    return True
+
+
+def code_fingerprint(engineering: dict) -> str | None:
+    sources = engineering.get("source_hashes", {})
+    if not isinstance(sources, dict):
+        return None
+    code = {path: sha for path, sha in sources.items() if Path(path).suffix in {".py", ".mjs", ".js", ".css", ".html"}}
+    return digest(canonical(code)) if code and all(re.fullmatch(r"[a-f0-9]{64}", str(sha)) for sha in code.values()) else None
+
+
+def hold_earned_review_credit(state: dict, engineering: dict, now: float) -> bool:
+    finished, existing, origin = state.get("last_finished", {}), state.get("review_held_continuation", {}), state.get("earned_continuation_origin", {})
+    recorded_origin = (origin.get("root") == finished.get("root") and origin.get("binding") == finished.get("binding")
+                       and origin.get("goal_sha256") == state.get("goal_sha256")
+                       and origin.get("source_sha256") == code_fingerprint(engineering))
+    if (state.get("phase") != "observing" or state.get("continuation_earned") is not True
+            or (state.get("last_action") != "root_finished_progress" and existing.get("status") != "restored" and not recorded_origin)):
+        return False
+    measured, binding = finished.get("engineering", {}), finished.get("binding", {})
+    if (measured.get("goal_sha256") != state.get("goal_sha256") or measured.get("verified_engineering") is not True
+            or code_fingerprint(measured) is None or code_fingerprint(measured) != code_fingerprint(engineering)
+            or binding.get("body_type") not in {"request", "praxis.supervision.continue"}):
+        return False
+    try:
+        root = str(uuid.UUID(finished["root"]))
+        validated = causal_binding(binding, binding["body_sha256"], binding["body_type"])
+    except (KeyError, ValueError, TypeError, AttributeError, SupervisionError):
+        return False
+    token = digest(canonical({"root": root, "binding": validated, "goal_sha256": state["goal_sha256"]}))
+    if existing.get("credit_id") == token and existing.get("status") == "consumed":
+        return False
+    state["review_held_continuation"] = {"credit_id": token, "status": "held", "held_at": now,
+        "root": root, "binding": validated, "goal_sha256": state["goal_sha256"],
+        "source_sha256": code_fingerprint(engineering), "cohort_sha256": engineering["qa_review"]["cohort_sha256"]}
+    return True
+
+
+def restore_earned_review_credit(state: dict, engineering: dict, now: float) -> bool:
+    held, current, pending = state.get("review_held_continuation", {}), engineering.get("qa_review"), state.get("pending_visual_review")
+    if (state.get("phase") != "waiting_visual_review" or state.get("active_root") or held.get("status") != "held"
+            or not isinstance(current, dict) or not isinstance(pending, dict) or "qa" not in engineering.get("valid_gates", [])
+            or held.get("goal_sha256") != state.get("goal_sha256") or held.get("source_sha256") != code_fingerprint(engineering)
+            or held.get("cohort_sha256") != current.get("cohort_sha256") or pending.get("cohort_sha256") != current.get("cohort_sha256")
+            or state.get("last_finished", {}).get("root") != held.get("root")
+            or state.get("last_finished", {}).get("binding") != held.get("binding")):
+        return False
+    held.update(status="restored", restored_at=now)
+    state["phase"], state["continuation_earned"] = "observing", True
+    state["idle_since"], state["cooldown_until"] = now, now + state.get("review_cooldown_seconds", 1200)
+    state.pop("pending_visual_review", None)
     return True

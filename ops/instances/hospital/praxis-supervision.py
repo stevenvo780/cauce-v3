@@ -470,12 +470,49 @@ class Supervisor:
     def pause(self, reason: str, kind: str = "alert") -> dict:
         self.state["phase"] = "circuit_paused"
         self.state["pause_reason"] = reason
-        if reason in {"no_measured_progress", "no_new_progress"}:
+        if reason in {"no_measured_progress", "no_new_progress"} and not self.state.get("progress_pause_binding"):
             self.state["progress_pause_baseline"] = self.state.get("observed", {}).get("engineering", {})
         self.save()
         self.notice(reason, kind, "Praxis: supervisión de ingeniería pausada; causa medida: " + reason
                     + ". El monitor conserva observación; hace falta una decisión o evidencia nueva verificable.")
         return self.finish(reason)
+
+    def request_visual_review(self, engineering: dict) -> dict:
+        review = engineering["qa_review"]
+        cohort, day = review["cohort_sha256"], STATE.utc_day(self.now)
+        STATE.hold_earned_review_credit(self.state, engineering, self.now)
+        self.state["phase"], self.state["pause_reason"] = "waiting_visual_review", "independent_visual_review_pending"
+        self.state["continuation_earned"] = False
+        self.state["pending_visual_review"] = review
+        self.state["review_cooldown_seconds"] = self.config["cooldown_seconds"]
+        requests, budgets = self.state.setdefault("visual_review_requests", {}), self.state.setdefault("visual_review_roots", {})
+        if cohort in requests:
+            return self.finish("visual_review_pending")
+        if self.state["roots"].get(day, 0) >= self.config["root_limit"] or budgets.get(day, 0) >= min(3, self.config["notice_limit"]):
+            return self.finish("visual_review_fuel_exhausted")
+        if self.now < self.state.get("cooldown_until", 0):
+            return self.finish("cooldown")
+        deferred = self.refresh_before_post()
+        if deferred is not None:
+            return deferred
+        key = "praxis-visual-review:" + self.config["goal_sha256"][:16] + ":" + cohort
+        payload = self.payload(key, "Operador: revisá este corte sintético de forma independiente de los developers. "
+            "Verificá hashes y source commit; inspeccioná las capturas de supervision.visual_review. "
+            "Registrá la revisión real en el artefacto QA y actualizá su hash. No desarrolles ni declares aceptación clínica. "
+            "Si falta evidencia, registrá el bloqueo. Cerrá sin polling. La revisión no acredita progreso de código.")
+        payload["body"]["supervision"].update(purpose="visual_review", visual_review=review,
+            original_root=self.state.get("progress_pause_binding", {}).get("root"))
+        self.state["roots"][day] = self.state["roots"].get(day, 0) + 1
+        budgets[day] = budgets.get(day, 0) + 1
+        requests[cohort] = {"at": self.now, "key": key, "status": "reserved"}
+        self.state["active_root"] = {"payload": payload, "baseline": engineering, "purpose": "visual_review",
+            "review_cohort": cohort, "reserved_at": self.now}
+        self.state["phase"] = "root_reserved"
+        self.save()
+        self.publish(self.state["active_root"])
+        if self.state["active_root"].get("error") in CAPACITY_CODES:
+            return self.pause(self.state["active_root"]["error"])
+        return self.finish("visual_review_requested" if self.state["active_root"].get("message_id") else "root_transport_unknown")
 
     def refresh_before_post(self) -> dict | None:
         if time.monotonic() >= getattr(self.api, "deadline", float("inf")):
@@ -558,6 +595,18 @@ class Supervisor:
                 return self.finish("root_pending")
             code = typed_failure(receipt) or chain_code
             failed = any(row["status"] != "done" for row in deliveries)
+            if root.get("purpose") == "visual_review":
+                self.state["visual_review_requests"][root["review_cohort"]].update(status="closed", message_id=root["message_id"])
+                self.state["last_review_finished"] = {"at": self.now, "root": root["message_id"], "cohort_sha256": root["review_cohort"]}
+                self.state.pop("active_root")
+                if code or failed:
+                    return self.pause(code or "visual_review_failed")
+                self.state["phase"] = "waiting_visual_review"
+                if (STATE.restore_earned_review_credit(self.state, engineering, self.now)
+                        or STATE.recover_reviewed_progress(self.state, engineering, self.now, made_progress)):
+                    return self.finish("visual_review_completed")
+                return self.finish("visual_review_completed_no_progress" if STATE.classify_reviewed_without_progress(self.state, engineering)
+                                   else "visual_review_pending")
             self.state["last_finished"] = {"at": self.now, "engineering": engineering, "root": root["message_id"],
                 "binding": {key: root[key] for key in ("request_id", "trace_id", "delivery_ids", "body_sha256", "body_type")}}
             self.state.pop("active_root")
@@ -566,12 +615,21 @@ class Supervisor:
                 return self.pause(code)
             if failed:
                 return self.pause("root_failed_unclassified")
+            STATE.preserve_progress_baseline(self.state, root)
+            if STATE.visual_review_pending(engineering):
+                self.state["phase"], self.state["pause_reason"] = "waiting_visual_review", "independent_visual_review_pending"
+                self.state["pending_visual_review"] = engineering["qa_review"]
+                self.state["continuation_earned"] = False
+                return self.finish("visual_review_pending")
             if not made_progress(root["baseline"], engineering):
                 return self.pause("no_measured_progress")
             if self.state["phase"] == "circuit_paused":
                 return self.finish("circuit_paused")
             self.state["phase"] = "observing"
             self.state["continuation_earned"] = True
+            self.state["earned_continuation_origin"] = {"root": root["message_id"],
+                "binding": self.state["last_finished"]["binding"], "goal_sha256": self.config["goal_sha256"],
+                "source_sha256": STATE.code_fingerprint(engineering)}
             self.state["cooldown_until"] = self.now + self.config["cooldown_seconds"]
             self.state["idle_since"] = self.now
             return self.finish("root_finished_progress")
@@ -580,6 +638,16 @@ class Supervisor:
             return self.finish("active_work")
         if not runtime["ready"]:
             return self.pause("actors_unavailable")
+        if STATE.visual_review_pending(engineering) and (self.state["phase"] in {"observing", "waiting_visual_review"}
+                or self.state.get("pause_reason") in {"no_measured_progress", "no_new_progress"}):
+            return self.request_visual_review(engineering)
+        if (STATE.restore_earned_review_credit(self.state, engineering, self.now)
+                or STATE.recover_reviewed_progress(self.state, engineering, self.now, made_progress)):
+            self.save()
+        if STATE.classify_reviewed_without_progress(self.state, engineering):
+            return self.finish("visual_review_completed_no_progress")
+        if self.state["phase"] == "waiting_visual_review":
+            return self.finish("visual_review_pending")
         if engineering["completion_candidate"]:
             self.state["phase"] = "awaiting_final_review"
             self.save()
@@ -616,6 +684,10 @@ class Supervisor:
         key = "praxis-engineering:" + self.config["goal_sha256"][:16] + ":" + str(uuid.uuid4())
         roots[day] = roots.get(day, 0) + 1
         self.state["continuation_earned"] = False
+        self.state.pop("earned_continuation_origin", None)
+        held = self.state.get("review_held_continuation", {})
+        if held.get("status") == "restored":
+            held.update(status="consumed", consumed_at=self.now, consumed_by=key)
         self.state["auth_retry_earned"] = False
         self.state["active_root"] = {"payload": self.payload(key, ROOT_TEXT), "baseline": engineering,
                                      "reserved_at": self.now}
@@ -651,7 +723,7 @@ def main() -> int:
                     engineering = engineering_snapshot(config, deadline)
                     config["certificate_not_after"] = certificate_expiry(config)
                     runtime = runtime_snapshot(config, deadline)
-                    if (supervisor.state["phase"] in {"observing", "root_reserved"}
+                    if (supervisor.state["phase"] in {"observing", "root_reserved", "waiting_visual_review"}
                             or supervisor.state.get("pause_reason") in {"no_measured_progress", "no_new_progress"}):
                         publication = PREVIEW.publish(config, engineering, runtime, deadline, STATE, run_command,
                             lambda: runtime_snapshot(config, deadline),

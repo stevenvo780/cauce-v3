@@ -8,6 +8,7 @@ import { DurableStore } from "../src/sdk/durable-store.js";
 import { AdapterEngine } from "../src/sdk/engine.js";
 import { conversationStatusOutput, isConversationStatusRequest } from "../src/sdk/engine/conversation-status.js";
 import type { Delivery, DeliveryEvent } from "../src/sdk/types.js";
+import { escala } from "./client-fixtures.js";
 import {
   claimToken, ControlledRunner, conversation, delivery, root, storeFor, waitFor,
 } from "./engine-fixtures.js";
@@ -110,7 +111,7 @@ test("status completes during a blocked shared-session task without reserving or
     await waitFor(() => context.runner.calls === 1, "long harness to start");
     const input = { ...humanStatus("status-fast"), conversation_work_state: state(["started", "pending"]) };
     statusTask = context.engine.handleDelivery(input);
-    await waitFor(() => context.store.getDelivery(input.delivery_id)?.state === "done", "status to finish during long task", 1_000);
+    await waitFor(() => context.store.getDelivery(input.delivery_id)?.state === "done", "status to finish during long task", escala(1_000));
     await statusTask;
     assert.equal(context.store.getDelivery(longInput.delivery_id)?.state, "started");
     assert.equal(context.runner.calls, 1);

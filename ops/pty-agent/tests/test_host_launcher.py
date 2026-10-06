@@ -35,7 +35,8 @@ class NativeHostLauncher(unittest.TestCase):
                 path.chmod(0o700)
             if os.geteuid() == 0:
                 os.chown(path, self.uid, self.gid)
-        env = {**os.environ, "CAUCE_ALIAS": "hostprobe", "CAUCE_TENANT": "Steven", "HOME": str(self.home),
+        inherited = {key: value for key, value in os.environ.items() if key not in {"CODEX_HOME", "CLAUDE_CONFIG_DIR"}}
+        env = {**inherited, "CAUCE_ALIAS": "hostprobe", "CAUCE_TENANT": "Steven", "HOME": str(self.home),
                "CAUCE_SHARED_SESSION": "1", "CAUCE_SHARED_SESSION_WORKSPACE": str(self.home)}
         self.process = subprocess.Popen(["python3", str(self.adapter)], env=env, cwd=self.home, **self.credentials())
         systemctl = self.base / "bin/systemctl"

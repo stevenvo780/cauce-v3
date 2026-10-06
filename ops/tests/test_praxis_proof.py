@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import importlib.util
 import json
 import os
@@ -229,6 +230,64 @@ class PraxisProofTests(unittest.TestCase):
             self.run_proof()
         self.assertEqual(self.verification.read_bytes(), original)
         self.assertEqual((self.workspace / self.args.artifact_prefix / "tests.json").read_bytes(), evidence)
+
+    def test_install_only_changes_declared_files_and_lock_is_invisible_to_git(self):
+        self.args.install_evidence = True
+        self.assertEqual(self.run_proof(), 0)
+        status = {row[3:] for row in self.git("status", "--porcelain", "--untracked-files=all").splitlines()}
+        expected = {PROOF.VERIFICATION, *(self.args.artifact_prefix + "/" + name for name in ("tests.json", "snapshot.json", "proof.json"))}
+        self.assertEqual(status, expected)
+        lock_path = self.workspace / ".git/praxis-proof.lock"
+        self.assertTrue(lock_path.is_file())
+        inode = lock_path.stat().st_ino
+        self.git("add", *expected)
+        self.git("commit", "-qm", "Synthetic installed evidence")
+        self.assertEqual(self.git("status", "--porcelain", "--untracked-files=all"), "")
+        self.assertEqual(lock_path.stat().st_ino, inode)
+
+    def test_installation_lock_preserves_writer_exclusion_and_inode(self):
+        self.assertEqual(self.run_proof(), 0)
+        environment = PROOF.child_environment(self.root)
+        first = PROOF.installation_lock(self.workspace, environment)
+        try:
+            fcntl.flock(first, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            inode = os.fstat(first).st_ino
+            with self.assertRaisesRegex(PROOF.ProofError, "evidence_installation_in_progress"):
+                self.install_output()
+            second = PROOF.installation_lock(self.workspace, environment)
+            try:
+                self.assertEqual(os.fstat(second).st_ino, inode)
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(second, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(second)
+        finally:
+            os.close(first)
+        self.install_output()
+        self.assertEqual((self.workspace / ".git/praxis-proof.lock").stat().st_ino, inode)
+
+    def test_worktree_lock_uses_its_git_metadata(self):
+        linked = self.root / "linked-worktree"
+        self.git("worktree", "add", "--detach", str(linked), self.commit)
+        environment = PROOF.child_environment(self.root)
+        lock = PROOF.installation_lock(linked, environment)
+        os.close(lock)
+        git_directory = Path(PROOF.git_text(linked, ["rev-parse", "--absolute-git-dir"], environment))
+        self.assertTrue((git_directory / "praxis-proof.lock").is_file())
+        self.assertFalse((linked / "praxis-proof.lock").exists())
+        self.assertEqual(PROOF.git_text(linked, ["status", "--porcelain", "--untracked-files=all"], environment), "")
+
+    def test_lock_symlink_and_inconsistent_git_metadata_are_rejected(self):
+        target = self.root / "synthetic-protected-file"
+        target.write_text("synthetic protected contents")
+        (self.workspace / ".git/praxis-proof.lock").symlink_to(target)
+        environment = PROOF.child_environment(self.root)
+        with self.assertRaisesRegex(PROOF.ProofError, "unsafe_installation_lock"):
+            PROOF.installation_lock(self.workspace, environment)
+        self.assertEqual(target.read_text(), "synthetic protected contents")
+        with mock.patch.object(PROOF, "git_text", return_value=str(self.root / "other-git")):
+            with self.assertRaisesRegex(PROOF.ProofError, "unsafe_git_metadata"):
+                PROOF.installation_lock(self.workspace, environment)
 
     def test_install_rejects_different_head_without_writing(self):
         self.assertEqual(self.run_proof(), 0)

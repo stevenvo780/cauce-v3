@@ -285,7 +285,7 @@ class EvidenceReader:
         return True
 
     def gates(self, verification: dict, source_current: bool) -> dict:
-        result = {"valid": set(), "not_applicable": {}, "artifacts": [], "tested": {}, "rejections": {}, "qa_executed": False}
+        result = {"valid": set(), "not_applicable": {}, "artifacts": [], "tested": {}, "rejections": {}, "qa_executed": False, "qa_review": None}
         entries, version = verification.get("gates", []), verification.get("schema_version")
         if type(version) is not int or version not in {1, 2} or not isinstance(entries, list) or len(entries) > 1000:
             result["rejections"]["schema"] = "unsupported_evidence_schema"
@@ -316,7 +316,7 @@ class EvidenceReader:
             expected = entry.get("source_files", verification.get("source_files"))
             source_commit = entry.get("source_commit", verification.get("integration_commit"))
             verified = self.commit_verified(source_commit) and self.source_matches(expected)
-            coverage, independent, executed_all, gate_tokens = {}, True, True, []
+            coverage, independent, executed_all, gate_tokens, review_images = {}, True, True, [], {}
             for artifact in artifacts + entry.get("transferred_artifacts", []):
                 observed = self.read_artifact(artifact)
                 report = observed[1] if observed else None
@@ -343,6 +343,10 @@ class EvidenceReader:
                     executed = (isinstance(runs, list) and bool(runs)
                                 and all(isinstance(run, dict) and run.get("status") == "passed" for run in runs))
                     executed_all = executed_all and executed
+                    for run in runs if isinstance(runs, list) else []:
+                        for capture in run.get("screenshots", []) if isinstance(run, dict) else []:
+                            if isinstance(capture, dict) and self.read_artifact(capture) is not None:
+                                review_images[capture["path"]] = capture["sha256"]
                     review, images = report.get("review", {}), report.get("inspected_images", [])
                     independent = (independent and executed and isinstance(review, dict) and review.get("independent") is True
                         and isinstance(review.get("reviewer"), str) and bool(review["reviewer"].strip())
@@ -351,6 +355,12 @@ class EvidenceReader:
                 gate_tokens.append(identifier + ":" + artifact["sha256"])
             if identifier == "qa":
                 result["qa_executed"] = bool(verified and executed_all)
+                if verified and executed_all and 1 <= len(review_images) <= 100:
+                    code_sources = {path: sha for path, sha in expected.items() if Path(path).suffix in {".py", ".mjs", ".js", ".css", ".html"}}
+                    result["qa_review"] = {"cohort_sha256": self.state.digest(self.state.canonical({
+                        "source_files": code_sources, "screenshots": sorted(set(review_images.values()))})),
+                        "source_commit": source_commit, "source_files": expected, "artifacts": artifacts,
+                        "screenshots": [{"path": path, "sha256": sha} for path, sha in sorted(review_images.items())]}
             if verified and independent:
                 result["valid"].add(identifier)
                 result["artifacts"].extend(gate_tokens)
@@ -529,6 +539,7 @@ def engineering_snapshot(config: dict, deadline: float, run_command, state) -> d
             "gate_artifacts": sorted(gates["artifacts"]), "tested_source_hashes": gates["tested"],
             "verified_engineering": bool(verified_engineering), "qa_executed": gates["qa_executed"],
             "production_clinical_accepted": verification.get("production_clinical_accepted", False),
+            "qa_review": dict(gates["qa_review"], git_head=head, goal_sha256=goal_hash) if gates["qa_review"] else None,
             "next_work": next_work(document, evidence, technical)}
 
 

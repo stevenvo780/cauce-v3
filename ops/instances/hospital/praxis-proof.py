@@ -12,6 +12,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -218,6 +219,37 @@ def bound_qa(workspace, gate, sources, commit, env):
         return False
 
 
+def installation_lock(workspace, env):
+    marker = workspace / ".git"
+    owner = workspace.stat().st_uid
+    if marker.is_symlink() or marker.stat().st_uid != owner:
+        raise ProofError("unsafe_git_metadata")
+    directory = Path(git_text(workspace, ["rev-parse", "--absolute-git-dir"], env))
+    if marker.is_dir():
+        expected = marker
+    elif marker.is_file() and marker.stat().st_size <= 4096:
+        lines = marker.read_text().splitlines()
+        if len(lines) != 1 or not lines[0].startswith("gitdir: "):
+            raise ProofError("unsafe_git_metadata")
+        expected = workspace / lines[0][8:]
+    else:
+        raise ProofError("unsafe_git_metadata")
+    if (not directory.is_absolute() or directory != directory.resolve() or expected.resolve() != directory
+            or not directory.is_dir() or directory.stat().st_uid != owner
+            or any(part.lower() in FORBIDDEN - {".git"} for part in directory.parts)):
+        raise ProofError("unsafe_git_metadata")
+    try:
+        lock = os.open(directory / "praxis-proof.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    except OSError as error:
+        raise ProofError("unsafe_installation_lock") from error
+    metadata = os.fstat(lock)
+    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != owner or metadata.st_nlink != 1
+            or metadata.st_size != 0 or metadata.st_mode & 0o022):
+        os.close(lock)
+        raise ProofError("unsafe_installation_lock")
+    return lock
+
+
 def install_evidence(workspace, output, prefix, proof, env):
     if not PREFIX.fullmatch(prefix) or not permitted(prefix):
         raise ProofError("invalid_artifact_prefix")
@@ -239,8 +271,7 @@ def install_evidence(workspace, output, prefix, proof, env):
            for name in ("tests", "snapshot")):
         raise ProofError("tests_or_snapshot_not_passed")
     target.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = metadata_path(workspace, "docs/evidence/.praxis-proof.lock")
-    lock = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    lock = installation_lock(workspace, env)
     try:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
