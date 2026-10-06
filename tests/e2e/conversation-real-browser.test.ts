@@ -144,8 +144,8 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
         name: 'Entrega: Publicado · esperando aceptación del agente', exact: true,
       });
       await pendingCheck.waitFor({ state: 'visible', timeout: 20_000 });
-      expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(1);
-      expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(0);
+      expect(await pendingCheck.innerText()).toBe('◷');
+      expect(await humanEntry.locator('[data-checks]').count()).toBe(0);
       expect(await humanEntry.locator('.canonical-reply').count()).toBe(0);
       const confirmingButton = page.getByRole('button', { name: 'Confirmando…', exact: true });
       await confirmingButton.waitFor({ state: 'visible', timeout: 10_000 });
@@ -212,8 +212,9 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
           name: 'Entrega: Recibido por el agente · ejecución iniciada', exact: true,
         });
         await startedCheck.waitFor({ state: 'visible', timeout: 20_000 });
-        expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(0);
-        expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(1);
+        expect(await startedCheck.innerText()).toBe('✓');
+        expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(1);
+        expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(0);
         expect(await humanEntry.locator('.canonical-reply').count()).toBe(0);
         const inProgress = await active.pty.database.pool.query<{ status: string }>(
           'SELECT status FROM deliveries WHERE id=$1::uuid', [pendingRoot.delivery_id],
@@ -235,8 +236,14 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
         name: 'Entrega: Recibido por el agente · ejecución terminada', exact: true,
       });
       await doneCheck.waitFor({ state: 'visible', timeout: 20_000 });
-      expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(0);
-      expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(1);
+      expect(await doneCheck.innerText()).toBe('✓');
+      expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(1);
+      expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(0);
+      const receipts = await active.pty.database.pool.query<{ count: string }>(
+        `SELECT count(*)::text FROM delivery_acks WHERE delivery_id=$1::uuid AND applied
+          AND payload->'result' ? 'harness_consumption_v1'`, [pendingRoot.delivery_id],
+      );
+      expect(receipts.rows).toEqual([{ count: '0' }]);
       const agentBubble = page.getByRole('article', { name: `Mensaje de ${active.pty.targetAlias}`, exact: true });
       expect(await agentBubble.count()).toBe(1);
       expect(await agentBubble.innerText()).toContain(reply);

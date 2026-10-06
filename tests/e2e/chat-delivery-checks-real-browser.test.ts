@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ackCanonicalConsumption } from './chat-native-consumption.fixtures.js';
 import {
   functionalTenants, newTrustedPage, startBoundedAdapter, startConsoleFunctionalFixture,
   type FunctionalTenant,
@@ -140,7 +141,8 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
       expect(await page.getByText(/ACK llega por polling|Respuesta provisional|Sin respuesta canónica/i).count()).toBe(0);
       expect(await page.locator('.transcript-entry details, .transcript-delivery').count()).toBe(0);
       expect(await page.getByText(/Mensaje aceptado para entrega/i).count()).toBe(0);
-      expect(await entry.locator('.chat-delivery-check').innerText()).toBe('✓✓');
+      expect(await entry.locator('.chat-delivery-check').innerText()).toBe('✓');
+      expect(await entry.locator('[data-checks="2"]').count()).toBe(0);
       expect(await reply.innerText()).toContain(`respuesta sintética ${tenant.tenant}`);
       const body = await page.locator('body').innerText();
       expect(body).not.toContain('{"type":"system.gate.probe"');
@@ -155,8 +157,35 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
         [tenant.tenant, nonce, tenant.target],
       );
       expect(persisted.rows).toEqual([{ state: 'done', actor_alias: tenant.operator, body: { text: nonce } }]);
+      const receipts = await activeFixture.database.pool.query<{ count: string }>(
+        `SELECT count(*)::text FROM delivery_acks ack JOIN deliveries d ON d.id=ack.delivery_id
+          JOIN messages m ON m.id=d.message_id WHERE m.tenant_id=$1 AND m.body->>'text'=$2
+          AND ack.applied AND ack.payload->'result' ? 'harness_consumption_v1'`, [tenant.tenant, nonce],
+      );
+      expect(receipts.rows).toEqual([{ count: '0' }]);
 
       await stopSyntheticAdapter(index);
+      const nativeMarker = `NATIVE-CONSUMPTION-${tenant.tenant}-${randomUUID()}`;
+      await page.getByLabel(`Mensaje para ${tenant.target}`).fill(nativeMarker);
+      await page.getByRole('button', { name: 'Enviar', exact: true }).click();
+      const nativeEntry = page.locator('.transcript-entry.input').filter({ hasText: nativeMarker });
+      const pending = nativeEntry.getByRole('status', {
+        name: 'Entrega: Publicado · esperando aceptación del agente', exact: true,
+      });
+      await pending.waitFor({ state: 'visible', timeout: 20_000 });
+      expect(await pending.innerText()).toBe('◷');
+      expect(await nativeEntry.locator('[data-checks]').count()).toBe(0);
+      const consumed = await ackCanonicalConsumption(activeFixture.database.pool,
+        activeFixture.directory, tenant.tenant, tenant.target, nativeMarker);
+      const read = nativeEntry.getByRole('status', {
+        name: 'Entrega: Leído por el agente · respuesta nativa comprobada', exact: true,
+      });
+      await read.waitFor({ state: 'visible', timeout: 20_000 });
+      expect(await read.innerText()).toBe('✓✓');
+      expect(await nativeEntry.locator('[data-checks="1"]').count()).toBe(0);
+      expect(await nativeEntry.locator('[data-checks="2"]').count()).toBe(1);
+      await page.getByText(consumed.reply, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+      if (artifacts) await page.screenshot({ path: join(artifacts, `chat-native-${String(width)}.png`) });
       const probeBody = { nonce: `PROBE-${randomUUID()}`, timeout_ms: 90_000 };
       await seedStructuredFeedMessage(tenant, 'system.gate.probe', probeBody);
       await seedStructuredFeedMessage(tenant, '__proto__', { marker: randomUUID() });
