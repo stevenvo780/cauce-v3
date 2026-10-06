@@ -9,7 +9,7 @@ const ARNESES = {
   claude: { variable: "CLAUDE_CONFIG_DIR", directorio: ".claude", testigo: "CLAUDE.md" },
 };
 
-const ALIAS_VALIDO = /^[a-z][a-z0-9-]*$/u;
+const ALIAS_VALIDO = /^[a-z][a-z0-9_-]{0,63}$/u;
 
 function rutaAbsolutaCanonica(valor, etiqueta) {
   if (typeof valor !== "string" || !valor.startsWith("/") || valor.includes("//")) {

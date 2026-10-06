@@ -20,7 +20,7 @@ while (($#)); do
   esac
 done
 [[ -n $alias_name && $# == 0 ]] || { printf 'uso: provision-hermes-runtime.sh [--check] <alias>\n' >&2; exit 2; }
-[[ $alias_name =~ ^[a-z][a-z0-9-]*$ ]] || { printf 'provision-hermes-runtime: alias inválido\n' >&2; exit 2; }
+[[ $alias_name =~ ^[a-z][a-z0-9_-]{0,63}$ ]] || { printf 'provision-hermes-runtime: alias inválido\n' >&2; exit 2; }
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 ops_root=${CAUCE_CONTAINER_OPS_ROOT:-$(cd -- "$script_dir/.." && pwd -P)}

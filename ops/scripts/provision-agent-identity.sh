@@ -12,7 +12,7 @@ usage() {
 [[ $# -eq 2 ]] || usage
 alias_name=$1
 output_dir=$2
-[[ $alias_name =~ ^[a-z][a-z0-9.-]*$ ]] || { printf 'agent identity failed: invalid alias\n' >&2; exit 2; }
+[[ $alias_name =~ ^[a-z][a-z0-9_-]{0,63}$ ]] || { printf 'agent identity failed: invalid alias\n' >&2; exit 2; }
 
 ops_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 snapshot=$ops_root/flota.json
