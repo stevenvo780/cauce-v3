@@ -49,8 +49,8 @@ interface DeliveryRoutingTarget {
 
 export function isDirectlyMessageableTarget(target: DeliveryRoutingTarget | undefined): boolean {
   if (target === undefined) return false;
-  if (target.client_mailbox === undefined) return target.online === true;
-  return target.online === false
+  if (target.client_mailbox === undefined) return target.online;
+  return !target.online
     && RoutingTargetSchema.shape.client_mailbox.unwrap().safeParse(target.client_mailbox).success;
 }
 

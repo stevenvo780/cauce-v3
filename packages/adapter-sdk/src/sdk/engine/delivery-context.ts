@@ -516,7 +516,7 @@ export function routingTargetsFromDelivery(delivery: Delivery): readonly {
     if (typeof target.alias !== "string" || target.alias.trim().length === 0) continue;
     if (typeof target.online !== "boolean") continue;
     const parsedMailbox = RoutingTargetSchema.shape.client_mailbox.unwrap().safeParse(target.client_mailbox);
-    if (target.client_mailbox !== undefined && target.online !== false) continue;
+    if (target.client_mailbox !== undefined && target.online) continue;
     const mailbox = parsedMailbox.success ? parsedMailbox.data : undefined;
     const normalized = {
       tenant_id: target.tenant_id,
