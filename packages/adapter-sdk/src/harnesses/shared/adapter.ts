@@ -398,7 +398,8 @@ export class HarnessAdapter {
       ...(request.emissionOutput === undefined ? {} : { emissionOutput: request.emissionOutput }),
       ...(request.onEmissionReady === undefined ? {} : { onEmissionReady: request.onEmissionReady }),
       ...(session.context.sessionId === undefined ? {} : { sessionId: session.context.sessionId }),
-      ...(this.definition.sessionStrategy.kind === "generated" && this.definition.sessionStrategy.forwardResume
+      ...(this.definition.id === "claude" || this.definition.id === "codex"
+        || (this.definition.sessionStrategy.kind === "generated" && this.definition.sessionStrategy.forwardResume)
         ? { resumeSession: session.context.resume } : {}),
       // The start witness and its notice travel together to the transport: it is the only thing
       // that sees the harness's bytes, and therefore the only one that can tell when it actually

@@ -1,3 +1,4 @@
+import { signalAborted } from "../runtime-state.js";
 import { OpenClawPhaseFrames, phaseEmitter } from "./openclaw-phases.js";
 import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
 import { isAbsolute } from "node:path";
@@ -69,10 +70,10 @@ export function childEnvironment(
   return environment;
 }
 
-function spawnHarness(request: CommandRunRequest, stdinDescriptor: number | undefined): HarnessChild {
+function spawnHarness(request: CommandRunRequest, stdinDescriptor: number | undefined, environment: NodeJS.ProcessEnv): HarnessChild {
   const options = {
     ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
-    env: childEnvironment(request.env, request.emissionSocketPath),
+    env: environment,
     shell: false,
     detached: process.platform !== "win32",
     windowsHide: true,
@@ -131,7 +132,7 @@ export class SpawnCommandRunner {
     this.logger = options.logger ?? (() => undefined);
   }
 
-  run(request: CommandRunRequest): Promise<CommandRunResult> {
+  async run(request: CommandRunRequest): Promise<CommandRunResult> {
     if (request.command.length === 0) {
       return Promise.reject(new ProcessExecutionError("INVALID_COMMAND", "Command may not be empty", false));
     }
@@ -149,12 +150,23 @@ export class SpawnCommandRunner {
       );
     }
 
+    const environment = childEnvironment(request.env, request.emissionSocketPath);
+    const attestor = request.harness === "claude" || request.harness === "codex"
+      ? await import("./headless-consumption.js") : undefined;
+    const snapshot = await attestor?.prepareHeadlessConsumption(request, environment);
+    if (signalAborted(request.signal)) throw new ProcessExecutionError("CANCELLED", "Harness process was cancelled before spawn", false);
+    const result = await this.runProcess(request, environment);
+    const witness = await attestor?.verifyHeadlessConsumption(snapshot, request, result);
+    return witness === undefined ? result : { ...result, consumptionWitness: witness };
+  }
+
+  private runProcess(request: CommandRunRequest, environment: NodeJS.ProcessEnv): Promise<CommandRunResult> {
     return new Promise<CommandRunResult>((resolve, reject) => {
       let child: HarnessChild;
       let stdinDescriptor: number | undefined;
       try {
         if (request.stdinSource === "file") stdinDescriptor = promptFileDescriptor(request.stdin);
-        child = spawnHarness(request, stdinDescriptor);
+        child = spawnHarness(request, stdinDescriptor, environment);
       } catch (error) {
         if (error instanceof ProcessExecutionError) {
           reject(error);
