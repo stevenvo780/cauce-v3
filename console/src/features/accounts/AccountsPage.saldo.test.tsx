@@ -92,7 +92,7 @@ async function openTab(user: ReturnType<typeof userEvent.setup>, label: string) 
 /** The balance badge of an account's row in the Inventory. */
 function balanceBadge(accountId: string): HTMLElement {
   const row = screen.getByRole('row', { name: new RegExp(`^${accountId} `) });
-  const balance = Array.from(row.querySelectorAll<HTMLElement>('.badge')).find((node) => node.textContent.includes('libre'));
+  const balance = Array.from(row.querySelectorAll<HTMLElement>('[data-tone]')).find((node) => node.textContent.includes('libre'));
   if (!balance) throw new Error(`${accountId} sin badge de saldo: ${row.textContent}`);
   return balance;
 }
@@ -142,10 +142,10 @@ it('en el borde exacto del umbral el Inventario dice lo mismo que Consumo', asyn
   expect(within(within(providers).getByRole('row', { name: /Grupo critico/ })).getByText('ATENCIÓN')).toBeInTheDocument();
 
   await openTab(user, 'Inventario');
-  expect(balanceBadge('borde').className).toContain('badge-done');
-  expect(balanceBadge('borde').className).not.toContain('badge-warning');
-  expect(balanceBadge('critico').className).toContain('badge-warning');
-  expect(balanceBadge('critico').className).not.toContain('badge-danger');
+  expect(balanceBadge('borde')).toHaveAttribute('data-tone', 'done');
+  expect(balanceBadge('borde')).not.toHaveAttribute('data-tone', 'warning');
+  expect(balanceBadge('critico')).toHaveAttribute('data-tone', 'warning');
+  expect(balanceBadge('critico')).not.toHaveAttribute('data-tone', 'danger');
 });
 
 it('sin severidad del servidor el Inventario compara con `<`, como la migración', async () => {
@@ -160,8 +160,8 @@ it('sin severidad del servidor el Inventario compara con `<`, como la migración
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
   await openTab(user, 'Inventario');
-  expect(balanceBadge('borde').className).toContain('badge-done');
-  expect(balanceBadge('critico').className).toContain('badge-warning');
+  expect(balanceBadge('borde')).toHaveAttribute('data-tone', 'done');
+  expect(balanceBadge('critico')).toHaveAttribute('data-tone', 'warning');
 });
 
 it('respeta la severidad que informa el servidor aunque el porcentaje sugiera otra cosa', async () => {
@@ -185,7 +185,7 @@ it('respeta la severidad que informa el servidor aunque el porcentaje sugiera ot
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
   await openTab(user, 'Inventario');
-  expect(balanceBadge('bloqueada').className).toContain('badge-danger');
+  expect(balanceBadge('bloqueada')).toHaveAttribute('data-tone', 'danger');
   expect(balanceBadge('bloqueada').textContent).toContain('100% libre');
 });
 

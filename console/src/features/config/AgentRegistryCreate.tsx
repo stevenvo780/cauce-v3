@@ -1,4 +1,3 @@
-import { Dialog } from '@base-ui/react/dialog';
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { useApi } from '../../api/context';
@@ -8,8 +7,8 @@ import {
   agentRegistryCreateError, createAgentRegistryMutation, EMPTY_AGENT_REGISTRY_DRAFT,
   registryHarnessOptions, registryTenantOptions, type AgentRegistryCreateDraft,
 } from './agent-registry-create';
-import { Button, Notice } from '../../components/form-kit';
-import { PREVIEW } from './config-ui';
+import { FormDialog } from '../../components/dialogs';
+import { Button, Notice, PREVIEW } from '../../components/kit';
 import { useConfigMutation, useRevisionEncadenada } from './use-config-mutation';
 
 export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, focusReturnRef }: {
@@ -104,81 +103,70 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
 
   return <>
     {resultNotice ? <Notice tone="ok" role="status">{resultNotice}</Notice> : null}
-    <Dialog.Root open={open} onOpenChange={(next) => { if (!next && busy) return; onOpenChange(next); }}>
-      <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-50 bg-scrim" />
-        <Dialog.Popup initialFocus={aliasInput} finalFocus={focusReturnRef} aria-describedby="agent-registry-create-hub-note"
-          className="fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-1.5rem)] w-[min(94vw,720px)] -translate-x-1/2 -translate-y-1/2 gap-3 overflow-y-auto rounded-xl border border-line bg-surface p-5 shadow-pop">
-          <div className="flex items-center justify-between gap-3">
-            <Dialog.Title className="m-0 text-base font-semibold">Añadir agente</Dialog.Title>
-            <Button size="sm" onClick={() => { onOpenChange(false); }} disabled={busy}>Cerrar</Button>
-          </div>
-          <Notice role="note"><p id="agent-registry-create-hub-note">
-            Este cambio requiere permiso para administrar el registro. El servidor lo verifica al previsualizar.
-          </p></Notice>
-          {!runner.canWrite ? <Notice role="note">
-            Tu cuenta no tiene permiso para modificar este registro, o no pudimos verificarlo.
-          </Notice> : null}
-          {!tenants.length ? <Notice role="note">No hay espacios de trabajo publicados en esta lectura; no se puede elegir destino.</Notice> : null}
+    <FormDialog open={open} wide busy={busy} title="Añadir agente" initialFocus={aliasInput} finalFocus={focusReturnRef}
+      description="Este cambio requiere permiso para administrar el registro. El servidor lo verifica al previsualizar."
+      onClose={() => { onOpenChange(false); }}>
+      {!runner.canWrite ? <Notice role="note">
+        Tu cuenta no tiene permiso para modificar este registro, o no pudimos verificarlo.
+      </Notice> : null}
+      {!tenants.length ? <Notice role="note">No hay espacios de trabajo publicados en esta lectura; no se puede elegir destino.</Notice> : null}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label>Espacio de trabajo
+          <select value={draft.tenantId} onChange={(event) => { edit({ tenantId: event.target.value }); }} disabled={disabled}>
+            <option value="">Elige un espacio de trabajo</option>
+            {tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.label}</option>)}
+          </select>
+        </label>
+        <label>Alias
+          <input ref={aliasInput} value={draft.alias} maxLength={64} pattern="[a-z][a-z0-9_-]{0,63}"
+            onChange={(event) => { edit({ alias: event.target.value }); }} disabled={disabled} />
+        </label>
+        <label>Nombre visible
+          <input value={draft.displayName} maxLength={128}
+            onChange={(event) => { edit({ displayName: event.target.value }); }} disabled={disabled} />
+        </label>
+        <label>Tipo de agente (opcional)
+          {harnesses.length ? <select value={draft.harnessId} onChange={(event) => { edit({ harnessId: event.target.value }); }} disabled={disabled}>
+            <option value="">Sin declarar</option>
+            {harnesses.map((harness) => <option key={harness} value={harness}>{harness}</option>)}
+          </select> : <input value={draft.harnessId} maxLength={64} placeholder="p. ej. codex"
+            onChange={(event) => { edit({ harnessId: event.target.value }); }} disabled={disabled} />}
+        </label>
+        <label>Máximo de entregas concurrentes
+          <input type="number" min={1} max={100} step={1} value={draft.capacity}
+            onChange={(event) => { edit({ capacity: event.target.value }); }} disabled={disabled} />
+        </label>
+        <details className="grid gap-2 sm:col-span-2">
+          <summary className="cursor-pointer text-[13px] font-medium">Entorno de ejecución (opcional)</summary>
+          <p className="m-0 my-2 text-xs text-muted">Indica el contenedor, el usuario y sus dos directorios. Completa los cuatro campos o déjalos vacíos; no se generan valores.</p>
           <div className="grid gap-3 sm:grid-cols-2">
-            <label>Espacio de trabajo
-              <select value={draft.tenantId} onChange={(event) => { edit({ tenantId: event.target.value }); }} disabled={disabled}>
-                <option value="">Elige un espacio de trabajo</option>
-                {tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.label}</option>)}
-              </select>
+            <label>Nombre del contenedor
+              <input value={draft.containerName} onChange={(event) => { edit({ containerName: event.target.value }); }} disabled={disabled} />
             </label>
-            <label>Alias
-              <input ref={aliasInput} value={draft.alias} maxLength={64} pattern="[a-z][a-z0-9_-]{0,63}"
-                onChange={(event) => { edit({ alias: event.target.value }); }} disabled={disabled} />
+            <label>Usuario de ejecución
+              <input value={draft.runtimeUser} onChange={(event) => { edit({ runtimeUser: event.target.value }); }} disabled={disabled} />
             </label>
-            <label>Nombre visible
-              <input value={draft.displayName} maxLength={128}
-                onChange={(event) => { edit({ displayName: event.target.value }); }} disabled={disabled} />
+            <label>Directorio personal
+              <input value={draft.homeDirectory} onChange={(event) => { edit({ homeDirectory: event.target.value }); }} disabled={disabled} />
             </label>
-            <label>Tipo de agente (opcional)
-              {harnesses.length ? <select value={draft.harnessId} onChange={(event) => { edit({ harnessId: event.target.value }); }} disabled={disabled}>
-                <option value="">Sin declarar</option>
-                {harnesses.map((harness) => <option key={harness} value={harness}>{harness}</option>)}
-              </select> : <input value={draft.harnessId} maxLength={64} placeholder="p. ej. codex"
-                onChange={(event) => { edit({ harnessId: event.target.value }); }} disabled={disabled} />}
+            <label>Directorio de estado
+              <input value={draft.stateDirectory} onChange={(event) => { edit({ stateDirectory: event.target.value }); }} disabled={disabled} />
             </label>
-            <label>Máximo de entregas concurrentes
-              <input type="number" min={1} max={100} step={1} value={draft.capacity}
-                onChange={(event) => { edit({ capacity: event.target.value }); }} disabled={disabled} />
-            </label>
-            <details className="grid gap-2 sm:col-span-2">
-              <summary className="cursor-pointer text-[13px] font-medium">Entorno de ejecución (opcional)</summary>
-              <p className="m-0 my-2 text-xs text-muted">Indica el contenedor, el usuario y sus dos directorios. Completa los cuatro campos o déjalos vacíos; no se generan valores.</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label>Nombre del contenedor
-                  <input value={draft.containerName} onChange={(event) => { edit({ containerName: event.target.value }); }} disabled={disabled} />
-                </label>
-                <label>Usuario de ejecución
-                  <input value={draft.runtimeUser} onChange={(event) => { edit({ runtimeUser: event.target.value }); }} disabled={disabled} />
-                </label>
-                <label>Directorio personal
-                  <input value={draft.homeDirectory} onChange={(event) => { edit({ homeDirectory: event.target.value }); }} disabled={disabled} />
-                </label>
-                <label>Directorio de estado
-                  <input value={draft.stateDirectory} onChange={(event) => { edit({ stateDirectory: event.target.value }); }} disabled={disabled} />
-                </label>
-              </div>
-            </details>
           </div>
-          {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
-          {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
-            role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="text-xs text-muted">Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}</span>
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={() => { void preview(); }} disabled={disabled || !tenants.length}>Previsualizar alta</Button>
-              <Button variant="primary" onClick={() => { void apply(); }}
-                disabled={disabled || !mutation || !runner.isValidated(mutation)}>Crear registro</Button>
-            </div>
-          </div>
-          {runner.preview ? <pre className={PREVIEW} aria-label="Preview del alta de agente">{runner.preview}</pre> : null}
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </details>
+      </div>
+      {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
+      {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
+        role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="text-xs text-muted">Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}</span>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => { void preview(); }} disabled={disabled || !tenants.length}>Previsualizar alta</Button>
+          <Button variant="primary" onClick={() => { void apply(); }}
+            disabled={disabled || !mutation || !runner.isValidated(mutation)}>Crear registro</Button>
+        </div>
+      </div>
+      {runner.preview ? <pre className={PREVIEW} aria-label="Preview del alta de agente">{runner.preview}</pre> : null}
+    </FormDialog>
   </>;
 }

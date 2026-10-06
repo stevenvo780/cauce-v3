@@ -1,5 +1,5 @@
 import { FileText, Slash } from 'lucide-react';
-import { Notice, SectionCard } from '../../components/form-kit';
+import { Notice, SectionCard } from '../../components/kit';
 import {
   ARNESES_REALES, DISTINCION_HERRAMIENTAS_Y_PERMISOS,
   DONDE_SE_ESCRIBE_EL_ROL_DECLARADO,
@@ -17,6 +17,7 @@ import {
 export function ArnesesPanel() {
   return (
     <SectionCard
+      level={3}
       title="Qué lee cada arnés de verdad"
       description="Contexto declarado, capacidades del runtime y permisos no son lo mismo"
     >
@@ -26,7 +27,7 @@ export function ArnesesPanel() {
           <li key={arnes.id} className="grid content-start gap-2 rounded-lg border border-line p-3"
             data-sin-directiva={arnes.directiva === '' ? 'true' : undefined}>
             <header className="flex items-baseline justify-between gap-2">
-              <h3 className="m-0 text-sm font-semibold">{arnes.label}</h3>
+              <h4 className="m-0 text-sm font-semibold">{arnes.label}</h4>
               <code className="text-xs text-muted">{arnes.id}</code>
             </header>
             {/* The path is the piece of data the visitor came for, so it goes first and in monospace. When

@@ -1,7 +1,7 @@
 import { Plus } from 'lucide-react';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { AgentOrb } from '../../components/AgentOrb';
-import { Button, LinkButton, Notice, SectionCard } from '../../components/form-kit';
+import { Button, LinkButton, Notice, SectionCard } from '../../components/kit';
 import { EmptyState } from '../../components/ui';
 import { onNavClick } from '../../router';
 import { AgentRegistryCreate } from './AgentRegistryCreate';
@@ -80,7 +80,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta }: {
   const reloaded = (siguiente: ConfigurationSnapshot) => { setReleido(siguiente); onReload?.(); };
   return <div className="grid gap-4">
     <ConfigSectionHeader seccion="agentes" />
-    <SectionCard title="Agentes y grupos" description="Identidad, grupos y responsabilidad en un solo lugar."
+    <SectionCard level={3} title="Agentes y grupos" description="Identidad, grupos y responsabilidad en un solo lugar."
       actions={<Button ref={createTrigger} onClick={() => { setCreateOpen(true); }}><Plus size={14} aria-hidden="true" />Añadir agente</Button>}>
       <AgentRegistryCreate snapshot={snapshot} open={createOpen} onOpenChange={setCreateOpen}
         onReloaded={reloaded} focusReturnRef={createTrigger} />
@@ -107,7 +107,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta }: {
         {tablaCompleta}
       </div>
     </details> : null}
-    <SectionCard title="Cuentas y ruteo de suscripciones"
+    <SectionCard level={3} title="Cuentas y ruteo de suscripciones"
       description="El inventario de provider_account, los techos y los bindings tienen una única autoridad de lectura y escritura.">
       <p className="m-0 text-[13px] text-fg-2">Se administran junto con su consumo y su orden de fallback en «Cuentas y cuotas»; estas tablas no se repiten en Ajustes.</p>
       <div>

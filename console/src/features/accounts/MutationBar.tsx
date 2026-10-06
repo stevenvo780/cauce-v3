@@ -1,9 +1,8 @@
 import { Save, SearchCheck } from 'lucide-react';
 import type { ConfigMutation } from '../../api/types';
-import { Button, Notice } from '../../components/form-kit';
+import { cn } from '../../cn';
+import { Button, Notice, Outcome, PREVIEW } from '../../components/kit';
 import type { ConfigMutationRunner } from '../config/use-config-mutation';
-
-export const PREVIEW_BOX = 'm-0 max-h-44 overflow-auto rounded-lg border border-line bg-subtle p-3 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-fg-2';
 
 /**
  * Write bar of the pool forms: dry-run first, apply after, with apply disabled until the server
@@ -35,12 +34,8 @@ export function MutationBar({ runner, mutation, invalid, previewLabel }: {
         <Save size={15} aria-hidden="true" />Aplicar
       </Button>
     </div>
-    {runner.notice ? <Notice
-      tone={runner.notice.tone === 'error' ? 'danger' : runner.notice.tone === 'parcial' ? 'warn' : 'ok'}
-      role={runner.notice.tone === 'success' ? 'status' : 'alert'}
-      data-canal={runner.canal}
-    >{runner.notice.text}</Notice> : null}
-    {mutation ? <pre className={PREVIEW_BOX} aria-label={`Mutación pendiente de ${previewLabel}`}>{JSON.stringify(mutation, null, 2)}</pre> : null}
-    {runner.preview ? <pre className={PREVIEW_BOX} aria-label={`Dry-run de ${previewLabel}`}>{runner.preview}</pre> : null}
+    {runner.notice ? <Outcome tone={runner.notice.tone} canal={runner.canal}>{runner.notice.text}</Outcome> : null}
+    {mutation ? <pre className={cn(PREVIEW, 'max-h-44')} aria-label={`Mutación pendiente de ${previewLabel}`}>{JSON.stringify(mutation, null, 2)}</pre> : null}
+    {runner.preview ? <pre className={cn(PREVIEW, 'max-h-44')} aria-label={`Dry-run de ${previewLabel}`}>{runner.preview}</pre> : null}
   </div>;
 }

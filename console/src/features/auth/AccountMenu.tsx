@@ -3,7 +3,7 @@ import { ChevronUp, LogOut, ShieldAlert, UserRound, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { cn } from '../../cn';
-import { Button, Notice } from '../../components/form-kit';
+import { Button, Notice } from '../../components/kit';
 import { ThemeControl } from '../../components/ThemeControl';
 import { Time } from '../../components/ui';
 import { humanProfileName } from './account-identity';

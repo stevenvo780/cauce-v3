@@ -7,8 +7,8 @@ import type {
 } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { cn } from '../../cn';
-import { Button, Notice } from '../../components/form-kit';
-import { CARD_TABLE, Explain, FormDialog, Kpi, KpiGrid, SCROLL } from '../../components/ops-kit';
+import { Button, CARD_TABLE, Explain, Kpi, KpiGrid, Notice, SCROLL } from '../../components/kit';
+import { FormDialog } from '../../components/dialogs';
 import { Badge, Desplazable, EmptyState, Time, Unknown } from '../../components/ui';
 import { useConfigMutation } from '../config/use-config-mutation';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';

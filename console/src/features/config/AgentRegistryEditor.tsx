@@ -4,8 +4,8 @@ import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { useConfigMutation, useRevisionEncadenada, type ConfigMutationRunner } from './use-config-mutation';
-import { Button, Notice } from '../../components/form-kit';
-import { CHECK_LABEL, HINT, PREVIEW } from './config-ui';
+import { Button, Notice, PREVIEW } from '../../components/kit';
+import { CHECK_LABEL, HINT } from './config-ui';
 
 type AgentRow = Record<string, unknown> & { tenant_id: string; alias: string };
 

@@ -3,9 +3,9 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 739,
-    "recorteMaximoEn": "/ayuda",
-    "recorteMaximoQue": "nav.-mx-4.flex.gap-1",
+    "recorteMaximo": 170,
+    "recorteMaximoEn": "/live",
+    "recorteMaximoQue": "div.-mx-4.flex.gap-1.5",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
     "recorteSinTecladoQue": "",
@@ -21,7 +21,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/overview": {
-        "pantallas": 1.75,
+        "pantallas": 1.7,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -39,7 +39,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 5.04,
+        "pantallas": 5.12,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -69,19 +69,19 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/queues": {
-        "pantallas": 1.47,
+        "pantallas": 1.3,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 1.25,
+        "pantallas": 1.31,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 1.18,
+        "pantallas": 1.09,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -99,7 +99,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 3.83,
+        "pantallas": 3.37,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -110,9 +110,9 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 339,
-    "recorteMaximoEn": "/ayuda",
-    "recorteMaximoQue": "nav.-mx-4.flex.gap-1",
+    "recorteMaximo": 0,
+    "recorteMaximoEn": "/",
+    "recorteMaximoQue": "",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
     "recorteSinTecladoQue": "",
@@ -146,7 +146,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 4.34,
+        "pantallas": 4.35,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -182,14 +182,14 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 1.04,
+        "pantallas": 1.05,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 1.02,
-        "foldDesaprovechado": 0,
+        "pantallas": 1,
+        "foldDesaprovechado": 149,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -206,7 +206,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 2.52,
+        "pantallas": 2.26,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -217,9 +217,9 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 1043,
+    "recorteMaximo": 74,
     "recorteMaximoEn": "/config",
-    "recorteMaximoQue": "div.max-w-full.overflow-x-auto.rounded-lg",
+    "recorteMaximoQue": "div.max-h-[min(70vh,720px)].overflow-auto.rounded-lg",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
     "recorteSinTecladoQue": "",
@@ -236,7 +236,7 @@
       },
       "/overview": {
         "pantallas": 1,
-        "foldDesaprovechado": 178,
+        "foldDesaprovechado": 182,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -253,7 +253,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 2.55,
+        "pantallas": 2.56,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -284,19 +284,19 @@
       },
       "/queues": {
         "pantallas": 1,
-        "foldDesaprovechado": 464,
+        "foldDesaprovechado": 466,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
         "pantallas": 1,
-        "foldDesaprovechado": 453,
+        "foldDesaprovechado": 442,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 438,
+        "foldDesaprovechado": 406,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -313,7 +313,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 2.43,
+        "pantallas": 2.17,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -324,9 +324,9 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 911,
-    "recorteMaximoEn": "/config",
-    "recorteMaximoQue": "div.max-w-full.overflow-x-auto.rounded-lg",
+    "recorteMaximo": 0,
+    "recorteMaximoEn": "/",
+    "recorteMaximoQue": "",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
     "recorteSinTecladoQue": "",
@@ -343,7 +343,7 @@
       },
       "/overview": {
         "pantallas": 1,
-        "foldDesaprovechado": 178,
+        "foldDesaprovechado": 182,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -360,7 +360,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 2.53,
+        "pantallas": 2.54,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -391,19 +391,19 @@
       },
       "/queues": {
         "pantallas": 1,
-        "foldDesaprovechado": 464,
+        "foldDesaprovechado": 466,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
         "pantallas": 1,
-        "foldDesaprovechado": 453,
+        "foldDesaprovechado": 442,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 454,
+        "foldDesaprovechado": 422,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -420,7 +420,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 2.4,
+        "pantallas": 2.12,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -428,12 +428,12 @@
     }
   },
   "1920": {
-    "huecoMaximo": 248,
-    "huecoMaximoEn": "/overview",
+    "huecoMaximo": 0,
+    "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 679,
-    "recorteMaximoEn": "/config",
-    "recorteMaximoQue": "div.max-w-full.overflow-x-auto.rounded-lg",
+    "recorteMaximo": 0,
+    "recorteMaximoEn": "/",
+    "recorteMaximoQue": "",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
     "recorteSinTecladoQue": "",
@@ -450,7 +450,7 @@
       },
       "/overview": {
         "pantallas": 1,
-        "foldDesaprovechado": 194,
+        "foldDesaprovechado": 198,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -467,7 +467,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 2.51,
+        "pantallas": 2.52,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -498,19 +498,19 @@
       },
       "/queues": {
         "pantallas": 1,
-        "foldDesaprovechado": 464,
+        "foldDesaprovechado": 466,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
         "pantallas": 1,
-        "foldDesaprovechado": 453,
+        "foldDesaprovechado": 442,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 454,
+        "foldDesaprovechado": 456,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -527,7 +527,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 2.4,
+        "pantallas": 2.12,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -535,12 +535,12 @@
     }
   },
   "2560": {
-    "huecoMaximo": 888,
+    "huecoMaximo": 608,
     "huecoMaximoEn": "/overview",
     "desbordeMaximo": 0,
-    "recorteMaximo": 679,
-    "recorteMaximoEn": "/config",
-    "recorteMaximoQue": "div.max-w-full.overflow-x-auto.rounded-lg",
+    "recorteMaximo": 0,
+    "recorteMaximoEn": "/",
+    "recorteMaximoQue": "",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
     "recorteSinTecladoQue": "",
@@ -557,7 +557,7 @@
       },
       "/overview": {
         "pantallas": 1,
-        "foldDesaprovechado": 194,
+        "foldDesaprovechado": 198,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -574,7 +574,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 2.51,
+        "pantallas": 2.52,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -605,19 +605,19 @@
       },
       "/queues": {
         "pantallas": 1,
-        "foldDesaprovechado": 464,
+        "foldDesaprovechado": 466,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
         "pantallas": 1,
-        "foldDesaprovechado": 453,
+        "foldDesaprovechado": 442,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 454,
+        "foldDesaprovechado": 456,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -634,7 +634,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 2.4,
+        "pantallas": 2.12,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0

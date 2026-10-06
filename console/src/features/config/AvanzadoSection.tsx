@@ -1,8 +1,8 @@
 import { Braces, RotateCcw, Save, SearchCheck } from 'lucide-react';
-import { Button, SectionCard } from '../../components/form-kit';
+import { Button, CARD_TABLE, Notice, Outcome, PREVIEW, SCROLL, SectionCard } from '../../components/kit';
 import { Badge, Desplazable, EmptyState, Time, Unknown } from '../../components/ui';
 import { onNavClick } from '../../router';
-import { Aviso, FORM_GRID, PREVIEW, TABLA } from './config-ui';
+import { FORM_GRID } from './config-ui';
 import { ConfigSectionHeader } from './ConfigSectionHeader';
 import { TablasDeSeccion } from './ConfigTables';
 import { actionsFor, rollbackPolicy, templates } from './mutation-editor';
@@ -16,23 +16,23 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
   return <div className="grid gap-4">
     <ConfigSectionHeader seccion="avanzado" />
 
-    <SectionCard title="Historial de revisiones" description="Rollback crea una nueva revisión; el historial nunca se reescribe.">
+    <SectionCard level={3} title="Historial de revisiones" description="Rollback crea una nueva revisión; el historial nunca se reescribe.">
       {/* The `oldValue` the store keeps as the inverse is the WHOLE ROW that was there before, not the field that was
           touched, even if the mutation that was sent was partial. The operator cannot deduce that from a button labeled
           "Rollback", and the difference could cost them a teammate's change. */}
-      <p className="m-0 rounded-lg border border-line bg-subtle px-3 py-2 text-[13px] text-fg-2" role="note">
+      <Notice role="note">
         Deshacer restituye la FILA COMPLETA que había antes de esa revisión, no sólo el campo que se
         tocó: si otro operador cambió otro campo de la misma fila después, ese cambio también se
         revierte.
-      </p>
+      </Notice>
 
       {/* The rollback outcome is painted HERE, above the table and in plain sight: it is the only spot the operator
           is looking at when they press one of these buttons. */}
-      {canalRollback.notice ? <Aviso tone={canalRollback.notice.tone} canal={canalRollback.canal}>{canalRollback.notice.text}</Aviso> : null}
+      {canalRollback.notice ? <Outcome tone={canalRollback.notice.tone} canal={canalRollback.canal}>{canalRollback.notice.text}</Outcome> : null}
       {canalRollback.preview ? <pre className={PREVIEW} aria-label="Preview del rollback">{canalRollback.preview}</pre> : null}
 
-      {!revisions?.length ? <EmptyState>No hay revisiones.</EmptyState> : <Desplazable etiqueta="Historial de revisiones de configuración" className="max-w-full overflow-x-auto rounded-lg border border-line">
-        <table className={TABLA}><thead><tr><th>Rev</th><th>Actor</th><th>Resumen</th><th>Fecha</th><th>Rollback</th></tr></thead><tbody>
+      {!revisions?.length ? <EmptyState>No hay revisiones.</EmptyState> : <Desplazable etiqueta="Historial de revisiones de configuración" className={SCROLL}>
+        <table className={CARD_TABLE}><thead><tr><th>Rev</th><th>Actor</th><th>Resumen</th><th>Fecha</th><th>Rollback</th></tr></thead><tbody>
           {revisions.map((revision, index) => {
             const policy = rollbackPolicy(revision.operation);
             const id = revision.id;
@@ -76,7 +76,7 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
           </div>
         </form>
         {canalEditor.preview ? <pre className={PREVIEW} aria-label="Resultado de preview">{canalEditor.preview}</pre> : null}
-        {canalEditor.notice ? <Aviso tone={canalEditor.notice.tone} canal={canalEditor.canal}>{canalEditor.notice.text}</Aviso> : null}
+        {canalEditor.notice ? <Outcome tone={canalEditor.notice.tone} canal={canalEditor.canal}>{canalEditor.notice.text}</Outcome> : null}
       </section>
     </details>
 

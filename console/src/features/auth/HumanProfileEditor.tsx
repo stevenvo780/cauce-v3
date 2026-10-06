@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
-import { Button } from '../../components/form-kit';
+import { Button } from '../../components/kit';
 
 export function HumanProfileEditor({ name, disabled }: { name: string; disabled: boolean }) {
   const api = useApi();

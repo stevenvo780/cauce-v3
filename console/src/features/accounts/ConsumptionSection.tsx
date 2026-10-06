@@ -6,8 +6,7 @@ import type {
   QuotaSnapshot, QuotaThresholds, QuotaUnboundGroup,
 } from '../../api/types';
 import { cn } from '../../cn';
-import { Button, Notice, SectionCard } from '../../components/form-kit';
-import { CARD_TABLE, Kpi, KpiGrid, SCROLL } from '../../components/ops-kit';
+import { Button, CARD_TABLE, Kpi, KpiGrid, Notice, SCROLL, SectionCard } from '../../components/kit';
 import { Badge, Desplazable, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
 import { formatDurationSeconds, UNKNOWN } from '../../lib';
 import { freshness, orphans } from './licenses';

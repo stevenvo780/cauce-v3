@@ -4,7 +4,7 @@ import type { ClientConnectionsPage } from '../../api/types/client-delegations';
 import { ClientDeclarationResponseError, clientConnectionsResponse } from '../../api/client/client-delegations-client';
 import { confirmDeclarationResult, verifiedConnection, declarationError, grantActive, prepareDeclaration, selectedConnection, sendDeclaration,
   uncertainDeclaration, type ClientDeclarationCommand } from './client-declaration-state';
-import { Button } from '../../components/form-kit';
+import { Button } from '../../components/kit';
 
 /** The panel scrolls inside the account popover instead of growing it past the viewport. */
 const BODY = 'grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 overflow-y-auto overscroll-contain pt-2 max-h-[min(55dvh,480px)] max-[760px]:max-h-[45dvh] [overflow-wrap:anywhere] [&_p]:m-0 [&_p]:text-xs';

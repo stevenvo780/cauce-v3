@@ -3,7 +3,7 @@ import { Fragment, useState, type SyntheticEvent, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import { cn } from '../../cn';
 import { Logo } from '../../components/brand/Logo';
-import { Button, LinkButton, Notice } from '../../components/form-kit';
+import { Button, LinkButton, Notice, Spinner } from '../../components/kit';
 import { useAuthGate, type AuthGateState } from './auth-session';
 import { authSessionKey } from './account-identity';
 
@@ -139,7 +139,7 @@ function CheckingScreen() {
   return (
     <AuthScreen role="status">
       <div className="flex items-center gap-3 text-[13px] text-fg-2" aria-live="polite">
-        <span className="spinner" aria-hidden="true" />
+        <Spinner />
         <p className="m-0">Verificando la sesión con el gateway…</p>
       </div>
     </AuthScreen>

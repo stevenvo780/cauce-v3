@@ -1,7 +1,7 @@
 import { AlertCircle, EyeOff } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { QuotaSnapshot } from '../../api/types';
-import { Notice } from '../../components/form-kit';
+import { Notice } from '../../components/kit';
 import { Badge, Unknown } from '../../components/ui';
 import { accountConsumption } from './licenses';
 import type { AccountRouteProjection, ProviderAccount } from './registry';

@@ -2,13 +2,13 @@ import { Braces, Plus, SearchCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { ConfigMutation } from '../../api/types';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
-import { Button } from '../../components/form-kit';
+import { Button, Outcome, PREVIEW } from '../../components/kit';
 import {
   BORRADOR_VACIO, errorDeAlta, mutacionDeAlta, RECURSOS_ALTA, TITULOS_ALTA,
   type BorradorAlta, type RecursoAlta,
 } from './alta-rapida';
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
-import { Aviso, CHECK_LABEL, FORM_GRID, HINT, PREVIEW } from './config-ui';
+import { CHECK_LABEL, FORM_GRID, HINT } from './config-ui';
 
 /**
  * Onboarding for a resource via form. Replaces "type the mutation by hand in JSON" for the four
@@ -165,10 +165,10 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
 
     {invalido
       ? tocado
-        ? <Aviso tone="error">{invalido}</Aviso>
+        ? <Outcome tone="error">{invalido}</Outcome>
         : <p className="m-0 text-xs text-muted">Completá el formulario para habilitar el alta: {invalido}</p>
       : null}
     {preview ? <pre className={PREVIEW} aria-label="Dry-run del alta">{preview}</pre> : null}
-    {aviso ? <Aviso tone={aviso.tone}>{aviso.text}</Aviso> : null}
+    {aviso ? <Outcome tone={aviso.tone}>{aviso.text}</Outcome> : null}
   </div>;
 }
