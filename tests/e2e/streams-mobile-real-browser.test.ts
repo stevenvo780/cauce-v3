@@ -228,7 +228,7 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
         LIMIT 1`,
       [active.tenant, active.targetAlias, id ?? null],
     );
-    const verifyOperatorClosure = async (reason: string, id: string) => {
+    const verifyOperatorClosure = async (id: string) => {
       if (!id) throw new Error('opened terminal session id was not captured');
       let closed = await readOperatorSession(id);
       const deadline = Date.now() + 15_000;
@@ -242,7 +242,7 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
       expect(decodeTerminalSubject(row.console_subject)).toEqual({ kind: 'human', humanId: human.rows[0]?.id,
         actor: { tenantId: active.tenant, alias: active.operatorAlias } });
       expect(closed.rows[0]?.revoked_at).toBeInstanceOf(Date);
-      expect(closed.rows[0]?.reason).toBe(reason);
+      expect(closed.rows[0]?.reason).toBe('');
       expect(closed.rows[0]?.closed_at).toBeInstanceOf(Date);
     };
     const operatorPage = await active.browserPage({ width: 1440, height: 900 });
@@ -258,7 +258,7 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     await operatorPty.click();
     const operatorDialog = operatorPage.getByRole('dialog', { name: `Abrir Terminal en ${active.targetAlias}` });
     await operatorDialog.waitFor({ state: 'visible', timeout: 10_000 });
-    await operatorPage.getByLabel('Motivo de la sesión (queda en la auditoría)').fill('Verificación E2E autorizada del canal shell.');
+    expect(await operatorPage.getByLabel('Motivo de la sesión').count()).toBe(0);
     await operatorDialog.getByRole('button', { name: 'Abrir sesión PTY' }).click();
     await operatorPage.locator('.pty-shell[data-state="open"]').waitFor({ state: 'visible', timeout: 30_000 });
     const operatorPtyBar = operatorPage.getByLabel('Sesión PTY activa');
@@ -271,7 +271,7 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     const operatorSessionId = (await readOperatorSession()).rows[0]?.id ?? '';
     await operatorPage.getByRole('link', { name: 'Conversaciones', exact: true }).click();
     await operatorPtyBar.waitFor({ state: 'hidden', timeout: 25_000 });
-    await verifyOperatorClosure('Verificación E2E autorizada del canal shell.', operatorSessionId);
+    await verifyOperatorClosure(operatorSessionId);
 
     const mobileOperatorPage = await active.browserPage({ width: 360, height: 800 });
     await login(active, mobileOperatorPage, active.operatorEmail, active.operatorPassword);
@@ -286,8 +286,7 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     await mobilePty.click();
     const mobileDialog = mobileOperatorPage.getByRole('dialog', { name: `Abrir Terminal en ${active.targetAlias}` });
     await mobileDialog.waitFor({ state: 'visible', timeout: 10_000 });
-    const mobileReason = 'Verificación E2E autorizada desde viewport móvil.';
-    await mobileOperatorPage.getByLabel('Motivo de la sesión (queda en la auditoría)').fill(mobileReason);
+    expect(await mobileOperatorPage.getByLabel('Motivo de la sesión').count()).toBe(0);
     await mobileDialog.getByRole('button', { name: 'Abrir sesión PTY' }).click();
     await mobileOperatorPage.locator('.pty-shell[data-state="open"]').waitFor({ state: 'visible', timeout: 30_000 });
     await mobileOperatorPage.locator('.xterm-helper-textarea').waitFor({ state: 'visible', timeout: 15_000 });
@@ -312,7 +311,7 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     const mobileSessionId = (await readOperatorSession()).rows[0]?.id ?? '';
     await mobileOperatorPage.getByRole('link', { name: 'Conversaciones', exact: true }).click();
     await mobilePtyBar.waitFor({ state: 'hidden', timeout: 25_000 });
-    await verifyOperatorClosure(mobileReason, mobileSessionId);
+    await verifyOperatorClosure(mobileSessionId);
 
     const baselineSessions = await active.database.pool.query<{ count: number }>(
       'SELECT count(*)::int AS count FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2',
