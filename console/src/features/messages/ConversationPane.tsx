@@ -1,5 +1,5 @@
-import { ArrowDownToLine, ArrowLeft, ChevronDown, CircleOff, LockKeyhole, RefreshCw, Send, Settings2, TerminalSquare, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent, type KeyboardEvent } from 'react';
+import { ArrowDownToLine, ArrowLeft, RefreshCw, Settings2, TerminalSquare, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
 import { useApi } from '../../api/context';
 import { ApiError } from '../../api/client';
 import type { JobLane, MessagePage } from '../../api/types';
@@ -24,6 +24,8 @@ import { MessageTimeline } from './MessageTimeline';
 import { useCanonicalReply, type CanonicalReplyRoot } from './use-canonical-reply';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
+import { snapshotAttachments } from './chat-attachments';
+import { ChatAttachmentsComposer } from './chat-attachments-composer';
 
 const apiDraftScopes = new WeakMap<object, number>();
 let nextApiDraftScope = 0;
@@ -89,7 +91,7 @@ function ConversationPaneContent({
   const replySubject = publisherHumanSubject ?? publisherSubject;
   const draftKey = conversationDraftKey(api, replySubject, agent.id);
   const [form, updateForm] = useConversationDraft(draftKey);
-  const { text: draft, roomId: roomElegido, lane, sending: enviando, notice: aviso } = form;
+  const { text: draft, files: archivos, roomId: roomElegido, lane, sending: enviando, notice: aviso } = form;
   const setDraft = (text: string) => { updateForm((current) => ({ ...current, text })); };
   const setRoomElegido = (roomId: string) => { updateForm((current) => ({ ...current, roomId })); };
   const setLane = (lane: JobLane) => { updateForm((current) => ({ ...current, lane })); };
@@ -252,18 +254,22 @@ function ConversationPaneContent({
 
   async function enviar(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    const snapshotText = draft;
     const texto = draft.trim();
-    if (!puedeEnviar || !texto || enviando || submissions.current.has(draftKey)) return;
+    const snapshotFiles = [...archivos];
+    if (!puedeEnviar || (!texto && snapshotFiles.length === 0) || enviando || submissions.current.has(draftKey)) return;
     submissions.current.add(draftKey);
     setConfirmandoPublicacion(false);
     updateForm((current) => ({ ...current, sending: true, notice: undefined }));
     const stillActive = () => activePublishScope.current === publishScope;
     const refresh = () => { if (stillActive()) onReload(); };
     try {
+      const attachments = await snapshotAttachments(snapshotFiles);
+      if (!stillActive()) return;
       const semantics = {
         room_id: roomOrigen,
         recipients: [{ tenant_id: agent.tenantId, alias: agent.alias }],
-        body: { text: texto },
+        body: { text: texto, ...(attachments.length ? { attachments_v1: attachments } : {}) },
         lane,
         // The SAME priority per lane the previous form published: interactive 10, batch 0. It is not a new constant —it was the one that was already there and got lost in the redesign.
         priority: lane === 'interactive' ? 10 : 0,
@@ -278,7 +284,9 @@ function ConversationPaneContent({
           setConfirmandoPublicacion(true);
           updateForm((current) => ({
             ...current,
-            text: current.text === draft ? '' : current.text,
+            text: current.text === snapshotText ? '' : current.text,
+            files: current.files.length === snapshotFiles.length
+              && snapshotFiles.every((file, index) => current.files[index] === file) ? [] : current.files,
             notice: { tone: 'success', text: `Aceptado por el control plane · ${compactId(receipt.message_id)}. Confirmación pendiente; todavía no hay estado de entrega.` },
           }));
           if (!stillActive()) return;
@@ -307,12 +315,6 @@ function ConversationPaneContent({
       submissions.current.delete(draftKey);
       updateForm((current) => ({ ...current, sending: false }));
     }
-  }
-
-  function teclaDelCompositor(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
-    event.preventDefault();
-    event.currentTarget.form?.requestSubmit();
   }
 
   function elegir(item: TranscriptItem) {
@@ -552,50 +554,13 @@ function ConversationPaneContent({
         </section>
       ) : null}
 
-      <form className="messenger-composer" onSubmit={(event) => void enviar(event)}>
-        <label className="sr-only" htmlFor={`messenger-input-${agent.id}`}>Mensaje para {agent.alias}</label>
-        {needsRoomChoice ? (
-          <label className="messenger-room-select">Room de origen
-            <span className="room-select-wrap">
-              <select value={roomOrigen} disabled={enviando} onChange={(event) => { setRoomElegido(event.target.value); }}>
-                <option value="" disabled>Elegí la sala de origen</option>
-                {roomUnavailable ? <option value={roomElegido} disabled>{roomElegido} · no disponible</option> : null}
-                {route.sourceRoomIds.map((room) => <option key={room} value={room}>{room}</option>)}
-              </select>
-              <ChevronDown size={14} aria-hidden="true" />
-            </span>
-          </label>
-        ) : null}
-        {roomUnavailable ? <p className="composer-blocked" role="alert">La sala elegida ya no está disponible. Elegí otra sala antes de enviar; el borrador se conserva.</p>
-          : route.allowed && !roomOrigen ? <p className="composer-blocked" role="note">Elegí una sala de origen antes de enviar.</p> : null}
-        {lane === 'batch' ? <p className="messenger-room-fixed">Envío en segundo plano · cambiá el carril en Más.</p> : null}
-        <div className="composer-input-row">
-        <textarea
-          id={`messenger-input-${agent.id}`}
-          value={draft}
-          onChange={(event) => { setDraft(event.target.value); }}
-          onKeyDown={teclaDelCompositor}
-          rows={1}
-          maxLength={8_000}
-          placeholder="Escribí un mensaje…"
-          disabled={!puedeEnviar}
-        />
-        <div className="composer-footer">
-          <span><kbd>Enter</kbd> enviar · <kbd>Shift</kbd> + <kbd>Enter</kbd> nueva línea</span>
-          <button className="button primary" type="submit" disabled={!puedeEnviar || enviando || !draft.trim()}
-            onPointerDown={(event) => {
-              if (event.button === 0 && document.activeElement?.matches('.messenger-composer textarea')) event.preventDefault();
-            }}>
-            <Send size={15} aria-hidden="true" /><span>{enviando ? confirmandoPublicacion || aviso?.tone === 'success' ? 'Confirmando…' : 'Enviando…' : 'Enviar'}</span>
-          </button>
-        </div>
-        </div>
-        {!canPublish ? <p className="composer-blocked"><LockKeyhole size={14} aria-hidden="true" /> Requiere el permiso message.publish.</p> : null}
-        {!route.allowed ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> {route.reason}</p> : null}
-        {aviso && aviso.tone !== 'success'
-          ? <p className={`notice ${aviso.tone}`} role={aviso.tone === 'error' ? 'alert' : 'status'}>{aviso.text}</p>
-          : null}
-      </form>
+      <ChatAttachmentsComposer
+        agentId={agent.id} agentAlias={agent.alias} canPublish={canPublish} route={route}
+        roomChoiceRequired={needsRoomChoice} roomId={roomOrigen} roomUnavailable={roomUnavailable}
+        lane={lane} text={draft} files={archivos} sending={enviando} confirming={confirmandoPublicacion}
+        notice={aviso} onSubmit={(event) => { void enviar(event); }} onTextChange={setDraft} onRoomChange={setRoomElegido}
+        onFilesChange={(files) => { updateForm((current) => ({ ...current, files })); }}
+      />
     </section>
   );
 }
