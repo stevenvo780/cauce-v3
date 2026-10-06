@@ -1,5 +1,7 @@
 # Arquitectura de Cauce V3
 
+Las instalaciones por empresa usan un descriptor, identidades y recursos propios. Véase [instalaciones independientes](instalaciones-independientes.md) para el instalador y los límites de su cualificación.
+
 ## 1. Qué es
 
 Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenClaw) de uno o varios tenants, con consola web de operador y puente Telegram (`AGENTS.md`). PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull*: el adapter de cada agente reclama sus entregas por WebSocket con fencing (`claim_token`+`epoch`) (`AGENTS.md`). El `dispatcher` no reparte nada — es el segador de reintentos (`services/dispatcher/README.md`). "Entregar" significa pegar el texto en la sesión tmux viva del CLI del agente (`packages/adapter-sdk/README.md`). El bundle versionado de migraciones alcanza el esquema 045; el esquema vivo de una instalación se acredita con `schema_migrations` y las sondas de operación, no se infiere desde este documento.

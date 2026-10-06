@@ -14,27 +14,40 @@
     "policy": "SDK",
     "sdk": "policy",
     "hospital": "SDK",
-    "namespace": "Ops",
-    "common": "Root/Hospital"
+    "namespace": "SDK favorable; últimas dos podas de comentario pendientes de actualizar manifest",
+    "common": "SDK y policy favorables; cierres de cuatro P1 y UID físico verificados"
   },
-  "status": "implementation and live acceptance",
+  "status": "fuentes implementadas y comprometidas; aceptación viva y gates finales",
   "gates": {
-    "sdk": "1510 PASS final; build lint smoke typecheck quality PASS",
-    "hospital": "209 Praxis +21 instalación PASS; revisión independiente detectó P1 ya corregido, revalidación pendiente",
-    "policy": "21 nuevos PASS incluidos 14 PostgreSQL; 616 regresiones PASS; generalización probe en curso",
-    "namespace": "10 PASS; defaults byte a byte y rechazo descriptor/inyección; supervisor regresión en curso"
+    "sdk": "1537 PASS después de main; 68 focused, build, lint estricto y calidad PASS",
+    "hospital": "211 Praxis +19 instalación PASS y revisión SDK aprobada",
+    "policy": "22 policy/probe PostgreSQL, 4 maintenance PostgreSQL, 1 probe privacy y 60 gateway unit PASS; 616 regresiones PASS",
+    "namespace": "8 locks +7 Hermes +11 namespace y CLI companion PASS; revisión SDK favorable, dos cambios sólo comentario revalidados próximamente",
+    "common": "20 unit sin skip +6 PostgreSQL reales finales +25 exportador +2 manifiestos PASS",
+    "live": "Cuatro intentos negativos conservados; instalación A/B real PASS parcial, transporte detenido por fixture CA estricta ya corregida; PKI Python3.14 9 handshakes PASS, espera GO final",
+    "ops_validate": "Primera ejecución rechazó OPERATIONS.sha256 desactualizado tras helpers nuevos; regenerado, reintento en curso",
+    "typecheck": "Global PASS core/adapter/mcp/console",
+    "lint": "Global ESLint/shell/cycles PASS; Ruff detectó4 formatos corregidos, Ruff global PASS; reintento completo pendiente",
+    "quality": "Global PASS 2137 archivos, baseline sin ampliaciones"
   },
   "pending": [
-    "Full exact gate",
-    "Live two instance acceptance",
-    "Independent final reviews",
-    "Commits and PR",
-    "Integration and deployment qualification"
+    "Revisión final del instalador y SDK combinado",
+    "Aceptación A/B durable, PKI, adjuntos, backup/restore y update independiente",
+    "Gates completos del código exacto y empaquetado runtime",
+    "Commits restantes, publicación y PR",
+    "Cualificación antes de integración/despliegue"
   ],
   "rulings": [
     "Registro host compartido explícito, root-owned setgid/sticky y lock común",
     "CAUCE_INSTALLATION_ID distinto de CAUCE_INSTANCE_ID de lease",
     "Probe reservado sin nombres de empresa, autoridad mTLS derivada y revalidación durable",
     "Contenedores/workspaces de empresas distintos; no adopción por nombre"
-  ]
+  ],
+  "main_incorporation": "410c0d5c incorporado; merge 842629e6, árbol final idéntico al SDK revisado",
+  "commits": {
+    "common": "64c6b6df",
+    "live_test": "100e6aa0",
+    "main_merge": "842629e6"
+  },
+  "source_head_before_docs": "c84ea922ed14790477e20ce3f5e6e894f71bcb65"
 }

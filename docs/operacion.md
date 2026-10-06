@@ -1,5 +1,7 @@
 # Manual operativo — Cauce V3
 
+Las instalaciones por empresa usan un descriptor, identidades y recursos propios. Véase [instalaciones independientes](instalaciones-independientes.md) para el instalador y los límites de su cualificación.
+
 Procedimientos del producto. Fuente de verdad de arquitectura: [arquitectura.md](arquitectura.md). Este documento es solo el CÓMO operar; runbooks completos en `ops/runbooks/*.md`.
 
 El stack corre desde el **propio checkout del repo** en el host del stack, con el compose canónico de `deploy/`: el árbol es material de producción, porque Prometheus, OTel y PostgreSQL montan ficheros directamente desde ahí. La configuración de instancia vive fuera del árbol, por defecto en `/etc/cauce-v3` (`CAUCE_ENV_FILE` apunta a `/etc/cauce-v3/prod.env` salvo que se sobrescriba). La revisión publicada se consulta en `deploy/HISTORIAL.md` y el esquema en `schema_migrations`; no se deducen del checkout.
