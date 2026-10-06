@@ -1,25 +1,6 @@
-/**
- * TERMINAL TEST HARNESS: what's needed for `/terminal` to actually PAINT a PTY without a
- * backend behind it.
- *
- * Why it exists. The costly defects of this view are about GEOMETRY —how many rows and columns
- * the PTY ends up with, whether the gap grows with the window, how much screen width is wasted—,
- * and none of them are visible in jsdom, which has no layout. Measuring them requires a real
- * Chrome with the REAL view. But `npm run dev:mock` got to the door and didn't cross it:
- * `capability` answered `available:false`, there was no handler for `targets` or `POST sessions`,
- * and without a ticket `PtyTerminal` never mounts. So the only thing you couldn't look at was
- * exactly what needed to be measured.
- *
- * These handlers live APART from `handlers.ts` on purpose: `handlers.ts` is shared by
- * `mocks/server.ts`, which is what vitest uses with `onUnhandledRequest: 'error'`. Putting a
- * `capability.available = true` here would change what view tests see, which today assert the
- * opposite. This plugs in ONLY into `mocks/browser.ts`, i.e., only under `VITE_USE_MOCKS=true`.
- *
- * It is not a relay simulator: it doesn't validate the ticket, doesn't sign anything, and
- * doesn't authorize anything. It's a stage set that responds just enough so geometry can be measured.
- */
+/** Handlers that let `/terminal` paint a PTY without a backend; kept apart from `handlers.ts` (shared with vitest) and plugged only into `mocks/browser.ts`. Not a relay: it validates and authorizes nothing. */
 import { http, HttpResponse } from 'msw';
-/* The constant, not a copy of the literal: that copy is exactly what was wrong (see below). */
+/* The constant, not a copy of the literal. */
 import { LIVE_TUI_MODE, WRITABLE_TUI_MODE } from '../features/terminal/fleet';
 import { mockAuthorityResumeToken, mockTerminalGrant } from './terminal-ticket';
 
@@ -49,14 +30,7 @@ export const terminalDemoHandlers = [
       runtime_user: 'dev',
       harness: 'claude-code',
       shares_container_with: [],
-      /*
-       * This used to say `'live-tui'`, and the client looks for `'harness'` (`LIVE_TUI_MODE`, in
-       * `fleet.ts`). That is, the test harness published a mode the console doesn't recognize:
-       * the "TUI" button was DISABLED, the counter said "EMIT THEIR TUI 0 / 1", and the only
-       * mode you could open was a new shell. Exactly the mode this view exists to give —read-only
-       * viewing of the TUI the agent already has painted— was never tested, neither by hand nor
-       * with the harness. It was discovered by measuring: the probe asked for TUI and mounted nothing.
-       */
+      // The client looks for 'harness' (`LIVE_TUI_MODE` in `fleet.ts`); another mode leaves the TUI button disabled.
       modes: ['shell', LIVE_TUI_MODE, WRITABLE_TUI_MODE],
       writable_modes: ['shell', WRITABLE_TUI_MODE],
       pty_state: 'online',
@@ -182,11 +156,7 @@ export function instalarPtyDeMentira(): void {
       this.onclose?.(new CloseEvent('close', { code, reason }));
     }
   }
-  /*
-   * Only the PTY channel is hijacked. Vite opens its own WebSocket for HMR and the console
-   * opens its own; replacing the entire class left the dev server without reload and —worse—
-   * without a single signal that it had happened.
-   */
+  /* Only the PTY channel is hijacked: Vite and the console open their own WebSockets. */
   const Fachada = new Proxy(Original, {
     construct(objetivo, argumentos: [string, ...unknown[]]): WebSocket {
       const url = argumentos[0];

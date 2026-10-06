@@ -1,10 +1,4 @@
-/**
- * Format and vocabulary verification on mounted views:
- * 1. No unrendered JSX markers.
- * 2. No visible UNKNOWN literals.
- * 3. No raw snake_case identifiers in table headers.
- * 4. No unformatted raw ISO dates.
- */
+/** Mounted views show no JSX markers, UNKNOWN literals, raw snake_case headers or raw ISO dates. */
 import { screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { renderWithApi } from './test/render';

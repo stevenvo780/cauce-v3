@@ -30,8 +30,7 @@ function mockTerminalTicket(input: {
   });
   const encoded = globalThis.btoa(String.fromCharCode(...new TextEncoder().encode(payload)))
     .replace(/=+$/u, '').replaceAll('+', '-').replaceAll('/', '_');
-  // The browser cannot verify this segment; it only enforces canonical 32-byte HMAC shape. The
-  // gateway/relay own signature verification, and no production code imports this fixture.
+  // The browser enforces only the canonical 32-byte HMAC shape; signature verification belongs to the gateway/relay.
   const structuralSignature = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
   return `v1.${encoded}.${structuralSignature}`;
 }

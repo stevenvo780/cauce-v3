@@ -366,11 +366,7 @@ export const handlers = [
     observed_at: new Date().toISOString(),
     items: [],
   })),
-  /*
-   * The operator's terminal sessions. The console reads them so it can CLOSE the ones left
-   * hanging: without this handler, every test of the view spat out "intercepted a request
-   * without a matching request handler" and the trap this listing unblocked went uncovered.
-   */
+  /* The operator's terminal sessions: the console reads them to close stale ones. */
   http.get('*/v3/console/terminal/sessions', () => HttpResponse.json({ items: [] })),
   http.delete('*/v3/console/terminal/sessions/:sid', () => new HttpResponse(null, { status: 204 })),
 ];
