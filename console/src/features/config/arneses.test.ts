@@ -57,7 +57,7 @@ describe('la tabla de arneses reales', () => {
     expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/role_brief/);
     expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/selfRoleFromProfile/);
     expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/self_role/);
-    expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/«Contexto»/);
+    expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/«Perfil y contexto»/);
     expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/sólo lectura/);
   });
 

@@ -76,8 +76,8 @@ export function esColumnaDeFecha(clave: string): boolean {
  * a row becomes unreadable because of a field you do not edit here.
  *
  * The full text is not lost: it remains in the cell's `title`, in the "Ver crudo" dropdown of the
- * collection, and is shown as a read-only diagnostic in «Contexto» inside the «La flota ahora»
- * drawer. That single tab owns context changes. Here it is enough to see the projection summarised.
+ * collection, and is shown as a read-only diagnostic in the «Directiva» section of the agent's
+ * context page. That page owns context changes. Here it is enough to see the projection summarised.
  */
 const COLUMNAS_LARGAS: ReadonlySet<string> = new Set(['role_brief']);
 

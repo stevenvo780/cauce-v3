@@ -1,7 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { ConfigAdministration as ConfigPage } from './ConfigPage';
+import { ConfigPage } from './ConfigPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 
@@ -12,8 +12,8 @@ import { renderWithApi } from '../../test/render';
 
 interface ChangeRequest { dry_run?: boolean; expected_revision?: number; mutation?: Record<string, unknown> }
 
-const PERMISOS = /^permisos$/i;
-const ESPACIOS = /espacios y miembros/i;
+const PERMISOS = /acceso y roles/i;
+const ESPACIOS = /espacios y salas/i;
 
 type Usuario = ReturnType<typeof userEvent.setup>;
 
@@ -72,13 +72,15 @@ function appliedReadReceipt(body: ChangeRequest, revision: number) {
 
 // --- What Steven asked for: switches, not buttons --------------------------------------------
 
+beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios'); });
+
 it('los permisos son INTERRUPTORES y la columna de botones ya no existe', async () => {
   servirConfig(() => snapshot(1));
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await irA(user, PERMISOS);
 
-  const heading = screen.getByRole('heading', { name: /directed acl/i });
+  const heading = screen.getByRole('heading', { name: /permisos entre clientes/i });
   const acl = heading.closest('section');
   expect(acl).not.toBeNull();
   if (acl) {
@@ -103,7 +105,7 @@ it('las cabeceras dejan de ser nombres de columna de Postgres y explican qué co
   renderWithApi(<ConfigPage />);
   await irA(user, PERMISOS);
 
-  const heading = screen.getByRole('heading', { name: /directed acl/i });
+  const heading = screen.getByRole('heading', { name: /permisos entre clientes/i });
   const acl = heading.closest('section');
   expect(acl).not.toBeNull();
   if (acl) {
@@ -373,9 +375,9 @@ it('«Espacios y miembros» pierde los treinta botones «Deshabilitar» y gana i
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await irA(user, ESPACIOS);
-  await screen.findByRole('heading', { name: 'Tenants' });
+  await screen.findByRole('heading', { name: 'Clientes' });
 
-  const area = screen.getByRole('tabpanel', { name: /espacios y miembros/i });
+  const area = screen.getByRole('tabpanel', { name: /espacios y salas/i });
   expect(within(area).queryAllByRole('button', { name: 'Deshabilitar' })).toHaveLength(0);
   expect(within(area).queryAllByRole('button', { name: 'Habilitar' })).toHaveLength(0);
   // 5 tenants + 8 rooms + 19 memberships from the mocks fixture.
@@ -393,13 +395,13 @@ it('«Alta rápida» y el wizard dejan de estar los dos abiertos: son dos modos 
 
   // On entering, ONE is visible. The other is not hidden: it is one click away, with a label
   // that says when it is the right call.
-  expect(await screen.findByRole('heading', { name: /alta rápida/i })).toBeInTheDocument();
-  expect(screen.queryByRole('heading', { name: /wizard de espacios/i })).not.toBeInTheDocument();
+  expect(await screen.findByRole('group', { name: /alta rápida/i })).toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: /wizard de espacios/i })).not.toBeInTheDocument();
 
   // Segmented, not a tab: see `AltaDeEspacios`.
   await user.click(screen.getByRole('button', { name: /espacio completo/i }));
-  expect(await screen.findByRole('heading', { name: /wizard de espacios/i })).toBeInTheDocument();
-  expect(screen.queryByRole('heading', { name: /alta rápida/i })).not.toBeInTheDocument();
+  expect(await screen.findByRole('group', { name: /wizard de espacios/i })).toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: /alta rápida/i })).not.toBeInTheDocument();
 });
 
 it('el JSON crudo del alta deja de estar abierto por defecto', async () => {
