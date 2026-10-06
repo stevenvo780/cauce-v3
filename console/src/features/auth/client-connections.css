@@ -1,0 +1,20 @@
+.client-connections { min-width: 0; border-top: 1px solid var(--border); padding-top: var(--space-3); }
+.account-popover:has(.client-connections) > header { position: sticky; top: 0; z-index: 1; background: var(--surface); }
+.client-reference { display: grid; gap: var(--space-1); min-width: 0; }
+.client-reference input { font-family: monospace; }
+.client-connections-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); max-height: min(55dvh, 480px); overflow-y: auto; overscroll-behavior: contain; min-width: 0; padding-top: var(--space-2); }
+.client-connections-body h3, .client-connections-body p { margin: 0; font-size: var(--tipo-rotulo); }
+.client-connections-body fieldset { min-width: 0; padding: var(--space-2); border: 1px solid var(--border); }
+.client-connections-body legend { font-size: var(--tipo-rotulo); max-width: 100%; }
+.client-connections-list { display: grid; gap: var(--space-2); max-height: min(25dvh, 240px); overflow-y: auto; overscroll-behavior: contain; }
+.client-connection { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.client-connection > span { min-width: 0; display: grid; gap: var(--space-1); font-size: var(--tipo-apunte); overflow-wrap: anywhere; }
+.client-connection code, .client-connection time { overflow-wrap: anywhere; white-space: normal; }
+.client-connection input { flex: none; width: 20px; min-height: 20px; margin: 0; padding: 0; }
+.client-connections-body form { display: grid; gap: var(--space-2); min-width: 0; }
+.client-connections-body form input { min-width: 0; width: 100%; box-sizing: border-box; color: var(--text); background: var(--surface); border: 1px solid var(--border); padding: var(--space-2); font: inherit; }
+.client-connections-body .button { white-space: normal; min-height: 44px; }
+.client-connections-body :focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+@media (max-width: 760px) {
+  .client-connections-body { max-height: 45dvh; }
+}

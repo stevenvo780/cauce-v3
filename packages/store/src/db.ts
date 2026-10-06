@@ -100,7 +100,6 @@ async function runMigrations(pool: DatabasePool, exactBundledVersion?: string): 
     if (cutoff < 0) throw new Error(`migration cutoff is not bundled: ${exactBundledVersion}`);
   }
   await withTransaction(pool, async (client) => {
-    await client.query('SELECT pg_advisory_xact_lock(783_003_003)');
     await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
       version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now()
     )`);
@@ -146,10 +145,44 @@ async function runMigrations(pool: DatabasePool, exactBundledVersion?: string): 
         [migration.version, migration.sourceSha256],
       );
     }
-  });
+  }, { schemaMode: 'migrate' });
 }
 
-export async function withTransaction<T>(pool: DatabasePool, work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+export interface TransactionOptions {
+  schemaMode?: 'read' | 'migrate';
+  schemaLockTimeoutMs?: number;
+}
+
+function schemaLockPolicy(options: TransactionOptions): { mode: 'read' | 'migrate'; timeoutMs: number } {
+  const mode: unknown = options.schemaMode ?? 'read';
+  if (mode !== 'read' && mode !== 'migrate') throw new RangeError('Invalid schema lock mode');
+  const timeoutMs = options.schemaLockTimeoutMs ?? (mode === 'read' ? 5_000 : 60_000);
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
+    throw new RangeError('Schema lock timeout must be between 1 and 60000 milliseconds');
+  }
+  return { mode, timeoutMs };
+}
+
+async function lockTransactionSchema(client: DatabaseClient, policy: ReturnType<typeof schemaLockPolicy>): Promise<void> {
+  const setting = (await client.query<{ timeout_ms: number }>(
+    "SELECT setting::integer AS timeout_ms FROM pg_settings WHERE name='lock_timeout' AND unit='ms'",
+  )).rows[0];
+  if (!setting || !Number.isSafeInteger(setting.timeout_ms) || setting.timeout_ms < 0) {
+    throw new Error('PostgreSQL lock timeout is unavailable');
+  }
+  const previous = setting.timeout_ms;
+  const bounded = previous === 0 ? policy.timeoutMs : Math.min(previous, policy.timeoutMs);
+  await client.query("SELECT set_config('lock_timeout',$1,true)", [`${String(bounded)}ms`]);
+  await client.query(policy.mode === 'migrate'
+    ? 'SELECT pg_advisory_xact_lock(783_003_003)'
+    : 'SELECT pg_advisory_xact_lock_shared(783_003_003)');
+  await client.query("SELECT set_config('lock_timeout',$1,true)", [`${String(previous)}ms`]);
+}
+
+export async function withTransaction<T>(
+  pool: DatabasePool, work: (client: DatabaseClient) => Promise<T>, options: TransactionOptions = {},
+): Promise<T> {
+  const policy = schemaLockPolicy(options);
   const client = await pool.connect();
   let broken = false;
   const onClientError = (): void => {
@@ -160,6 +193,7 @@ export async function withTransaction<T>(pool: DatabasePool, work: (client: Data
   client.on('error', onClientError);
   try {
     await client.query('BEGIN');
+    await lockTransactionSchema(client, policy);
     const result = await work(client);
     await client.query('COMMIT');
     return result;
@@ -272,7 +306,9 @@ export async function withAbortableTransaction<T>(
   pool: DatabasePool,
   signal: AbortSignal,
   work: (client: DatabaseClient) => Promise<T>,
+  options: TransactionOptions = {},
 ): Promise<T> {
+  const policy = schemaLockPolicy(options);
   const client = await connectAbortably(pool, signal);
   let broken = false;
   let released = false;
@@ -307,6 +343,7 @@ export async function withAbortableTransaction<T>(
   try {
     if (signal.aborted) throw abortFailure(signal);
     await client.query('BEGIN');
+    await lockTransactionSchema(client, policy);
     if (isSignalAborted(signal)) throw abortFailure(signal);
     const result = await work(client);
     if (isSignalAborted(signal)) throw abortFailure(signal);

@@ -1,7 +1,11 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildGateway } from '../../services/gateway/src/index.js';
+import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
+import { configuredHumanMcp } from '../../services/gateway/src/mcp-configuration.js';
+import { OAuthClients } from '../../services/gateway/src/oauth-client-metadata.js';
+import type { OAuthAuthorizationServerOptions } from '../../services/gateway/src/oauth-authorization-server.js';
 import { FixedAuthProvider, fakePool, fakeRepository, grants, noDeliveryWakes, roles, testPrincipal } from './helpers.js';
 
 /**
@@ -53,6 +57,15 @@ const SOLO_CON_PLANO_DE_TERMINAL = new Set([
   '/v3/console/agents/1/1/directive',
   '/v3/console/terminal/sessions'
 ]);
+
+const CLIENT_DECLARATIONS = [
+  { method: 'GET', path: '/v3/console/mcp/client-delegations' },
+  { method: 'POST', path: '/v3/console/mcp/client-delegations' },
+  { method: 'POST', path: '/v3/console/mcp/client-delegations/1/rename' },
+  { method: 'POST', path: '/v3/console/mcp/client-delegations/1/revoke' },
+] as const satisfies readonly ApiCall[];
+const LOCAL_OAUTH_ONLY = new Set(CLIENT_DECLARATIONS.map(call => `${call.method} ${call.path}`));
+const declarationRoutePattern = (call: ApiCall) => call.path.replace('/1/', '/:binding_id/');
 
 function isHttpMethod(value: string): value is HttpMethod {
   return (HTTP_METHODS as readonly string[]).includes(value);
@@ -201,12 +214,49 @@ async function operatorGateway() {
   return app;
 }
 
+function clientDeclarationConfiguration() {
+  const provider = new PasswordAuthProvider({ signingKey: Buffer.alloc(32), users: {
+    ready: async () => undefined, findByEmail: async () => undefined,
+    findById: async () => undefined, updateDisplayName: async () => undefined, recordLogin: async () => undefined,
+  } });
+  const external = configuredHumanMcp({
+    CAUCE_MCP_PUBLIC_ORIGIN: 'https://mcp.example.test',
+    CAUCE_MCP_OAUTH_ISSUER: 'https://issuer.example.test',
+    CAUCE_MCP_OAUTH_JWKS_URI: 'https://issuer.example.test/jwks',
+  });
+  if (!external) throw new Error('Missing MCP fixture');
+  const unexpected = () => { throw new Error('Routing fixture must not issue or resolve OAuth grants'); };
+  const clients = new OAuthClients();
+  vi.spyOn(clients, 'resolve').mockImplementation(unexpected);
+  const oauth: OAuthAuthorizationServerOptions = {
+    passwordAuth: provider, clients, session: async () => unexpected(),
+    tokens: { issuer: 'https://mcp.example.test', resource: 'https://mcp.example.test/mcp',
+      issue: unexpected, jwks: unexpected } as unknown as OAuthAuthorizationServerOptions['tokens'],
+    store: new Proxy({}, { get: unexpected }) as OAuthAuthorizationServerOptions['store'],
+  };
+  const local = configuredHumanMcp({ CAUCE_MCP_OAUTH_PROVIDER: 'local',
+    CAUCE_MCP_PUBLIC_ORIGIN: 'https://mcp.example.test' }, oauth);
+  if (!local) throw new Error('Missing local OAuth fixture');
+  return { provider, external, local };
+}
+
+async function clientDeclarationGateway(mode: 'off' | 'external' | 'local') {
+  const configuration = clientDeclarationConfiguration();
+  const pool = fakePool();
+  const app = await buildGateway({ pool, repository: fakeRepository(), authProvider: configuration.provider,
+    ...(mode === 'off' ? {} : { humanMcp: configuration[mode] }),
+    deliveryWakeSubscriber: noDeliveryWakes, outboxPollMs: 60_000 });
+  apps.push(app);
+  return { app, pool };
+}
+
 async function unroutedPaths(calls: readonly ApiCall[]): Promise<string[]> {
   const app = await operatorGateway();
   const missing: string[] = [];
   for (const call of calls) {
     if (OIDC_BFF_ONLY.has(call.path)) continue;
     if (SOLO_CON_PLANO_DE_TERMINAL.has(call.path)) continue;
+    if (LOCAL_OAUTH_ONLY.has(`${call.method} ${call.path}`)) continue;
     const response = await app.inject({
       method: call.method,
       url: call.path,
@@ -247,6 +297,7 @@ describe('console API surface matches the gateway routing table', () => {
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/context/repository' });
     expect(calls).toContainEqual({ method: 'POST', path: '/v3/console/tenants/1/agents/1/context/repository/preview' });
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/context/repository/inspect?1' });
+    for (const call of CLIENT_DECLARATIONS) expect(calls).toContainEqual(call);
     expect(calls.map((call) => call.path)).not.toContain('/v3/console/topology/access');
 
     expect(await unroutedPaths(calls)).toEqual([]);
@@ -273,5 +324,33 @@ describe('console API surface matches the gateway routing table', () => {
       const response = await app.inject({ method: 'GET', url: path });
       expect(response.statusCode, `${path} should be OIDC-conditional`).toBe(404);
     }
+  });
+
+  it('mounts every declaration route with the real password provider and local OAuth, and denies anonymous access without writes', async () => {
+    const { app, pool } = await clientDeclarationGateway('local');
+    const query = vi.spyOn(pool, 'query');
+    const before = query.mock.calls.length;
+    for (const call of CLIENT_DECLARATIONS) {
+      expect(app.hasRoute({ method: call.method, url: declarationRoutePattern(call) }), `${call.method} ${call.path}`).toBe(true);
+      const response = await app.inject({ method: call.method, url: call.path,
+        headers: { origin: 'http://localhost' },
+        ...(call.method === 'POST' ? { payload: {} } : {}) });
+      expect([401, 403]).toContain(response.statusCode);
+    }
+    expect(query.mock.calls.length).toBe(before);
+  });
+
+  it.each(['off', 'external'] as const)('keeps declaration routes absent with password authentication and MCP %s', async mode => {
+    const { app } = await clientDeclarationGateway(mode);
+    for (const call of CLIENT_DECLARATIONS) expect(app.hasRoute({ method: call.method, url: declarationRoutePattern(call) })).toBe(false);
+  });
+
+  it('keeps declaration routes absent for fixed auth and rejects local OAuth with a mismatched password provider', async () => {
+    const app = await operatorGateway();
+    for (const call of CLIENT_DECLARATIONS) expect(app.hasRoute({ method: call.method, url: declarationRoutePattern(call) })).toBe(false);
+    const { local } = clientDeclarationConfiguration();
+    await expect(buildGateway({ pool: fakePool(), repository: fakeRepository(),
+      authProvider: new FixedAuthProvider(testPrincipal()), humanMcp: local,
+      deliveryWakeSubscriber: noDeliveryWakes })).rejects.toThrow('Local OAuth requires the configured password provider');
   });
 });

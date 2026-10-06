@@ -17,6 +17,15 @@ const session = { userId, credentialStamp: stamp, issuedAt: Math.floor(Date.now(
 const context = () => ({ signal: new AbortController().signal, deadlineMs: Date.now() + 10_000 });
 const exchange = { codeHash: secretHash('code'), clientId: request.clientId, redirectUri: request.redirectUri,
   resource: request.resource, challenge: request.challenge };
+const schemaLockTimeoutQuery = "SELECT setting::integer AS timeout_ms FROM pg_settings WHERE name='lock_timeout' AND unit='ms'";
+const schemaBarrierQuery = 'SELECT pg_advisory_xact_lock_shared(783_003_003)';
+
+function protocolQueryResult(sql: string) {
+  return sql === schemaLockTimeoutQuery
+    ? { rows: [{ timeout_ms: 1_000 }], rowCount: 1 }
+    : { rows: [], rowCount: 0 };
+}
+
 function issue(input: OAuthTokenInput): OAuthIssuedToken {
   return { token: 'signed-fixture', identity: { kind: 'oauth', authorizationServer: 'local', issuer, subject: input.userId,
     audience: request.resource, grantId: input.grantId, tokenId, expiresAt: Math.floor(Date.now() / 1000) + 300, scopes: input.scopes } };
@@ -27,7 +36,8 @@ function fixture(consumeCount = 1, challenge = request.challenge, sessionActive 
   const query = vi.fn(async (sql: string, _values?: readonly unknown[]) => {
     await hook?.(sql);
     let rows: Record<string, unknown>[] = [];
-    if (sql.includes('FROM cauce_oauth_requests WHERE')) rows = [{ id_hash: request.idHash, browser_hash: request.browserHash,
+    if (sql === schemaLockTimeoutQuery) rows = [{ timeout_ms: 1_000 }];
+    else if (sql.includes('FROM cauce_oauth_requests WHERE')) rows = [{ id_hash: request.idHash, browser_hash: request.browserHash,
       client_id: request.clientId, client_name: request.clientName, redirect_uri: request.redirectUri,
       resource: request.resource, scopes: request.scopes, challenge: request.challenge, state: request.state }];
     else if (sql.includes('SELECT human_id')) rows = [{ human_id: userId }];
@@ -73,7 +83,7 @@ describe('OAuth SQL contracts with an injected database client', () => {
     expect(statements.findIndex(sql => sql.includes('INSERT INTO human_external_identities')))
       .toBeLessThan(statements.findIndex(sql => sql.includes('SELECT human_id')));
     const missing = fixture(1, request.challenge, true, async () => undefined);
-    missing.query.mockImplementation(async () => ({ rows: [], rowCount: 0 }));
+    missing.query.mockImplementation(async sql => protocolQueryResult(sql));
     await expect(missing.store.consent(request.idHash, request.browserHash, session, ['cauce.read'], context())).rejects.toThrow('access_denied');
     const denied = fixture();
     await denied.store.consent(request.idHash, request.browserHash, session, undefined, context());
@@ -90,9 +100,40 @@ describe('OAuth SQL contracts with an injected database client', () => {
   it('checks schema at readiness without creating tables', async () => {
     const fake = fixture();
     await fake.store.ready();
-    expect(fake.query).toHaveBeenCalledOnce();
-    expect(fake.query.mock.calls[0]?.[0]).toContain('LIMIT 0');
-    expect(fake.query.mock.calls[0]?.[0]).not.toMatch(/CREATE|ALTER/u);
+    const statements = fake.query.mock.calls.map(([sql]) => sql);
+    const readinessQueries = statements.filter(sql => sql.includes('LIMIT 0'));
+    expect(readinessQueries).toHaveLength(1);
+    expect(readinessQueries[0]).not.toMatch(/CREATE|ALTER/u);
+    expect(statements).toEqual([
+      'BEGIN',
+      schemaLockTimeoutQuery,
+      "SELECT set_config('lock_timeout',$1,true)",
+      schemaBarrierQuery,
+      "SELECT set_config('lock_timeout',$1,true)",
+      readinessQueries[0],
+      'COMMIT',
+    ]);
+    expect(fake.query.mock.calls.filter(([sql]) => sql.includes('set_config'))
+      .map(([, values]) => values)).toEqual([['1000ms'], ['1000ms']]);
+    expect(fake.release).toHaveBeenCalledOnce();
+    expect(fake.release).toHaveBeenCalledWith(false);
+  });
+  it.each([
+    ['pg_settings', schemaLockTimeoutQuery],
+    ['the schema barrier', schemaBarrierQuery],
+  ])('rolls back and releases when %s setup fails before business queries', async (_stage, failedQuery) => {
+    const fake = fixture(1, request.challenge, true, async sql => {
+      if (sql === failedQuery) throw new Error('schema setup unavailable');
+    });
+    await expect(fake.store.createRequest(request, context())).rejects.toThrow('schema setup unavailable');
+    const statements = fake.query.mock.calls.map(([sql]) => sql);
+    expect(statements).toContain('BEGIN');
+    expect(statements).toContain(failedQuery);
+    expect(statements).toContain('ROLLBACK');
+    expect(statements.some(sql => sql.includes('cauce_oauth_'))).toBe(false);
+    expect(statements.some(sql => sql.includes('SET LOCAL statement_timeout'))).toBe(false);
+    expect(fake.release).toHaveBeenCalledOnce();
+    expect(fake.release).toHaveBeenCalledWith(false);
   });
   it('consumes a code and records the issued token before COMMIT', async () => {
     const fake = fixture();

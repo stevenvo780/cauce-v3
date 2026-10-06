@@ -5,15 +5,18 @@ import { withTransaction } from '../src/db.js';
 import { insertDelivery, insertMessage } from '../src/repository/messages/_insert.js';
 import { putHumanMessageInitiator } from '../src/repository/messages/human-initiators.js';
 import { seedIdentity } from '../../../tests/integration/human-identity-resolver-postgres.fixtures.js';
+import { putHumanClientProvenance } from '../src/human-client-provenance.js';
+import { projectHumanClientProvenance } from '../src/repository/deliveries/client-provenance.js';
+import { HUMAN_CLIENT_PROVENANCE_CAPABILITY, HUMAN_CLIENT_DELEGATION_CAPABILITY } from '@cauce/protocol';
 
 export { seedIdentity };
 
-export async function lineageMessage(client: DatabaseClient, tenant = 'Steven') {
+export async function lineageMessage(client: DatabaseClient, tenant = 'Steven', authChannel: string | null = null) {
   const message = await insertMessage(client, {
     requestId: randomUUID(), traceId: `lineage-${randomUUID()}`, tenantId: tenant,
     roomId: tenant === 'Steven' ? 'grp.steven' : 'grp.jhon',
     actorAlias: tenant === 'Steven' ? 'argos' : 'hegel', body: { text: 'lineage fixture' },
-    origin: null, lane: 'batch', priority: 3, authSessionId: null, authChannel: null,
+    origin: null, lane: 'batch', priority: 3, authSessionId: null, authChannel,
   });
   const id = message.rows[0]?.id;
   if (!id) throw new Error('missing fixture message');
@@ -28,6 +31,39 @@ export async function lineageRoot(pool: DatabasePool, humanId: string, messageId
     await putHumanMessageInitiator(client, row);
     return row;
   });
+}
+
+export async function attachLineageClient(pool: DatabasePool, root: Awaited<ReturnType<typeof lineageRoot>>) {
+  const grantId = randomUUID(); const bindingId = randomUUID(); const issuer = 'https://issuer.example.test';
+  const clientId = 'https://chatgpt.com/oauth/client.json'; const label = 'Dots';
+  await withTransaction(pool, async (client) => {
+    await client.query("UPDATE messages SET auth_channel='human-mcp' WHERE id=$1", [root.rootMessageId]);
+    await client.query(`INSERT INTO cauce_oauth_grants(id,human_id,issuer,resource,client_id,redirect_uri,
+      scopes,binding_id,binding_revision,membership_revision,tenant_id,actor_alias,credential_stamp,expires_at)
+      SELECT $1,e.human_id,$2,$2||'/mcp',$3,'https://client.example/callback',ARRAY['cauce.read','cauce.publish'],
+        e.id,e.revision,m.revision,m.tenant_id,m.actor_alias,repeat('a',43),clock_timestamp()+interval '1 hour'
+      FROM human_external_identities e JOIN human_tenant_memberships m ON m.human_id=e.human_id
+      WHERE e.human_id=$4 AND e.provider='oauth' AND e.namespace=$2 AND m.tenant_id='Steven'`,
+    [grantId, issuer, clientId, root.humanId]);
+    await client.query(`INSERT INTO human_oauth_client_delegations(id,local_oauth_grant_id,human_id,
+      tenant_id,declared_by_human_id,label) VALUES($1,$2,$3,'Steven',$3,$4)`, [bindingId, grantId, root.humanId, label]);
+    await client.query(`INSERT INTO human_client_delegation_operations(human_id,tenant_id,request_id,
+      request_hash,operation,response) VALUES($1,'Steven',$2,repeat('a',64),'create','{}')`, [root.humanId, randomUUID()]);
+    await putHumanClientProvenance(client, root, { kind: 'oauth_client', verification: 'local_grant',
+      issuer, clientId, grantId, instance: 'unknown', delegationBindingId: bindingId });
+  });
+  return {
+    human_client_provenance: { root_message_id: root.rootMessageId,
+      client: { kind: 'oauth_client', verification: 'local_grant', issuer, client_id: clientId, instance: 'unknown' } },
+    human_client_delegation: { root_message_id: root.rootMessageId, owner_human_id: root.humanId,
+      owner_tenant_id: root.tenantId, label, basis: 'owner_declared_grant', instance: 'unknown' },
+  };
+}
+
+export async function lineageClientProjection(client: DatabaseClient, messageId: string) {
+  const projections = await projectHumanClientProvenance(client, [{ id: messageId, message_id: messageId }],
+    [HUMAN_CLIENT_PROVENANCE_CAPABILITY, HUMAN_CLIENT_DELEGATION_CAPABILITY], 'Steven');
+  return projections.get(messageId);
 }
 
 export async function lineageBranch(client: DatabaseClient, root: string, child: string) {

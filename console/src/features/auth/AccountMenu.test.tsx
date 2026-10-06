@@ -1,9 +1,12 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { CLAVE_TEMA } from '../../components/ThemeControl';
 import type { AuthGateState } from './auth-session';
 import { AccountMenu } from './AccountMenu';
+import { CauceApi } from '../../api/client';
+import { ApiProvider } from '../../api/context';
+import type { ClientConnectionsPage } from '../../api/types/client-delegations';
 
 afterEach(() => {
   document.documentElement.removeAttribute('data-theme');
@@ -97,4 +100,74 @@ it('mantiene el tema dentro de la pestaña si el almacenamiento falla y cambia l
   await user.click(trigger);
   expect(screen.getByRole('button', { name: 'Sistema' })).toHaveAttribute('aria-pressed', 'true');
   expect(document.documentElement).not.toHaveAttribute('data-theme');
+});
+
+function passwordGate(subject = 'owner-a'): AuthGateState {
+  return { ...gate(), state: { authenticated: true, name: 'Owner', subject, login_mode: 'password', csrf_token: `csrf-${subject}` } };
+}
+
+function connections(reference = 'a'.repeat(64)): ClientConnectionsPage {
+  return { items: [{ connection_ref: reference, client_id: 'same-client', created_at: '2026-01-01T00:00:00Z',
+    expires_at: '2099-01-01T00:00:00Z', revoked: false, binding_id: null, label: null, display_label: null,
+    basis: 'owner_declared_grant', instance: 'unknown', last_publication_at: null, last_use_at: null, last_use_observed: false }], truncated: false };
+}
+
+it('opens MCP declarations only for password sessions, keeps them lazy and returns focus through both Escape levels', async () => {
+  const user = userEvent.setup(); const api = new CauceApi();
+  const list = vi.spyOn(api, 'listClientConnections').mockResolvedValue(connections());
+  const mount = (input: AuthGateState) => <ApiProvider api={api}><AccountMenu gate={input} /></ApiProvider>;
+  const view = render(mount(gate()));
+  await user.click(screen.getByRole('button', { name: /^Cuenta de/ }));
+  expect(screen.queryByRole('button', { name: 'Conexiones MCP' })).toBeNull();
+  view.rerender(mount(passwordGate()));
+  await user.click(screen.getByRole('button', { name: /^Cuenta de/ }));
+  expect(list).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Conexiones MCP' }));
+  await screen.findByRole('radio');
+  await user.keyboard('{Escape}');
+  expect(screen.getByRole('button', { name: 'Conexiones MCP' })).toHaveFocus();
+  expect(screen.getByRole('dialog')).toBeVisible();
+  await user.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.getByRole('button', { name: /^Cuenta de/ })).toHaveFocus();
+});
+
+it('invalidates late MCP reads when AccountMenu changes the account instead of showing the old grants', async () => {
+  const api = new CauceApi(); const user = userEvent.setup();
+  let resolve!: (page: ClientConnectionsPage) => void;
+  const response = new Promise<ClientConnectionsPage>(done => { resolve = done; });
+  vi.spyOn(api, 'listClientConnections').mockReturnValueOnce(response).mockResolvedValue(connections('b'.repeat(64)));
+  const mount = (subject: string) => <ApiProvider api={api}><AccountMenu gate={passwordGate(subject)} /></ApiProvider>;
+  const view = render(mount('owner-a'));
+  await user.click(screen.getByRole('button', { name: /^Cuenta de/ }));
+  await user.click(screen.getByRole('button', { name: 'Conexiones MCP' }));
+  view.rerender(mount('owner-b'));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await user.click(screen.getByRole('button', { name: /^Cuenta de/ }));
+  await user.click(screen.getByRole('button', { name: 'Conexiones MCP' }));
+  await screen.findByText('b'.repeat(64));
+  await act(async () => { resolve(connections()); await response; });
+  expect(screen.queryByText('a'.repeat(64))).toBeNull();
+});
+
+it('retains the exact uncertain command across closing AccountMenu and navigating within the same account', async () => {
+  const api = new CauceApi(); const input = passwordGate(); const user = userEvent.setup();
+  vi.spyOn(api, 'listClientConnections').mockResolvedValue(connections());
+  const create = vi.spyOn(api, 'createClientDeclaration').mockRejectedValue(new TypeError('Lost response'));
+  const mount = (route: string) => <ApiProvider api={api}><AccountMenu gate={input} routeKey={route} /></ApiProvider>;
+  const view = render(mount('messages'));
+  await user.click(screen.getByRole('button', { name: /^Cuenta de/ }));
+  await user.click(screen.getByRole('button', { name: 'Conexiones MCP' }));
+  await user.click(await screen.findByRole('radio'));
+  await user.click(screen.getByRole('button', { name: 'Guardar declaración' }));
+  await screen.findByRole('alert');
+  const original = create.mock.calls[0][0];
+  view.rerender(mount('live'));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await user.click(screen.getByRole('button', { name: /^Cuenta de/ }));
+  await user.click(screen.getByRole('button', { name: 'Conexiones MCP' }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Reintentar mismo intento' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'Reintentar mismo intento' }));
+  await waitFor(() => { expect(create).toHaveBeenCalledTimes(2); });
+  expect(create.mock.calls[1][0]).toBe(original);
 });

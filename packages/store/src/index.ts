@@ -14,3 +14,4 @@ export * from './human-identity.js';
 export * from './repository/agent-context-quarantine.js';
 export type { ContextWritePlan, ContextWriteAuditAttribution } from './repository/agent-context-write-plan.js';
 export { persistAgentContextReconcileInTransaction, type AgentContextFenceInput, type AgentContextReconcileEffect } from './repository/agent-context-reconcile.js';
+export * from './human-client-provenance.js';

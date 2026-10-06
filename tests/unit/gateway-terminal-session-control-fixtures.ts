@@ -1,3 +1,4 @@
+import { schemaBarrierReply } from '../helpers/schema-barrier.js';
 // Shared fixtures for session-control test files.
 // Not a test file: not picked up by vitest.
 // Imported by per-route test files to avoid duplicating 200+ lines per file.
@@ -247,6 +248,8 @@ export function transactionClient(
 ): DatabaseClient {
   return {
     query: vi.fn(async (text: string, values: unknown[] = []) => {
+      const schema = schemaBarrierReply(text, values);
+      if (schema) return schema;
       if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [], rowCount: 0 };
       const result = await handleQuery(text, values);
       if (result.rows.length === 0 && text === 'SELECT clock_timestamp() AS database_now') {
@@ -306,6 +309,8 @@ export function stubFleetPool(
   const queries: { text: string; values: unknown[] }[] = [];
   const pool = {
     query: vi.fn(async (text: string, values: unknown[] = []) => {
+      const schema = schemaBarrierReply(text, values);
+      if (schema) return schema;
       queries.push({ text, values });
       if (text.includes('FROM agents')) {
         return { rows: [...placements], rowCount: placements.length };

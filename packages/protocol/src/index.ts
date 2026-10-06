@@ -23,3 +23,4 @@ export * from './blob-reference.js';
 export * from './deterministic-uuid.js';
 export * from './agent-egress.js';
 export * from './harness-consumption.js';
+export * from './schemas/client-provenance.js';

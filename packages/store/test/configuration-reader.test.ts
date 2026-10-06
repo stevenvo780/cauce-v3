@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ConfigurationRepository } from '../src/configuration.js';
 import type { DatabasePool } from '../src/db.js';
+import { schemaBarrierReply, schemaBarrierStatements } from '../../../tests/helpers/schema-barrier.js';
 
 interface QueryRecord {
   readonly sql: string;
@@ -12,6 +13,8 @@ function readerPool(): { pool: DatabasePool; queries: QueryRecord[] } {
   const query = async (sql: string, params: readonly unknown[] = []) => {
     const normalized = sql.replace(/\s+/gu, ' ').trim();
     queries.push({ sql: normalized, params });
+    const barrier = schemaBarrierReply(normalized, params);
+    if (barrier !== undefined) return barrier;
     if (normalized.includes('role.allow_read')) {
       return { rows: [{ is_hub: false }], rowCount: 1 };
     }
@@ -37,6 +40,7 @@ describe('configuration reader authority', () => {
     const { pool, queries } = readerPool();
     const snapshot = await new ConfigurationRepository(pool).get('Pablo', 'midas');
 
+    expect(queries.slice(0, 5).map((record) => record.sql)).toEqual(['BEGIN', ...schemaBarrierStatements]);
     expect(snapshot).toMatchObject({ revision: 0, tenants: [], rooms: [], memberships: [] });
     const authorization = queries.find((record) => record.sql.includes('FROM memberships membership'));
     expect(authorization?.sql).toContain('role.allow_read');
@@ -60,6 +64,9 @@ describe('configuration reader authority', () => {
     await expect(repository.rollback('Pablo', 'midas', 1, false, 0))
       .rejects.toMatchObject({ code: 'forbidden' });
 
+    for (const [index, record] of queries.entries()) {
+      if (record.sql === 'BEGIN') expect(queries.slice(index + 1, index + 5).map((query) => query.sql)).toEqual(schemaBarrierStatements);
+    }
     const controls = queries.filter((record) => record.sql.includes('role.allow_control'));
     expect(controls).toHaveLength(2);
     expect(queries.some((record) => /\b(INSERT|UPDATE|DELETE)\b/iu.test(record.sql))).toBe(false);

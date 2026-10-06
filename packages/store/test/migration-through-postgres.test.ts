@@ -11,6 +11,12 @@ import {
 const version043 = '043_blob_tenant_entitlements.sql';
 const version044 = '044_human_mcp_identity.sql';
 const version045 = '045_mcp_oauth_authorization.sql';
+const version046 = '046_human_client_provenance.sql';
+const provenanceTables = [
+  'human_oauth_client_delegations',
+  'human_message_client_provenance',
+  'human_client_delegation_operations',
+];
 const oauthTables = ['cauce_oauth_requests', 'cauce_oauth_grants', 'cauce_oauth_codes',
   'cauce_oauth_tokens', 'cauce_oauth_refresh_tokens', 'cauce_oauth_grant_revocations', 'cauce_oauth_clients'];
 let database: TestDatabase;
@@ -41,7 +47,7 @@ describe('bounded migration runner', () => {
          JOIN schema_migration_ledger ledger USING(version)
         ORDER BY migration.version`,
     );
-    expect(before.rows.slice(-2).map((row) => row.version)).toEqual([version044, version045]);
+    expect(before.rows.slice(-3).map((row) => row.version)).toEqual([version044, version045, version046]);
     const tablesBefore = await pool.query<{ name: string }>(
       `SELECT tablename AS name FROM pg_tables WHERE schemaname='public' ORDER BY tablename`,
     );
@@ -55,6 +61,9 @@ describe('bounded migration runner', () => {
 
     await expect(applyMigrationsThrough(pool, version044)).rejects.toThrow(
       /later migration is already applied: 045_mcp_oauth_authorization[.]sql/u,
+    );
+    await expect(applyMigrationsThrough(pool, version045)).rejects.toThrow(
+      /later migration is already applied: 046_human_client_provenance[.]sql/u,
     );
 
     const after = await pool.query<{ version: string; source_sha256: string; source_origin: string }>(
@@ -70,7 +79,7 @@ describe('bounded migration runner', () => {
     expect(tablesAfter.rows).toEqual(tablesBefore.rows);
   });
 
-  it('creates only the requested prefix, then default apply adds 044 backfill and 045 OAuth fences', async () => {
+  it('creates only the requested prefix, then default apply adds 044 identity, 045 OAuth, and 046 provenance', async () => {
     const historical: EmptyTestDatabase = await startEmptyTestDatabase(database.url);
     try {
       await applyMigrationsThrough(historical.pool, version043);
@@ -79,8 +88,10 @@ describe('bounded migration runner', () => {
       expect(cutoffIndex).toBeGreaterThanOrEqual(0);
       const prefix = sources.slice(0, cutoffIndex + 1);
       expect(prefix).toHaveLength(39);
-      expect(sources).toHaveLength(41);
-      expect(sources.slice(cutoffIndex + 1).map((migration) => migration.version)).toEqual([version044, version045]);
+      expect(sources).toHaveLength(42);
+      expect(sources.slice(cutoffIndex + 1).map((migration) => migration.version)).toEqual([
+        version044, version045, version046,
+      ]);
       const versions = await historical.pool.query<{ version: string }>(
         'SELECT version FROM schema_migrations ORDER BY version',
       );
@@ -88,6 +99,7 @@ describe('bounded migration runner', () => {
       expect(versions.rows.some((row) => row.version === version044)).toBe(false);
       expect(await relationExists(historical.pool, 'human_tenant_memberships')).toBe(false);
       for (const table of oauthTables) expect(await relationExists(historical.pool, table)).toBe(false);
+      for (const table of provenanceTables) expect(await relationExists(historical.pool, table)).toBe(false);
       await expectExactLedger(historical.pool, prefix);
 
       const humanId = randomUUID();
@@ -104,10 +116,14 @@ describe('bounded migration runner', () => {
       await expectExactLedger(historical.pool, sources);
 
       const finalVersion = await historical.pool.query<{ version: string }>(
-        `SELECT version FROM schema_migrations WHERE version=ANY($1::text[]) ORDER BY version`, [[version044, version045]],
+        `SELECT version FROM schema_migrations WHERE version=ANY($1::text[]) ORDER BY version`,
+        [[version044, version045, version046]],
       );
-      expect(finalVersion.rows).toEqual([{ version: version044 }, { version: version045 }]);
+      expect(finalVersion.rows).toEqual([
+        { version: version044 }, { version: version045 }, { version: version046 },
+      ]);
       for (const table of oauthTables) expect(await relationExists(historical.pool, table)).toBe(true);
+      for (const table of provenanceTables) expect(await relationExists(historical.pool, table)).toBe(true);
       const membership = await historical.pool.query<{
         human_id: string; tenant_id: string; actor_alias: string; role: string; permissions: string[];
       }>(

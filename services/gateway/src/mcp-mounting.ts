@@ -1,3 +1,5 @@
+import { PasswordAuthProvider } from './password-auth.js';
+import { registerClientDelegationRoutes } from './routes/mcp-client-delegations.js';
 import type { ServerOptions as HttpServerOptions } from 'node:http';
 import type { ServerOptions as HttpsServerOptions } from 'node:https';
 import type { FastifyInstance } from 'fastify';
@@ -46,6 +48,12 @@ export async function registerHumanMcp(
     } }),
     logRedaction: (actor, redaction) => { logPublishRedaction(app.log, actor, redaction); },
   });
-  if (configuration.oauth !== undefined) await registerOAuthAuthorizationServer(app, configuration.oauth);
+  if (configuration.oauth !== undefined) {
+    await registerOAuthAuthorizationServer(app, configuration.oauth);
+    if (configuration.oauth.passwordAuth instanceof PasswordAuthProvider) registerClientDelegationRoutes(app, pool, configuration.oauth.passwordAuth, {
+      issuer: configuration.oauth.tokens.issuer, resource: configuration.oauth.tokens.resource,
+      verifyCredentialStamp: configuration.oauth.passwordAuth.verifyCredentialStamp.bind(configuration.oauth.passwordAuth),
+    });
+  }
   await app.register(registerMcpIngress, { ...configuration, operationsFactory });
 }

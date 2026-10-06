@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readMcpConnectionIdentity } from './mcp-connection-identity.js';
 import { CanonicalUuidV4Schema, PROTOCOL_VERSION, PublishResultSchema, publishReceiptCausalHash } from '@cauce/protocol';
 import { PublishIntentExpiredError, PublishIntentRateLimitedError, PublishIntentReconciliationRequired, StoreError } from '@cauce/store';
 import {
@@ -139,6 +140,10 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
       }
 
       const operations = {
+        async connectionIdentity() {
+          await authorize('read', 'cauce.read');
+          return readMcpConnectionIdentity(options.pool, options, identity, pinned, signal);
+        },
         async status() {
           const { principal } = await authorize('read', 'cauce.read');
           const presence = options.identityStore === undefined && options.pool === undefined
@@ -224,6 +229,7 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
         },
       };
       return Object.freeze({
+        connectionIdentity: () => guardedOperation(() => operations.connectionIdentity()),
         status: () => guardedOperation(() => operations.status()),
         agents: () => guardedOperation(() => operations.agents()),
         submit: (command: McpSubmitCommand) => guardedOperation(() => operations.submit(command), true),

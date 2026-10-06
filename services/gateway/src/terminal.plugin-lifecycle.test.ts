@@ -25,7 +25,7 @@ import {
   fakeDatabase,
   presence,
   type FakeDatabase,
-} from './terminal/plugin-test-fixtures.js';
+} from './terminal.plugin.fixtures.js';
 
 describe('terminal control plane', () => {
   let directory: string;

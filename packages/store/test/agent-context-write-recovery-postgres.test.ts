@@ -4,10 +4,11 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { emptyAgentProfile } from '@cauce/protocol';
 import {
   AgentProfileRepository, CauceRepository, type ContextWriteDescriptor, type ContextWritePlan,
-  type ContextWriteRecoveryInput, type ContextWriterRecoveryProof, type DatabasePool, type ReserveContextWriteInput,
+  type ContextWriteRecoveryInput, type ContextWriterRecoveryProof, type DatabaseClient, type DatabasePool, type ReserveContextWriteInput,
 } from '../src/index.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { preparePostgresSuite } from './postgres-suite.js';
+import { agentContextReconcileLockKey } from '../src/repository/agent-context-lock.js';
 
 let database: TestDatabase;
 let pool: DatabasePool;
@@ -68,6 +69,19 @@ function recoveryInput(descriptor: ContextWriteDescriptor, overrides: Partial<Co
   };
 }
 
+async function ownedAuthorityLocks(client: DatabaseClient): Promise<{ kind: string; mode: string }[]> {
+  const locks = await client.query<{ kind: string; mode: string }>(`WITH keys(kind,key) AS (
+      VALUES ('schema',783003003::bigint), ('human',hashtextextended('owned-human-authority',0)),
+        ('context',hashtextextended($1,0)))
+    SELECT keys.kind,locks.mode FROM pg_locks locks JOIN keys
+      ON locks.classid::bigint=((keys.key >> 32) & 4294967295)
+      AND locks.objid::bigint=(keys.key & 4294967295) AND locks.objsubid=1
+    WHERE locks.pid=pg_backend_pid() AND locks.locktype='advisory' AND locks.granted
+    ORDER BY keys.kind,locks.mode`, [agentContextReconcileLockKey(tenant, alias)]);
+  expect(locks.rows.filter((lock) => lock.kind === 'schema')).toEqual([{ kind: 'schema', mode: 'ShareLock' }]);
+  return locks.rows.filter((lock) => lock.kind !== 'schema');
+}
+
 async function expectStillRunning(operationId: string): Promise<void> {
   const result = await pool.query<{ status: string; lease_until: Date | null; payload: { completion: unknown } }>(
     'SELECT status,lease_until,payload FROM jobs WHERE id=$1', [operationId]);
@@ -126,19 +140,15 @@ describe('versioned context-write recovery', () => {
     const result = await repository.recoverContextWrite(recoveryInput(descriptor, {
       lockHumanAuthority: async (client) => {
         order.push('authority'); pids.push(Number((await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid));
-        const before = await client.query<{ total: string }>(`SELECT count(*)::text AS total FROM pg_locks
-          WHERE pid=pg_backend_pid() AND locktype='advisory' AND granted`);
-        expect(Number(before.rows[0]?.total)).toBe(0);
+        expect(await ownedAuthorityLocks(client)).toEqual([]);
         await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('owned-human-authority',0))`);
-        const held = await client.query<{ total: string }>(`SELECT count(*)::text AS total FROM pg_locks
-          WHERE pid=pg_backend_pid() AND locktype='advisory' AND granted`);
-        expect(Number(held.rows[0]?.total)).toBe(1);
+        expect(await ownedAuthorityLocks(client)).toEqual([{ kind: 'human', mode: 'ExclusiveLock' }]);
       },
       assertTargetControl: async (client, selected) => {
         order.push('control'); pids.push(Number((await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid));
-        const held = await client.query<{ total: string }>(`SELECT count(*)::text AS total FROM pg_locks
-          WHERE pid=pg_backend_pid() AND locktype='advisory' AND granted`);
-        expect(Number(held.rows[0]?.total)).toBe(2);
+        expect(await ownedAuthorityLocks(client)).toEqual([
+          { kind: 'context', mode: 'ExclusiveLock' }, { kind: 'human', mode: 'ExclusiveLock' },
+        ]);
         expect(selected.version).toBe(2);
         expect(selected.operationId).toBe(descriptor.operationId);
       },

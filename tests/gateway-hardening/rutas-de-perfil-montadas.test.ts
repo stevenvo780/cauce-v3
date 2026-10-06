@@ -6,6 +6,7 @@ import type {
   AgentFactsProbe, GovernanceBatchWrite,
 } from '../../services/gateway/src/console/agent-documents.routes.js';
 import type { GovernanceWriteOperation } from '../../services/gateway/src/console/governance-write-operation.js';
+import { schemaBarrierReply } from '../helpers/schema-barrier.js';
 import { FixedAuthProvider, fakePool, fakeRepository, grants, noDeliveryWakes, roles, testPrincipal } from './helpers.js';
 
 /**
@@ -79,6 +80,8 @@ function poolDePerfil(state: ProfileState, supersedeAfterCommit: boolean): Datab
   });
   const query = async (sql: string, params: readonly unknown[] = []) => {
     const normalized = sql.replace(/\s+/gu, ' ').trim();
+    const barrier = schemaBarrierReply(normalized, params);
+    if (barrier !== undefined) return barrier;
     if (normalized === 'BEGIN' || normalized === 'COMMIT' || normalized === 'ROLLBACK'
       || normalized.startsWith('INSERT INTO audit_events')) {
       return { rows: [], rowCount: normalized === 'BEGIN' ? null : 1 };

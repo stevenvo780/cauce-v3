@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { ConfigurationRepository } from '../src/configuration.js';
 import type { DatabasePool } from '../src/db.js';
+import { schemaBarrierReply, schemaBarrierStatements } from '../../../tests/helpers/schema-barrier.js';
 
 function revisionPool(revisions: Record<string, unknown>[]) {
   const queries: string[] = [];
-  const query = async (sql: string) => {
+  const query = async (sql: string, params: readonly unknown[] = []) => {
     const normalized = sql.replace(/\s+/gu, ' ').trim();
     queries.push(normalized);
+    const barrier = schemaBarrierReply(normalized, params);
+    if (barrier !== undefined) return barrier;
     if (normalized.includes('role.allow_read')) return { rows: [{ is_hub: false }], rowCount: 1 };
     if (normalized.includes('COALESCE(max(id),0)::text AS revision')) {
       return { rows: [{ revision: '3' }], rowCount: 1 };
@@ -49,6 +52,7 @@ describe('configuration revision read projection', () => {
     const { pool, queries } = revisionPool(stored);
 
     const snapshot = await new ConfigurationRepository(pool).get('Steven', 'kant');
+    expect(queries.slice(0, 5)).toEqual(['BEGIN', ...schemaBarrierStatements]);
     const revisions = snapshot.revisions as Record<string, unknown>[];
     const accountOperation = revisions[0]?.operation as Record<string, unknown>;
     const accountValue = accountOperation.value as Record<string, unknown>;

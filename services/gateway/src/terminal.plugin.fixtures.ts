@@ -1,10 +1,17 @@
+import { schemaBarrierReply } from '../../../tests/helpers/schema-barrier.js';
 /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { DatabasePool } from '@cauce/store';
 import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import { vi } from 'vitest';
+import { expect, vi } from 'vitest';
 import { MtlsAuthProvider, requireOperatorPermission, validatePrincipal, type AuthProvider, type Principal } from './auth.js';
-import { machineAuthorityOrigin, type VerifiedTerminalMachine } from './terminal/authority-continuity.js';
+import {
+  authorityContinuityCommitment,
+  issueAuthorityContinuity,
+  machineAuthorityOrigin,
+  verifyAuthorityContinuity,
+  type VerifiedTerminalMachine,
+} from './terminal/authority-continuity.js';
 import { sessionExpiry } from './terminal/helpers.js';
 import type { AgentPresence, TerminalSessionRow } from './terminal/types.js';
 import { instrumentFailurePool } from './test-support/terminal-plugin.js';
@@ -46,7 +53,7 @@ function isOpen(row: TerminalSessionRow, ttlSeconds: number, now: number): boole
   return row.consumed_at.getTime() + ttlSeconds * 1_000 > now;
 }
 
-function fakeDatabase(): FakeDatabase {
+function fakeDatabaseBase(): FakeDatabase {
   const sessions = new Map<string, TerminalSessionRow>();
   const audit: AuditRow[] = [];
   let failingAuditAction: string | undefined;
@@ -78,6 +85,8 @@ function fakeDatabase(): FakeDatabase {
   };
 
   const query = async (text: string, values: unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> => {
+    const schema = schemaBarrierReply(text, values);
+    if (schema) return schema;
     const now = clock.now();
     if (text.trim() === 'SELECT clock_timestamp() AS database_now') {
       return { rows: [{ database_now: new Date(now) }], rowCount: 1 };
@@ -540,6 +549,57 @@ function presence(overrides: Partial<AgentPresence> = {}): AgentPresence {
 }
 
 export type { AuditRow, FakeDatabase };
+
+interface QueryClient {
+  query(text: string, values?: unknown[]): Promise<unknown>;
+}
+
+interface QueryPool {
+  connect(): Promise<QueryClient>;
+}
+
+function fakeDatabase(): FakeDatabase {
+  const database = fakeDatabaseBase();
+  const pool = database.pool as unknown as QueryPool;
+  const connect = pool.connect.bind(pool);
+  pool.connect = async () => {
+    const client = await connect();
+    const query = client.query.bind(client);
+    client.query = (text, values = []) => {
+      if (text.includes('decision AS MATERIALIZED') && text.includes('INSERT INTO terminal_sessions')) {
+        expect(text).toContain("$13,$14,'',$15,$16");
+        expect(values).toHaveLength(24);
+        return query(text, [...values.slice(0, 14), '', ...values.slice(14)]);
+      }
+      return query(text, values);
+    };
+    return client;
+  };
+  return database;
+}
+
+function installLegacyAdmission(database: FakeDatabase, sessionId: string): string {
+  const row = database.sessions.get(sessionId);
+  const proof = database.authorityProofs.get(sessionId);
+  if (row === undefined || proof === undefined) throw new Error('legacy admission fixture is unavailable');
+  const previous = verifyAuthorityContinuity(proof, MASTER);
+  const material = {
+    suite: 'cauce-v3-terminal-browser-admission', version: 2, request_id: row.request_id,
+    actor: { tenant_id: previous.origin.actor.tenantId, alias: previous.origin.actor.alias },
+    operator: { operator_id: row.operator_id, attributed: row.attributed, console_subject: row.console_subject },
+    target: { tenant_id: row.tenant_id, alias: row.alias, container: row.container,
+      presence_generation: row.generation, image_id: row.image_id, runtime_user: row.runtime_user,
+      runtime_uid: 1000, mode: row.mode, relay_instance_id: row.relay_instance_id },
+    reason: 'historical human justification', cols: row.cols, rows: row.rows,
+  };
+  const payload = { ...previous, semanticDigest: createHash('sha256').update(JSON.stringify(material)).digest('hex') };
+  const legacyProof = issueAuthorityContinuity(payload, MASTER);
+  row.reason = material.reason;
+  row.request_sha256 = authorityContinuityCommitment(payload);
+  database.authorityProofs.set(sessionId, legacyProof);
+  return legacyProof;
+}
+
 export {
   CLAIM_A,
   CLAIM_B,
@@ -552,6 +612,7 @@ export {
   RELAY_TOKEN,
   consoleAuthProvider,
   installAuthorityCarrier,
+  installLegacyAdmission,
   machineMapping,
   fakeDatabase,
   isOpen,

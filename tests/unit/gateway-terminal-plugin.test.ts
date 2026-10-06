@@ -1,3 +1,4 @@
+import { schemaBarrierReply } from '../helpers/schema-barrier.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -60,7 +61,9 @@ function authFixture() {
 type TrackedPool = DatabasePool & { query: ReturnType<typeof vi.fn>; connect: ReturnType<typeof vi.fn> };
 
 function emptyPool(): TrackedPool {
-  const query = vi.fn(async (text: string) => {
+  const query = vi.fn(async (text: string, values: readonly unknown[] = []) => {
+    const schema = schemaBarrierReply(text, values);
+    if (schema) return schema;
     if (text.includes('FROM console_users WHERE id=$1 FOR SHARE')) return { rows: [{
       id: HUMAN_ID, active: true, role: 'operator', tenant_id: 'Steven', alias: 'kant',
       password_changed_at: new Date(0), password_hash: PASSWORD_HASH,
@@ -608,6 +611,8 @@ describe('POST /v3/terminal/relay/sessions/:sid/close: fila agregada de entrada'
   function closePool(mode: string): DatabasePool {
     const row = sessionRow(mode);
     const handle = async (text: string, values: unknown[] = []) => {
+      const schema = schemaBarrierReply(text, values);
+      if (schema) return schema;
       if (text.includes('INSERT INTO audit_events')) {
         audits.push({
           action: String(values[2]),

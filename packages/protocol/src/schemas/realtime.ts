@@ -23,6 +23,7 @@ import {
 } from './core.js';
 import { MessageBodySchema } from './messages.js';
 import { ConversationWorkStateSchema } from './conversation-work.js';
+import { HumanClientProvenanceSchema, HumanClientDelegationSchema } from './client-provenance.js';
 
 export const BaseAckSchema = z.object({
   version: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
@@ -167,6 +168,8 @@ export const DeliveryEnvelopeSchema = z.object({
   recipient_alias: AliasSchema,
   body: MessageBodySchema,
   human_initiator: HumanMessageInitiatorSchema.optional(),
+  human_client_provenance: HumanClientProvenanceSchema.optional(),
+  human_client_delegation: HumanClientDelegationSchema.optional(),
   origin: OriginSchema.optional(),
   authenticated_context: AuthenticatedContextSchema.optional(),
   console_human_subject: z.string().length(70).regex(/^human:[a-f0-9]{64}$/u).optional(),

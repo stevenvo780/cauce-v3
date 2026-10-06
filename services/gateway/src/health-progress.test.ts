@@ -1,3 +1,4 @@
+import { schemaBarrierReply, schemaBarrierStatements } from '../../../tests/helpers/schema-barrier.js';
 import type { DatabasePool } from '@cauce/store';
 import { describe, expect, it } from 'vitest';
 import {
@@ -8,6 +9,8 @@ import {
 describe('gateway readiness stops lying about the listener the agents actually use', () => {
   it('probes the ACK ledger under bounded PostgreSQL timeouts without reading payloads', async () => {
     const query = vi.fn(async (sql: string, parameters?: readonly unknown[]) => {
+      const schema = schemaBarrierReply(sql, parameters);
+      if (schema) return schema;
       void parameters;
       void sql;
       return { rows: [], rowCount: 0 };
@@ -24,6 +27,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     expect(query.mock.calls.map(([sql]) => sql)).toEqual([
       'BEGIN',
+      ...schemaBarrierStatements,
       "SET LOCAL lock_timeout='1000ms'",
       "SET LOCAL statement_timeout='2000ms'",
       expect.stringMatching(/FROM deliveries d[\s\S]*LEFT JOIN delivery_acks/u),
@@ -33,7 +37,9 @@ describe('gateway readiness stops lying about the listener the agents actually u
   });
 
   it('probes delivery admission schema, privileges and live-capacity SQL read-only', async () => {
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
       if (sql.includes('AS capacity_column_exact')) {
         return {
           rows: [{
@@ -56,6 +62,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
     const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
+      ...schemaBarrierStatements,
       'SET TRANSACTION READ ONLY',
       "SET LOCAL lock_timeout='1000ms'",
       "SET LOCAL statement_timeout='2000ms'",
@@ -63,12 +70,14 @@ describe('gateway readiness stops lying about the listener the agents actually u
       expect.stringMatching(/WITH requested[\s\S]*max_concurrent_deliveries[\s\S]*memberships[\s\S]*role_policies[\s\S]*acl_edges[\s\S]*ack_deadline_at>now\(\)[\s\S]*message\.priority/u),
       'COMMIT',
     ]);
-    expect(calls[5]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE|FOR\s+SHARE)\b/iu);
+    expect(calls[9]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE|FOR\s+SHARE)\b/iu);
     expect(client.release).toHaveBeenCalledWith(false);
   });
 
   it('rejects an incomplete delivery-capacity contract before running its SQL probe', async () => {
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
       if (sql.includes('AS capacity_column_exact')) {
         return {
           rows: [{
@@ -95,6 +104,8 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
   it('probes the schema-031 wake claim read-only, bounded and without a real recipient', async () => {
     const query = vi.fn(async (sql: string, parameters?: readonly unknown[]) => {
+      const schema = schemaBarrierReply(sql, parameters);
+      if (schema) return schema;
       void parameters;
       if (sql.includes('AS migration_applied')) {
         return {
@@ -116,6 +127,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
     const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
+      ...schemaBarrierStatements,
       'SET TRANSACTION READ ONLY',
       "SET LOCAL lock_timeout='1000ms'",
       "SET LOCAL statement_timeout='2000ms'",
@@ -123,13 +135,15 @@ describe('gateway readiness stops lying about the listener the agents actually u
       expect.stringMatching(/WITH requested[\s\S]*NULL::uuid[\s\S]*JOIN connection_leases[\s\S]*FROM adapter_outbox[\s\S]*FROM outbox_dead_letters/u),
       'COMMIT',
     ]);
-    expect(calls[5]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
-    expect(query.mock.calls[5]?.[1]).toBeUndefined();
+    expect(calls[9]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
+    expect(query.mock.calls[9]?.[1]).toBeUndefined();
     expect(client.release).toHaveBeenCalledWith(false);
   });
 
   it('rejects a missing schema-031 contract before pretending the wake SQL is usable', async () => {
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
       if (sql.includes('AS migration_applied')) {
         return {
           rows: [{
@@ -153,7 +167,9 @@ describe('gateway readiness stops lying about the listener the agents actually u
   });
 
   it('probes schema-032 and its exact-fence CAS read-only without observing a session', async () => {
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
       if (sql.includes('AS columns_exact')) {
         return {
           rows: [{
@@ -176,6 +192,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
     const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
+      ...schemaBarrierStatements,
       'SET TRANSACTION READ ONLY',
       "SET LOCAL lock_timeout='1000ms'",
       "SET LOCAL statement_timeout='2000ms'",
@@ -183,12 +200,14 @@ describe('gateway readiness stops lying about the listener the agents actually u
       expect.stringMatching(/WITH requested[\s\S]*NULL::bytea[\s\S]*relay_claim_sha256=requested\.claim_sha256[\s\S]*relay_claim_epoch=requested\.claim_epoch[\s\S]*closed_at IS NULL/u),
       'COMMIT',
     ]);
-    expect(calls[5]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
+    expect(calls[9]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
     expect(client.release).toHaveBeenCalledWith(false);
   });
 
   it('rejects a missing schema-032 constraint before running the claim CAS probe', async () => {
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
       if (sql.includes('AS columns_exact')) {
         return {
           rows: [{
@@ -214,7 +233,9 @@ describe('gateway readiness stops lying about the listener the agents actually u
   });
 
   it('probes schema-033 columns, owner CHECK, unique request index and CAS read-only', async () => {
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
       if (sql.includes('AS request_index_exact')) {
         return {
           rows: [{
@@ -238,6 +259,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
     const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
+      ...schemaBarrierStatements,
       'SET TRANSACTION READ ONLY',
       "SET LOCAL lock_timeout='1000ms'",
       "SET LOCAL statement_timeout='2000ms'",
@@ -245,12 +267,14 @@ describe('gateway readiness stops lying about the listener the agents actually u
       expect.stringMatching(/WITH requested[\s\S]*NULL::uuid[\s\S]*request_sha256=requested\.request_sha256[\s\S]*browser_owner_generation=requested\.browser_owner_generation/u),
       'COMMIT',
     ]);
-    expect(calls[5]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
+    expect(calls[9]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
     expect(client.release).toHaveBeenCalledWith(false);
   });
 
   it('rejects a merely named but non-unique schema-033 request index', async () => {
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
       if (sql.includes('AS request_index_exact')) {
         return {
           rows: [{
@@ -274,7 +298,9 @@ describe('gateway readiness stops lying about the listener the agents actually u
   });
 
   it('probes schema-034 relay instance and UUIDv4 process fencing read-only', async () => {
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
       if (sql.includes('schema-034 relay instance contract')) return { rows: [], rowCount: 0 };
       if (sql.includes('AS mutation_permissions') && sql.includes('relay_constraint')) {
         return {
@@ -297,6 +323,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
     const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
+      ...schemaBarrierStatements,
       'SET TRANSACTION READ ONLY',
       "SET LOCAL lock_timeout='1000ms'",
       "SET LOCAL statement_timeout='2000ms'",
@@ -304,11 +331,13 @@ describe('gateway readiness stops lying about the listener the agents actually u
       expect.stringMatching(/WITH requested[\s\S]*NULL::text[\s\S]*relay_instance_id=requested\.relay_instance_id[\s\S]*relay_boot_id IS NOT DISTINCT FROM/u),
       'COMMIT',
     ]);
-    expect(calls[5]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
+    expect(calls[9]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
   });
 
   it('probes the exact schema-035 profile evidence topology and behavior read-only', async () => {
     const query = vi.fn(async (sql: string, parameters?: readonly unknown[]) => {
+      const schema = schemaBarrierReply(sql, parameters);
+      if (schema) return schema;
       if (sql.includes('AS functions_exact')) {
         expect(parameters).toEqual([
           expect.stringMatching(/jsonb_array_elements[\s\S]*document_count/u),
@@ -339,6 +368,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
     const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
+      ...schemaBarrierStatements,
       'SET TRANSACTION READ ONLY',
       "SET LOCAL lock_timeout='1000ms'",
       "SET LOCAL statement_timeout='2000ms'",
@@ -346,12 +376,14 @@ describe('gateway readiness stops lying about the listener the agents actually u
       expect.stringMatching(/WITH requested[\s\S]*NULL::uuid[\s\S]*agent_profile_runtime_expectations[\s\S]*agent_profile_runtime_adoptions[\s\S]*agent_profiles/u),
       'COMMIT',
     ]);
-    expect(calls[5]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
+    expect(calls[9]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
     expect(client.release).toHaveBeenCalledWith(false);
   });
 
   it('rejects a disabled schema-035 adoption trigger before its behavior probe', async () => {
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
       if (sql.includes('AS functions_exact')) {
         return {
           rows: [{
@@ -378,6 +410,8 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
   it('probes schema-037 ledger, exact index topology and journal authority read-only', async () => {
     const query = vi.fn(async (sql: string, parameters?: readonly unknown[]) => {
+      const schema = schemaBarrierReply(sql, parameters);
+      if (schema) return schema;
       if (sql.includes('AS migration_ledger_exact')) {
         expect(parameters).toEqual([
           '0daeb89c224e940600562ab162fba03c4facd4cb0b80b65f20feedc02b33f281',
@@ -401,19 +435,20 @@ describe('gateway readiness stops lying about the listener the agents actually u
     const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
+      ...schemaBarrierStatements,
       'SET TRANSACTION READ ONLY',
       "SET LOCAL lock_timeout='1000ms'",
       "SET LOCAL statement_timeout='2000ms'",
       expect.any(String),
       'COMMIT',
     ]);
-    expect(calls[4]).toMatch(/audit_events_console_publish_key_037_idx/u);
-    expect(calls[4]).toMatch(/audit_events_console_publish_nonce_037_idx/u);
-    expect(calls[4]).toMatch(/audit_events_console_publish_rate_037_idx/u);
-    expect(calls[4]).toMatch(/audit_events_console_publish_head_037_idx/u);
-    expect(calls[4]).toMatch(/pg_get_indexdef[\s\S]*schema_migration_ledger/u);
-    expect(calls[4]).toMatch(/console\.publish\.prepare/u);
-    expect(calls[4]).toMatch(/journal_permissions/u);
+    expect(calls[8]).toMatch(/audit_events_console_publish_key_037_idx/u);
+    expect(calls[8]).toMatch(/audit_events_console_publish_nonce_037_idx/u);
+    expect(calls[8]).toMatch(/audit_events_console_publish_rate_037_idx/u);
+    expect(calls[8]).toMatch(/audit_events_console_publish_head_037_idx/u);
+    expect(calls[8]).toMatch(/pg_get_indexdef[\s\S]*schema_migration_ledger/u);
+    expect(calls[8]).toMatch(/console\.publish\.prepare/u);
+    expect(calls[8]).toMatch(/journal_permissions/u);
     expect(client.release).toHaveBeenCalledWith(false);
   });
 });

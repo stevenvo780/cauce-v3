@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  AliasSchema, AuthenticatedPublishSchema, CanonicalUuidV4Schema, DeliveryStateSchema,
+  ClientProvenanceWireSchema, AliasSchema, AuthenticatedPublishSchema, CanonicalUuidV4Schema, DeliveryStateSchema,
   ConsolePublishIntentReconciliationSchema, ConsolePublishIntentExpiredSchema, ConsolePublishIntentRateLimitedSchema,
   PublishResultSchema, RecipientSchema, Sha256HexSchema, TenantSchema, type PublishResult, type Tenant,
 } from '@cauce/protocol';
@@ -24,6 +24,7 @@ export interface HumanMcpReceipt {
   readonly chain_open: boolean;
 }
 export interface HumanGatewayOperations {
+  connectionIdentity?(): Promise<unknown>;
   status(): Promise<unknown>;
   agents(): Promise<unknown>;
   submit(command: McpSubmitCommand): Promise<PublishResult>;
@@ -42,6 +43,12 @@ export interface GatewayRequestContext {
 export const McpSubmitCommandSchema = AuthenticatedPublishSchema.pick({
   room_id: true, recipients: true, body: true,
 }).safeExtend({ request_key: CanonicalUuidV4Schema, recipients: z.array(RecipientSchema).min(1).max(100) }).strict();
+export const McpConnectionIdentitySchema = z.object({
+  client: ClientProvenanceWireSchema, connection_ref: Sha256HexSchema.nullable(),
+  expires_at: z.iso.datetime({ offset: true }).nullable(),
+}).strict().refine((value) => value.client.kind === 'unknown'
+  ? value.connection_ref === null && value.expires_at === null
+  : value.connection_ref !== null && value.expires_at !== null);
 export const ReceiptInputSchema = z.object({ message_id: CanonicalUuidV4Schema }).strict();
 export const HumanMcpReceiptSchema = z.object({
   message_id: CanonicalUuidV4Schema,

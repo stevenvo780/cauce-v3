@@ -1,13 +1,13 @@
 import { preparePostgresSuite } from './postgres-suite.js';
 import { randomUUID } from 'node:crypto';
 import { requireValue } from './helpers.js';
-import { afterAll, beforeEach } from 'vitest';
+import { afterAll, afterEach, beforeEach } from 'vitest';
 import {
   type Ack, type DeliveryEnvelope, type PublishMessage, type Tenant,
 } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
-  resetTestDatabase, startTestDatabase, type TestDatabase
+  resetTestDatabase, startTestDatabase, startTestCaseDatabase, type TestDatabase, type EmptyTestDatabase
 } from '../../../tests/helpers/postgres.js';
 import { PostgresTelegramBridgeRepository } from '../../../services/telegram-bridge/src/repository.js';
 import { terminalAck as buildTerminalAck } from './helpers/consumer.js';
@@ -197,6 +197,7 @@ export async function deadTelegramAckEffect(ackId: string): Promise<{
 }
 
 export function registerAgentOutputSuite(sourceUrl: string): void {
+  let currentCase: EmptyTestDatabase | undefined;
   preparePostgresSuite(sourceUrl, async () => {
     database = await startTestDatabase();
     databaseStarted = true;
@@ -205,6 +206,9 @@ export function registerAgentOutputSuite(sourceUrl: string): void {
   }, 120_000);
 
   beforeEach(async () => {
+    currentCase = await startTestCaseDatabase(database);
+    pool = currentCase.pool;
+    repository = new CauceRepository(pool);
     await resetTestDatabase(pool);
     await pool.query(`
       DELETE FROM memberships WHERE tenant_id='Pablo' AND alias='kant';
@@ -220,9 +224,12 @@ export function registerAgentOutputSuite(sourceUrl: string): void {
     `);
   });
 
+  afterEach(async () => { await currentCase?.close(); currentCase = undefined; });
+
   afterAll(async () => {
     if (!databaseStarted) return;
-    await pool.end();
+    await currentCase?.close();
+    await database.pool.end();
     await database.container.stop();
   });
 }

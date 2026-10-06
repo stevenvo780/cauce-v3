@@ -30,7 +30,7 @@ function client(override: Record<string, unknown> = {}, absentToken = false, dis
     else if (sql.includes('FROM human_tenant_memberships')) rows = [{ tenant_id: 'Steven', actor_alias: 'kant', role: 'operator', permissions: ['read', 'route'], enabled: unavailable !== 'membership', revision: '3', revoked_at: unavailable === 'membership' ? new Date() : null }];
     else if (sql.includes('SELECT credential_stamp')) rows = [{ credential_stamp: typeof override.credential_stamp === 'string' ? override.credential_stamp : stamp }];
     else if (sql.includes('AS valid')) rows = [{ valid: true }];
-    else if (sql.includes('FROM cauce_oauth_grants')) rows = [{ id: grantId, human_id: userId, scopes: ['cauce.read'], expires_at: new Date(identity.expiresAt * 1000), credential_stamp: stamp,
+    else if (sql.includes('FROM cauce_oauth_grants')) rows = [{ id: grantId, human_id: userId, client_id: 'https://client.example/metadata', scopes: ['cauce.read'], expires_at: new Date(identity.expiresAt * 1000), credential_stamp: stamp,
       binding_id: bindingId, binding_revision: '2', membership_revision: '3', tenant_id: 'Steven', actor_alias: 'kant', ...override }];
     else if (sql.includes('FROM cauce_oauth_tokens') && !absentToken) rows = [{ expires_at: new Date(identity.expiresAt * 1000) }];
     return { rows, rowCount: rows.length };
@@ -46,7 +46,7 @@ describe('OAuth live authority contracts without PostgreSQL', () => {
   });
   it('takes shared locks and requires matching token expiration', async () => {
     const fake = client();
-    await expect(lockOAuthAccess(fake.client, identity, issuer, identity.audience, verifyCredentialStamp)).resolves.toBeUndefined();
+    await expect(lockOAuthAccess(fake.client, identity, issuer, identity.audience, verifyCredentialStamp)).resolves.toMatchObject({ kind: 'oauth_client', clientId: 'https://client.example/metadata', grantId, instance: 'unknown' });
     expect(fake.query.mock.calls.map(([sql]) => sql).filter((sql) => sql.includes('FOR SHARE'))).toHaveLength(7);
     await expect(lockOAuthAccess(fake.client, { ...identity, expiresAt: 19_999 }, issuer, identity.audience, verifyCredentialStamp)).rejects.toThrow('invalid_grant');
   });
@@ -112,8 +112,8 @@ describe('configured remote authority on the resource origin', () => {
 
 describe('SQL fixture without durable revision triggers', () => {
   it.each(['binding', 'membership'] as const)('reproduces grant revival if %s is re-enabled with the same revision', async (kind) => {
-    await expect(lockOAuthAccess(client().client, identity, issuer, identity.audience, verifyCredentialStamp)).resolves.toBeUndefined();
+    await expect(lockOAuthAccess(client().client, identity, issuer, identity.audience, verifyCredentialStamp)).resolves.toMatchObject({ kind: 'oauth_client', clientId: 'https://client.example/metadata', grantId, instance: 'unknown' });
     await expect(lockOAuthAccess(client({}, false, false, kind).client, identity, issuer, identity.audience, verifyCredentialStamp)).rejects.toThrow();
-    await expect(lockOAuthAccess(client().client, identity, issuer, identity.audience, verifyCredentialStamp)).resolves.toBeUndefined();
+    await expect(lockOAuthAccess(client().client, identity, issuer, identity.audience, verifyCredentialStamp)).resolves.toMatchObject({ kind: 'oauth_client', clientId: 'https://client.example/metadata', grantId, instance: 'unknown' });
   });
 });
