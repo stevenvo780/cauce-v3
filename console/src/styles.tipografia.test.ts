@@ -24,6 +24,7 @@ const HOJAS = [
   'features/config/config.css',
   'features/config/settings.css',
   'features/config/AgentRegistryEditor.css',
+  'features/config/AgentRegistryCreate.css',
   'features/config/toggles.css',
   'features/landing/landing.css',
   'features/audit/audit.css',

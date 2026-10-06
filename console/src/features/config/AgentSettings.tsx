@@ -3,13 +3,16 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { EmptyState, Panel } from '../../components/ui';
 import { AgentContextPanel } from '../live/AgentContextPanel';
 import { AgentRegistryEditor } from './AgentRegistryEditor';
+import { AgentRegistryCreate } from './AgentRegistryCreate';
 import { filterSettingsAgents, settingsAgents } from './settings-model';
 export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string>();
   const [dirty, setDirty] = useState(false);
   const [reloadedSnapshot, setReloadedSnapshot] = useState<ConfigurationSnapshot>();
+  const [createOpen, setCreateOpen] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
+  const createTrigger = useRef<HTMLButtonElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const recoveryButton = useRef<HTMLButtonElement>(null);
   const buttons = useRef(new Map<string, HTMLButtonElement>());
@@ -47,6 +50,11 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
       </button>
     </div> : null}
     <Panel title="Agentes y contexto" subtitle="Identidad, grupos y responsabilidad en un solo lugar.">
+      <button ref={createTrigger} type="button" className="button secondary" onClick={() => { setCreateOpen(true); }}>
+        Añadir agente
+      </button>
+      <AgentRegistryCreate snapshot={activeSnapshot} open={createOpen} onOpenChange={setCreateOpen}
+        onReloaded={setReloadedSnapshot} focusReturnRef={createTrigger} />
       <label className="settings-search">Buscar agente o grupo
         <input ref={searchInput} type="search" value={query} onChange={(event) => { setQuery(event.target.value); }} />
       </label>
