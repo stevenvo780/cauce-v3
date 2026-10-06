@@ -1,3 +1,4 @@
+import { schemaBarrierReply } from '../../../../../tests/helpers/schema-barrier.js';
 import { describe, expect, it, vi } from 'vitest';
 import { buildPublishReceipt, consolePublishIntentSemanticHash, publishRequestHash, type PublishMessage } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool, type PublishOptions } from '../../index.js';
@@ -31,6 +32,8 @@ function fixture(duplicate = false, failAudit = false) {
   const receipt = buildPublishReceipt(command, { message_id: messageId, delivery_ids: [deliveryId], duplicate: false,
     request_id: command.request_id, trace_id: command.trace_id });
   const query = vi.fn(async (sql: string, values?: unknown[]) => {
+    const schema = schemaBarrierReply(sql, values);
+    if (schema) return schema;
     let rows: Record<string, unknown>[] = [];
     if (sql.includes('INSERT INTO idempotency_keys')) rows = duplicate ? [] : [{ idempotency_key: command.idempotency_key }];
     else if (sql.includes('INSERT INTO messages')) rows = [{ id: messageId }];
