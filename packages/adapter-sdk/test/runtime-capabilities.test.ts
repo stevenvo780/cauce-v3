@@ -94,7 +94,9 @@ test("human initiator capability is absent by default and explicit only for the 
   assert.equal(helloCapabilityStrings(capabilities).includes("human_message_initiator_v1"), false);
   const enabled = helloCapabilityStrings(capabilities, true);
   assert.equal(enabled.filter((capability) => capability === "human_message_initiator_v1").length, 1);
-  assert.deepEqual(enabled.filter((capability) => capability !== "human_message_initiator_v1"),
+  assert.deepEqual(enabled.filter((capability) => ![
+    "human_message_initiator_v1", "human_message_client_provenance_v1", "human_message_client_delegation_v1",
+  ].includes(capability)),
     helloCapabilityStrings(capabilities));
 });
 
@@ -117,6 +119,8 @@ test("client HELLO follows the immutable factory capability for supported and un
       const hello = connection.sent.find((frame) => frame.type === "hello");
       assert.ok(hello);
       assert.equal(hello.capabilities.includes("human_message_initiator_v1"), definition.id !== "fake");
+      assert.equal(hello.capabilities.includes("human_message_client_provenance_v1"), definition.id !== "fake");
+      assert.equal(hello.capabilities.includes("human_message_client_delegation_v1"), definition.id !== "fake");
     } finally { stop.abort(); await running; }
   }
 });
