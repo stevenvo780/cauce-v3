@@ -32,6 +32,35 @@ from company_instances_live_support import (
 ENABLED = os.environ.get("CAUCE_COMPANY_LIVE") == "1"
 
 
+def normalized_mounts(mounts):
+    return sorted(mounts, key=canonical)
+
+
+class ResourceSnapshotTest(unittest.TestCase):
+    def test_mount_order_preserves_all_fields_and_multiplicity(self):
+        first = {"Destination": "/one", "Source": "/owned/one", "Type": "bind", "RW": False, "Mode": "ro"}
+        second = {"Destination": "/two", "Source": "/owned/two", "Type": "bind", "RW": False, "Mode": "ro"}
+        before = [first, second, first]
+        reordered = [second, first, first]
+        self.assertEqual(normalized_mounts(before), normalized_mounts(reordered))
+        self.assertCountEqual([canonical(mount) for mount in before], [canonical(mount) for mount in reordered])
+        self.assertEqual(len(normalized_mounts(before)), 3)
+        self.assertNotEqual(normalized_mounts(before), normalized_mounts([first, second]))
+        changes = (
+            ("Destination", "/foreign"),
+            ("Source", "/foreign"),
+            ("Type", "volume"),
+            ("RW", True),
+            ("Mode", "rw"),
+            ("Propagation", "shared"),
+        )
+        for field, replacement in changes:
+            with self.subTest(field=field):
+                changed = [dict(first), dict(second), dict(first)]
+                changed[0][field] = replacement
+                self.assertNotEqual(normalized_mounts(before), normalized_mounts(changed))
+
+
 @unittest.skipUnless(ENABLED, "explicit opt-in required for owned live Docker installations")
 class CompanyInstancesLiveTest(unittest.TestCase):
     def setUp(self):
@@ -327,11 +356,24 @@ class CompanyInstancesLiveTest(unittest.TestCase):
             "docker": receipt["docker"],
             "owner": receipt["owner"],
             "containers": {
-                value["Config"]["Labels"]["com.docker.compose.service"]: {"id": value["Id"], "mounts": value["Mounts"]}
+                value["Config"]["Labels"]["com.docker.compose.service"]: {
+                    "id": value["Id"],
+                    "mounts": normalized_mounts(value["Mounts"]),
+                }
                 for value in values
             },
             "files": {path: hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest() for path in receipt["files"]},
         }
+
+    def assert_resources_unchanged(self, company, before, stage):
+        after = self.snapshot(company)
+        for label, snapshot in (("before", before), ("after", after)):
+            (self.root / (stage + "-" + label + ".json")).write_bytes(canonical(snapshot))
+        self.assertEqual(after, before)
+        self.record(
+            stage,
+            {"snapshot_sha256": hashlib.sha256(canonical(after)).hexdigest(), "all_resource_fields_equal": True},
+        )
 
     def test_two_profileless_installations_and_real_tls_delivery_update_isolation(self):
         a, b = self.companies
@@ -453,7 +495,7 @@ class CompanyInstancesLiveTest(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(errors, [])
         self.assertGreater(len(successes), 0)
-        self.assertEqual(before, self.snapshot(b))
+        self.assert_resources_unchanged(b, before, "b_resources_after_update")
         for company in (a, b):
             self.identities(company)
         self.record(
@@ -617,7 +659,7 @@ class CompanyInstancesLiveTest(unittest.TestCase):
             )
             self.assertEqual(actual, expected)
             self.assertEqual(actual["ownership"]["owner"], receipt["owner"])
-            self.assertEqual(self.snapshot(b), b_before)
+            self.assert_resources_unchanged(b, b_before, "b_resources_after_restore")
             self.assertEqual(hashlib.sha256(a["path"].read_bytes()).hexdigest(), descriptor_before)
             self.record(
                 "own_backup_restore",
