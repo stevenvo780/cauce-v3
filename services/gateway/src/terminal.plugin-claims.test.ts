@@ -38,9 +38,7 @@ describe('terminal control plane', () => {
   let app: FastifyInstance;
   let config: TerminalConfig;
   let controlPermission: () => Promise<void>;
-  /** MEASURED facts per alias. Empty = nobody measured that container, which is today's state. */
   let hechos: Map<string, { facts: RuntimeFacts; source: FactsSource }>;
-  /** Everything the gateway asked the terminal-relay, in order. */
   let pedidas: { tenant_id: string; alias: string; path: string }[];
   let leer: (path: string) => RelayFileRead | GovernanceReadError;
   let relayPeerInstanceId: string;
@@ -98,9 +96,6 @@ describe('terminal control plane', () => {
         },
       },
       measuredFacts: { factsFor: async (tenantId, alias) => hechos.get(`${tenantId}:${alias}`) },
-      // The terminal-relay is the only thing substituted: mounting the whole relay here would
-      // test the relay, not the plugin. What is recorded is WHICH routes get asked for, which
-      // is the part the gateway decides.
       governanceRelay: {
         readFile: async (tenantId, alias, path) => {
           pedidas.push({ tenant_id: tenantId, alias, path });
