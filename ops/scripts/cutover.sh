@@ -5,7 +5,7 @@ family=${1:?usage: cutover.sh host-native|container ALIAS DRAIN-SNAPSHOT.json}
 alias_name=${2:?usage: cutover.sh host-native|container ALIAS DRAIN-SNAPSHOT.json}
 drain_snapshot=${3:?usage: cutover.sh host-native|container ALIAS DRAIN-SNAPSHOT.json}
 [[ $family == host-native || $family == container ]] || { printf 'runtime family must be host-native or container\n' >&2; exit 2; }
-[[ $alias_name =~ ^[a-z][a-z0-9-]*$ ]] || { printf 'invalid alias\n' >&2; exit 2; }
+[[ $alias_name =~ ^[a-z][a-z0-9_-]{0,63}$ ]] || { printf 'invalid alias\n' >&2; exit 2; }
 change_id=${CAUCE_CHANGE_ID:?set a non-secret change/ticket ID}
 [[ $change_id =~ ^[A-Za-z0-9._-]+$ ]] || { printf 'invalid CAUCE_CHANGE_ID\n' >&2; exit 2; }
 [[ ${CAUCE_CUTOVER_CONFIRM:-} == "cutover:$family:$alias_name:$change_id" ]] || {
