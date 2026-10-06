@@ -30,6 +30,7 @@ export interface HumanInboxQuery {
 }
 export interface HumanInboxDelivery extends Partial<CanonicalReplyMedia> {
   readonly deliveryId: string; readonly tenantId: string; readonly alias: string; readonly status: string;
+  readonly clientMailbox?: { readonly label: string; readonly state: 'stored' };
   readonly attempt: number; readonly terminalAt: string | null; readonly reply: string | null;
 
 }
@@ -194,6 +195,7 @@ async function inboxItem(
       // it unbounded the way it already avoids for the root's own body.text above.
       const reply = view.replies.get(delivery.delivery_id) ?? null;
       return {
+        ...(delivery.client_mailbox == null ? {} : { clientMailbox: delivery.client_mailbox }),
         deliveryId: delivery.delivery_id, tenantId: delivery.tenant_id, alias: delivery.alias, status: delivery.status,
         attempt: delivery.attempt, terminalAt: delivery.terminal_at,
         reply: typeof reply === 'string' ? reply.slice(0, HUMAN_INBOX_TEXT_CHARS) : null,
