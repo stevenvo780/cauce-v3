@@ -70,7 +70,7 @@ fi
 command -v timeout >/dev/null 2>&1 || die 'timeout is unavailable' 127
 
 valid_alias() {
-  [[ $1 =~ ^[a-z][a-z0-9-]*$ ]]
+  [[ $1 =~ ^[a-z][a-z0-9_-]{0,63}$ ]]
 }
 
 valid_absolute_path() {
