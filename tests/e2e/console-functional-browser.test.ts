@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { browserDeliveryFailure } from './browser-delivery-diagnostics.js';
 import {
   functionalTenants, isaSecondHuman, isaTenant, jhonTenant, newTrustedPage, startBoundedAdapter,
   startConsoleFunctionalFixture, type FunctionalTenant,
@@ -112,15 +113,13 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
       await page.getByRole('group', { name: 'Detalle del mensaje seleccionado', exact: true }).waitFor({ timeout: 10_000 });
       await entry.locator('.chat-delivery-check[aria-label="Entrega: Recibido por el agente · ejecución terminada"]')
         .waitFor({ state: 'visible', timeout: 35_000 }).catch(async (cause: unknown) => {
-        const state = await activeFixture.database.pool.query(
-          `SELECT message.id,message.auth_channel,delivery.status,delivery.attempt,delivery.last_error,delivery.result
-             FROM messages message LEFT JOIN deliveries delivery ON delivery.message_id=message.id
-            WHERE message.tenant_id=$1 AND message.body->>'text'=$2`, [tenant.tenant, nonce],
-        );
-        const capture = activeFixture.prompts[`${tenant.tenant}:capture`];
-        let prompt = '<no adapter invocation captured>';
-        if (capture) prompt = await readFile(capture, 'utf8').catch(() => prompt);
-        throw new Error(`UI no mostró estado terminal; durable=${JSON.stringify(state.rows)} adapter=${activeFixture.prompts[`${tenant.tenant}:stderr`] ?? ''} capture=${JSON.stringify(prompt.slice(0, 800))} body=${JSON.stringify((await page.locator('body').innerText()).slice(-1000))}`, { cause });
+        throw await browserDeliveryFailure(cause, {
+          pool: activeFixture.database.pool, tenant, instanceId: `ui-e2e-${tenant.tenant.toLowerCase()}`,
+          selector: { kind: 'text', value: nonce },
+          stdout: activeFixture.prompts[`${tenant.tenant}:stdout`] ?? '',
+          stderr: activeFixture.prompts[`${tenant.tenant}:stderr`] ?? '',
+          child: activeFixture.adapters[functionalTenants.indexOf(tenant)],
+        });
       });
       receipts.set(tenant.tenant, nonce);
       const persisted = await activeFixture.database.pool.query<{ id: string; delivery_id: string; actor_alias: string; body: { text?: string }; tenant_id: string; auth_channel: string | null; auth_session_id: string | null }>(
@@ -257,7 +256,15 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
       await page.getByRole('group', { name: 'Detalle del mensaje seleccionado', exact: true })
         .waitFor({ state: 'visible', timeout: 10_000 });
       await entry.locator('.chat-delivery-check[aria-label="Entrega: Recibido por el agente · ejecución terminada"]')
-        .waitFor({ state: 'visible', timeout: 35_000 });
+        .waitFor({ state: 'visible', timeout: 35_000 }).catch(async (cause: unknown) => {
+          throw await browserDeliveryFailure(cause, {
+            pool: activeFixture.database.pool, tenant: isaTenant, instanceId: `ui-e2e-${isaTenant.tenant.toLowerCase()}`,
+            selector: { kind: 'text', value: nonce },
+            stdout: activeFixture.prompts[`${isaTenant.tenant}:stdout`] ?? '',
+            stderr: activeFixture.prompts[`${isaTenant.tenant}:stderr`] ?? '',
+            child: activeFixture.adapters[functionalTenants.indexOf(isaTenant)],
+          });
+        });
       const persisted = await activeFixture.database.pool.query<{ id: string; author: { subject_id?: string } | null }>(
         `SELECT message.id,
                 (SELECT author_audit.metadata->'console_author'
