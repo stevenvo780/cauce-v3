@@ -2,6 +2,8 @@ import { Fragment } from 'react';
 import { ArrowRight, Scissors } from 'lucide-react';
 import { MessageActions } from '../messages/MessageActions';
 import { MessageDeliveryCheck } from '../messages/MessageDeliveryCheck';
+import { MessageAttachments } from '../messages/MessageAttachments';
+import { messageAttachmentList } from '../messages/message-attachment-list';
 import { AgentAvatar } from '../../components/AgentAvatar';
 import { EmptyState, Time } from '../../components/ui';
 import { compactId } from '../../lib';
@@ -166,7 +168,8 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, can
                 </header>
                 {estructura
                   ? <StructuredMessage body={estructura} />
-                  : <p>{previewText(message.body_preview, recortado)}</p>}
+                  : hasTextPreview || messageAttachmentList(message.attachments).length === 0 ? <p>{previewText(message.body_preview, recortado)}</p> : null}
+                <MessageAttachments files={message.attachments} />
                 {!humanChat ? response : null}
                 {recortado ? <p className="transcript-truncado"><Scissors size={12} aria-hidden="true" /><span>Vista previa recortada</span></p> : null}
               </article>

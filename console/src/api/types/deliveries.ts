@@ -1,5 +1,8 @@
 import type { CapabilityState } from './system';
-import type { HarnessConsumptionEvidence } from '@cauce/protocol';
+import type { AttachmentEntry, HarnessConsumptionEvidence } from '@cauce/protocol';
+
+export type ChatAttachment = Extract<AttachmentEntry, { content_base64: string }>;
+export type MessageAttachment = Pick<ChatAttachment, 'name' | 'mime_type' | 'file_size' | 'sha256'>;
 
 export type DeliveryState =
   | 'pending'
@@ -38,6 +41,7 @@ export interface MessageAuthor {
 }
 
 export interface MessageView {
+  attachments?: MessageAttachment[] | null;
   author?: MessageAuthor | null;
   message_id?: string | null;
   request_id?: string | null;
@@ -57,6 +61,7 @@ export interface MessageView {
  * unknown-shape case, in `features/terminal/cuerpo-del-mensaje.ts`.
  */
 export interface MessageDetail {
+  attachments?: MessageAttachment[] | null;
   author?: MessageAuthor | null;
   id?: string | null;
   message_id?: string | null;
@@ -89,7 +94,7 @@ export interface MessagePage {
 export interface PublishMessageInput {
   room_id: string;
   recipients: { tenant_id: string; alias: string }[];
-  body: { text: string };
+  body: { text: string; attachments_v1?: ChatAttachment[] };
   lane: JobLane;
   priority: number;
   idempotency_key: string;
