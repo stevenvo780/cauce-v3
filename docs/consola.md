@@ -217,10 +217,8 @@ Sobre una TUI de sólo lectura (`harness`) la consola sólo mira. Para **teclear
 - **El botón existe sólo si el gateway dice que se puede.** La condición es `writable_modes` de
   `/targets`, nunca que `harness_rw` aparezca en la lista de modos: la consola no deduce qué es
   escribible a partir de un nombre.
-- **El motivo lo escribe la persona**, entre 8 y 280 caracteres, sin plantilla y sin texto
-  generado. La frase que la consola sí redacta sola —la que justifica una observación de sólo
-  lectura— no llega nunca a esta escritura. Ese motivo es lo único que queda en la fila de
-  auditoría de la toma.
+- **La apertura y la toma no piden justificación.** La sesión y la toma conservan la identidad
+  atribuida de la persona, los permisos vigentes y su auditoría.
 - **La consecuencia está en pantalla antes de escribir nada:** mientras alguien tiene el control,
   el bus **no le entrega mensajes a ese alias**; quedan en cola y salen en orden al devolverlo.
 - **La toma se envía cuando la sesión escribible ya está atada por el relay**, no al pedirla: un

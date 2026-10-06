@@ -12,7 +12,10 @@ del plan, notas de las reseñas y lo no probado— está en `docs/v3.1-pendiente
 `artifacts` con el mismo inliner y los mismos topes que la salida al origen (`@cauce/protocol`
 tiene un único lector de `data:`; `parseDataUri`/`dataUriByteLength`). Una respuesta que sólo trae
 un fichero se entrega, no se marca fallida. Los álbumes de Telegram entran como un solo mensaje y
-cada miembro se juzga por separado. La consola muestra y descarga adjuntos. Los cuerpos de
+cada miembro se juzga por separado. La consola permite enviar y recibir archivos, imágenes, audio
+y vídeo, grabar notas de voz, ver imágenes y reproducir audio y vídeo con controles. Admite hasta
+cuatro archivos y 10 MiB por mensaje; conserva el borrador ante fallos y aísla los adjuntos por
+cuenta y conversación. Los cuerpos de
 adjuntos se podan cuando la respuesta ya los inlineó (fase nueva del dispatcher).
 
 **Credenciales por vías seguras.** Traspaso sellado de secretos entre alias (migración `039`,
@@ -39,7 +42,7 @@ entregas (id, estado, fechas; nunca cuerpos). El motor de contexto nativo sigue 
 se encienda alias a alias.
 
 **Control real de TUI y PTY desde la consola.** Modo `harness_rw` (ADR 009): tomar y devolver el
-teclado de la TUI compartida con motivo obligatorio, operador atribuido y sin comodín en
+teclado de la TUI compartida sin pedir justificación, con operador atribuido y sin comodín en
 `grants.json`; mientras hay control tomado el store no arrienda entregas a ese alias (se encolan,
 ninguna falla) y el pty-agent rechaza teclado si hay una pegada en vuelo. Arriendo en
 `terminal_control_holds` (migración `040`) con techo en SQL, prórroga de la sesión, grabación
