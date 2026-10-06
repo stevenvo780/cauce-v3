@@ -58,7 +58,7 @@ function holdRow(overrides: Partial<HoldRow> = {}): HoldRow {
     tenant_id: 'Steven',
     alias: 'jarvis',
     operator_id: 'steven-kant',
-    reason: 'tomar la TUI para desatascar el turno',
+    reason: '',
     taken_at: new Date(Date.now() - 1_000),
     expires_at: new Date(Date.now() + 120_000),
     released_at: null,
@@ -250,12 +250,27 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     expect(transactionAudits(ctx)).toEqual([expect.objectContaining({
       action: 'terminal.control_taken',
       decision: 'allow',
+      actor_alias: 'kant',
       metadata: expect.objectContaining({
         hold_id: HOLD_ID,
-        operator_reason: 'tomar la TUI para desatascar el turno',
         mode: 'harness_rw',
+        operator_id: 'steven-kant',
+        target_tenant: 'Steven',
+        target_alias: 'jarvis',
       }) as unknown,
     })]);
+    const insert = pool.__queries.find((query) => query.text.includes('INSERT INTO terminal_control_holds'));
+    expect(insert?.text).toMatch(/operator_id,reason,taken_at[\s\S]*SELECT[\s\S]*\$4,''/u);
+    expect(insert?.values).not.toContain('tomar la TUI para desatascar el turno');
+  });
+
+  it('rechaza el campo heredado reason en la toma y en la devolución', async () => {
+    ctx = buildContext({ pool: controlPool({ session: ownedRow() }) });
+    expect(Object.keys(validControlRequest()).sort()).toEqual([
+      'action', 'authority_proof', 'owner_generation', 'owner_token', 'request_id',
+    ]);
+    expect((await control({ ...validControlRequest(), reason: 'motivo heredado' })).statusCode).toBe(400);
+    expect((await control({ ...validControlRequest({ action: 'release' }), reason: 'motivo heredado' })).statusCode).toBe(400);
   });
 
   it('mantiene el teclado cerrado durante un turno hasta que el operador lo elija explícitamente', async () => {
@@ -281,8 +296,8 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     expect(response.json()).toMatchObject({ session_id: UUID_OK, hold_id: HOLD_ID, held_by: 'steven-kant' });
     expect(pool.__queries.filter((query) => query.text.includes('INSERT INTO terminal_control_holds'))).toHaveLength(1);
     expect(transactionAudits(ctx)).toEqual([expect.objectContaining({
-      action: 'terminal.control_taken', decision: 'allow', metadata: expect.objectContaining({
-        allow_busy: true, operator_reason: 'tomar la TUI para desatascar el turno', mode: 'harness_rw',
+      action: 'terminal.control_taken', decision: 'allow', actor_alias: 'kant', metadata: expect.objectContaining({
+        allow_busy: true, mode: 'harness_rw', operator_id: 'steven-kant', target_tenant: 'Steven', target_alias: 'jarvis',
       }) as unknown,
     })]);
   });
@@ -301,15 +316,15 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     const inserted = pool.__queries.find(
       (query) => query.text.includes('INSERT INTO terminal_control_holds'),
     );
-    expect(inserted?.text).toContain(`LEAST(${sessionWindowExpression(7, 8)}, $9::timestamptz+($6||' milliseconds')::interval, $10::timestamptz)`);
+    expect(inserted?.text).toContain(`LEAST(${sessionWindowExpression(6, 7)}, $8::timestamptz+($5||' milliseconds')::interval, $9::timestamptz)`);
     expect(inserted?.text).toContain('consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL');
     expect(pool.__queries.some((query) => query.text.includes('FROM terminal_sessions') && query.text.includes('FOR UPDATE'))).toBe(true);
-    expect(inserted?.values.slice(5, 8)).toEqual([
+    expect(inserted?.values.slice(4, 7)).toEqual([
       String((configBase().controlHoldSeconds ?? 0) * 1_000),
       configBase().sessionTtlSeconds,
       configBase().sessionMaxTotalSeconds,
     ]);
-    expect(inserted?.values[9]).toBe(new Date(UNIT_ORIGIN.expiresAtSeconds * 1000).toISOString());
+    expect(inserted?.values[8]).toBe(new Date(UNIT_ORIGIN.expiresAtSeconds * 1000).toISOString());
   });
 
   it('responde 409 stale_terminal_owner si la sesión muere entre el vallado y la toma', async () => {

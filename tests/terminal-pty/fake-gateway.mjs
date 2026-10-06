@@ -330,7 +330,15 @@ export async function startFakeGateway(options = {}) {
     session.claim_expires_at = claimDeadline(session);
     session.resume_token = authorityResumeToken(session);
     sessions.set(sessionId, session);
-    record('terminal.session.request', { session_id: sessionId, alias: session.alias, decision: 'allow', reason: body.reason ?? null });
+    record('terminal.session.request', {
+      session_id: sessionId,
+      operator_id: `${operatorTenant}:kant`,
+      tenant_id: session.tenant_id,
+      alias: session.alias,
+      container_id: session.container_id,
+      mode: session.mode,
+      decision: 'allow',
+    });
     record('terminal.session.consume', {
       session_id: sessionId, alias: session.alias, container_id: session.container_id,
       image_id: session.image_id, generation: session.generation, mode: session.mode,

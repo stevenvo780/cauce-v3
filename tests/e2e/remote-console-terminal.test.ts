@@ -480,7 +480,6 @@ function sessionPayload(alias = targetAlias, tenantId = TARGET_TENANT) {
     tenant_id: tenantId,
     alias,
     mode: 'shell',
-    reason: 'validar admisión terminal de forma local',
     cols: 100,
     rows: 30,
     request_id: randomUUID(),

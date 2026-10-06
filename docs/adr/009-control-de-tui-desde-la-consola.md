@@ -85,21 +85,26 @@ una condición transitoria y esperada.
 Una entrega **ya arrendada** antes de la toma no se toca: el arriendo cierra la puerta a leases
 NUEVOS, nunca a los que están en vuelo. Un turno a medias se termina.
 
-### 4. El motivo lo escribe una persona
+### 4. La apertura y la toma no piden una justificación escrita
 
-`operatorReason` (`services/gateway/src/terminal/plugin.ts`) exige entre 8 y 280 caracteres y no
-tiene valor por defecto: **nunca se genera**. La consola lo pide en un `textarea` y no ofrece
-plantilla (`console/src/features/terminal/ControlDeTui.tsx`).
+La consola abre una sesión con destino, modo, geometría, `request_id` y `owner_token`; `initiator`
+es opcional. La toma o devolución del control usa `action`, `authority_proof`, `request_id`,
+`owner_generation` y `owner_token`, con `allow_busy` opcional solo para una toma. El backend rechaza
+el campo heredado `reason` en ambas rutas. El usuario ya no aporta una justificación escrita; la
+auditoría conserva quién actuó, el destino, el modo, la decisión, la sesión y la generación de
+propietario. La autoridad de continuidad y los vallados del propietario siguen siendo obligatorios.
 
-La razón es que el motivo es la única explicación humana que la fila de auditoría va a llevar
-jamás. La grabación dice qué se tecleó; los contadores dicen cuánto; nada dice **por qué** salvo
-esa frase. Un motivo autogenerado la volvería ruido y dejaría la fila sin la única parte que un
-lector futuro no puede reconstruir.
+La columna histórica `terminal_sessions.reason` mantiene su `NOT NULL` por compatibilidad de
+esquema: las nuevas escrituras guardan el literal vacío `''` como dato interno, sin migración. La
+columna `terminal_control_holds.reason` también recibe `''` interno; tomar el arriendo ya no acepta
+un motivo humano. Los cierres y liberaciones conservan sus causas técnicas (`operator_closed`,
+`session_revoked`, `expired` y equivalentes), que describen el evento y no solicitan una
+justificación del operador.
 
-La devolución es lo contrario y por eso admite motivo opcional: `beforeunload` no tiene a nadie a
-quien pedirle que escriba, así que una devolución sin motivo lleva `operator_released`
-(`services/gateway/src/terminal/session-control/control.ts`) y la fila sigue diciendo quién
-devolvió el alias. Un arriendo que sobrevive a la pestaña es lo que calla a un agente.
+El digest semántico de una apertura nueva no incluye motivo. Un reintento de un `request_id` cuya
+fila cerrada se guardó con el hash legado basado en motivo termina en `request_conflict`; no se
+interpreta como la misma petición ni se reabre. Las pruebas de continuidad, recuperación de sesión,
+pruebas activas y autoridad de reanudación mantienen sus requisitos actuales.
 
 ### 5. Una fila de auditoría agregada, no una por ráfaga de teclas
 
@@ -161,7 +166,7 @@ despliegue del gateway en una decisión de seguridad que nadie tomó a propósit
   `4410 control_released` (`services/terminal-relay/src/session-limits.ts`).
 - La consola gana una superficie de escritura, y con ella la obligación de devolver: `ControlDeTui`
   devuelve el arriendo al desmontarse y en `beforeunload`, y el aviso de que el bus deja de
-  entregarle al alias está en pantalla **antes** de que el operador escriba el motivo.
+  entregarle al alias aparece antes de tomar el control.
 - `/metrics` del relay gana `cauce_terminal_control_sessions_open` y
   `cauce_terminal_recordings_total{result}`. Como todas las series del relay, son agregadas: no hay
   etiqueta de tenant, alias, operador ni sesión, porque la forma de a quién se está vigilando no

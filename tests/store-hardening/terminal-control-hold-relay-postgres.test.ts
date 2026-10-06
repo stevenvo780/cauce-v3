@@ -88,7 +88,7 @@ async function abrirSesion(): Promise<{ session_id: string; ticket: string }> {
     headers: { cookie: authentication.cookie(), origin: ORIGIN, 'x-cauce-operator': 'steven' },
     payload: {
       tenant_id: 'Steven', alias: 'jarvis', mode: 'shell',
-      reason: 'probar el arriendo del control en el relay', cols: 100, rows: 30,
+      cols: 100, rows: 30,
       request_id: randomUUID(), owner_token: randomUUID(),
     },
   });
