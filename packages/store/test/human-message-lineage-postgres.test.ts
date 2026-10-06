@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { HUMAN_MESSAGE_INITIATOR_CAPABILITY } from '@cauce/protocol';
 import { withTransaction } from '../src/db.js';
 import {
   humanLineageConsensus, loadDeliveryHumanLineage, loadFaninHumanLineage,
@@ -138,6 +139,9 @@ describe('durable human message lineage on PostgreSQL', () => {
     const claimed = await claim(command(), 'Steven', 'argos', 'lineage-output');
     const root = await lineageRoot(pool, human.humanId, claimed.delivery.message_id);
     const clientProjection = await attachLineageClient(pool, root);
+    const resumed = await repository.acquireLease('Steven', 'argos', 'lineage-output', [HUMAN_MESSAGE_INITIATOR_CAPABILITY],
+      30_000, { resume: true });
+    expect(resumed.epoch).toBe(claimed.epoch);
     const ack = terminalAck(claimed.delivery, 'lineage-output', claimed.epoch, [{ to: 'kant', body: 'ordinary delegation' }]);
     await repository.ackDelivery(claimed.delivery.delivery_id, 'Steven', 'argos', ack);
     await repository.ackDelivery(claimed.delivery.delivery_id, 'Steven', 'argos', ack);
@@ -146,13 +150,13 @@ describe('durable human message lineage on PostgreSQL', () => {
       [claimed.delivery.delivery_id, 'materialized'],
     );
     expect(children.rows).toHaveLength(1);
-    const lease = await repository.acquireLease('Steven', 'kant', 'lineage-child', [], 30_000);
+    const lease = await repository.acquireLease('Steven', 'kant', 'lineage-child', [HUMAN_MESSAGE_INITIATOR_CAPABILITY], 30_000);
     if (lease.epoch === undefined) throw new Error('missing child epoch');
     const [childDelivery] = await repository.claimDeliveries('Steven', 'kant', 'lineage-child', lease.epoch, 1, 30_000);
     if (!childDelivery) throw new Error('missing child delivery');
     await repository.ackDelivery(childDelivery.delivery_id, 'Steven', 'kant',
       terminalAck(childDelivery, 'lineage-child', lease.epoch, [{ to: 'socrates', body: 'ordinary nested work' }]));
-    const leafLease = await repository.acquireLease('Steven', 'socrates', 'lineage-leaf', [], 30_000);
+    const leafLease = await repository.acquireLease('Steven', 'socrates', 'lineage-leaf', [HUMAN_MESSAGE_INITIATOR_CAPABILITY], 30_000);
     if (leafLease.epoch === undefined) throw new Error('missing leaf epoch');
     const [leaf] = await repository.claimDeliveries('Steven', 'socrates', 'lineage-leaf', leafLease.epoch, 1, 30_000);
     if (!leaf) throw new Error('missing leaf delivery');

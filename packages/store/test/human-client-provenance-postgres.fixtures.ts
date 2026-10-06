@@ -15,6 +15,7 @@ import { PostgresOAuthStore } from '../../../services/gateway/src/oauth-authoriz
 import { secretHash, type OAuthPasswordSession } from '../../../services/gateway/src/oauth-authorization-types.js';
 import { OAuthTokens } from '../../../services/gateway/src/oauth-tokens.js';
 import { createHumanMcpOperationsFactory } from '../../../services/gateway/src/mcp-operations.js';
+import { buildTestGateway } from '../../../services/gateway/src/test-support/gateway-doubles.js';
 
 export const issuer = 'https://cauce.example';
 const key = Buffer.alloc(32, 27);
@@ -97,11 +98,17 @@ export async function connection(pool: DatabasePool, owner: Awaited<ReturnType<t
   const operations = await factory.forRequest(identity, signal());
   return { identity, operations, repository, factory };
 }
-export async function consoleApp(pool: DatabasePool, owner: Awaited<ReturnType<typeof seed>>) {
+export async function consoleApp(pool: DatabasePool, owner: Awaited<ReturnType<typeof seed>>, withPublishing = false) {
   const provider = new PasswordAuthProvider({ users: owner.users, signingKey: key });
-  const app = Fastify(); apps.push(app);
-  app.addHook('onRequest', createConsoleSecurityHook({ allowedOrigins: [issuer] }));
-  registerPasswordAuth(app, provider); registerClientDelegationRoutes(app, pool, provider, controlOptions);
+  const app = withPublishing
+    ? await buildTestGateway({ pool, repository: new CauceRepository(pool), authProvider: provider, consoleOrigins: [issuer] })
+    : Fastify();
+  apps.push(app);
+  if (!withPublishing) {
+    app.addHook('onRequest', createConsoleSecurityHook({ allowedOrigins: [issuer] }));
+    registerPasswordAuth(app, provider);
+  }
+  registerClientDelegationRoutes(app, pool, provider, controlOptions);
   const login = await app.inject({ method: 'POST', url: '/v3/auth/login', headers: { origin: issuer },
     payload: { email: owner.email, password: 'fixture-only-passphrase' } });
   const cookie = login.headers['set-cookie'];

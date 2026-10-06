@@ -512,7 +512,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         }
       }
       const humanProjections = await projectHumanClientProvenance(client, claimedRows,
-        Array.isArray(capabilities) ? capabilities.filter((value): value is string => typeof value === 'string') : []);
+        Array.isArray(capabilities) ? capabilities.filter((value): value is string => typeof value === 'string') : [], tenantId);
       return claimedRows.map((row) => {
         if (row.claim_token === null || row.ack_deadline_at === null) {
           throw new StoreError('conflict', 'claimed delivery is missing its fencing fields');

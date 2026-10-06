@@ -152,9 +152,9 @@ describe('durable human client provenance', () => {
       await putHumanMessageInitiator(client, { messageId: child, messageTenantId: 'Steven', humanId: owner.humanId,
         tenantId: 'Steven', rootMessageId: receipt.message_id, conversationId: root?.conversation_id as string });
       const rows = [{ id: randomUUID(), message_id: child }];
-      expect((await projectHumanClientProvenance(client, rows, [])).size).toBe(0);
+      expect((await projectHumanClientProvenance(client, rows, [], 'Steven')).size).toBe(0);
       const projection = (await projectHumanClientProvenance(client, rows, [HUMAN_CLIENT_PROVENANCE_CAPABILITY,
-        HUMAN_CLIENT_DELEGATION_CAPABILITY])).get(rows[0]?.id ?? '');
+        HUMAN_CLIENT_DELEGATION_CAPABILITY], 'Steven')).get(rows[0]?.id ?? '');
       expect(projection).not.toHaveProperty('human_initiator');
       expect(projection?.human_client_provenance?.root_message_id).toBe(receipt.message_id);
       expect(projection?.human_client_delegation?.label).toBe('Dots');
@@ -190,6 +190,28 @@ describe('durable human client provenance', () => {
     try {
       expect(await loadHumanClientProvenance(client, receipt.message_id)).toEqual({ client: { kind: 'unknown' } });
       expect(await loadHumanClientProvenance(client, randomUUID())).toEqual({ client: { kind: 'unknown' } });
+      const project = (messageId: string) => projectHumanClientProvenance(client,
+        [{ id: messageId, message_id: messageId }], [HUMAN_CLIENT_PROVENANCE_CAPABILITY, HUMAN_CLIENT_DELEGATION_CAPABILITY], 'Steven');
+      expect((await project(receipt.message_id)).get(receipt.message_id)).toEqual({
+        human_client_provenance: { root_message_id: receipt.message_id, client: { kind: 'unknown' } },
+      });
+      const historical = await lineageMessage(client, 'Steven', 'human-mcp');
+      await putHumanMessageInitiator(client, { messageId: historical, messageTenantId: 'Steven', humanId: owner.humanId,
+        tenantId: 'Steven', rootMessageId: historical, conversationId: 'historical-mcp' });
+      expect((await project(historical)).get(historical)).toEqual({
+        human_client_provenance: { root_message_id: historical, client: { kind: 'unknown' } },
+      });
+      expect((await client.query('SELECT * FROM human_message_client_provenance WHERE root_message_id=$1', [historical])).rowCount).toBe(0);
+      const consoleRoot = await lineageMessage(client, 'Steven', 'console');
+      const consoleIdentity = { messageId: consoleRoot, messageTenantId: 'Steven', humanId: owner.humanId,
+        tenantId: 'Steven', rootMessageId: consoleRoot, conversationId: 'historical-console' };
+      await putHumanMessageInitiator(client, consoleIdentity);
+      await putHumanClientProvenance(client, consoleIdentity, undefined);
+      const misleadingChild = await lineageMessage(client, 'Steven', 'human-mcp');
+      await putHumanMessageInitiator(client, { ...consoleIdentity, messageId: misleadingChild });
+      expect((await project(consoleRoot)).get(consoleRoot)).toEqual({});
+      expect((await project(misleadingChild)).get(misleadingChild)).toEqual({});
+      expect((await client.query('SELECT * FROM human_message_client_provenance WHERE root_message_id=$1', [consoleRoot])).rowCount).toBe(1);
     } finally { client.release(); }
   });
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DeliveryEnvelopeSchema } from '@cauce/protocol';
+import { DeliveryEnvelopeSchema, HUMAN_CLIENT_PROVENANCE_CAPABILITY } from '@cauce/protocol';
+import { projectHumanClientProvenance } from '../../../packages/store/src/repository/deliveries/client-provenance.js';
 import { lockOAuthAccess } from './oauth-grant-authority.js';
 import { createHumanPublishAuthority } from './human-mcp-authority.js';
 import { expectedLocalClient, fixtureDatabase, fixtureDelivery, fixtureGrantId, fixtureIdentity,
@@ -74,6 +75,20 @@ describe('OAuth client provenance', () => {
 });
 
 describe('existing security and compatibility controls', () => {
+  it('fails closed when durable lineage names a missing root rather than projecting unknown', async () => {
+    const f = fixtureDatabase();
+    f.query.mockImplementation(async sql => {
+      const rows = sql.includes('FROM human_message_initiators') ? [{ messageId: fixtureDelivery.message_id,
+        messageTenantId: 'Steven', humanId: pinnedFixture.humanId, tenantId: 'Steven',
+        rootMessageId: fixtureDelivery.message_id, conversationId: 'missing-root' }] : [];
+      return { rows, rowCount: rows.length };
+    });
+    await expect(projectHumanClientProvenance(f.client,
+      [{ id: fixtureDelivery.delivery_id, message_id: fixtureDelivery.message_id }],
+      [HUMAN_CLIENT_PROVENANCE_CAPABILITY], 'Steven')).rejects.toThrow('durable human message root is missing');
+    expect(f.query.mock.calls.some(([sql]) => sql.includes('FROM human_message_client_provenance'))).toBe(false);
+  });
+
   it('keeps the legacy delivery valid and the sender route unchanged', () => {
     expect(DeliveryEnvelopeSchema.parse(fixtureDelivery)).toMatchObject({
       actor_alias: 'kant', recipient_alias: 'zeus', tenant_id: 'Steven',

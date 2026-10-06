@@ -297,8 +297,10 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
         tenantId: human.tenantId, rootMessageId: messageId,
         conversationId: consolePublishConversationHash(input),
         });
-        await putHumanClientProvenance(client, { messageId, humanId: human.humanId,
-          tenantId: human.tenantId, conversationId: consolePublishConversationHash(input) }, human.clientProvenance);
+        if (authenticated?.channel === 'human-mcp') {
+          await putHumanClientProvenance(client, { messageId, humanId: human.humanId,
+            tenantId: human.tenantId, conversationId: consolePublishConversationHash(input) }, human.clientProvenance);
+        }
       }
       const deliveryIds: string[] = [];
       for (const recipient of uniqueRecipients) {

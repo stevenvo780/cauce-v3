@@ -11,12 +11,12 @@ import { HUMAN_CLIENT_PROVENANCE_CAPABILITY, HUMAN_CLIENT_DELEGATION_CAPABILITY 
 
 export { seedIdentity };
 
-export async function lineageMessage(client: DatabaseClient, tenant = 'Steven') {
+export async function lineageMessage(client: DatabaseClient, tenant = 'Steven', authChannel: string | null = null) {
   const message = await insertMessage(client, {
     requestId: randomUUID(), traceId: `lineage-${randomUUID()}`, tenantId: tenant,
     roomId: tenant === 'Steven' ? 'grp.steven' : 'grp.jhon',
     actorAlias: tenant === 'Steven' ? 'argos' : 'hegel', body: { text: 'lineage fixture' },
-    origin: null, lane: 'batch', priority: 3, authSessionId: null, authChannel: null,
+    origin: null, lane: 'batch', priority: 3, authSessionId: null, authChannel,
   });
   const id = message.rows[0]?.id;
   if (!id) throw new Error('missing fixture message');
@@ -37,6 +37,7 @@ export async function attachLineageClient(pool: DatabasePool, root: Awaited<Retu
   const grantId = randomUUID(); const bindingId = randomUUID(); const issuer = 'https://issuer.example.test';
   const clientId = 'https://chatgpt.com/oauth/client.json'; const label = 'Dots';
   await withTransaction(pool, async (client) => {
+    await client.query("UPDATE messages SET auth_channel='human-mcp' WHERE id=$1", [root.rootMessageId]);
     await client.query(`INSERT INTO cauce_oauth_grants(id,human_id,issuer,resource,client_id,redirect_uri,
       scopes,binding_id,binding_revision,membership_revision,tenant_id,actor_alias,credential_stamp,expires_at)
       SELECT $1,e.human_id,$2,$2||'/mcp',$3,'https://client.example/callback',ARRAY['cauce.read','cauce.publish'],
@@ -61,7 +62,7 @@ export async function attachLineageClient(pool: DatabasePool, root: Awaited<Retu
 
 export async function lineageClientProjection(client: DatabaseClient, messageId: string) {
   const projections = await projectHumanClientProvenance(client, [{ id: messageId, message_id: messageId }],
-    [HUMAN_CLIENT_PROVENANCE_CAPABILITY, HUMAN_CLIENT_DELEGATION_CAPABILITY]);
+    [HUMAN_CLIENT_PROVENANCE_CAPABILITY, HUMAN_CLIENT_DELEGATION_CAPABILITY], 'Steven');
   return projections.get(messageId);
 }
 

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { requireValue } from './helpers.js';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
+import { HUMAN_MESSAGE_INITIATOR_CAPABILITY } from '@cauce/protocol';
 import { CauceRepository, StoreError, withTransaction, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, startTestCaseDatabase, type TestDatabase, type EmptyTestDatabase
@@ -631,6 +632,9 @@ describe('gate resuelto -> reanuda', () => {
     const human = await seedIdentity(pool);
     const root = await lineageRoot(pool, human.humanId, published.message_id);
     const clientProjection = await attachLineageClient(pool, root);
+    const resumedLease = await repository.acquireLease(argos.tenant, argos.alias, argos.instanceId,
+      [HUMAN_MESSAGE_INITIATOR_CAPABILITY], 30_000, { resume: true });
+    expect(resumedLease.epoch).toBe(argos.epoch);
     await ackWith(argos, await nextDelivery(argos), [{ to: '@human', body: '¿aprobás?' }]);
 
     const gateId = requireValue((await pool.query<{ id: string }>(

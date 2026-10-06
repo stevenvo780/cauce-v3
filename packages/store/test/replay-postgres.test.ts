@@ -112,7 +112,7 @@ describe('transactional manual delivery replay', () => {
     const stateDirectory = await mkdtemp(join(tmpdir(), 'cauce-replay-store-'));
     try {
       const durableStore = await DurableStore.open(stateDirectory);
-      const lease = await repository.acquireLease('Isa', 'salva', 'replay-consumer', [], 60_000);
+      const lease = await repository.acquireLease('Isa', 'salva', 'replay-consumer', ['human_message_initiator_v1'], 60_000);
       const published = await repository.publish(command());
       const human = await seedIdentity(pool);
       const root = await lineageRoot(pool, human.humanId, published.message_id);
