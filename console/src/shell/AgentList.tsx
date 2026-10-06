@@ -10,7 +10,9 @@ import { STATE_TONE, TONE_CLASS } from '../status-tone';
 import { agentHref } from './agent-href';
 import { useFleet } from './fleet-context';
 
-function queueHint(agent: AgenteDeMensajeria, salud: ReturnType<typeof useFleet>['salud']): string | undefined {
+type Salud = ReturnType<typeof useFleet>['salud'];
+
+function queueHint(agent: AgenteDeMensajeria, salud: Partial<Salud>): string | undefined {
   const s = salud[agent.id];
   if (!s) return undefined;
   if (s.muertas) return `${String(s.muertas)} muerta${s.muertas === 1 ? '' : 's'}`;

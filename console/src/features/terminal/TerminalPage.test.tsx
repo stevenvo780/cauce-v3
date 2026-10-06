@@ -5,6 +5,7 @@ import { afterEach, beforeEach } from 'vitest';
 import { server } from '../../mocks/server';
 import { mockTerminalGrant } from '../../mocks/terminal-ticket';
 import { renderWithApi } from '../../test/render';
+import { must } from '../../test/must';
 import type { TerminalTarget } from './api';
 import { closePtySession, ptySessionText } from './pty-session';
 import { installStubWebSocket, StubWebSocket } from './pty-socket-stub';
@@ -435,7 +436,7 @@ it('closes the local socket and offers retry when server-side revocation fails',
   expect(socket.closeCode).toBe(1000);
   expect(attempts).toBe(1);
 
-  await user.click(within(alert.closest('[role="alert"]') as HTMLElement).getByRole('button', { name: 'Reintentar revocación' }));
+  await user.click(within(must(alert.closest<HTMLElement>('[role="alert"]'), 'the alert container')).getByRole('button', { name: 'Reintentar revocación' }));
   await waitFor(() => { expect(attempts).toBe(2); });
   await waitFor(() => { expect(screen.queryByText(/No se confirmó la revocación/i)).not.toBeInTheDocument(); });
 }, 20_000);

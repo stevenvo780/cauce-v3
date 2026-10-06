@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { must } from './test/must';
 import { describe, expect, it } from 'vitest';
 
 const css = readFileSync(resolve(process.cwd(), 'src/styles/theme.css'), 'utf8');
@@ -65,7 +66,7 @@ describe('brand palette', () => {
 
   it.each(Object.entries(THEMES))('meets WCAG AA for every text pairing in %s', (_, theme) => {
     for (const [fg, bg] of PAIRS) {
-      expect(ratio(theme.get(fg)!, theme.get(bg)!), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(must(theme.get(fg), `token ${fg}`), must(theme.get(bg), `token ${bg}`)), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
     }
   });
 });

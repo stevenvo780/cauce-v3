@@ -6,6 +6,7 @@ import { server } from '../../mocks/server';
 import { mockTerminalGrant } from '../../mocks/terminal-ticket';
 import { navigate } from '../../router';
 import { renderRouted } from '../../test/render';
+import { must } from '../../test/must';
 import type { TerminalTarget } from './api';
 import { closePtySession, ptySessionText } from './pty-session';
 import { installStubWebSocket, StubWebSocket } from './pty-socket-stub';
@@ -179,7 +180,7 @@ describe('cambiar el agente de la dirección', () => {
     await waitForTui();
     go('/terminal/Isa/salva');
     const alert = await screen.findByText(/No se confirmó la revocación/i);
-    expect(within(alert.closest('[role="alert"]') as HTMLElement).getByRole('button', { name: 'Reintentar revocación' })).toBeInTheDocument();
+    expect(within(must(alert.closest<HTMLElement>('[role="alert"]'), 'the alert container')).getByRole('button', { name: 'Reintentar revocación' })).toBeInTheDocument();
     expect(posts).toEqual(['zeus']);
   });
 
