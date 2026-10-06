@@ -23,8 +23,8 @@ canonical = importlib.import_module("descriptor").canonical
 REQUIRED_SECRET_VARS = importlib.import_module("planning").REQUIRED_SECRET_VARS
 
 IMAGES = {
-    "runtimeImage": "cauce-v3-runtime@sha256:6ec2c49bfcb70fcfa8751479b26bd532ed070778e8a8d8ca56568ee3ec2ee664",
-    "consoleImage": "cauce-v3-console@sha256:13e44a7fda4f58fb6a78889728e07ef201a8471544010cc94f8e0f74ab26ed15",
+    "runtimeImage": "sha256:3ffeaaf77766355359fc2aa58349bb7be33b77792059e3e17d27f5ad979558e2",
+    "consoleImage": "sha256:e6643b0bb67fa001dd192367a08399b51f7a6f9a4c952ec2118f90894dd36a3c",
     "postgresImage": "postgres@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
     "otelImage": "otel/opentelemetry-collector-contrib@sha256:9c247564e65ca19f97d891cca19a1a8d291ce631b890885b44e3503c5fdb3895",
     "prometheusImage": "prom/prometheus@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996",
@@ -273,7 +273,10 @@ class Api:
                 raw = reply.read()
                 return reply.status, json.loads(raw) if "json" in reply.headers.get("Content-Type", "") else raw
         except urllib.error.HTTPError as error:
-            return error.code, json.loads(error.read())
+            code = error.code
+            raw = error.read()
+            error.close()
+            return code, json.loads(raw)
 
     def hello(self):
         status, self.lease = self.request(
@@ -326,7 +329,7 @@ class Api:
             "status": status,
             "instance_id": self.instance_id,
             "epoch": self.lease["epoch"],
-            "event_id": delivery["event_id"],
+            "event_id": str(uuid.uuid4()),
             "claim_token": delivery["claim_token"],
             "attempt": delivery["attempt"],
             "retryable": retryable,
@@ -334,6 +337,8 @@ class Api:
         code, result = self.request("POST", "/v3/deliveries/" + delivery["delivery_id"] + "/ack", value)
         if code != 200:
             raise RuntimeError("ack failed: " + str(code) + " " + str(result))
+        if result.get("applied") is not True:
+            raise RuntimeError("fresh ACK did not apply: " + str(result.get("receipt")))
         return result
 
 

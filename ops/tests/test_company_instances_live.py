@@ -130,23 +130,26 @@ class CompanyInstancesLiveTest(unittest.TestCase):
             data=sql,
         )
 
-    def publish(self, company, sender, text):
+    def publish(self, company, sender, text, attachments=None):
+        body = {"type": "request", "text": text}
+        if attachments is not None:
+            body["attachments_v1"] = attachments
         status, value = sender.request(
             "POST",
             "/v3/messages",
             {
                 "room_id": company["room"],
                 "recipients": [{"tenant_id": company["tenant"], "alias": "operador"}],
-                "body": {"type": "request", "text": text},
+                "body": body,
                 "idempotency_key": "company-live:" + self.nonce + ":" + str(uuid.uuid4()),
             },
         )
         self.assertEqual(status, 202, str(value))
         return value
 
-    def process(self, company, consumer, sender, text):
+    def process(self, company, consumer, sender, text, attachments=None):
         consumer.heartbeat()
-        published = self.publish(company, sender, text)
+        published = self.publish(company, sender, text, attachments)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             deliveries = consumer.query()
@@ -157,6 +160,8 @@ class CompanyInstancesLiveTest(unittest.TestCase):
         delivery = deliveries[0]
         self.assertEqual(delivery["message_id"], published["message_id"])
         self.assertEqual(delivery["body"]["text"], text)
+        if attachments is not None:
+            self.assertEqual(delivery["body"]["attachments_v1"], attachments)
         result = consumer.ack(delivery)
         self.assertEqual(result["status"], "done")
         return published["message_id"], delivery
@@ -179,31 +184,60 @@ class CompanyInstancesLiveTest(unittest.TestCase):
         second = recovered[0]
         self.assertEqual(second["delivery_id"], first["delivery_id"])
         self.assertGreater(second["attempt"], first["attempt"])
-        self.assertNotEqual(second["claim_token"], first["claim_token"])
+        self.assertTrue(second["claim_token"] != first["claim_token"], "recovery must rotate the claim")
         stale = {
             "version": "3.0",
             "status": "done",
             "instance_id": consumer.instance_id,
             "epoch": consumer.lease["epoch"],
-            "event_id": first["event_id"],
+            "event_id": str(uuid.uuid4()),
             "claim_token": first["claim_token"],
             "attempt": first["attempt"],
         }
-        code, _ = consumer.request("POST", "/v3/deliveries/" + first["delivery_id"] + "/ack", stale)
-        self.assertIn(code, (403, 409))
+        delivery_id = str(uuid.UUID(second["delivery_id"]))
+        query = f"""SELECT json_build_object(
+            'delivery',(SELECT json_build_object('status',status,'attempt',attempt,
+                'claim_hash',encode(digest(claim_token::text,'sha256'),'hex'),
+                'instance_id',consumer_instance_id,'epoch',consumer_epoch) FROM deliveries WHERE id='{delivery_id}'),
+            'lease',(SELECT json_build_object('instance_id',instance_id,'epoch',epoch,'lease_until',lease_until,
+                'connection_hash',encode(digest(connection_token::text,'sha256'),'hex'))
+                FROM connection_leases WHERE tenant_id='{company["tenant"]}' AND alias='operador'));"""
+        before = json.loads(self.sql(company, query))
+        self.assertEqual(before["delivery"]["attempt"], second["attempt"])
+        self.assertEqual(before["delivery"]["claim_hash"], hashlib.sha256(second["claim_token"].encode()).hexdigest())
+        code, rejected = consumer.request("POST", "/v3/deliveries/" + first["delivery_id"] + "/ack", stale)
+        self.assertEqual(code, 200)
+        self.assertIs(rejected.get("applied"), False)
+        self.assertEqual(rejected.get("receipt"), "ownership_lost")
+        self.assertEqual(before, json.loads(self.sql(company, query)))
+        self.record(
+            "stale_ack_refused",
+            {
+                "http_status": code,
+                "applied": False,
+                "receipt": rejected["receipt"],
+                "current_claim_and_lease_unchanged": True,
+            },
+        )
         self.assertEqual(consumer.ack(second)["status"], "done")
+        self.assertEqual(
+            self.sql(company, "SELECT status FROM deliveries WHERE id='" + delivery_id + "';").strip(), "done"
+        )
         self.record(
             "retry_recovery",
             {
                 "delivery_id": second["delivery_id"],
                 "first_attempt": first["attempt"],
                 "recovered_attempt": second["attempt"],
-                "stale_claim_rejected": code,
+                "stale_claim_http_status": code,
+                "stale_claim_applied": False,
+                "current_claim_and_lease_unchanged": True,
+                "fresh_ack_applied": True,
                 "method": "real retryable ACK and durable re-claim",
             },
         )
 
-    def blobs(self, a, b, sa, sb):
+    def blobs(self, a, b, aa, ab, sa, sb):
         content = b"synthetic same content independently authorized in both companies"
         sha = hashlib.sha256(content).hexdigest()
         headers = {
@@ -213,15 +247,44 @@ class CompanyInstancesLiveTest(unittest.TestCase):
             "x-cauce-blob-media-type": "text/plain",
         }
         status, uploaded = sa.request("PUT", "/v3/blobs", data=content, headers=headers)
-        self.assertIn(status, (200, 201), str(uploaded))
+        self.assertEqual(status, 201, str(uploaded))
+        self.assertEqual(uploaded["sha256"], sha)
+        self.assertEqual(uploaded["bytes"], len(content))
         status, _ = sb.request("GET", "/v3/blobs/" + sha)
         self.assertEqual(status, 404)
         status, uploaded = sb.request("PUT", "/v3/blobs", data=content, headers=headers)
-        self.assertIn(status, (200, 201), str(uploaded))
+        self.assertEqual(status, 201, str(uploaded))
+        self.assertEqual(uploaded["sha256"], sha)
+        self.assertEqual(uploaded["bytes"], len(content))
         for sender in (sa, sb):
             status, value = sender.request("GET", "/v3/blobs/" + sha)
             self.assertEqual(status, 200)
             self.assertEqual(value, content)
+        attachment = {
+            "kind": "document",
+            "name": "synthetic.txt",
+            "mime_type": "text/plain",
+            "file_size": len(content),
+            "blob": "sha256:" + sha,
+            "sha256": sha,
+        }
+        attachment_messages = []
+        for company, consumer, sender in ((a, aa, sa), (b, ab, sb)):
+            message, _ = self.process(company, consumer, sender, "synthetic blob attachment", [attachment])
+            status, downloaded = consumer.request("GET", "/v3/blobs/" + sha)
+            self.assertEqual(status, 200)
+            self.assertEqual(downloaded, content)
+            attachment_messages.append(message)
+        self.record(
+            "blob_attachment_end_to_end",
+            {
+                "message_ids": attachment_messages,
+                "sha256": sha,
+                "bytes": len(content),
+                "recipient_downloads": 2,
+                "durable_ack_done": True,
+            },
+        )
         owners = []
         for company in (a, b):
             self.assertEqual(self.sql(company, "SELECT count(*) FROM blobs WHERE sha256='" + sha + "';").strip(), "1")
@@ -327,7 +390,7 @@ class CompanyInstancesLiveTest(unittest.TestCase):
             "status": "done",
             "instance_id": aa.instance_id,
             "epoch": aa.lease["epoch"],
-            "event_id": claimed[0]["event_id"],
+            "event_id": str(uuid.uuid4()),
             "claim_token": claimed[0]["claim_token"],
             "attempt": claimed[0]["attempt"],
         }
@@ -338,7 +401,7 @@ class CompanyInstancesLiveTest(unittest.TestCase):
             {"correct_b_certificate": True, "foreign_connection_token": code, "foreign_delivery_ack": ack_code},
         )
         self.recover_retry(a, aa, sa)
-        self.blobs(a, b, sa, sb)
+        self.blobs(a, b, aa, ab, sa, sb)
         for company in self.companies:
             self.assertEqual(self.cli(company, "status")["status"], "installed")
             receipt = self.cli(company, "install")
@@ -371,10 +434,17 @@ class CompanyInstancesLiveTest(unittest.TestCase):
         worker.start()
         try:
             self.backup_restore(a, b, before)
+            original_console = a["descriptor"]["release"]["consoleImage"]
             updated = json.loads(a["path"].read_text())
             updated["release"]["consoleImage"] = UPDATE_CONSOLE
             a["path"].write_bytes(canonical(updated))
             a["descriptor"] = updated
+            self.cli(a, "update")
+            self.assertEqual(self.cli(a, "status")["status"], "installed")
+            final_release = json.loads(a["path"].read_text())
+            final_release["release"]["consoleImage"] = original_console
+            a["path"].write_bytes(canonical(final_release))
+            a["descriptor"] = final_release
             self.cli(a, "update")
             self.assertEqual(self.cli(a, "status")["status"], "installed")
         finally:
@@ -392,6 +462,7 @@ class CompanyInstancesLiveTest(unittest.TestCase):
                 "b_deliveries_done": len(successes),
                 "b_resources_unchanged": True,
                 "a_changed_console_digest": True,
+                "a_restored_qualified_console_digest": True,
                 "runtime_digest_unchanged": True,
             },
         )
@@ -404,6 +475,7 @@ class CompanyInstancesLiveTest(unittest.TestCase):
                     "durable HTTP claim and fenced ACK",
                     "retryable failure recovery and stale claim fencing",
                     "same-SHA blob isolation",
+                    "blob attachment publish/claim/ACK/recipient download",
                     "foreign connection token and delivery ACK rejection with own B certificate",
                     "own PostgreSQL dump and staging database restore",
                     "own blob volume snapshot and isolated volume restore",
@@ -494,7 +566,10 @@ class CompanyInstancesLiveTest(unittest.TestCase):
                 restored_volume,
             ]
         )
-        self.backup_volumes.append((restored_volume, receipt["owner"], a["descriptor"]["instanceId"]))
+        restored_identity = resources.docker_identity("volume", resources.inspect_resource("volume", restored_volume))
+        self.backup_volumes.append(
+            (restored_volume, receipt["owner"], a["descriptor"]["instanceId"], restored_identity)
+        )
         restore_blob_volume(a["descriptor"]["release"]["runtimeImage"], restored_volume, files)
         self.assertEqual(files, snapshot_blob_volume(a["descriptor"]["release"]["runtimeImage"], restored_volume))
         database = "live_restore_" + self.nonce
@@ -593,12 +668,13 @@ class CompanyInstancesLiveTest(unittest.TestCase):
                         continue
                     self.assertEqual(value["Labels"]["io.cauce.owner"], owner)
                     self.assertEqual(value["Labels"]["io.cauce.installation"], name)
+                    self.assertEqual(resources.docker_identity(kind, value), receipt["docker"][registered])
                     execute(["docker", kind, "rm", resource], timeout=30)
                     removed.append(kind + ":" + resource)
                 registry = resources.REGISTRY_ROOT / (name + ".json")
                 with resources.reservation_lock(require_shared=True):
                     if registry.exists():
-                        reservation = json.loads(registry.read_text())
+                        reservation = resources.read_reservation(registry, own=True)
                         self.assertEqual(reservation["owner"], owner)
                         self.assertEqual(reservation["installerUid"], os.getuid())
                         self.assertEqual(reservation["resources"]["instanceId"], name)
@@ -607,13 +683,14 @@ class CompanyInstancesLiveTest(unittest.TestCase):
                         registry.unlink()
             except Exception as error:
                 failures.append(str(error))
-        for volume, owner, name in self.backup_volumes:
+        for volume, owner, name, identity in self.backup_volumes:
             try:
                 value = resources.inspect_resource("volume", volume)
                 if value is not None:
                     self.assertEqual(value["Labels"]["io.cauce.owner"], owner)
                     self.assertEqual(value["Labels"]["io.cauce.installation"], name)
                     self.assertEqual(value["Labels"]["io.cauce.live-test"], self.nonce)
+                    self.assertEqual(resources.docker_identity("volume", value), identity)
                     execute(["docker", "volume", "rm", volume])
                     removed.append("volume:" + volume)
             except Exception as error:
