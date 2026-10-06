@@ -91,6 +91,7 @@ function failOnMissingMember(stubs: GatewayRepository): GatewayRepository {
  */
 export function fakeRepository(overrides: Partial<GatewayRepository> = {}): GatewayRepository {
   return failOnMissingMember({
+    resolveSystemGateProbeActor: vi.fn(async () => 'kant'),
     publish: vi.fn(async (input: Parameters<GatewayRepository['publish']>[0]) => buildPublishReceipt(
       input,
       {

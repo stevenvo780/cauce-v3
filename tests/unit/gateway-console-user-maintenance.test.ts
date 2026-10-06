@@ -41,8 +41,8 @@ function fixture(initial?: typeof existing) {
         ...existing, id: 'fixture-person', email: stringParameter(params[7]),
         display_name: params[2] === null ? stringParameter(params[7]).split('@')[0] ?? '' : stringParameter(params[2]),
         role: params[3] === null ? 'operator' : stringParameter(params[3]),
-        tenant_id: params[4] === null ? 'Steven' : stringParameter(params[4]),
-        alias: params[5] === null ? 'kant' : stringParameter(params[5]),
+        tenant_id: stringParameter(params[4]),
+        alias: stringParameter(params[5]),
         active: true, password_hash: stringParameter(params[1]), password_changed_at: 1,
       };
       return { rows: [{ ...account }], rowCount: 1 };
@@ -86,18 +86,18 @@ describe('mantenimiento de usuarios: contrato de persistencia', () => {
     await maintainConsoleUser(store.pool, omitted, 'new-fixture-hash');
     await maintainConsoleUser(store.pool, omitted, 'newer-fixture-hash');
     expect(store.current()).toEqual({ ...before, password_hash: 'newer-fixture-hash', password_changed_at: 3 });
-    expect(store.query).toHaveBeenCalledTimes(16);
+    expect(store.query).toHaveBeenCalledTimes(2);
     const firstUpdate = store.query.mock.calls.find(([sql]) => sql.startsWith('UPDATE console_users SET'));
     expect(firstUpdate?.[1]).toEqual([
       'person@example.test', 'new-fixture-hash', null, null, null, null, null,
     ]);
   });
 
-  it('un alta conserva todos los defaults y empieza activa', async () => {
+  it('un alta usa el ámbito explícito y conserva los defaults de presentación', async () => {
     const store = fixture();
-    await maintainConsoleUser(store.pool, omitted, 'new-fixture-hash');
+    await maintainConsoleUser(store.pool, { ...omitted, tenant: 'Equipo', alias: 'salva' }, 'new-fixture-hash');
     expect(store.current()).toMatchObject({ email: 'Person@Example.test', display_name: 'Person',
-      role: 'operator', tenant_id: 'Steven', alias: 'kant', active: true });
+      role: 'operator', tenant_id: 'Equipo', alias: 'salva', active: true });
   });
 
   it.each([
@@ -122,12 +122,12 @@ describe('mantenimiento de usuarios: contrato de persistencia', () => {
       query,
       connect: async () => ({ query, release: vi.fn(), on: vi.fn(), off: vi.fn() }),
     } as unknown as DatabasePool;
-    await expect(maintainConsoleUser(pool, { ...omitted, name: '' }, 'new-fixture-hash'))
+    await expect(maintainConsoleUser(pool, { ...omitted, tenant: 'Equipo', alias: 'salva', name: '' }, 'new-fixture-hash'))
       .rejects.toThrow('fixture constraint rejection');
     expect(query).toHaveBeenCalledTimes(7);
     const insert = query.mock.calls.find(([sql]) => sql.startsWith('INSERT INTO console_users'));
     expect(insert?.[1]).toEqual([
-      'person@example.test', 'new-fixture-hash', '', null, null, null, null, 'Person@Example.test',
+      'person@example.test', 'new-fixture-hash', '', null, 'Equipo', 'salva', null, 'Person@Example.test',
     ]);
   });
 
@@ -153,12 +153,19 @@ describe('mantenimiento de usuarios: contrato de persistencia', () => {
       }),
     } as unknown as DatabasePool;
 
-    await expect(maintainConsoleUser(pool, omitted, 'new-fixture-hash'))
+    await expect(maintainConsoleUser(pool, { ...omitted, tenant: 'Equipo', alias: 'salva' }, 'new-fixture-hash'))
       .rejects.toThrow('fixture insert failure');
     expect(release).toHaveBeenCalledWith(true);
   });
 
-  it('un alta respeta nombre, rol y ámbito explícitos', async () => {
+  it.each([{}, { tenant: 'Equipo' }, { alias: 'salva' }])('un alta sin identidad completa rechaza sin insertar %j', async (scope) => {
+    const store = fixture();
+    await expect(maintainConsoleUser(store.pool, { ...omitted, ...scope }, 'new-fixture-hash')).rejects.toThrow('requiere tenant y alias explícitos');
+    expect(store.current()).toBeUndefined();
+    expect(store.query.mock.calls.some(([sql]) => sql.startsWith('INSERT'))).toBe(false);
+  });
+
+  it('un alta respeta nombre, rol y ámbito explícitos' , async () => {
     const store = fixture();
     await maintainConsoleUser(store.pool, { ...omitted, name: 'Otra persona', role: 'reader', tenant: 'Equipo', alias: 'salva' }, 'new-fixture-hash');
     expect(store.current()).toMatchObject({ display_name: 'Otra persona', role: 'reader', tenant_id: 'Equipo', alias: 'salva', active: true });

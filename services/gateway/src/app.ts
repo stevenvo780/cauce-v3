@@ -70,7 +70,7 @@ type StoreDerivedRepository = Pick<CauceRepository,
   | 'principalAccess' | 'queueSnapshot' | 'quotaSnapshot' | 'readProfileRuntimeAdoption'
   | 'reconcileAgentContextRuntime' | 'recordProfileRuntimeExpectation' | 'recordQuotaSample'
   | 'renewWakeOutbox' | 'replayDelivery' | 'retryOwnDelivery' | 'agentQueue' | 'recordAgentProgress'
-  | 'resolveOperationalDlqWithoutReplay' | 'selectAccount' | 'topology'
+  | 'resolveOperationalDlqWithoutReplay' | 'resolveSystemGateProbeActor' | 'selectAccount' | 'topology'
 >;
 
 /** Narrowed on purpose: deriving these widens an authenticated, actor-scoped or fenced signature. */
