@@ -1,0 +1,10 @@
+.chat-voice-recorder { position: relative; display: flex; min-width: 0; flex: none; align-items: center; gap: var(--space-1); }
+.messenger-composer .composer-voice-start, .messenger-composer .composer-voice-stop, .messenger-composer .composer-voice-cancel { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: var(--space-1); padding-inline: var(--space-2); }
+.messenger-composer .composer-voice-start { width: 44px; min-width: 44px; padding: 0; }
+.chat-voice-duration { min-width: 42px; color: var(--text); font-variant-numeric: tabular-nums; font-size: var(--tipo-apunte); text-align: center; }
+.chat-voice-error { position: absolute; z-index: 2; bottom: calc(100% + var(--space-1)); left: 0; width: min(260px, calc(100vw - 110px)); padding: var(--space-2); border: 1px solid var(--red); border-radius: var(--radius-sm); background: var(--surface); color: var(--red); font-size: var(--tipo-apunte); overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .messenger-composer .composer-voice-stop, .messenger-composer .composer-voice-cancel { width: 44px; min-width: 44px; padding: 0; }
+  .composer-voice-stop > span, .composer-voice-cancel > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+}

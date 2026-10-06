@@ -4,6 +4,7 @@ import { useApi } from '../../api/context';
 import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
 import type { DeliveryState, MessageDetail } from '../../api/types';
+import { canonicalReplyMedia, type CanonicalReplyMedia } from './canonical-reply-media';
 
 export interface CanonicalReplyRoot {
   messageId: string;
@@ -11,7 +12,7 @@ export interface CanonicalReplyRoot {
   status?: DeliveryState | null;
 }
 
-export interface CanonicalReply {
+export interface CanonicalReply extends CanonicalReplyMedia {
   messageId: string;
   deliveryId: string;
   tenantId: string;
@@ -51,6 +52,7 @@ function project(detail: MessageDetail, root: CanonicalReplyRoot, tenantId: stri
     ...(detail.chain_open === undefined ? {} : { chainOpen: detail.chain_open }),
     ...(status === undefined ? {} : { status }),
     ...(delivery.reply === undefined ? {} : { reply: delivery.reply }),
+    ...canonicalReplyMedia(delivery),
   };
 }
 
@@ -122,7 +124,7 @@ export function useCanonicalReply(input: {
   const accessDenied = purgedKey === key || accessError;
   const data = accessDenied ? undefined : resource.data;
   const waitingForMissingReply = effectiveStatus === 'done' && data !== undefined
-    && data.chainOpen !== true && !data.reply?.trim();
+    && data.chainOpen !== true && !data.reply?.trim() && !data.replyAttachments?.length;
   useEffect(() => {
     setMissingReplyWindow((current) => {
       if (!waitingForMissingReply) return current.key === key && current.startedAt === undefined ? current : { key };

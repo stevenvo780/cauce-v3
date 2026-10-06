@@ -34,6 +34,41 @@ export function getMessage(request: RequestFn, messageId: string): Promise<Messa
   return request(`/v3/console/messages/${encodeURIComponent(messageId)}`);
 }
 
+export function getMessageAttachment(
+  request: RequestFn,
+  messageId: string,
+  attachmentIndex: number,
+  options: { signal?: AbortSignal } = {},
+): Promise<Blob> {
+  if (!Number.isSafeInteger(attachmentIndex) || attachmentIndex < 0) {
+    throw new RangeError('Attachment index must be a non-negative safe integer');
+  }
+  return request(
+    `/v3/console/messages/${encodeURIComponent(messageId)}/attachments/${String(attachmentIndex)}`,
+    { signal: options.signal, headers: { Accept: '*/*' } },
+    { responseMode: 'blob' },
+  );
+}
+
+export function getMessageReplyAttachment(
+  request: RequestFn,
+  messageId: string,
+  deliveryId: string,
+  attempt: number,
+  attachmentIndex: number,
+  options: { signal?: AbortSignal } = {},
+): Promise<Blob> {
+  if (!Number.isSafeInteger(attempt) || attempt < 0 || attempt > 2_147_483_647
+    || !Number.isSafeInteger(attachmentIndex) || attachmentIndex < 0 || attachmentIndex > 3) {
+    throw new RangeError('Reply attachment reference is invalid');
+  }
+  return request(
+    `/v3/console/messages/${encodeURIComponent(messageId)}/replies/${encodeURIComponent(deliveryId)}/${String(attempt)}/attachments/${String(attachmentIndex)}`,
+    { signal: options.signal, headers: { Accept: '*/*' } },
+    { responseMode: 'blob' },
+  );
+}
+
 export function publishMessage(request: RequestFn, input: PublishMessageInput): Promise<PublishResult> {
   const payload: PublishMessageInput = {
     room_id: input.room_id,
@@ -149,6 +184,8 @@ export function listOriginRelays(request: RequestFn): Promise<OriginRelayPage> {
 export interface MessagingClient {
   listMessages(): Promise<MessagePage>;
   getMessage(messageId: string): Promise<MessageDetail>;
+  getMessageAttachment(messageId: string, attachmentIndex: number, options?: { signal?: AbortSignal }): Promise<Blob>;
+  getMessageReplyAttachment(messageId: string, deliveryId: string, attempt: number, attachmentIndex: number, options?: { signal?: AbortSignal }): Promise<Blob>;
   publishMessage(input: PublishMessageInput): Promise<PublishResult>;
   preparePublishIntent(input: PreparePublishIntentInput): Promise<PreparePublishIntentResult>;
   confirmPublishIntent(input: ConfirmPublishIntentInput): Promise<ConfirmPublishIntentResult>;
@@ -164,6 +201,8 @@ export function messagingClient(request: RequestFn): MessagingClient {
   return {
     listMessages: () => listMessages(request),
     getMessage: (messageId) => getMessage(request, messageId),
+    getMessageAttachment: (messageId, attachmentIndex, options) => getMessageAttachment(request, messageId, attachmentIndex, options),
+    getMessageReplyAttachment: (messageId, deliveryId, attempt, attachmentIndex, options) => getMessageReplyAttachment(request, messageId, deliveryId, attempt, attachmentIndex, options),
     publishMessage: (input) => publishMessage(request, input),
     preparePublishIntent: (input) => preparePublishIntent(request, input),
     confirmPublishIntent: (input) => confirmPublishIntent(request, input),
