@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { lockHumanIdentity, lockConsoleHuman, withAbortableTransaction, StoreError, type ConsoleCredentialStampVerifier,
+import { lockHumanIdentity, lockConsoleHuman, withAbortableTransaction, withTransaction, StoreError, type ConsoleCredentialStampVerifier,
   type DatabasePool, type DatabaseClient, type HumanIdentitySnapshot } from '@cauce/store';
 import { isAnyUuid } from '@cauce/protocol';
 import { currentOAuthScopes, lockOAuthAccess, lockOAuthGrant, requireOAuthExpiry, type OAuthGrantRow } from './oauth-grant-authority.js';
@@ -122,13 +122,13 @@ export class PostgresOAuthStore implements OAuthStore {
   }
 
   async ready(): Promise<void> {
-    await this.pool.query(`SELECT r.id_hash,r.browser_hash,r.scopes,r.challenge,r.expires_at,r.consumed_at,
+    await withTransaction(this.pool, client => client.query(`SELECT r.id_hash,r.browser_hash,r.scopes,r.challenge,r.expires_at,r.consumed_at,
       g.id,g.human_id,g.issuer,g.resource,g.binding_id,g.binding_revision,g.membership_revision,
       g.tenant_id,g.actor_alias,g.credential_stamp,v.grant_id,v.revoked_at,c.code_hash,c.grant_id,c.challenge,
       c.expires_at,c.consumed_at,t.id,t.grant_id,t.expires_at,t.revoked_at,k.id,k.client_id,k.metadata,k.created_at,
       f.token_hash,f.grant_id,f.expires_at,f.consumed_at
       FROM cauce_oauth_requests r,cauce_oauth_grants g,cauce_oauth_grant_revocations v,cauce_oauth_codes c,
-        cauce_oauth_tokens t,cauce_oauth_clients k,cauce_oauth_refresh_tokens f LIMIT 0`);
+        cauce_oauth_tokens t,cauce_oauth_clients k,cauce_oauth_refresh_tokens f LIMIT 0`));
   }
 
   private async transaction<T>(context: OAuthRequestContext, operation: (client: DatabaseClient) => Promise<T>): Promise<T> {
