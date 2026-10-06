@@ -1,5 +1,6 @@
-import type { AdapterView, PresenceLease, SystemStatus, TopologySnapshot } from '../../api/types';
+import type { PresenceLease, SystemStatus, TopologySnapshot } from '../../api/types';
 import { leaseExpiry, leaseState, type LeaseState } from '../../lib';
+import type { LiveAgentView, LiveState } from '../live/agent-state';
 import type { TerminalTarget } from './api';
 
 export interface FleetAgent {
@@ -119,34 +120,9 @@ export function filterFleetAgents<T extends FleetAgent>(agents: readonly T[], fi
   });
 }
 
-/**
- * Breakdown of adapters available, failing, or unreported,
- * avoiding interpreting unreported states as confirmed failures.
- */
-interface AdapterBreakdown {
-  disponibles: number;
-  /** `degraded` + `unavailable`: the server DID report, and reported a problem. */
-  conFallo: number;
-  /** `unknown`, absent or malformed: no data, which is not the same as a failure. */
-  sinReportar: number;
-  total: number;
-}
-
-export function adapterBreakdown(adapters: AdapterView[]): AdapterBreakdown {
-  const disponibles = adapters.filter((adapter) => adapter.state === 'available').length;
-  const conFallo = adapters.filter((adapter) => adapter.state === 'degraded' || adapter.state === 'unavailable').length;
-  return { disponibles, conFallo, sinReportar: adapters.length - disponibles - conFallo, total: adapters.length };
-}
-
-/** Counter text: counts each group by name and doesn't invent a fraction. */
-export function adapterBreakdownText(adapters: AdapterView[]): string {
-  const { disponibles, conFallo, sinReportar, total } = adapterBreakdown(adapters);
-  if (total === 0) return 'UNKNOWN';
-  return [
-    `${String(disponibles)} disponibles`,
-    conFallo ? `${String(conFallo)} con fallo` : undefined,
-    sinReportar ? `${String(sinReportar)} sin reportar` : undefined,
-  ].filter(Boolean).join(' · ');
+/** Live state of the agent; without an activity row it falls back to the lease alone. */
+export function agentLiveState(agent: FleetAgent, live: ReadonlyMap<string, LiveAgentView> | undefined): LiveState {
+  return live?.get(agent.id)?.state ?? (agent.leaseState === 'online' ? 'idle' : 'down');
 }
 
 /** Explicit PTY states. There is no implicit "available": absent data is UNKNOWN. */
@@ -231,7 +207,7 @@ export function countOnlinePtyTargets(targets: TerminalTarget[] | null | undefin
  */
 export const LIVE_TUI_MODE = 'harness';
 
-/** New shell mode. Writes: still requires a hand-written reason. */
+/** Fresh shell inside the agent's container. */
 export const SHELL_MODE = 'shell';
 
 /** Writable TUI: the SAME tmux the agent is drawing, with the keyboard attached to it. */

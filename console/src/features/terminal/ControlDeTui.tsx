@@ -14,8 +14,11 @@ import {
 } from './api-control';
 import { codigoDeDenegacion, explicarDenegacionPty, type DenegacionExplicada } from './denegaciones';
 import { WRITABLE_TUI_MODE } from './fleet';
-import { NegativaPty } from './PtySessionDialog';
+import { NegativaPty } from './NegativaPty';
 import type { PtyChannelState } from './pty-types';
+
+const BOTON = 'inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border-0 px-2.5 text-[13px] font-medium bg-brand text-on-brand hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50';
+const AVISO = 'm-0 rounded-md bg-warn-soft px-2 py-1 text-xs text-warn-ink';
 
 /** Close code the relay uses on the browser leg when the operator's hold is no longer theirs. */
 const CIERRE_CONTROL_DEVUELTO = 4410;
@@ -336,52 +339,56 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
   if (!puedeEscribir) return null;
 
   return (
-    <section className="pty-control" aria-label="Control de la TUI" data-sostenido={arriendo ? true : undefined} data-fase={fase === 'reposo' ? undefined : fase}>
+    <section
+      aria-label="Control de la TUI"
+      data-sostenido={arriendo ? true : undefined}
+      data-fase={fase === 'reposo' ? undefined : fase}
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 py-1.5"
+    >
       {arriendo ? (
         <>
-          <p className="pty-control-estado" role="status" title={`Tenés el teclado de esta TUI. ${vencimiento(arriendo)}`}>
-            <KeyRound size={14} aria-hidden="true" /><span className="sr-only">Tenés el teclado de esta TUI.</span>
+          <p
+            className="m-0 inline-flex items-center gap-1.5 rounded-md bg-ok-soft px-2 py-1 text-xs font-medium text-ok-ink"
+            role="status"
+            title={`Tenés el teclado de esta TUI. ${vencimiento(arriendo)}`}
+          >
+            <KeyRound size={13} aria-hidden="true" />Tenés el teclado de esta TUI.
           </p>
           {arriendo.dudoso.length > 0 ? (
-            // Wears the amber notice rule the panel already has (`pty-control-perdido`): this is the
-            // same kind of aside about the hold, so it needs no rule of its own. `pty-control-recibo`
-            // stays as the hook that names WHICH notice this is.
-            <p className="pty-control-perdido pty-control-recibo" role="status">
+            <p className={AVISO} role="status">
               El gateway acreditó la toma con un recibo incompleto (sin {arriendo.dudoso.join(', ')}). El teclado es tuyo y la devolución queda registrada igual.
             </p>
           ) : null}
           <button
-            className="button small primary pty-control-devolver"
+            className={BOTON}
             type="button"
             onClick={() => void devolver()}
             title="Suelta el teclado y el bus vuelve a entregarle a este alias."
           >
-            <Undo2 size={14} aria-hidden="true" /><span className="sr-only">Devolver el control</span>
+            <Undo2 size={14} aria-hidden="true" />Devolver el control
           </button>
         </>
       ) : (
-        <>
-          <button
-            className="button small primary pty-control-tomar"
-            type="button"
-            disabled={pendiente || pidiendoSesion || escrituraBloqueada}
-            title={escrituraBloqueada ? error.titulo : `Usar el teclado de ${alias}; los mensajes del bus quedan en cola mientras tengas el control.`}
-            onClick={() => void tomar()}
-          >
-            <KeyRound size={14} aria-hidden="true" /> <span className="sr-only">{pendiente
-              ? ETIQUETA_DE_FASE[fase]
-              : escrituraBloqueada ? 'Escritura no disponible' : reintentable ? 'Reintentar la toma' : 'Tomar el control'}</span>
-          </button>
-        </>
+        <button
+          className={BOTON}
+          type="button"
+          disabled={pendiente || pidiendoSesion || escrituraBloqueada}
+          title={escrituraBloqueada ? error.titulo : `Usar el teclado de ${alias}; los mensajes del bus quedan en cola mientras tengas el control.`}
+          onClick={() => void tomar()}
+        >
+          <KeyRound size={14} aria-hidden="true" />{pendiente
+            ? ETIQUETA_DE_FASE[fase]
+            : escrituraBloqueada ? 'Escritura no disponible' : reintentable ? 'Reintentar la toma' : 'Tomar el control'}
+        </button>
       )}
 
       {perdido ? (
-        <p className="pty-control-perdido" role="status">
+        <p className={AVISO} role="status">
           Esta sesión ya no tiene el control de la TUI de {alias}. Otra sesión puede mantener el bus en pausa.
         </p>
       ) : null}
 
-      {error ? <NegativaPty negativa={error} /> : null}
+      {error ? <div className="basis-full"><NegativaPty negativa={error} /></div> : null}
     </section>
   );
 }

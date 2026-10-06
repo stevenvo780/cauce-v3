@@ -4,14 +4,13 @@ import { renderWithApi } from '../../test/render';
 import { HelpPage } from '../help/HelpPage';
 import { TerminalPage } from './TerminalPage';
 
-it('la referencia del control está en Docs y la selección usa identidad tenant más alias', async () => {
+it('el selector identifica cada agente por tenant más alias y el agente abierto no repite cabeceras ni KPIs', async () => {
   const { container } = renderWithApi(<TerminalPage />);
-  const select = await screen.findByRole('combobox', { name: 'Agente' });
-  expect(select).toBeEnabled();
-  expect(await screen.findByRole('option', { name: /^kant · Steven/ })).toHaveValue('Steven:kant');
+  const kant = await screen.findByRole('link', { name: /^kant/ });
+  expect(kant).toHaveAttribute('href', '/terminal/Steven/kant');
+  expect(kant).toHaveTextContent('Steven');
   expect(container.querySelector('.terminal-overview')).toBeNull();
   expect(container.querySelector('.terminal-fleet')).toBeNull();
-  expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/ayuda#terminal');
 });
 
 it('Docs explica la cola y la devolución del teclado sin exigir una justificación escrita', () => {

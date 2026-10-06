@@ -1,12 +1,10 @@
-import { AlertTriangle, MonitorPlay } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type RefObject, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { useApi } from '../../api/context';
-import type { ConsoleAccess, TerminalCapability } from '../../api/types';
+import type { ConsoleAccess, MessagePage, TerminalCapability } from '../../api/types';
+import type { Resource } from '../../api/use-resource';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
-import { EmptyState, LoadingState } from '../../components/ui';
-import { GridContainer } from './GridContainer';
-import { TerminalAgentToolbar } from './TerminalAgentToolbar';
-import { PlazasColgadas, type MotivoReconciliacionPlaza } from './PlazasColgadas';
+import type { LiveAgentView } from '../live/agent-state';
 import {
   TerminalApiError,
   createTerminalSession,
@@ -18,40 +16,32 @@ import {
   type TerminalSessionListItem,
   type TerminalTargetsSnapshot,
 } from './api';
+import { agentLiveState, type FleetAgent } from './fleet';
+import { PlazasColgadas, type MotivoReconciliacionPlaza } from './PlazasColgadas';
 import { plazasColgadas, plazasOcupadas } from './plazas';
-import { fleetTerminalChip, type FleetAgent } from './fleet';
-import { ultimateTerminalGate, type PluginGate } from './plugin';
 import { closePtySession } from './pty-session';
-import { type OperatorSession } from './session';
-import type { TerminalGrantRequestOutcome } from './types';
+import { SessionStage } from './SessionStage';
+import { TerminalHome } from './TerminalHome';
+import type { StageMemory, TerminalGrantRequestOutcome } from './types';
 
 interface OperatorWorkspaceProps {
   agents: FleetAgent[];
-  initialAgentId?: string;
-  toolbar?: ReactNode;
+  /** Agent named by the address; absent on the bare route, which shows the picker. */
+  agentId?: string;
+  live: ReadonlyMap<string, LiveAgentView>;
+  messages: Resource<MessagePage>;
+  summary: string;
   access?: ConsoleAccess;
   terminalCapability?: TerminalCapability;
   /** Optional: without the server inventory every destination stays UNKNOWN and PTY is closed. */
   terminalTargets?: TerminalTargetsSnapshot;
   fleetLoading: boolean;
   fleetError?: Error;
-  onSesionesAbiertas?: (cantidad: number) => void;
-  /** The page measures this box to write `--terminal-tope`; see `TerminalPage`. */
-  cajaRef?: RefObject<HTMLDivElement | null>;
+  onRefresh: () => void;
 }
 
-function sessionId(agent: FleetAgent): string {
-  return `session:${agent.id}`;
-}
-
-function createSession(agent: FleetAgent): OperatorSession {
-  return {
-    id: sessionId(agent),
-    agent,
-    sourceRoomId: '',
-    openedAt: new Date().toISOString(),
-    mode: 'pty',
-  };
+function sessionIdOf(agentId: string): string {
+  return `session:${agentId}`;
 }
 
 interface WorkspaceTerminalAttempt {
@@ -83,96 +73,6 @@ function terminalCapabilityUuid(): string {
   throw new Error('Este navegador no ofrece UUID seguros para cercar la sesión PTY.');
 }
 
-interface EscenarioVacioProps {
-  agents: FleetAgent[];
-  access?: ConsoleAccess;
-  capability?: TerminalCapability;
-  targets?: TerminalTargetsSnapshot;
-  loading: boolean;
-  error?: Error;
-  onOpenAgent: (agent: FleetAgent) => void;
-}
-
-interface CopiaDelEscenario {
-  tono: 'espera' | 'cerrado';
-  eyebrow: string;
-  titulo: string;
-  cuerpo: string;
-}
-
-function copiaDelEscenario(
-  gate: PluginGate,
-  targets: TerminalTargetsSnapshot | undefined,
-  emitiendo: number,
-): CopiaDelEscenario {
-  if (!gate.enabled) {
-    return {
-      tono: 'cerrado',
-      eyebrow: 'Canal cerrado',
-      titulo: 'Aquí no se puede espejar ninguna TUI',
-      cuerpo: `${gate.reason} Elegí un agente para consultar el estado de su terminal.`,
-    };
-  }
-  if (!targets?.items) {
-    return {
-      tono: 'cerrado',
-      eyebrow: 'Inventario sin comprobar',
-      titulo: 'No se sabe qué alias pueden emitir su TUI',
-      cuerpo: 'El gateway no publicó el inventario de destinos PTY, así que ningún alias se da por disponible. '
-        + 'No es que no haya ninguno: es que no se pudo comprobar. Sincronizá y volvé a mirar.',
-    };
-  }
-  if (emitiendo === 0) {
-    return {
-      tono: 'cerrado',
-      eyebrow: 'Sin TUI que espejar',
-      titulo: 'Ningún alias está emitiendo su TUI ahora mismo',
-      cuerpo: 'El canal está abierto y el inventario llegó, pero ningún destino publica el modo harness en este '
-        + 'momento. Abrí un alias para consultar el estado observado de su terminal.',
-    };
-  }
-  return {
-    tono: 'espera',
-    eyebrow: 'Escenario vacío',
-    titulo: 'Ningún agente seleccionado',
-    cuerpo: 'Este hueco es el espejo en vivo de la TUI de un agente —la sesión tmux que está corriendo ahora—, '
-      + `en solo lectura. ${String(emitiendo)} de ${String(targets.items.length)} destinos la están emitiendo: `
-      + 'elegí un alias en la flota y su terminal ocupa este espacio.',
-  };
-}
-
-function EscenarioVacio({ agents, access, capability, targets, loading, error, onOpenAgent }: EscenarioVacioProps) {
-  if (loading && agents.length === 0) {
-    return <div className="terminal-stage-empty"><LoadingState label="Leyendo la flota del servidor…" /></div>;
-  }
-  if (error && agents.length === 0) {
-    return (
-      <div className="terminal-stage-empty" data-tono="fallo" role="alert">
-        <span className="terminal-stage-icon"><AlertTriangle size={26} aria-hidden="true" /></span>
-        <p className="eyebrow">La flota no se pudo leer</p>
-        <h2>Este hueco está vacío por un fallo, no porque no haya agentes</h2>
-        <EmptyState>{error.message}</EmptyState>
-      </div>
-    );
-  }
-  const gate = ultimateTerminalGate(capability, access);
-  const emitiendo = agents.filter((agent) => fleetTerminalChip(targets?.items, agent).status === 'allowed');
-  const copia = copiaDelEscenario(gate, targets, emitiendo.length);
-  const primero = emitiendo.at(0);
-  return (
-    <div className="terminal-stage-empty" data-tono={copia.tono}>
-      <span className="terminal-stage-icon"><MonitorPlay size={26} aria-hidden="true" /></span>
-      <h2>{copia.titulo}</h2>
-      {copia.tono === 'cerrado' ? <EmptyState>{copia.cuerpo}</EmptyState> : null}
-      {primero ? (
-        <button className="button" type="button" onClick={() => { onOpenAgent(primero); }}>
-          <MonitorPlay size={16} aria-hidden="true" /> Abrir la TUI de {primero.alias}
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
 function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T> {
   const result: Record<string, T> = {};
   for (const [k, v] of Object.entries(map)) {
@@ -181,15 +81,13 @@ function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T
   return result;
 }
 
-export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, terminalCapability, terminalTargets, fleetLoading, fleetError, onSesionesAbiertas, cajaRef }: OperatorWorkspaceProps) {
+export function OperatorWorkspace({ agents, agentId, live, messages, summary, access, terminalCapability, terminalTargets, fleetLoading, fleetError, onRefresh }: OperatorWorkspaceProps) {
   // The session that holds the CSRF token in memory: without it every PTY plane write returns 403.
   const api = useApi();
-  const [sessions, setSessions] = useState<OperatorSession[]>([]);
-  const [activeId, setActiveId] = useState<string>();
-  const [changingAgent, setChangingAgent] = useState(false);
   const [grants, setGrants] = useState<Record<string, TerminalSessionGrant>>({});
   const [closedChannels, setClosedChannels] = useState<Record<string, true | undefined>>({});
   const [revocationFailures, setRevocationFailures] = useState<Record<string, true | undefined>>({});
+  const [memory, setMemory] = useState<Record<string, StageMemory>>({});
   const [plazas, setPlazas] = useState<TerminalSessionListItem[]>([]);
   const [plazasAlaVista, setPlazasAlaVista] = useState(0);
   const [topeAlcanzado, setTopeAlcanzado] = useState(false);
@@ -198,14 +96,13 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, ter
   const [cerrandoPlaza, setCerrandoPlaza] = useState<Record<string, true>>({});
   const [errorCierrePlaza, setErrorCierrePlaza] = useState<string>();
   const [errorPlazas, setErrorPlazas] = useState<string>();
-  const initialAgentOpenedRef = useRef<string | undefined>(undefined);
 
   const sessionTokensRef = useRef(new Map<string, number>());
   const nextSessionTokenRef = useRef(0);
   const workspaceMountedRef = useRef(true);
-  /** One reservation attempt per logical tab, even while its visible SessionStage is unmounted. */
+  /** One reservation attempt per opening, even while its visible SessionStage is unmounted. */
   const terminalAttemptsRef = useRef(new Map<string, WorkspaceTerminalAttempt>());
-  /** Stable request/capability for exact retries during one logical tab incarnation. */
+  /** Stable request/capability for exact retries during one opening. */
   const terminalIntentsRef = useRef(new Map<string, WorkspaceTerminalIntent>());
 
   const grantsRef = useRef(grants);
@@ -214,6 +111,18 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, ter
   apiRef.current = api;
   /** Only the newest read may publish state; the initial and the causal ones may overlap. */
   const revisionPlazasRef = useRef(0);
+  const releaseChannelRef = useRef<(id: string) => Promise<void>>(async () => undefined);
+
+  const agent = agentId ? agents.find((item) => item.id === agentId) : undefined;
+  const sessionId = agentId ? sessionIdOf(agentId) : undefined;
+
+  // Each time the open agent changes it is a new incarnation: a reservation still in flight for the
+  // previous one must not be adopted, and the token is what tells them apart.
+  const openingRef = useRef<{ id?: string; token: number }>({ token: 0 });
+  if (openingRef.current.id !== sessionId) {
+    openingRef.current = { id: sessionId, token: ++nextSessionTokenRef.current };
+    if (sessionId) sessionTokensRef.current.set(sessionId, openingRef.current.token);
+  }
 
   useEffect(() => {
     const sessionTokens = sessionTokensRef.current;
@@ -230,6 +139,25 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, ter
       }
     };
   }, []);
+
+  // Leaving an agent revokes its channel; if the gateway does not confirm, the notice stays with a retry.
+  useEffect(() => {
+    if (!sessionId) return;
+    const sessionTokens = sessionTokensRef.current;
+    const terminalIntents = terminalIntentsRef.current;
+    const token = openingRef.current.token;
+    sessionTokens.set(sessionId, token);
+    return () => {
+      if (sessionTokens.get(sessionId) === token) sessionTokens.delete(sessionId);
+      terminalIntents.delete(sessionId);
+      setTopeAlcanzado(false);
+      setMotivoReconciliacionPlaza(undefined);
+      // On unmount the effect above already revokes every grant; asking twice would double the DELETE.
+      if (!workspaceMountedRef.current) return;
+      setMemory((current) => omitKey(current, sessionId));
+      void releaseChannelRef.current(sessionId);
+    };
+  }, [sessionId]);
 
   const revisarPlazas = useCallback(async () => {
     const revision = ++revisionPlazasRef.current;
@@ -290,35 +218,6 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, ter
     }
   }
 
-  const avisarRef = useRef(onSesionesAbiertas);
-  avisarRef.current = onSesionesAbiertas;
-  useEffect(() => { avisarRef.current?.(sessions.length); }, [sessions.length]);
-
-  const liveSessions = sessions.map((session) => ({
-    ...session,
-    agent: agents.find((agent) => agent.id === session.agent.id) ?? session.agent,
-  }));
-  const activeSession = liveSessions.find((session) => session.id === activeId);
-
-  const openAgent = useCallback((agent: FleetAgent) => {
-    const id = sessionId(agent);
-    if (!sessionTokensRef.current.has(id)) {
-      sessionTokensRef.current.set(id, ++nextSessionTokenRef.current);
-    }
-    setSessions((current) => {
-      const existing = current.find((session) => session.id === id);
-      return existing ? current : [...current, createSession(agent)];
-    });
-    setActiveId(id);
-  }, []);
-
-  useEffect(() => {
-    if (!initialAgentId || initialAgentOpenedRef.current === initialAgentId) return;
-    const requestedAgent = agents.find((agent) => agent.id === initialAgentId);
-    if (!requestedAgent) return;
-    initialAgentOpenedRef.current = initialAgentId;
-    openAgent(requestedAgent);
-  }, [agents, initialAgentId, openAgent]);
 
   function requestTerminalGrant(
     id: string,
@@ -390,9 +289,7 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, ter
         if (!(id in channels)) return channels;
         return omitKey(channels, id);
       });
-      setSessions((currentSessions) => currentSessions.map((session) => session.id === id
-        ? { ...session, mode: 'pty', channelMode: input.mode, liveTuiAttempted: true }
-        : session));
+      setMemory((current) => ({ ...current, [id]: { ...current[id], channelMode: input.mode, liveTuiAttempted: true } }));
       return { grant, adopted: true };
     }).finally(() => {
       if (terminalAttemptsRef.current.get(id)?.id === attemptId) terminalAttemptsRef.current.delete(id);
@@ -425,36 +322,7 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, ter
     }
   }
 
-  function closeSession(id: string) {
-    setTopeAlcanzado(false);
-    setMotivoReconciliacionPlaza(undefined);
-    sessionTokensRef.current.delete(id);
-    terminalIntentsRef.current.delete(id);
-    const index = sessions.findIndex((session) => session.id === id);
-    const next = sessions.filter((session) => session.id !== id);
-    void releaseChannel(id);
-    setSessions(next);
-    if (activeId === id) setActiveId(next[Math.min(index, next.length - 1)]?.id);
-  }
-
-  async function selectAgent(agent: FleetAgent) {
-    if (changingAgent || activeSession?.agent.id === agent.id) return;
-    setChangingAgent(true);
-    try {
-      for (const session of sessions) {
-        await releaseChannel(session.id);
-        if ((grantsRef.current[session.id] as TerminalSessionGrant | undefined) !== undefined) return;
-        closeSession(session.id);
-      }
-      openAgent(agent);
-    } finally {
-      if (workspaceMountedRef.current) setChangingAgent(false);
-    }
-  }
-
-  function updateSession(updated: OperatorSession) {
-    setSessions((current) => current.map((session) => session.id === updated.id ? updated : session));
-  }
+  releaseChannelRef.current = releaseChannel;
 
   return (
     <>
@@ -462,9 +330,10 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, ter
         const grant = grantsRef.current[id] as TerminalSessionGrant | undefined;
         if (!grant) return null;
         return (
-          <div className="notice error" role="alert" key={id}>
-            <span>No se confirmó la revocación de la sesión PTY. El canal local se cerró; vuelve a intentarlo.</span>
-            <button type="button" onClick={() => { void releaseChannel(id); }}>Reintentar revocación</button>
+          <div role="alert" key={id} className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-danger/30 bg-danger-soft px-3 py-2 text-[13px] text-danger-ink">
+            <AlertTriangle size={15} aria-hidden="true" className="shrink-0" />
+            <span className="min-w-0 flex-1">No se confirmó la revocación de la sesión PTY. El canal local se cerró; vuelve a intentarlo.</span>
+            <button type="button" className="button small secondary" onClick={() => { void releaseChannel(id); }}>Reintentar revocación</button>
           </div>
         );
       })}
@@ -480,46 +349,47 @@ export function OperatorWorkspace({ agents, initialAgentId, toolbar, access, ter
         onRevisar={() => { void revisarPlazas(); }}
         onCerrar={(id) => { void cerrarPlaza(id); }}
       />
-      <div className="ultimate-terminal-shell" data-objeto-principal="escenario" ref={cajaRef}>
-      <TerminalAgentToolbar agents={agents} activeId={activeSession?.agent.id}
-        targets={terminalTargets} disabled={changingAgent || (fleetLoading && agents.length === 0)}
-        onSelect={(agent) => { void selectAgent(agent); }}>{toolbar}</TerminalAgentToolbar>
-      {liveSessions.length === 0 ? (
-        <EscenarioVacio
-          agents={agents}
-          access={access}
-          capability={terminalCapability}
-          targets={terminalTargets}
-          loading={fleetLoading}
-          error={fleetError}
-          onOpenAgent={openAgent}
-        />
-      ) : (
-        <ErrorBoundary label="La terminal del agente">
-          <GridContainer
-            sessions={liveSessions}
-            sessionTokens={sessionTokensRef.current}
-            activeId={activeId}
+      <div className="flex min-h-0 flex-1 flex-col" data-objeto-principal="escenario">
+        {agent && sessionId ? (
+          <ErrorBoundary label="La terminal del agente" resetKey={sessionId}>
+            <SessionStage
+              key={sessionId}
+              agent={agent}
+              sessionId={sessionId}
+              sessionToken={openingRef.current.token}
+              state={agentLiveState(agent, live)}
+              memory={memory[sessionId] ?? {}}
+              access={access}
+              capability={terminalCapability}
+              targets={terminalTargets}
+              messages={messages}
+              summary={summary}
+              grants={grants}
+              closedChannels={closedChannels}
+              onRequestGrant={requestTerminalGrant}
+              onMemory={(patch) => { setMemory((current) => ({ ...current, [sessionId]: { ...current[sessionId], ...patch } })); }}
+              onChannelClosed={(id) => { setClosedChannels((current) => ({ ...current, [id]: true })); }}
+              onReleaseChannel={releaseChannel}
+              onReconciliarPlazas={(motivo) => {
+                setTopeAlcanzado(true);
+                setMotivoReconciliacionPlaza(motivo);
+                void revisarPlazas();
+              }}
+              onRefresh={onRefresh}
+            />
+          </ErrorBoundary>
+        ) : (
+          <TerminalHome
             agents={agents}
+            live={live}
             access={access}
             capability={terminalCapability}
             targets={terminalTargets}
-            grants={grants}
-            closedChannels={closedChannels}
-            onActivate={setActiveId}
-            onClose={closeSession}
-            onUpdate={updateSession}
-            onRequestGrant={requestTerminalGrant}
-            onChannelClosed={(id) => { setClosedChannels((current) => ({ ...current, [id]: true })); }}
-            onReleaseChannel={releaseChannel}
-            onReconciliarPlazas={(motivo) => {
-              setTopeAlcanzado(true);
-              setMotivoReconciliacionPlaza(motivo);
-              void revisarPlazas();
-            }}
+            loading={fleetLoading}
+            error={fleetError}
+            summary={summary}
           />
-        </ErrorBoundary>
-      )}
+        )}
       </div>
     </>
   );
