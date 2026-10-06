@@ -3,6 +3,7 @@ import type { DatabaseClient } from '../../db.js';
 import { StoreError } from '../errors.js';
 import type { MessageDetailRow } from '../visibility-rows.js';
 import { MESSAGE_AUTHOR_SQL, withMessageAuthor } from './author.js';
+import { messageClientOriginSql } from './client-origin.js';
 import { MESSAGE_ATTACHMENTS_SQL } from './attachments.js';
 import type { SenderView } from './agent-roots.js';
 
@@ -46,7 +47,7 @@ export async function loadMessageDetail(
     `SELECT m.id,m.version,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
             m.body-'attachments_v1'::text AS body,
             ${MESSAGE_ATTACHMENTS_SQL},
-            m.origin,m.lane,m.priority,m.created_at,${MESSAGE_AUTHOR_SQL},
+            m.origin,m.lane,m.priority,m.created_at,${MESSAGE_AUTHOR_SQL},${messageClientOriginSql('$2')},
             ${MESSAGE_DELIVERIES_SQL}
      ${visibilitySql}`, [messageId, actorTenant, actorAlias]
   );

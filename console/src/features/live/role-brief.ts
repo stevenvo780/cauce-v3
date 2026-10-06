@@ -15,11 +15,8 @@
  * the agent stops receiving— without any visible error. That's why the counter warns BEFORE
  * the limit and the button turns off: it's the only warning that will exist.
  *
- * It is a hand-mirrored copy of `ROLE_BRIEF_MAX_CODE_POINTS` (packages/protocol/src/schemas.ts),
- * which is where the number lives for the layers that can import it. The console does not depend
- * on `@cauce/protocol` —it builds alone, against the gateway over HTTP— so copying it is the
- * only option; if that one changes, this one changes in the same batch. The unit must remain the
- * CODE POINT: see `contarRoleBrief()` below.
+ * Keep this cap aligned with `ROLE_BRIEF_MAX_CODE_POINTS`; avoid the protocol's Node barrel
+ * in the browser bundle. The unit is a code point, as in `contarRoleBrief()` below.
  */
 export const ROLE_BRIEF_MAX = 1200;
 
