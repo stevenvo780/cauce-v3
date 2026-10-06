@@ -229,26 +229,29 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
   });
 
   it('role "reader" se persiste en la fila INSERT', async () => {
-    const row = { id: '00000000-0000-4000-8000-000000000002', role: 'operator', tenant_id: 'Steven', alias: 'kant', active: true };
+    const row = { id: '00000000-0000-4000-8000-000000000002', role: 'reader', tenant_id: 'EmpresaNueva', alias: 'salva', active: true };
     stub.query.mockResolvedValueOnce({ rows: [row], rowCount: 1 });
     process.argv = [
       'node', 'console-user-cli.js',
       '--email', 'reader@example.com',
       '--role', 'reader',
+      '--tenant', 'EmpresaNueva',
       '--alias', 'salva',
     ];
 
     await importCli();
 
-    const params = exigir(stub.query.mock.calls[0], 'una llamada registrada')[1] as unknown[];
+    const call = exigir(stub.query.mock.calls[0], 'una llamada registrada');
+    expect(call[0]).toMatch(/^INSERT INTO console_users/);
+    const params = call[1] as unknown[];
     expect(params[3]).toBe('reader');
   });
 
-  it('valores por defecto: sin --name deriva del local-part; sin --alias usa kant; sin --tenant usa Steven; sin --role usa operator', async () => {
-    const row = { id: '00000000-0000-4000-8000-000000000003', role: 'operator', tenant_id: 'Steven', alias: 'kant', active: true };
+  it('scope externo explícito: sin --name deriva del local-part y sin --role usa operator', async () => {
+    const row = { id: '00000000-0000-4000-8000-000000000003', role: 'operator', tenant_id: 'EmpresaNueva', alias: 'operador_uno', active: true };
     stub.query.mockResolvedValueOnce({ rows: [row], rowCount: 1 });
 
-    process.argv = ['node', 'console-user-cli.js', '--email', 'kant@example.com'];
+    process.argv = ['node', 'console-user-cli.js', '--email', 'persona@example.com', '--tenant', 'EmpresaNueva', '--alias', 'operador_uno'];
 
     await importCli();
 
@@ -256,12 +259,12 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
     const insert = exigir(stub.query.mock.calls.find(([sql]) => String(sql).startsWith('INSERT INTO console_users')),
       'el INSERT de la cuenta');
     const params = insert[1] as unknown[];
-    expect(params.slice(2, 7)).toEqual([null, null, null, null, null]);
+    expect(params.slice(2, 7)).toEqual([null, null, 'EmpresaNueva', 'operador_uno', null]);
     const sql = String(insert[0]);
     expect(sql).toContain("COALESCE($3,split_part($8,'@',1))");
     expect(sql).toContain("COALESCE($4,'operator')");
-    expect(sql).toContain("COALESCE($5,'Steven')");
-    expect(sql).toContain("COALESCE($6,'kant')");
+    expect(sql).not.toContain("COALESCE($5,");
+    expect(sql).not.toContain("COALESCE($6,");
   });
 
   it('forma --email=valor se acepta (igual que --email valor)', async () => {
@@ -270,6 +273,7 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
     process.argv = [
       'node', 'console-user-cli.js',
       '--email=kant@example.com',
+      '--tenant', 'Steven',
       '--alias', 'kant',
     ];
 
@@ -280,18 +284,17 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
     expect(params[0]).toBe('kant@example.com');
   });
 
-  it('cuenta existente: cierra el pool después de guardar', async () => {
+  it('cuenta existente con scope explícito: actualiza tras el conflicto y cierra el pool', async () => {
     stub.query.mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({ rows: [{ id: '00000000-0000-4000-8000-000000000005', role: 'reader', tenant_id: 'Equipo', alias: 'salva', active: false }], rowCount: 1 });
-    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--alias', 'kant'];
+    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--tenant', 'Equipo', '--alias', 'salva'];
 
     await importCli();
 
     expect(stub.query).toHaveBeenCalledTimes(2);
     expect(stub.query.mock.calls[0]?.[0]).toContain('ON CONFLICT (email_normalized) DO NOTHING');
     expect(stub.query.mock.calls[1]?.[0]).toMatch(/^UPDATE console_users SET/);
-
-
+    expect(stub.query.mock.calls[1]?.[1]).toEqual(['a@b.c', 'MOCKED-SCRYPT-HASH', null, null, 'Equipo', 'salva', null]);
     expect(stub.end).toHaveBeenCalledTimes(1);
   });
 });
@@ -406,18 +409,33 @@ describe('mantenimiento conservador de una cuenta existente', () => {
       expect(sql).toContain('tenant_id=COALESCE($5,console_users.tenant_id)');
       expect(sql).toContain('alias=COALESCE($6,console_users.alias)');
       expect(sql).toContain('active=COALESCE($7,console_users.active)');
-      const changed = { ...account };
-      expect(changed).toEqual(account);
-      return { rows: [{ id: changed.id, role: changed.role, tenant_id: changed.tenant_id,
-        alias: changed.alias, active: changed.active }], rowCount: 1 };
+      return { rows: [{ id: account.id, role: account.role, tenant_id: account.tenant_id,
+        alias: account.alias, active: account.active }], rowCount: 1 };
     });
-    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c'];
-    await importCli();
-    expect(stub.end).toHaveBeenCalledTimes(1);
+    const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c'];
+      await importCli();
+      expect(stub.query).toHaveBeenCalledTimes(1);
+      expect(output).toHaveBeenCalledWith('  rol     reader');
+      expect(output).toHaveBeenCalledWith('  actúa   Equipo:salva');
+      expect(output).toHaveBeenCalledWith('  activa  no');
+      expect(stub.end).toHaveBeenCalledTimes(1);
+    } finally { output.mockRestore(); }
   });
 });
 
 describe('operaciones explícitas y errores sin efectos', () => {
+  it.each([
+    [], ['--tenant', 'EmpresaNueva'], ['--alias', 'operador_uno'],
+  ])('una identidad nueva con scope incompleto se deniega: %j', async (...scope) => {
+    process.argv = ['node', 'console-user-cli.js', '--email', 'persona@example.com', ...scope];
+    await expect(importCli()).rejects.toThrow('una cuenta nueva requiere tenant y alias explícitos');
+    expect(stub.query).toHaveBeenCalledTimes(1);
+    expect(stub.query.mock.calls[0]?.[0]).toMatch(/^UPDATE console_users SET/);
+    expect(stub.end).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ['--activate'], ['--activate', '--deactivate'], ['--update', '--deactivate'],
     ['--deactivate', '--role', 'reader'], ['--udpate', 'true'], ['--activate=false'],
