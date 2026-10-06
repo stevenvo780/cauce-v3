@@ -186,9 +186,14 @@ lines.on("line", (line) => {
     case "session/read":
       state.reads += 1;
       persist();
-      if (!scenario.hangRead) response(frame.id, {
-        session: opened(p.sessionId), viewCursor: head(p.sessionId), history: history(), pendingRequests: [],
-      });
+      if (!scenario.hangRead) {
+        const finishRead = () => response(frame.id, {
+          session: { ...opened(p.sessionId),
+            ...(scenario.readWorkspaceRoot === undefined ? {} : { workspaceRoot: scenario.readWorkspaceRoot }),
+          }, viewCursor: head(p.sessionId), history: history(), pendingRequests: [],
+        });
+        if (scenario.readDelayMs) setTimeout(finishRead, scenario.readDelayMs); else finishRead();
+      }
       break;
     case "model/list": response(frame.id, models()); break;
     case "session/setApprovalMode":

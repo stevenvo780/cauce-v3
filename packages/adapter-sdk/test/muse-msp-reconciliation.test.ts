@@ -117,6 +117,34 @@ test("Muse health reads disclose missing or unknown none reasons instead of gues
     (error: unknown) => error instanceof MuseMspFault && error.code === "MUSE_VIEW_HEALTH_UNKNOWN");
 });
 
+test("Muse extended preflight read budget leaves its projection probe at five seconds", async () => {
+  const budgets: (number | undefined)[] = [];
+  const methods: string[] = [];
+  const connection = { request: async (method: string, params: Record<string, unknown>) => {
+    methods.push(method);
+    assert.equal(params.sessionId, sessionId);
+    if (method === "view/page") return { events: [], nextCursor: null };
+    assert.equal(params.excludeItems, false);
+    return { session: { sessionId }, viewCursor: "head",
+      history: { mode: "none", noneReason: "projectionReadLimit" } };
+  } } as unknown as Connection;
+  await readMuseView(connection, sessionId, async (promise, budget) => {
+    budgets.push(budget);
+    return promise;
+  }, 30_000);
+  assert.deepEqual(methods, ["session/read", "view/page"]);
+  assert.deepEqual(budgets, [30_000, 5_000]);
+});
+
+test("Muse reconciliation retains five-second budgets for the health read and event page", async () => {
+  const budgets: (number | undefined)[] = [];
+  const { connection } = connectionWithPages([{ events: [message("Recovered reply"), terminal()], nextCursor: null }]);
+  const result = await reconcileMuseTurn(connection, new MuseTurnEvidence(sessionId, turnId), "start",
+    async (promise, budget) => { budgets.push(budget); return promise; });
+  assert.equal(result.text, "Recovered reply");
+  assert.deepEqual(budgets, [5_000, 5_000]);
+});
+
 test("Muse validates advertised effort variants without synthesizing unsupported max", () => {
   assert.deepEqual(museReasoningVariants(["high", "xhigh"]), ["high", "xhigh"]);
   assert.equal(museReasoningVariants(undefined), undefined);

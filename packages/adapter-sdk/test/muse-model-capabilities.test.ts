@@ -21,12 +21,13 @@ function assertPreflight(telemetry: readonly MuseMspTelemetry[], phases: readonl
   assert.equal(telemetry.length, events.length + modelSelections(telemetry).length);
   const expected: (
     | { event: "muse_preflight_started"; phase: string; budget_ms: number }
-    | { event: "muse_preflight_finished"; phase: string; outcome: "completed" }
+    | { event: "muse_preflight_finished"; phase: string; budget_ms: number; outcome: "completed" }
   )[] = [];
   for (const phase of phases) {
+    const budget_ms = phase === "session/read" ? 30_000 : 5_000;
     expected.push(
-      { event: "muse_preflight_started", phase, budget_ms: 5_000 },
-      { event: "muse_preflight_finished", phase, outcome: "completed" },
+      { event: "muse_preflight_started", phase, budget_ms },
+      { event: "muse_preflight_finished", phase, budget_ms, outcome: "completed" },
     );
   }
   assert.deepEqual(events.map(({ elapsed_ms, ...event }) => {
@@ -98,6 +99,17 @@ test("Muse reports the exact catalog route only after model and approval command
     requested_effort: "max", supported_efforts: ["high", "max"],
   }]);
   assert.deepEqual(view, { viewCursor: "opaque=model-view", workspace: "/synthetic-workspace" });
+});
+
+test("Muse configures both nested read budgets without extending model or approval commands", async (t) => {
+  const { session } = fixture();
+  const budgets: (number | undefined)[] = [];
+  t.after(() => { session.close(); });
+  await session.configure(modelId, "max", "denyUnmatched", async (promise, budget) => {
+    budgets.push(budget);
+    return promise;
+  });
+  assert.deepEqual(budgets, [30_000, 30_000, 5_000, 5_000, 5_000]);
 });
 
 test("Muse uses the session model when none is requested without inventing verified effort support", async (t) => {

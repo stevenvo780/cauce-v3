@@ -11,12 +11,12 @@ import { ProcessExecutionError } from "./errors.js";
 import type { CommandRunRequest, CommandRunResult } from "./types.js";
 import { sanitizeProcessOutput } from "../harnesses/shared/errors.js";
 import { MuseMspSession, type MuseMspTelemetry } from "./muse-msp-session.js";
-import { MuseMspFault, museObject, type MuseWait } from "./muse-msp-reconciliation.js";
+import { MuseAbortError, MuseDeadlineError, MuseMspFault, museObject, type MuseWait } from "./muse-msp-reconciliation.js";
 
 export type MuseReasoningEffort =
   | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 
-const SESSION_OPEN_BUDGET_MS = 15_000;
+const SESSION_OPEN_BUDGET_MS = 30_000;
 
 export interface MuseRunnerConfig {
   readonly executable: string;
@@ -30,21 +30,19 @@ export interface MuseRunnerConfig {
   readonly onTelemetry?: (event: MuseMspTelemetry) => void;
 }
 
-class MuseDeadlineError extends Error {}
-class MuseAbortError extends Error {}
-
 function bounded<T>(promise: Promise<T>, deadline: number, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(new MuseAbortError());
   const remaining = deadline - Date.now();
   if (remaining <= 0) return Promise.reject(new MuseDeadlineError());
   return new Promise<T>((resolveResult, rejectResult) => {
-    const timer = setTimeout(() => { rejectResult(new MuseDeadlineError()); }, remaining);
-    const onAbort = (): void => { rejectResult(new MuseAbortError()); };
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(resolveResult, rejectResult).finally(() => {
+    const stop = (): void => {
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
-    }).catch(() => undefined);
+    };
+    const timer = setTimeout(() => { stop(); rejectResult(new MuseDeadlineError()); }, remaining);
+    const onAbort = (): void => { stop(); rejectResult(new MuseAbortError()); };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolveResult, rejectResult).finally(stop).catch(() => undefined);
   });
 }
 
@@ -287,8 +285,10 @@ export class MuseMspRunner {
       const configured = await session.configure(this.config.model, this.config.reasoningEffort,
         this.config.approvalMode, wait);
       if (configured.workspace !== this.config.workspace) {
-        throw new Error("Muse read workspace differs from the configured alias workspace");
+        throw new ProcessExecutionError("MUSE_PREFLIGHT_FAILED",
+          "Muse preflight failed at session/read: Muse read workspace differs from the configured alias workspace", false);
       }
+      await bounded(Promise.resolve(), deadline, request.signal);
       turnAttempted = true;
       await session.submit(request.stdin, this.config.reasoningEffort, wait);
       turnAdmitted = true;
@@ -303,8 +303,10 @@ export class MuseMspRunner {
     } catch (error) {
       if (error instanceof MuseDeadlineError) {
         if (!turnAttempted) {
+          const budgetMs = session?.lastPreflightBudgetMs ?? (preflightPhase === "initialize" ? 5_000 : request.timeoutMs);
           throw new ProcessExecutionError("MUSE_PREFLIGHT_TIMEOUT",
-            `Muse preflight exceeded its bounded read budget at ${session?.lastPreflightPhase ?? preflightPhase}`, true);
+            `Muse preflight timed out (phase limit ${String(budgetMs)} ms; request limit ${String(request.timeoutMs)} ms)`
+            + ` at ${session?.lastPreflightPhase ?? preflightPhase}`, true);
         }
         return result("", { timedOut: true, ...(turnAdmitted ? { harnessStarted: true } : {}) });
       }
@@ -321,13 +323,13 @@ export class MuseMspRunner {
       if (error instanceof ProcessExecutionError) throw error;
       if (error instanceof MuseMspFault) {
         throw new ProcessExecutionError(turnAttempted ? "MUSE_EXECUTION_AMBIGUOUS" : error.code,
-          `Muse ${error.code}: ${safeFailure(error)}`, false);
+          `Muse ${error.code}${turnAttempted ? "" : ` at ${session?.lastPreflightPhase ?? preflightPhase}`}: ${safeFailure(error)}`, false);
       }
       throw new ProcessExecutionError(
         turnAttempted ? "MUSE_EXECUTION_AMBIGUOUS" : "MUSE_PREFLIGHT_FAILED",
         turnAttempted
           ? "Muse turn submission or completion was interrupted; execution state is unknown"
-          : `Muse preflight failed: ${safeFailure(error)}`,
+          : `Muse preflight failed at ${session?.lastPreflightPhase ?? preflightPhase}: ${safeFailure(error)}`,
         !turnAttempted && error instanceof MspError && error.kind === "sessionInUse",
       );
     } finally {

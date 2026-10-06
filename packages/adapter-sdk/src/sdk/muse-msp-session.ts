@@ -1,9 +1,10 @@
 import {
-  Session, type Connection, type HostDeathNotification, type SessionDurabilityProfile,
+  MspError, Session, type Connection, type HostDeathNotification, type SessionDurabilityProfile,
   type TurnOutcome,
 } from "@muse-code/sdk";
 import {
-  MuseMspFault, MuseTurnEvidence, museIdentifier, museObject, readMuseView, reconcileMuseTurn,
+  MuseAbortError, MuseDeadlineError, MuseMspFault, MuseTurnEvidence,
+  museIdentifier, museObject, readMuseView, reconcileMuseTurn,
   type MuseWait,
 } from "./muse-msp-reconciliation.js";
 import type { MuseReasoningEffort } from "./muse-msp-runner.js";
@@ -15,6 +16,7 @@ export interface MuseMspTelemetry {
   readonly budget_ms?: number;
   readonly elapsed_ms?: number;
   readonly outcome?: "completed" | "failed";
+  readonly error_code?: string;
   readonly server_version?: string;
   readonly schema_fingerprint?: string;
   readonly fingerprint_warning?: boolean;
@@ -30,6 +32,15 @@ export interface MuseMspTelemetry {
 const EFFORTS: ReadonlySet<string> = new Set([
   "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
 ]);
+const SESSION_READ_BUDGET_MS = 30_000;
+
+function preflightFailureCode(error: unknown): string {
+  if (error instanceof MuseDeadlineError) return "MUSE_PREFLIGHT_TIMEOUT";
+  if (error instanceof MuseAbortError) return "MUSE_PREFLIGHT_CANCELLED";
+  if (error instanceof MuseMspFault) return error.code;
+  if (error instanceof MspError) return error.kind;
+  return "MUSE_PREFLIGHT_FAILED";
+}
 
 function effort(value: unknown): MuseReasoningEffort {
   if (typeof value !== "string" || !EFFORTS.has(value)) {
@@ -88,6 +99,7 @@ export class MuseMspSession {
   private readonly progressCursors = new Set<string>();
   private progressCursorBytes = 0;
   private preflightPhase: string | undefined;
+  private preflightBudgetMs: number | undefined;
 
   constructor(
     private readonly connection: Connection,
@@ -190,6 +202,7 @@ export class MuseMspSession {
 
   get lastProgressAt(): number { return this.progressAt; }
   get lastPreflightPhase(): string | undefined { return this.preflightPhase; }
+  get lastPreflightBudgetMs(): number | undefined { return this.preflightBudgetMs; }
 
   private throwIfFaulted(): void {
     if (this.fault !== undefined) throw this.fault;
@@ -198,6 +211,7 @@ export class MuseMspSession {
   async preflight<T>(promise: Promise<T>, wait: MuseWait, phase: string, budgetMs = 5_000): Promise<T> {
     this.throwIfFaulted();
     this.preflightPhase = phase;
+    this.preflightBudgetMs = budgetMs;
     const started = Date.now();
     const pending = wait(Promise.race([
       promise,
@@ -207,10 +221,12 @@ export class MuseMspSession {
     try {
       const value = await pending;
       this.throwIfFaulted();
-      this.telemetry({ event: "muse_preflight_finished", phase, elapsed_ms: Date.now() - started, outcome: "completed" });
+      this.telemetry({ event: "muse_preflight_finished", phase, budget_ms: budgetMs,
+        elapsed_ms: Date.now() - started, outcome: "completed" });
       return value;
     } catch (error) {
-      this.telemetry({ event: "muse_preflight_finished", phase, elapsed_ms: Date.now() - started, outcome: "failed" });
+      this.telemetry({ event: "muse_preflight_finished", phase, budget_ms: budgetMs,
+        elapsed_ms: Date.now() - started, outcome: "failed", error_code: preflightFailureCode(error) });
       throw error;
     }
   }
@@ -221,7 +237,8 @@ export class MuseMspSession {
     approvalMode: "allowAll" | "onRequest" | "denyUnmatched",
     wait: MuseWait,
   ): Promise<{ viewCursor: string; workspace: unknown }> {
-    const view = await this.preflight(readMuseView(this.connection, this.sessionId, wait), wait, "session/read");
+    const view = await this.preflight(readMuseView(this.connection, this.sessionId, wait, SESSION_READ_BUDGET_MS),
+      wait, "session/read", SESSION_READ_BUDGET_MS);
     const catalog = await this.preflight(this.connection.request("model/list", { sessionId: this.sessionId }), wait, "model/list");
     if (!Array.isArray(catalog.models)) {
       throw new MuseMspFault("MUSE_CATALOG_INVALID", "Muse returned an invalid model catalog");

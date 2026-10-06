@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -129,7 +130,8 @@ for (const resumeSession of [false, true]) {
       if (event.event !== "muse_preflight_started"
         || event.phase !== (resumeSession ? "session/resume" : "session/start")) return;
       advanced = true;
-      t.mock.timers.tick(6_000);
+      assert.equal(event.budget_ms, 30_000);
+      t.mock.timers.tick(16_000);
     } }).run({
       harness: "muse", command: fakeMuse, args: ["serve"], stdin: "Synthetic task",
       sessionId, resumeSession, timeoutMs: 30_000, signal: new AbortController().signal,
@@ -140,23 +142,66 @@ for (const resumeSession of [false, true]) {
     assert.equal(telemetry.filter((event) => event.event === "muse_turn_admitted").length, 1);
     assert.equal(telemetry.some((event) => event.event === "muse_preflight_finished"
       && event.phase === (resumeSession ? "session/resume" : "session/start")
-      && event.outcome === "completed" && event.elapsed_ms === 6_000), true);
+      && event.outcome === "completed" && event.elapsed_ms === 16_000), true);
   });
 }
 
-for (const interruptedBy of ["deadline", "abort", "read-budget"] as const) {
-  test(`Muse preserves ${interruptedBy} while bounding preflight phases`, async (t) => {
-    const { config } = await fixture(`opening-interruption-${interruptedBy}`);
+test("Muse admits exactly one turn after a session read exceeds the old nested five-second budgets", async (t) => {
+  const config = await scenarioFixture("slow-read", { readDelayMs: 40 });
+  const telemetry: MuseMspTelemetry[] = [];
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const run = await execute({ ...config, onTelemetry: (event) => {
+    telemetry.push(event);
+    if (event.event === "muse_preflight_started" && event.phase === "session/read") {
+      assert.equal(event.budget_ms, 30_000);
+      t.mock.timers.tick(6_000);
+    }
+  } }, 60_000);
+  assert.equal(parseMuseMspOutput(run.stdout).output.status, "done");
+  assert.equal((await stateOf(config)).turns.length, 1);
+  assert.equal(telemetry.filter((event) => event.event === "muse_turn_admitted").length, 1);
+  assert.ok(telemetry.some((event) => event.event === "muse_preflight_finished"
+    && event.phase === "session/read" && event.outcome === "completed" && event.elapsed_ms === 6_000));
+});
+
+test("Muse rejects a foreign workspace even after allowing its delayed session read", async (t) => {
+  const config = await scenarioFixture("slow-foreign-read", {
+    readDelayMs: 40, readWorkspaceRoot: "/another-alias-workspace",
+  });
+  const telemetry: MuseMspTelemetry[] = [];
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  await assert.rejects(execute({ ...config, onTelemetry: (event) => {
+    telemetry.push(event);
+    if (event.event === "muse_preflight_started" && event.phase === "session/read") t.mock.timers.tick(6_000);
+  } }, 60_000), (error: unknown) => error instanceof ProcessExecutionError
+    && error.code === "MUSE_PREFLIGHT_FAILED" && !error.retryable
+    && error.message.includes("at session/read: Muse read workspace differs"));
+  assert.equal((await stateOf(config)).turns.length, 0);
+  assert.equal(telemetry.filter((event) => event.event === "muse_turn_admitted").length, 0);
+});
+
+for (const [target, interruptedBy] of [
+  ["session/start", "deadline"], ["session/start", "abort"], ["session/start", "phase-budget"],
+  ["session/read", "deadline"], ["session/read", "abort"], ["session/read", "phase-budget"],
+  ["model/list", "phase-budget"],
+] as const) {
+  test(`Muse preserves ${interruptedBy} while bounding ${target}`, async (t) => {
+    const { config } = await fixture(`preflight-interruption-${target.replace("/", "-")}-${interruptedBy}`);
     const controller = new AbortController();
+    const telemetry: MuseMspTelemetry[] = [];
+    const abortListenersAfterFailure: number[] = [];
     t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
-    const target = interruptedBy === "read-budget" ? "session/read" : "session/start";
     const pending = new MuseMspRunner({ ...config, onTelemetry: (event) => {
+      telemetry.push(event);
+      if (event.event === "muse_preflight_finished" && event.outcome === "failed" && event.phase === target) {
+        abortListenersAfterFailure.push(getEventListeners(controller.signal, "abort").length);
+      }
       if (event.event !== "muse_preflight_started" || event.phase !== target) return;
       if (interruptedBy === "abort") controller.abort();
-      else t.mock.timers.tick(interruptedBy === "deadline" ? 1_001 : 5_001);
+      else t.mock.timers.tick(interruptedBy === "deadline" ? 1_001 : (event.budget_ms ?? 0) + 1);
     } }).run({
       harness: "muse", command: fakeMuse, args: ["serve"], stdin: "Synthetic task must remain unsubmitted",
-      sessionId: mintId(), timeoutMs: interruptedBy === "deadline" ? 1_000 : 30_000,
+      sessionId: mintId(), timeoutMs: interruptedBy === "deadline" ? 1_000 : 60_000,
       signal: controller.signal,
     });
     if (interruptedBy === "abort") {
@@ -169,6 +214,37 @@ for (const interruptedBy of ["deadline", "abort", "read-budget"] as const) {
         && error.message.endsWith(`at ${target}`));
     }
     assert.equal((await stateOf(config)).turns.length, 0);
+    assert.deepEqual(abortListenersAfterFailure, [0]);
+    assert.ok(telemetry.some((event) => event.event === "muse_preflight_finished"
+      && event.phase === target && event.outcome === "failed"
+      && event.budget_ms === (target === "model/list" ? 5_000 : 30_000)
+      && event.error_code === (interruptedBy === "abort" ? "MUSE_PREFLIGHT_CANCELLED" : "MUSE_PREFLIGHT_TIMEOUT")));
+    assert.doesNotMatch(JSON.stringify(telemetry), /Synthetic task|workspaceRoot|sessionId/u);
+  });
+}
+
+for (const interruptedBy of ["abort", "deadline"] as const) {
+  test(`Muse ${interruptedBy} after model selection never sends the provider a turn`, async (t) => {
+    const { config } = await fixture(`configured-interruption-${interruptedBy}`);
+    const controller = new AbortController();
+    const telemetry: MuseMspTelemetry[] = [];
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+    const pending = new MuseMspRunner({ ...config, onTelemetry: (event) => {
+      telemetry.push(event);
+      if (event.event !== "muse_model_selection") return;
+      if (interruptedBy === "abort") controller.abort(); else t.mock.timers.tick(60_001);
+    } }).run({
+      harness: "muse", command: fakeMuse, args: ["serve"], stdin: "Synthetic task must remain unsubmitted",
+      sessionId: mintId(), timeoutMs: 60_000, signal: controller.signal,
+    });
+    if (interruptedBy === "abort") {
+      const run = await pending;
+      assert.equal(run.cancelled, true);
+      assert.notEqual(run.harnessStarted, true);
+    } else await assert.rejects(pending, (error: unknown) => error instanceof ProcessExecutionError
+      && error.code === "MUSE_PREFLIGHT_TIMEOUT" && error.retryable);
+    assert.equal((await stateOf(config)).turns.length, 0);
+    assert.equal(telemetry.filter((event) => event.event === "muse_turn_admitted").length, 0);
   });
 }
 
