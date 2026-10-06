@@ -36,6 +36,7 @@ const PYTHON_ESPERADOS = [
   "ops/guardias/cauce-sesiones",
   "ops/guardias/cauce-v3-medico-monitor",
   "ops/guardias/cauce-watch",
+  "ops/instances/common/cauce-instance",
 ];
 
 function descubrir(familia) {

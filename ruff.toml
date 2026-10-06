@@ -13,6 +13,7 @@ extend-include = [
   "ops/guardias/cauce-sesiones",
   "ops/guardias/cauce-v3-medico-monitor",
   "ops/guardias/cauce-watch",
+  "ops/instances/common/cauce-instance",
 ]
 [lint]
 select = ["E", "W", "F", "I", "B", "UP"]
