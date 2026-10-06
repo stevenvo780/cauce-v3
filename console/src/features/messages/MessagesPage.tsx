@@ -1,20 +1,18 @@
-import { MessagesSquare, Sparkles } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
-import { useApi } from '../../api/context';
-import { usePolling } from '../../api/use-polling';
-import { useResource } from '../../api/use-resource';
-import { EmptyState, LoadingState, PageHeader, RefreshButton } from '../../components/ui';
+import { EmptyState, LoadingState } from '../../components/ui';
+import { LogoMark } from '../../components/brand/Logo';
+import { BOTTOM_BAR_VIEWPORT } from '../../breakpoints';
+import { AgentList } from '../../shell/AgentList';
+import { useMediaQuery } from '../../shell/use-media-query';
+import { useFleet } from '../../shell/fleet-context';
 import { permissionState } from '../../lib';
-import { navigate, onNavClick } from '../../router';
-import { fleetAgentId, type FleetAgent } from '../terminal/fleet';
+import { onNavClick } from '../../router';
+import { fleetAgentId } from '../terminal/fleet';
 import { operatorRouteForAgent } from '../terminal/session';
-import { AgentRoster } from './AgentRoster';
 import { ConversationPane } from './ConversationPane';
 import './messages.css';
 import { useConversationViewport } from './use-conversation-viewport';
-import { saludDeColaPorAgente } from './queue-health';
-import { construirRosterDeMensajeria } from './roster';
 
 export const VAR_TOPE_MENSAJERIA = '--messenger-tope';
 
@@ -31,39 +29,10 @@ export function MessagesPage({ params }: MessagesPageProps = {}) {
 }
 
 function MessagesPageContent({ params }: MessagesPageProps) {
-  const api = useApi();
-  const status = useResource('messages-status', () => api.getStatus());
-  const topology = useResource('messages-topology', () => api.getTopology());
+  const fleet = useFleet();
   const access = useConsoleAccess();
-  const messages = useResource('messages-feed', () => api.listMessages());
-  const activity = useResource('messages-activity', () => api.getFleetActivity());
-  const queues = useResource('messages-queues', () => api.getQueues());
-
-  usePolling(messages.reload, 2_500, { pausedWhile: messages.loading });
-  usePolling(status.reload, 5_000, { pausedWhile: status.loading });
-  usePolling(activity.reload, 5_000, { pausedWhile: activity.loading });
-  usePolling(queues.reload, 15_000, { pausedWhile: queues.loading });
-  usePolling(topology.reload, 30_000, { pausedWhile: topology.loading });
-
-  /**
-   * The roster is NOT built only from `memberships ∪ presence`. See `roster.ts`: with that single
-   * source, a message addressed to an alias without membership or lease showed up nowhere on this
-   * screen —the `gaia` case—, and the messages feed is added precisely so a thread with history
-   * cannot disappear because of a table nobody touched.
-   */
-  const agents = useMemo(
-    () => construirRosterDeMensajeria({
-      status: status.data,
-      topology: topology.data,
-      activity: activity.error ? undefined : activity.data,
-      messages: messages.data,
-    }),
-    [status.data, topology.data, activity.data, activity.error, messages.data],
-  );
-  const salud = useMemo(
-    () => saludDeColaPorAgente(activity.error ? undefined : activity.data, queues.error ? undefined : queues.data),
-    [activity.data, activity.error, queues.data, queues.error],
-  );
+  const { agents, salud, topology, messages, activity, queues } = fleet;
+  const phone = useMediaQuery(BOTTOM_BAR_VIEWPORT);
 
   const pedido = params?.length === 2 ? { tenantId: params[0], alias: params[1] } : undefined;
   const seleccionado = pedido ? agents.find((agent) => agent.id === fleetAgentId(pedido.tenantId, pedido.alias)) : undefined;
@@ -73,11 +42,8 @@ function MessagesPageContent({ params }: MessagesPageProps) {
   // The messages feed is NOW one of the roster's sources, so it also gates the "the server does
   // not observe this alias" notice: asserting it with a half-loaded feed would be another denial
   // spoken before having the evidence.
-  const flotaCargando = (status.loading && !status.data)
-    || (topology.loading && !topology.data)
-    || (activity.loading && !activity.data)
-    || (messages.loading && !messages.data);
-  const flotaError = status.error ?? topology.error ?? activity.error ?? messages.error;
+  const flotaCargando = fleet.loading;
+  const flotaError = fleet.error;
 
   /*
    * -------------------------------------------------- THE COMPOSER, ALSO ON DESKTOP
@@ -135,88 +101,48 @@ function MessagesPageContent({ params }: MessagesPageProps) {
     }
   }, [seleccionado, requestedId]);
 
-  function abrir(agent: FleetAgent) {
-    navigate(`/messages/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`);
-  }
-
-  function sincronizar() {
-    void status.reload();
-    void topology.reload();
-    void access.reload();
-    void messages.reload();
-    void activity.reload();
-    void queues.reload();
-  }
-
   return (
-    <>
-      {!pedido ? <div className="chat-page-heading"><PageHeader
-        eyebrow="Tu espacio"
-        title="Mensajes"
-        description="Una conversación por agente, con el estado de su cola al lado del nombre y un salto directo a su terminal. El actor, el tenant de origen y el canal siguen siendo autoridad del servidor."
-        actions={<RefreshButton onClick={sincronizar} loading={messages.loading && !messages.data} />}
-      /></div> : null}
-
-      {/*
-        `data-conversacion` es para la hoja de estilo, no para la lógica: en pantalla estrecha el
-        roster pasa de ser el contenido a ser el conmutador de agente y se encoge a dos filas, para
-        que el hilo y su compositor anclado no arranquen a dos pantallas del borde. Ver el bloque
-        de 760 px de `messages.css`, que explica por qué el anclaje es a 66 px y no a 0.
-      */}
-      <div className="messenger-shell" ref={envolturaRef} data-conversacion={seleccionado || pedido ? 'abierta' : undefined}>
-        <AgentRoster
-          agents={agents}
-          salud={salud}
-          activeAgentId={seleccionado?.id}
-          onSelect={abrir}
-          loading={flotaCargando}
-          error={flotaError}
+    <div className="flex min-h-0 flex-1 flex-col" ref={envolturaRef} data-conversacion={seleccionado || pedido ? 'abierta' : undefined}>
+      {seleccionado ? (
+        <ConversationPane
+          /* Keyed by human and agent: switching agents must remount, or the previous draft,
+             selection and scroll position would follow the operator into another thread. */
+          key={`${accesoVerificado?.human_subject ?? accesoVerificado?.subject ?? ''}:${seleccionado.id}`}
+          agent={seleccionado}
+          page={messages.data}
+          loading={messages.loading}
+          error={messages.error}
+          route={operatorRouteForAgent(topologiaVerificada, accesoVerificado, seleccionado)}
+          canPublish={canPublish}
+          publisherSubject={accesoVerificado?.subject}
+          publisherHumanSubject={accesoVerificado?.human_subject}
+          salud={salud[seleccionado.id]}
+          queueError={queues.error ?? activity.error}
+          onQueueReload={() => { void queues.reload(); void activity.reload(); }}
+          onReload={messages.reload}
         />
-        {seleccionado ? (
-          <ConversationPane
-            /*
-              The `key` belongs to the ARRAY, not decorative: without it, switching agents keeps
-              the previous agent's draft, selected message, and thread position — a draft written
-              for zeus would stay in kant's box — and the effect that opens the thread at the
-              bottom does not run again, because the component is not remounted.
-            */
-            key={`${accesoVerificado?.human_subject ?? accesoVerificado?.subject ?? ''}:${seleccionado.id}`}
-            agent={seleccionado}
-            page={messages.data}
-            loading={messages.loading}
-            error={messages.error}
-            route={operatorRouteForAgent(topologiaVerificada, accesoVerificado, seleccionado)}
-            canPublish={canPublish}
-            publisherSubject={accesoVerificado?.subject}
-            publisherHumanSubject={accesoVerificado?.human_subject}
-            salud={salud[seleccionado.id]}
-            queueError={queues.error ?? activity.error}
-            onQueueReload={() => { void queues.reload(); void activity.reload(); }}
-            onReload={messages.reload}
-          />
-        ) : (
-          <section className="messenger-empty" data-state={pedido ? 'missing' : 'welcome'} aria-label="Sin conversación abierta">
-            <span className="chat-welcome-mark" aria-hidden="true"><MessagesSquare size={32} /></span>
-            <h2>{pedido ? 'Abrí otra conversación' : '¿Con quién trabajamos hoy?'}</h2>
-            {pedido && flotaCargando ? <LoadingState label="Buscando la conversación…" /> : pedido && flotaError ? (
-              <EmptyState>No se pudo comprobar este agente: {flotaError.message}</EmptyState>
-            ) : pedido ? (
-              <EmptyState>
-                El servidor no observa a <strong>{pedido.tenantId}:{pedido.alias}</strong>: ni en topología, ni en
-                presencia, ni en el registro de agentes, ni como emisor o destinatario de un mensaje de la ventana.
-                Cauce no inventa un agente que no existe.
-              </EmptyState>
-            ) : (
-              <>
-                <p>Elegí un agente para retomar una conversación, compartir una idea o darle una tarea.</p>
-                <p className="chat-welcome-hint"><Sparkles size={15} aria-hidden="true" /> Tus agentes y sus conversaciones, en un solo lugar</p>
-              </>
-            )}
-            {pedido ? <a className="button secondary" href="/messages" onClick={(event) => { onNavClick(event, '/messages'); }}>Volver a los agentes</a> : null}
-          </section>
-        )}
-      </div>
-
-    </>
+      ) : phone && !pedido ? (
+        <section aria-label="Conversaciones" className="flex min-h-0 flex-1 flex-col bg-surface pt-3">
+          <h1 className="m-0 px-4 pb-3 text-xl font-semibold tracking-tight">Chats</h1>
+          <AgentList routeId="messages" />
+        </section>
+      ) : (
+        <section className="grid flex-1 place-content-center justify-items-center gap-3 p-8 text-center" data-state={pedido ? 'missing' : 'welcome'} aria-label="Sin conversación abierta">
+          <LogoMark size={48} />
+          <h1 className="m-0 text-2xl font-semibold tracking-tight">{pedido ? 'No encontramos esa conversación' : '¿Con quién trabajamos hoy?'}</h1>
+          {pedido && flotaCargando ? <LoadingState label="Buscando la conversación…" /> : pedido && flotaError ? (
+            <EmptyState>No se pudo comprobar este agente: {flotaError.message}</EmptyState>
+          ) : pedido ? (
+            <p className="m-0 max-w-md text-muted">
+              El servidor no observa a <strong className="text-fg">{pedido.tenantId}:{pedido.alias}</strong> en topología,
+              presencia, registro ni mensajes. Cauce no inventa un agente que no existe.
+            </p>
+          ) : (
+            <p className="m-0 max-w-md text-muted">Elegí un agente en la barra lateral para retomar una conversación, compartir una idea o darle una tarea.</p>
+          )}
+          {pedido ? <a className="button secondary" href="/messages" onClick={(event) => { onNavClick(event, '/messages'); }}>Volver a los chats</a> : null}
+        </section>
+      )}
+    </div>
   );
 }

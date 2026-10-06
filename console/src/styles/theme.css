@@ -1,0 +1,207 @@
+/* Cauce brand tokens. Single source of colour, type and radius for the whole console.
+   Light is the bare :root; dark is declared twice with the same values: once for the system
+   preference and once for the forced attribute written by ThemeControl / public/tema.js. */
+
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme='light']), :root:not([data-theme='light']) *) { @slot; }
+  }
+  &:where([data-theme='dark'], [data-theme='dark'] *) { @slot; }
+}
+
+@theme inline {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  --color-canvas: var(--c-canvas);
+  --color-surface: var(--c-surface);
+  --color-subtle: var(--c-subtle);
+  --color-muted-bg: var(--c-muted-bg);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+  --color-fg: var(--c-fg);
+  --color-fg-2: var(--c-fg-2);
+  --color-muted: var(--c-muted);
+  --color-brand: var(--c-brand);
+  --color-brand-hover: var(--c-brand-hover);
+  --color-brand-soft: var(--c-brand-soft);
+  --color-brand-ink: var(--c-brand-ink);
+  --color-on-brand: var(--c-on-brand);
+  --color-flow: var(--c-flow);
+  --color-ok: var(--c-ok);
+  --color-ok-soft: var(--c-ok-soft);
+  --color-ok-ink: var(--c-ok-ink);
+  --color-info: var(--c-info);
+  --color-info-soft: var(--c-info-soft);
+  --color-info-ink: var(--c-info-ink);
+  --color-warn: var(--c-warn);
+  --color-warn-soft: var(--c-warn-soft);
+  --color-warn-ink: var(--c-warn-ink);
+  --color-danger: var(--c-danger);
+  --color-danger-soft: var(--c-danger-soft);
+  --color-danger-ink: var(--c-danger-ink);
+  --color-violet: var(--c-violet);
+  --color-violet-soft: var(--c-violet-soft);
+  --color-violet-ink: var(--c-violet-ink);
+  --color-scrim: var(--c-scrim);
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  --shadow-card: var(--c-shadow-card);
+  --shadow-pop: var(--c-shadow-pop);
+}
+
+:root {
+  color-scheme: light;
+  --c-canvas: oklch(0.982 0.003 275);
+  --c-surface: oklch(1 0 0);
+  --c-subtle: oklch(0.966 0.005 275);
+  --c-muted-bg: oklch(0.938 0.008 275);
+  --c-line: oklch(0.912 0.008 275);
+  --c-line-strong: oklch(0.85 0.012 275);
+  --c-fg: oklch(0.2 0.02 275);
+  --c-fg-2: oklch(0.37 0.02 275);
+  --c-muted: oklch(0.5 0.02 275);
+  --c-brand: oklch(0.52 0.2 278);
+  --c-brand-hover: oklch(0.46 0.2 278);
+  --c-brand-soft: oklch(0.95 0.03 278);
+  --c-brand-ink: oklch(0.44 0.19 278);
+  --c-on-brand: oklch(0.99 0.005 278);
+  --c-flow: oklch(0.7 0.13 205);
+  --c-ok: oklch(0.6 0.14 162);
+  --c-ok-soft: oklch(0.95 0.04 162);
+  --c-ok-ink: oklch(0.42 0.1 162);
+  --c-info: oklch(0.6 0.15 240);
+  --c-info-soft: oklch(0.95 0.03 240);
+  --c-info-ink: oklch(0.44 0.14 245);
+  --c-warn: oklch(0.72 0.15 70);
+  --c-warn-soft: oklch(0.96 0.045 80);
+  --c-warn-ink: oklch(0.47 0.11 60);
+  --c-danger: oklch(0.6 0.2 20);
+  --c-danger-soft: oklch(0.95 0.03 15);
+  --c-danger-ink: oklch(0.47 0.18 22);
+  --c-violet: oklch(0.6 0.19 305);
+  --c-violet-soft: oklch(0.95 0.035 305);
+  --c-violet-ink: oklch(0.46 0.18 305);
+  --c-scrim: oklch(0.2 0.02 275 / 45%);
+  --c-shadow-card: 0 1px 2px oklch(0.2 0.02 275 / 6%), 0 1px 3px oklch(0.2 0.02 275 / 4%);
+  --c-shadow-pop: 0 12px 32px oklch(0.2 0.02 275 / 14%), 0 2px 6px oklch(0.2 0.02 275 / 8%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --c-canvas: oklch(0.155 0.008 275);
+    --c-surface: oklch(0.19 0.009 275);
+    --c-subtle: oklch(0.215 0.01 275);
+    --c-muted-bg: oklch(0.25 0.012 275);
+    --c-line: oklch(0.27 0.012 275);
+    --c-line-strong: oklch(0.34 0.014 275);
+    --c-fg: oklch(0.965 0.004 275);
+    --c-fg-2: oklch(0.85 0.01 275);
+    --c-muted: oklch(0.7 0.014 275);
+    --c-brand: oklch(0.55 0.2 278);
+    --c-brand-hover: oklch(0.6 0.19 278);
+    --c-brand-soft: oklch(0.29 0.07 278);
+    --c-brand-ink: oklch(0.82 0.1 278);
+    --c-on-brand: oklch(0.99 0.005 278);
+    --c-flow: oklch(0.78 0.12 205);
+    --c-ok: oklch(0.72 0.15 162);
+    --c-ok-soft: oklch(0.28 0.05 162);
+    --c-ok-ink: oklch(0.85 0.11 162);
+    --c-info: oklch(0.7 0.13 240);
+    --c-info-soft: oklch(0.28 0.05 240);
+    --c-info-ink: oklch(0.85 0.08 240);
+    --c-warn: oklch(0.8 0.14 75);
+    --c-warn-soft: oklch(0.3 0.05 70);
+    --c-warn-ink: oklch(0.88 0.11 80);
+    --c-danger: oklch(0.68 0.19 20);
+    --c-danger-soft: oklch(0.29 0.07 20);
+    --c-danger-ink: oklch(0.84 0.1 15);
+    --c-violet: oklch(0.7 0.17 305);
+    --c-violet-soft: oklch(0.29 0.07 305);
+    --c-violet-ink: oklch(0.85 0.1 305);
+    --c-scrim: oklch(0.08 0.01 275 / 65%);
+    --c-shadow-card: 0 1px 2px oklch(0 0 0 / 30%);
+    --c-shadow-pop: 0 16px 40px oklch(0 0 0 / 45%), 0 0 0 1px oklch(1 0 0 / 5%);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --c-canvas: oklch(0.155 0.008 275);
+  --c-surface: oklch(0.19 0.009 275);
+  --c-subtle: oklch(0.215 0.01 275);
+  --c-muted-bg: oklch(0.25 0.012 275);
+  --c-line: oklch(0.27 0.012 275);
+  --c-line-strong: oklch(0.34 0.014 275);
+  --c-fg: oklch(0.965 0.004 275);
+  --c-fg-2: oklch(0.85 0.01 275);
+  --c-muted: oklch(0.7 0.014 275);
+  --c-brand: oklch(0.55 0.2 278);
+  --c-brand-hover: oklch(0.6 0.19 278);
+  --c-brand-soft: oklch(0.29 0.07 278);
+  --c-brand-ink: oklch(0.82 0.1 278);
+  --c-on-brand: oklch(0.99 0.005 278);
+  --c-flow: oklch(0.78 0.12 205);
+  --c-ok: oklch(0.72 0.15 162);
+  --c-ok-soft: oklch(0.28 0.05 162);
+  --c-ok-ink: oklch(0.85 0.11 162);
+  --c-info: oklch(0.7 0.13 240);
+  --c-info-soft: oklch(0.28 0.05 240);
+  --c-info-ink: oklch(0.85 0.08 240);
+  --c-warn: oklch(0.8 0.14 75);
+  --c-warn-soft: oklch(0.3 0.05 70);
+  --c-warn-ink: oklch(0.88 0.11 80);
+  --c-danger: oklch(0.68 0.19 20);
+  --c-danger-soft: oklch(0.29 0.07 20);
+  --c-danger-ink: oklch(0.84 0.1 15);
+  --c-violet: oklch(0.7 0.17 305);
+  --c-violet-soft: oklch(0.29 0.07 305);
+  --c-violet-ink: oklch(0.85 0.1 305);
+  --c-scrim: oklch(0.08 0.01 275 / 65%);
+  --c-shadow-card: 0 1px 2px oklch(0 0 0 / 30%);
+  --c-shadow-pop: 0 16px 40px oklch(0 0 0 / 45%), 0 0 0 1px oklch(1 0 0 / 5%);
+}
+
+/* Legacy names still read by feature sheets that have not been rewritten yet. They point at the
+   brand palette so every view changes colour at once; each disappears with its last consumer. */
+:root {
+  --bg: var(--c-canvas);
+  --surface: var(--c-surface);
+  --surface-2: var(--c-subtle);
+  --surface-3: var(--c-muted-bg);
+  --border: var(--c-line);
+  --border-strong: var(--c-line-strong);
+  --text: var(--c-fg);
+  --text-2: var(--c-fg-2);
+  --muted: var(--c-muted);
+  --faint: var(--c-muted);
+  --mint: var(--c-brand);
+  --mint-dim: var(--c-brand-soft);
+  --on-mint: var(--c-brand-ink);
+  --blue: var(--c-info);
+  --blue-dim: var(--c-info-soft);
+  --on-blue: var(--c-info-ink);
+  --amber: var(--c-warn);
+  --amber-dim: var(--c-warn-soft);
+  --on-amber: var(--c-warn-ink);
+  --red: var(--c-danger);
+  --red-dim: var(--c-danger-soft);
+  --on-red: var(--c-danger-ink);
+  --violet: var(--c-violet);
+  --violet-dim: var(--c-violet-soft);
+  --lime: var(--c-ok);
+  --lime-dim: var(--c-ok-soft);
+  --on-neutral: var(--c-muted);
+  --tooltip-bg: var(--c-surface);
+  --shadow: var(--c-shadow-pop);
+}
+
+/* Base UI renders no <style> under the console CSP (CSPProvider disableStyleElements); this is the
+   one rule its scroll areas expect from an external sheet. */
+.base-ui-disable-scrollbar { scrollbar-width: none; }
+.base-ui-disable-scrollbar::-webkit-scrollbar { display: none; }

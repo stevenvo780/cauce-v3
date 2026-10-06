@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { cpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import { ansiPaletteCss, xtermAnsiPalette } from './vite/ansi-palette';
@@ -26,7 +27,7 @@ function xtermAnsiCss(): Plugin {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react(), xtermAnsiCss()],
+    plugins: [tailwindcss(), react(), xtermAnsiCss()],
     server: {
       port: 4173,
       proxy: {

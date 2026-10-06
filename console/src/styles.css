@@ -1,4 +1,10 @@
-@import './styles/base.css';
-@import './styles/components.css';
-@import './styles/responsive.css';
-@import './styles/chat-shell.css';
+@layer theme, base, legacy, components, utilities;
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+@import './styles/theme.css';
+@import './styles/base.css' layer(legacy);
+@import './styles/components.css' layer(legacy);
+@import './styles/responsive.css' layer(legacy);
+@import './styles/chat-shell.css' layer(legacy);
+@import './styles/orb.css' layer(components);

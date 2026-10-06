@@ -1,59 +1,9 @@
-/* ==========================================================================
-   Cortes de pantalla del ARMAZÓN y de lo que escribe más de una ruta.
-
-   Cada vista trae sus propios cortes en su hoja, detrás de su regla base: una hoja de vista carga
-   DESPUÉS de ésta, así que un corte de acá sobre una regla que vive allá pierde por orden aunque
-   empate en especificidad. Acá quedan el armazón (`.app-shell`, `.sidebar`, la navegación,
-   `.page-header`), los componentes de `components.css` y las reglas de `base.css` que dibujan más
-   de una ruta. La escala de tres pasos está declarada al principio de `base.css`.
-   ========================================================================== */
-
-/* --- Dimensionamiento de paneles e inputs --- */
+/* Compact-width rules for the shared classes. The shell itself is laid out in AppShell.tsx. */
 input, select, textarea { min-width: 0; }
-.config-area > .panel, .panel { min-width: 0; }
-.observation-line, .permission-line, .auto-refresh-toggle, .trust-callout { flex-wrap: wrap; }
+.panel { min-width: 0; }
 
-/* --- Riel por elección del operador: sólo donde la ventana no lo impone ya --- */
-@media (min-width: 1101px) {
-  .app-shell[data-sidebar="rail"] { grid-template-columns: 78px minmax(0, 1fr); }
-  .app-shell[data-sidebar="rail"] .brand { justify-content: center; padding-inline: 0; }
-  .app-shell[data-sidebar="rail"] .brand > div, .app-shell[data-sidebar="rail"] .sidebar nav a span { display: none; }
-  .app-shell[data-sidebar="rail"] .sidebar nav a, .app-shell[data-sidebar="rail"] .sidebar-toggle { justify-content: center; padding: var(--space-3); }
-}
-
-/* --- Paso medio --- */
-@media (max-width: 1100px) {
-  .app-shell, .app-shell[data-sidebar] { grid-template-columns: 78px minmax(0, 1fr); }
-  /* El control de plegado no aplica: acá el riel lo decide la ventana, no el operador. */
-  .sidebar-toggle { display: none; }
-  .brand { justify-content: center; padding-inline: 0; }
-  .brand > div, .sidebar nav a span { display: none; }
-  .sidebar nav a { justify-content: center; padding: var(--space-3); }
-  .metrics-grid { grid-template-columns: repeat(2, 1fr); }
-}
-
-/* --- Paso compacto --- */
 @media (max-width: 760px) {
-  .app-shell { display: block; padding-bottom: calc(var(--nav-inferior-alto) + env(safe-area-inset-bottom, 0px)); }
-  .sidebar { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 20; display: block; width: auto; height: calc(var(--nav-inferior-alto) + env(safe-area-inset-bottom, 0px)); padding: var(--space-1); padding-inline: var(--space-2); padding-bottom: env(safe-area-inset-bottom, 0px); background: var(--surface); border-top: 1px solid var(--border); border-right: 0; box-sizing: border-box; }
-  .brand { display: none; }
-  .sidebar nav ul { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 48px; overflow: visible; gap: var(--space-1); }
-  .sidebar nav li { min-width: 0; }
-  .sidebar nav a { min-width: 0; min-height: 48px; height: 100%; justify-content: center; gap: var(--space-1); padding: var(--space-1); font-size: var(--tipo-apunte); line-height: 1.15; text-align: center; }
-  .sidebar nav a span { display: none; }
-  .sidebar nav a { flex-direction: column; }
-  .badge { white-space: normal; }
-  .topbar { padding: 0 var(--space-3); }
-  /* Sin rótulo el botón medía 30x22: por debajo del mínimo de 24x24 que pide un dedo. */
-  .theme-option { min-width: var(--space-5); min-height: var(--space-5); justify-content: center; }
-  main { padding: 14px 15px calc(var(--nav-inferior-alto) + 16px + env(safe-area-inset-bottom, 0px)); }
-  .page-header { align-items: start; flex-direction: column; }
-  .metrics-grid, .metrics-grid.three, .explain-grid, .trust-grid { grid-template-columns: 1fr; }
-  .auto-refresh-toggle { margin-top: var(--space-1); }
-  .timeline { grid-template-columns: 1fr; gap: 0; }
-  .timeline li { min-height: 65px; padding: 0 0 var(--space-3) var(--space-5); border-top: 0; border-left: 2px solid var(--border-strong); }
-  .timeline li:not(:last-child)::after { top: 9px; right: auto; bottom: 0; left: -2px; width: 2px; height: auto; }
-  .timeline-node { top: 0; left: -7px; }
+  .panel { padding: var(--space-4); border-radius: var(--radius); }
   .config-form { grid-template-columns: 1fr; }
   .config-json { grid-column: auto; }
   .terminal-transcript { max-height: 500px; }
@@ -63,86 +13,6 @@ input, select, textarea { min-width: 0; }
   .transcript-delivery > span:last-child { width: 100%; margin-left: 0; }
 }
 
-/* --- Dos anchos de CONTENIDO, no dos pasos de la escala ---------------------------------------
- *
- * A 640 el título y su acción ya no caben en la misma línea: la barra de acciones más ancha mide
- * 200px y un título necesita unos 380 para leerse. A 460 el título del panel y su frase dejan de
- * caber uno al lado del otro. Los dos se midieron subiéndolos al paso compacto: en /accounts a
- * 760px el documento pasaba de 5,21 a 5,37 pantallas de scroll (0,05 el primero, 0,11 el segundo),
- * y el trinquete de `qa/layout-baseline.json` no admite ninguno de los dos. */
-@media (max-width: 640px) {
-  .page-header { grid-template-columns: minmax(0, 1fr); row-gap: var(--space-3); }
-  .page-actions { grid-area: auto; }
-}
-
-@media (max-width: 460px) {
-  .panel-header { align-items: stretch; flex-direction: column; }
-}
-
-/* --- Tema Claro: los tokens viven en `base.css`; acá sólo lo que hay que corregir a mano --- */
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .panel { background: linear-gradient(145deg, rgb(255 255 255 / 98%), rgb(245 248 252 / 98%)); }
-  :root:not([data-theme="dark"]) input,
-  :root:not([data-theme="dark"]) select,
-  :root:not([data-theme="dark"]) textarea { background: #fbfcfe; color: var(--text); }
-  :root:not([data-theme="dark"]) .explain-grid article,
-  :root:not([data-theme="dark"]) .trust-grid article { background: #f4f7fb; }
-  :root:not([data-theme="dark"]) .chip { background: #eef3f9; }
-  :root:not([data-theme="dark"]) .badge-offline { border-color: #ccd4de; background: #eceff4; }
-  :root:not([data-theme="dark"]) .button:hover:not(:disabled) { border-color: #9ab8d6; background: #e9f0f8; }
-  :root:not([data-theme="dark"]) .config-records li { background: #f8fafd; }
-  :root:not([data-theme="dark"]) .config-preview { background: #f4f7fb; }
-  :root:not([data-theme="dark"]) .notice { color: #33455c; }
-  :root:not([data-theme="dark"]) .notice.success { color: #0f6450; }
-  :root:not([data-theme="dark"]) .notice.error { color: #8f2230; }
-  :root:not([data-theme="dark"]) .notice.parcial { background: #fdf2df; color: #7a4d05; }
-  :root:not([data-theme="dark"]) .timeline-node { border-color: #4b91c8; background: #dbeaf6; }
-  :root:not([data-theme="dark"]) .timeline-missing .timeline-node { border-color: #b3bdcb; background: #e8ecf2; }
-  :root:not([data-theme="dark"]) .transcript-delivery { background: #ffffff; }
-  :root:not([data-theme="dark"]) .transcript-entry.input { border-color: #8fc5b7; background: linear-gradient(145deg, #e2f5ef, #edf5fb); }
-  :root:not([data-theme="dark"]) .transcript-entry p { color: #203149; }
-  :root:not([data-theme="dark"]) .view-tabs { background: var(--surface-2); }
-  :root:not([data-theme="dark"]) .view-tab[aria-selected='true'] { background: var(--surface); box-shadow: 0 1px 2px rgb(20 32 51 / 12%); }
-  :root:not([data-theme="dark"]) .view-tabs[data-variant='panel'] .view-tab[aria-selected='true'] { background: var(--surface-3); }
-  :root:not([data-theme="dark"]) .view-tabs[data-variant='chip'] .view-tab[aria-selected='true'] { background: var(--surface-3); }
-  :root:not([data-theme="dark"]) .view-tab-badge { background: rgb(20 32 51 / 10%); }
-}
-
-/* Gemela del bloque de arriba para el tema claro FORZADO: la consulta de medios no llega
-   cuando el sistema prefiere oscuro y el operador eligió «claro» en el menú de cuenta. */
-:root[data-theme="light"] .panel { background: linear-gradient(145deg, rgb(255 255 255 / 98%), rgb(245 248 252 / 98%)); }
-:root[data-theme="light"] input,
-:root[data-theme="light"] select,
-:root[data-theme="light"] textarea { background: #fbfcfe; color: var(--text); }
-:root[data-theme="light"] .explain-grid article,
-:root[data-theme="light"] .trust-grid article { background: #f4f7fb; }
-:root[data-theme="light"] .chip { background: #eef3f9; }
-:root[data-theme="light"] .badge-offline { border-color: #ccd4de; background: #eceff4; }
-:root[data-theme="light"] .button:hover:not(:disabled) { border-color: #9ab8d6; background: #e9f0f8; }
-:root[data-theme="light"] .config-records li { background: #f8fafd; }
-:root[data-theme="light"] .config-preview { background: #f4f7fb; }
-:root[data-theme="light"] .notice { color: #33455c; }
-:root[data-theme="light"] .notice.success { color: #0f6450; }
-:root[data-theme="light"] .notice.error { color: #8f2230; }
-:root[data-theme="light"] .notice.parcial { background: #fdf2df; color: #7a4d05; }
-:root[data-theme="light"] .timeline-node { border-color: #4b91c8; background: #dbeaf6; }
-:root[data-theme="light"] .timeline-missing .timeline-node { border-color: #b3bdcb; background: #e8ecf2; }
-:root[data-theme="light"] .transcript-delivery { background: #ffffff; }
-:root[data-theme="light"] .transcript-entry.input { border-color: #8fc5b7; background: linear-gradient(145deg, #e2f5ef, #edf5fb); }
-:root[data-theme="light"] .transcript-entry p { color: #203149; }
-:root[data-theme="light"] .view-tabs { background: var(--surface-2); }
-:root[data-theme="light"] .view-tab[aria-selected='true'] { background: var(--surface); box-shadow: 0 1px 2px rgb(20 32 51 / 12%); }
-:root[data-theme="light"] .view-tabs[data-variant='panel'] .view-tab[aria-selected='true'] { background: var(--surface-3); }
-:root[data-theme="light"] .view-tabs[data-variant='chip'] .view-tab[aria-selected='true'] { background: var(--surface-3); }
-:root[data-theme="light"] .view-tab-badge { background: rgb(20 32 51 / 10%); }
-
-/* --- Reducción de Movimiento --- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
-}
-
-@media (max-width: 760px) {
-  .topbar[data-route="terminal"] .back-to-chat { flex: none; width: 44px; height: 44px; display: grid; place-items: center; }
-  .topbar[data-route="terminal"] .back-to-chat span { display: none; }
-  .topbar[data-route="terminal"] { padding-inline: var(--space-2); }
 }
