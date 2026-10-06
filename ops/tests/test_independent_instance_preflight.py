@@ -44,6 +44,37 @@ class ArtifactPreflightTest(unittest.TestCase):
             self.assertIsNone(aliases.ALIAS_RE.fullmatch(invalid))
         self.assertIsNone(aliases.NAME_RE.fullmatch("user_name"))
 
+    def test_composed_consumer_ids_respect_protocol_limit_before_effects(self):
+        planning = importlib.import_module("planning")
+        instance = importlib.import_module("instance")
+        self.assertEqual(plan_instance(self.document)["descriptor"]["instanceId"], "empresa-a")
+        for installation_length, alias_length, expected_length in ((48, 61, 128), (45, 64, 128),
+                                                                  (48, 62, 129), (48, 64, 131)):
+            with self.subTest(installation_length=installation_length, alias_length=alias_length):
+                installation = "i" + "n" * (installation_length - 1)
+                alias = "a" + "b" * (alias_length - 1)
+                root = pathlib.Path(self.temporary.name) / str(installation_length) / str(alias_length)
+                descriptor = make_descriptor(root, installation)
+                bootstrap_path = pathlib.Path(descriptor["identityRefs"]["bootstrap"])
+                bootstrap = json.loads(bootstrap_path.read_text())
+                bootstrap["agents"][0]["alias"] = alias
+                bootstrap["agents"][0]["state_directory"] = "/home/dev/.local/state/cauce-v3/" + alias
+                bootstrap["memberships"][0]["alias"] = alias
+                bootstrap_path.write_bytes(canonical(bootstrap))
+                self.assertEqual(len("systemd-container-" + installation + "-" + alias), expected_length)
+                self.assertLessEqual(len("systemd-" + installation + "-" + alias), 128)
+                if expected_length == 128:
+                    self.assertIn(alias, plan_instance(descriptor)["bootstrapInventory"]["fleet"])
+                else:
+                    with patch.object(planning, "run", side_effect=AssertionError("Docker reached")):
+                        with self.assertRaisesRegex(InstanceError, "consumer instance identifier exceeds 128"):
+                            plan_instance(descriptor)
+                        with patch.object(instance.resources, "reservation_lock", side_effect=AssertionError("mutation reached")):
+                            with self.assertRaisesRegex(InstanceError, "consumer instance identifier exceeds 128"):
+                                instance.apply_instance({"descriptor": descriptor})
+                self.assertFalse(pathlib.Path(descriptor["inventoryRoot"]).exists())
+                self.assertFalse(pathlib.Path(descriptor["paths"]["state"]).exists())
+
     def test_json_schema_rejection_is_reported_before_install_effects(self):
         planning = importlib.import_module("planning")
         instance = importlib.import_module("instance")

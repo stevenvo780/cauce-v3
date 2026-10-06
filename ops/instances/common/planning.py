@@ -124,6 +124,9 @@ def bootstrap_artifacts(descriptor, bootstrap):
         validator = Draft202012Validator(json.loads((pathlib.Path(descriptor["codeRoot"]) / "ops/schemas/alias-manifest.schema.json").read_text()))
         assignments = {alias: alias_entry(alias, row, {}) for alias, row in inventory["fleet"].items()}
         for alias, row in inventory["fleet"].items():
+            for prefix in ("systemd-", "systemd-container-"):
+                if len(prefix + descriptor["instanceId"] + "-" + alias) > 128:
+                    raise InstanceError("generated consumer instance identifier exceeds 128 characters")
             manifest = manifest_doc(alias, row)
             validator.validate(manifest)
             validate_manifest(manifest, pathlib.Path(alias + ".yaml"), assignments)
