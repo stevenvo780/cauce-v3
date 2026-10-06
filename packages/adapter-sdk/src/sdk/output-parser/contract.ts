@@ -7,6 +7,7 @@ import {
   MAX_ARTIFACTS_CONSIDERED,
   MAX_NOTIFY_BODY_BYTES,
   NOTIFY_KINDS,
+  RoutingTargetSchema,
 } from "@cauce/protocol";
 import { AdapterError, MalformedOutputError } from "../errors.js";
 import {
@@ -43,6 +44,14 @@ interface DeliveryRoutingTarget {
   readonly tenant_id: string;
   readonly alias: string;
   readonly online: boolean;
+  readonly client_mailbox?: { readonly label: string; readonly available: true };
+}
+
+export function isDirectlyMessageableTarget(target: DeliveryRoutingTarget | undefined): boolean {
+  if (target === undefined) return false;
+  if (target.client_mailbox === undefined) return target.online === true;
+  return target.online === false
+    && RoutingTargetSchema.shape.client_mailbox.unwrap().safeParse(target.client_mailbox).success;
 }
 
 /** Keep plain-text compatibility bounded below the process runner's 2 MiB cap. */
@@ -497,10 +506,10 @@ function validateDelegationTargets(
         false,
       );
     }
-    if (matches[0]?.online !== true) {
+    if (!isDirectlyMessageableTarget(matches[0])) {
       throw new AdapterError(
         "OFFLINE_DELEGATION_TARGET",
-        "Delegation target is not online in the trusted routing inventory",
+        "Delegation target is neither online nor an available client mailbox in the trusted routing inventory",
         false,
       );
     }

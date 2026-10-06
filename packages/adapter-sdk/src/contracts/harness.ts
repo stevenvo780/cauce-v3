@@ -69,6 +69,7 @@ interface HarnessRoutingTarget {
   readonly tenant_id: string;
   readonly alias: string;
   readonly online: boolean;
+  readonly client_mailbox?: { readonly label: string; readonly available: true };
 }
 
 export interface HarnessAdapterOptions {

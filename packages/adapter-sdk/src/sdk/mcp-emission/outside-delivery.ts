@@ -1,4 +1,4 @@
-import { isAlias } from "@cauce/protocol";
+import { ClientDelegationLabelSchema, isAlias } from "@cauce/protocol";
 import { hasNonBlankText } from "../output-parser.js";
 import { EmissionGatewayError, type EmissionGateway } from "./tools.js";
 
@@ -10,7 +10,7 @@ export interface EmissionIdentity {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
-const TERMINAL = new Set(["done", "failed", "dead"]);
+const TERMINAL = new Set(["done", "failed", "dead", "stored"]);
 
 function visible(args: Record<string, unknown>, key: string): string {
   const value = args[key];
@@ -30,6 +30,18 @@ function openRootsText(body: unknown): string {
     return `${String(record(root).message_id)} -> ${targets.join(", ")}`;
   }).join("; ");
 }
+
+/** A delivery whose result says it was only stored in a client mailbox: durable storage, never execution. */
+function isStoredInClientMailbox(item: unknown): boolean {
+  const delivery = record(item);
+  const mailbox = record(delivery.client_mailbox);
+  return delivery.status === "done" && delivery.attempt === 0
+    && mailbox.state === "stored" && Object.keys(mailbox).sort().join(",") === "label,state"
+    && ClientDelegationLabelSchema.safeParse(mailbox.label).success;
+}
+
+const MAILBOX_NOTE = "Guardado en el buzón del cliente: almacenamiento durable sin consumidor en línea."
+  + " No implica que alguien lo haya leído ni ejecutado, ni que arranque un turno.";
 
 /** A root message published now, outside any delivery: one alias of the own tenant, under the caller's key. */
 export async function sendOutsideDelivery(
@@ -59,7 +71,7 @@ export async function sendOutsideDelivery(
     nota: receipt.duplicate === true
       ? "Este mismo envío ya se había hecho (la misma llamada, reintentada): no se mandó de nuevo. Mirá su estado con"
         + " cauce_result(message_id)."
-      : "Enviado como mensaje nuevo fuera de una entrega. La respuesta no vuelve sola a esta"
+      : "Encolado como mensaje nuevo fuera de una entrega; no acredita lectura ni ejecución. La respuesta no vuelve sola a esta"
         + " conversación: consultala con cauce_result(message_id).",
   };
 }
@@ -71,12 +83,16 @@ export async function readResult(gateway: EmissionGateway, args: Record<string, 
   const message = record(await gateway("GET", `/v3/messages/${encodeURIComponent(id)}`));
   const deliveries = (Array.isArray(message.deliveries) ? message.deliveries : []).map((item) => {
     const delivery = record(item);
+    if (isStoredInClientMailbox(delivery)) {
+      return { alias: delivery.alias, status: "stored", reply: null, buzon: true };
+    }
     return { alias: delivery.alias, status: delivery.status, reply: delivery.reply ?? null };
   });
   return {
     message_id: id,
     terminado: message.chain_open !== true && deliveries.length > 0
       && deliveries.every((item) => TERMINAL.has(String(item.status))),
+    ...(deliveries.some((item) => item.buzon === true) ? { nota_buzon: MAILBOX_NOTE } : {}),
     ...(message.chain_open === true ? { cadena: "sigue trabajando: hay delegaciones o una espera humana abiertas" } : {}),
     entregas: deliveries,
   };

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   HumanMessageInitiatorSchema,
+  RoutingTargetSchema,
   clampToRoleBriefLimit,
   isAgentToAgentBody,
   isAlias,
@@ -496,6 +497,7 @@ export function routingTargetsFromDelivery(delivery: Delivery): readonly {
   readonly tenant_id: string;
   readonly alias: string;
   readonly online: boolean;
+  readonly client_mailbox?: { readonly label: string; readonly available: true };
 }[] {
   const forwardCompatible = delivery as Delivery & {
     readonly routing_targets?: unknown;
@@ -504,17 +506,23 @@ export function routingTargetsFromDelivery(delivery: Delivery): readonly {
   const candidate = forwardCompatible.routing_targets ?? forwardCompatible.available_recipients;
   if (!Array.isArray(candidate)) return [];
 
-  const unique = new Map<string, { tenant_id: string; alias: string; online: boolean }>();
+  const unique = new Map<string, {
+    tenant_id: string; alias: string; online: boolean; client_mailbox?: { label: string; available: true };
+  }>();
   for (const value of candidate) {
     if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
     const target = value as Record<string, unknown>;
     if (typeof target.tenant_id !== "string" || target.tenant_id.trim().length === 0) continue;
     if (typeof target.alias !== "string" || target.alias.trim().length === 0) continue;
     if (typeof target.online !== "boolean") continue;
+    const parsedMailbox = RoutingTargetSchema.shape.client_mailbox.unwrap().safeParse(target.client_mailbox);
+    if (target.client_mailbox !== undefined && target.online !== false) continue;
+    const mailbox = parsedMailbox.success ? parsedMailbox.data : undefined;
     const normalized = {
       tenant_id: target.tenant_id,
       alias: target.alias,
       online: target.online,
+      ...(mailbox === undefined ? {} : { client_mailbox: mailbox }),
     };
     unique.set(`${normalized.tenant_id}\u0000${normalized.alias}`, normalized);
   }
