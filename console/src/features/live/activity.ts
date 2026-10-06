@@ -144,7 +144,7 @@ function stateRank(state: FleetWorkState | null | undefined): number {
  * strip says the first thing to look at is the fallen ones and the list below puts them somewhere in the
  * middle, the "sorted by urgency" subtitle stops being true.
  */
-const ORDEN_VIVO: readonly LiveState[] = [
+export const ORDEN_VIVO: readonly LiveState[] = [
   'down', 'blocked', 'delegating', 'receiving', 'thinking', 'settled', 'idle',
 ];
 
@@ -291,4 +291,32 @@ export function resumirSenales(
     ocultas: Math.max(0, visibles.length - TOPE_DE_SENALES),
     detalle: partes.join(' '),
   };
+}
+
+export type SortKey = 'urgencia' | 'agente' | 'vuelo' | 'cola' | 'antiguedad' | 'ack';
+
+const SORTERS: Record<Exclude<SortKey, 'urgencia'>, (agent: FleetActivityAgent) => number | string> = {
+  agente: (agent) => agentDisplayName(agent).toLocaleLowerCase(),
+  vuelo: (agent) => agent.in_flight ?? 0,
+  cola: (agent) => agent.queued ?? 0,
+  antiguedad: (agent) => agent.oldest_in_flight_seconds ?? -1,
+  ack: (agent) => agent.seconds_since_last_ack ?? Number.MAX_SAFE_INTEGER,
+};
+
+/** Applies the column sort on top of the urgency order, which stays the tie-breaker. */
+export function sortAgents(
+  agents: readonly FleetActivityAgent[], estados: EstadosVivos | undefined, key: SortKey, descending: boolean,
+): FleetActivityAgent[] {
+  const urgent = sortByUrgency(agents, estados);
+  if (key === 'urgencia') return descending ? urgent.reverse() : urgent;
+  const value = SORTERS[key];
+  return urgent
+    .map((agent, rank) => ({ agent, rank }))
+    .sort((a, b) => {
+      const left = value(a.agent);
+      const right = value(b.agent);
+      const diff = typeof left === 'string' ? left.localeCompare(String(right)) : left - Number(right);
+      return (descending ? -diff : diff) || a.rank - b.rank;
+    })
+    .map(({ agent }) => agent);
 }

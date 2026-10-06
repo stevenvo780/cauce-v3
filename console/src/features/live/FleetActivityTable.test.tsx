@@ -1,10 +1,8 @@
-import { screen, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http, HttpResponse } from 'msw';
-import { LiveFleetPage } from './LiveFleetPage';
-import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
 import type { FleetActivitySnapshot } from '../../api/types';
+import { sortAgents } from './activity';
+import { FleetActivityTable } from './FleetActivityTable';
 
 const BASE: FleetActivitySnapshot = {
   observed_at: '2026-07-27T14:52:11.000Z',
@@ -64,151 +62,71 @@ const BASE: FleetActivitySnapshot = {
   ],
 };
 
-async function abrirListaAgentes() {
+function aliases(): string[] {
+  return [...document.querySelectorAll('tr[data-agent-key]')].map((row) => row.getAttribute('data-agent-key') ?? '');
+}
+
+it('ordena por urgencia: lo trabado arriba, lo saturado después y lo libre al final', () => {
+  render(<FleetActivityTable snapshot={BASE} onOpen={() => undefined} />);
+  expect(aliases()).toEqual(['Pablo/midas', 'Steven/jarvis', 'Isa/salva']);
+  expect(document.querySelector('tr[data-agent-key="Pablo/midas"]')).toHaveAttribute('data-urgency', 'critical');
+  expect(document.querySelector('tr[data-agent-key="Steven/jarvis"]')).toHaveAttribute('data-urgency', 'warning');
+});
+
+it('ordena por columna y vuelve a invertir con un segundo clic', async () => {
   const user = userEvent.setup();
-  await user.click(await screen.findByText(/^Agentes ·/u));
-}
+  render(<FleetActivityTable snapshot={BASE} onOpen={() => undefined} />);
 
-function mockActivityOnce(snapshot: FleetActivitySnapshot) {
-  server.use(http.get('http://localhost/v3/console/activity', () => HttpResponse.json(snapshot)));
-}
-
-it('renders agents from GET /v3/console/activity, sorted with the most urgent first', async () => {
-  mockActivityOnce(BASE);
-  renderWithApi(<LiveFleetPage />);
-  await abrirListaAgentes();
-
-  const rows = await screen.findAllByRole('row');
-  // The first data row (after the header) must be the stalled one, not the alphabetical one.
-  const dataRows = rows.filter((row) => within(row).queryAllByRole('cell').length > 0);
-  expect(dataRows[0].textContent).toMatch(/midas/i);
-
-  // The count of visible aliases is stated in the view's help, not on a card labelled with the SQL
-  // expression that produces it.
-  await userEvent.click(screen.getByRole('button', { name: /Qué es «La flota ahora»/ }));
-  expect(within(await screen.findByRole('dialog')).getByText(/Los 3 alias que podés ver/)).toBeInTheDocument();
-  await userEvent.keyboard('{Escape}');
-  // And the figures moved down to the verdict's text line, in Spanish. The server definition
-  // ("leased + accepted + started") is still available: it is in the tooltip.
-  await userEvent.click(screen.getByTitle('Detalles del estado de la flota'));
-  expect(within(screen.getByRole('region', { name: 'Veredicto de la flota' })).getByText(/en vuelo$/)).toHaveTextContent('50 en vuelo');
+  await user.click(screen.getByRole('button', { name: 'Último ACK' }));
+  expect(screen.getByRole('columnheader', { name: /último ack/i })).toHaveAttribute('aria-sort', 'descending');
+  expect(aliases()[0]).toBe('Pablo/midas');
+  await user.click(screen.getByRole('button', { name: 'Último ACK' }));
+  expect(aliases()).toEqual(['Steven/jarvis', 'Isa/salva', 'Pablo/midas']);
 });
 
-it('shows an error state with a working retry button when the request fails', async () => {
-  server.use(http.get('http://localhost/v3/console/activity', () => HttpResponse.json({ error: 'boom', message: 'actividad caída' }, { status: 500 })));
-  renderWithApi(<LiveFleetPage />);
-
-  expect(await screen.findByRole('alert')).toHaveTextContent(/actividad caída/i);
-  expect(screen.getByRole('button', { name: /reintentar/i })).toBeInTheDocument();
+it('un ACK nulo se lee como un hueco explícito, nunca como cero o un guion', () => {
+  render(<FleetActivityTable snapshot={BASE} onOpen={() => undefined} />);
+  const midas = document.querySelector<HTMLElement>('tr[data-agent-key="Pablo/midas"]')!;
+  expect(within(midas).getByText(/sin ACK/)).toBeInTheDocument();
 });
 
-it('makes the saturated agent stand out visually with its own badge and highlight class, distinct from a healthy one', async () => {
-  mockActivityOnce(BASE);
-  renderWithApi(<LiveFleetPage />);
-  await abrirListaAgentes();
-
-  const jarvisRow = await screen.findByRole('row', { name: /jarvis/i });
-  // Saturation is a SIGNAL, not an eighth state: the state says "Trabajando" — the same word as
-  // the chip and the legend — and the signal chip says "Saturado". Before the row emitted
-  // "SATURADO" twice, once in each spot, and neither matched the legend.
-  expect(within(jarvisRow).getByText('Trabajando')).toBeInTheDocument();
-  expect(within(jarvisRow).getByText('Saturado')).toBeInTheDocument();
-  // Only ONCE. `work_state: 'saturated'` and `flags: ['saturated']` are two server fields for the
-  // same fact, and the cell used to paint both: "SATURADO SATURADO".
-  expect(within(jarvisRow).getAllByText('Saturado')).toHaveLength(1);
-  expect(jarvisRow.className).toContain('row-warning');
-
-  const salvaRow = screen.getByRole('row', { name: /salva/i });
-  expect(salvaRow.className).not.toContain('row-warning');
-  expect(salvaRow.className).not.toContain('row-critical');
+it('apila las señales del agente trabado sin repetir la palabra del estado', () => {
+  const estados = new Map([['Pablo/midas', 'down' as const], ['Steven/jarvis', 'thinking' as const], ['Isa/salva', 'idle' as const]]);
+  render(<FleetActivityTable snapshot={BASE} estados={estados} onOpen={() => undefined} />);
+  const estado = within(document.querySelector<HTMLElement>('tr[data-agent-key="Pablo/midas"]')!).getAllByRole('cell')[1];
+  expect(estado).toHaveTextContent('Caído');
+  const palabras = within(estado).getAllByText(/.+/).map((nodo) => nodo.textContent);
+  expect(new Set(palabras).size).toBe(palabras.length);
 });
 
-it('makes the stalled (incident) agent stand out even harder, and stacks its flags instead of hiding any of them', async () => {
-  mockActivityOnce(BASE);
-  renderWithApi(<LiveFleetPage />);
-  await abrirListaAgentes();
+it('la fila y el nombre abren la ficha del agente, también con el teclado', async () => {
+  const user = userEvent.setup();
+  const abiertos: string[] = [];
+  render(<FleetActivityTable snapshot={BASE} onOpen={(key) => { abiertos.push(key); }} />);
 
-  const midasRow = await screen.findByRole('row', { name: /midas/i });
-  /*
-   * The agent is `stalled` AND with an expired lease. The row shows the down label because that
-   * is what its bot shows: `liveState` precedence puts the expired lease above the stall — an
-   * agent without a lease is not going to unstick anything — and the tally chip counts it as
-   * down. The row and the chip must say THE SAME THING; before they said `COLGADO` and the
-   * down label.
-   */
-  const celdaEstado = within(midasRow).getAllByRole('cell')[2];
-  expect(celdaEstado).toHaveTextContent('Caído');
-  expect(midasRow).toHaveAttribute('data-state', 'down');
-  expect(midasRow.className).toContain('row-critical');
-  // The agent is both saturated and not acknowledging at the same time: signals coexist, they do
-  // not collide.
-  expect(within(midasRow).getByText('Saturado')).toBeInTheDocument();
-  // The down label is shown by the "Presencia" column, ONCE across the whole row.
-  // The down label appears TWICE in the row and they are two different questions whose answer
-  // coincides: the "Estado" column says the derived state — same as its bot, which for an expired
-  // lease is the down label and wins over the stall — and the "Presencia" column says the
-  // presence.
-  // What does disappear is the THIRD down label: the `lease_expired` chip in the signals panel.
-  expect(within(midasRow).getAllByText('Caído')).toHaveLength(2);
-
-  // But the five are NOT stacked. "Sin ACK" and "ACK vencido" are the definition of being stalled,
-  // and the down label is already shown by the next column: repeating them does not inform five
-  // times, it informs less.
-  // What was measured in production was FIVE badges in one cell to say "it is stalled".
-  const insignias = celdaEstado.querySelectorAll('.badge');
-  expect(insignias.length).toBeLessThanOrEqual(3);
-  // And not a single measured signal is lost: the cell's `title=` names them all.
-  for (const palabra of ['Sin ACK', 'ACK vencido', 'Saturado', 'Caído']) {
-    expect(celdaEstado.getAttribute('title')).toContain(palabra);
-  }
+  await user.click(screen.getByRole('row', { name: /jarvis/i }));
+  screen.getByRole('button', { name: 'Salva' }).focus();
+  await user.keyboard('{Enter}');
+  expect(abiertos).toEqual(['Steven/jarvis', 'Isa/salva']);
 });
 
-it('never renders a null seconds_since_last_ack as zero or a dash: it reads as an explicit ACK gap', async () => {
-  mockActivityOnce(BASE);
-  renderWithApi(<LiveFleetPage />);
-  await abrirListaAgentes();
+it('respeta el filtro de estado y la búsqueda, y dice por qué queda vacía', async () => {
+  const user = userEvent.setup();
+  const { rerender } = render(<FleetActivityTable snapshot={BASE} only={new Set(['Isa/salva'])} onOpen={() => undefined} />);
+  expect(aliases()).toEqual(['Isa/salva']);
 
-  const midasRow = await screen.findByRole('row', { name: /midas/i });
-  const ackCell = within(midasRow).getAllByRole('cell')[7];
-  expect(ackCell.textContent).not.toBe('0');
-  expect(ackCell.textContent.toLowerCase()).toContain('ack');
+  rerender(<FleetActivityTable snapshot={BASE} only={new Set()} onOpen={() => undefined} />);
+  expect(screen.getByText(/ningún agente en ese estado/i)).toBeInTheDocument();
+
+  rerender(<FleetActivityTable snapshot={BASE} onOpen={() => undefined} />);
+  await user.type(screen.getByRole('searchbox', { name: /buscar un agente/i }), 'zzz');
+  expect(screen.getByText('Ningún alias coincide con «zzz».')).toBeInTheDocument();
 });
 
-it('reflects totals.flagged without inventing zeroes for absent keys, and keeps it separate from the seven states', async () => {
-  mockActivityOnce(BASE);
-  renderWithApi(<LiveFleetPage />);
-
-  // `flagged` is cumulative and CANNOT be derived from the per-state count: midas is both
-  // saturated and stalled, so it adds to both columns. That is why this panel survived the
-  // merge while "Por estado" — five exclusive server buckets, a coarser version of the seven
-  // states the page already draws — was removed as redundant.
-  // The fold's `<summary>` and the panel's title share the name, so we look up the panel by its
-  // title inside the fold, not by a text that appears twice.
-  const fold = (await screen.findAllByText('Señales activas'))
-    .map((nodo) => nodo.closest('section'))
-    .find((seccion): seccion is HTMLElement => seccion !== null);
-  expect(fold).toBeDefined();
-  if (!fold) throw new Error('fold section not found');
-  expect(within(fold).getByText('Saturado').closest('.chip')).toHaveTextContent('2');
-  expect(within(fold).getByText('Caído').closest('.chip')).toHaveTextContent('1');
-  expect(within(fold).queryByText('Nunca conectó')).not.toBeInTheDocument();
-
-  expect(screen.queryByText('Por estado')).not.toBeInTheDocument();
-});
-
-it('shows claimed_not_started in "Señales activas" with its danger tone', async () => {
-  mockActivityOnce({
-    ...BASE,
-    totals: { ...BASE.totals, flagged: { ...BASE.totals?.flagged, claimed_not_started: 3 } },
-  });
-  renderWithApi(<LiveFleetPage />);
-
-  const fold = (await screen.findAllByText('Señales activas'))
-    .map((nodo) => nodo.closest('section'))
-    .find((seccion): seccion is HTMLElement => seccion !== null);
-  expect(fold).toBeDefined();
-  if (!fold) throw new Error('fold section not found');
-  const chip = within(fold).getByText('Tomó y no empezó').closest('.chip');
-  expect(chip).toHaveTextContent('3');
-  expect(within(fold).getByText('Tomó y no empezó')).toHaveClass('badge-danger');
+it('sortAgents no muta la entrada y desempata por urgencia', () => {
+  const agents = BASE.agents ?? [];
+  const copia = [...agents];
+  const porCola = sortAgents(agents, undefined, 'cola', true);
+  expect(agents).toEqual(copia);
+  expect(porCola.map((agent) => agent.alias)).toEqual(['midas', 'jarvis', 'salva']);
 });

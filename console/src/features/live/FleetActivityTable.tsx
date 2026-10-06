@@ -1,389 +1,194 @@
-import { ChevronDown, ChevronRight, Flame, Search, ShieldAlert } from 'lucide-react';
+import { ArrowDown, ArrowUp, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import type {
-  FleetActivityAgent, FleetActivityFlag, FleetActivitySnapshot, FleetActivityThresholds,
-} from '../../api/types';
-import { Badge, Desplazable, EmptyState, Panel, Time, Unknown } from '../../components/ui';
-import { compactId, safeJobLane } from '../../lib';
-import { deliveryPolicy } from '../deliveries/delivery-policy';
+import type { FleetActivityAgent, FleetActivitySnapshot } from '../../api/types';
+import { AgentOrb } from '../../components/AgentOrb';
+import { Unknown } from '../../components/ui';
+import { cn } from '../../cn';
+import { useMediaQuery } from '../../shell/use-media-query';
+import { STATE_TONE, TONE_CLASS, type Tone } from '../../status-tone';
 import {
-  FLAG_LABEL, FLAG_TONE, agentDisplayName, agentKeyOf, agentRowKey, estadoDeFila,
-  formatAckAge, formatInFlightAge, presenceBadge, presenciaDeLaFila,
-  resumirSenales, rowUrgency, sortByUrgency,
-  type EstadosVivos,
+  agentDisplayName, agentKeyOf, estadoDeFila, formatAckAge, formatInFlightAge, presenciaDeLaFila, resumirSenales,
+  rowUrgency, sortAgents, type BadgeTone, type EstadosVivos, type SortKey,
 } from './activity';
 
-/**
- * The tabular reading of `GET /v3/console/activity`.
- *
- * This **was** a route of its own ("Fleet activity") that read exactly the same endpoint as the
- * engine room and drew it differently: two menu entries, two pollings, one single question. Now it
- * is the engine room's detail panel — the hypergraph answers *who is talking to whom*, and this
- * table answers *how long each delivery has been going and whether it advances*, which is the next
- * question, not the same one. It feeds on the snapshot the page already has: it does not ask again.
- */
+const BADGE_TONE: Record<BadgeTone, Tone> = {
+  online: 'ok', done: 'ok', running: 'ok', info: 'info', warning: 'warn', danger: 'danger', offline: 'neutral', unknown: 'neutral',
+};
 
-const FLAG_ORDER: FleetActivityFlag[] = [
-  'saturated', 'ack_stalled', 'overdue_acks', 'lease_expired', 'never_connected', 'unregistered', 'queued_without_consumer',
-  'claimed_not_started',
+const COLUMNS: { key: SortKey; label: string; numeric?: boolean }[] = [
+  { key: 'agente', label: 'Agente' },
+  { key: 'urgencia', label: 'Estado' },
+  { key: 'vuelo', label: 'En vuelo', numeric: true },
+  { key: 'cola', label: 'Cola', numeric: true },
+  { key: 'antiguedad', label: 'Antigüedad', numeric: true },
+  { key: 'ack', label: 'Último ACK', numeric: true },
 ];
 
-interface FleetActivityTableProps {
-  snapshot: FleetActivitySnapshot | undefined;
-  /** Alias highlighted in the hypergraph, in `tenant/alias` format. Synchronises the two halves. */
-  selectedKey?: string | null;
-  /** `tenant/alias` keys to which the state filter restricts the table. `null` = no filter. */
-  onlyKeys?: Set<string> | null;
-  /** Name of the filtered state, only to be able to say it when the filter leaves the table empty. */
-  filterLabel?: string;
-  /**
-   * The doll's state per alias (`tenant/alias`), as derived by the page.
-   *
-   * This is what prevents the row and the chip from saying different things about the same agent:
-   * without it, the STATE column had to translate the server's `work_state` on its own and a
-   * downed alias came out "Free" because it had no work. See `estadoDeFila`.
-   */
-  estados?: EstadosVivos;
-  onSelect?: (key: string | null) => void;
-  /** Click on the row: opens that agent's drawer on the same page, without navigating. */
-  onOpen?: (key: string) => void;
-}
-
 /**
- * Table of agents with search by alias and detail per delivery.
- *
- * Search is the reason this table outlasts the card grid it replaced: with fifteen dolls in one
- * drawing, finding *one* specific one by name is the only thing the graph does worse than a list.
+ * The tabular reading of the same snapshot the office draws: who has how much, since when, and
+ * whether it advances. Sorted by urgency unless a column says otherwise.
  */
-export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabel, estados, onSelect, onOpen }: FleetActivityTableProps) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+export function FleetActivityTable({ snapshot, estados, only, selectedKey, onOpen }: {
+  snapshot: FleetActivitySnapshot | undefined;
+  /** Live state per `tenant/alias`, so the row and the office never disagree. */
+  estados?: EstadosVivos;
+  /** `tenant/alias` keys the state filter keeps; `null` means no filter. */
+  only?: ReadonlySet<string> | null;
+  selectedKey?: string | null;
+  onOpen: (key: string) => void;
+}) {
+  const phone = useMediaQuery('(max-width: 760px)');
   const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<{ key: SortKey; descending: boolean }>({ key: 'urgencia', descending: false });
+  const lookback = snapshot?.thresholds?.ack_lookback_seconds;
 
-  const thresholds = snapshot?.thresholds;
   const agents = useMemo(() => {
-    let ordered = sortByUrgency(snapshot?.agents ?? [], estados);
-    if (onlyKeys) ordered = ordered.filter((agent) => onlyKeys.has(agentKeyOf(agent)));
     const needle = query.trim().toLowerCase();
-    if (!needle) return ordered;
-    return ordered.filter((agent) => `${agent.tenant_id} ${agent.alias} ${agent.display_name ?? ''} ${agent.harness_id ?? ''}`
-      .toLowerCase().includes(needle));
-  }, [snapshot, query, onlyKeys, estados]);
+    return sortAgents(snapshot?.agents ?? [], estados, sort.key, sort.descending)
+      .filter((agent) => !only || only.has(agentKeyOf(agent)))
+      .filter((agent) => !needle || `${agent.tenant_id} ${agent.alias} ${agent.display_name ?? ''} ${agent.harness_id ?? ''}`
+        .toLowerCase().includes(needle));
+  }, [snapshot, estados, only, query, sort]);
 
-  function toggle(key: string) {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
-  }
+  const toggleSort = (key: SortKey) => {
+    setSort((current) => ({ key, descending: current.key === key ? !current.descending : key !== 'agente' && key !== 'urgencia' }));
+  };
 
   return (
-    <Panel
-      className="fleet-activity-panel"
-      title="Agentes"
-    >
-      <label className="activity-search">
-        <Search size={15} aria-hidden="true" />
-        <input
-          type="search"
-          value={query}
-          placeholder="Buscar alias, tenant o arnés…"
-          aria-label="Buscar un agente por alias"
-          onChange={(event) => { setQuery(event.target.value); }}
-        />
-      </label>
+    <section aria-labelledby="agentes-titulo" className="overflow-hidden rounded-xl border border-line bg-surface shadow-card">
+      <header className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3">
+        <h2 id="agentes-titulo" className="m-0 text-sm font-semibold text-fg">
+          Agentes <span className="font-normal text-muted tabular-nums">{agents.length}</span>
+        </h2>
+        <label className="relative ml-auto w-full sm:w-64">
+          <span className="sr-only">Buscar un agente por alias</span>
+          <Search size={14} aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted" />
+          <input
+            type="search"
+            value={query}
+            placeholder="Buscar alias, tenant o arnés"
+            onChange={(event) => { setQuery(event.target.value); }}
+            className="min-h-8 w-full rounded-md border border-line bg-surface py-1 pl-8 text-[13px]"
+          />
+        </label>
+      </header>
+
       {agents.length === 0 ? (
-        <EmptyState>
-          {query.trim()
-            ? `Ningún alias coincide con «${query.trim()}».`
-            : filterLabel
-              ? `Ningún agente en estado «${filterLabel}» ahora mismo.`
-              : 'Ningún alias visible: ni configurado, ni con entregas abiertas, ni con lease reciente.'}
-        </EmptyState>
+        <p className="m-0 px-4 py-8 text-center text-[13px] text-muted">
+          {query.trim() ? `Ningún alias coincide con «${query.trim()}».` : only ? 'Ningún agente en ese estado ahora mismo.' : 'Ningún agente visible.'}
+        </p>
+      ) : phone ? (
+        <ul className="m-0 list-none divide-y divide-line p-0">
+          {agents.map((agent) => (
+            <li key={agentKeyOf(agent)}>
+              <button
+                type="button"
+                onClick={() => { onOpen(agentKeyOf(agent)); }}
+                className={cn('flex w-full cursor-pointer items-center gap-3 border-0 bg-transparent px-4 py-3 text-left hover:bg-subtle',
+                  selectedKey === agentKeyOf(agent) && 'bg-brand-soft')}
+              >
+                <AgentOrb seed={agentKeyOf(agent)} state={estados?.get(agentKeyOf(agent))} size={28} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-medium text-fg">{agentDisplayName(agent)}</span>
+                  <span className="block truncate text-xs text-muted">
+                    {agent.in_flight ?? 0} en vuelo · {agent.queued ?? 0} en cola · {formatAckAge(agent.seconds_since_last_ack, lookback)}
+                  </span>
+                </span>
+                <StatePill agent={agent} estados={estados} />
+              </button>
+            </li>
+          ))}
+        </ul>
       ) : (
-        <Desplazable etiqueta="Actividad en vuelo por agente">
-          <table data-objeto-principal="tabla-de-flota">
+        <div className="overflow-x-auto">
+          <table data-objeto-principal="tabla-de-flota" className="w-full border-collapse text-[13px]">
             <caption className="sr-only">Actividad en vuelo por agente</caption>
             <thead>
-              <tr>
-                <th aria-hidden="true" />
-                <th>Agente</th>
-                <th>Estado</th>
-                <th>Presencia</th>
-                <th>En vuelo</th>
-                <th>Cola</th>
-                <th>Antigüedad</th>
-                <th>Último ACK</th>
-                <th>ACKs recientes</th>
+              <tr className="border-b border-line text-left text-xs text-muted">
+                {COLUMNS.map((column) => (
+                  <th
+                    key={column.key}
+                    scope="col"
+                    aria-sort={sort.key === column.key ? (sort.descending ? 'descending' : 'ascending') : undefined}
+                    className={cn('px-4 py-2 font-medium whitespace-nowrap', column.numeric && 'text-right')}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => { toggleSort(column.key); }}
+                      className="inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 font-medium text-inherit hover:text-fg"
+                    >
+                      {column.label}
+                      {sort.key === column.key
+                        ? (sort.descending ? <ArrowDown size={12} aria-hidden="true" /> : <ArrowUp size={12} aria-hidden="true" />)
+                        : null}
+                    </button>
+                  </th>
+                ))}
+                <th scope="col" className="px-4 py-2 text-right font-medium">ACKs recientes</th>
               </tr>
             </thead>
             <tbody>
               {agents.map((agent) => {
-                const key = agentRowKey(agent);
+                const key = agentKeyOf(agent);
                 const estado = estadoDeFila(agent, estados);
-                const urgency = rowUrgency(agent.work_state, estado.live);
-                const presence = presenceBadge(agent);
-                const items = agent.in_flight_items ?? [];
-                const isExpanded = expanded.has(key);
                 return (
-                  <FragmentRow
+                  <tr
                     key={key}
-                    agent={agent}
-                    estado={estado}
-                    urgency={urgency}
-                    presenceLabel={presence.label}
-                    presenceTone={presence.tone}
-                    expanded={isExpanded}
-                    onToggle={() => { toggle(key); }}
-                    items={items}
-                    ackLookbackSeconds={thresholds?.ack_lookback_seconds}
-                    highlighted={selectedKey === agentKeyOf(agent)}
-                    onHover={onSelect}
-                    onOpen={onOpen}
-                  />
+                    data-agent-key={key}
+                    data-state={estado.live ?? agent.work_state ?? 'unknown'}
+                    data-urgency={rowUrgency(agent.work_state, estado.live)}
+                    data-highlighted={selectedKey === key ? 'true' : undefined}
+                    onClick={() => { onOpen(key); }}
+                    className={cn('cursor-pointer border-b border-line last:border-b-0 hover:bg-subtle', selectedKey === key && 'bg-brand-soft hover:bg-brand-soft')}
+                  >
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-2.5">
+                        <AgentOrb seed={key} state={estado.live} size={24} />
+                        <button
+                          type="button"
+                          onClick={(event) => { event.stopPropagation(); onOpen(key); }}
+                          className="cursor-pointer border-0 bg-transparent p-0 text-left font-medium text-fg hover:underline"
+                        >
+                          {agentDisplayName(agent)}
+                        </button>
+                        <span className="text-xs text-muted">{agent.tenant_id}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5"><StatePill agent={agent} estados={estados} signals /></td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums">{agent.in_flight ?? 0}</td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums">{agent.queued ?? 0}</td>
+                    <td className="px-4 py-2.5 text-right whitespace-nowrap text-fg-2">{formatInFlightAge(agent.oldest_in_flight_seconds)}</td>
+                    <td className="px-4 py-2.5 text-right whitespace-nowrap text-fg-2">{formatAckAge(agent.seconds_since_last_ack, lookback)}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-fg-2"><Unknown value={agent.acks_recent} /></td>
+                  </tr>
                 );
               })}
             </tbody>
           </table>
-        </Desplazable>
-      )}
-    </Panel>
-  );
-}
-
-/**
- * Active signals: `totals.flagged`.
- *
- * Kept apart from the dolls' seven states because it is **not the same partition**: an agent that
- * is saturated AND has a stalled ACK counts in both columns, so this does not add up to
- * `totals.agents` and cannot be derived from the count by state.
- */
-export function FleetSignals({ snapshot }: { snapshot: FleetActivitySnapshot | undefined }) {
-  const flagged = snapshot?.totals?.flagged;
-  return (
-    <Panel title="Señales activas" subtitle="totals.flagged es acumulativo: un mismo agente saturado y con ACK detenido cuenta en las dos columnas, así que esto NO suma a totals.agents.">
-      {!flagged || FLAG_ORDER.every((flag) => !flagged[flag]) ? (
-        <EmptyState>Ninguna señal activa: no hay agentes saturados, colgados ni con lease vencido.</EmptyState>
-      ) : (
-        <div className="chip-list">
-          {FLAG_ORDER.filter((flag) => (flagged[flag] ?? 0) > 0).map((flag) => (
-            <span className="chip" key={flag}>
-              <Badge tone={FLAG_TONE[flag]}>{FLAG_LABEL[flag]}</Badge> {flagged[flag]}
-            </span>
-          ))}
         </div>
       )}
-    </Panel>
+    </section>
   );
 }
 
-/** The three things one needs to know to avoid misreading the table. */
-export function ActivityExplainers({ thresholds }: { thresholds: FleetActivityThresholds | null | undefined }) {
+function StatePill({ agent, estados, signals = false }: { agent: FleetActivityAgent; estados?: EstadosVivos; signals?: boolean }) {
+  const estado = estadoDeFila(agent, estados);
+  const resumen = resumirSenales(agent.work_state ?? undefined, agent.flags, presenciaDeLaFila(agent), {
+    clave: estado.live ?? 'estado', label: estado.label, tone: estado.tone,
+  });
+  const tone = TONE_CLASS[estado.live ? STATE_TONE[estado.live] : BADGE_TONE[estado.tone]];
   return (
-    <div className="explain-grid">
-      <article>
-        <Flame aria-hidden="true" />
-        <div>
-          <strong>Tener trabajo no es avanzar</strong>
-          <p>
-            «En vuelo» cuenta lo que el agente TOMÓ; «ACKs recientes» y «Último ACK» dicen si avanza. 41 en vuelo
-            con cero acuses es un incendio; 3 en vuelo con nueve acuses es sano — son los dos números que
-            motivaron este panel.
-          </p>
-        </div>
-      </article>
-      <article>
-        <ShieldAlert aria-hidden="true" />
-        <div>
-          <strong>Sin cuerpos, nunca</strong>
-          <p>
-            Esta consulta no selecciona el texto de ningún mensaje ni el detalle de ningún error: sólo
-            identificadores, estados y tiempos. Ni el operador del hub ve contenido ajeno acá.
-          </p>
-        </div>
-      </article>
-      <article>
-        <ChevronDown aria-hidden="true" />
-        <div>
-          <strong>Umbrales del servidor</strong>
-          <p>
-            {/* "Stalled", the same word as the chip, the verdict, the legend and this table.
-                It used to say "hung", which was the old label of the STATE column. */}
-            Saturado desde {thresholds?.saturation_in_flight ?? 'un número que el servidor no informó'} en vuelo;
-            trabado tras {thresholds?.stall_after_seconds ?? 'un tiempo que el servidor no informó'}
-            {thresholds?.stall_after_seconds ? 's' : ''} sin ACK aplicado. La consola no inventa estos números.
-          </p>
-        </div>
-      </article>
-    </div>
-  );
-}
-
-function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expanded, onToggle, items, ackLookbackSeconds, highlighted, onHover, onOpen }: {
-  agent: FleetActivityAgent;
-  estado: ReturnType<typeof estadoDeFila>;
-  urgency: 'critical' | 'warning' | undefined;
-  presenceLabel: string;
-  presenceTone: 'online' | 'done' | 'running' | 'warning' | 'danger' | 'offline' | 'unknown' | 'info';
-  expanded: boolean;
-  onToggle: () => void;
-  items: NonNullable<FleetActivityAgent['in_flight_items']>;
-  ackLookbackSeconds: number | null | undefined;
-  highlighted?: boolean;
-  onHover?: (key: string | null) => void;
-  onOpen?: (key: string) => void;
-}) {
-  /**
-   * Title and signals come from TWO different places on purpose, and both are needed:
-   *
-   *  - the TITLE comes from `estadoDeFila`, which consumes the state already derived by the page
-   *    —the same object the doll paints and the chip counts—, because `work_state` and
-   *    `LiveState` are different partitions and no label translation could make them match: `iza`
-   *    came out "Downed" in the chip and "Free" in its row.
-   *  - the SIGNALS come from `resumirSenales`, which drops those implied by something else already
-   *    visible: `midas` stacked FIVE badges to say "it is stalled" and `jarvis` said "Saturated"
-   *    twice.
-   *
-   * The summary's title is DISCARDED and that of `estadoDeFila` is used instead: two titles for
-   * the same cell would again be two words for one fact.
-   */
-  const stateLabel = estado.label;
-  const stateTone = estado.tone;
-  const senales = resumirSenales(
-    agent.work_state ?? undefined, agent.flags, presenciaDeLaFila(agent),
-    { clave: estado.live ?? 'estado', label: stateLabel, tone: stateTone },
-  );
-  const hasItems = items.length > 0;
-  return (
-    <>
-      {/* Hovering the row highlights the doll in the hypergraph above: that is what ties the list
-          to the drawing without having to draw the list again. */}
-      <tr
-        data-agent-key={agentKeyOf(agent)}
-        data-state={estado.live ?? agent.work_state ?? 'unknown'}
-        data-urgency={urgency}
-        data-highlighted={highlighted ? 'true' : undefined}
-        className={urgency ? `row-${urgency}` : undefined}
-        onMouseEnter={() => onHover?.(agentKeyOf(agent))}
-        onMouseLeave={() => onHover?.(null)}
-        onClick={onOpen ? () => { onOpen(agentKeyOf(agent)); } : undefined}
-        data-clickable={onOpen ? 'true' : undefined}
-      >
-        <td>
-          <button
-            type="button"
-            className="row-toggle"
-            // Detail expansion must not bubble into the separate agent drawer action.
-            onClick={(event) => { event.stopPropagation(); onToggle(); }}
-            aria-expanded={expanded}
-            aria-label={`Detalle de ${agent.alias}`}
-          >
-            {expanded ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
-          </button>
-        </td>
-        <td title={`${agent.tenant_id}:${agent.alias} · ${agent.harness_id ?? 'arnés desconocido'}`}>
-          <div className="identity-cell">
-            {/* A `<tr>` with `onClick` is an action that only exists for the mouse. The name becomes
-                a real button so the same action is reachable from the keyboard; the row click is
-                kept as a shortcut, which is why the button stops the bubble (otherwise a click on
-                the name would open the drawer twice). */}
-            {onOpen ? (
-              <button
-                type="button"
-                className="row-open"
-                onClick={(event) => { event.stopPropagation(); onOpen(agentKeyOf(agent)); }}
-              >
-                {agentDisplayName(agent)}
-              </button>
-            ) : <strong>{agentDisplayName(agent)}</strong>}
-          </div>
-          <small className="sr-only">
-            {agent.tenant_id}:{agent.alias} · <Unknown value={agent.harness_id} />
-          </small>
-          {agent.registered === false ? <span className="sr-only">{FLAG_LABEL.unregistered}</span> : null}
-        </td>
-        <td title={senales.detalle}>
-          <Badge tone={senales.estado.tone}>{senales.estado.label}</Badge>
-          {senales.senales.length > 0 || senales.ocultas > 0 ? (
-            <div className="chip-list flag-chip-list">
-              {senales.senales.map((senal) => <Badge tone={senal.tone} key={senal.clave}>{senal.label}</Badge>)}
-              {senales.ocultas > 0 ? <Badge tone="unknown">+{senales.ocultas}</Badge> : null}
-            </div>
-          ) : null}
-        </td>
-        <td title={`epoch ${String(agent.presence?.epoch ?? 'desconocido')}`}>
-          <Badge tone={presenceTone}>{presenceLabel}</Badge>
-          <small className="sr-only">epoch <Unknown value={agent.presence?.epoch} /></small>
-        </td>
-        <td title={`${String(agent.started ?? 0)} iniciadas · ${String(agent.claimed_not_started ?? 0)} reclamadas · ${String(agent.overdue_in_flight ?? 0)} vencidas`}>
-          <strong className="mono">{agent.in_flight ?? 0}</strong>
-          <small className="sr-only">
-            {agent.started ?? 0} iniciadas · {agent.claimed_not_started ?? 0} reclamadas
-            {agent.overdue_in_flight ? <span className="overdue-note"> · {agent.overdue_in_flight} vencidas</span> : null}
-          </small>
-        </td>
-        <td title={`${String(agent.queued_ready ?? 0)} listas · ${String(agent.retrying ?? 0)} en retry`}>
-          <strong className="mono">{agent.queued ?? 0}</strong>
-          <small className="sr-only">
-            {agent.queued_ready ?? 0} listas · {agent.retrying ?? 0} en retry
-          </small>
-        </td>
-        <td>{formatInFlightAge(agent.oldest_in_flight_seconds)}</td>
-        <td>{formatAckAge(agent.seconds_since_last_ack, ackLookbackSeconds)}</td>
-        <td><Unknown value={agent.acks_recent} /></td>
-      </tr>
-      {expanded ? (
-        <tr className="row-detail">
-          <td />
-          <td colSpan={8}>
-            <dl className="activity-agent-details">
-              <dt>Identidad</dt><dd>{agent.tenant_id}:{agent.alias}</dd>
-              <dt>Arnés</dt><dd><Unknown value={agent.harness_id} /></dd>
-              <dt>Epoch de presencia</dt><dd><Unknown value={agent.presence?.epoch} /></dd>
-              <dt>En vuelo</dt><dd>{agent.started ?? 0} iniciadas · {agent.claimed_not_started ?? 0} reclamadas · {agent.overdue_in_flight ?? 0} vencidas</dd>
-              <dt>Cola</dt><dd>{agent.queued_ready ?? 0} listas · {agent.retrying ?? 0} en retry</dd>
-              <dt>Señales</dt><dd>{senales.detalle}</dd>
-            </dl>
-            {hasItems ? <Desplazable etiqueta={`Entregas en vuelo de ${agent.alias}`}>
-              <table>
-                <caption className="sr-only">Entregas en vuelo de {agent.alias}</caption>
-                <thead>
-                  <tr>
-                    <th>Delivery</th><th>Origen</th><th>Lane</th><th>Estado</th><th>Intento</th>
-                    <th>En vuelo desde</th><th>Deadline ACK</th><th>Último ACK</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item, index) => {
-                    const policy = deliveryPolicy(item.status);
-                    return <tr key={item.delivery_id ?? index}>
-                      <td><span className="mono">{compactId(item.delivery_id)}</span><small className="subline">msg {compactId(item.message_id)}</small></td>
-                      <td><Unknown value={item.from_alias} />@<Unknown value={item.from_tenant} /><small className="subline"><Unknown value={item.origin_adapter} /></small></td>
-                      <td><Unknown value={safeJobLane(item.lane)} /></td>
-                      <td><Badge tone={policy.tone}><Unknown
-                        value={policy.known ? policy.label : undefined}
-                        motivo={item.status && !policy.known
-                          ? `El servidor mandó un estado que esta consola no conoce: ${item.status}`
-                          : undefined}
-                      /></Badge></td>
-                      <td><Unknown value={item.attempt} /></td>
-                      <td>{formatInFlightAge(item.seconds_in_flight)}</td>
-                      <td><Time value={item.ack_deadline_at} relativo /></td>
-                      <td>{item.last_ack_at ? <Time value={item.last_ack_at} relativo /> : <span className="unknown">sin ACK</span>}</td>
-                    </tr>;
-                  })}
-                </tbody>
-              </table>
-            </Desplazable> : null}
-            {agent.in_flight_items_truncated ? (
-              <p className="notice">
-                Mostrando las {items.length} entregas en vuelo más antiguas de {agent.in_flight} totales; el resto
-                comparte el mismo diagnóstico y no aporta nuevas fuentes.
-              </p>
-            ) : null}
-          </td>
-        </tr>
-      ) : null}
-    </>
+    <span className="inline-flex flex-wrap items-center gap-1" title={resumen.detalle}>
+      <span className={cn('inline-flex h-5 shrink-0 items-center gap-1.5 rounded-full px-2 text-[11px] font-medium', tone.pill)}>
+        <span aria-hidden="true" className={cn('size-1.5 rounded-full', tone.dot)} />
+        {estado.label}
+      </span>
+      {signals ? resumen.senales.map((senal) => (
+        <span key={senal.clave} className={cn('inline-flex h-5 items-center rounded-full px-2 text-[11px]', TONE_CLASS[BADGE_TONE[senal.tone]].pill)}>
+          {senal.label}
+        </span>
+      )) : null}
+      {signals && resumen.ocultas > 0 ? <span className="text-[11px] text-muted">+{resumen.ocultas}</span> : null}
+    </span>
   );
 }

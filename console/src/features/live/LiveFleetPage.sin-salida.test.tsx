@@ -1,10 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { http } from 'msw';
 import { CauceApi } from '../../api/client';
-import { ApiProvider } from '../../api/context';
 import { LoadingState, PACIENCIA_MS } from '../../components/ui';
 import { server } from '../../mocks/server';
-import { LiveFleetPage } from './LiveFleetPage';
+import { renderLive } from './render-live';
 
 /**
  * Verification of timeout and error handling in LiveFleetPage: checks that slow or hanging
@@ -16,8 +15,7 @@ function actividadColgada(): void {
 }
 
 function pintarLive(topeMs: number) {
-  const api = new CauceApi('http://localhost', undefined, undefined, topeMs);
-  return render(<ApiProvider api={api}><LiveFleetPage /></ApiProvider>);
+  return renderLive(new CauceApi('http://localhost', undefined, undefined, topeMs));
 }
 
 describe('/live cuando el gateway no contesta', () => {
@@ -89,7 +87,7 @@ describe('/live cuando el gateway no contesta', () => {
   it('a healthy reading does not see either the timeout or the warning: it keeps painting the fleet', async () => {
     // NEGATIVE CONTROL of the cut: with the server responding, the page reaches its normal state.
     pintarLive(4000);
-    expect(await screen.findByRole('heading', { level: 1, name: 'La flota ahora' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Oficina' })).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
