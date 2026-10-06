@@ -119,7 +119,7 @@ describe('MCP mounted through the pinned Nginx mTLS ingress', () => {
     clients.push(client);
     const toolset = await client.listTools();
     expect(toolset.tools.map((tool) => tool.name).sort()).toEqual([
-      'cauce_agents', 'cauce_inbox', 'cauce_receipt', 'cauce_status', 'cauce_submit',
+      'cauce_agents', 'cauce_connection_identity', 'cauce_inbox', 'cauce_receipt', 'cauce_status', 'cauce_submit',
     ]);
     const requestKey = randomUUID();
     const uniqueBody = `nginx mTLS publish ${randomUUID()}`;
