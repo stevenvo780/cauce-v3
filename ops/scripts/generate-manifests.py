@@ -10,10 +10,11 @@ from typing import Any
 
 import yaml
 from atomic_file import atomic_write
+from container_alias_lib import ALIAS_RE
 from fleet_derive import manifest_doc
 
 OPS_ROOT = pathlib.Path(__file__).resolve().parents[1]
-ALIAS_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+
 PLAIN_SCALAR_RE = re.compile(r"^[A-Za-z0-9._:/-]+$")
 
 

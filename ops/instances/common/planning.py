@@ -9,6 +9,8 @@ import re
 import sys
 
 from descriptor import InstanceError, canonical, mutable_roots, safe_path, validate_bootstrap, validate_descriptor
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
 from resources import digest, run
 
 REQUIRED_SECRET_VARS = {
@@ -94,10 +96,49 @@ def instance_environment(descriptor):
     return env
 
 
+def bootstrap_artifacts(descriptor, bootstrap):
+    exporter = load_exporter(descriptor["codeRoot"])
+    from container_alias_lib import validate_container_aliases, validate_system_principals
+    from fleet_derive import alias_entry, manifest_doc
+    from instance_namespace import validate_unit_path
+    from manifest_lib import validate_manifest
+
+    scripts = pathlib.Path(descriptor["codeRoot"]) / "ops/scripts"
+    spec = importlib.util.spec_from_file_location("instance_alias_preflight", scripts / "generate-container-aliases.py")
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    source = {"agents": bootstrap["agents"],
+              "memberships": [{**row, "enabled": True} for row in bootstrap["memberships"]],
+              "rolePolicies": [{"role": role} for role in sorted({row["role"] for row in bootstrap["memberships"]})]}
+    try:
+        inventory = exporter.snapshot_document(source)
+        aliases = json.loads(generator.render(inventory))
+        entries = validate_container_aliases(aliases)
+        validate_system_principals(aliases)
+        for entry in entries.values():
+            if entry["harness"] == "hermes":
+                raise InstanceError("Hermes requires an explicitly provisioned own runtime inventory before installation")
+            for field in ("home", "stateDirectory", "workspace"):
+                if field in entry:
+                    validate_unit_path(entry[field])
+        validator = Draft202012Validator(json.loads((pathlib.Path(descriptor["codeRoot"]) / "ops/schemas/alias-manifest.schema.json").read_text()))
+        assignments = {alias: alias_entry(alias, row, {}) for alias, row in inventory["fleet"].items()}
+        for alias, row in inventory["fleet"].items():
+            manifest = manifest_doc(alias, row)
+            validator.validate(manifest)
+            validate_manifest(manifest, pathlib.Path(alias + ".yaml"), assignments)
+    except InstanceError:
+        raise
+    except (ValueError, KeyError, TypeError, ValidationError) as exc:
+        raise InstanceError("bootstrap cannot produce supported canonical inventory and manifests") from exc
+    return inventory, aliases
+
+
 def plan_instance(descriptor):
     descriptor = validate_descriptor(json.loads(canonical(descriptor)))
     bootstrap_path = pathlib.Path(descriptor["identityRefs"]["bootstrap"])
     bootstrap = validate_bootstrap(json.loads(bootstrap_path.read_text()))
+    inventory, aliases = bootstrap_artifacts(descriptor, bootstrap)
     env = instance_environment(descriptor)
     code = pathlib.Path(descriptor["codeRoot"])
     compose = json.loads(run(["docker", "compose", "--env-file", "/dev/null", "-f", str(code / "deploy/compose.yaml"),
@@ -150,7 +191,8 @@ def plan_instance(descriptor):
          "gateway", "dispatcher", "console", "outbox-metrics"],
     ]
     plan = {"schemaVersion": 1, "descriptor": descriptor, "sourceHash": source_hash(descriptor, compose),
-            "bootstrapHash": digest(bootstrap), "bootstrap": bootstrap, "environment": env,
+            "bootstrapHash": digest(bootstrap), "bootstrap": bootstrap, "bootstrapInventory": inventory,
+            "bootstrapAliases": aliases, "environment": env,
             "compose": compose, "dockerResources": names, "resources": resources, "commands": commands}
     plan["immutableHash"] = digest({"descriptor": {key: value for key, value in descriptor.items() if key not in {"release", "codeRoot"}}, "bootstrapHash": plan["bootstrapHash"]})
     plan["planHash"] = digest({key: value for key, value in plan.items() if key != "environment"})

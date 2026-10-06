@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 import yaml
+from jsonschema import Draft202012Validator
 
 OPS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(OPS / "scripts"))
@@ -30,6 +31,29 @@ class GenericManifestTest(unittest.TestCase):
             path = OPS / "manifests" / (alias + ".yaml")
             if path.exists():
                 self.assertEqual(MODULE.render_manifest(alias, existing), path.read_text())
+
+    def test_protocol_underscore_alias_round_trips_through_manifest_loader(self):
+        from manifest_lib import load_manifests
+
+        row = json.loads((OPS / "flota.json").read_text())["fleet"]["socrates"]
+        with tempfile.TemporaryDirectory(prefix="cauce-manifest-") as temporary:
+            root = pathlib.Path(temporary)
+            (root / "manifests").mkdir()
+            (root / "schemas").mkdir()
+            schema = (OPS / "schemas/alias-manifest.schema.json").read_text()
+            (root / "schemas/alias-manifest.schema.json").write_text(schema)
+            snapshot = root / "flota.json"
+            snapshot.write_text(json.dumps({"schemaVersion": 1, "fleet": {"operador_uno": row}}))
+            loaded = MODULE.load_fleet(snapshot)
+            rendered = MODULE.render_manifest("operador_uno", loaded["operador_uno"])
+            (root / "manifests/operador_uno.yaml").write_text(rendered)
+            document = yaml.safe_load(rendered)
+            Draft202012Validator(json.loads(schema)).validate(document)
+            self.assertEqual(load_manifests(root)[0]["spec"]["alias"], "operador_uno")
+            for alias in ("operador.uno", "_operador", "Operador", "a" * 65):
+                snapshot.write_text(json.dumps({"schemaVersion": 1, "fleet": {alias: row}}))
+                with self.assertRaises(MODULE.GeneratorError):
+                    MODULE.load_fleet(snapshot)
 
     def test_yaml_newline_injection_rejected(self):
         row = json.loads((OPS / "flota.json").read_text())["fleet"]["socrates"]

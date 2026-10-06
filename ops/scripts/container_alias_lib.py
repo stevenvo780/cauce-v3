@@ -12,6 +12,7 @@ FIELDS = ("tenant", "room", "container", "user", "home", "stateDirectory", "harn
 ALIAS_REQUIRED_FIELDS = (*FIELDS, "membershipRole", "systemdUser")
 ALIAS_OPTIONAL_FIELDS = ("registryContainer", "workspace", "dockerHost")
 PRINCIPAL_FIELDS = ("tenant", "room", "membershipRole")
+ALIAS_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 NAME_RE = re.compile(r"^[a-z][a-z0-9.-]*$")
 PLACEMENT_RE = re.compile(r"^(?:[a-z][a-z0-9.-]*|host:[a-z][a-z0-9.-]*)$")
 TENANT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
@@ -119,13 +120,16 @@ def _document(root: pathlib.Path, *, hardened: bool = False) -> dict[str, Any]:
 def load_container_aliases(
     root: pathlib.Path, *, hardened: bool = False
 ) -> dict[str, dict[str, str]]:
-    document = _document(root, hardened=hardened)
+    return validate_container_aliases(_document(root, hardened=hardened))
+
+
+def validate_container_aliases(document: dict[str, Any]) -> dict[str, dict[str, str]]:
     aliases = _mapping(document["aliases"], "aliases")
     if not aliases:
         raise ContainerAliasError("container alias mapping must not be empty")
     validated: dict[str, dict[str, str]] = {}
     for alias in sorted(aliases):
-        if not NAME_RE.fullmatch(alias):
+        if not isinstance(alias, str) or not ALIAS_RE.fullmatch(alias):
             raise ContainerAliasError(f"invalid alias: {alias}")
         entry = _mapping(aliases[alias], alias)
         if set(entry) - set(ALIAS_REQUIRED_FIELDS) - set(ALIAS_OPTIONAL_FIELDS) or set(
@@ -176,11 +180,14 @@ def load_container_aliases(
 
 
 def load_system_principals(root: pathlib.Path) -> dict[str, dict[str, str]]:
-    document = _document(root)
+    return validate_system_principals(_document(root))
+
+
+def validate_system_principals(document: dict[str, Any]) -> dict[str, dict[str, str]]:
     principals = _mapping(document["systemPrincipals"], "systemPrincipals")
     validated: dict[str, dict[str, str]] = {}
     for alias in sorted(principals):
-        if not NAME_RE.fullmatch(alias):
+        if not isinstance(alias, str) or not ALIAS_RE.fullmatch(alias):
             raise ContainerAliasError(f"invalid system principal: {alias}")
         entry = _mapping(principals[alias], f"systemPrincipals.{alias}")
         if set(entry) != set(PRINCIPAL_FIELDS):
@@ -198,7 +205,7 @@ def load_system_principals(root: pathlib.Path) -> dict[str, dict[str, str]]:
                 f"system principal {alias}.membershipRole is invalid"
             )
         validated[alias] = {field: str(entry[field]) for field in PRINCIPAL_FIELDS}
-    overlap = set(validated) & set(load_container_aliases(root))
+    overlap = set(validated) & set(validate_container_aliases(document))
     if overlap:
         raise ContainerAliasError(
             f"system principals overlap fleet aliases: {sorted(overlap)}"

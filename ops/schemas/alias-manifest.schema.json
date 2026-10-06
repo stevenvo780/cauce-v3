@@ -12,7 +12,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["name"],
-      "properties": { "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" } }
+      "properties": { "name": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" } }
     },
     "spec": {
       "type": "object",
@@ -21,7 +21,7 @@
       "properties": {
         "tenant": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$" },
         "room": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\u0000-\\u001f\\u007f]+$"},
-        "alias": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "alias": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
         "harness": { "enum": ["openclaw", "opencode", "claude", "hermes", "codex", "grok", "muse"] },
         "profile": {
           "type": "object",
