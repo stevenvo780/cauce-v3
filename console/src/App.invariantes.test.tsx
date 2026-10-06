@@ -20,7 +20,7 @@ const DESTINOS: Record<string, Destino> = {
   overview: { encabezado: /cauce en una pantalla/i },
   live: { encabezado: /^la flota ahora$/i },
   accounts: { encabezado: /^cuentas y cuotas$/i },
-  messages: { encabezado: /^mensajes$/i },
+  messages: { encabezado: /con quién trabajamos hoy/i },
   queues: { encabezado: /colas y dlq operativo/i },
   observability: { encabezado: /^señales y auditoría$/i },
   /* The `h1` matches the menu entry name exactly. The `^…$` anchor ensures title consistency. */

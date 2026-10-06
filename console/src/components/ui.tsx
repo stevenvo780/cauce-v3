@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { TIEMPO_MAXIMO_MS } from '../api/client';
 import type { ConsoleAccess, ConsolePermission } from '../api/types';
 import { display, haceCuanto, permissionState, timestamp, timestampExacto, NO_APLICA, TODAVIA_NO, UNKNOWN } from '../lib';
+import { cn } from '../cn';
 import { PageHelp } from './PageHelp';
 import { useRovingTabs } from './use-roving-tabs';
 
@@ -18,15 +19,15 @@ export function PageHeader({ eyebrow, title, description, notes, actions }: {
   actions?: ReactNode;
 }) {
   return (
-    <header className="page-header">
-      <div className="page-title">
+    <header className="page-header mb-5 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+      <div className="page-title min-w-0">
         <p className="eyebrow">{eyebrow}</p>
-        <div className="page-title-fila">
-          <h1>{title}</h1>
+        <div className="page-title-fila mt-0.5 flex items-center gap-2">
+          <h1 className="m-0 text-[22px] font-semibold tracking-tight text-fg">{title}</h1>
           <PageHelp title={title} description={description}>{notes}</PageHelp>
         </div>
       </div>
-      {actions ? <div className="page-actions">{actions}</div> : null}
+      {actions ? <div className="page-actions flex flex-wrap items-center gap-2">{actions}</div> : null}
     </header>
   );
 }
@@ -36,7 +37,11 @@ export function PageShell({ kind, className = '', children }: {
   className?: string;
   children: ReactNode;
 }) {
-  return <div className={`page-shell-${kind} ${className}`.trim()}>{children}</div>;
+  return (
+    <div className={cn(`page-shell-${kind}`, kind === 'documento' ? 'w-full max-w-3xl' : 'flex min-h-0 flex-1 flex-col', className)}>
+      {children}
+    </div>
+  );
 }
 
 export function Panel({ title, subtitle, children, className = '' }: {
@@ -46,7 +51,7 @@ export function Panel({ title, subtitle, children, className = '' }: {
   className?: string;
 }) {
   return (
-    <section className={`panel ${className}`.trim()}>
+    <section className={cn('panel', className)}>
       {title || subtitle ? (
         <header className="panel-header">
           {title ? <h2>{title}</h2> : null}
@@ -77,7 +82,7 @@ export function Badge({ children, tone = 'unknown' }: {
   children: ReactNode;
   tone?: 'online' | 'done' | 'running' | 'warning' | 'danger' | 'offline' | 'unknown' | 'info';
 }) {
-  return <span className={`badge badge-${tone}`}>{children}</span>;
+  return <span className={cn('badge', `badge-${tone}`)}>{children}</span>;
 }
 
 /**
@@ -262,7 +267,17 @@ export function ViewTabs<T extends string>({
 }) {
   const roving = useRovingTabs(tabs.length, (index) => { onSelect(tabs[index].id); });
   return (
-    <div className="view-tabs" role="tablist" aria-label={label} data-variant={variant}>
+    <div
+      className={cn(
+        'view-tabs flex max-w-full items-center overflow-x-auto',
+        variant === 'page' && 'mb-4 gap-1 border-b border-line',
+        variant === 'panel' && 'mb-3 inline-flex gap-0.5 rounded-lg bg-muted-bg p-0.5',
+        variant === 'chip' && 'mb-3 flex-wrap gap-1.5',
+      )}
+      role="tablist"
+      aria-label={label}
+      data-variant={variant}
+    >
       {tabs.map((tab, index) => (
         <button
           key={tab.id}
@@ -272,13 +287,18 @@ export function ViewTabs<T extends string>({
           aria-selected={active === tab.id}
           aria-controls={panelId ?? `view-panel-${tab.id}`}
           tabIndex={active === tab.id ? 0 : -1}
-          className="view-tab"
+          className={cn(
+            'view-tab inline-flex shrink-0 cursor-pointer items-center gap-1.5 border-0 bg-transparent text-[13px] font-medium whitespace-nowrap text-muted transition-colors hover:text-fg',
+            variant === 'page' && '-mb-px border-b-2 border-transparent px-3 py-2 aria-selected:border-brand aria-selected:text-fg',
+            variant === 'panel' && 'rounded-md px-3 py-1 aria-selected:bg-surface aria-selected:text-fg aria-selected:shadow-card',
+            variant === 'chip' && 'rounded-full border border-line px-3 py-1 aria-selected:border-transparent aria-selected:bg-brand-soft aria-selected:text-brand-ink',
+          )}
           ref={roving.tabRef(index)}
           onClick={() => { onSelect(tab.id); }}
           onKeyDown={(event) => { roving.onKeyDown(event, index); }}
         >
           {tab.label}
-          {tab.badge == null ? null : <span className="view-tab-badge">{tab.badge}</span>}
+          {tab.badge == null ? null : <span className="view-tab-badge rounded-full bg-muted-bg px-1.5 text-[11px] tabular-nums text-fg-2">{tab.badge}</span>}
         </button>
       ))}
     </div>
@@ -308,7 +328,7 @@ export function ViewTabPanel({ id, labelledBy, hidden = false, children }: {
   children: ReactNode;
 }) {
   return (
-    <div id={`view-panel-${id}`} role="tabpanel" tabIndex={hidden ? -1 : 0} hidden={hidden} aria-labelledby={labelledBy ?? `view-tab-${id}`} className="view-tab-panel">
+    <div id={`view-panel-${id}`} role="tabpanel" tabIndex={hidden ? -1 : 0} hidden={hidden} aria-labelledby={labelledBy ?? `view-tab-${id}`} className="view-tab-panel outline-none">
       {children}
     </div>
   );

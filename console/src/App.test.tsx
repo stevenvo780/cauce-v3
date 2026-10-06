@@ -6,7 +6,7 @@ import { renderWithApi } from './test/render';
 import { server } from './mocks/server';
 
 async function openTools() {
-  const button = await screen.findByRole('button', { name: 'Herramientas' });
+  const button = await screen.findByRole('button', { name: 'Gestión' });
   if (button.getAttribute('aria-expanded') !== 'true') await userEvent.click(button);
 }
 
@@ -20,7 +20,7 @@ it('provides basic accessible landmarks and identity guidance', async () => {
   expect(screen.getByRole('link', { name: /saltar al contenido/i })).toHaveAttribute('href', '#main-content');
   expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.getByRole('main')).not.toHaveFocus();
-  expect(screen.getByRole('button', { name: 'Herramientas' })).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.getByRole('button', { name: 'Gestión' })).toHaveAttribute('aria-expanded', 'false');
   await userEvent.click(screen.getByRole('button', { name: /^Cuenta de/ }));
   const account = within(screen.getByRole('dialog', { name: 'Cuenta y apariencia' }));
   expect(account.getByText('Steven:kant', { selector: 'code' })).toBeInTheDocument();
@@ -224,14 +224,14 @@ it('el menú contiene la portada más ocho entradas consolidadas', async () => {
   const entradas = within(nav).getAllByRole('link').map((link) => link.textContent);
 
   expect(entradas).toEqual([
-    'Conversaciones',
-    'Grafo y actividad',
+    'Chat',
+    'Oficina',
+    'Terminal',
     'Resumen',
     'Cuentas y cuotas',
-    'Queues & DLQ',
+    'Colas y DLQ',
     'Señales y auditoría',
-    'Ajustes y altas',
-    'Terminal de agentes',
+    'Ajustes',
     'Ayuda',
   ]);
   expect(entradas).not.toContain('Fleet');
@@ -276,7 +276,7 @@ it('/fleet/:cliente sin alias conserva la dirección incompleta como 404', async
   expect(window.location.pathname).toBe('/fleet/Steven');
 });
 
-it('deja navegar a «Ajustes y altas» sin config.write para consultar la vista en solo lectura', async () => {
+it('deja navegar a «Ajustes» sin config.write para consultar la vista en solo lectura', async () => {
   server.use(
     http.get('http://localhost/v3/console/access', () =>
       HttpResponse.json({
@@ -297,7 +297,7 @@ it('deja navegar a «Ajustes y altas» sin config.write para consultar la vista 
   expect(window.location.pathname).toBe('/config');
 });
 
-it('deja «Ajustes y altas» navegable para quien SI tiene config.write', async () => {
+it('deja «Ajustes» navegable para quien SI tiene config.write', async () => {
   server.use(
     http.get('http://localhost/v3/console/access', () =>
       HttpResponse.json({
@@ -321,7 +321,7 @@ it('la raíz abre las conversaciones', async () => {
   window.history.pushState({}, '', '/');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: 'Mensajes' }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: '¿Con quién trabajamos hoy?' }, { timeout: 10_000 })).toBeInTheDocument();
   await waitFor(() => { expect(window.location.pathname).toBe('/messages'); });
 });
 
@@ -429,15 +429,16 @@ it('el foco sigue la selección y vuelve al agente al cerrar la conversación', 
   expect(await screen.findByRole('button', { name: /conversación con argos,/i })).toHaveFocus();
 });
 
-it('las herramientas se cierran con Escape y devuelven el foco al control', async () => {
+it('el grupo Gestión se pliega y despliega sin perder el foco', async () => {
   window.history.pushState({}, '', '/messages');
   const user = userEvent.setup();
   renderWithApi(<App />);
   await openTools();
-  await user.tab();
-  await user.keyboard('{Escape}');
-  expect(screen.getByRole('button', { name: 'Herramientas' })).toHaveFocus();
-  expect(screen.queryByRole('region', { name: 'Herramientas de Cauce' })).toBeNull();
+  const toggle = screen.getByRole('button', { name: 'Gestión' });
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await user.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(toggle).toHaveFocus();
 });
 
 it('un agente desconocido conserva su aviso, oculta el roster móvil y permite volver', async () => {

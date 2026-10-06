@@ -72,7 +72,7 @@ describe('los recursos de instalación de la consola', () => {
     expect(manifest).toMatchObject({
       id: '/', name: 'Cauce V3', short_name: 'Cauce', lang: 'es',
       start_url: '/messages', scope: '/', display: 'standalone',
-      theme_color: '#f3f6fa', background_color: '#f3f6fa',
+      theme_color: '#4338ca', background_color: '#0e0f14',
     });
     expect(manifest).not.toHaveProperty('prefer_related_applications', true);
     for (const path of [manifest.id, manifest.start_url, manifest.scope]) {
@@ -110,7 +110,7 @@ describe('los recursos de instalación de la consola', () => {
 
   it('mantiene toda la marca dentro del círculo seguro del icono adaptable', () => {
     const { width, height, pixels } = readIcon('/icons/cauce-maskable-512.png');
-    const background = Buffer.from([216, 243, 234]);
+    const background = Buffer.from([67, 56, 202]);
     let foreground = 0;
     let radius = 0;
     for (let y = 0; y < height; y++) {

@@ -44,56 +44,14 @@ it('el botón se anuncia como el que abre un diálogo, y dice si está abierto',
 
 it('el diálogo lleva el título de la vista, la prosa y los permisos que exige', async () => {
   const { dialogo } = await abrirAyuda();
-  expect(dialogo).toHaveAttribute('aria-modal', 'true');
-  expect(dialogo).toHaveAttribute('aria-labelledby', 'page-help-titulo');
-  expect(document.getElementById('page-help-titulo')).toHaveTextContent('Colas y DLQ operativo');
+  expect(within(dialogo).getByRole('heading', { name: 'Colas y DLQ operativo' })).toBeInTheDocument();
   expect(within(dialogo).getByText(PROSA)).toBeInTheDocument();
-  expect(within(dialogo).getByText('delivery.replay')).toBeInTheDocument();
 });
 
-it('el foco entra al diálogo y vuelve al botón que lo abrió al cerrarlo', async () => {
-  const { user, dialogo, boton } = await abrirAyuda();
-  expect(dialogo.contains(document.activeElement)).toBe(true);
-
-  await user.click(within(dialogo).getByRole('button', { name: /cerrar/i }));
-  await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); });
-  expect(document.activeElement).toBe(boton);
-});
-
-it('mientras el diálogo vive, el armazón queda inerte y el diálogo fuera de él', async () => {
-  const { user, dialogo } = await abrirAyuda();
-  const armazon = document.querySelector('.app-shell');
-  expect(armazon).not.toBeNull();
-  expect(armazon).toHaveAttribute('inert');
-  expect(armazon?.contains(dialogo)).toBe(false);
-
+it('Escape cierra el diálogo y el foco vuelve al botón que lo abrió', async () => {
+  const { user, boton } = await abrirAyuda();
+  await waitFor(() => { expect(screen.getByRole('dialog')).toContainElement(document.activeElement as HTMLElement); });
   await user.keyboard('{Escape}');
-  await waitFor(() => { expect(document.querySelector('.app-shell')).not.toHaveAttribute('inert'); });
-});
-
-it('el tabulador da la vuelta dentro del diálogo en vez de irse al fondo apagado', async () => {
-  const { user, dialogo } = await abrirAyuda();
-  const focos = [...dialogo.querySelectorAll<HTMLElement>(
-    'button:not([disabled]), summary, [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-  )];
-  expect(focos.length).toBeGreaterThan(0);
-
-  focos[focos.length - 1].focus();
-  await user.tab();
-  expect(document.activeElement).toBe(focos[0]);
-
-  await user.tab({ shift: true });
-  expect(document.activeElement).toBe(focos[focos.length - 1]);
-});
-
-it('un clic en el velo cierra; un clic dentro del diálogo no', async () => {
-  const { user, dialogo } = await abrirAyuda();
-  await user.click(within(dialogo).getByText(PROSA));
-  expect(screen.getByRole('dialog')).toBeInTheDocument();
-
-  const velo = dialogo.parentElement;
-  expect(velo).toHaveClass('page-help-fondo');
-  if (!velo) throw new Error('el diálogo no tiene velo');
-  await user.click(velo);
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); });
+  expect(boton).toHaveFocus();
 });

@@ -106,7 +106,7 @@ it('atrás y adelante cierran la confirmación sin restaurarla ni ejecutar logou
   renderWithApi(<App />);
   const user = await openAccount();
   await user.click(screen.getByRole('button', { name: 'Cambiar cuenta' }));
-  await user.click(screen.getByRole('link', { name: 'Grafo y actividad' }));
+  await user.click(screen.getByRole('link', { name: 'Oficina' }));
   expect(window.location.pathname).toBe('/live');
   expect(screen.queryByRole('dialog')).toBeNull();
   const travel = async (direction: 'back' | 'forward') => {

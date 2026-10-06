@@ -51,7 +51,7 @@ it('sin permiso de escritura, la barra abre /config en solo lectura', async () =
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
-  await userEvent.click(within(nav).getByRole('button', { name: 'Herramientas' }));
+  await userEvent.click(within(nav).getByRole('button', { name: 'Gestión' }));
   const lateral = within(nav).getByRole('link', { name: /ajustes y altas/i });
   expect(lateral).not.toHaveAttribute('aria-disabled');
   await userEvent.click(lateral);
@@ -82,19 +82,19 @@ it('con el permiso de escritura, esa misma entrada sigue navegando', async () =>
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
-  await userEvent.click(within(nav).getByRole('button', { name: 'Herramientas' }));
+  await userEvent.click(within(nav).getByRole('button', { name: 'Gestión' }));
   const lateral = within(nav).getByRole('link', { name: /ajustes y altas/i });
   await waitFor(() => { expect(lateral).not.toHaveAttribute('aria-disabled'); });
   await userEvent.click(lateral);
   expect(window.location.pathname).toBe('/config');
 });
 
-it('la barra sigue teniendo las SIETE entradas, «Terminal de agentes» incluida', async () => {
+it('la barra sigue teniendo las SIETE entradas, «Terminal» incluida', async () => {
   window.history.pushState({}, '', '/overview');
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
-  await userEvent.click(within(nav).getByRole('button', { name: 'Herramientas' }));
+  await userEvent.click(within(nav).getByRole('button', { name: 'Gestión' }));
   const rotulos = within(nav).getAllByRole('link').map((enlace) => enlace.textContent);
   expect(rotulos).toEqual(NAV_ENTRIES.map((entry) => entry.label));
 });
