@@ -213,10 +213,9 @@ function clientBackendPid(client: DatabaseClient): number | undefined {
 async function terminateBackend(pool: DatabasePool, backendPid: number | undefined): Promise<void> {
   if (backendPid === undefined) return;
   try {
-    // Closing a TCP socket does not necessarily wake a backend blocked inside every PostgreSQL
-    // wait primitive immediately. Signal our own abandoned backend through a fresh pool checkout
-    // and wait for that command before reporting the cancellation complete.
-    await pool.query('SELECT pg_terminate_backend($1)', [backendPid]);
+    // A closed socket can leave a backend blocked inside PostgreSQL. A positive timeout waits
+    // for backend exit; the default zero timeout only confirms signal delivery.
+    await pool.query('SELECT pg_terminate_backend($1, 1000)', [backendPid]);
   } catch {
     // A DB restart or concurrent reap is already an equivalent terminal outcome. Callers still
     // observe the original abort and readiness independently observes a broader outage.
