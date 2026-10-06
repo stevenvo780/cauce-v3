@@ -448,7 +448,7 @@ function ownTestServer(database: TestDatabase, migrationThrough?: string): TestD
 
 export async function startTestCaseDatabase(database: TestDatabase): Promise<EmptyTestDatabase> {
   const server = ownedTestServers.get(database.pool);
-  if (server === undefined || server.url !== database.url) {
+  if (server?.url !== database.url) {
     throw new Error('case database requires an unchanged server created by startTestDatabase');
   }
   const serverUrl = server.url;

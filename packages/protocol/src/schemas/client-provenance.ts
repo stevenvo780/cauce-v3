@@ -8,7 +8,7 @@ export const ClientDelegationLabelSchema = z.string().min(1).max(128)
   .refine((value) => value.normalize('NFC') === value && !/[^A-Za-z0-9 ._-]/u.test(value)
     && /^[A-Za-z0-9](?:[A-Za-z0-9 ._-]*[A-Za-z0-9])?$/u.test(value));
 const PublicClientIdSchema = z.string().min(1)
-  .refine((value) => new TextEncoder().encode(value).byteLength <= 2048 && ![...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127));
+  .refine((value) => new TextEncoder().encode(value).byteLength <= 2048 && !Array.from(value).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127));
 export const ClientProvenanceWireSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('unknown') }).strict(),
   z.object({ kind: z.literal('oauth_client'), verification: z.literal('local_grant'),
