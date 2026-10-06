@@ -37,7 +37,7 @@ describe('PTY real Python agent through gateway and relay', () => {
       method: 'POST',
       headers: { cookie: session.cookie, 'x-csrf-token': session.csrf, origin: active.gatewayUrl },
       body: {
-        tenant_id: active.tenant, alias: active.targetAlias, mode: 'shell', reason: 'real PTY E2E',
+        tenant_id: active.tenant, alias: active.targetAlias, mode: 'shell',
         cols: 100, rows: 30, request_id: requestId, owner_token: ownerToken,
       },
     });
@@ -169,7 +169,7 @@ describe('PTY real Python agent through gateway and relay', () => {
     await selector.selectOption(`${active.tenant}:${active.targetAlias}`);
     await page.getByRole('button', { name: 'Terminal', exact: true }).click();
     await page.getByRole('dialog', { name: new RegExp(`Abrir Terminal en ${active.targetAlias}`, 'u') }).waitFor({ timeout: 10_000 });
-    await page.getByLabel('Motivo de la sesión (queda en la auditoría)').fill('Verificación local de resize y cierre desde Chromium móvil.');
+    expect(await page.getByLabel('Motivo de la sesión (queda en la auditoría)').count()).toBe(0);
     await page.getByRole('button', { name: 'Abrir sesión PTY' }).click();
     await page.locator('.pty-shell[data-state="open"]').waitFor({ state: 'visible', timeout: 30_000 });
     await page.locator('.xterm-helper-textarea').waitFor({ state: 'visible', timeout: 15_000 });

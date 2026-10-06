@@ -228,7 +228,7 @@ describe('fake gateway: the /v3/terminal/relay contract', () => {
     const payload = ticketPayload();
     const ticket = mintTicket(aliasKey, payload);
     const first = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`, {
-      body: claimed(ticket, CLAIM_TOKEN, { cols: 120, rows: 32, reason: 'revisar el despliegue atrasado' }),
+      body: claimed(ticket, CLAIM_TOKEN, { cols: 120, rows: 32 }),
     });
     expect(first.status).toBe(200);
     expect(first.body).toMatchObject({
@@ -322,14 +322,17 @@ describe('fake gateway: the /v3/terminal/relay contract', () => {
     const gateway = await gatewayWith();
     const payload = ticketPayload();
     await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`, {
-      body: claimed(mintTicket(aliasKey, payload), CLAIM_TOKEN, { reason: 'reiniciar el adaptador colgado' }),
+      body: claimed(mintTicket(aliasKey, payload), CLAIM_TOKEN),
     });
     const closed = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/close`, {
       body: identified({ reason: 'operator_closed', exit_code: 0, claim_token: CLAIM_TOKEN, claim_epoch: '1' }),
     });
     expect(closed.status).toBe(200);
 
-    expect(gateway.auditOf('terminal.session.request')[0]).toMatchObject({ decision: 'allow', reason: 'reiniciar el adaptador colgado' });
+    expect(gateway.auditOf('terminal.session.request')[0]).toMatchObject({
+      decision: 'allow', tenant_id: TENANT, alias: ALIAS, mode: 'shell',
+    });
+    expect(gateway.auditOf('terminal.session.request')[0]).not.toHaveProperty('reason');
     expect(gateway.auditOf('terminal.session.consume')[0]).toMatchObject({
       alias: ALIAS, container_id: CONTAINER, image_id: IMAGE, generation: GENERATION,
     });

@@ -104,13 +104,13 @@ export function configBase(): TerminalConfig {
   };
 }
 
-export function validSessionBody(overrides: Partial<SessionRequestBody> = {}): SessionRequestBody {
+type ValidSessionBody = Omit<SessionRequestBody, 'initiator'> & { initiator?: SessionRequestBody['initiator'] };
+
+export function validSessionBody(overrides: Partial<SessionRequestBody> = {}): ValidSessionBody {
   return {
     tenant_id: 'Steven',
     alias: 'jarvis',
     mode: 'shell',
-    initiator: 'operator',
-    reason: 'revisar el harness colgado',
     cols: 120,
     rows: 40,
     request_id: REQUEST_ID_OK,
@@ -146,7 +146,6 @@ export function validControlRequest(overrides: Partial<ControlRequestBody> = {})
   return {
     authority_proof: UNIT_PROOF,
     action: 'take',
-    reason: 'tomar la TUI para desatascar el turno',
     request_id: REQUEST_ID_OK,
     owner_generation: '1',
     owner_token: OWNER_TOKEN_OK,
@@ -354,7 +353,7 @@ export function makeRow(overrides: Partial<TerminalSessionRow> & { occupies_slot
     runtime_user: 'claw',
     mode: 'shell',
     ticket_sha256: Buffer.alloc(32),
-    reason: 'revisar el harness colgado',
+    reason: '',
     cols: 120,
     rows: 40,
     trace_id: null,

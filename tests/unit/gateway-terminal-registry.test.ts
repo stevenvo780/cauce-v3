@@ -201,11 +201,12 @@ describe('AgentRegistry.observe / accepts / resolve / state / snapshot', () => {
     expect(() => { registry.observe(RELAY_REBOOT, [presencia()], now + 1); }).toThrow(RelayBootConflictError);
   });
 
-  it('resolve devuelve "unknown" antes del primer observe y "not_installed" para alias ausente', () => {
+  it('resolve devuelve "unknown" para alias nunca observado incluso tras observar otros alias', () => {
     const registry = new AgentRegistry();
     expect(registry.resolve('Steven', 'zeus')).toEqual({ status: 'unknown' });
     registry.observe(RELAY, [presencia()], Date.now());
-    expect(registry.resolve('Steven', 'kant')).toEqual({ status: 'not_installed' });
+    expect(registry.resolve('Steven', 'kant')).toEqual({ status: 'unknown' });
+    expect(registry.state('Steven', 'kant')).toBe('unknown');
   });
 
   it('resolve devuelve "online" cuando un solo relay fresco reporta el alias', () => {

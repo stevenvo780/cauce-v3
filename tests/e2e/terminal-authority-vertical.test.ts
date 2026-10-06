@@ -60,7 +60,7 @@ describe('human authority across HTTPS, PostgreSQL, relay and Python PTY', () =>
       method: 'POST',
       headers: { cookie: human.cookie, 'x-csrf-token': human.csrf, origin: active.gatewayUrl },
       body: {
-        tenant_id: active.tenant, alias: active.targetAlias, mode: 'shell', reason: 'local terminal authority continuity QA',
+        tenant_id: active.tenant, alias: active.targetAlias, mode: 'shell',
         cols: 100, rows: 30, request_id: requestId, owner_token: ownerToken,
       },
     });

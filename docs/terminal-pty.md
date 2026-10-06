@@ -230,7 +230,8 @@ ssh <host> "echo '<b64>' | base64 -d | bash -l"
 El alta del agente escribe su identidad en `pty_agent_identities.json` con el
 rename atómico de §1.4. No reinicia el gateway ni toca el bus. Al terminar, el
 relay tiene que ver al agente conectado y la consola tiene que mostrar el alias
-en "PTY online" con el resto en "agente PTY no instalado".
+en "PTY online" con los destinos sin presencia observada en "Conexión sin comprobar". Ese estado no
+confirma si el paquete está instalado.
 
 ### Paso 3 — el ÚNICO reinicio del gateway
 
@@ -307,14 +308,14 @@ JSON y repetir el rename antes de seguir. El `grep 'terminal grants'` del log s�
 **después** de una lectura real (§1.4), así que va al final de la verificación de abajo, no acá.
 
 Verificación de extremo a extremo, en la consola publicada (`https://<dominio-consola>`): la barra
-de flota muestra el estado de PTY de cada alias, el alias con grant habilitado, el diálogo exige
-motivo de 8 caracteres o más y nombra a los agentes que comparten el contenedor destino (el mapa de
+de flota muestra el estado de PTY de cada alias, el alias con grant habilitado y el diálogo nombra
+a los agentes que comparten el contenedor destino (el mapa de
 contenedor↔alias vive en `ops/container-aliases.json`). Dentro de la
 shell, `id -un` devuelve el usuario del contenedor —nunca root— y `hostname` devuelve el contenedor
 esperado. En `/audit` tienen que
 aparecer `terminal.session.request` (allow), `terminal.session.consume` y
 `terminal.session.close` con alias, contenedor, digest de imagen, generación y
-el motivo escrito a mano. Cargada esa barra, el gateway ya leyó `grants.json`: ahí
+la identidad de la persona que opera. Cargada esa barra, el gateway ya leyó `grants.json`: ahí
 `docker logs --since 2m cauce-v3-prod-gateway-1 | grep 'terminal grants'` sin salida confirma que
 la lista se aplicó, y con salida delata la errata que dejó a TODOS los alias sin puerta.
 
@@ -466,8 +467,25 @@ más lo rechaza— y lleva siempre la valla de dueño del navegador
 | Campo | Toma | Devolución |
 |---|---|---|
 | `action` | `"take"` | `"release"` |
-| `reason` | **obligatorio**, 8..280 caracteres, escrito a mano | opcional; sin él la auditoría lleva `operator_released` |
+| `authority_proof` | obligatoria | obligatoria |
+| `allow_busy` | opcional, sólo `"take"` | no se admite |
 | `request_id` · `owner_generation` · `owner_token` | obligatorios | obligatorios |
+
+La toma y la apertura no piden justificación de texto. El cuerpo de `POST /sessions` contiene
+`tenant_id`, `alias`, `mode`, `cols`, `rows`, `request_id` y `owner_token`; `initiator` es opcional.
+El cuerpo de `/control` contiene `action`, `authority_proof`, `request_id`, `owner_generation` y
+`owner_token`, más `allow_busy` opcional sólo al tomar. La identidad de la persona y los `reason`
+que el gateway devuelve al explicar un rechazo siguen formando parte de la atribución y los errores.
+
+Las columnas históricas `terminal_sessions.reason` y `terminal_control_holds.reason` conservan
+sus restricciones y registros anteriores; las nuevas inserciones escriben `''` internamente.
+No hay migración ni lectura de esa columna para pedir, validar o auditar una justificación humana.
+Los clientes que aún envían `reason` deben actualizarse junto al gateway: el contrato lo rechaza
+como campo inesperado.
+
+Una reserva anterior conserva su proof para consumir, retomar y prorrogar la sesión. Un nuevo
+intento con el mismo identificador y el hash antiguo recibe `request_conflict`; no se sustituye
+la identidad, el propietario ni la semántica de una reserva existente.
 
 La toma vuelve a correr las compuertas 1, 2, 3 y 5 —el `grants.json` se relee del disco sobre toda
 la cohorte, otra vez—, exige que la sesión sea `harness_rw` (`no_recognized_mode`, 409) y devuelve
