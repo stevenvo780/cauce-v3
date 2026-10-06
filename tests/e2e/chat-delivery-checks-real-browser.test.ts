@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ackCanonicalConsumption } from './chat-native-consumption.fixtures.js';
+import { browserDeliveryFailure } from './browser-delivery-diagnostics.js';
 import {
   functionalTenants, newTrustedPage, startBoundedAdapter, startConsoleFunctionalFixture,
   type FunctionalTenant,
@@ -135,7 +136,15 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
       await bubble.waitFor({ state: 'visible', timeout: 20_000 });
       const entry = bubble.locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
       await entry.locator('.chat-delivery-check[aria-label="Entrega: Recibido por el agente · ejecución terminada"]')
-        .waitFor({ state: 'visible', timeout: 35_000 });
+        .waitFor({ state: 'visible', timeout: 35_000 }).catch(async (cause: unknown) => {
+          throw await browserDeliveryFailure(cause, {
+            pool: activeFixture.database.pool, tenant, instanceId: `ui-e2e-${tenant.tenant.toLowerCase()}`,
+            selector: { kind: 'text', value: nonce },
+            stdout: activeFixture.prompts[`${tenant.tenant}:stdout`] ?? '',
+            stderr: activeFixture.prompts[`${tenant.tenant}:stderr`] ?? '',
+            child: activeFixture.adapters[index],
+          });
+        });
       const reply = page.locator('.transcript-entry.output[data-reply-to] .canonical-reply');
       await reply.getByText(new RegExp(`respuesta sintética ${tenant.tenant}`)).waitFor({ state: 'visible', timeout: 20_000 });
       expect(await page.getByText(/ACK llega por polling|Respuesta provisional|Sin respuesta canónica/i).count()).toBe(0);
