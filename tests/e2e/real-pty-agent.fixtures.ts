@@ -20,6 +20,7 @@ import { relayInstanceIdFromCertificate } from '../../services/terminal-relay/sr
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 import { startTrustedBrowser, type BrowserContext, type BrowserPage, type TrustedBrowser } from './console-functional-browser.fixtures.js';
 import { reserveNamedLoopbackPorts, type NamedLoopbackPortReservations } from './port-reservation.js';
+import { cleanupLabelsForFailure, createCleanupAggregate, type CleanupStep } from './fixture-cleanup-error.js';
 
 const execute = promisify(execFile);
 const APPROVED_NODE_IMAGE = 'node@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436';
@@ -328,10 +329,14 @@ export async function startRealPtyFixture(options: RealPtyFixtureOptions = {}): 
   let ports: RealPtyFixture['relayPorts'] | undefined;
   let portReservations: NamedLoopbackPortReservations<'browser' | 'agent' | 'health' | 'gateway' | 'frontend'> | undefined;
   const cleanupErrors: Error[] = [];
-  const record = (label: string, error: unknown) => { cleanupErrors.push(new Error(`${label} cleanup failed`, { cause: error })); };
+  const cleanupLabels: CleanupStep[] = [];
+  const record = (label: CleanupStep, error: unknown) => {
+    cleanupLabels.push(...cleanupLabelsForFailure(label, error));
+    cleanupErrors.push(new Error(`${label} cleanup failed`, { cause: error }));
+  };
   const cleanup = async () => {
-    for (const [index, context] of browserContexts.entries()) {
-      try { await context.close(); } catch (error) { record(`browser context ${String(index)}`, error); }
+    for (const context of browserContexts) {
+      try { await context.close(); } catch (error) { record('browser context', error); }
     }
     if (trustedBrowser) {
       try { await trustedBrowser.close(); } catch (error) { record('owned browser runtime', error); }
@@ -373,7 +378,7 @@ export async function startRealPtyFixture(options: RealPtyFixtureOptions = {}): 
     if (directory) {
       try { await rm(directory, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 }); } catch (error) { record('private TLS directory', error); }
     }
-    if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'real PTY fixture cleanup incomplete');
+    if (cleanupErrors.length > 0) throw createCleanupAggregate(cleanupErrors, cleanupLabels);
   };
 
   try {
@@ -686,10 +691,16 @@ WORKDIR /home/node
         const errors: Error[] = [];
         if (agent?.exitCode === null && agent.signalCode === null) {
           agent.kill('SIGTERM');
-          if (!await waitForExit(agent, 2_000)) { agent.kill('SIGKILL'); if (!await waitForExit(agent, 2_000)) errors.push(new Error('agent docker exec process did not exit')); }
+          if (!await waitForExit(agent, 2_000)) {
+            agent.kill('SIGKILL');
+            if (!await waitForExit(agent, 2_000)) {
+              errors.push(new Error('agent docker exec process did not exit'));
+              cleanupLabels.push('agent exec process');
+            }
+          }
         }
         try { await cleanup(); } catch (error) { errors.push(error instanceof Error ? error : new Error(String(error))); }
-        if (errors.length) throw new AggregateError(errors, 'real PTY fixture cleanup incomplete');
+        if (errors.length) throw createCleanupAggregate(errors, cleanupLabels);
       },
     };
   } catch (error) {
