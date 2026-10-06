@@ -1,6 +1,6 @@
 import { humanHarnessSelector } from "./engine/delivery-context.js";
 import type { EgressReceiptSource } from "./notify-history.js";
-import { AliasSchema, HUMAN_MESSAGE_INITIATOR_CAPABILITY, PROTOCOL_VERSION } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
+import { AliasSchema, PROTOCOL_VERSION } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import {
   resumenDeLaSiembra, sembrarPerfilDelArnes, type ResultadoDeLaSiembra,
 } from '../context/siembra-del-perfil.js';
@@ -23,7 +23,6 @@ import { AdapterError } from './errors.js';
 import type { EmissionRuntime } from './mcp-emission/runtime.js';
 import type { HarnessAdapter } from '../contracts/harness.js';
 import type {
-  AdapterCapabilities,
   AdapterConfig,
   AdapterLogger,
   ClientFrame,
@@ -64,10 +63,6 @@ function validateIdentity(config: AdapterConfig): void {
     throw new Error('A durable state directory is required; ephemeral consumers are forbidden');
   }
 }
-type CapabilityEncoder = (capabilities: AdapterCapabilities) => readonly string[];
-function matchesCapability(value: unknown, expected: string | boolean): boolean {
-  return value === expected;
-}
 interface ExecutionIntentWaiter {
   readonly delivery_id: string;
   readonly attempt: number;
@@ -86,22 +81,8 @@ interface ConnectionGeneration {
   readonly abortController: AbortController;
   failure?: AdapterError;
 }
-const CAPABILITY_ENCODERS = {
-  mcp_emit: (value) => matchesCapability(value.mcp_emit, true) ? ['mcp_emit'] : [],
-  harness: (value) => [`harness.${value.harness}`],
-  heartbeat: (value) => matchesCapability(value.heartbeat, true) ? ['heartbeat'] : [],
-  routing_targets_v1: (value) => matchesCapability(value.routing_targets_v1, true) ? ['routing_targets_v1'] : [],
-  renewable_delivery_claims_v1: (value) => matchesCapability(value.renewable_delivery_claims_v1, true) ? ['renewable_delivery_claims_v1'] : [],
-  delegation_feedback_v1: (value) => matchesCapability(value.delegation_feedback_v1, true) ? ['delegation_feedback_v1'] : [],
-  agent_identity_v1: (value) => matchesCapability(value.agent_identity_v1, true) ? ['agent_identity_v1'] : [],
-  agent_profile_v1: (value) => matchesCapability(value.agent_profile_v1, true) ? ['agent_profile_v1'] : [],
-  agent_profile_adoption_v1: (value) => matchesCapability(value.agent_profile_adoption_v1, true) ? ['agent_profile_adoption_v1'] : [],
-  conversation_work_v1: (value) => matchesCapability(value.conversation_work_v1, true) ? ['conversation_work_v1'] : [],
-} satisfies Partial<Record<keyof AdapterCapabilities, CapabilityEncoder>>;
-
-export function helloCapabilityStrings(capabilities: AdapterCapabilities, humanIsolation = false): string[] {
-  return [...(humanIsolation ? [HUMAN_MESSAGE_INITIATOR_CAPABILITY] : []), 'console_human_scope_v1', ...Object.values(CAPABILITY_ENCODERS).flatMap((encode) => encode(capabilities))];
-}
+import { helloCapabilityStrings } from './capabilities.js';
+export { helloCapabilityStrings };
 export class AdapterClient {
   private readonly config: AdapterConfig;
   private readonly connector: ConsumerConnector;

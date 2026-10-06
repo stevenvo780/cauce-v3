@@ -12,6 +12,7 @@ import type { MaterializedSecret } from "../secrets.js";
 import type { SessionOrigin } from "../durable-store.js";
 import { DurableStore, sanitizeSessionOrigin } from "../durable-store.js";
 import { AdapterError } from "../errors.js";
+import { clientIdentitySidecarFields, type ClientIdentityExecuteFields } from './client-identity.js';
 import type { Delivery } from "../types.js";
 import type { HarnessTimeoutKind } from "../message-timeout.js";
 
@@ -292,6 +293,7 @@ export interface DeliveryHarnessInvocation {
   readonly session: HarnessSessionRequestScope;
   readonly reservation?: HarnessSessionReservation;
   readonly humanInitiator?: NonNullable<HarnessRequestContext["human_initiator"]>;
+  readonly clientIdentity?: ClientIdentityExecuteFields;
   readonly selectionError?: unknown;
 }
 
@@ -300,6 +302,7 @@ export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAd
   ownTenantId: string | undefined): DeliveryHarnessInvocation {
   try {
     const humanInitiator = humanInitiatorFromDelivery(delivery);
+    const clientIdentity = clientIdentitySidecarFields(delivery, humanInitiator, ownTenantId);
     const consoleHuman = authenticatedConsoleDelivery(delivery);
     const isolatedHuman = humanInitiator !== undefined || consoleHuman;
     if (isolatedHuman && selector === undefined) {
@@ -316,7 +319,7 @@ export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAd
       ? { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane }
       : { ...sessionFromDelivery(delivery, ownTenantId), sessionLane: lane };
     const reservation = fanin ? undefined : selected.reserveSession(session.sessionKey, lane);
-    return { harness: selected, session, ...(reservation === undefined ? {} : { reservation }),
+    return { harness: selected, session, clientIdentity, ...(reservation === undefined ? {} : { reservation }),
       ...(humanInitiator === undefined ? {} : { humanInitiator }) };
   } catch (selectionError) {
     return { harness, session: {}, selectionError };
