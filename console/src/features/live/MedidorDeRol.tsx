@@ -1,3 +1,5 @@
+import { cn } from '../../cn';
+import { Notice } from '../../components/form-kit';
 import { ROLE_BRIEF_MAX, bloqueoPorRuntimeDesplegado } from './role-brief';
 
 /**
@@ -12,16 +14,16 @@ export function MedidorDeRol({ texto }: { texto: string }) {
   const bloqueo = bloqueoPorRuntimeDesplegado(texto);
   return (
     <>
-      <span className={`perfil-tramo${pasado ? ' perfil-tramo-fuera' : ''}`}>
+      <span className={cn('text-xs font-normal', pasado ? 'font-medium text-danger-ink' : 'text-muted')}>
         Le llega al agente: {puntos} puntos de código · {utf16} unidades UTF-16 / {ROLE_BRIEF_MAX}
       </span>
       {bloqueo ? (
-        <p className="perfil-aviso perfil-aviso-error" role="alert">{bloqueo}</p>
+        <Notice tone="danger" role="alert">{bloqueo}</Notice>
       ) : pasado ? (
-        <p className="perfil-aviso perfil-aviso-error" role="alert">
+        <Notice tone="danger" role="alert">
           Pasado de {ROLE_BRIEF_MAX}: la proyección a role_brief y el self_role de cada entrega
           recortan ahí, así que lo que sigue se guarda y el agente no lo lee.
-        </p>
+        </Notice>
       ) : null}
     </>
   );

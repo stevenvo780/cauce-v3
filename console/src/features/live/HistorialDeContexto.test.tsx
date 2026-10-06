@@ -1,18 +1,15 @@
 import { screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, expect, it } from 'vitest';
-import { mockActivity } from '../../mocks/data';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
-import { LiveFleetPage } from './LiveFleetPage';
+import { abrirContexto } from './context-test-utils';
 import { RUTA_PERFIL, ackAplicado, perfilAplicado } from './perfil-fixtures';
 
 /**
- * THE CONTEXT JOURNAL AND ITS RESTORE, tested from the live page.
+ * THE CONTEXT JOURNAL AND ITS RESTORE, tested from the context page.
  *
  * Where it lives is half the task: a loose component test would go green with the panel detached
- * from the drawer, which is how a screen ends up existing with no way to reach it. And the
+ * from the page, which is how a screen ends up existing with no way to reach it. And the
  * restore is only worth anything if it ends in the canonical PUT —CAS, governed batch, ACK and a
  * hand-typed reason—, so it is followed to the end instead of stopping at the draft.
  */
@@ -97,22 +94,12 @@ function conDiario(entradas: RevisionCruda[]) {
 }
 
 async function abrirHistorialDeKant() {
-  const user = userEvent.setup();
-  renderWithApi(<LiveFleetPage />);
-  await screen.findByLabelText('Veredicto de la flota');
-  await user.click(await screen.findByText(/^Agentes ·/u));
-  await user.click(await screen.findByRole('row', { name: /kant/i }));
-  const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
-  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
-  await user.click(await within(cajon).findByRole('button', { name: /abrir directiva completa/i }));
-  const dialogo = await screen.findByRole('dialog', { name: /directiva de kant/i });
-  await user.click(within(dialogo).getByText('Historial y diff del contexto'));
-  return { user, cajon, dialogo };
+  const { user, cajon } = await abrirContexto('historial');
+  return { user, cajon, dialogo: cajon };
 }
 
 beforeEach(() => {
-  window.history.replaceState({}, '', '/live');
-  server.use(http.get('*/v3/console/activity', () => HttpResponse.json(mockActivity())));
+  window.history.replaceState({}, '', '/messages/Steven/kant?view=context');
   conDiario([REVISION_NUEVA, REVISION_VIEJA]);
   server.use(http.get(RUTA_REVISIONES_FICHERO, ({ params }) => HttpResponse.json({
     observed_at: new Date().toISOString(),
@@ -192,7 +179,7 @@ it('restaurar carga los SIETE campos en el borrador canónico y no escribe por n
   await user.click((await within(dialogo).findAllByRole('button', { name: /restaurar esta revisión/i }))[0]);
 
   expect(screen.queryByRole('dialog', { name: /directiva de kant/i })).not.toBeInTheDocument();
-  expect(within(cajon).getByRole('tab', { name: 'Contexto' })).toHaveAttribute('aria-selected', 'true');
+  expect(within(cajon).getByRole('tab', { name: /^Perfil/ })).toHaveAttribute('aria-selected', 'true');
   expect(await within(cajon).findByLabelText(/^Identidad y propósito/i))
     .toHaveValue('Coordinar la flota.');
   expect(within(cajon).getByLabelText(/^Rol declarado/i)).toHaveValue('PMO de la flota.');
@@ -268,13 +255,13 @@ it('un diario largo se pagina pidiendo una ventana más ancha del mismo diario',
   }));
 
   const { user, dialogo } = await abrirHistorialDeKant();
-  await waitFor(() => { expect(dialogo.querySelectorAll('.historial-entrada')).toHaveLength(20); });
+  await waitFor(() => { expect(dialogo.querySelectorAll('li[data-clase]')).toHaveLength(20); });
   expect(within(dialogo).getByText(/· revisión 25$/)).toBeInTheDocument();
   expect(within(dialogo).queryByText(/· revisión 5$/)).not.toBeInTheDocument();
 
   await user.click(within(dialogo).getByRole('button', { name: /ver más/i }));
 
-  await waitFor(() => { expect(dialogo.querySelectorAll('.historial-entrada')).toHaveLength(25); });
+  await waitFor(() => { expect(dialogo.querySelectorAll('li[data-clase]')).toHaveLength(25); });
   expect(within(dialogo).getByText(/· revisión 5$/)).toBeInTheDocument();
   expect(limites).toEqual([20, 40]);
   // A short page proves there is no more: the button stops offering a trip to nowhere.
@@ -351,13 +338,13 @@ it('un «Ver más» que falla se ve roto: la lista sigue, el fallo se dice y se 
   }));
 
   const { user, dialogo } = await abrirHistorialDeKant();
-  await waitFor(() => { expect(dialogo.querySelectorAll('.historial-entrada')).toHaveLength(20); });
+  await waitFor(() => { expect(dialogo.querySelectorAll('li[data-clase]')).toHaveLength(20); });
   await user.click(within(dialogo).getByRole('button', { name: /ver más/i }));
 
   expect(await within(dialogo).findByText(/no se pudo leer el resto del diario del perfil/i))
     .toHaveTextContent('la base no responde');
   // The twenty already measured stay on screen, and the failure is not dressed up as the end.
-  expect(dialogo.querySelectorAll('.historial-entrada')).toHaveLength(20);
+  expect(dialogo.querySelectorAll('li[data-clase]')).toHaveLength(20);
   expect(within(dialogo).getByRole('button', { name: /reintentar/i })).toBeInTheDocument();
 }, 30_000);
 
@@ -380,7 +367,7 @@ it('la escalera de la ventana para en el tope de la ruta y dice que lo viejo que
   for (let esperado = 40; esperado <= 200; esperado += 20) {
     await user.click(within(dialogo).getByRole('button', { name: /ver más/i }));
     await waitFor(() => {
-      expect(dialogo.querySelectorAll('.historial-entrada')).toHaveLength(esperado);
+      expect(dialogo.querySelectorAll('li[data-clase]')).toHaveLength(esperado);
     });
   }
 
@@ -410,10 +397,12 @@ it('un gateway que no publica el inventario lo dice con las palabras del cliente
     { error: 'not_implemented', message: 'sin inventario' }, { status: 501 },
   )));
 
-  const { dialogo } = await abrirHistorialDeKant();
+  await abrirHistorialDeKant();
+  // The hidden Ficheros panel says the same thing: only the visible section counts here.
+  const [visible] = screen.getAllByRole('tabpanel');
 
-  expect(await within(dialogo).findByText(/no publica GET/i)).toBeInTheDocument();
-  expect(within(dialogo).queryByText(/no se pudo leer el inventario/i)).not.toBeInTheDocument();
+  expect(await within(visible).findByText(/no publica GET/i)).toBeInTheDocument();
+  expect(within(visible).queryByText(/no se pudo leer el inventario/i)).not.toBeInTheDocument();
 }, 25_000);
 
 it('restaurar un borrado del perfil no se ofrece con las mismas palabras que volver atrás', async () => {
@@ -439,8 +428,6 @@ it('restaurar un borrado del perfil no se ofrece con las mismas palabras que vol
   // The other row keeps the plain wording AND the plain skin: the difference is the point.
   const volverAtras = within(dialogo).getByRole('button', { name: /^restaurar esta revisión$/i });
   expect(volverAtras).toBeInTheDocument();
-  expect(borrado.className).toContain('historial-restaurar-vacia');
-  expect(volverAtras.className).not.toContain('historial-restaurar-vacia');
-  expect(volverAtras.className).toContain('secondary');
-  expect(borrado.className).not.toContain('secondary');
+  expect(borrado).toHaveAttribute('data-destructive', 'true');
+  expect(volverAtras).not.toHaveAttribute('data-destructive');
 }, 25_000);

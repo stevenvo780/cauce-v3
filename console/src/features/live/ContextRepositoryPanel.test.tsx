@@ -32,7 +32,6 @@ function result() {
 async function open() {
   const user = userEvent.setup();
   renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
-  await user.click(screen.getByText('Versiones Git del contexto'));
   await screen.findByLabelText('Commit completo');
   return user;
 }
@@ -41,16 +40,14 @@ beforeEach(() => {
   server.use(http.get(BASE, () => HttpResponse.json(CAPABILITY)));
 });
 
-it('loads only when opened and remains read-only', async () => {
+it('reads the binding on mount and remains read-only', async () => {
   const read = vi.fn(() => HttpResponse.json(CAPABILITY));
   const calls: string[] = [];
   server.use(http.get(BASE, read), http.get(`${BASE}/inspect`, ({ request }) => {
     calls.push(request.method); return HttpResponse.json(result());
   }));
   renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
-  expect(read).not.toHaveBeenCalled();
   const user = userEvent.setup();
-  await user.click(screen.getByText('Versiones Git del contexto'));
   await screen.findByLabelText('Commit completo');
   expect(screen.getByRole('button', { name: 'Inspeccionar versión' })).toBeDisabled();
   await user.type(screen.getByLabelText('Commit completo'), COMMIT);
@@ -86,7 +83,6 @@ it.each([
     ? HttpResponse.json({ error: 'unavailable' }, { status: 501 })
     : HttpResponse.json({ ...CAPABILITY, state, instance_id: null })));
   renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
-  await userEvent.click(screen.getByText('Versiones Git del contexto'));
   expect(await screen.findByText(message)).toBeInTheDocument();
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
 });
@@ -94,7 +90,6 @@ it.each([
 it('keeps inaccessible agents distinct from unpublished routes and can retry', async () => {
   server.use(http.get(BASE, () => HttpResponse.json({ error: 'not_found' }, { status: 404 })));
   renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
-  await userEvent.click(screen.getByText('Versiones Git del contexto'));
   expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo consultar');
   expect(screen.queryByText('Este gateway todavía no publica la inspección Git.')).not.toBeInTheDocument();
   server.use(http.get(BASE, () => HttpResponse.json(CAPABILITY)));
@@ -117,19 +112,19 @@ it('invalidates an in-flight result when the requested commit changes', async ()
   expect(screen.getByLabelText('Commit completo')).toHaveValue(PREVIOUS);
 });
 
-it('closing and reopening discards an in-flight result and stale input', async () => {
+it('unmounting and mounting again discards an in-flight result and stale input', async () => {
   let release: (() => void) | undefined;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   let started = false;
   server.use(http.get(`${BASE}/inspect`, async () => { started = true; await gate; return HttpResponse.json(result()); }));
-  const user = await open();
-  await user.type(screen.getByLabelText('Commit completo'), COMMIT);
+  const user = userEvent.setup();
+  const view = renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
+  await user.type(await screen.findByLabelText('Commit completo'), COMMIT);
   await user.click(screen.getByRole('button', { name: 'Inspeccionar versión' }));
   await waitFor(() => { expect(started).toBe(true); });
-  await user.click(screen.getByText('Versiones Git del contexto'));
-  await waitFor(() => { expect(screen.queryByLabelText('Commit completo')).not.toBeInTheDocument(); });
+  view.unmount();
   await act(async () => { release?.(); await gate; });
-  await user.click(screen.getByText('Versiones Git del contexto'));
+  renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
   expect(await screen.findByLabelText('Commit completo')).toHaveValue('');
   expect(screen.queryByText('Review context')).not.toBeInTheDocument();
 });
@@ -141,7 +136,6 @@ it('switching agents cannot display the former agent response', async () => {
     http.get(BASE.replace('/helper/', '/other/'), () => HttpResponse.json({ ...CAPABILITY, alias: 'other' })));
   const api = new CauceApi('http://localhost');
   const view = renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
-  await userEvent.click(screen.getByText('Versiones Git del contexto'));
   fireEvent.change(await screen.findByLabelText('Commit completo'), { target: { value: COMMIT } });
   await userEvent.click(screen.getByRole('button', { name: 'Inspeccionar versión' }));
   view.rerender(<ApiProvider api={api}><ContextRepositoryPanel tenantId="Steven" alias="other" /></ApiProvider>);
@@ -198,7 +192,6 @@ it.each([
   }));
   const user = userEvent.setup();
   renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
-  await user.click(screen.getByText('Versiones Git del contexto'));
   expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo consultar la vinculación Git');
   expect(screen.queryByText('Este gateway todavía no publica la inspección Git.')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Reintentar' }));
@@ -208,18 +201,14 @@ it.each([
 
 it('preserves a non-JSON transport 404 as a retryable failure', async () => {
   server.use(http.get(BASE, () => new HttpResponse('upstream resource missing', { status: 404 })));
-  const user = userEvent.setup();
   renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
-  await user.click(screen.getByText('Versiones Git del contexto'));
   expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo consultar');
   expect(screen.getByRole('button', { name: 'Reintentar' })).toBeEnabled();
 });
 
 it('recognizes explicit HTTP 501 without disguising a failure to find the agent', async () => {
   server.use(http.get(BASE, () => HttpResponse.json({ error: 'unavailable' }, { status: 501 })));
-  const user = userEvent.setup();
   renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
-  await user.click(screen.getByText('Versiones Git del contexto'));
   expect(await screen.findByText('Este gateway todavía no publica la inspección Git.')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Reintentar' })).toBeNull();
 });
@@ -233,7 +222,6 @@ it.each(['journal_match', 'git_authored', 'journal_mismatch', 'journal_unavailab
       http.post(`${BASE}/preview`, () => { previews += 1; return HttpResponse.json({}); }),
       http.put(BASE.replace('/context/repository', '/perfil'), () => { writes += 1; return HttpResponse.json({}); }));
     const user = userEvent.setup(); renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" canApply />);
-    await user.click(screen.getByText('Versiones Git del contexto'));
     fireEvent.change(await screen.findByLabelText('Commit completo'), { target: { value: COMMIT } });
     await user.click(screen.getByRole('button', { name: 'Inspeccionar versión' }));
     await screen.findByText('Review context');

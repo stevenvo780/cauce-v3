@@ -1,15 +1,13 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { mockActivity } from '../../mocks/data';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
-import { LiveFleetPage } from './LiveFleetPage';
+import { abrirContexto as abrirPagina } from './context-test-utils';
 import { MENSAJES_DE_APLICACION } from './perfil';
 
 /**
- * The file editor is tested FROM the live page, because half the task is WHERE it lives: a loose
- * component test passes just as well with the tab detached from the drawer, which is the state all
+ * The file editor is tested FROM the context page, because half the task is WHERE it lives: a loose
+ * component test passes just as well with the section detached from the page, which is the state all
  * this comes from — `agent-documents.ts` lived a day with its HTTP surface at zero.
  */
 
@@ -66,34 +64,19 @@ const IDENTIDAD_DE_PERFIL = {
   format: 'markdown',
   readable: true,
   editable: false,
-  reason: 'Es parte de los campos canónicos: se cambia desde Contexto y se aplica como un lote.',
+  reason: 'Es parte de los campos canónicos: se cambia desde Perfil y se aplica como un lote.',
 };
 
 beforeEach(() => {
   window.history.replaceState({}, '', '/live');
-  server.use(http.get('http://localhost/v3/console/activity', () => HttpResponse.json(mockActivity())));
 });
 
 async function abrirFicheros() {
-  const user = userEvent.setup();
-  renderWithApi(<LiveFleetPage />);
-  await screen.findByLabelText('Veredicto de la flota');
-  await user.click(await screen.findByText(/^Agentes ·/u));
-  await user.click(await screen.findByRole('row', { name: /kant/i }));
-  const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
-  await user.click(within(cajon).getByRole('tab', { name: 'Ficheros' }));
-  return { user, cajon };
+  return abrirPagina('ficheros');
 }
 
 async function abrirContexto() {
-  const user = userEvent.setup();
-  renderWithApi(<LiveFleetPage />);
-  await screen.findByLabelText('Veredicto de la flota');
-  await user.click(await screen.findByText(/^Agentes ·/u));
-  await user.click(await screen.findByRole('row', { name: /kant/i }));
-  const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
-  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
-  return { user, cajon };
+  return abrirPagina('ficheros');
 }
 
 async function motivar(
@@ -104,7 +87,7 @@ async function motivar(
   await user.type(within(cajon).getByLabelText(/Motivo del guardado/i), texto);
 }
 
-it('la pestaña existe en el cajón y enseña el mapa de ficheros del alias', async () => {
+it('la sección existe en la página y enseña el mapa de ficheros del alias', async () => {
   mapaDeKant([CLAUDE_MD, MCP_CERRADO]);
   const { cajon } = await abrirFicheros();
 
@@ -138,8 +121,7 @@ it('lo no servido dice por qué y no finge ser desplegable ni hace GET', async (
   expect(within(fila as HTMLElement).getByText(/junto al OAuth de la cuenta/)).toBeInTheDocument();
   expect(within(fila as HTMLElement).getByText('no se sirve')).toBeInTheDocument();
   expect(within(fila as HTMLElement).queryByRole('button')).not.toBeInTheDocument();
-  expect(within(fila as HTMLElement).getByText('Servidores MCP').closest('.ficheros-cabecera'))
-    .not.toHaveAttribute('aria-expanded');
+  expect(within(fila as HTMLElement).getByText('Servidores MCP').closest('[aria-expanded]')).toBeNull();
 
   const directorio = within(cajon).getByText('Subagentes (~/.claude/agents)').closest('li');
   expect(directorio).not.toBeNull();
@@ -400,7 +382,7 @@ it('un conflicto con el bloque canónico conserva el borrador y dirige a sus cam
   await motivar(user, cajon);
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
-  expect(await within(cajon).findByText(/bloque canónico se edita en Contexto/i)).toBeInTheDocument();
+  expect(await within(cajon).findByText(/bloque canónico se edita en Perfil/i)).toBeInTheDocument();
   expect(within(cajon).getByText(/manual conserva el borrador/i)).toBeInTheDocument();
   expect(caja).toHaveValue('mi manual');
   expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
@@ -547,7 +529,7 @@ it('la vista declara en castellano lo que todavía no hace', async () => {
   mapaDeKant([CLAUDE_MD]);
   const { cajon } = await abrirFicheros();
 
-  const hueco = await within(cajon).findByLabelText(/Lo que esta vista todavía no hace/i);
+  const hueco = (await within(cajon).findByText(/Lo que esto todavía no hace/i)).closest('details') as HTMLElement;
   expect(within(hueco).getByText(/no se editan desde aquí/i)).toBeInTheDocument();
 });
 
