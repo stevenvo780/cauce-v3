@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
+import { cauceApi } from '../../api/client';
 import { mockMessages } from '../../mocks/data';
 import { TerminalTranscript } from './TerminalTranscript';
 import type { CanonicalReply } from '../messages/use-canonical-reply';
@@ -31,6 +32,26 @@ it.each(['', '   ', ' '.repeat(240)])('no dibuja una burbuja vacía para un prev
   expect(entry?.querySelector('.transcript-truncado')).toBeNull();
 });
 
+it('muestra metadatos de adjuntos entrantes y salientes sin precargar sus bytes', () => {
+  const source = fixture();
+  const getAttachment = vi.spyOn(cauceApi, 'getMessageAttachment');
+  const incoming = { ...source.message, message_id: 'incoming-message', attachments: [
+    { name: 'entrada.png', mime_type: 'image/png', file_size: 40, sha256: 'a'.repeat(64) },
+  ] };
+  const outgoing = { ...source.message, message_id: 'outgoing-message', attachments: [
+    { name: 'salida.mp4', mime_type: 'video/mp4', file_size: 80, sha256: 'b'.repeat(64) },
+  ] };
+  render(<TerminalTranscript items={[
+    { message: incoming, direction: 'input' },
+    { message: outgoing, direction: 'output' },
+  ]} onSelectItem={vi.fn()} />);
+  expect(screen.getByText('entrada.png')).toBeVisible();
+  expect(screen.getByText('salida.mp4')).toBeVisible();
+  expect(screen.getAllByRole('list', { name: 'Archivos del mensaje' })).toHaveLength(2);
+  expect(getAttachment).not.toHaveBeenCalled();
+  getAttachment.mockRestore();
+});
+
 it('separa humano autenticado y respuesta final escapada, sin filas técnicas permanentes', async () => {
   const { message, delivery, canonical } = fixture();
   const select = vi.fn();
@@ -48,6 +69,20 @@ it('separa humano autenticado y respuesta final escapada, sin filas técnicas pe
   await user.click(screen.getByRole('button', { name: 'Opciones del mensaje' }));
   await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
   expect(select).toHaveBeenCalledExactlyOnceWith({ message, delivery, direction: 'input' });
+});
+
+it('representa una respuesta final sólo con archivos sin burbuja vacía ni descarga automática', () => {
+  const { message, delivery, canonical } = fixture();
+  const download = vi.spyOn(cauceApi, 'getMessageReplyAttachment');
+  render(<TerminalTranscript items={[{ message, delivery, direction: 'input' }]} canonicalReply={{ ...canonical, reply: null,
+    replyAttachments: [{ name: 'respuesta.ogg', mime_type: 'audio/ogg', file_size: 20, sha256: 'a'.repeat(64) }],
+    replyAttachmentDeliveryId: 'effective-final', replyAttachmentAttempt: 2,
+  }} onSelectItem={vi.fn()} />);
+  const agent = screen.getByRole('article', { name: `Mensaje de ${canonical.alias}` });
+  expect(within(agent).getByText('respuesta.ogg')).toBeVisible();
+  expect(agent.querySelector('p')).toBeNull();
+  expect(download).not.toHaveBeenCalled();
+  download.mockRestore();
 });
 
 it.each([
