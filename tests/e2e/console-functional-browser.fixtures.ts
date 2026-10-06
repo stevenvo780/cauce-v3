@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process';
 import { randomBytes, randomUUID, X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -15,39 +14,8 @@ import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.j
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 import { observeUiBootstrap } from './ui-bootstrap-diagnostics.js';
 import { isolatedBrowserNetwork, publishBrowserCdp } from './ui-bootstrap-network.js';
+import { browserExec as exec, browserDocker as docker, browserErrorStderr as errorStderr, browserErrorStdout as errorStdout, ownedBrowserLifecycle, browserResourcesRetained, BrowserResourcesRetained } from './browser-owned-lifecycle.js';
 
-interface ExecOptions { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number }
-class SubprocessError extends Error {
-  readonly stderr: string;
-  readonly stdout: string;
-  constructor(command: string, cause: unknown, stdout: string, stderr: string) {
-    super(`subprocess ${command} failed`, { cause });
-    this.stdout = stdout.slice(-64 * 1024);
-    this.stderr = stderr.slice(-8 * 1024);
-  }
-}
-function exec(command: string, args: string[], options: ExecOptions = {}): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const timeoutMs = options.timeout ?? 60_000;
-    const { timeout: _timeout, maxBuffer, ...execOptions } = options;
-    let timedOut = false;
-    let escalation: NodeJS.Timeout | undefined;
-    const child = execFile(command, args, { encoding: 'utf8', maxBuffer: maxBuffer ?? 64 * 1024, ...execOptions }, (error, stdout, stderr) => {
-      clearTimeout(timer);
-      if (escalation) clearTimeout(escalation);
-      if (error || timedOut) reject(new SubprocessError(command, error ?? new Error(`timed out after ${String(timeoutMs)}ms`), stdout, stderr));
-      else resolve({ stdout, stderr });
-    });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-      escalation = setTimeout(() => child.kill('SIGKILL'), 1_000);
-    }, timeoutMs);
-  });
-}
-function docker(args: string[], options: ExecOptions = {}): Promise<{ stdout: string; stderr: string }> {
-  return exec('docker', args, { timeout: 15_000, maxBuffer: 64 * 1024, ...options });
-}
 const require = createRequire(join(process.cwd(), 'console/package.json'));
 export interface Locator { fill(value: string): Promise<void>; type(value: string): Promise<void>; press(key: string): Promise<void>; click(): Promise<void>; count(): Promise<number>; waitFor(options?: { state?: 'visible' | 'hidden'; timeout?: number }): Promise<void>; selectOption(value: string): Promise<void>; filter(options: { hasText: string }): Locator; locator(selector: string): Locator; getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): Locator; getByText(text: string | RegExp, options?: { exact?: boolean }): Locator; innerText(): Promise<string>; boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null> }
 export interface BrowserSocket { url(): string; on(event: 'close', handler: (socket: BrowserSocket) => void): void }
@@ -82,27 +50,6 @@ interface Identity { tenant_id: string; alias: string; session_id: string; chann
 interface Pki { ca: { key: string; cert: string }; server: { key: string; cert: string }; consoleClient: { key: string; cert: string }; adapterCerts: { key: string; cert: string }[]; identityPath: string }
 export interface BrowserRuntime { image: string; imageId: string; owned: boolean; playwrightVersion: string }
 interface Fixture { database: TestDatabase; directory: string; browserRuntime: BrowserRuntime; baseUrl: string; gatewayUrl: string; pki: Pki; app: Awaited<ReturnType<typeof buildGateway>>; vite: ViteServer; browser: ConnectedBrowser; browserContainer: string; contexts: BrowserContext[]; adapters: ChildProcess[]; prompts: Record<string, string>; close(): Promise<void> }
-
-function errorStderr(error: unknown): string {
-  let current = error;
-  while (current !== null && typeof current === 'object') {
-    if ('stderr' in current) {
-      if (typeof current.stderr === 'string') return current.stderr;
-      if (Buffer.isBuffer(current.stderr)) return current.stderr.toString('utf8');
-    }
-    current = 'cause' in current ? current.cause : undefined;
-  }
-  return error instanceof Error ? error.message : String(error);
-}
-
-function errorStdout(error: unknown): string {
-  let current = error;
-  while (current !== null && typeof current === 'object') {
-    if ('stdout' in current && typeof current.stdout === 'string') return current.stdout;
-    current = 'cause' in current ? current.cause : undefined;
-  }
-  return '';
-}
 
 async function inspectImage(image: string): Promise<string | undefined> {
   try { return (await docker(['image', 'inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}}', image])).stdout.trim(); }
@@ -210,21 +157,19 @@ RUN playwright install --with-deps chromium
   }
 }
 
-async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime, ports: readonly number[]): Promise<{ browser: ConnectedBrowser; container: string; containerId: string; closeNetwork(): Promise<void> }> {
-  const { image } = runtime;
-  const container = `cauce-ui-browser-${randomUUID()}`;
+async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime, ports: readonly number[]): Promise<{ browser: ConnectedBrowser; container: string; containerId: string; closeNetwork(): Promise<void>; closeContainer: () => Promise<void> }> {
+  const owner = randomUUID();
+  const container = `cauce-ui-browser-${owner}`;
   const network = await isolatedBrowserNetwork(docker, ports);
+  const lifecycle = ownedBrowserLifecycle(docker, { name: container, owner, imageId: runtime.imageId,
+    networkName: network.name, networkId: network.id, networkOwner: network.owner, directory: network.directory, socketIdentity: network.socketIdentity });
+  const closeNetwork = async () => {
+    if (lifecycle.retained()) { await network.closeTransport(); throw new BrowserResourcesRetained(lifecycle.descriptor); }
+    await network.close();
+  };
   let cdp: Awaited<ReturnType<typeof publishBrowserCdp>> | undefined;
   try {
-    const collision = await docker(['inspect', '--format', '{{.Id}}', container]).then((result) => result.stdout.trim()).catch((error: unknown) => {
-      if (/No such (?:object|container)/iu.test(errorStderr(error))) return '';
-      throw error;
-    });
-    if (collision) throw new Error(`random browser container name collision; refusing to reuse ${container}`);
-    await docker(['run', '--rm', '--detach', '--network', network.name, '--mount', `type=bind,source=${network.directory},target=/qa-browser-transport,readonly`, '--name', container, '--label', 'cauce.e2e.owner=ui-functional', '--entrypoint', 'sh', image, '-lc', 'sleep 600']);
-    const identity = (await docker(['inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}}', container])).stdout.trim().split(/\s+/u);
-    const containerId = identity[0];
-    if (!containerId || identity[1] !== 'ui-functional') throw new Error(`isolated browser container identity/owner validation failed: ${container}`);
+    const containerId = await lifecycle.start();
     const containerCa = `/tmp/${container}-ca.crt`;
     await docker(['cp', caCertPath, `${container}:${containerCa}`]);
     const initializeNss = 'if [ -d "$HOME/.pki/nssdb" ]; then nssdb="$HOME/.pki/nssdb"; else nssdb="${XDG_DATA_HOME:-$HOME/.local/share}/pki/nssdb"; fi; install -d -m 700 "$nssdb" && certutil -N --empty-password -d "sql:$nssdb" && printf "%s\\n" "$nssdb"';
@@ -277,45 +222,20 @@ async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime,
     const websocket = new URL(version.webSocketDebuggerUrl);
     if (websocket.hostname !== '127.0.0.1' || websocket.port !== String(cdp.port)) throw new Error('Published CDP websocket address differs from its private host binding');
     const browser = await chromium.connectOverCDP(endpoint, { timeout: 10_000 });
-    return { browser, container, containerId, closeNetwork: async () => {
+    return { browser, container, containerId, closeContainer: lifecycle.close, closeNetwork: async () => {
       const errors: Error[] = [];
       await attemptCleanup(errors, 'private CDP publication', () => cdp?.close() ?? Promise.resolve());
-      await attemptCleanup(errors, 'owned browser network', () => network.close());
+      await attemptCleanup(errors, 'owned browser network', closeNetwork);
       if (errors.length > 0) throw new AggregateError(errors, 'Browser network cleanup incomplete');
     } };
   } catch (error) {
     const errors: Error[] = [];
-    await attemptCleanup(errors, 'owned browser container', () => removeBrowserContainer(container));
+    await attemptCleanup(errors, 'owned browser container', lifecycle.close);
     await attemptCleanup(errors, 'private CDP publication', () => cdp?.close() ?? Promise.resolve());
-    await attemptCleanup(errors, 'owned browser network', () => network.close());
+    await attemptCleanup(errors, 'owned browser network', closeNetwork);
     if (errors.length > 0) throw new AggregateError([error, ...errors], 'Browser setup failed with incomplete cleanup');
     throw error;
   }
-}
-
-async function inspectBrowserContainer(container: string): Promise<string | undefined> {
-  try { return (await docker(['inspect', '--format', '{{.Id}} {{.State.Status}} {{index .Config.Labels "cauce.e2e.owner"}}', container])).stdout.trim(); }
-  catch (error) {
-    if (/No such (?:object|container)/iu.test(errorStderr(error))) return undefined;
-    throw error;
-  }
-}
-
-async function removeBrowserContainer(container: string, expectedId?: string): Promise<void> {
-  const inspection = await inspectBrowserContainer(container);
-  if (inspection === undefined) return;
-  const [id] = inspection.split(/\s+/u);
-  if (expectedId !== undefined && id !== expectedId) throw new Error(`browser container ${container} changed identity`);
-  if (inspection.split(/\s+/u).at(-1) !== 'ui-functional') throw new Error(`browser container ${container} lacks the expected ownership label`);
-  let removalError: unknown;
-  try { await docker(['rm', '--force', container]); }
-  catch (error) { removalError = error; }
-  let after: string | undefined;
-  try { after = await inspectBrowserContainer(container); }
-  catch (inspectError) {
-    throw new AggregateError(removalError === undefined ? [inspectError] : [removalError, inspectError], `could not confirm owned browser container ${container} was removed`);
-  }
-  if (after !== undefined) throw new Error(`owned browser container ${container} remains after cleanup`, { cause: removalError });
 }
 
 export interface TrustedBrowser {
@@ -338,14 +258,14 @@ export async function startTrustedBrowser(caCertPath: string, directory: string,
       close: async () => {
         const errors: Error[] = [];
         await attemptCleanup(errors, 'CDP browser', () => isolated.browser.close());
-        await attemptCleanup(errors, 'owned browser container', () => removeBrowserContainer(isolated.container, isolated.containerId));
+        await attemptCleanup(errors, 'owned browser container', isolated.closeContainer);
         await attemptCleanup(errors, 'owned browser network', () => isolated.closeNetwork());
-        await attemptCleanup(errors, 'owned browser image', () => removeBrowserImage(runtime));
+        if (!browserResourcesRetained(new AggregateError(errors))) await attemptCleanup(errors, 'owned browser image', () => removeBrowserImage(runtime));
         if (errors.length > 0) throw new AggregateError(errors, 'trusted browser cleanup was incomplete');
       },
     };
   } catch (error) {
-    try { await removeBrowserImage(runtime); }
+    try { if (!browserResourcesRetained(error)) await removeBrowserImage(runtime); }
     catch (cleanupError) { throw new AggregateError([error, cleanupError], 'trusted browser startup failed and its owned image could not be confirmed removed'); }
     throw error;
   }
@@ -428,7 +348,7 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
   let app: Fixture['app'] | undefined;
   let vite: Fixture['vite'] | undefined;
   let browser: ConnectedBrowser | undefined;
-  let browserContainer: string | undefined;
+  let closeBrowserContainer: (() => Promise<void>) | undefined;
   let closeBrowserNetwork: (() => Promise<void>) | undefined;
   let proxyAgent: HttpsAgent | undefined;
   const contexts: Fixture['contexts'] = [];
@@ -481,14 +401,14 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
     const activeBrowser = isolatedBrowser.browser;
     const activeBrowserContainer = isolatedBrowser.container;
     browser = activeBrowser;
-    browserContainer = activeBrowserContainer;
+    closeBrowserContainer = isolatedBrowser.closeContainer;
     const fixture: Fixture = {
       database, directory, browserRuntime: runtime, baseUrl: `https://localhost:${String(address.port)}`, gatewayUrl: `https://localhost:${String(gatewayAddress.port)}`, pki, app, vite, browser: activeBrowser, browserContainer: activeBrowserContainer, contexts, adapters, prompts,
       close: async () => {
         const cleanupErrors: Error[] = [];
         for (const [index, context] of contexts.entries()) await attemptCleanup(cleanupErrors, `browser context ${String(index)}`, () => context.close());
         await attemptCleanup(cleanupErrors, 'CDP browser', () => activeBrowser.close());
-        await attemptCleanup(cleanupErrors, 'owned browser container', () => removeBrowserContainer(activeBrowserContainer));
+        await attemptCleanup(cleanupErrors, 'owned browser container', isolatedBrowser.closeContainer);
         await attemptCleanup(cleanupErrors, 'owned browser network', () => closeBrowserNetwork?.() ?? Promise.resolve());
         for (const child of adapters) {
           if (child.exitCode !== null || child.signalCode !== null) continue;
@@ -505,7 +425,7 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
         if (app) await attemptCleanup(cleanupErrors, 'gateway server', () => app?.close() ?? Promise.resolve());
         if (database) await attemptCleanup(cleanupErrors, 'database pool', () => database?.pool.end() ?? Promise.resolve());
         if (database) await attemptCleanup(cleanupErrors, 'owned PostgreSQL container', () => database?.container.stop() ?? Promise.resolve());
-        await attemptCleanup(cleanupErrors, 'owned browser image', () => removeBrowserImage(runtime));
+        if (!browserResourcesRetained(new AggregateError(cleanupErrors))) await attemptCleanup(cleanupErrors, 'owned browser image', () => removeBrowserImage(runtime));
         await attemptCleanup(cleanupErrors, 'fixture temporary directory', () => rm(directory, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 }));
         if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'functional E2E cleanup was incomplete');
       },
@@ -515,17 +435,14 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
     process.stderr.write(`functional fixture setup failed at: ${setupStage}\n`);
     const cleanupErrors: Error[] = [];
     if (browser) await attemptCleanup(cleanupErrors, 'CDP browser', () => browser?.close() ?? Promise.resolve());
-    if (browserContainer) {
-      const ownedContainer = browserContainer;
-      await attemptCleanup(cleanupErrors, 'owned browser container', () => removeBrowserContainer(ownedContainer));
-    }
+    if (closeBrowserContainer) await attemptCleanup(cleanupErrors, 'owned browser container', closeBrowserContainer);
     await attemptCleanup(cleanupErrors, 'owned browser network', () => closeBrowserNetwork?.() ?? Promise.resolve());
     proxyAgent?.destroy();
     if (vite) await attemptCleanup(cleanupErrors, 'Vite server', () => vite?.close() ?? Promise.resolve());
     if (app) await attemptCleanup(cleanupErrors, 'gateway server', () => app?.close() ?? Promise.resolve());
     if (database) await attemptCleanup(cleanupErrors, 'database pool', () => database?.pool.end() ?? Promise.resolve());
     if (database) await attemptCleanup(cleanupErrors, 'owned PostgreSQL container', () => database?.container.stop() ?? Promise.resolve());
-    if (browserRuntime) {
+    if (browserRuntime && !browserResourcesRetained(error) && !browserResourcesRetained(new AggregateError(cleanupErrors))) {
       const ownedRuntime = browserRuntime;
       await attemptCleanup(cleanupErrors, 'owned browser image', () => removeBrowserImage(ownedRuntime));
     }

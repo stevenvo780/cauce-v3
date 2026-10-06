@@ -183,3 +183,30 @@ it('preserves a foreign network after a partial create error', async () => {
   await expect(isolatedBrowserNetwork(docker, [12340, 12341])).rejects.toThrow('setup and cleanup failed');
   expect(removed).toEqual([]);
 });
+
+it('closes the transport while retaining the namespace until container admission is resolved', async () => {
+  let owner = '';
+  let name = '';
+  let removed = false;
+  const commands: string[][] = [];
+  const docker = async (args: string[]) => {
+    commands.push(args);
+    if (args[1] === 'create') {
+      name = args.at(-1) ?? '';
+      owner = (args[args.indexOf('--label') + 1] ?? '').split('=')[1] ?? '';
+      return { stdout: 'own-network-id' };
+    }
+    if (args[1] === 'rm') { removed = true; return { stdout: '' }; }
+    if (removed) throw Object.assign(new Error('own absence'), { code: 1, stderr: `Error: No such network: ${name}` });
+    return { stdout: JSON.stringify([{ Id: 'own-network-id', Internal: true, Labels: { 'cauce.e2e.owner': owner },
+      Containers: {}, IPAM: { Config: [{ Gateway: '192.0.2.1' }] } }]) };
+  };
+  const network = await isolatedBrowserNetwork(docker, [12340, 12341]);
+  try {
+    await network.closeTransport(); await network.closeTransport();
+    expect((await lstat(network.directory)).isDirectory()).toBe(true);
+    expect(await readdir(network.directory)).toEqual([]);
+    expect(commands.filter((args) => args[1] === 'rm')).toEqual([]);
+  } finally { await network.close(); }
+  expect(removed).toBe(true);
+});
