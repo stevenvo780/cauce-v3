@@ -1,3 +1,5 @@
+import { mockAuthorityResumeToken } from '../../mocks/terminal-ticket';
+
 /**
  * Test double for the PTY WebSocket. jsdom has no WebSocket server, so tests install this
  * class on `globalThis.WebSocket` and drive the wire by hand: it is the only way to assert the
@@ -91,18 +93,6 @@ export class StubWebSocket {
     if (!socket) throw new Error('No PTY WebSocket was opened');
     return socket;
   }
-}
-
-function base64url(value: string): string {
-  return globalThis.btoa(String.fromCharCode(...new TextEncoder().encode(value)))
-    .replace(/=+$/u, '').replaceAll('+', '-').replaceAll('/', '_');
-}
-
-function mockAuthorityResumeToken(sessionId: unknown, authorityProof: unknown): string {
-  const legacyPayload = JSON.stringify({ v: 1, sid: sessionId, op: 'fixture-operator', iat: 1_750_000_000,
-    exp: 1_750_003_600, nonce: 'A'.repeat(22) });
-  const legacy = `r1.${base64url(legacyPayload)}.${'A'.repeat(43)}`;
-  return `r2.${base64url(JSON.stringify([legacy, authorityProof]))}`;
 }
 
 /**

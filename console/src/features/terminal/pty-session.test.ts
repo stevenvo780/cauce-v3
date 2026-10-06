@@ -55,7 +55,6 @@ it('focuses a visible terminal only after readiness and an explicit writable tra
   const focus = vi.spyOn(Terminal.prototype, 'focus');
   const socket = open({ readOnly: true });
   const wrapper = document.createElement('div');
-  wrapper.className = 'pty-mount';
   document.body.append(wrapper);
   vi.spyOn(wrapper, 'getClientRects').mockReturnValue([{}] as unknown as DOMRectList);
   attachPtySession(SESSION, wrapper);
@@ -70,7 +69,6 @@ it('focuses a visible terminal only after readiness and an explicit writable tra
 it('does not steal form focus when a visible writable terminal receives ready again', () => {
   const socket = open();
   const wrapper = document.createElement('div');
-  wrapper.className = 'pty-mount';
   const form = document.createElement('input');
   document.body.append(wrapper, form);
   vi.spyOn(wrapper, 'getClientRects').mockReturnValue([{}] as unknown as DOMRectList);

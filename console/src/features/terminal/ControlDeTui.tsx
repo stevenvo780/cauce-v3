@@ -15,6 +15,7 @@ import {
 import { codigoDeDenegacion, explicarDenegacionPty, type DenegacionExplicada } from './denegaciones';
 import { WRITABLE_TUI_MODE } from './fleet';
 import { NegativaPty } from './NegativaPty';
+import { YIELDS_FOCUS_ATTRIBUTE } from './pty-focus';
 import type { PtyChannelState } from './pty-types';
 
 const BOTON = 'inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border-0 px-2.5 text-[13px] font-medium bg-brand text-on-brand hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50';
@@ -341,6 +342,7 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
   return (
     <section
       aria-label="Control de la TUI"
+      {...{ [YIELDS_FOCUS_ATTRIBUTE]: '' }}
       data-sostenido={arriendo ? true : undefined}
       data-fase={fase === 'reposo' ? undefined : fase}
       className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 py-1.5"

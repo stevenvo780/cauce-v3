@@ -1,9 +1,9 @@
 import { useMemo, useState, useSyncExternalStore } from 'react';
+import { cn } from '../../cn';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import { Button, Notice, SectionCard } from '../../components/form-kit';
-import { Kpi, KpiGrid, SearchField, Toolbar } from '../../components/ops-kit';
+import { Button, Notice, SearchField, SectionCard, Toolbar } from '../../components/kit';
 import {
   ErrorState, LoadingState, PageHeader, PermissionBadge, RefreshButton, Time, ViewTabPanel, ViewTabs,
 } from '../../components/ui';
@@ -93,10 +93,11 @@ function QueuesPageContent() {
           with no `LIMIT`), not what fits on this page: a dead-letter count capped at the page size
           reads as "there are 200" on a queue with thousands and hides exactly the work that has to
           be rescued. When the page holds fewer rows than the total, the tile says how many. */}
-      <KpiGrid label="Filtrar por estado">
-        <Kpi label="Todas" value={items.length} detail="en este snapshot"
-          pressed={filtro.grupo === 'todas'} disabled={conFoco} onPress={() => { elegirGrupo('todas'); }}
-          title={conFoco ? TITULO_FOCO : `Ver ${ROTULO_DEL_GRUPO.todas}`} />
+      <div role="group" aria-label="Filtrar por estado" className="mb-3 grid grid-cols-4 gap-1.5 sm:mb-4 sm:gap-2">
+        <TarjetaFiltro
+          etiqueta="Todas" valor={items.length} detalle="en este snapshot"
+          grupo="todas" activo={filtro.grupo === 'todas'} enPagina={items.length} bloqueado={conFoco} onElegir={elegirGrupo}
+        />
         <TarjetaFiltro
           etiqueta="Pendientes" valor={totalDelGrupo(snapshot, 'pendientes')} detalle="disponibles o claimed"
           grupo="pendientes" activo={filtro.grupo === 'pendientes'} enPagina={porGrupo.pendientes}
@@ -112,7 +113,7 @@ function QueuesPageContent() {
           grupo="revision" activo={filtro.grupo === 'revision'} enPagina={porGrupo.revision}
           bloqueado={conFoco} onElegir={elegirGrupo}
         />
-      </KpiGrid>
+      </div>
 
       <ViewTabs tabs={PESTANAS} active={pestana} onSelect={setPestana} label="Colas y DLQ operativo" />
 
@@ -120,12 +121,11 @@ function QueuesPageContent() {
       <ViewTabPanel id="entregas" hidden={pestana !== 'entregas'}>
         {/* Said with the server's own flag, not guessed from `items.length === LIMIT`: with
             exactly `LIMIT` deliveries that guess would announce a truncation that isn't. */}
-        <p className="m-0 mb-3 text-xs text-muted">
-          Leído del servidor: <Time value={snapshot?.observed_at} relativo />
-          {muestraRecortada(snapshot)
-            ? ' · Página recortada: el servidor devolvió sólo las entregas más recientes; los totales de arriba sí cuentan todo.'
-            : null}
-        </p>
+        {muestraRecortada(snapshot) ? (
+          <p className="m-0 mb-3 text-xs text-warn-ink">
+            Página recortada: el servidor devolvió sólo las entregas más recientes; los totales de arriba sí cuentan todo.
+          </p>
+        ) : null}
 
         {/* The requested id is written IN FULL, not compacted: it's what the operator has to be
             able to compare against the one in the link, and `compactId` eats the middle. */}
@@ -146,11 +146,14 @@ function QueuesPageContent() {
             <Button size="sm" onClick={quitarElFoco}>Ver todas las entregas</Button>
           </Notice>
         ) : null}
+        <p className={cn('m-0 mb-3 text-xs text-muted', conFoco ? '' : 'max-sm:hidden')}>
+          Leído <Time value={snapshot?.observed_at} relativo />
+        </p>
         {conFoco ? null : (
           <Toolbar>
             <SearchField label="Buscar entrega" value={filtro.texto} placeholder="Alias, tenant, delivery id, message id o error"
               onChange={(texto) => { setFiltro((previo) => ({ ...previo, texto })); }} />
-            <p className="m-0 flex flex-wrap items-center gap-2 text-xs text-muted" role="status">
+            <p className="m-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted" role="status">
               <span>
                 {filas.length === items.length
                   ? `${String(items.length)} entregas en este snapshot.`
@@ -159,6 +162,7 @@ function QueuesPageContent() {
               {filtro.grupo !== 'todas' || filtro.texto.trim() ? (
                 <Button size="sm" onClick={() => { setFiltro(FILTRO_VACIO); }}>Quitar el filtro</Button>
               ) : null}
+              <span className="sm:hidden">Leído <Time value={snapshot?.observed_at} relativo /></span>
             </p>
           </Toolbar>
         )}
@@ -194,8 +198,8 @@ function QueuesPageContent() {
 
 const TITULO_FOCO = 'Hay un enlace profundo abierto: quitá el foco para filtrar';
 
-/** One of the filter tiles: a pressable `Kpi` that also says when the page holds fewer rows than the total. */
-function TarjetaFiltro({ etiqueta, valor, tono, detalle, grupo, activo, enPagina, bloqueado, onElegir }: {
+/** One of the filter tiles: a toggle that also says when the page holds fewer rows than the total. */
+function TarjetaFiltro({ etiqueta, valor, tono = 'neutral', detalle, grupo, activo, enPagina, bloqueado, onElegir }: {
   etiqueta: string;
   valor: unknown;
   tono?: 'neutral' | 'warning' | 'danger';
@@ -209,20 +213,30 @@ function TarjetaFiltro({ etiqueta, valor, tono, detalle, grupo, activo, enPagina
   const cifra = display(valor);
   const recortada = String(enPagina) !== cifra;
   return (
-    <Kpi
-      label={etiqueta}
-      value={valor}
-      tone={tono}
-      detail={recortada
-        ? <span className="text-warn-ink" title={`El servidor cuenta ${cifra} en total; en esta página caben ${String(enPagina)} porque el snapshot viene recortado por su LIMIT.`}>{enPagina} en esta página · total {cifra}</span>
-        : detalle}
-      pressed={activo}
+    <button
+      type="button"
+      aria-pressed={activo}
       disabled={bloqueado}
-      onPress={() => { onElegir(grupo); }}
-      title={bloqueado ? TITULO_FOCO : `Ver ${ROTULO_DEL_GRUPO[grupo]}`}
-    />
+      title={bloqueado ? TITULO_FOCO : recortada
+        ? `El servidor cuenta ${cifra} en total; en esta página caben ${String(enPagina)} porque el snapshot viene recortado por su LIMIT.`
+        : `Ver ${ROTULO_DEL_GRUPO[grupo]}`}
+      onClick={() => { onElegir(grupo); }}
+      className={cn(
+        'flex min-w-0 cursor-pointer flex-col items-start gap-0 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left font-[inherit] transition-colors sm:gap-0.5 sm:px-3 sm:py-2.5',
+        'enabled:hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-60',
+        activo && 'border-brand bg-brand-soft',
+      )}
+    >
+      <span className="max-w-full truncate text-[11px] text-muted sm:text-xs">{etiqueta}</span>
+      <strong className={cn('text-lg leading-tight font-semibold tabular-nums sm:text-xl', INK[tono])}>{cifra}</strong>
+      <span className={cn('hidden text-xs leading-snug sm:block', recortada ? 'text-warn-ink' : 'text-muted')}>
+        {recortada ? `${String(enPagina)} en esta página · total ${cifra}` : detalle}
+      </span>
+    </button>
   );
 }
+
+const INK = { neutral: 'text-fg', warning: 'text-warn-ink', danger: 'text-danger-ink' } as const;
 
 function suscribirseAlHistorial(callback: () => void): () => void {
   window.addEventListener('popstate', callback);

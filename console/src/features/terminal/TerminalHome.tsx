@@ -65,7 +65,7 @@ export function TerminalHome({ agents, live, access, capability, targets, loadin
   const notice = homeNotice(access, capability, targets, emitting);
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto w-full max-w-[1400px] p-4 min-[761px]:p-6">
+      <div className="mx-auto w-full max-w-[1680px] p-4 min-[761px]:p-6">
         <h2 className="m-0 text-lg font-semibold tracking-tight">Elegí un agente</h2>
         <p className="m-0 mt-0.5 mb-4 text-[13px] text-muted">{summary}</p>
         {notice ? (
