@@ -45,6 +45,7 @@ import type { HumanMessageOptions } from './messages/contracts.js';
 import type { MessageListRow } from './visibility-rows.js';
 import { MESSAGE_AUTHOR_SQL, withMessageAuthor } from './messages/author.js';
 import { withValidatedConsumptionTimeline } from './messages/harness-consumption.js';
+import { MESSAGE_ATTACHMENTS_SQL, MESSAGE_BODY_PREVIEW_SQL } from './messages/attachments.js';
 
 export {
   PublishIntentExpiredError,
@@ -557,12 +558,11 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
       };
     });
   }
-
   async listMessages(actorTenant: Tenant, actorAlias: string, limit = 100): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'read');
-    const result = await this.pool.query<MessageListRow>(
+    const result = await this.pool.query<MessageListRow & { attachments: unknown }>(
       `SELECT m.id AS message_id,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
-              left(COALESCE(m.body->>'text',m.body->>'prompt',m.body::text),240) AS body_preview,
+              ${MESSAGE_BODY_PREVIEW_SQL},${MESSAGE_ATTACHMENTS_SQL},
               m.lane,m.created_at,${MESSAGE_AUTHOR_SQL},
               COALESCE(jsonb_agg(jsonb_build_object(
                 'delivery_id',d.id,'recipient_tenant',d.recipient_tenant,'recipient_alias',d.recipient_alias,

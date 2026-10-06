@@ -3,6 +3,7 @@ import type { DatabaseClient } from '../../db.js';
 import { StoreError } from '../errors.js';
 import type { MessageDetailRow } from '../visibility-rows.js';
 import { MESSAGE_AUTHOR_SQL, withMessageAuthor } from './author.js';
+import { MESSAGE_ATTACHMENTS_SQL } from './attachments.js';
 import type { SenderView } from './agent-roots.js';
 
 export async function loadMessageDetail(
@@ -11,14 +12,7 @@ export async function loadMessageDetail(
   const result = await client.query<MessageDetailRow & { attachments: unknown }>(
     `SELECT m.id,m.version,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
             m.body-'attachments_v1'::text AS body,
-            COALESCE(CASE WHEN jsonb_typeof(m.body->'attachments_v1')='array' THEN (
-              SELECT jsonb_agg(jsonb_build_object(
-                       'name',entry.attachment->'name','mime_type',entry.attachment->'mime_type',
-                       'file_size',entry.attachment->'file_size','sha256',entry.attachment->'sha256'
-                     ) ORDER BY entry.position)
-              FROM jsonb_array_elements(m.body->'attachments_v1')
-                   WITH ORDINALITY AS entry(attachment,position)
-            ) END,'[]'::jsonb) AS attachments,
+            ${MESSAGE_ATTACHMENTS_SQL},
             m.origin,m.lane,m.priority,m.created_at,${MESSAGE_AUTHOR_SQL},
             COALESCE(jsonb_agg(jsonb_build_object(
        'delivery_id',d.id,'tenant_id',d.recipient_tenant,'alias',d.recipient_alias,
