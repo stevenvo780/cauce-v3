@@ -1,0 +1,187 @@
+import { randomUUID } from 'node:crypto';
+import { chmod, lstat, mkdtemp, rmdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createServer, type Server } from 'node:net';
+import { afterEach, beforeEach, expect, it } from 'vitest';
+import { ownedBrowserLifecycle, browserResourcesRetained, type BrowserDescriptor } from './browser-owned-lifecycle.js';
+
+const cid = 'a'.repeat(64);
+let descriptor: BrowserDescriptor;
+let server: Server;
+let directory: string;
+beforeEach(async () => {
+  directory = await mkdtemp(join(tmpdir(), 'blc-'));
+  await chmod(directory, 0o700);
+  server = createServer((socket) => { socket.destroy(); });
+  const socket = join(directory, 'proxy.sock');
+  await new Promise<void>((resolve) => { server.listen(socket, resolve); });
+  await chmod(socket, 0o600);
+  descriptor = { name: `cauce-ui-browser-${randomUUID()}`, owner: randomUUID(), imageId: `sha256:${'b'.repeat(64)}`,
+    networkName: 'own-network', networkId: 'own-network-id', networkOwner: randomUUID(), directory, socketIdentity: await lstat(socket) };
+});
+afterEach(async () => {
+  await new Promise<void>((resolve, reject) => { server.close((error) => { if (error) reject(error); else resolve(); }); });
+  await rmdir(directory);
+});
+
+function daemon() {
+  let visible = false;
+  let state = 'created';
+  let owner = descriptor.owner;
+  let createError = false;
+  let startError = false;
+  let removing = false;
+  let exitedBeforeRemoval = false;
+  let foreignNetwork = false;
+  let changeNetworkAfterCreate = false;
+  let linger = false;
+  let ticks = 0;
+  const commands: string[][] = [];
+  const view = () => ({ id: cid, name: `/${descriptor.name}`, image: descriptor.imageId, owner, cohort: 'ui-functional',
+    networkMode: descriptor.networkName, mounts: [{ Type: 'bind', Source: directory, Destination: '/qa-browser-transport', RW: false }],
+    state: { Status: state, Pid: state === 'running' ? 1234 : 0 }, networks: state === 'created' ? {} : { [descriptor.networkName]: { NetworkID: descriptor.networkId } } });
+  const docker = async (args: string[], options?: { timeout: number }) => {
+    commands.push(args);
+    expect(options?.timeout).toBeGreaterThan(0);
+    expect(options?.timeout).toBeLessThanOrEqual(15_000);
+    if (args[0] === 'network' && args[1] === 'inspect') return { stdout: JSON.stringify({ id: foreignNetwork ? 'foreign-network-id' : descriptor.networkId, name: descriptor.networkName, internal: true, owner: descriptor.networkOwner }) };
+    if (args[0] === 'inspect') {
+      if (!visible) throw Object.assign(new Error('own absence'), { code: 1, stderr: `Error: No such object: ${args.at(-1) ?? ''}` });
+      return { stdout: JSON.stringify(view()) };
+    }
+    if (args[0] === 'create') {
+      if (createError) throw new Error('original CLI create timeout');
+      visible = true;
+      if (changeNetworkAfterCreate) foreignNetwork = true;
+      return { stdout: cid };
+    }
+    if (args[0] === 'start') {
+      if (startError) throw new Error('original CLI start timeout');
+      state = 'running';
+      return { stdout: descriptor.name };
+    }
+    if (args[0] === 'stop') { state = exitedBeforeRemoval ? 'exited' : 'removing'; removing = true; return { stdout: cid }; }
+    if (args[0] === 'rm') { visible = false; return { stdout: cid }; }
+    throw new Error('unexpected Docker operation');
+  };
+  return { docker, commands, timing: { now: () => ticks, wait: async (ms: number) => { ticks += ms; if (removing && !linger) visible = false; } },
+    failCreate: () => { createError = true; }, failStart: () => { startError = true; },
+    lateCreate: () => { visible = true; }, foreign: () => { owner = 'foreign'; }, visible: () => visible,
+    stayRemoving: () => { linger = true; }, elapsed: () => ticks,
+    foreignNetworkAfterCreate: () => { changeNetworkAfterCreate = true; }, foreignNetworkNow: () => { foreignNetwork = true; },
+    exitBeforeAutoRemove: () => { exitedBeforeRemoval = true; } };
+}
+
+it('retains an absent namespace when the daemon creates after CLI cancellation and first cleanup inspection', async () => {
+  const fake = daemon(); fake.failCreate();
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  await expect(owned.start()).rejects.toThrow('original CLI create timeout');
+  const cleanupError = await owned.close().catch((error: unknown) => error);
+  expect(browserResourcesRetained(cleanupError)).toBe(true);
+  fake.lateCreate();
+  expect(fake.visible()).toBe(true);
+  expect(fake.commands.filter((args) => ['start', 'rm', 'stop'].includes(args[0] ?? ''))).toEqual([]);
+  expect(owned.retained()).toBe(true);
+});
+
+it('does not retry admission and cleans the known created CID after a start timeout', async () => {
+  const fake = daemon(); fake.failStart();
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  await expect(owned.start()).rejects.toThrow('original CLI start timeout');
+  await owned.close();
+  expect(fake.commands.filter((args) => args[0] === 'create')).toHaveLength(1);
+  expect(fake.commands.filter((args) => args[0] === 'start')).toEqual([['start', cid]]);
+  expect(fake.commands.filter((args) => args[0] === 'rm')).toEqual([['rm', cid]]);
+  expect(owned.retained()).toBe(false);
+});
+
+it('refuses deletion after the container changes owner despite the same name and CID', async () => {
+  const fake = daemon();
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  await owned.start(); fake.foreign();
+  await expect(owned.close()).rejects.toThrow('namespace and image retained');
+  expect(fake.commands.filter((args) => ['rm', 'stop'].includes(args[0] ?? ''))).toEqual([]);
+  expect(owned.retained()).toBe(true);
+});
+
+it('waits for auto-removal instead of sending rm against the removing container', async () => {
+  const fake = daemon();
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  expect(await owned.start()).toBe(cid);
+  await owned.close(); await owned.close();
+  expect(fake.commands.filter((args) => args[0] === 'stop')).toEqual([['stop', '--time', '5', cid]]);
+  expect(fake.commands.filter((args) => args[0] === 'rm')).toEqual([]);
+  expect(fake.visible()).toBe(false);
+  expect(owned.retained()).toBe(false);
+  const create = fake.commands.find((args) => args[0] === 'create');
+  expect(create).toContain('--pull=never');
+  expect(create).toContain(descriptor.imageId);
+});
+
+it('reports unresolved remote creation and never equates repeated absence with cancellation', async () => {
+  const fake = daemon(); fake.failCreate();
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  await expect(owned.start()).rejects.toThrow('original CLI create timeout');
+  await expect(owned.close()).rejects.toMatchObject({ cause: { message: 'CLI exit does not confirm remote create cancellation' } });
+  expect(owned.retained()).toBe(true);
+  expect(fake.commands.filter((args) => args[0] === 'create')).toHaveLength(1);
+  expect(fake.commands.filter((args) => args[0] === 'start')).toEqual([]);
+});
+
+it('recovers the exact late-created resource without converting the initial error to a successful start', async () => {
+  const fake = daemon(); fake.failCreate();
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  await expect(owned.start()).rejects.toThrow('original CLI create timeout');
+  fake.lateCreate(); await owned.close();
+  expect(fake.commands.filter((args) => args[0] === 'start')).toEqual([]);
+  expect(fake.commands.filter((args) => args[0] === 'rm')).toEqual([['rm', cid]]);
+  expect(owned.retained()).toBe(false);
+});
+
+it('bounds automatic removal verification and retains a namespace whose removal remains pending', async () => {
+  const fake = daemon(); fake.stayRemoving();
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  await owned.start();
+  await expect(owned.close()).rejects.toMatchObject({ cause: { message: 'Owned browser removal remains unresolved' } });
+  expect(fake.elapsed()).toBe(15_000);
+  expect(fake.commands.filter((args) => args[0] === 'rm')).toEqual([]);
+  expect(owned.retained()).toBe(true);
+});
+
+it('refuses cleanup when the private transport no longer has the verified mode', async () => {
+  const fake = daemon();
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  await owned.start(); await chmod(join(directory, 'proxy.sock'), 0o644);
+  await expect(owned.close()).rejects.toMatchObject({ cause: { message: 'Owned browser socket identity changed' } });
+  expect(fake.commands.filter((args) => ['rm', 'stop'].includes(args[0] ?? ''))).toEqual([]);
+});
+
+
+it('rejects a replaced network before start even when created has no allocated network map', async () => {
+  const fake = daemon(); fake.foreignNetworkAfterCreate();
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  await expect(owned.start()).rejects.toThrow('Owned browser network identity changed');
+  await expect(owned.close()).rejects.toThrow('namespace and image retained');
+  expect(fake.commands.filter((args) => ['start', 'rm', 'stop'].includes(args[0] ?? ''))).toEqual([]);
+  expect(owned.retained()).toBe(true);
+});
+
+it('retains the created resource if its network changes before destructive cleanup', async () => {
+  const fake = daemon(); fake.failStart();
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  await expect(owned.start()).rejects.toThrow('original CLI start timeout');
+  fake.foreignNetworkNow();
+  await expect(owned.close()).rejects.toThrow('namespace and image retained');
+  expect(fake.commands.filter((args) => ['rm', 'stop'].includes(args[0] ?? ''))).toEqual([]);
+});
+
+it('waits for auto-removal in exited state without racing another rm', async () => {
+  const fake = daemon(); fake.exitBeforeAutoRemove();
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  await owned.start(); await owned.close();
+  expect(fake.commands.filter((args) => args[0] === 'stop')).toEqual([['stop', '--time', '5', cid]]);
+  expect(fake.commands.filter((args) => args[0] === 'rm')).toEqual([]);
+  expect(fake.visible()).toBe(false);
+  expect(owned.retained()).toBe(false);
+});

@@ -140,16 +140,24 @@ export async function isolatedBrowserNetwork(docker: Docker, ports: readonly num
   let socketIdentity: Awaited<ReturnType<typeof lstat>> | undefined;
   let id: string | undefined;
   let proxy: Awaited<ReturnType<typeof restrictedBrowserProxy>> | undefined;
+  let transportCleanup: Promise<void> | undefined;
+  const closeTransport = () => {
+    transportCleanup ??= (async () => {
+      if (socketIdentity !== undefined) {
+        const current = await lstat(socketPath);
+        if (!current.isSocket() || current.ino !== socketIdentity.ino || current.dev !== socketIdentity.dev
+          || current.uid !== process.getuid?.()) throw new Error('Browser transport socket changed ownership');
+      }
+      await proxy?.close();
+    })();
+    return transportCleanup;
+  };
   let cleanup: Promise<void> | undefined;
   const close = () => {
     cleanup ??= (async () => {
       const errors: unknown[] = [];
       try {
-        if (socketIdentity !== undefined) {
-          const current = await lstat(socketPath);
-          if (!current.isSocket() || current.ino !== socketIdentity.ino || current.dev !== socketIdentity.dev || current.uid !== process.getuid?.()) throw new Error('Browser transport socket changed ownership');
-        }
-        await proxy?.close();
+        await closeTransport();
         if ((await readdir(directory)).length !== 0) throw new Error('Browser transport directory contains foreign resources');
         await rmdir(directory);
       } catch (error) { errors.push(error); }
@@ -183,7 +191,7 @@ export async function isolatedBrowserNetwork(docker: Docker, ports: readonly num
     if (!socketIdentity.isSocket() || socketIdentity.uid !== process.getuid?.() || (socketIdentity.mode & 0o777) !== 0o600) throw new Error('Private browser transport metadata differs');
     process.stdout.write(`E2E browser transport: uid=${String(socketIdentity.uid)} dev=${String(socketIdentity.dev)} ino=${String(socketIdentity.ino)} mode=600\n`);
     process.stdout.write(`E2E browser network: id=${id} owner=${owner} mode=internal\n`);
-    return { name, id, directory, socketIdentity, proxyUrl: 'socks5://127.0.0.1:1080', close };
+    return { name, id, owner, directory, socketIdentity, proxyUrl: 'socks5://127.0.0.1:1080', close, closeTransport };
   } catch (error) {
     try { await close(); } catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Browser network setup and cleanup failed'); }
     throw error;
