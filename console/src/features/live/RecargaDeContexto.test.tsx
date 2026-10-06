@@ -103,7 +103,7 @@ it('una recarga acreditada dice estado, evidencia y las huellas de cada fichero'
 
 it('la copia dice que reescribe y vuelve a medir, y que NO reinicia la TUI', async () => {
   renderWithApi(<Vista />);
-  const ayuda = screen.getByText(/Recargar reescribe y vuelve a medir/i);
+  const ayuda = screen.getByText(/Reescribe y vuelve a medir/i);
   expect(ayuda).toHaveTextContent(/NO reinicia la TUI/);
   expect(ayuda).toHaveTextContent(/ACK de adopción/);
 });

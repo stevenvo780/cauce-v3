@@ -1,32 +1,58 @@
 import { ArrowLeft } from 'lucide-react';
 import { lazy, Suspense, useEffect, useRef } from 'react';
+import { AgentOrb } from '../../components/AgentOrb';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
+import { LinkButton } from '../../components/form-kit';
 import { LoadingState } from '../../components/ui';
-import { onNavClick } from '../../router';
+import { cn } from '../../cn';
+import { onNavClick, useRouteSearch } from '../../router';
+import { useFleet } from '../../shell/fleet-context';
+import { STATE_TONE, TONE_CLASS } from '../../status-tone';
+import { LIVE_STATE_META } from '../live/agent-state';
+import type { ContextSection } from '../live/AgentContextPanel';
 
 const AgentContextPanel = lazy(async () => ({
   default: (await import('../live/AgentContextPanel')).AgentContextPanel,
 }));
 
+const SECTIONS: readonly ContextSection[] = ['perfil', 'ficheros', 'directiva', 'historial', 'git'];
+
+/** `/messages/<tenant>/<alias>?view=context[&tab=...]`: the canonical profile and context page. */
 export function AgentSettingsView({ tenantId, alias, conversationPath }: {
   tenantId: string; alias: string; conversationPath: string;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const { agents, live } = useFleet();
+  const requested = new URLSearchParams(useRouteSearch()).get('tab');
   useEffect(() => { heading.current?.focus({ preventScroll: true }); }, []);
-  return <section className="chat-settings-view" aria-label={`Configuración de ${alias}`}>
-    <header className="chat-settings-head">
-      <a className="button small secondary" href={conversationPath} onClick={(event) => { onNavClick(event, conversationPath); }}>
+  const agent = agents.find((candidate) => candidate.tenantId === tenantId && candidate.alias === alias);
+  const state = agent ? live.get(agent.id)?.state ?? (agent.leaseState === 'online' ? 'idle' : 'down') : undefined;
+  return <section className="flex min-h-0 flex-1 flex-col bg-canvas" aria-label={`Perfil y contexto de ${alias}`}>
+    <header className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-line bg-surface px-4 py-3 sm:px-6">
+      <LinkButton variant="ghost" size="sm" href={conversationPath} onClick={(event) => { onNavClick(event, conversationPath); }}>
         <ArrowLeft size={16} aria-hidden="true" /> Volver a la conversación
-      </a>
-      <h2 ref={heading} tabIndex={-1}>Configuración de {alias}</h2>
-      <p>Personalidad, instrucciones y contexto según su arnés</p>
+      </LinkButton>
+      <div className="flex min-w-64 flex-1 items-center gap-3">
+        <AgentOrb seed={`${tenantId}/${alias}`} state={state} size={36} />
+        <div className="min-w-0">
+          <h2 ref={heading} tabIndex={-1} className="m-0 truncate text-[15px] font-semibold tracking-tight">Perfil y contexto de {alias}</h2>
+          <p className="m-0 truncate text-xs text-muted">{tenantId} / {alias}</p>
+        </div>
+        {state ? <span className={cn('ml-1 inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium', TONE_CLASS[STATE_TONE[state]].pill)}>
+          <span aria-hidden="true" className={cn('size-1.5 rounded-full', TONE_CLASS[STATE_TONE[state]].dot)} />
+          {LIVE_STATE_META[state].label}
+        </span> : null}
+      </div>
     </header>
-    <div className="chat-settings-body">
-      <ErrorBoundary label={`Configuración de ${alias}`} resetKey={`${tenantId}:${alias}`}>
-        <Suspense fallback={<LoadingState label="Abriendo la configuración del agente…" />}>
-          <AgentContextPanel tenantId={tenantId} alias={alias} />
-        </Suspense>
-      </ErrorBoundary>
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto w-full max-w-5xl px-4 pb-8 sm:px-6">
+        <ErrorBoundary label={`Perfil y contexto de ${alias}`} resetKey={`${tenantId}:${alias}`}>
+          <Suspense fallback={<LoadingState label="Abriendo el perfil y contexto del agente…" />}>
+            <AgentContextPanel tenantId={tenantId} alias={alias}
+              initialSection={SECTIONS.find((section) => section === requested)} />
+          </Suspense>
+        </ErrorBoundary>
+      </div>
     </div>
   </section>;
 }

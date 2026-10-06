@@ -1,11 +1,11 @@
 import { RefreshCw, ShieldAlert } from 'lucide-react';
-import { useId, useState } from 'react';
+import { useState } from 'react';
 import { ApiError } from '../../api/client';
 import { ContextoContaminadoError, EntregaEnVueloError } from '../../api/client/agent-client';
 import { useApi } from '../../api/context';
-import {
-  DOCUMENT_REASON_MAX, DOCUMENT_REASON_MIN, explicarFalloDeMotivo, problemaDeMotivo,
-} from './ficheros-motivo';
+import { Button, Notice, SectionCard } from '../../components/form-kit';
+import { ReasonField } from './context-ui';
+import { explicarFalloDeMotivo, problemaDeMotivo } from './ficheros-motivo';
 import {
   CONTAMINACION_ILEGIBLE, MENSAJES_DE_APLICACION, contaminacionDe, entregasEnVuelo, esRecargaHecha,
   fraseDeContaminacion,
@@ -27,8 +27,8 @@ function huellaCorta(sha: string | null): string {
 
 export function AvisoDeContaminacion({ contaminacion }: { contaminacion: ContaminacionDeContexto }) {
   return (
-    <div className="perfil-cuarentena" role="alert">
-      <p className="perfil-cuarentena-titulo">
+    <Notice tone="danger" role="alert" className="grid gap-1.5">
+      <p className="flex items-center gap-1.5 font-semibold">
         <ShieldAlert size={16} aria-hidden />
         Los ficheros de gobierno de este alias contienen algo que no es suyo.
       </p>
@@ -42,7 +42,7 @@ export function AvisoDeContaminacion({ contaminacion }: { contaminacion: Contami
           sucio igual: un veredicto que no se puede leer no se presenta como limpio.
         </p>
       ) : (
-        <ul className="perfil-cuarentena-lista">
+        <ul className="m-0 grid gap-1 pl-5">
           {contaminacion.findings.map((hallazgo) => (
             <li key={`${hallazgo.reason}-${hallazgo.path}`}>
               <code>{hallazgo.document}</code> en {hallazgo.path}:{' '}
@@ -54,26 +54,26 @@ export function AvisoDeContaminacion({ contaminacion }: { contaminacion: Contami
           ))}
         </ul>
       )}
-    </div>
+    </Notice>
   );
 }
 
 function ResultadoDeRecarga({ resultado }: { resultado: RespuestaDeRecarga }) {
   return (
-    <div className="perfil-recarga-resultado" role="status">
-      <p className="perfil-aviso perfil-aviso-parcial">
+    <div className="grid gap-2" role="status">
+      <Notice tone="warn">
         Contexto reescrito en la revisión {resultado.revision}. Estado{' '}
         <strong>{resultado.state}</strong>, acreditado por <strong>{resultado.evidence}</strong>:{' '}
         {MENSAJES_DE_APLICACION[resultado.state]}
-      </p>
+      </Notice>
       {resultado.documents.length === 0 ? (
-        <p className="muted">El lote no tocó ningún fichero: no había ninguno que reescribir.</p>
+        <p className="m-0 text-xs text-muted">El lote no tocó ningún fichero: no había ninguno que reescribir.</p>
       ) : (
-        <ul className="perfil-recarga-ficheros">
+        <ul className="m-0 grid list-none gap-1 p-0 text-xs">
           {resultado.documents.map((documento) => (
             <li key={documento.path}>
               <code>{documento.name}</code>{' '}
-              <span className="muted">{documento.path}</span>{' '}
+              <span className="text-muted">{documento.path}</span>{' '}
               {huellaCorta(documento.sha_before)} → {huellaCorta(documento.sha_after)} ·{' '}
               {documento.bytes.toLocaleString('es')} bytes
             </li>
@@ -101,7 +101,6 @@ export function RecargaDeContexto({
   editorBlocked = false, onWriteInFlightChange,
 }: RecargaDeContextoProps) {
   const api = useApi();
-  const idMotivo = useId();
   const [motivo, setMotivo] = useState('');
   const [recargando, setRecargando] = useState(false);
   const [resultado, setResultado] = useState<RespuestaDeRecarga>();
@@ -165,49 +164,20 @@ export function RecargaDeContexto({
   }
 
   return (
-    <div className="perfil-recarga">
-      <p className="muted perfil-ayuda">
-        Recargar reescribe y vuelve a medir los ficheros de gobierno de este alias a partir de la
-        revisión ya guardada. NO reinicia la TUI ni toca la conversación de su dueño: que el
-        proceso relea sólo lo dice su propio ACK de adopción, en la entrega siguiente.
-      </p>
-      <label className="perfil-motivo" htmlFor={idMotivo}>
-        Motivo de la recarga (lo escribe una persona y queda en la auditoría)
-        <input
-          id={idMotivo}
-          type="text"
-          value={motivo}
-          maxLength={DOCUMENT_REASON_MAX}
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="Motivo de la recarga, escrito a mano…"
-          aria-describedby={`${idMotivo}-pista`}
-          disabled={bloqueada}
-          onChange={(event) => { setMotivo(event.target.value); }}
-        />
-      </label>
-      <p className="perfil-razon" id={`${idMotivo}-pista`}>
-        {motivo.length === 0
-          ? `Hace falta un motivo escrito a mano: sin él no se recarga (mínimo `
-            + `${String(DOCUMENT_REASON_MIN)}, máximo ${String(DOCUMENT_REASON_MAX)}).`
-          : problemaMotivo
-            ?? `Motivo válido · ${String(motivo.trim().length)}/${String(DOCUMENT_REASON_MAX)}`}
-      </p>
-      <button
-        type="button"
-        className="button small secondary"
-        disabled={bloqueada || problemaMotivo !== undefined}
-        onClick={() => { void recargar(); }}
-      >
-        <RefreshCw size={14} aria-hidden />
-        {recargando ? 'Recargando contexto…' : 'Recargar contexto'}
-      </button>
-      {fallo ? (
-        <p className="perfil-aviso perfil-aviso-error" role="alert">
-          <strong>{fallo.titulo}</strong>. {fallo.detalle}
-        </p>
-      ) : null}
+    <SectionCard
+      title="Recargar contexto"
+      description="Reescribe y vuelve a medir los ficheros de gobierno desde la revisión ya guardada. NO reinicia la TUI ni toca la conversación de su dueño: que el proceso relea lo dice su ACK de adopción."
+    >
+      <ReasonField label="Motivo de la recarga" value={motivo} onChange={setMotivo} disabled={bloqueada}
+        placeholder="Por qué recargás el contexto…" />
+      <div>
+        <Button size="sm" disabled={bloqueada || problemaMotivo !== undefined} onClick={() => { void recargar(); }}>
+          <RefreshCw size={14} aria-hidden />
+          {recargando ? 'Recargando contexto…' : 'Recargar contexto'}
+        </Button>
+      </div>
+      {fallo ? <Notice tone="danger" role="alert"><strong>{fallo.titulo}</strong>. {fallo.detalle}</Notice> : null}
       {resultado ? <ResultadoDeRecarga resultado={resultado} /> : null}
-    </div>
+    </SectionCard>
   );
 }

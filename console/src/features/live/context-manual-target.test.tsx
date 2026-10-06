@@ -1,10 +1,7 @@
-import { useState } from 'react';
 import { screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
-import { AgentContextPanel, AgentDocumentsPanel } from './AgentContextPanel';
+import { abrirContexto } from './context-test-utils';
 import { RUTA_PERFIL, perfilAplicado } from './perfil-fixtures';
 
 const DOCUMENTS = 'http://localhost/v3/console/tenants/Steven/agents/kant/documents';
@@ -47,9 +44,7 @@ function serveManual() {
 }
 
 async function editManual() {
-  const user = userEvent.setup();
-  renderWithApi(<AgentContextPanel tenantId="Steven" alias="kant" />);
-  await screen.findByLabelText(/^Identidad y propósito/i);
+  const { user } = await abrirContexto('ficheros');
   await user.click(await screen.findByText('Manual medido'));
   await user.type(await screen.findByLabelText('Contenido de Manual medido'), ' con notas locales');
   return user;
@@ -97,7 +92,7 @@ it.each([
   }]);
 });
 
-it('keeps OpenClaw memory out of the manual editor and unreadable in the inventory', async () => {
+it('lists OpenClaw memory as unreadable and never offers to read or write it', async () => {
   const reason = 'La memoria viva pertenece al arnés; no se sirve ni se edita desde la consola.';
   let memoryReads = 0;
   let writes = 0;
@@ -114,19 +109,7 @@ it('keeps OpenClaw memory out of the manual editor and unreadable in the invento
     http.get(`${DOCUMENTS}/memory/content`, () => { memoryReads += 1; return HttpResponse.json({}); }),
     http.put(`${DOCUMENTS}/:kind/content`, () => { writes += 1; return HttpResponse.json({}); }),
   );
-  function PanelHarness() {
-    const [inventory, setInventory] = useState(false);
-    return <>
-      <button onClick={() => { setInventory(true); }}>Ver inventario</button>
-      {inventory ? <AgentDocumentsPanel tenantId="Steven" alias="kant" onOpenContext={() => { setInventory(false); }} />
-        : <AgentContextPanel tenantId="Steven" alias="kant" />}
-    </>;
-  }
-  const user = userEvent.setup();
-  renderWithApi(<PanelHarness />);
-  await screen.findByText('No se pudo resolver un manual editable para este alias.');
-  expect(screen.queryByText('Memoria del arnés')).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Ver inventario' }));
+  const { user } = await abrirContexto('ficheros');
   const memory = (await screen.findByText('Memoria del arnés')).closest('li');
   expect(memory).not.toBeNull();
   expect(within(memory as HTMLElement).getByText(reason)).toBeInTheDocument();

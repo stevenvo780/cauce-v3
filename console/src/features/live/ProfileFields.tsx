@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
+import { cn } from '../../cn';
 import { Unknown } from '../../components/ui';
 import { MedidorDeRol } from './MedidorDeRol';
 import {
@@ -25,6 +26,7 @@ const GROUPS: readonly { title: string; help: string; fields: readonly CampoDelP
   },
 ];
 
+/** Orientation only, shown as placeholders: they are never added to the profile. */
 const EXAMPLES: Record<CampoDelPerfil, string> = {
   purpose: 'Ayudar a mantener la documentación del proyecto clara y actualizada.',
   role_summary: 'Revisor de documentación: detecta inconsistencias y propone correcciones.',
@@ -46,21 +48,14 @@ interface ProfileFieldsProps {
 
 export function ProfileFields(props: ProfileFieldsProps) {
   return (
-    <div className="profile-fields">
+    <div className="grid gap-7">
       {GROUPS.map((group) => (
-        <fieldset className="profile-field-group" key={group.title}>
-          <legend>{group.title}</legend>
-          <p className="muted profile-group-help">{group.help}</p>
-          <details className="profile-field-examples">
-            <summary>Ver ejemplos: {group.title.toLocaleLowerCase('es')}</summary>
-            <p>Ejemplos orientativos; no se añaden al perfil.</p>
-            <dl>
-              {group.fields.map((field) => (
-                <div key={field}><dt>{ETIQUETAS[field].titulo}</dt><dd>{EXAMPLES[field]}</dd></div>
-              ))}
-            </dl>
-          </details>
-          {group.fields.map((field) => <ProfileField key={field} {...props} field={field} />)}
+        <fieldset className="m-0 min-w-0 border-0 p-0" key={group.title}>
+          <legend className="p-0 text-sm font-semibold text-fg">{group.title}</legend>
+          <p className="m-0 mt-0.5 mb-3 text-xs text-muted">{group.help}</p>
+          <div className={cn('grid gap-4', group.fields.length === 2 && 'lg:grid-cols-2')}>
+            {group.fields.map((field) => <ProfileField key={field} {...props} field={field} />)}
+          </div>
         </fieldset>
       ))}
     </div>
@@ -76,30 +71,35 @@ function ProfileField({ field, fields, destinations, limits, disabled, onTextCha
   const count = textField ? contarUnidades(value) : entradasDeLista(fields[field]).length;
   const limit = textField ? field === 'role_summary' ? limits?.role_summary : limits?.purpose : limits?.items;
   const destination = destinations[field];
+  const over = limit !== undefined && count > limit;
   return (
-    <label className="perfil-campo">
-      <span className="perfil-campo-titulo" id={`${id}-title`}>{ETIQUETAS[field].titulo}</span>
-      <span className="muted perfil-campo-ayuda" id={`${id}-help`}>
-        {ETIQUETAS[field].ayuda}{' '}
-        <em className="perfil-destino">
+    <label className="min-w-0 content-start">
+      <span className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <span id={`${id}-title`} className="text-[13px] font-medium text-fg">{ETIQUETAS[field].titulo}</span>
+        <span id={`${id}-dest`} className="font-mono text-[11px] font-normal text-muted">
           →{' '}{destination.tipo === 'fichero'
             ? destination.nombre
             : <Unknown value={null} ausente={destination.ausente} motivo={destination.motivo} />}
-        </em>
+        </span>
       </span>
       <textarea
         aria-labelledby={`${id}-title`}
-        aria-describedby={`${id}-help ${id}-count`}
+        aria-describedby={`${id}-dest ${id}-help ${id}-count`}
         value={value}
-        rows={textField && field !== 'purpose' ? 3 : 4}
+        placeholder={EXAMPLES[field]}
+        rows={textField ? 3 : 4}
         disabled={disabled}
         onChange={(event) => {
           if (textField) onTextChange(field, event.target.value);
           else onListChange(field, event.target.value);
         }}
       />
-      <span id={`${id}-count`} className={`perfil-cuenta${limit !== undefined && count > limit ? ' perfil-cuenta-fuera' : ''}`}>
-        {count}{textField ? '' : count === 1 ? ' entrada' : ' entradas'} / {limit ?? '—'}
+      <span className="flex items-start justify-between gap-3 text-xs font-normal">
+        <span id={`${id}-help`} className="text-muted">{ETIQUETAS[field].ayuda}</span>
+        <span id={`${id}-count`} data-over={over || undefined}
+          className={cn('shrink-0 tabular-nums', over ? 'font-medium text-danger-ink' : 'text-muted')}>
+          {count}{textField ? '' : count === 1 ? ' entrada' : ' entradas'} / {limit ?? '—'}
+        </span>
       </span>
       {field === 'role_summary' ? <MedidorDeRol texto={value} /> : null}
     </label>
