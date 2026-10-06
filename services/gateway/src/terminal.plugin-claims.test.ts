@@ -27,7 +27,7 @@ import {
   CLAIM_B,
   RELAY_BOOT_B,
   type FakeDatabase,
-} from './terminal.plugin.shared.js';
+} from './terminal.plugin.fixtures.js';
 
 describe('terminal control plane', () => {
   let directory: string;

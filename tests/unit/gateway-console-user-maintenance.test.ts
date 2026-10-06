@@ -1,3 +1,4 @@
+import { schemaBarrierReply } from '../helpers/schema-barrier.js';
 import { describe, expect, it, vi } from 'vitest';
 import type { DatabasePool } from '@cauce/store';
 import { maintainConsoleUser, type ConsoleUserMaintenance } from '../../services/gateway/src/console-user-maintenance.js';
@@ -19,7 +20,9 @@ function stringParameter(value: unknown): string {
 
 function fixture(initial?: typeof existing) {
   let account = initial === undefined ? undefined : { ...initial };
-  const query = vi.fn(async (sql: string, params: unknown[]) => {
+  const query = vi.fn(async (sql: string, params: unknown[] = []) => {
+    const schema = schemaBarrierReply(sql, params);
+    if (schema) return schema;
     if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [], rowCount: 0 };
     if (sql.startsWith('INSERT INTO human_tenant_memberships')) {
       expect(params).toHaveLength(5);
@@ -83,7 +86,7 @@ describe('mantenimiento de usuarios: contrato de persistencia', () => {
     await maintainConsoleUser(store.pool, omitted, 'new-fixture-hash');
     await maintainConsoleUser(store.pool, omitted, 'newer-fixture-hash');
     expect(store.current()).toEqual({ ...before, password_hash: 'newer-fixture-hash', password_changed_at: 3 });
-    expect(store.query).toHaveBeenCalledTimes(8);
+    expect(store.query).toHaveBeenCalledTimes(16);
     const firstUpdate = store.query.mock.calls.find(([sql]) => sql.startsWith('UPDATE console_users SET'));
     expect(firstUpdate?.[1]).toEqual([
       'person@example.test', 'new-fixture-hash', null, null, null, null, null,
@@ -109,7 +112,9 @@ describe('mantenimiento de usuarios: contrato de persistencia', () => {
   });
 
   it('un nombre vacío sigue siendo explícito y no oculta un rechazo de la base', async () => {
-    const query = vi.fn(async (sql: string, _params: unknown[]) => {
+    const query = vi.fn(async (sql: string, params: unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
       if (sql.startsWith('INSERT INTO console_users')) throw new Error('fixture constraint rejection');
       return { rows: [], rowCount: 0 };
     });
@@ -119,7 +124,7 @@ describe('mantenimiento de usuarios: contrato de persistencia', () => {
     } as unknown as DatabasePool;
     await expect(maintainConsoleUser(pool, { ...omitted, name: '' }, 'new-fixture-hash'))
       .rejects.toThrow('fixture constraint rejection');
-    expect(query).toHaveBeenCalledTimes(3);
+    expect(query).toHaveBeenCalledTimes(7);
     const insert = query.mock.calls.find(([sql]) => sql.startsWith('INSERT INTO console_users'));
     expect(insert?.[1]).toEqual([
       'person@example.test', 'new-fixture-hash', '', null, null, null, null, 'Person@Example.test',
@@ -130,7 +135,9 @@ describe('mantenimiento de usuarios: contrato de persistencia', () => {
     const originalError = new Error('fixture insert failure');
     const rollbackError = new Error('rollback network drop');
     const release = vi.fn();
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(async (sql: string, params: unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
       if (sql === 'BEGIN') return { rows: [], rowCount: 0 };
       if (sql.startsWith('INSERT INTO console_users')) throw originalError;
       if (sql === 'ROLLBACK') throw rollbackError;

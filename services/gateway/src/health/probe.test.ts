@@ -1,3 +1,4 @@
+import { schemaBarrierReply, schemaBarrierStatements } from '../../../../tests/helpers/schema-barrier.js';
 import type { DatabasePool } from '@cauce/store';
 import { describe, expect, it, vi } from 'vitest';
 import { probeSchemaContract } from './probe.js';
@@ -18,6 +19,8 @@ function recordingPool(rows: readonly Record<string, unknown>[]): RecordingPool 
   const release = vi.fn();
   const query = vi.fn(async (sql: string, params?: readonly unknown[]) => {
     statements.push({ sql, params });
+    const schema = schemaBarrierReply(sql, params);
+    if (schema) return schema;
     return sql.startsWith('CONTRACT') ? { rows, rowCount: rows.length } : { rows: [], rowCount: 0 };
   });
   const client = { query, on: vi.fn(), off: vi.fn(), release };
@@ -37,8 +40,9 @@ describe('probeSchemaContract scaffolding', () => {
       name: 'sample', sql: contractSql, required: ['alpha', 'beta'],
     });
     const order = recording.statements.map((statement) => statement.sql);
-    expect(order.slice(0, 5)).toEqual([
+    expect(order.slice(0, 9)).toEqual([
       'BEGIN',
+      ...schemaBarrierStatements,
       'SET TRANSACTION READ ONLY',
       "SET LOCAL lock_timeout='1000ms'",
       "SET LOCAL statement_timeout='2000ms'",
