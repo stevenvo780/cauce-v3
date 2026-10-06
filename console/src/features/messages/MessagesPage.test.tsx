@@ -1,10 +1,11 @@
+import { useState } from 'react';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { mockActivity, mockMessages, mockStatus, topology } from '../../mocks/data';
 import { server } from '../../mocks/server';
-import { renderRouted } from '../../test/render';
+import { renderRouted, renderWithApi } from '../../test/render';
 import { MessagesPage } from './MessagesPage';
 
 beforeEach(() => {
@@ -139,6 +140,67 @@ it('abre el hilo del agente elegido y NO mezcla los mensajes de los demás', asy
 
   // And the URL reflects the open conversation, so the link can be pasted.
   expect(window.location.pathname).toBe('/messages/Steven/argos');
+}, 20_000);
+
+it('conserva el foco del opener de diálogo expandido al hidratar el agente seleccionado', async () => {
+  let releaseTopology: () => void = () => {};
+  let markTopologyStarted: () => void = () => {};
+  const topologyStarted = new Promise<void>((resolve) => { markTopologyStarted = resolve; });
+  const pendingTopology = new Promise<void>((resolve) => { releaseTopology = resolve; });
+  const status = mockStatus();
+  const activity = mockActivity();
+  server.use(
+    http.get('*/v3/status', () => HttpResponse.json({
+      ...status, presence: status.presence?.filter((agent) => agent.alias !== 'argos' && agent.alias !== 'kratos'),
+    })),
+    http.get('*/v3/console/activity', () => HttpResponse.json({
+      ...activity, agents: activity.agents?.filter((agent) => agent.alias !== 'argos' && agent.alias !== 'kratos'),
+    })),
+    http.get('*/v3/console/messages', () => HttpResponse.json({ items: [] })),
+    http.get('*/v3/console/topology', async () => {
+      markTopologyStarted();
+      await pendingTopology;
+      return HttpResponse.json(topology);
+    }),
+  );
+  renderWithApi(<>
+    <button type="button" aria-controls="external-panel" aria-haspopup="dialog" aria-expanded="true">Abrir panel</button>
+    <section id="external-panel" role="dialog" aria-label="Panel externo">Contenido del panel</section>
+    <MessagesPage params={['Steven', 'argos']} />
+  </>);
+  const opener = screen.getByRole('button', { name: 'Abrir panel' });
+  try {
+    opener.focus();
+    await topologyStarted;
+    expect(screen.queryByRole('heading', { name: 'argos' })).not.toBeInTheDocument();
+
+    releaseTopology();
+    await screen.findByRole('heading', { name: 'argos' });
+    expect(opener).toHaveFocus();
+  } finally { releaseTopology(); }
+}, 20_000);
+
+it('permite que la selección y navegación enfoquen el hilo con el opener de diálogo cerrado', async () => {
+  function MessagesWithNavigation() {
+    const [params, setParams] = useState<readonly string[]>(['Steven', 'argos']);
+    return <>
+      <button type="button" onClick={() => setParams(['Miguel', 'kratos'])}>Elegir kratos</button>
+      <button type="button" aria-controls="external-panel" aria-haspopup="dialog" aria-expanded="false">Abrir panel</button>
+      <section id="external-panel" role="dialog" aria-label="Panel externo">Contenido del panel</section>
+      <MessagesPage params={params} />
+    </>;
+  }
+  const user = userEvent.setup();
+  renderWithApi(<MessagesWithNavigation />);
+  const opener = screen.getByRole('button', { name: 'Abrir panel' });
+  opener.focus();
+
+  const argos = await screen.findByRole('heading', { name: 'argos' });
+  expect(argos).toHaveFocus();
+
+  await user.click(screen.getByRole('button', { name: 'Elegir kratos' }));
+  const kratos = await screen.findByRole('heading', { name: 'kratos' });
+  expect(kratos).toHaveFocus();
 }, 20_000);
 
 it('emite el mensaje al agente elegido derivando el room, sin pedirlo escrito a mano', async () => {
