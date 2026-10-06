@@ -4,7 +4,7 @@ La distribución de Cauce se instala mediante un descriptor operativo explícito
 
 ## Alcance y estado
 
-La implementación vive en una rama propia y se está calificando con instalaciones reales. Los gates globales, la aceptación completa y la publicación siguen pendientes hasta que exista su evidencia. El instalador genera unidades de adaptadores; su activación y el aprovisionamiento de perfiles nativos pertenecen al operador.
+La implementación vive en una rama propia y se está calificando con instalaciones reales. La rama está publicada en el PR #131; los gates globales finales y la aceptación completa siguen pendientes hasta que exista su evidencia. El instalador genera unidades de adaptadores; su activación y el aprovisionamiento de perfiles nativos pertenecen al operador. El instalador común todavía no aprovisiona el inventario de runtime de Hermes y rechaza ese harness antes de crear recursos.
 
 ## Descriptor y referencias
 
@@ -34,7 +34,7 @@ El host necesita un registro compartido de reservas, aprovisionado por su admini
     python3 /ruta/distribucion/ops/instances/common/cauce-instance install --instance-config /ruta/empresa/instance.json
     python3 /ruta/distribucion/ops/instances/common/cauce-instance status --instance-config /ruta/empresa/instance.json
 
-plan valida y describe los recursos; no instala. install reserva el host, acredita recursos nuevos, migra la base propia y comprueba la baseline exacta antes de reemplazar las identidades iniciales. El bootstrap ocurre únicamente sobre almacenamiento nuevo acreditado y dentro de una transacción. Una base o un volumen desconocido, incluso vacío, provoca un rechazo.
+plan valida y describe los recursos; no instala. install reserva el host, acredita recursos nuevos, migra la base propia y comprueba la baseline exacta antes de reemplazar las identidades iniciales. El inventario y los manifiestos derivados se validan antes de reservar recursos o tocar la base de datos. El bootstrap ocurre únicamente sobre almacenamiento nuevo acreditado y dentro de una transacción. Una base o un volumen desconocido, incluso vacío, provoca un rechazo.
 
 La actualización conserva propietario, identidades y bootstrap. Solo permite cambiar release y codeRoot, mediante el comando explícito:
 
@@ -60,3 +60,9 @@ La supervisión de proyectos vive bajo ops/instances/hospital/ como integración
 ## Evidencia de cierre
 
 Se conserva la salida de los gates y el recibo de aceptación con dos instalaciones, mismo alias y recursos distintos. La aceptación cubre entrega durable, ACK, recuperación, rechazo de autoridad cruzada y actualización de una instalación con la otra funcionando. Las pruebas de adjuntos y terminales se acreditan por separado; generar unidades no demuestra una sesión viva.
+
+Los comandos de canary y cutover que usan gate-roundtrip-probe.mjs exigen CAUCE_GATE_SOURCE_ROOM con la sala de origen de esa instalación. La sala es configuración de la prueba; el gateway conserva la autorización mTLS y los permisos vigentes.
+
+El gate operacional de canary y cutover acredita tráfico dentro del mismo tenant del alias. La autorización cruzada entre tenants del bus conserva sus reglas y requiere pruebas separadas; ese escenario no se acredita mediante este gate.
+
+El colector y cutover reciben CAUCE_INSTALLATION_ID para acreditar los leases, unidades y locks de esa instalación. El modo central conserva sus nombres anteriores si la variable está ausente. La identidad compuesta del consumidor debe caber en los 128 caracteres del protocolo; el preflight y el colector rechazan combinaciones más largas antes de crear recursos o conectar la base.
