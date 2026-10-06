@@ -1,6 +1,15 @@
 import { ApiError, CauceApi } from './client';
 import { expect, it, vi } from 'vitest';
 
+function readBlobText(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => { resolve(reader.result as string); };
+    reader.onerror = () => { reject(reader.error ?? new Error('Blob read failed')); };
+    reader.readAsText(blob);
+  });
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => { resolve = done; });
@@ -27,7 +36,7 @@ it('lee el adjunto binario por índice con credenciales de sesión y conserva MI
   expect(observed?.credentials).toBe('include');
   expect(observed?.accept).toBe('*/*');
   expect(blob.type).toBe('image/png');
-  expect(await blob.text()).toBe('image-bytes');
+  expect(await readBlobText(blob)).toBe('image-bytes');
 });
 
 it('rechaza índices inválidos antes de la red', async () => {
@@ -45,7 +54,7 @@ it('descarga la respuesta por raíz, entrega e intento con sesión autenticada',
   expect(fetcher.mock.calls.at(0)?.[0]).toBe('http://localhost/v3/console/messages/root%20%2F1/replies/delivery%20%2F2/3/attachments/1');
   expect(fetcher.mock.calls.at(0)?.[1]?.credentials).toBe('include');
   expect(blob.type).toBe('audio/ogg');
-  expect(await blob.text()).toBe('reply-bytes');
+  expect(await readBlobText(blob)).toBe('reply-bytes');
 });
 
 it.each([[-1, 0], [1.5, 0], [2_147_483_648, 0], [0, -1], [0, 4], [0, 0.5]])('rechaza referencia de respuesta inválida %s/%s antes de la red', (attempt, index) => {
