@@ -5,6 +5,7 @@ umask 077
 
 SCRIPT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ROOT=${CAUCE_CONTAINER_OPS_ROOT:-$SCRIPT_ROOT}
+CODE_ROOT=${CAUCE_CONTAINER_CODE_ROOT:-$ROOT}
 if (( EUID == 0 )); then
   default_config_root=/etc/cauce-v3/container-aliases
   default_bundle_root=/opt/cauce-v3-adapter
@@ -27,16 +28,22 @@ CONFIG_ROOT=${CAUCE_CONTAINER_CONFIG_ROOT:-$default_config_root}
 BUNDLE_ROOT=${CAUCE_CONTAINER_BUNDLE_ROOT:-$default_bundle_root}
 PKI_ROOT=${CAUCE_CONTAINER_PKI_ROOT:-$default_pki_root}
 LOCK_ROOT=${CAUCE_CONTAINER_LOCK_ROOT:-$default_lock_root}
-RUNTIME_HELPER_SOURCE="$ROOT/container-runtime/cauce-container-runtime.py"
+RUNTIME_HELPER_SOURCE="$CODE_ROOT/container-runtime/cauce-container-runtime.py"
 # The helper imports these siblings from its own directory: the container copy must carry all of them.
 RUNTIME_HELPER_MODULES=(cauce_container_base.py cauce_container_proc.py cauce_container_tree.py)
-MOUNT_VALIDATOR="$ROOT/scripts/validate-container-mount.py"
-ALIAS_LOCK_EXEC="$ROOT/scripts/alias-lock-exec.py"
-HERMES_RUNTIME_VERIFIER="$ROOT/scripts/verify-hermes-runtime.py"
+MOUNT_VALIDATOR="$CODE_ROOT/scripts/validate-container-mount.py"
+ALIAS_LOCK_EXEC="$CODE_ROOT/scripts/alias-lock-exec.py"
+HERMES_RUNTIME_VERIFIER="$CODE_ROOT/scripts/verify-hermes-runtime.py"
 SUPERVISOR_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/container-adapter-supervisor-lib.sh"
 # shellcheck source=container-adapter-supervisor-lib.sh
 source "$SUPERVISOR_LIB"
-CONTROL_ROOT=/run/cauce-v3-supervisor
+INSTALLATION_ID=${CAUCE_INSTALLATION_ID:-}
+if [[ -n $INSTALLATION_ID ]]; then
+  [[ $INSTALLATION_ID =~ ^[a-z][a-z0-9-]{0,47}$ ]] || exit 2
+  CONTROL_ROOT="/run/cauce-$INSTALLATION_ID-supervisor"
+else
+  CONTROL_ROOT=/run/cauce-v3-supervisor
+fi
 WAIT_SECONDS=60
 DOCKER_CALL_TIMEOUT=${CAUCE_CONTAINER_DOCKER_TIMEOUT:-30}
 
@@ -119,7 +126,7 @@ assert_secure_directory() {
 
 alias_name=${2:-}
 valid_alias "$alias_name" || die 'invalid container adapter alias'
-mapping_line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/container-alias-query.py" "$alias_name") || exit $?
+mapping_line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$CODE_ROOT/scripts/container-alias-query.py" "$alias_name") || exit $?
 IFS=$'\t' read -r tenant room container_name container_user container_home state_directory harness extra <<<"$mapping_line"
 [[ -n $tenant && -n $room && -n $container_name && -n $container_user && -n $container_home \
   && -n $state_directory && -n $harness && -z ${extra:-} ]] \
@@ -429,7 +436,7 @@ copy_control_helper() {
   docker_id_exec --user 0 chmod 0555 "$control_helper"
   local module
   for module in "${RUNTIME_HELPER_MODULES[@]}"; do
-    docker_id_cp "$ROOT/container-runtime/$module" "$instance_root/$module"
+    docker_id_cp "$CODE_ROOT/container-runtime/$module" "$instance_root/$module"
     docker_id_exec --user 0 chown 0:0 "$instance_root/$module"
     docker_id_exec --user 0 chmod 0444 "$instance_root/$module"
   done
@@ -602,7 +609,7 @@ deploy_bundle() {
 # la release del staging del host, así que podar no pierde la reversa. Conserva la activa, las que usa un
 # proceso vivo o nombra una config de arnés (MCP) y las CAUCE_BUNDLE_CACHE_KEEP (2) más recientes.
 prune_bundle_cache() {
-  local script="$ROOT/container-runtime/podar-releases.py" out
+  local script="$CODE_ROOT/container-runtime/podar-releases.py" out
   [[ -f $script && ! -L $script ]] || return 0
   if out=$(docker_id_mutate --user 0 /usr/bin/python3 -c "$(cat "$script")" \
       "$instance_root/releases" "$bundle_release" "${CAUCE_BUNDLE_CACHE_KEEP:-2}" 2>&1); then
@@ -672,7 +679,7 @@ start_adapter() {
     "HOME=$container_home" "USER=$container_user" "LOGNAME=$container_user" "PATH=$runtime_path"
     'LANG=C.UTF-8' 'LC_ALL=C.UTF-8' 'NODE_ENV=production' 'CAUCE_ENVIRONMENT=production'
     "CAUCE_TENANT=$tenant" "CAUCE_ROOM=$room" 'CAUCE_ORIGIN_TRANSPORT=telegram'
-    "CAUCE_ALIAS=$alias_name" "CAUCE_INSTANCE_ID=systemd-container-$alias_name" "CAUCE_STATE_DIR=$state_directory"
+    "CAUCE_ALIAS=$alias_name" "CAUCE_INSTANCE_ID=systemd-container-${INSTALLATION_ID:+$INSTALLATION_ID-}$alias_name" "CAUCE_STATE_DIR=$state_directory"
     "CAUCE_CONTROL_DIR=$control_dir"
     "CAUCE_CONTAINER_ID=$container_id" "CAUCE_CONTAINER_GENERATION=$container_generation"
     "CAUCE_CONTAINER_PRESENCE_GENERATION=$container_presence_generation"

@@ -53,6 +53,7 @@ OPERATIONS_SOURCES = (
 # Recursive discovery prevents a newly added operational script from evading OPERATIONS.sha256.
 OPERATIONAL_TREES = (
     "scripts",
+    "instances",
     "tests",
     "runbooks",
     "schemas",
@@ -111,7 +112,7 @@ def operational_files(root: pathlib.Path, generated: pathlib.Path, *, rootless: 
     files = [root / relative for relative in (*OPERATIONS_SOURCES, *OPERATIONAL_ROOT_FILES)]
     files.extend(root / name for name in ("flota.json", "flota-fisica.json") if (root / name).is_file())
     files.extend(tracked_files(root, OPERATIONAL_TREES, keep=operational_source))
-    files.extend(sorted(generated.glob("cauce-v3-container-*.service")))
+    files.extend(sorted(generated.glob("cauce-*-container-*.service")))
     files.extend(sorted((generated / "configs").glob("*.env.example")))
     if not rootless:
         # The system digest also binds the complete checked-in

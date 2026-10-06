@@ -10,6 +10,7 @@ from atomic_file import atomic_write
 from container_alias_lib import load_container_aliases
 from container_ops_digest import operational_digest
 from fleet_derive import HARNESS_RULES
+from instance_namespace import unit_prefix, validate_installation_id, validate_unit_path
 
 source_root = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description="Generate host systemd units for adapters inside existing containers")
@@ -23,6 +24,8 @@ parser.add_argument(
 parser.add_argument("--rootless", action="store_true", help="generate systemd user units")
 parser.add_argument("--home", type=pathlib.Path, default=pathlib.Path.home(), help="rootless example HOME")
 parser.add_argument("--install-prefix", help="installed source prefix used by ExecStart/ExecStop")
+parser.add_argument("--instance-id", help="installation namespace; omitted preserves existing units")
+parser.add_argument("--inventory-prefix", help="installed inventory ops directory, separate from source")
 parser.add_argument("--config-root", help="host alias config root")
 parser.add_argument("--pki-root", help="host PKI root")
 parser.add_argument("--bundle-root", help="host immutable bundle root")
@@ -56,17 +59,24 @@ for entry in aliases.values():
     container = entry["container"]
     physical_alias_counts[container] = physical_alias_counts.get(container, 0) + 1
 
-UNIT_PREFIX = "cauce-v3"
+try:
+    installation = validate_installation_id(args.instance_id)
+    UNIT_PREFIX = unit_prefix(installation)
+except ValueError as error:
+    parser.error(str(error))
 mode = "rootless" if args.rootless else "system"
 args.output = args.output or ops_root / "generated" / "container-systemd" / ("rootless" if args.rootless else "")
 home = args.home.resolve().as_posix()
 if not home.startswith("/"):
     parser.error("--home must resolve to an absolute path")
-for option in (args.config_root, args.pki_root, args.bundle_root, args.lock_root):
-    if option is not None and not option.startswith("/"):
-        parser.error("path overrides must be absolute")
-if args.install_prefix is not None and not (args.install_prefix.startswith("/") or args.install_prefix.startswith("%h/")):
-    parser.error("--install-prefix must be absolute or start with %h/")
+try:
+    for option in (args.config_root, args.pki_root, args.bundle_root, args.lock_root, args.inventory_prefix):
+        if option is not None:
+            validate_unit_path(option)
+    if args.install_prefix is not None:
+        validate_unit_path(args.install_prefix, specifier=True)
+except ValueError as error:
+    parser.error(str(error))
 
 if args.rootless:
     install_prefix = args.install_prefix or "%h/.local/share/cauce-v3"
@@ -82,6 +92,13 @@ else:
     unit_pki_root = example_pki_root = args.pki_root or "/etc/cauce-v3/container-pki"
     unit_bundle_root = args.bundle_root or "/opt/cauce-v3-adapter"
     unit_lock_root = args.lock_root or "/run/lock"
+
+inventory_prefix = args.inventory_prefix or f"{install_prefix}/ops"
+instance_environment = ""
+if installation is not None:
+    instance_environment = f"Environment=CAUCE_INSTALLATION_ID={installation}\n"
+if args.inventory_prefix is not None:
+    instance_environment += f"Environment=CAUCE_CONTAINER_CODE_ROOT={install_prefix}/ops\n"
 
 
 def expectation_hook(scope: str, alias: str) -> str:
@@ -105,7 +122,7 @@ Type=simple
 User=root
 Group=root
 UMask=0077
-Environment=CAUCE_CONTAINER_OPS_ROOT={install_prefix}/ops
+{instance_environment}Environment=CAUCE_CONTAINER_OPS_ROOT={inventory_prefix}
 Environment=CAUCE_CONTAINER_CONFIG_ROOT={unit_config_root}
 Environment=CAUCE_CONTAINER_PKI_ROOT={unit_pki_root}
 Environment=CAUCE_CONTAINER_BUNDLE_ROOT={unit_bundle_root}
@@ -156,7 +173,7 @@ StartLimitBurst=10
 [Service]
 Type=simple
 UMask=0077
-Environment=CAUCE_CONTAINER_OPS_ROOT={install_prefix}/ops
+{instance_environment}Environment=CAUCE_CONTAINER_OPS_ROOT={inventory_prefix}
 Environment=CAUCE_CONTAINER_CONFIG_ROOT={unit_config_root}
 Environment=CAUCE_CONTAINER_PKI_ROOT={unit_pki_root}
 Environment=CAUCE_CONTAINER_BUNDLE_ROOT={unit_bundle_root}
@@ -297,14 +314,14 @@ config_output = args.output / "configs"
 config_output.mkdir(parents=True, exist_ok=True)
 generated: list[pathlib.Path] = []
 for alias, entry in aliases.items():
-    unit_path = args.output / f"cauce-v3-container-{alias}.service"
+    unit_path = args.output / f"{UNIT_PREFIX}-container-{alias}.service"
     config_path = config_output / f"{alias}.env.example"
     atomic_write(unit_path, unit(alias, entry))
     atomic_write(config_path, example(alias, entry))
     generated.extend((unit_path, config_path))
 
-for stale in sorted(args.output.glob("cauce-v3-container-*.service")):
-    stale_alias = stale.name[len("cauce-v3-container-"):-len(".service")]
+for stale in sorted(args.output.glob(f"{UNIT_PREFIX}-container-*.service")):
+    stale_alias = stale.name[len(f"{UNIT_PREFIX}-container-"):-len(".service")]
     if stale_alias not in aliases:
         stale.unlink()
         (config_output / f"{stale_alias}.env.example").unlink(missing_ok=True)
@@ -316,7 +333,11 @@ if not args.no_profile_expectation:
     generated.append(expectation_path)
 
 operations_path = args.output / "OPERATIONS.sha256"
-atomic_write(operations_path, f"{operational_digest(source_root, args.output.resolve(), rootless=args.rootless)}\n")
+operations = operational_digest(source_root, args.output.resolve(), rootless=args.rootless)
+if ops_root != source_root:
+    inventory_hash = hashlib.sha256((ops_root / "container-aliases.json").read_bytes()).hexdigest()
+    operations = hashlib.sha256(f"{operations}:{inventory_hash}".encode()).hexdigest()
+atomic_write(operations_path, f"{operations}\n")
 generated.append(operations_path)
 
 checksum_lines = []
