@@ -109,7 +109,7 @@ class PraxisSupervisionTests(unittest.TestCase):
             {"id": "PRAX001", "criteria": [{"id": "C1"}, {"id": "C2"}]},
             {"id": "PRAX002", "criteria": [{"id": "C1"}]},
         ]})
-        self.write_json("evidence.json", {"goal_sha256": self.config["goal_sha256"], "records": {}})
+        self.write_json("evidence.json", {"schema_version": 1, "goal_sha256": self.config["goal_sha256"], "records": {}})
         self.write_json("verification.json", {})
         self.api = FakeApi()
         self.trust_patch = mock.patch.object(SUP, "trusted_file", side_effect=self.fixture_trust)
@@ -285,7 +285,8 @@ class PraxisSupervisionTests(unittest.TestCase):
         self.api.receipt = {"chain_open": False, "deliveries": [{"status": "done", "reply": "verified commit"}]}
         progressed = self.snapshot(NEXT_HEAD)
         progressed.update(source_hashes={"apps/web/app.js": "b" * 64}, verification_source_current=True,
-                          gate_artifacts=["tests:" + "b" * 64])
+                          gate_artifacts=["tests:" + "b" * 64], verified_engineering=True,
+                          tested_source_hashes={"apps/web/app.js": "b" * 64})
         self.assertEqual(self.run_pass(NOW + 300, progressed)["action"], "root_finished_progress")
         self.assertEqual(self.run_pass(NOW + 1000, progressed)["action"], "cooldown")
         self.assertEqual(self.run_pass(NOW + 1501, progressed)["action"], "root_published")
@@ -321,6 +322,32 @@ class PraxisSupervisionTests(unittest.TestCase):
         self.assertEqual(snapshot["accepted_issues"], [])
         self.assertNotEqual(self.run_pass(snapshot=snapshot)["phase"], "awaiting_final_review")
 
+    def proof_fixture(self, head=HEAD, accepted=False):
+        from test_praxis_supervision_evidence import proof_fixture
+        return proof_fixture(self, head, accepted)
+
+    def test_malformed_verification_acceptance_preserves_verified_source_progress(self):
+        previous = self.snapshot()
+        self.write_issues("accepted")
+        (self.workspace / "apps/web/app.js").write_text("verified synthetic code change")
+        (self.preview / "app.js").write_text("verified synthetic code change")
+        verification = self.proof_fixture(NEXT_HEAD)
+        for accepted in (0, 2, "PRAX001", {"PRAX001": True, "PRAX002": True}, None,
+                         [0], [None], [[]], [{}], ["PRAX001", "PRAX 002"]):
+            with self.subTest(accepted=accepted):
+                self.write_json("verification.json", {**verification, "accepted_issues": accepted})
+                snapshot = self.snapshot(NEXT_HEAD)
+                self.assertTrue(snapshot["verification_source_current"])
+                self.assertTrue(snapshot["source_files_match"])
+                self.assertTrue(snapshot["web_matches"])
+                self.assertEqual(snapshot["valid_gates"], ["qa", "snapshot", "tests"])
+                self.assertEqual(len(snapshot["gate_artifacts"]), 3)
+                self.assertTrue(SUP.made_progress(previous, snapshot))
+                self.assertFalse(snapshot["verification_current"])
+                self.assertFalse(snapshot["completion_candidate"])
+                self.assertEqual(snapshot["accepted_issues"], [])
+                self.assertEqual(snapshot["accepted_roadmap"], [])
+
     def test_daily_engineering_fuel_and_notice_fuel_are_bounded(self):
         supervisor = self.supervisor()
         day = SUP.dt.datetime.fromtimestamp(NOW, SUP.dt.timezone.utc).strftime("%Y-%m-%d")
@@ -330,6 +357,83 @@ class PraxisSupervisionTests(unittest.TestCase):
             supervisor.notice("synthetic:" + str(number), "alert", "synthetic notice")
         self.assertEqual(len(self.engineering_posts()), 0)
         self.assertEqual(len(self.api.posts), 3)
+
+    def test_root_limit_configuration_defaults_to_six_accepts_twelve_and_rejects_thirteen(self):
+        path = self.workspace / "supervision-config.json"
+        for limit, expected in ((None, 6), (12, 12), (13, None)):
+            with self.subTest(limit=limit):
+                config = {**self.config, "issue_count": 37, "roadmap_count": 216}
+                config.pop("root_limit")
+                if limit is not None:
+                    config["root_limit"] = limit
+                path.write_text(json.dumps(config))
+                if expected is None:
+                    with self.assertRaisesRegex(SUP.SupervisionError, "invalid_configuration"):
+                        SUP.load_config(path)
+                else:
+                    self.assertEqual(SUP.load_config(path)["root_limit"], expected)
+
+    def test_extended_budget_preserves_nine_roots_and_publishes_one_earned_continuation(self):
+        self.config["root_limit"] = 12
+        self.assertEqual(self.run_pass()["action"], "root_published")
+        supervisor = self.supervisor()
+        day, yesterday = SUP.STATE.utc_day(NOW), SUP.STATE.utc_day(NOW - 86400)
+        supervisor.state["roots"] = {day: 9, yesterday: 4}
+        supervisor.save()
+        progressed = self.snapshot(NEXT_HEAD)
+        progressed.update(source_hashes={"apps/web/app.js": "b" * 64}, verification_source_current=True,
+                          gate_artifacts=["tests:" + "b" * 64], verified_engineering=True,
+                          tested_source_hashes={"apps/web/app.js": "b" * 64})
+        self.assertEqual(self.run_pass(NOW + 300, progressed, active=1)["action"], "root_pending")
+        self.assertEqual(len(self.engineering_posts()), 1)
+        self.assertEqual(json.loads(self.state_path.read_text())["roots"], {day: 9, yesterday: 4})
+        self.api.receipt = {"chain_open": False, "deliveries": [{"status": "done", "reply": "verified commit"}]}
+        self.assertEqual(self.run_pass(NOW + 600, progressed)["action"], "root_finished_progress")
+        self.assertEqual(self.run_pass(NOW + 1079, progressed)["action"], "idle_observation")
+        self.assertEqual(self.run_pass(NOW + 1080, progressed)["action"], "cooldown")
+        self.assertEqual(self.run_pass(NOW + 1800, progressed)["action"], "root_published")
+        state = json.loads(self.state_path.read_text())
+        self.assertEqual(state["roots"], {day: 10, yesterday: 4})
+        self.assertFalse(state["continuation_earned"])
+        self.assertEqual(len(self.engineering_posts()), 2)
+        self.api.receipt = {"chain_open": True, "deliveries": [{"status": "started", "reply": None}]}
+        self.assertEqual(self.run_pass(NOW + 3300, progressed)["action"], "root_pending")
+        self.assertEqual(json.loads(self.state_path.read_text())["roots"], state["roots"])
+        self.assertEqual(len(self.engineering_posts()), 2)
+
+    def test_extended_budget_retains_activity_readiness_and_progress_guards(self):
+        self.config["root_limit"] = 12
+        snapshot = self.snapshot()
+        day = SUP.STATE.utc_day(NOW)
+        for active, ready, earned, action in ((1, True, True, "active_work"),
+                                              (0, False, True, "actors_unavailable"),
+                                              (0, True, False, "no_new_progress")):
+            with self.subTest(action=action):
+                self.state_path.unlink(missing_ok=True)
+                supervisor = self.supervisor()
+                supervisor.state.update(roots={day: 9}, continuation_earned=earned,
+                                        last_finished={"engineering": snapshot})
+                supervisor.save()
+                self.assertEqual(self.run_pass(snapshot=snapshot, active=active, ready=ready)["action"], action)
+                state = json.loads(self.state_path.read_text())
+                self.assertEqual(state["roots"], {day: 9})
+                self.assertNotIn("active_root", state)
+                self.assertEqual(self.engineering_posts(), [])
+
+    def test_extended_daily_budget_is_exhausted_at_twelve(self):
+        self.config["root_limit"] = 12
+        supervisor = self.supervisor()
+        day = SUP.STATE.utc_day(NOW)
+        supervisor.state["roots"][day] = 12
+        supervisor.state["continuation_earned"] = True
+        supervisor.save()
+        self.assertEqual(self.run_pass()["action"], "root_fuel_exhausted")
+        self.assertEqual(self.run_pass(NOW + 1500)["action"], "root_fuel_exhausted")
+        state = json.loads(self.state_path.read_text())
+        self.assertEqual(state["roots"], {day: 12})
+        self.assertNotIn("active_root", state)
+        self.assertEqual(self.engineering_posts(), [])
+        self.assertEqual(len(self.api.posts), 1)
 
     def test_previous_day_unknown_notices_and_new_notices_share_today_post_budget(self):
         self.api.post_errors = ["transport_unknown"] * 3
@@ -375,8 +479,8 @@ class PraxisSupervisionTests(unittest.TestCase):
 
     def test_ledger_cannot_reference_outside_workspace_or_secret(self):
         marker = self.directory / "shell-marker"
-        self.write_json("evidence.json", {"goal_sha256": self.config["goal_sha256"], "records": {
-            "PRAX001": {"source_commit": HEAD, "criteria": [{"id": "C1", "outcome": "accepted", "artifact": {
+        self.write_json("evidence.json", {"schema_version": 1, "goal_sha256": self.config["goal_sha256"], "records": {
+            "PRAX001": {"source_commit": HEAD, "validation_status": "accepted", "criteria": [{"id": "C1", "outcome": "accepted", "artifact": {
                 "path": "../outside; touch " + str(marker), "sha256": "f" * 64}}]}}})
         with self.assertRaisesRegex(SUP.SupervisionError, "artifact_scope"):
             self.snapshot()
@@ -396,24 +500,27 @@ class PraxisSupervisionTests(unittest.TestCase):
         self.assertFalse(snapshot["source_files_match"])
         self.assertFalse(snapshot["completion_candidate"])
 
-    def test_complete_evidence_pauses_for_owner_review_and_keeps_observing(self):
-        self.write_issues("accepted")
-        proof = self.workspace / "proof.json"
-        proof.write_text('{"synthetic":true}')
-        artifact = {"path": "proof.json", "sha256": SUP.digest(proof.read_bytes())}
-        self.write_json("evidence.json", {"goal_sha256": self.config["goal_sha256"], "records": {
-            "PRAX001": {"source_commit": HEAD, "validation_status": "accepted", "criteria": [
-                {"id": identifier, "outcome": "accepted", "artifact": artifact} for identifier in ("C1", "C2")]},
-            "PRAX002": {"source_commit": HEAD, "validation_status": "accepted", "criteria": [{"id": "C1", "outcome": "accepted", "artifact": artifact}]},
-        }})
-        self.write_json("verification.json", {"status": "verified-preview", "source_commit": HEAD,
-            "integration_commit": HEAD, "accepted_issues": ["PRAX001", "PRAX002"],
-            "source_files": {path: SUP.digest((self.workspace / path).read_bytes()) for path in self.config["preview_files"]},
-            "gates": [{"id": name, "outcome": "accepted", "artifacts": [artifact]}
-                      for name in ("tests", "typecheck", "build", "qa", "snapshot")]})
+    def test_complete_technical_evidence_pauses_for_technical_review_without_human_acceptance(self):
+        self.proof_fixture(accepted=True)
         snapshot = self.snapshot()
-        self.assertTrue(snapshot["completion_candidate"])
-        self.assertTrue(self.snapshot(NEXT_HEAD)["completion_candidate"])
+        self.assertFalse(snapshot["completion_candidate"])
+        self.assertTrue(snapshot["technical_milestone_candidate"])
+        self.assertTrue(self.snapshot(NEXT_HEAD)["technical_milestone_candidate"])
+        self.assertTrue(snapshot["acceptance_receipt_required"])
+        self.assertEqual(snapshot["accepted_issues"], [])
+        self.assertEqual(snapshot["accepted_roadmap"], [])
+        verification = json.loads((self.workspace / "verification.json").read_text())
+        for accepted in (0, 2, "PRAX001", {"PRAX001": True, "PRAX002": True}, None,
+                         ["PRAX001", None], ["PRAX001", []], ["PRAX001", "PRAX 002"]):
+            with self.subTest(accepted=accepted):
+                self.write_json("verification.json", {**verification, "accepted_issues": accepted})
+                malformed = self.snapshot()
+                self.assertTrue(malformed["verification_source_current"])
+                self.assertFalse(malformed["verification_current"])
+                self.assertFalse(malformed["completion_candidate"])
+                self.assertEqual(malformed["accepted_issues"], snapshot["accepted_issues"])
+                self.assertEqual(malformed["accepted_roadmap"], snapshot["accepted_roadmap"])
+        self.write_json("verification.json", verification)
         def changed_source(argv, *_):
             if "diff" in argv:
                 return "apps/web/app.js\n"
@@ -428,12 +535,12 @@ class PraxisSupervisionTests(unittest.TestCase):
         self.assertFalse(self.snapshot()["completion_candidate"])
         ledger["records"]["PRAX001"]["validation_status"] = "accepted"
         self.write_json("evidence.json", ledger)
-        self.assertEqual(self.run_pass(snapshot=snapshot)["phase"], "awaiting_final_review")
+        self.assertEqual(self.run_pass(snapshot=snapshot)["phase"], "awaiting_technical_review")
         self.run_pass(NOW + 2000, snapshot)
         self.assertEqual(len(self.api.posts), 1)
         self.assertEqual(self.api.posts[0]["body"]["kind"], "decision_request")
         self.assertEqual(self.engineering_posts(), [])
-        self.assertFalse(self.snapshot(dirty=True)["completion_candidate"])
+        self.assertFalse(self.snapshot(dirty=True)["technical_milestone_candidate"])
 
     def test_observe_only_does_not_write_state_or_post(self):
         result = self.supervisor(observe_only=True).pass_once(self.runtime(), self.snapshot())
@@ -557,6 +664,8 @@ class PraxisSupervisionTests(unittest.TestCase):
         self.assertFalse(SUP.made_progress(previous, current))
         current["verification_source_current"] = True
         current["gate_artifacts"] = ["tests:" + "f" * 64]
+        self.assertFalse(SUP.made_progress(previous, current))
+        current.update(verified_engineering=True, tested_source_hashes={"apps/web/app.js": "f" * 64})
         self.assertTrue(SUP.made_progress(previous, current))
 
     def test_root_absent_from_metadata_does_not_accredit_chain_completion(self):

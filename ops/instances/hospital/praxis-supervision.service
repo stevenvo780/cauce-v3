@@ -14,4 +14,4 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/praxis-supervision
+ReadWritePaths=/var/lib/praxis-supervision /opt/hospital-agent/runtime/praxis-preview/web
