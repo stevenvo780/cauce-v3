@@ -1,0 +1,40 @@
+{
+  "plan": "docs/superpowers/plans/2026-10-06-instalaciones-independientes.md",
+  "authorization": "Usuario aprobó implementación remota; UI local fuera del alcance",
+  "branch": "codex/company-instances-20261006",
+  "base": "08a788947238a49f1b953ae82c3b357c4760f499",
+  "owners": {
+    "policy": "generic_policy_remote",
+    "sdk": "generic_sdk_remote",
+    "common": "generic_ops_remote",
+    "hospital-live": "generic_hospital_remote",
+    "namespace-integration": "root"
+  },
+  "reviews": {
+    "policy": "SDK",
+    "sdk": "policy",
+    "hospital": "SDK",
+    "namespace": "Ops",
+    "common": "Root/Hospital"
+  },
+  "status": "implementation and live acceptance",
+  "gates": {
+    "sdk": "1510 PASS final; build lint smoke typecheck quality PASS",
+    "hospital": "209 Praxis +21 instalación PASS; revisión independiente detectó P1 ya corregido, revalidación pendiente",
+    "policy": "21 nuevos PASS incluidos 14 PostgreSQL; 616 regresiones PASS; generalización probe en curso",
+    "namespace": "10 PASS; defaults byte a byte y rechazo descriptor/inyección; supervisor regresión en curso"
+  },
+  "pending": [
+    "Full exact gate",
+    "Live two instance acceptance",
+    "Independent final reviews",
+    "Commits and PR",
+    "Integration and deployment qualification"
+  ],
+  "rulings": [
+    "Registro host compartido explícito, root-owned setgid/sticky y lock común",
+    "CAUCE_INSTALLATION_ID distinto de CAUCE_INSTANCE_ID de lease",
+    "Probe reservado sin nombres de empresa, autoridad mTLS derivada y revalidación durable",
+    "Contenedores/workspaces de empresas distintos; no adopción por nombre"
+  ]
+}
