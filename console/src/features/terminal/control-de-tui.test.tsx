@@ -15,7 +15,6 @@ import { TERMINAL_DENY_MESSAGES } from './denegaciones';
 import { LIVE_TUI_MODE, SHELL_MODE, WRITABLE_TUI_MODE, terminalEsSoloLectura } from './fleet';
 import { closePtySession, ptySessionType } from './pty-session';
 import { installStubWebSocket, StubWebSocket } from './pty-socket-stub';
-import { PTY_REASON_MIN_LENGTH, PTY_REASON_MAX_LENGTH, controlTuiReason, liveTuiReason } from './session';
 import { TerminalPage } from './TerminalPage';
 
 const TENANT = 'Steven';
@@ -23,9 +22,7 @@ const ALIAS = 'zeus';
 const WS_PATH = '/v3/console/terminal/ws';
 const SESION_HARNESS = 'pty-harness-1';
 const SESION_ESCRIBIBLE = 'pty-rw-1';
-const MOTIVO = controlTuiReason(ALIAS);
-
-interface SesionPedida { mode: string; reason: string }
+interface SesionPedida { mode: string; hasReason: boolean }
 interface ControlPedido { sid: string; body: Record<string, unknown> }
 
 const sesionesTerminalEmitidas = new Set<string>();
@@ -69,7 +66,7 @@ function servirSesiones(registro: SesionPedida[]) {
     http.post('*/v3/console/terminal/sessions', async ({ request }) => {
       const body = await request.json() as Record<string, unknown>;
       const mode = String(body.mode);
-      registro.push({ mode, reason: String(body.reason) });
+      registro.push({ mode, hasReason: Object.hasOwn(body, 'reason') });
       const writableGrant = mode === WRITABLE_TUI_MODE;
       const sessionId = writableGrant ? `pty-rw-${String(registro.filter((item) => item.mode === WRITABLE_TUI_MODE).length)}` : SESION_HARNESS;
       sesionesTerminalEmitidas.add(sessionId);
@@ -215,7 +212,8 @@ describe('el botón sólo existe si el gateway publica un modo con escritura', (
     await abrirZeus(user);
     expect(controles).toHaveLength(0);
     await tomarElControl(user, controles);
-    expect(controles[0]?.body).toMatchObject({ action: 'take', reason: MOTIVO, allow_busy: true });
+    expect(controles[0]?.body).toMatchObject({ action: 'take', allow_busy: true });
+    expect(controles[0]?.body).not.toHaveProperty('reason');
     expect(await screen.findByText(/Tenés el teclado/)).toBeInTheDocument();
     expect(controles).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Tomar control durante el turno' })).not.toBeInTheDocument();
@@ -240,18 +238,22 @@ describe('el botón sólo existe si el gateway publica un modo con escritura', (
   }, 20_000);
 });
 
-describe('control directo con auditoría', () => {
-  it('seleccionar la TUI abre escritura sin formulario y espera ready antes de tomar', async () => {
+describe('control directo con atribución y fencing', () => {
+  it('seleccionar la TUI abre escritura sin justificación y toma después de ready con el owner exacto', async () => {
     const user = userEvent.setup();
     const { sesiones, controles } = escenario();
     await abrirZeus(user);
     expect(screen.queryByRole('textbox', { name: /motivo/i })).not.toBeInTheDocument();
-    expect(sesiones).toEqual([{ mode: WRITABLE_TUI_MODE, reason: MOTIVO }]);
+    expect(sesiones).toEqual([{ mode: WRITABLE_TUI_MODE, hasReason: false }]);
     expect(controles).toHaveLength(0);
     await tomarElControl(user, controles);
-    expect(controles[0].body).toMatchObject({ action: 'take', reason: MOTIVO });
-    expect(Object.keys(controles[0].body).sort()).toEqual([...CAMPOS_DE_CONTROL, 'reason', 'allow_busy'].sort());
-    expect(controles[0].body.reason).not.toBe(liveTuiReason(ALIAS));
+    expect(controles[0].body).toMatchObject({ action: 'take' });
+    expect(Object.keys(controles[0].body).sort()).toEqual([...CAMPOS_DE_CONTROL, 'allow_busy'].sort());
+    expect(controles[0].body).not.toHaveProperty('reason');
+    expect(typeof controles[0].body.request_id).toBe('string');
+    expect(typeof controles[0].body.owner_generation).toBe('string');
+    expect(typeof controles[0].body.owner_token).toBe('string');
+    expect(typeof controles[0].body.authority_proof).toBe('string');
   }, 20_000);
 
   it('devolver el teclado no dispara otra toma automática', async () => {
@@ -509,7 +511,7 @@ describe('la toma espera al enganche del relay', () => {
     await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(abiertos); }, { timeout: 5000 });
     engancharSocket(StubWebSocket.last());
     await waitFor(() => { expect(controles).toHaveLength(1); }, { timeout: 5000 });
-    expect(sesiones.at(-1)).toMatchObject({ mode: WRITABLE_TUI_MODE, reason: MOTIVO });
+    expect(sesiones.at(-1)).toEqual({ mode: WRITABLE_TUI_MODE, hasReason: false });
     await screen.findByRole('button', { name: /devolver el control/i });
   }, 20_000);
 
@@ -704,6 +706,23 @@ describe('el contrato de /control, /extend y writable_modes sale del gateway, no
   const control = fuenteDelGateway('session-control', 'control.ts');
   const extend = fuenteDelGateway('session-control', 'extend.ts');
   const targets = fuenteDelGateway('session-control', 'targets.ts');
+  const workspace = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'OperatorWorkspace.tsx'), 'utf8');
+  const session = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'session.ts'), 'utf8');
+  const stage = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'SessionStage.tsx'), 'utf8');
+  const controlUi = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ControlDeTui.tsx'), 'utf8');
+
+  it('la identidad de reintento de sesión depende del destino, modo y geometría, no de texto', () => {
+    const bloque = /function terminalRequestInputKey\([\s\S]*?\n}/.exec(workspace)?.[0];
+    expect(bloque).toBeDefined();
+    expect(bloque).toContain('input.tenant_id, input.alias, input.mode, input.cols, input.rows');
+    expect(bloque).not.toMatch(/reason|motivo/i);
+  });
+
+  it('no quedan helpers de motivo generados ni validación de justificación en los flujos terminales', () => {
+    for (const source of [session, stage, controlUi]) {
+      expect(source).not.toMatch(/ptyReasonProblem|liveTuiReason|controlTuiReason|PTY_REASON_(MIN|MAX)/);
+    }
+  });
 
   it('los campos del cuerpo de /control son los que `parseControlRequest` acepta', () => {
     expect([...CAMPOS_DE_CONTROL].sort()).toEqual(listaDelGateway(plugin, 'CONTROL_KEYS'));
@@ -711,13 +730,6 @@ describe('el contrato de /control, /extend y writable_modes sale del gateway, no
 
   it('los campos del cuerpo de /extend son los del cuerpo con dueño', () => {
     expect([...CAMPOS_DE_PRORROGA].sort()).toEqual([...listaDelGateway(plugin, 'DELETE_SESSION_KEYS'), 'authority_proof'].sort());
-  });
-
-  it('el motivo auditado tiene los mismos límites que el del gateway', () => {
-    const minimo = /const REASON_MIN = (\d+);/.exec(plugin);
-    const maximo = /const REASON_MAX = (\d+);/.exec(plugin);
-    expect(Number(minimo?.[1])).toBe(PTY_REASON_MIN_LENGTH);
-    expect(Number(maximo?.[1])).toBe(PTY_REASON_MAX_LENGTH);
   });
 
   it('la toma contesta con el identificador de arriendo y su vencimiento', () => {

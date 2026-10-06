@@ -67,10 +67,11 @@ async function abrirDialogoPty() {
   return { user, dialogo, boton };
 }
 
-it('el foco entra al diálogo, en el campo que hay que rellenar', async () => {
+it('el foco inicial entra al botón que abre la terminal', async () => {
   const { dialogo } = await abrirDialogoPty();
   expect(dialogo.contains(document.activeElement)).toBe(true);
-  expect(document.activeElement).toBe(within(dialogo).getByLabelText(/motivo de la sesión/i));
+  expect(document.activeElement).toBe(within(dialogo).getByRole('button', { name: /abrir sesión pty/i }));
+  expect(within(dialogo).queryByRole('textbox')).not.toBeInTheDocument();
 });
 
 it('mientras el diálogo vive, el armazón de la consola queda inerte', async () => {

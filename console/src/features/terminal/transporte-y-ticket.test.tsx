@@ -196,7 +196,6 @@ describe('pedir una sesión nueva después de que el relay cierre el canal', () 
     await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled(); });
     await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
     const dialogo = await screen.findByRole('dialog');
-    await user.type(within(dialogo).getByRole('textbox'), 'revisar el despliegue');
     await user.click(within(dialogo).getByRole('button', { name: /abrir sesión pty/i }));
     await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
 

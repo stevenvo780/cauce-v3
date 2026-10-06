@@ -79,13 +79,14 @@ afterEach(() => {
 });
 
 /** Drives the UI from the fleet list up to a live PTY socket. */
-async function openPtyChannel(user: ReturnType<typeof userEvent.setup>, alias: string, reason: string) {
+async function openPtyChannel(user: ReturnType<typeof userEvent.setup>, alias: string) {
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: new RegExp(`^${alias} ·`, 'i') }));
   await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
 
   const dialog = await screen.findByRole('dialog');
-  await user.type(within(dialog).getByRole('textbox'), reason);
+  expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
+  expect(within(dialog).getByRole('button', { name: /abrir sesión pty/i })).toHaveFocus();
   await user.click(within(dialog).getByRole('button', { name: /abrir sesión pty/i }));
 
   await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
@@ -206,10 +207,10 @@ it('labels every alias with an explicit PTY state instead of a spinner or a bare
   renderWithApi(<TerminalPage />);
 
   expect(await screen.findByRole('option', { name: /^jarvis ·.*TUI en vivo/i })).toBeInTheDocument();
-  expect(screen.getByRole('option', { name: /^argos ·.*Agente PTY no instalado/i })).toBeInTheDocument();
+  expect(screen.getByRole('option', { name: /^argos ·.*Conexión sin comprobar/i })).toBeInTheDocument();
   expect(screen.getByRole('option', { name: /^salva ·.*Sin autoridad/i })).toBeInTheDocument();
   // An alias the inventory never mentioned is UNKNOWN, never silently "available".
-  expect(screen.getByRole('option', { name: /^kant ·.*PTY desconocido/i })).toBeInTheDocument();
+  expect(screen.getByRole('option', { name: /^kant ·.*Conexión sin comprobar/i })).toBeInTheDocument();
 
 });
 
@@ -251,7 +252,7 @@ it('disables PTY for a denied destination and shows the server motive, not an em
   expect(screen.getByRole('option', { name: /^salva ·.*Sin autoridad/ })).toBeInTheDocument();
 });
 
-it('states not_installed explicitly rather than leaving the operator on a spinner', async () => {
+it('treats legacy not_installed metadata as an unobserved connection, not proof of absence', async () => {
   const user = userEvent.setup();
   enableCapability();
   serveTargets([target({ tenant_id: 'Steven', alias: 'argos', pty_state: 'not_installed', container: 'ctrl-infra', reason: 'El agente PTY no está instalado en ctrl-infra.' })]);
@@ -260,15 +261,16 @@ it('states not_installed explicitly rather than leaving the operator on a spinne
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^argos ·/ }));
 
   await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeDisabled(); });
-  expect(screen.getAllByText('Agente PTY no instalado')).toHaveLength(1);
-  expect(screen.getByRole('option', { name: /^argos ·.*Agente PTY no instalado/ })).toBeInTheDocument();
-  expect(screen.getByText(/no está instalado en ctrl-infra/i)).toBeInTheDocument();
+  expect(screen.getAllByText('Conexión sin comprobar')).toHaveLength(1);
+  expect(screen.getByRole('option', { name: /^argos ·.*Conexión sin comprobar/ })).toBeInTheDocument();
+  expect(screen.getByText(/(?:no se observó presencia|presencia no observada).*instalación.*sin comprobar/i)).toBeInTheDocument();
+  expect(document.body.textContent).not.toMatch(/nunca tuvo agente|no está instalado en ctrl-infra/i);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   // No spinner is left standing in place of an answer.
   expect(screen.queryByText(/Cargando Xterm/i)).not.toBeInTheDocument();
 });
 
-it('refuses to confirm without a written motive and spells out who shares the container', async () => {
+it('shows the shell destination, initial focus, and shared-container scope without a textbox', async () => {
   const user = userEvent.setup();
   enableCapability();
   serveTargets([target({
@@ -290,13 +292,11 @@ it('refuses to confirm without a written motive and spells out who shares the co
   expect(within(dialog).getByText('ws-humanizar')).toBeInTheDocument();
 
   const confirm = within(dialog).getByRole('button', { name: /abrir sesión pty/i });
-  expect(confirm).toBeDisabled();
-  await user.type(within(dialog).getByRole('textbox'), 'corto');
-  expect(confirm).toBeDisabled();
-  expect(within(dialog).getByText(/al menos 8 caracteres/i)).toBeInTheDocument();
-
-  await user.type(within(dialog).getByRole('textbox'), ' pero ya no');
   expect(confirm).toBeEnabled();
+  expect(confirm).toHaveFocus();
+  expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
+  await user.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(StubWebSocket.instances).toHaveLength(0);
 });
 
@@ -307,7 +307,7 @@ it('sends attach as the first frame and renders binary PTY output', async () => 
   serveGrant();
   renderWithApi(<TerminalPage />);
 
-  const socket = await openPtyChannel(user, 'jarvis', 'verificar el despliegue atrasado');
+  const socket = await openPtyChannel(user, 'jarvis');
 
   expect(socket.frames()).toHaveLength(0);
   act(() => { socket.acceptOpen(); });
@@ -362,8 +362,9 @@ it('fences two confirmations in the same render to one PTY reservation POST', as
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^jarvis ·/ }));
   await user.click(await screen.findByRole('button', { name: /^Terminal$/i }));
   const dialog = await screen.findByRole('dialog');
-  await user.type(within(dialog).getByRole('textbox'), 'verificar carrera de reserva');
   const confirm = within(dialog).getByRole('button', { name: /abrir sesión pty/i });
+  expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
+  expect(confirm).toHaveFocus();
 
   // Both handlers run before React can render `pending=true`; the synchronous attempt ref is the
   // authority that prevents the second POST.
@@ -395,7 +396,7 @@ it.each([
   serveGrant();
   renderWithApi(<TerminalPage />);
 
-  const socket = await openPtyChannel(user, 'jarvis', 'diagnóstico de la sesión');
+  const socket = await openPtyChannel(user, 'jarvis');
   act(() => {
     socket.acceptOpen();
     socket.emitControl({
@@ -426,7 +427,7 @@ it('releases the grant server-side when the operator closes the session', async 
   }));
   renderWithApi(<TerminalPage />);
 
-  const socket = await openPtyChannel(user, 'jarvis', 'cerrar despues de revisar');
+  const socket = await openPtyChannel(user, 'jarvis');
   act(() => {
     socket.acceptOpen();
     socket.emitControl({
@@ -458,7 +459,7 @@ it('closes the local socket and offers retry when server-side revocation fails',
   }));
   renderWithApi(<TerminalPage />);
 
-  const socket = await openPtyChannel(user, 'jarvis', 'cerrar y reintentar revocación');
+  const socket = await openPtyChannel(user, 'jarvis');
   act(() => {
     socket.acceptOpen();
     socket.emitControl({
@@ -489,7 +490,6 @@ it('surfaces a 409 conflict from the gateway without opening any socket', async 
   await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
   const dialog = await screen.findByRole('dialog');
-  await user.type(within(dialog).getByRole('textbox'), 'intento contra un agente caido');
   await user.click(within(dialog).getByRole('button', { name: /abrir sesión pty/i }));
 
   // The 409 is explained: what happened, why, and who can lift it. Before, the `[role=alert]`

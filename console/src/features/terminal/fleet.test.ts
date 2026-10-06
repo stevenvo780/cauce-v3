@@ -84,7 +84,7 @@ it('resolves PTY authority per destination from the server inventory', () => {
   ];
 
   expect(resolveTerminalTarget(targets, find('jarvis'))).toMatchObject({ status: 'allowed' });
-  expect(resolveTerminalTarget(targets, find('argos'))).toMatchObject({ status: 'not_installed' });
+  expect(resolveTerminalTarget(targets, find('argos'))).toMatchObject({ status: 'unknown', reason: /instalación quedan sin comprobar/ });
   // Denial wins over any state: an unauthorised destination is never shown as merely offline.
   expect(resolveTerminalTarget(targets, find('salva'))).toMatchObject({ status: 'denied', reason: expect.stringContaining('attribution_required') as unknown });
   expect(resolveTerminalTarget(targets, find('midas')).reason).toContain('2026-07-24T10:00:00.000Z');
@@ -94,9 +94,9 @@ it('resolves PTY authority per destination from the server inventory', () => {
 });
 
 it.each([
-  ['not_installed', 'not_installed', 'ok', /no instalado/iu, 'Agente PTY no instalado'],
+  ['not_installed', 'unknown', 'ok', /presencia no observada.*sin comprobar/iu, 'Conexión sin comprobar'],
   ['agent_offline', 'offline', ' OK ', /fuera de línea/iu, 'Agente PTY offline'],
-  ['unknown', 'unknown', 'Ok', /desconocido/iu, 'PTY desconocido'],
+  ['unknown', 'unknown', 'Ok', /no se observó presencia.*sin comprobar/iu, 'Conexión sin comprobar'],
 ] as const)(
   'replaces a legacy ok placeholder for authorized %s with a state-specific UI reason',
   (ptyState, status, reportedReason, expectedReason, label) => {

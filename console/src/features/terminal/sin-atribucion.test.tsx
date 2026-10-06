@@ -37,7 +37,7 @@ function resumeToken(proof: string, sessionId: string): string {
 
 interface SesionPedida {
   mode: string;
-  reason: string;
+  hasReason: boolean;
 }
 interface ControlPedido {
   sid: string;
@@ -94,7 +94,7 @@ function servirSesiones(registro: SesionPedida[]): void {
     http.post('*/v3/console/terminal/sessions', async ({ request }) => {
       const body = (await request.json()) as Record<string, unknown>;
       const mode = String(body.mode);
-      registro.push({ mode, reason: String(body.reason) });
+      registro.push({ mode, hasReason: Object.hasOwn(body, 'reason') });
       const sessionId = mode === WRITABLE_TUI_MODE ? SESION_ESCRIBIBLE : mode === SHELL_MODE ? SESION_SHELL : SESION_HARNESS;
       const grant = mockTerminalGrant({
         sessionId,
@@ -222,7 +222,7 @@ describe('T042 · abrir shell y leer sigue permitido (dejar como está)', () => 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled();
     });
-    // El botón no nace bloqueado por atribución: el motivo que lleva es el del canal.
+    // La shell sigue el permiso del canal; su petición no exige una justificación escrita.
     expect(screen.getByRole('button', { name: /^Terminal$/i })).toHaveAttribute(
       'title',
       expect.not.stringContaining('persona con nombre') as unknown,
@@ -230,7 +230,6 @@ describe('T042 · abrir shell y leer sigue permitido (dejar como está)', () => 
     await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
 
     const dialogo = await screen.findByRole('dialog');
-    await user.type(within(dialogo).getByRole('textbox'), 'revisar el despliegue de zeus');
     await user.click(within(dialogo).getByRole('button', { name: /abrir sesión pty/i }));
 
     await waitFor(() => {
