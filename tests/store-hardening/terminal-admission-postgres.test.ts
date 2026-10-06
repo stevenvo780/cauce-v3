@@ -90,7 +90,6 @@ async function build(maxSessionsPerOperator: number, sessionMaxTotalSeconds?: nu
 async function request(
   operator: string | undefined,
   alias = 'jarvis',
-  reason = 'probar admisión concurrente real',
   receipt: { requestId?: string; ownerToken?: string } = {},
 ) {
   const response = await app.inject({
@@ -99,7 +98,7 @@ async function request(
       ...(operator === undefined ? {} : { 'x-cauce-operator': operator }) },
     payload: {
       tenant_id: 'Steven', alias, mode: 'shell',
-      reason, cols: 100, rows: 30,
+      cols: 100, rows: 30,
       request_id: receipt.requestId ?? randomUUID(), owner_token: receipt.ownerToken ?? randomUUID(),
     },
   });
@@ -259,8 +258,8 @@ describe('atomic PTY admission', () => {
   it('admits only one concurrent request at the per-operator limit', async () => {
     await build(1);
     const responses = await Promise.all([
-      request('steven', 'jarvis', 'primera tarea concurrente real'),
-      request('steven', 'jarvis', 'segunda tarea concurrente real'),
+      request('steven'),
+      request('steven'),
     ]);
     expect(responses.map((response) => response.statusCode).sort()).toEqual([201, 409]);
     expect(responses.find((response) => response.statusCode === 409)?.json())
@@ -272,7 +271,7 @@ describe('atomic PTY admission', () => {
   it('returns one durable issuance receipt to concurrent exact retries', async () => {
     await build(1);
     const receipt = { requestId: randomUUID(), ownerToken: randomUUID() };
-    const responses = await Promise.all([request('steven', 'jarvis', 'probar admisión concurrente real', receipt), request('steven', 'jarvis', 'probar admisión concurrente real', receipt)]);
+    const responses = await Promise.all([request('steven', 'jarvis', receipt), request('steven', 'jarvis', receipt)]);
     expect(responses.map((response) => response.statusCode)).toEqual([201, 201]);
     const receipts = responses.map((response) => response.json<{
       session_id: string; ticket: string; receipt_recovered: boolean;
@@ -290,7 +289,7 @@ describe('atomic PTY admission', () => {
     await build(1);
     const ownerToken = randomUUID();
     const requestId = randomUUID();
-    const opened = await request(undefined, 'jarvis', 'probar admisión concurrente real', {
+    const opened = await request(undefined, 'jarvis', {
       requestId, ownerToken,
     });
     expect(opened.statusCode).toBe(201);
@@ -328,20 +327,20 @@ describe('atomic PTY admission', () => {
       [issued.session_id],
     );
     expect(untouched.rows[0]?.revoked_at).toBeNull();
-    expect((await request(undefined, 'jarvis', 'tarea del sujeto de consola actual')).statusCode).toBe(201);
+    expect((await request(undefined)).statusCode).toBe(201);
   });
 
   it('reconstructs the exact issuance receipt across a real gateway restart', async () => {
     await build(10);
     const receipt = { requestId: randomUUID(), ownerToken: randomUUID() };
-    const first = await request('steven', 'jarvis', 'probar admisión concurrente real', receipt);
+    const first = await request('steven', 'jarvis', receipt);
     expect(first.statusCode).toBe(201);
     const original = first.json<{ session_id: string; ticket: string }>();
 
     await app.close();
     await rm(directory, { recursive: true, force: true });
     await build(10);
-    const retried = await request('steven', 'jarvis', 'probar admisión concurrente real', receipt);
+    const retried = await request('steven', 'jarvis', receipt);
     expect(retried.statusCode).toBe(201);
     expect(retried.json()).toMatchObject({
       session_id: original.session_id,
@@ -764,7 +763,7 @@ describe('atomic PTY admission', () => {
     await allowAuditAgain();
     expect((await closeClaim(issued.session_id, CLAIM_A, epoch)).statusCode).toBe(200);
 
-    const legacyOpened = await request('steven', 'socrates', 'drenar spool legacy sin fence');
+    const legacyOpened = await request('steven', 'socrates');
     const legacy = legacyOpened.json<{ session_id: string }>();
     await pool.query(
       'UPDATE terminal_sessions SET consumed_at=clock_timestamp() WHERE id=$1',

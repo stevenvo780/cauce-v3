@@ -86,11 +86,11 @@ describe('HTTP publish body limit derives from the protocol, not from Fastify', 
     expect(response.body).not.toContain('FST_ERR_CTP_BODY_TOO_LARGE');
   });
 
-  it('leaves every other route on the 1 MiB instance default that bounds the DoS surface', async () => {
+  it('keeps the non-media query route on the 1 MiB default that bounds the DoS surface', async () => {
     const app = await gateway();
     const response = await app.inject({
       method: 'POST',
-      url: '/v3/ack',
+      url: '/v3/query',
       headers,
       payload: `{"padding":"${'x'.repeat(2 * 1024 * 1024)}"}`,
     });
