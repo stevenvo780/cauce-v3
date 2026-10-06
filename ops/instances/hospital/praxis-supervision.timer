@@ -1,0 +1,11 @@
+[Unit]
+Description=Observa Praxis y reanuda trabajo autorizado cada hora
+
+[Timer]
+OnCalendar=*-*-* *:00:00 UTC
+AccuracySec=15s
+Persistent=true
+Unit=praxis-supervision.service
+
+[Install]
+WantedBy=timers.target

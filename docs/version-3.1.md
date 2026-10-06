@@ -117,14 +117,14 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra la consola `2d587daa`, árbol
-`54982b6b6ae8b5b9e09e4d6335c5e6fbca28eac6`, fuente
-`sha256:372bc05a4f16aa0aa57fb462e4edf304b90af12c38c05dc7feb3398b63bf4c5d` e imagen
-`sha256:4dda3420c270159b7c010bbad4acf4df77cf40ae76441deaf7a0ec1e7cbd2ff6`. La verificación
-independiente confirmó 9/9 servicios sanos, ocho contenedores preservados, HTML, 87 assets y seis
-recursos PWA coincidentes con la imagen montada, y once gates PASS para el SHA exacto. El navegador
-autenticado no se probó en esa verificación. Evidencia: `/tmp/cauce-programa-20261004/root-release-2d587daa/live-independent-verification.json` y
-`/home/stev/cauce-release-qa/wave4-2d587daa/gate-evidence-complete.json`.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra la consola `fa3c5e1a`, árbol
+`ec5bce02d3f7147f1e6fd45fcf351171c48cb7f5`, fuente
+`sha256:463ae1433becfd833051c69a592d7b596ab19b20944f1b73483b18f92a1872fc` e imagen
+`sha256:8d869066775259bb2d89a9b239b993c76175387d667c75256adf0a999124d252`. La fila acredita
+controlador exit 0, 9/9 servicios sanos, ocho contenedores preservados, HTML, 87 assets y seis
+recursos PWA coincidentes, once gates exactos verdes y revisión independiente. También registra
+sesión autenticada y toma/devolución sin texto manual verificadas.
+Evidencia registrada: `/var/log/cauce-v3-release/console-tui-fa3c5e1a/`.
 
 El runtime sigue en `fc30f85e`, imagen
 `sha256:d0d44532cbe07a9afd2ea77b8472bf299270b92a7065684721ae78ea664bfea6`, fuente
