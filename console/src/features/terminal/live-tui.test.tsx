@@ -40,13 +40,13 @@ function enableCapability() {
   })));
 }
 
-interface SessionCall { mode: unknown; reason: unknown; alias: unknown }
+interface SessionCall { mode: unknown; hasReason: boolean; alias: unknown }
 
 function recordSessions(calls: SessionCall[], mode = 'harness') {
   server.use(
     http.post('*/v3/console/terminal/sessions', async ({ request }) => {
       const body = await request.json() as Record<string, unknown>;
-      calls.push({ mode: body.mode, reason: body.reason, alias: body.alias });
+      calls.push({ mode: body.mode, hasReason: Object.hasOwn(body, 'reason'), alias: body.alias });
       return HttpResponse.json(mockTerminalGrant({
         sessionId: PTY_SESSION_ID, tenantId: 'Steven', alias: 'zeus', container: 'ws-zeus',
         runtimeUser: 'dev', mode, requestId: String(body.request_id),
@@ -80,7 +80,7 @@ it('transmite la TUI viva del agente en cuanto se elige el alias, sin diálogo y
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(calls).toHaveLength(1);
   expect(calls[0].mode).toBe('harness');
-  expect(String(calls[0].reason)).toMatch(/TUI en vivo de zeus \(solo lectura\)/i);
+  expect(calls[0].hasReason).toBe(false);
 
   const socket = StubWebSocket.last();
   act(() => { socket.acceptOpen(); });
@@ -167,7 +167,7 @@ it('un rechazo del gateway no se reintenta en bucle: la apertura automática es 
   expect(StubWebSocket.instances).toHaveLength(0);
 });
 
-it('la shell sigue exigiendo motivo escrito a mano aunque la TUI se abra sola', async () => {
+it('la shell abre sin diálogo de justificación después de seleccionar Terminal', async () => {
   const user = userEvent.setup();
   const calls: SessionCall[] = [];
   enableCapability();
@@ -180,8 +180,13 @@ it('la shell sigue exigiendo motivo escrito a mano aunque la TUI se abra sola', 
 
   await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
   const dialog = await screen.findByRole('dialog');
-  expect(within(dialog).getByRole('button', { name: /abrir sesión pty/i })).toBeDisabled();
-  expect(within(dialog).getByText(/al menos 8 caracteres/i)).toBeInTheDocument();
+  const abrir = within(dialog).getByRole('button', { name: /abrir sesión pty/i });
+  expect(abrir).toBeEnabled();
+  expect(abrir).toHaveFocus();
+  expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
+  await user.click(abrir);
+  await waitFor(() => { expect(calls).toHaveLength(2); });
+  expect(calls[1]).toMatchObject({ mode: 'shell', hasReason: false });
 });
 
 describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la culpa', () => {
@@ -253,7 +258,10 @@ it('Terminal pide una shell nueva aunque la TUI actual tenga teclado', async () 
   await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
   const dialog = await screen.findByRole('dialog');
   expect(within(dialog).getByRole('heading', { name: 'Abrir Terminal en zeus' })).toBeInTheDocument();
-  expect(within(dialog).getByRole('button', { name: /abrir sesión pty/i })).toBeDisabled();
-  await user.click(within(dialog).getByRole('button', { name: 'Cancelar' }));
-  expect(calls).toHaveLength(1);
+  expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
+  const abrir = within(dialog).getByRole('button', { name: /abrir sesión pty/i });
+  expect(abrir).toBeEnabled();
+  await user.click(abrir);
+  await waitFor(() => { expect(calls).toHaveLength(2); });
+  expect(calls.at(-1)).toMatchObject({ mode: 'shell', hasReason: false });
 });

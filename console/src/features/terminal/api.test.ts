@@ -32,7 +32,6 @@ function sessionInput(overrides: Partial<CreateTerminalSessionInput> = {}): Crea
     tenant_id: 'Steven',
     alias: 'jarvis',
     mode: 'shell',
-    reason: 'verificar el despliegue',
     cols: 80,
     rows: 24,
     request_id: REQUEST_ID,
@@ -198,24 +197,24 @@ it('rejects a target record without an exact tenant and alias', () => {
   expect(readTerminalTarget('jarvis')).toBeUndefined();
 });
 
-it('requests a session with the allow-listed body and surfaces the server reason on 403', async () => {
+it('requests a session without justification and surfaces the server reason on 403', async () => {
   let body: Record<string, unknown> | undefined;
   server.use(http.post('*/v3/console/terminal/sessions', async ({ request }) => {
     body = await request.json() as Record<string, unknown>;
     return HttpResponse.json({ error: 'forbidden', reason: 'attribution_required' }, { status: 403 });
   }));
 
-  await expect(createTerminalSession(sessionInput({
-    tenant_id: 'Miguel', alias: 'kratos', reason: 'diagnóstico del adaptador',
-  }))).rejects.toMatchObject({ status: 403, code: 'forbidden', message: 'attribution_required' });
-  expect(body).toEqual(sessionInput({
-    tenant_id: 'Miguel', alias: 'kratos', reason: 'diagnóstico del adaptador',
-  }));
+  await expect(createTerminalSession(sessionInput({ tenant_id: 'Miguel', alias: 'kratos' })))
+    .rejects.toMatchObject({ status: 403, code: 'forbidden', message: 'attribution_required' });
+  expect(Object.keys(body ?? {}).sort()).toEqual([
+    'tenant_id', 'alias', 'mode', 'cols', 'rows', 'request_id', 'owner_token',
+  ].sort());
+  expect(body).not.toHaveProperty('reason');
 });
 
 it('surfaces a 409 conflict reason verbatim', async () => {
   server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json({ error: 'conflict', reason: 'agent_offline' }, { status: 409 })));
-  await expect(createTerminalSession(sessionInput({ alias: 'argos', reason: 'revisar el bucle' })))
+  await expect(createTerminalSession(sessionInput({ alias: 'argos' })))
     .rejects.toMatchObject({ status: 409, code: 'conflict', message: 'agent_offline' });
 });
 
@@ -336,7 +335,7 @@ it.each([
     mutate(base), { status: 201 },
   )));
 
-  await expect(createTerminalSession(sessionInput({ reason: 'validar exactitud' })))
+  await expect(createTerminalSession(sessionInput()))
     .rejects.toMatchObject({ status: 409, code: 'invalid_grant_receipt' });
 });
 
@@ -355,7 +354,7 @@ it('rejects a malformed 201 grant without deleting the untrusted session_id', as
     }),
   );
 
-  await expect(createTerminalSession(sessionInput({ reason: 'validar recibo' })))
+  await expect(createTerminalSession(sessionInput()))
     .rejects.toMatchObject({ status: 409, code: 'invalid_grant_receipt' });
   expect(deleteAttempts).toBe(0);
 });
@@ -460,7 +459,7 @@ it('adjunta el token CSRF de la sesión al pedir un grant: sin él el gateway re
   }));
 
   const grant = await createTerminalSession(sessionInput({
-    alias: 'zeus', mode: 'harness', reason: 'abrir la TUI',
+    alias: 'zeus', mode: 'harness',
   }));
 
   expect(vistos).toEqual(['mock-csrf-token']);
@@ -513,7 +512,7 @@ describe('el token CSRF viaja en toda escritura del plano PTY', () => {
     }));
 
     await createTerminalSession(
-      sessionInput({ alias: 'zeus', mode: 'harness', reason: 'ver la TUI' }),
+      sessionInput({ alias: 'zeus', mode: 'harness' }),
       sesion,
     );
 
@@ -562,7 +561,7 @@ it('surfaces a 403 whose body only carries reason, with no message key', async (
     { reason: 'attribution_required' }, { status: 403 },
   )));
 
-  await expect(createTerminalSession(sessionInput({ reason: 'sólo reason' })))
+  await expect(createTerminalSession(sessionInput()))
     .rejects.toMatchObject({ status: 403, code: undefined, message: 'attribution_required' });
 });
 
@@ -585,7 +584,7 @@ it('demands the exact 201 receipt and refuses any other successful status', asyn
     runtimeUser: 'claw', mode: 'shell', requestId: REQUEST_ID,
   }), { status: 200 })));
 
-  await expect(createTerminalSession(sessionInput({ reason: 'recibo 200' })))
+  await expect(createTerminalSession(sessionInput()))
     .rejects.toMatchObject({ status: 409, code: 'invalid_grant_receipt' });
 });
 
@@ -616,7 +615,7 @@ it.each([undefined, 'r1.legacy', `ac2.${'x'.repeat(4_100)}`])('refuses a grant w
   if (proof === undefined) delete grant.authority_proof;
   else grant.authority_proof = proof;
   server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json(grant, { status: 201 })));
-  await expect(createTerminalSession(sessionInput({ reason: 'validar continuidad' })))
+  await expect(createTerminalSession(sessionInput()))
     .rejects.toMatchObject({ status: 409, code: 'invalid_grant_receipt' });
 });
 

@@ -57,7 +57,6 @@ try {
     dispatchEvent(new PopStateEvent('popstate'));
   });
   await terminal().waitFor();
-  await page.locator('#pty-control-motivo').waitFor();
   const readonly = [...fixture.sessions.values()].find(session => session.grant.target.mode === 'harness');
   await waitUntil(() => readonly.output.length > 0);
   await terminal().click();
@@ -68,7 +67,6 @@ try {
   check('readonly DOM key sends no input', !readonly.frames.some(frame => frame.type === 'input'));
   check('readonly resize does not resize remote PTY', readonly.frames.filter(frame => frame.type === 'resize').length === readonlyResizes);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.locator('#pty-control-motivo').fill('Verify keyboard with the synthetic PTY only');
   await page.getByRole('button', { name: 'Tomar el control', exact: true }).click();
   await page.getByRole('button', { name: 'Reintentar la toma', exact: true }).waitFor();
   const writable = [...fixture.sessions.values()].find(session => session.grant.target.mode === 'harness_rw');
@@ -127,7 +125,6 @@ try {
   await new Promise(resolve => setTimeout(resolve, 150));
   check('hidden reconnect does not steal search focus', await search.evaluate(element => element === document.activeElement));
   await page.getByRole('tab', { name: /kant/i }).click();
-  await page.locator('#pty-control-motivo').waitFor();
   check('return keeps session readonly until explicit take', !writable.held && await page.locator('.pty-control[data-sostenido]').count() === 0);
   check('return explains explicit reacquisition', await page.getByText(/Cambiar de pestaña devuelve el control/).isVisible());
   await terminal().click();
@@ -135,13 +132,11 @@ try {
   await page.keyboard.press('F4');
   await new Promise(resolve => setTimeout(resolve, 100));
   check('returned readonly terminal blocks browser key', writable.frames.filter(frame => frame.type === 'input').length === beforeReturn);
-  await page.locator('#pty-control-motivo').fill('Reacquire the synthetic keyboard after changing tabs');
   await page.getByRole('button', { name: 'Tomar el control', exact: true }).click();
   await page.locator('.pty-control[data-sostenido]').waitFor();
   await key(writable, 'key after explicit reacquisition', 't', () => page.keyboard.press('t'));
   await page.getByRole('button', { name: 'Devolver el control', exact: true }).click();
   fixture.scenario.disabled = true;
-  await page.locator('#pty-control-motivo').fill('Verify disabled gateway rejects synthetic control');
   await page.getByRole('button', { name: 'Tomar el control', exact: true }).click();
   await page.getByText('La escritura sobre la TUI está apagada en este gateway', { exact: true }).waitFor();
   check('disabled switch has explicit reason and grants no control', !writable.held);
@@ -149,7 +144,6 @@ try {
   check('disabled switch action is unavailable', await page.getByRole('button', { name: 'Escritura no disponible', exact: true }).isDisabled());
   await page.screenshot({ path: `${output}/disabled.png` });
   await page.getByRole('tab', { name: /argos/i }).click();
-  await page.locator('#pty-control-motivo').fill('Verify disabled admission despite advertised writable modes');
   const takesBeforeDenial = fixture.journal.filter(event => event.path?.endsWith('/control') && event.body.action === 'take').length;
   await page.getByRole('button', { name: 'Tomar el control', exact: true }).click();
   await page.getByText('La escritura sobre la TUI está apagada en este gateway', { exact: true }).waitFor();

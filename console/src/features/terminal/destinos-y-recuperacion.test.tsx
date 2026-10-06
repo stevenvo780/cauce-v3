@@ -55,7 +55,7 @@ describe('destinos que el servidor publica a medias', () => {
    * console must not turn a read-only mirror into an interactive terminal, and it must say so
    * where the shell is refused — not leave a grey button with an empty tooltip.
    */
-  it('sólo con modo harness: la TUI se abre y la shell queda cerrada con el motivo escrito', async () => {
+  it('sólo con modo harness: la TUI se abre y la shell queda cerrada sin conceder modo no publicado', async () => {
     const user = userEvent.setup();
     let posts = 0;
     enableCapability();
@@ -97,7 +97,7 @@ describe('destinos que el servidor publica a medias', () => {
 
     await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeDisabled(); });
     expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled();
-    expect(screen.getAllByText(/no publicó una medición verificable/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/no se observó presencia.*sin comprobar/i).length).toBeGreaterThan(0);
     // Nothing was asked of the gateway and no socket opened on an unmeasured destination.
     expect(posts).toBe(0);
     expect(StubWebSocket.instances).toHaveLength(0);

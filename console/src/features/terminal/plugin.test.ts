@@ -97,7 +97,7 @@ it('holds the inventory endpoint to the same same-origin rule as the capability'
 
 it.each([
   ['agent_offline', 'offline'],
-  ['not_installed', 'not_installed'],
+  ['not_installed', 'unknown'],
   ['unknown', 'unknown'],
 ] as const)('reports %s as the explicit status %s instead of enabling the channel', (ptyState, status) => {
   const gate = terminalChannelGate(CAPABILITY, ACCESS, { items: [target({ pty_state: ptyState })] }, JARVIS);

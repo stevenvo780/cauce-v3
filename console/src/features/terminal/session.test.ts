@@ -2,7 +2,6 @@ import type { FleetAgent } from './fleet';
 import {
   formatCountdown,
   operatorRouteForAgent,
-  ptyReasonProblem,
   ptySecondsLeft,
   transcriptForSession,
   type OperatorSession,
@@ -101,15 +100,6 @@ it('projects a recipient transcript across server-authorized rooms', () => {
   ]);
 });
 
-it('demands a hand-written justification between 8 and 280 characters', () => {
-  expect(ptyReasonProblem('')).toMatch(/al menos 8/);
-  expect(ptyReasonProblem('corto')).toMatch(/al menos 8/);
-  // Whitespace is not a justification: it is trimmed before counting.
-  expect(ptyReasonProblem('        ')).toMatch(/al menos 8/);
-  expect(ptyReasonProblem('revisar el bucle de argos')).toBeUndefined();
-  expect(ptyReasonProblem('x'.repeat(281))).toMatch(/no puede pasar de 280/);
-});
-
 it('cuenta atrás hasta el vencimiento del permiso y dice «sin dato» en vez de un reloj inventado', () => {
   const now = Date.parse('2026-07-25T12:00:00.000Z');
   expect(ptySecondsLeft('2026-07-25T12:00:30.000Z', now)).toBe(30);
@@ -120,4 +110,3 @@ it('cuenta atrás hasta el vencimiento del permiso y dice «sin dato» en vez de
   expect(formatCountdown(95)).toBe('1:35');
   expect(formatCountdown(5)).toBe('0:05');
 });
-
