@@ -75,10 +75,8 @@ function mock(quotas: Partial<QuotaSnapshot>, config: Record<string, unknown> = 
 
 /** The metrics strip of the tab that is open: both are mounted at once, the hidden one included. */
 function metrics(): HTMLElement {
-  const visible = Array.from(document.querySelectorAll('.view-tab-panel')).find((panel) => !panel.hasAttribute('hidden'));
-  const grid = (visible ?? document).querySelector('.metrics-grid');
-  if (!grid) throw new Error('metrics-grid not found');
-  return grid as HTMLElement;
+  const visible = Array.from(document.querySelectorAll('[role="tabpanel"]')).find((panel) => !panel.hasAttribute('hidden'));
+  return within((visible ?? document.body) as HTMLElement).getByRole('group', { name: 'Indicadores' });
 }
 
 function metric(label: string): HTMLElement {
@@ -125,7 +123,7 @@ it('«Peor remanente» mide la peor VENTANA, no el porcentaje efectivo que la pr
   // NEGATIVE CONTROL: the effective percentage must not be what is read here. Without this line, a card that
   // kept using `effective_remaining_percent` would still pass the assertion above the day both numbers agree.
   expect(peor.textContent).not.toContain('100%');
-  expect(peor.className).toContain('metric-danger');
+  expect(peor).toHaveAttribute('data-tone', 'danger');
 });
 
 it('en el borde exacto del umbral el Inventario dice lo mismo que Consumo', async () => {
@@ -139,8 +137,7 @@ it('en el borde exacto del umbral el Inventario dice lo mismo que Consumo', asyn
   renderWithApi(<AccountsPage />);
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
-  const providers = screen.getByRole('heading', { level: 2, name: 'Proveedores' }).closest('section');
-  if (!providers) throw new Error('section not found');
+  const providers = screen.getByRole('region', { name: 'Proveedores' });
   expect(within(within(providers).getByRole('row', { name: /Grupo borde/ })).getByText('OK')).toBeInTheDocument();
   expect(within(within(providers).getByRole('row', { name: /Grupo critico/ })).getByText('ATENCIÓN')).toBeInTheDocument();
 
@@ -201,8 +198,7 @@ it('no imprime el 33.333333333333336 crudo del recolector: un decimal como mucho
   renderWithApi(<AccountsPage />);
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
-  const providers = screen.getByRole('heading', { level: 2, name: 'Proveedores' }).closest('section');
-  if (!providers) throw new Error('section not found');
+  const providers = screen.getByRole('region', { name: 'Proveedores' });
   expect(within(providers).getByText('33.3% libre')).toBeInTheDocument();
   expect(within(metrics()).getByText('33.3%')).toBeInTheDocument();
 
@@ -238,7 +234,7 @@ it('el detalle de fallback nombra al agente del cliente que TIENE el binding, no
   await openTab(user, 'Inventario');
   await user.click(screen.getByRole('button', { name: /Detalle de ruteo de claude-max/ }));
 
-  const detail = document.querySelector('.account-detail-row');
+  const detail = document.querySelector('tr.row-detail');
   if (!(detail instanceof HTMLElement)) throw new Error('detalle no abierto');
   expect(detail).toHaveTextContent('Steven/claude');
   expect(detail).toHaveTextContent('Claude de Steven');
@@ -252,7 +248,7 @@ it('el binding de un cliente no tapa al homónimo del otro en «Agentes sin bind
   mock({ providers: [provider('claude-max', 60, 'ok')] }, HOMONIMOS);
   renderWithApi(<AccountsPage />);
 
-  const findings = (await screen.findByRole('heading', { level: 2, name: 'Hallazgos' })).closest('section');
+  const findings = await screen.findByRole('region', { name: 'Hallazgos' });
   if (!findings) throw new Error('section not found');
   const orphans = within(findings).getByRole('heading', { name: /agentes sin bindings/i }).closest('div');
   if (!orphans) throw new Error('finding-section not found');

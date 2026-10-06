@@ -39,7 +39,7 @@ it('mantiene cada ratio de intentos como una sola unidad legible', () => {
     canReplay canCancel onChanged={verifiedRefresh}
   />);
 
-  const intentos = container.querySelectorAll('td[data-label="Intentos"] .intentos-ratio');
+  const intentos = container.querySelectorAll('td[data-label="Intentos"]');
   expect(intentos).toHaveLength(2);
   expect(intentos[0]).toHaveTextContent('0 / 5');
   const ratioIncompleto = intentos[1];

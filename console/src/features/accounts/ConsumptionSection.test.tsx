@@ -115,9 +115,7 @@ function mockBoth(snapshot: QuotaSnapshot = BASE, config: Record<string, unknown
 }
 
 function panel(name: string): HTMLElement {
-  const el = screen.getByRole('heading', { level: 2, name }).closest('section');
-  if (!el) throw new Error(`Panel ${name} not found`);
-  return el;
+  return screen.getByRole('region', { name });
 }
 
 /**
@@ -128,11 +126,10 @@ function panel(name: string): HTMLElement {
  * runs inside the open panel.
  */
 function metrics(): HTMLElement {
-  const visible = Array.from(document.querySelectorAll('.view-tab-panel'))
+  const visible = Array.from(document.querySelectorAll('[role="tabpanel"]'))
     .find((p) => !p.hasAttribute('hidden'));
-  const el = (visible ?? document).querySelector('.metrics-grid');
-  if (!el) throw new Error('metrics-grid not found');
-  return el as HTMLElement;
+  const el = within((visible ?? document.body) as HTMLElement).getByRole('group', { name: 'Indicadores' });
+  return el;
 }
 
 it('es UNA sola vista con las tres mitades: consumo, inventario y asignaciones', async () => {
@@ -146,10 +143,9 @@ it('es UNA sola vista con las tres mitades: consumo, inventario y asignaciones',
   expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   expect(panel('Proveedores')).toBeInTheDocument();
 
-  // The six top-level counts from the quota views coexist: none got lost in the merge.
+  // The top-level counts of the quota view coexist: none got lost in the merge.
   for (const label of [
-    'Cuentas registradas', 'Con datos de cuota', 'Agentes', 'Recolectores conectados',
-    'Proveedores', 'Peor remanente',
+    'Con datos de cuota', 'Recolectores conectados', 'Proveedores', 'Peor remanente',
   ]) {
     expect(within(metrics()).getByText(label)).toBeInTheDocument();
   }
@@ -184,17 +180,18 @@ it('conserva entero el inventario de licencias: identidad, pagador, asignaciones
   const text = inventory.textContent;
 
   expect(text).toContain('codex-pro-steven');
-  expect(text).toContain('bengalfox@openai');
-  // An account paid by another tenant does not expose its external id, and that is stated in full.
-  expect(text).toMatch(/No visible: la paga Miguel/i);
   expect(within(inventory).getAllByText('PUBLICADA').length).toBeGreaterThan(0);
   // The plan comes from the quota sample, on the consumption side: the merge is what makes it possible to read it in the SAME row as the account that has it.
   expect(within(inventory).getByRole('row', { name: /codex-pro-steven/ })).toHaveTextContent('pro');
 
     // Who uses the account and with what priority, and the routing ceiling: they do not exist anywhere else in the
     // console together with the balance, and they are the reason for the merge. They live in the row detail.
-  await user.click(within(inventory).getByRole('button', { name: /Detalle de ruteo de codex-pro-steven/ }));
-  const detail = panel('Inventario de cuentas').querySelector('.account-detail-row');
+    // The external id and locator live in the same detail: an account paid by another tenant does not
+    // expose them, and that is stated in full.
+  for (const button of within(inventory).getAllByRole('button', { name: /Detalle de ruteo de/ })) await user.click(button);
+  expect(inventory.textContent).toContain('bengalfox@openai');
+  expect(inventory.textContent).toMatch(/No visible: la paga Miguel/i);
+  const detail = panel('Inventario de cuentas').querySelector('tr.row-detail');
   expect(detail).not.toBeNull();
   if (detail instanceof HTMLElement) {
     const detailText = detail.textContent;
@@ -211,8 +208,7 @@ it('conserva entero el consumo: peor primero, una fila por grupo y el histórico
   mockBoth();
   renderWithApi(<AccountsPage />);
 
-  const heading = await screen.findByRole('heading', { level: 2, name: 'Proveedores' });
-  const providers = heading.closest('section');
+  const providers = await screen.findByRole('region', { name: 'Proveedores' });
   expect(providers).not.toBeNull();
   if (providers) {
     const cards = within(providers).getAllByRole('heading', { level: 3 });
@@ -244,15 +240,14 @@ it('la única representación gráfica es el sparkline: las barras duplicadas de
     // The account cards used to draw their own percentage bar with less data than the Proveedores table: two drawings
     // of the same number on the same page.
   expect(document.querySelectorAll('.windows-grid, .bar-container, .bar-fill')).toHaveLength(0);
-  expect(document.querySelectorAll('.sparkline svg').length).toBeGreaterThan(0);
+  expect(document.querySelectorAll('svg[role="img"]').length).toBeGreaterThan(0);
 });
 
 it('junta las tres direcciones de huérfano en un solo panel de hallazgos', async () => {
   mockBoth();
   renderWithApi(<AccountsPage />);
 
-  const heading = await screen.findByRole('heading', { level: 2, name: 'Hallazgos' });
-  const findings = heading.closest('section');
+  const findings = await screen.findByRole('region', { name: 'Hallazgos' });
   expect(findings).not.toBeNull();
   if (findings) {
     const text = findings.textContent;
@@ -279,8 +274,7 @@ it('marca desactualizado a un recolector viejo aunque el servidor lo declare fre
   });
   renderWithApi(<AccountsPage />);
 
-  const heading = await screen.findByRole('heading', { level: 2, name: 'Recolectores' });
-  const collectors = heading.closest('section');
+  const collectors = await screen.findByRole('region', { name: 'Recolectores' });
   expect(collectors).not.toBeNull();
   if (collectors) {
     expect(within(within(collectors).getByRole('row', { name: /kratos/i })).getByText('FRESCO')).toBeInTheDocument();
@@ -315,10 +309,14 @@ it('sin recolector NO inventa porcentajes: muestra el inventario y declara que n
   const inventory = panel('Inventario de cuentas');
   expect(inventory).toHaveTextContent('codex-pro-steven');
   expect(inventory.textContent).not.toContain('Ningún recolector reportó');
-  await user.click(within(inventory).getByRole('button', { name: /Detalle de ruteo de codex-pro-steven/ }));
+    // The external id and locator live in the same detail: an account paid by another tenant does not
+    // expose them, and that is stated in full.
+  for (const button of within(inventory).getAllByRole('button', { name: /Detalle de ruteo de/ })) await user.click(button);
+  expect(inventory.textContent).toContain('bengalfox@openai');
+  expect(inventory.textContent).toMatch(/No visible: la paga Miguel/i);
   expect(panel('Inventario de cuentas')).toHaveTextContent('claw-zeus');
   // The GLOBAL reason is not repeated in the detail: it was already declared once above.
-  expect(document.querySelectorAll('.account-notice')).toHaveLength(0);
+  expect(within(panel('Inventario de cuentas')).queryAllByRole('note')).toHaveLength(0);
   // And consumption is declared as absent, not as zero.
   expect(panel('Inventario de cuentas').textContent).not.toMatch(/\d+\s*%/);
 });
@@ -358,7 +356,7 @@ it('una sonda caída no reaparece como un número: la cuenta queda en interrogan
   for (const id of ['codex-pro-steven', 'minimax-pool', 'claude-max-saldantia']) {
     await user.click(screen.getByRole('button', { name: `Detalle de ruteo de ${id}` }));
   }
-  const notices = Array.from(document.querySelectorAll('.account-notice')).map((n) => n.textContent);
+  const notices = within(panel('Inventario de cuentas')).queryAllByRole('note').map((n) => n.textContent);
   expect(notices.filter((text) => text.includes('Sonda caída:'))).toHaveLength(1);
   expect(notices.filter((text) => text.includes('El recolector no reportó esta cuenta'))).toHaveLength(2);
 

@@ -1,26 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { Info, Search, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Info, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import type { AuditEvent, AuditPage } from '../../api/types';
-import { Badge, EmptyState, ErrorState, LoadingState, Panel, Time, Unknown } from '../../components/ui';
+import { cn } from '../../cn';
+import { Button, Notice } from '../../components/form-kit';
+import { SearchField, Toolbar } from '../../components/ops-kit';
+import { Badge, EmptyState, ErrorState, LoadingState, Time, Unknown } from '../../components/ui';
+import { TONE_CLASS, type Tone } from '../../status-tone';
 import { compactId, safeAuditDecision } from '../../lib';
 import { readableAuditSummary } from './audit-summary';
-import './audit.css';
+
+const DECISION_TONE: Record<string, Tone> = { allow: 'ok', deny: 'danger', info: 'info' };
 
 /**
- * **The audit** — not a
- * route of its own.
- *
- * An investigation starts at a relay and ends at the audit, and it used to take two browser tabs
- * and an identifier copied by hand. The relay row now carries a button that lands here with the
- * `trace_id` already in the filter, which is why the search text lives on the PAGE and not in this
- * component: here, switching tabs would lose it.
- *
- * What is preserved in full from the old view, without exception: the search over the six fields
- * (action, actor, tenant, request, trace, summary), the "N visible of M" counter, the icon by
- * decision, the allow/deny/UNKNOWN badge, the summary, and the actor · tenant · request · trace ·
- * timestamp card. Plus its three states: loading, error with retry, and empty.
+ * The audit log, mounted inside /observability. An investigation starts at a relay and ends here,
+ * so the search text lives on the PAGE (the relay row lands here with its `trace_id` already in
+ * the filter) and not in this component: switching tabs would lose it.
  */
 export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value: string) => void }) {
   const api = useApi();
@@ -127,50 +123,67 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
 
   return (
     <>
-      <Panel>
-        <label className="search-field"><Search size={17} aria-hidden="true" /><span className="sr-only">Filtrar auditoría</span><input type="search" value={query} onChange={(event) => { onQuery(event.target.value); }} placeholder="Filtrar por actor, action, trace…" /></label>
-        {needle ? (
-          <p className="notice" role="status">
+      <Toolbar className="mb-3">
+        <SearchField label="Filtrar auditoría" value={query} onChange={onQuery} placeholder="Filtrar por actor, action, trace…" />
+        <span className="text-xs text-muted">{String(filtered.length)} visibles de {String(events.length)}</span>
+      </Toolbar>
+      {needle ? (
+        <Notice role="status" className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1 basis-64">
             Filtrando por <span className="mono">{query.trim()}</span>{busquedaParcial
               ? ` entre los ${String(events.length)} eventos ya cargados; la auditoría tiene más atrás.`
-              : '.'}{' '}
-            <button className="button small" type="button" onClick={() => { onQuery(''); }}>Quitar el filtro</button>
-          </p>
-        ) : null}
-      </Panel>
-      <Panel title="Eventos" subtitle={`${String(filtered.length)} visibles de ${String(events.length)}`}>
-        {filtered.length === 0 ? (
-          <EmptyState>
-            {busquedaParcial
-              ? `Ninguno de los ${String(events.length)} eventos cargados coincide. NO quiere decir que no exista: `
-                + 'la búsqueda sólo cubre lo cargado y quedan eventos anteriores sin leer — seguí con '
-                + '«Cargar anteriores».'
-              : 'No hay eventos que coincidan.'}
-          </EmptyState>
-        ) : (
-          <div className="audit-list">
-            {filtered.map((event, index) => {
-              const decision = safeAuditDecision(event.decision);
-              return <article className="audit-row" key={event.event_id ?? index}>
-                <span className={`audit-icon ${decision ?? 'unknown'}`}>{decision === 'allow' ? <ShieldCheck aria-hidden="true" /> : decision === 'info' ? <Info aria-hidden="true" /> : <ShieldAlert aria-hidden="true" />}</span>
-                <div className="audit-main"><div><strong><Unknown value={event.action} /></strong><Badge tone={decision === 'allow' ? 'online' : decision === 'deny' ? 'danger' : decision === 'info' ? 'info' : 'unknown'}><Unknown value={decision} /></Badge></div><p><Unknown value={readableAuditSummary(event.summary)} /></p></div>
-                <dl><div><dt>Actor</dt><dd><Unknown value={event.actor_alias} /> · <Unknown value={event.tenant_id} /></dd></div><div><dt>Request</dt><dd className="mono">{compactId(event.request_id)}</dd></div><div><dt>Trace</dt><dd className="mono">{compactId(event.trace_id)}</dd></div><div><dt>Fecha</dt><dd><Time value={event.at} /></dd></div></dl>
-              </article>;
-            })}
-          </div>
-        )}
-        {olderError ? (
-          <p className="notice danger" role="alert">
-            No se pudieron cargar eventos anteriores: {olderError.message}.{' '}
-            <button className="button small" type="button" onClick={() => void loadOlder()}>Reintentar</button>
-          </p>
-        ) : null}
-        {nextCursor !== null ? (
-          <button className="button secondary" type="button" disabled={olderLoading} onClick={() => void loadOlder()}>
+              : '.'}
+          </span>
+          <Button size="sm" onClick={() => { onQuery(''); }}>Quitar el filtro</Button>
+        </Notice>
+      ) : null}
+      {filtered.length === 0 ? (
+        <EmptyState>
+          {busquedaParcial
+            ? `Ninguno de los ${String(events.length)} eventos cargados coincide. NO quiere decir que no exista: `
+              + 'la búsqueda sólo cubre lo cargado y quedan eventos anteriores sin leer — seguí con '
+              + '«Cargar anteriores».'
+            : 'No hay eventos que coincidan.'}
+        </EmptyState>
+      ) : (
+        <ul className="m-0 grid list-none divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface p-0" aria-label="Eventos de auditoría">
+          {filtered.map((event, index) => {
+            const decision = safeAuditDecision(event.decision);
+            const tone = TONE_CLASS[(decision && DECISION_TONE[decision]) || 'neutral'];
+            return <li className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 px-3 py-2.5" key={event.event_id ?? index}>
+              <span data-decision={decision ?? 'unknown'} className={cn('grid size-7 place-items-center rounded-md [&>svg]:size-4', tone.pill)}>
+                {decision === 'allow' ? <ShieldCheck aria-hidden="true" /> : decision === 'info' ? <Info aria-hidden="true" /> : <ShieldAlert aria-hidden="true" />}
+              </span>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <strong className="text-[13px]"><Unknown value={event.action} /></strong>
+                  <Badge tone={decision === 'allow' ? 'online' : decision === 'deny' ? 'danger' : decision === 'info' ? 'info' : 'unknown'}><Unknown value={decision} /></Badge>
+                </div>
+                <p className="m-0 mt-0.5 text-[13px] break-words text-fg-2"><Unknown value={readableAuditSummary(event.summary)} /></p>
+                <dl className="m-0 mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted">
+                  <div className="flex gap-1"><dt>Actor</dt><dd className="m-0 text-fg-2"><Unknown value={event.actor_alias} /> · <Unknown value={event.tenant_id} /></dd></div>
+                  <div className="flex gap-1"><dt>Request</dt><dd className="mono m-0 text-fg-2">{compactId(event.request_id)}</dd></div>
+                  <div className="flex gap-1"><dt>Trace</dt><dd className="mono m-0 text-fg-2">{compactId(event.trace_id)}</dd></div>
+                  <div className="flex gap-1"><dt>Fecha</dt><dd className="m-0 text-fg-2"><Time value={event.at} /></dd></div>
+                </dl>
+              </div>
+            </li>;
+          })}
+        </ul>
+      )}
+      {olderError ? (
+        <Notice tone="danger" role="alert" className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1 basis-64">No se pudieron cargar eventos anteriores: {olderError.message}.</span>
+          <Button size="sm" onClick={() => void loadOlder()}>Reintentar</Button>
+        </Notice>
+      ) : null}
+      {nextCursor !== null ? (
+        <div className="mt-3 flex justify-center">
+          <Button disabled={olderLoading} onClick={() => void loadOlder()}>
             {olderLoading ? 'Cargando anteriores…' : 'Cargar anteriores'}
-          </button>
-        ) : null}
-      </Panel>
+          </Button>
+        </div>
+      ) : null}
     </>
   );
 }
