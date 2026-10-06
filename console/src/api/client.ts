@@ -15,6 +15,7 @@ import {
 import { systemClient, type RequestFn, type SystemClient } from './client/system-client';
 import { messagingClient, type MessagingClient } from './client/messaging-client';
 import { agentClient, type AgentClient } from './client/agent-client';
+import { clientDelegationsClient, type ClientDelegationsClient } from './client/client-delegations-client';
 
 /**
  * A 401 on ANY data call is the session dying, and until it is noticed the console keeps painting
@@ -33,7 +34,7 @@ type UnauthorizedListener = () => void;
 const AUTH_PATH = '/v3/auth/';
 
 /* eslint-disable @typescript-eslint/no-unsafe-declaration-merging -- the merge IS the surface; client.test.ts asserts every merged method at runtime. */
-export interface CauceApi extends SystemClient, MessagingClient, AgentClient, ContextRepositoryClient, NativeContextRepositoryClient {}
+export interface CauceApi extends SystemClient, MessagingClient, AgentClient, ContextRepositoryClient, NativeContextRepositoryClient, ClientDelegationsClient {}
 
 export class CauceApi {
   private readonly baseUrl: string;
@@ -66,6 +67,7 @@ export class CauceApi {
     const request: RequestFn = <T>(path: string, init?: RequestInit, options?: RequestOptions): Promise<T> =>
       this.request<T>(path, init, options);
     Object.assign(this, systemClient(request), messagingClient(request), agentClient(request), contextRepositoryClient(request), nativeContextRepositoryClient(request));
+    Object.assign(this, clientDelegationsClient(request));
   }
 
   private async request<T>(

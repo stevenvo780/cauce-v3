@@ -1,7 +1,8 @@
 import { ChevronUp, LogOut, UserRound, X } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { HumanProfileEditor } from './HumanProfileEditor';
+import { ClientConnectionsPanel } from './ClientConnectionsPanel';
 import { humanProfileName } from './account-identity';
 import { ThemeControl } from '../../components/ThemeControl';
 import { Time } from '../../components/ui';
@@ -24,11 +25,24 @@ function AccountPopover({ gate, routeKey }: { gate: AuthGateState; routeKey: str
   const heading = useRef<HTMLHeadingElement>(null);
   const switchTrigger = useRef<HTMLButtonElement>(null);
   const switchHeading = useRef<HTMLParagraphElement>(null);
+  const popover = useRef<HTMLElement>(null);
+  const [maximumHeight, setMaximumHeight] = useState<number>();
   const name = status === 'in' ? humanProfileName(state) : 'Cuenta';
 
   useEffect(() => { setOpen(false); setConfirmSwitch(false); }, [routeKey, state?.subject]);
   useEffect(() => { if (!open) setConfirmSwitch(false); }, [open]);
   useEffect(() => { if (confirmSwitch) switchHeading.current?.focus({ preventScroll: true }); }, [confirmSwitch]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const bound = () => {
+      const bottom = popover.current?.getBoundingClientRect().bottom;
+      if (bottom !== undefined && bottom > 0) setMaximumHeight(Math.max(0, Math.min(bottom, window.innerHeight - 12) - 12));
+    };
+    bound();
+    window.addEventListener('resize', bound);
+    return () => { window.removeEventListener('resize', bound); };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -67,7 +81,8 @@ function AccountPopover({ gate, routeKey }: { gate: AuthGateState; routeKey: str
       <span className="account-name">{name}</span>
       <ChevronUp className="account-chevron" size={16} aria-hidden="true" />
     </button>
-    <section hidden={!open} id={id} className="account-popover" role="dialog" aria-labelledby={`${id}-title`}>
+    <section ref={popover} style={maximumHeight === undefined ? undefined : { maxHeight: maximumHeight }}
+      hidden={!open} id={id} className="account-popover" role="dialog" aria-labelledby={`${id}-title`}>
       <header>
         <h2 id={`${id}-title`} ref={heading} tabIndex={-1}>Cuenta y apariencia</h2>
         <button type="button" className="account-close" aria-label="Cerrar cuenta y apariencia" onClick={close}><X size={18} aria-hidden="true" /></button>
@@ -90,6 +105,8 @@ function AccountPopover({ gate, routeKey }: { gate: AuthGateState; routeKey: str
           : <><code>{technicalIdentity === undefined || technicalIdentity.length === 0 ? 'No informada por el servidor' : technicalIdentity}</code>
             <p>El servidor usa esta identidad para enrutar y comprobar permisos. No es el nombre de la persona.</p></>}
       </div> : null}
+      {status === 'in' && state?.login_mode === 'password' ? <ClientConnectionsPanel
+        key={`${state.subject ?? ''}:${state.csrf_token ?? ''}`} active={open} disabled={busy} /> : null}
       <div className="account-appearance"><span>Apariencia</span><ThemeControl /></div>
       {error ? <p className="auth-failure" role="alert">{error.message}</p> : null}
       {status === 'in' ? <button ref={switchTrigger} type="button" className="button secondary account-logout" disabled={busy} aria-expanded={confirmSwitch} onClick={() => { setConfirmSwitch(!confirmSwitch); }}>Cambiar cuenta</button> : null}
