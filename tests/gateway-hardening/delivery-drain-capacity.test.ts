@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { StoreError } from '@cauce/store';
 import { WebSocket } from 'ws';
 import { buildGateway, type DeliveryClaimRecord } from '../../services/gateway/src/index.js';
+import { recordChatLatency } from '../../services/gateway/src/routes/core/outbox.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import {
   DEFAULT_HUMAN_RESERVED_DELIVERIES, DEFAULT_MAX_INFLIGHT_DELIVERIES
@@ -24,6 +26,7 @@ const sockets: WebSocket[] = [];
 
 afterEach(async () => {
   await closeGatewaysAndSockets(apps, sockets);
+  vi.restoreAllMocks();
 });
 
 function claim(deliveryId: string, claimToken: string): DeliveryClaimRecord {
@@ -38,7 +41,8 @@ function claim(deliveryId: string, claimToken: string): DeliveryClaimRecord {
 
 async function connect(
   repository: ReturnType<typeof fakeRepository>,
-  overrides: Record<string, unknown> = {}
+  overrides: Record<string, unknown> = {},
+  observe?: (app: Awaited<ReturnType<typeof buildGateway>>) => void,
 ): Promise<{ socket: WebSocket; next: () => Promise<Record<string, unknown>> }> {
   const app = await buildGateway({
     pool: fakePool(),
@@ -50,6 +54,7 @@ async function connect(
     ...overrides
   });
   apps.push(app);
+  observe?.(app);
   await app.listen({ host: '127.0.0.1', port: 0 });
   const port = (app.server.address() as AddressInfo).port;
   const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
@@ -205,5 +210,107 @@ describe('drain keeps moving when capacity is what gates the claim', () => {
       deliveryWakeSubscriber: noDeliveryWakes,
       deliveryClaimLimit: 0
     })).rejects.toThrow(/deliveryClaimLimit/);
+  });
+});
+
+
+function latencyCapture(events: Record<string, unknown>[]) {
+  return (app: Awaited<ReturnType<typeof buildGateway>>): void => {
+    vi.spyOn(app.log, 'info').mockImplementation((entry: unknown) => {
+      if (entry && typeof entry === 'object' && 'event' in entry && entry.event === 'chat_latency') {
+        events.push(entry);
+      }
+    });
+  };
+}
+
+describe('chat latency delivery boundaries', () => {
+  it('observes a blocked claim before its result and the actual WS enqueue', async () => {
+    const repository = fakeRepository();
+    let release!: (deliveries: DeliveryClaimRecord[]) => void;
+    const pending = new Promise<DeliveryClaimRecord[]>((resolve) => { release = resolve; });
+    vi.mocked(repository.claimDeliveries).mockImplementationOnce(async () => pending).mockResolvedValue([]);
+    const events: Record<string, unknown>[] = [];
+    const { next } = await connect(repository, {}, latencyCapture(events));
+    try {
+      await vi.waitFor(() => { expect(events.some((event) => event.phase === 'delivery_claim_entered')).toBe(true); });
+      expect(events.some((event) => event.phase === 'delivery_claim_result')).toBe(false);
+      expect(events.some((event) => event.phase === 'delivery_frame_queued')).toBe(false);
+      release([{ ...claim(ids.delivery, ids.claim), body: { text: 'body-sentinel' }, trace_id: 'unsafe-trace-secret' }]);
+      expect(await next()).toMatchObject({ type: 'delivery', delivery_id: ids.delivery });
+      const phases = events.map((event) => event.phase);
+      expect(phases.indexOf('delivery_claim_result')).toBeGreaterThan(phases.indexOf('delivery_claim_entered'));
+      expect(phases.indexOf('delivery_frame_queued')).toBeGreaterThan(phases.indexOf('delivery_claim_result'));
+      const entry = events.find((event) => event.phase === 'delivery_claim_entered');
+      const frame = events.find((event) => event.phase === 'delivery_frame_queued');
+      expect(frame).toMatchObject({ operation_id: entry?.operation_id, round: 0, delivery_id: ids.delivery,
+        message_id: ids.message, request_id: ids.request, attempt: 1 });
+      expect(JSON.stringify(events)).not.toMatch(/body-sentinel|unsafe-trace-secret|claim_token|connection_token|body|tenant|alias|headers/);
+      expect(repository.claimDeliveries).toHaveBeenCalledTimes(1);
+    } finally { release([]); }
+  });
+
+  it('does not credit a returned claim after its socket has closed', async () => {
+    const repository = fakeRepository();
+    let release!: (deliveries: DeliveryClaimRecord[]) => void;
+    const pending = new Promise<DeliveryClaimRecord[]>((resolve) => { release = resolve; });
+    vi.mocked(repository.claimDeliveries).mockImplementationOnce(async () => pending).mockResolvedValue([]);
+    const events: Record<string, unknown>[] = [];
+    const { socket } = await connect(repository, {}, latencyCapture(events));
+    try {
+      await vi.waitFor(() => { expect(repository.claimDeliveries).toHaveBeenCalledOnce(); });
+      const closed = new Promise<void>((resolve) => { socket.once('close', () => { resolve(); }); });
+      socket.close(); await closed;
+      release([claim(ids.delivery, ids.claim)]);
+      await vi.waitFor(() => { expect(events.some((event) => event.phase === 'drain_finished')).toBe(true); });
+      expect(events.some((event) => event.phase === 'delivery_frame_queued')).toBe(false);
+    } finally { release([]); }
+  });
+
+  it('does not report a queued frame for a fenced claim', async () => {
+    const repository = fakeRepository();
+    vi.mocked(repository.claimDeliveries).mockRejectedValueOnce(new StoreError('fenced', 'private-error-sentinel'));
+    const events: Record<string, unknown>[] = [];
+    const { next } = await connect(repository, {}, latencyCapture(events));
+    expect(await next()).toMatchObject({ type: 'error', code: 'fenced' });
+    await vi.waitFor(() => { expect(events.some((event) => event.status === 'fenced')).toBe(true); });
+    expect(events.some((event) => event.phase === 'delivery_frame_queued')).toBe(false);
+    expect(JSON.stringify(events)).not.toContain('private-error-sentinel');
+  });
+
+  it('keeps delivery and capacity unchanged when the latency sink throws', async () => {
+    const repository = fakeRepository();
+    vi.mocked(repository.claimDeliveries).mockResolvedValueOnce([claim(ids.delivery, ids.claim)]).mockResolvedValue([]);
+    let attempts = 0;
+    const { next } = await connect(repository, {}, (app) => {
+      vi.spyOn(app.log, 'info').mockImplementation((entry: unknown) => {
+        if (entry && typeof entry === 'object' && 'event' in entry && entry.event === 'chat_latency') {
+          attempts += 1; throw new Error('latency sink unavailable');
+        }
+      });
+    });
+    expect(await next()).toMatchObject({ type: 'delivery', delivery_id: ids.delivery });
+    expect(attempts).toBeGreaterThanOrEqual(3);
+    expect(repository.claimDeliveries).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe('chat latency metadata limits', () => {
+  it('drops invalid correlation and numeric fields without copying private data', async () => {
+    const app = await buildGateway({ pool: fakePool(), repository: fakeRepository(),
+      authProvider: DevOnlyAuthProvider.forTests(), deliveryWakeSubscriber: noDeliveryWakes });
+    apps.push(app);
+    const events: Record<string, unknown>[] = [];
+    latencyCapture(events)(app);
+    recordChatLatency(app.log, 'drain_started', {
+      operation_id: 'unsafe-id', trace_id: 'private-trace-sentinel', request_correlation: '/private/path',
+      elapsed_ms: Number.NaN, wake_claim_elapsed_ms: Number.POSITIVE_INFINITY,
+      round: 16, attempt: 0, claimed_count: -1, wake_claim_started_at: 'invalid-date',
+      body: 'private-body-sentinel', claim_token: ids.claim, headers: { authorization: 'private-header-sentinel' },
+    });
+    expect(events).toHaveLength(1);
+    expect(Object.keys(events[0] ?? {}).sort()).toEqual(['at', 'event', 'phase', 'version']);
+    expect(JSON.stringify(events)).not.toMatch(/private|unsafe|token|header/);
   });
 });

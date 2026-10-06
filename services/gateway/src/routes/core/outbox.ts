@@ -1,13 +1,64 @@
 import type { FastifyInstance } from 'fastify'; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import { WebSocket } from 'ws';
-import { AliasSchema, TenantSchema, isLiteralTrue, isSignalAborted } from '@cauce/protocol';
+import { AliasSchema, TenantSchema, isLiteralTrue, isSignalAborted, isRfcUuid } from '@cauce/protocol';
 import {
   StoreError, subscribeDeliveryWakes, type ConnectionSessionFence,
   type FencedWakeOutboxRecipient, type WakeOutboxClaimFence,
 } from '@cauce/store';
 import type { GatewayRepository, OutboxLeaseEvent } from '../../app.js';
 import type { CoreResolvedOptions, CoreRouteOptions, Session } from './contracts.js';
-import { isSocketOpen, send, sessionFence, sessionKey } from './helpers.js';
+import { MAX_DRAIN_ROUNDS, isSocketOpen, send, sessionFence, sessionKey } from './helpers.js';
+
+export type WakeLatencyContext = Readonly<Pick<OutboxLeaseEvent,
+  'message_id' | 'delivery_id' | 'request_id' | 'trace_id'
+> & {
+  wake_claim_started_at: string;
+  wake_claim_finished_at: string;
+  wake_claim_elapsed_ms: number;
+}>;
+
+type ChatLatencyPhase = 'publish_receipt_verified' | 'publish_http_reply_completed'
+  | 'drain_started' | 'drain_joined' | 'drain_finished'
+  | 'delivery_claim_entered' | 'delivery_claim_result'
+  | 'delivery_frame_queued' | 'delivery_frame_not_queued';
+
+export function recordChatLatency(
+  log: FastifyInstance['log'], phase: ChatLatencyPhase,
+  fields: Readonly<Record<string, unknown>> = {},
+): void {
+  try {
+    const event: Record<string, string | number> = {
+      event: 'chat_latency', version: 1, phase, at: new Date().toISOString(),
+    };
+    for (const key of ['message_id', 'delivery_id', 'request_id', 'operation_id']) {
+      const value = fields[key];
+      if (typeof value === 'string' && isRfcUuid(value)) event[key] = value;
+    }
+    const trace = fields.trace_id;
+    if (typeof trace === 'string') {
+      const traceUuid = trace.startsWith('trace-') ? trace.slice(6) : trace;
+      if (isRfcUuid(traceUuid)) event.trace_id = trace;
+    }
+    const request = fields.request_correlation;
+    if (typeof request === 'string' && /^req-[a-z0-9]{1,24}$/u.test(request)) event.request_correlation = request;
+    for (const key of ['elapsed_ms', 'wake_claim_elapsed_ms', 'round', 'attempt', 'claimed_count']) {
+      const value = fields[key];
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 86_400_000
+          && (key.endsWith('_ms') || Number.isSafeInteger(value))
+          && (key !== 'round' || value < MAX_DRAIN_ROUNDS)
+          && (key !== 'attempt' || value >= 1)) event[key] = value;
+    }
+    for (const key of ['wake_claim_started_at', 'wake_claim_finished_at']) {
+      const value = fields[key];
+      if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T[0-9:.]{12}Z$/u.test(value)
+          && Number.isFinite(Date.parse(value))) event[key] = value;
+    }
+    const status = fields.status;
+    if (typeof status === 'string' && ['empty', 'returned', 'queued', 'not_queued', 'fenced',
+      'cancelled', 'error'].includes(status)) event.status = status;
+    log.info(event);
+  } catch { return; }
+}
 
 function isExpectedWakeStatus(
   value: unknown,
@@ -49,7 +100,7 @@ export function createCoreOutboxRuntime(
   sessions: Map<string, Session>,
   pendingDrains: Set<Promise<boolean>>,
   pendingSessionTasks: Set<Promise<unknown>>,
-  drain: (session: Session) => Promise<boolean>,
+  drain: (session: Session, context?: WakeLatencyContext) => Promise<boolean>,
 ): { pumpOutbox: () => Promise<void>; start: () => Promise<void> } {
   const {
     outboxPollMs, outboxLeaseMs, outboxWakeConcurrency, outboxShutdownTimeoutMs,
@@ -105,6 +156,8 @@ export function createCoreOutboxRuntime(
       ...sortedRecipients.slice(0, offset)
     ];
     // One SQL claim per cycle returns at most one row per requested identity in rotated order.
+    const wakeClaimStarted = performance.now();
+    const wakeClaimStartedAt = new Date().toISOString();
     const events = await repository.claimWakeOutbox(
       workerId,
       recipients,
@@ -112,6 +165,11 @@ export function createCoreOutboxRuntime(
       outboxLeaseMs,
       outboxPumpAbort.signal,
     );
+    const wakeTiming = {
+      wake_claim_started_at: wakeClaimStartedAt,
+      wake_claim_finished_at: new Date().toISOString(),
+      wake_claim_elapsed_ms: performance.now() - wakeClaimStarted,
+    };
     wakePumpTelemetry.markProgress();
     for (const event of events) {
       void event;
@@ -147,6 +205,7 @@ export function createCoreOutboxRuntime(
         event,
         recipientsByIdentity,
         outboxPumpAbort.signal,
+        wakeTiming,
       ),
     );
     for (const result of results) {
@@ -163,6 +222,7 @@ export function createCoreOutboxRuntime(
     event: OutboxLeaseEvent,
     recipients: ReadonlyMap<string, FencedWakeOutboxRecipient>,
     signal: AbortSignal,
+    wakeTiming: Pick<WakeLatencyContext, 'wake_claim_started_at' | 'wake_claim_finished_at' | 'wake_claim_elapsed_ms'>,
   ): Promise<void> {
     if (signal.aborted) {
       wakePumpTelemetry.recordOutcome('cancelled');
@@ -216,7 +276,10 @@ export function createCoreOutboxRuntime(
       wakePumpTelemetry.recordOutcome(result === 'dead' ? 'dead' : 'retry');
       return;
     }
-    const drained = await drain(active);
+    const drained = await drain(active, {
+      ...wakeTiming, message_id: event.message_id, delivery_id: event.delivery_id,
+      request_id: event.request_id, trace_id: event.trace_id,
+    });
     if (!drained) {
       if (isSignalAborted(signal) || isSignalAborted(active.abort.signal)) {
         wakePumpTelemetry.recordOutcome('cancelled');

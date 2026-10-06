@@ -16,6 +16,7 @@ import { PasswordAuthProvider } from '../../password-auth.js';
 import { logPublishRedaction } from '../publish-redaction.js';
 import { principal, replyError } from '../shared.js';
 import { publishOperation } from '../../publish-operation.js';
+import { recordChatLatency } from './outbox.js';
 import type { CorePublishHandler, CoreRouteOptions } from './contracts.js';
 
 function requestAuthMechanism(authProvider: AuthProvider, request: FastifyRequest): string | undefined {
@@ -50,6 +51,7 @@ export function registerCorePublishRoutes(
   consolePublishTelemetry: ConsolePublishTelemetry,
 ): CorePublishHandler {
   const publishHandler = async (request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
+    const startedAt = performance.now();
     const consolePublish = request.routeOptions.url === '/v3/console/messages';
     let human: ConsoleHumanAccess | undefined;
     try {
@@ -67,7 +69,18 @@ export function registerCorePublishRoutes(
       if (consolePublish) {
         consolePublishTelemetry.record({ operation: 'publish', result: 'committed' });
       }
-      return await reply.code(202).send(receipt);
+      const latencyFields = {
+        message_id: receipt.message_id, request_id: receipt.request_id, trace_id: receipt.trace_id,
+        request_correlation: request.id,
+      };
+      for (const deliveryId of receipt.delivery_ids) recordChatLatency(request.log, 'publish_receipt_verified', {
+        ...latencyFields, delivery_id: deliveryId, elapsed_ms: performance.now() - startedAt,
+      });
+      const response = await reply.code(202).send(receipt);
+      for (const deliveryId of receipt.delivery_ids) recordChatLatency(request.log, 'publish_http_reply_completed', {
+        ...latencyFields, delivery_id: deliveryId, elapsed_ms: performance.now() - startedAt,
+      });
+      return response;
     } catch (error) {
       if (error instanceof PublishIntentExpiredError) {
         if (consolePublish) {

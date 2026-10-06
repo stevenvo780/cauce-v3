@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { blobArtifactUri, blobLocator, buildPublishReceipt, type PublishMessage } from '@cauce/protocol';
 import { AgentRootLimitError, type PublishOptions } from '@cauce/store';
 import type { buildGateway } from '../../app.js';
@@ -22,6 +22,7 @@ const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 
 afterEach(async () => {
   while (apps.length > 0) await apps.pop()?.close();
+  vi.restoreAllMocks();
 });
 
 interface PublishCall {
@@ -317,5 +318,83 @@ describe('POST /v3/console/messages validation', () => {
     expect(machineRoute.statusCode).toBe(202);
     // Only the console leg feeds the console journal telemetry.
     expect(telemetry.snapshot()['publish:committed']).toBe(1);
+  });
+});
+
+
+describe('chat latency publication boundaries', () => {
+  it('waits for the durable receipt and verification before logging the server reply', async () => {
+    let releasePublish!: () => void;
+    let releaseVerify!: (value: boolean) => void;
+    const publishReady = new Promise<void>((resolve) => { releasePublish = resolve; });
+    const verifyReady = new Promise<boolean>((resolve) => { releaseVerify = resolve; });
+    const verify = vi.fn(async () => verifyReady);
+    const { app, calls } = await gateway({
+      publish: async (input) => {
+        await publishReady;
+        return buildPublishReceipt(input, {
+          message_id: MESSAGE_ID, delivery_ids: [DELIVERY_ID], duplicate: false,
+          request_id: input.request_id, trace_id: input.trace_id,
+        });
+      }, verify,
+    });
+    const events: Record<string, unknown>[] = [];
+    vi.spyOn(app.log, 'info').mockImplementation((entry: unknown) => {
+      if (entry && typeof entry === 'object' && 'event' in entry && entry.event === 'chat_latency') {
+        events.push(entry);
+      }
+    });
+    const pending = app.inject({ method: 'POST', url: '/v3/console/messages',
+      headers: HEADERS, payload: payload({ body: { text: 'private-body-sentinel' } }) }).then((response) => response);
+    try {
+      await vi.waitFor(() => { expect(calls).toHaveLength(1); });
+      expect(events).toEqual([]);
+      releasePublish();
+      await vi.waitFor(() => { expect(verify).toHaveBeenCalledOnce(); });
+      expect(events).toEqual([]);
+      releaseVerify(true);
+      expect((await pending).statusCode).toBe(202);
+      await vi.waitFor(() => { expect(events.map((event) => event.phase)).toEqual([
+        'publish_receipt_verified', 'publish_http_reply_completed',
+      ]); });
+      expect(events[0]).toMatchObject({ message_id: MESSAGE_ID, delivery_id: DELIVERY_ID,
+        request_id: calls[0]?.command.request_id, trace_id: calls[0]?.command.trace_id });
+      expect(events[1]?.request_correlation).toBe(events[0]?.request_correlation);
+      expect(events[0]?.request_correlation).toMatch(/^req-[a-z0-9]+$/u);
+      expect(JSON.stringify(events)).not.toMatch(/private-body-sentinel|body|headers|tenant|alias|idempotency|csrf|token/);
+      for (const event of events) {
+        expect(Number.isFinite(event.elapsed_ms)).toBe(true);
+        expect(event.elapsed_ms).toBeGreaterThanOrEqual(0);
+        expect(event.at).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/u);
+      }
+    } finally { releasePublish(); releaseVerify(true); await pending; }
+  });
+
+  it('does not report a successful boundary for a rejected receipt', async () => {
+    const { app } = await gateway({ verify: async () => false });
+    const events: Record<string, unknown>[] = [];
+    vi.spyOn(app.log, 'info').mockImplementation((entry: unknown) => {
+      if (entry && typeof entry === 'object' && 'event' in entry && entry.event === 'chat_latency') {
+        events.push(entry);
+      }
+    });
+    const response = await app.inject({ method: 'POST', url: '/v3/console/messages', headers: HEADERS, payload: payload() });
+    expect(response.statusCode).toBe(409);
+    expect(events).toEqual([]);
+  });
+
+  it('preserves the exact HTTP outcome when the latency sink throws', async () => {
+    const { app } = await gateway();
+    let attempts = 0;
+    vi.spyOn(app.log, 'info').mockImplementation((entry: unknown) => {
+      if (entry && typeof entry === 'object' && 'event' in entry && entry.event === 'chat_latency') {
+        attempts += 1;
+        throw new Error('latency sink unavailable');
+      }
+    });
+    const response = await app.inject({ method: 'POST', url: '/v3/console/messages', headers: HEADERS, payload: payload() });
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({ message_id: MESSAGE_ID, delivery_ids: [DELIVERY_ID] });
+    await vi.waitFor(() => { expect(attempts).toBe(2); });
   });
 });

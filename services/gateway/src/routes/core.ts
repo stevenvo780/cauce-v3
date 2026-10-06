@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { WebSocket, type RawData } from 'ws';
 import {
@@ -6,9 +7,9 @@ import {
 } from '@cauce/protocol';
 import { StoreError, type AckResult, type AgentProfileRepository, type LeaseResult } from '@cauce/store';
 import { requirePermission, validatePrincipal } from '../auth.js';
-import type { GatewayRepository } from '../app.js';
+import type { DeliveryClaimRecord, GatewayRepository } from '../app.js';
 import { registerCoreRuntimeHttpRoutes } from './core/http.js';
-import { createCoreOutboxRuntime } from './core/outbox.js';
+import { createCoreOutboxRuntime, recordChatLatency, type WakeLatencyContext } from './core/outbox.js';
 import { registerCorePublishRoutes } from './core/publish.js';
 import type {
   CorePublishHandler, CoreResolvedOptions, CoreRouteOptions, CoreRoutePhases, Session, SessionClaim,
@@ -35,6 +36,7 @@ export function createCoreRoutePhases(
   // newer resume rotated the durable connection token. The opaque marker lets only the most recently acquired hello install/replace the local session.
   const helloAdmissions = new Map<string, object>();
   const pendingDrains = new Set<Promise<boolean>>();
+  const drainObservations = new WeakMap<Session, string>();
   const pendingSessionTasks = new Set<Promise<unknown>>();
 
   function registerPublishRoutes(): CorePublishHandler {
@@ -75,23 +77,34 @@ export function createCoreRoutePhases(
    * Drains pending deliveries to the session respecting the configured admission limits.
    * Handles re-draining on new wakes, capacity releases from ACKs and deadline expirations.
    */
-  function drain(session: Session): Promise<boolean> {
+  function drain(session: Session, context?: WakeLatencyContext): Promise<boolean> {
     if (session.abort.signal.aborted || session.socket.readyState !== WebSocket.OPEN) {
       return Promise.resolve(false);
     }
     if (session.drainPromise !== undefined) {
+      if (context !== undefined) recordChatLatency(app.log, 'drain_joined', {
+        ...context, operation_id: drainObservations.get(session),
+      });
       session.drainAgain = true;
       return session.drainPromise;
     }
     // The microtask hop guarantees that `drainPromise` is published before an I/O-free branch
     // (e.g. zero capacity) reaches `finally` and lets another concurrent drain through.
+    const operationId = randomUUID();
+    const startedAt = performance.now();
+    drainObservations.set(session, operationId);
     const operation = Promise.resolve()
-      .then(async () => drainExclusively(session))
+      .then(async () => drainExclusively(session, operationId))
       .finally(() => {
         if (session.drainPromise === operation) session.drainPromise = undefined;
+        if (drainObservations.get(session) === operationId) drainObservations.delete(session);
+        recordChatLatency(app.log, 'drain_finished', {
+          operation_id: operationId, elapsed_ms: performance.now() - startedAt,
+        });
       });
     session.drainPromise = operation;
     pendingDrains.add(operation);
+    recordChatLatency(app.log, 'drain_started', { ...context, operation_id: operationId });
     void operation.then(
       () => pendingDrains.delete(operation),
       () => pendingDrains.delete(operation),
@@ -99,7 +112,13 @@ export function createCoreRoutePhases(
     return operation;
   }
 
-  async function drainExclusively(session: Session): Promise<boolean> {
+  async function drainExclusively(session: Session, operationId: string): Promise<boolean> {
+    let claimStarted: number | undefined;
+    let claimRound = 0;
+    const correlation = (delivery: DeliveryClaimRecord) => ({
+      delivery_id: delivery.delivery_id, message_id: delivery.message_id,
+      request_id: delivery.request_id, trace_id: delivery.trace_id, attempt: delivery.attempt,
+    });
     try {
       // The cap only applies to unproductive rounds; productive ones consume bounded capacity.
       for (let round = 0; round < MAX_DRAIN_ROUNDS; round += 1) {
@@ -110,6 +129,9 @@ export function createCoreRoutePhases(
         // separately and PostgreSQL subtracts live claims for the whole alias; this session's RAM
         // no longer decides how much can be claimed.
         const requested = Math.min(deliveryClaimLimit, maxQueryLimit);
+        claimStarted = performance.now();
+        claimRound = round;
+        recordChatLatency(app.log, 'delivery_claim_entered', { operation_id: operationId, round });
         const deliveries = (await repository.claimDeliveries(
           session.tenantId, session.alias, session.instanceId, session.epoch,
           requested, ackDeadlineMs, undefined,
@@ -122,6 +144,15 @@ export function createCoreRoutePhases(
           session.connectionToken,
           session.abort.signal,
         )).map((delivery) => normalizeDeliveryClaim(delivery, ackDeadlineMs));
+        const resultFields = { operation_id: operationId, round, claimed_count: deliveries.length,
+          elapsed_ms: performance.now() - claimStarted };
+        if (deliveries.length === 0) recordChatLatency(app.log, 'delivery_claim_result', {
+          ...resultFields, status: 'empty',
+        });
+        for (const delivery of deliveries) recordChatLatency(app.log, 'delivery_claim_result', {
+          ...resultFields, ...correlation(delivery), status: 'returned',
+        });
+        claimStarted = undefined;
         if (isSignalAborted(session.abort.signal)
             || sessions.get(sessionKey(session.tenantId, session.alias)) !== session
             || session.socket.readyState !== WebSocket.OPEN) return false;
@@ -130,7 +161,12 @@ export function createCoreRoutePhases(
           const claim = claimFromDelivery(delivery, ackDeadlineMs);
           // The previous attempt stays in `recentClaims`: it is what correlates its late ACK.
           session.claims.set(delivery.delivery_id, claim);
-          allFramesQueued = send(session.socket, delivery) && allFramesQueued;
+          const queued = send(session.socket, delivery);
+          allFramesQueued = queued && allFramesQueued;
+          recordChatLatency(app.log, queued ? 'delivery_frame_queued' : 'delivery_frame_not_queued', {
+            ...correlation(delivery), operation_id: operationId, round,
+            status: queued ? 'queued' : 'not_queued',
+          });
         }
         // A socket can drop while the store grants claims; reconnection reclaims them selectively.
         if (!allFramesQueued) return false;
@@ -139,6 +175,11 @@ export function createCoreRoutePhases(
       }
       return true;
     } catch (error) {
+      if (claimStarted !== undefined) recordChatLatency(app.log, 'delivery_claim_result', {
+        operation_id: operationId, round: claimRound, elapsed_ms: performance.now() - claimStarted,
+        status: session.abort.signal.aborted ? 'cancelled'
+          : error instanceof StoreError && error.code === 'fenced' ? 'fenced' : 'error',
+      });
       if (session.abort.signal.aborted) return false;
       if (error instanceof StoreError && error.code === 'fenced') {
         send(session.socket, { type: 'error', code: 'fenced', message: error.message });

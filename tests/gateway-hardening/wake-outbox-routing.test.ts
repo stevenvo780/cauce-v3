@@ -21,6 +21,7 @@ let eventSequence = 0;
 afterEach(async () => {
   for (const release of pendingReleases) release();
   pendingReleases.clear();
+  vi.restoreAllMocks();
   await closeGatewaysAndSockets(apps, sockets);
 });
 
@@ -500,5 +501,63 @@ describe('gateway selective durable wake routing', () => {
     expect(stoppedSnapshot.state).toBe('stopping');
     expect(typeof stoppedSnapshot.lastProgressAtMs).toBe('number');
     expect(stoppedSnapshot.counters).toMatchObject({ claimed: 0, cancelled: 1, sent: 0 });
+  });
+});
+
+
+describe('chat latency wake correlation', () => {
+  it('links a wake to the original blocked drain without starting a second claim', async () => {
+    const repository = fakeRepository();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; pendingReleases.add(resolve); });
+    vi.mocked(repository.claimDeliveries).mockImplementationOnce(async () => { await blocked; return []; });
+    let emitted: OutboxLeaseEvent | undefined;
+    repository.claimWakeOutbox = vi.fn<GatewayRepository['claimWakeOutbox']>(async (worker, recipients) => {
+      if (emitted !== undefined || recipients.length === 0) return [];
+      emitted = wakeEvent(worker, 'Steven', 'kant');
+      return [emitted];
+    });
+    const { app, port } = await start(repository);
+    const events: Record<string, unknown>[] = [];
+    vi.spyOn(app.log, 'info').mockImplementation((entry: unknown) => {
+      if (entry && typeof entry === 'object' && 'event' in entry && entry.event === 'chat_latency') {
+        events.push(entry);
+      }
+    });
+    await connect(port, 'Steven', 'kant', 'wake-latency');
+    try {
+      await vi.waitFor(() => { expect(events.some((event) => event.phase === 'drain_joined' && event.delivery_id === emitted?.delivery_id)).toBe(true); });
+      const entry = events.find((event) => event.phase === 'delivery_claim_entered');
+      const joined = events.find((event) => event.phase === 'drain_joined');
+      expect(joined).toMatchObject({ operation_id: entry?.operation_id, message_id: emitted?.message_id,
+        delivery_id: emitted?.delivery_id, request_id: emitted?.request_id });
+      expect(repository.claimDeliveries).toHaveBeenCalledOnce();
+      expect(joined?.wake_claim_elapsed_ms).toBeGreaterThanOrEqual(0);
+      expect(JSON.stringify(events)).not.toMatch(/claim_token|connection_token|tenant|alias|payload|origin|headers/);
+      release(); pendingReleases.delete(release);
+      await vi.waitFor(() => { expect(repository.ackOutbox).toHaveBeenCalled(); });
+      expect(repository.claimDeliveries).toHaveBeenCalledTimes(2);
+      const finished = events.find((event) => event.phase === 'drain_finished');
+      expect(finished?.operation_id).toBe(entry?.operation_id);
+    } finally { release(); pendingReleases.delete(release); }
+  });
+});
+
+
+describe('chat latency idle polling', () => {
+  it('does not create per-poll logs when the wake batch is empty', async () => {
+    const repository = fakeRepository();
+    const { app, port } = await start(repository);
+    const events: Record<string, unknown>[] = [];
+    vi.spyOn(app.log, 'info').mockImplementation((entry: unknown) => {
+      if (entry && typeof entry === 'object' && 'event' in entry && entry.event === 'chat_latency') events.push(entry);
+    });
+    await connect(port, 'Steven', 'kant', 'idle-latency');
+    await waitFor(() => events.some((event) => event.phase === 'drain_finished'));
+    events.length = 0;
+    const cycles = vi.mocked(repository.claimWakeOutbox).mock.calls.length;
+    await waitFor(() => vi.mocked(repository.claimWakeOutbox).mock.calls.length >= cycles + 3);
+    expect(events).toEqual([]);
+    expect(repository.claimDeliveries).toHaveBeenCalledOnce();
   });
 });
