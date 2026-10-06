@@ -141,7 +141,7 @@ it.each(['agente', 'subject'] as const)('mantiene los adjuntos aislados por %s e
   expect(screen.getByRole('list', { name: 'Archivos adjuntos' })).toHaveTextContent('scope.txt');
 });
 
-it('bloquea doble envío y edición mientras serializa archivos y publica', async () => {
+it('bloquea doble envío y cambios de archivos mientras conserva el siguiente borrador', async () => {
   const api = configurePublish();
   let resolvePrepare!: (value: PreparePublishIntentResult) => void;
   const pendingPrepare = new Promise<PreparePublishIntentResult>((resolve) => { resolvePrepare = resolve; });
@@ -151,15 +151,25 @@ it('bloquea doble envío y edición mientras serializa archivos y publica', asyn
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Una vez' } });
   const form = screen.getByRole('textbox').closest('form');
   if (!form) throw new Error('Missing composer');
+  screen.getByRole('textbox').focus();
   act(() => { fireEvent.submit(form); fireEvent.submit(form); });
-  expect(screen.getByRole('textbox')).toBeDisabled();
+  expect(screen.getByRole('textbox')).toBeEnabled();
+  expect(screen.getByRole('textbox')).toHaveFocus();
   expect(screen.getByRole('button', { name: 'Adjuntar archivos' })).toBeDisabled();
   await waitFor(() => { expect(api.prepare).toHaveBeenCalledOnce(); });
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Siguiente borrador' } });
+  fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+  fireEvent.submit(form);
+  expect(api.prepare).toHaveBeenCalledOnce();
+  expect(api.prepare.mock.calls[0][0].body).toMatchObject({ text: 'Una vez' });
   await act(async () => { resolvePrepare({
     version: 1, state: 'prepared', idempotency_key: 'intent-chat-files', receipt: null,
   }); });
   await waitFor(() => { expect(api.confirm).toHaveBeenCalledOnce(); });
   expect(api.publish).toHaveBeenCalledOnce();
+  expect(api.publish.mock.calls[0][0].body).toEqual(api.prepare.mock.calls[0][0].body);
+  expect(screen.getByRole('textbox')).toHaveValue('Siguiente borrador');
+  expect(screen.getByRole('textbox')).toHaveFocus();
 });
 
 it('no publica un archivo si cambia la cuenta durante su lectura', async () => {

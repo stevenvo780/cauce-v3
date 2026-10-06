@@ -146,7 +146,7 @@ export function ChatAttachmentsComposer({
           onFile={(file) => { appendFiles([file]); }} onRecordingChange={recordingChanged} />
         <textarea id={`messenger-input-${agentId}`} value={text} onChange={(event) => { onTextChange(event.target.value); }}
           onKeyDown={handleKeyDown} onPaste={handlePaste} rows={1} maxLength={8_000} placeholder="Escribí un mensaje…"
-          disabled={!canSend || editingBlocked} />
+          disabled={!canSend} />
         <div className="composer-footer">
           <span><kbd>Enter</kbd> enviar · <kbd>Shift</kbd> + <kbd>Enter</kbd> nueva línea</span>
           <button className="button primary" type="submit" disabled={!canSend || sending || recording || (!text.trim() && files.length === 0)}
