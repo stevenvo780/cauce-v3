@@ -19,6 +19,9 @@ import { sinComentarios } from '../../test/css-parser';
 const DIRECTORIO = resolve(process.cwd(), 'src/features/messages');
 const HOJAS = [
   join(DIRECTORIO, 'messages.css'),
+  join(DIRECTORIO, 'MessageAttachments.css'),
+  join(DIRECTORIO, 'chat-selected-media.css'),
+  join(DIRECTORIO, 'chat-voice-recorder.css'),
   join(DIRECTORIO, '..', '..', 'styles.css'),
   join(DIRECTORIO, '..', 'terminal', 'terminal-panel.css'),
 ];

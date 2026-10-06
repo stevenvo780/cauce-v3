@@ -10,10 +10,10 @@
 .chat-message-file-action { display: inline-flex; min-width: 44px; min-height: 44px; align-items: center; justify-content: center; gap: var(--space-1); padding: 0 var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; font-size: var(--tipo-apunte); }
 .chat-message-file-action:disabled { cursor: not-allowed; opacity: .65; }
 .chat-message-file audio, .chat-message-file video { display: block; width: 100%; max-width: 100%; }
-.chat-message-file video { max-height: 18rem; background: #111; object-fit: contain; }
+.chat-message-file video { max-height: 18rem; background: var(--surface-2); object-fit: contain; }
 .chat-message-image-preview { display: block; width: fit-content; max-width: 100%; min-height: 44px; padding: 0; overflow: hidden; border: 0; border-radius: var(--radius-sm); background: transparent; cursor: zoom-in; }
 .chat-message-image-preview img { display: block; max-width: min(100%, 16rem); max-height: 12rem; object-fit: contain; }
 .chat-media-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(0 0 0 / 78%); }
 .chat-media-dialog { position: relative; display: grid; place-items: center; width: min(100%, 70rem); max-height: 100%; outline: none; }
 .chat-media-dialog img { display: block; max-width: 100%; max-height: calc(100vh - 2rem); object-fit: contain; }
-.chat-media-close { position: absolute; z-index: 1; top: .5rem; right: .5rem; display: grid; width: 44px; height: 44px; place-items: center; border: 1px solid white; border-radius: 50%; background: #222; color: white; cursor: pointer; }
+.chat-media-close { position: absolute; z-index: 1; top: .5rem; right: .5rem; display: grid; width: 44px; height: 44px; place-items: center; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--text); cursor: pointer; }
