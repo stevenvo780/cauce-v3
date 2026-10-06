@@ -20,7 +20,6 @@ from pathlib import Path
 
 # cauce:requiere none
 
-ACTORS = ("operador", "perseo", "teseo")
 OPEN = {"pending", "retry", "leased", "accepted", "started"}
 TERMINAL = {"done", "failed", "dead", "cancelled", "expired"}
 ADVANCED = {"advanced", "validated", "accepted", "avanzada", "validada", "aceptada"}
@@ -33,49 +32,20 @@ CAPACITY_CODES = {
 HEX = re.compile(r"[a-f0-9]{64}\Z")
 HEAD = re.compile(r"[a-f0-9]{40,64}\Z")
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}\Z")
-ROOT_TEXT = (
-    "Continuá el GOAL autorizado de Praxis con ingeniería y datos sintéticos. "
-    "Primero reconciliá el estado real, commits y evidencia; una entrega anterior "
-    "con transport_cancelled_unknown no acredita ejecución ni permite replay ciego. "
-    "El operador coordina, revisa e integra; Teseo y Perseo son dos developers "
-    "generalistas con ownership disjunto. Elegí trabajo independiente y terminable "
-    "para completar los criterios completos de las incidencias y del roadmap; "
-    "evitá microflags. Elegí un criterio íntegro del SDD, actualizá "
-    "su evidencia y dejá el siguiente criterio ejecutable o su bloqueo medido. "
-    "next_work orienta; no obliga a repetir ni reemplaza elegir ingeniería independiente. "
-    "Gobernanza se registra en paralelo, no sustituye código probado. "
-    "Después de integrar y commitear el código canónico, el operador consulta --help "
-    "y ejecuta /opt/praxis-qa-venv/bin/python -B /home/node/clawd/.cauce/runtime/praxis-proof.py "
-    "con --workspace, --output, --artifact-prefix y --install-evidence, y --qa cuando "
-    "corresponda; luego revisa imágenes independientes y sus hashes. Los developers "
-    "pueden usar Python estándar para unidades sin navegador. Usá ese productor "
-    "para renovar pruebas y snapshot con su contrato v2, "
-    "comandos reales y hashes de los módulos y pruebas ejecutados. N/A requiere "
-    "justificación explícita y no acredita una prueba aprobada. Comprobá pruebas, "
-    "QA y snapshot antes de publicar con la "
-    "autorización durable vigente. Los criterios clínicos o legales pendientes "
-    "requieren decisión del dueño y sólo bloquean esa parte. No declarés el producto "
-    "terminado por labels o entregas done. No leas datos clínicos privados ni secretos. "
-    "El controlador publica el destino real del preview sintético con la autorización "
-    "vigente; no requiere repetir un pedido humano de publicación. "
-    "Cerrá esta entrega sin esperar ni hacer polling. Si falla cuota, autenticación "
-    "o capacidad, incluí un código técnico tipado en JSON: "
-    '{"supervision":{"version":1,"outcome":"capacity_failure","code":'
-    '"quota_exhausted"}}; usá el código observado, nunca lo inventes.'
-)
+
 
 RUNTIME_SQL = """
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '5000ms';
 SELECT json_build_object(
  'observed_at',extract(epoch FROM now()),
- 'open_gates',(SELECT count(*) FROM agent_chain_gates WHERE tenant_id='Hospital' AND status='open'),
+ 'open_gates',(SELECT count(*) FROM agent_chain_gates WHERE tenant_id=__TENANT__ AND status='open'),
  'actors',COALESCE((SELECT json_agg(json_build_object(
     'alias',a.alias,'enabled',a.enabled,
     'online',COALESCE(l.lease_until>now(),false),
     'heartbeat_age',extract(epoch FROM now()-l.last_heartbeat_at)))
     FROM agents a LEFT JOIN connection_leases l USING(tenant_id,alias)
-    WHERE a.tenant_id='Hospital' AND a.enabled),'[]'::json),
+    WHERE a.tenant_id=__TENANT__ AND a.enabled),'[]'::json),
  'work',json_build_object(
     'pending',count(*) FILTER(WHERE d.status='pending'),
     'retry',count(*) FILTER(WHERE d.status='retry'),
@@ -83,7 +53,7 @@ SELECT json_build_object(
     'accepted',count(*) FILTER(WHERE d.status='accepted'),
     'started',count(*) FILTER(WHERE d.status='started')),
  'last_activity_at',extract(epoch FROM max(COALESCE(d.terminal_at,d.created_at))))
-FROM deliveries d WHERE d.recipient_tenant='Hospital';
+FROM deliveries d WHERE d.recipient_tenant=__TENANT__;
 COMMIT;
 """
 
@@ -111,16 +81,23 @@ def load_config(path: Path) -> dict:
     trusted_file(path)
     config = json.loads(read_bytes(path, 64_000))
     required = {"workspace", "goal_file", "goal_sha256", "issues_file", "roadmap_file",
-                "preview_root", "preview_files", "verification_file", "evidence_file",
+                "verification_file", "evidence_file",
                 "client_cert", "client_key", "ca_cert"}
     if not isinstance(config, dict) or not required.issubset(config):
         raise SupervisionError("invalid_configuration")
+    profile = STATE.PROFILE.load(config, STATE)
+    if "project_profile" in config:
+        if config["workspace"] != profile["workspace"]:
+            raise SupervisionError("project_workspace_mismatch")
+        for key in ("postgres_container", "issue_count", "roadmap_count"):
+            if key in config and config[key] != profile[key]:
+                raise SupervisionError("project_profile_configuration_mismatch")
     if not HEX.fullmatch(config["goal_sha256"]):
         raise SupervisionError("invalid_goal_digest")
     url = urllib.parse.urlsplit(config.get("api_url", "https://172.17.0.1:18443"))
     if url.scheme != "https" or not url.netloc or url.username or url.password or url.query or url.fragment or url.path:
         raise SupervisionError("invalid_api_url")
-    for key in ("workspace", "preview_root", "client_cert", "client_key", "ca_cert"):
+    for key in ("workspace", "client_cert", "client_key", "ca_cert"):
         if not isinstance(config[key], str) or not Path(config[key]).is_absolute():
             raise SupervisionError("invalid_configuration")
     bounds = {"root_limit": (1, 12, 6), "notice_limit": (1, 3, 3),
@@ -132,12 +109,23 @@ def load_config(path: Path) -> dict:
         if type(value) is not int or not minimum <= value <= maximum:
             raise SupervisionError("invalid_configuration")
         config[key] = value
-    if not isinstance(config["preview_files"], dict) or not config["preview_files"]:
+    config.setdefault("preview_files", {})
+    if not isinstance(config["preview_files"], dict):
         raise SupervisionError("invalid_preview_files")
+    if config["preview_files"] and not config.get("preview_root"):
+        raise SupervisionError("invalid_preview_files")
+    for key in ("goal_file", "issues_file", "roadmap_file", "verification_file", "evidence_file"):
+        scoped(Path(config["workspace"]), config[key])
+    for source, destination in config["preview_files"].items():
+        scoped(Path(config["workspace"]), source)
+        scoped(Path(config["preview_root"]), destination)
     EVIDENCE.acceptance_path(config, STATE)
     PREVIEW.validate_config(config, STATE)
-    if config.get("issue_count", 37) != 37 or config.get("roadmap_count", 216) != 216:
-        raise SupervisionError("invalid_tracker_counts")
+    for key in ("issue_count", "roadmap_count"):
+        value = config.get(key, profile[key])
+        if type(value) is not int or not 1 <= value <= 100000:
+            raise SupervisionError("invalid_tracker_counts")
+        config[key] = value
     if type(config.get("enabled", False)) is not bool:
         raise SupervisionError("invalid_configuration")
     if (type(config.get("bootstrap_generation", 0)) is not int or config.get("bootstrap_generation", 0) < 0
@@ -197,26 +185,27 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise ApiError("unexpected_redirect")
 
 
-def run_command(command: list[str], deadline: float, input_text: str | None = None) -> str:
+def run_command(command: list[str], deadline: float, input_text: str | None = None, config: dict | None = None) -> str:
     timeout = min(8, deadline - time.monotonic())
     if timeout <= 0:
         raise SupervisionError("pass_timeout")
     environment = {"PATH": "/usr/bin:/bin"}
     try:
-        result = subprocess.run(STATE.isolated_command(command), input=input_text, text=True, capture_output=True,
-                                timeout=timeout, check=True, env=environment, **STATE.command_identity(command))
+        result = subprocess.run(STATE.isolated_command(command, config), input=input_text, text=True, capture_output=True,
+                                timeout=timeout, check=True, env=environment, **STATE.command_identity(command, config))
         return result.stdout
     except (subprocess.SubprocessError, OSError) as error:
         raise SupervisionError("observation_unavailable") from error
 
 
 def runtime_snapshot(config: dict, deadline: float) -> dict:
-    container = config.get("postgres_container", "hospital-cauce-postgres-1")
+    profile = STATE.project_profile(config)
+    container = config.get("postgres_container", profile["postgres_container"])
     if not re.fullmatch(r"[a-zA-Z0-9_.-]{1,100}", container):
         raise SupervisionError("invalid_configuration")
     raw = run_command(["docker", "exec", "-i", container, "psql", "-XAtq",
-                       "-v", "ON_ERROR_STOP=1", "-U", "cauce_hospital", "-d", "cauce_hospital"],
-                      deadline, RUNTIME_SQL)
+                       "-v", "ON_ERROR_STOP=1", "-U", profile["postgres_user"], "-d", profile["postgres_database"]],
+                      deadline, RUNTIME_SQL.replace("__TENANT__", "'" + profile["tenant_id"] + "'"))
     value = json.loads(raw)
     actors, work = value.get("actors"), value.get("work")
     if not isinstance(actors, list) or not isinstance(work, dict):
@@ -228,7 +217,7 @@ def runtime_snapshot(config: dict, deadline: float) -> dict:
     if type(value.get("open_gates", 0)) is not int or value.get("open_gates", 0) < 0:
         raise SupervisionError("invalid_runtime_snapshot")
     value["active"] = sum(work[status] for status in OPEN) + value.get("open_gates", 0)
-    value["ready"] = (sorted(actor.get("alias", "") for actor in actors) == list(ACTORS)
+    value["ready"] = (sorted(actor.get("alias", "") for actor in actors) == sorted(profile["participants"])
                       and all(actor.get("enabled") is True and actor.get("online") is True
                               and isinstance(actor.get("heartbeat_age"), (int, float))
                               and 0 <= actor["heartbeat_age"] <= config["heartbeat_seconds"]
@@ -238,22 +227,24 @@ def runtime_snapshot(config: dict, deadline: float) -> dict:
 
 def root_failure_metadata(config: dict, message_id: str, deadline: float) -> str | None:
     identifier = str(uuid.UUID(message_id))
+    profile = STATE.project_profile(config)
     sql = "BEGIN READ ONLY; SET LOCAL statement_timeout='3000ms'; WITH owner_root AS ("
-    sql += f"SELECT id,trace_id FROM messages WHERE id='{identifier}'::uuid AND tenant_id='Hospital' "
-    sql += "AND actor_alias='praxis-supervisor' AND room_id='grp.hospital'), scope AS ("
+    sql += f"SELECT id,trace_id FROM messages WHERE id='{identifier}'::uuid AND tenant_id=__TENANT__ "
+    sql += "AND actor_alias=__SUPERVISOR__ AND room_id=__ROOM__), scope AS ("
     sql += "SELECT d.status,d.last_error FROM owner_root root JOIN messages m ON m.id=root.id OR "
-    sql += "(m.trace_id=root.trace_id AND m.tenant_id='Hospital' AND m.body->>'type' IN "
+    sql += "(m.trace_id=root.trace_id AND m.tenant_id=__TENANT__ AND m.body->>'type' IN "
     sql += "('agent.message','agent.response','agent.fanin','agent.notify')) JOIN deliveries d ON d.message_id=m.id "
-    sql += "WHERE d.recipient_tenant='Hospital') SELECT json_build_object('root_found',EXISTS(SELECT 1 FROM owner_root),"
+    sql += "WHERE d.recipient_tenant=__TENANT__) SELECT json_build_object('root_found',EXISTS(SELECT 1 FROM owner_root),"
     sql += "'open',count(*) FILTER(WHERE status IN ('pending','retry','leased','accepted','started')),"
     sql += "'failed',count(*) FILTER(WHERE status IN ('failed','dead','cancelled','expired')),'errors',"
     sql += "COALESCE((SELECT json_agg(error) FROM (SELECT left(COALESCE(last_error,''),4000) error FROM scope "
     sql += "WHERE status IN ('failed','dead','cancelled','expired') LIMIT 8) errors),'[]'::json)) FROM scope; COMMIT;"
-    container = config.get("postgres_container", "hospital-cauce-postgres-1")
+    profile = STATE.project_profile(config)
+    container = config.get("postgres_container", profile["postgres_container"])
     if not re.fullmatch(r"[a-zA-Z0-9_.-]{1,100}", container):
         raise SupervisionError("invalid_configuration")
     raw = run_command(["docker", "exec", "-i", container, "psql", "-XAtq", "-v", "ON_ERROR_STOP=1",
-                       "-U", "cauce_hospital", "-d", "cauce_hospital"], deadline, sql)
+                       "-U", profile["postgres_user"], "-d", profile["postgres_database"]], deadline, sql.replace("__TENANT__", "'" + profile["tenant_id"] + "'").replace("__SUPERVISOR__", "'" + profile["supervisor_alias"] + "'").replace("__ROOM__", "'" + profile["room_id"] + "'"))
     value = json.loads(raw)
     if (not isinstance(value, dict) or value.get("root_found") is not True
             or type(value.get("open")) is not int or type(value.get("failed")) is not int):
@@ -281,7 +272,7 @@ def certificate_expiry(config: dict) -> float:
         path = Path(metadata_path)
         trusted_file(path)
         metadata = json.loads(read_bytes(path, 16_000))
-        if isinstance(metadata, dict) and metadata.get("alias") == "praxis-supervisor" and metadata.get("cert_sha256") == digest(read_bytes(Path(config["client_cert"]), 64_000)):
+        if isinstance(metadata, dict) and metadata.get("alias") == STATE.project_profile(config)["supervisor_alias"] and metadata.get("cert_sha256") == digest(read_bytes(Path(config["client_cert"]), 64_000)):
             declared = dt.datetime.fromisoformat(metadata["expires_at"].replace("Z", "+00:00"))
             if declared.tzinfo and abs(declared.timestamp() - observed) <= 1:
                 return declared.timestamp()
@@ -314,7 +305,7 @@ def criterion_evidence(value: dict, roadmap: dict, workspace: Path, commit_verif
 
 
 def engineering_snapshot(config: dict, deadline: float) -> dict:
-    return EVIDENCE.engineering_snapshot(config, deadline, run_command, STATE)
+    return EVIDENCE.engineering_snapshot(config, deadline, (lambda command, limit: run_command(command, limit, config=config)) if "project_profile" in config else run_command, STATE)
 
 
 def made_progress(previous: dict, current: dict) -> bool:
@@ -339,6 +330,7 @@ def typed_failure(receipt: dict) -> str | None:
 class Supervisor:
     def __init__(self, config: dict, state_path: Path, api, now: float, observe_only: bool = False, failure_reader=None, post_clock=None, runtime_reader=None):
         self.config, self.path, self.api, self.now = config, state_path, api, now
+        self.profile = STATE.project_profile(config)
         self.failure_reader = failure_reader
         self.post_clock = post_clock or (lambda: self.now)
         self.runtime_reader = runtime_reader
@@ -351,6 +343,13 @@ class Supervisor:
         else:
             self.state = {"schema_version": 1, "goal_sha256": config["goal_sha256"],
                           "roots": {}, "notices": {}, "phase": "observing"}
+        if "project_profile" in config:
+            if not self.path.is_relative_to(Path(self.profile["acceptance_root"])):
+                raise SupervisionError("project_state_scope_mismatch")
+            fingerprint = config["project_profile_sha256"]
+            if (state_path.exists() and self.state.get("project_profile_sha256") != fingerprint):
+                raise SupervisionError("foreign_state_project")
+            self.state["project_profile_sha256"] = fingerprint
         if self.state.get("goal_sha256") != config["goal_sha256"]:
             raise SupervisionError("foreign_state_goal")
 
@@ -419,10 +418,11 @@ class Supervisor:
             body["supervision"] = {"version": 2, "goal_sha256": self.config["goal_sha256"],
                                    "authority": "existing_owner_goal", "evidence_contract": 2,
                                    "next_work": self.state.get("next_work")}
-        return {"room_id": "grp.hospital", "recipients": [{"tenant_id": "Hospital", "alias": "operador"}],
+        return {"room_id": self.profile["room_id"], "recipients": [{"tenant_id": self.profile["tenant_id"], "alias": self.profile["recipient_alias"]}],
                 "body": body, "lane": "interactive", "priority": 0, "idempotency_key": key}
 
     def publish(self, reserved: dict) -> bool:
+        STATE.project_profile(self.config)
         if self.observe_only:
             return False
         if (reserved["payload"]["body"]["type"] == "praxis.supervision.notice"
@@ -437,7 +437,7 @@ class Supervisor:
                 raise ApiError("invalid_receipt")
             if receipt.get("idempotency_key") != reserved["payload"]["idempotency_key"]:
                 raise ApiError("invalid_receipt")
-            if receipt.get("tenant_id") != "Hospital" or receipt.get("actor_alias") != "praxis-supervisor":
+            if receipt.get("tenant_id") != self.profile["tenant_id"] or receipt.get("actor_alias") != self.profile["supervisor_alias"]:
                 raise ApiError("invalid_receipt")
             reserved.update(STATE.causal_binding(receipt, digest(canonical(reserved["payload"]["body"])), reserved["payload"]["body"]["type"]))
             reserved["message_id"] = message_id
@@ -449,6 +449,8 @@ class Supervisor:
         return "message_id" in reserved
 
     def notice(self, signature: str, kind: str, text: str):
+        if not self.profile["notification"]["enabled"]:
+            return
         day = dt.datetime.fromtimestamp(self.now, dt.timezone.utc).strftime("%Y-%m-%d")
         notices = self.state.setdefault("notices", {})
         token = digest(signature.encode())[:24]
@@ -473,7 +475,7 @@ class Supervisor:
         if reason in {"no_measured_progress", "no_new_progress"} and not self.state.get("progress_pause_binding"):
             self.state["progress_pause_baseline"] = self.state.get("observed", {}).get("engineering", {})
         self.save()
-        self.notice(reason, kind, "Praxis: supervisión de ingeniería pausada; causa medida: " + reason
+        self.notice(reason, kind, self.profile["project_name"] + ": supervisión de ingeniería pausada; causa medida: " + reason
                     + ". El monitor conserva observación; hace falta una decisión o evidencia nueva verificable.")
         return self.finish(reason)
 
@@ -539,7 +541,7 @@ class Supervisor:
             return self.pause("foreign_goal")
         self.state["next_work"] = engineering.get("next_work")
         self.adopt_bootstrap(engineering)
-        if STATE.apply_auth_resume_control(self.state, self.path.parent / "RESUME.json", self.config["goal_sha256"], self.post_clock()):
+        if STATE.apply_auth_resume_control(self.state, self.path.parent / "RESUME.json", self.config["goal_sha256"], self.post_clock(), self.config):
             self.save()
         if STATE.resume_measured_progress(self.state, engineering, self.now, made_progress):
             self.save()
@@ -549,7 +551,7 @@ class Supervisor:
                 return self.pause("supervisor_certificate_expired")
             if not_after - self.now <= 172800:
                 self.notice("supervisor_certificate_renewal", "alert",
-                            "Praxis: el certificado propio del supervisor vence en menos de 48 horas; requiere renovación root con el mismo alcance.")
+                            self.profile["project_name"] + ": el certificado propio del supervisor vence en menos de 48 horas; requiere renovación root con el mismo alcance.")
         root = self.state.get("active_root")
         if root:
             if not root.get("message_id"):
@@ -573,10 +575,10 @@ class Supervisor:
                     return self.pause(error.code)
                 return self.finish("receipt_unavailable")
             deliveries = receipt.get("deliveries")
-            if (receipt.get("id") != root["message_id"] or receipt.get("tenant_id") != "Hospital"
-                    or receipt.get("actor_alias") != "praxis-supervisor" or receipt.get("room_id") != "grp.hospital"):
+            if (receipt.get("id") != root["message_id"] or receipt.get("tenant_id") != self.profile["tenant_id"]
+                    or receipt.get("actor_alias") != self.profile["supervisor_alias"] or receipt.get("room_id") != self.profile["room_id"]):
                 return self.pause("foreign_receipt")
-            if not STATE.receipt_matches(receipt, root):
+            if not STATE.receipt_matches(receipt, root, self.config):
                 return self.pause("causal_receipt_mismatch")
             if type(receipt.get("chain_open")) is not bool or not isinstance(deliveries, list) or not deliveries:
                 return self.pause("invalid_receipt")
@@ -652,14 +654,14 @@ class Supervisor:
             self.state["phase"] = "awaiting_final_review"
             self.save()
             self.notice("final_review:" + engineering["git_head"], "decision_request",
-                        "Praxis: 37 incidencias y 216 criterios tienen evidencia aceptada; gates, verificación y publicación coinciden. "
+                        self.profile["project_name"] + ": " + str(self.config.get("issue_count", self.profile["issue_count"])) + " incidencias y " + str(self.config.get("roadmap_count", self.profile["roadmap_count"])) + " criterios tienen evidencia aceptada; gates, verificación y publicación coinciden. "
                         "La ingeniería queda pausada para revisión final independiente y aprobación del dueño. El monitor continúa.")
             return self.finish("awaiting_final_review")
         if engineering.get("technical_milestone_candidate"):
             self.state["phase"] = "awaiting_technical_review"
             self.save()
             self.notice("technical_review:" + engineering["git_head"], "decision_request",
-                        "Praxis: los criterios tienen prueba técnica específica y gates vigentes. "
+                        self.profile["project_name"] + ": los criterios tienen prueba técnica específica y gates vigentes. "
                         "Se requiere revisión del hito técnico; la aceptación humana del GOAL permanece sin recibo autenticado.")
             return self.finish("awaiting_technical_review")
         if self.state["phase"] in {"circuit_paused", "awaiting_final_review", "awaiting_technical_review"}:
@@ -676,7 +678,7 @@ class Supervisor:
         day = dt.datetime.fromtimestamp(self.now, dt.timezone.utc).strftime("%Y-%m-%d")
         roots = self.state.setdefault("roots", {})
         if roots.get(day, 0) >= self.config["root_limit"]:
-            self.notice("root_fuel:" + day, "digest", "Praxis: límite diario de continuaciones alcanzado; el monitor conserva observación.")
+            self.notice("root_fuel:" + day, "digest", self.profile["project_name"] + ": límite diario de continuaciones alcanzado; el monitor conserva observación.")
             return self.finish("root_fuel_exhausted")
         deferred = self.refresh_before_post()
         if deferred is not None:
@@ -689,7 +691,7 @@ class Supervisor:
         if held.get("status") == "restored":
             held.update(status="consumed", consumed_at=self.now, consumed_by=key)
         self.state["auth_retry_earned"] = False
-        self.state["active_root"] = {"payload": self.payload(key, ROOT_TEXT), "baseline": engineering,
+        self.state["active_root"] = {"payload": self.payload(key, self.profile["root_text"]), "baseline": engineering,
                                      "reserved_at": self.now}
         self.state["phase"] = "root_reserved"
         self.save()
@@ -703,13 +705,17 @@ class Supervisor:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=Path("/etc/cauce-v3-hospital/praxis-supervision/config.json"))
-    parser.add_argument("--state", type=Path, default=Path("/var/lib/praxis-supervision/state.json"))
+    parser.add_argument("--config", type=Path, default=Path(STATE.PROFILE.DEFAULT["config_path"]))
+    parser.add_argument("--state", type=Path)
     parser.add_argument("--observe-only", action="store_true")
     parser.add_argument("--once", action="store_true", help="Run one pass (also the default)")
     args = parser.parse_args()
     try:
         config = load_config(args.config)
+        profile = STATE.project_profile(config)
+        args.state = STATE.PROFILE.safe_path(str(args.state or profile["state_path"]), STATE)
+        if "project_profile" in config and not args.state.is_relative_to(Path(profile["acceptance_root"])):
+            raise SupervisionError("project_state_scope_mismatch")
         signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(SupervisionError("pass_timeout")))
         signal.alarm(config["pass_seconds"])
         deadline = time.monotonic() + config["pass_seconds"]
@@ -725,7 +731,7 @@ def main() -> int:
                     runtime = runtime_snapshot(config, deadline)
                     if (supervisor.state["phase"] in {"observing", "root_reserved", "waiting_visual_review"}
                             or supervisor.state.get("pause_reason") in {"no_measured_progress", "no_new_progress"}):
-                        publication = PREVIEW.publish(config, engineering, runtime, deadline, STATE, run_command,
+                        publication = PREVIEW.publish(config, engineering, runtime, deadline, STATE, lambda command, limit: run_command(command, limit, config=config),
                             lambda: runtime_snapshot(config, deadline),
                             EVIDENCE.EvidenceReader(Path(config["workspace"]), STATE).source_matches, supervisor.observe_only)
                         supervisor.state["preview_publication"] = publication

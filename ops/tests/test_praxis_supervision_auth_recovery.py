@@ -258,6 +258,8 @@ class AuthRecoveryTests(unittest.TestCase):
         docker.write_text("#!/usr/bin/python3\nimport json,pathlib,sys\npathlib.Path(" + repr(str(arguments))
                           + ").write_text(json.dumps(sys.argv[1:]))\nraise SystemExit(" + str(exit_code) + ")\n")
         docker.chmod(0o700)
+        for name in ("project-profile.py", "project-profile.json"):
+            (root / name).write_bytes((HELPER.parent / name).read_bytes())
         helper = root / "synthetic-state.py"
         helper.write_text(HELPER.read_text() + "\ndef trusted_file(path, directory=False):\n"
                           "    metadata = path.lstat()\n"

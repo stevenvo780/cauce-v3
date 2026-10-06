@@ -6,10 +6,12 @@ import datetime as dt
 import fcntl
 import hashlib
 import json
+import importlib.util
 import os
 import re
 import stat
 import tempfile
+from types import SimpleNamespace
 import uuid
 from pathlib import Path
 
@@ -21,6 +23,15 @@ class SupervisionError(Exception):
         self.code = code
 
 
+PROFILE_SPEC = importlib.util.spec_from_file_location("project_profile", Path(__file__).with_name("project-profile.py"))
+PROFILE = importlib.util.module_from_spec(PROFILE_SPEC)
+PROFILE_SPEC.loader.exec_module(PROFILE)
+
+
+def project_profile(config: dict | None = None) -> dict:
+    return PROFILE.for_config(config, SimpleNamespace(SupervisionError=SupervisionError))
+
+
 def canonical(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
@@ -29,26 +40,12 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def command_identity(command: list[str]) -> dict:
-    if command[:2] != ["git", "-C"]:
-        return {}
-    owner = Path(command[2]).stat()
-    if owner.st_uid == 0:
-        raise SupervisionError("git_workspace_requires_unprivileged_owner")
-    if os.geteuid() != 0:
-        raise SupervisionError("git_requires_actor_isolation")
-    if command[2] != "/opt/hospital-agent/runtime/praxis/operator" or owner.st_uid != 1000:
-        raise SupervisionError("git_workspace_requires_actor_isolation")
-    return {}
+def command_identity(command: list[str], config: dict | None = None) -> dict:
+    return PROFILE.command_identity(command, project_profile(config), SupervisionError)
 
 
-def isolated_command(command: list[str]) -> list[str]:
-    if command[:2] != ["git", "-C"]:
-        return command
-    command_identity(command)
-    return ["docker", "exec", "-u", "1000:1000", "hospital-agent-openclaw-operator-gateway-1",
-            "git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C",
-            "/home/node/.openclaw/workspace/praxis", *command[3:]]
+def isolated_command(command: list[str], config: dict | None = None) -> list[str]:
+    return PROFILE.isolated_command(command, project_profile(config), SupervisionError)
 
 
 def trusted_file(path: Path, directory: bool = False) -> None:
@@ -196,7 +193,8 @@ def causal_binding(receipt: dict, body_hash: str, body_type: str) -> dict:
             "body_sha256": body_hash, "body_type": body_type}
 
 
-def receipt_matches(receipt: dict, root: dict) -> bool:
+def receipt_matches(receipt: dict, root: dict, config: dict | None = None) -> bool:
+    profile = project_profile(config)
     deliveries = receipt.get("deliveries")
     if not isinstance(deliveries, list) or len(deliveries) != 1:
         return False
@@ -208,7 +206,7 @@ def receipt_matches(receipt: dict, root: dict) -> bool:
     if (receipt.get("request_id") != root.get("request_id") or receipt.get("trace_id") != root.get("trace_id")
             or not root.get("body_sha256") or digest(canonical(body)) != root["body_sha256"]):
         return False
-    return (all(isinstance(row, dict) and row.get("tenant_id") == "Hospital" and row.get("alias") == "operador"
+    return (all(isinstance(row, dict) and row.get("tenant_id") == profile["tenant_id"] and row.get("alias") == profile["recipient_alias"]
                 for row in deliveries)
             and [row.get("delivery_id") for row in deliveries] == root.get("delivery_ids"))
 
@@ -220,7 +218,8 @@ def auth_resume_event(goal_hash: str, now: float) -> dict:
             "nonce": str(uuid.uuid4()), "created_at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat().replace("+00:00", "Z")}
 
 
-def resumable_reservation(root: object, goal_hash: str) -> bool:
+def resumable_reservation(root: object, goal_hash: str, config: dict | None = None) -> bool:
+    profile = project_profile(config)
     if not isinstance(root, dict) or "message_id" in root or root.get("error") != "unauthorized":
         return False
     attempts = root.get("attempts")
@@ -232,8 +231,8 @@ def resumable_reservation(root: object, goal_hash: str) -> bool:
     key = payload.get("idempotency_key")
     if (not isinstance(body, dict) or body.get("type") != "praxis.supervision.continue"
             or not isinstance(key, str)
-            or payload.get("room_id") != "grp.hospital"
-            or payload.get("recipients") != [{"tenant_id": "Hospital", "alias": "operador"}]):
+            or payload.get("room_id") != profile["room_id"]
+            or payload.get("recipients") != [{"tenant_id": profile["tenant_id"], "alias": profile["recipient_alias"]}]):
         return False
     if root.get("purpose") == "visual_review":
         supervision = body.get("supervision")
@@ -254,11 +253,11 @@ def resumable_reservation(root: object, goal_hash: str) -> bool:
         return False
 
 
-def consume_auth_resume(state: dict, path: Path, goal_hash: str, now: float) -> bool:
+def consume_auth_resume(state: dict, path: Path, goal_hash: str, now: float, config: dict | None = None) -> bool:
     if state.get("phase") != "circuit_paused" or state.get("pause_reason") != "unauthorized":
         return False
     root = state.get("active_root")
-    if root is not None and not resumable_reservation(root, goal_hash):
+    if root is not None and not resumable_reservation(root, goal_hash, config):
         return False
     if not path.exists() and not path.is_symlink():
         return False
@@ -303,9 +302,9 @@ def consume_auth_resume(state: dict, path: Path, goal_hash: str, now: float) -> 
     return True
 
 
-def apply_auth_resume_control(state: dict, path: Path, goal_hash: str, now: float) -> bool:
+def apply_auth_resume_control(state: dict, path: Path, goal_hash: str, now: float, config: dict | None = None) -> bool:
     try:
-        return consume_auth_resume(state, path, goal_hash, now)
+        return consume_auth_resume(state, path, goal_hash, now, config)
     except (SupervisionError, OSError, ValueError, TypeError, AttributeError, RecursionError) as error:
         code = error.code if isinstance(error, SupervisionError) else "invalid_auth_resume"
         state["auth_resume_rejection"] = {"code": code, "observed_at": now}

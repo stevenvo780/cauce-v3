@@ -469,12 +469,12 @@ class EvidenceContractTests(unittest.TestCase):
             {"id": "PRAX-001", "criteria": [{"id": "AC01", "text": "Register the 83 P0 decisions"}]},
             {"id": "PRAX-013", "criteria": [{"id": "AC01", "text": "Implement synthetic consent persistence and isolation"}]},
             {"id": "PRAX-037", "criteria": [{"id": "AC01", "text": "Record final milestone acceptance"}]}]}
-        work = SUP.EVIDENCE.next_work(document, {}, set())
+        work = SUP.EVIDENCE.next_work(document, {}, set(), SUP.STATE.PROFILE.DEFAULT["deferred_issues"])
         self.assertEqual(work["issue_id"], "PRAX-013")
         self.assertTrue(work["advisory"])
-        self.assertIn("next_work orienta", SUP.ROOT_TEXT)
-        self.assertIn("--install-evidence", SUP.ROOT_TEXT)
-        self.assertIn("/opt/praxis-qa-venv/bin/python", SUP.ROOT_TEXT)
+        self.assertIn("next_work orienta", SUP.STATE.PROFILE.DEFAULT["root_text"])
+        self.assertIn("--install-evidence", SUP.STATE.PROFILE.DEFAULT["root_text"])
+        self.assertIn("/opt/praxis-qa-venv/bin/python", SUP.STATE.PROFILE.DEFAULT["root_text"])
         previous = self.fixture.snapshot()
         current = {**previous, "next_work": work, "validated_roadmap": ["PRAX-001:AC01"]}
         self.assertFalse(SUP.made_progress(previous, current))
