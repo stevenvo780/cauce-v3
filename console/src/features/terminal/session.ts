@@ -128,7 +128,7 @@ export function operatorRouteForAgent(
 }
 
 /** Projects authoritative server messages into a recipient-scoped, non-durable UI session. */
-export function transcriptForSession(page: MessagePage | undefined, session: OperatorSession): TranscriptItem[] {
+export function transcriptForSession(page: MessagePage | undefined, session: Pick<OperatorSession, 'agent'>): TranscriptItem[] {
   return (page?.items ?? []).flatMap((message): TranscriptItem[] => {
     const output = humanAuthor(message) === undefined && same(message.tenant_id, session.agent.tenantId)
       && same(message.actor_alias, session.agent.alias);

@@ -1,0 +1,53 @@
+import { Menu } from '@base-ui/react/menu';
+import { BookOpen, Ellipsis, Hourglass, PowerOff, RefreshCw } from 'lucide-react';
+import { cn } from '../../cn';
+
+const ITEM = 'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-fg-2 no-underline outline-none data-[disabled]:cursor-not-allowed data-[disabled]:opacity-45 data-[highlighted]:bg-subtle data-[highlighted]:text-fg';
+
+/** Secondary actions of the open session. Every one that touches the PTY plane needs a live grant. */
+export function StageMenu({ hasGrant, canExtend, extending, onExtend, onClose, onRefresh, summary }: {
+  hasGrant: boolean;
+  canExtend: boolean;
+  extending: boolean;
+  onExtend: () => void;
+  onClose: () => void;
+  onRefresh: () => void;
+  summary: string;
+}) {
+  return (
+    <Menu.Root>
+      <Menu.Trigger
+        aria-label="Más acciones"
+        className="grid size-8 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted hover:bg-subtle hover:text-fg data-[popup-open]:bg-muted-bg"
+      >
+        <Ellipsis size={17} aria-hidden="true" />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner align="end" sideOffset={6} className="z-50">
+          <Menu.Popup className="min-w-60 rounded-lg border border-line bg-surface p-1 shadow-pop outline-none">
+            <Menu.Item
+              className={ITEM}
+              disabled={!canExtend || extending}
+              onClick={onExtend}
+              title={canExtend ? 'Prorrogar la ventana de esta sesión con auditoría' : 'Disponible cuando el relay ya enganchó y consumió el ticket'}
+            >
+              <Hourglass size={15} aria-hidden="true" />{extending ? 'Prorrogando sesión…' : 'Prorrogar sesión'}
+            </Menu.Item>
+            <Menu.Item className={cn(ITEM, 'data-[highlighted]:text-danger-ink')} disabled={!hasGrant} onClick={onClose}
+              title="Revoca la sesión PTY en el servidor y cierra el canal">
+              <PowerOff size={15} aria-hidden="true" />Cerrar sesión PTY
+            </Menu.Item>
+            <Menu.Separator className="my-1 h-px bg-line" />
+            <Menu.Item className={ITEM} onClick={onRefresh}>
+              <RefreshCw size={15} aria-hidden="true" />Actualizar flota y permisos
+            </Menu.Item>
+            <Menu.LinkItem className={ITEM} href="/ayuda#terminal">
+              <BookOpen size={15} aria-hidden="true" />Docs
+            </Menu.LinkItem>
+            <p className="m-0 mt-1 border-t border-line px-2.5 pt-2 pb-1.5 text-xs text-muted">{summary}</p>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}

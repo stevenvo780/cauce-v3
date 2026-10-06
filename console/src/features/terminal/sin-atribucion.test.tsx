@@ -142,9 +142,8 @@ function servirControl(registro: ControlPedido[], fallo: { status: number; reaso
   );
 }
 
-async function abrirZeus(user: ReturnType<typeof userEvent.setup>): Promise<void> {
-  renderWithApi(<TerminalPage />);
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+async function abrirZeus(): Promise<void> {
+  renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
   await waitFor(() => {
     expect(StubWebSocket.instances.length).toBeGreaterThan(0);
   }, { timeout: 5000 });
@@ -174,14 +173,13 @@ describe('T041 · la toma de teclado exige persona con nombre', () => {
     ['writable_requires_attribution', 'Escribir en una TUI exige una persona con nombre'],
     ['writable_requires_named_operator', 'Una concesión comodín no abre modos con teclado'],
   ])('403 %s se dice en castellano y el teclado no se entrega', async (codigo, titulo) => {
-    const user = userEvent.setup();
     const sesiones: SesionPedida[] = [];
     const controles: ControlPedido[] = [];
     habilitarCapacidad();
     servirDestinos([destino()]);
     servirSesiones(sesiones);
     servirControl(controles, { status: 403, reason: codigo });
-    await abrirZeus(user);
+    await abrirZeus();
     const escribible = engancharSocket(StubWebSocket.last());
     await waitFor(() => {
       expect(controles).toHaveLength(1);
@@ -216,9 +214,7 @@ describe('T042 · abrir shell y leer sigue permitido (dejar como está)', () => 
     // Sólo shell: nada se autoabre y el canal bajo prueba es el interactivo.
     servirDestinos([destino({ modes: [SHELL_MODE], writable_modes: [] })]);
     servirSesiones(sesiones);
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled();
     });
@@ -229,8 +225,7 @@ describe('T042 · abrir shell y leer sigue permitido (dejar como está)', () => 
     );
     await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
 
-    const dialogo = await screen.findByRole('dialog');
-    await user.click(within(dialogo).getByRole('button', { name: /abrir sesión pty/i }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(StubWebSocket.instances).toHaveLength(1);
@@ -261,13 +256,10 @@ describe('T042 · abrir shell y leer sigue permitido (dejar como está)', () => 
   }, 20_000);
 
   it('la TUI de solo lectura se abre sola y se lee sin teclado ni negativa', async () => {
-    const user = userEvent.setup();
     habilitarCapacidad();
     servirDestinos([destino({ modes: [SHELL_MODE, LIVE_TUI_MODE], writable_modes: [] })]);
     servirSesiones([]);
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
     await waitFor(() => {
       expect(StubWebSocket.instances).toHaveLength(1);
     });
@@ -296,15 +288,12 @@ describe('T042 · abrir shell y leer sigue permitido (dejar como está)', () => 
 
 describe('T041 · la caída del relay se anuncia de inmediato', () => {
   it('un 1001 relay_shutdown pinta ERROR con código y motivo sin reintentar en silencio ni esperar al polling', async () => {
-    const user = userEvent.setup();
     const capacidad = { lecturas: 0 };
     const sesiones: SesionPedida[] = [];
     habilitarCapacidad(capacidad);
     servirDestinos([destino({ modes: [SHELL_MODE, LIVE_TUI_MODE], writable_modes: [] })]);
     servirSesiones(sesiones);
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
     await waitFor(() => {
       expect(StubWebSocket.instances).toHaveLength(1);
     });

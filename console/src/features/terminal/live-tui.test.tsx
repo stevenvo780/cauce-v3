@@ -68,13 +68,11 @@ afterEach(() => {
 });
 
 it('transmite la TUI viva del agente en cuanto se elige el alias, sin diálogo y en solo lectura', async () => {
-  const user = userEvent.setup();
   const calls: SessionCall[] = [];
   enableCapability();
   serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })]);
   recordSessions(calls);
-  renderWithApi(<TerminalPage />);
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+  renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
 
   await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -110,14 +108,11 @@ it('transmite la TUI viva del agente en cuanto se elige el alias, sin diálogo y
 }, 20_000);
 
 it('CONTROL NEGATIVO: el mismo alias sin el modo harness no abre ninguna sesión y dice por qué', async () => {
-  const user = userEvent.setup();
   const calls: SessionCall[] = [];
   enableCapability();
   serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell'] })]);
   recordSessions(calls);
-  renderWithApi(<TerminalPage />);
-
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+  renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
   await screen.findByRole('button', { name: /^TUI$/i });
   await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled(); });
 
@@ -126,11 +121,11 @@ it('CONTROL NEGATIVO: el mismo alias sin el modo harness no abre ninguna sesión
   expect(screen.getByRole('button', { name: /^TUI$/i })).toHaveAttribute('title', expect.stringMatching(/no publica el modo harness.*Modos publicados: shell/i));
   expect(calls).toHaveLength(0);
   expect(StubWebSocket.instances).toHaveLength(0);
-  expect(screen.queryByRole('button', { name: /^Feed$/i })).not.toBeInTheDocument();
+  // The agent stays readable as a feed: only the PTY modes are closed.
+  expect(screen.getByRole('button', { name: 'Feed' })).toBeEnabled();
 });
 
 it('CONTROL NEGATIVO: publica harness pero el agente PTY está offline; no se inventa una TUI', async () => {
-  const user = userEvent.setup();
   const calls: SessionCall[] = [];
   enableCapability();
   serveTargets([target({
@@ -138,9 +133,7 @@ it('CONTROL NEGATIVO: publica harness pero el agente PTY está offline; no se in
     pty_state: 'agent_offline', reason: 'El agente PTY no está conectado al relay.',
   })]);
   recordSessions(calls);
-  renderWithApi(<TerminalPage />);
-
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+  renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
   await screen.findByRole('button', { name: /^TUI$/i });
 
   await waitFor(() => { expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled(); });
@@ -150,7 +143,6 @@ it('CONTROL NEGATIVO: publica harness pero el agente PTY está offline; no se in
 });
 
 it('un rechazo del gateway no se reintenta en bucle: la apertura automática es UNA sola', async () => {
-  const user = userEvent.setup();
   let attempts = 0;
   enableCapability();
   serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })]);
@@ -158,9 +150,7 @@ it('un rechazo del gateway no se reintenta en bucle: la apertura automática es 
     attempts += 1;
     return HttpResponse.json({ error: 'conflict', reason: 'container_busy' }, { status: 409 });
   }));
-  renderWithApi(<TerminalPage />);
-
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+  renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
   await waitFor(() => { expect(attempts).toBe(1); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
   expect(attempts).toBe(1);
@@ -173,18 +163,13 @@ it('la shell abre sin diálogo de justificación después de seleccionar Termina
   enableCapability();
   serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })]);
   recordSessions(calls, 'harness');
-  renderWithApi(<TerminalPage />);
-
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+  renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
   await waitFor(() => { expect(calls).toHaveLength(1); });
 
   await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
-  const dialog = await screen.findByRole('dialog');
-  const abrir = within(dialog).getByRole('button', { name: /abrir sesión pty/i });
-  expect(abrir).toBeEnabled();
-  expect(abrir).toHaveFocus();
-  expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
-  await user.click(abrir);
+  // One click: no modal and no text box stand between the operator and the request.
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   await waitFor(() => { expect(calls).toHaveLength(2); });
   expect(calls[1]).toMatchObject({ mode: 'shell', hasReason: false });
 });
@@ -195,13 +180,10 @@ describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la 
   }
 
   it('pinta el 403 por CSRF como lo que es: un fallo de la consola, no del permiso ni del alias', async () => {
-    const user = userEvent.setup();
     enableCapability();
     serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })]);
     rechazaSesiones(403, { error: 'forbidden', message: 'se requiere un token CSRF válido' });
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
 
     const aviso = await screen.findByRole('alert');
     expect(aviso).toHaveTextContent(/token CSRF/i);
@@ -212,13 +194,10 @@ describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la 
   });
 
   it('un 403 que NO es de CSRF se muestra con el motivo del servidor y sin acusar a la consola', async () => {
-    const user = userEvent.setup();
     enableCapability();
     serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })]);
     rechazaSesiones(403, { error: 'forbidden', reason: 'attribution_required: falta identidad por persona.' });
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
 
     const aviso = await screen.findByRole('alert');
     expect(aviso).toHaveAttribute('data-codigo', 'attribution_required');
@@ -229,14 +208,11 @@ describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la 
   });
 
   it('CONTROL NEGATIVO: cuando el servidor SÍ abre la sesión no aparece ningún aviso de rechazo', async () => {
-    const user = userEvent.setup();
     const calls: SessionCall[] = [];
     enableCapability();
     serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })]);
     recordSessions(calls);
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
     await waitFor(() => { expect(calls).toHaveLength(1); });
     expect(screen.queryByText(/rechazó la apertura de sesión|falta el token CSRF|No se pudo abrir el canal/i))
       .not.toBeInTheDocument();
@@ -250,18 +226,12 @@ it('Terminal pide una shell nueva aunque la TUI actual tenga teclado', async () 
   serveTargets([target({ tenant_id: 'Steven', alias: 'zeus',
     modes: ['shell', 'harness', 'harness_rw'], writable_modes: ['harness_rw'] })]);
   recordSessions(calls, 'harness_rw');
-  renderWithApi(<TerminalPage />);
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }),
-    await screen.findByRole('option', { name: /^zeus ·/ }));
+  renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
   await waitFor(() => { expect(calls).toHaveLength(1); });
   expect(calls[0].mode).toBe('harness_rw');
   await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
-  const dialog = await screen.findByRole('dialog');
-  expect(within(dialog).getByRole('heading', { name: 'Abrir Terminal en zeus' })).toBeInTheDocument();
-  expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
-  const abrir = within(dialog).getByRole('button', { name: /abrir sesión pty/i });
-  expect(abrir).toBeEnabled();
-  await user.click(abrir);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   await waitFor(() => { expect(calls).toHaveLength(2); });
   expect(calls.at(-1)).toMatchObject({ mode: 'shell', hasReason: false });
 });

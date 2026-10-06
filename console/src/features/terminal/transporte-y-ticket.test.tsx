@@ -99,8 +99,7 @@ afterEach(() => {
 });
 
 /** Opens the alias, whose TUI opens on its own, and takes the relay to `ready`. */
-async function abrirTui(user: ReturnType<typeof userEvent.setup>, ready?: Record<string, unknown>) {
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+async function abrirTui(ready?: Record<string, unknown>) {
   await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
   const socket = StubWebSocket.last();
   act(() => {
@@ -114,13 +113,10 @@ async function abrirTui(user: ReturnType<typeof userEvent.setup>, ready?: Record
 
 describe('el ticket de un solo uso, contado sin mentir', () => {
   it('un ticket ya vencido cuenta 0:00 y se marca, en vez de decir que la sesión está activa', async () => {
-    const user = userEvent.setup();
     enableCapability();
     serveTargets([target()]);
     serveSessions([], { expiresAt: new Date(Date.now() - 5_000).toISOString() });
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
     await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
     // The socket is up but the relay has not authorised: the ticket window is what is ticking.
     act(() => { StubWebSocket.last().acceptOpen(); });
@@ -138,13 +134,12 @@ describe('el ticket de un solo uso, contado sin mentir', () => {
    * exists.
    */
   it('una caída de transporte NO devuelve el ticket a la cuenta atrás: sigue consumido', async () => {
-    const user = userEvent.setup();
     enableCapability();
     serveTargets([target()]);
     serveSessions([]);
-    renderWithApi(<TerminalPage />);
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
 
-    const socket = await abrirTui(user);
+    const socket = await abrirTui();
     expect(await screen.findByLabelText('Sesión PTY activa')).toHaveTextContent(/Ticket consumido · sesión activa/);
 
     act(() => { socket.emitClose(1006, 'network_lost'); });
@@ -169,9 +164,9 @@ describe('pedir una sesión nueva después de que el relay cierre el canal', () 
     enableCapability();
     serveTargets([target()]);
     serveSessions(posts);
-    renderWithApi(<TerminalPage />);
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
 
-    const socket = await abrirTui(user);
+    const socket = await abrirTui();
     act(() => { socket.emitClose(4408, 'idle'); });
     expect(await screen.findByText(/Sesión cerrada por inactividad/i)).toBeInTheDocument();
 
@@ -183,20 +178,16 @@ describe('pedir una sesión nueva después de que el relay cierre el canal', () 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   }, 20_000);
 
-  it('sobre una shell abre el diálogo, y cancelarlo NO deja un panel que diga «PTY online»', async () => {
+  it('sobre una shell la sesión nueva se pide directo, sin diálogo, y el hueco no dice «PTY online»', async () => {
     const user = userEvent.setup();
     const posts: { mode: string }[] = [];
     enableCapability();
     // Only `shell`: nothing opens by itself and the channel under test is the interactive one.
     serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell'] })]);
     serveSessions(posts);
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
     await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled(); });
     await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
-    const dialogo = await screen.findByRole('dialog');
-    await user.click(within(dialogo).getByRole('button', { name: /abrir sesión pty/i }));
     await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
 
     const socket = StubWebSocket.last();
@@ -204,32 +195,43 @@ describe('pedir una sesión nueva después de que el relay cierre el canal', () 
     act(() => { socket.emitClose(4423, 'max_session'); });
     await user.click(await screen.findByRole('button', { name: /pedir sesión nueva/i }));
 
-    const segundo = await screen.findByRole('dialog');
-    await user.click(within(segundo).getByRole('button', { name: /^cancelar$/i }));
+    // The same kind of channel, asked again as a fresh audited session; nothing stops to confirm.
+    await waitFor(() => { expect(posts).toHaveLength(2); });
+    expect(posts[1].mode).toBe('shell');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  }, 20_000);
 
-    // The channel was released: the empty stage must not keep advertising an open PTY.
+  it('al cerrar el canal desde el menú el hueco dice que no hay canal abierto, no «PTY online»', async () => {
+    const user = userEvent.setup();
+    enableCapability();
+    serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell'] })]);
+    serveSessions([]);
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
+    await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled(); });
+    await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
+    await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
+
+    await user.click(screen.getByRole('button', { name: 'Más acciones' }));
+    await user.click(await screen.findByRole('menuitem', { name: /cerrar sesión pty/i }));
+
     const hueco = await waitFor(() => {
-      const nodo = document.querySelector('.terminal-channel-unavailable');
+      const nodo = document.querySelector('[data-canal-no-disponible]');
       if (!nodo) throw new Error('el panel sin canal no se pintó');
       return nodo as HTMLElement;
     });
     expect(within(hueco).queryByRole('heading', { name: 'PTY online' })).not.toBeInTheDocument();
     expect(hueco).toHaveTextContent(/no hay (ningún )?canal PTY abierto/i);
-    expect(posts).toHaveLength(1);
   }, 20_000);
 });
 
 describe('las denegaciones que no traen código', () => {
   it('un 503 al abrir la TUI se cita con su estado y no acusa al permiso del operador', async () => {
-    const user = userEvent.setup();
     enableCapability();
     serveTargets([target()]);
     server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json(
       { error: 'unavailable', reason: 'terminal-relay upstream timeout' }, { status: 503 },
     )));
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
 
     const aviso = await screen.findByRole('alert');
     expect(aviso).toHaveTextContent(/HTTP 503/);

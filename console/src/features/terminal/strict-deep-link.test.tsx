@@ -5,7 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { server } from '../../mocks/server';
 import { mockTerminalGrant } from '../../mocks/terminal-ticket';
-import { renderWithApi } from '../../test/render';
+import { renderRouted, renderWithApi } from '../../test/render';
 import { closePtySession } from './pty-session';
 import { installStubWebSocket } from './pty-socket-stub';
 import { TerminalPage } from './TerminalPage';
@@ -21,6 +21,11 @@ const target: TerminalTarget = {
 };
 
 let restoreSocket: () => void;
+
+function RoutedTerminal() {
+  const [, ...params] = window.location.pathname.split('/').filter(Boolean);
+  return <TerminalPage params={params} />;
+}
 
 function installAuthority() {
   server.use(
@@ -58,14 +63,13 @@ it('CONTROL: StrictMode deep-link opens exactly one writable session after the f
 
   renderWithApi(<StrictMode><TerminalPage params={['Steven', 'kant']} /></StrictMode>);
 
-  expect(await screen.findByRole('tab', { name: /kant/i })).toHaveAttribute('aria-selected', 'true');
-  expect(screen.getByRole('combobox', { name: 'Agente' })).toHaveValue('Steven:kant');
+  expect(await screen.findByRole('heading', { level: 2, name: /kant/i })).toBeInTheDocument();
   await waitFor(() => { expect(requests).toHaveLength(1); });
   expect(requests[0]).toMatchObject({ tenant_id: 'Steven', alias: 'kant', mode: 'harness_rw' });
   expect(screen.queryByRole('alert', { name: /pestaña/i })).not.toBeInTheDocument();
 });
 
-it('CONTROL: StrictMode manual selector also requests one writable session', async () => {
+it('CONTROL: StrictMode opening from the picker card also requests one writable session', async () => {
   const user = userEvent.setup();
   const requests: Record<string, unknown>[] = [];
   server.use(http.post('*/v3/console/terminal/sessions', async ({ request }) => {
@@ -75,9 +79,9 @@ it('CONTROL: StrictMode manual selector also requests one writable session', asy
     }), { status: 201 });
   }));
 
-  renderWithApi(<StrictMode><TerminalPage /></StrictMode>);
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }),
-    await screen.findByRole('option', { name: /^kant ·/ }));
+  window.history.pushState({}, '', '/terminal');
+  renderRouted(() => <StrictMode><RoutedTerminal /></StrictMode>);
+  await user.click(await screen.findByRole('link', { name: /^kant/ }));
 
   await waitFor(() => { expect(requests).toHaveLength(1); });
   expect(requests[0]).toMatchObject({ tenant_id: 'Steven', alias: 'kant', mode: 'harness_rw' });
@@ -95,14 +99,18 @@ it('StrictMode conserva el token de un enlace con inventario ya disponible al mo
     }), { status: 201 });
   }));
   renderWithApi(<StrictMode><OperatorWorkspace
-    initialAgentId="Steven:kant"
+    agentId="Steven:kant"
+    live={new Map()}
+    messages={{ loading: false, data: { items: [] }, reload: () => Promise.resolve({ data: { items: [] } }) }}
+    summary=""
+    onRefresh={() => undefined}
     agents={[{ id: 'Steven:kant', tenantId: 'Steven', alias: 'kant', roomIds: [], roomMembership: {}, leaseState: 'online' }]}
     fleetLoading={false}
     access={{ subject: 'Steven:kant', roles: ['operator'], permissions: ['ultimate-terminal.connect'] }}
     terminalCapability={{ available: true, plugin_id: 'ultimate-terminal.client', capabilities: ['terminal.pty.client'], websocket_path: '/v3/console/terminal/ws' }}
     terminalTargets={{ observed_at: new Date().toISOString(), websocket_path: '/v3/console/terminal/ws', items: [target] }}
   /></StrictMode>);
-  expect(await screen.findByRole('tab', { name: /kant/i })).toHaveAttribute('aria-selected', 'true');
+  expect(await screen.findByRole('heading', { level: 2, name: /kant/i })).toBeInTheDocument();
   await waitFor(() => { expect(requests).toHaveLength(1); });
   expect(requests[0]).toMatchObject({ tenant_id: 'Steven', alias: 'kant', mode: 'harness_rw' });
 });

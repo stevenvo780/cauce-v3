@@ -1,10 +1,11 @@
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { server } from '../../mocks/server';
 import { mockTerminalGrant } from '../../mocks/terminal-ticket';
-import { renderWithApi } from '../../test/render';
+import { navigate } from '../../router';
+import { renderRouted } from '../../test/render';
 import type { TerminalTarget } from './api';
 import { closePtySession, ptySessionText } from './pty-session';
 import { installStubWebSocket, StubWebSocket } from './pty-socket-stub';
@@ -90,8 +91,17 @@ afterEach(() => {
   restoreSocket();
 });
 
-async function openTui(user: ReturnType<typeof userEvent.setup>): Promise<StubWebSocket> {
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+/** Opening an agent is a route change; the sidebar links do exactly this. */
+function renderAt(path: string) {
+  window.history.pushState({}, '', path);
+  return renderRouted(TerminalPage);
+}
+
+function go(path: string) {
+  act(() => { navigate(path); });
+}
+
+async function waitForTui(): Promise<StubWebSocket> {
   await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
   const socket = StubWebSocket.last();
   act(() => {
@@ -103,19 +113,13 @@ async function openTui(user: ReturnType<typeof userEvent.setup>): Promise<StubWe
   return socket;
 }
 
-async function select(user: ReturnType<typeof userEvent.setup>, alias: string) {
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Agente' }),
-    screen.getByRole('option', { name: new RegExp(`^${alias} ·`) }));
-}
-
-describe('cambiar el agente seleccionado', () => {
-  it('seleccionar el mismo agente conserva socket, ticket y salida', async () => {
-    const user = userEvent.setup();
+describe('cambiar el agente de la dirección', () => {
+  it('volver a pedir el mismo agente conserva socket, ticket y salida', async () => {
     const posts: string[] = [], deletes: string[] = [];
     serveTwoAgents(); serveSessions(posts, deletes);
-    renderWithApi(<TerminalPage />);
-    await openTui(user);
-    await select(user, 'zeus');
+    renderAt('/terminal/Steven/zeus');
+    await waitForTui();
+    go('/terminal/Steven/zeus');
     expect(ptySessionText('sid-zeus')).toContain('zeus corriendo');
     expect(StubWebSocket.instances).toHaveLength(1);
     expect(posts).toEqual(['zeus']);
@@ -123,78 +127,71 @@ describe('cambiar el agente seleccionado', () => {
   });
 
   it('devuelve el canal anterior y al regresar abre una intención nueva', async () => {
-    const user = userEvent.setup();
     const posts: string[] = [], deletes: string[] = [];
     serveTwoAgents(); serveSessions(posts, deletes);
-    renderWithApi(<TerminalPage />);
-    const old = await openTui(user);
-    await select(user, 'salva');
-    await screen.findByRole('button', { name: /^TUI$/i });
-    expect(deletes).toEqual(['sid-zeus']);
+    renderAt('/terminal/Steven/zeus');
+    const old = await waitForTui();
+    go('/terminal/Isa/salva');
+    await screen.findByRole('heading', { level: 2, name: /salva/ });
+    await waitFor(() => { expect(deletes).toEqual(['sid-zeus']); });
     expect(old.readyState).toBe(StubWebSocket.CLOSED);
-    await select(user, 'zeus');
+    go('/terminal/Steven/zeus');
     await waitFor(() => { expect(posts).toEqual(['zeus', 'zeus']); });
     expect(StubWebSocket.instances).toHaveLength(2);
     expect(StubWebSocket.last()).not.toBe(old);
   });
 
-  it('cerrar una pestaña revoca el canal y reabrir crea otra intención', async () => {
+  it('cerrar la sesión revoca el canal y no la reabre sola', async () => {
     const user = userEvent.setup();
     const posts: string[] = [], deletes: string[] = [];
     serveTwoAgents(); serveSessions(posts, deletes);
-    renderWithApi(<TerminalPage />);
-    await openTui(user);
-    await user.click(screen.getByRole('button', { name: /Cerrar sesión zeus/i }));
+    renderAt('/terminal/Steven/zeus');
+    await waitForTui();
+    await user.click(screen.getByRole('button', { name: 'Más acciones' }));
+    await user.click(await screen.findByRole('menuitem', { name: /cerrar sesión pty/i }));
     await waitFor(() => { expect(deletes).toEqual(['sid-zeus']); });
     expect(screen.queryByLabelText('Sesión PTY activa')).not.toBeInTheDocument();
-    await select(user, 'zeus');
+    expect(posts).toEqual(['zeus']);
+    await user.click(screen.getByRole('button', { name: /^TUI$/i }));
     await waitFor(() => { expect(posts).toEqual(['zeus', 'zeus']); });
   });
 
-  it('una negativa permanente no se reintenta por elegir el agente ya visible', async () => {
-    const user = userEvent.setup();
+  it('una negativa permanente no se reintenta sola', async () => {
     let attempts = 0;
     serveTwoAgents();
     server.use(http.post('*/v3/console/terminal/sessions', () => {
       attempts += 1;
       return HttpResponse.json({ reason: 'no_grant' }, { status: 403 });
     }));
-    renderWithApi(<TerminalPage />);
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }),
-      await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderAt('/terminal/Steven/zeus');
     expect(await screen.findByRole('alert')).toHaveAttribute('data-codigo', 'no_grant');
-    await select(user, 'zeus');
+    go('/terminal/Steven/zeus');
     expect(attempts).toBe(1);
     expect(StubWebSocket.instances).toHaveLength(0);
   });
 
-  it('si falla la devolución conserva el agente anterior y no abre otra reserva', async () => {
-    const user = userEvent.setup();
+  it('si falla la devolución al salir, el aviso queda con su reintento y no se abre otra reserva', async () => {
     const posts: string[] = [], deletes: string[] = [];
     serveTwoAgents(); serveSessions(posts, deletes);
     server.use(http.delete('*/v3/console/terminal/sessions/:sid', () =>
       HttpResponse.json({ reason: 'temporary_failure' }, { status: 503 })));
-    renderWithApi(<TerminalPage />);
-    await openTui(user);
-    await select(user, 'salva');
-    expect(await screen.findByRole('alert')).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Agente' })).toHaveValue('Steven:zeus');
+    renderAt('/terminal/Steven/zeus');
+    await waitForTui();
+    go('/terminal/Isa/salva');
+    const alert = await screen.findByText(/No se confirmó la revocación/i);
+    expect(within(alert.closest('[role="alert"]') as HTMLElement).getByRole('button', { name: 'Reintentar revocación' })).toBeInTheDocument();
     expect(posts).toEqual(['zeus']);
-    expect(screen.queryByRole('link', { name: /escribir a salva en mensajes/i })).not.toBeInTheDocument();
   });
 
-  it('cada selección conserva tenant y alias y solo un escenario', async () => {
-    const user = userEvent.setup();
+  it('cada dirección muestra un único escenario con el tenant y el alias pedidos', async () => {
     serveTwoAgents(); serveSessions([], []);
-    renderWithApi(<TerminalPage />);
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }),
-      await screen.findByRole('option', { name: /^salva ·/ }));
-    expect(screen.getByRole('combobox', { name: 'Agente' })).toHaveValue('Isa:salva');
-    await select(user, 'kant');
-    expect(screen.getByRole('combobox', { name: 'Agente' })).toHaveValue('Steven:kant');
-    expect(document.querySelectorAll('.terminal-session-head')).toHaveLength(1);
-    expect(screen.getAllByRole('tab')).toHaveLength(1);
-    await user.click(screen.getByRole('button', { name: /cerrar sesión kant/i }));
-    expect(await screen.findByText('Ningún agente seleccionado')).toBeInTheDocument();
+    renderAt('/terminal/Isa/salva');
+    expect(await screen.findByRole('heading', { level: 2, name: /salva/ })).toHaveTextContent('Isa');
+    go('/terminal/Steven/kant');
+    expect(await screen.findByRole('heading', { level: 2, name: /kant/ })).toHaveTextContent('Steven');
+    expect(document.querySelectorAll('[data-objeto-principal]')).toHaveLength(1);
+    expect(document.querySelectorAll('header')).toHaveLength(1);
+    go('/terminal');
+    expect(await screen.findByText('Elegí un agente')).toBeInTheDocument();
   });
 });
