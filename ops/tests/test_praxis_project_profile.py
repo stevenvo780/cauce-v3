@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import copy
 import csv
-import json
 import importlib.util
+import json
 import sys
-from types import SimpleNamespace
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
-import test_praxis_supervision as fixtures
 import test_praxis_preview as previews
+import test_praxis_supervision as fixtures
 
 # cauce:requiere none
 
@@ -85,10 +85,12 @@ class OptionalProjectTests(unittest.TestCase):
             with self.subTest(mutation=mutation):
                 value={**self.profile,**mutation}
                 self.config.update(project_profile=value,project_profile_sha256=SUP.STATE.PROFILE.fingerprint(value))
-                with self.assertRaises(SUP.SupervisionError): self.load()
+                with self.assertRaises(SUP.SupervisionError):
+                    self.load()
         self.config.update(project_profile=self.profile,project_profile_sha256=SUP.STATE.PROFILE.fingerprint(self.profile))
         self.config["issues_file"]="../ISSUES.csv"
-        with self.assertRaisesRegex(SUP.SupervisionError,"artifact_scope"): self.load()
+        with self.assertRaisesRegex(SUP.SupervisionError,"artifact_scope"):
+            self.load()
 
     def test_another_container_scope_payload_and_read_only_sql_are_used(self):
         self.load()

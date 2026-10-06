@@ -5,15 +5,15 @@ from __future__ import annotations
 import datetime as dt
 import fcntl
 import hashlib
-import json
 import importlib.util
+import json
 import os
 import re
 import stat
 import tempfile
-from types import SimpleNamespace
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 # cauce:requiere none
 
