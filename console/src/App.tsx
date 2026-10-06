@@ -232,9 +232,10 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
       <AppShell
         routeId={notFoundPath ? '' : routeId}
         activeAgentId={activeAgentId}
+        bounded={!notFoundPath && (routeId === 'messages' || routeId === 'terminal')}
         account={(
           <div className="grid w-full gap-1">
-            {mocks ? <span className="mx-auto rounded-full bg-warn-soft px-2 py-0.5 text-[10px] font-semibold tracking-wide text-warn-ink" role="status">MOCK API</span> : null}
+            {mocks ? <span className="mock-flag mx-auto rounded-full bg-warn-soft px-2 py-0.5 text-[10px] font-semibold tracking-wide text-warn-ink" role="status">MOCK API</span> : null}
             <AccountMenu routeKey={`${routeId}/${params.join('/')}`} gate={gate} />
           </div>
         )}
@@ -246,7 +247,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
           ref={mainRef}
           tabIndex={-1}
           className={fullBleed
-            ? 'flex min-h-0 w-full flex-1 flex-col max-[760px]:pb-[calc(56px+env(safe-area-inset-bottom))]'
+            ? 'flex min-h-0 w-full flex-1 flex-col max-[760px]:pb-[calc(56px+env(safe-area-inset-bottom))] max-[760px]:has-[[data-keyboard-open]]:pb-0'
             : 'mx-auto w-full max-w-[1400px] flex-1 px-4 pt-4 pb-[calc(72px+env(safe-area-inset-bottom))] min-[761px]:px-8 min-[761px]:pt-6 min-[761px]:pb-10'}
         >
           {notFoundPath

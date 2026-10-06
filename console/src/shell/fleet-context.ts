@@ -15,6 +15,9 @@ export interface FleetData {
   messages: Resource<MessagePage>;
   activity: Resource<FleetActivitySnapshot>;
   queues: Resource<QueueSnapshot>;
+  /** Activity refresh period; 0 pauses it. */
+  activityIntervalMs: number;
+  setActivityIntervalMs: (ms: number) => void;
   loading: boolean;
   error?: Error;
   reload: () => void;

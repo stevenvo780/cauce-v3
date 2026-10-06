@@ -115,7 +115,14 @@ function Sidebar({ routeId, activeAgentId, rail, collapsible, onToggle, footer }
       <div className={cn('mt-3 flex min-h-0 flex-1 flex-col border-t border-line pt-3', rail && 'w-full')}>
         <AgentList routeId={routeId} activeId={activeAgentId} rail={rail} />
       </div>
-      <div className={cn('shrink-0 border-t border-line p-2', rail && 'flex w-full justify-center')}>{footer}</div>
+      <div
+        className={cn(
+          'shrink-0 border-t border-line p-2',
+          rail && 'flex w-full justify-center [&_.account-chevron]:hidden [&_.account-name]:hidden [&_.mock-flag]:hidden',
+        )}
+      >
+        {footer}
+      </div>
     </aside>
   );
 }
@@ -179,8 +186,10 @@ function BottomBar({ routeId, account }: { routeId: string; account: ReactNode }
  * One sidebar on desktop (sections + the agent roster + account), an icon rail on tablets and a
  * bottom bar on phones. The roster lives here so the chat and the terminal stop drawing their own.
  */
-export function AppShell({ routeId, activeAgentId, account, notices, children }: {
+export function AppShell({ routeId, activeAgentId, bounded = false, account, notices, children }: {
   routeId: string;
+  /** The page owns its scroll areas: the column is exactly one viewport tall. */
+  bounded?: boolean;
   activeAgentId?: string;
   account: ReactNode;
   notices?: ReactNode;
@@ -205,7 +214,10 @@ export function AppShell({ routeId, activeAgentId, account, notices, children }:
   }, [tablet, toggle]);
 
   return (
-    <div className="flex min-h-dvh bg-canvas text-fg" data-sidebar={phone ? 'bottom' : rail ? 'rail' : 'expanded'}>
+    <div
+      className="flex min-h-dvh bg-canvas text-fg [&:has([data-keyboard-open])_nav[aria-label='Navegación principal']]:hidden"
+      data-sidebar={phone ? 'bottom' : rail ? 'rail' : 'expanded'}
+    >
       <a
         href="#main-content"
         className="fixed top-3 left-3 z-[100] -translate-y-[200%] rounded-md bg-fg px-3 py-2 text-sm font-medium text-canvas focus:translate-y-0"
@@ -222,7 +234,7 @@ export function AppShell({ routeId, activeAgentId, account, notices, children }:
           footer={account}
         />
       )}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className={cn('flex min-w-0 flex-1 flex-col', bounded && 'h-dvh overflow-hidden')}>
         {notices}
         {children}
       </div>

@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useApi } from '../api/context';
 import { usePolling } from '../api/use-polling';
 import { useResource } from '../api/use-resource';
@@ -22,7 +22,8 @@ export function FleetProvider({ children }: { children: ReactNode }) {
 
   usePolling(messages.reload, 2_500, { pausedWhile: messages.loading });
   usePolling(status.reload, 5_000, { pausedWhile: status.loading });
-  usePolling(activity.reload, 5_000, { pausedWhile: activity.loading });
+  const [activityIntervalMs, setActivityIntervalMs] = useState(5_000);
+  usePolling(activity.reload, activityIntervalMs, { pausedWhile: activity.loading || activityIntervalMs === 0 });
   usePolling(queues.reload, 15_000, { pausedWhile: queues.loading });
   usePolling(topology.reload, 30_000, { pausedWhile: topology.loading });
 
@@ -57,6 +58,8 @@ export function FleetProvider({ children }: { children: ReactNode }) {
     messages,
     activity,
     queues,
+    activityIntervalMs,
+    setActivityIntervalMs,
     loading: (status.loading && !status.data) || (topology.loading && !topology.data)
       || (activity.loading && !activity.data) || (messages.loading && !messages.data),
     error: status.error ?? topology.error ?? activity.error ?? messages.error,
@@ -67,7 +70,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
       void activity.reload();
       void queues.reload();
     },
-  }), [agents, salud, live, status, topology, messages, activity, queues]);
+  }), [agents, salud, live, status, topology, messages, activity, queues, activityIntervalMs]);
 
   return <FleetContext.Provider value={value}>{children}</FleetContext.Provider>;
 }

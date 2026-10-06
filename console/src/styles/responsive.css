@@ -6,11 +6,6 @@ input, select, textarea { min-width: 0; }
   .panel { padding: var(--space-4); border-radius: var(--radius); }
   .config-form { grid-template-columns: 1fr; }
   .config-json { grid-column: auto; }
-  .terminal-transcript { max-height: 500px; }
-  .transcript-entry { width: 96%; }
-  .transcript-entry footer { align-items: start; flex-direction: column; }
-  .transcript-delivery { flex-wrap: wrap; }
-  .transcript-delivery > span:last-child { width: 100%; margin-left: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
