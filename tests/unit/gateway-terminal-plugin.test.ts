@@ -20,7 +20,7 @@ import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
  * El plugin registra cuatro rutas de console, cinco rutas de relay y la ruta de directive
  * del governance probe. Los asserts aquí no reproducen la cobertura fina de los otros
  * ficheros del plano terminal: se concentran en validar que el plugin PUBLICA las rutas
- * correctas, que cada una devuelve 400 con motivo cuando la entrada es inválida, y que
+ * correctas, que cada una devuelve 400 cuando la entrada es inválida, y que
  * un cuerpo bien formado pasa la validación de shape antes de tocar la base de datos.
  *
  * La base de datos es mínima: devuelve `[]` para todo. Las rutas que solo validan input
@@ -231,7 +231,7 @@ describe('registerTerminalControlPlane: validación de body', () => {
 
   function validSessionBody(): Record<string, unknown> {
     return {
-      tenant_id: 'Steven', alias: 'jarvis', mode: 'shell', reason: 'revisar el harness colgado',
+      tenant_id: 'Steven', alias: 'jarvis', mode: 'shell',
       cols: 120, rows: 40, request_id: randomUUID(), owner_token: randomUUID(),
     };
   }
@@ -257,25 +257,25 @@ describe('registerTerminalControlPlane: validación de body', () => {
     });
   });
 
-  it('POST /v3/console/terminal/sessions: rechaza un reason más corto que 8 caracteres', async () => {
+  it('POST /v3/console/terminal/sessions: rechaza un reason legado con menos de 8 caracteres', async () => {
     const response = await app.inject({
       method: 'POST', url: '/v3/console/terminal/sessions',
       payload: { ...validSessionBody(), reason: 'corto' }
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({
-      error: 'invalid_request', message: 'reason must be between 8 and 280 characters'
+      error: 'invalid_request', message: 'session request has unexpected or missing fields'
     });
   });
 
-  it('POST /v3/console/terminal/sessions: rechaza un reason de más de 280 caracteres', async () => {
+  it('POST /v3/console/terminal/sessions: rechaza un reason legado con más de 280 caracteres', async () => {
     const response = await app.inject({
       method: 'POST', url: '/v3/console/terminal/sessions',
       payload: { ...validSessionBody(), reason: 'x'.repeat(281) }
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({
-      error: 'invalid_request', message: 'reason must be between 8 and 280 characters'
+      error: 'invalid_request', message: 'session request has unexpected or missing fields'
     });
   });
 
@@ -360,23 +360,26 @@ describe('registerTerminalControlPlane: validación de body', () => {
     });
   });
 
-  it('POST /v3/console/terminal/sessions/:sid/control: exige acción y razón escrita a mano', async () => {
+  it('POST /v3/console/terminal/sessions/:sid/control: valida acción, campos estrictos y proof antes de SQL', async () => {
     const url = '/v3/console/terminal/sessions/11111111-1111-4111-8111-111111111111/control';
     const fence = {
       request_id: randomUUID(), owner_generation: '1', owner_token: randomUUID(), authority_proof: 'ac2.invalid',
     };
-    const noAction = await app.inject({ method: 'POST', url, payload: { ...fence, action: 'grab', reason: 'una razón larga' } });
+    const noAction = await app.inject({ method: 'POST', url, payload: { ...fence, action: 'grab' } });
     expect(noAction.statusCode).toBe(400);
     expect(noAction.json()).toEqual({
       error: 'invalid_request', message: "action must be 'take' or 'release'"
     });
-    const shortReason = await app.inject({ method: 'POST', url, payload: { ...fence, action: 'take', reason: 'corta' } });
-    expect(shortReason.statusCode).toBe(400);
-    expect(shortReason.json()).toEqual({
-      error: 'invalid_request', message: 'reason must be between 8 and 280 characters'
-    });
     const noReason = await app.inject({ method: 'POST', url, payload: { ...fence, action: 'take' } });
-    expect(noReason.statusCode).toBe(400);
+    expect(noReason.statusCode).toBe(403);
+    expect(noReason.json()).toMatchObject({ error: 'forbidden' });
+    const legacyReason = await app.inject({
+      method: 'POST', url, payload: { ...fence, action: 'take', reason: 'una razón larga' },
+    });
+    expect(legacyReason.statusCode).toBe(400);
+    expect(legacyReason.json()).toEqual({
+      error: 'invalid_request', message: 'terminal control request has unexpected or missing fields'
+    });
     const extra = await app.inject({
       method: 'POST', url, payload: { ...fence, action: 'release', unexpected: true },
     });
@@ -384,6 +387,8 @@ describe('registerTerminalControlPlane: validación de body', () => {
     expect(extra.json()).toEqual({
       error: 'invalid_request', message: 'terminal control request has unexpected or missing fields'
     });
+    expect(pool.query.mock.calls).toHaveLength(0);
+    expect(pool.connect.mock.calls).toHaveLength(0);
   });
 
   it('POST /v3/terminal/relay/sessions/:sid/close: acepta las medidas de la grabación', async () => {
@@ -479,7 +484,7 @@ describe('registerTerminalControlPlane: validación de body', () => {
   it.each([
     {
       route: 'control', url: '/v3/console/terminal/sessions/11111111-1111-4111-8111-111111111111/control',
-      payload: { action: 'take', reason: 'retomar control', request_id: randomUUID(), owner_generation: '1', owner_token: randomUUID() },
+      payload: { action: 'take', request_id: randomUUID(), owner_generation: '1', owner_token: randomUUID() },
     },
     {
       route: 'extend', url: '/v3/console/terminal/sessions/11111111-1111-4111-8111-111111111111/extend',
