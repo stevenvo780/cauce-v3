@@ -58,14 +58,34 @@ def trusted_file(path: Path, directory: bool = False) -> None:
         raise SupervisionError("untrusted_control_file")
 
 
+def readonly_descriptor(path: Path) -> int:
+    absolute = Path(os.path.abspath(path))
+    directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for component in absolute.parts[1:-1]:
+            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            os.close(directory)
+            directory = child
+        return os.open(absolute.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+    except OSError as error:
+        raise SupervisionError("unsafe_artifact") from error
+    finally:
+        os.close(directory)
+
+
 def read_bytes(path: Path, maximum: int = 4_000_000) -> bytes:
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > maximum:
-        raise SupervisionError("unsafe_artifact")
-    with path.open("rb") as stream:
-        data = stream.read(maximum + 1)
-    if len(data) > maximum:
-        raise SupervisionError("artifact_too_large")
-    return data
+    descriptor = readonly_descriptor(path)
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1 or details.st_size > maximum:
+            raise SupervisionError("unsafe_artifact")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            data = stream.read(maximum + 1)
+        if len(data) > maximum:
+            raise SupervisionError("artifact_too_large")
+        return data
+    finally:
+        os.close(descriptor)
 
 
 def scoped(root: Path, relative: str) -> Path:
@@ -264,7 +284,10 @@ def consume_auth_resume(state: dict, path: Path, goal_hash: str, now: float) -> 
         record["reserved_key"] = root["payload"]["idempotency_key"]
         record["reservation_error"] = root.pop("error")
     state["phase"] = "root_reserved" if root is not None else "observing"
-    state["continuation_earned"] = root is None
+    if root is not None:
+        state["continuation_earned"] = False
+    else:
+        state["auth_retry_earned"] = True
     state.pop("backoff_until", None)
     return True
 
@@ -276,3 +299,22 @@ def apply_auth_resume_control(state: dict, path: Path, goal_hash: str, now: floa
         code = error.code if isinstance(error, SupervisionError) else "invalid_auth_resume"
         state["auth_resume_rejection"] = {"code": code, "observed_at": now}
         return False
+
+
+def resume_measured_progress(state: dict, engineering: dict, now: float, made_progress) -> bool:
+    if (state.get("phase") != "circuit_paused" or state.get("active_root")
+            or state.get("pause_reason") not in {"no_measured_progress", "no_new_progress"}
+            or engineering.get("goal_sha256") != state.get("goal_sha256")
+            or engineering.get("verified_engineering") is not True):
+        return False
+    previous = state.get("progress_pause_baseline", state.get("last_finished", {}).get("engineering"))
+    if not isinstance(previous, dict) or not made_progress(previous, engineering):
+        return False
+    recoveries = state.setdefault("progress_recoveries", [])
+    recoveries.append({"at": now, "reason": state["pause_reason"], "root": state.get("last_finished", {}).get("root"),
+                       "baseline_sha256": digest(canonical(previous)), "evidence_sha256": digest(canonical(engineering))})
+    del recoveries[:-24]
+    state["phase"] = "observing"
+    state["continuation_earned"] = True
+    state.pop("progress_pause_baseline", None)
+    return True

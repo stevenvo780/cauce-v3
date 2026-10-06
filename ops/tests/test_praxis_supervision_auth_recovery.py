@@ -56,8 +56,17 @@ class AuthRecoveryTests(unittest.TestCase):
         self.assertEqual(state["auth_recoveries"][0]["backoff_until"], NOW + 21600)
         self.assertEqual(state["auth_resume_nonces"], [event["nonce"]])
         self.assertFalse(state["continuation_earned"])
+        self.assertFalse(state["auth_retry_earned"])
         self.fixture.run_pass(NOW + 300)
         self.assertEqual(len(self.fixture.engineering_posts()), 1)
+
+    def test_auth_resume_without_reservation_grants_auth_retry_only(self):
+        supervisor = self.paused()
+        path, _ = self.event()
+        self.assertTrue(SUP.STATE.consume_auth_resume(supervisor.state, path, self.fixture.config["goal_sha256"], NOW))
+        self.assertEqual(supervisor.state["phase"], "observing")
+        self.assertTrue(supervisor.state["auth_retry_earned"])
+        self.assertFalse(supervisor.state.get("continuation_earned", False))
 
     def test_duplicate_event_cannot_reopen_a_second_auth_failure(self):
         self.paused()
@@ -87,7 +96,8 @@ class AuthRecoveryTests(unittest.TestCase):
                 self.assertEqual(action, {"fuel": "root_fuel_exhausted", "cooldown": "cooldown", "activity": "active_work"}[constraint])
                 self.assertEqual(self.fixture.engineering_posts(), [])
                 state = json.loads(self.fixture.state_path.read_text())
-                self.assertTrue(state["continuation_earned"])
+                self.assertTrue(state["auth_retry_earned"])
+                self.assertFalse(state.get("continuation_earned", False))
                 if constraint == "fuel":
                     self.assertEqual(state["roots"][SUP.STATE.utc_day(NOW)], 6)
 
