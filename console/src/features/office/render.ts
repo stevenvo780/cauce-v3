@@ -134,7 +134,7 @@ function paintBoard(ctx: Ctx, x: number, w: number): void {
   rect(ctx, x - 1, 7, w + 2, 23, OFFICE.boardFrame);
   rect(ctx, x, 8, w, 21, OFFICE.board);
   const bars = [6, 10, 7, 13, 9];
-  bars.forEach((height, index) => rect(ctx, x + 4 + index * 4, 25 - height, 3, height, OFFICE.ink[index % 2]));
+  bars.forEach((height, index) => { rect(ctx, x + 4 + index * 4, 25 - height, 3, height, OFFICE.ink[index % 2]); });
   rect(ctx, x + 3, 25, 20, 1, OFFICE.outline);
   for (let i = 0; i < 14; i += 1) rect(ctx, x + 27 + i, 12 + Math.round(Math.sin(i / 2) * 2), 1, 1, OFFICE.ink[2]);
   rect(ctx, x + 27, 18, 12, 1, OFFICE.ink[1]);

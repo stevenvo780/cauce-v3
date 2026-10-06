@@ -182,8 +182,7 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
   const nearestFree = (tile: Point): Point => {
     const seen = new Set<number>([tile.y * cols + tile.x]);
     const queue: Point[] = [tile];
-    for (let head = 0; head < queue.length; head += 1) {
-      const current = queue[head];
+    for (const current of queue) {
       if (walkable[current.y * cols + current.x]) return current;
       for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) {
         const next = { x: current.x + dx, y: current.y + dy };
@@ -264,7 +263,7 @@ export function chooseLayout(count: number, box: { width: number; height: number
       });
     }
   }
-  type Entry = { params: LayoutParams; k: number; empty: number };
+  interface Entry { params: LayoutParams; k: number; empty: number }
   const area = (entry: Entry) => {
     const size = layoutSize(entry.params);
     return size.cols * size.rows * (entry.params.side === 'bottom' ? 1.25 : 1);
@@ -282,9 +281,10 @@ export function chooseLayout(count: number, box: { width: number; height: number
   }
   if (!best) {
     const fitting = candidates.filter((candidate) => candidate.kw >= minScale);
-    const widest = fitting.sort((a, b) => b.params.podCols - a.params.podCols || (a.params.side === 'bottom' ? -1 : 1))[0];
+    const widest = fitting.sort((a, b) => b.params.podCols - a.params.podCols || (a.params.side === 'bottom' ? -1 : 1)).at(0);
     if (widest) return { params: widest.params, scale: Math.min(widest.kw, maxScale) };
-    const narrow = candidates.find((candidate) => candidate.params.podCols === 1 && candidate.params.side === 'bottom')!;
+    const narrow = candidates.find((candidate) => candidate.params.podCols === 1 && candidate.params.side === 'bottom');
+    if (!narrow) throw new Error('chooseLayout: the single-column bottom candidate is always generated');
     return { params: narrow.params, scale: Math.max(1, narrow.kw) };
   }
   return { params: best.params, scale: best.k };

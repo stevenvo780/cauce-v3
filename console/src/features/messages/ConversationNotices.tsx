@@ -34,7 +34,7 @@ export function ConversationNotices({ health, queueError, feedError, leaseWarnin
   if (leaseWarning) labels.push({ role: 'note', text: leaseExpired ? 'Lease vencido · envío en cola' : 'Lease sin dato · envío en cola' });
   if (topologyWarning) labels.push({ role: 'note', text: 'Fuera de la topología' });
   const hasNotices = labels.length > 0;
-  const severe = Boolean(queueError || feedError || health?.muertas);
+  const severe = queueError !== undefined || feedError !== undefined || Boolean(health?.muertas);
 
   useEffect(() => {
     if (hasNotices) return;

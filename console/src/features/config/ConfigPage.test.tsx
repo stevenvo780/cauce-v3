@@ -4,6 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { ConfigPage } from './ConfigPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
+import { must } from '../../test/must';
 import {
   CONFIG_SIN_CONTROL_REASON, CONFIG_SIN_LECTURA_REASON, CONFIG_WRITE_NO_ACREDITADO_REASON,
 } from '../../router';
@@ -244,7 +245,7 @@ it('FAMILIA 8: hay UNA sola tira de secciones, y el modo de alta es un segmentad
   const segmentado = screen.getByRole('group', { name: 'Modo de alta' });
   const tarjeta = segmentado.closest('section');
   expect(tarjeta, 'el segmentado del alta quedó fuera de toda tarjeta').not.toBeNull();
-  expect(within(tarjeta as HTMLElement).getByRole('heading', { name: /alta de espacios/i })).toBeInTheDocument();
+  expect(within(must(tarjeta, 'the enrolment card')).getByRole('heading', { name: /alta de espacios/i })).toBeInTheDocument();
 
   expect(screen.getByRole('button', { name: 'Un solo recurso' })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByRole('button', { name: /espacio completo/i })).toHaveAttribute('aria-pressed', 'false');

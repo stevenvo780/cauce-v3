@@ -51,7 +51,7 @@ export interface World {
 
 export function seedOf(text: string): number {
   let value = 2166136261;
-  for (const char of text) value = Math.imul(value ^ char.codePointAt(0)!, 16777619);
+  for (const char of text) value = Math.imul(value ^ (char.codePointAt(0) ?? 0), 16777619);
   return value >>> 0;
 }
 
@@ -162,7 +162,7 @@ function begin(world: World, actor: Actor, instant: boolean): void {
 }
 
 function enter(world: World, actor: Actor): void {
-  const step = actor.steps[actor.stepIndex];
+  const step = actor.steps.at(actor.stepIndex);
   if (!step) return;
   if (step.kind === 'repeat') {
     actor.stepIndex = step.from;
@@ -214,7 +214,7 @@ export function syncWorld(world: World, inputs: readonly ActorInput[]): void {
     rank[behaviour.rest] += 1;
     const delegateDesk = input.delegateDesk ?? null;
     const existing = world.actors.get(input.id);
-    if (existing && existing.state === input.state && existing.desk === input.desk
+    if (existing?.state === input.state && existing.desk === input.desk
       && existing.delegateDesk === delegateDesk && sameSpot(existing.rest, rest)) continue;
     if (existing) {
       Object.assign(existing, { state: input.state, behaviour, desk: input.desk, delegateDesk, rest });
@@ -238,7 +238,7 @@ export function stepWorld(world: World, dt: number): void {
   for (const actor of world.actors.values()) {
     actor.clock += delta;
     if (world.reducedMotion) continue;
-    const step = actor.steps[actor.stepIndex];
+    const step = actor.steps.at(actor.stepIndex);
     if (!step) continue;
     if (step.kind === 'act') {
       actor.timer -= delta;

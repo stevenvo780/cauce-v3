@@ -249,7 +249,6 @@ it('el binding de un cliente no tapa al homónimo del otro en «Agentes sin bind
   renderWithApi(<AccountsPage />);
 
   const findings = await screen.findByRole('region', { name: 'Hallazgos' });
-  if (!findings) throw new Error('section not found');
   const orphans = within(findings).getByRole('heading', { name: /agentes sin bindings/i }).closest('div');
   if (!orphans) throw new Error('finding-section not found');
   // Qualified by client, because the bare alias does not identify anyone: Steven's is the orphan one.

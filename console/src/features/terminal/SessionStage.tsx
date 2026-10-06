@@ -288,7 +288,7 @@ export function SessionStage({
   const wantsTui = view === 'tui';
   const paneMatchesView = grant !== undefined && wantsTui === channelIsLiveTui;
   const paneEnabled = channelIsLiveTui ? tuiEnabled : channel.enabled;
-  const paneSocketPath = grant ? grant.websocket_path || channel.websocketPath || liveTui.websocketPath : undefined;
+  const paneSocketPath = grant ? [grant.websocket_path, channel.websocketPath, liveTui.websocketPath].find((path) => path !== undefined && path !== '') : undefined;
   const viewEnabled = wantsTui ? tuiEnabled : channel.enabled;
   const ptyClosedAll = !tuiEnabled && !channel.enabled;
   const tone = TONE_CLASS[STATE_TONE[state]];
@@ -378,7 +378,7 @@ export function SessionStage({
       <div className="flex min-h-0 flex-1 flex-col">
         {view === 'feed' ? (
           <AgentFeed agent={agent} messages={messages} />
-        ) : paneMatchesView && paneEnabled && grant && paneSocketPath ? (
+        ) : paneMatchesView && paneEnabled && paneSocketPath ? (
           <Suspense fallback={<p className="m-0 p-4 text-[13px] text-muted" role="status">Cargando Xterm…</p>}>
             <PtyTerminal
               websocketPath={paneSocketPath}

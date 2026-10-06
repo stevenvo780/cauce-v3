@@ -101,7 +101,7 @@ const SKINS = [
 
 function seedHash(seed: string): number {
   let value = 2166136261;
-  for (const char of seed) value = Math.imul(value ^ char.codePointAt(0)!, 16777619);
+  for (const char of seed) value = Math.imul(value ^ (char.codePointAt(0) ?? 0), 16777619);
   return value >>> 0;
 }
 

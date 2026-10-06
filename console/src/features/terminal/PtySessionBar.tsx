@@ -15,7 +15,7 @@ function Fact({ icon: Icon, label, title, className, words, expiring, children }
   children?: string;
 }) {
   return (
-    <span title={title ?? label} aria-label={label} data-expiring={expiring || undefined} className={cn('inline-flex h-7 items-center gap-1 px-1.5 text-muted', className)}>
+    <span title={title ?? label} aria-label={label} data-expiring={expiring ? true : undefined} className={cn('inline-flex h-7 items-center gap-1 px-1.5 text-muted', className)}>
       <Icon size={14} aria-hidden="true" />
       {children ? <span className="text-xs tabular-nums" aria-hidden="true">{children}</span> : null}
       {words ? <span className="sr-only">{label}</span> : null}

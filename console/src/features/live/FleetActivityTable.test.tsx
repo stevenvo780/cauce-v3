@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { FleetActivitySnapshot } from '../../api/types';
+import { must } from '../../test/must';
 import { sortAgents } from './activity';
 import { FleetActivityTable } from './FleetActivityTable';
 
@@ -86,14 +87,14 @@ it('ordena por columna y vuelve a invertir con un segundo clic', async () => {
 
 it('un ACK nulo se lee como un hueco explícito, nunca como cero o un guion', () => {
   render(<FleetActivityTable snapshot={BASE} onOpen={() => undefined} />);
-  const midas = document.querySelector<HTMLElement>('tr[data-agent-key="Pablo/midas"]')!;
+  const midas = must(document.querySelector<HTMLElement>('tr[data-agent-key="Pablo/midas"]'), 'the midas row');
   expect(within(midas).getByText(/sin ACK/)).toBeInTheDocument();
 });
 
 it('apila las señales del agente trabado sin repetir la palabra del estado', () => {
   const estados = new Map([['Pablo/midas', 'down' as const], ['Steven/jarvis', 'thinking' as const], ['Isa/salva', 'idle' as const]]);
   render(<FleetActivityTable snapshot={BASE} estados={estados} onOpen={() => undefined} />);
-  const estado = within(document.querySelector<HTMLElement>('tr[data-agent-key="Pablo/midas"]')!).getAllByRole('cell')[1];
+  const estado = within(must(document.querySelector<HTMLElement>('tr[data-agent-key="Pablo/midas"]'), 'the midas row')).getAllByRole('cell')[1];
   expect(estado).toHaveTextContent('Caído');
   const palabras = within(estado).getAllByText(/.+/).map((nodo) => nodo.textContent);
   expect(new Set(palabras).size).toBe(palabras.length);

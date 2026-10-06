@@ -361,7 +361,7 @@ function ProviderCard({ provider, expanded, onToggle, staleAfterSeconds }: {
     ? `El servidor publica effective_remaining_percent = ${efectivoTexto}, que es lo que el enrutador usa para elegir cuenta. `
       + 'Acá se muestra el peor porcentaje de las ventanas, que es el que va con la severidad de al lado.'
     : 'El peor porcentaje de las ventanas de este proveedor.';
-  const groupsLine = provider.limiting_groups?.length || provider.available_groups?.length;
+  const groupsLine = (provider.limiting_groups?.length ?? 0) > 0 || (provider.available_groups?.length ?? 0) > 0;
   return (
     <section className={cn('overflow-hidden rounded-xl border border-l-[3px] border-line bg-surface shadow-card', PROVIDER_EDGE[severity])} data-severity={severity}>
       <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-4 pt-3 pb-2">

@@ -292,7 +292,7 @@ export function PerfilTab({
     }
   }
 
-  const abierto = ficheros.find((f) => f.nombre === ficheroAbierto) ?? ficheros[0];
+  const abierto = ficheros.find((f) => f.nombre === ficheroAbierto) ?? ficheros.at(0);
   const publicado = perfil.data?.publicado === true;
   const incoherente = !presenciaConocida || !revisionCoherente || !estadoConocido || !runtimeActual;
   const estados: { key: string; tone: 'warn' | 'danger'; role: 'alert' | 'status'; body: ReactNode }[] = [];

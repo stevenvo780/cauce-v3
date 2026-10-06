@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { LIVE_STATES } from '../live/agent-state';
+import { must } from '../../test/must';
 import { BEHAVIOUR, behaviourFor } from './behaviour';
 import { TILE, buildLayout, chooseLayout, layoutSize, podsFor, type LayoutParams } from './layout';
 import { characterPalette, hslHex } from './palette';
 import { findPath } from './pathfinding';
-import { createWorld, planFor, seededRandom, stepWorld, syncWorld, type ActorInput } from './simulation';
+import { createWorld, planFor, seededRandom, stepWorld, syncWorld, type Actor, type ActorInput, type World } from './simulation';
 import { BUBBLE, CHAR_H, CHAR_KEYS, CHAR_W, ICONS, characterFrame, type Facing, type FrameName } from './sprites';
 
 const params = (pods: number, overrides: Partial<LayoutParams> = {}): LayoutParams => ({
@@ -22,14 +23,14 @@ describe('sprites', () => {
       expect(rows).toHaveLength(CHAR_H);
       for (const row of rows) {
         expect(row).toHaveLength(CHAR_W);
-        expect([...row].every((key) => allowed.has(key))).toBe(true);
+        expect(Array.from(row).every((key) => allowed.has(key))).toBe(true);
       }
     }
   });
 
   it('left is the mirror of right, and the walk cycle actually moves the feet', () => {
     const right = characterFrame('walk', 'right', 1);
-    expect(characterFrame('walk', 'left', 1)).toEqual(right.map((row) => [...row].reverse().join('')));
+    expect(characterFrame('walk', 'left', 1)).toEqual(right.map((row) => Array.from(row).reverse().join('')));
     expect(characterFrame('walk', 'down', 1)).not.toEqual(characterFrame('walk', 'down', 0));
     expect(characterFrame('walk', 'down', 1)).not.toEqual(characterFrame('walk', 'down', 3));
   });
@@ -149,6 +150,7 @@ describe('pathfinding', () => {
 
 describe('simulation', () => {
   const layout = buildLayout(params(1));
+  const actorOf = (world: World, id: string): Actor => must(world.actors.get(id), `actor ${id}`);
   const inputs = (overrides: Partial<Record<string, ActorInput>> = {}): ActorInput[] => [
     { id: 'a', state: 'thinking', desk: 0 },
     { id: 'b', state: 'idle', desk: 1 },
@@ -165,18 +167,18 @@ describe('simulation', () => {
   it('places newcomers straight at their resting pose instead of walking in', () => {
     const world = createWorld(layout);
     syncWorld(world, inputs());
-    const a = world.actors.get('a')!;
+    const a = actorOf(world, 'a');
     expect([a.x, a.y]).toEqual([layout.desks[0].seat.px.x, layout.desks[0].seat.px.y]);
     expect(a.pose).toBe('type');
-    expect(world.actors.get('b')!.pose).toBe('sleep');
-    expect([world.actors.get('b')!.x, world.actors.get('b')!.y]).toEqual([layout.lounge[0].px.x, layout.lounge[0].px.y]);
-    expect(world.actors.get('c')!.pose).toBe('ghost');
+    expect(actorOf(world, 'b').pose).toBe('sleep');
+    expect([actorOf(world, 'b').x, actorOf(world, 'b').y]).toEqual([layout.lounge[0].px.x, layout.lounge[0].px.y]);
+    expect(actorOf(world, 'c').pose).toBe('ghost');
   });
 
   it('a delegator carries paper to the delegate and comes back', () => {
     const world = createWorld(layout);
     syncWorld(world, inputs());
-    const d = world.actors.get('d')!;
+    const d = actorOf(world, 'd');
     const plan = planFor(d, layout);
     expect(plan.some((step) => step.kind === 'goto' && step.carrying && step.spot === layout.desks[0].visit)).toBe(true);
     let carried = false;
@@ -193,7 +195,7 @@ describe('simulation', () => {
   it('changing state replans from where the person stands, and leaving removes them', () => {
     const world = createWorld(layout);
     syncWorld(world, inputs());
-    const a = world.actors.get('a')!;
+    const a = actorOf(world, 'a');
     syncWorld(world, inputs({ a: { id: 'a', state: 'idle', desk: 0 } }));
     expect(a.pose).toBe('walk');
     expect([a.x, a.y]).toEqual([layout.desks[0].seat.px.x, layout.desks[0].seat.px.y]);
@@ -210,7 +212,7 @@ describe('simulation', () => {
     const before = [...world.actors.values()].map((actor) => [actor.x, actor.y, actor.pose]);
     for (let t = 0; t < 10; t += 0.1) stepWorld(world, 0.1);
     expect([...world.actors.values()].map((actor) => [actor.x, actor.y, actor.pose])).toEqual(before);
-    expect(world.actors.get('d')!.bubble).toBe('paper');
+    expect(actorOf(world, 'd').bubble).toBe('paper');
     expect([...world.actors.values()].some((actor) => actor.pose === 'walk')).toBe(false);
   });
 

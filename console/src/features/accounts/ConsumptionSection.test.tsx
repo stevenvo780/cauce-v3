@@ -209,25 +209,22 @@ it('conserva entero el consumo: peor primero, una fila por grupo y el histórico
   renderWithApi(<AccountsPage />);
 
   const providers = await screen.findByRole('region', { name: 'Proveedores' });
-  expect(providers).not.toBeNull();
-  if (providers) {
-    const cards = within(providers).getAllByRole('heading', { level: 3 });
-    // codex is exhausted and opencode ok: the exhausted one must come first.
-    expect(cards[0]).toHaveTextContent(/codex/i);
+  const cards = within(providers).getAllByRole('heading', { level: 3 });
+  // codex is exhausted and opencode ok: the exhausted one must come first.
+  expect(cards[0]).toHaveTextContent(/codex/i);
 
-    const codexRow = within(providers).getByRole('row', { name: /codex pro/i });
-    expect(within(codexRow).getByText('AGOTADO')).toBeInTheDocument();
-    expect(within(codexRow).getByText('PAUSADA')).toBeInTheDocument();
-    expect(codexRow.className).toContain('row-critical');
-    // 'codex' (exhausted) and 'codex_bengalfox' (free, without account) are separate rows: a single number per provider
-    // would make it look like the account that does not have a balance has one.
-    expect(within(providers).getByRole('row', { name: /sin cuenta/i })).toBeInTheDocument();
+  const codexRow = within(providers).getByRole('row', { name: /codex pro/i });
+  expect(within(codexRow).getByText('AGOTADO')).toBeInTheDocument();
+  expect(within(codexRow).getByText('PAUSADA')).toBeInTheDocument();
+  expect(codexRow.className).toContain('row-critical');
+  // 'codex' (exhausted) and 'codex_bengalfox' (free, without account) are separate rows: a single number per provider
+  // would make it look like the account that does not have a balance has one.
+  expect(within(providers).getByRole('row', { name: /sin cuenta/i })).toBeInTheDocument();
 
-    const healthy = within(providers).getByRole('row', { name: /minimax/i });
-    expect(healthy.className).not.toContain('row-critical');
-    expect(healthy).toHaveTextContent('0 / 12');
-    expect(within(providers).getAllByRole('img', { name: /consumo/i }).length).toBeGreaterThan(0);
-  }
+  const healthy = within(providers).getByRole('row', { name: /minimax/i });
+  expect(healthy.className).not.toContain('row-critical');
+  expect(healthy).toHaveTextContent('0 / 12');
+  expect(within(providers).getAllByRole('img', { name: /consumo/i }).length).toBeGreaterThan(0);
 
   expect(panel('Suscripciones pausadas')).toHaveTextContent('Codex Pro (principal)');
 });
@@ -248,18 +245,15 @@ it('junta las tres direcciones de huérfano en un solo panel de hallazgos', asyn
   renderWithApi(<AccountsPage />);
 
   const findings = await screen.findByRole('region', { name: 'Hallazgos' });
-  expect(findings).not.toBeNull();
-  if (findings) {
-    const text = findings.textContent;
-    // 1) registered account the collector does not know, 2) observed group with no bound account —with its window_count,
-    // which the leaner list from the other view did not bring—, 3) agent with no binding.
-    expect(text).toContain('claude-max-saldantia');
-    const unboundRow = within(findings).getByRole('row', { name: /codex_bengalfox/i });
-    expect(unboundRow).toHaveTextContent('Sin account_id');
-    // window_count: the leaner list from the licenses view did not bring it and the quotas table did.
-    expect(within(unboundRow).getAllByRole('cell')[3]).toHaveTextContent('1');
-    expect(text).toContain('kant');
-  }
+  const text = findings.textContent;
+  // 1) registered account the collector does not know, 2) observed group with no bound account —with its window_count,
+  // which the leaner list from the other view did not bring—, 3) agent with no binding.
+  expect(text).toContain('claude-max-saldantia');
+  const unboundRow = within(findings).getByRole('row', { name: /codex_bengalfox/i });
+  expect(unboundRow).toHaveTextContent('Sin account_id');
+  // window_count: the leaner list from the licenses view did not bring it and the quotas table did.
+  expect(within(unboundRow).getAllByRole('cell')[3]).toHaveTextContent('1');
+  expect(text).toContain('kant');
 });
 
 it('marca desactualizado a un recolector viejo aunque el servidor lo declare fresco', async () => {
@@ -275,11 +269,8 @@ it('marca desactualizado a un recolector viejo aunque el servidor lo declare fre
   renderWithApi(<AccountsPage />);
 
   const collectors = await screen.findByRole('region', { name: 'Recolectores' });
-  expect(collectors).not.toBeNull();
-  if (collectors) {
-    expect(within(within(collectors).getByRole('row', { name: /kratos/i })).getByText('FRESCO')).toBeInTheDocument();
-    expect(within(within(collectors).getByRole('row', { name: /ws-midas/i })).getByText('DESACTUALIZADO')).toBeInTheDocument();
-  }
+  expect(within(within(collectors).getByRole('row', { name: /kratos/i })).getByText('FRESCO')).toBeInTheDocument();
+  expect(within(within(collectors).getByRole('row', { name: /ws-midas/i })).getByText('DESACTUALIZADO')).toBeInTheDocument();
   // And it is said above, once, which sample the numbers below come from.
   expect(screen.getByText(/Muestra vieja\./)).toBeInTheDocument();
 });

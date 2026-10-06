@@ -13,7 +13,11 @@ export function AgentFeed({ agent, messages }: { agent: FleetAgent; messages: Re
   const items = useMemo(() => transcriptForSession(messages.data, { agent }), [messages.data, agent]);
   const end = useRef<HTMLLIElement>(null);
   const last = items.at(-1)?.message.message_id;
-  useEffect(() => { end.current?.scrollIntoView?.({ block: 'end' }); }, [last]);
+  useEffect(() => {
+    // jsdom and some embedded webviews do not implement scrollIntoView.
+    const node: Partial<Pick<HTMLElement, 'scrollIntoView'>> | null = end.current;
+    node?.scrollIntoView?.({ block: 'end' });
+  }, [last]);
 
   if (messages.loading && !messages.data) return <p className="m-0 p-4 text-[13px] text-muted" role="status">Leyendo mensajes…</p>;
   if (messages.error && !messages.data) return <p className="m-0 p-4 text-[13px] text-danger-ink" role="alert">No se pudieron leer los mensajes: {messages.error.message}</p>;
@@ -38,7 +42,7 @@ export function AgentFeed({ agent, messages }: { agent: FleetAgent; messages: Re
                 <span className="truncate font-medium text-fg-2">{who}</span>
                 <Time value={message.created_at} />
               </p>
-              <p className="m-0 mt-0.5 line-clamp-4 max-w-[80ch] text-[13px] break-words whitespace-pre-wrap text-fg">{preview || 'Mensaje sin contenido textual.'}</p>
+              <p className="m-0 mt-0.5 line-clamp-4 max-w-[80ch] text-[13px] break-words whitespace-pre-wrap text-fg">{preview === undefined || preview === '' ? 'Mensaje sin contenido textual.' : preview}</p>
             </div>
           </li>
         );

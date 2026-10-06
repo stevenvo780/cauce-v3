@@ -156,7 +156,7 @@ function Now({ view }: { view: LiveAgentView }) {
       ['Trabaja para', view.delegatedFrom.length > 0 ? view.delegatedFrom.map(aliasDe).join(', ') : none('nadie ahora mismo')],
       ['Cerradas en 24 h', view.closed24h === undefined ? none('sin dato') : String(view.closed24h)],
       ['Señales', view.flags.length > 0
-        ? view.flags.map((flag) => FLAG_LABEL[flag as keyof typeof FLAG_LABEL] ?? flag).join(' · ')
+        ? view.flags.map((flag) => (Object.hasOwn(FLAG_LABEL, flag) ? FLAG_LABEL[flag as keyof typeof FLAG_LABEL] : flag)).join(' · ')
         : none('ninguna')],
     ]} />
   );

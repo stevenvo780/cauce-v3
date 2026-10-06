@@ -139,7 +139,7 @@ const ARMS_UP_OVERLAY: Rows = [
 
 const BLANK = '................';
 
-const mirror = (rows: Rows): Rows => rows.map((row) => [...row].reverse().join(''));
+const mirror = (rows: Rows): Rows => rows.map((row) => Array.from(row).reverse().join(''));
 
 export type Facing = 'down' | 'up' | 'left' | 'right';
 
@@ -150,7 +150,7 @@ function overlay(base: Rows, top: Rows): Rows {
   return base.map((row, y) => {
     const over = top[y];
     if (!over) return row;
-    return [...row].map((char, x) => (over[x] && over[x] !== '.' ? over[x] : char)).join('');
+    return Array.from(row).map((char, x) => (over[x] && over[x] !== '.' ? over[x] : char)).join('');
   });
 }
 

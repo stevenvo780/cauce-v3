@@ -10,7 +10,7 @@ import { TONE_CLASS, type Tone } from '../../status-tone';
 import { compactId, safeAuditDecision } from '../../lib';
 import { readableAuditSummary } from './audit-summary';
 
-const DECISION_TONE: Record<string, Tone> = { allow: 'ok', deny: 'danger', info: 'info' };
+const DECISION_TONE: Record<NonNullable<ReturnType<typeof safeAuditDecision>>, Tone> = { allow: 'ok', deny: 'danger', info: 'info' };
 
 /**
  * The audit log, mounted inside /observability. An investigation starts at a relay and ends here,
@@ -148,7 +148,7 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
         <ul className="m-0 grid list-none divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface p-0" aria-label="Eventos de auditoría">
           {filtered.map((event, index) => {
             const decision = safeAuditDecision(event.decision);
-            const tone = TONE_CLASS[(decision && DECISION_TONE[decision]) || 'neutral'];
+            const tone = TONE_CLASS[decision ? DECISION_TONE[decision] : 'neutral'];
             return <li className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 px-3 py-2.5" key={event.event_id ?? index}>
               <span data-decision={decision ?? 'unknown'} className={cn('grid size-7 place-items-center rounded-md [&>svg]:size-4', tone.pill)}>
                 {decision === 'allow' ? <ShieldCheck aria-hidden="true" /> : decision === 'info' ? <Info aria-hidden="true" /> : <ShieldAlert aria-hidden="true" />}

@@ -46,11 +46,8 @@ it('resume la consola entera: deja lo que exige atención antes de las métricas
   // actual incident without scrolling past four large cards.
   const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
   const numeros = screen.getByRole('group', { name: /cifras de la flota/i });
-  expect(numeros).not.toBeNull();
-  if (numeros) {
-    // `compareDocumentPosition` with FOLLOWING = the alert band is before the numbers.
-    expect(banda.compareDocumentPosition(numeros) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  }
+  // `compareDocumentPosition` with FOLLOWING = the alert band is before the numbers.
+  expect(banda.compareDocumentPosition(numeros) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 });
 
 it('no imprime rutas de endpoint en la pantalla del operador: van al title=', async () => {
