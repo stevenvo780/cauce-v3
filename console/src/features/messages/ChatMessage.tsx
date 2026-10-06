@@ -5,7 +5,7 @@ import { cn } from '../../cn';
 import { timestampExacto } from '../../lib';
 import type { LiveState } from '../live/agent-state';
 import { previsualizacionRecortada } from '../terminal/cuerpo-del-mensaje';
-import { humanAuthor } from '../terminal/message-author';
+import { humanAuthor, messageAuthorPresentation } from '../terminal/message-author';
 import type { TranscriptItem } from '../terminal/session';
 import { MessageActions } from './MessageActions';
 import { MessageAttachments } from './MessageAttachments';
@@ -190,14 +190,15 @@ export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody,
   }
 
   const author = humanAuthor(message);
-  const authorLabel = author?.display_name ?? (author ? 'Persona autenticada' : message.actor_alias ?? 'Emisor sin dato');
+  const { label: authorLabel, title: authorTitle, clientDeclarationNotice } = messageAuthorPresentation(message);
   const own = Boolean(author && ownSubject && author.subject_id === ownSubject);
   const failed = delivery?.status === 'failed' || delivery?.status === 'dead';
   return (
     <article {...common} className={cn('group/msg flex flex-col items-end', startsGroup ? 'mt-5' : 'mt-1.5')}>
       {own ? <span className="sr-only">{authorLabel}</span> : startsGroup ? (
         <div className="mb-1 px-1 text-xs text-muted">
-          <span title={author ? `Persona autenticada · identidad técnica: ${message.actor_alias ?? 'sin dato'}` : 'Identidad técnica; autor humano no registrado'}>{authorLabel}</span>
+          <span title={authorTitle}>{authorLabel}</span>
+          {clientDeclarationNotice ? <span className="sr-only">{clientDeclarationNotice}</span> : null}
           {author ? <span className="sr-only">Persona autenticada</span> : <><span aria-hidden="true"> → </span><span className="sr-only">hacia</span>{delivery?.recipient_alias ?? 'Destino sin dato'}</>}
         </div>
       ) : null}

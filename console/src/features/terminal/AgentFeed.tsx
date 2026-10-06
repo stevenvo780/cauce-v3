@@ -5,7 +5,7 @@ import type { Resource } from '../../api/use-resource';
 import { cn } from '../../cn';
 import { Time } from '../../components/ui';
 import type { FleetAgent } from './fleet';
-import { humanAuthor } from './message-author';
+import { messageAuthorPresentation } from './message-author';
 import { transcriptForSession } from './session';
 
 /** Read-only recent traffic of one agent, from the roster's own message window. It never writes. */
@@ -27,8 +27,7 @@ export function AgentFeed({ agent, messages }: { agent: FleetAgent; messages: Re
   return (
     <ol aria-label={`Mensajes recientes de ${agent.alias}`} className="m-0 min-h-0 flex-1 list-none overflow-y-auto p-0">
       {items.map(({ message, direction }, index) => {
-        const author = humanAuthor(message);
-        const who = author?.display_name ?? (author ? 'Persona autenticada' : message.actor_alias ?? 'Emisor sin dato');
+        const { label: who } = messageAuthorPresentation(message);
         const Icon = direction === 'input' ? ArrowDownLeft : ArrowUpRight;
         const preview = message.body_preview?.trim();
         return (
