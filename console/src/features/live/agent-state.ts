@@ -61,16 +61,6 @@ export const LIVE_STATE_META: Record<LiveState, LiveStateMeta> = {
   },
 };
 
-export const STATE_ACCENT: Record<LiveState, string> = {
-  down: 'var(--red)',
-  blocked: 'var(--amber)',
-  delegating: 'var(--violet)',
-  settled: 'var(--muted)',
-  receiving: 'var(--blue)',
-  thinking: 'var(--mint)',
-  idle: 'var(--faint)',
-};
-
 /** How long a transient state stays on screen before falling to the stable state. */
 export const BURST_MS = 4500;
 
@@ -456,16 +446,6 @@ export {
   type Pulse,
   type PulseMap,
   detectPulses,
-  type EdgeAggregate,
-  edgePairKey,
-  aggregateEdges,
-  type HumanOrigin,
   type OrigenEncargo,
   origenDeItem,
-  humanOrigins,
-  AVATAR_UNIFORME,
-  AVATAR_MIN,
-  AVATAR_MAX,
-  radioDe,
-  grosorDe,
 } from './agent-state-helpers';

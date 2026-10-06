@@ -1,12 +1,10 @@
 import { screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import type { FleetActivitySnapshot } from '../../api/types';
 import { mockActivity } from '../../mocks/data';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
 import { LIVE_STATE_META, LIVE_STATES } from './agent-state';
-import { LiveFleetPage } from './LiveFleetPage';
+import { renderLive } from './render-live';
 
 /**
  * **THE ROW AND THE CHIP, FOR THE SAME AGENT, MUST SAY THE SAME THING.**
@@ -38,24 +36,18 @@ function filasPintadas(): { alias: string; estado: string }[] {
     .map((fila) => {
       const celdas = within(fila).getAllByRole('cell');
       return {
-        alias: celdas[1].textContent,
-        // The cell contains the state and, below, the signal chips. The state is the first.
-        estado: within(celdas[2]).getAllByText(/.+/)[0]?.textContent ?? '',
+        alias: celdas[0].textContent,
+        // The cell holds the state pill and then the signal chips. The state is the first.
+        estado: within(celdas[1]).getAllByText(/.+/)[0]?.textContent ?? '',
       };
     });
-}
-
-async function abrirListaAgentes() {
-  const user = userEvent.setup();
-  await user.click(await screen.findByText(/^Agentes ·/u));
 }
 
 describe('la columna «Estado» de la tabla de /live', () => {
   it('sólo emite palabras del vocabulario de los chips, nunca un juego propio', async () => {
     conActividad(mockActivity());
-    renderWithApi(<LiveFleetPage />);
-    await screen.findByLabelText('Veredicto de la flota');
-    await abrirListaAgentes();
+    renderLive();
+    await screen.findByRole('table');
 
     const permitidas = new Set(LIVE_STATES.map((estado) => LIVE_STATE_META[estado].label));
     const ajenas = filasPintadas()
@@ -80,17 +72,16 @@ describe('la columna «Estado» de la tabla de /live', () => {
         in_flight: 0, started: 0, claimed_not_started: 0, queued: 0, in_flight_items: [],
       }],
     });
-    renderWithApi(<LiveFleetPage />);
-    await screen.findByLabelText('Veredicto de la flota');
-    await abrirListaAgentes();
+    renderLive();
+    await screen.findByRole('table');
 
     const fila = await screen.findByRole('row', { name: /iza/i });
-    const estado = within(fila).getAllByRole('cell')[2];
+    const estado = within(fila).getAllByRole('cell')[1];
     expect(estado).toHaveTextContent(LIVE_STATE_META.down.label);
     expect(estado).not.toHaveTextContent(LIVE_STATE_META.idle.label);
     // And the chip counts exactly the same: one down, zero libre.
     expect(screen.getByRole('button', { name: /Caído 1/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Libre 0/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Libre/ })).not.toBeInTheDocument();
   });
 
   it('CONTROL POSITIVO — un alias conectado y sin trabajo SÍ dice «Libre»', async () => {
@@ -108,22 +99,20 @@ describe('la columna «Estado» de la tabla de /live', () => {
         in_flight: 0, started: 0, claimed_not_started: 0, queued: 0, in_flight_items: [],
       }],
     });
-    renderWithApi(<LiveFleetPage />);
-    await screen.findByLabelText('Veredicto de la flota');
-    await abrirListaAgentes();
+    renderLive();
+    await screen.findByRole('table');
 
     const fila = await screen.findByRole('row', { name: /salva/i });
-    expect(within(fila).getAllByRole('cell')[2]).toHaveTextContent(LIVE_STATE_META.idle.label);
+    expect(within(fila).getAllByRole('cell')[1]).toHaveTextContent(LIVE_STATE_META.idle.label);
     expect(screen.getByRole('button', { name: /Libre 1/ })).toBeInTheDocument();
   });
 
   it('la tabla se ordena en el MISMO orden que la cinta de chips, no en otro', async () => {
     conActividad(mockActivity());
-    renderWithApi(<LiveFleetPage />);
-    await screen.findByLabelText('Veredicto de la flota');
-    await abrirListaAgentes();
+    renderLive();
+    await screen.findByRole('table');
 
-    const ordenDeLaCinta = [...document.querySelectorAll('.live-tally-chip:not(.is-unreported)')]
+    const ordenDeLaCinta = within(screen.getByRole('group', { name: 'Filtrar por estado' })).getAllByRole('button')
       .map((chip) => chip.textContent.replace(/\d+$/, '').trim());
     const rangos = filasPintadas().map((fila) => ordenDeLaCinta.indexOf(fila.estado));
 

@@ -3,7 +3,6 @@ import type {
   FleetActivityAgent,
   FleetActivityItem,
   FleetActivitySnapshot,
-  FleetDelegationEdge,
 } from '../../api/types';
 
 export function agentKey(agent: { tenant_id: string; alias: string }): string {
@@ -176,77 +175,8 @@ export function detectPulses(
 }
 
 // ----------------------------------------------------------------------------------------------
-// Edges aggregated by pair.
-// ----------------------------------------------------------------------------------------------
-
-export interface EdgeAggregate {
-  from: string;
-  to: string;
-  /** Deliveries of that pair in flight right now. Greater than 0 paints the arrow blue. */
-  inFlight: number;
-  /** Volume from which the thickness comes. Without server data, it is the `inFlight` itself. */
-  total: number;
-  /** The oldest one going that direction, used to decide amber against the threshold. */
-  oldestSeconds: number | null;
-  /** `true` if the volume is the server's window one and not a count of what is seen. */
-  totalFromServer: boolean;
-}
-
-export function edgePairKey(from: string, to: string): string {
-  return `${from}→${to}`;
-}
-
-/**
- * Joins into ONE arrow the N deliveries that go from the same sender to the same receiver.
- */
-export function aggregateEdges(
-  edges: readonly DelegationEdge[],
-  serverEdges?: readonly FleetDelegationEdge[] | null,
-): Map<string, EdgeAggregate> {
-  const salida = new Map<string, EdgeAggregate>();
-  for (const edge of edges) {
-    const clave = edgePairKey(edge.from, edge.to);
-    const actual = salida.get(clave) ?? {
-      from: edge.from, to: edge.to, inFlight: 0, total: 0, oldestSeconds: null, totalFromServer: false,
-    };
-    actual.inFlight += 1;
-    actual.total += 1;
-    const edad = edge.secondsInFlight;
-    if (typeof edad === 'number' && (actual.oldestSeconds === null || edad > actual.oldestSeconds)) {
-      actual.oldestSeconds = edad;
-    }
-    salida.set(clave, actual);
-  }
-
-  for (const server of serverEdges ?? []) {
-    if (!server.from_tenant || !server.from_alias || !server.to_tenant || !server.to_alias) continue;
-    const from = `${server.from_tenant}/${server.from_alias}`;
-    const to = `${server.to_tenant}/${server.to_alias}`;
-    const clave = edgePairKey(from, to);
-    const actual = salida.get(clave) ?? {
-      from, to, inFlight: 0, total: 0, oldestSeconds: null, totalFromServer: false,
-    };
-    if (typeof server.total_window === 'number') {
-      actual.total = server.total_window;
-      actual.totalFromServer = true;
-    }
-    salida.set(clave, actual);
-  }
-  return salida;
-}
-
-// ----------------------------------------------------------------------------------------------
 // The work that comes in through a human bridge.
 // ----------------------------------------------------------------------------------------------
-
-export interface HumanOrigin {
-  /** `tenant/alias` of the agent that received the task. */
-  agentKey: string;
-  /** Adapter through which it came: 'telegram', 'whatsapp'… Never the `conversation_id`. */
-  adapter: string;
-  /** How many in-flight deliveries came in through there. */
-  count: number;
-}
 
 export type OrigenEncargo =
   | { tipo: 'agente'; tenant: string | null; alias: string }
@@ -286,44 +216,4 @@ export function origenesDeAgente(
 ): OrigenEncargo[] {
   const selfKey = agentKey(agent);
   return (agent.in_flight_items ?? []).map((item) => origenDeItem(item, { selfKey, known }));
-}
-
-export function humanOrigins(snapshot: FleetActivitySnapshot | undefined): HumanOrigin[] {
-  const agents = snapshot?.agents ?? [];
-  const known = new Set(agents.map(agentKey));
-  const conteo = new Map<string, HumanOrigin>();
-  for (const agent of agents) {
-    const key = agentKey(agent);
-    for (const origen of origenesDeAgente(agent, known)) {
-      if (origen.tipo !== 'puente') continue;
-      const clave = `${key}|${origen.adapter}`;
-      const actual = conteo.get(clave) ?? { agentKey: key, adapter: origen.adapter, count: 0 };
-      actual.count += 1;
-      conteo.set(clave, actual);
-    }
-  }
-  return [...conteo.values()].sort((left, right) =>
-    left.agentKey.localeCompare(right.agentKey) || left.adapter.localeCompare(right.adapter));
-}
-
-// ----------------------------------------------------------------------------------------------
-// Geometry of the map.
-// ----------------------------------------------------------------------------------------------
-
-/** Radius of the doughboy when there is nothing to scale it with, and the extremes when there is. */
-export const AVATAR_UNIFORME = 26;
-export const AVATAR_MIN = 22;
-export const AVATAR_MAX = 34;
-
-export function radioDe(closed24h: number | undefined, maxClosed: number | null): number {
-  if (maxClosed === null) return AVATAR_UNIFORME;
-  if (typeof closed24h !== 'number' || !Number.isFinite(closed24h) || closed24h <= 0) return AVATAR_MIN;
-  if (maxClosed <= 0) return AVATAR_MIN;
-  return AVATAR_MIN + (AVATAR_MAX - AVATAR_MIN) * Math.sqrt(Math.min(1, closed24h / maxClosed));
-}
-
-/** Arrow thickness by volume. Explicit ceiling: a busy relationship cannot blanket the map. */
-export function grosorDe(total: number, maxTotal: number): number {
-  if (maxTotal <= 1) return 1.5;
-  return 1.5 + 3.5 * Math.min(1, (total - 1) / (maxTotal - 1));
 }
