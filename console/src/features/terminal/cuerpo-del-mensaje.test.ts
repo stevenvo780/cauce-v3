@@ -15,14 +15,14 @@ describe('el recorte del cuerpo que hace el servidor', () => {
    * is the cheap check that does catch it.
    */
   it('el número que la consola dice es el que el servidor aplica', () => {
-    let consulta: string;
-    try {
-      consulta = readFileSync(resolve(process.cwd(), '../packages/store/src/repository/messages.ts'), 'utf8');
-    } catch {
-      consulta = readFileSync(resolve(process.cwd(), '../packages/store/src/repository.ts'), 'utf8');
-    }
-    const recorte = /left\(COALESCE\(m\.body->>'text',m\.body->>'prompt',m\.body::text\),(\d+)\)/.exec(consulta);
-    expect(recorte, 'no se encontró el recorte de listMessages en packages/store/src/repository').not.toBeNull();
+    const consulta = readFileSync(resolve(process.cwd(), '../packages/store/src/repository/messages.ts'), 'utf8');
+    expect(consulta).toMatch(/import\s*\{[^}]*\bMESSAGE_BODY_PREVIEW_SQL\b[^}]*\}\s*from\s*'\.\/messages\/attachments\.js'/);
+    expect(consulta).toMatch(/async listMessages\([\s\S]*?this\.pool\.query[\s\S]*?`SELECT[\s\S]*?\$\{MESSAGE_BODY_PREVIEW_SQL\}/);
+    const proyecciones = readFileSync(resolve(process.cwd(), '../packages/store/src/repository/messages/attachments.ts'), 'utf8');
+    const expresion = /export const MESSAGE_BODY_PREVIEW_SQL\s*=\s*`([^`]+)`/.exec(proyecciones)?.[1];
+    expect(expresion, 'no se encontró la proyección SQL que usa listMessages').toBeDefined();
+    const recorte = /^left\(COALESCE\(m\.body->>'text',m\.body->>'prompt',\(m\.body-'attachments_v1'::text\)::text\),(\d+)\) AS body_preview$/.exec(expresion ?? '');
+    expect(recorte, 'no se encontró el recorte saneado de listMessages').not.toBeNull();
     expect(Number(recorte?.[1])).toBe(CARACTERES_DE_PREVISUALIZACION);
   });
 
