@@ -9,7 +9,7 @@ import {
   AliasSchema, CreateJobSchema, DeliveryIdSchema, ProfileRuntimeContractSchema, TenantSchema,
   type Tenant,
 } from '@cauce/protocol';
-import { AgentContextRevisionsStore, AgentProfileRepository, StoreError } from '@cauce/store';
+import { AgentContextRevisionsStore, AgentProfileRepository, CauceRepository, StoreError } from '@cauce/store';
 import { messageReader, requireOperatorPermission, requirePermission } from '../auth.js';
 import { registerAgentContextHistoryRoutes } from '../console/agent-context-history.routes.js';
 import {
@@ -34,7 +34,10 @@ import {
   runtimeContractFromVerification, validatedCancelReceipt, validatedDlqResolutionReceipt,
   validatedReplayReceipt,
 } from './console/helpers.js';
+import { consoleHumanAccess } from '../console-human-authority.js';
+import { registerConsoleReplyAttachmentRoutes } from './console/reply-attachments.js';
 import { registerConsoleAccessRoutes } from './console/access.js';
+import { registerConsoleMessageAttachmentRoutes } from './console/message-attachments.js';
 import { registerConsoleOperationsRoutes } from './console/operations.js';
 import { publishRouteOptions } from './core/publish.js';
 
@@ -107,6 +110,8 @@ export function registerConsoleRoutes(
   publishHandler: PublishHandler,
 ): AgentProfileRepository {
   registerConsoleAccessRoutes(app, context);
+  registerConsoleMessageAttachmentRoutes(app, context.options);
+  registerConsoleReplyAttachmentRoutes(app, context.options);
   registerConsoleOperationsRoutes(app, context);
   return registerConsoleAgentRoutes(app, context, publishHandler);
 }
@@ -123,7 +128,20 @@ function registerConsoleAgentRoutes(
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'read');
-      const row = visibleMessage(await repository.getMessage(request.params.messageId, actor.tenant_id, actor.alias, messageReader(actor)), actor);
+      const access = await consoleHumanAccess(options.authProvider, request, reply, 'read');
+      let detail: Record<string, unknown>;
+      try {
+        if (access) {
+          try { detail = await new CauceRepository(options.pool).getHumanMessage(request.params.messageId, access.options); }
+          catch (error) {
+            if (!(error instanceof StoreError) || error.code !== 'not_found') throw error;
+            detail = await new CauceRepository(options.pool).getLegacyHumanMessage(
+              request.params.messageId, access.options, messageReader(actor),
+            );
+          }
+        } else detail = await repository.getMessage(request.params.messageId, actor.tenant_id, actor.alias, messageReader(actor));
+      } finally { access?.close(); }
+      const row = visibleMessage(detail, actor);
       // `not_found`, never `forbidden`: it does not confirm that an invisible message exists.
       if (!row) throw new StoreError('not_found', 'message not found or not visible');
       return row;

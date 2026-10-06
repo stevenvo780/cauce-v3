@@ -293,6 +293,7 @@ export function sanitizedAckResult(result: Record<string, unknown> | undefined):
   if (!result) return result;
   const withoutProfileAdoption = { ...result };
   delete withoutProfileAdoption.profile_adoption;
+  delete withoutProfileAdoption.reply_attachments_v1;
   const normalized = Object.keys(withoutProfileAdoption).length === 0
     ? undefined
     : withoutProfileAdoption;

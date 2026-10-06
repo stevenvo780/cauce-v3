@@ -3,7 +3,7 @@ import type { DatabaseClient } from '../../db.js';
 import { chainGateOriginTenantSql, tenantReadableSql } from '../acl-edges.js';
 import { consolePublishConversationHash } from '../config.js';
 import { StoreError } from '../errors.js';
-import { CHAIN_TYPES, chainOpenSql, humanSenderView } from './agent-roots.js';
+import { CHAIN_TYPES, chainOpenSql, humanSenderView, type CanonicalReplyMedia } from './agent-roots.js';
 import type { HumanPublishProvenance } from './contracts.js';
 import { loadMessageDetail } from './message-detail.js';
 
@@ -28,9 +28,10 @@ export interface HumanInboxQuery {
   readonly after?: HumanInboxKey;
   readonly since?: string;
 }
-export interface HumanInboxDelivery {
+export interface HumanInboxDelivery extends Partial<CanonicalReplyMedia> {
   readonly deliveryId: string; readonly tenantId: string; readonly alias: string; readonly status: string;
   readonly attempt: number; readonly terminalAt: string | null; readonly reply: string | null;
+
 }
 export interface HumanInboxQuestion {
   readonly gateId: string; readonly askedBy: { readonly tenantId: string; readonly alias: string };
@@ -196,6 +197,7 @@ async function inboxItem(
         deliveryId: delivery.delivery_id, tenantId: delivery.tenant_id, alias: delivery.alias, status: delivery.status,
         attempt: delivery.attempt, terminalAt: delivery.terminal_at,
         reply: typeof reply === 'string' ? reply.slice(0, HUMAN_INBOX_TEXT_CHARS) : null,
+        ...view.replyMedia?.get(delivery.delivery_id),
       };
     }),
   };

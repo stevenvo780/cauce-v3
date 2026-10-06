@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { DeliveryIdSchema, HeartbeatSchema, HelloSchema, QueryDeliveriesSchema } from '@cauce/protocol';
+import { DeliveryIdSchema, HeartbeatSchema, HelloSchema, MAX_PUBLISH_BODY_BYTES, QueryDeliveriesSchema } from '@cauce/protocol';
 import { StoreError } from '@cauce/store';
 import { messageReader, requirePermission, validatePrincipal } from '../../auth.js';
 import { visibleMessage } from '../../facades.js';
@@ -109,7 +109,7 @@ export function registerCoreRuntimeHttpRoutes(
     }
   });
 
-  app.post<{ Params: { deliveryId: string } }>('/v3/deliveries/:deliveryId/ack', async (request, reply) => {
+  app.post<{ Params: { deliveryId: string } }>('/v3/deliveries/:deliveryId/ack', { bodyLimit: MAX_PUBLISH_BODY_BYTES }, async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'route');
@@ -124,7 +124,7 @@ export function registerCoreRuntimeHttpRoutes(
     }
   });
 
-  app.post('/v3/ack', async (request, reply) => {
+  app.post('/v3/ack', { bodyLimit: MAX_PUBLISH_BODY_BYTES }, async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'route');

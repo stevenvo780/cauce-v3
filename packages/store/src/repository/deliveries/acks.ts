@@ -33,6 +33,7 @@ import {
   type LateResultRow,
   type OpenChainGate,
 } from './contracts.js';
+import { withFinalReplyMedia } from './final-media.js';
 import { DeliveryClaimsRepository } from './claims.js';
 import { withValidatedHarnessConsumption } from './harness-consumption.js';
 import {
@@ -207,7 +208,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       const backoffSeconds = ackFailureBackoffSeconds(row.attempt);
       await this.persistAckTransition(client, row, ack, {
         tenantId, alias, deliveryId, ackDeadlineMs, leaseCapMs, executionStarted,
-        storedResult, runtimeAdoption, transition, backoffSeconds
+        storedResult, persistedResult, runtimeAdoption, transition, backoffSeconds
       });
       const {
         notified, delegationRejections, delegationMaterializations, chainGate
@@ -261,6 +262,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       leaseCapMs: number;
       executionStarted: boolean;
       storedResult: Record<string, unknown> | undefined;
+      persistedResult: Record<string, unknown> | undefined;
       runtimeAdoption: ProfileRuntimeAdoptionEvidence | undefined;
       transition: AckTransition;
       backoffSeconds: number;
@@ -271,6 +273,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       runtimeAdoption, transition, backoffSeconds
     } = input;
     const { nextStatus, nextRank, terminalAt, terminalError, terminalErrorCode } = transition;
+    const deliveryResult = await withFinalReplyMedia(client, row, nextStatus === 'done', input.persistedResult, storedResult);
     await client.query(
        `UPDATE deliveries SET status=$2,last_ack_rank=$3,last_error=$4,result=$5::jsonb,
           available_at=CASE WHEN $2='retry' THEN now()+$6*interval '1 second' ELSE available_at END,
@@ -297,7 +300,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
           consumer_epoch=CASE WHEN $2='retry' THEN NULL ELSE consumer_epoch END,
           terminal_at=${terminalAt},updated_at=now() WHERE id=$1`,
       [deliveryId, nextStatus, nextRank, terminalError ?? null,
-        storedResult ? JSON.stringify(storedResult) : null, backoffSeconds,
+        deliveryResult ? JSON.stringify(deliveryResult) : null, backoffSeconds,
         ackDeadlineMs, executionStarted, leaseCapMs]
     );
     if (nextStatus === 'done') {
@@ -512,6 +515,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
 
     const salvagedStatus: DeliveryState = ack.status === 'done' ? 'done' : 'dead';
     const storedResult = withoutInlineArtifactBytes(persistedResult);
+    const deliveryResult = await withFinalReplyMedia(client, row, salvagedStatus === 'done', persistedResult, storedResult);
     const terminalError = postgresTextSafe(ack.error);
     const terminalErrorCode = postgresTextSafe(ack.error_code);
     const previousStatus = row.status;
@@ -528,7 +532,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
            claim_expires_at=NULL,ack_deadline_at=NULL,updated_at=now()
        WHERE id=$1`,
       [row.id, salvagedStatus, terminalError ?? null,
-        storedResult ? JSON.stringify(storedResult) : null, ack.attempt]
+        deliveryResult ? JSON.stringify(deliveryResult) : null, ack.attempt]
     );
 
     const relayDisposition = await this.undoDeathNotice(
