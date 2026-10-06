@@ -168,7 +168,7 @@ export class TerminalHumanFixture {
     const ownerToken = randomUUID();
     const admitted = await this.request('/v3/console/terminal/sessions', { method: 'POST',
       headers: { cookie, origin: this.url, 'x-csrf-token': csrf },
-      body: { tenant_id: this.tenant, alias: this.targetAlias, mode: 'shell', reason: 'Human revocation QA',
+      body: { tenant_id: this.tenant, alias: this.targetAlias, mode: 'shell',
         cols: 80, rows: 24, request_id: requestId, owner_token: ownerToken },
     });
     if (admitted.status !== 201 || typeof admitted.body.session_id !== 'string' || typeof admitted.body.ticket !== 'string') {
