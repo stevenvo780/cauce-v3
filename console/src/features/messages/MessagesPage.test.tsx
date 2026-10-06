@@ -563,7 +563,7 @@ it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del p
   expect(within(fanout).getByText('Steven:jarvis')).toBeInTheDocument();
   expect(within(fanout).getByText('FALLÓ')).toBeInTheDocument();
   expect(within(fanout).getByText('Steven:socrates')).toBeInTheDocument();
-  expect(within(fanout).getByText('EN REINTENTO').closest('.badge')).toHaveClass('badge-warning');
+  expect(within(fanout).getByText('EN REINTENTO').closest('[data-tone]')).toHaveAttribute('data-tone', 'warning');
 
   const gestionarPrincipal = within(detalle).getByRole('link', {
     name: /gestionar delivery 4b981ddd-f311-494e-887c-83fd5e11be90 en colas/i,

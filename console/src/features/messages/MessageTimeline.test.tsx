@@ -9,10 +9,10 @@ it('renders the publish to terminal ACK sequence', () => {
     { status: 'done', at: '2026-07-22T10:00:03Z' },
   ]} />);
   const timeline = screen.getByRole('list', { name: /timeline/i });
-  expect(within(timeline).getByText('PUBLICADA')).toHaveClass('badge-info');
-  expect(within(timeline).getByText('ACEPTADA')).toHaveClass('badge-running');
-  expect(within(timeline).getByText('EN CURSO')).toHaveClass('badge-running');
-  expect(within(timeline).getByText('HECHA')).toHaveClass('badge-done');
+  expect(within(timeline).getByText('PUBLICADA')).toHaveAttribute('data-tone', 'info');
+  expect(within(timeline).getByText('ACEPTADA')).toHaveAttribute('data-tone', 'running');
+  expect(within(timeline).getByText('EN CURSO')).toHaveAttribute('data-tone', 'running');
+  expect(within(timeline).getByText('HECHA')).toHaveAttribute('data-tone', 'done');
 });
 
 it('uses the same danger policy as queues for a failed terminal ACK', () => {
@@ -22,5 +22,5 @@ it('uses the same danger policy as queues for a failed terminal ACK', () => {
     { status: 'started' },
     { status: 'failed', detail: 'adapter timeout' },
   ]} />);
-  expect(screen.getByText('FALLÓ')).toHaveClass('badge-danger');
+  expect(screen.getByText('FALLÓ')).toHaveAttribute('data-tone', 'danger');
 });

@@ -6,8 +6,8 @@ import type {
 } from '../../api/types';
 import { isLowercaseSha256, isUuidV1ToV8 } from '../../api/contract-guards';
 import { useResource } from '../../api/use-resource';
-import { Button, Notice, SectionCard } from '../../components/form-kit';
-import { CARD_TABLE, ConfirmDialog, SCROLL, Toolbar } from '../../components/ops-kit';
+import { Button, CARD_TABLE, Notice, SCROLL, SectionCard, Toolbar } from '../../components/kit';
+import { ConfirmDialog } from '../../components/dialogs';
 import { Badge, Desplazable, EmptyState, ErrorState, LoadingState, RefreshButton, Time, Unknown } from '../../components/ui';
 import { compactId } from '../../lib';
 import { DLQ_DISPOSITION_LABEL, DLQ_DISPOSITION_TONE } from '../../vocabulario';

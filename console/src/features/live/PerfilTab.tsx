@@ -7,7 +7,7 @@ import { useApi } from '../../api/context';
 import type { AgentPerfil } from '../../api/types';
 import { useResource, type RecargaResultado } from '../../api/use-resource';
 import { cn } from '../../cn';
-import { Button, Notice, SectionCard, type NoticeTone } from '../../components/form-kit';
+import { Button, Notice, SectionCard, type NoticeTone } from '../../components/kit';
 import { EmptyState } from '../../components/ui';
 import type { PermissionState } from '../../lib';
 import { ReasonField, TabStrip } from './context-ui';

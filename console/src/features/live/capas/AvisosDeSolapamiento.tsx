@@ -1,5 +1,5 @@
 import { AlertTriangle, FileWarning } from 'lucide-react';
-import { Notice } from '../../../components/form-kit';
+import { Notice } from '../../../components/kit';
 import type { AvisoDeCapas } from '../directiva';
 
 export function AvisosDeSolapamiento({ avisos }: { avisos: AvisoDeCapas[] }) {

@@ -1,5 +1,5 @@
 import { cn } from '../../cn';
-import { Notice } from '../../components/form-kit';
+import { Notice } from '../../components/kit';
 import { ROLE_BRIEF_MAX, bloqueoPorRuntimeDesplegado } from './role-brief';
 
 /**

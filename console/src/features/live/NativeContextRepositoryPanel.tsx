@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import type { NativeContextRepositoryInspection, NativeSourceFile } from '../../api/client/native-context-repository-client';
 import { authSessionKey } from '../auth/account-identity';
-import { Button, Notice } from '../../components/form-kit';
+import { Button, Notice } from '../../components/kit';
 
 interface Props { tenantId: string; alias: string; instanceId: string; commit: string; previous: string }
 const OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;

@@ -58,10 +58,10 @@ export function ConversationNotices({ health, queueError, feedError, leaseWarnin
       onBlurCapture={(event) => { if (!(event.relatedTarget instanceof Node && container.current?.contains(event.relatedTarget))) focusInside.current = false; }}
       onKeyDown={(event) => { if (event.key === 'Escape' && open) { event.preventDefault(); close(); } }}
     >
-      <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-1.5">
+      <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-1.5 in-data-[keyboard-open]:py-0.5">
         {severe ? <AlertTriangle size={14} aria-hidden="true" className="shrink-0" />
           : <Info size={14} aria-hidden="true" className={cn('shrink-0', leaseExpired ? 'text-warn-ink' : 'text-muted')} />}
-        <span className="min-w-0 flex-1 leading-4">
+        <span className="min-w-0 flex-1 leading-4 in-data-[keyboard-open]:truncate" title={labels.map((label) => label.text).join(' · ')}>
           {labels.map(({ role, text }, index) => <span key={text}>{index > 0 ? <span aria-hidden="true"> · </span> : null}<span role={role}>{text}</span></span>)}
         </span>
         <button
@@ -73,7 +73,7 @@ export function ConversationNotices({ health, queueError, feedError, leaseWarnin
           onClick={() => { setOpen(!open); }}
           className="flex min-h-7 shrink-0 cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-1.5 font-medium text-inherit hover:bg-muted-bg"
         >
-          Detalles<ChevronDown size={14} aria-hidden="true" className={cn('transition-transform', open && 'rotate-180')} />
+          <span className="in-data-[keyboard-open]:sr-only">Detalles</span><ChevronDown size={14} aria-hidden="true" className={cn('transition-transform', open && 'rotate-180')} />
         </button>
       </div>
       {open ? (

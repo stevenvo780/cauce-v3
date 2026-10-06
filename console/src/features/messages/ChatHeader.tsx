@@ -10,7 +10,7 @@ import { onNavClick } from '../../router';
 import { STATE_TONE, TONE_CLASS } from '../../status-tone';
 import { LEASE_LABEL } from '../../vocabulario';
 import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
-import { MENU_ITEM, MENU_POPUP } from './MessageActions';
+import { MENU_ITEM, MENU_POPUP } from '../../components/kit';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
 import type { AgenteDeMensajeria } from './roster';
 

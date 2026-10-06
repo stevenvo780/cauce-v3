@@ -57,7 +57,7 @@ it('un relay en cola o fallido se nombra por lo que es, y nunca como entregado',
   expect(within(await relayRow('relay-curso')).getByText('EN CURSO')).toBeInTheDocument();
   const fallido = await relayRow('relay-fallo');
   expect(within(fallido).getByText('FALLÓ')).toBeInTheDocument();
-  expect(fallido.querySelector('.badge')?.className).toContain('badge-danger');
+  expect(fallido.querySelector('[data-tone]')).toHaveAttribute('data-tone', 'danger');
   // None of the three has an arrival time, and none pretends to: the "Enviado" column says it does not apply.
   for (const id of ['relay-espera', 'relay-curso', 'relay-fallo']) {
     const row = await relayRow(id);

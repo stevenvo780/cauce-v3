@@ -39,11 +39,27 @@ export function ChatAttachmentsComposer({
   const canSend = canPublish && route.allowed && Boolean(roomId) && !roomUnavailable;
   const editingBlocked = sending && !confirming;
 
+  // The field also changes width (the soft keyboard folds the toolbar into its row), and wrapped lines follow.
   useLayoutEffect(() => {
     const box = textarea.current;
     if (!box) return;
-    box.style.height = 'auto';
-    if (box.scrollHeight) box.style.height = `${String(box.scrollHeight)}px`;
+    const fit = () => {
+      box.style.height = 'auto';
+      if (box.scrollHeight) box.style.height = `${String(box.scrollHeight)}px`;
+    };
+    fit();
+    if (typeof ResizeObserver !== 'function') return;
+    let width = box.clientWidth;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      if (box.clientWidth === width) return;
+      width = box.clientWidth;
+      // Refitting inside the callback would resize the observed box again: «loop completed with undelivered notifications».
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(fit);
+    });
+    observer.observe(box);
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); };
   }, [text]);
 
   function recordingChanged(active: boolean) {
@@ -132,7 +148,7 @@ export function ChatAttachmentsComposer({
   return (
     <form data-chat-composer data-dragging-files={draggingFiles || undefined} onSubmit={handleSubmit} onDragOver={handleDragOver}
       onDragLeave={() => { setDraggingFiles(false); }} onDrop={handleDrop}
-      className="group/composer mx-auto grid w-full max-w-3xl gap-2 px-3 pt-1 pb-3 min-[761px]:px-4 min-[761px]:pb-4">
+      className="group/composer mx-auto grid w-full max-w-3xl gap-2 px-3 pt-1 pb-3 in-data-[keyboard-open]:pb-1.5 min-[761px]:px-4 min-[761px]:pb-4">
       <label className="sr-only" htmlFor={`messenger-input-${agentId}`}>Mensaje para {agentAlias}</label>
       {roomChoiceRequired ? (
         <label className="flex items-center gap-2 px-1 text-xs text-muted">Room de origen
@@ -151,9 +167,9 @@ export function ChatAttachmentsComposer({
           {canPublish ? <CircleOff size={13} aria-hidden="true" /> : <LockKeyhole size={13} aria-hidden="true" />}{blocked}
         </p>
       ) : null}
-      <div className="rounded-[26px] border border-line bg-surface shadow-card transition-colors focus-within:border-line-strong group-data-[dragging-files]/composer:border-brand group-data-[dragging-files]/composer:ring-2 group-data-[dragging-files]/composer:ring-brand/30">
+      <div className="rounded-[26px] border border-line bg-surface shadow-card transition-colors in-data-[keyboard-open]:flex in-data-[keyboard-open]:flex-wrap in-data-[keyboard-open]:items-end focus-within:border-line-strong group-data-[dragging-files]/composer:border-brand group-data-[dragging-files]/composer:ring-2 group-data-[dragging-files]/composer:ring-brand/30">
         {files.length ? (
-          <ul aria-label="Archivos adjuntos" className="m-0 flex list-none flex-wrap gap-2 px-3 pt-3 pb-0">
+          <ul aria-label="Archivos adjuntos" className="m-0 flex w-full list-none flex-wrap gap-2 px-3 pt-3 pb-0">
             {files.map((file, index) => <ChatSelectedMedia key={`${file.name}:${String(file.size)}:${String(file.lastModified)}:${String(index)}`}
               file={file} disabled={editingBlocked || recording}
               onRemove={() => { onFilesChange(files.filter((_, currentIndex) => currentIndex !== index)); setAttachmentError(undefined); }} />)}
@@ -162,8 +178,8 @@ export function ChatAttachmentsComposer({
         <textarea ref={(node) => { textarea.current = node; if (inputRef) inputRef.current = node; }} id={`messenger-input-${agentId}`} value={text} onChange={(event) => { onTextChange(event.target.value); }}
           onKeyDown={handleKeyDown} onPaste={handlePaste} rows={1} maxLength={8_000}
           placeholder={canSend ? `Escribile a ${agentAlias}…` : 'No podés escribir en esta conversación'} disabled={!canSend}
-          className="block max-h-[40dvh] min-h-12 w-full resize-none border-0 bg-transparent px-4 pt-3.5 pb-1 text-[15px] leading-6 text-fg shadow-none outline-none placeholder:text-muted focus:shadow-none disabled:cursor-not-allowed max-[760px]:text-base" />
-        <div className="flex items-center gap-1 px-2 pb-2">
+          className="block max-h-[40dvh] min-h-12 w-full min-w-0 flex-1 resize-none in-data-[keyboard-open]:min-h-11 in-data-[keyboard-open]:pt-2.5 in-data-[keyboard-open]:pb-2.5 border-0 bg-transparent px-4 pt-3.5 pb-1 text-[15px] leading-6 text-fg shadow-none outline-none placeholder:text-muted focus:shadow-none focus-visible:border-transparent focus-visible:ring-0 focus-visible:outline-none disabled:cursor-not-allowed max-[760px]:text-base" />
+        <div className="flex items-center gap-1 px-2 pb-2 in-data-[keyboard-open]:shrink-0 in-data-[keyboard-open]:gap-0.5 in-data-[keyboard-open]:pr-1.5 in-data-[keyboard-open]:pb-1">
           <input ref={fileInput} className="hidden" type="file" multiple tabIndex={-1}
             aria-hidden="true" onChange={handleFiles} disabled={!canSend || editingBlocked || recording} />
           <button type="button" aria-label="Adjuntar archivos" title="Adjuntar archivos" onPointerDown={keepFocus}
@@ -174,7 +190,7 @@ export function ChatAttachmentsComposer({
           <ChatVoiceRecorder disabled={!canSend || editingBlocked || files.length >= MAX_ATTACHMENTS_PER_MESSAGE}
             availableBytes={MAX_ATTACHMENTS_TOTAL_BYTES - files.reduce((total, file) => total + file.size, 0)}
             onFile={(file) => { appendFiles([file]); }} onRecordingChange={recordingChanged} />
-          {lane === 'batch' ? <span className="ml-1 rounded-full bg-muted-bg px-2 py-0.5 text-[11px] text-muted" title="Cambiá el carril en Más">Batch</span> : null}
+          {lane === 'batch' ? <span className="ml-1 rounded-full bg-muted-bg in-data-[keyboard-open]:hidden px-2 py-0.5 text-[11px] text-muted" title="Cambiá el carril en «Opciones de la conversación»">Batch</span> : null}
           <button type="submit" aria-label={sendLabel} title={sendLabel} onPointerDown={keepFocus}
             disabled={!canSend || sending || recording || (!text.trim() && files.length === 0)}
             className="ml-auto grid size-9 cursor-pointer place-items-center rounded-full border-0 bg-fg text-canvas transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:bg-muted-bg disabled:text-muted disabled:opacity-100 touch-manipulation">

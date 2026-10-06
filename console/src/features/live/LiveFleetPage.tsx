@@ -7,7 +7,7 @@ import { cn } from '../../cn';
 import { redirect, useRouteSearch } from '../../router';
 import { useFleet } from '../../shell/fleet-context';
 import { STATE_TONE, TONE_CLASS } from '../../status-tone';
-import { MENU_ITEM, MENU_POPUP } from '../messages/MessageActions';
+import { MENU_ITEM, MENU_POPUP } from '../../components/kit';
 import { OfficeCanvas, type OfficeAgent } from '../office/OfficeCanvas';
 import { ORDEN_VIVO } from './activity';
 import { AgentSheet } from './AgentSheet';

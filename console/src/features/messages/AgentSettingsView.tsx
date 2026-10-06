@@ -2,7 +2,7 @@ import { ArrowLeft } from 'lucide-react';
 import { lazy, Suspense, useEffect, useRef } from 'react';
 import { AgentOrb } from '../../components/AgentOrb';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
-import { LinkButton } from '../../components/form-kit';
+import { LinkButton } from '../../components/kit';
 import { LoadingState } from '../../components/ui';
 import { cn } from '../../cn';
 import { onNavClick, useRouteSearch } from '../../router';

@@ -2,8 +2,7 @@ import { ArrowRight, RadioTower, Search } from 'lucide-react';
 import { useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import { Button, Notice, SectionCard } from '../../components/form-kit';
-import { CARD_TABLE, Kpi, KpiGrid, SCROLL } from '../../components/ops-kit';
+import { Button, CARD_TABLE, Kpi, KpiGrid, Notice, SCROLL, SectionCard } from '../../components/kit';
 import {
   Badge, Desplazable, EmptyState, ErrorState, LoadingState, PageHeader, RefreshButton, Time,
   Unknown, ViewTabPanel, ViewTabs,

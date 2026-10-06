@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { ApiError } from '../../api/client';
 import { ContextoContaminadoError, EntregaEnVueloError } from '../../api/client/agent-client';
 import { useApi } from '../../api/context';
-import { Button, Notice, SectionCard } from '../../components/form-kit';
+import { Button, Notice, SectionCard } from '../../components/kit';
 import { ReasonField } from './context-ui';
 import { explicarFalloDeMotivo, problemaDeMotivo } from './ficheros-motivo';
 import {

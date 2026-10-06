@@ -5,7 +5,7 @@ import { useApi } from '../../api/context';
 import type { AgentDocumentKind, AgentDocumentsMap, AgentPerfilCampos } from '../../api/types';
 import { useResource, type Resource } from '../../api/use-resource';
 import { cn } from '../../cn';
-import { Button, Notice } from '../../components/form-kit';
+import { Button, Notice } from '../../components/kit';
 import { EmptyState, Time } from '../../components/ui';
 import { TabStrip } from './context-ui';
 import {

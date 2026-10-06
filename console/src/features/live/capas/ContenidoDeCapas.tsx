@@ -2,7 +2,7 @@ import { Eye, EyeOff } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { AgentDirective } from '../../../api/types';
 import { Time } from '../../../components/ui';
-import { Notice } from '../../../components/form-kit';
+import { Notice } from '../../../components/kit';
 import { medicionDeCapa, totalDeMemoria } from '../directiva';
 
 const META = 'm-0 text-xs text-muted';

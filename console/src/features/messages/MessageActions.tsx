@@ -1,9 +1,7 @@
 import { Menu } from '@base-ui/react/menu';
 import { MoreHorizontal } from 'lucide-react';
 import { useRef } from 'react';
-
-export const MENU_POPUP = 'z-50 min-w-44 rounded-lg border border-line bg-surface p-1 text-[13px] text-fg shadow-pop outline-none';
-export const MENU_ITEM = 'flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left text-fg no-underline outline-none select-none data-[highlighted]:bg-subtle data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50';
+import { MENU_ITEM, MENU_POPUP } from '../../components/kit';
 
 export function MessageActions({ disabled, onDetail, onRetry }: {
   disabled: boolean;

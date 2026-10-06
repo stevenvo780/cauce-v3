@@ -3,8 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import type { QueueItem } from '../../api/types';
 import { AgentOrb } from '../../components/AgentOrb';
-import { Button, Notice } from '../../components/form-kit';
-import { CARD_TABLE, ConfirmDialog, SCROLL } from '../../components/ops-kit';
+import { Button, CARD_TABLE, Notice, SCROLL } from '../../components/kit';
+import { ConfirmDialog } from '../../components/dialogs';
 import { Badge, Desplazable, EmptyState, Time, Unknown } from '../../components/ui';
 import { compactId, safeJobLane } from '../../lib';
 import {
