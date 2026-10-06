@@ -52,7 +52,7 @@ else if (mode === 'replace-inode') { await rename(file, `${file}.old`); await wr
 else if (mode === 'symlink') { await writeFile(`${file}.target`, body, { mode: 0o600 }); await symlink(`${file}.target`, file); }
 else if (mode !== 'no-file' && mode !== 'replay-only') await appendFile(file, body, { mode: 0o600 });
 if (mode === 'hardlink') await link(file, `${file}.alias`);
-if (mode === 'partial') await appendFile(file, '{\"type\":');
+if (mode === 'partial') await appendFile(file, '{"type":');
 if (mode === 'unsafe-mode') await chmod(file, 0o666);
 if (mode === 'oversize') await truncate(file, 33 * 1024 * 1024);
 const stdoutSid = mode === 'wrong-sid' ? sid : session;
