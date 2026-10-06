@@ -145,7 +145,8 @@ interface GatewayNarrowedRepository {
 }
 
 /** Contract implemented by the hardened store; current method names remain stable. */
-export type GatewayRepository = StoreDerivedRepository & GatewayNarrowedRepository;
+export type GatewayRepository = StoreDerivedRepository & GatewayNarrowedRepository
+  & Partial<Pick<CauceRepository, 'listHumanMailbox'>>;
 
 export interface GatewayOptions {
   contextRepository?: ContextRepositoryBinding;

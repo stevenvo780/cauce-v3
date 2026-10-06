@@ -191,7 +191,7 @@ function createHumanMessageAuthority(
         ...(delegationBindingId === undefined ? {} : { delegationBindingId }) });
     }
     return Object.freeze({ humanId: authority.userId, tenantId: authority.principal.tenant_id,
-      actorAlias: authority.principal.alias, ...(access === 'publish' ? { clientProvenance } : {}) });
+      actorAlias: authority.principal.alias, ...(access === 'publish' || clientProvenance.kind === 'oauth_client' ? { clientProvenance } : {}) });
   };
 }
 
@@ -209,6 +209,6 @@ export function createHumanReadAuthority(
   pinnedIdentity: PinnedHumanIdentity,
   signal: AbortSignal,
   identityStore?: Pick<HumanIdentityStore, 'lock' | 'verifyCredentialStamp'>,
-): (client: DatabaseClient) => Promise<Readonly<PinnedHumanIdentity>> {
+): (client: DatabaseClient) => Promise<Readonly<HumanPublishProvenance>> {
   return createHumanMessageAuthority('read', identity, pinnedIdentity, signal, identityStore);
 }

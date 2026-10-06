@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { readMcpConnectionIdentity } from './mcp-connection-identity.js';
 import { CanonicalUuidV4Schema, PROTOCOL_VERSION, PublishResultSchema, publishReceiptCausalHash } from '@cauce/protocol';
-import { PublishIntentExpiredError, PublishIntentRateLimitedError, PublishIntentReconciliationRequired, StoreError } from '@cauce/store';
+import { PublishIntentExpiredError, PublishIntentRateLimitedError, PublishIntentReconciliationRequired, StoreError, type CauceRepository } from '@cauce/store';
 import {
-  McpSubmitCommandSchema, HumanMcpReceiptSchema, InboxInputSchema,
+  HUMAN_MCP_INBOX_MAX_BYTES, McpSubmitCommandSchema, HumanMcpReceiptSchema, InboxInputSchema, MailboxInputSchema, type HumanMcpMailboxQuery,
   GatewayOperationError,
   projectGatewayAgents, projectGatewayStatus,
   type GatewayOperationsFactory, type HumanMcpInboxQuery, type HumanMcpReceipt, type McpSubmitCommand, type VerifiedOAuthIdentity,
@@ -15,13 +15,14 @@ import { prepareConsolePublishOperation, confirmConsolePublishOperation } from '
 import { createHumanPublishAuthority, createHumanReadAuthority, resolveHumanMcpAuthority,
   type HumanMcpAuthorityOptions } from './human-mcp-authority.js';
 import { humanInboxQuery, projectHumanInbox } from './mcp-inbox-projection.js';
+import { mailboxCursorOwner, clientMailboxQuery, projectClientMailbox } from './mcp-mailbox-projection.js';
 import { publishOperation, type PublishOperationInput } from './publish-operation.js';
 import { OAuthError } from './oauth-authorization-types.js';
 
 export type HumanMcpRepository = Pick<GatewayRepository,
   'publish' | 'verifyPublishReceipt' | 'prepareConsolePublishIntent' | 'confirmConsolePublishIntent'
   | 'listPresence' | 'listAgents' | 'getHumanMessage' | 'listHumanInbox'
->;
+> & Partial<Pick<CauceRepository, 'listHumanMailbox'>>;
 
 export interface HumanMcpOperationsOptions extends HumanMcpAuthorityOptions, Pick<PublishOperationInput, 'priorityLog' | 'logRedaction'> {
   readonly repository: HumanMcpRepository;
@@ -94,6 +95,7 @@ function projectReceipt(row: Record<string, unknown>, messageId: string): HumanM
       delivery_id: delivery.delivery_id, tenant_id: delivery.tenant_id, alias: delivery.alias,
       status: delivery.status, attempt: delivery.attempt, terminal_at: delivery.terminal_at,
       reply: delivery.reply,
+      ...(delivery.client_mailbox == null ? {} : { client_mailbox: delivery.client_mailbox }),
     };
   });
   const result = HumanMcpReceiptSchema.safeParse({ message_id: messageId, deliveries, chain_open: row.chain_open });
@@ -218,6 +220,16 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           active();
           return projectReceipt(row, messageId);
         },
+        async mailbox(candidate: HumanMcpMailboxQuery) {
+          const parsed = MailboxInputSchema.safeParse(candidate);
+          if (!parsed.success) throw new StoreError('invalid_input', 'invalid mailbox query');
+          const { userId, principal } = await authorize('read', 'cauce.read');
+          if (!options.repository.listHumanMailbox) throw new StoreError('forbidden', 'mailbox storage unavailable');
+          const owner = mailboxCursorOwner(userId, principal.tenant_id, identity.grantId);
+          const page = await options.repository.listHumanMailbox(clientMailboxQuery(parsed.data, owner), access('read'));
+          active();
+          return projectClientMailbox(page, owner);
+        },
         async inbox(candidate: HumanMcpInboxQuery) {
           const parsed = InboxInputSchema.safeParse(candidate);
           if (!parsed.success) throw new StoreError('invalid_input', 'invalid inbox query');
@@ -225,10 +237,15 @@ export function createHumanMcpOperationsFactory(options: HumanMcpOperationsOptio
           const query = humanInboxQuery(parsed.data, userId);
           const page = await options.repository.listHumanInbox(query, access('read'));
           active();
-          return projectHumanInbox(page, query, userId);
+          const mailbox = options.repository.listHumanMailbox === undefined ? undefined
+            : await operations.mailbox({ limit: Math.min(parsed.data.limit ?? 20, 20) });
+          const inbox = projectHumanInbox(page, query, userId,
+            HUMAN_MCP_INBOX_MAX_BYTES - Buffer.byteLength(JSON.stringify(mailbox ?? null)) - 1024);
+          return mailbox == null ? inbox : { ...inbox, mailbox };
         },
       };
       return Object.freeze({
+        mailbox: (query: HumanMcpMailboxQuery) => guardedOperation(() => operations.mailbox(query)),
         connectionIdentity: () => guardedOperation(() => operations.connectionIdentity()),
         status: () => guardedOperation(() => operations.status()),
         agents: () => guardedOperation(() => operations.agents()),

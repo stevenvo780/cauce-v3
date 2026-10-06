@@ -1,3 +1,4 @@
+import { HumanMcpMailboxSchema, type HumanMcpMailbox, type HumanMcpMailboxQuery } from './gateway-mailbox.js';
 import { z } from 'zod';
 import {
   ClientProvenanceWireSchema, AliasSchema, AuthenticatedPublishSchema, CanonicalUuidV4Schema, DeliveryStateSchema,
@@ -20,10 +21,12 @@ export interface HumanMcpReceipt {
     readonly delivery_id: string; readonly tenant_id: string; readonly alias: string;
     readonly status: string; readonly attempt: number; readonly terminal_at: string | null;
     readonly reply: string | null;
+    readonly client_mailbox?: { readonly label: string; readonly state: 'stored' } | undefined;
   }[];
   readonly chain_open: boolean;
 }
 export interface HumanGatewayOperations {
+  mailbox?(query: HumanMcpMailboxQuery): Promise<HumanMcpMailbox | null>;
   connectionIdentity?(): Promise<unknown>;
   status(): Promise<unknown>;
   agents(): Promise<unknown>;
@@ -60,6 +63,7 @@ export const HumanMcpReceiptSchema = z.object({
     attempt: z.number().int().min(0).max(2147483647),
     terminal_at: z.iso.datetime({ offset: true }).nullable(),
     reply: z.string().nullable(),
+    client_mailbox: z.object({ label: z.string().min(1).max(128), state: z.literal('stored') }).strict().optional(),
   }).strict()).min(1).max(100),
   chain_open: z.boolean(),
 }).strict();
@@ -79,6 +83,7 @@ export type HumanMcpInboxQuery = z.infer<typeof InboxInputSchema>;
 const InboxPrincipalSchema = z.object({ tenant_id: TenantSchema, alias: AliasSchema }).strict();
 const InboxInstantSchema = z.iso.datetime({ offset: true });
 export const HumanMcpInboxSchema = z.object({
+  mailbox: HumanMcpMailboxSchema.nullable().optional(),
   items: z.array(z.object({
     message_id: CanonicalUuidV4Schema,
     created_at: InboxInstantSchema,
