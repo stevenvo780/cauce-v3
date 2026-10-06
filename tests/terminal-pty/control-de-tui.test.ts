@@ -527,12 +527,16 @@ describe('terminal-relay writable TUI: the circuit can run at all', () => {
 
 describe.skipIf(relay === null)('taking control of a TUI, with a recording directory configured', () => {
   let circuit: Circuit;
+  let closeCircuit: (() => Promise<void>) | undefined;
   const drive = driver(() => circuit);
 
-  beforeAll(async () => { circuit = await startCircuit('recorded', true); });
+  beforeAll(async () => {
+    circuit = await startCircuit('recorded', true);
+    closeCircuit = () => circuit.stop();
+  });
   afterEach(() => drive.cleanup());
   afterAll(async () => {
-    if (circuit !== undefined) await circuit.stop();
+    await closeCircuit?.();
   });
 
   it('refuses a signed proof from another session before sending OPEN to the agent', async () => {
@@ -702,10 +706,12 @@ describe.skipIf(relay === null)('taking control of a TUI, with a recording direc
 
 describe.skipIf(relay === null)('taking control of a TUI with no recording directory configured', () => {
   let circuit: Circuit;
+  let closeCircuit: (() => Promise<void>) | undefined;
   const drive = driver(() => circuit);
 
   beforeAll(async () => {
     circuit = await startCircuit('unrecorded', false);
+    closeCircuit = () => circuit.stop();
     await drive.attachAgent();
   });
   afterEach(async () => {
@@ -717,7 +723,7 @@ describe.skipIf(relay === null)('taking control of a TUI with no recording direc
   });
   afterAll(async () => {
     for (const handle of drive.agents.splice(0)) handle.destroy();
-    if (circuit !== undefined) await circuit.stop();
+    await closeCircuit?.();
   });
 
   it('6. refuses to open harness_rw and says why, while a plain shell still opens', async () => {
