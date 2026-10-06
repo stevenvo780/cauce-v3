@@ -14,7 +14,7 @@ if (process.argv.length !== 4 || !alias || !outputFile) {
   console.error('usage: gate-roundtrip-probe.mjs ALIAS EVIDENCE.json');
   process.exit(2);
 }
-if (!/^[a-z][a-z0-9-]*$/.test(alias)) {
+if (/^[a-z][a-z0-9_-]{0,63}$/.exec(alias)?.[0] !== alias) {
   console.error('invalid alias format');
   process.exit(2);
 }
@@ -33,6 +33,10 @@ async function regularFile(file, label, privateFile = false) {
 }
 
 async function targetFromInventory() {
+  const sourceRoom = process.env.CAUCE_GATE_SOURCE_ROOM;
+  if (typeof sourceRoom !== 'string' || sourceRoom.length < 1 || sourceRoom.length > 128 || /\p{Cc}/u.test(sourceRoom)) {
+    throw new Error('CAUCE_GATE_SOURCE_ROOM is required and must contain 1..128 characters without control characters');
+  }
   const inventoryFile = process.env.CAUCE_GATE_INVENTORY_FILE ?? path.resolve(here, '..', 'flota.json');
   const raw = await regularFile(inventoryFile, 'gate inventory');
   let decoded;
@@ -41,7 +45,7 @@ async function targetFromInventory() {
   if (!entry || typeof entry.tenant !== 'string') {
     throw new Error('alias is not declared in the gate inventory');
   }
-  return { tenant: entry.tenant, sourceRoom: 'grp.steven', alias };
+  return { tenant: entry.tenant, sourceRoom, alias };
 }
 
 function gatewayUrl() {

@@ -74,6 +74,7 @@ try {
     env: {
       ...cleanEnvironment,
       CAUCE_GATE_INVENTORY_FILE: inventory,
+      CAUCE_GATE_SOURCE_ROOM: 'empresa.ámbito',
       CAUCE_GATE_PROBE_HTTP_TIMEOUT_MS: '1.5',
     },
   });

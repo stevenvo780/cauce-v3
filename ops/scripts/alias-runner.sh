@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 
 alias_name=${1:?usage: alias-runner.sh ALIAS}
-[[ $alias_name =~ ^[a-z][a-z0-9-]*$ ]] || { printf 'invalid alias\n' >&2; exit 2; }
+[[ $alias_name =~ ^[a-z][a-z0-9_-]{0,63}$ ]] || { printf 'invalid alias\n' >&2; exit 2; }
 [[ ${CAUCE_ALIAS:-} == "$alias_name" ]] || { printf 'unit alias mismatch\n' >&2; exit 2; }
 [[ ${CAUCE_ORIGIN_TRANSPORT:-} == telegram ]] || { printf 'origin transport must be telegram\n' >&2; exit 2; }
 [[ ${CAUCE_ENVIRONMENT:-} == production ]] || { printf 'alias runtime must use production transport policy\n' >&2; exit 2; }

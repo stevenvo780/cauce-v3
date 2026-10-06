@@ -4,7 +4,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 alias_name=${1:?usage: canary.sh ALIAS BASELINE-SNAPSHOT.json}
 baseline=${2:?usage: canary.sh ALIAS BASELINE-SNAPSHOT.json}
 (($# == 2)) || { printf 'usage: canary.sh ALIAS BASELINE-SNAPSHOT.json\n' >&2; exit 2; }
-[[ $alias_name =~ ^[a-z][a-z0-9-]*$ ]] || { printf 'invalid alias\n' >&2; exit 2; }
+[[ $alias_name =~ ^[a-z][a-z0-9_-]{0,63}$ ]] || { printf 'invalid alias\n' >&2; exit 2; }
 [[ -f $baseline && -r $baseline && ! -L $baseline ]] || {
   printf 'canary baseline must be a readable regular non-symlink file\n' >&2
   exit 2

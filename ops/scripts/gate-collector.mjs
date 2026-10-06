@@ -14,6 +14,7 @@ import {
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { SYSTEM_PRINCIPAL_ALIASES } from '@cauce/protocol';
 import { boundedInteger } from './bounded-environment-integer.mjs';
 
 const requireFromStore = createRequire(new URL('../../packages/store/package.json', import.meta.url));
@@ -32,7 +33,7 @@ if (process.argv.length !== 5 || !phases.has(phase) || !alias || !outputFile) {
   console.error('usage: gate-collector.mjs ALIAS OUTPUT_FILE PHASE');
   process.exit(2);
 }
-if (!/^[a-z][a-z0-9-]*$/.test(alias)) {
+if (/^[a-z][a-z0-9_-]{0,63}$/.exec(alias)?.[0] !== alias) {
   console.error('invalid alias format');
   process.exit(2);
 }
@@ -147,7 +148,46 @@ function number(value, label) {
   return parsed;
 }
 
-async function waitForTerminal(client, target, evidence, timeoutMs) {
+function consumerLeaseIds(alias) {
+  const installation = process.env.CAUCE_INSTALLATION_ID;
+  if (installation !== undefined && /^[a-z][a-z0-9-]{0,47}$/.exec(installation)?.[0] !== installation) {
+    throw new Error('CAUCE_INSTALLATION_ID must be a canonical installation identifier');
+  }
+  const prefix = installation === undefined ? '' : `${installation}-`;
+  return [`systemd-${prefix}${alias}`, `systemd-container-${prefix}${alias}`];
+}
+
+function gateSourceRoom() {
+  const room = process.env.CAUCE_GATE_SOURCE_ROOM;
+  if (typeof room !== 'string' || room.length < 1 || room.length > 128 || /\p{Cc}/u.test(room)) {
+    throw new Error('CAUCE_GATE_SOURCE_ROOM is required and must contain 1..128 characters without control characters');
+  }
+  return room;
+}
+
+function gateProbeConditions(roomParameter, principalsParameter) {
+  return `m.tenant_id=$2 AND m.room_id=${roomParameter}
+    AND EXISTS (
+      SELECT 1 FROM memberships member
+      JOIN tenants tenant ON tenant.id=member.tenant_id
+      JOIN rooms room ON room.tenant_id=member.tenant_id AND room.id=member.room_id
+      JOIN role_policies role ON role.role=member.role
+      JOIN agents agent ON agent.tenant_id=member.tenant_id AND agent.alias=member.alias
+      WHERE member.tenant_id=m.tenant_id AND member.room_id=m.room_id AND member.alias=m.actor_alias
+        AND NOT (member.alias=ANY(${principalsParameter}::text[]))
+        AND member.enabled AND tenant.enabled AND room.enabled AND role.allow_route AND agent.enabled
+    )
+    AND m.auth_session_id='gate-probe' AND m.auth_channel='gate' AND m.origin IS NULL
+    AND m.lane='interactive' AND m.priority=-100
+    AND m.body->>'type'='system.gate.probe' AND m.body->>'nonce'=$4
+    AND (SELECT count(*) FROM jsonb_object_keys(m.body))=3
+    AND CASE WHEN jsonb_typeof(m.body->'timeout_ms')='number' THEN
+      (m.body->>'timeout_ms')::numeric BETWEEN 1 AND 604800000
+      AND (m.body->>'timeout_ms')::numeric=trunc((m.body->>'timeout_ms')::numeric)
+    ELSE false END`;
+}
+
+async function waitForTerminal(client, target, evidence, timeoutMs, sourceRoom) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const result = await client.query(
@@ -155,14 +195,9 @@ async function waitForTerminal(client, target, evidence, timeoutMs) {
          FROM deliveries d
          JOIN messages m ON m.id=d.message_id
         WHERE d.id=$1 AND d.recipient_tenant=$2 AND d.recipient_alias=$3
-          AND m.tenant_id='Steven' AND m.room_id='grp.steven' AND m.actor_alias='kant'
-          AND m.auth_session_id='gate-probe' AND m.auth_channel='gate' AND m.origin IS NULL
-          AND m.lane='interactive' AND m.priority=-100
-          AND m.body->>'type'='system.gate.probe'
-          AND m.body->>'nonce'=$4
-          AND (SELECT count(*) FROM jsonb_object_keys(m.body))=3
+          AND ${gateProbeConditions('$6', '$7')}
           AND m.created_at >= $5::timestamptz`,
-      [evidence.deliveryId, target.tenant, target.alias, evidence.nonce, evidence.startedAt],
+      [evidence.deliveryId, target.tenant, target.alias, evidence.nonce, evidence.startedAt, sourceRoom, SYSTEM_PRINCIPAL_ALIASES],
     );
     const status = result.rows[0]?.status;
     if (status === undefined) return;
@@ -186,8 +221,10 @@ async function atomicWriteJson(destination, value) {
 
 async function collectSnapshot() {
   const target = await targetFromInventory();
+  const leaseIds = consumerLeaseIds(target.alias);
   const baseline = await baselineFor(target);
   const evidence = await roundTripEvidenceFor(target);
+  const sourceRoom = evidence ? gateSourceRoom() : undefined;
   const pollerFreshMs = boundedInteger('CAUCE_GATE_POLLER_FRESH_MS', 30_000, 5_000, 120_000);
   const rejectedAckWindowMs = boundedInteger('CAUCE_GATE_REJECTED_ACK_WINDOW_MS', 300_000, 30_000, 3_600_000);
   const roundTripTimeoutMs = boundedInteger('CAUCE_GATE_ROUNDTRIP_TIMEOUT_MS', 600_000, 1_000, 1_800_000);
@@ -195,25 +232,25 @@ async function collectSnapshot() {
   let transaction = false;
   try {
     await client.connect();
-    if (evidence) await waitForTerminal(client, target, evidence, roundTripTimeoutMs);
+    if (evidence) await waitForTerminal(client, target, evidence, roundTripTimeoutMs, sourceRoom);
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     transaction = true;
 
     const consumerResult = await client.query(
       `SELECT
-         count(*) FILTER (WHERE instance_id NOT IN ('systemd-'||$2,'systemd-container-'||$2))::text AS v2_consumers,
-         count(*) FILTER (WHERE instance_id NOT IN ('systemd-'||$2,'systemd-container-'||$2)
+         count(*) FILTER (WHERE instance_id<>ALL($4::text[]))::text AS v2_consumers,
+         count(*) FILTER (WHERE instance_id<>ALL($4::text[])
            AND capabilities ? 'heartbeat'
            AND last_heartbeat_at > connected_at
            AND last_heartbeat_at >= transaction_timestamp()-$3::int*interval '1 millisecond')::text AS v2_pollers,
-         count(*) FILTER (WHERE instance_id IN ('systemd-'||$2,'systemd-container-'||$2))::text AS v3_consumers,
-         count(*) FILTER (WHERE instance_id IN ('systemd-'||$2,'systemd-container-'||$2)
+         count(*) FILTER (WHERE instance_id=ANY($4::text[]))::text AS v3_consumers,
+         count(*) FILTER (WHERE instance_id=ANY($4::text[])
            AND capabilities ? 'heartbeat'
            AND last_heartbeat_at > connected_at
            AND last_heartbeat_at >= transaction_timestamp()-$3::int*interval '1 millisecond')::text AS v3_pollers
        FROM connection_leases
        WHERE tenant_id=$1 AND alias=$2 AND lease_until>transaction_timestamp()`,
-      [target.tenant, target.alias, pollerFreshMs],
+      [target.tenant, target.alias, pollerFreshMs, leaseIds],
     );
     const consumerState = consumerResult.rows[0];
 
@@ -276,12 +313,13 @@ async function collectSnapshot() {
              SELECT 1 FROM delivery_acks ack
               WHERE ack.delivery_id=d.id AND ack.status='done' AND ack.applied
                 AND ack.instance_id=d.consumer_instance_id AND ack.epoch=d.consumer_epoch
+                AND ack.claim_token=d.claim_token AND ack.attempt=d.attempt
            ) AS terminal_ack_applied,
            EXISTS (
              SELECT 1 FROM connection_leases lease
               WHERE lease.tenant_id=d.recipient_tenant AND lease.alias=d.recipient_alias
                 AND lease.instance_id=d.consumer_instance_id AND lease.epoch=d.consumer_epoch
-                AND lease.instance_id IN ('systemd-'||$3,'systemd-container-'||$3)
+                AND lease.instance_id=ANY($9::text[])
                 AND lease.lease_until>transaction_timestamp()
                 AND lease.capabilities ? 'heartbeat'
                 AND lease.last_heartbeat_at>lease.connected_at
@@ -289,16 +327,11 @@ async function collectSnapshot() {
            ) AS active_lease_match
          FROM deliveries d JOIN messages m ON m.id=d.message_id
         WHERE d.id=$1 AND d.recipient_tenant=$2 AND d.recipient_alias=$3
-          AND m.tenant_id='Steven' AND m.room_id='grp.steven' AND m.actor_alias='kant'
-          AND m.auth_session_id='gate-probe' AND m.auth_channel='gate' AND m.origin IS NULL
-          AND m.lane='interactive' AND m.priority=-100
-          AND m.body->>'type'='system.gate.probe'
-          AND m.body->>'nonce'=$4
-          AND (SELECT count(*) FROM jsonb_object_keys(m.body))=3
+          AND ${gateProbeConditions('$7', '$8')}
           AND m.created_at >= $5::timestamptz`,
         [
           evidence.deliveryId, target.tenant, target.alias, evidence.nonce,
-          evidence.startedAt, pollerFreshMs,
+          evidence.startedAt, pollerFreshMs, sourceRoom, SYSTEM_PRINCIPAL_ALIASES, leaseIds,
         ],
       );
       const proof = proofResult.rows[0];

@@ -21,6 +21,7 @@ function run(arguments_, extra = {}) {
       ...process.env,
       CAUCE_DATABASE_URL: 'postgres://127.0.0.1:1/unreachable',
       CAUCE_GATE_INVENTORY_FILE: inventory,
+      CAUCE_GATE_SOURCE_ROOM: 'grp.steven',
       ...extra,
     },
   });
@@ -82,6 +83,23 @@ try {
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /mode 0600/);
+
+  await chmod(evidence, 0o600);
+  for (const room of [undefined, '', 'empresa\n', 'empresa\u0085', 'a'.repeat(129)]) {
+    result = run(['kant', output, 'post-cutover'], {
+      CAUCE_GATE_BASELINE_FILE: baseline,
+      CAUCE_GATE_PROBE_EVIDENCE_FILE: evidence,
+      CAUCE_GATE_SOURCE_ROOM: room,
+    });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /CAUCE_GATE_SOURCE_ROOM is required/u);
+  }
+
+  for (const installation of ['', 'empresa_principal', '../empresa', 'empresa\n', 'a'.repeat(49), 'A']) {
+    result = run(['kant', output, 'drain'], { CAUCE_INSTALLATION_ID: installation });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /CAUCE_INSTALLATION_ID must be a canonical installation identifier/u);
+  }
 
   process.stdout.write('gate-collector pre-database validation tests passed\n');
 } finally {

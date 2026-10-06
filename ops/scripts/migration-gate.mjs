@@ -62,7 +62,7 @@ try {
   if (typeof parsed.tenant !== 'string' || parsed.tenant.length < 1 || parsed.tenant.length > 64) {
     fail('snapshot tenant is invalid');
   }
-  if (parsed.alias !== expectedAlias || !/^[a-z][a-z0-9-]*$/.test(parsed.alias)) {
+  if (parsed.alias !== expectedAlias || /^[a-z][a-z0-9_-]{0,63}$/.exec(parsed.alias)?.[0] !== parsed.alias) {
     fail('snapshot alias mismatch');
   }
   const captured = timestamp(parsed.capturedAt, 'capturedAt');
