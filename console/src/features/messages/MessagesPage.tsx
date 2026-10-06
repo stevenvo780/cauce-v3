@@ -119,7 +119,11 @@ function MessagesPageContent({ params }: MessagesPageProps) {
     const root = envolturaRef.current;
     if (seleccionado && lastSelected.current !== seleccionado.id) {
       lastSelected.current = seleccionado.id;
-      if (!document.activeElement?.closest('[role="dialog"]')) {
+      const activeElement = document.activeElement;
+      const focusInsideDialog = activeElement?.closest('[role="dialog"]');
+      const focusOnExpandedDialogTrigger = activeElement?.getAttribute('aria-haspopup') === 'dialog'
+        && activeElement.getAttribute('aria-expanded') === 'true';
+      if (!focusInsideDialog && !focusOnExpandedDialogTrigger) {
         root?.querySelector<HTMLElement>('.messenger-thread h2')?.focus({ preventScroll: true });
       }
     } else if (!requestedId && lastSelected.current) {
