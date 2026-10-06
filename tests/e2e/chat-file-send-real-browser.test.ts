@@ -118,15 +118,17 @@ async function publishFile(tenant: FunctionalTenant, file: TestFile, text: strin
       WHERE m.tenant_id=$1 AND d.recipient_alias=$2 AND m.body->'attachments_v1'->0->>'name'=$3`,
     [tenant.tenant, tenant.target, file.name],
   );
-  await expect.poll(async () => (await records()).rows[0]?.status,
-    { timeout: 35_000, interval: 100 }).toBe('done').catch(async (cause: unknown) => {
-      throw await browserDeliveryFailure(cause, {
-        pool: active.database.pool, tenant, instanceId: `file-e2e-${tenant.tenant.toLowerCase()}`,
-        selector: { kind: 'filename', value: file.name },
-        stdout: active.prompts[`${tenant.tenant}:stdout`] ?? '', stderr: active.prompts[`${tenant.tenant}:stderr`] ?? '',
-        child: active.adapters[functionalTenants.indexOf(tenant)],
-      });
+  try {
+    await expect.poll(async () => (await records()).rows[0]?.status,
+      { timeout: 35_000, interval: 100 }).toBe('done');
+  } catch (cause) {
+    throw await browserDeliveryFailure(cause, {
+      pool: active.database.pool, tenant, instanceId: `file-e2e-${tenant.tenant.toLowerCase()}`,
+      selector: { kind: 'filename', value: file.name },
+      stdout: active.prompts[`${tenant.tenant}:stdout`] ?? '', stderr: active.prompts[`${tenant.tenant}:stderr`] ?? '',
+      child: active.adapters[functionalTenants.indexOf(tenant)],
     });
+  }
   const persisted = (await records()).rows;
   expect(persisted).toHaveLength(1);
   const row = persisted[0];
