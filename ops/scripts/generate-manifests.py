@@ -8,6 +8,7 @@ import re
 import sys
 from typing import Any
 
+import yaml
 from atomic_file import atomic_write
 from fleet_derive import manifest_doc
 
@@ -35,10 +36,13 @@ def load_fleet(path: pathlib.Path) -> dict[str, dict[str, Any]]:
             raise GeneratorError(f"fleet contains an invalid manifest alias: {alias!r}")
         if not isinstance(row, dict) or row.get("enabled") is not True:
             raise GeneratorError(f"fleet.{alias} must be an enabled agent object")
-        for field in ("tenant", "room", "harness"):
+        for field in ("tenant", "harness"):
             value = row.get(field)
             if not isinstance(value, str) or not PLAIN_SCALAR_RE.fullmatch(value):
                 raise GeneratorError(f"fleet.{alias}.{field} is not a safe plain YAML scalar")
+        room = row.get("room")
+        if not isinstance(room, str) or not 1 <= len(room) <= 128 or any(ord(c) < 32 or ord(c) == 127 for c in room):
+            raise GeneratorError(f"fleet.{alias}.room is invalid")
         home = row.get("home")
         if (
             not isinstance(home, str)
@@ -48,6 +52,12 @@ def load_fleet(path: pathlib.Path) -> dict[str, dict[str, Any]]:
         ):
             raise GeneratorError(f"fleet.{alias}.home is not a canonical absolute path")
     return fleet
+
+
+def yaml_scalar(value: str) -> str:
+    if PLAIN_SCALAR_RE.fullmatch(value) and isinstance(yaml.safe_load(value), str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
 
 
 def render_manifest(alias: str, row: dict[str, Any]) -> str:
@@ -75,8 +85,8 @@ kind: {document["kind"]}
 metadata:
   name: {document["metadata"]["name"]}
 spec:
-  tenant: {spec["tenant"]}
-  room: {spec["room"]}
+  tenant: {yaml_scalar(spec["tenant"])}
+  room: {yaml_scalar(spec["room"])}
   alias: {spec["alias"]}
   harness: {spec["harness"]}
   profile: {profile_text}

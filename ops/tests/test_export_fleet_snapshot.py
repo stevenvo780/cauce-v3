@@ -144,29 +144,18 @@ class FleetSnapshotDocumentTest(unittest.TestCase):
         )
         self.assertLess(body.index(b'"fleet"'), body.index(b'"schemaVersion"'))
 
-    def test_rejects_tenant_outside_real_schema_enum(self) -> None:
-        self.assertEqual(
-            MODULE.tenant_enum(),
-            frozenset({"Steven", "Miguel", "Isa", "Jhon", "Hospital"}),
-        )
-        hospital = MODULE.snapshot_document(
-            source(
-                agents=[agent("operador", tenant="Hospital", harness="openclaw")],
-                memberships=[
-                    membership(
-                        "operador", tenant="Hospital", room="grp.hospital", role="operator"
-                    )
-                ],
-            )
-        )
-        self.assertEqual(hospital["fleet"]["operador"]["tenant"], "Hospital")
-        with self.assertRaisesRegex(MODULE.SnapshotError, "tenant enum"):
-            MODULE.snapshot_document(
-                source(
-                    agents=[agent("dedalo", tenant="Pablo", enabled=False)],
-                    memberships=[membership("dedalo", tenant="Pablo", room="grp.pablo")],
-                )
-            )
+    def test_accepts_generic_tenants_and_rejects_invalid_identifiers(self) -> None:
+        for tenant in ("Hospital", "Empresa_42", "Pablo"):
+            document = MODULE.snapshot_document(source(
+                agents=[agent("operador", tenant=tenant, harness="openclaw")],
+                memberships=[membership("operador", tenant=tenant, room="sala.42")],
+            ))
+            self.assertEqual(document["fleet"]["operador"]["tenant"], tenant)
+        with self.assertRaisesRegex(MODULE.SnapshotError, "tenant contract"):
+            MODULE.snapshot_document(source(
+                agents=[agent("operador", tenant="bad tenant")],
+                memberships=[membership("operador", tenant="bad tenant")],
+            ))
 
     def test_fails_loud_on_every_unrepresentable_database_row(self) -> None:
         cases = {

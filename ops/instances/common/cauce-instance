@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+
+from descriptor import InstanceError
+from instance import apply_instance, load_instance_descriptor, plan_instance, status_instance
+
+parser = argparse.ArgumentParser(description="Install an independently owned Cauce instance")
+parser.add_argument("operation", choices=("plan", "install", "update", "status"))
+parser.add_argument("--instance-config", "--descriptor", dest="descriptor", required=True)
+args = parser.parse_args()
+try:
+    descriptor = load_instance_descriptor(args.descriptor)
+    if args.operation == "plan":
+        result = plan_instance(descriptor)
+    elif args.operation in {"install", "update"}:
+        result = apply_instance(plan_instance(descriptor), update=args.operation == "update")
+    else:
+        result = status_instance(descriptor)
+    print(json.dumps(result, sort_keys=True, indent=2))
+except (OSError, ValueError, InstanceError) as error:
+    print(f"cauce-instance: {error}", file=sys.stderr)
+    raise SystemExit(1) from None

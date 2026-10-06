@@ -19,8 +19,8 @@
       "additionalProperties": false,
       "required": ["tenant", "room", "alias", "harness", "profile", "origin", "relay", "secretPathEnv", "process", "stateDirectory"],
       "properties": {
-        "tenant": { "enum": ["Steven", "Miguel", "Isa", "Jhon", "Hospital"] },
-        "room": { "enum": ["grp.steven", "grp.miguel", "grp.isa", "grp.jhon", "grp.hospital"] },
+        "tenant": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$" },
+        "room": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\u0000-\\u001f\\u007f]+$"},
         "alias": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
         "harness": { "enum": ["openclaw", "opencode", "claude", "hermes", "codex", "grok", "muse"] },
         "profile": {
@@ -68,7 +68,7 @@
             "operationalModelEnv": { "const": "HERMES_INFERENCE_MODEL" }
           }
         },
-        "stateDirectory": { "type": "string", "pattern": "^/var/lib/cauce-v3/aliases/[a-z][a-z0-9-]*$" }
+        "stateDirectory": { "type": "string", "pattern": "^/[A-Za-z0-9._/-]+$" }
       },
       "allOf": [
         {
