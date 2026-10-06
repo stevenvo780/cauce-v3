@@ -323,6 +323,14 @@
 .chat-inspector-head h3 { margin: 0; font-size: var(--tipo-cuerpo); }
 
 .composer-input-row { min-width: 0; }
+.composer-file-input { display: none; }
+.messenger-composer .composer-attach { display: grid; width: 44px; height: 44px; min-width: 44px; flex: none; place-items: center; padding: 0; }
+.messenger-composer .composer-attachment-remove { display: grid; width: 44px; height: 44px; min-width: 44px; flex: none; place-items: center; padding: 0; }
+.messenger-composer .composer-attach, .messenger-composer .composer-attachment-remove { touch-action: manipulation; }
+.composer-attachments { display: flex; flex-wrap: wrap; gap: var(--space-2); min-width: 0; margin: var(--space-2) 0 0; padding: 0; list-style: none; }
+.composer-attachments li { display: flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%; padding-left: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-2); }
+.composer-attachments li > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-attachments li > small { flex: none; color: var(--faint); }
 .messenger-thread-identity { min-width: 0; }
 .messenger-thread-head h2 { overflow-wrap: anywhere; }
 .messenger-thread-scroll .terminal-transcript-empty { margin: auto; padding: var(--space-4); }
