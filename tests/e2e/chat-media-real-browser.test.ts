@@ -256,6 +256,8 @@ async function previewMedia(page: BrowserPage, files: MediaFile[]): Promise<void
   for (const file of files.filter((item) => item.mimeType.startsWith('audio/') || item.mimeType.startsWith('video/'))) {
     const row = page.locator(`li.chat-message-file:has(strong:text-is(${JSON.stringify(file.name)}))`);
     await row.getByRole('button', { name: 'Cargar reproductor', exact: true }).click();
+    const player = file.mimeType.startsWith('audio/') ? 'audio' : 'video';
+    await row.locator(`${player}[controls][src^="blob:"]`).waitFor({ state: 'visible', timeout: 10_000 });
     const played = await page.evaluate(async (name) => {
       const media = Array.from(document.querySelectorAll<HTMLMediaElement>('audio,video'))
         .find((element) => element.getAttribute('aria-label')?.endsWith(name));
