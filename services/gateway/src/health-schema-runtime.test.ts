@@ -1,3 +1,4 @@
+import { schemaBarrierReply } from '../../../tests/helpers/schema-barrier.js';
 import { readFile } from 'node:fs/promises';
 import type { DatabasePool } from '@cauce/store';
 import { describe, expect, it, vi } from 'vitest';
@@ -122,7 +123,9 @@ const adversarialCases = schemaProbeCases.flatMap((probeCase) =>
 );
 
 function poolReturning(marker: string, row: Readonly<Record<string, unknown>>): DatabasePool {
-  const query = vi.fn(async (sql: string) => {
+  const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
     if (sql.includes(marker)) return { rows: [row], rowCount: 1 };
     return { rows: [], rowCount: 0 };
   });
@@ -140,8 +143,10 @@ function poolWithExpectations(rows: readonly Readonly<Record<string, unknown>>[]
   readonly statements: string[];
 } {
   const statements: string[] = [];
-  const query = vi.fn(async (sql: string) => {
+  const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
     statements.push(sql);
+    const schema = schemaBarrierReply(sql, params);
+    if (schema) return schema;
     return sql.includes('agent_profile_runtime_expectations')
       ? { rows: [...rows], rowCount: rows.length }
       : { rows: [], rowCount: 0 };

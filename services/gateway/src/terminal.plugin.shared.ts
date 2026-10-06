@@ -1,3 +1,4 @@
+import { schemaBarrierReply } from '../../../tests/helpers/schema-barrier.js';
 /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { DatabasePool } from '@cauce/store';
 import { createHash } from 'node:crypto';
@@ -78,6 +79,8 @@ function fakeDatabase(): FakeDatabase {
   };
 
   const query = async (text: string, values: unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> => {
+    const schema = schemaBarrierReply(text, values);
+    if (schema) return schema;
     const now = clock.now();
     if (text.trim() === 'SELECT clock_timestamp() AS database_now') {
       return { rows: [{ database_now: new Date(now) }], rowCount: 1 };

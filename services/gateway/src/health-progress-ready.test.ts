@@ -1,3 +1,4 @@
+import { schemaBarrierReply } from '../../../tests/helpers/schema-barrier.js';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
@@ -33,7 +34,9 @@ async function listeningDataApp(): Promise<{ server: Server }> {
 
 describe('gateway readiness stops lying about the listener the agents actually use', () => {
   it('rejects schema-037 when same-named indexes do not match the exact definitions', async () => {
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
       if (sql.includes('AS migration_ledger_exact')) {
         return {
           rows: [{
@@ -102,7 +105,9 @@ describe('gateway readiness stops lying about the listener the agents actually u
     const telemetry = new WakePumpTelemetry();
     telemetry.beginCycle();
     telemetry.finishCycle();
-    const clientQuery = vi.fn(async (sql: string) => {
+    const clientQuery = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
+      const schema = schemaBarrierReply(sql, params);
+      if (schema) return schema;
       if (sql.includes('AS migration_applied')) {
         return {
           rows: [{
