@@ -143,8 +143,8 @@ it('abre el hilo del agente elegido y NO mezcla los mensajes de los demás', asy
 }, 20_000);
 
 it('conserva el foco del opener de diálogo expandido al hidratar el agente seleccionado', async () => {
-  let releaseTopology: () => void = () => {};
-  let markTopologyStarted: () => void = () => {};
+  let releaseTopology: () => void = () => undefined;
+  let markTopologyStarted: () => void = () => undefined;
   const topologyStarted = new Promise<void>((resolve) => { markTopologyStarted = resolve; });
   const pendingTopology = new Promise<void>((resolve) => { releaseTopology = resolve; });
   const status = mockStatus();
@@ -184,7 +184,7 @@ it('permite que la selección y navegación enfoquen el hilo con el opener de di
   function MessagesWithNavigation() {
     const [params, setParams] = useState<readonly string[]>(['Steven', 'argos']);
     return <>
-      <button type="button" onClick={() => setParams(['Miguel', 'kratos'])}>Elegir kratos</button>
+      <button type="button" onClick={() => { setParams(['Miguel', 'kratos']); }}>Elegir kratos</button>
       <button type="button" aria-controls="external-panel" aria-haspopup="dialog" aria-expanded="false">Abrir panel</button>
       <section id="external-panel" role="dialog" aria-label="Panel externo">Contenido del panel</section>
       <MessagesPage params={params} />
