@@ -7,7 +7,7 @@ import unittest
 import uuid
 from unittest import mock
 
-from test_tmux_dynamic import TMUX, _loadable_bundle, agent
+from .test_tmux_dynamic import TMUX, _loadable_bundle, agent
 
 
 @unittest.skipUnless(TMUX, "tmux is required for native presence")

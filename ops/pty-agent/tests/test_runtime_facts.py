@@ -121,7 +121,7 @@ class RuntimeFactsTest(unittest.TestCase):
             **facts,
         }
         self.processes.append(subprocess.Popen(
-            ["/bin/sleep", "30"], env=environment, cwd=cwd or self.workspace,
+            ["/bin/sleep", "infinity"], env=environment, cwd=cwd or self.workspace,
         ))
 
     def _measure(self, harness: str, *, tmux_cwd: pathlib.Path | None = None) -> str:
