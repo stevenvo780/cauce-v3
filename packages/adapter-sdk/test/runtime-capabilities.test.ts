@@ -7,6 +7,7 @@ import { helloCapabilityStrings } from "../src/sdk/client.js";
 const HELLO_SUFFIXES = [
   "console_human_scope_v1",
   "agent_identity_v1",
+  "agent_behavior_policy_v1",
   "agent_profile_adoption_v1",
   "agent_profile_v1",
   "delegation_feedback_v1",
@@ -48,7 +49,7 @@ test("hello advertises only capabilities consumed by runtime or operational read
       [`harness.${definition.id}`, ...HELLO_SUFFIXES, ...workState].sort(),
       definition.id,
     );
-    assert.equal(advertised.length, 10 + workState.length, definition.id);
+    assert.equal(advertised.length, 11 + workState.length, definition.id);
     assert.equal(new Set(advertised).size, advertised.length, definition.id);
   }
 });
@@ -119,4 +120,12 @@ test("client HELLO follows the immutable factory capability for supported and un
       assert.equal(hello.capabilities.includes("human_message_initiator_v1"), definition.id !== "fake");
     } finally { stop.abort(); await running; }
   }
+});
+
+
+test("old adapters omit behavior policy capability on their original wire", () => {
+  const { agent_behavior_policy_v1: _capability, ...old } = HARNESS_DEFINITIONS.fake.capabilities;
+  assert.equal(helloCapabilityStrings(old).includes("agent_behavior_policy_v1"), false);
+  assert.equal(helloCapabilityStrings(HARNESS_DEFINITIONS.fake.capabilities)
+    .filter(value => value === "agent_behavior_policy_v1").length, 1);
 });

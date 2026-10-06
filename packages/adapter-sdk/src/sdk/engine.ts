@@ -33,8 +33,6 @@ import {
 import type { ExecutionBudget, DeliveryHarnessInvocation } from "./engine/delivery-context.js";
 import {
   executionBudgetFor,
-  routingTargetsFromDelivery,
-  selfRoleFromDelivery,
   prepareDeliveryInvocation,
   timeoutFromBody,
   timeoutKindFromBody,
@@ -49,6 +47,7 @@ import type { SealedSecretGateway, TurnInput, TurnInputDeps } from "./engine/tur
 import { materializeTurnInput, releaseTurn } from "./engine/turn-cleanup.js";
 import { runSystemGateProbe } from "./engine/system-gate-probe.js";
 import { isConversationStatusRequest, runConversationStatus } from "./engine/conversation-status.js";
+import { deliveryHarnessContext } from "./engine/harness-context.js";
 import { PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE, runPraxisSupervisionNotice } from "./engine/praxis-supervision-notice.js";
 import { DEFAULT_NO_PROGRESS_TIMEOUT_MS } from "./message-timeout.js";
 import type { EmissionRuntime } from "./mcp-emission/runtime.js";
@@ -68,6 +67,7 @@ export class AdapterEngine {
   private readonly logger: AdapterLogger;
   private readonly ownTenantId: string | undefined;
   private readonly ownRoom: string | undefined;
+  private readonly ownAlias: string | undefined;
   private readonly defaultTimeoutMs: number;
   private readonly claimRenewalMs: number | undefined;
   private readonly claimWatchdogMs: number | undefined;
@@ -98,6 +98,7 @@ export class AdapterEngine {
     this.logger = options.logger ?? (() => undefined);
     this.ownTenantId = options.ownTenantId;
     this.ownRoom = options.ownRoom;
+    this.ownAlias = options.ownAlias;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_NO_PROGRESS_TIMEOUT_MS;
     if (messageTimeoutMs({ timeout_ms: this.defaultTimeoutMs }) === undefined) {
       throw new RangeError(
@@ -161,7 +162,7 @@ export class AdapterEngine {
       const localHandler = supervisionNotice ? runPraxisSupervisionNotice : runConversationStatus;
       const execution = statusRequest || supervisionNotice ? localHandler(delivery, {
         store: this.store, clock: this.clock, publishEvent: this.publishEvent,
-        ownTenantId: this.ownTenantId, ownRoom: this.ownRoom,
+        ownTenantId: this.ownTenantId, ownRoom: this.ownRoom, ownAlias: this.ownAlias,
         isCurrent: () => delivery.epoch === this.store.epoch
           && !this.fenced.has(delivery.delivery_id) && !controller.signal.aborted,
       }) : this.runSystemGateProbe(delivery);
@@ -297,7 +298,9 @@ export class AdapterEngine {
       clock: this.clock,
       publishEvent: this.publishEvent,
       replayPending: (record) => this.replayPending(record),
-      rejectStale: (stale) => this.rejectStale(stale),
+      ownAlias: this.ownAlias,
+      isCurrent: () => delivery.epoch === this.store.epoch && !this.fenced.has(delivery.delivery_id)
+        && !this.controllers.get(delivery.delivery_id)?.signal.aborted,
     });
   }
 
@@ -346,7 +349,6 @@ export class AdapterEngine {
     const controller = new AbortController();
     this.controllers.set(delivery.delivery_id, controller);
 
-    // Waits to acquire the session lock before transitioning to 'started'.
     if (reservation !== undefined) {
       const acquired = await this.awaitSessionTurn(
         accepted.record,
@@ -363,35 +365,14 @@ export class AdapterEngine {
     const messageType = typeof delivery.body.type === "string"
       ? delivery.body.type
       : "request";
-    const rawRequestContext: HarnessRequestContext = {
-      ...(this.emission === undefined ? {} : { mcp_emit: true }),
-      ...(humanInitiator === undefined ? {} : { human_initiator: humanInitiator }),
-      self_alias: delivery.recipient_alias,
-      sender_alias: delivery.actor_alias,
-      sender_tenant_id: delivery.tenant_id,
-      tenant_id: this.ownTenantId ?? delivery.tenant_id,
-      room_id: this.ownRoom ?? delivery.room_id,
-      channel: delivery.authenticated_context?.channel
-        ?? delivery.origin?.channel
-        ?? "cauce",
-      agent_message: messageType === "agent.message"
-        || messageType === "agent.response"
-        || messageType === "agent.fanin",
-      message_type: messageType,
-      routing_targets: routingTargetsFromDelivery(delivery),
-      ...selfRoleFromDelivery(delivery),
-      ...(delivery.profile_runtime_contract === undefined
-        ? {}
-        : { native_profile_contract: delivery.profile_runtime_contract }),
-    };
-    let requestContext = rawRequestContext;
-    if (messageType !== "agent.fanin") {
-      try {
-        requestContext = harness.prepareContext(rawRequestContext);
-      } catch (error) {
-        await this.finishError(accepted.record, this.adapterError(error, accepted.record));
-        return;
-      }
+    let requestContext: HarnessRequestContext;
+    try {
+      requestContext = deliveryHarnessContext(delivery, this.ownTenantId, this.ownRoom,
+        this.ownAlias, this.emission !== undefined, humanInitiator);
+      if (messageType !== "agent.fanin") requestContext = harness.prepareContext(requestContext);
+    } catch (error) {
+      await this.finishError(accepted.record, this.adapterError(error, accepted.record));
+      return;
     }
 
     phase("setup_completed");
@@ -432,7 +413,7 @@ export class AdapterEngine {
           delivery.body,
           {
             ...(processedReplies.length === 0 ? {} : { processedReplies }),
-            ...(this.ownTenantId === 'Hospital' && delivery.recipient_alias === 'operador'
+            ...(requestContext.behavior_policy?.fanin_receipt_mode === 'human'
               ? { humanFacingReceipt: true } : {}),
           },
         ), {

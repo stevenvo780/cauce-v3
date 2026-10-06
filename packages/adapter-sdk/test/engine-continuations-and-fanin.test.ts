@@ -505,6 +505,8 @@ test("Hospital director fan-in sends a short human reply without raw branch repo
     room_id: "grp.hospital",
     actor_alias: "cauce",
     recipient_alias: "operador",
+    behavior_policy: { version: 1, revision: "7", scope: { tenant_id: "Hospital", room_id: "grp.hospital", alias: "operador" },
+      coordination_mode: "coordinator", fanin_receipt_mode: "human" },
     body: {
       type: "agent.fanin",
       fanin_data_v1: {
@@ -544,6 +546,8 @@ test("Hospital director fan-in preserves a clear local conclusion without raw br
     ...delivery("hospital-conclusion-root"),
     tenant_id: "Hospital", room_id: "grp.hospital",
     recipient_alias: "operador",
+    behavior_policy: { version: 1, revision: "7", scope: { tenant_id: "Hospital", room_id: "grp.hospital", alias: "operador" },
+      coordination_mode: "coordinator", fanin_receipt_mode: "human" },
     routing_targets: [{ tenant_id: "Hospital", alias: "teseo", online: true }],
   };
   await context.engine.handleDelivery(rootDelivery);
@@ -556,6 +560,8 @@ test("Hospital director fan-in preserves a clear local conclusion without raw br
     ...delivery("hospital-conclusion-response"),
     tenant_id: "Hospital", room_id: "grp.hospital",
     actor_alias: "teseo", recipient_alias: "operador",
+    behavior_policy: { version: 1, revision: "7", scope: { tenant_id: "Hospital", room_id: "grp.hospital", alias: "operador" },
+      coordination_mode: "coordinator", fanin_receipt_mode: "human" },
     trace_id: rootDelivery.trace_id,
     body: {
       type: "agent.response", text: "raw backend sha256 1234567890123456789012345678901234567890",
@@ -572,6 +578,8 @@ test("Hospital director fan-in preserves a clear local conclusion without raw br
     ...delivery("hospital-conclusion-fanin"),
     tenant_id: "Hospital", room_id: "grp.hospital",
     actor_alias: "cauce", recipient_alias: "operador",
+    behavior_policy: { version: 1, revision: "7", scope: { tenant_id: "Hospital", room_id: "grp.hospital", alias: "operador" },
+      coordination_mode: "coordinator", fanin_receipt_mode: "human" },
     trace_id: rootDelivery.trace_id,
     body: {
       type: "agent.fanin",

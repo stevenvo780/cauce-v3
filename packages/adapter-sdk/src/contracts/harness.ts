@@ -1,7 +1,7 @@
 import type { OpenClawPhaseObserver } from "../sdk/openclaw-phases.js";
 import type { NoticeSelection } from "../sdk/notify-history.js";
 import type { HarnessTimeoutKind } from "../sdk/message-timeout.js";
-import type { DeliveryEnvelope, ProfileRuntimeContract } from "@cauce/protocol";
+import type { AgentBehaviorPolicyV1, DeliveryEnvelope, ProfileRuntimeContract } from "@cauce/protocol";
 import type { DurableStore, SessionOrigin } from "../sdk/durable-store.js";
 import type {
   CommandRunner,
@@ -20,6 +20,7 @@ export type { HarnessAdapter } from "../harnesses/shared/adapter.js";
 export interface HarnessRequestContext {
   readonly human_initiator?: NonNullable<DeliveryEnvelope["human_initiator"]>;
   readonly mcp_emit?: true;
+  readonly behavior_policy?: AgentBehaviorPolicyV1;
   readonly self_alias: string;
   readonly sender_alias: string;
   readonly sender_tenant_id?: string;

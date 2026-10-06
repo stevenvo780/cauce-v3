@@ -51,6 +51,8 @@ const baseContext: HarnessRequestContext = {
   agent_message: true,
   message_type: "agent.message",
   routing_targets: [{ tenant_id: "Steven", alias: "zeus", online: true }],
+  behavior_policy: { version: 1, revision: "7", scope: { tenant_id: "Steven", room_id: "grp.steven", alias: "argos" },
+    coordination_mode: "coordinator", fanin_receipt_mode: "technical", escalation: { infrastructure: { tenant_id: "Steven", alias: "zeus" } } },
 };
 
 async function stdinFor(
@@ -128,7 +130,7 @@ test("la identidad describe el mundo del agente y deja el mandato al deber prima
   assert.match(identity, /Entre entregas no existís/u);
   assert.match(identity, /no dejes el turno abierto/u);
   assert.match(identity, /Comunicación no es autorización/u);
-  assert.match(identity, /escalá a zeus con el error textual crudo/u);
+  assert.match(identity, /escalá a zeus \(tenant Steven\) con el error textual crudo/u);
 
   // The mandate lives only in the primary duty, which is director-specific for this context.
   assert.doesNotMatch(identity, /Esta entrega es TU trabajo/u);
@@ -161,10 +163,10 @@ test("el rol del alias gana a las lineas genericas, y solo cuando hay rol", asyn
     conRol.indexOf(IDENTITY_BEGIN),
     conRol.indexOf(IDENTITY_END) + IDENTITY_END.length,
   );
-  assert.match(identidad, /Tu rol manda sobre las líneas genéricas de este bloque/u);
+  assert.match(identidad, /Tu rol describe tu trabajo; la política tipada define la coordinación/u);
 
   assert.ok(
-    identidad.indexOf("Tu rol manda sobre las líneas genéricas")
+    identidad.indexOf("Tu rol describe tu trabajo")
       > identidad.indexOf("Comunicación no es autorización"),
     "la precedencia tiene que cerrar el bloque, no abrirlo",
   );
@@ -172,5 +174,5 @@ test("el rol del alias gana a las lineas genericas, y solo cuando hay rol", asyn
   assert.match(identidad, /Si algo SÓLO lo puede resolver un humano/u);
 
   const sinRol = await stdinFor("identity-precedencia-sin-rol", HARNESS_DEFINITIONS.claude, baseContext);
-  assert.doesNotMatch(sinRol, /Tu rol manda sobre las líneas genéricas/u);
+  assert.doesNotMatch(sinRol, /Tu rol describe tu trabajo/u);
 });

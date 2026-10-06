@@ -28,6 +28,11 @@ function noticeDelivery(id: string, overrides: Partial<Delivery> = {}): Delivery
   return {
     ...base, tenant_id: "Hospital", room_id: "grp.hospital",
     actor_alias: "praxis-supervisor", recipient_alias: "operador",
+    behavior_policy: {
+      version: 1, revision: "7", scope: { tenant_id: "Hospital", room_id: "grp.hospital", alias: "operador" },
+      coordination_mode: "coordinator", fanin_receipt_mode: "human",
+      supervision_notice: { issuer_alias: "praxis-supervisor", issuer_session_id: "praxis-supervisor", egress_handle: "steven_dm" },
+    },
     authenticated_context: { session_id: "praxis-supervisor", channel: "adapter" },
     body: { type: PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE, kind: "alert", text: "El trabajo requiere atención." },
     ...overrides,
@@ -46,7 +51,7 @@ async function setup(
   const events: DeliveryEvent[] = [];
   let executionIntents = 0;
   const engine = new AdapterEngine({
-    store, harness, ownTenantId, ownRoom,
+    store, harness, ownTenantId, ownRoom, ownAlias: "operador",
     publishExecutionIntent: async () => { executionIntents += 1; },
     publish: async (event) => { events.push(event); await onPublish?.(event, engine); },
   });
@@ -90,7 +95,12 @@ test("reserved notices reject foreign authority, forged body identity and additi
   const body = noticeDelivery("supervision-body").body;
   const origin = delivery("supervision-human").origin;
   assert.ok(origin);
+  const approvedPolicy = noticeDelivery("policy-forgery").behavior_policy;
+  assert.ok(approvedPolicy);
   const cases: Partial<Delivery>[] = [
+    { behavior_policy: undefined },
+    { recipient_alias: "frontend", behavior_policy: { ...approvedPolicy,
+      scope: { tenant_id: "Hospital", room_id: "grp.hospital", alias: "frontend" } } },
     { tenant_id: "Steven" }, { room_id: "grp.steven" }, { recipient_alias: "frontend" },
     { actor_alias: "operador" }, { actor_alias: "Praxis-supervisor" },
     { authenticated_context: { session_id: "wrong-session", channel: "adapter" } },
@@ -189,7 +199,7 @@ test("duplicate notices reuse the exact ACK and cached notification, including a
   context.events.length = 0;
   const reopened = await DurableStore.open(resolve(root, name));
   const restarted = new AdapterEngine({
-    store: reopened, harness: context.harness, ownTenantId: "Hospital", ownRoom: "grp.hospital",
+    store: reopened, harness: context.harness, ownTenantId: "Hospital", ownRoom: "grp.hospital", ownAlias: "operador",
     executionIntentMode: "local-test-only", publish: async (event) => { context.events.push(event); },
   });
   await restarted.handleDelivery(input);
@@ -246,4 +256,39 @@ test("notice claim loss during async preparation is rechecked at the durable per
   assert.equal(context.store.getDelivery(input.delivery_id)?.state, "accepted");
   assert.equal(context.store.pendingEvents().some((event) => event.phase === "done"), false);
   assert.deepEqual(context.events.map((event) => event.phase), ["accepted"]);
+});
+
+
+test("same consumer alias in two companies uses only its own approved notice handle", async () => {
+  const companies: [string, string, string][] = [["Acme", "grp.acme", "acme_owner"], ["Beta", "grp.beta", "beta_owner"]];
+  for (const [tenant, room, handle] of companies) {
+    const context = await setup(`notice-company-${tenant}`, undefined, tenant, room);
+    const policy = { version: 1 as const, revision: "7", scope: { tenant_id: tenant, room_id: room, alias: "operador" },
+      coordination_mode: "executor" as const, fanin_receipt_mode: "technical" as const,
+      supervision_notice: { issuer_alias: "watcher", issuer_session_id: "watcher-session", egress_handle: handle } };
+    const input = noticeDelivery(`notice-${tenant}`, { tenant_id: tenant, room_id: room, actor_alias: "watcher",
+      authenticated_context: { session_id: "watcher-session", channel: "adapter" }, behavior_policy: policy });
+    await context.engine.handleDelivery(input);
+    assert.deepEqual(context.store.getDelivery(input.delivery_id)?.output?.notify,
+      [{ to: handle, kind: "alert", body: "El trabajo requiere atención." }]);
+    const foreign = noticeDelivery(`notice-foreign-${tenant}`, { ...input,
+      delivery_id: delivery(`notice-foreign-${tenant}`).delivery_id,
+      behavior_policy: { ...policy, scope: { ...policy.scope, tenant_id: "Foreign" } } });
+    await context.engine.handleDelivery(foreign);
+    assert.equal(context.store.getDelivery(foreign.delivery_id)?.state, "failed");
+    assert.equal(context.runner.calls, 0);
+  }
+});
+
+test("an older attempt cannot replace an approved durable notice", async () => {
+  const context = await setup("notice-old-attempt");
+  const input = noticeDelivery("notice-old-attempt", { attempt: 2, claim_token: "new-claim" });
+  await context.engine.handleDelivery(input);
+  const initial = [...context.events];
+  await context.engine.handleDelivery({ ...input, attempt: 1, claim_token: "old-claim" });
+  await assert.rejects(context.engine.handleDelivery({ ...input, attempt: 1, claim_token: "old-claim",
+    body: { ...input.body, text: "replacement text" } }), /delivery_id collision/u);
+  assert.deepEqual(context.events, initial);
+  assert.equal(context.store.getDelivery(input.delivery_id)?.attempt, 2);
+  assert.equal(context.store.getDelivery(input.delivery_id)?.output?.notify[0]?.body, "El trabajo requiere atención.");
 });

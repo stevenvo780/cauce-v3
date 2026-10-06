@@ -9,36 +9,31 @@ interface SystemGateProbeContext {
   readonly clock: Clock;
   readonly publishEvent: EventPublisher;
   readonly replayPending: (record: InboxRecord) => Promise<void>;
-  readonly rejectStale: (delivery: Delivery) => Promise<void>;
+  readonly ownAlias: string | undefined;
+  readonly isCurrent: () => boolean;
 }
 
-/**
- * Reserved transport probe. Closes the real claim without session, prompt, harness, model,
- * reply, delegation, or egress. The request disappears from the durable inbox on the terminal
- * transition (`retainRequest=false`); only the minimum result needed for the ACK remains.
- */
+function ownsClaim(delivery: Delivery, runtime: SystemGateProbeContext): boolean {
+  const record = runtime.store.getDelivery(delivery.delivery_id);
+  return runtime.isCurrent() && record?.attempt === delivery.attempt && record.claim_token === delivery.claim_token;
+}
+
 export async function runSystemGateProbe(
   delivery: Delivery,
   runtime: SystemGateProbeContext,
 ): Promise<void> {
   const occurredAt = runtime.clock.now().toISOString();
   const accepted = await runtime.store.acceptAndEnqueue(delivery, occurredAt);
-  if (accepted.acceptance === "stale" || accepted.acceptance === "blocked") return;
+  if (accepted.acceptance === "stale" || accepted.acceptance === "blocked" || !ownsClaim(delivery, runtime)) return;
   if (accepted.acceptance === "duplicate") {
     await runtime.replayPending(accepted.record);
     if (accepted.record.state !== "accepted") return;
   } else if (accepted.event !== undefined) await runtime.publishEvent(accepted.event);
 
-  if (delivery.epoch !== runtime.store.epoch) {
-    await runtime.rejectStale(delivery);
-    return;
-  }
-
+  if (!ownsClaim(delivery, runtime)) return;
   const context = delivery.authenticated_context;
   const authorized = isSystemGateProbeBody(delivery.body)
-    && delivery.tenant_id === "Steven"
-    && delivery.room_id === "grp.steven"
-    && delivery.actor_alias === "kant"
+    && runtime.ownAlias !== undefined && delivery.recipient_alias === runtime.ownAlias
     && delivery.origin === undefined
     && context?.session_id === "gate-probe"
     && context.channel === "gate"
@@ -49,13 +44,14 @@ export async function runSystemGateProbe(
       message: "Reserved system gate probe authority is invalid",
       retryable: false,
     };
-    const failed = await runtime.store.transitionAndEnqueue(
+    const failed = await runtime.store.transitionAndEnqueueIfCurrent(
       delivery.delivery_id,
       "failed",
       runtime.clock.now().toISOString(),
-      { error, attempt: delivery.attempt, claimToken: delivery.claim_token },
+      { error, attempt: delivery.attempt, claimToken: delivery.claim_token,
+        expectedEpoch: delivery.epoch, isCurrent: runtime.isCurrent },
     );
-    await runtime.publishEvent(failed.event);
+    if (failed !== undefined && ownsClaim(delivery, runtime)) await runtime.publishEvent(failed.event);
     return;
   }
 
@@ -67,11 +63,12 @@ export async function runSystemGateProbe(
     retryable: false,
     artifacts: [],
   };
-  const done = await runtime.store.transitionAndEnqueue(
+  const done = await runtime.store.transitionAndEnqueueIfCurrent(
     delivery.delivery_id,
     "done",
     runtime.clock.now().toISOString(),
-    { output, attempt: delivery.attempt, claimToken: delivery.claim_token },
+    { output, attempt: delivery.attempt, claimToken: delivery.claim_token,
+      expectedEpoch: delivery.epoch, isCurrent: runtime.isCurrent },
   );
-  await runtime.publishEvent(done.event);
+  if (done !== undefined && ownsClaim(delivery, runtime)) await runtime.publishEvent(done.event);
 }

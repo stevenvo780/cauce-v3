@@ -20,7 +20,11 @@ import { testStateRoot } from "./test-state.js";
 const stateRoot = testStateRoot();
 
 function context(overrides: Partial<HarnessRequestContext> = {}): HarnessRequestContext {
+  const configured = overrides.tenant_id === "Hospital" && overrides.self_alias === "operador"
+    ? { behavior_policy: { version: 1 as const, revision: "7", scope: { tenant_id: "Hospital", room_id: "grp.hospital", alias: "operador" },
+      coordination_mode: "coordinator" as const, fanin_receipt_mode: "technical" as const } } : {};
   return {
+    ...configured,
     self_alias: "iza",
     sender_alias: "kratos",
     tenant_id: "Miguel",
@@ -342,6 +346,8 @@ test("el harness recibe identidad y deber antes de la mecanica por stdin", async
 
 const DIRECTOR = {
   self_alias: "argos", tenant_id: "Steven", room_id: "grp.steven", sender_alias: "zeus",
+  behavior_policy: { version: 1, revision: "7", scope: { tenant_id: "Steven", room_id: "grp.steven", alias: "argos" },
+    coordination_mode: "coordinator", fanin_receipt_mode: "technical" },
 } as const;
 
 test("para el alias que dirige, el deber primario manda REPARTIR y VERIFICAR; construir es la excepción", () => {
@@ -386,12 +392,16 @@ test("el operador del Hospital dirige y sus developers escalan hacia él", () =>
   );
   assert.match(leader, /tu entrega es REPARTIR y VERIFICAR/u);
   assert.match(leader, /Escribir código de producto NUNCA es tuyo/u);
-  assert.match(leader, /informá el error textual crudo a tu humano/u);
+  assert.match(leader, /informá el error textual crudo en reply/u);
   assert.doesNotMatch(leader, /escalá a zeus/u);
   assert.doesNotMatch(leader, /Para coordinación de trabajo, kant/u);
   for (const self_alias of ["teseo", "perseo"]) {
     const developer = protocolPrompt(
-      "request", undefined, context({ self_alias, tenant_id: "Hospital", room_id: "grp.hospital" }),
+      "request", undefined, context({ self_alias, tenant_id: "Hospital", room_id: "grp.hospital",
+        routing_targets: [{ tenant_id: "Hospital", alias: "operador", online: true }],
+        behavior_policy: { version: 1, revision: "7", scope: { tenant_id: "Hospital", room_id: "grp.hospital", alias: self_alias },
+          coordination_mode: "executor", fanin_receipt_mode: "technical", escalation: { infrastructure: { tenant_id: "Hospital", alias: "operador" } } },
+      }),
     );
     assert.match(developer, /Esta entrega es TU trabajo/u);
     assert.match(developer, /escalá a operador/u);
@@ -471,7 +481,7 @@ test("una revision del Hospital cierra con evidencia en reply y sin delegacion f
 
 test("el mandato del director no pesa más que el del ejecutor: el sobre de argos no crece", () => {
   const director = protocolPrompt("request", undefined, context(DIRECTOR));
-  const ejecutor = protocolPrompt("request", undefined, context({ ...DIRECTOR, self_alias: "zeus" }));
+  const ejecutor = protocolPrompt("request", undefined, context({ ...DIRECTOR, behavior_policy: { ...DIRECTOR.behavior_policy, coordination_mode: "executor" } }));
   assert.ok(
     director.length <= ejecutor.length + 100,
     `el sobre del director mide ${String(director.length)} y el del ejecutor ${String(ejecutor.length)}`,

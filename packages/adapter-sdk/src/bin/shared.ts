@@ -274,11 +274,6 @@ function pointedRunner(
 export async function runCli(harnessId: HarnessId): Promise<void> {
   const runtime = await loadCliRuntimeConfig(harnessId);
   const tenantId = TenantSchema.parse(runtime.tenant);
-  if (harnessId === "muse" && tenantId === "Hospital"
-    && runtime.muse?.workspace !== "/home/node/clawd") {
-    throw new Error("Hospital Muse workspace must be exactly /home/node/clawd");
-  }
-  // Muse: default `muse-cauce exec` (hegel); MSP (Hospital) only with explicit config, loaded lazily.
   const museMsp = harnessId === "muse" && runtime.muse !== undefined;
   if (museMsp && runtime.harnessCommand !== undefined
     && runtime.harnessCommand !== runtime.muse.executable) {
