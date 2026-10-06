@@ -1,4 +1,10 @@
+import { loadReplyAttachments } from './messages/reply-attachments.js';
+import { humanMessageAuthority } from './messages/human-authority.js';
+import { withAbortableTransaction } from '../db.js';
 import { randomUUID } from 'node:crypto';
+import { loadHumanMessageAttachment, loadMessageAttachment, type AuthorizedMessageAttachments } from './messages/attachment-download.js';
+import { senderView, type MessageReader } from './messages/agent-roots.js';
+import { loadMessageDetail, messageDetailWithReplies } from './messages/message-detail.js';
 import type {
   ConsolePublishIntentCommand,
   ConsolePublishIntentConfirm,
@@ -63,6 +69,42 @@ export {
 } from './messages/human-inbox.js';
 
 export abstract class MessagesRepository extends MessagePublishingRepository {
+  async getReplyAttachments(
+    messageId: string, deliveryId: string, attempt: number, options: HumanMessageOptions,
+  ): Promise<unknown> {
+    return withAbortableTransaction(this.pool, options.signal, async (client) => {
+      const human = await humanMessageAuthority(client, options);
+      return loadReplyAttachments(client, messageId, deliveryId, attempt, human);
+    });
+  }
+
+  async getLegacyHumanMessage(
+    messageId: string, options: HumanMessageOptions, reader?: MessageReader,
+  ): Promise<Record<string, unknown>> {
+    return withAbortableTransaction(this.pool, options.signal, async (client) => {
+      const human = await humanMessageAuthority(client, options);
+      const row = await loadMessageDetail(client, messageId, human.tenantId, human.actorAlias, 'legacy-human');
+      const view = reader === undefined || row.tenant_id !== human.tenantId || row.actor_alias !== human.actorAlias
+        ? undefined : await senderView(client, messageId, reader);
+      return messageDetailWithReplies(row, view);
+    });
+  }
+
+  async getHumanMessageAttachment(
+    messageId: string, options: HumanMessageOptions,
+  ): Promise<AuthorizedMessageAttachments> {
+    return withAbortableTransaction(this.pool, options.signal, async (client) => {
+      const human = await humanMessageAuthority(client, options);
+      return loadHumanMessageAttachment(client, messageId, human);
+    });
+  }
+
+  async getMessageAttachment(
+    messageId: string, actorTenant: Tenant, actorAlias: string, _reader?: MessageReader,
+  ): Promise<AuthorizedMessageAttachments> {
+    return loadMessageAttachment(this.pool, messageId, actorTenant, actorAlias);
+  }
+
   // Reserve one server-generated key for an authenticated console publish meaning.
   // Prepare and confirm audit rows are durable state, never disposable observability.
   async prepareConsolePublishIntent(

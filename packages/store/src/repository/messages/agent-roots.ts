@@ -1,6 +1,8 @@
 import { RESERVED_INTERNAL_MESSAGE_TYPES, SYSTEM_GATE_PROBE_MESSAGE_TYPE, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { AGENT_ROOT_OPEN_LIMIT } from '../../delegation-guard.js';
+import { replyAttachmentMetadata } from '../deliveries/final-media.js';
+import { CANONICAL_REPLY_JOIN_SQL } from './reply-attachments-selector.js';
 import { StoreError } from '../errors.js';
 import type { HumanPublishProvenance } from './contracts.js';
 import { assertHumanMessageRoot } from './human-initiators.js';
@@ -109,9 +111,16 @@ export async function agentRootActorNode(client: DatabaseClient, rootMessageId: 
 /** Who reads a message: the reply of what it sent is shown only to the same kind of principal. */
 export type MessageReader = 'agent' | 'operator';
 
+export interface CanonicalReplyMedia {
+  readonly reply_attachments: ReturnType<typeof replyAttachmentMetadata>;
+  readonly reply_attachment_delivery_id?: string;
+  readonly reply_attachment_attempt?: number;
+}
+
 export interface SenderView {
   readonly chainOpen: boolean;
   readonly replies: ReadonlyMap<string, string | null>;
+  readonly replyMedia?: ReadonlyMap<string, CanonicalReplyMedia>;
 }
 
 /**
@@ -144,30 +153,25 @@ async function loadSenderView(
   );
   const row = head.rows[0];
   if (row === undefined || row.probe || row.agent_root !== (reader === 'agent')) return undefined;
-  const replies = await pool.query<{ delivery_id: string; reply: string | null }>(
-    `SELECT d.id AS delivery_id,CASE WHEN fanin.id IS NOT NULL
-       THEN CASE WHEN fanin.status='done' THEN fanin.result->'output'->>'reply' END
-       ELSE COALESCE((
-         SELECT c.result->'output'->>'reply' FROM messages cm JOIN deliveries c ON c.message_id=cm.id
-         WHERE cm.body->'correlation'->>'root_message_id'=$2 AND cm.body->>'type'='agent.response'
-           AND cm.body->'correlation'->>'root_delivery_id'=d.id::text
-           AND c.recipient_tenant=d.recipient_tenant AND c.recipient_alias=d.recipient_alias
-           AND c.status='done' AND c.result->'output'->>'reply' IS NOT NULL
-         ORDER BY c.terminal_at DESC NULLS LAST,c.created_at DESC LIMIT 1
-       ),d.result->'output'->>'reply') END AS reply
-     FROM deliveries d
-     LEFT JOIN LATERAL ( -- The fan-in is this branch's consolidated answer: when it exists nothing else speaks for it.
-       SELECT c.id,c.status,c.result FROM messages cm JOIN deliveries c ON c.message_id=cm.id
-       WHERE cm.body->'correlation'->>'root_message_id'=$2 AND cm.body->>'type'='agent.fanin'
-         AND cm.body->'correlation'->>'root_delivery_id'=d.id::text
-         AND c.recipient_tenant=d.recipient_tenant AND c.recipient_alias=d.recipient_alias
-       ORDER BY c.created_at DESC,c.id DESC LIMIT 1
-     ) fanin ON true
-     WHERE d.message_id=$1::uuid`,
-    [messageId, messageId.toLowerCase()],
+  const replies = await pool.query<{ delivery_id: string; reply: string | null;
+    effective_id: string; effective_attempt: number; attachments: unknown }>(
+    `SELECT d.id AS delivery_id,effective.result->'output'->>'reply' AS reply,
+      effective.id AS effective_id,effective.attempt AS effective_attempt,
+      CASE WHEN effective.status='done' AND jsonb_typeof(effective.result->'reply_attachments_v1')='array'
+        THEN (SELECT jsonb_agg(jsonb_build_object('name',item->'name','mime_type',item->'mime_type',
+          'file_size',item->'file_size','sha256',item->'sha256') ORDER BY position)
+          FROM jsonb_array_elements(effective.result->'reply_attachments_v1') WITH ORDINALITY AS entries(item,position))
+      END AS attachments
+     FROM deliveries d ${CANONICAL_REPLY_JOIN_SQL} WHERE d.message_id=$1::uuid`, [messageId],
   );
   return {
     chainOpen: row.chain_open,
     replies: new Map(replies.rows.map((entry) => [entry.delivery_id, entry.reply])),
+    ...(reader === 'human' ? { replyMedia: new Map(replies.rows.map((entry) => {
+      const attachments = replyAttachmentMetadata(entry.attachments);
+      return [entry.delivery_id, { reply_attachments: attachments, ...(attachments.length === 0 ? {} : {
+        reply_attachment_delivery_id: entry.effective_id, reply_attachment_attempt: entry.effective_attempt,
+      }) }];
+    })) } : {}),
   };
 }

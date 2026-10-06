@@ -10,7 +10,7 @@ export interface ConsoleHumanAccess {
 }
 
 export async function consoleHumanAccess(
-  provider: AuthProvider, request: FastifyRequest, reply: FastifyReply,
+  provider: AuthProvider, request: FastifyRequest, reply: FastifyReply, permission: 'route' | 'read' = 'route',
 ): Promise<ConsoleHumanAccess | undefined> {
   if (!(provider instanceof PasswordAuthProvider)) return undefined;
   const session = await provider.verifiedConsoleSession(request);
@@ -52,9 +52,9 @@ export async function consoleHumanAccess(
     }
     const account = consoleRoleAuthority(snapshot.account.role);
     const member = consoleRoleAuthority(snapshot.membership.role);
-    if (!account.roles.includes('operator') || !member.roles.includes('operator')
-        || !account.permissions.includes('route') || !member.permissions.includes('route')
-        || !snapshot.membership.permissions.includes('route')) throw new AuthorizationError();
+    if ((permission === 'route' && (!account.roles.includes('operator') || !member.roles.includes('operator')))
+        || !account.permissions.includes(permission) || !member.permissions.includes(permission)
+        || !snapshot.membership.permissions.includes(permission)) throw new AuthorizationError();
     return Object.freeze({ humanId: session.humanId, tenantId: session.tenantId, actorAlias: session.actorAlias });
   } });
   return { options, close: () => {
