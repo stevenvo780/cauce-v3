@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { sep } from 'node:path';
+import { browserDeliveryFailure } from './browser-delivery-diagnostics.js';
 import {
   functionalTenants, isaTenant, jhonTenant, newTrustedPage, startConsoleFunctionalFixture,
   type BrowserPage, type FunctionalTenant, type Locator,
@@ -118,7 +119,14 @@ async function publishFile(tenant: FunctionalTenant, file: TestFile, text: strin
     [tenant.tenant, tenant.target, file.name],
   );
   await expect.poll(async () => (await records()).rows[0]?.status,
-    { timeout: 35_000, interval: 100 }).toBe('done');
+    { timeout: 35_000, interval: 100 }).toBe('done').catch(async (cause: unknown) => {
+      throw await browserDeliveryFailure(cause, {
+        pool: active.database.pool, tenant, instanceId: `file-e2e-${tenant.tenant.toLowerCase()}`,
+        selector: { kind: 'filename', value: file.name },
+        stdout: active.prompts[`${tenant.tenant}:stdout`] ?? '', stderr: active.prompts[`${tenant.tenant}:stderr`] ?? '',
+        child: active.adapters[functionalTenants.indexOf(tenant)],
+      });
+    });
   const persisted = (await records()).rows;
   expect(persisted).toHaveLength(1);
   const row = persisted[0];
