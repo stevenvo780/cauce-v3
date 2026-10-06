@@ -45,12 +45,12 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(response)
 
 
-def start(pki_dir: str, port: int) -> HTTPServer:
+def start(pki_dir: str) -> HTTPServer:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(certfile=f'{pki_dir}/server.crt', keyfile=f'{pki_dir}/server.key')
     ctx.load_verify_locations(cafile=f'{pki_dir}/ca.crt')
     ctx.verify_mode = ssl.CERT_REQUIRED  # exige cert de cliente: es el punto del test
-    server = HTTPServer(('127.0.0.1', port), Handler)
+    server = HTTPServer(('127.0.0.1', 0), Handler)
     server.socket = ctx.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -58,9 +58,9 @@ def start(pki_dir: str, port: int) -> HTTPServer:
 
 
 if __name__ == '__main__':
-    pki_dir, port = sys.argv[1], int(sys.argv[2])
-    srv = start(pki_dir, port)
-    print(f'listening on {port}', flush=True)
+    pki_dir = sys.argv[1]
+    srv = start(pki_dir)
+    print(f'listening on {srv.server_port}', flush=True)
     try:
         threading.Event().wait()
     except KeyboardInterrupt:

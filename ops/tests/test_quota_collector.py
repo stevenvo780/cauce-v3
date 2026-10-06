@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / 'scripts' / 'quota-collector.py'
@@ -244,15 +245,140 @@ def _generate_server_cert(tmp_dir: str, ca_key: str, ca_crt: str, cn: str, san_l
     return server_key, server_crt
 
 
-def _start_fake_server(pki_dir: str, port: int) -> subprocess.Popen:
+def _stop_fake_servers(*servers: subprocess.Popen | None) -> list[Exception]:
+    failures = []
+    for server in servers:
+        if server is None:
+            continue
+        try:
+            if server.poll() is None:
+                server.terminate()
+        except Exception as error:
+            failures.append(error)
+    for server in servers:
+        if server is None:
+            continue
+        try:
+            server.wait(timeout=5)
+        except Exception as error:
+            failures.append(error)
+    return failures
+
+
+def _finish_fake_servers(*servers: subprocess.Popen | None) -> None:
+    failures = _stop_fake_servers(*servers)
+    if failures:
+        details = ', '.join(type(error).__name__ for error in failures)
+        cleanup_error = RuntimeError(f'{len(failures)} fake server cleanup operation(s) failed: {details}')
+        original = sys.exc_info()[1]
+        raise cleanup_error from (original if original is not None else failures[0])
+
+
+def _start_fake_server(pki_dir: str) -> tuple[subprocess.Popen, int]:
     proc = subprocess.Popen(
-        [sys.executable, str(FIXTURES / 'fake_quota_server.py'), pki_dir, str(port)],
+        [sys.executable, str(FIXTURES / 'fake_quota_server.py'), pki_dir],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
-    line = proc.stdout.readline()
-    assert 'listening' in line, f'el servidor de prueba no arranco: {line!r}'
-    time.sleep(0.2)
-    return proc
+    try:
+        line = proc.stdout.readline()
+        assert 'listening' in line, f'el servidor de prueba no arranco: {line!r}'
+        port = int(line.rsplit(' ', 1)[-1])
+        assert 1 <= port <= 65535, f'puerto de prueba invalido: {port}'
+        time.sleep(0.2)
+        return proc, port
+    except BaseException as error:
+        failures = _stop_fake_servers(proc)
+        if failures:
+            details = ', '.join(type(failure).__name__ for failure in failures)
+            raise RuntimeError(f'fake server startup cleanup failed: {details}') from error
+        raise
+
+
+def test_fake_server_startup_failure_reaps_process():
+    class FakeStream:
+        def __init__(self, line):
+            self.line = line
+
+        def readline(self):
+            if isinstance(self.line, BaseException):
+                raise self.line
+            return self.line
+
+    class FakeProcess:
+        def __init__(self, line, wait_failure=None):
+            self.stdout = FakeStream(line)
+            self.events = []
+            self.wait_failure = wait_failure
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.events.append('terminate')
+
+        def wait(self, timeout):
+            self.events.append(('wait', timeout))
+            if self.wait_failure:
+                raise self.wait_failure
+            return 0
+
+    cleanup_failure = subprocess.TimeoutExpired('fake-server', 5)
+    cases = [
+        ('startup output missing', 'Traceback (most recent call last):\n', AssertionError, None),
+        ('port output malformed', 'listening on invalid\n', ValueError, None),
+        ('readline raises', OSError('readline failed'), OSError, None),
+        ('startup and reap both fail', 'Traceback (most recent call last):\n', AssertionError, cleanup_failure),
+    ]
+    for label, line, expected, wait_failure in cases:
+        proc = FakeProcess(line, wait_failure)
+        with patch.object(subprocess, 'Popen', return_value=proc):
+            try:
+                _start_fake_server('/synthetic/pki')
+            except Exception as error:
+                if wait_failure:
+                    assert isinstance(error, RuntimeError), f'{label} lost the cleanup failure: {error!r}'
+                    assert isinstance(error.__cause__, expected), f'{label} lost the startup failure: {error!r}'
+                    assert 'TimeoutExpired' in str(error)
+                else:
+                    assert isinstance(error, expected), f'{label} changed its original error: {error!r}'
+            else:
+                raise AssertionError(f'{label} did not preserve the startup failure')
+        assert proc.events == ['terminate', ('wait', 5)], f'{label} did not reap its child: {proc.events!r}'
+
+
+def test_fake_server_cleanup_attempts_all_terminations_before_waits():
+    events = []
+    wait_failure = subprocess.TimeoutExpired('fake-server', 5)
+
+    class FakeProcess:
+        def __init__(self, name, failure=None):
+            self.name = name
+            self.failure = failure
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            events.append(('terminate', self.name))
+
+        def wait(self, timeout):
+            events.append(('wait', self.name, timeout))
+            if self.failure:
+                raise self.failure
+            return 0
+
+    first = FakeProcess('first', wait_failure)
+    second = FakeProcess('second')
+    try:
+        _finish_fake_servers(first, second)
+    except RuntimeError as error:
+        assert error.__cause__ is wait_failure
+    else:
+        raise AssertionError('first wait failure was not reported')
+    assert events == [
+        ('terminate', 'first'), ('terminate', 'second'),
+        ('wait', 'first', 5), ('wait', 'second', 5),
+    ], f'cleanup skipped or reordered operations: {events!r}'
 
 
 def test_mtls_round_trip_with_ip_san_succeeds():
@@ -262,9 +388,11 @@ def test_mtls_round_trip_with_ip_san_succeeds():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ca_key, ca_crt, client_key, client_crt = _generate_ca_and_client(tmp_dir)
         _generate_server_cert(tmp_dir, ca_key, ca_crt, '127.0.0.1', 'IP:127.0.0.1')
-        port = 8901
-        server = _start_fake_server(tmp_dir, port)
+        server, port = _start_fake_server(tmp_dir)
+        second_server = None
         try:
+            second_server, second_port = _start_fake_server(tmp_dir)
+            assert second_port != port, 'servidores de prueba concurrentes deben usar puertos distintos'
             result = run_cli([
                 '--input-file', str(FIXTURES / 'ai-usage-sample.json'),
                 '--account-bindings-file', str(FIXTURES / 'account-bindings-sample.json'),
@@ -275,8 +403,7 @@ def test_mtls_round_trip_with_ip_san_succeeds():
             assert '-> 202' in result.stderr
             assert 'collection_id=test-collection-id' in result.stderr
         finally:
-            server.terminate()
-            server.wait(timeout=5)
+            _finish_fake_servers(server, second_server)
     print('✓ handshake mTLS real + POST exitoso contra un cert con SAN de IP (check_hostname sigue prendido)')
 
 
@@ -292,8 +419,7 @@ def test_hostname_verification_is_enforced_and_override_works():
         ca_key, ca_crt, client_key, client_crt = _generate_ca_and_client(tmp_dir)
         # A proposito SIN SAN de IP: solo un nombre DNS que no matchea 127.0.0.1.
         _generate_server_cert(tmp_dir, ca_key, ca_crt, 'quota-gateway.internal', 'DNS:quota-gateway.internal')
-        port = 8902
-        server = _start_fake_server(tmp_dir, port)
+        server, port = _start_fake_server(tmp_dir)
         try:
             without_override = run_cli([
                 '--input-file', str(FIXTURES / 'ai-usage-sample.json'), '--host', 'kratos',
@@ -310,8 +436,7 @@ def test_hostname_verification_is_enforced_and_override_works():
             assert with_override.returncode == 0, with_override.stderr
             assert '-> 202' in with_override.stderr
         finally:
-            server.terminate()
-            server.wait(timeout=5)
+            _finish_fake_servers(server)
     print('✓ la verificacion de hostname esta realmente activa, y CAUCE_QUOTA_GATEWAY_SERVER_NAME la resuelve cuando el cert no trae SAN de IP')
 
 
@@ -338,6 +463,8 @@ def test_network_failure_never_leaks_credential_content():
 
 
 TESTS = [
+    test_fake_server_startup_failure_reaps_process,
+    test_fake_server_cleanup_attempts_all_terminations_before_waits,
     test_script_exists_and_shebang,
     test_dry_run_normalizes_realistic_fixture,
     test_malformed_provider_and_windows_without_numbers_dont_crash,
