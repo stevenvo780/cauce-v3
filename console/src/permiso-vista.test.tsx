@@ -77,7 +77,7 @@ function servirRelayDisponible() {
 }
 
 async function esperarLaFlota() {
-  await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 });
+  await screen.findByRole('heading', { level: 1, name: 'Oficina' }, { timeout: 10_000 });
   await userEvent.click(screen.getByRole('button', { name: 'Gestión' }));
 }
 
@@ -137,8 +137,8 @@ it('sin permisos de acción: el menú deja abrir la vista y la escritura falla c
 
   await esperarLaFlota();
   const nav = barra();
-  expect(within(nav).getAllByRole('link').map((enlace) => enlace.getAttribute('aria-label')))
-    .toEqual(NAV_ENTRIES.map((entrada) => entrada.label));
+  expect(within(nav).getAllByRole('link').map((enlace) => enlace.textContent).sort())
+    .toEqual(NAV_ENTRIES.map((entrada) => entrada.label).sort());
   const config = within(nav).getByRole('link', { name: 'Ajustes' });
   await waitFor(() => { expect(config).not.toHaveAttribute('aria-disabled'); });
   for (const entrada of NAV_ENTRIES.filter((candidate) => candidate.id !== 'config')) {
@@ -205,20 +205,22 @@ it('ruta /config sin config.write: abre en solo lectura, no 404 ni redirección'
   window.history.pushState({}, '', '/config');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /ajustes y altas/i }, { timeout: 10_000 }))
+  expect(await screen.findByRole('heading', { level: 1, name: 'Ajustes' }, { timeout: 10_000 }))
     .toBeInTheDocument();
-  expect(screen.getByRole('list', { name: 'Agentes configurados' })).toBeInTheDocument();
-  expect(screen.queryByRole('switch')).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: 'Administración avanzada' }));
   expect(await screen.findByText(/Solo lectura:/, {}, { timeout: 10_000 })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /^Crear$/ })).toBeDisabled();
-  for (const control of screen.getAllByRole('switch')) expect(control).toBeDisabled();
+  await userEvent.click(screen.getByRole('tab', { name: 'Agentes' }));
+  expect(await screen.findByRole('list', { name: 'Agentes configurados' })).toBeInTheDocument();
+  for (const control of screen.queryAllByRole('switch')) expect(control).toBeDisabled();
+  await userEvent.click(screen.getByRole('tab', { name: 'Espacios y salas' }));
+  for (const crear of await screen.findAllByRole('button', { name: /^Crear$/ })) expect(crear).toBeDisabled();
+  await userEvent.click(screen.getByRole('tab', { name: 'Avanzado' }));
+  expect(await screen.findByRole('button', { name: /Aplicar atómico/ }, { timeout: 10_000 })).toBeDisabled();
   expect(window.location.pathname).toBe('/config');
   expect(screen.queryByRole('heading', { level: 1, name: /ruta no encontrada/i })).not.toBeInTheDocument();
 });
 
 it.each([
-  ['/queues', /colas y dlq operativo/i],
+  ['/queues', /^colas y dlq/i],
   ['/messages', /con quién trabajamos hoy/i],
 ] as const)('ruta %s sin permisos de acción: la vista abre igual (lo inerte es la acción)', async (ruta, titulo) => {
   servirAcceso([], []);

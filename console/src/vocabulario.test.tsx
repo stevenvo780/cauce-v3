@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { renderWithApi } from './test/render';
 import { LandingPage } from './features/landing/LandingPage';
 import { LiveFleetPage } from './features/live/LiveFleetPage';
+import { FleetProvider } from './shell/fleet';
 import { AccountsPage } from './features/accounts/AccountsPage';
 import { QueuesPage } from './features/queues/QueuesPage';
 import { ObservabilityPage } from './features/observability/ObservabilityPage';
@@ -18,9 +19,9 @@ import { HelpPage } from './features/help/HelpPage';
 
 const VISTAS = [
   ['la portada', LandingPage, /cauce en una pantalla/i],
-  ['/live', LiveFleetPage, /la flota ahora/i],
+  ['/live', LiveFleetPage, 'Oficina'],
   ['/accounts', AccountsPage, /cuentas y cuotas/i],
-  ['/queues', QueuesPage, /colas y dlq operativo/i],
+  ['/queues', QueuesPage, /colas y dlq/i],
   ['/observability', ObservabilityPage, /señales y auditoría/i],
   ['/terminal', TerminalPage, 'Terminal de agentes'],
   ['/ayuda', HelpPage, /ayuda y documentación/i],
@@ -46,7 +47,8 @@ function textoVisible(): string {
 
 describe.each(VISTAS)('%s dice la verdad en castellano', (nombre, Vista, titulo) => {
   async function montar() {
-    renderWithApi(<Vista />);
+    // The shell always provides the shared fleet poller that the office and the front page read.
+    renderWithApi(<FleetProvider><Vista /></FleetProvider>);
     await screen.findByRole('heading', { level: 1, name: titulo }, { timeout: 5000 });
     // The views request several sources; it waits for the first table or metric to land so it
     // does not measure a loading screen and believe it is clean.

@@ -36,6 +36,19 @@ function mockTerminalTicket(input: {
   return `v1.${encoded}.${structuralSignature}`;
 }
 
+function base64url(value: string): string {
+  return globalThis.btoa(String.fromCharCode(...new TextEncoder().encode(value)))
+    .replace(/=+$/u, '').replaceAll('+', '-').replaceAll('/', '_');
+}
+
+/** The `ready` resume token the console accepts: a legacy r1 token wrapped with the grant's authority proof. */
+export function mockAuthorityResumeToken(sessionId: unknown, authorityProof: unknown): string {
+  const legacyPayload = JSON.stringify({ v: 1, sid: sessionId, op: 'fixture-operator', iat: 1_750_000_000,
+    exp: 1_750_003_600, nonce: 'A'.repeat(22) });
+  const legacy = `r1.${base64url(legacyPayload)}.${'A'.repeat(43)}`;
+  return `r2.${base64url(JSON.stringify([legacy, authorityProof]))}`;
+}
+
 function mockAuthorityProof(input: { sessionId: string; tenantId: string; requestId: string }): string {
   const origin = {
     kind: 'human',
