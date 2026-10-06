@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ConfigMutation } from '@cauce/protocol';
 import { ConfigurationError, ConfigurationRepository } from '../src/configuration.js';
 import type { DatabasePool } from '../src/db.js';
+import { schemaBarrierReply, schemaBarrierStatements } from '../../../tests/helpers/schema-barrier.js';
 
 interface PreparedResponse {
   readonly includes: string;
@@ -23,7 +24,9 @@ function fakePool(responses: readonly PreparedResponse[] = []): {
     off: () => undefined,
     async query(sql: string, params: readonly unknown[] = []) {
       queries.push({ sql, params });
-      const normalized = sql.replace(/\s+/gu, ' ');
+      const normalized = sql.replace(/\s+/gu, ' ').trim();
+      const barrier = schemaBarrierReply(normalized, params);
+      if (barrier !== undefined) return barrier;
       const response = responses.find((candidate) => normalized.includes(candidate.includes));
       return { rows: response?.rows ?? [], rowCount: response?.rows.length ?? 0 };
     },
@@ -91,6 +94,7 @@ describe('perfil canónico: el editor genérico falla cerrado', () => {
       'Steven', 'kant', 7, false, 12,
     )).rejects.toMatchObject({ code: 'invalid_input' });
     const sql = queries.map((query) => query.sql.replace(/\s+/gu, ' '));
+    expect(sql.slice(0, 5)).toEqual(['BEGIN', ...schemaBarrierStatements]);
     expect(sql.some((statement) => statement.includes('INSERT INTO config_revisions'))).toBe(false);
     expect(sql.some((statement) => statement.includes('INSERT INTO agent_profiles'))).toBe(false);
     expect(sql.some((statement) => statement.includes('UPDATE agent_profiles'))).toBe(false);
@@ -114,6 +118,7 @@ describe('perfil canónico: el editor genérico falla cerrado', () => {
     await expect(new ConfigurationRepository(pool).apply('Steven', 'kant', {
       resource: 'agent', action: 'delete', tenant_id: 'Steven', alias: 'zeus',
     }, false, 3)).rejects.toMatchObject({ code: 'conflict' });
+    expect(queries.slice(0, 5).map((query) => query.sql)).toEqual(['BEGIN', ...schemaBarrierStatements]);
     expect(queries.some((query) => /DELETE FROM agents/iu.test(query.sql))).toBe(false);
   });
 });
