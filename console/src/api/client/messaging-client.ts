@@ -24,6 +24,7 @@ import {
   PublishIntentReconciliationError,
 } from './core';
 import type { RequestFn } from './system-client';
+import { publishBody } from './publish-body';
 
 export function listMessages(request: RequestFn): Promise<MessagePage> {
   return request('/v3/console/messages');
@@ -37,7 +38,7 @@ export function publishMessage(request: RequestFn, input: PublishMessageInput): 
   const payload: PublishMessageInput = {
     room_id: input.room_id,
     recipients: input.recipients.map(({ tenant_id, alias }) => ({ tenant_id, alias })),
-    body: { text: input.body.text },
+    body: publishBody(input.body),
     lane: input.lane,
     priority: input.priority,
     idempotency_key: input.idempotency_key,
@@ -57,7 +58,7 @@ export function preparePublishIntent(request: RequestFn, input: PreparePublishIn
   const payload: PreparePublishIntentInput = {
     room_id: input.room_id,
     recipients: input.recipients.map(({ tenant_id, alias }) => ({ tenant_id, alias })),
-    body: { text: input.body.text },
+    body: publishBody(input.body),
     lane: input.lane,
     priority: input.priority,
     intent_nonce: input.intent_nonce,
