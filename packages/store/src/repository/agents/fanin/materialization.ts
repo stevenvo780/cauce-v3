@@ -1,3 +1,4 @@
+import { clientMailboxStoredSql } from '../../../client-mailbox.js';
 import { isRfcUuid, parseBlobArtifactUri, type DeliveryState, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../../db.js';
 import { loadFaninHumanLineage, preserveHumanMessageLineage } from '../../human-message-lineage.js';
@@ -108,7 +109,7 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
        FROM agent_output_materializations materialization
        JOIN deliveries child ON child.id=materialization.produced_delivery_id
        WHERE materialization.status='materialized'
-         AND materialization.correlation->>'root_message_id'=$1`,
+         AND materialization.correlation->>'root_message_id'=$1 AND NOT ${clientMailboxStoredSql('child')}`,
       [rootMessageId]
     );
     const expected = Number(progress.rows[0]?.expected ?? 0);

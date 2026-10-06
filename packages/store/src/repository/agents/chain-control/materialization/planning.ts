@@ -1,4 +1,5 @@
 import { isAlias, MAX_DELEGATION_FEEDBACK_ITEMS, type Tenant } from '@cauce/protocol';
+import { isClientMailboxAlias, clientMailboxRoutingTargets, resolveClientMailbox } from '../../../../client-mailbox.js';
 import type { DatabaseClient } from '../../../../db.js';
 import { declaredArtifactBudget } from '../../delegated-attachments.js';
 import { AGENT_ROOT_DELEGATIONS, HUMAN_GATE_TARGET } from '../../../../delegation-guard.js';
@@ -169,6 +170,23 @@ export async function allowedTargetTenants(
   targetTenant: Tenant | undefined,
   excludedAliases: readonly string[]
 ): Promise<Tenant[]> {
+  if (isClientMailboxAlias(targetAlias)) {
+    const candidates = targetTenant === undefined
+      ? await clientMailboxRoutingTargets(client, row.recipient_tenant, targetAlias)
+      : [{ tenant_id: targetTenant, alias: targetAlias }];
+    const allowed: Tenant[] = [];
+    for (const candidate of candidates.filter((target) => target.alias === targetAlias)) {
+      if (candidate.tenant_id !== row.recipient_tenant) {
+        const edge = await client.query(`SELECT 1 FROM acl_edges edge JOIN tenants source ON source.id=edge.from_tenant
+          JOIN tenants target ON target.id=edge.to_tenant WHERE edge.from_tenant=$1 AND edge.to_tenant=$2
+          AND source.enabled AND target.enabled AND edge.enabled AND edge.allow_route AND (source.is_hub OR target.is_hub)
+          FOR SHARE OF edge,source,target`, [row.recipient_tenant, candidate.tenant_id]);
+        if (edge.rowCount !== 1) continue;
+      }
+      if (await resolveClientMailbox(client, candidate.tenant_id, targetAlias)) allowed.push(candidate.tenant_id);
+    }
+    return allowed;
+  }
   if (targetTenant !== undefined) return [targetTenant];
   const candidates = await client.query<{ tenant_id: Tenant }>(
     `SELECT membership.tenant_id

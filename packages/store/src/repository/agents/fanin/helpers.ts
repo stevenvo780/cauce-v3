@@ -1,3 +1,4 @@
+import { isClientMailboxAlias } from '../../../client-mailbox.js';
 import { createHash } from 'node:crypto'; /* eslint @typescript-eslint/prefer-optional-chain: "error", @typescript-eslint/no-unnecessary-condition: "error" */
 import {
   deterministicUuidFromSha256, isAlias, isTenant, type DeliveryState, type Tenant
@@ -69,6 +70,9 @@ export function agentResponseText(
   error: string | undefined,
   errorCode: string | undefined
 ): string {
+  if (outcome === 'done' && isClientMailboxAlias(alias) && result?.kind === 'client_mailbox' && result.state === 'stored') {
+    return `${String(result.label)}: message stored in its durable mailbox; reading, execution and response remain unconfirmed.`;
+  }
   const reply = textualReply(result);
   if (reply) return reply;
   if (outcome === 'done') return `${alias} completed the delegated request without a textual reply.`;

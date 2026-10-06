@@ -1,4 +1,5 @@
 import { clampAgentPriority, type Ack, type Tenant } from '@cauce/protocol';
+import { isClientMailboxAlias } from '../../../../client-mailbox.js';
 import type { DatabaseClient } from '../../../../db.js';
 import { grantCarriedBlobs } from '../../../blob-carry.js';
 import {
@@ -84,7 +85,7 @@ export async function persistAgentOutput(
     targetAlias: input.targetAlias,
     deliveryId: producedDeliveryId,
   });
-  await client.query(
+  if (!isClientMailboxAlias(input.targetAlias)) await client.query(
     `INSERT INTO adapter_outbox(
        tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload
      ) VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,NULL,$7::jsonb)`,
@@ -136,7 +137,7 @@ export async function persistAgentOutput(
       })
     ]
   );
-  await client.query('SELECT pg_notify($1,$2)', [
+  if (!isClientMailboxAlias(input.targetAlias)) await client.query('SELECT pg_notify($1,$2)', [
     'cauce_delivery_wake',
     JSON.stringify({ tenant_id: input.targetTenant, alias: input.targetAlias })
   ]);
