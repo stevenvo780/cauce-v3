@@ -91,7 +91,10 @@ function StructuredMessage({ body }: { body: StructuredBody }) {
 function CanonicalResponse({ reply }: { reply: CanonicalReply }) {
   return (
     <section className="canonical-reply" aria-label={`Respuesta canónica de ${reply.tenantId}:${reply.alias}`} data-delivery-id={reply.deliveryId}>
-      <p style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{reply.reply}</p>
+      {reply.reply?.trim() ? <p style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{reply.reply}</p> : null}
+      {reply.replyAttachmentDeliveryId !== undefined && reply.replyAttachmentAttempt !== undefined
+        ? <MessageAttachments messageId={reply.messageId} files={reply.replyAttachments}
+          replySource={{ deliveryId: reply.replyAttachmentDeliveryId, attempt: reply.replyAttachmentAttempt }} /> : null}
     </section>
   );
 }
@@ -136,7 +139,8 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, can
             && canonicalReply.tenantId === delivery.recipient_tenant
             && canonicalReply.alias === delivery.recipient_alias
             ? canonicalReply : undefined;
-          const responseReceived = typeof matchingReply?.reply === 'string' && matchingReply.reply.trim().length > 0;
+          const responseReceived = (typeof matchingReply?.reply === 'string' && matchingReply.reply.trim().length > 0)
+            || Boolean(matchingReply?.replyAttachments?.length);
           const consolidated = matchingReply?.chainOpen === false
             && ['done', 'failed', 'dead'].includes(matchingReply.status ?? '');
           const response = matchingReply && responseReceived && consolidated
@@ -169,7 +173,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, can
                 {estructura
                   ? <StructuredMessage body={estructura} />
                   : hasTextPreview || messageAttachmentList(message.attachments).length === 0 ? <p>{previewText(message.body_preview, recortado)}</p> : null}
-                <MessageAttachments files={message.attachments} />
+                <MessageAttachments messageId={message.message_id} files={message.attachments} />
                 {!humanChat ? response : null}
                 {recortado ? <p className="transcript-truncado"><Scissors size={12} aria-hidden="true" /><span>Vista previa recortada</span></p> : null}
               </article>

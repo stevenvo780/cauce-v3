@@ -48,6 +48,7 @@ export class CauceApi {
   private readonly developmentIdentity?: { tenant: string; alias: string };
   private readonly unauthorizedListeners = new Set<UnauthorizedListener>();
   private readonly authSessionListeners = new Set<(state: ConsoleAuthState) => void>();
+  private readonly authGenerationListeners = new Set<() => void>();
 
   constructor(
     baseUrl = import.meta.env.VITE_CAUCE_API_BASE ?? '',
@@ -71,8 +72,9 @@ export class CauceApi {
   private async request<T>(
     path: string,
     init: RequestInit = {},
-    { requireCsrf = true, mapError }: RequestOptions = {},
+    options: RequestOptions = {},
   ): Promise<T> {
+    const { requireCsrf = true, mapError, responseMode } = options;
     const requestGeneration = this.authGeneration;
     const method = init.method?.toUpperCase() ?? 'GET';
     const unsafe = isUnsafeMethod(method);
@@ -116,7 +118,9 @@ export class CauceApi {
         const contentType = response.headers.get('content-type') ?? '';
         body = response.status === 204
           ? undefined
-          : contentType.includes('application/json')
+          : response.ok && responseMode === 'blob'
+            ? await response.blob()
+            : contentType.includes('application/json')
             ? await response.json()
             : await response.text();
       };
@@ -150,6 +154,9 @@ export class CauceApi {
       const detail = errorBody(body);
       throw new ApiError(detail.message ?? (response.statusText || 'API request failed'), response.status, detail.error);
     }
+    if (responseMode === 'blob' && requestGeneration !== this.authGeneration) {
+      throw new ApiError('La sesión cambió mientras se recibía el archivo.', 409, 'session_changed');
+    }
     return body as T;
   }
 
@@ -182,9 +189,19 @@ export class CauceApi {
     return () => { this.authSessionListeners.delete(listener); };
   }
 
+  onAuthGenerationChange(listener: () => void): () => void {
+    this.authGenerationListeners.add(listener);
+    return () => { this.authGenerationListeners.delete(listener); };
+  }
+
+  private advanceAuthGeneration(): void {
+    this.authGeneration += 1;
+    for (const listener of [...this.authGenerationListeners]) listener();
+  }
+
   private acceptSession(state: ConsoleAuthState): void {
     const identity = JSON.stringify([state.authenticated, state.subject, state.csrf_token]);
-    if (this.sessionIdentity !== undefined && identity !== this.sessionIdentity) this.authGeneration += 1;
+    if (this.sessionIdentity !== undefined && identity !== this.sessionIdentity) this.advanceAuthGeneration();
     this.confirmedSession = state;
     this.sessionIdentity = identity;
     this.bffSessionSupported = state.authenticated !== null;
@@ -194,7 +211,8 @@ export class CauceApi {
 
   async login(email: string, password: string): Promise<ConsoleAuthState> {
     this.profileRequest = undefined;
-    const generation = ++this.authGeneration;
+    this.advanceAuthGeneration();
+    const generation = this.authGeneration;
     this.sessionRead += 1;
     const state = await this.request<ConsoleAuthState>('/v3/auth/login', {
       method: 'POST',
@@ -268,7 +286,8 @@ export class CauceApi {
 
   async logout(): Promise<void> {
     this.profileRequest = undefined;
-    const generation = ++this.authGeneration;
+    this.advanceAuthGeneration();
+    const generation = this.authGeneration;
     this.sessionRead += 1;
     await this.request<undefined>('/v3/auth/logout', { method: 'POST' });
     if (generation === this.authGeneration) {

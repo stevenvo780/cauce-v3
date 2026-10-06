@@ -84,6 +84,9 @@ export interface MessageDetailDelivery {
   attempt?: number | null;
   terminal_at?: string | null;
   reply?: string | null;
+  reply_attachments?: MessageAttachment[] | null;
+  reply_attachment_delivery_id?: string | null;
+  reply_attachment_attempt?: number | null;
 }
 
 export interface MessagePage {
