@@ -10,7 +10,7 @@ import { StoreError } from './repository/errors.js';
 export const CONTROL_HOLD_MAX_WINDOW_MS = 12 * 60 * 60 * 1_000;
 
 const holdColumns =
-  'id,session_id,tenant_id,alias,operator_id,reason,taken_at,expires_at,released_at,released_reason';
+  'id,session_id,tenant_id,alias,operator_id,taken_at,expires_at,released_at,released_reason';
 
 export interface ControlHold {
   id: string;
@@ -18,7 +18,6 @@ export interface ControlHold {
   tenant_id: string;
   alias: string;
   operator_id: string;
-  reason: string;
   taken_at: Date;
   expires_at: Date;
   released_at: Date | null;
@@ -30,7 +29,6 @@ export interface ControlHoldTake {
   alias: string;
   sessionId: string;
   operatorId: string;
-  reason: string;
   windowMs: number;
   sessionTtlSeconds: number;
   sessionMaxTotalSeconds: number | null;
@@ -121,7 +119,6 @@ export async function takeControlHoldWithinTransaction(
   client: DatabaseClient, input: ControlHoldTake, authorityExpiresAt?: Date,
 ): Promise<ControlHold> {
   const windowMs = boundedWindow(input.windowMs);
-  const reason = boundedReason(input.reason);
   const ttlSeconds = boundedSeconds(input.sessionTtlSeconds);
   const maxTotalSeconds = input.sessionMaxTotalSeconds === null
     ? null : boundedSeconds(input.sessionMaxTotalSeconds);
@@ -130,7 +127,7 @@ export async function takeControlHoldWithinTransaction(
     throw new StoreError('invalid_input', 'terminal control authority deadline is invalid');
   }
   const authorityDeadline = authorityExpiresAt?.toISOString() ?? null;
-  const sessionWindow = terminalSessionWindowExpression(7, 8);
+  const sessionWindow = terminalSessionWindowExpression(6, 7);
   await lockTerminalControlLease(client, input);
   if (input.allowBusy !== true) {
     const active = await client.query(
@@ -161,15 +158,15 @@ export async function takeControlHoldWithinTransaction(
   if (!instant.authority_live) throw new StoreError('forbidden', 'terminal control authority expired');
   const taken = await client.query<ControlHold>(
     `INSERT INTO terminal_control_holds(session_id,tenant_id,alias,operator_id,reason,taken_at,expires_at)
-     SELECT id,tenant_id,alias,$4,$5,$9::timestamptz,
-            LEAST(${sessionWindow}, $9::timestamptz+($6||' milliseconds')::interval, $10::timestamptz)
+     SELECT id,tenant_id,alias,$4,'',$8::timestamptz,
+            LEAST(${sessionWindow}, $8::timestamptz+($5||' milliseconds')::interval, $9::timestamptz)
        FROM terminal_sessions
       WHERE id=$3::uuid AND tenant_id=$1 AND alias=$2
         AND consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
         AND ${sessionWindow}>clock_timestamp()
-        AND ($10::timestamptz IS NULL OR $10::timestamptz>clock_timestamp())
+        AND ($9::timestamptz IS NULL OR $9::timestamptz>clock_timestamp())
      RETURNING ${holdColumns}`,
-    [input.tenantId, input.alias, input.sessionId, input.operatorId, reason, windowMs,
+    [input.tenantId, input.alias, input.sessionId, input.operatorId, windowMs,
       ttlSeconds, maxTotalSeconds, instant.taken_at, authorityDeadline],
   ).catch(liveHoldConflict);
   const row = taken.rows[0];

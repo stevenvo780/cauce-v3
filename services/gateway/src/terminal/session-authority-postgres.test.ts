@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify from 'fastify';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { CauceRepository, withTransaction, type DatabaseClient, type DatabasePool } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
@@ -10,10 +10,11 @@ import { startTestDatabase, resetTestDatabase, type TestDatabase } from '../../.
 import { PasswordAuthProvider, signConsoleSession } from '../password-auth.js';
 import { MemoryConsoleUserStore } from '../test-support/console-users.js';
 import { createConsoleCredentialStamp } from '../console-credential-stamp.js';
-import { authorityContinuityCommitment, encodeTerminalSubject, type AuthorityContinuityPayload } from './authority-continuity.js';
+import { authorityContinuityCommitment, encodeTerminalSubject, issueAuthorityContinuity, verifyAuthorityContinuity, type AuthorityContinuityPayload } from './authority-continuity.js';
 import { TerminalSessionAuthority, terminalDatabaseNow } from './session-authority.js';
 import { registerTerminalControlPlane } from './plugin.js';
 import { AgentRegistry } from './registry.js';
+import type { TerminalSessionRow } from './types.js';
 import { createConsoleSecurityHook } from '../console-security.js';
 import { verifyTicketSignature, deriveAliasKey } from './tickets.js';
 import { renewRelayClaim } from './relay-proxy/claim-transition.js';
@@ -26,7 +27,6 @@ const provider = new PasswordAuthProvider({ users, signingKey: key });
 const authority = new TerminalSessionAuthority(provider, randomBytes(32));
 preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase(); pool = database.pool;
-  console.info(`terminal-authority container ${database.container.getId()}`);
 });
 beforeEach(async () => {
   await resetTestDatabase(pool);
@@ -196,7 +196,7 @@ function cookie(payload: AuthorityContinuityPayload, differentSid = false): stri
     credential_stamp: origin.credentialStamp })}`;
 }
 
-async function httpFixture(payload: AuthorityContinuityPayload) {
+async function httpFixture(payload: AuthorityContinuityPayload, sessionTtlSeconds = 900) {
   if (payload.origin.kind !== 'human') throw new Error('human expected');
   await pool.query('DELETE FROM terminal_sessions WHERE id=$1', [payload.sessionId]);
   const directory = await mkdtemp(join(tmpdir(), 'cauce-authority-http-'));
@@ -214,7 +214,7 @@ async function httpFixture(payload: AuthorityContinuityPayload) {
     app.addHook('onRequest', createConsoleSecurityHook({ allowedOrigins: ['https://console.test'] }));
     await registerTerminalControlPlane(app, { pool, authProvider: provider, registry,
       config: { wsPath: '/v3/console/terminal/ws', ticketKey: master, relayToken, relayInstanceIds: new Set([relayId]),
-        grantsFile, ticketTtlSeconds: 30, sessionTtlSeconds: 900, sessionMaxTotalSeconds: 3600,
+        grantsFile, ticketTtlSeconds: 30, sessionTtlSeconds, sessionMaxTotalSeconds: 3600,
         claimLeaseSeconds: 150, writableTuiEnabled: true, controlHoldSeconds: 900, maxSessionsPerOperator: 10, operatorHeader: 'x-cauce-operator', operators: new Set() },
       measuredFacts: { factsFor: async () => undefined },
       governanceRelay: { readFile: async () => ({ error: 'unavailable', reason: 'fixture' }) },
@@ -230,6 +230,7 @@ async function expectTokenFreeAudits(actions: readonly string[], tokens: readonl
   const rows = (await pool.query<{ action: string; metadata: unknown }>('SELECT action,metadata FROM audit_events')).rows;
   for (const action of actions) expect(rows.some((row) => row.action === action)).toBe(true);
   for (const row of rows) {
+    expect(row.metadata).not.toHaveProperty('operator_reason');
     const encoded = JSON.stringify(row.metadata);
     expect(/(?:ac2\.|r2\.|"(?:authority_proof|resume_token)"\s*:)/u.test(encoded), row.action).toBe(false);
     for (const token of tokens) expect(encoded.includes(token), row.action).toBe(false);
@@ -237,10 +238,53 @@ async function expectTokenFreeAudits(actions: readonly string[], tokens: readonl
 }
 
 describe('HTTP terminal continuity with authenticated cookie and real PostgreSQL', () => {
+  it('preserves a legacy admission proof for consume, extend and resume while rejecting a new retry', async () => {
+    const original = await seed(60); const fixture = await httpFixture(original, 10);
+    const headers = { origin: 'https://console.test', cookie: cookie(original) };
+    const body = { tenant_id: 'Steven', alias: 'argos', mode: 'shell', rows: 24, cols: 80,
+      request_id: randomUUID(), owner_token: randomUUID() };
+    try {
+      const opened = await fixture.app.inject({ method: 'POST', url: '/v3/console/terminal/sessions', headers, payload: body });
+      expect(opened.statusCode).toBe(201);
+      const receipt = opened.json<{ session_id: string; authority_proof: string; ticket: string }>();
+      const row = (await pool.query<TerminalSessionRow>('SELECT * FROM terminal_sessions WHERE id=$1', [receipt.session_id])).rows[0];
+      if (row === undefined) throw new Error('legacy session fixture missing');
+      expect(row.reason).toBe('');
+      const proof = verifyAuthorityContinuity(receipt.authority_proof, fixture.master);
+      const material = { suite: 'cauce-v3-terminal-browser-admission', version: 2, request_id: body.request_id,
+        actor: { tenant_id: proof.origin.actor.tenantId, alias: proof.origin.actor.alias },
+        operator: { operator_id: row.operator_id, attributed: row.attributed, console_subject: row.console_subject },
+        target: { tenant_id: row.tenant_id, alias: row.alias, container: row.container, presence_generation: row.generation,
+          image_id: row.image_id, runtime_user: row.runtime_user, runtime_uid: 1000, mode: row.mode, relay_instance_id: row.relay_instance_id },
+        reason: 'historical human justification', cols: body.cols, rows: body.rows };
+      const legacy = { ...proof, semanticDigest: createHash('sha256').update(JSON.stringify(material)).digest('hex') };
+      const authorityProof = issueAuthorityContinuity(legacy, fixture.master);
+      await pool.query('UPDATE terminal_sessions SET reason=$2,request_sha256=$3 WHERE id=$1',
+        [row.id, material.reason, authorityContinuityCommitment(legacy)]);
+      const retry = await fixture.app.inject({ method: 'POST', url: '/v3/console/terminal/sessions', headers, payload: body });
+      expect(retry.statusCode).toBe(409); expect(retry.json()).toMatchObject({ reason: 'request_conflict' });
+      const identity = { relay_instance_id: fixture.relayId, relay_boot_id: fixture.boot };
+      const relayHeaders = { authorization: `Bearer ${fixture.relayToken}` }; const claimToken = randomUUID();
+      const consumed = await fixture.app.inject({ method: 'POST', url: `/v3/terminal/relay/sessions/${row.id}/consume`,
+        headers: relayHeaders, payload: { ...identity, ticket: receipt.ticket, claim_token: claimToken, authority_proof: authorityProof } });
+      expect(consumed.statusCode).toBe(200);
+      const grant = consumed.json<{ resume_token: string; claim_epoch: string }>();
+      await pool.query("UPDATE terminal_sessions SET consumed_at=consumed_at-interval '1 second' WHERE id=$1", [row.id]);
+      const extended = await fixture.app.inject({ method: 'POST', url: `/v3/console/terminal/sessions/${row.id}/extend`, headers,
+        payload: { request_id: body.request_id, owner_generation: '1', owner_token: body.owner_token, authority_proof: authorityProof } });
+      expect(extended.statusCode).toBe(200);
+      const resumed = await fixture.app.inject({ method: 'POST', url: `/v3/terminal/relay/sessions/${row.id}/resume`, headers: relayHeaders,
+        payload: { ...identity, claim_token: claimToken, claim_epoch: grant.claim_epoch, resume_token: grant.resume_token,
+          authority_proof: authorityProof } });
+      expect(resumed.statusCode).toBe(200);
+      await expectTokenFreeAudits(['terminal.session.consume', 'terminal.session.extended', 'terminal.session.resume'], [authorityProof]);
+    } finally { await fixture.close(); }
+  });
+
   it('recovers the original admission, preserves OPEN v1 and blocks proofless renewal without audit', async () => {
     const original = await seed(60); const fixture = await httpFixture(original);
     const headers = { origin: 'https://console.test', cookie: cookie(original) };
-    const body = { tenant_id: 'Steven', alias: 'argos', mode: 'shell', reason: 'continuity HTTP fixture',
+    const body = { tenant_id: 'Steven', alias: 'argos', mode: 'shell',
       rows: 24, cols: 80, request_id: randomUUID(), owner_token: randomUUID() };
     try {
       const opened = await fixture.app.inject({ method: 'POST', url: '/v3/console/terminal/sessions', headers, payload: body });
@@ -299,7 +343,7 @@ describe('browser control retains the exact original authority', () => {
   it('takes and releases the hold in one transaction; stale owner and renewal above origin fail', async () => {
     const original = await seed(60); const fixture = await httpFixture(original);
     const headers = { origin: 'https://console.test', cookie: cookie(original) };
-    const body = { tenant_id: 'Steven', alias: 'argos', mode: 'harness_rw', reason: 'take real authority fixture',
+    const body = { tenant_id: 'Steven', alias: 'argos', mode: 'harness_rw',
       rows: 24, cols: 80, request_id: randomUUID(), owner_token: randomUUID() };
     try {
       const opened = await fixture.app.inject({ method: 'POST', url: '/v3/console/terminal/sessions', headers, payload: body });
@@ -312,18 +356,18 @@ describe('browser control retains the exact original authority', () => {
       const path = `/v3/console/terminal/sessions/${receipt.session_id}`;
       const owner = { request_id: body.request_id, owner_generation: '1', owner_token: body.owner_token };
       const count = (await pool.query('SELECT id FROM audit_events')).rows.length;
-      for (const [route, data] of [['extend', owner], ['control', { ...owner, action: 'take', reason: body.reason }],
+      for (const [route, data] of [['extend', owner], ['control', { ...owner, action: 'take' }],
         ['owner', { request_id: body.request_id, expected_owner_generation: '1', owner_token: randomUUID() }]] as const) {
         const denied = await fixture.app.inject({ method: 'POST', url: `${path}/${route}`, headers, payload: data });
         expect(denied.statusCode).toBeGreaterThanOrEqual(400);
       }
       expect((await pool.query('SELECT id FROM audit_events')).rows.length).toBe(count);
       const taken = await fixture.app.inject({ method: 'POST', url: `${path}/control`, headers,
-        payload: { ...owner, authority_proof: receipt.authority_proof, action: 'take', reason: body.reason } });
+        payload: { ...owner, authority_proof: receipt.authority_proof, action: 'take' } });
       expect(taken.statusCode).toBe(200);
       expect(Date.parse(taken.json<{ expires_at: string }>().expires_at)).toBeLessThanOrEqual(original.origin.expiresAtSeconds * 1000);
       const conflicting = await fixture.app.inject({ method: 'POST', url: `${path}/control`, headers,
-        payload: { ...owner, authority_proof: receipt.authority_proof, action: 'take', reason: body.reason } });
+        payload: { ...owner, authority_proof: receipt.authority_proof, action: 'take' } });
       expect(conflicting.statusCode).toBe(409);
       expect(conflicting.json()).toMatchObject({ reason: 'control_held', held_by: `${original.origin.kind === 'human' ? original.origin.humanId : ''}@example.invalid` });
       expect((await pool.query('SELECT id FROM terminal_control_holds WHERE released_at IS NULL')).rows).toHaveLength(1);

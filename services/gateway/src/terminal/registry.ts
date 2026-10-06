@@ -28,7 +28,7 @@ export type AgentResolution =
   | { readonly status: 'online'; readonly observation: AgentObservation }
   | { readonly status: 'ambiguous'; readonly relay_instance_ids: readonly string[] }
   | { readonly status: 'offline'; readonly observation: AgentObservation }
-  | { readonly status: 'not_installed' | 'unknown' };
+  | { readonly status: 'unknown' };
 
 interface RelaySnapshot {
   readonly relayBootId: string;
@@ -171,7 +171,7 @@ export class AgentRegistry {
     }
     const historical = this.history.get(aliasKey);
     return historical === undefined
-      ? { status: 'not_installed' }
+      ? { status: 'unknown' }
       : { status: 'offline', observation: observation(historical, true) };
   }
 

@@ -204,7 +204,6 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
                   session_id: sid,
                   image_id: session.image_id,
                   generation: session.generation,
-                  operator_reason: session.reason,
                   cols: session.cols,
                   rows: session.rows,
                   ticket_sha256: ticketDigest(ticket),

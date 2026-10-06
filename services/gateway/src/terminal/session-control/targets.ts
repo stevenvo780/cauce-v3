@@ -22,8 +22,8 @@ interface TerminalTargetRouteOptions {
   readonly replyError: (reply: FastifyReply, error: unknown) => void;
 }
 
-/** Authority and reachability are independent: an authorized target may be offline, not installed or unknown. */
-function terminalTargetStateReason(resolution: AgentResolution, container: string): string {
+/** Authority and reachability are independent: an authorized target may be offline or unknown. */
+function terminalTargetStateReason(resolution: AgentResolution): string {
   switch (resolution.status) {
     case 'online':
       return 'El agente PTY está conectado al terminal-relay.';
@@ -31,10 +31,8 @@ function terminalTargetStateReason(resolution: AgentResolution, container: strin
       return 'El agente PTY figura fuera de línea: no está conectado al terminal-relay.';
     case 'ambiguous':
       return 'El agente PTY figura fuera de línea porque más de un terminal-relay lo anuncia y no hay una ruta única segura.';
-    case 'not_installed':
-      return `El agente PTY figura como no instalado: el terminal-relay nunca registró este destino en ${container}.`;
     case 'unknown':
-      return 'El estado del agente PTY es desconocido: el terminal-relay todavía no publicó un snapshot verificable.';
+      return 'El estado del agente PTY es desconocido: su presencia en el terminal-relay no está comprobada.';
   }
 }
 
@@ -164,7 +162,7 @@ export function registerTerminalTargetRoute(
           last_seen: observation?.observed_at ?? null,
           authorized: usable,
           reason: usable
-            ? terminalTargetStateReason(resolution, placement.container) + availabilityReason
+            ? terminalTargetStateReason(resolution) + availabilityReason
             : terminalTargetDenialReason(denial, `${placement.tenant_id}:${placement.alias}`)
         });
       }

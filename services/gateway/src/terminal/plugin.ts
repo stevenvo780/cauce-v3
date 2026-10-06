@@ -49,14 +49,12 @@ import { isTerminalMode, isWritableMode, type TerminalMode } from './types.js';
  *    same-origin Origin header on every non-GET and the relay is not a browser.
  */
 
-const REASON_MIN = 8;
-const REASON_MAX = 280;
 const COLS_MIN = 20;
 const COLS_MAX = 500;
 const ROWS_MIN = 5;
 const ROWS_MAX = 200;
 const SESSION_REQUEST_KEYS = [
-  'alias', 'cols', 'mode', 'owner_token', 'reason', 'request_id', 'rows', 'tenant_id',
+  'alias', 'cols', 'mode', 'owner_token', 'request_id', 'rows', 'tenant_id',
 ] as const;
 const OWNER_ROTATION_KEYS = [
   'authority_proof', 'expected_owner_generation', 'owner_token', 'request_id',
@@ -64,8 +62,7 @@ const OWNER_ROTATION_KEYS = [
 const DELETE_SESSION_KEYS = ['owner_generation', 'owner_token', 'request_id'] as const;
 const SESSION_REQUEST_WITH_INITIATOR_KEYS = [...SESSION_REQUEST_KEYS, 'initiator'].sort();
 const CONTROL_KEYS = ['action', 'authority_proof', 'owner_generation', 'owner_token', 'request_id'] as const;
-const CONTROL_WITH_REASON_KEYS = [...CONTROL_KEYS, 'reason'].sort();
-const CONTROL_WITH_BUSY_KEYS = [...CONTROL_WITH_REASON_KEYS, 'allow_busy'].sort();
+const CONTROL_WITH_BUSY_KEYS = [...CONTROL_KEYS, 'allow_busy'].sort();
 
 interface TerminalControlPlaneOptions {
   readonly pool: DatabasePool;
@@ -104,15 +101,6 @@ function canonicalUuidV4(value: unknown, name: string): string {
   return value;
 }
 
-// The operator reason is mandatory and hand written: it is the only human explanation the
-// audit row will ever carry, so it is never defaulted or auto-generated.
-function operatorReason(value: unknown): string {
-  if (typeof value !== 'string' || value.trim().length < REASON_MIN || value.length > REASON_MAX) {
-    throw new Error(`reason must be between ${String(REASON_MIN)} and ${String(REASON_MAX)} characters`);
-  }
-  return value.trim();
-}
-
 function sessionInitiator(value: unknown, mode: TerminalMode): 'operator' | 'auto' {
   const initiator = value ?? 'operator';
   if (initiator !== 'operator' && initiator !== 'auto') {
@@ -149,7 +137,6 @@ export function parseSessionRequest(value: unknown): SessionRequestBody {
     alias: alias.data,
     mode: body.mode,
     initiator: sessionInitiator(body.initiator, body.mode),
-    reason: operatorReason(body.reason),
     cols: boundedInteger(body.cols, COLS_MIN, COLS_MAX, 'cols'),
     rows: boundedInteger(body.rows, ROWS_MIN, ROWS_MAX, 'rows'),
     request_id: canonicalUuidV4(body.request_id, 'request_id'),
@@ -209,18 +196,16 @@ export function parseControlRequest(value: unknown): ControlRequestBody {
     throw new Error('terminal control request must be an object');
   }
   const body = value as Record<string, unknown>;
-  if (!exactObjectKeys(body, CONTROL_KEYS) && !exactObjectKeys(body, CONTROL_WITH_REASON_KEYS)
+  if (!exactObjectKeys(body, CONTROL_KEYS)
       && !exactObjectKeys(body, CONTROL_WITH_BUSY_KEYS)) {
     throw new Error('terminal control request has unexpected or missing fields');
   }
   if (body.action !== 'take' && body.action !== 'release') {
     throw new Error("action must be 'take' or 'release'");
   }
-  if (body.allow_busy !== undefined && (typeof body.allow_busy !== 'boolean' || body.action !== 'take')) {
+  if (Object.hasOwn(body, 'allow_busy') && (typeof body.allow_busy !== 'boolean' || body.action !== 'take')) {
     throw new Error('allow_busy is only valid as a boolean when taking control');
   }
-  const reason = body.reason === undefined && body.action === 'release'
-    ? undefined : operatorReason(body.reason);
   const { request_id, owner_generation, owner_token } = ownerFencedBody({
     request_id: body.request_id,
     owner_generation: body.owner_generation,
@@ -229,8 +214,7 @@ export function parseControlRequest(value: unknown): ControlRequestBody {
   return {
     authority_proof: authorityProof(body.authority_proof),
     action: body.action,
-    ...(body.allow_busy === undefined ? {} : { allow_busy: body.allow_busy }),
-    ...(reason === undefined ? {} : { reason }),
+    ...(typeof body.allow_busy === 'boolean' ? { allow_busy: body.allow_busy } : {}),
     request_id,
     owner_generation,
     owner_token,

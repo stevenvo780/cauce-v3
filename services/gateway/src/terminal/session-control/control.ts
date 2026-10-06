@@ -59,7 +59,7 @@ export function registerTerminalControlRoute(app: FastifyInstance, options: Term
           )).rows[0];
           if (live === undefined) return { status: 200, body: { session_id: row.id, hold_id: null, released: true } };
           if (live.session_id !== row.id) return deny(409, 'control_held');
-          const reason = body.reason ?? 'operator_released';
+          const reason = 'operator_released';
           await releaseSessionControlHolds(client, row.id, reason);
           await audit('terminal.control_released', { hold_id: live.id, reason });
           await terminalDatabaseNow(client, deadline);
@@ -71,11 +71,10 @@ export function registerTerminalControlRoute(app: FastifyInstance, options: Term
         if (!(await grants.allowsCohort(row.operator_id, cohort, row.mode))) {
           return deny(403, 'no_grant_for_operator');
         }
-        if (body.reason === undefined) throw new Error('taking control requires a typed reason');
         await client.query('SAVEPOINT terminal_control_take');
         let hold;
         try { hold = await takeControlHoldWithinTransaction(client, { tenantId: row.tenant_id, alias: row.alias,
-          sessionId: row.id, operatorId: row.operator_id, reason: body.reason, allowBusy: body.allow_busy === true,
+          sessionId: row.id, operatorId: row.operator_id, allowBusy: body.allow_busy === true,
           windowMs: Math.max(1, (config.controlHoldSeconds ?? 0) * 1000), sessionTtlSeconds: config.sessionTtlSeconds,
           sessionMaxTotalSeconds: config.sessionMaxTotalSeconds ?? null }, deadline);
           await client.query('RELEASE SAVEPOINT terminal_control_take');
@@ -91,7 +90,7 @@ export function registerTerminalControlRoute(app: FastifyInstance, options: Term
           )).rows[0];
           return deny(409, 'control_held', { held_by: live?.operator_id ?? null, expires_at: live?.expires_at.toISOString() ?? null });
         }
-        await audit('terminal.control_taken', { operator_reason: body.reason, allow_busy: body.allow_busy === true,
+        await audit('terminal.control_taken', { allow_busy: body.allow_busy === true,
           hold_id: hold.id, expires_at: hold.expires_at.toISOString() });
         await terminalDatabaseNow(client, deadline);
         return { status: 200, body: { session_id: row.id, hold_id: hold.id,

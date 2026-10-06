@@ -25,7 +25,7 @@ import {
   fakeDatabase,
   presence,
   type FakeDatabase,
-} from './terminal.plugin.shared.js';
+} from './terminal/plugin-test-fixtures.js';
 
 describe('terminal control plane', () => {
   let directory: string;
@@ -133,7 +133,7 @@ describe('terminal control plane', () => {
       headers: { origin: ORIGIN, ...headers },
       payload: {
         tenant_id: 'Steven', alias: 'jarvis', mode: 'shell',
-        reason: 'revisar el harness colgado', cols: 120, rows: 40,
+        cols: 120, rows: 40,
         request_id: randomUUID(), owner_token: randomUUID(), ...body
       }
     });
@@ -158,6 +158,7 @@ describe('terminal control plane', () => {
   });
 
   afterEach(async () => {
+    for (const entry of database.audit) expect(entry.metadata).not.toHaveProperty('operator_reason');
     await app.close();
     await rm(directory, { recursive: true, force: true });
   });
@@ -197,7 +198,7 @@ describe('terminal control plane', () => {
     expect(forbiddenRevoke.json()).toEqual({ error: 'forbidden', message: 'insufficient permissions' });
     expect(database.sessions.get(first.session_id)?.revoked_at).toBeNull();
 
-    const independent = await openSession({ reason: 'tarea del segundo sujeto de consola' });
+    const independent = await openSession({});
     expect(independent.statusCode).toBe(201);
     expect(database.sessions.size).toBe(2);
     const listed = await app.inject({ method: 'GET', url: '/v3/console/terminal/sessions' });
@@ -272,7 +273,7 @@ describe('terminal control plane', () => {
     const close = database.audit.find((row) => row.action === 'terminal.session.close');
     expect(close?.metadata).toMatchObject({
       close_reason: 'operator_closed', exit_code: 0, bytes_in: 1_024, bytes_out: 65_536,
-      image_id: 'sha256:c0ffee', generation: 'gen-7', operator_reason: 'revisar el harness colgado'
+      image_id: 'sha256:c0ffee', generation: 'gen-7'
     });
     // Closing twice must not duplicate the audit row.
     await app.inject({

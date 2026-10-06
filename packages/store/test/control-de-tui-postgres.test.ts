@@ -306,7 +306,6 @@ describe('the store module that takes and releases the control', () => {
       alias: HELD,
       sessionId,
       operatorId: 'steven',
-      reason: 'operator typing',
       windowMs,
       sessionTtlSeconds: SESSION_TTL_SECONDS,
       sessionMaxTotalSeconds: SESSION_MAX_TOTAL_SECONDS
@@ -318,7 +317,6 @@ describe('the store module that takes and releases the control', () => {
       alias: HELD,
       sessionId: await seedSession(HELD, { tenant }),
       operatorId: 'steven',
-      reason: 'operator typing',
       windowMs,
       sessionTtlSeconds: SESSION_TTL_SECONDS,
       sessionMaxTotalSeconds: SESSION_MAX_TOTAL_SECONDS
@@ -351,7 +349,6 @@ describe('the store module that takes and releases the control', () => {
       alias: HELD,
       sessionId: await seedSession(HELD, { tenant: NEIGHBOUR }),
       operatorId: 'steven',
-      reason: 'terminal ajena',
       windowMs: WINDOW_MS,
       sessionTtlSeconds: SESSION_TTL_SECONDS,
       sessionMaxTotalSeconds: SESSION_MAX_TOTAL_SECONDS

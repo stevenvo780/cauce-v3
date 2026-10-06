@@ -22,12 +22,13 @@ import {
   RELAY_TOKEN,
   consoleAuthProvider,
   installAuthorityCarrier,
+  installLegacyAdmission,
   fakeDatabase,
   presence,
   CLAIM_B,
   RELAY_BOOT_B,
   type FakeDatabase,
-} from './terminal.plugin.shared.js';
+} from './terminal/plugin-test-fixtures.js';
 
 describe('terminal control plane', () => {
   let directory: string;
@@ -135,7 +136,7 @@ describe('terminal control plane', () => {
       headers: { origin: ORIGIN, ...headers },
       payload: {
         tenant_id: 'Steven', alias: 'jarvis', mode: 'shell',
-        reason: 'revisar el harness colgado', cols: 120, rows: 40,
+        cols: 120, rows: 40,
         request_id: randomUUID(), owner_token: randomUUID(), ...body
       }
     });
@@ -219,6 +220,7 @@ describe('terminal control plane', () => {
   });
 
   afterEach(async () => {
+    for (const entry of database.audit) expect(entry.metadata).not.toHaveProperty('operator_reason');
     await app.close();
     await rm(directory, { recursive: true, force: true });
   });
@@ -503,6 +505,24 @@ describe('terminal control plane', () => {
       MASTER, Math.floor(Date.now() / 1_000) - 10, consumed.authorityProof,
     );
     expect((await resumeSession(consumed.sessionId, expired)).statusCode).toBe(401);
+  });
+
+  it('consumes and resumes sessions with the original admission proof containing reason', async () => {
+    await report([presence()]);
+    const ownerToken = randomUUID();
+    const opened = await openSession({ owner_token: ownerToken });
+    expect(opened.statusCode).toBe(201);
+    const issued = opened.json<{ session_id: string; ticket: string; request_id: string; owner_generation: string }>();
+    const legacyProof = installLegacyAdmission(database, issued.session_id);
+    registry = new AgentRegistry();
+    await build(); await report([presence()]);
+    const consumed = await app.inject({ method: 'POST', url: `/v3/terminal/relay/sessions/${issued.session_id}/consume`,
+      headers: { authorization: `Bearer ${RELAY_TOKEN}` }, payload: { ticket: issued.ticket, claim_token: CLAIM_A,
+        authority_proof: legacyProof } });
+    expect(consumed.statusCode).toBe(200);
+    const active = consumed.json<{ resume_token: string }>();
+    const resumed = await resumeSession(issued.session_id, active.resume_token);
+    expect(resumed.statusCode).toBe(200);
   });
 
   it('resume revalidates revoked, closed, routing authority and grants on every call', async () => {
