@@ -11,7 +11,10 @@ it('reads complete Unicode mailbox text through MCP and rejects foreign authorit
       stored_at: '2026-10-06T01:00:00.000001Z', from: { tenant_id: 'Steven', alias: 'jarvis' }, text: '😀'.repeat(3000),
       text_truncated: false, state: 'stored' }], next_cursor: null, untrusted_fields: ['items[].text'], reading_confirms_execution: false });
   const mailbox = vi.fn(async () => value);
-  const forRequest = vi.fn(async () => ({ mailbox }) as HumanGatewayOperations);
+  const unexpected = vi.fn(async (): Promise<never> => { throw new Error('unexpected mailbox test operation'); });
+  const operations: HumanGatewayOperations = { mailbox, status: unexpected, agents: unexpected,
+    submit: unexpected, receipt: unexpected, inbox: unexpected };
+  const forRequest = vi.fn(async () => operations);
   const server = createGatewayToolServer({ factory: { forRequest }, signal: new AbortController().signal,
     identity: { kind: 'oauth', issuer: 'https://issuer.example', subject: 'owner', audience: 'https://mcp.example/mcp',
       expiresAt: 4_000_000_000, scopes: ['cauce.read'] } });
