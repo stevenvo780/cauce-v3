@@ -1,7 +1,11 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ComponentProps, SyntheticEvent } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ChatAttachmentsComposer } from './chat-attachments-composer';
+import { ConversationPane } from './ConversationPane';
+import { mockStatus, topology } from '../../mocks/data';
+import { renderWithApi, testApi } from '../../test/render';
+import { construirRosterDeMensajeria } from './roster';
 
 class Recorder {
   static isTypeSupported = (type: string) => type.startsWith('audio/webm');
@@ -101,4 +105,70 @@ it('allows an eligible drop and refuses direct submission of an empty draft', ()
   const { props, form } = fixture({ text: '' }); const { file } = drop(form);
   expect(props.onFilesChange).toHaveBeenCalledWith([file]);
   fireEvent.submit(form); expect(props.onSubmit).not.toHaveBeenCalled();
+});
+
+it('keeps the focused editor enabled on sending rerender but blocks another submit and file mutation', () => {
+  const { props, form, rerender } = fixture();
+  const textbox = screen.getByRole('textbox');
+  textbox.focus();
+  fireEvent.submit(form);
+  expect(props.onSubmit).toHaveBeenCalledOnce();
+  rerender(<ChatAttachmentsComposer {...props} sending />);
+  expect(textbox).toBeEnabled();
+  expect(textbox).toHaveFocus();
+  expect(screen.getByRole('button', { name: 'Enviando…' })).toBeDisabled();
+  fireEvent.keyDown(textbox, { key: 'Enter' });
+  fireEvent.submit(form);
+  drop(form);
+  expect(props.onSubmit).toHaveBeenCalledOnce();
+  expect(props.onFilesChange).not.toHaveBeenCalled();
+});
+it('captures the original payload once and preserves the next draft while the real controller awaits publication', async () => {
+  window.history.replaceState({}, '', '/messages');
+  const agent = construirRosterDeMensajeria({ status: mockStatus(), topology }).find((item) => item.alias === 'argos');
+  if (!agent) throw new Error('Missing agent fixture');
+  const receipt = {
+    message_id: '10000000-0000-4000-8000-000000000001',
+    delivery_ids: ['20000000-0000-4000-8000-000000000002'], duplicate: false,
+    request_id: '30000000-0000-4000-8000-000000000003', trace_id: 'trace-focused-send',
+    idempotency_key: 'intent-focused-send', tenant_id: 'Steven', actor_alias: 'operator',
+    request_hash: 'a'.repeat(64), causal_hash: 'b'.repeat(64),
+  };
+  vi.spyOn(testApi, 'preparePublishIntent').mockResolvedValue({
+    version: 1, state: 'prepared', idempotency_key: receipt.idempotency_key, receipt: null,
+  });
+  let release: () => void = () => undefined;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const publish = vi.spyOn(testApi, 'publishMessage').mockImplementation(async () => { await pending; return receipt; });
+  const confirm = vi.spyOn(testApi, 'confirmPublishIntent').mockResolvedValue({
+    version: 1, confirmed: true, idempotency_key: receipt.idempotency_key,
+    message_id: receipt.message_id, causal_hash: receipt.causal_hash,
+  });
+  vi.spyOn(testApi, 'getMessage').mockResolvedValue({ message_id: receipt.message_id, chain_open: false, deliveries: [] });
+  renderWithApi(<ConversationPane agent={agent} loading={false} canPublish publisherSubject="Steven:operator"
+    publisherHumanSubject={`human:${'a'.repeat(64)}`} page={{ items: [] }}
+    route={{ allowed: true, membership: true, sourceRoomIds: ['grp.steven'], reason: 'Verified' }}
+    onReload={vi.fn()} onQueueReload={vi.fn()} />);
+  const textbox = screen.getByRole('textbox');
+  textbox.focus();
+  fireEvent.change(textbox, { target: { value: 'Captured message' } });
+  const form = textbox.closest('form');
+  if (!form) throw new Error('Missing composer form');
+  try {
+    fireEvent.submit(form);
+    await waitFor(() => { expect(publish).toHaveBeenCalledOnce(); });
+    expect(textbox).toBeEnabled();
+    expect(textbox).toHaveFocus();
+    fireEvent.change(textbox, { target: { value: 'Next unsent draft' } });
+    fireEvent.keyDown(textbox, { key: 'Enter' });
+    fireEvent.submit(form);
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish.mock.calls[0][0].body).toEqual({ text: 'Captured message' });
+    expect(textbox).toHaveValue('Next unsent draft');
+    await act(async () => { release(); await pending; });
+    await waitFor(() => { expect(confirm).toHaveBeenCalledOnce(); });
+    expect(textbox).toHaveFocus();
+    expect(textbox).toHaveValue('Next unsent draft');
+    expect(publish).toHaveBeenCalledOnce();
+  } finally { release(); }
 });
