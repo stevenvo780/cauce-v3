@@ -24,7 +24,7 @@ describe('CauceApi', () => {
     // `Object.assign` en el constructor pone los métodos en la instancia, no en el prototipo: si un
     // módulo deja de mezclarse el tipo sigue compilando y la vista revienta en tiempo de ejecución.
     const api = new CauceApi();
-    expect(metodosDeLosModulos).toHaveLength(34);
+    expect(metodosDeLosModulos).toHaveLength(36);
     for (const nombre of metodosDeLosModulos) {
       expect(typeof (api as unknown as Record<string, unknown>)[nombre]).toBe('function');
     }

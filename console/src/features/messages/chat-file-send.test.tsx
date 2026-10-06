@@ -97,6 +97,31 @@ it('rechaza cantidades excesivas sin alterar la selección previa y permite quit
   expect(screen.getAllByRole('button', { name: /^Quitar f/u })).toHaveLength(3);
 });
 
+it('adjunta archivos pegados y arrastrados sin interferir con el pegado de texto', () => {
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:composer-preview') });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+  renderWithApi(<ConversationPane {...props()} page={{ items: [] }} />);
+  const textarea = screen.getByRole('textbox');
+  const pasted = new File(['png'], 'pegada.png', { type: 'image/png' });
+  const paste = fireEvent.paste(textarea, { clipboardData: { files: [pasted], items: [] } });
+  expect(paste).toBe(false);
+  expect(screen.getByRole('list', { name: 'Archivos adjuntos' })).toHaveTextContent('pegada.png');
+
+  const composer = textarea.closest('form');
+  if (!composer) throw new Error('Missing composer');
+  const dragged = new File(['video'], 'clip.mp4', { type: 'video/mp4' });
+  fireEvent.dragOver(composer, { dataTransfer: { types: ['Files'], files: [dragged], dropEffect: 'none' } });
+  expect(composer).toHaveAttribute('data-dragging-files', 'true');
+  fireEvent.drop(composer, { dataTransfer: { types: ['Files'], files: [dragged], dropEffect: 'none' } });
+  expect(screen.getByRole('list', { name: 'Archivos adjuntos' })).toHaveTextContent('pegada.png');
+  expect(screen.getByRole('list', { name: 'Archivos adjuntos' })).toHaveTextContent('clip.mp4');
+
+  const textPaste = fireEvent.paste(textarea, { clipboardData: { files: [], items: [], getData: () => 'texto pegado' } });
+  expect(textPaste).toBe(true);
+  expect(screen.getByRole('textbox')).toHaveValue('');
+  expect(screen.getByRole('list', { name: 'Archivos adjuntos' })).toHaveTextContent('clip.mp4');
+});
+
 it.each(['agente', 'subject'] as const)('mantiene los adjuntos aislados por %s en el borrador', (scope) => {
   const input = props();
   const drafts = new ConversationDraftStore();
