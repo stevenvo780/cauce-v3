@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import configparser
+import errno
 import json
+import os
+import stat
 import time
 import unittest
 import urllib.error
@@ -185,6 +189,47 @@ class PreviewPublicationTests(unittest.TestCase):
         self.assertEqual(self.restarts(), [])
         self.assertFalse(self.marker.exists())
 
+    def test_read_only_sandbox_is_detected_before_copy_or_rollback(self):
+        with mock.patch.object(PREVIEW.os, "fstatvfs", return_value=mock.Mock(f_flag=os.ST_RDONLY)), \
+                mock.patch.object(PREVIEW, "atomic_bytes") as copy, \
+                self.assertRaisesRegex(SUP.SupervisionError, "preview_destination_read_only") as raised:
+            self.publish()
+        self.assertEqual(raised.exception.preview_diagnostics, {"stage": "preflight", "errno": errno.EROFS})
+        copy.assert_not_called()
+        self.assertEqual(self.restarts(), [])
+        self.assertFalse(self.marker.exists())
+        for name, value in self.originals.items():
+            self.assertEqual((self.fixture.preview / name).read_bytes(), value)
+
+    def test_ero_fs_before_replacement_does_not_report_unknown_rollback(self):
+        with mock.patch.object(PREVIEW, "atomic_bytes", side_effect=OSError(errno.EROFS, "synthetic immutable mount")) as copy, \
+                self.assertRaisesRegex(SUP.SupervisionError, "preview_publication_failed") as raised:
+            self.publish()
+        self.assertEqual(copy.call_count, 1)
+        self.assertEqual(raised.exception.preview_diagnostics, {"stage": "copy", "errno": errno.EROFS})
+        self.assertFalse(self.marker.exists())
+        for name, value in self.originals.items():
+            self.assertEqual((self.fixture.preview / name).read_bytes(), value)
+
+    def test_failure_after_atomic_replacement_still_restores_changed_asset(self):
+        original_sync = PREVIEW.os.fsync
+        failed = False
+        def fail_directory_sync(descriptor):
+            nonlocal failed
+            if not failed and stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                failed = True
+                raise OSError(errno.EIO, "synthetic post-replace sync error")
+            original_sync(descriptor)
+        with mock.patch.object(PREVIEW.os, "fsync", side_effect=fail_directory_sync), \
+                self.assertRaisesRegex(SUP.SupervisionError, "preview_publication_failed") as raised:
+            self.publish()
+        self.assertTrue(failed)
+        self.assertEqual(raised.exception.preview_diagnostics, {"stage": "copy", "errno": errno.EIO})
+        for name, value in self.originals.items():
+            self.assertEqual((self.fixture.preview / name).read_bytes(), value)
+        self.assertEqual(self.restarts(), [])
+        self.assertFalse(self.marker.exists())
+
     def test_unknown_service_health_rolls_back_and_does_not_write_success_marker(self):
         original = self.command
         def unhealthy(arguments, deadline):
@@ -302,6 +347,7 @@ class PreviewHttpHealthTests(unittest.TestCase):
                 self.assertNotIn("Cookie", dict(request.header_items()))
                 response.read.assert_not_called()
                 response.close.assert_called_once()
+                self.assertEqual(opener.open.call_count, 1)
 
     def test_http_error_401_is_success_but_transport_unknown_is_closed(self):
         error = urllib.error.HTTPError(PREVIEW.HEALTH_URL, 401, "Unauthorized", {"Content-Type": "application/json"}, None)
@@ -313,6 +359,64 @@ class PreviewHttpHealthTests(unittest.TestCase):
         with mock.patch.object(PREVIEW.urllib.request, "build_opener", return_value=opener), \
                 self.assertRaisesRegex(SUP.SupervisionError, "preview_http_auth_health_unknown"):
             PREVIEW.http_auth_health(time.monotonic() + 5, SUP.STATE)
+
+
+    def test_startup_connection_refused_then_json_401_retries_only_startup_error(self):
+        response = mock.Mock(code=401, headers={"Content-Type": "application/json"})
+        opener = mock.Mock()
+        opener.open.side_effect = [urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "startup")), response]
+        with mock.patch.object(PREVIEW.urllib.request, "build_opener", return_value=opener), \
+                mock.patch.object(PREVIEW.time, "sleep") as sleep:
+            PREVIEW.http_auth_health(time.monotonic() + 5, SUP.STATE)
+        self.assertEqual(opener.open.call_count, 2)
+        sleep.assert_called_once()
+        self.assertLessEqual(sleep.call_args.args[0], 0.1)
+        response.read.assert_not_called()
+        response.close.assert_called_once()
+
+    def test_permanent_refusal_stops_at_absolute_three_seconds_or_earlier_pass_deadline(self):
+        for pass_budget in (0.25, 10):
+            with self.subTest(pass_budget=pass_budget):
+                clock = [100.0]
+                opener = mock.Mock()
+                opener.open.side_effect = urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "startup"))
+                def advance(seconds, timer=clock):
+                    timer[0] += seconds
+                with mock.patch.object(PREVIEW.urllib.request, "build_opener", return_value=opener), \
+                        mock.patch.object(PREVIEW.time, "monotonic", side_effect=lambda timer=clock: timer[0]), \
+                        mock.patch.object(PREVIEW.time, "sleep", side_effect=advance), \
+                        self.assertRaisesRegex(SUP.SupervisionError, "preview_http_auth_health_unknown") as raised:
+                    PREVIEW.http_auth_health(100 + pass_budget, SUP.STATE)
+                self.assertLessEqual(clock[0] - 100, min(3, pass_budget) + 1e-9)
+                self.assertLessEqual(opener.open.call_count, 32)
+                self.assertEqual(raised.exception.preview_diagnostics, {"stage": "health", "errno": errno.ECONNREFUSED})
+                for call in opener.open.call_args_list:
+                    self.assertLessEqual(call.kwargs["timeout"], 3)
+
+    def test_other_transport_errors_are_not_retried_and_errno_is_recorded(self):
+        opener = mock.Mock()
+        opener.open.side_effect = urllib.error.URLError(OSError(errno.ETIMEDOUT, "synthetic timeout"))
+        with mock.patch.object(PREVIEW.urllib.request, "build_opener", return_value=opener), \
+                mock.patch.object(PREVIEW.time, "sleep") as sleep, \
+                self.assertRaisesRegex(SUP.SupervisionError, "preview_http_auth_health_unknown") as raised:
+            PREVIEW.http_auth_health(time.monotonic() + 5, SUP.STATE)
+        self.assertEqual(opener.open.call_count, 1)
+        sleep.assert_not_called()
+        self.assertEqual(raised.exception.preview_diagnostics, {"stage": "health", "errno": errno.ETIMEDOUT})
+
+
+class PreviewServiceSandboxTests(unittest.TestCase):
+    def test_root_controller_can_write_only_private_state_and_fixed_public_preview(self):
+        path = fixtures.ROOT / "ops/instances/hospital/praxis-supervision.service"
+        unit = configparser.ConfigParser(interpolation=None)
+        unit.read(path)
+        service = unit["Service"]
+        self.assertEqual(set(service["ReadWritePaths"].split()), {
+            "/var/lib/praxis-supervision", "/opt/hospital-agent/runtime/praxis-preview/web"})
+        self.assertEqual(service["ProtectSystem"], "strict")
+        self.assertEqual(service["ProtectHome"], "true")
+        self.assertEqual(service["NoNewPrivileges"], "true")
+        self.assertEqual(service["User"], "root")
 
 
 if __name__ == "__main__":

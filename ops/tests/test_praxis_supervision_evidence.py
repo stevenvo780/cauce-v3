@@ -456,11 +456,28 @@ class EvidenceContractTests(unittest.TestCase):
             "records": {"PRAX001": {"remaining": "All documented behaviors and actual synthetic E2E"}}})
         self.fixture.run_pass()
         state = json.loads(self.fixture.state_path.read_text())
-        self.assertEqual(state["next_work"]["criterion_id"], "C2")
+        self.assertEqual(state["next_work"]["issue_id"], "PRAX002")
+        self.assertEqual(state["next_work"]["criterion_id"], "C1")
         self.assertEqual(state["next_work"]["authority"], "existing_owner_goal")
         body = self.fixture.engineering_posts()[0]["body"]
         self.assertEqual(body["supervision"]["next_work"], state["next_work"])
         self.assertIn("criterio íntegro", body["text"])
+        self.assertTrue(body["supervision"]["next_work"]["advisory"])
+
+    def test_product_consent_engineering_precedes_governance_without_granting_doc_progress(self):
+        document = {"issues": [
+            {"id": "PRAX-001", "criteria": [{"id": "AC01", "text": "Register the 83 P0 decisions"}]},
+            {"id": "PRAX-013", "criteria": [{"id": "AC01", "text": "Implement synthetic consent persistence and isolation"}]},
+            {"id": "PRAX-037", "criteria": [{"id": "AC01", "text": "Record final milestone acceptance"}]}]}
+        work = SUP.EVIDENCE.next_work(document, {}, set())
+        self.assertEqual(work["issue_id"], "PRAX-013")
+        self.assertTrue(work["advisory"])
+        self.assertIn("next_work orienta", SUP.ROOT_TEXT)
+        self.assertIn("--install-evidence", SUP.ROOT_TEXT)
+        self.assertIn("/opt/praxis-qa-venv/bin/python", SUP.ROOT_TEXT)
+        previous = self.fixture.snapshot()
+        current = {**previous, "next_work": work, "validated_roadmap": ["PRAX-001:AC01"]}
+        self.assertFalse(SUP.made_progress(previous, current))
 
     def paused_progress(self, reason="no_measured_progress"):
         supervisor = self.fixture.supervisor()

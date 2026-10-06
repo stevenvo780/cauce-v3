@@ -40,16 +40,24 @@ ROOT_TEXT = (
     "El operador coordina, revisa e integra; Teseo y Perseo son dos developers "
     "generalistas con ownership disjunto. Elegí trabajo independiente y terminable "
     "para completar los criterios completos de las incidencias y del roadmap; "
-    "evitá microflags. Ejecutá el criterio íntegro indicado por el SDD, actualizá "
+    "evitá microflags. Elegí un criterio íntegro del SDD, actualizá "
     "su evidencia y dejá el siguiente criterio ejecutable o su bloqueo medido. "
-    "Consultá --help de python3 -B /home/node/clawd/.cauce/runtime/praxis-proof.py "
-    "y usá ese productor para renovar pruebas y snapshot con su contrato v2, "
+    "next_work orienta; no obliga a repetir ni reemplaza elegir ingeniería independiente. "
+    "Gobernanza se registra en paralelo, no sustituye código probado. "
+    "Después de integrar y commitear el código canónico, el operador consulta --help "
+    "y ejecuta /opt/praxis-qa-venv/bin/python -B /home/node/clawd/.cauce/runtime/praxis-proof.py "
+    "con --workspace, --output, --artifact-prefix y --install-evidence, y --qa cuando "
+    "corresponda; luego revisa imágenes independientes y sus hashes. Los developers "
+    "pueden usar Python estándar para unidades sin navegador. Usá ese productor "
+    "para renovar pruebas y snapshot con su contrato v2, "
     "comandos reales y hashes de los módulos y pruebas ejecutados. N/A requiere "
     "justificación explícita y no acredita una prueba aprobada. Comprobá pruebas, "
     "QA y snapshot antes de publicar con la "
     "autorización durable vigente. Los criterios clínicos o legales pendientes "
     "requieren decisión del dueño y sólo bloquean esa parte. No declarés el producto "
     "terminado por labels o entregas done. No leas datos clínicos privados ni secretos. "
+    "El controlador publica el destino real del preview sintético con la autorización "
+    "vigente; no requiere repetir un pedido humano de publicación. "
     "Cerrá esta entrega sin esperar ni hacer polling. Si falla cuota, autenticación "
     "o capacidad, incluí un código técnico tipado en JSON: "
     '{"supervision":{"version":1,"outcome":"capacity_failure","code":'
@@ -655,6 +663,8 @@ def main() -> int:
                     result = supervisor.pass_once(runtime, engineering)
             except (SupervisionError, OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError) as error:
                 code = error.code if isinstance(error, SupervisionError) else "observation_invalid"
+                if code.startswith("preview_"):
+                    supervisor.state["preview_failure"] = {"code": code, **getattr(error, "preview_diagnostics", {})}
                 result = supervisor.pause(code)
         print(json.dumps(result, sort_keys=True))
         return 0

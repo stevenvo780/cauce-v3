@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -77,6 +78,29 @@ def guarded_directory(state) -> int:
     return os.open(PREVIEW_ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 
 
+def failure(state, code: str, stage: str, error=None):
+    value = state.SupervisionError(code)
+    number = getattr(error, "errno", None)
+    value.preview_diagnostics = {"stage": stage, "errno": number if type(number) is int else None}
+    return value
+
+
+def preflight_writable(directory: int, state) -> None:
+    if os.fstatvfs(directory).f_flag & os.ST_RDONLY:
+        raise failure(state, "preview_destination_read_only", "preflight", OSError(errno.EROFS, "read-only preview"))
+    temporary = ".praxis-preflight-" + uuid.uuid4().hex
+    descriptor = None
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+    except OSError as error:
+        code = "preview_destination_read_only" if error.errno == errno.EROFS else "preview_destination_not_writable"
+        raise failure(state, code, "preflight", error) from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+            os.unlink(temporary, dir_fd=directory)
+
+
 def atomic_bytes(directory: int, name: str, value: bytes) -> None:
     temporary = ".praxis-publish-" + uuid.uuid4().hex
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=directory)
@@ -133,19 +157,34 @@ def http_auth_health(deadline: float, state) -> None:
     check_deadline(deadline, state)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     request = urllib.request.Request(HEALTH_URL, headers={"Accept": "application/json"}, method="GET")
-    response = None
-    try:
+    health_deadline = min(deadline, time.monotonic() + 3)
+    last_error = None
+    for _ in range(32):
+        remaining = health_deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        response = None
         try:
-            response = opener.open(request, timeout=min(3, deadline - time.monotonic()))
-        except urllib.error.HTTPError as error:
-            response = error
-        if (response.code != 401 or response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json"):
-            raise state.SupervisionError("preview_http_auth_health_failed")
-    except (urllib.error.URLError, OSError, TimeoutError) as error:
-        raise state.SupervisionError("preview_http_auth_health_unknown") from error
-    finally:
-        if response is not None:
-            response.close()
+            try:
+                response = opener.open(request, timeout=remaining)
+            except urllib.error.HTTPError as error:
+                response = error
+            if (response.code != 401 or response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json"):
+                raise state.SupervisionError("preview_http_auth_health_failed")
+            return
+        except (urllib.error.URLError, OSError, TimeoutError) as error:
+            reason = error.reason if isinstance(error, urllib.error.URLError) else error
+            if getattr(reason, "errno", None) != errno.ECONNREFUSED:
+                raise failure(state, "preview_http_auth_health_unknown", "health", reason) from error
+            last_error = reason
+            remaining = health_deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.1, remaining))
+        finally:
+            if response is not None:
+                response.close()
+    raise failure(state, "preview_http_auth_health_unknown", "health", last_error)
 
 
 def marker(state, goal: str) -> dict | None:
@@ -228,7 +267,7 @@ def publish(config: dict, engineering: dict, runtime: dict, deadline: float, sta
     fingerprint = state.digest(state.canonical(app_sources))
     new_application = previous is None or previous["fingerprint"] != fingerprint
     directory = guarded_directory(state)
-    originals, changed = {}, []
+    originals, changed, stage = {}, [], "preflight"
     try:
         originals = {name: public_bytes(PREVIEW_ROOT / name, state) for name in WEB_FILES.values()}
         different = [name for name, value in captured.items() if originals[name] != value]
@@ -236,12 +275,14 @@ def publish(config: dict, engineering: dict, runtime: dict, deadline: float, sta
             systemd_command(["is-active", "--quiet", SERVICE], deadline, state, run_command)
             http_auth_health(deadline, state)
             return {"action": "preview_already_current", "fingerprint": fingerprint}
+        preflight_writable(directory, state)
         fresh_idle(runtime_reader, state)
         if verify_source(config, engineering, deadline, state, run_command, source_matches) != captured:
             raise state.SupervisionError("preview_source_changed")
         for name in different:
             check_deadline(deadline, state, 6)
             changed.append(name)
+            stage = "copy"
             atomic_bytes(directory, name, captured[name])
         fresh_idle(runtime_reader, state)
         verify_source(config, engineering, deadline, state, run_command, source_matches)
@@ -249,12 +290,15 @@ def publish(config: dict, engineering: dict, runtime: dict, deadline: float, sta
             raise state.SupervisionError("preview_copy_verification_failed")
         service_guard(deadline, state, run_command)
         if new_application:
+            stage = "restart"
             systemd_command(["restart", SERVICE], deadline, state, run_command)
+        stage = "health"
         systemd_command(["is-active", "--quiet", SERVICE], deadline, state, run_command)
         verify_source(config, engineering, deadline, state, run_command, source_matches)
         http_auth_health(deadline, state)
         fresh_idle(runtime_reader, state)
         verify_source(config, engineering, deadline, state, run_command, source_matches)
+        stage = "marker"
         state.atomic_save(PUBLICATION_STATE, {"schema_version": 1, "goal_sha256": config["goal_sha256"],
             "source_commit": engineering["git_head"], "service": SERVICE, "fingerprint": fingerprint,
             "app_source_hashes": app_sources, "web_hashes": {name: state.digest(value) for name, value in captured.items()},
@@ -263,11 +307,16 @@ def publish(config: dict, engineering: dict, runtime: dict, deadline: float, sta
     except BaseException as error:
         try:
             for name in changed:
-                atomic_bytes(directory, name, originals[name])
+                if public_bytes(PREVIEW_ROOT / name, state) != originals[name]:
+                    atomic_bytes(directory, name, originals[name])
         except BaseException as rollback_error:
-            raise state.SupervisionError("preview_rollback_unknown") from rollback_error
+            value = failure(state, "preview_rollback_unknown", "rollback", rollback_error)
+            value.preview_diagnostics.update(cause_stage=stage, cause_errno=getattr(error, "errno", None))
+            raise value from rollback_error
         if isinstance(error, state.SupervisionError):
+            if not getattr(error, "preview_diagnostics", None):
+                error.preview_diagnostics = {"stage": stage, "errno": None}
             raise
-        raise state.SupervisionError("preview_publication_failed") from error
+        raise failure(state, "preview_publication_failed", stage, error) from error
     finally:
         os.close(directory)

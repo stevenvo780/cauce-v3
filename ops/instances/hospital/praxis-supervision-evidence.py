@@ -424,7 +424,8 @@ def next_work(document: dict, evidence: dict, technical: set) -> dict | None:
     if not isinstance(records_value, dict):
         records_value = {}
     blocked = None
-    for issue in document["issues"]:
+    issues = sorted(document["issues"], key=lambda issue: issue["id"].replace("-", "") in {"PRAX001", "PRAX037"})
+    for issue in issues:
         record = records_value.get(issue["id"], {})
         record = record if isinstance(record, dict) else {}
         for criterion in issue.get("criteria", []):
@@ -438,7 +439,7 @@ def next_work(document: dict, evidence: dict, technical: set) -> dict | None:
             work = {"issue_id": issue["id"], "criterion_id": criterion["id"], "criterion": text[:4000],
                     "remaining": str(record.get("remaining", ""))[:2000],
                     "blocked_reason": blocker[:1000] if isinstance(blocker, str) else None,
-                    "source": "sdd-roadmap", "authority": "existing_owner_goal"}
+                    "source": "sdd-roadmap", "authority": "existing_owner_goal", "advisory": True}
             if not work["blocked_reason"]:
                 return work
             blocked = blocked or work
