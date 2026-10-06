@@ -52,13 +52,14 @@ beforeAll(async () => {
 afterEach(async () => { await Promise.all(pools.splice(0).map(pool => pool.end())); });
 afterAll(async () => { if (admin) await admin.end(); if (container) await container.stop(); });
 
-async function database(apply = true): Promise<DatabasePool> {
+async function database(apply: boolean | string = true): Promise<DatabasePool> {
   if (!admin) throw new Error('OAuth disposable database is not initialized');
   const name = `cauce_test_oauth_${randomUUID().replaceAll('-', '')}`;
   await admin.query(`CREATE DATABASE ${name} TEMPLATE cauce_test_oauth_template`);
   const url = new URL(serverUrl); url.pathname = `/${name}`;
   const pool = createPool(url.href, { max: 12 }); pools.push(pool);
-  if (apply) await applyMigrations(pool);
+  if (typeof apply === 'string') await applyMigrationsThrough(pool, apply);
+  else if (apply) await applyMigrations(pool);
   return pool;
 }
 
@@ -159,10 +160,10 @@ function barrier() {
   it('applies four empty tables and its checksum atomically, leaving 044 unchanged', async () => {
     const pool = await database(false);
     const broken = intercept(pool, async sql => sql.includes('CREATE DOMAIN cauce_oauth_scopes') ? `${sql}\nSELECT 1/0;` : undefined);
-    await expect(applyMigrations(broken)).rejects.toThrow('division by zero');
+    await expect(applyMigrationsThrough(broken, version)).rejects.toThrow('division by zero');
     expect((await pool.query('SELECT to_regclass(\'cauce_oauth_grants\') AS name')).rows[0]).toEqual({ name: null });
     expect((await pool.query('SELECT version FROM schema_migration_ledger WHERE version=$1', [version])).rowCount).toBe(0);
-    await applyMigrations(pool);
+    await applyMigrationsThrough(pool, version);
     expect(await counts(pool)).toEqual({ requests: '0', grants: '0', codes: '0', tokens: '0' });
     await pool.query('TRUNCATE cauce_oauth_requests,cauce_oauth_grants,cauce_oauth_codes,cauce_oauth_tokens,cauce_oauth_refresh_tokens,cauce_oauth_grant_revocations');
     expect(await counts(pool)).toEqual({ requests: '0', grants: '0', codes: '0', tokens: '0' });
@@ -175,7 +176,7 @@ function barrier() {
   });
 
   it('enforces scope, hash, challenge, stamp and TTL constraints and immutable authority', async () => {
-    const pool = await database(); const f = await authorized(pool);
+    const pool = await database(version); const f = await authorized(pool);
     for (const invalid of ['{}', '{cauce.admin}', '{cauce.read,cauce.read}']) {
       await expect(pool.query('SELECT $1::cauce_oauth_scopes', [invalid])).rejects.toThrow();
     }
@@ -447,32 +448,52 @@ function barrier() {
   });
 
   it.each(['down first', 'insert first'])('serializes INSERT/down with locks before checking emptiness: %s', async order => {
-    const pool = await database(); const down = await readFile(downPath, 'utf8');
+    const pool = await database(version); const down = await readFile(downPath, 'utf8');
     const split = down.indexOf('DO $$'); const prefix = down.slice(0, split); const rest = down.slice(split);
     const request: OAuthAuthorizationRequest = { idHash: secretHash(randomUUID()), browserHash: secretHash(randomUUID()), clientId: 'https://client.example/doc', clientName: 'Fixture',
       redirectUri: 'https://client.example/callback', resource: tokens.resource, scopes: ['cauce.read'], challenge: 'x'.repeat(43), state: null };
-    const client = await pool.connect(); const observer = await pool.connect();
+    const client = await pool.connect(); let observer: DatabaseClient | undefined;
     const reached = barrier(); const resume = barrier(); let workerPid = 0;
+    const controller = new AbortController();
+    type InsertionOutcome = { status: 'fulfilled' } | { status: 'rejected'; code: string | undefined };
+    let insertionResult: Promise<InsertionOutcome> | undefined;
+    let lockingResult: Promise<boolean> | undefined;
     const wrapped = intercept(pool, async (sql, connection) => {
-      if (sql.includes('INSERT INTO cauce_oauth_requests')) { workerPid = await pid(connection); if (order === 'down first') reached.release(); }
+      if (sql === 'SELECT pg_advisory_xact_lock_shared(783_003_003)') {
+        workerPid = await pid(connection); if (order === 'down first') reached.release();
+      }
     }, async sql => { if (order === 'insert first' && sql.includes('INSERT INTO cauce_oauth_requests')) { reached.release(); await resume.promise; } });
     const store = new PostgresOAuthStore(wrapped, issuer, verify);
-    await client.query('BEGIN');
     try {
+      observer = await pool.connect(); await client.query('BEGIN');
+      const downPid = await pid(client);
+      if (order === 'down first') await client.query(prefix);
+      const insertion = store.createRequest(request, { signal: controller.signal, deadlineMs: Date.now() + 10_000 }).then<InsertionOutcome, InsertionOutcome>(
+        () => ({ status: 'fulfilled' }),
+        (error: unknown) => ({ status: 'rejected', code: error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined }),
+      );
+      insertionResult = insertion;
+      await Promise.race([reached.promise, insertion.then(() => { throw new Error('fixture insertion settled before reaching its lock barrier'); })]);
       if (order === 'down first') {
-        await client.query(prefix);
-        const insertion = store.createRequest(request, context()); const rejected = expect(insertion).rejects.toThrow();
-        await reached.promise; await waitForBlocked(observer, workerPid);
-        await client.query(rest); await client.query('COMMIT'); await rejected;
+        await waitForBlocked(observer, workerPid);
+        expect((await observer.query<{ blockers: number[] }>('SELECT pg_blocking_pids($1) AS blockers', [workerPid])).rows[0]?.blockers).toContain(downPid);
+        await client.query(rest); await client.query('COMMIT');
+        expect(await insertionResult).toEqual({ status: 'rejected', code: '42P01' });
         expect((await observer.query<{ name: string | null }>("SELECT to_regclass('cauce_oauth_requests') AS name")).rows[0]?.name).toBeNull();
       } else {
-        const insertion = store.createRequest(request, context()); await reached.promise;
-        const downPid = await pid(client); const locking = client.query(prefix);
-        await waitForBlocked(observer, downPid); resume.release(); await insertion; await locking;
+        lockingResult = client.query(prefix).then(() => true, () => false);
+        await waitForBlocked(observer, downPid);
+        expect((await observer.query<{ blockers: number[] }>('SELECT pg_blocking_pids($1) AS blockers', [downPid])).rows[0]?.blockers).toContain(workerPid);
+        resume.release(); expect(await insertionResult).toEqual({ status: 'fulfilled' }); expect(await lockingResult).toBe(true);
         await expect(client.query(rest)).rejects.toThrow('data-retention'); await client.query('ROLLBACK');
         expect(await counts(pool)).toEqual({ requests: '1', grants: '0', codes: '0', tokens: '0' });
+        expect((await observer.query<{ id_hash: string }>('SELECT id_hash FROM cauce_oauth_requests')).rows).toEqual([{ id_hash: request.idHash }]);
       }
-    } finally { resume.release(); await client.query('ROLLBACK'); client.release(); observer.release(); }
+    } finally {
+      resume.release(); controller.abort(); let rolledBack = false;
+      try { await client.query('ROLLBACK'); rolledBack = true; }
+      finally { await Promise.all([insertionResult, lockingResult]); client.release(!rolledBack); observer?.release(); }
+    }
   });
 
   it('observes an uncertain COMMIT through another connection and rejects replay', async () => {
@@ -695,7 +716,7 @@ function barrier() {
   });
 
   it('drops only empty OAuth tables atomically and preserves the human ledger', async () => {
-    const pool = await database(); const client = await pool.connect();
+    const pool = await database(version); const client = await pool.connect();
     try { await transaction(client, async () => { await client.query(await readFile(downPath, 'utf8')); }); }
     finally { client.release(); }
     expect((await pool.query("SELECT to_regclass('cauce_oauth_grants') AS oauth,to_regclass('human_external_identities') AS human")).rows[0]).toEqual({ oauth: null, human: 'human_external_identities' });
@@ -703,7 +724,7 @@ function barrier() {
       expect((await pool.query(`SELECT 1 FROM ${table} WHERE version=$1`, [version])).rowCount).toBe(0);
       expect((await pool.query(`SELECT 1 FROM ${table} WHERE version=$1`, [previousVersion])).rowCount).toBe(1);
     }
-    await applyMigrations(pool);
+    await applyMigrationsThrough(pool, version);
     expect(await counts(pool)).toEqual({ requests: '0', grants: '0', codes: '0', tokens: '0' });
     expect((await pool.query("SELECT to_regclass('cauce_oauth_refresh_tokens') AS refresh,to_regclass('cauce_oauth_clients') AS clients")).rows[0])
       .toEqual({ refresh: 'cauce_oauth_refresh_tokens', clients: 'cauce_oauth_clients' });

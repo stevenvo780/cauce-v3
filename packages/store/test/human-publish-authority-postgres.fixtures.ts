@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
-import { afterAll, beforeEach } from 'vitest';
+import { afterAll, afterEach, beforeEach } from 'vitest';
 import type { ConsolePublishIntentCommand, PublishMessage, Tenant } from '@cauce/protocol';
 import {
   CauceRepository, lockHumanIdentity,
@@ -9,7 +9,8 @@ import {
 } from '../src/index.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import {
-  resetTestDatabase, startTestDatabase, type TestDatabase,
+  resetTestDatabase, startTestCaseDatabase, startTestDatabase,
+  type EmptyTestDatabase, type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
 import { seedIdentity } from '../../../tests/integration/human-identity-resolver-postgres.fixtures.js';
 
@@ -25,11 +26,12 @@ const LOCK_CLASS = 19742;
 const LOCK_OBJECT = 41029;
 
 let database: TestDatabase | undefined;
+let currentCase: EmptyTestDatabase | undefined;
 let repository: CauceRepository | undefined;
 
 function pool(): DatabasePool {
-  if (!database) throw new Error('PostgreSQL fixture has not started');
-  return database.pool;
+  if (!currentCase) throw new Error('PostgreSQL test case has not started');
+  return currentCase.pool;
 }
 
 async function assertOwnedPostgresNetwork(): Promise<void> {
@@ -72,15 +74,29 @@ export function registerHumanPublishSuite(sourceUrl: string): void {
     await assertOwnedPostgresNetwork();
     database = await startTestDatabase();
     console.info(`human publication PostgreSQL container ${database.container.getId()} labels ${JSON.stringify(database.container.getLabels())}`);
-    repository = new CauceRepository(database.pool);
   }, 180_000);
   beforeEach(async () => {
+    if (!database) throw new Error('PostgreSQL fixture has not started');
+    currentCase = await startTestCaseDatabase(database);
     await resetTestDatabase(pool());
     repository = new CauceRepository(pool());
   });
+  afterEach(async () => {
+    const testCase = currentCase;
+    await testCase?.close();
+    if (currentCase === testCase) currentCase = undefined;
+    repository = undefined;
+  });
   afterAll(async () => {
     if (!database) return;
-    try { await database.pool.end(); } finally { await database.container.stop(); }
+    try {
+      const testCase = currentCase;
+      await testCase?.close();
+      if (currentCase === testCase) currentCase = undefined;
+      repository = undefined;
+    } finally {
+      try { await database.pool.end(); } finally { await database.container.stop(); }
+    }
   });
 }
 
