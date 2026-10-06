@@ -127,6 +127,9 @@ LABEL io.cauce.source.digest=${CAUCE_SOURCE_DIGEST} \
   org.opencontainers.image.revision=${CAUCE_RELEASE_COMMIT} \
   org.opencontainers.image.base.name=${CAUCE_NGINX_BASE}
 COPY --from=build /app/console/dist /usr/share/nginx/html
+USER 0
+RUN find /usr/share/nginx/html -type d -exec chmod 0755 {} + \
+ && find /usr/share/nginx/html -type f -exec chmod 0644 {} +
 USER 101
 
 FROM console-base AS console-dev
