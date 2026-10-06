@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { HumanClientDelegationSchema, HumanClientProvenanceSchema } from "@cauce/protocol";
 import type { AgentBehaviorPolicyV1 } from "@cauce/protocol";
 import type { HarnessRequestContext } from "../src/contracts/harness.js";
 import { protocolPrompt, capabilities } from "../src/harnesses/shared/prompt.js";
@@ -73,4 +74,31 @@ test("engine forwards a validated policy and rejects an out-of-scope one before 
     behavior_policy: policy("Beta", "grp.beta") });
   assert.equal(runner.calls, 1);
   assert.equal(store.getDelivery("behavior-invalid")?.error?.code, "INVALID_BEHAVIOR_POLICY");
+});
+
+
+test("trusted client metadata remains separate from scoped coordination authority", () => {
+  const companies: [string, string][] = [["Acme", "grp.acme"], ["Beta", "grp.beta"]];
+  const root = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+  for (const [tenant, room] of companies) {
+    const ctx = context(tenant, room);
+    const sidecar = {
+      clientProvenance: HumanClientProvenanceSchema.parse({ root_message_id: root,
+        client: { kind: "oauth_client", verification: "local_grant", issuer: "https://cauce.example",
+          client_id: "https://client.example/oauth.json", instance: "unknown" } }),
+      clientDelegation: HumanClientDelegationSchema.parse({ root_message_id: root,
+        owner_human_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", owner_tenant_id: tenant,
+        label: "coordinator", basis: "owner_declared_grant", instance: "unknown" }),
+    };
+    const coordinated = protocolPrompt("task", undefined, ctx, undefined, sidecar);
+    assert.match(coordinated, /BEGIN TRUSTED CLIENT IDENTITY/u);
+    assert.match(coordinated, /tu entrega es REPARTIR y VERIFICAR/u);
+    assert.ok(coordinated.includes(`escalá a infra (tenant ${tenant})`));
+    const { behavior_policy: _policy, ...executor } = ctx;
+    const fallback = protocolPrompt("task", undefined, executor, undefined, sidecar);
+    assert.match(fallback, /BEGIN TRUSTED CLIENT IDENTITY/u);
+    assert.match(fallback, /Esta entrega es TU trabajo/u);
+    assert.doesNotMatch(fallback, /tu entrega es REPARTIR y VERIFICAR|escalá a infra/u);
+    assert.deepEqual(ctx.routing_targets, [{ tenant_id: tenant, alias: "infra", online: true }]);
+  }
 });

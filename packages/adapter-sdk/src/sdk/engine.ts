@@ -5,8 +5,7 @@ import {
   isAmbiguousAckErrorCode, MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs,
   SYSTEM_GATE_PROBE_MESSAGE_TYPE,
 } from "@cauce/protocol";
-import type { InboxRecord } from "./durable-store.js";
-import { DurableStore } from "./durable-store.js";
+import { DurableStore, type InboxRecord } from "./durable-store.js";
 import { AdapterError, StaleEpochError, asAdapterError } from "./errors.js";
 import type {
   HarnessAdapter, HarnessRequestContext, HarnessSessionReservation, RuntimeProfileMeasurement,
@@ -308,7 +307,7 @@ export class AdapterEngine {
     delivery: Delivery,
     invocation: DeliveryHarnessInvocation,
   ): Promise<void> {
-    const { harness, session, reservation, humanInitiator, selectionError } = invocation;
+    const { harness, session, reservation, humanInitiator, clientIdentity, selectionError } = invocation;
     const occurredAt = this.clock.now().toISOString();
     const accepted = await this.store.acceptAndEnqueue(delivery, occurredAt);
     if (accepted.acceptance === "stale" || accepted.acceptance === "blocked") return;
@@ -442,6 +441,7 @@ export class AdapterEngine {
           ...(onOpenClawPhase === undefined ? {} : { onOpenClawPhase }),
           ...(emissionSocketPath === undefined ? {} : { emissionSocketPath }),
           ...(noticeHistory === undefined ? {} : { noticeHistory }),
+          ...clientIdentity,
           prompt,
           ...(attachments === undefined ? {} : { attachments: attachments.attachments }),
           context: requestContext,
