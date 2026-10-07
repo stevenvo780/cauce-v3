@@ -13,7 +13,7 @@ import {
 import { consumer as leaseConsumer, type Consumer } from './helpers/consumer.js';
 
 /*
- * Prod 2026-10-07: a console delivery to zeus stayed `pending` 85 s with no hold and free capacity.
+ * In prod a console delivery to zeus stayed `pending` 85 s with no hold and free capacity.
  * Both drains of its own publish ran while the console's receipt read held the fresh row FOR SHARE,
  * `FOR UPDATE SKIP LOCKED` skipped it, and a later hold release woke nobody either.
  */

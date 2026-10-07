@@ -6,19 +6,14 @@ export interface SweepRecipient {
 }
 
 export interface PendingSweepOptions {
-  /** Only deliveries this old: the publish's own wake is still draining the fresh ones. */
   readonly minAgeMs: number;
-  /** Gateway admission headroom reserved to humans on top of `agents.max_concurrent_deliveries`. */
   readonly humanReservedCapacity: number;
 }
 
 /**
- * Connected recipients that have claimable work and nothing to drain it: a pending delivery past
- * `minAgeMs`, no live control hold and in-flight below the durable cap. A claim that found the row
- * locked, a hold that expired or a NOTIFY that got lost leaves no wake behind; this is the net.
- * Read-only: `claimDeliveries` re-checks every condition under its locks. The gateway runs it every
- * `pendingSweepMs` (default 2 s, 0 disables) over its open sessions, so such work waits at most one
- * tick plus one drain instead of an unrelated publish to the same alias.
+ * Connected recipients with claimable work and nothing to drain it (a skipped locked row, an expired
+ * hold, a lost NOTIFY): pending past `minAgeMs`, no live hold, in-flight below the durable cap.
+ * Read-only; the gateway drains them every `pendingSweepMs` and `claimDeliveries` re-checks all.
  */
 export async function claimableIdleRecipients(
   pool: DatabasePool, recipients: readonly SweepRecipient[], options: PendingSweepOptions,
