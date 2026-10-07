@@ -167,6 +167,7 @@ export interface GatewayOptions {
   /** Per-session admission control. See `DeliveryAdmissionConfig` and `drain()`. */
   admission?: DeliveryAdmissionConfig;
   outboxPollMs?: number;
+  pendingSweepMs?: number;
   outboxLeaseMs?: number;
   /** Maximum recipients whose wake claims may be in I/O simultaneously. */
   outboxWakeConcurrency?: number;
@@ -191,6 +192,7 @@ export interface GatewayOptions {
 
 // Matches the historical QueryDeliveriesSchema default while keeping the claim limit local.
 const DEFAULT_DELIVERY_CLAIM_LIMIT = 20;
+const DEFAULT_PENDING_SWEEP_MS = 2_000;
 const DEFAULT_WAKE_PUMP_CONCURRENCY = 4;
 const DEFAULT_OUTBOX_SHUTDOWN_TIMEOUT_MS = 1_000;
 const GATEWAY_WS_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
@@ -234,6 +236,10 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   }
   const leaseTtlMs = options.leaseTtlMs ?? configuredLeaseTtlMs();
   const outboxPollMs = options.outboxPollMs ?? 100;
+  const pendingSweepMs = options.pendingSweepMs ?? DEFAULT_PENDING_SWEEP_MS;
+  if (!Number.isInteger(pendingSweepMs) || pendingSweepMs < 0 || pendingSweepMs > 60_000) {
+    throw new Error('pendingSweepMs must be an integer between 0 and 60000');
+  }
   const outboxLeaseMs = options.outboxLeaseMs ?? 30_000;
   const outboxWakeConcurrency = options.outboxWakeConcurrency ?? DEFAULT_WAKE_PUMP_CONCURRENCY;
   if (!Number.isInteger(outboxWakeConcurrency) || outboxWakeConcurrency < 1 || outboxWakeConcurrency > 32) {
@@ -269,6 +275,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     maxQueryLimit,
     leaseTtlMs,
     outboxPollMs,
+    pendingSweepMs,
     outboxLeaseMs,
     outboxWakeConcurrency,
     outboxShutdownTimeoutMs,

@@ -252,9 +252,7 @@ export function promptForDelivery(delivery: Delivery, store: DurableStore): stri
  */
 const CONVERSATION_SESSION_NAMESPACE = "cauce-conversation-session-v3";
 
-/**
- * Ephemeral session identifiers discarded to avoid fragmenting native sessions.
- */
+/** Ephemeral session identifiers discarded to avoid fragmenting native sessions. */
 const EPHEMERAL_SESSION_ID = /^(?:delivery|fanin):/u;
 
 interface ConversationScope {
@@ -296,6 +294,16 @@ export interface DeliveryHarnessInvocation {
   readonly humanInitiator?: NonNullable<HarnessRequestContext["human_initiator"]>;
   readonly clientIdentity?: ClientIdentityExecuteFields;
   readonly selectionError?: unknown;
+  readonly ownerShared?: true;
+}
+
+/** Exact owner match only: shared TTY mode, the configured owner UUID and the agent's own tenant. */
+function ownerInSharedSession(humanInitiator: HarnessRequestContext["human_initiator"],
+  ownTenantId: string | undefined): boolean {
+  const owner = process.env.CAUCE_OWNER_HUMAN_ID?.trim().toLowerCase();
+  return process.env.CAUCE_SHARED_SESSION === "1" && owner !== undefined && owner.length > 0
+    && humanInitiator !== undefined && ownTenantId !== undefined
+    && humanInitiator.human_id.toLowerCase() === owner && humanInitiator.tenant_id === ownTenantId;
 }
 
 export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAdapter,
@@ -305,6 +313,14 @@ export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAd
     const humanInitiator = humanInitiatorFromDelivery(delivery);
     const clientIdentity = clientIdentitySidecarFields(delivery, humanInitiator, ownTenantId);
     const consoleHuman = authenticatedConsoleDelivery(delivery);
+    // The owner is ONE person talking to ONE agent (the live shared session); other humans stay isolated.
+    if (ownerInSharedSession(humanInitiator, ownTenantId)) {
+      const lane = "human";
+      const session: HarnessSessionRequestScope = { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane };
+      const reservation = harness.reserveSession(session.sessionKey, lane);
+      return { harness, session, clientIdentity, ...(reservation === undefined ? {} : { reservation }),
+        ...(humanInitiator === undefined ? {} : { humanInitiator }), ownerShared: true };
+    }
     const isolatedHuman = humanInitiator !== undefined || consoleHuman;
     if (isolatedHuman && selector === undefined) {
       throw new AdapterError("UNSUPPORTED_HUMAN_ISOLATION", "Human session isolation is unavailable", false);

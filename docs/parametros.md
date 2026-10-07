@@ -72,6 +72,7 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | `MAX_REHYDRATED_CLAIMS` (`:13`) | claims | 256 | fijo | — |
 | `MAX_RECENT_SESSION_CLAIMS` (`:7`) | claims | 1_024 (LRU) | fijo | — |
 | `outboxPollMs` / `outboxLeaseMs` / workers (`app.ts:218`, `DEFAULT_WAKE_PUMP_CONCURRENCY`, `DEFAULT_OUTBOX_SHUTDOWN_TIMEOUT_MS`=1_000) | ms/ms/n | 100 / 30_000 / 4 (1–32) | código llamante | — |
+| `pendingSweepMs` (`app.ts`, `DEFAULT_PENDING_SWEEP_MS`) — barrido de pendientes sin wake (hold liberado o caducado, fila saltada, NOTIFY perdido) | ms | 2_000, rango 0–60_000 (0 = apagado) | código llamante | gateway-hardening/pending-sweep + store redrain-pendiente-postgres |
 | `bodyLimit` publish (`publish.ts:43`) | bytes | `MAX_PUBLISH_BODY_BYTES` ≈ 13,6 MB | protocolo (exceder → 413) | e2e |
 | `QueryDeliveries` limit (`realtime.ts:130`) | filas | 1–100, defecto 20 | fijo | — |
 
