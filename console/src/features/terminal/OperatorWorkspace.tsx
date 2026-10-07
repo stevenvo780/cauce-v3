@@ -2,8 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useApi } from '../../api/context';
 import type { ConsoleAccess, TerminalCapability } from '../../api/types';
+import { BOTTOM_BAR_VIEWPORT } from '../../breakpoints';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
-import { Button } from '../../components/kit';
+import { Button, LinkButton } from '../../components/kit';
+import { onNavClick } from '../../router';
+import { useMediaQuery } from '../../shell/use-media-query';
 import type { LiveAgentView } from '../live/agent-state';
 import {
   TerminalApiError,
@@ -85,6 +88,7 @@ function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T
 export function OperatorWorkspace({ agents, agentId, live, summary, access, terminalCapability, terminalTargets, fleetLoading, fleetError, onRefresh, requestedView }: OperatorWorkspaceProps) {
   // The session that holds the CSRF token in memory: without it every PTY plane write returns 403.
   const api = useApi();
+  const phone = useMediaQuery(BOTTOM_BAR_VIEWPORT);
   const [grants, setGrants] = useState<Record<string, TerminalSessionGrant>>({});
   const [closedChannels, setClosedChannels] = useState<Record<string, true | undefined>>({});
   const [revocationFailures, setRevocationFailures] = useState<Record<string, true | undefined>>({});
@@ -379,6 +383,12 @@ export function OperatorWorkspace({ agents, agentId, live, summary, access, term
               requestedView={requestedView}
             />
           </ErrorBoundary>
+        ) : phone && !agentId && agents.length > 0 ? (
+          <div className="grid flex-1 place-content-center gap-3 p-6 text-center">
+            <h2 className="m-0 text-base font-semibold tracking-tight">Elegí un agente para abrir su terminal</h2>
+            <p className="m-0 text-[13px] text-muted">Elegilo en Chat y volvé a Terminal.</p>
+            <LinkButton href="/messages" onClick={(event) => { onNavClick(event, '/messages'); }}>Elegir agente</LinkButton>
+          </div>
         ) : (
           <TerminalHome agentCount={agents.length} loading={fleetLoading} error={fleetError} />
         )}
