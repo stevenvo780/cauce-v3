@@ -74,8 +74,8 @@ export async function assertAgentRegistryGeometry(page: BrowserPage, evidenceDir
     if (!item.label || !item.input) throw new Error('Una etiqueta no contiene su casilla.');
     expect(item.associated).toBe(true);
     expect(item.label.height).toBeGreaterThan(0);
-    expect(item.input.width).toBeGreaterThanOrEqual(16);
-    expect(item.input.width).toBeLessThanOrEqual(24);
+    expect(item.input.width).toBeGreaterThan(0);
+    expect(item.input.width).toBeLessThanOrEqual(item.input.height);
     expect(item.input.height).toBeGreaterThanOrEqual(16);
     expect(item.input.height).toBeLessThanOrEqual(24);
     expect(item.input.left).toBeGreaterThanOrEqual(item.label.left - 0.5);

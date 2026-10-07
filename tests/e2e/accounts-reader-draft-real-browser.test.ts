@@ -191,7 +191,7 @@ describe('lectura de cuentas y borradores para lectores', () => {
       expect(accountRouting.length).toBeGreaterThan(0);
       expect(accountRouting.every((label) => label.endsWith(': sin techo'))).toBe(true);
       await page.getByRole('tab', { name: 'Consumo' }).click();
-      await page.getByRole('heading', { name: 'Proveedores', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+      await page.getByRole('heading', { name: 'Recolectores', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
       await page.getByRole('tab', { name: 'Inventario' }).click();
       await page.getByRole('row', { name: new RegExp(active.foreignPoolAccountId, 'u') }).waitFor({ state: 'visible' });
 

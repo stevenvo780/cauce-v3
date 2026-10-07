@@ -105,7 +105,7 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
       const editor = page.getByLabel(`Mensaje para ${tenant.target}`);
       await editor.fill(nonce);
       await page.getByRole('button', { name: 'Enviar', exact: true }).click();
-      const bubble = page.getByText(nonce, { exact: true });
+      const bubble = page.getByLabel('Historial de la conversación', { exact: true }).getByText(nonce, { exact: true });
       await bubble.waitFor({ timeout: 20_000 });
       const entry = bubble.locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
       await entry.getByRole('button', { name: 'Opciones del mensaje', exact: true }).click();
@@ -145,7 +145,7 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
       historyReads.length = 0;
       await page.reload({ waitUntil: 'domcontentloaded' });
       await page.getByRole('heading', { name: tenant.target, exact: true }).waitFor({ timeout: 20_000 });
-      const historyBubble = page.getByText(nonce, { exact: true });
+      const historyBubble = page.getByLabel('Historial de la conversación', { exact: true }).getByText(nonce, { exact: true });
       await historyBubble.waitFor({ state: 'visible', timeout: 20_000 });
       const historyEntry = historyBubble.locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
       expect(await historyEntry.count()).toBe(1);
@@ -248,7 +248,7 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
       await page.getByRole('heading', { name: isaTenant.target, exact: true }).waitFor({ timeout: 20_000 });
       await page.getByLabel(`Mensaje para ${isaTenant.target}`).fill(nonce);
       await page.getByRole('button', { name: 'Enviar', exact: true }).click();
-      const message = page.getByText(nonce, { exact: true });
+      const message = page.getByLabel('Historial de la conversación', { exact: true }).getByText(nonce, { exact: true });
       await message.waitFor({ timeout: 20_000 });
       const entry = message.locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
       await entry.getByRole('button', { name: 'Opciones del mensaje', exact: true }).click();
@@ -301,22 +301,22 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
     expect(firstMessage.author?.subject_id).not.toBe(secondMessage.author?.subject_id);
 
     await firstHumanPage.reload({ waitUntil: 'domcontentloaded' });
-    await firstHumanPage.getByText(ownerNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+    await firstHumanPage.getByLabel('Historial de la conversación', { exact: true }).getByText(ownerNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
     const firstReply = firstHumanPage.locator(`.transcript-entry.output[data-reply-to="${firstMessage.id}"] .canonical-reply[data-delivery-id="${firstMessage.deliveryId}"]`);
     await firstReply.getByText(`respuesta sintética Isa ${ownerNonce}`, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
     expect(await firstReply.count()).toBe(1);
-    await firstHumanPage.getByText(secondNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+    await firstHumanPage.getByLabel('Historial de la conversación', { exact: true }).getByText(secondNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
     expect(await firstHumanPage.locator(`.transcript-entry.output[data-reply-to="${secondMessage.id}"]`).count()).toBe(0);
-    expect(await firstHumanPage.getByText(`respuesta sintética Isa ${secondNonce}`, { exact: true }).count()).toBe(0);
+    expect(await firstHumanPage.getByLabel('Historial de la conversación', { exact: true }).getByText(`respuesta sintética Isa ${secondNonce}`, { exact: true }).count()).toBe(0);
 
     await secondHumanPage.reload({ waitUntil: 'domcontentloaded' });
-    await secondHumanPage.getByText(secondNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+    await secondHumanPage.getByLabel('Historial de la conversación', { exact: true }).getByText(secondNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
     const secondReply = secondHumanPage.locator(`.transcript-entry.output[data-reply-to="${secondMessage.id}"] .canonical-reply[data-delivery-id="${secondMessage.deliveryId}"]`);
     await secondReply.getByText(`respuesta sintética Isa ${secondNonce}`, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
     expect(await secondReply.count()).toBe(1);
-    await secondHumanPage.getByText(ownerNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+    await secondHumanPage.getByLabel('Historial de la conversación', { exact: true }).getByText(ownerNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
     expect(await secondHumanPage.locator(`.transcript-entry.output[data-reply-to="${firstMessage.id}"]`).count()).toBe(0);
-    expect(await secondHumanPage.getByText(`respuesta sintética Isa ${ownerNonce}`, { exact: true }).count()).toBe(0);
+    expect(await secondHumanPage.getByLabel('Historial de la conversación', { exact: true }).getByText(`respuesta sintética Isa ${ownerNonce}`, { exact: true }).count()).toBe(0);
 
     const crossTenantPage = await loginAndCreateMembership(jhonTenant, { width: 360, height: 800 }, false);
     const crossTenantDetail = await crossTenantPage.evaluate(async (url) => {

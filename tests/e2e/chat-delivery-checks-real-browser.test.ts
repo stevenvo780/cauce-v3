@@ -132,7 +132,7 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
       await page.getByRole('button', { name: 'Enviar', exact: true }).click();
       expect(await page.evaluate(() => document.activeElement?.matches('.messenger-composer textarea'))).toBe(true);
 
-      const bubble = page.getByText(nonce, { exact: true });
+      const bubble = page.getByLabel('Historial de la conversación', { exact: true }).getByText(nonce, { exact: true });
       await bubble.waitFor({ state: 'visible', timeout: 20_000 });
       const entry = bubble.locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
       await entry.locator('.chat-delivery-check[aria-label="Entrega: Recibido por el agente · ejecución terminada"]')
@@ -194,7 +194,7 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
       expect(await read.innerText()).toBe('✓✓');
       expect(await nativeEntry.locator('[data-checks="1"]').count()).toBe(0);
       expect(await nativeEntry.locator('[data-checks="2"]').count()).toBe(1);
-      await page.getByText(consumed.reply, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+      await page.getByLabel('Historial de la conversación', { exact: true }).getByText(consumed.reply, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
       if (artifacts) await page.screenshot({ path: join(artifacts, `chat-native-${String(width)}.png`) });
       const probeBody = { nonce: `PROBE-${randomUUID()}`, timeout_ms: 90_000 };
       await seedStructuredFeedMessage(tenant, 'system.gate.probe', probeBody);

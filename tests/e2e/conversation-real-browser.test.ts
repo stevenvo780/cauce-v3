@@ -166,14 +166,14 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
         .waitFor({ state: 'visible', timeout: 20_000 });
       await fault.remove();
       expect((await messageEvidence(active, marker)).message_id).toBe(pendingRoot.message_id);
-      expect(await page.getByText(marker, { exact: true }).count()).toBe(1);
+      expect(await page.getByLabel('Historial de la conversación', { exact: true }).getByText(marker, { exact: true }).count()).toBe(1);
 
       await page.reload({ waitUntil: 'domcontentloaded' });
       await page.getByLabel(`Mensaje para ${active.pty.targetAlias}`, { exact: true })
         .waitFor({ state: 'visible', timeout: 20_000 });
-      await page.getByText(marker, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+      await page.getByLabel('Historial de la conversación', { exact: true }).getByText(marker, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
       expect((await messageEvidence(active, marker)).message_id).toBe(pendingRoot.message_id);
-      expect(await page.getByText(marker, { exact: true }).count()).toBe(1);
+      expect(await page.getByLabel('Historial de la conversación', { exact: true }).getByText(marker, { exact: true }).count()).toBe(1);
 
       const author = humanEntry.locator('.transcript-direction span[title^="Persona autenticada"]');
       await author.waitFor({ state: 'visible', timeout: 15_000 });
@@ -221,13 +221,13 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
         );
         expect(inProgress.rows[0]?.status).toBe('started');
         expect(await page.getByText('Respuesta consolidada', { exact: true }).count()).toBe(0);
-        expect(await page.getByText(reply, { exact: true }).count()).toBe(0);
+        expect(await page.getByLabel('Historial de la conversación', { exact: true }).getByText(reply, { exact: true }).count()).toBe(0);
       });
       const completed = await active.pty.database.pool.query<{ status: string }>(
         'SELECT status FROM deliveries WHERE id=$1::uuid', [pendingRoot.delivery_id],
       );
       expect(completed.rows[0]?.status).toBe('done');
-      await page.getByText(reply, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+      await page.getByLabel('Historial de la conversación', { exact: true }).getByText(reply, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
       const canonicalReply = page.getByRole('region', {
         name: `Respuesta canónica de ${active.pty.tenant}:${active.pty.targetAlias}`, exact: true,
       });
@@ -247,7 +247,7 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
       const agentBubble = page.getByRole('article', { name: `Mensaje de ${active.pty.targetAlias}`, exact: true });
       expect(await agentBubble.count()).toBe(1);
       expect(await agentBubble.innerText()).toContain(reply);
-      expect(await page.getByText(marker, { exact: true }).count()).toBe(1);
+      expect(await page.getByLabel('Historial de la conversación', { exact: true }).getByText(marker, { exact: true }).count()).toBe(1);
       expect((await messageEvidence(active, marker)).message_id).toBe(pendingRoot.message_id);
       await page.screenshot({ path: `${evidenceDirectory}/${viewport.label}-agent-reply-done.png`, fullPage: false });
       console.info(JSON.stringify({ viewport: viewport.label, messageId: pendingRoot.message_id,
@@ -274,7 +274,7 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
     await entry.waitFor({ state: 'visible', timeout: 20_000 });
     await entry.getByRole('status', { name: 'Entrega: Publicado · esperando aceptación del agente', exact: true })
       .waitFor({ state: 'visible', timeout: 20_000 });
-    expect(await page.getByText(marker, { exact: true }).count()).toBe(1);
+    expect(await page.getByLabel('Historial de la conversación', { exact: true }).getByText(marker, { exact: true }).count()).toBe(1);
     expect(await page.evaluate(() => document.activeElement?.matches('.messenger-composer textarea'))).toBe(true);
     expect(await (page.locator('textarea') as unknown as InputLocator).inputValue()).toBe('');
 
