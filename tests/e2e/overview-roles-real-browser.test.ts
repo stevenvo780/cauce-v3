@@ -121,9 +121,33 @@ async function overviewReads(page: BrowserPage) {
 }
 
 async function expectMetric(page: BrowserPage, label: string, value: unknown): Promise<void> {
-  const card = page.locator('.metric').filter({ hasText: label });
+  const card = page.locator('article[data-tone], [aria-label="Filtrar por estado"] button').filter({ hasText: label });
   await card.waitFor({ state: 'visible', timeout: 20_000 });
   await expect.poll(async () => card.locator('strong').innerText(), { timeout: 20_000 }).toBe(String(value));
+}
+
+async function openSignals(page: BrowserPage): Promise<void> {
+  if (!fixture) throw new Error('fixture not initialized');
+  await page.goto(`${fixture.baseUrl}/observability`, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('heading', { name: 'Señales y auditoría', exact: true }).waitFor({ timeout: 20_000 });
+}
+
+async function expectAgentMetrics(page: BrowserPage, tenant: FunctionalTenant, inFlight: unknown, queued: unknown): Promise<void> {
+  if (!fixture) throw new Error('fixture not initialized');
+  await page.goto(`${fixture.baseUrl}/live?agente=${encodeURIComponent(`${tenant.tenant}/${tenant.target}`)}`, { waitUntil: 'domcontentloaded' });
+  const detail = page.getByRole('dialog', { name: tenant.target, exact: true });
+  await detail.waitFor({ state: 'visible', timeout: 20_000 });
+  for (const [label, value] of [['En vuelo', inFlight], ['En cola', queued]] as const) {
+    await expect.poll(async () => detail.getByText(label, { exact: true }).locator('..').locator('dd').innerText(), { timeout: 20_000 }).toBe(String(value));
+  }
+  await detail.getByRole('button', { name: 'Cerrar el detalle', exact: true }).click();
+}
+
+async function openQueues(page: BrowserPage, mobile: boolean): Promise<void> {
+  await page.getByRole('button', { name: mobile ? 'Más' : 'Gestión', exact: true }).click();
+  const tools = mobile ? page.getByRole('dialog', { name: 'Gestión', exact: true }) : page.getByRole('navigation', { name: 'Navegación principal', exact: true });
+  await tools.getByRole('link', { name: 'Colas y DLQ', exact: true }).click();
+  await page.getByRole('heading', { name: 'Colas y DLQ operativo' }).waitFor({ timeout: 20_000 });
 }
 
 describe('overview de consola con roles reales y aislamiento por tenant', () => {
@@ -132,23 +156,17 @@ describe('overview de consola con roles reales y aislamiento por tenant', () => 
     const active = fixture;
     const operatorPage = await newTrustedPage(active, { width: 1440, height: 1000 });
     await signIn(operatorPage, isaTenant);
-    await operatorPage.goto(`${active.baseUrl}/overview`, { waitUntil: 'domcontentloaded' });
-    await operatorPage.getByRole('heading', { name: 'Cauce en una pantalla' }).waitFor({ state: 'visible', timeout: 20_000 });
+    await openSignals(operatorPage);
 
     const baseline = await active.database.pool.query<{ count: string }>(
       'SELECT count(*)::text AS count FROM deliveries',
     );
     expect(baseline.rows[0]?.count).toBe('0');
-    await expectMetric(operatorPage, 'Agentes en línea', 0);
-    await expectMetric(operatorPage, 'En vuelo', 0);
-    await expectMetric(operatorPage, 'Esperando turno', 0);
-    await expectMetric(operatorPage, 'Entregas muertas', 0);
+    await expectMetric(operatorPage, 'En línea', 0);
+    await expectAgentMetrics(operatorPage, isaTenant, 0, 0);
+    await openQueues(operatorPage, false);
+    await expectMetric(operatorPage, 'Dead letters', 0);
     await seedWorkload();
-    await operatorPage.getByRole('button', { name: 'Actualizar' }).click();
-    await expectMetric(operatorPage, 'Agentes en línea', 1);
-    await expectMetric(operatorPage, 'En vuelo', 1);
-    await expectMetric(operatorPage, 'Esperando turno', 1);
-    await expectMetric(operatorPage, 'Entregas muertas', 1);
 
     const reads = await overviewReads(operatorPage);
     expect(reads.status.status).toBe(200);
@@ -180,10 +198,16 @@ describe('overview de consola con roles reales y aislamiento por tenant', () => 
     );
     expect(status.online).toBe(Number(pgOnline.rows[0]?.count));
     expect(status.online).toBe(1);
-    await expectMetric(operatorPage, 'Agentes en línea', status.online);
-    await expectMetric(operatorPage, 'En vuelo', activity.totals?.in_flight);
-    await expectMetric(operatorPage, 'Esperando turno', activity.totals?.queued);
-    await expectMetric(operatorPage, 'Entregas muertas', queues.dead);
+    const foreignWork = await active.database.pool.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM deliveries WHERE recipient_tenant=$1 AND recipient_alias<>$2',
+      [isaTenant.tenant, isaTenant.target],
+    );
+    expect(foreignWork.rows[0]?.count).toBe('0');
+    await openSignals(operatorPage);
+    await expectMetric(operatorPage, 'En línea', status.online);
+    await expectAgentMetrics(operatorPage, isaTenant, activity.totals?.in_flight, activity.totals?.queued);
+    await openQueues(operatorPage, false);
+    await expectMetric(operatorPage, 'Dead letters', queues.dead);
     const operatorOverviewBody = await operatorPage.locator('body').innerText();
     expect(operatorOverviewBody).not.toContain(jhonTenant.target);
     expect(operatorOverviewBody).not.toContain(jhonTenant.marker);
@@ -195,11 +219,6 @@ describe('overview de consola con roles reales y aislamiento por tenant', () => 
       await operatorPage.screenshot({ path: join(evidenceDirectory, 'overview-operator-1440.png') });
     }
 
-    await operatorPage.getByRole('link', { name: 'Grafo y actividad' }).click();
-    await operatorPage.getByRole('heading', { name: /La flota ahora/u }).waitFor({ state: 'visible', timeout: 20_000 });
-    await operatorPage.getByRole('button', { name: 'Herramientas' }).click();
-    await operatorPage.getByRole('link', { name: 'Queues & DLQ' }).click();
-    await operatorPage.getByRole('heading', { name: 'Colas y DLQ operativo' }).waitFor({ state: 'visible', timeout: 20_000 });
     expect(await operatorPage.getByRole('button', { name: /Replay delivery/u }).count()).toBeGreaterThan(0);
     expect(await operatorPage.locator('table tbody tr').count()).toBeGreaterThanOrEqual(3);
     expect(await operatorPage.locator('body').innerText()).toContain(isaTenant.target);
@@ -207,8 +226,7 @@ describe('overview de consola con roles reales y aislamiento por tenant', () => 
 
     const readerPage = await newTrustedPage(active, { width: 360, height: 800 });
     await signIn(readerPage, reader);
-    await readerPage.goto(`${active.baseUrl}/overview`, { waitUntil: 'domcontentloaded' });
-    await readerPage.getByRole('heading', { name: 'Cauce en una pantalla' }).waitFor({ state: 'visible', timeout: 20_000 });
+    await openSignals(readerPage);
     const readerReads = await overviewReads(readerPage);
     expect(readerReads.status.status).toBe(200);
     expect(readerReads.queues.status).toBe(200);
@@ -242,9 +260,15 @@ describe('overview de consola con roles reales y aislamiento por tenant', () => 
     expect(access.permissions).not.toContain('delivery.replay');
     expect(access.permissions).not.toContain('delivery.cancel');
     expect(access.permissions).not.toContain('config.write');
-    await expectMetric(readerPage, 'Agentes en línea', (readerReads.status.body as { online?: number }).online);
-    await expectMetric(readerPage, 'Esperando turno', (readerReads.activity.body as { totals?: { queued?: number } }).totals?.queued);
-    await expectMetric(readerPage, 'Entregas muertas', 0);
+    await expectMetric(readerPage, 'En línea', (readerReads.status.body as { online?: number }).online);
+    const readerForeignWork = await active.database.pool.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM deliveries WHERE recipient_tenant=$1 AND recipient_alias<>$2',
+      [jhonTenant.tenant, jhonTenant.target],
+    );
+    expect(readerForeignWork.rows[0]?.count).toBe('0');
+    await expectAgentMetrics(readerPage, reader, 0, (readerReads.activity.body as { totals?: { queued?: number } }).totals?.queued);
+    await openQueues(readerPage, true);
+    await expectMetric(readerPage, 'Dead letters', 0);
     const readerOverviewOverflow = await readerPage.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(readerOverviewOverflow, 'reader overview horizontal overflow at 360px').toBe(false);
     const readerOverviewBody = await readerPage.locator('body').innerText();
@@ -254,11 +278,6 @@ describe('overview de consola con roles reales y aislamiento por tenant', () => 
       expect(readerOverviewBody).not.toContain(marker);
     }
     if (evidenceDirectory) await readerPage.screenshot({ path: join(evidenceDirectory, 'overview-reader-360.png') });
-    await readerPage.getByRole('link', { name: 'Grafo y actividad' }).click();
-    await readerPage.getByRole('heading', { name: /La flota ahora/u }).waitFor({ state: 'visible', timeout: 20_000 });
-    await readerPage.getByRole('button', { name: 'Herramientas' }).click();
-    await readerPage.getByRole('link', { name: 'Queues & DLQ' }).click();
-    await readerPage.getByRole('heading', { name: 'Colas y DLQ operativo' }).waitFor({ state: 'visible', timeout: 20_000 });
     expect(await readerPage.locator('table tbody tr').count()).toBeGreaterThanOrEqual(1);
     expect(await readerPage.locator('body').innerText()).toContain(jhonTenant.target);
     expect(await readerPage.locator('body').innerText()).not.toContain(isaTenant.target);
