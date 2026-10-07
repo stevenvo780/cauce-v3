@@ -120,8 +120,8 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `6849452c`, el 6 de octubre a las
-22:05, hora de Colombia: una actualización sólo de consola sobre el `deploy.sh` completo de las 21:21 con el rediseño de la consola, favoritos, apariencia
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `61a91214`, el 6 de octubre a las
+22:25, hora de Colombia: una actualización sólo de consola sobre el `deploy.sh` completo de las 21:21 con el rediseño de la consola, favoritos, apariencia
 de agentes y la migración 047. Los nueve servicios quedaron sanos, pero el smoke cerró ROJO
 parcial porque el bus no tuvo entregas después del arranque; esa comprobación sigue pendiente. El
 runtime usa la imagen `sha256:489ac015d79f6273db049ba2984edbf51c3e35382767afd2a894ae7d1c6cdaae` y
