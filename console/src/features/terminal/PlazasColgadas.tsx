@@ -1,4 +1,5 @@
 import { AlertTriangle, Bot, PowerOff, RefreshCw, Timer } from 'lucide-react';
+import { Button, Notice } from '../../components/kit';
 import type { TerminalSessionListItem } from './api';
 import { LIVE_TUI_MODE, SHELL_MODE } from './fleet';
 import { minutosParaLiberar } from './plazas';
@@ -77,12 +78,12 @@ export function PlazasColgadas({ items, aLaVista, topeAlcanzado, motivo, revisan
         <div className="min-w-0 flex-1">
           <strong className="font-semibold">{titulo}</strong>
           <p className="m-0 mt-0.5 text-xs text-fg-2">{cuerpo}</p>
-          {error ? <p className="notice error mt-1.5 mb-0" role="alert">{error}</p> : null}
-          {errorCierre ? <p className="notice error mt-1.5 mb-0" role="alert">{errorCierre}</p> : null}
+          {error ? <Notice tone="danger" className="mt-1.5" role="alert">{error}</Notice> : null}
+          {errorCierre ? <Notice tone="danger" className="mt-1.5" role="alert">{errorCierre}</Notice> : null}
         </div>
-        <button className="button small secondary shrink-0" type="button" onClick={onRevisar} disabled={revisando}>
+        <Button size="sm" onClick={onRevisar} disabled={revisando}>
           <RefreshCw size={13} aria-hidden="true" /> {revisando ? 'Revisando…' : 'Revisar'}
-        </button>
+        </Button>
       </div>
       {items.length === 0 ? null : (
         <ul className="m-0 mt-2 grid list-none gap-1 p-0">
@@ -91,9 +92,9 @@ export function PlazasColgadas({ items, aLaVista, topeAlcanzado, motivo, revisan
               <span className="inline-flex items-center gap-1"><Bot size={12} aria-hidden="true" /> <strong>{item.alias}</strong> <small className="text-muted">{item.tenant_id}</small></span>
               <span className="text-xs text-muted">{item.mode === LIVE_TUI_MODE ? 'TUI en vivo' : item.mode === SHELL_MODE ? 'shell' : item.mode}</span>
               <span className="inline-flex items-center gap-1 text-xs text-muted"><Timer size={12} aria-hidden="true" /> se suelta sola en {minutosParaLiberar(item, ahora)} min</span>
-              <button className="button small ml-auto" type="button" onClick={() => { onCerrar(item.session_id); }} disabled={cerrando[item.session_id] === true}>
+              <Button size="sm" className="ml-auto" onClick={() => { onCerrar(item.session_id); }} disabled={cerrando[item.session_id] === true}>
                 <PowerOff size={13} aria-hidden="true" /> {cerrando[item.session_id] === true ? 'Cerrando…' : 'Cerrar ahora'}
-              </button>
+              </Button>
             </li>
           ))}
         </ul>

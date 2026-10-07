@@ -4,6 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { QueuesPage } from './QueuesPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
+import { FleetProvider } from '../../shell/fleet';
 
 it('requests replay from the API and reports the accepted action', async () => {
   const sourceDeliveryId = '10000000-0000-4000-8000-000000000001';
@@ -19,7 +20,7 @@ it('requests replay from the API and reports the accepted action', async () => {
     }),
   );
   const user = userEvent.setup();
-  renderWithApi(<QueuesPage />);
+  renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
   await user.click(await screen.findByRole('button', { name: new RegExp(`replay delivery ${sourceDeliveryId}`, 'i') }));
   // .
   await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: /^sí,/i }));
@@ -49,7 +50,7 @@ describe('/queues?delivery= — the deep link landing', () => {
   function abrir(url: string) {
     window.history.pushState({}, '', url);
     server.use(http.get('http://localhost/v3/console/queues', () => HttpResponse.json(tresEntregas)));
-    return renderWithApi(<QueuesPage />);
+    return renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
   }
 
   afterEach(() => { window.history.pushState({}, '', '/'); });

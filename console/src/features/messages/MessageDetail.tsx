@@ -1,5 +1,6 @@
 import { X } from 'lucide-react';
 import type { ReactNode, RefObject } from 'react';
+import { Button } from '../../components/kit';
 import { Badge, Time, Unknown } from '../../components/ui';
 import { compactId, safeJobLane } from '../../lib';
 import { onNavClick } from '../../router';
@@ -84,10 +85,10 @@ export function MessageDetail({ item, chosen, outOfWindow, agentId, fullBody, he
           {truncated && fullBody?.estado !== 'listo' ? (
             <p className="m-0 flex flex-wrap items-center gap-2 text-xs text-muted">
               <span>El listado trae sólo los primeros {CARACTERES_DE_PREVISUALIZACION} caracteres.</span>
-              <button type="button" className="button small secondary" disabled={!id || fullBody?.estado === 'pidiendo'}
+              <Button size="sm" disabled={!id || fullBody?.estado === 'pidiendo'}
                 onClick={() => { if (id) onFetchBody(id); }}>
                 {fullBody?.estado === 'pidiendo' ? 'Pidiendo…' : 'Ver el mensaje completo'}
-              </button>
+              </Button>
             </p>
           ) : null}
         </section>

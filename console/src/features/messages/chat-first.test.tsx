@@ -6,6 +6,8 @@ import { ConversationDrafts, ConversationDraftStore } from './conversation-draft
 import { ApiProvider } from '../../api/context';
 import type { ComponentProps } from 'react';
 import { mockMessages, mockStatus, topology } from '../../mocks/data';
+import { server } from '../../mocks/server';
+import { declaredPtyTargets } from '../../test/pty-targets';
 import { renderWithApi, testApi } from '../../test/render';
 import { renderChat } from './chat-test-utils';
 import { ConversationPane } from './ConversationPane';
@@ -33,13 +35,14 @@ it('la bienvenida no repite el selector de agentes de la barra lateral', async (
 
 it('el menú de la conversación lleva a perfil y terminal y devuelve el foco con Escape', async () => {
   const user = userEvent.setup();
+  server.use(declaredPtyTargets(['Steven', 'argos']));
   renderWithApi(<ConversationPane {...props()} />);
   const more = screen.getByRole('button', { name: 'Opciones de la conversación' });
   expect(screen.queryByRole('menuitem', { name: 'Perfil y contexto' })).toBeNull();
   await user.click(more);
   const menu = await screen.findByRole('menu');
   expect(within(menu).getByRole('menuitem', { name: 'Perfil y contexto' })).toHaveAttribute('href', '/messages/Steven/argos?view=context');
-  expect(within(menu).getByRole('menuitem', { name: 'Abrir terminal' })).toHaveAttribute('href', '/terminal/Steven/argos');
+  expect(within(menu).getByRole('menuitem', { name: 'Abrir terminal' })).toHaveAttribute('href', '/terminal/Steven/argos?modo=terminal');
   expect(within(menu).getByRole('menuitemradio', { name: /Interactivo/ })).toHaveAttribute('aria-checked', 'true');
   await user.keyboard('{Escape}');
   await waitFor(() => { expect(screen.queryByRole('menu')).toBeNull(); });

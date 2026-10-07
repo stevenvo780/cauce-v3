@@ -7,6 +7,7 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { DeliveryTable } from './DeliveryTable';
 import { QueuesPage } from './QueuesPage';
+import { FleetProvider } from '../../shell/fleet';
 
 /**
  * Integration tests for management, filtering and actions on delivery queues.
@@ -52,7 +53,7 @@ describe('llegar a las entregas que hay que revisar', () => {
   it('🔴 la tarjeta «Dead letters» LLEVA a sus filas, en vez de sólo nombrarlas', async () => {
     const user = userEvent.setup();
     servidorConLas38();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
 
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
     expect(filasDeLaTabla()).toHaveLength(38);
@@ -69,7 +70,7 @@ describe('llegar a las entregas que hay que revisar', () => {
   it('🔴 el filtro se puede quitar, y la tarjeta queda anunciada como apretada', async () => {
     const user = userEvent.setup();
     servidorConLas38();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     const tarjeta = screen.getByRole('button', { name: /dead letters/i });
@@ -85,7 +86,7 @@ describe('llegar a las entregas que hay que revisar', () => {
   it('🔴 se puede buscar por alias sin tener que leer 38 filas', async () => {
     const user = userEvent.setup();
     servidorConLas38();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     await user.type(screen.getByRole('searchbox', { name: /buscar entrega/i }), 'zeus');
@@ -98,7 +99,7 @@ describe('llegar a las entregas que hay que revisar', () => {
    */
   it('sin tocar nada siguen estando las 38 filas y ninguna tarjeta apretada', async () => {
     servidorConLas38();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     expect(filasDeLaTabla()).toHaveLength(38);
@@ -115,7 +116,7 @@ describe('llegar a las entregas que hay que revisar', () => {
   it('con un enlace profundo abierto, las tarjetas no filtran y lo dicen', async () => {
     servidorConLas38();
     window.history.pushState({}, '', '/queues?delivery=bien-3');
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
 
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
     expect(filasDeLaTabla()).toHaveLength(1);
@@ -130,7 +131,7 @@ describe('llegar a las entregas que hay que revisar', () => {
 describe('la columna «Último error»', () => {
   it('🔴 una entrega que salió BIEN no grita UNKNOWN en ámbar', async () => {
     servidorConLas38();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     const terminadaBien = screen.getByRole('row', { name: /bien-0/ });
@@ -149,7 +150,7 @@ describe('la columna «Último error»', () => {
    */
   it('🔴 una entrega MUERTA sin motivo sigue marcada como UNKNOWN', async () => {
     servidorConLas38();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     const muertaSinMotivo = screen.getByRole('row', { name: /muerta-0/ });
@@ -213,7 +214,7 @@ describe('la confirmación antes de mover trabajo de la flota', () => {
   it('🔴 la explicación de qué hace Replay se puede leer sin apretar nada', async () => {
     const user = userEvent.setup();
     servidorConLas38();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     await user.click(screen.getByRole('button', { name: /Qué es «Colas y DLQ operativo»/ }));

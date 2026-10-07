@@ -6,9 +6,9 @@ import type { CanonicalReply } from './use-canonical-reply';
 /** Consecutive messages from the same author closer than this share one header. */
 const GROUP_WINDOW_MS = 5 * 60_000;
 
-export type TypingState = 'thinking' | 'receiving';
+type TypingState = 'thinking' | 'receiving';
 
-export type ThreadRow =
+type ThreadRow =
   | { kind: 'day'; key: string; label: string }
   | { kind: 'message'; key: string; item: TranscriptItem; side: 'operator' | 'agent'; startsGroup: boolean }
   | { kind: 'reply'; key: string; item: TranscriptItem; reply: CanonicalReply; startsGroup: boolean };
@@ -28,11 +28,11 @@ export function replyConsolidated(reply: CanonicalReply): boolean {
   return reply.chainOpen === false && ['done', 'failed', 'dead'].includes(reply.status ?? '');
 }
 
-export function replyHasContent(reply: CanonicalReply): boolean {
+function replyHasContent(reply: CanonicalReply): boolean {
   return (typeof reply.reply === 'string' && reply.reply.trim().length > 0) || Boolean(reply.replyAttachments?.length);
 }
 
-export function visibleReply(item: TranscriptItem, reply: CanonicalReply | undefined): CanonicalReply | undefined {
+function visibleReply(item: TranscriptItem, reply: CanonicalReply | undefined): CanonicalReply | undefined {
   const matching = replyFor(item, reply);
   return matching && replyHasContent(matching) && replyConsolidated(matching) ? matching : undefined;
 }

@@ -1,13 +1,12 @@
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { cn } from '../../cn';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
-import { useApi } from '../../api/context';
-import { useResource } from '../../api/use-resource';
 import { Button, Notice, SearchField, SectionCard, Toolbar } from '../../components/kit';
 import {
   ErrorState, LoadingState, PageHeader, PermissionBadge, RefreshButton, Time, ViewTabPanel, ViewTabs,
 } from '../../components/ui';
 import { compactId, display, permissionState } from '../../lib';
+import { useFleet } from '../../shell/fleet-context';
 import { DeliveryTable, EXPLICACION_CANCEL, EXPLICACION_REPLAY } from './DeliveryTable';
 import { OperationalDlqPanel } from './OperationalDlqPanel';
 import { enfocarEntrega, leerEntregaPedida, TEXTO_AUSENTE } from './foco-de-entrega';
@@ -31,8 +30,7 @@ export function QueuesPage() {
 }
 
 function QueuesPageContent() {
-  const api = useApi();
-  const resource = useResource('queues', () => api.getQueues());
+  const resource = useFleet().queues;
   const access = useConsoleAccess();
   const [filtro, setFiltro] = useState(FILTRO_VACIO);
   const [pestana, setPestana] = useState<Pestana>('entregas');

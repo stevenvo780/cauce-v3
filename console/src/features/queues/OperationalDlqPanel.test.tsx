@@ -6,6 +6,7 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { OperationalDlqPanel } from './OperationalDlqPanel';
 import { QueuesPage } from './QueuesPage';
+import { FleetProvider } from '../../shell/fleet';
 
 const incident = {
   target: 'outbox',
@@ -389,7 +390,7 @@ it('does not even request the operator-only DLQ endpoint when RBAC denies dlq.re
       return HttpResponse.json({ items: [] });
     }),
   );
-  renderWithApi(<QueuesPage />);
+  renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
 
   expect(await screen.findByText(/no tiene control operativo/i)).toBeInTheDocument();
   expect(dlqReads).toBe(0);

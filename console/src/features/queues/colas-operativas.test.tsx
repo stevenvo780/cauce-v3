@@ -7,6 +7,7 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { OperationalDlqPanel } from './OperationalDlqPanel';
 import { QueuesPage } from './QueuesPage';
+import { FleetProvider } from '../../shell/fleet';
 
 /**
  * The rest of the paths an operator walks on `/queues`: reading again, searching, moving between
@@ -43,7 +44,7 @@ describe('leer la cola', () => {
       observed_at: SNAPSHOT.observed_at, pending: 0, retrying: 0, dead: 0,
       totals: { pending: 0, retrying: 0, dead: 0 }, muestra_recortada: false, items: [],
     })));
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
 
     expect(await screen.findByText('No hay deliveries informadas.')).toBeInTheDocument();
     expect(screen.queryByRole('table', { name: ENTREGAS })).not.toBeInTheDocument();
@@ -60,7 +61,7 @@ describe('leer la cola', () => {
         : HttpResponse.json(SNAPSHOT);
     }));
     const user = userEvent.setup();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
 
     const reintentar = await screen.findByRole('button', { name: /reintentar/i });
     await user.click(reintentar);
@@ -76,7 +77,7 @@ describe('leer la cola', () => {
       return HttpResponse.json({ ...SNAPSHOT, observed_at: `2026-08-28T16:0${String(lecturas)}:00.000Z` });
     }));
     const user = userEvent.setup();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: ENTREGAS });
 
     await user.click(screen.getByRole('button', { name: /actualizar/i }));
@@ -90,7 +91,7 @@ describe('leer la cola', () => {
       ...SNAPSHOT,
       items: [{ ...SNAPSHOT.items[0], state: 'quarantined' }],
     })));
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: ENTREGAS });
 
     const estado = filasDeLaTabla()[0].querySelector('[data-label="Estado"] .unknown');
@@ -110,7 +111,7 @@ describe('lo que puede llegar roto en una fila', () => {
       ...SNAPSHOT,
       items: [{ ...SNAPSHOT.items[0], delivery_id: null }],
     })));
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: ENTREGAS });
 
     const fila = filasDeLaTabla()[0];
@@ -138,7 +139,7 @@ describe('lo que puede llegar roto en una fila', () => {
       }, { status: 202 })),
     );
     const user = userEvent.setup();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: ENTREGAS });
 
     await user.click(screen.getByRole('button', { name: new RegExp(`replay delivery ${muerta.delivery_id}`, 'i') }));
@@ -154,7 +155,7 @@ describe('buscar dentro de la página', () => {
   async function abrir() {
     server.use(http.get('*/v3/console/queues', () => HttpResponse.json(SNAPSHOT)));
     const user = userEvent.setup();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: ENTREGAS });
     return user;
   }
@@ -198,7 +199,7 @@ describe('las dos pestañas', () => {
   it('el DLQ operativo se abre sin perder la tabla de entregas, y la tarjeta vuelve a ella', async () => {
     server.use(http.get('*/v3/console/queues', () => HttpResponse.json(SNAPSHOT)));
     const user = userEvent.setup();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: ENTREGAS });
 
     await user.click(screen.getByRole('tab', { name: /DLQ operativo/i }));
@@ -221,7 +222,7 @@ describe('las dos pestañas', () => {
       http.get('*/v3/console/dlq', () => { pedidos += 1; return HttpResponse.json(mockDlq()); }),
     );
     const user = userEvent.setup();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: ENTREGAS });
 
     await user.click(screen.getByRole('tab', { name: /DLQ operativo/i }));
@@ -243,7 +244,7 @@ describe('las dos pestañas', () => {
       }),
     );
     const user = userEvent.setup();
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: ENTREGAS });
 
     const boton = await screen.findByRole('button', { name: /cancelar delivery cc000000-0000-4000-8000-000000000003/i });

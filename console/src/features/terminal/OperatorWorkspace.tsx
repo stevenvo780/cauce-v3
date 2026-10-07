@@ -4,6 +4,7 @@ import { useApi } from '../../api/context';
 import type { ConsoleAccess, MessagePage, TerminalCapability } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
+import { Button } from '../../components/kit';
 import type { LiveAgentView } from '../live/agent-state';
 import {
   TerminalApiError,
@@ -38,6 +39,8 @@ interface OperatorWorkspaceProps {
   fleetLoading: boolean;
   fleetError?: Error;
   onRefresh: () => void;
+  /** `?modo=` from the address: open the agent straight into its TUI or a shell. */
+  requestedView?: 'tui' | 'terminal';
 }
 
 function sessionIdOf(agentId: string): string {
@@ -81,7 +84,7 @@ function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T
   return result;
 }
 
-export function OperatorWorkspace({ agents, agentId, live, messages, summary, access, terminalCapability, terminalTargets, fleetLoading, fleetError, onRefresh }: OperatorWorkspaceProps) {
+export function OperatorWorkspace({ agents, agentId, live, messages, summary, access, terminalCapability, terminalTargets, fleetLoading, fleetError, onRefresh, requestedView }: OperatorWorkspaceProps) {
   // The session that holds the CSRF token in memory: without it every PTY plane write returns 403.
   const api = useApi();
   const [grants, setGrants] = useState<Record<string, TerminalSessionGrant>>({});
@@ -333,7 +336,7 @@ export function OperatorWorkspace({ agents, agentId, live, messages, summary, ac
           <div role="alert" key={id} className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-danger/30 bg-danger-soft px-3 py-2 text-[13px] text-danger-ink">
             <AlertTriangle size={15} aria-hidden="true" className="shrink-0" />
             <span className="min-w-0 flex-1">No se confirmó la revocación de la sesión PTY. El canal local se cerró; vuelve a intentarlo.</span>
-            <button type="button" className="button small secondary" onClick={() => { void releaseChannel(id); }}>Reintentar revocación</button>
+            <Button size="sm" onClick={() => { void releaseChannel(id); }}>Reintentar revocación</Button>
           </div>
         );
       })}
@@ -376,6 +379,7 @@ export function OperatorWorkspace({ agents, agentId, live, messages, summary, ac
                 void revisarPlazas();
               }}
               onRefresh={onRefresh}
+              requestedView={requestedView}
             />
           </ErrorBoundary>
         ) : (

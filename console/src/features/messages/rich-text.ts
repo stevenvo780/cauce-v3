@@ -1,4 +1,4 @@
-export type RichBlock =
+type RichBlock =
   | { kind: 'paragraph'; text: string }
   | { kind: 'heading'; text: string }
   | { kind: 'code'; text: string; lang?: string }

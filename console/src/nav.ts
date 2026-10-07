@@ -16,7 +16,7 @@ interface NavEntry {
   id: string;
   label: string;
   icon: ComponentType<{ size?: number; 'aria-hidden'?: boolean }>;
-  /** The question the view answers. Only the front page uses it. */
+  /** The question the view answers. Only the help page uses it. */
   que: string;
 }
 

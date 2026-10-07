@@ -10,7 +10,7 @@ export function humanAuthor(message: MessageView): MessageAuthor | undefined {
   return author;
 }
 
-export function validatedClientOrigin(value: unknown): MessageClientOrigin | null {
+function validatedClientOrigin(value: unknown): MessageClientOrigin | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
   const origin = value as Record<string, unknown>;
   if (Object.keys(origin).length !== 2 || !Object.hasOwn(origin, 'client')
@@ -21,7 +21,7 @@ export function validatedClientOrigin(value: unknown): MessageClientOrigin | nul
   return { client: client.data, delegation_label: label.data };
 }
 
-export interface MessageAuthorPresentation {
+interface MessageAuthorPresentation {
   readonly label: string;
   readonly title: string;
   readonly clientDeclarationNotice?: string;

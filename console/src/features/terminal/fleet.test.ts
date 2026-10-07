@@ -7,7 +7,6 @@ import {
   resolveLiveTui,
   resolveTerminalTarget,
   terminalTargetForAgent,
-  filterFleetAgents,
 } from './fleet';
 
 function target(overrides: Partial<TerminalTarget> & Pick<TerminalTarget, 'tenant_id' | 'alias'>): TerminalTarget {
@@ -37,7 +36,6 @@ it('builds the fleet from server topology and merges authoritative lease observa
     tenantId: 'Steven', roomIds: ['grp.steven'], leaseState: 'online', membershipEnabled: true,
   });
   expect(agents.find((agent) => agent.alias === 'argos')?.leaseState).toBe('unknown');
-  expect(filterFleetAgents(agents, { tenantId: 'Steven', roomId: 'grp.steven', query: 'messages' }).map((agent) => agent.alias)).toEqual(['kant']);
 });
 
 it('does not resurrect an explicitly unregistered membership from a stale presence lease', () => {

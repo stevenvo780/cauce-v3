@@ -14,12 +14,6 @@ export interface FleetAgent {
   leaseState: LeaseState;
 }
 
-interface FleetFilters {
-  tenantId: string;
-  roomId: string;
-  query: string;
-}
-
 interface MutableFleetAgent {
   tenantId: string;
   alias: string;
@@ -27,10 +21,6 @@ interface MutableFleetAgent {
   roomMembership: Map<string, boolean | undefined>;
   membershipStates: boolean[];
   presence?: PresenceLease;
-}
-
-function normalized(value: string): string {
-  return value.trim().toLocaleLowerCase();
 }
 
 export function fleetAgentId(tenantId: string, alias: string): string {
@@ -109,20 +99,13 @@ export function buildFleetAgents(status?: SystemStatus, topology?: TopologySnaps
     });
 }
 
-export function filterFleetAgents<T extends FleetAgent>(agents: readonly T[], filters: FleetFilters): T[] {
-  const query = normalized(filters.query);
-  return agents.filter((agent) => {
-    if (filters.tenantId !== 'all' && agent.tenantId !== filters.tenantId) return false;
-    if (filters.roomId !== 'all' && !agent.roomIds.includes(filters.roomId)) return false;
-    if (!query) return true;
-    return [agent.alias, agent.tenantId, ...agent.roomIds, ...(agent.presence?.capabilities ?? [])]
-      .some((value) => normalized(value).includes(query));
-  });
+/** Live state of the agent; without an activity row it falls back to the lease alone. */
+export function liveStateOf(agent: Pick<FleetAgent, 'leaseState'>, view: Pick<LiveAgentView, 'state'> | undefined): LiveState {
+  return view?.state ?? (agent.leaseState === 'online' ? 'idle' : 'down');
 }
 
-/** Live state of the agent; without an activity row it falls back to the lease alone. */
 export function agentLiveState(agent: FleetAgent, live: ReadonlyMap<string, LiveAgentView> | undefined): LiveState {
-  return live?.get(agent.id)?.state ?? (agent.leaseState === 'online' ? 'idle' : 'down');
+  return liveStateOf(agent, live?.get(agent.id));
 }
 
 /** Explicit PTY states. There is no implicit "available": absent data is UNKNOWN. */
