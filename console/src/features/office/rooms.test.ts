@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TILE, buildLayout, podsFor, type LayoutParams } from './layout';
+import { TILE, buildLayout, chooseLayout, layoutSize, podsFor, type LayoutParams } from './layout';
 import { findPath } from './pathfinding';
 import { ROOM_NAMES, roomAt, roomCamera, roomCounts, sameCounts } from './rooms';
 import { createWorld, syncWorld } from './simulation';
@@ -35,6 +35,41 @@ describe('rooms', () => {
       expect(layout.routine.cook.map((spot) => roomAt(layout, spot.px)?.id)).toEqual(['cocina', 'jardin']);
       for (const desk of layout.desks) expect(roomAt(layout, desk.seat.px)?.id).toBe('programadores');
       expect(roomAt(layout, { x: 0, y: 0 })).toBeNull();
+    }
+  });
+
+  it('lays the garden as the bottom band, full width on desktop and last in the stack on a phone', () => {
+    const wide = buildLayout(params(15, 'right', true));
+    const garden = wide.rooms.find((room) => room.id === 'jardin');
+    expect(garden).toMatchObject({ x: 0, w: wide.cols });
+    for (const room of wide.rooms.filter((other) => other.id !== 'jardin')) expect(room.y + room.h).toBeLessThan(garden?.y ?? 0);
+    expect((garden?.h ?? 0) / wide.rows).toBeGreaterThanOrEqual(0.3);
+    expect(wide.cols / wide.rows).toBeLessThan(1.6);
+
+    const stacked = buildLayout(params(15, 'bottom', true));
+    const last = stacked.rooms.reduce((a, b) => (b.y > a.y ? b : a));
+    expect(last.id).toBe('jardin');
+  });
+
+  it('keeps the desktop map between 4:3 and square for a fleet of fifteen', () => {
+    for (const box of [{ width: 1440, height: 732 }, { width: 1800, height: 900 }, { width: 2560, height: 1180 }]) {
+      const { params: chosen } = chooseLayout(15, { ...box, dpr: 1 });
+      const size = layoutSize(chosen);
+      expect(chosen.side).toBe('right');
+      expect(size.cols / size.rows).toBeGreaterThanOrEqual(1);
+      expect(size.cols / size.rows).toBeLessThanOrEqual(1.6);
+    }
+  });
+
+  it('opens a doorway from the indoor rooms into the garden and keeps every garden spot reachable', () => {
+    for (const side of ['right', 'bottom'] as const) {
+      const layout = buildLayout(params(15, side, true));
+      const garden = layout.rooms.find((room) => room.id === 'jardin');
+      const from = layout.desks[0].seat.tile;
+      const outdoors = [...layout.routine.read, ...layout.routine.chat, ...layout.routine.water, ...layout.routine.stroll].filter((spot) => roomAt(layout, spot.px)?.id === 'jardin');
+      expect(outdoors.length).toBeGreaterThan(20);
+      for (const spot of outdoors) expect(findPath(layout.walkable, layout.cols, from, spot.tile)).not.toBeNull();
+      expect(garden?.y).toBeGreaterThan(layout.door.tile.y);
     }
   });
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
+import { pixelIconName } from '@cauce/protocol/agent-preferences';
 import { FloatingTooltip } from '../../components/ui';
 import { isContextMenuKey, openContextMenuAt } from '../../components/agent-actions/agent-actions';
 import { AgentActionItems } from '../../components/agent-actions/AgentActionsMenu';
@@ -156,7 +157,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
   live.current = {
     selectedId, hoverId: hoverId ?? cursorId, highlight, paseo, view, limits, onSelect, speech, talkId: talk?.id ?? null,
     states: new Map(ordered.map((agent) => [agent.id, agent.state])),
-    names: new Map(ordered.map((agent) => [agent.id, agent.glyph ? `${agent.glyph} ${agent.name}` : agent.name])),
+    names: new Map(ordered.map((agent) => [agent.id, agent.glyph && pixelIconName(agent.glyph) === undefined ? `${agent.glyph} ${agent.name}` : agent.name])),
   };
 
   const scene = useMemo(() => (typeof document === 'undefined' ? null : createScene(layout, world, makeCanvas)), [layout, world]);

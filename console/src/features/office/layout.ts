@@ -1,4 +1,4 @@
-import { GARDEN_CORE_H, GARDEN_CORE_W, buildGarden } from './garden-layout';
+import { GARDEN_CORE_H, buildGarden } from './garden-layout';
 
 /** Tile edge, in art pixels. */
 export { TILE } from './tile';
@@ -11,11 +11,8 @@ const POD_H = 4;
 /** The kitchen and the playground share a column this wide; their fixtures are drawn for it. */
 const MID_W = 10;
 const KITCHEN_H = 4;
-const PATIO_H = 7;
-const GARDEN_W = GARDEN_CORE_W;
+const PATIO_H = 6;
 const GARDEN_H = GARDEN_CORE_H;
-/** The side door into the garden opens on a core row that is clear at both edges. */
-const GARDEN_DOOR_ROW = 3;
 const SLOT_W = 3;
 
 export interface Point { x: number; y: number }
@@ -110,8 +107,10 @@ export interface LayoutParams {
   /** One-tile margins and gaps: lets two pods sit side by side on a phone, or the room grow a scale step. */
   compact: boolean;
   beds: number;
-  /** Bed columns in the side arrangement's dormitory; fewer makes it taller. */
+  /** Bed columns in the dormitory; fewer makes it taller. */
   slots?: number;
+  /** Garden rows in the wide arrangement, where the garden is a band under the whole building. */
+  yard?: number;
 }
 
 interface Plan { cols: number; rows: number; rooms: Record<RoomId, Room>; slots: number }
@@ -122,7 +121,7 @@ function workSize(params: LayoutParams): { w: number; h: number } {
   const gap = params.compact ? 1 : 2;
   return {
     w: margin * 2 + params.podCols * POD_W + (params.podCols - 1) * gap,
-    h: margin * 2 + podRows * POD_H + (podRows - 1) * 2,
+    h: margin * 2 + podRows * POD_H + (podRows - 1) * gap,
   };
 }
 
@@ -132,22 +131,20 @@ function plan(params: LayoutParams): Plan {
   const top = WALL_ROWS;
   if (params.side === 'right') {
     const base = Math.max(work.h, KITCHEN_H + 1 + PATIO_H, 5);
-    const minSlots = Math.ceil((GARDEN_W - 1) / SLOT_W);
-    const slots = Math.max(minSlots, params.slots ?? Math.ceil(Math.sqrt(beds * 1.5)));
-    const dormH = 1 + 2 * Math.ceil(beds / slots);
-    const h = Math.max(base, dormH + 1 + GARDEN_H);
+    const slots = Math.max(3, params.slots ?? Math.ceil(beds / Math.floor((base - 1) / 2)));
+    const h = Math.max(base, 1 + 2 * Math.ceil(beds / slots));
     const mid = work.w + 1;
-    const dorm = { id: 'dormitorio' as const, x: mid + MID_W + 1, y: top, w: 1 + slots * SLOT_W, h: dormH };
-    const garden = { id: 'jardin' as const, x: dorm.x, y: top + dormH + 1, w: dorm.w, h: h - dormH - 1 };
+    const dorm = { id: 'dormitorio' as const, x: mid + MID_W + 1, y: top, w: 1 + slots * SLOT_W, h };
+    const yard = Math.max(GARDEN_H, params.yard ?? Math.ceil((h + 4) / 2));
     return {
       cols: dorm.x + dorm.w,
-      rows: top + h,
+      rows: top + h + 1 + yard,
       slots,
       rooms: {
         programadores: { id: 'programadores', x: 0, y: top, w: work.w, h },
         cocina: { id: 'cocina', x: mid, y: top, w: MID_W, h: KITCHEN_H },
         patio: { id: 'patio', x: mid, y: top + KITCHEN_H + 1, w: MID_W, h: h - KITCHEN_H - 1 },
-        jardin: garden,
+        jardin: { id: 'jardin', x: 0, y: top + h + 1, w: dorm.x + dorm.w, h: yard },
         dormitorio: dorm,
       },
     };
@@ -156,12 +153,12 @@ function plan(params: LayoutParams): Plan {
   const slots = Math.floor((w - 1) / SLOT_W);
   const kitchenY = top + work.h + 1;
   const patioY = kitchenY + KITCHEN_H + 1;
-  const gardenY = patioY + PATIO_H + 1;
-  const dormY = gardenY + GARDEN_H + 1;
+  const dormY = patioY + PATIO_H + 1;
   const dormH = 1 + 2 * Math.ceil(beds / slots);
+  const gardenY = dormY + dormH + 1;
   return {
     cols: w,
-    rows: dormY + dormH,
+    rows: gardenY + GARDEN_H,
     slots,
     rooms: {
       programadores: { id: 'programadores', x: 0, y: top, w, h: work.h },
@@ -210,7 +207,7 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
 
   for (let pod = 0; pod < params.pods; pod += 1) {
     const px = workX + margin + (pod % params.podCols) * (POD_W + gap);
-    const py = top + margin + Math.floor(pod / params.podCols) * (POD_H + 2);
+    const py = top + margin + Math.floor(pod / params.podCols) * (POD_H + gap);
     for (let seat = 0; seat < SEATS_PER_POD; seat += 1) {
       const x = px + (seat % 2) * 2;
       const facing = seat < 2 ? 'down' : 'up';
@@ -255,20 +252,21 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
   const patio = rooms.patio;
   const dorm = rooms.dormitorio;
   const garden = rooms.jardin;
-  const coreX = garden.x + Math.floor((garden.w - GARDEN_CORE_W) / 2);
   const kx = kitchen.x + Math.floor((kitchen.w - MID_W) / 2);
   const gx = patio.x + Math.floor((patio.w - MID_W) / 2);
+  const gardenDoors = [gx + 4];
   if (params.side === 'right') {
+    gardenDoors.unshift(Math.floor(workRoom.w / 2) - 1);
+    gardenDoors.push(dorm.x);
     wallRun('pillar', workRoom.w, top, workRoom.h, [1, KITCHEN_H + 4]);
     wallRun('partition', kitchen.x, kitchen.y + KITCHEN_H, MID_W, [7]);
-    wallRun('pillar', dorm.x - 1, top, rows - top, [garden.y - top + GARDEN_DOOR_ROW]);
-    wallRun('partition', garden.x, garden.y - 1, garden.w, [coreX - garden.x + 4]);
+    wallRun('pillar', dorm.x - 1, top, workRoom.h, [KITCHEN_H + 3]);
   } else {
     wallRun('partition', 0, kitchen.y - 1, cols, [kx + 6]);
     wallRun('partition', 0, patio.y - 1, cols, [gx + 7]);
-    wallRun('partition', 0, garden.y - 1, cols, [gx + 4]);
     wallRun('partition', 0, dorm.y - 1, cols, [gx + 4]);
   }
+  wallRun('partition', 0, garden.y - 1, cols, gardenDoors);
 
   furniture.push({ kind: 'counter', x: kx, y: kitchen.y, w: 4 });
   furniture.push({ kind: 'coffee', x: kx + 1, y: kitchen.y });
@@ -317,8 +315,7 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
   );
   plant(gx + 9, patio.y, false);
   plant(gx, patio.y + PATIO_H - 1, false);
-  const outside = buildGarden(garden, coreX, garden.y, { furniture, zones, block });
-  if (params.side === 'right') zones.push({ kind: 'path', x: garden.x, y: garden.y + GARDEN_DOOR_ROW, w: coreX - garden.x + 3, h: 1 });
+  const outside = buildGarden(garden, gx, gardenDoors, { furniture, zones, block });
 
   const sx0 = dorm.x + 1 + Math.floor((dorm.w - 1 - slots * SLOT_W) / 2);
   const bedCount = Math.max(1, params.beds);
@@ -442,6 +439,10 @@ function pick(room: Room): { x: number; y: number; w: number; h: number } {
 
 export interface LayoutChoice { params: LayoutParams; scale: number }
 
+/** Width over height the wide arrangement aims for: between 4:3 and square. */
+const TARGET_ASPECT = 1.2;
+const YARDS = [GARDEN_H, 8, 9, 10, 12];
+
 /** Largest crisp integer `scale` (device px per art px); on phones the height is let go and the page scrolls. */
 export function chooseLayout(count: number, box: { width: number; height: number; dpr: number }): LayoutChoice {
   const pods = podsFor(count);
@@ -449,27 +450,29 @@ export function chooseLayout(count: number, box: { width: number; height: number
   const minScale = Math.ceil(1.6 * box.dpr);
   const maxScale = Math.floor(5 * box.dpr);
   const candidates: { params: LayoutParams; kw: number; kh: number; empty: number }[] = [];
-  const slotChoices = [...new Set([3, 4, 5, 6, 8, 10, 13].map((slots) => Math.min(slots, Math.max(3, beds))))];
+  const slotChoices = [undefined, ...new Set([3, 4, 5, 6, 8, 10, 13].map((slots) => Math.min(slots, Math.max(3, beds))))];
   for (const compact of box.width < 700 ? [true] : [false, true]) for (const side of ['right', 'bottom'] as const) {
     for (let podCols = 1; podCols <= Math.min(pods, 8); podCols += 1) for (const slots of side === 'right' ? slotChoices : [undefined]) {
-      const params = { pods, podCols, side, compact, beds, slots };
-      const { cols, rows } = layoutSize(params);
-      candidates.push({
-        params,
-        kw: Math.floor((box.width * box.dpr) / (cols * TILE)),
-        kh: Math.floor((box.height * box.dpr) / (rows * TILE)),
-        empty: Math.ceil(pods / podCols) * podCols - pods,
-      });
+      for (const yard of side === 'right' ? YARDS : [undefined]) {
+        const params = { pods, podCols, side, compact, beds, slots, yard };
+        const { cols, rows } = layoutSize(params);
+        candidates.push({
+          params,
+          kw: Math.floor((box.width * box.dpr) / (cols * TILE)),
+          kh: Math.floor((box.height * box.dpr) / (rows * TILE)),
+          empty: Math.ceil(pods / podCols) * podCols - pods,
+        });
+      }
     }
   }
   interface Entry { params: LayoutParams; k: number; empty: number }
-  const area = (entry: Entry) => {
+  const skew = (entry: Entry) => {
     const size = layoutSize(entry.params);
-    return size.cols * size.rows * (entry.params.side === 'bottom' ? 1.25 : 1);
+    return Math.abs(Math.log(size.cols / size.rows / TARGET_ASPECT));
   };
   const better = (a: Entry, b: Entry) => (a.k !== b.k ? a.k > b.k
     : a.empty !== b.empty ? a.empty < b.empty
-      : area(a) < area(b));
+      : skew(a) < skew(b));
 
   let best: Entry | undefined;
   for (const candidate of candidates) {

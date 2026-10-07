@@ -1,4 +1,4 @@
-import { TILE, type Furniture, type Point, type Room, type Zone } from './layout';
+import { TILE, type Furniture, type Point, type Zone } from './layout';
 import { rect, type Ctx } from './paint';
 import { OFFICE } from './palette';
 import { seededRandom } from './random';
@@ -23,26 +23,6 @@ export function paintGround(ctx: Ctx, zone: Zone): void {
       for (let i = 0; i < 3; i += 1) rect(ctx, x + Math.floor(random() * 14), y + Math.floor(random() * 13), 1, 2, OFFICE.grassBlade);
     }
   }
-}
-
-/** Open sky, a hedge and a picket fence where the back wall would be. */
-export function paintGardenWall(ctx: Ctx, room: Room, wallH: number): void {
-  const x0 = room.x * TILE;
-  const w = room.w * TILE;
-  rect(ctx, x0, 0, w, wallH, OFFICE.sky);
-  rect(ctx, x0, wallH - 22, w, 8, OFFICE.skyLow);
-  rect(ctx, x0 + w - 20, 6, 9, 9, OFFICE.marquee);
-  for (const cloud of [12, w * 0.55]) {
-    rect(ctx, x0 + cloud, 12, 18, 4, OFFICE.paper);
-    rect(ctx, x0 + cloud + 4, 9, 9, 4, OFFICE.paper);
-  }
-  rect(ctx, x0, wallH - 16, w, 12, OFFICE.hedge);
-  for (let x = 2; x < w; x += 7) rect(ctx, x0 + x, wallH - 17 + (x % 3), 4, 3, OFFICE.hedgeDark);
-  for (let x = 1; x < w; x += 5) {
-    rect(ctx, x0 + x, wallH - 12, 3, 11, OFFICE.fence);
-    rect(ctx, x0 + x + 2, wallH - 11, 1, 10, OFFICE.fenceDark);
-  }
-  rect(ctx, x0, wallH - 8, w, 2, OFFICE.fenceDark);
 }
 
 function tree(ctx: Ctx, x: number, y: number, variant: number): void {

@@ -2,7 +2,7 @@ import type { MonitorMode } from './behaviour';
 import { TILE, WALL_ROWS, type DeskSlot, type GameKind, type OfficeLayout } from './layout';
 import { rect, type Ctx } from './paint';
 import { OFFICE } from './palette';
-import { gardenDrawable, paintGardenWall, paintGround } from './render-garden';
+import { gardenDrawable, paintGround } from './render-garden';
 import { arcade, foosball, nightstand, paintNightWindow, paintPillar, pingpong } from './render-rooms';
 import { seededRandom } from './random';
 
@@ -167,8 +167,6 @@ export function paintRoom(ctx: Ctx, layout: OfficeLayout): void {
     else if (item.kind === 'door') paintDoor(ctx, x + 2, item.w * TILE - 4);
     else paintClock(ctx, x);
   }
-  const garden = layout.rooms.find((room) => room.id === 'jardin');
-  if (garden?.y === WALL_ROWS) paintGardenWall(ctx, garden, wallH);
   rect(ctx, 0, wallH, width, 2, OFFICE.shadow);
   rect(ctx, 0, wallH, width, 1, OFFICE.shadow);
 }
