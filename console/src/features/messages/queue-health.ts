@@ -97,7 +97,10 @@ export function saludDeColaPorAgente(
   for (const fila of filas) {
     if (!fila.tenant_id || !fila.recipient_alias) continue;
     const salud = entrada(mapa, fleetAgentId(fila.tenant_id, fila.recipient_alias));
-    if (deliveryPolicy(fila.state).group === 'review') salud.muertas = (salud.muertas ?? 0) + 1;
+    // A resolved DLQ incident stays failed/dead forever; counting it again is the badge that never clears.
+    if (deliveryPolicy(fila.state).group === 'review' && fila.dlq_resolved !== true) {
+      salud.muertas = (salud.muertas ?? 0) + 1;
+    }
   }
 
   // `/queues` answered: for the aliases that show up in the view, "no dead rows" is a KNOWN zero
