@@ -7,6 +7,7 @@ import { cn } from '../cn';
 import { NAV_ENTRIES, PRIMARY_NAV_IDS, useNavAvailability } from '../nav';
 import { onNavClick } from '../router';
 import { AgentList } from './AgentList';
+import { useChatNavTarget } from './last-chat';
 import { useMediaQuery } from './use-media-query';
 
 const SIDEBAR_SHORTCUT = 'Alt+Shift+B';
@@ -14,18 +15,20 @@ const PRIMARY = new Set(PRIMARY_NAV_IDS);
 
 function NavLink({ id, routeId, rail, onNavigate }: { id: string; routeId: string; rail: boolean; onNavigate?: () => void }) {
   const availability = useNavAvailability()(id);
+  const chatTarget = useChatNavTarget();
   const entry = NAV_ENTRIES.find((item) => item.id === id);
   if (!entry || availability.hidden) return null;
   const Icon = entry.icon;
   const current = routeId === id;
+  const target = id === 'messages' ? chatTarget : `/${id}`;
   return (
     <a
-      href={`/${id}`}
+      href={target}
       aria-current={current ? 'page' : undefined}
       aria-disabled={availability.disabled || undefined}
       aria-label={rail ? entry.label : undefined}
       title={availability.reason ?? (rail ? entry.label : undefined)}
-      onClick={(event) => { onNavClick(event, `/${id}`, availability.reason); if (!availability.reason) onNavigate?.(); }}
+      onClick={(event) => { onNavClick(event, target, availability.reason); if (!availability.reason) onNavigate?.(); }}
       className={cn(
         'flex items-center gap-2.5 rounded-lg text-[13px] font-medium no-underline transition-colors',
         rail ? 'size-10 justify-center' : 'px-2.5 py-1.5',
@@ -60,7 +63,7 @@ function Sidebar({ routeId, activeAgentId, rail, collapsible, onToggle, footer }
     >
       <div className={cn('flex h-14 shrink-0 items-center', rail ? 'justify-center' : 'justify-between px-4')}>
         <a href="/messages" onClick={(event) => { onNavClick(event, '/messages'); }} className="no-underline" aria-label="Cauce, ir al chat">
-          {rail ? <LogoMark size={30} /> : <Logo />}
+          {rail ? <LogoMark size={30} live /> : <Logo live />}
         </a>
         {collapsible && !rail ? (
           <button
@@ -131,6 +134,7 @@ function BottomBar({ routeId, account }: { routeId: string; account: ReactNode }
   const [open, setOpen] = useState(false);
   const secondary = NAV_ENTRIES.filter((item) => !PRIMARY.has(item.id));
   const secondaryActive = !PRIMARY.has(routeId);
+  const chatTarget = useChatNavTarget();
   return (
     <nav
       aria-label="Navegación principal"
@@ -141,12 +145,13 @@ function BottomBar({ routeId, account }: { routeId: string; account: ReactNode }
         if (!entry) return null;
         const Icon = entry.icon;
         const current = routeId === id;
+        const target = id === 'messages' ? chatTarget : `/${id}`;
         return (
           <a
             key={id}
-            href={`/${id}`}
+            href={target}
             aria-current={current ? 'page' : undefined}
-            onClick={(event) => { onNavClick(event, `/${id}`); }}
+            onClick={(event) => { onNavClick(event, target); }}
             className={cn('flex h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium no-underline', current ? 'text-brand-ink' : 'text-muted')}
           >
             <Icon size={20} aria-hidden={true} />

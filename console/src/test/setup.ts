@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest';
+import './foreign-abort-signal';
 import { transferableAbortController } from 'node:util';
 
 const nativeAbortController = transferableAbortController();

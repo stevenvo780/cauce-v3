@@ -41,6 +41,7 @@
 .agent-orb[data-state='blocked'] { animation-duration: 22s; filter: saturate(0.7); }
 .agent-orb[data-state='down'] { animation: none; filter: grayscale(1) brightness(0.85); opacity: 0.7; }
 .agent-orb[data-state='down'] .agent-orb-core { animation: none; }
+.agent-orb[data-state='down'] *, .agent-orb[data-state='down']::before, .agent-orb[data-state='down']::after { animation-play-state: paused; }
 
 @keyframes orb-turn { to { --orb-turn: 360deg; } }
 @keyframes orb-breathe {
@@ -50,6 +51,236 @@
 @keyframes orb-halo {
   to { box-shadow: inset 0 0 0 1px oklch(1 0 0 / 0.2), 0 0 0 7px oklch(0.72 0.16 var(--h1) / 0); }
 }
+
+/* Chosen looks. Every layer stays inside the circle except the bloom and the z's. */
+.agent-orb[data-style='aurora'] {
+  background: radial-gradient(circle at 50% 115%, oklch(0.5 0.14 var(--h2)), oklch(0.24 0.07 var(--h1)) 70%);
+}
+.agent-orb-sky {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 50%;
+}
+.agent-orb-ribbon {
+  position: absolute;
+  left: -40%;
+  width: 180%;
+  height: 46%;
+  top: 22%;
+  border-radius: 50%;
+  background: linear-gradient(100deg, transparent 18%, oklch(0.88 0.17 var(--h3) / 0.85) 42%, oklch(0.84 0.16 var(--h1) / 0.9) 58%, transparent 82%);
+  filter: blur(calc(var(--orb-size) * 0.07));
+  mix-blend-mode: screen;
+  animation: orb-ribbon 7s ease-in-out infinite alternate;
+}
+.agent-orb-ribbon + .agent-orb-ribbon {
+  top: 44%;
+  background: linear-gradient(80deg, transparent 20%, oklch(0.8 0.18 var(--h2) / 0.8) 48%, transparent 78%);
+  animation-duration: 9s;
+  animation-delay: -3s;
+}
+.agent-orb[data-style='aurora'][data-state='thinking'] .agent-orb-ribbon,
+.agent-orb[data-style='aurora'][data-state='receiving'] .agent-orb-ribbon { animation-duration: 2.2s; }
+
+.agent-orb[data-style='pulse'] {
+  background: radial-gradient(circle at 50% 50%, oklch(0.93 0.07 var(--h1)), oklch(0.66 0.18 var(--h1)) 38%, oklch(0.42 0.16 var(--h2)) 100%);
+}
+.agent-orb[data-style='pulse']::before,
+.agent-orb[data-style='pulse']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: max(1px, calc(var(--orb-size) * 0.05)) solid oklch(0.96 0.06 var(--h1) / 0.9);
+  animation: orb-ring 2.8s ease-out infinite;
+}
+.agent-orb[data-style='pulse']::after { animation-delay: -1.4s; }
+.agent-orb[data-style='pulse'][data-state='thinking']::before,
+.agent-orb[data-style='pulse'][data-state='thinking']::after,
+.agent-orb[data-style='pulse'][data-state='receiving']::before,
+.agent-orb[data-style='pulse'][data-state='receiving']::after { animation-duration: 1.2s; }
+.agent-orb[data-style='pulse'][data-state='thinking']::after,
+.agent-orb[data-style='pulse'][data-state='receiving']::after { animation-delay: -0.6s; }
+
+.agent-orb[data-style='pixel'] {
+  background: radial-gradient(circle at 50% 40%, oklch(0.95 0.04 var(--h1)), oklch(0.85 0.07 var(--h3)));
+}
+.agent-orb-pixel {
+  position: absolute;
+  inset: 14%;
+  width: 72%;
+  height: 72%;
+  overflow: visible;
+  animation: px-hop 1.6s steps(1, end) infinite;
+}
+.px-body { fill: oklch(0.62 0.17 var(--h1)); }
+.px-shine { fill: oklch(0.92 0.06 var(--h1)); }
+.px-eye { fill: oklch(0.22 0.04 var(--h1)); transform-box: fill-box; transform-origin: center; animation: px-blink 4.2s infinite; }
+.px-cheek { fill: oklch(0.78 0.12 15); }
+.agent-orb[data-style='pixel'][data-state='thinking'] .agent-orb-pixel,
+.agent-orb[data-style='pixel'][data-state='receiving'] .agent-orb-pixel { animation-duration: 0.5s; }
+.agent-orb[data-style='pixel'][data-state='down'] .agent-orb-pixel,
+.agent-orb[data-style='pixel'][data-state='down'] .px-eye { animation: none; }
+
+.agent-orb-glyph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: calc(var(--orb-size) * 0.5);
+  font-weight: 700;
+  line-height: 1;
+  color: oklch(1 0 0);
+  text-shadow: 0 1px 2px oklch(0 0 0 / 0.35);
+  user-select: none;
+}
+.agent-orb[data-style='pixel'] .agent-orb-glyph { color: oklch(0.35 0.12 var(--h1)); text-shadow: none; }
+
+/* Empty states: a few z's drift up from a resting orb. */
+.agent-orb-zzz {
+  position: absolute;
+  top: -12%;
+  right: -22%;
+  font-size: max(9px, calc(var(--orb-size) * 0.26));
+  font-weight: 700;
+  line-height: 1;
+  color: var(--c-muted);
+  pointer-events: none;
+}
+.agent-orb-zzz > span { position: absolute; opacity: 0; animation: orb-zzz 3.6s ease-in infinite; }
+.agent-orb-zzz > span:nth-child(2) { animation-delay: 1.2s; }
+.agent-orb-zzz > span:nth-child(3) { animation-delay: 2.4s; }
+
+/* The answer arrived: a ring blooms out of the orb, and a finished delivery throws a few sparks. */
+.agent-orb-bloom {
+  position: absolute;
+  inset: -18%;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, transparent 52%, oklch(0.8 0.16 var(--h1) / 0.7) 62%, transparent 72%);
+  animation: orb-bloom 0.75s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.agent-orb-bloom[data-kind='sparkle']::after,
+.sparkle-burst::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0.09em;
+  height: 0.09em;
+  margin: -0.045em;
+  border-radius: 50%;
+  font-size: max(28px, var(--orb-size, 28px));
+  color: oklch(0.82 0.16 var(--h1, 85));
+  box-shadow:
+    0 -0.72em 0 currentColor, 0.51em -0.51em 0 oklch(0.85 0.15 85), 0.72em 0 0 currentColor,
+    0.51em 0.51em 0 oklch(0.8 0.17 340), 0 0.72em 0 currentColor, -0.51em 0.51em 0 oklch(0.85 0.15 85),
+    -0.72em 0 0 currentColor, -0.51em -0.51em 0 oklch(0.8 0.17 340);
+  animation: sparkle 0.8s cubic-bezier(0.15, 0.8, 0.3, 1) both;
+}
+.sparkle-burst {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  --orb-size: 22px;
+  --h1: 85;
+}
+
+@keyframes orb-ribbon {
+  from { transform: translateX(-12%) rotate(-14deg) skewX(-10deg); }
+  to { transform: translateX(12%) rotate(10deg) skewX(12deg); }
+}
+@keyframes orb-ring {
+  from { transform: scale(0.3); opacity: 1; }
+  to { transform: scale(1); opacity: 0; }
+}
+@keyframes px-hop {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -5%; }
+}
+@keyframes px-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.15); }
+}
+@keyframes orb-zzz {
+  0% { transform: translate(0, 0) scale(0.6); opacity: 0; }
+  20% { opacity: 0.9; }
+  100% { transform: translate(0.6em, -1.6em) scale(1.1); opacity: 0; }
+}
+@keyframes orb-bloom {
+  from { transform: scale(0.55); opacity: 1; }
+  to { transform: scale(1.35); opacity: 0; }
+}
+@keyframes sparkle {
+  from { transform: scale(0.3); opacity: 1; }
+  70% { opacity: 1; }
+  to { transform: scale(1.2); opacity: 0; }
+}
+
+/* A row that arrives after the thread was drawn slides into place; rows of the first paint never do,
+   because `data-settled` only appears after it and @starting-style only applies to new elements. */
+.thread-log[data-settled] > * { transition: opacity 0.32s cubic-bezier(0.2, 0.7, 0.2, 1), translate 0.32s cubic-bezier(0.2, 0.7, 0.2, 1); }
+@starting-style {
+  .thread-log[data-settled] > * { opacity: 0; translate: 0 8px; }
+}
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Loading rows: a soft light passes over placeholder bars. */
+.skeleton {
+  background: linear-gradient(90deg, var(--c-muted-bg) 30%, var(--c-subtle) 50%, var(--c-muted-bg) 70%) 0 0 / 300% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+@keyframes shimmer { to { background-position: -150% 0; } }
+
+/* The sidebar brand mark breathes through its own palette. */
+.logo-live .logo-stop-a { animation: logo-a 9s ease-in-out infinite alternate; }
+.logo-live .logo-stop-c { animation: logo-c 11s ease-in-out infinite alternate; }
+@keyframes logo-a { to { stop-color: #7c5cf5; } }
+@keyframes logo-c { to { stop-color: #0891b2; } }
+
+/* Menus grow from where they were opened; toasts rise into place. */
+.menu-pop { transform-origin: var(--transform-origin); transition: opacity 0.12s ease-out, scale 0.12s ease-out; }
+.menu-pop[data-starting-style], .menu-pop[data-ending-style] { opacity: 0; scale: 0.96; }
+.toast-in { animation: msg-in 0.28s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.hue-range {
+  appearance: none;
+  height: 8px;
+  margin: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  background: linear-gradient(90deg, oklch(0.7 0.16 0), oklch(0.7 0.16 60), oklch(0.7 0.16 120), oklch(0.7 0.16 180),
+    oklch(0.7 0.16 240), oklch(0.7 0.16 300), oklch(0.7 0.16 359));
+}
+.hue-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 3px solid oklch(1 0 0);
+  border-radius: 50%;
+  background: var(--thumb);
+  box-shadow: var(--c-shadow-pop);
+}
+.hue-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 3px solid oklch(1 0 0);
+  border-radius: 50%;
+  background: var(--thumb);
+  box-shadow: var(--c-shadow-pop);
+}
+.hue-range:focus-visible { outline: 2px solid var(--c-brand); outline-offset: 4px; }
+
+/* Route changes cross-fade the content column only; the sidebar stays put. */
+#main-content { view-transition-name: main-content; }
+::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+::view-transition-old(main-content) { animation: vt-out 0.12s ease-in both; }
+::view-transition-new(main-content) { animation: vt-in 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+@keyframes vt-out { to { opacity: 0; } }
+@keyframes vt-in { from { opacity: 0; transform: translateY(6px); } }
 
 /* The "is typing / thinking" bubble: three dots that rise in turn. */
 .typing-dot {
