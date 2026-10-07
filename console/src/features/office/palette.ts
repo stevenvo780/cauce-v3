@@ -84,8 +84,30 @@ export const OFFICE = {
   alert: '#e5484d',
   mail: '#f6d77a',
   sweat: '#7cc8f4',
-  zzz: '#5b7fd1',
+  zzz: '#4a63c9',
+  zzzHalo: 'rgba(244, 246, 255, 0.82)',
   offSign: '#e5484d',
+  rest: '#c9c3dc',
+  restAlt: '#c1bad5',
+  restLine: '#b3abca',
+  bedFrame: '#8c5a3a',
+  bedFrameLight: '#a8714c',
+  mattress: '#f7f3ec',
+  sheet: '#ffffff',
+  pillow: '#fbf8f2',
+  pillowShade: '#e2dccf',
+  blanket: ['#6f8fd6', '#e0896a', '#7cb98a', '#e7b54a'] as const,
+  blanketDark: ['#5470b4', '#bf6b4f', '#5e9a6c', '#c4922c'] as const,
+  blanketLight: ['#91acec', '#f0a88d', '#9dd2a9', '#f3cf7a'] as const,
+  lampShade: '#f3d48b',
+  lampGlow: 'rgba(255, 214, 120, 0.22)',
+  door: '#b07a4e',
+  doorDark: '#8a5a35',
+  doorLight: '#c99167',
+  doorGlass: '#bfe3f5',
+  exit: '#3fae6a',
+  operatorMark: '#22c55e',
+  operatorMarkDark: '#15803d',
 } as const;
 
 /** Keys a character pixel map may use; `.` is transparent. */
@@ -117,6 +139,11 @@ export function hslHex(hue: number, saturation: number, lightness: number): stri
   };
   return `#${channel(0)}${channel(8)}${channel(4)}`;
 }
+
+export const OPERATOR_PALETTE: CharPalette = {
+  o: OFFICE.outline, s: '#f1c7a3', S: '#dca983', c: '#f09a8a', h: '#2b2522', H: '#1b1614',
+  t: '#f2b733', T: '#c98c16', p: '#34507a', P: '#263b5c', b: '#1f1a18', e: '#1f1a18',
+};
 
 /** Shirt from the orb's first hue and hair from its second, so a character and its orb read as one. */
 export function characterPalette(seed: string, ghost = false): CharPalette {

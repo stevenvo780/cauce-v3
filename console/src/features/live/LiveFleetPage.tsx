@@ -162,7 +162,7 @@ export function LiveFleetPage() {
   const summary = `Oficina con ${String(views.length)} agentes: ${ORDEN_VIVO
     .filter((state) => tally[state] > 0)
     .map((state) => `${String(tally[state])} ${LIVE_STATE_META[state].label.toLowerCase()}`)
-    .join(', ')}. Flechas para recorrerlos, Enter para abrir uno.`;
+    .join(', ')}. Flechas para recorrerlos y Enter para abrir uno; WASD mueve la vista, + y − acercan, 0 muestra todo y P activa el modo paseo.`;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -172,7 +172,7 @@ export function LiveFleetPage() {
             <h1 className="m-0 text-[22px] font-semibold tracking-tight text-fg">Oficina</h1>
             <PageHelp
               title="Oficina"
-              description="Cada persona es un agente de la flota. Trabaja en su escritorio, duerme en el sofá cuando no tiene nada, lleva papeles al escritorio de otro cuando le delega y levanta un «!» cuando se traba. El estado sale del trabajo que avanza (o no), no del latido."
+              description="Cada persona es un agente de la flota. Trabaja en su escritorio, se va a dormir a la zona de descanso cuando no tiene nada, lleva papeles al escritorio de otro cuando le delega y levanta un «!» cuando se traba. El estado sale del trabajo que avanza (o no), no del latido. Vos también estás: arrastrá para mirar, acercá con la rueda o pellizcando y tocá el piso para caminar hasta alguien."
             >
               <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
                 {ORDEN_VIVO.map((state) => (
@@ -265,7 +265,7 @@ export function LiveFleetPage() {
         <section
           aria-label="Oficina"
           data-objeto-principal="oficina"
-          className="-mx-4 overflow-hidden border-y border-line bg-subtle py-2 sm:mx-0 sm:rounded-xl sm:border sm:p-3 sm:shadow-card"
+          className="-mx-4 overflow-hidden border-y border-line bg-subtle sm:mx-0 sm:rounded-xl sm:border sm:shadow-card"
         >
           {views.length === 0 ? (
             <p className="m-0 p-8 text-center text-[13px] text-muted">

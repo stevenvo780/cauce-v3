@@ -1,64 +1,8 @@
 import type { MonitorMode } from './behaviour';
 import { TILE, WALL_ROWS, type DeskSlot, type Furniture, type OfficeLayout } from './layout';
-import { OFFICE, characterPalette, type CharPalette } from './palette';
-import { seededRandom, type Actor } from './simulation';
-import { BUBBLE, CHAR_H, CHAR_W, GLYPH_Z, ICONS, characterFrame, type Facing, type FrameName, type IconName } from './sprites';
-
-type Ctx = CanvasRenderingContext2D;
-type MakeCanvas = (width: number, height: number) => HTMLCanvasElement;
-
-const SELECT = '#6c63ff';
-
-function rect(ctx: Ctx, x: number, y: number, w: number, h: number, color: string): void {
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, w, h);
-}
-
-/** Paints a pixel map, merging horizontal runs of one key into a single rectangle. */
-function paintRows(ctx: Ctx, rows: readonly string[], x: number, y: number, colors: Readonly<Record<string, string>>): void {
-  rows.forEach((row, dy) => {
-    let start = 0;
-    for (let dx = 1; dx <= row.length; dx += 1) {
-      if (dx < row.length && row[dx] === row[start]) continue;
-      const color = colors[row[start]];
-      if (row[start] !== '.' && color) rect(ctx, x + start, y + dy, dx - start, 1, color);
-      start = dx;
-    }
-  });
-}
-
-export class SpriteCache {
-  private readonly sprites = new Map<string, HTMLCanvasElement>();
-  private readonly palettes = new Map<string, CharPalette>();
-
-  constructor(private readonly make: MakeCanvas) {}
-
-  palette(seed: string, ghost: boolean): CharPalette {
-    const key = `${seed}|${String(ghost)}`;
-    let palette = this.palettes.get(key);
-    if (!palette) {
-      palette = characterPalette(seed, ghost);
-      this.palettes.set(key, palette);
-    }
-    return palette;
-  }
-
-  character(seed: string, ghost: boolean, frame: FrameName, facing: Facing, step: number): HTMLCanvasElement {
-    const key = `${seed}|${String(ghost)}|${frame}|${facing}|${String(step % 4)}`;
-    let sprite = this.sprites.get(key);
-    if (!sprite) {
-      sprite = this.make(CHAR_W, CHAR_H);
-      const ctx = sprite.getContext('2d');
-      if (ctx) paintRows(ctx, characterFrame(frame, facing, step), 0, 0, this.palette(seed, ghost));
-      this.sprites.set(key, sprite);
-    }
-    return sprite;
-  }
-}
-
-// ---------------------------------------------------------------------------------------------
-// Static room: floor, wall and what hangs on it. Painted once per layout.
-// ---------------------------------------------------------------------------------------------
+import { rect, type Ctx } from './paint';
+import { OFFICE, type CharPalette } from './palette';
+import { seededRandom } from './simulation';
 
 function paintFloor(ctx: Ctx, layout: OfficeLayout): void {
   for (const zone of [...layout.zones].sort((a, b) => Number(a.kind === 'partition') - Number(b.kind === 'partition'))) {
@@ -83,6 +27,14 @@ function paintFloor(ctx: Ctx, layout: OfficeLayout): void {
         rect(ctx, x0, y0 + y + 5, w, 1, OFFICE.woodLine);
         for (let x = (row * 13) % 40; x < w; x += 40) rect(ctx, x0 + x, y0 + y, 1, 5, OFFICE.woodLine);
       }
+    } else if (zone.kind === 'rest') {
+      for (let ty = 0; ty < zone.h; ty += 1) {
+        for (let tx = 0; tx < zone.w; tx += 1) {
+          rect(ctx, x0 + tx * TILE, y0 + ty * TILE, TILE, TILE, (tx + ty) % 2 === 0 ? OFFICE.rest : OFFICE.restAlt);
+        }
+      }
+      rect(ctx, x0, y0, w, 1, OFFICE.restLine);
+      rect(ctx, x0 + w - 1, y0, 1, h, OFFICE.restLine);
     } else if (zone.kind === 'tile') {
       for (let y = 0; y < h; y += 8) {
         for (let x = 0; x < w; x += 8) rect(ctx, x0 + x, y0 + y, 8, 8, ((x + y) / 8) % 2 === 0 ? OFFICE.tile : OFFICE.tileAlt);
@@ -154,6 +106,30 @@ function paintClock(ctx: Ctx, x: number): void {
   rect(ctx, cx, 15, 3, 1, OFFICE.alert);
 }
 
+function paintDoor(ctx: Ctx, x: number, w: number): void {
+  const top = 13;
+  const bottom = WALL_ROWS * TILE;
+  rect(ctx, x - 2, top - 2, w + 4, bottom - top + 2, OFFICE.trimDark);
+  rect(ctx, x, top, w, bottom - top, OFFICE.door);
+  rect(ctx, x, top, w, 1, OFFICE.doorLight);
+  const leaf = Math.floor(w / 2);
+  rect(ctx, x + leaf, top, 1, bottom - top, OFFICE.doorDark);
+  for (const left of [x + 3, x + leaf + 3]) {
+    rect(ctx, left - 1, top + 4, leaf - 4, 10, OFFICE.doorDark);
+    rect(ctx, left, top + 5, leaf - 6, 8, OFFICE.doorGlass);
+    rect(ctx, left, top + 5, 2, 2, OFFICE.glassShine);
+    rect(ctx, left - 1, top + 18, leaf - 4, 12, OFFICE.doorDark);
+    rect(ctx, left, top + 19, leaf - 6, 10, OFFICE.doorLight);
+  }
+  rect(ctx, x + leaf - 3, top + 17, 2, 2, OFFICE.mail);
+  rect(ctx, x + leaf + 2, top + 17, 2, 2, OFFICE.mail);
+  rect(ctx, x + leaf - 5, top - 9, 10, 5, OFFICE.outline);
+  rect(ctx, x + leaf - 4, top - 8, 8, 3, OFFICE.exit);
+  rect(ctx, x + leaf - 2, top - 7, 4, 1, OFFICE.paper);
+  rect(ctx, x - 2, bottom, w + 4, 3, OFFICE.rugBorder);
+  rect(ctx, x, bottom + 1, w, 1, OFFICE.rug);
+}
+
 export function paintRoom(ctx: Ctx, layout: OfficeLayout): void {
   const width = layout.cols * TILE;
   const height = layout.rows * TILE;
@@ -171,15 +147,12 @@ export function paintRoom(ctx: Ctx, layout: OfficeLayout): void {
     const x = item.x * TILE;
     if (item.kind === 'window') paintWindow(ctx, x + 2, item.w * TILE - 4);
     else if (item.kind === 'board') paintBoard(ctx, x + 2, item.w * TILE - 4);
+    else if (item.kind === 'door') paintDoor(ctx, x + 2, item.w * TILE - 4);
     else paintClock(ctx, x);
   }
   rect(ctx, 0, wallH, width, 2, OFFICE.shadow);
   rect(ctx, 0, wallH, width, 1, OFFICE.shadow);
 }
-
-// ---------------------------------------------------------------------------------------------
-// Furniture. Each piece is one or two drawables sorted by its base line with the people.
-// ---------------------------------------------------------------------------------------------
 
 export interface DeskState {
   monitor: MonitorMode;
@@ -187,6 +160,24 @@ export interface DeskState {
   typing: boolean;
   hands?: string;
   offline: boolean;
+  /** Owner asleep with the head on folded arms; only drawn on desks that face the viewer. */
+  napper?: CharPalette;
+}
+
+/** Folded arms and a bowed head on the desk top, right of the monitor so the face-down head shows. */
+function napOnDesk(ctx: Ctx, x: number, y: number, look: CharPalette): void {
+  rect(ctx, x + 12, y, 19, 7, OFFICE.outline);
+  rect(ctx, x + 13, y + 1, 17, 5, look.t);
+  rect(ctx, x + 13, y + 5, 17, 1, look.T);
+  rect(ctx, x + 13, y + 1, 3, 3, look.s);
+  rect(ctx, x + 27, y + 1, 3, 3, look.s);
+  rect(ctx, x + 17, y - 6, 11, 9, OFFICE.outline);
+  rect(ctx, x + 16, y - 5, 13, 7, OFFICE.outline);
+  rect(ctx, x + 18, y - 5, 9, 8, look.h);
+  rect(ctx, x + 17, y - 4, 11, 6, look.h);
+  rect(ctx, x + 19, y - 5, 4, 1, look.H);
+  rect(ctx, x + 17, y + 1, 11, 1, look.H);
+  rect(ctx, x + 21, y + 2, 3, 1, look.S);
 }
 
 export interface Drawable { sortY: number; draw: (ctx: Ctx, time: number) => void }
@@ -267,7 +258,8 @@ function deskDrawables(desk: DeskSlot, state: () => DeskState): Drawable[] {
           rect(ctx, x + 9 + left, y + 1 + left, 3, 2, s.hands);
           rect(ctx, x + 20 - left, y + 2 - left, 3, 2, s.hands);
         }
-        rect(ctx, x + 26, y + 3, 3, 3, OFFICE.mug);
+        if (s.napper) napOnDesk(ctx, x, y, s.napper);
+        else rect(ctx, x + 26, y + 3, 3, 3, OFFICE.mug);
         if (s.offline) {
           rect(ctx, x + 2, y + 2, 5, 4, OFFICE.paper);
           rect(ctx, x + 3, y + 3, 3, 2, OFFICE.offSign);
@@ -444,6 +436,51 @@ function beanbagDrawables(x: number, y: number, variant: 0 | 1): Drawable[] {
   ];
 }
 
+/** Two tiles wide, headboard on the left; the sleeper and their blanket are drawn by the person. */
+function bed(ctx: Ctx, x: number, y: number, variant: number): void {
+  const left = x * TILE;
+  const top = y * TILE;
+  const blanket = OFFICE.blanket[variant % OFFICE.blanket.length];
+  const dark = OFFICE.blanketDark[variant % OFFICE.blanketDark.length];
+  const light = OFFICE.blanketLight[variant % OFFICE.blanketLight.length];
+  shadow(ctx, left + 1, top + 15, 31);
+  rect(ctx, left, top - 1, 32, 16, OFFICE.outline);
+  rect(ctx, left + 1, top, 30, 11, OFFICE.mattress);
+  rect(ctx, left + 1, top + 11, 30, 3, OFFICE.bedFrame);
+  rect(ctx, left + 1, top + 11, 30, 1, OFFICE.bedFrameLight);
+  rect(ctx, left + 2, top + 14, 2, 2, OFFICE.outline);
+  rect(ctx, left + 28, top + 14, 2, 2, OFFICE.outline);
+  rect(ctx, left + 3, top + 2, 8, 7, OFFICE.pillowShade);
+  rect(ctx, left + 3, top + 2, 8, 6, OFFICE.pillow);
+  rect(ctx, left + 4, top + 3, 3, 1, OFFICE.sheet);
+  rect(ctx, left + 13, top, 18, 11, dark);
+  rect(ctx, left + 13, top, 18, 10, blanket);
+  rect(ctx, left + 13, top, 18, 1, light);
+  rect(ctx, left + 12, top, 2, 11, OFFICE.sheet);
+  rect(ctx, left + 18, top + 4, 9, 1, light);
+  rect(ctx, left - 1, top - 7, 4, 22, OFFICE.outline);
+  rect(ctx, left, top - 6, 2, 20, OFFICE.bedFrame);
+  rect(ctx, left, top - 6, 2, 1, OFFICE.bedFrameLight);
+  rect(ctx, left + 30, top + 3, 3, 12, OFFICE.outline);
+  rect(ctx, left + 31, top + 4, 1, 10, OFFICE.bedFrame);
+}
+
+function lamp(ctx: Ctx, x: number, y: number): void {
+  const cx = x * TILE + 8;
+  const base = y * TILE + 14;
+  ctx.fillStyle = OFFICE.lampGlow;
+  ctx.fillRect(cx - 9, base - 22, 18, 16);
+  shadow(ctx, cx - 6, base, 12);
+  rect(ctx, cx - 6, base - 9, 12, 10, OFFICE.outline);
+  rect(ctx, cx - 5, base - 8, 10, 8, OFFICE.bedFrame);
+  rect(ctx, cx - 5, base - 8, 10, 1, OFFICE.bedFrameLight);
+  rect(ctx, cx - 4, base - 5, 8, 1, OFFICE.outline);
+  rect(ctx, cx - 1, base - 14, 2, 5, OFFICE.outline);
+  rect(ctx, cx - 5, base - 20, 10, 7, OFFICE.outline);
+  rect(ctx, cx - 4, base - 19, 8, 5, OFFICE.lampShade);
+  rect(ctx, cx - 4, base - 19, 8, 1, OFFICE.paper);
+}
+
 function plant(ctx: Ctx, x: number, y: number, big: boolean): void {
   const cx = x * TILE + 8;
   const base = y * TILE + 15;
@@ -574,8 +611,7 @@ function table(ctx: Ctx, x: number, y: number): void {
 
 export function furnitureDrawables(layout: OfficeLayout, deskState: (slot: number) => DeskState): Drawable[] {
   const list: Drawable[] = [];
-  const at = (piece: Furniture, sortY: number, draw: (ctx: Ctx, time: number) => void) => {
-    void piece;
+  const at = (_piece: Furniture, sortY: number, draw: (ctx: Ctx, time: number) => void) => {
     list.push({ sortY, draw });
   };
   for (const piece of layout.furniture) {
@@ -613,6 +649,12 @@ export function furnitureDrawables(layout: OfficeLayout, deskState: (slot: numbe
       case 'shelf':
         at(piece, piece.y * TILE + 15, (ctx) => { shelf(ctx, piece.x, piece.y); });
         break;
+      case 'bed':
+        at(piece, piece.y * TILE + 1, (ctx) => { bed(ctx, piece.x, piece.y, piece.variant); });
+        break;
+      case 'lamp':
+        at(piece, piece.y * TILE + 14, (ctx) => { lamp(ctx, piece.x, piece.y); });
+        break;
       case 'table':
         at(piece, piece.y * TILE + 13, (ctx) => { table(ctx, piece.x, piece.y); });
         break;
@@ -621,146 +663,3 @@ export function furnitureDrawables(layout: OfficeLayout, deskState: (slot: numbe
   return list;
 }
 
-// ---------------------------------------------------------------------------------------------
-// People.
-// ---------------------------------------------------------------------------------------------
-
-export interface ActorLook {
-  /** Top-left of the sprite cell, in art px. */
-  x: number;
-  y: number;
-  frame: FrameName;
-  facing: Facing;
-  step: number;
-  ghost: boolean;
-  seated: boolean;
-  /** Where the name goes: above the head or below the feet. */
-  labelAbove: boolean;
-}
-
-const SEATED: ReadonlySet<string> = new Set(['sit', 'type', 'sleep', 'nap', 'ghost']);
-
-export function actorLook(actor: Actor): ActorLook {
-  const seated = SEATED.has(actor.pose);
-  const facing: Facing = actor.pose === 'coffee'
-    ? (actor.clock % 7 < 2.2 ? 'up' : 'down')
-    : actor.pose === 'stretch' ? 'down' : actor.dir;
-  let frame: FrameName = 'stand';
-  if (actor.pose === 'walk') frame = 'walk';
-  else if (actor.pose === 'stretch') frame = Math.floor(actor.clock * 2) % 2 === 0 ? 'stretch' : 'stand';
-  else if (actor.pose === 'sleep' || actor.pose === 'nap') frame = 'sleep';
-  let dy = 0;
-  if (seated) dy = facing === 'down' ? 5 : 3;
-  if (actor.pose === 'nap') dy += facing === 'down' ? 3 : 1;
-  if (actor.pose === 'type' && facing === 'up') dy += Math.floor(actor.clock * 6) % 2;
-  if ((actor.pose === 'sleep' || actor.pose === 'nap') && Math.floor(actor.clock / 1.4) % 2 === 1) dy += 1;
-  let dx = 0;
-  if (actor.behaviour.shake && actor.pose === 'sit') dx = Math.floor(actor.clock * 14) % 3 === 0 ? 1 : 0;
-  return {
-    x: Math.round(actor.x - CHAR_W / 2 + dx),
-    y: Math.round(actor.y - CHAR_H + 1 + dy),
-    frame,
-    facing,
-    step: Math.floor(actor.walked / 5),
-    ghost: actor.pose === 'ghost',
-    seated,
-    labelAbove: seated && facing === 'down',
-  };
-}
-
-function paintIcon(ctx: Ctx, name: IconName, x: number, y: number): void {
-  paintRows(ctx, ICONS[name], x, y, { k: OFFICE.outline, w: OFFICE.paper, y: OFFICE.mail, r: OFFICE.alert, g: OFFICE.ink[1] });
-}
-
-function bubble(ctx: Ctx, icon: IconName, x: number, y: number): void {
-  paintRows(ctx, BUBBLE, x, y, { o: OFFICE.outline, w: OFFICE.bubble });
-  paintIcon(ctx, icon, x + 2, y + 1 + (icon === 'alert' ? 0 : 0) + 0);
-}
-
-export function drawActor(ctx: Ctx, sprites: SpriteCache, actor: Actor, look: ActorLook, time: number): void {
-  if (!look.seated && actor.pose !== 'ghost') {
-    ctx.fillStyle = OFFICE.shadow;
-    ctx.fillRect(look.x + 3, Math.round(actor.y) - 1, 10, 3);
-  }
-  const sprite = sprites.character(actor.id, look.ghost, look.frame, look.facing, look.step);
-  if (look.ghost) ctx.globalAlpha *= 0.55;
-  ctx.drawImage(sprite, look.x, look.y);
-  if (look.ghost) ctx.globalAlpha /= 0.55;
-  const cx = look.x + CHAR_W / 2;
-  const handY = look.y + 16;
-  if (actor.carrying || actor.pose === 'handover') {
-    const px = look.facing === 'left' ? cx - 9 : look.facing === 'right' ? cx + 3 : cx - 3;
-    if (look.facing !== 'up') {
-      rect(ctx, px - 1, handY - 4, 7, 8, OFFICE.outline);
-      rect(ctx, px, handY - 3, 5, 6, OFFICE.paper);
-      rect(ctx, px + 1, handY - 1, 3, 1, OFFICE.ink[1]);
-    }
-  }
-  if (actor.pose === 'coffee' && look.facing === 'down') {
-    rect(ctx, cx + 3, handY - 2, 5, 5, OFFICE.outline);
-    rect(ctx, cx + 4, handY - 1, 3, 3, OFFICE.mug);
-    if (Math.floor(time * 3) % 2 === 0) rect(ctx, cx + 5, handY - 5, 1, 2, 'rgba(255,255,255,0.8)');
-  }
-  if (actor.behaviour.shake && actor.pose === 'sit') {
-    const drop = Math.floor(time * 2) % 3;
-    rect(ctx, look.x + 13, look.y + 4 + drop, 2, 3, OFFICE.sweat);
-  }
-}
-
-/** Overlays that must sit above every piece of furniture: bubbles, the sleep trail, selection. */
-export function drawActorOverlay(ctx: Ctx, actor: Actor, look: ActorLook, time: number, selected: boolean, hovered: boolean): void {
-  const cx = look.x + CHAR_W / 2;
-  if (selected || hovered) {
-    const y = Math.round(actor.y) + (look.seated ? 2 : 0);
-    const color = selected ? SELECT : 'rgba(255,255,255,0.85)';
-    rect(ctx, cx - 6, y, 12, 1, color);
-    rect(ctx, cx - 8, y - 1, 2, 1, color);
-    rect(ctx, cx + 6, y - 1, 2, 1, color);
-    rect(ctx, cx - 6, y - 2, 12, 1, color);
-    if (selected) {
-      const bob = Math.floor(time * 3) % 2;
-      const top = look.y + (look.labelAbove ? -15 : -6) - bob;
-      rect(ctx, cx - 3, top, 7, 1, SELECT);
-      rect(ctx, cx - 2, top + 1, 5, 1, SELECT);
-      rect(ctx, cx - 1, top + 2, 3, 1, SELECT);
-      rect(ctx, cx, top + 3, 1, 1, SELECT);
-    }
-  }
-  const icon: IconName | null = actor.bubble === 'mail' ? 'mail'
-    : actor.bubble === 'alert' ? 'alert'
-      : actor.bubble === 'paper' ? 'paper' : null;
-  if (icon) {
-    const bob = Math.floor(time * 2.5) % 2;
-    const bx = look.labelAbove ? cx + 6 : cx + 2;
-    const by = look.labelAbove ? look.y - 2 - bob : look.y - 9 - bob;
-    bubble(ctx, icon, bx, by);
-  }
-  if (actor.bubble === 'zzz') {
-    for (let i = 0; i < 3; i += 1) {
-      const phase = (time * 0.5 + i / 3) % 1;
-      ctx.globalAlpha = Math.max(0, 1 - phase) * 0.9;
-      paintRows(ctx, GLYPH_Z, Math.round(cx + 4 + phase * 8), Math.round(look.y + 2 - phase * 12), { k: OFFICE.zzz });
-    }
-    ctx.globalAlpha = 1;
-  }
-}
-
-/** Device-pixel name tag: drawn after the art is scaled so the text stays sharp. */
-export function drawLabel(ctx: Ctx, text: string, x: number, y: number, above: boolean, fontPx: number, selected: boolean, dim: boolean): void {
-  ctx.font = `600 ${String(fontPx)}px "Inter Variable", Inter, system-ui, sans-serif`;
-  const width = Math.ceil(ctx.measureText(text).width) + fontPx;
-  const height = Math.round(fontPx * 1.5);
-  const left = Math.round(x - width / 2);
-  const top = Math.round(above ? y - height : y);
-  ctx.globalAlpha = dim ? 0.4 : 1;
-  ctx.fillStyle = selected ? SELECT : 'rgba(37, 28, 24, 0.78)';
-  const radius = height / 2;
-  ctx.beginPath();
-  ctx.roundRect(left, top, width, height, radius);
-  ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'center';
-  ctx.fillText(text, Math.round(x), top + height / 2 + 0.5);
-  ctx.globalAlpha = 1;
-}

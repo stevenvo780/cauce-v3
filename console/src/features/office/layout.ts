@@ -6,13 +6,15 @@ const SEATS_PER_POD = 4;
 const POD_W = 4;
 const POD_H = 4;
 const LOUNGE_W = 9;
-const LOUNGE_H = 9;
+const LOUNGE_H = 10;
 
 export interface Point { x: number; y: number }
 export type Dir = 'down' | 'up' | 'left' | 'right';
 
+export type RestKind = 'bed' | 'sofa' | 'beanbag';
+
 /** A place a character can occupy: the tile it paths to, and its exact feet position in art px. */
-export interface Spot { tile: Point; px: Point; dir: Dir }
+export interface Spot { tile: Point; px: Point; dir: Dir; rest?: RestKind; variant?: number }
 
 export interface DeskSlot {
   index: number;
@@ -31,6 +33,8 @@ export type Furniture =
   | { kind: 'chair'; x: number; y: number; slot: number; facing: 'down' | 'up' }
   | { kind: 'sofa'; x: number; y: number; w: number; facing: 'down' | 'up'; alt: boolean }
   | { kind: 'beanbag'; x: number; y: number; variant: 0 | 1 }
+  | { kind: 'bed'; x: number; y: number; variant: number }
+  | { kind: 'lamp'; x: number; y: number }
   | { kind: 'table'; x: number; y: number }
   | { kind: 'plant'; x: number; y: number; big: boolean }
   | { kind: 'counter'; x: number; y: number; w: number }
@@ -40,8 +44,8 @@ export type Furniture =
   | { kind: 'cooler'; x: number; y: number }
   | { kind: 'shelf'; x: number; y: number };
 
-export interface WallItem { kind: 'window' | 'board' | 'clock'; x: number; w: number }
-export interface Zone { kind: 'carpet' | 'wood' | 'tile' | 'rug' | 'partition'; x: number; y: number; w: number; h: number }
+export interface WallItem { kind: 'window' | 'board' | 'clock' | 'door'; x: number; w: number }
+export interface Zone { kind: 'carpet' | 'wood' | 'tile' | 'rug' | 'rest' | 'partition'; x: number; y: number; w: number; h: number }
 
 export interface OfficeLayout {
   cols: number;
@@ -51,8 +55,9 @@ export interface OfficeLayout {
   furniture: Furniture[];
   wall: WallItem[];
   zones: Zone[];
-  /** Sofa and beanbag places where idle people nap, best first. */
+  /** Beds, the sofa and beanbags where idle people sleep, best first. */
   lounge: Spot[];
+  door: Spot;
   /** Standing places in front of the coffee machine. */
   coffee: Spot[];
   /** Free floor tiles worth strolling to. */
@@ -169,14 +174,22 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
   block(lx + 6, ly + 3);
   block(lx + 6, ly + 5);
   plant(lx, ly + 4, false);
+
+  zones.push({ kind: 'rest', x: lx, y: ly + 7, w: 7, h: 3 });
+  const beds = [{ x: lx + 1, y: ly + 7 }, { x: lx + 4, y: ly + 7 }, { x: lx + 1, y: ly + 9 }];
+  beds.forEach((bed, variant) => {
+    furniture.push({ kind: 'bed', x: bed.x, y: bed.y, variant });
+    block(bed.x, bed.y, 2, 1);
+  });
+  furniture.push({ kind: 'lamp', x: lx + 3, y: ly + 9 });
+  block(lx + 3, ly + 9);
   furniture.push({ kind: 'rack', x: lx + 7, y: ly + 7 });
   furniture.push({ kind: 'rack', x: lx + 8, y: ly + 7 });
   block(lx + 7, ly + 7, 2, 1);
-  furniture.push({ kind: 'cooler', x: lx, y: ly + 7 });
-  block(lx, ly + 7);
-  furniture.push({ kind: 'shelf', x: lx + 3, y: ly + 7 });
-  block(lx + 3, ly + 7, 2, 1);
-  plant(lx + 5, ly + 7, false);
+  furniture.push({ kind: 'cooler', x: lx + 5, y: ly + 9 });
+  block(lx + 5, ly + 9);
+  furniture.push({ kind: 'shelf', x: lx + 7, y: ly + 9 });
+  block(lx + 7, ly + 9, 2, 1);
 
   const walkable = blocked.map((value) => !value);
   const nearestFree = (tile: Point): Point => {
@@ -200,20 +213,25 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
     desk.visit.tile = nearestFree(desk.visit.tile);
   }
 
-  const seatSpot = (x: number, y: number, dir: Dir, dx = 0): Spot => ({
+  const seatSpot = (x: number, y: number, dir: Dir, rest: RestKind, variant: number): Spot => ({
     tile: nearestFree({ x, y }),
-    px: { x: x * TILE + TILE / 2 + dx, y: y * TILE + TILE - 3 },
+    px: { x: x * TILE + TILE / 2, y: y * TILE + TILE - 3 },
     dir,
+    rest,
+    variant,
+  });
+  const lieSpot = (x: number, y: number, dx: number, dy: number, rest: RestKind, variant: number): Spot => ({
+    tile: nearestFree({ x, y }),
+    px: { x: x * TILE + dx, y: y * TILE + dy },
+    dir: 'right',
+    rest,
+    variant,
   });
   const lounge: Spot[] = [
-    seatSpot(lx + 3, ly + 3, 'down'),
-    seatSpot(lx + 3, ly + 5, 'up'),
-    seatSpot(lx + 6, ly + 3, 'down'),
-    seatSpot(lx + 6, ly + 5, 'down'),
-    seatSpot(lx + 2, ly + 3, 'down', 2),
-    seatSpot(lx + 4, ly + 5, 'up', -2),
-    seatSpot(lx + 4, ly + 3, 'down', -2),
-    seatSpot(lx + 2, ly + 5, 'up', 2),
+    ...beds.map((bed, variant) => lieSpot(bed.x, bed.y, 16, 9, 'bed', variant)),
+    lieSpot(lx + 2, ly + 3, 18, 13, 'sofa', beds.length),
+    seatSpot(lx + 6, ly + 3, 'down', 'beanbag', 0),
+    seatSpot(lx + 6, ly + 5, 'down', 'beanbag', 1),
   ];
   const coffee: Spot[] = [1, 2, 3, 0].map((dx) => ({
     tile: { x: lx + dx, y: ly + 1 }, px: centerPx({ x: lx + dx, y: ly + 1 }), dir: 'up' as const,
@@ -228,15 +246,23 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
 
   const wall: WallItem[] = [];
   const workWallEnd = params.side === 'right' ? work.w : cols;
-  for (let x = workX + 1, n = 0; x + 3 <= workWallEnd - 1; x += 5, n += 1) {
-    wall.push({ kind: n === 1 ? 'board' : 'window', x, w: 3 });
+  const doorX = workX + margin + POD_W;
+  for (let x = workX + 1; x + 3 <= workWallEnd - 1;) {
+    if (x + 3 > doorX - 1 && x < doorX + 3) {
+      x = doorX + 3;
+      continue;
+    }
+    wall.push({ kind: wall.length === 1 ? 'board' : 'window', x, w: 3 });
+    x += 5;
   }
+  wall.push({ kind: 'door', x: doorX, w: 2 });
   if (params.side === 'right') {
     wall.push({ kind: 'clock', x: lx + 2, w: 1 });
     wall.push({ kind: 'window', x: lx + 5, w: 3 });
   }
+  const door: Spot = { tile: { x: doorX, y: top }, px: { x: doorX * TILE + TILE / 2 + (gap > 1 ? TILE / 2 : 0), y: top * TILE + TILE - 3 }, dir: 'down' };
 
-  return { cols, rows, walkable, desks, furniture, wall, zones, lounge, coffee, wander };
+  return { cols, rows, walkable, desks, furniture, wall, zones, lounge, door, coffee, wander };
 }
 
 export interface LayoutChoice { params: LayoutParams; scale: number }

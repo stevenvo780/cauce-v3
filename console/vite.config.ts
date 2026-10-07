@@ -40,7 +40,7 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       target: 'es2022',
-      // The console CSP serves fonts only from 'self': an inlined data: font would be refused.
+      // font-src 'self' refuses inlined data: fonts.
       assetsInlineLimit: 0,
       sourcemap: true,
       rollupOptions: {

@@ -6,14 +6,17 @@ import { TILE, buildLayout, chooseLayout, layoutSize, podsFor, type LayoutParams
 import { characterPalette, hslHex } from './palette';
 import { findPath } from './pathfinding';
 import { createWorld, planFor, seededRandom, stepWorld, syncWorld, type Actor, type ActorInput, type World } from './simulation';
-import { BUBBLE, CHAR_H, CHAR_KEYS, CHAR_W, ICONS, characterFrame, type Facing, type FrameName } from './sprites';
+import {
+  BLANKET, BLANKET_INHALE, BUBBLE, CHAR_H, CHAR_KEYS, CHAR_W, GLYPH_Z, GLYPH_Z_SMALL, ICONS, LIE_H, LIE_W, characterFrame, lyingFrame,
+  type Facing, type FrameName,
+} from './sprites';
 
 const params = (pods: number, overrides: Partial<LayoutParams> = {}): LayoutParams => ({
   pods, podCols: Math.min(2, pods), side: 'right', compact: false, ...overrides,
 });
 
 describe('sprites', () => {
-  const frames: FrameName[] = ['stand', 'walk', 'sit', 'sleep', 'stretch'];
+  const frames: FrameName[] = ['stand', 'walk', 'sit', 'sleep', 'stretch', 'napUp', 'napDown'];
   const facings: Facing[] = ['down', 'up', 'left', 'right'];
 
   it('every frame is a full 16×24 grid of known palette keys', () => {
@@ -35,9 +38,20 @@ describe('sprites', () => {
     expect(characterFrame('walk', 'down', 1)).not.toEqual(characterFrame('walk', 'down', 3));
   });
 
-  it('icons and the bubble are rectangular maps', () => {
-    for (const icon of Object.values(ICONS)) expect(new Set(icon.map((row) => row.length)).size).toBe(1);
-    expect(new Set(BUBBLE.map((row) => row.length)).size).toBe(1);
+  it('icons, the bubble, the blanket and the sleep letters are rectangular maps', () => {
+    for (const map of [...Object.values(ICONS), BUBBLE, BLANKET, BLANKET_INHALE, GLYPH_Z, GLYPH_Z_SMALL]) {
+      expect(new Set(map.map((row) => row.length)).size).toBe(1);
+    }
+    expect(BLANKET_INHALE).toHaveLength(BLANKET.length + 1);
+  });
+
+  it('the sleeping head fits its sprite, eyes shut, and the desk naps hide the face', () => {
+    const lying = lyingFrame();
+    expect(lying.length).toBeLessThanOrEqual(LIE_H);
+    for (const row of lying) expect(row).toHaveLength(LIE_W);
+    expect(lying.join('')).not.toMatch(/[^.oshHcSe]/);
+    expect(characterFrame('sleep', 'down').join('\n')).toMatch(/ee..ee/);
+    for (const frame of ['napUp', 'napDown'] as const) expect(characterFrame(frame, 'down').join('')).not.toContain('e');
   });
 });
 
@@ -92,6 +106,35 @@ describe('layout', () => {
         ...layout.coffee.map((spot) => spot.tile),
       ];
       for (const spot of spots) expect(findPath(layout.walkable, layout.cols, start, spot), `${side} ${String(compact)}`).not.toBeNull();
+    }
+  });
+
+  it('sleeps people in beds first, then on the sofa, then in beanbags, all reachable', () => {
+    for (const side of ['right', 'bottom'] as const) {
+      const layout = buildLayout(params(4, { side }));
+      expect(layout.lounge.map((spot) => spot.rest)).toEqual(['bed', 'bed', 'bed', 'sofa', 'beanbag', 'beanbag']);
+      const beds = layout.furniture.filter((piece) => piece.kind === 'bed');
+      expect(beds).toHaveLength(3);
+      for (const [index, bed] of beds.entries()) {
+        const spot = layout.lounge[index];
+        expect(spot.px.x).toBeGreaterThan(bed.x * TILE);
+        expect(spot.px.x).toBeLessThan((bed.x + 2) * TILE);
+        expect(Math.floor(spot.px.y / TILE)).toBe(bed.y);
+        expect(layout.walkable[spot.tile.y * layout.cols + spot.tile.x]).toBe(true);
+      }
+    }
+  });
+
+  it('opens a door in the back wall over a walkable corridor, clear of windows', () => {
+    for (const side of ['right', 'bottom'] as const) for (const compact of [false, true]) for (const pods of [1, 4]) {
+      const layout = buildLayout(params(pods, { side, compact, podCols: Math.min(2, pods) }));
+      const door = must(layout.wall.find((item) => item.kind === 'door'), 'door');
+      expect(layout.walkable[layout.door.tile.y * layout.cols + layout.door.tile.x]).toBe(true);
+      expect(layout.door.tile.y).toBe(3);
+      for (const item of layout.wall.filter((other) => other !== door && other.kind !== 'clock')) {
+        expect(item.x + item.w <= door.x || item.x >= door.x + door.w).toBe(true);
+      }
+      expect(findPath(layout.walkable, layout.cols, layout.door.tile, layout.lounge[0].tile)).not.toBeNull();
     }
   });
 
@@ -170,7 +213,8 @@ describe('simulation', () => {
     const a = actorOf(world, 'a');
     expect([a.x, a.y]).toEqual([layout.desks[0].seat.px.x, layout.desks[0].seat.px.y]);
     expect(a.pose).toBe('type');
-    expect(actorOf(world, 'b').pose).toBe('sleep');
+    expect(actorOf(world, 'b').pose).toBe('lie');
+    expect(actorOf(world, 'b').rest.rest).toBe('bed');
     expect([actorOf(world, 'b').x, actorOf(world, 'b').y]).toEqual([layout.lounge[0].px.x, layout.lounge[0].px.y]);
     expect(actorOf(world, 'c').pose).toBe('ghost');
   });
@@ -200,7 +244,7 @@ describe('simulation', () => {
     expect(a.pose).toBe('walk');
     expect([a.x, a.y]).toEqual([layout.desks[0].seat.px.x, layout.desks[0].seat.px.y]);
     for (let t = 0; t < 60; t += 0.05) stepWorld(world, 0.05);
-    expect(['sleep', 'nap']).toContain(a.pose);
+    expect(['lie', 'sleep', 'nap']).toContain(a.pose);
 
     syncWorld(world, inputs().filter((input) => input.id !== 'c'));
     expect(world.actors.has('c')).toBe(false);
@@ -216,13 +260,14 @@ describe('simulation', () => {
     expect([...world.actors.values()].some((actor) => actor.pose === 'walk')).toBe(false);
   });
 
-  it('idle people beyond the sofas nap at their own desk', () => {
+  it('idle people lie in beds and on the sofa, slump in beanbags, and beyond that nap at their own desk', () => {
     const big = buildLayout(params(4));
     const world = createWorld(big);
     const many: ActorInput[] = Array.from({ length: 12 }, (_, index) => ({ id: `idle-${String(index).padStart(2, '0')}`, state: 'idle', desk: index }));
     syncWorld(world, many);
     const poses = [...world.actors.values()].map((actor) => actor.pose);
-    expect(poses.filter((pose) => pose === 'sleep')).toHaveLength(big.lounge.length);
+    expect(poses.filter((pose) => pose === 'lie')).toHaveLength(big.lounge.filter((spot) => spot.rest !== 'beanbag').length);
+    expect(poses.filter((pose) => pose === 'sleep')).toHaveLength(big.lounge.filter((spot) => spot.rest === 'beanbag').length);
     expect(poses.filter((pose) => pose === 'nap')).toHaveLength(12 - big.lounge.length);
   });
 });

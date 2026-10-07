@@ -9,7 +9,6 @@ import { Badge, Time, Unknown } from '../../components/ui';
 import { cn } from '../../cn';
 import { UNKNOWN, compactId, safeJobLane } from '../../lib';
 import { onNavClick } from '../../router';
-import { useMediaQuery } from '../../shell/use-media-query';
 import { STATE_TONE, TONE_CLASS } from '../../status-tone';
 import { queueDeliveryPath } from '../deliveries/delivery-links';
 import { deliveryPolicy } from '../deliveries/delivery-policy';
@@ -26,16 +25,14 @@ export function AgentSheet({ view, status, onClose }: {
   status: Resource<SystemStatus>;
   onClose: () => void;
 }) {
-  const desktop = useMediaQuery('(min-width: 761px)');
   return (
-    <Dialog.Root open={view !== null} onOpenChange={(open) => { if (!open) onClose(); }} modal={desktop ? false : true}>
+    <Dialog.Root open={view !== null} onOpenChange={(open) => { if (!open) onClose(); }} modal={false}>
       <Dialog.Portal>
-        {desktop ? null : <Dialog.Backdrop className="fixed inset-0 z-40 bg-scrim" />}
         <Dialog.Popup
           className={cn(
             'fixed z-50 flex flex-col overflow-hidden border-line bg-surface shadow-pop outline-none',
-            'inset-x-0 bottom-0 max-h-[85dvh] rounded-t-2xl border-t',
-            'min-[761px]:inset-x-auto min-[761px]:top-3 min-[761px]:right-3 min-[761px]:bottom-3 min-[761px]:max-h-none min-[761px]:w-[400px] min-[761px]:rounded-xl min-[761px]:border',
+            'inset-x-0 bottom-0 h-[55dvh] rounded-t-2xl border-t',
+            'min-[761px]:inset-x-auto min-[761px]:top-3 min-[761px]:right-3 min-[761px]:bottom-3 min-[761px]:h-auto min-[761px]:w-[400px] min-[761px]:rounded-xl min-[761px]:border',
           )}
         >
           {view ? <SheetBody view={view} status={status} /> : null}

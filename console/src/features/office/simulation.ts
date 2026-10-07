@@ -131,14 +131,16 @@ function restSpot(world: World, actor: Pick<Actor, 'desk' | 'behaviour'>, rank: 
 
 const sameSpot = (a: Spot, b: Spot) => a.px.x === b.px.x && a.px.y === b.px.y;
 
-function napAtDesk(world: World, actor: Actor): boolean {
-  return actor.behaviour.rest === 'lounge' && sameSpot(actor.rest, world.layout.desks[actor.desk].seat);
+function sleepPose(world: World, actor: Actor): Pose {
+  if (sameSpot(actor.rest, world.layout.desks[actor.desk].seat)) return 'nap';
+  return actor.rest.rest === 'bed' || actor.rest.rest === 'sofa' ? 'lie' : 'sleep';
 }
 
 function begin(world: World, actor: Actor, instant: boolean): void {
   actor.steps = planFor(actor, world.layout);
-  if (napAtDesk(world, actor)) {
-    actor.steps = actor.steps.map((step) => (step.kind === 'act' && step.seconds === Infinity ? { ...step, pose: 'nap' } : step));
+  if (actor.behaviour.rest === 'lounge') {
+    const pose = sleepPose(world, actor);
+    actor.steps = actor.steps.map((step) => (step.kind === 'act' && step.seconds === Infinity ? { ...step, pose } : step));
   }
   actor.waypoints = [];
   actor.carrying = false;

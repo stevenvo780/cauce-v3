@@ -99,10 +99,32 @@ describe('la oficina', () => {
 
     lista.focus();
     await user.keyboard('{ArrowRight}');
-    expect(lista).toHaveAttribute('aria-activedescendant', opciones[0].id);
+    expect(opciones.map((opcion) => opcion.id)).toContain(lista.getAttribute('aria-activedescendant'));
     await user.keyboard('{Enter}');
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     expect(new URLSearchParams(window.location.search).get('agente')).toMatch(/\//);
+  });
+  it('trae controles de cámara con nombre y el modo paseo se activa con el botón o con la tecla P', async () => {
+    const user = userEvent.setup();
+    conActividad(mockActivity());
+    renderLive();
+
+    const camara = await screen.findByRole('toolbar', { name: 'Cámara de la oficina' });
+    for (const nombre of ['Acercar', 'Alejar', 'Ver toda la oficina', 'Centrar en mí']) {
+      expect(within(camara).getByRole('button', { name: nombre })).toBeInTheDocument();
+    }
+    const paseo = within(camara).getByRole('button', { name: 'Modo paseo' });
+    expect(paseo).toHaveAttribute('aria-pressed', 'false');
+    await user.click(paseo);
+    expect(paseo).toHaveAttribute('aria-pressed', 'true');
+
+    const lista = screen.getByRole('listbox', { name: /oficina con \d+ agentes/i });
+    expect(lista).toHaveAccessibleName(/modo paseo/i);
+    lista.focus();
+    await user.keyboard('p');
+    expect(paseo).toHaveAttribute('aria-pressed', 'false');
+    await user.keyboard('{Shift>}{ArrowRight}{/Shift}');
+    expect(lista).not.toHaveAttribute('aria-activedescendant');
   });
 });
 

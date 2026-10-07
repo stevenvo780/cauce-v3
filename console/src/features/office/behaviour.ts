@@ -1,7 +1,7 @@
 import type { LiveState } from '../live/agent-state';
 
 export type Pose =
-  | 'stand' | 'walk' | 'sit' | 'type' | 'sleep' | 'nap' | 'stretch' | 'coffee' | 'handover' | 'ghost';
+  | 'stand' | 'walk' | 'sit' | 'type' | 'sleep' | 'lie' | 'nap' | 'stretch' | 'coffee' | 'handover' | 'ghost';
 export type BubbleKind = 'mail' | 'alert' | 'paper' | 'zzz' | null;
 export type MonitorMode = 'code' | 'error' | 'idle' | 'off';
 
