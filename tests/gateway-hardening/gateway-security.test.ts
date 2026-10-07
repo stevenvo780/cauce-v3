@@ -564,7 +564,15 @@ describe('gateway hardening facades and RBAC', () => {
     expect(repository.publish).toHaveBeenCalledWith(expect.objectContaining({
       tenant_id: 'Steven', actor_alias: 'kant', body: payload.body,
       authenticated_context: { session_id: 'gate-probe', channel: 'gate' },
-    }), { requirePreparedConsoleIntent: false });
+    }), {
+      requirePreparedConsoleIntent: false,
+      systemGateProbeAuthority: {
+        tenant_id: exact.tenant_id,
+        alias: exact.alias,
+        session_id: exact.session_id,
+        channel: exact.channel,
+      },
+    });
 
     const wrongProvider = await gateGateway(fakeRepository(), exact, 'fixed-test');
     expect((await wrongProvider.inject({ method: 'POST', url: '/v3/messages', payload })).statusCode).toBe(403);
