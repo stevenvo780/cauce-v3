@@ -1,3 +1,4 @@
+import { CLIENT_MAILBOX_DELIVERY_VIEW_SQL } from '../client-mailbox.js';
 import { loadReplyAttachments } from './messages/reply-attachments.js';
 import { humanMessageAuthority } from './messages/human-authority.js';
 import { withAbortableTransaction } from '../db.js';
@@ -609,9 +610,13 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
               m.lane,m.created_at,${MESSAGE_AUTHOR_SQL},${messageClientOriginSql('$1')},
               COALESCE(jsonb_agg(jsonb_build_object(
                 'delivery_id',d.id,'recipient_tenant',d.recipient_tenant,'recipient_alias',d.recipient_alias,
-                'status',d.status,'attempt',d.attempt,
+                'status',d.status,'attempt',d.attempt,'client_mailbox',${CLIENT_MAILBOX_DELIVERY_VIEW_SQL},
                 'timeline',(SELECT COALESCE(jsonb_agg(event ORDER BY at),'[]'::jsonb) FROM (
                   SELECT jsonb_build_object('status','published','at',m.created_at,'attempt',0) AS event,m.created_at AS at
+                  UNION ALL
+                  SELECT jsonb_build_object('status','done','at',d.terminal_at,'attempt',0,
+                    'detail','client_mailbox_storage'),d.terminal_at
+                  WHERE d.result->>'kind'='client_mailbox' AND d.result->>'state'='stored' AND d.attempt=0 AND d.status='done'
                   UNION ALL
                   SELECT jsonb_build_object('status',a.status,'at',a.created_at,'attempt',a.attempt,
                     'applied',a.applied,

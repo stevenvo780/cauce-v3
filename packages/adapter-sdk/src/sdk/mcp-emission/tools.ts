@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { HarnessRequestContext } from "../../contracts/harness.js";
 import type { Delivery, StructuredOutput } from "../types.js";
 import {
-  hasNonBlankText, MAX_FINAL_TEXT_BYTES, validateDeliveryOutput, validateStructuredOutput,
+  hasNonBlankText, isDirectlyMessageableTarget, MAX_FINAL_TEXT_BYTES, validateDeliveryOutput, validateStructuredOutput,
 } from "../output-parser.js";
 import { HEX_SHA256 } from "../output-parser/relay-artifacts.js";
 
@@ -19,7 +19,7 @@ export const EMISSION_TOOLS: Tool[] = [
   tool("cauce_reply", "Deposit this turn's answer once. Corrections to rejected input are safe. End the CLI turn after success; delivery is committed by the engine afterwards.", {
     reply: { type: ["string", "null"] }, status: { enum: ["done", "failed"] }, retryable: { type: "boolean" },
   }, ["reply", "status", "retryable"]),
-  tool("cauce_send", "Inside a Cauce delivery: stage a delegation to an online routing target; it is sent with this turn's successful final ACK."
+  tool("cauce_send", "Inside a Cauce delivery: stage a delegation to an online routing target or an available client mailbox (durable storage, not execution); it is sent with this turn's successful final ACK."
     + " With no delivery in flight and the last prompt of this TUI typed by a person (never a Cauce request): publish it now as a new message to ONE alias of your own tenant; at most 8 stay open at once,"
     + " their chains have reduced fuel and cannot come back to you, and the reply is not pushed back: read it with cauce_result(message_id).", { to: string, body: string }, ["to", "body"]),
   tool("cauce_notify", "Stage a notification to a configured human destination handle.", {
@@ -141,7 +141,7 @@ export class EmissionTurn {
         const to = text(args, "to");
         const targets = context.routing_targets.filter((target) => target.alias === to);
         if (to === context.self_alias || to === context.sender_alias) throw new Error("Use cauce_reply to answer the sender; self-delegation is forbidden");
-        if (targets.length !== 1 || targets[0]?.online !== true) throw new Error("Target must be one unambiguous online alias in this turn's routing_targets");
+        if (targets.length !== 1 || !isDirectlyMessageableTarget(targets[0])) throw new Error("Target must be one unambiguous online alias or available client mailbox in this turn's routing_targets");
         candidate = { ...candidate, messages: [...candidate.messages, { to, body: text(args, "body") }] };
         break;
       }

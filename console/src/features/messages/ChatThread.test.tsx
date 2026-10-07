@@ -240,3 +240,53 @@ it('deja intacta la identidad técnica histórica cuando no hay procedencia', ()
   expect(screen.getByText('kant')).toHaveAttribute('title', 'Identidad técnica; autor humano no registrado');
   expect(screen.queryByText('Steven')).not.toBeInTheDocument();
 });
+
+it('muestra el nombre Cronos (label) y estado «Guardado en buzón» sin afirmar ejecución ni usar alias kant ni Steve', () => {
+  const { message } = fixture(false);
+  const mailboxAddress = 'mbx-0123456789abcdef0123456789abcdef';
+  const mailboxDelivery: DeliveryView = {
+    delivery_id: '10000000-0000-4000-8000-000000000001',
+    recipient_tenant: 'Steven',
+    recipient_alias: mailboxAddress,
+    status: 'done',
+    attempt: 0,
+    timeline: [{ status: 'published' }, { status: 'done', attempt: 0 }],
+    client_mailbox: { label: 'Buzón Cronos', state: 'stored' },
+  };
+  thread({ items: [{ message: { ...message, deliveries: [mailboxDelivery] }, delivery: mailboxDelivery, direction: 'input' }] });
+
+  expect(screen.getByText('Buzón Cronos')).toBeVisible();
+  expect(screen.getByText(`(${mailboxAddress})`)).toBeVisible();
+
+  expect(screen.getByText('Guardado en buzón')).toBeVisible();
+  const check = screen.getByRole('status', { name: 'Entrega: Guardado en buzón' });
+  expect(check).toHaveAttribute('title', expect.stringMatching(/no acredita lectura ni ejecución/i));
+
+  const destination = document.querySelector<HTMLElement>('[data-mailbox-destination]');
+  expect(destination).toBeInTheDocument();
+  if (!destination) throw new Error('Missing mailbox destination');
+  expect(within(destination).queryByText('kant')).toBeNull();
+  expect(within(destination).queryByText('Steve')).toBeNull();
+  expect(within(destination).queryByText('Steven')).toBeNull();
+
+  expect(screen.queryByText(/ejecutad/i)).toBeNull();
+  expect(screen.queryByText(/ejecución terminada/i)).toBeNull();
+});
+
+it('no infiere buzón por prefijo de dirección sin marcador del API en el hilo', () => {
+  const { message } = fixture(false);
+  const mailboxAddress = 'mbx-0123456789abcdef0123456789abcdef';
+  const plainDelivery: DeliveryView = {
+    delivery_id: '10000000-0000-4000-8000-000000000002',
+    recipient_tenant: 'Steven',
+    recipient_alias: mailboxAddress,
+    status: 'done',
+    attempt: 1,
+    timeline: [{ status: 'published' }, { status: 'done', attempt: 1 }],
+  };
+  thread({ items: [{ message: { ...message, deliveries: [plainDelivery] }, delivery: plainDelivery, direction: 'input' }] });
+
+  expect(screen.queryByText('Guardado en buzón')).toBeNull();
+  expect(document.querySelector('[data-mailbox-destination]')).toBeNull();
+  expect(screen.getByText(mailboxAddress, { exact: false })).toBeVisible();
+});

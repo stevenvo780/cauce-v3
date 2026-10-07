@@ -4,6 +4,7 @@ import { AgentOrb } from '../../components/AgentOrb';
 import { cn } from '../../cn';
 import { timestampExacto } from '../../lib';
 import type { LiveState } from '../live/agent-state';
+import { clientMailboxRecipientLabel, isClientMailboxDelivery } from '../deliveries/client-mailbox';
 import { previsualizacionRecortada } from '../terminal/cuerpo-del-mensaje';
 import { humanAuthor, messageAuthorPresentation } from '../terminal/message-author';
 import type { TranscriptItem } from '../terminal/session';
@@ -192,14 +193,21 @@ export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody,
   const author = humanAuthor(message);
   const { label: authorLabel, title: authorTitle, clientDeclarationNotice } = messageAuthorPresentation(message);
   const own = Boolean(author && ownSubject && author.subject_id === ownSubject);
-  const failed = delivery?.status === 'failed' || delivery?.status === 'dead';
+  const mailbox = isClientMailboxDelivery(delivery);
+  const failed = !mailbox && (delivery?.status === 'failed' || delivery?.status === 'dead');
+  const destination = mailbox ? (
+    <span data-mailbox-destination="" title={`Buzón: ${delivery.recipient_alias ?? 'sin dirección'}`}>
+      <span>{clientMailboxRecipientLabel(delivery)}</span>
+      {delivery.recipient_alias ? <small className="font-mono"> ({delivery.recipient_alias})</small> : null}
+    </span>
+  ) : delivery?.recipient_alias ?? 'Destino sin dato';
   return (
     <article {...common} className={cn('group/msg flex flex-col items-end', startsGroup ? 'mt-5' : 'mt-1.5')}>
       {own ? <span className="sr-only">{authorLabel}</span> : startsGroup ? (
         <div className="mb-1 px-1 text-xs text-muted">
           <span title={authorTitle}>{authorLabel}</span>
           {clientDeclarationNotice ? <span className="sr-only">{clientDeclarationNotice}</span> : null}
-          {author ? <span className="sr-only">Persona autenticada</span> : <><span aria-hidden="true"> → </span><span className="sr-only">hacia</span>{delivery?.recipient_alias ?? 'Destino sin dato'}</>}
+          {author ? <span className="sr-only">Persona autenticada</span> : <><span aria-hidden="true"> → </span><span className="sr-only">hacia</span>{destination}</>}
         </div>
       ) : null}
       {structured ? <div className="w-full max-w-[min(85%,36rem)]"><StructuredMessage body={structured} /></div> : showText ? (

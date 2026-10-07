@@ -94,5 +94,6 @@ export const RecipientSchema = z.object({
 
 /** Trusted routing inventory derived by the store for the current delivery consumer. */
 export const RoutingTargetSchema = RecipientSchema.extend({
-  online: z.boolean()
+  online: z.boolean(),
+  client_mailbox: z.object({ label: z.string().min(1).max(128), available: z.literal(true) }).strict().optional(),
 }).strict();

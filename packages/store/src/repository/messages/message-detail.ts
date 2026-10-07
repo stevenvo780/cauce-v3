@@ -1,3 +1,4 @@
+import { CLIENT_MAILBOX_DELIVERY_VIEW_SQL } from '../../client-mailbox.js';
 import type { Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { StoreError } from '../errors.js';
@@ -9,7 +10,8 @@ import type { SenderView } from './agent-roots.js';
 
 export const MESSAGE_DELIVERIES_SQL = `COALESCE(jsonb_agg(jsonb_build_object(
        'delivery_id',d.id,'tenant_id',d.recipient_tenant,'alias',d.recipient_alias,
-       'status',d.status,'attempt',d.attempt,'terminal_at',d.terminal_at
+       'status',d.status,'attempt',d.attempt,'terminal_at',d.terminal_at,
+       'client_mailbox',${CLIENT_MAILBOX_DELIVERY_VIEW_SQL}
      ) ORDER BY d.created_at) FILTER (WHERE d.id IS NOT NULL), '[]'::jsonb) AS deliveries`;
 
 const MESSAGE_VISIBILITY_SCOPE_SQL = `     FROM messages m LEFT JOIN deliveries d ON d.message_id=m.id AND (

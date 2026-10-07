@@ -38,7 +38,7 @@ describe('attachment authorization on isolated PostgreSQL temporary tables', () 
       ) ON COMMIT DROP;
       CREATE TEMP TABLE deliveries (
         id uuid PRIMARY KEY, message_id uuid, recipient_tenant text, recipient_alias text,
-        status text, attempt int, terminal_at timestamptz, created_at timestamptz DEFAULT now()
+        status text, attempt int, terminal_at timestamptz, result jsonb, created_at timestamptz DEFAULT now()
       ) ON COMMIT DROP;
       CREATE TEMP TABLE memberships (
         tenant_id text, room_id text, alias text, role text, enabled boolean

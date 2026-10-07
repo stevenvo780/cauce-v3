@@ -2,6 +2,7 @@ import {
   SYSTEM_PRINCIPAL_ALIASES, type Ack
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { DatabaseClient } from '../../../db.js';
+import { CLIENT_MAILBOX_MESSAGE_BYTES, isClientMailboxAlias, clientMailboxRoutingTargets, lockClientMailboxes, clientMailboxHasCapacity, resolveClientMailbox } from '../../../client-mailbox.js';
 import {
   boundedRejectionTarget, describeDelegationRejection, fanoutCapForTurn, HUMAN_GATE_TARGET
 } from '../../../delegation-guard.js';
@@ -71,10 +72,15 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         row.recipient_alias
       )
     );
+    const mailboxTargets = (await Promise.all(expandedOutputs
+      .flatMap(output => typeof output.target === 'string' && isClientMailboxAlias(output.target) ? [output.target] : [])
+      .map(target => clientMailboxRoutingTargets(client, row.recipient_tenant, target)))).flat();
+    await lockClientMailboxes(client, mailboxTargets);
     const ordered = orderAgentOutputs(expandedOutputs, policy, openGate, rootMessageId);
     const gateDirective = ordered.gateDirective;
 
     let materialized = 0;
+    let mailboxStored = 0;
     let suspended = false;
     const rejections: DelegationRejection[] = [];
     const materializations: DelegationMaterialization[] = [];
@@ -206,6 +212,18 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         await reject(allowedTargets.length > 1 ? 'ambiguous_alias' : 'unroutable_alias');
         continue;
       }
+      if (isClientMailboxAlias(targetAlias)) {
+        const proposed = { type: 'agent.message', text: body, from_alias: row.recipient_alias, correlation };
+        if ((output.artifacts?.length ?? 0) > 0 || Buffer.byteLength(JSON.stringify(proposed)) > CLIENT_MAILBOX_MESSAGE_BYTES) {
+          await reject('invalid_output');
+          continue;
+        }
+        if (!await clientMailboxHasCapacity(client, targetTenant, targetAlias)
+            || !await resolveClientMailbox(client, targetTenant, targetAlias)) {
+          await reject('unroutable_alias');
+          continue;
+        }
+      }
       const targetNode = chainNode(targetTenant, targetAlias);
       // The only point where the destination pair is both resolved and authorized. A cycle
       // is a durable rejection, never an exception: when every output of an ACK is rejected
@@ -255,6 +273,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         visitedPathAvailable: policy.visitedPathAvailable
       });
       materialized += 1;
+      if (isClientMailboxAlias(targetAlias)) mailboxStored += 1;
       materializations.push({
         output_index: output.index,
         target_tenant: targetTenant,
@@ -273,7 +292,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
       );
     }
     return {
-      materialized,
+      materialized, mailboxStored,
       suspended,
       rejections,
       materializations,

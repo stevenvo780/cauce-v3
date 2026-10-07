@@ -16,3 +16,5 @@ export type { ContextWritePlan, ContextWriteAuditAttribution } from './repositor
 export { persistAgentContextReconcileInTransaction, type AgentContextFenceInput, type AgentContextReconcileEffect } from './repository/agent-context-reconcile.js';
 export * from './human-client-provenance.js';
 export * from './agent-preferences.js';
+export * from './client-mailbox.js';
+export * from './client-mailbox-read.js';

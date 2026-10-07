@@ -25,6 +25,11 @@ export interface TimelineEvent {
   harness_consumption?: HarnessConsumptionEvidence | null;
 }
 
+export interface ClientMailboxDeliveryReceipt {
+  label: string;
+  state: 'stored';
+}
+
 export interface DeliveryView {
   delivery_id?: string | null;
   recipient_tenant?: string | null;
@@ -32,6 +37,7 @@ export interface DeliveryView {
   status?: DeliveryState | null;
   attempt?: number | null;
   timeline?: TimelineEvent[] | null;
+  client_mailbox?: ClientMailboxDeliveryReceipt | null;
 }
 
 export interface MessageAuthor {
@@ -104,6 +110,7 @@ export interface MessageDetailDelivery {
   reply_attachments?: MessageAttachment[] | null;
   reply_attachment_delivery_id?: string | null;
   reply_attachment_attempt?: number | null;
+  client_mailbox?: ClientMailboxDeliveryReceipt | null;
 }
 
 export interface MessagePage {
