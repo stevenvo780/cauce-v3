@@ -11,6 +11,8 @@ import { STATE_TONE, TONE_CLASS } from '../../status-tone';
 import { MENU_ITEM, MENU_POPUP } from '../../components/kit';
 import { useAgentPreferences } from '../../components/agent-actions/preferences-context';
 import { OfficeCanvas, type OfficeAgent } from '../office/OfficeCanvas';
+import { OfficeDialog } from '../office/OfficeDialog';
+import { useOfficeChat } from '../office/use-office-chat';
 import { ORDEN_VIVO } from './activity';
 import { AgentSheet } from './AgentSheet';
 import {
@@ -22,6 +24,7 @@ import { projectLiveFleet } from './live-projection';
 
 /** Three missed reads and the picture stops proving anything; never less than this window. */
 const STALE_AFTER_MS = 15_000;
+const AWAKE_SECONDS = 15 * 60;
 const PROBLEMS: ReadonlySet<LiveState> = new Set(['down', 'blocked']);
 /** Poll periods the operator can pick; 0 pauses the shared activity poll. */
 const REFRESH_OPTIONS = [
@@ -109,6 +112,8 @@ export function LiveFleetPage() {
   const search = useRouteSearch();
   const selectedKey = new URLSearchParams(search).get('agente');
   const [filter, setFilter] = useState<ReadonlySet<LiveState>>(new Set());
+  const [talkKey, setTalkKey] = useState<string | null>(null);
+  const chat = useOfficeChat(talkKey);
 
   const { snapshot } = useMemo(() => projectLiveFleet(activity.data, topology.data), [activity.data, topology.data]);
   const pulses = usePulses(snapshot);
@@ -135,10 +140,15 @@ export function LiveFleetPage() {
   const officeAgents = useMemo<OfficeAgent[]>(() => views.map((view) => ({
     id: view.key, name: view.alias, state: view.state, reason: view.reason, delegatesTo: view.delegatesTo,
     glyph: appearances?.get(view.key)?.glyph, hue: appearances?.get(view.key)?.hue,
+    awake: view.state === 'idle' && typeof view.secondsSinceLastAck === 'number' && view.secondsSinceLastAck < AWAKE_SECONDS,
   })), [views, appearances]);
 
   const select = (key: string) => { redirect(`/live?agente=${encodeURIComponent(key)}`); };
   const close = () => { redirect('/live'); };
+  const talkTo = (key: string) => {
+    if (selectedKey) close();
+    setTalkKey(key);
+  };
   const toggle = (state: LiveState) => {
     setFilter((current) => {
       const next = new Set(current);
@@ -163,10 +173,11 @@ export function LiveFleetPage() {
   const unknown = verdict.tone === 'desconocido';
   const age = observedAt ? Math.max(0, (now - Date.parse(observedAt)) / 1000) : null;
   const selected = views.find((view) => view.key === selectedKey) ?? null;
+  const talking = views.find((view) => view.key === talkKey);
   const summary = `Oficina con ${String(views.length)} agentes: ${ORDEN_VIVO
     .filter((state) => tally[state] > 0)
     .map((state) => `${String(tally[state])} ${LIVE_STATE_META[state].label.toLowerCase()}`)
-    .join(', ')}. Flechas para recorrerlos y Enter para abrir uno; WASD mueve la vista, + y − acercan, 0 muestra todo y P activa el modo paseo.`;
+    .join(', ')}. Flechas para recorrerlos y Enter para abrir uno; WASD mueve la vista, + y − acercan, 0 muestra todo, 1 a 4 vuelan a cada habitación y P activa el modo paseo.`;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -176,7 +187,7 @@ export function LiveFleetPage() {
             <h1 className="m-0 text-[22px] font-semibold tracking-tight text-fg">Oficina</h1>
             <PageHelp
               title="Oficina"
-              description="Cada persona es un agente de la flota. Trabaja en su escritorio, se va a dormir a la zona de descanso cuando no tiene nada, lleva papeles al escritorio de otro cuando le delega y levanta un «!» cuando se traba. El estado sale del trabajo que avanza (o no), no del latido. Vos también estás: arrastrá para mirar, acercá con la rueda o pellizcando y tocá el piso para caminar hasta alguien."
+              description="Cada persona es un agente de la flota. Trabaja en su escritorio con los Programadores, se va a dormir a su cama del Dormitorio cuando no tiene nada, pasa por la Cocina y juega en el Patio de juegos cuando terminó, lleva papeles al escritorio de otro cuando le delega y levanta un «!» cuando se traba. El estado sale del trabajo que avanza (o no), no del latido. Vos también estás: arrastrá para mirar, acercá con la rueda o pellizcando y tocá el piso para caminar hasta alguien y hablarle sin salir de la oficina."
             >
               <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
                 {ORDEN_VIVO.map((state) => (
@@ -283,6 +294,12 @@ export function LiveFleetPage() {
               highlight={highlight}
               onSelect={select}
               label={summary}
+              onTalk={talkTo}
+              speech={chat.speech}
+              talk={talkKey && chat.dialog && talking ? {
+                id: talkKey,
+                panel: <OfficeDialog model={chat.dialog} state={talking.state} onClose={() => { setTalkKey(null); }} />,
+              } : null}
             />
           )}
         </section>
@@ -296,7 +313,7 @@ export function LiveFleetPage() {
         />
       </div>
 
-      <AgentSheet view={selected} status={fleet.status} onClose={close} />
+      <AgentSheet view={selected} status={fleet.status} onClose={close} onTalk={selected ? () => { talkTo(selected.key); } : undefined} />
     </div>
   );
 }

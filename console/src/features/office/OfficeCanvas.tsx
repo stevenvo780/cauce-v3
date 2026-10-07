@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
 import { FloatingTooltip } from '../../components/ui';
-import { isContextMenuKey, openContextMenuAt, type AgentRef } from '../../components/agent-actions/agent-actions';
+import { isContextMenuKey, openContextMenuAt } from '../../components/agent-actions/agent-actions';
 import { AgentActionItems } from '../../components/agent-actions/AgentActionsMenu';
 import { MENU_POPUP } from '../../components/kit';
 import { cn } from '../../cn';
@@ -14,9 +14,14 @@ import {
   zoomAt, zoomLimits, type Camera, type Inset, type Size, type Vec, type ZoomLimits,
 } from './camera';
 import {
-  DOUBLE_MS, isDoubleTap, isTap, movedPast, pinchOf, pinchZoom, wheelPassesThrough, wheelZoom, type Clipping, type Pinch, type TapMark,
+  DOUBLE_MS, isDoubleTap, isTap, movedPast, pinchOf, pinchZoom, wheelPassesThrough, wheelZoom, type Pinch, type TapMark,
 } from './gesture';
-import { TILE, WALL_ROWS, buildLayout, chooseLayout, type Dir } from './layout';
+import { TILE, WALL_ROWS, buildLayout, chooseLayout, type Dir, type RoomId } from './layout';
+import { drawMinimap, minimapSize, minimapToWorld } from './minimap';
+import { Minimap, RoomBar } from './OfficeNav';
+import { roomAt, roomCamera, roomForState } from './rooms';
+import type { Speech } from './speech';
+import { agentRefOf, clientPointOf, clippingOf, hintSeen, makeCanvas, rememberHint, scrollBand, useBox } from './frame';
 import { DirectionPad, OfficeControls, OfficeHint } from './OfficeControls';
 import type { TapMarker } from './people';
 import { createScene, drawFrame, lookOf, screenBox } from './scene';
@@ -32,6 +37,7 @@ export interface OfficeAgent {
   /** The fleet's chosen look: the hue dresses the character and the glyph rides on its name tag. */
   glyph?: string | null;
   hue?: number | null;
+  awake?: boolean;
 }
 
 interface OfficeCanvasProps {
@@ -41,9 +47,12 @@ interface OfficeCanvasProps {
   highlight: ReadonlySet<string> | null;
   onSelect: (id: string) => void;
   label: string;
+  /** Walking up to someone and pressing E, or the prompt, starts a talk instead of opening the sheet. */
+  onTalk?: (id: string) => void;
+  talk?: { id: string; panel: ReactNode } | null;
+  speech?: ReadonlyMap<string, Speech>;
 }
 
-const HINT_KEY = 'cauce.oficina.ayuda-vista';
 const HINT_MS = 12_000;
 /** Must match AgentSheet: a 400 px side panel 12 px from the edge from 761 px up, a 55dvh bottom sheet below. */
 const SHEET_RESERVE = 412;
@@ -59,97 +68,6 @@ const DIR_OF: Readonly<Record<string, Dir>> = {
   ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right',
 };
 const PAD_VECTOR: Readonly<Record<Dir, Vec>> = { up: VECTORS.w, down: VECTORS.s, left: VECTORS.a, right: VECTORS.d };
-
-/** Office ids are `tenant/alias`; tenants never contain a slash. */
-function agentRefOf(id: string): AgentRef | null {
-  const cut = id.indexOf('/');
-  return cut > 0 ? { tenantId: id.slice(0, cut), alias: id.slice(cut + 1) } : null;
-}
-
-/** Where a right click or a long press landed. */
-function clientPointOf(event: Event | undefined): Vec | null {
-  if (event instanceof MouseEvent) return { x: event.clientX, y: event.clientY };
-  if ('TouchEvent' in window && event instanceof TouchEvent) {
-    const touch = event.touches.item(0) ?? event.changedTouches.item(0);
-    return touch ? { x: touch.clientX, y: touch.clientY } : null;
-  }
-  return null;
-}
-
-const makeCanvas = (width: number, height: number) => {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  return canvas;
-};
-
-function hintSeen(): boolean {
-  try {
-    return window.localStorage.getItem(HINT_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function rememberHint(): void {
-  try {
-    window.localStorage.setItem(HINT_KEY, '1');
-  } catch {
-    return;
-  }
-}
-
-/** Short landscape screens keep a strip of page above and below the canvas to scroll with. */
-function availableHeight(): { height: number; roomy: boolean } {
-  const roomy = window.matchMedia('(min-width: 640px)').matches;
-  const tall = window.innerHeight;
-  const height = roomy
-    ? Math.min(1180, Math.max(Math.min(460, tall - 96), tall - 168))
-    : Math.max(Math.min(340, tall - 96), Math.round(tall * 0.7));
-  return { height, roomy };
-}
-
-function scrollBand(element: HTMLElement): { top: number; bottom: number } {
-  let top = 0;
-  let bottom = window.innerHeight;
-  for (let node = element.parentElement; node; node = node.parentElement) {
-    const { overflowY } = getComputedStyle(node);
-    if ((overflowY === 'auto' || overflowY === 'scroll') && node.scrollHeight > node.clientHeight) {
-      const rect = node.getBoundingClientRect();
-      top = Math.max(top, rect.top);
-      bottom = Math.min(bottom, rect.bottom);
-    }
-  }
-  return { top, bottom };
-}
-
-function clippingOf(element: HTMLElement): Clipping {
-  const rect = element.getBoundingClientRect();
-  const band = scrollBand(element);
-  return { above: rect.top < band.top - 1, below: rect.bottom > band.bottom + 1 };
-}
-
-function useBox(ref: React.RefObject<HTMLElement | null>) {
-  const [box, setBox] = useState({ width: 960, height: 640, dpr: 1, roomy: true });
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return undefined;
-    const measure = () => {
-      const width = Math.floor(element.clientWidth);
-      if (width <= 0) return;
-      const { height, roomy } = availableHeight();
-      const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
-      setBox((current) => (current.width === width && current.height === height && current.dpr === dpr && current.roomy === roomy
-        ? current : { width, height, dpr, roomy }));
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    window.addEventListener('resize', measure);
-    return () => { observer.disconnect(); window.removeEventListener('resize', measure); };
-  }, [ref]);
-  return box;
-}
 
 interface Press { start: Vec; at: number; type: string; dragging: boolean; last: Vec }
 
@@ -169,14 +87,18 @@ interface Engine {
   inset: Inset;
   pendingWalk: number;
   marker: (Omit<TapMarker, 'age'> & { at: number }) | null;
+  flying: boolean;
+  mapAt: number;
 }
 
-export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }: OfficeCanvasProps) {
+export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, onTalk, talk = null, speech }: OfficeCanvasProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLButtonElement>(null);
   const padRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<HTMLCanvasElement>(null);
+  const talkRef = useRef<HTMLDivElement>(null);
   const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
   const coarse = useMediaQuery('(pointer: coarse)');
   const box = useBox(frameRef);
@@ -189,6 +111,8 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
   const [hint, setHint] = useState(() => !hintSeen());
   const [grabbing, setGrabbing] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [room, setRoom] = useState<RoomId | null>(null);
+  const [mapOpen, setMapOpen] = useState<boolean | null>(null);
 
   const ordered = useMemo(() => [...agents].sort((a, b) => a.id.localeCompare(b.id)), [agents]);
   const choice = useMemo(() => chooseLayout(ordered.length, box), [ordered.length, box]);
@@ -208,7 +132,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
   const engine = useMemo<Engine>(() => ({
     avatar: createAvatar(layout.door), cam: { x: 0, y: 0, zoom: 1 }, target: { x: 0, y: 0, zoom: 1 }, following: false,
     keys: new Set(), pad: new Set(), presses: new Map(), pinch: null, lastTap: null, settleAt: 0, nearby: null, fresh: true,
-    inset: NO_INSET, pendingWalk: 0, marker: null,
+    inset: NO_INSET, pendingWalk: 0, marker: null, flying: false, mapAt: 0,
   }), [layout]);
 
   useEffect(() => {
@@ -216,6 +140,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
     const inputs: ActorInput[] = ordered.map((agent, index) => ({
       id: agent.id,
       state: agent.state,
+      awake: agent.awake,
       desk: index,
       delegateDesk: agent.state === 'delegating'
         ? agent.delegatesTo.map((target) => desks.get(target)).find((desk) => desk !== undefined) ?? null
@@ -224,9 +149,10 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
     syncWorld(world, inputs);
   }, [world, ordered]);
 
-  const live = useRef({ selectedId, hoverId: hoverId ?? cursorId, highlight, names: new Map<string, string>(), paseo, view, limits, onSelect });
+  const live = useRef({ selectedId, hoverId: hoverId ?? cursorId, highlight, names: new Map<string, string>(), paseo, view, limits, onSelect, speech, talkId: null as string | null, states: new Map<string, LiveState>() });
   live.current = {
-    selectedId, hoverId: hoverId ?? cursorId, highlight, paseo, view, limits, onSelect,
+    selectedId, hoverId: hoverId ?? cursorId, highlight, paseo, view, limits, onSelect, speech, talkId: talk?.id ?? null,
+    states: new Map(ordered.map((agent) => [agent.id, agent.state])),
     names: new Map(ordered.map((agent) => [agent.id, agent.glyph ? `${agent.glyph} ${agent.name}` : agent.name])),
   };
 
@@ -262,8 +188,21 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
     drawFrame(ctx, {
       world, scene, avatar: engine.avatar, cam: engine.cam, view: now.view, dpr: box.dpr, time, still: reducedMotion,
       selected: now.selectedId, hovered: now.hoverId, highlight: now.highlight, nearby: engine.nearby, names: now.names,
-      marker: engine.marker ? { ...engine.marker, age: Math.max(0, time - engine.marker.at) } : null,
+      marker: engine.marker ? { ...engine.marker, age: Math.max(0, time - engine.marker.at) } : null, speech: now.speech,
     });
+    const map = mapRef.current;
+    const mapCtx = map?.getContext('2d');
+    if (map && mapCtx && typeof mapCtx.fillRect === 'function' && Math.abs(time - engine.mapAt) > 0.1) {
+      engine.mapAt = time;
+      const zoom = engine.cam.zoom;
+      const origin = originOf(engine.cam, now.view);
+      drawMinimap(mapCtx, {
+        layout,
+        people: [...world.actors.values()].map((actor) => ({ x: actor.x, y: actor.y, state: now.states.get(actor.id) ?? actor.state })),
+        avatar: { x: engine.avatar.x, y: engine.avatar.y },
+        view: { x: -origin.x / zoom, y: -origin.y / zoom, w: now.view.width / zoom, h: now.view.height / zoom },
+      }, map.width, map.height);
+    }
     const pad = padRef.current;
     if (pad) {
       const gutter = originOf(engine.cam, now.view).x / box.dpr;
@@ -278,10 +217,10 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
       if (look.labelAbove) at.y -= Math.max(Math.round(10 * box.dpr), Math.min(Math.round(15 * box.dpr), Math.round(engine.cam.zoom * 3.4))) * 1.5 + 2 * box.dpr;
       prompt.style.transform = `translate(${String(Math.round(at.x / box.dpr))}px, ${String(Math.round(at.y / box.dpr))}px) translate(-50%, calc(-100% - 10px))`;
     }
-  }, [scene, world, engine, box.dpr, reducedMotion]);
+  }, [scene, world, engine, box.dpr, reducedMotion, layout]);
 
   const tick = useCallback((now: number, dt: number) => {
-    const { view: size, limits: bounds, paseo: walking } = live.current;
+    const { view: size, limits: bounds, paseo: walking, talkId: partnerId } = live.current;
     stepWorld(world, dt);
     const held = [...engine.keys].flatMap((key) => (key in VECTORS ? [VECTORS[key]] : []));
     const input = [...held, ...[...engine.pad].map((dir) => PAD_VECTOR[dir])].reduce((sum, v) => ({ x: sum.x + v.x, y: sum.y + v.y }), { x: 0, y: 0 });
@@ -298,8 +237,16 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
     if (!gesturing && now >= engine.settleAt && !Number.isInteger(engine.target.zoom)) {
       engine.target = zoomAt(engine.target, size, { x: size.width / 2, y: size.height / 2 }, Math.round(engine.target.zoom));
     }
+    const partner = partnerId && !gesturing && !engine.flying ? world.actors.get(partnerId) : undefined;
+    if (partner) engine.target = reveal(engine.target, size, lookOf(partner, null, null).hit, engine.inset, 24 * box.dpr);
     engine.target = clampCamera(engine.target, size, worldSize, bounds, engine.inset);
-    engine.cam = gesturing ? { ...engine.target } : ease(engine.cam, engine.target, dt, reducedMotion);
+    engine.cam = gesturing ? { ...engine.target } : ease(engine.cam, engine.target, dt, reducedMotion, engine.flying ? 4 : 10);
+    if (engine.flying && engine.cam.x === engine.target.x && engine.cam.y === engine.target.y) engine.flying = false;
+    const whole = engine.target.zoom <= bounds.min + 1e-6 && size.width >= worldSize.width * engine.target.zoom;
+    const seen = whole ? null : roomAt(layout, {
+      x: engine.target.x - engine.inset.right / (2 * engine.target.zoom), y: engine.target.y - engine.inset.bottom / (2 * engine.target.zoom),
+    })?.id ?? null;
+    setRoom((current) => (current === seen ? current : seen));
     const near = walking
       ? nearbyAgent(engine.avatar, [...world.actors.values()].map((actor) => ({ id: actor.id, x: actor.x, y: actor.y })))
       : null;
@@ -363,7 +310,18 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
     };
   }, [tick, engine, view, worldSize, limits, reducedMotion, choice.scale]);
 
-  useEffect(() => { kick(); }, [kick, ordered, selectedId, hoverId, cursorId, highlight, paseo]);
+  useEffect(() => { kick(); }, [kick, ordered, selectedId, hoverId, cursorId, highlight, paseo, speech]);
+
+  const showMap = mapOpen ?? (!coarse && box.width >= 640);
+  const mapSize = useMemo(() => minimapSize(layout, { width: box.width < 640 ? 132 : 184, height: box.width < 640 ? 110 : 128 }), [layout, box.width]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !showMap) return;
+    map.width = Math.round(mapSize.width * box.dpr);
+    map.height = Math.round(mapSize.height * box.dpr);
+    engine.mapAt = -1;
+    kick();
+  }, [showMap, mapSize, box.dpr, engine, kick]);
 
   /** How much of the canvas the agent sheet covers; on phones it first scrolls the canvas up if too little would show. */
   const sheetInset = useCallback((): Inset => {
@@ -396,12 +354,35 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
     kick();
   }, [world, engine, clamp, kick, box.dpr]);
 
+  const talkInset = useCallback((): Inset => {
+    const canvas = canvasRef.current;
+    const panel = talkRef.current?.firstElementChild;
+    if (!canvas || !panel) return NO_INSET;
+    const rect = canvas.getBoundingClientRect();
+    return { right: 0, bottom: Math.max(0, Math.min(rect.height, rect.bottom - panel.getBoundingClientRect().top)) * box.dpr };
+  }, [box.dpr]);
+
+  const talkId = talk?.id ?? null;
+  const hadTalk = useRef(false);
   useEffect(() => {
-    engine.inset = selectedId ? sheetInset() : NO_INSET;
-    if (selectedId) focusAgent(selectedId, true);
+    if (!talkId && hadTalk.current) listRef.current?.focus({ preventScroll: true });
+    hadTalk.current = Boolean(talkId);
+    engine.inset = talkId ? talkInset() : selectedId ? sheetInset() : NO_INSET;
+    const focus = talkId ?? selectedId;
+    if (focus) focusAgent(focus, true);
     else engine.target = clamp(engine.target);
     kick();
-  }, [selectedId, focusAgent, sheetInset, engine, clamp, kick, view]);
+  }, [talkId, selectedId, focusAgent, sheetInset, talkInset, engine, clamp, kick, view]);
+
+  const flyTo = useCallback((id: RoomId) => {
+    const target = layout.rooms.find((candidate) => candidate.id === id);
+    if (!target) return;
+    engine.following = false;
+    engine.flying = true;
+    engine.target = clamp(roomCamera(target, live.current.view, live.current.limits, engine.inset));
+    dismissHint();
+    kick();
+  }, [layout, engine, clamp, dismissHint, kick]);
 
   const zoomTo = useCallback((zoom: number, at?: Vec) => {
     const size = live.current.view;
@@ -617,6 +598,8 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
     if (key === '0') { event.preventDefault(); fitAll(); return; }
     if (key === 'c') { event.preventDefault(); centerMe(); return; }
     if (key === 'p') { event.preventDefault(); togglePaseo(!paseo); return; }
+    const roomKey = layout.rooms.at(Number(key) - 1);
+    if (/^[1-9]$/.test(key) && roomKey) { event.preventDefault(); flyTo(roomKey.id); return; }
     if (paseo) {
       if (key in VECTORS) {
         event.preventDefault();
@@ -628,7 +611,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
         }
       } else if ((key === 'e' || key === 'Enter') && engine.nearby) {
         event.preventDefault();
-        onSelect(engine.nearby);
+        (onTalk ?? onSelect)(engine.nearby);
       } else if (key === 'Escape') {
         event.preventDefault();
         togglePaseo(false);
@@ -672,7 +655,18 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
   const menuAgent = menuFor ? agentRefOf(menuFor) : null;
   const tipId = hoverId ?? cursorId;
   const tip = tipId ? ordered.find((agent) => agent.id === tipId) : undefined;
-  const talkTo = nearby && nearby !== selectedId ? ordered.find((agent) => agent.id === nearby) : undefined;
+  const talkTo = nearby && nearby !== selectedId && nearby !== talkId ? ordered.find((agent) => agent.id === nearby) : undefined;
+  const counts: Partial<Record<RoomId, number>> = {};
+  for (const agent of ordered) counts[roomForState(agent.state, agent.awake)] = (counts[roomForState(agent.state, agent.awake)] ?? 0) + 1;
+  const jump = (event: MouseEvent<HTMLCanvasElement>) => {
+    const point = minimapToWorld(layout, event.currentTarget.getBoundingClientRect(), { x: event.clientX, y: event.clientY });
+    const hit = roomAt(layout, point);
+    if (hit) { flyTo(hit.id); return; }
+    engine.following = false;
+    engine.flying = true;
+    engine.target = clamp(centerOn(engine.target, point, engine.inset));
+    kick();
+  };
   const short = frameHeight < (coarse ? 300 : 240);
   const optionId = (id: string) => `office-agent-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
@@ -737,7 +731,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
       <button
         ref={promptRef}
         type="button"
-        onClick={() => { if (talkTo) onSelect(talkTo.id); }}
+        onClick={() => { if (talkTo) (onTalk ?? onSelect)(talkTo.id); }}
         tabIndex={talkTo ? 0 : -1}
         aria-hidden={talkTo ? undefined : true}
         className={cn(
@@ -748,7 +742,10 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
         {talkTo ? `Hablar con ${talkTo.name}` : ''}
         {coarse ? null : <kbd className="rounded border border-line bg-subtle px-1 font-sans text-[10px] text-muted">E</kbd>}
       </button>
-      {hint ? <OfficeHint touch={coarse} top={short} onClose={dismissHint} /> : null}
+      <RoomBar rooms={layout.rooms} current={room} counts={counts} onGo={flyTo} />
+      <Minimap canvasRef={mapRef} open={showMap} size={mapSize} onToggle={() => { setMapOpen(!showMap); }} onJump={jump} />
+      {hint && !talk ? <OfficeHint touch={coarse} top={short} onClose={dismissHint} /> : null}
+      {talk ? <div ref={talkRef} className="contents">{talk.panel}</div> : null}
       <OfficeControls
         canZoomIn={!edges.atMax}
         canZoomOut={!edges.atMin}

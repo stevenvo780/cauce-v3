@@ -2,6 +2,7 @@ import type { LiveState } from '../live/agent-state';
 import { behaviourFor, type Behaviour, type BubbleKind, type Pose } from './behaviour';
 import { TILE, type Dir, type OfficeLayout, type Point, type Spot } from './layout';
 import { findPath } from './pathfinding';
+import { assignRest } from './rooms';
 
 /** Walking speed in art pixels per second. */
 export const WALK_SPEED = 34;
@@ -9,6 +10,7 @@ export const WALK_SPEED = 34;
 export interface ActorInput {
   id: string;
   state: LiveState;
+  awake?: boolean;
   desk: number;
   /** Desk index of the agent this one is handing work to, when delegating. */
   delegateDesk?: number | null;
@@ -86,7 +88,7 @@ function wanderSpot(layout: OfficeLayout, random: () => number): Spot {
 export function planFor(actor: Actor, layout: OfficeLayout): Step[] {
   const desk = layout.desks[actor.desk];
   const behaviour = actor.behaviour;
-  const forever = (spot: Spot): Step => ({ kind: 'act', pose: behaviour.pose, seconds: Infinity, bubble: behaviour.bubble, dir: spot.dir });
+  const forever = (spot: Spot): Step => ({ kind: 'act', pose: restPose(spot, behaviour), seconds: Infinity, bubble: behaviour.bubble, dir: spot.dir });
   const goto = (spot: Spot, carrying = false): Step => ({ kind: 'goto', spot, carrying });
 
   if (behaviour.errand === 'deliver' && actor.delegateDesk !== null && layout.desks[actor.delegateDesk]) {
@@ -111,9 +113,11 @@ export function planFor(actor: Actor, layout: OfficeLayout): Step[] {
       forever(actor.rest),
     ];
   }
-  if (behaviour.errand === 'stretch') {
+  if (behaviour.errand === 'coffee') {
+    const cup = layout.coffee.at(seedOf(actor.id) % Math.max(1, layout.coffee.length));
     return [
       { kind: 'act', pose: 'stretch', seconds: 1.8, bubble: null, dir: 'down' },
+      ...(cup ? [goto(cup), { kind: 'act', pose: 'coffee', seconds: between(actor.random, 3, 6), bubble: null, dir: cup.dir } as const] : []),
       goto(actor.rest),
       forever(actor.rest),
     ];
@@ -121,27 +125,17 @@ export function planFor(actor: Actor, layout: OfficeLayout): Step[] {
   return [goto(actor.rest), forever(actor.rest)];
 }
 
-/** Where the state finally parks someone; idle people without a free sofa nap at their desk. */
-function restSpot(world: World, actor: Pick<Actor, 'desk' | 'behaviour'>, rank: number): Spot {
-  const desk = world.layout.desks[actor.desk].seat;
-  if (actor.behaviour.rest === 'lounge') return world.layout.lounge[rank] ?? desk;
-  if (actor.behaviour.rest === 'coffee') return world.layout.coffee[rank] ?? wanderSpot(world.layout, () => (rank * 0.37) % 1);
-  return desk;
+/** Beds are for lying down and games for playing; anyone parked elsewhere off duty just stands around. */
+function restPose(spot: Spot, behaviour: Behaviour): Pose {
+  if (spot.rest === 'bed') return 'lie';
+  if (spot.game) return 'play';
+  return behaviour.rest === 'desk' ? behaviour.pose : 'stand';
 }
 
 const sameSpot = (a: Spot, b: Spot) => a.px.x === b.px.x && a.px.y === b.px.y;
 
-function sleepPose(world: World, actor: Actor): Pose {
-  if (sameSpot(actor.rest, world.layout.desks[actor.desk].seat)) return 'nap';
-  return actor.rest.rest === 'bed' || actor.rest.rest === 'sofa' ? 'lie' : 'sleep';
-}
-
 function begin(world: World, actor: Actor, instant: boolean): void {
   actor.steps = planFor(actor, world.layout);
-  if (actor.behaviour.rest === 'lounge') {
-    const pose = sleepPose(world, actor);
-    actor.steps = actor.steps.map((step) => (step.kind === 'act' && step.seconds === Infinity ? { ...step, pose } : step));
-  }
   actor.waypoints = [];
   actor.carrying = false;
   if (instant || world.reducedMotion || actor.state === 'down') {
@@ -207,16 +201,15 @@ function advance(world: World, actor: Actor): void {
 /** Adds, updates and removes people so the office matches the fleet. Unchanged people keep walking. */
 export function syncWorld(world: World, inputs: readonly ActorInput[]): void {
   const seen = new Set<string>();
-  const rank = { lounge: 0, coffee: 0, desk: 0 };
   const ordered = [...inputs].sort((a, b) => a.id.localeCompare(b.id));
+  const rests = assignRest(world.layout, ordered);
   for (const input of ordered) {
     seen.add(input.id);
-    const behaviour = behaviourFor(input.state);
-    const rest = restSpot(world, { desk: input.desk, behaviour }, rank[behaviour.rest]);
-    rank[behaviour.rest] += 1;
+    const behaviour = behaviourFor(input.state, input.awake);
+    const rest = rests.get(input.id) ?? world.layout.desks[input.desk].seat;
     const delegateDesk = input.delegateDesk ?? null;
     const existing = world.actors.get(input.id);
-    if (existing?.state === input.state && existing.desk === input.desk
+    if (existing?.state === input.state && existing.behaviour === behaviour && existing.desk === input.desk
       && existing.delegateDesk === delegateDesk && sameSpot(existing.rest, rest)) continue;
     if (existing) {
       Object.assign(existing, { state: input.state, behaviour, desk: input.desk, delegateDesk, rest });

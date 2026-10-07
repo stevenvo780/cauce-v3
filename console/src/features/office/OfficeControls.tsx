@@ -100,7 +100,7 @@ export function OfficeHint({ touch, top = false, onClose }: { touch: boolean; to
     ? ['Arrastrá para mirar', 'pellizcá para acercar', 'tocá el piso para caminar']
     : ['Arrastrá para mirar', 'rueda para acercar', 'clic en el piso para caminar', 'P: modo paseo'];
   return (
-    <div className={cn('pointer-events-none absolute left-2 z-10 flex max-w-[calc(100%-4.5rem)] pointer-coarse:max-w-[calc(100%-5rem)]', top ? 'top-2 items-start' : 'bottom-2 items-end')}>
+    <div className={cn('pointer-events-none absolute left-2 z-10 flex max-w-[calc(100%-4.5rem)] pointer-coarse:max-w-[calc(100%-5rem)]', top ? 'top-14 items-start' : 'bottom-2 items-end')}>
       <p role="status" className="pointer-events-auto m-0 flex items-center gap-1 rounded-lg border border-line bg-surface/92 py-1 pr-1 pl-2.5 text-xs text-fg-2 shadow-card backdrop-blur-sm">
         <span>{tips.join(' · ')}</span>
         <button

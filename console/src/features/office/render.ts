@@ -1,11 +1,13 @@
 import type { MonitorMode } from './behaviour';
-import { TILE, WALL_ROWS, type DeskSlot, type Furniture, type OfficeLayout } from './layout';
+import { TILE, WALL_ROWS, type DeskSlot, type GameKind, type OfficeLayout } from './layout';
 import { rect, type Ctx } from './paint';
-import { OFFICE, type CharPalette } from './palette';
+import { OFFICE } from './palette';
+import { arcade, foosball, nightstand, paintNightWindow, paintPillar, pingpong } from './render-rooms';
 import { seededRandom } from './simulation';
 
 function paintFloor(ctx: Ctx, layout: OfficeLayout): void {
-  for (const zone of [...layout.zones].sort((a, b) => Number(a.kind === 'partition') - Number(b.kind === 'partition'))) {
+  const wallish = (kind: string) => Number(kind === 'partition' || kind === 'pillar');
+  for (const zone of [...layout.zones].sort((a, b) => wallish(a.kind) - wallish(b.kind))) {
     const x0 = zone.x * TILE;
     const y0 = zone.y * TILE;
     const w = zone.w * TILE;
@@ -35,6 +37,15 @@ function paintFloor(ctx: Ctx, layout: OfficeLayout): void {
       }
       rect(ctx, x0, y0, w, 1, OFFICE.restLine);
       rect(ctx, x0 + w - 1, y0, 1, h, OFFICE.restLine);
+    } else if (zone.kind === 'play') {
+      for (let ty = 0; ty < zone.h; ty += 1) {
+        for (let tx = 0; tx < zone.w; tx += 1) {
+          rect(ctx, x0 + tx * TILE, y0 + ty * TILE, TILE, TILE, (tx + ty) % 2 === 0 ? OFFICE.playFloor : OFFICE.playFloorAlt);
+          rect(ctx, x0 + tx * TILE, y0 + ty * TILE + TILE - 1, TILE, 1, OFFICE.playLine);
+        }
+      }
+    } else if (zone.kind === 'pillar') {
+      paintPillar(ctx, x0, y0, h);
     } else if (zone.kind === 'tile') {
       for (let y = 0; y < h; y += 8) {
         for (let x = 0; x < w; x += 8) rect(ctx, x0 + x, y0 + y, 8, 8, ((x + y) / 8) % 2 === 0 ? OFFICE.tile : OFFICE.tileAlt);
@@ -145,7 +156,10 @@ export function paintRoom(ctx: Ctx, layout: OfficeLayout): void {
   rect(ctx, 0, wallH - 2, width, 2, OFFICE.trimDark);
   for (const item of layout.wall) {
     const x = item.x * TILE;
-    if (item.kind === 'window') paintWindow(ctx, x + 2, item.w * TILE - 4);
+    if (item.kind === 'night') {
+      const top = item.y === 0 ? 8 : item.y * TILE - 1;
+      paintNightWindow(ctx, x + 3, item.w * TILE - 6, top, item.y === 0 ? 31 : top + 10);
+    } else if (item.kind === 'window') paintWindow(ctx, x + 2, item.w * TILE - 4);
     else if (item.kind === 'board') paintBoard(ctx, x + 2, item.w * TILE - 4);
     else if (item.kind === 'door') paintDoor(ctx, x + 2, item.w * TILE - 4);
     else paintClock(ctx, x);
@@ -160,24 +174,6 @@ export interface DeskState {
   typing: boolean;
   hands?: string;
   offline: boolean;
-  /** Owner asleep with the head on folded arms; only drawn on desks that face the viewer. */
-  napper?: CharPalette;
-}
-
-/** Folded arms and a bowed head on the desk top, right of the monitor so the face-down head shows. */
-function napOnDesk(ctx: Ctx, x: number, y: number, look: CharPalette): void {
-  rect(ctx, x + 12, y, 19, 7, OFFICE.outline);
-  rect(ctx, x + 13, y + 1, 17, 5, look.t);
-  rect(ctx, x + 13, y + 5, 17, 1, look.T);
-  rect(ctx, x + 13, y + 1, 3, 3, look.s);
-  rect(ctx, x + 27, y + 1, 3, 3, look.s);
-  rect(ctx, x + 17, y - 6, 11, 9, OFFICE.outline);
-  rect(ctx, x + 16, y - 5, 13, 7, OFFICE.outline);
-  rect(ctx, x + 18, y - 5, 9, 8, look.h);
-  rect(ctx, x + 17, y - 4, 11, 6, look.h);
-  rect(ctx, x + 19, y - 5, 4, 1, look.H);
-  rect(ctx, x + 17, y + 1, 11, 1, look.H);
-  rect(ctx, x + 21, y + 2, 3, 1, look.S);
 }
 
 export interface Drawable { sortY: number; draw: (ctx: Ctx, time: number) => void }
@@ -258,8 +254,7 @@ function deskDrawables(desk: DeskSlot, state: () => DeskState): Drawable[] {
           rect(ctx, x + 9 + left, y + 1 + left, 3, 2, s.hands);
           rect(ctx, x + 20 - left, y + 2 - left, 3, 2, s.hands);
         }
-        if (s.napper) napOnDesk(ctx, x, y, s.napper);
-        else rect(ctx, x + 26, y + 3, 3, 3, OFFICE.mug);
+        rect(ctx, x + 26, y + 3, 3, 3, OFFICE.mug);
         if (s.offline) {
           rect(ctx, x + 2, y + 2, 5, 4, OFFICE.paper);
           rect(ctx, x + 3, y + 3, 3, 2, OFFICE.offSign);
@@ -341,72 +336,6 @@ function chairDrawables(x: number, y: number, facing: 'down' | 'up'): Drawable[]
   ];
 }
 
-function sofaDrawables(x: number, y: number, w: number, facing: 'down' | 'up', alt: boolean): Drawable[] {
-  const left = x * TILE;
-  const top = y * TILE;
-  const width = w * TILE;
-  const base = alt ? OFFICE.sofaAlt : OFFICE.sofa;
-  const dark = alt ? OFFICE.sofaAltDark : OFFICE.sofaDark;
-  const light = alt ? OFFICE.sofaAltLight : OFFICE.sofaLight;
-  const cushions = (ctx: Ctx, cy: number) => {
-    for (let i = 0; i < w; i += 1) {
-      rect(ctx, left + 4 + i * ((width - 8) / w), cy, (width - 8) / w - 1, 6, light);
-      rect(ctx, left + 4 + i * ((width - 8) / w), cy + 5, (width - 8) / w - 1, 1, base);
-    }
-  };
-  if (facing === 'down') {
-    return [
-      {
-        sortY: top + 1,
-        draw: (ctx) => {
-          rect(ctx, left, top - 6, width, 18, OFFICE.outline);
-          rect(ctx, left + 1, top - 5, width - 2, 10, dark);
-          rect(ctx, left + 1, top - 5, width - 2, 2, base);
-          cushions(ctx, top + 4);
-        },
-      },
-      {
-        sortY: top + TILE - 1,
-        draw: (ctx) => {
-          shadow(ctx, left, top + 15, width);
-          rect(ctx, left, top + 10, width, 6, OFFICE.outline);
-          rect(ctx, left + 1, top + 10, width - 2, 5, dark);
-          rect(ctx, left, top - 2, 5, 18, OFFICE.outline);
-          rect(ctx, left + width - 5, top - 2, 5, 18, OFFICE.outline);
-          rect(ctx, left + 1, top - 1, 3, 16, base);
-          rect(ctx, left + width - 4, top - 1, 3, 16, base);
-          rect(ctx, left + 1, top - 1, 3, 1, light);
-          rect(ctx, left + width - 4, top - 1, 3, 1, light);
-        },
-      },
-    ];
-  }
-  return [
-    {
-      sortY: top + 1,
-      draw: (ctx) => {
-        rect(ctx, left, top - 2, width, 12, OFFICE.outline);
-        rect(ctx, left + 1, top - 1, width - 2, 10, dark);
-        cushions(ctx, top);
-      },
-    },
-    {
-      sortY: top + TILE - 1,
-      draw: (ctx) => {
-        shadow(ctx, left, top + 16, width);
-        rect(ctx, left, top + 5, width, 12, OFFICE.outline);
-        rect(ctx, left + 1, top + 6, width - 2, 10, base);
-        rect(ctx, left + 1, top + 6, width - 2, 2, light);
-        rect(ctx, left + 1, top + 14, width - 2, 2, dark);
-        rect(ctx, left, top - 2, 5, 14, OFFICE.outline);
-        rect(ctx, left + width - 5, top - 2, 5, 14, OFFICE.outline);
-        rect(ctx, left + 1, top - 1, 3, 12, base);
-        rect(ctx, left + width - 4, top - 1, 3, 12, base);
-      },
-    },
-  ];
-}
-
 function beanbagDrawables(x: number, y: number, variant: 0 | 1): Drawable[] {
   const cx = x * TILE + 8;
   const top = y * TILE;
@@ -463,22 +392,6 @@ function bed(ctx: Ctx, x: number, y: number, variant: number): void {
   rect(ctx, left, top - 6, 2, 1, OFFICE.bedFrameLight);
   rect(ctx, left + 30, top + 3, 3, 12, OFFICE.outline);
   rect(ctx, left + 31, top + 4, 1, 10, OFFICE.bedFrame);
-}
-
-function lamp(ctx: Ctx, x: number, y: number): void {
-  const cx = x * TILE + 8;
-  const base = y * TILE + 14;
-  ctx.fillStyle = OFFICE.lampGlow;
-  ctx.fillRect(cx - 9, base - 22, 18, 16);
-  shadow(ctx, cx - 6, base, 12);
-  rect(ctx, cx - 6, base - 9, 12, 10, OFFICE.outline);
-  rect(ctx, cx - 5, base - 8, 10, 8, OFFICE.bedFrame);
-  rect(ctx, cx - 5, base - 8, 10, 1, OFFICE.bedFrameLight);
-  rect(ctx, cx - 4, base - 5, 8, 1, OFFICE.outline);
-  rect(ctx, cx - 1, base - 14, 2, 5, OFFICE.outline);
-  rect(ctx, cx - 5, base - 20, 10, 7, OFFICE.outline);
-  rect(ctx, cx - 4, base - 19, 8, 5, OFFICE.lampShade);
-  rect(ctx, cx - 4, base - 19, 8, 1, OFFICE.paper);
 }
 
 function plant(ctx: Ctx, x: number, y: number, big: boolean): void {
@@ -547,24 +460,6 @@ function fridge(ctx: Ctx, x: number, y: number): void {
   rect(ctx, left + 3, top + 16, 4, 5, OFFICE.paper);
 }
 
-function rack(ctx: Ctx, x: number, y: number, time: number): void {
-  const left = x * TILE + 1;
-  const top = y * TILE - 14;
-  shadow(ctx, left, top + 30, 14);
-  rect(ctx, left - 1, top - 1, 16, 31, OFFICE.outline);
-  rect(ctx, left, top, 14, 29, OFFICE.rack);
-  for (let row = 0; row < 6; row += 1) {
-    const ry = top + 2 + row * 4.5;
-    rect(ctx, left + 1, ry, 12, 3, OFFICE.rackDark);
-    const random = seededRandom(x * 100 + row * 7 + Math.floor(time * 3 + row));
-    const colors = [OFFICE.ledOk, OFFICE.ledOk, OFFICE.ledInfo, OFFICE.ledWarn];
-    for (let led = 0; led < 3; led += 1) {
-      if (random() > 0.3) rect(ctx, left + 8 + led * 2, ry + 1, 1, 1, colors[Math.floor(random() * colors.length)]);
-    }
-    rect(ctx, left + 2, ry + 1, 4, 1, '#3a404d');
-  }
-}
-
 function cooler(ctx: Ctx, x: number, y: number): void {
   const cx = x * TILE + 8;
   const base = y * TILE + 15;
@@ -575,27 +470,6 @@ function cooler(ctx: Ctx, x: number, y: number): void {
   rect(ctx, cx - 4, base - 24, 8, 10, OFFICE.outline);
   rect(ctx, cx - 3, base - 23, 6, 9, '#8fd0f5');
   rect(ctx, cx - 2, base - 22, 1, 6, '#d6f1ff');
-}
-
-function shelf(ctx: Ctx, x: number, y: number): void {
-  const left = x * TILE + 1;
-  const top = y * TILE - 14;
-  shadow(ctx, left, top + 30, 30);
-  rect(ctx, left - 1, top - 1, 32, 31, OFFICE.outline);
-  rect(ctx, left, top, 30, 29, OFFICE.deskFront);
-  const colors = [OFFICE.ink[0], OFFICE.ink[1], OFFICE.ink[2], OFFICE.mail, OFFICE.sofaAlt, OFFICE.beanbag[1], OFFICE.paper];
-  for (let row = 0; row < 3; row += 1) {
-    const sy = top + 2 + row * 9;
-    rect(ctx, left + 1, sy, 28, 7, OFFICE.deskDark);
-    const random = seededRandom(x * 31 + row * 5);
-    for (let bx = left + 2; bx < left + 27;) {
-      const w = 2 + Math.floor(random() * 2);
-      const h = 4 + Math.floor(random() * 3);
-      rect(ctx, bx, sy + 7 - h, w, h, colors[Math.floor(random() * colors.length)]);
-      bx += w + (random() > 0.75 ? 2 : 0);
-    }
-    rect(ctx, left, sy + 7, 30, 1, OFFICE.deskLight);
-  }
 }
 
 function table(ctx: Ctx, x: number, y: number): void {
@@ -609,9 +483,12 @@ function table(ctx: Ctx, x: number, y: number): void {
   rect(ctx, left + 9, top + 5, 4, 3, OFFICE.ink[1]);
 }
 
-export function furnitureDrawables(layout: OfficeLayout, deskState: (slot: number) => DeskState): Drawable[] {
+/** `playing` tells whether someone is at a given game right now, so idle machines rest. */
+export function furnitureDrawables(
+  layout: OfficeLayout, deskState: (slot: number) => DeskState, playing: (game: GameKind, station: number) => boolean,
+): Drawable[] {
   const list: Drawable[] = [];
-  const at = (_piece: Furniture, sortY: number, draw: (ctx: Ctx, time: number) => void) => {
+  const at = (sortY: number, draw: (ctx: Ctx, time: number) => void) => {
     list.push({ sortY, draw });
   };
   for (const piece of layout.furniture) {
@@ -622,44 +499,43 @@ export function furnitureDrawables(layout: OfficeLayout, deskState: (slot: numbe
       case 'chair':
         list.push(...chairDrawables(piece.x, piece.y, piece.facing));
         break;
-      case 'sofa':
-        list.push(...sofaDrawables(piece.x, piece.y, piece.w, piece.facing, piece.alt));
-        break;
       case 'beanbag':
         list.push(...beanbagDrawables(piece.x, piece.y, piece.variant));
         break;
       case 'plant':
-        at(piece, piece.y * TILE + 15, (ctx) => { plant(ctx, piece.x, piece.y, piece.big); });
+        at(piece.y * TILE + 15, (ctx) => { plant(ctx, piece.x, piece.y, piece.big); });
         break;
       case 'counter':
-        at(piece, piece.y * TILE + 14, (ctx) => { counter(ctx, piece.x, piece.y, piece.w); });
+        at(piece.y * TILE + 14, (ctx) => { counter(ctx, piece.x, piece.y, piece.w); });
         break;
       case 'coffee':
-        at(piece, piece.y * TILE + 14.5, (ctx, time) => { coffeeMachine(ctx, piece.x, piece.y, time); });
+        at(piece.y * TILE + 14.5, (ctx, time) => { coffeeMachine(ctx, piece.x, piece.y, time); });
         break;
       case 'fridge':
-        at(piece, piece.y * TILE + 15, (ctx) => { fridge(ctx, piece.x, piece.y); });
-        break;
-      case 'rack':
-        at(piece, piece.y * TILE + 15, (ctx, time) => { rack(ctx, piece.x, piece.y, time); });
+        at(piece.y * TILE + 15, (ctx) => { fridge(ctx, piece.x, piece.y); });
         break;
       case 'cooler':
-        at(piece, piece.y * TILE + 15, (ctx) => { cooler(ctx, piece.x, piece.y); });
-        break;
-      case 'shelf':
-        at(piece, piece.y * TILE + 15, (ctx) => { shelf(ctx, piece.x, piece.y); });
+        at(piece.y * TILE + 15, (ctx) => { cooler(ctx, piece.x, piece.y); });
         break;
       case 'bed':
-        at(piece, piece.y * TILE + 1, (ctx) => { bed(ctx, piece.x, piece.y, piece.variant); });
+        at(piece.y * TILE + 1, (ctx) => { bed(ctx, piece.x, piece.y, piece.variant); });
         break;
-      case 'lamp':
-        at(piece, piece.y * TILE + 14, (ctx) => { lamp(ctx, piece.x, piece.y); });
+      case 'nightstand':
+        at(piece.y * TILE + 14, (ctx) => { nightstand(ctx, piece.x, piece.y); });
+        break;
+      case 'arcade':
+        at(piece.y * TILE + 15, (ctx, time) => { arcade(ctx, piece.x, piece.y, piece.station, playing('arcade', piece.station), time); });
+        break;
+      case 'pingpong':
+        at(piece.y * TILE + 14, (ctx, time) => { pingpong(ctx, piece.x, piece.y, playing('pingpong', 0), time); });
+        break;
+      case 'foosball':
+        at(piece.y * TILE + 15, (ctx, time) => { foosball(ctx, piece.x, piece.y, playing('foosball', 0), time); });
         break;
       case 'table':
-        at(piece, piece.y * TILE + 13, (ctx) => { table(ctx, piece.x, piece.y); });
+        at(piece.y * TILE + 13, (ctx) => { table(ctx, piece.x, piece.y); });
         break;
     }
   }
   return list;
 }
-

@@ -12,7 +12,7 @@ import {
 } from './sprites';
 
 const params = (pods: number, overrides: Partial<LayoutParams> = {}): LayoutParams => ({
-  pods, podCols: Math.min(2, pods), side: 'right', compact: false, ...overrides,
+  pods, podCols: Math.min(2, pods), side: 'right', compact: false, beds: pods * 4, ...overrides,
 });
 
 describe('sprites', () => {
@@ -80,8 +80,8 @@ describe('behaviour', () => {
     expect(behaviourFor('receiving')).toMatchObject({ rest: 'desk', bubble: 'mail' });
     expect(behaviourFor('delegating')).toMatchObject({ rest: 'desk', errand: 'deliver' });
     expect(behaviourFor('blocked')).toMatchObject({ bubble: 'alert', shake: true, monitor: 'error' });
-    expect(behaviourFor('settled')).toMatchObject({ rest: 'coffee', errand: 'stretch' });
-    expect(behaviourFor('idle')).toMatchObject({ rest: 'lounge', pose: 'sleep', bubble: 'zzz', errand: 'wander' });
+    expect(behaviourFor('settled')).toMatchObject({ rest: 'patio', pose: 'play', errand: 'coffee' });
+    expect(behaviourFor('idle')).toMatchObject({ rest: 'bed', pose: 'lie', bubble: 'zzz', errand: 'wander' });
     expect(behaviourFor('down')).toMatchObject({ pose: 'ghost', monitor: 'off', errand: null });
   });
 });
@@ -96,27 +96,26 @@ describe('layout', () => {
     }
   });
 
-  it('every seat, visit spot, nap spot and coffee spot is reachable from every desk', () => {
+  it('every seat, visit spot, bed, game and coffee spot is reachable from every desk', () => {
     for (const side of ['right', 'bottom'] as const) for (const compact of [false, true]) {
       const layout = buildLayout(params(4, { side, compact }));
       const start = layout.desks[0].seat.tile;
       const spots = [
         ...layout.desks.flatMap((desk) => [desk.seat.tile, desk.visit.tile]),
-        ...layout.lounge.map((spot) => spot.tile),
-        ...layout.coffee.map((spot) => spot.tile),
+        ...[...layout.beds, ...layout.play, ...layout.watch, ...layout.coffee].map((spot) => spot.tile),
       ];
       for (const spot of spots) expect(findPath(layout.walkable, layout.cols, start, spot), `${side} ${String(compact)}`).not.toBeNull();
     }
   });
 
-  it('sleeps people in beds first, then on the sofa, then in beanbags, all reachable', () => {
-    for (const side of ['right', 'bottom'] as const) {
-      const layout = buildLayout(params(4, { side }));
-      expect(layout.lounge.map((spot) => spot.rest)).toEqual(['bed', 'bed', 'bed', 'sofa', 'beanbag', 'beanbag']);
-      const beds = layout.furniture.filter((piece) => piece.kind === 'bed');
-      expect(beds).toHaveLength(3);
-      for (const [index, bed] of beds.entries()) {
-        const spot = layout.lounge[index];
+  it('lays one bed per agent, each with its sleeper on the mattress and reachable floor beside it', () => {
+    for (const side of ['right', 'bottom'] as const) for (const beds of [1, 5, 15, 40]) {
+      const layout = buildLayout(params(podsFor(beds), { side, beds }));
+      const frames = layout.furniture.filter((piece) => piece.kind === 'bed');
+      expect(frames).toHaveLength(beds);
+      expect(layout.beds).toHaveLength(beds);
+      for (const [index, bed] of frames.entries()) {
+        const spot = layout.beds[index];
         expect(spot.px.x).toBeGreaterThan(bed.x * TILE);
         expect(spot.px.x).toBeLessThan((bed.x + 2) * TILE);
         expect(Math.floor(spot.px.y / TILE)).toBe(bed.y);
@@ -131,10 +130,10 @@ describe('layout', () => {
       const door = must(layout.wall.find((item) => item.kind === 'door'), 'door');
       expect(layout.walkable[layout.door.tile.y * layout.cols + layout.door.tile.x]).toBe(true);
       expect(layout.door.tile.y).toBe(3);
-      for (const item of layout.wall.filter((other) => other !== door && other.kind !== 'clock')) {
+      for (const item of layout.wall.filter((other) => other !== door && other.kind !== 'clock' && other.y === 0)) {
         expect(item.x + item.w <= door.x || item.x >= door.x + door.w).toBe(true);
       }
-      expect(findPath(layout.walkable, layout.cols, layout.door.tile, layout.lounge[0].tile)).not.toBeNull();
+      expect(findPath(layout.walkable, layout.cols, layout.door.tile, layout.beds[0].tile)).not.toBeNull();
     }
   });
 
@@ -154,7 +153,7 @@ describe('layout', () => {
     expect(Number.isInteger(desk.scale)).toBe(true);
     expect(size.cols * TILE * desk.scale).toBeLessThanOrEqual(1100);
     expect(size.rows * TILE * desk.scale).toBeLessThanOrEqual(760);
-    expect(desk.scale).toBeGreaterThanOrEqual(3);
+    expect(desk.scale).toBeGreaterThanOrEqual(2);
 
     const phone = chooseLayout(15, { width: 358, height: 700, dpr: 3 });
     const phoneSize = layoutSize(phone.params);
@@ -215,7 +214,7 @@ describe('simulation', () => {
     expect(a.pose).toBe('type');
     expect(actorOf(world, 'b').pose).toBe('lie');
     expect(actorOf(world, 'b').rest.rest).toBe('bed');
-    expect([actorOf(world, 'b').x, actorOf(world, 'b').y]).toEqual([layout.lounge[0].px.x, layout.lounge[0].px.y]);
+    expect([actorOf(world, 'b').x, actorOf(world, 'b').y]).toEqual([layout.beds[1].px.x, layout.beds[1].px.y]);
     expect(actorOf(world, 'c').pose).toBe('ghost');
   });
 
@@ -244,7 +243,7 @@ describe('simulation', () => {
     expect(a.pose).toBe('walk');
     expect([a.x, a.y]).toEqual([layout.desks[0].seat.px.x, layout.desks[0].seat.px.y]);
     for (let t = 0; t < 60; t += 0.05) stepWorld(world, 0.05);
-    expect(['lie', 'sleep', 'nap']).toContain(a.pose);
+    expect(a.pose).toBe('lie');
 
     syncWorld(world, inputs().filter((input) => input.id !== 'c'));
     expect(world.actors.has('c')).toBe(false);
@@ -260,14 +259,11 @@ describe('simulation', () => {
     expect([...world.actors.values()].some((actor) => actor.pose === 'walk')).toBe(false);
   });
 
-  it('idle people lie in beds and on the sofa, slump in beanbags, and beyond that nap at their own desk', () => {
-    const big = buildLayout(params(4));
+  it('nobody sleeps at a desk: every idle person lies in a bed, however many there are', () => {
+    const big = buildLayout(params(3, { beds: 12 }));
     const world = createWorld(big);
     const many: ActorInput[] = Array.from({ length: 12 }, (_, index) => ({ id: `idle-${String(index).padStart(2, '0')}`, state: 'idle', desk: index }));
     syncWorld(world, many);
-    const poses = [...world.actors.values()].map((actor) => actor.pose);
-    expect(poses.filter((pose) => pose === 'lie')).toHaveLength(big.lounge.filter((spot) => spot.rest !== 'beanbag').length);
-    expect(poses.filter((pose) => pose === 'sleep')).toHaveLength(big.lounge.filter((spot) => spot.rest === 'beanbag').length);
-    expect(poses.filter((pose) => pose === 'nap')).toHaveLength(12 - big.lounge.length);
+    expect([...world.actors.values()].every((actor) => actor.pose === 'lie' && actor.rest.rest === 'bed')).toBe(true);
   });
 });

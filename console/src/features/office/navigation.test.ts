@@ -150,7 +150,7 @@ describe('gestures', () => {
 });
 
 describe('operator avatar', () => {
-  const layout = buildLayout({ pods: 2, podCols: 2, side: 'right', compact: false });
+  const layout = buildLayout({ pods: 2, podCols: 2, side: 'right', compact: false, beds: 8 });
 
   it('walks in through the door, onto floor', () => {
     const avatar = createAvatar(layout.door);
@@ -184,14 +184,14 @@ describe('operator avatar', () => {
 
   it('keys take over from a planned walk', () => {
     const avatar = createAvatar(layout.door);
-    walkTo(avatar, layout, layout.lounge[0].tile);
+    walkTo(avatar, layout, layout.beds[0].tile);
     stepAvatar(avatar, layout, { x: 1, y: 0 }, 0.05);
     expect(avatar.route).toEqual([]);
   });
 
   it('jumps straight to the end without motion and steps whole tiles', () => {
     const avatar = createAvatar(layout.door);
-    walkTo(avatar, layout, layout.lounge[0].tile);
+    walkTo(avatar, layout, layout.beds[0].tile);
     const goal = must(avatar.route.at(-1), 'goal');
     arrive(avatar);
     expect([avatar.x, avatar.y]).toEqual([goal.x, goal.y]);

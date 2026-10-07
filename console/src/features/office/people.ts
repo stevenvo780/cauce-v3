@@ -30,7 +30,7 @@ export interface ActorLook {
   head: { x: number; y: number };
 }
 
-const SEATED: ReadonlySet<string> = new Set(['sit', 'type', 'sleep', 'lie', 'nap', 'ghost']);
+const SEATED: ReadonlySet<string> = new Set(['sit', 'type', 'lie', 'ghost']);
 const BREATH = 1.6;
 
 /** `gaze` turns someone standing around towards the operator walking up to them. */
@@ -45,7 +45,8 @@ export function actorLook(actor: Actor, gaze: Facing | null = null): ActorLook {
       head: { x: x + 10, y: y + 1 },
     };
   }
-  const seated = SEATED.has(actor.pose);
+  const game = actor.pose === 'play' ? actor.rest.game : undefined;
+  const seated = SEATED.has(actor.pose) || game === 'beanbag';
   let facing: Facing = actor.pose === 'coffee'
     ? (actor.clock % 7 < 2.2 ? 'up' : 'down')
     : actor.pose === 'stretch' ? 'down' : actor.dir;
@@ -53,33 +54,20 @@ export function actorLook(actor: Actor, gaze: Facing | null = null): ActorLook {
   let frame: FrameName = 'stand';
   if (actor.pose === 'walk') frame = 'walk';
   else if (actor.pose === 'stretch') frame = Math.floor(actor.clock * 2) % 2 === 0 ? 'stretch' : 'stand';
-  else if (actor.pose === 'sleep') frame = 'sleep';
-  else if (actor.pose === 'nap') frame = facing === 'down' ? 'napDown' : 'napUp';
   let dy = 0;
   if (seated) dy = facing === 'down' ? 5 : 3;
-  if (actor.pose === 'sleep') dy = 3 + (Math.floor(actor.clock / BREATH) % 2);
   if (actor.pose === 'type' && facing === 'up') dy += Math.floor(actor.clock * 6) % 2;
+  if (game === 'arcade' || game === 'foosball') dy += Math.floor(actor.clock * (game === 'arcade' ? 5 : 3)) % 2;
   let dx = 0;
   if (actor.behaviour.shake && actor.pose === 'sit') dx = Math.floor(actor.clock * 14) % 3 === 0 ? 1 : 0;
-  if (frame === 'napDown') dx = 5;
+  if (game === 'pingpong') dx = Math.round(Math.sin(actor.clock * 4.4) * 1.5);
   const x = Math.round(actor.x - CHAR_W / 2 + dx);
   const y = Math.round(actor.y - CHAR_H + 1 + dy);
   const labelAbove = seated && facing === 'down';
   const feet = Math.round(actor.y);
-  let labelY = labelAbove ? y + 1 : feet + 4;
-  let head = { x: x + 11, y: y + 2 };
-  if (frame === 'napDown') {
-    labelY = feet - 4;
-    head = { x: Math.round(actor.x) + 10, y: feet - 5 };
-  } else if (frame === 'napUp') {
-    head = { x: x + 11, y: y + 6 };
-  } else if (frame === 'sleep') {
-    head = { x: x + 12, y: y + 3 };
-  }
-  const top = frame === 'napDown' ? y + 14 : y + 1;
   return {
     x, y, frame, facing, step: Math.floor(actor.walked / 5), ghost: actor.pose === 'ghost', seated, lying: false,
-    labelAbove, labelY, hit: { x: x + 1, y: top, w: 14, h: y + 24 - top }, head,
+    labelAbove, labelY: labelAbove ? y + 1 : feet + 4, hit: { x: x + 1, y: y + 1, w: 14, h: 23 }, head: { x: x + 11, y: y + 2 },
   };
 }
 
@@ -98,18 +86,28 @@ function blanketColors(actor: Actor): Record<string, string> {
   return { o: OFFICE.outline, w: OFFICE.sheet, b: pick(OFFICE.blanket), l: pick(OFFICE.blanketLight), d: pick(OFFICE.blanketDark) };
 }
 
-/** Bed blankets match the bed's own cover; the sofa one runs to the far armrest so no feet stick out. */
 function drawLying(ctx: Ctx, sprites: SpriteCache, actor: Actor, look: ActorLook): void {
-  const sofa = actor.rest.rest === 'sofa';
-  if (sofa) {
-    rect(ctx, look.x + 1, look.y + 3, 11, 9, OFFICE.outline);
-    rect(ctx, look.x + 2, look.y + 4, 9, 7, OFFICE.pillow);
-    rect(ctx, look.x + 2, look.y + 10, 9, 1, OFFICE.pillowShade);
-  }
   const inhale = Math.floor(actor.clock / BREATH) % 2 === 1;
-  const rows = sofa ? blanketRows(29, 6, inhale) : blanketRows(19, 7, inhale);
-  paintRows(ctx, rows, look.x + BLANKET_X, look.y + BLANKET_Y - (inhale ? 1 : 0), blanketColors(actor));
+  paintRows(ctx, blanketRows(19, 7, inhale), look.x + BLANKET_X, look.y + BLANKET_Y - (inhale ? 1 : 0), blanketColors(actor));
   ctx.drawImage(sprites.lying(actor.id), look.x, look.y);
+}
+
+/** Props in the hands of someone playing: a swinging paddle or a handheld console. */
+function drawToy(ctx: Ctx, actor: Actor, look: ActorLook, time: number): void {
+  const cx = look.x + CHAR_W / 2;
+  const handY = look.y + 15;
+  if (actor.rest.game === 'pingpong') {
+    const side = look.facing === 'left' ? -1 : 1;
+    const swing = Math.round(Math.sin(time * 8.8 + (side > 0 ? 0 : Math.PI)) * 3);
+    const px = cx + side * 6;
+    rect(ctx, px - 2, handY - 3 + swing, 5, 5, OFFICE.outline);
+    rect(ctx, px - 1, handY - 2 + swing, 3, 3, OFFICE.paddle);
+    rect(ctx, px, handY + 2 + swing, 1, 2, OFFICE.outline);
+  } else if (actor.rest.game === 'beanbag') {
+    rect(ctx, cx - 4, handY - 1, 9, 5, OFFICE.outline);
+    rect(ctx, cx - 3, handY, 7, 3, OFFICE.handheld);
+    rect(ctx, cx - 1, handY, 3, 2, OFFICE.code[Math.floor(time * 6) % 4]);
+  }
 }
 
 export function drawActor(ctx: Ctx, sprites: SpriteCache, actor: Actor, look: ActorLook, time: number): void {
@@ -125,10 +123,7 @@ export function drawActor(ctx: Ctx, sprites: SpriteCache, actor: Actor, look: Ac
   if (look.ghost) ctx.globalAlpha *= 0.55;
   ctx.drawImage(sprite, look.x, look.y);
   if (look.ghost) ctx.globalAlpha /= 0.55;
-  if (actor.pose === 'sleep') {
-    const inhale = Math.floor(actor.clock / BREATH) % 2 === 1;
-    paintRows(ctx, blanketRows(12, 3, inhale), look.x + 2, look.y + 13 - (inhale ? 1 : 0), blanketColors(actor));
-  }
+  if (actor.pose === 'play') drawToy(ctx, actor, look, time);
   const cx = look.x + CHAR_W / 2;
   const handY = look.y + 16;
   if ((actor.carrying || actor.pose === 'handover') && look.facing !== 'up') {

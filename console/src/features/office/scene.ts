@@ -1,6 +1,6 @@
 import { faceTowards, type Avatar } from './avatar';
 import { originOf, type Camera, type Size } from './camera';
-import { TILE, type OfficeLayout } from './layout';
+import { TILE, type GameKind, type OfficeLayout } from './layout';
 import { SpriteCache, type MakeCanvas } from './paint';
 import { CHAR_H } from './sprites';
 import {
@@ -9,6 +9,7 @@ import {
 } from './people';
 import { furnitureDrawables, paintRoom, type DeskState, type Drawable } from './render';
 import type { Actor, World } from './simulation';
+import { drawSpeech, type Speech } from './speech';
 
 export interface Scene {
   sprites: SpriteCache;
@@ -36,10 +37,11 @@ export function createScene(layout: OfficeLayout, world: World, make: MakeCanvas
       typing: atDesk && owner.pose === 'type',
       hands: sprites.palette(owner.id, false).s,
       offline: owner.state === 'down',
-      napper: atDesk && owner.pose === 'nap' && desk.facing === 'down' ? sprites.palette(owner.id, false) : undefined,
     };
   };
-  return { sprites, room, art, furniture: furnitureDrawables(layout, deskState) };
+  const playing = (game: GameKind, station: number) => [...world.actors.values()].some((actor) => actor.pose === 'play'
+    && actor.rest.game === game && actor.rest.station === station);
+  return { sprites, room, art, furniture: furnitureDrawables(layout, deskState, playing) };
 }
 
 /** The look of an agent, turned towards the operator when the operator is the one standing next to them. */
@@ -63,9 +65,10 @@ export interface FrameInput {
   nearby: string | null;
   names: ReadonlyMap<string, string>;
   marker?: TapMarker | null;
+  speech?: ReadonlyMap<string, Speech>;
 }
 
-interface Tag { text: string; x: number; y: number; above: boolean; tone: LabelTone; rank: number; box?: ScreenRect }
+interface Tag { id?: string; text: string; x: number; y: number; above: boolean; tone: LabelTone; rank: number; box?: ScreenRect }
 
 const crosses = (a: ScreenRect, b: ScreenRect, gap: number) =>
   a.left < b.right + gap && b.left < a.right + gap && a.top < b.bottom + gap && b.top < a.bottom + gap;
@@ -126,6 +129,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, input: FrameInput): voi
     if ((actor.pose === 'walk' || actor.pose === 'handover') && actor.id !== selected && actor.id !== hovered) continue;
     const dim = Boolean(only && !only.has(actor.id));
     tags.push({
+      id: actor.id,
       text: input.names.get(actor.id) ?? actor.id,
       x: sx(look.hit.x + look.hit.w / 2),
       y: origin.y + look.labelY * cam.zoom - (look.labelAbove ? 2 * dpr : 0),
@@ -138,11 +142,18 @@ export function drawFrame(ctx: CanvasRenderingContext2D, input: FrameInput): voi
   const shown = placeTags(ctx, tags, fontPx, dpr);
   const boxes = shown.flatMap((tag) => (tag.box ? [tag.box] : []));
   for (const { actor, look } of actors) {
-    if (actor.bubble !== 'zzz' || !['sleep', 'lie', 'nap'].includes(actor.pose)) continue;
+    if (actor.bubble !== 'zzz' || actor.pose !== 'lie') continue;
     if (only && !only.has(actor.id)) continue;
     drawSleepTrail(ctx, { x: sx(look.head.x), y: origin.y + look.head.y * cam.zoom }, time, cam.zoom, boxes, input.still);
   }
   for (const tag of shown) if (tag.box) drawLabel(ctx, tag.text, tag.box, fontPx, tag.tone);
+  for (const { actor, look } of actors) {
+    const speech = input.speech?.get(actor.id);
+    if (!speech) continue;
+    const tag = shown.find((item) => item.id === actor.id && item.above);
+    const head = origin.y + look.hit.y * cam.zoom;
+    drawSpeech(ctx, speech, { x: sx(look.hit.x + look.hit.w / 2), y: Math.min(head, tag?.box?.top ?? head) }, fontPx, dpr, time, view.width);
+  }
 }
 
 /** Screen box of an agent in device px, for hit tests and tooltips. */

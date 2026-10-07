@@ -5,16 +5,29 @@ export const WALL_ROWS = 3;
 const SEATS_PER_POD = 4;
 const POD_W = 4;
 const POD_H = 4;
-const LOUNGE_W = 9;
-const LOUNGE_H = 10;
+/** The kitchen and the playground share a column this wide; their fixtures are drawn for it. */
+const MID_W = 10;
+const KITCHEN_H = 4;
+const PATIO_H = 7;
+const SLOT_W = 3;
 
 export interface Point { x: number; y: number }
 export type Dir = 'down' | 'up' | 'left' | 'right';
 
-export type RestKind = 'bed' | 'sofa' | 'beanbag';
+export type RoomId = 'programadores' | 'cocina' | 'patio' | 'dormitorio';
+export interface Room { id: RoomId; x: number; y: number; w: number; h: number }
+export type GameKind = 'arcade' | 'pingpong' | 'foosball' | 'beanbag';
 
 /** A place a character can occupy: the tile it paths to, and its exact feet position in art px. */
-export interface Spot { tile: Point; px: Point; dir: Dir; rest?: RestKind; variant?: number }
+export interface Spot {
+  tile: Point;
+  px: Point;
+  dir: Dir;
+  rest?: 'bed';
+  game?: GameKind;
+  station?: number;
+  variant?: number;
+}
 
 export interface DeskSlot {
   index: number;
@@ -31,32 +44,39 @@ export interface DeskSlot {
 export type Furniture =
   | { kind: 'desk'; x: number; y: number; slot: number }
   | { kind: 'chair'; x: number; y: number; slot: number; facing: 'down' | 'up' }
-  | { kind: 'sofa'; x: number; y: number; w: number; facing: 'down' | 'up'; alt: boolean }
-  | { kind: 'beanbag'; x: number; y: number; variant: 0 | 1 }
+  | { kind: 'beanbag'; x: number; y: number; variant: 0 | 1; station: number }
   | { kind: 'bed'; x: number; y: number; variant: number }
-  | { kind: 'lamp'; x: number; y: number }
+  | { kind: 'nightstand'; x: number; y: number }
+  | { kind: 'arcade'; x: number; y: number; station: number }
+  | { kind: 'pingpong'; x: number; y: number }
+  | { kind: 'foosball'; x: number; y: number }
   | { kind: 'table'; x: number; y: number }
   | { kind: 'plant'; x: number; y: number; big: boolean }
   | { kind: 'counter'; x: number; y: number; w: number }
   | { kind: 'coffee'; x: number; y: number }
   | { kind: 'fridge'; x: number; y: number }
-  | { kind: 'rack'; x: number; y: number }
-  | { kind: 'cooler'; x: number; y: number }
-  | { kind: 'shelf'; x: number; y: number };
+  | { kind: 'cooler'; x: number; y: number };
 
-export interface WallItem { kind: 'window' | 'board' | 'clock' | 'door'; x: number; w: number }
-export interface Zone { kind: 'carpet' | 'wood' | 'tile' | 'rug' | 'rest' | 'partition'; x: number; y: number; w: number; h: number }
+/** `y` is the wall row the item hangs on: 0 for the back wall, or an inner partition's row. */
+export interface WallItem { kind: 'window' | 'board' | 'clock' | 'door' | 'night'; x: number; w: number; y: number }
+export interface Zone {
+  kind: 'carpet' | 'wood' | 'tile' | 'rug' | 'rest' | 'play' | 'partition' | 'pillar';
+  x: number; y: number; w: number; h: number;
+}
 
 export interface OfficeLayout {
   cols: number;
   rows: number;
   walkable: boolean[];
+  rooms: Room[];
   desks: DeskSlot[];
   furniture: Furniture[];
   wall: WallItem[];
   zones: Zone[];
-  /** Beds, the sofa and beanbags where idle people sleep, best first. */
-  lounge: Spot[];
+  /** One bed per agent; bed `i` belongs to the agent at desk `i`. */
+  beds: Spot[];
+  play: Spot[];
+  watch: Spot[];
   door: Spot;
   /** Standing places in front of the coffee machine. */
   coffee: Spot[];
@@ -70,7 +90,10 @@ export interface LayoutParams {
   side: 'right' | 'bottom';
   /** One-tile margins and gaps: lets two pods sit side by side on a phone, or the room grow a scale step. */
   compact: boolean;
+  beds: number;
 }
+
+interface Plan { cols: number; rows: number; rooms: Record<RoomId, Room>; slots: number }
 
 function workSize(params: LayoutParams): { w: number; h: number } {
   const podRows = Math.ceil(params.pods / params.podCols);
@@ -82,12 +105,49 @@ function workSize(params: LayoutParams): { w: number; h: number } {
   };
 }
 
-export function layoutSize(params: LayoutParams): { cols: number; rows: number } {
+function plan(params: LayoutParams): Plan {
   const work = workSize(params);
+  const beds = Math.max(1, params.beds);
+  const top = WALL_ROWS;
   if (params.side === 'right') {
-    return { cols: work.w + LOUNGE_W, rows: WALL_ROWS + Math.max(work.h, LOUNGE_H) };
+    const h = Math.max(work.h, KITCHEN_H + 1 + PATIO_H, 5);
+    const slots = Math.max(2, Math.ceil(beds / Math.floor((h - 1) / 2)));
+    const mid = work.w + 1;
+    const dorm = { id: 'dormitorio' as const, x: mid + MID_W + 1, y: top, w: 1 + slots * SLOT_W, h };
+    return {
+      cols: dorm.x + dorm.w,
+      rows: top + h,
+      slots,
+      rooms: {
+        programadores: { id: 'programadores', x: 0, y: top, w: work.w, h },
+        cocina: { id: 'cocina', x: mid, y: top, w: MID_W, h: KITCHEN_H },
+        patio: { id: 'patio', x: mid, y: top + KITCHEN_H + 1, w: MID_W, h: h - KITCHEN_H - 1 },
+        dormitorio: dorm,
+      },
+    };
   }
-  return { cols: Math.max(work.w, LOUNGE_W + 2), rows: WALL_ROWS + work.h + 1 + LOUNGE_H };
+  const w = Math.max(work.w, MID_W);
+  const slots = Math.floor((w - 1) / SLOT_W);
+  const kitchenY = top + work.h + 1;
+  const patioY = kitchenY + KITCHEN_H + 1;
+  const dormY = patioY + PATIO_H + 1;
+  const dormH = 1 + 2 * Math.ceil(beds / slots);
+  return {
+    cols: w,
+    rows: dormY + dormH,
+    slots,
+    rooms: {
+      programadores: { id: 'programadores', x: 0, y: top, w, h: work.h },
+      cocina: { id: 'cocina', x: 0, y: kitchenY, w, h: KITCHEN_H },
+      patio: { id: 'patio', x: 0, y: patioY, w, h: PATIO_H },
+      dormitorio: { id: 'dormitorio', x: 0, y: dormY, w, h: dormH },
+    },
+  };
+}
+
+export function layoutSize(params: LayoutParams): { cols: number; rows: number } {
+  const { cols, rows } = plan(params);
+  return { cols, rows };
 }
 
 export function podsFor(count: number): number {
@@ -97,11 +157,12 @@ export function podsFor(count: number): number {
 const centerPx = (tile: Point): Point => ({ x: tile.x * TILE + TILE / 2, y: tile.y * TILE + TILE - 3 });
 
 export function buildLayout(params: LayoutParams): OfficeLayout {
-  const { cols, rows } = layoutSize(params);
+  const { cols, rows, rooms, slots } = plan(params);
   const work = workSize(params);
   const margin = params.compact ? 1 : 2;
   const gap = params.compact ? 1 : 2;
-  const workX = params.side === 'bottom' ? Math.floor((cols - work.w) / 2) : 0;
+  const workRoom = rooms.programadores;
+  const workX = workRoom.x + Math.floor((workRoom.w - work.w) / 2);
   const top = WALL_ROWS;
   const blocked = new Array<boolean>(cols * rows).fill(false);
   const block = (x: number, y: number, w = 1, h = 1) => {
@@ -111,7 +172,13 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
 
   const furniture: Furniture[] = [];
   const desks: DeskSlot[] = [];
-  const zones: Zone[] = [{ kind: 'carpet', x: workX, y: top, w: work.w, h: rows - top }];
+  const zones: Zone[] = [
+    { kind: 'carpet', ...pick(workRoom) },
+    { kind: 'tile', ...pick(rooms.cocina) },
+    { kind: 'play', ...pick(rooms.patio) },
+    { kind: 'rest', ...pick(rooms.dormitorio) },
+  ];
+  const wall: WallItem[] = [];
 
   for (let pod = 0; pod < params.pods; pod += 1) {
     const px = workX + margin + (pod % params.podCols) * (POD_W + gap);
@@ -122,11 +189,10 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
       const chairY = facing === 'down' ? py : py + 3;
       const deskY = facing === 'down' ? py + 1 : py + 2;
       const index = desks.length;
-      const seatTile = { x, y: chairY };
       const visitTile = { x, y: facing === 'down' ? py - 1 : py + 4 };
       desks.push({
         index, x, deskY, chairY, facing,
-        seat: { tile: seatTile, px: { x: (x + 1) * TILE, y: chairY * TILE + TILE - 3 }, dir: facing },
+        seat: { tile: { x, y: chairY }, px: { x: (x + 1) * TILE, y: chairY * TILE + TILE - 3 }, dir: facing },
         visit: { tile: visitTile, px: { x: (x + 1) * TILE, y: visitTile.y * TILE + TILE - 3 }, dir: facing },
       });
       furniture.push({ kind: 'desk', x, y: deskY, slot: index });
@@ -140,56 +206,95 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
     furniture.push({ kind: 'plant', x, y, big });
     block(x, y);
   };
-  plant(workX, top, true);
-  plant(workX + work.w - 1, rows - 1, false);
-  if (params.side === 'right') plant(workX, rows - 1, false);
+  plant(workRoom.x, top, true);
+  plant(workRoom.x + workRoom.w - 1, workRoom.y + workRoom.h - 1, false);
 
-  const lx = params.side === 'right' ? work.w : Math.floor((cols - LOUNGE_W) / 2);
-  const ly = params.side === 'right' ? top : top + work.h + 1;
-  if (params.side === 'bottom') {
-    const door = lx + 6;
-    zones.push({ kind: 'partition', x: 0, y: ly - 1, w: door, h: 1 });
-    zones.push({ kind: 'partition', x: door + 2, y: ly - 1, w: cols - door - 2, h: 1 });
-    block(0, ly - 1, door, 1);
-    block(door + 2, ly - 1, cols - door - 2, 1);
+  /** A wall run with gaps: `gaps` lists the first tile of each two-tile doorway. */
+  const wallRun = (kind: 'partition' | 'pillar', x: number, y: number, length: number, gaps: number[]) => {
+    let start = 0;
+    for (const gapAt of [...gaps.sort((a, b) => a - b), length]) {
+      const run = gapAt - start;
+      if (run > 0) {
+        const zone = kind === 'partition' ? { x: x + start, y, w: run, h: 1 } : { x, y: y + start, w: 1, h: run };
+        zones.push({ kind, ...zone });
+        block(zone.x, zone.y, zone.w, zone.h);
+      }
+      start = gapAt + 2;
+    }
+  };
+
+  const kitchen = rooms.cocina;
+  const patio = rooms.patio;
+  const dorm = rooms.dormitorio;
+  const kx = kitchen.x + Math.floor((kitchen.w - MID_W) / 2);
+  const gx = patio.x + Math.floor((patio.w - MID_W) / 2);
+  if (params.side === 'right') {
+    wallRun('pillar', workRoom.w, top, workRoom.h, [1, KITCHEN_H + 4]);
+    wallRun('partition', kitchen.x, kitchen.y + KITCHEN_H, MID_W, [7]);
+    wallRun('pillar', dorm.x - 1, top, dorm.h, [KITCHEN_H + 6]);
+  } else {
+    wallRun('partition', 0, kitchen.y - 1, cols, [kx + 6]);
+    wallRun('partition', 0, patio.y - 1, cols, [gx + 7]);
+    wallRun('partition', 0, dorm.y - 1, cols, [gx + 4]);
   }
-  zones.push({ kind: 'wood', x: params.side === 'right' ? lx : 0, y: params.side === 'right' ? ly : ly - 1, w: params.side === 'right' ? LOUNGE_W : cols, h: rows - ly + (params.side === 'right' ? 0 : 1) });
-  zones.push({ kind: 'tile', x: lx, y: ly, w: 6, h: 3 });
-  zones.push({ kind: 'rug', x: lx + 1, y: ly + 3, w: 7, h: 3 });
 
-  furniture.push({ kind: 'counter', x: lx, y: ly, w: 4 });
-  furniture.push({ kind: 'coffee', x: lx + 1, y: ly });
-  furniture.push({ kind: 'fridge', x: lx + 4, y: ly });
-  block(lx, ly, 5, 1);
-  plant(lx + 8, ly, true);
+  furniture.push({ kind: 'counter', x: kx, y: kitchen.y, w: 4 });
+  furniture.push({ kind: 'coffee', x: kx + 1, y: kitchen.y });
+  furniture.push({ kind: 'fridge', x: kx + 4, y: kitchen.y });
+  block(kx, kitchen.y, 5, 1);
+  plant(kx + 9, kitchen.y, true);
+  furniture.push({ kind: 'table', x: kx + 6, y: kitchen.y + 2 });
+  block(kx + 6, kitchen.y + 2);
+  furniture.push({ kind: 'cooler', x: kx + 9, y: kitchen.y + 2 });
+  block(kx + 9, kitchen.y + 2);
 
-  furniture.push({ kind: 'sofa', x: lx + 2, y: ly + 3, w: 3, facing: 'down', alt: false });
-  furniture.push({ kind: 'table', x: lx + 3, y: ly + 4 });
-  furniture.push({ kind: 'sofa', x: lx + 2, y: ly + 5, w: 3, facing: 'up', alt: true });
-  furniture.push({ kind: 'beanbag', x: lx + 6, y: ly + 3, variant: 0 });
-  furniture.push({ kind: 'beanbag', x: lx + 6, y: ly + 5, variant: 1 });
-  block(lx + 2, ly + 3, 3, 1);
-  block(lx + 3, ly + 4);
-  block(lx + 2, ly + 5, 3, 1);
-  block(lx + 6, ly + 3);
-  block(lx + 6, ly + 5);
-  plant(lx, ly + 4, false);
-
-  zones.push({ kind: 'rest', x: lx, y: ly + 7, w: 7, h: 3 });
-  const beds = [{ x: lx + 1, y: ly + 7 }, { x: lx + 4, y: ly + 7 }, { x: lx + 1, y: ly + 9 }];
-  beds.forEach((bed, variant) => {
-    furniture.push({ kind: 'bed', x: bed.x, y: bed.y, variant });
-    block(bed.x, bed.y, 2, 1);
+  const play: Spot[] = [];
+  const stand = (x: number, y: number, dir: Dir, game: GameKind, station: number): Spot => ({
+    tile: { x, y }, px: centerPx({ x, y }), dir, game, station,
   });
-  furniture.push({ kind: 'lamp', x: lx + 3, y: ly + 9 });
-  block(lx + 3, ly + 9);
-  furniture.push({ kind: 'rack', x: lx + 7, y: ly + 7 });
-  furniture.push({ kind: 'rack', x: lx + 8, y: ly + 7 });
-  block(lx + 7, ly + 7, 2, 1);
-  furniture.push({ kind: 'cooler', x: lx + 5, y: ly + 9 });
-  block(lx + 5, ly + 9);
-  furniture.push({ kind: 'shelf', x: lx + 7, y: ly + 9 });
-  block(lx + 7, ly + 9, 2, 1);
+  const arcades = [0, 1, 2].map((station) => {
+    furniture.push({ kind: 'arcade', x: gx + 1 + station, y: patio.y, station });
+    block(gx + 1 + station, patio.y);
+    return stand(gx + 1 + station, patio.y + 1, 'up', 'arcade', station);
+  });
+  furniture.push({ kind: 'pingpong', x: gx + 5, y: patio.y + 2 });
+  block(gx + 5, patio.y + 2, 3, 1);
+  furniture.push({ kind: 'foosball', x: gx + 2, y: patio.y + 4 });
+  block(gx + 2, patio.y + 4, 2, 1);
+  zones.push({ kind: 'rug', x: gx + 5, y: patio.y + 4, w: 5, h: 2 });
+  const beanbags = ([[6, 0], [8, 1]] as const).map(([dx, variant], station) => {
+    furniture.push({ kind: 'beanbag', x: gx + dx, y: patio.y + 4, variant, station });
+    block(gx + dx, patio.y + 4);
+    return { tile: { x: gx + dx, y: patio.y + 5 }, px: { x: (gx + dx) * TILE + TILE / 2, y: (patio.y + 4) * TILE + TILE - 3 }, dir: 'down' as const, game: 'beanbag' as const, station };
+  });
+  play.push(
+    stand(gx + 4, patio.y + 2, 'right', 'pingpong', 0),
+    stand(gx + 8, patio.y + 2, 'left', 'pingpong', 0),
+    arcades[0],
+    stand(gx + 3, patio.y + 5, 'up', 'foosball', 0),
+    stand(gx + 2, patio.y + 3, 'down', 'foosball', 0),
+    arcades[1],
+    beanbags[0],
+    arcades[2],
+    beanbags[1],
+  );
+  plant(gx + 9, patio.y, false);
+  plant(gx, patio.y + PATIO_H - 1, false);
+  const watch: Spot[] = ([[5, 3, 'up'], [7, 3, 'up'], [4, 6, 'up'], [6, 6, 'up'], [8, 6, 'up'], [2, 6, 'up'], [1, 3, 'right']] as const)
+    .map(([dx, dy, dir]) => ({ tile: { x: gx + dx, y: patio.y + dy }, px: centerPx({ x: gx + dx, y: patio.y + dy }), dir }));
+
+  const sx0 = dorm.x + 1 + Math.floor((dorm.w - 1 - slots * SLOT_W) / 2);
+  const bedCount = Math.max(1, params.beds);
+  const bedTiles: Point[] = [];
+  for (let index = 0; index < bedCount; index += 1) {
+    const x = sx0 + (index % slots) * SLOT_W;
+    const y = dorm.y + 1 + 2 * Math.floor(index / slots);
+    furniture.push({ kind: 'nightstand', x, y });
+    furniture.push({ kind: 'bed', x: x + 1, y, variant: index });
+    block(x, y, SLOT_W, 1);
+    bedTiles.push({ x: x + 1, y });
+  }
+  zones.push({ kind: 'rug', x: sx0, y: dorm.y, w: Math.min(slots, bedCount) * SLOT_W, h: 1 });
 
   const walkable = blocked.map((value) => !value);
   const nearestFree = (tile: Point): Point => {
@@ -212,29 +317,12 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
     desk.seat.tile = nearestFree(desk.seat.tile);
     desk.visit.tile = nearestFree(desk.visit.tile);
   }
-
-  const seatSpot = (x: number, y: number, dir: Dir, rest: RestKind, variant: number): Spot => ({
-    tile: nearestFree({ x, y }),
-    px: { x: x * TILE + TILE / 2, y: y * TILE + TILE - 3 },
-    dir,
-    rest,
-    variant,
-  });
-  const lieSpot = (x: number, y: number, dx: number, dy: number, rest: RestKind, variant: number): Spot => ({
-    tile: nearestFree({ x, y }),
-    px: { x: x * TILE + dx, y: y * TILE + dy },
-    dir: 'right',
-    rest,
-    variant,
-  });
-  const lounge: Spot[] = [
-    ...beds.map((bed, variant) => lieSpot(bed.x, bed.y, 16, 9, 'bed', variant)),
-    lieSpot(lx + 2, ly + 3, 18, 13, 'sofa', beds.length),
-    seatSpot(lx + 6, ly + 3, 'down', 'beanbag', 0),
-    seatSpot(lx + 6, ly + 5, 'down', 'beanbag', 1),
-  ];
+  for (const spot of play) spot.tile = nearestFree(spot.tile);
+  const beds: Spot[] = bedTiles.map((tile, variant) => ({
+    tile: nearestFree(tile), px: { x: tile.x * TILE + 16, y: tile.y * TILE + 9 }, dir: 'right', rest: 'bed', variant,
+  }));
   const coffee: Spot[] = [1, 2, 3, 0].map((dx) => ({
-    tile: { x: lx + dx, y: ly + 1 }, px: centerPx({ x: lx + dx, y: ly + 1 }), dir: 'up' as const,
+    tile: { x: kx + dx, y: kitchen.y + 1 }, px: centerPx({ x: kx + dx, y: kitchen.y + 1 }), dir: 'up' as const,
   }));
 
   const wander: Point[] = [];
@@ -244,42 +332,50 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
     }
   }
 
-  const wall: WallItem[] = [];
-  const workWallEnd = params.side === 'right' ? work.w : cols;
+  const workWallEnd = workRoom.x + workRoom.w;
   const doorX = workX + margin + POD_W;
-  for (let x = workX + 1; x + 3 <= workWallEnd - 1;) {
+  for (let x = workRoom.x + 1; x + 3 <= workWallEnd - 1;) {
     if (x + 3 > doorX - 1 && x < doorX + 3) {
       x = doorX + 3;
       continue;
     }
-    wall.push({ kind: wall.length === 1 ? 'board' : 'window', x, w: 3 });
+    wall.push({ kind: wall.length === 1 ? 'board' : 'window', x, w: 3, y: 0 });
     x += 5;
   }
-  wall.push({ kind: 'door', x: doorX, w: 2 });
+  wall.push({ kind: 'door', x: doorX, w: 2, y: 0 });
   if (params.side === 'right') {
-    wall.push({ kind: 'clock', x: lx + 2, w: 1 });
-    wall.push({ kind: 'window', x: lx + 5, w: 3 });
+    wall.push({ kind: 'clock', x: kitchen.x + 6, w: 1, y: 0 });
+    wall.push({ kind: 'window', x: kitchen.x + 7, w: 3, y: 0 });
+    wall.push({ kind: 'night', x: dorm.x + 1, w: 3, y: 0 });
+    if (dorm.w >= 10) wall.push({ kind: 'night', x: dorm.x + dorm.w - 4, w: 3, y: 0 });
+  } else {
+    wall.push({ kind: 'night', x: gx + 1, w: 2, y: dorm.y - 1 });
+    wall.push({ kind: 'night', x: gx + 7, w: 2, y: dorm.y - 1 });
   }
   const door: Spot = { tile: { x: doorX, y: top }, px: { x: doorX * TILE + TILE / 2 + (gap > 1 ? TILE / 2 : 0), y: top * TILE + TILE - 3 }, dir: 'down' };
 
-  return { cols, rows, walkable, desks, furniture, wall, zones, lounge, door, coffee, wander };
+  return {
+    cols, rows, walkable, rooms: [rooms.programadores, rooms.cocina, rooms.patio, rooms.dormitorio],
+    desks, furniture, wall, zones, beds, play, watch, door, coffee, wander,
+  };
+}
+
+function pick(room: Room): { x: number; y: number; w: number; h: number } {
+  return { x: room.x, y: room.y, w: room.w, h: room.h };
 }
 
 export interface LayoutChoice { params: LayoutParams; scale: number }
 
-/**
- * Picks the pod arrangement that shows the office largest inside the box. `scale` is in device
- * pixels per art pixel and always an integer, so pixels stay square and crisp. When nothing fits
- * the height at the minimum readable scale (phones), the height is let go and the page scrolls.
- */
+/** Largest crisp integer `scale` (device px per art px); on phones the height is let go and the page scrolls. */
 export function chooseLayout(count: number, box: { width: number; height: number; dpr: number }): LayoutChoice {
   const pods = podsFor(count);
+  const beds = Math.max(1, count);
   const minScale = Math.ceil(1.6 * box.dpr);
   const maxScale = Math.floor(5 * box.dpr);
   const candidates: { params: LayoutParams; kw: number; kh: number; empty: number }[] = [];
   for (const compact of box.width < 700 ? [true] : [false, true]) for (const side of ['right', 'bottom'] as const) {
     for (let podCols = 1; podCols <= Math.min(pods, 8); podCols += 1) {
-      const params = { pods, podCols, side, compact };
+      const params = { pods, podCols, side, compact, beds };
       const { cols, rows } = layoutSize(params);
       candidates.push({
         params,

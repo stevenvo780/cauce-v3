@@ -1,6 +1,6 @@
 import { Dialog } from '@base-ui/react/dialog';
 import { Tabs } from '@base-ui/react/tabs';
-import { FileText, MessageSquare, SquareTerminal, X } from 'lucide-react';
+import { FileText, MessageCircle, MessageSquare, SquareTerminal, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { FleetActivityItem, SystemStatus } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
@@ -21,10 +21,11 @@ import { LIVE_STATE_META, aliasDe, humanSeconds, type LiveAgentView, type Origen
  * hit a row that just moved. Each delivery links to Queues, where retry and cancel live with their
  * own confirmation.
  */
-export function AgentSheet({ view, status, onClose }: {
+export function AgentSheet({ view, status, onClose, onTalk }: {
   view: LiveAgentView | null;
   status: Resource<SystemStatus>;
   onClose: () => void;
+  onTalk?: () => void;
 }) {
   return (
     <Dialog.Root open={view !== null} onOpenChange={(open) => { if (!open) onClose(); }} modal={false}>
@@ -36,14 +37,14 @@ export function AgentSheet({ view, status, onClose }: {
             'min-[761px]:inset-x-auto min-[761px]:top-3 min-[761px]:right-3 min-[761px]:bottom-3 min-[761px]:h-auto min-[761px]:w-[400px] min-[761px]:rounded-xl min-[761px]:border',
           )}
         >
-          {view ? <SheetBody view={view} status={status} /> : null}
+          {view ? <SheetBody view={view} status={status} onTalk={onTalk} /> : null}
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
   );
 }
 
-function SheetBody({ view, status }: { view: LiveAgentView; status: Resource<SystemStatus> }) {
+function SheetBody({ view, status, onTalk }: { view: LiveAgentView; status: Resource<SystemStatus>; onTalk?: () => void }) {
   const tenant = encodeURIComponent(view.tenantId);
   const alias = encodeURIComponent(view.alias);
   const items = view.agent.in_flight_items ?? [];
@@ -83,6 +84,15 @@ function SheetBody({ view, status }: { view: LiveAgentView; status: Resource<Sys
         </dl>
 
         <div className="mt-4 grid gap-2">
+          {onTalk ? (
+            <button
+              type="button"
+              onClick={onTalk}
+              className="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-line bg-surface text-[13px] font-medium text-fg transition-colors hover:bg-subtle"
+            >
+              <MessageCircle size={15} aria-hidden="true" /> Hablar
+            </button>
+          ) : null}
           {links.map(({ href, label, icon: Icon, primary }) => (
             <a
               key={label}
