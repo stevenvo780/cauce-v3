@@ -2,22 +2,22 @@ import { useId } from 'react';
 import { cn } from '../../cn';
 
 /** Three streams —the agents— converging into one channel: the confluence that names Cauce. */
-export function LogoMark({ size = 32, className }: { size?: number; className?: string }) {
+export function LogoMark({ size = 32, className, live = false }: { size?: number; className?: string; live?: boolean }) {
   const id = useId();
   return (
     <svg
       viewBox="0 0 64 64"
       width={size}
       height={size}
-      className={cn('shrink-0', className)}
+      className={cn('shrink-0', live && 'logo-live', className)}
       aria-hidden="true"
       focusable="false"
     >
       <defs>
         <linearGradient id={`${id}-tile`} x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#6157F2" />
+          <stop offset="0" stopColor="#6157F2" className="logo-stop-a" />
           <stop offset="0.55" stopColor="#4338CA" />
-          <stop offset="1" stopColor="#0E7490" />
+          <stop offset="1" stopColor="#0E7490" className="logo-stop-c" />
         </linearGradient>
         <linearGradient id={`${id}-flow`} x1="12" y1="0" x2="54" y2="0" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.55" />
@@ -42,10 +42,10 @@ export function LogoMark({ size = 32, className }: { size?: number; className?: 
   );
 }
 
-export function Logo({ compact = false, className }: { compact?: boolean; className?: string }) {
+export function Logo({ compact = false, className, live = false }: { compact?: boolean; className?: string; live?: boolean }) {
   return (
     <span className={cn('inline-flex items-center gap-2.5', className)}>
-      <LogoMark size={compact ? 28 : 30} />
+      <LogoMark size={compact ? 28 : 30} live={live} />
       {compact ? null : (
         <span className="flex flex-col leading-none">
           <span className="text-[17px] font-semibold tracking-tight text-fg">cauce</span>

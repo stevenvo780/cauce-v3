@@ -2,7 +2,7 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Component, Fragment, type ErrorInfo, type ReactNode } from 'react';
 import { Button, StateCard } from './kit';
 
-export interface ErrorBoundaryProps {
+interface ErrorBoundaryProps {
   /** What is inside, said as the operator would name it: it becomes the panel's heading. */
   label: string;
   children: ReactNode;

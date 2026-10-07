@@ -61,12 +61,12 @@ export function ThemeControl() {
   }, []);
 
   return (
-    <div className="theme-control inline-flex gap-0.5 rounded-lg bg-muted-bg p-0.5" role="group" aria-label="Tema de la consola">
+    <div className="inline-flex gap-0.5 rounded-lg bg-muted-bg p-0.5" role="group" aria-label="Tema de la consola">
       {OPCIONES.map(({ id, rotulo, icono: Icono }) => (
         <button
           key={id}
           type="button"
-          className="theme-option inline-flex cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:text-fg aria-pressed:bg-surface aria-pressed:text-fg aria-pressed:shadow-card"
+          className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:text-fg aria-pressed:bg-surface aria-pressed:text-fg aria-pressed:shadow-card"
           aria-pressed={tema === id}
           // The label is hidden on a phone, so the name has to travel on the button itself.
           aria-label={rotulo}

@@ -2,7 +2,9 @@ import { Collapsible } from '@base-ui/react/collapsible';
 import { ChevronRight, Search } from 'lucide-react';
 import type { ComponentProps, ReactNode } from 'react';
 import { cn } from '../cn';
+import { LIVE_STATE_META, type LiveState } from '../features/live/agent-state';
 import { display } from '../lib';
+import { STATE_TONE, TONE_CLASS, type Tone } from '../status-tone';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 type Size = 'sm' | 'md';
@@ -49,6 +51,21 @@ ComponentProps<'div'> & { tone?: NoticeTone; children: ReactNode }) {
       {children}
     </div>
   );
+}
+
+/** A soft tone pill with its dot. */
+export function Pill({ tone, className, children, ...props }: ComponentProps<'span'> & { tone: Tone }) {
+  return (
+    <span className={cn('inline-flex h-5 shrink-0 items-center gap-1.5 rounded-full px-2 text-[11px] font-medium whitespace-nowrap', TONE_CLASS[tone].pill, className)} {...props}>
+      <span aria-hidden="true" className={cn('size-1.5 rounded-full', TONE_CLASS[tone].dot)} />
+      {children}
+    </span>
+  );
+}
+
+/** The one way an agent's live state is painted as a pill. */
+export function StatePill({ state, children, ...props }: Omit<ComponentProps<typeof Pill>, 'tone'> & { state: LiveState }) {
+  return <Pill tone={STATE_TONE[state]} {...props}>{children ?? LIVE_STATE_META[state].label}</Pill>;
 }
 
 /** The outcome of a write. Success is announced politely; anything else interrupts. */
@@ -109,7 +126,7 @@ ComponentProps<'div'> & { tone?: 'neutral' | 'danger' }) {
   );
 }
 
-export type KpiTone = 'neutral' | 'positive' | 'warning' | 'danger';
+type KpiTone = 'neutral' | 'positive' | 'warning' | 'danger';
 
 const KPI_INK: Record<KpiTone, string> = {
   neutral: 'text-fg',

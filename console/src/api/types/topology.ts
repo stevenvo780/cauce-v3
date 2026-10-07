@@ -17,7 +17,7 @@ interface RoomMember {
   off_reason?: MemberOffReason | null;
 }
 
-export interface TenantNode {
+interface TenantNode {
   id?: string | null;
   label?: string | null;
   rooms?: {
@@ -27,7 +27,7 @@ export interface TenantNode {
   }[] | null;
 }
 
-export interface AclEdge {
+interface AclEdge {
   from_tenant?: string | null;
   to_tenant?: string | null;
   enabled?: boolean | null;

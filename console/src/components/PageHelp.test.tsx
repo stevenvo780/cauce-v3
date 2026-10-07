@@ -12,13 +12,14 @@ import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';
 import { renderWithApi } from '../test/render';
 import { QueuesPage } from '../features/queues/QueuesPage';
+import { FleetProvider } from '../shell/fleet';
 
 const PROSA = /Las entregas y los incidentes causales son fuentes distintas/i;
 const ABRIDOR = /Qué es «Colas y DLQ operativo»/i;
 
 async function abrirAyuda() {
   const user = userEvent.setup();
-  renderWithApi(<div className="app-shell"><QueuesPage /></div>);
+  renderWithApi(<div className="app-shell"><FleetProvider><QueuesPage /></FleetProvider></div>);
   const boton = await screen.findByRole('button', { name: ABRIDOR });
   await user.click(boton);
   const dialogo = await screen.findByRole('dialog');
@@ -26,7 +27,7 @@ async function abrirAyuda() {
 }
 
 it('la prosa de la cabecera no se pinta en la página: vive detrás del botón', async () => {
-  renderWithApi(<div className="app-shell"><QueuesPage /></div>);
+  renderWithApi(<div className="app-shell"><FleetProvider><QueuesPage /></FleetProvider></div>);
   await screen.findByRole('button', { name: ABRIDOR });
 
   expect(screen.queryByText(PROSA)).not.toBeInTheDocument();

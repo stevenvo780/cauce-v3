@@ -11,7 +11,7 @@ export function PageHelp({ title, description, children }: {
   return (
     <Dialog.Root>
       <Dialog.Trigger
-        className="page-help-boton grid size-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted transition-colors hover:bg-subtle hover:text-fg"
+        className="grid size-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted transition-colors hover:bg-subtle hover:text-fg"
         aria-label={`Qué es «${title}»`}
         title={`Qué es «${title}» y qué exige`}
       >
@@ -27,7 +27,7 @@ export function PageHelp({ title, description, children }: {
             </Dialog.Close>
           </div>
           <Dialog.Description className="m-0 text-[13px] leading-relaxed text-fg-2">{description}</Dialog.Description>
-          {children ? <div className="page-help-extra mt-3 grid gap-2 border-t border-line pt-3 text-[13px] text-muted">{children}</div> : null}
+          {children ? <div className="mt-3 grid gap-2 border-t border-line pt-3 text-[13px] text-muted">{children}</div> : null}
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>

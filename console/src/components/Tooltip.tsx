@@ -14,10 +14,10 @@ import { createId } from '../lib';
  *
  * Two reasons the bubble is mounted with `createPortal` to `document.body` and NEVER inside
  * the `<svg>`:
- *  - a `<foreignObject>` is clipped by the `overflow` of `.lhg-scroll`, so the text of the
- *    right-edge node would be cut off exactly when it is most needed;
- *  - inside the SVG it inherits the node's `transform` and the `viewBox` scaling, meaning the
- *    font size would depend on how many aliases the fleet has.
+ *  - a `<foreignObject>` is clipped by the `overflow` of the scrolling container, so the text of
+ *    an edge node would be cut off exactly when it is most needed;
+ *  - inside the SVG it inherits the node's `transform` and the `viewBox` scaling, so the font
+ *    size would depend on the drawing's zoom.
  *
  * The native `title` is PRESERVED where it already existed: it is the screen-reader and
  * mouse-less user's fallback. This adds to it; it does not replace it.

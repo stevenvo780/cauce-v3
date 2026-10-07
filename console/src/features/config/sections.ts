@@ -8,7 +8,7 @@ import type { ConfigCollection } from './collections';
 
 export type ConfigSectionId = 'general' | 'espacios' | 'agentes' | 'arneses' | 'acceso' | 'avanzado';
 
-export interface ConfigSection {
+interface ConfigSection {
   id: ConfigSectionId;
   label: string;
   /** What the section is for: one sentence, read on entry. */

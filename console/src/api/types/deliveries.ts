@@ -40,7 +40,7 @@ export interface MessageAuthor {
   display_name: string | null;
 }
 
-export type MessageClientProvenance =
+type MessageClientProvenance =
   | { kind: 'unknown' }
   | {
       kind: 'oauth_client';

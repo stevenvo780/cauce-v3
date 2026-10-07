@@ -35,7 +35,7 @@ export function PageHeader({ eyebrow, title, description, notes, actions }: {
   );
 }
 
-const BADGE_TONE = {
+export const BADGE_TONE = {
   online: 'ok', done: 'ok', running: 'info', info: 'info', warning: 'warn', danger: 'danger', offline: 'neutral', unknown: 'neutral',
 } as const satisfies Record<string, Tone>;
 
@@ -210,7 +210,7 @@ export function PermissionBadge({ access, permission }: { access?: ConsoleAccess
 /**
  * Accessible tabs component to switch views within a page.
  */
-export interface ViewTab<T extends string> {
+interface ViewTab<T extends string> {
   id: T;
   label: ReactNode;
   badge?: ReactNode;

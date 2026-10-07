@@ -30,7 +30,7 @@ export const templates: Record<ConfigResource, ConfigMutation> = {
 const actionsByResource: Partial<Record<ConfigResource, readonly ConfigAction[]>> = {
   chain_policy: ['update'],
 };
-export const allActions: readonly ConfigAction[] = ['create', 'update', 'delete'];
+const allActions: readonly ConfigAction[] = ['create', 'update', 'delete'];
 
 export function actionsFor(resource: ConfigResource): readonly ConfigAction[] {
   return actionsByResource[resource] ?? allActions;
