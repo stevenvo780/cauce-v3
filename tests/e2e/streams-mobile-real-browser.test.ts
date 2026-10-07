@@ -275,7 +275,7 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     await mobilePty.click();
     expect(await mobileOperatorPage.getByLabel('Motivo de la sesión').count()).toBe(0);
     await mobileOperatorPage.locator('[data-pty-shell][data-state="open"]').waitFor({ state: 'visible', timeout: 30_000 });
-    await mobileOperatorPage.locator('.xterm-helper-textarea').waitFor({ state: 'visible', timeout: 15_000 });
+    await mobileOperatorPage.locator('.xterm-helper-textarea').waitFor({ state: 'attached', timeout: 15_000 });
     const mobileNonce = randomBytes(12).toString('hex');
     const mobileInput = mobileOperatorPage.locator('.xterm-helper-textarea');
     await mobileInput.type(`printf 'MOBILE-PTY:${mobileNonce}\\n'`);
