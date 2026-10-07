@@ -10,7 +10,7 @@ it.each(['accepted', 'started', 'done'] as const)(
       { status, detail: 'duplicate_or_out_of_order' },
     ] }} />);
     const receipt = screen.getByRole('status');
-    expect(receipt.querySelector('[data-checks]')).toBeNull();
+    expect(receipt.querySelector('[data-checks="1"]')).toBeInTheDocument();
     expect(receipt.querySelector('[data-checks="2"]')).toBeNull();
     expect(receipt).toHaveAttribute('aria-label', 'Entrega: Cauce reintentará la entrega');
   },
@@ -22,8 +22,8 @@ it('un historial con ACK rechazado no completa el estado ausente', () => {
     { status: 'done', detail: 'duplicate_or_out_of_order' },
   ] }} />);
   const receipt = screen.getByRole('status');
-  expect(receipt.querySelector('[data-checks]')).toBeNull();
-  expect(receipt).toHaveAttribute('aria-label', 'Entrega: Publicado · esperando aceptación del agente');
+  expect(receipt.querySelector('[data-checks="1"]')).toBeInTheDocument();
+  expect(receipt).toHaveAttribute('aria-label', 'Entrega: Enviado · esperando aceptación del agente');
 });
 
 it('conserva el recibo aplicado anterior cuando un intento posterior falla', () => {
@@ -33,7 +33,7 @@ it('conserva el recibo aplicado anterior cuando un intento posterior falla', () 
   ];
   render(<MessageDeliveryCheck delivery={{ status: 'failed', timeline }} />);
   const receipt = screen.getByRole('status', { name: 'Entrega: La ejecución falló' });
-  expect(receipt.querySelector('[data-checks="1"]')).toBeInTheDocument();
+  expect(receipt.querySelector('[data-checks="2"]')).toBeInTheDocument();
   expect(receipt).toHaveAttribute('data-failed', 'true');
 });
 
@@ -51,16 +51,15 @@ const consumption = {
 it.each(['accepted', 'started', 'done'] as const)('%s sin comprobante muestra recibido, sin afirmar leído', (status) => {
   render(<MessageDeliveryCheck delivery={{ status, attempt: 1, timeline: [{ status, applied: true, attempt: 1 }] }} />);
   const receipt = screen.getByRole('status');
-  expect(receipt.querySelector('[data-checks="1"]')).toBeInTheDocument();
-  expect(receipt.querySelector('[data-checks="2"]')).toBeNull();
+  expect(receipt.querySelector('[data-checks="2"]')).toBeInTheDocument();
   expect(receipt).toHaveAttribute('title', expect.stringContaining('Lectura sin comprobar'));
 });
 
-it('solo un comprobante aplicado del intento vigente muestra doble check de lectura', () => {
+it('un comprobante aplicado del intento vigente añade lectura al tooltip de recepción', () => {
   render(<MessageDeliveryCheck delivery={{ status: 'done', attempt: 2, timeline: [{
     status: 'done', applied: true, attempt: 2, harness_consumption: consumption,
   }] }} />);
-  const receipt = screen.getByRole('status', { name: 'Entrega: Leído por el agente · respuesta nativa comprobada' });
+  const receipt = screen.getByRole('status', { name: 'Entrega: Recibido por el agente · ejecución terminada' });
   expect(receipt.querySelector('[data-checks="2"]')).toBeInTheDocument();
   expect(receipt).toHaveAttribute('title', expect.stringContaining('Lectura comprobada'));
 });
@@ -72,14 +71,14 @@ it.each([
   render(<MessageDeliveryCheck delivery={{ status: 'done', attempt: 2, timeline: [{
     status: 'done', ...binding, harness_consumption: consumption,
   }] }} />);
-  expect(screen.getByRole('status').querySelector('[data-checks="2"]')).toBeNull();
+  expect(screen.getByRole('status')).toHaveAttribute('title', expect.stringContaining('Lectura sin comprobar'));
 });
 
 it('un intento ausente no convierte evidencia sin binding en lectura', () => {
   render(<MessageDeliveryCheck delivery={{ status: 'done', timeline: [{
     status: 'done', applied: true, harness_consumption: consumption,
   }] }} />);
-  expect(screen.getByRole('status').querySelector('[data-checks="2"]')).toBeNull();
+  expect(screen.getByRole('status')).toHaveAttribute('title', expect.stringContaining('Lectura sin comprobar'));
 });
 
 it('rechaza la evidencia malformada aunque el ACK esté aplicado', () => {
@@ -87,7 +86,7 @@ it('rechaza la evidencia malformada aunque el ACK esté aplicado', () => {
     status: 'done', applied: true, attempt: 1,
     harness_consumption: { ...consumption, input_sha256: 'not-a-digest' },
   }] }} />);
-  expect(screen.getByRole('status').querySelector('[data-checks="2"]')).toBeNull();
+  expect(screen.getByRole('status')).toHaveAttribute('title', expect.stringContaining('Lectura sin comprobar'));
 });
 
 it('muestra «Guardado en buzón» con explicación sin afirmar lectura ni ejecución', () => {

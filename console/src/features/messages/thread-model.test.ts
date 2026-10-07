@@ -100,3 +100,28 @@ describe('dayLabel', () => {
     expect(dayLabel(Date.parse('2025-09-01T12:00:00'), NOW)).toMatch(/2025/);
   });
 });
+
+it('mantiene respuestas hermanas en orden del hilo aunque el detalle llegue fuera de orden', () => {
+  const first = input('first', 'done');
+  const second = input('second', 'done');
+  const rows = threadRows([first, second], [reply(second, { reply: 'segunda' }), reply(first, { reply: 'primera' })]);
+  expect(rows.filter((row) => row.kind !== 'day').map((row) => row.kind === 'reply' ? row.reply.reply : row.item.message.message_id))
+    .toEqual(['first', 'primera', 'second', 'segunda']);
+  expect(new Set(rows.map((row) => row.key)).size).toBe(rows.length);
+});
+
+it('una lectura parcial posterior no oculta la respuesta consolidada guardada de esa raíz', () => {
+  const root = input('a', 'accepted');
+  const rows = threadRows([root], [reply(root, { chainOpen: true, reply: 'parcial' }), reply(root)]);
+  expect(rows.filter((row) => row.kind === 'reply').map((row) => row.reply.reply)).toEqual(['hecho']);
+});
+
+it('deduplica una salida equivalente sólo con la misma traza, destinatario, texto y archivos', () => {
+  const root = input('a', 'done');
+  root.message.trace_id = 'trace-a';
+  const answer = output('hecho');
+  answer.message.trace_id = 'trace-a';
+  expect(threadRows([root, answer], [reply(root)]).filter((row) => row.kind === 'reply')).toHaveLength(0);
+  answer.message.trace_id = 'trace-other';
+  expect(threadRows([root, answer], [reply(root)]).filter((row) => row.kind === 'reply')).toHaveLength(1);
+});

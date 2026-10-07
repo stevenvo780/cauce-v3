@@ -90,16 +90,15 @@ it('representa una respuesta final sólo con archivos sin burbuja vacía ni desc
 });
 
 it.each([
-  { status: 'pending', events: ['published'], label: 'Publicado · esperando aceptación del agente', checks: 0 },
-  { status: 'accepted', events: ['published', 'accepted'], label: 'Recibido por el agente · entrega aceptada', checks: 1 },
-  { status: 'started', events: ['published', 'accepted', 'started'], label: 'Recibido por el agente · ejecución iniciada', checks: 1 },
-  { status: 'done', events: ['published', 'done'], label: 'Recibido por el agente · ejecución terminada', checks: 1 },
+  { status: 'pending', events: ['published'], label: 'Enviado · esperando aceptación del agente', checks: 1 },
+  { status: 'accepted', events: ['published', 'accepted'], label: 'Recibido por el agente · entrega aceptada', checks: 2 },
+  { status: 'started', events: ['published', 'accepted', 'started'], label: 'Recibido por el agente · ejecución iniciada', checks: 2 },
+  { status: 'done', events: ['published', 'done'], label: 'Recibido por el agente · ejecución terminada', checks: 2 },
 ] as const)('los checks de $status dependen de entrega durable y no afirman lectura', ({ status, events, label, checks }) => {
   const { message, delivery } = fixture();
   thread({ items: [{ message, delivery: { ...delivery, status, timeline: events.map((event) => ({ status: event })) }, direction: 'input' }] });
   const check = screen.getByRole('status', { name: `Entrega: ${label}` });
-  if (checks === 0) expect(check.querySelector('[data-checks]')).toBeNull();
-  else expect(check.querySelector(`[data-checks="${String(checks)}"]`)).toBeInTheDocument();
+  expect(check.querySelector(`[data-checks="${String(checks)}"]`)).toBeInTheDocument();
   expect(check).toHaveAttribute('title', `${label}. Lectura sin comprobar.`);
   expect(check).not.toHaveTextContent(/leído|leyó/);
 });
@@ -289,4 +288,24 @@ it('no infiere buzón por prefijo de dirección sin marcador del API en el hilo'
   expect(screen.queryByText('Guardado en buzón')).toBeNull();
   expect(document.querySelector('[data-mailbox-destination]')).toBeNull();
   expect(screen.getByText(mailboxAddress, { exact: false })).toBeVisible();
+});
+
+it('conserva texto y archivos de dos raíces al cambiar la respuesta activa o enviarla todavía', () => {
+  const { message, delivery, canonical } = fixture();
+  const next = { ...message, message_id: 'second-root', body_preview: 'Segundo mensaje' };
+  const nextDelivery = { ...delivery, delivery_id: 'second-delivery' };
+  const second = { ...canonical, messageId: 'second-root', deliveryId: 'second-delivery', reply: null,
+    replyAttachments: [{ name: 'segunda.png', mime_type: 'image/png', file_size: 20, sha256: 'a'.repeat(64) }],
+    replyAttachmentDeliveryId: 'effective-second', replyAttachmentAttempt: 1 };
+  const items = [{ message, delivery, direction: 'input' as const }, { message: next, delivery: nextDelivery, direction: 'input' as const }];
+  const base = { items, alias: 'argos', seed: 'Steven/argos', fullBodies: {}, onSelectItem: vi.fn(), onExpand: vi.fn(), canonicalReplies: [canonical, second] };
+  const view = render(<ChatThread {...base} canonicalReply={second} />);
+  expect(screen.getByText('Pong del agente')).toBeVisible();
+  expect(screen.getByText('segunda.png')).toBeVisible();
+  view.rerender(<ChatThread {...base} />);
+  expect(screen.getByText('Pong del agente')).toBeVisible();
+  expect(screen.getByText('segunda.png')).toBeVisible();
+  view.rerender(<ChatThread {...base} canonicalReply={canonical} />);
+  expect(screen.getAllByText('Pong del agente')).toHaveLength(1);
+  expect(screen.getAllByText('segunda.png')).toHaveLength(1);
 });

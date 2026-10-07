@@ -1,5 +1,5 @@
 import { Scissors } from 'lucide-react';
-import type { HTMLAttributes, MouseEvent, ReactNode } from 'react';
+import { useEffect, useState, type HTMLAttributes, type MouseEvent, type ReactNode } from 'react';
 import { AgentOrb } from '../../components/AgentOrb';
 import { cn } from '../../cn';
 import { timestampExacto } from '../../lib';
@@ -11,7 +11,8 @@ import type { TranscriptItem } from '../terminal/session';
 import { MessageActions } from './MessageActions';
 import { MessageAttachments } from './MessageAttachments';
 import { MessageDeliveryCheck } from './MessageDeliveryCheck';
-import { messageAttachmentList } from './message-attachment-list';
+import { messageAttachmentList, messageMediaKind } from './message-attachment-list';
+import { optimisticMessageOf } from './optimistic-message';
 import { RichText } from './RichText';
 import { replyConsolidated, replyFor } from './thread-model';
 import type { CanonicalReply } from './use-canonical-reply';
@@ -93,6 +94,23 @@ function MessageTime({ value }: { value: string | null | undefined }) {
   return <time dateTime={value ?? undefined} title={timestampExacto(value)}>{clock.format(time)}</time>;
 }
 
+function LocalMessageFile({ file }: { file: File }) {
+  const [url, setUrl] = useState<string>();
+  const kind = messageMediaKind(file.type);
+  useEffect(() => {
+    if (kind === 'document') return;
+    const preview = URL.createObjectURL(file);
+    setUrl(preview);
+    return () => { URL.revokeObjectURL(preview); };
+  }, [file, kind]);
+  return <li>
+    {url && kind === 'image' ? <img className="size-9 shrink-0 rounded-md object-cover" src={url} alt={`Adjunto local: ${file.name}`} /> : null}
+    {url && kind === 'video' ? <video className="h-9 w-[min(160px,42vw)] shrink-0" src={url} controls playsInline preload="metadata" aria-label={`Vista previa de ${file.name}`} /> : null}
+    {url && kind === 'audio' ? <audio className="h-9 w-[min(160px,42vw)] shrink-0" src={url} controls preload="metadata" aria-label={`Vista previa de ${file.name}`} /> : null}
+    <span>{file.name}</span>
+  </li>;
+}
+
 function previewText(preview: string | null | undefined, truncated: boolean): string {
   if (typeof preview !== 'string') return 'Contenido no incluido por el servidor.';
   if (preview.trim().length === 0) return 'Mensaje sin contenido textual.';
@@ -154,14 +172,17 @@ export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody,
   onReplyRetry?: () => void;
 }) {
   const { message, direction, delivery } = item;
+  const optimistic = optimisticMessageOf(item);
   const id = message.message_id ?? undefined;
   const hasText = typeof message.body_preview === 'string' && message.body_preview.trim().length > 0;
   const full = fullBody?.estado === 'listo' ? fullBody.texto : undefined;
-  const truncated = hasText && full === undefined && previsualizacionRecortada(message.body_preview);
+  const truncated = !optimistic && hasText && full === undefined && previsualizacionRecortada(message.body_preview);
   const structured = full === undefined ? structuredBody(message.body_preview) : undefined;
   const showText = full !== undefined || hasText || messageAttachmentList(message.attachments).length === 0;
   const text = full ?? previewText(message.body_preview, truncated);
   const matching = replyFor(item, canonicalReply);
+  const deliveryState = optimistic?.state === 'published' && delivery?.status === 'pending'
+    && matching?.status && !canonicalReplyStale ? { ...delivery, status: matching.status } : delivery;
   const retry = matching && (!replyConsolidated(matching) || canonicalReplyStale) ? onReplyRetry : undefined;
   const actions = <MessageActions disabled={!id} onDetail={(opener) => { onSelect(item, opener); }} onRetry={retry} />;
   const common = {
@@ -215,12 +236,22 @@ export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody,
           <p className="m-0 whitespace-pre-wrap">{text}</p>
         </div>
       ) : null}
-      <div className="flex max-w-[min(85%,36rem)] justify-end"><MessageAttachments messageId={message.message_id} files={message.attachments} /></div>
+      <div className="flex max-w-[min(85%,36rem)] justify-end"><MessageAttachments messageId={message.message_id} files={optimistic?.files.length ? undefined : message.attachments} /></div>
+      {optimistic?.files.length ? (
+        <ul className="m-0 grid min-w-0 list-none gap-1.5 p-0" aria-label="Archivos del mensaje">
+          {optimistic.files.map((file, index) => <LocalMessageFile key={index} file={file} />)}
+        </ul>
+      ) : null}
       {truncation ? <div className="mt-1 px-1">{truncation}</div> : null}
       <div className="mt-1 flex items-center gap-2 px-1 text-[11px] text-muted">
         <span className="opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/msg:opacity-100 [@media(hover:hover)]:focus-within:opacity-100">{actions}</span>
         <MessageTime value={message.created_at} />
-        {delivery ? <MessageDeliveryCheck delivery={delivery} /> : null}
+        {optimistic && optimistic.state !== 'published' ? (
+          <span role="status" aria-label={`Publicación: ${optimistic.state === 'sending' ? 'Enviando' : 'Sin confirmar'}`}>
+            <span aria-hidden="true">{optimistic.state === 'sending' ? '◷' : '!'}</span>
+            {optimistic.state === 'failed' ? ' Sin confirmar' : null}
+          </span>
+        ) : deliveryState ? <MessageDeliveryCheck delivery={deliveryState} /> : null}
         {failed && id ? (
           <button type="button" onClick={() => { onSelect(item); }}
             className="cursor-pointer border-0 bg-transparent p-0 text-[11px] font-medium text-danger-ink underline-offset-2 hover:underline">

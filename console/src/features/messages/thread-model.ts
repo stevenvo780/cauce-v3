@@ -1,6 +1,7 @@
 import type { LiveState } from '../live/agent-state';
 import type { TranscriptItem } from '../terminal/session';
 import { humanAuthor } from '../terminal/message-author';
+import { optimisticMessageOf } from './optimistic-message';
 import type { CanonicalReply } from './use-canonical-reply';
 
 /** Consecutive messages from the same author closer than this share one header. */
@@ -14,13 +15,15 @@ type ThreadRow =
   | { kind: 'reply'; key: string; item: TranscriptItem; reply: CanonicalReply; startsGroup: boolean };
 
 /** The canonical reply belongs to this row only when message, delivery and recipient all match. */
-export function replyFor(item: TranscriptItem, reply: CanonicalReply | undefined): CanonicalReply | undefined {
+export function replyFor(item: TranscriptItem, reply: CanonicalReply | readonly CanonicalReply[] | undefined): CanonicalReply | undefined {
+  if (Array.isArray(reply)) return (reply as readonly CanonicalReply[]).find((candidate) => replyFor(item, candidate));
+  const single = reply as CanonicalReply | undefined;
   const delivery = item.delivery;
-  if (!reply || !delivery) return undefined;
-  return reply.messageId === item.message.message_id
-    && reply.deliveryId === delivery.delivery_id
-    && reply.tenantId === delivery.recipient_tenant
-    && reply.alias === delivery.recipient_alias ? reply : undefined;
+  if (!single || !delivery) return undefined;
+  return single.messageId === item.message.message_id
+    && single.deliveryId === delivery.delivery_id
+    && single.tenantId === delivery.recipient_tenant
+    && single.alias === delivery.recipient_alias ? single : undefined;
 }
 
 /** Partial text is never shown: only a closed chain with a terminal status counts as an answer. */
@@ -32,9 +35,20 @@ function replyHasContent(reply: CanonicalReply): boolean {
   return (typeof reply.reply === 'string' && reply.reply.trim().length > 0) || Boolean(reply.replyAttachments?.length);
 }
 
-function visibleReply(item: TranscriptItem, reply: CanonicalReply | undefined): CanonicalReply | undefined {
-  const matching = replyFor(item, reply);
-  return matching && replyHasContent(matching) && replyConsolidated(matching) ? matching : undefined;
+function visibleReply(item: TranscriptItem, reply: CanonicalReply | readonly CanonicalReply[] | undefined): CanonicalReply | undefined {
+  const candidates: readonly CanonicalReply[] = Array.isArray(reply) ? reply as readonly CanonicalReply[] : reply ? [reply as CanonicalReply] : [];
+  return candidates.find((candidate) => replyFor(item, candidate) && replyHasContent(candidate) && replyConsolidated(candidate));
+}
+
+function echoedByOutput(items: readonly TranscriptItem[], root: TranscriptItem, reply: CanonicalReply): boolean {
+  const trace = root.message.trace_id;
+  if (!trace) return false;
+  const attachments = (entries: CanonicalReply['replyAttachments']) => JSON.stringify((entries ?? [])
+    .map((entry) => [entry.name, entry.mime_type, entry.file_size, entry.sha256]));
+  return items.some((item) => item.direction === 'output' && item.message.trace_id === trace
+    && item.message.tenant_id === reply.tenantId && item.message.actor_alias === reply.alias
+    && (item.message.body_preview ?? '') === (reply.reply ?? '')
+    && attachments(item.message.attachments ?? undefined) === attachments(reply.replyAttachments));
 }
 
 function authorKey(item: TranscriptItem): string {
@@ -65,7 +79,7 @@ export function dayLabel(time: number, now = Date.now()): string {
  * consolidated replies, each marked with whether it opens a new author group. Kept flat on purpose
  * so a reply stays a sibling of the message it answers.
  */
-export function threadRows(items: readonly TranscriptItem[], reply: CanonicalReply | undefined, now = Date.now()): ThreadRow[] {
+export function threadRows(items: readonly TranscriptItem[], reply: CanonicalReply | readonly CanonicalReply[] | undefined, now = Date.now()): ThreadRow[] {
   const rows: ThreadRow[] = [];
   let lastDay: string | undefined;
   let lastAuthor: string | undefined;
@@ -84,10 +98,10 @@ export function threadRows(items: readonly TranscriptItem[], reply: CanonicalRep
   };
   items.forEach((item, index) => {
     const time = Date.parse(item.message.created_at ?? '');
-    const key = item.message.message_id ?? `${item.direction}-${String(index)}`;
+    const key = optimisticMessageOf(item)?.clientId ?? item.message.message_id ?? `${item.direction}-${String(index)}`;
     push({ kind: 'message', key, item, side: item.direction === 'output' ? 'agent' : 'operator', startsGroup: true }, authorKey(item), time);
     const answer = item.direction === 'input' ? visibleReply(item, reply) : undefined;
-    if (answer) push({ kind: 'reply', key: `${key}-reply`, item, reply: answer, startsGroup: true }, `agent:${answer.tenantId}:${answer.alias}`, time);
+    if (answer && !echoedByOutput(items, item, answer)) push({ kind: 'reply', key: `${key}-reply`, item, reply: answer, startsGroup: true }, `agent:${answer.tenantId}:${answer.alias}`, time);
   });
   return rows;
 }
@@ -103,7 +117,7 @@ const WAITING = new Set(['pending', 'retry']);
  */
 export function typingState({ items, reply, live }: {
   items: readonly TranscriptItem[];
-  reply?: CanonicalReply;
+  reply?: CanonicalReply | readonly CanonicalReply[];
   live?: LiveState;
 }): TypingState | undefined {
   const last = items.at(-1);
