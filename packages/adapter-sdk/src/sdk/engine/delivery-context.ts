@@ -297,6 +297,15 @@ export interface DeliveryHarnessInvocation {
   readonly selectionError?: unknown;
 }
 
+/** Exact owner match only: shared TTY mode, the configured owner UUID and the agent's own tenant. */
+function ownerInSharedSession(humanInitiator: HarnessRequestContext["human_initiator"],
+  ownTenantId: string | undefined): boolean {
+  const owner = process.env.CAUCE_OWNER_HUMAN_ID?.trim().toLowerCase();
+  return process.env.CAUCE_SHARED_SESSION === "1" && owner !== undefined && owner.length > 0
+    && humanInitiator !== undefined && ownTenantId !== undefined
+    && humanInitiator.human_id.toLowerCase() === owner && humanInitiator.tenant_id === ownTenantId;
+}
+
 export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAdapter,
   selector: ((delivery: Delivery) => HarnessAdapter) | undefined,
   ownTenantId: string | undefined): DeliveryHarnessInvocation {
@@ -304,6 +313,15 @@ export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAd
     const humanInitiator = humanInitiatorFromDelivery(delivery);
     const clientIdentity = clientIdentitySidecarFields(delivery, humanInitiator, ownTenantId);
     const consoleHuman = authenticatedConsoleDelivery(delivery);
+    // The owner is ONE person talking to ONE agent: their turns land in the live shared session, never in
+    // a parallel headless copy of the agent. Other humans keep their isolated conversation.
+    if (ownerInSharedSession(humanInitiator, ownTenantId)) {
+      const lane = "human";
+      const session: HarnessSessionRequestScope = { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane };
+      const reservation = harness.reserveSession(session.sessionKey, lane);
+      return { harness, session, clientIdentity, ...(reservation === undefined ? {} : { reservation }),
+        ...(humanInitiator === undefined ? {} : { humanInitiator }) };
+    }
     const isolatedHuman = humanInitiator !== undefined || consoleHuman;
     if (isolatedHuman && selector === undefined) {
       throw new AdapterError("UNSUPPORTED_HUMAN_ISOLATION", "Human session isolation is unavailable", false);

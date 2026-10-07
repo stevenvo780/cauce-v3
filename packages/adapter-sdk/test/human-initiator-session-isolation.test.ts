@@ -316,3 +316,34 @@ test("a custom selector cannot send console or durable human turns into a shared
   }
   assert.equal(context.manual.requests.length, 0);
 });
+
+test("the configured owner lands in the one shared session; other humans stay isolated", async (t) => {
+  const context = await isolatedEngine(t);
+  const previous = { shared: process.env.CAUCE_SHARED_SESSION, owner: process.env.CAUCE_OWNER_HUMAN_ID };
+  const reservations = [];
+  try {
+    process.env.CAUCE_SHARED_SESSION = "1";
+    process.env.CAUCE_OWNER_HUMAN_ID = HUMAN_A.toUpperCase();
+    const selector = humanHarnessSelector(context.adapters.harness, context.adapters.humanHarness);
+    const owner = prepareDeliveryInvocation(humanDelivery(HUMAN_A), context.adapters.harness, selector, "Steven");
+    reservations.push(owner.reservation);
+    assert.equal(owner.harness, context.adapters.harness);
+    assert.equal(owner.session.sessionKey, "shared:argos");
+    assert.equal(owner.humanInitiator?.human_id, HUMAN_A);
+    const other = prepareDeliveryInvocation(humanDelivery(HUMAN_B), context.adapters.harness, selector, "Steven");
+    reservations.push(other.reservation);
+    assert.equal(other.harness, context.adapters.humanHarness);
+    assert.match(other.session.sessionKey ?? "", /^auth-v3:/u);
+    const foreignTenant = prepareDeliveryInvocation(humanDelivery(HUMAN_A), context.adapters.harness, selector, "Miguel");
+    assert.notEqual(foreignTenant.harness, context.adapters.harness);
+    reservations.push(foreignTenant.reservation);
+    delete process.env.CAUCE_SHARED_SESSION;
+    const noShared = prepareDeliveryInvocation(humanDelivery(HUMAN_A), context.adapters.harness, selector, "Steven");
+    reservations.push(noShared.reservation);
+    assert.equal(noShared.harness, context.adapters.humanHarness);
+  } finally {
+    for (const reservation of reservations) reservation?.release();
+    if (previous.shared === undefined) delete process.env.CAUCE_SHARED_SESSION; else process.env.CAUCE_SHARED_SESSION = previous.shared;
+    if (previous.owner === undefined) delete process.env.CAUCE_OWNER_HUMAN_ID; else process.env.CAUCE_OWNER_HUMAN_ID = previous.owner;
+  }
+});
