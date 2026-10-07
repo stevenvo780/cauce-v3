@@ -1,4 +1,5 @@
-import { TILE, type Dir, type Furniture, type Point, type Room, type Spot, type Zone } from './layout';
+import type { Dir, Furniture, Point, Room, Spot, Zone } from './layout';
+import { TILE } from './tile';
 
 /** The garden's fixtures are drawn for a block this size; wider or taller gardens get more lawn. */
 export const GARDEN_CORE_W = 10;

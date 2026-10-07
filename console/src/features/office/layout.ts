@@ -1,7 +1,8 @@
 import { GARDEN_CORE_H, GARDEN_CORE_W, buildGarden } from './garden-layout';
 
 /** Tile edge, in art pixels. */
-export const TILE = 16;
+export { TILE } from './tile';
+import { TILE } from './tile';
 /** The back wall takes the first rows; the floor starts below it. */
 export const WALL_ROWS = 3;
 const SEATS_PER_POD = 4;
