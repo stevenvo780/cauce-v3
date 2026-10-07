@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'; /* eslint @typescript-eslint/no-
 import { WebSocket } from 'ws';
 import { AliasSchema, TenantSchema, isLiteralTrue, isSignalAborted, isRfcUuid } from '@cauce/protocol';
 import {
-  StoreError, subscribeDeliveryWakes, type ConnectionSessionFence,
+  StoreError, claimableIdleRecipients, subscribeDeliveryWakes, type ConnectionSessionFence,
   type FencedWakeOutboxRecipient, type WakeOutboxClaimFence,
 } from '@cauce/store';
 import type { GatewayRepository, OutboxLeaseEvent } from '../../app.js';
@@ -103,9 +103,10 @@ export function createCoreOutboxRuntime(
   drain: (session: Session, context?: WakeLatencyContext) => Promise<boolean>,
 ): { pumpOutbox: () => Promise<void>; start: () => Promise<void> } {
   const {
-    outboxPollMs, outboxLeaseMs, outboxWakeConcurrency, outboxShutdownTimeoutMs,
-    wakePumpTelemetry, workerId,
+    outboxPollMs, pendingSweepMs, outboxLeaseMs, outboxWakeConcurrency, outboxShutdownTimeoutMs,
+    wakePumpTelemetry, workerId, admission,
   } = resolved;
+  let pendingSweepPromise: Promise<void> | undefined;
   let outboxPumpPromise: Promise<void> | undefined;
   const outboxPumpAbort = new AbortController();
   let wakeRecipientCursor = 0;
@@ -351,6 +352,27 @@ export function createCoreOutboxRuntime(
     return result.status;
   }
 
+  function sweepPendingDeliveries(): Promise<void> {
+    if (pendingSweepPromise !== undefined || outboxPumpAbort.signal.aborted) return pendingSweepPromise ?? Promise.resolve();
+    const open = [...sessions.values()].filter((session) => session.socket.readyState === WebSocket.OPEN
+      && !session.abort.signal.aborted && session.drainPromise === undefined);
+    if (open.length === 0) return Promise.resolve();
+    const sweep = claimableIdleRecipients(options.pool,
+      open.map((session) => ({ tenant_id: session.tenantId, alias: session.alias })),
+      { minAgeMs: pendingSweepMs, humanReservedCapacity: admission.humanReservedDeliveries })
+      .then((claimable) => {
+        for (const recipient of claimable) {
+          const tenant = TenantSchema.safeParse(recipient.tenant_id);
+          if (!tenant.success) continue;
+          const active = sessions.get(sessionKey(tenant.data, recipient.alias));
+          if (active?.socket.readyState === WebSocket.OPEN) void drain(active);
+        }
+      })
+      .finally(() => { pendingSweepPromise = undefined; });
+    pendingSweepPromise = sweep;
+    return sweep;
+  }
+
   async function start(): Promise<void> {
     const wakeSubscriber = options.deliveryWakeSubscriber ?? subscribeDeliveryWakes;
     const stopDeliveryWakes = await wakeSubscriber(options.pool, (notice) => {
@@ -366,9 +388,14 @@ export function createCoreOutboxRuntime(
       void pumpOutbox().catch((error: unknown) => { app.log.error(error); });
     }, outboxPollMs);
     timer.unref();
+    const sweepTimer = pendingSweepMs === 0 ? undefined : setInterval(() => {
+      void sweepPendingDeliveries().catch((error: unknown) => { app.log.error(error); });
+    }, pendingSweepMs);
+    sweepTimer?.unref();
 
     app.addHook('onClose', async () => {
       clearInterval(timer);
+      if (sweepTimer !== undefined) clearInterval(sweepTimer);
       wakePumpTelemetry.markStopping();
       outboxPumpAbort.abort(new Error('gateway shutdown'));
       await stopDeliveryWakes();
@@ -390,6 +417,7 @@ export function createCoreOutboxRuntime(
         for (;;) {
           const pending: Promise<unknown>[] = [
             ...(outboxPumpPromise === undefined ? [] : [outboxPumpPromise]),
+            ...(pendingSweepPromise === undefined ? [] : [pendingSweepPromise]),
             ...pendingDrains,
             ...pendingSessionTasks,
           ];

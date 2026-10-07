@@ -28,6 +28,7 @@ export interface CoreResolvedOptions {
   readonly maxQueryLimit: number;
   readonly leaseTtlMs: number;
   readonly outboxPollMs: number;
+  readonly pendingSweepMs: number;
   readonly outboxLeaseMs: number;
   readonly outboxWakeConcurrency: number;
   readonly outboxShutdownTimeoutMs: number;
