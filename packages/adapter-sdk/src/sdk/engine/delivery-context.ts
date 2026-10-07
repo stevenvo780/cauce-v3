@@ -251,9 +251,7 @@ export function promptForDelivery(delivery: Delivery, store: DurableStore): stri
  */
 const CONVERSATION_SESSION_NAMESPACE = "cauce-conversation-session-v3";
 
-/**
- * Ephemeral session identifiers discarded to avoid fragmenting native sessions.
- */
+/** Ephemeral session identifiers discarded to avoid fragmenting native sessions. */
 const EPHEMERAL_SESSION_ID = /^(?:delivery|fanin):/u;
 
 interface ConversationScope {
@@ -295,7 +293,6 @@ export interface DeliveryHarnessInvocation {
   readonly humanInitiator?: NonNullable<HarnessRequestContext["human_initiator"]>;
   readonly clientIdentity?: ClientIdentityExecuteFields;
   readonly selectionError?: unknown;
-  /** The configured owner talking to the one live shared session: there is no parallel copy to scope emissions to. */
   readonly ownerShared?: true;
 }
 
@@ -315,8 +312,7 @@ export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAd
     const humanInitiator = humanInitiatorFromDelivery(delivery);
     const clientIdentity = clientIdentitySidecarFields(delivery, humanInitiator, ownTenantId);
     const consoleHuman = authenticatedConsoleDelivery(delivery);
-    // The owner is ONE person talking to ONE agent: their turns land in the live shared session, never in
-    // a parallel headless copy of the agent. Other humans keep their isolated conversation.
+    // The owner is ONE person talking to ONE agent (the live shared session); other humans stay isolated.
     if (ownerInSharedSession(humanInitiator, ownTenantId)) {
       const lane = "human";
       const session: HarnessSessionRequestScope = { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane };
