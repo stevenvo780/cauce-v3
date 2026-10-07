@@ -158,7 +158,7 @@ async function login(
   await page.getByLabel('Correo').fill(email);
   await page.getByLabel('Contraseña').fill(password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
 }
 
 async function openTerminalFromMenu(page: Awaited<ReturnType<RealPtyFixture['browserPage']>>): Promise<void> {
@@ -269,7 +269,7 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
       await operatorPage.screenshot({ path: join(artifactDirectory, 'terminal-operator-1440.png') });
     }
     const operatorSessionId = (await readOperatorSession()).rows[0]?.id ?? '';
-    await operatorPage.getByRole('link', { name: 'Conversaciones', exact: true }).click();
+    await operatorPage.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').click();
     await operatorPtyBar.waitFor({ state: 'hidden', timeout: 25_000 });
     await verifyOperatorClosure(operatorSessionId);
 
@@ -309,7 +309,7 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     }
     const mobilePtyBar = mobileOperatorPage.getByLabel('Sesión PTY activa');
     const mobileSessionId = (await readOperatorSession()).rows[0]?.id ?? '';
-    await mobileOperatorPage.getByRole('link', { name: 'Conversaciones', exact: true }).click();
+    await mobileOperatorPage.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').click();
     await mobilePtyBar.waitFor({ state: 'hidden', timeout: 25_000 });
     await verifyOperatorClosure(mobileSessionId);
 

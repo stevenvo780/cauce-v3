@@ -129,7 +129,7 @@ describe('PTY real Python agent through gateway and relay', () => {
     await page.getByLabel('Correo').fill(active.operatorEmail);
     await page.getByLabel('Contraseña').fill(active.operatorPassword);
     await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-    await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 }).catch(async (cause: unknown) => {
+    await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 }).catch(async (cause: unknown) => {
       const access = await page.evaluate(async () => {
         const response = await fetch('/v3/console/access', { credentials: 'include' });
         return { status: response.status, body: await response.text() };
@@ -238,7 +238,7 @@ describe('PTY real Python agent through gateway and relay', () => {
         uiDeleteStatus = response.status();
       }
     });
-    await page.getByRole('link', { name: 'Conversaciones', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').click();
     await page.locator('.pty-shell').waitFor({ state: 'hidden', timeout: 20_000 });
     const deleteDeadline = Date.now() + 10_000;
     while (uiDeleteStatus === undefined && Date.now() < deleteDeadline) await new Promise((resolve) => setTimeout(resolve, 50));

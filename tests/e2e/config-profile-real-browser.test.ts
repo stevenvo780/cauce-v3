@@ -295,7 +295,7 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     await page.getByLabel('Correo').fill(active.operatorEmail);
     await page.getByLabel('Contraseña').fill(active.operatorPassword);
     await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-    await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 });
+    await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
     const cookies = await page.context().cookies(active.baseUrl);
     const browserCookie = cookies.find((item) => item.name === '__Host-cauce_session');
     expect(browserCookie?.httpOnly).toBe(true);

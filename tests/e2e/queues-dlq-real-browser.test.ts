@@ -26,14 +26,14 @@ async function login(tenant: FunctionalTenant, viewport: { width: number; height
   await page.getByLabel('Correo').fill(tenant.email);
   await page.getByLabel('Contraseña').fill(tenant.password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
   return page;
 }
 
 async function ensureRecipientMembership(page: Awaited<ReturnType<typeof newTrustedPage>>) {
   if (!fixture) throw new Error('functional browser fixture is not initialized');
   await page.goto(`${fixture.baseUrl}/config`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: 'Administración avanzada' }).click();
+  await page.getByRole('tab', { name: 'Espacios', exact: true }).click();
   await page.getByRole('button', { name: 'Un solo recurso' }).click();
   await page.getByLabel('Recurso a crear').selectOption('membership');
   await page.getByLabel('Tenant', { exact: true }).fill(isaTenant.tenant);

@@ -103,7 +103,7 @@ async function signIn(page: BrowserPage, user: FunctionalTenant): Promise<void> 
   await page.getByLabel('Correo').fill(user.email);
   await page.getByLabel('Contraseña').fill(user.password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
 }
 
 async function overviewReads(page: BrowserPage) {

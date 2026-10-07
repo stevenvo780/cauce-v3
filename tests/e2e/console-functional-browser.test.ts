@@ -33,7 +33,7 @@ async function loginAndCreateMembership(tenant: FunctionalTenant, viewport: { wi
   await page.getByLabel('Correo').fill(tenant.email);
   await page.getByLabel('Contraseña').fill(tenant.password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/ }).waitFor({ state: 'visible', timeout: 20_000 }).catch(async (cause: unknown) => {
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 }).catch(async (cause: unknown) => {
     const state = await page.evaluate(async () => {
       const response = await fetch('/v3/console/access', { credentials: 'include' });
       return { status: response.status, body: await response.text() };
@@ -42,7 +42,7 @@ async function loginAndCreateMembership(tenant: FunctionalTenant, viewport: { wi
   });
   if (!createMembership) return page;
   await page.goto(`${fixture.baseUrl}/config`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: 'Administración avanzada' }).click();
+  await page.getByRole('tab', { name: 'Espacios', exact: true }).click();
   await page.getByRole('button', { name: 'Un solo recurso' }).click();
   await page.getByLabel('Recurso a crear').selectOption('membership');
   await page.getByLabel('Tenant', { exact: true }).fill(tenant.tenant);

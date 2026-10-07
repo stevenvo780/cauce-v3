@@ -148,7 +148,7 @@ async function login(page: BrowserPage, user: FunctionalTenant): Promise<void> {
   await page.getByLabel('Correo').fill(user.email);
   await page.getByLabel('Contraseña').fill(user.password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
 }
 
 async function saveScreenshot(page: BrowserPage, name: string): Promise<void> {
@@ -181,7 +181,7 @@ describe('navegación de Configuración para lectores', () => {
       expect(configLinkDisabled).not.toBe('true');
       await configLink.click();
       await page.getByRole('heading', { name: 'Ajustes y altas', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
-      await page.getByRole('button', { name: 'Administración avanzada' }).click();
+      await page.getByRole('tab', { name: 'Avanzado', exact: true }).click();
       await page.getByText(/Solo lectura:/u).waitFor({ state: 'visible', timeout: 20_000 });
 
       const snapshot = await page.evaluate(async () => {
