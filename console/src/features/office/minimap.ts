@@ -7,6 +7,7 @@ const ROOM_FILL: Readonly<Record<RoomId, string>> = {
   programadores: OFFICE.carpet,
   cocina: OFFICE.tile,
   patio: OFFICE.playFloor,
+  jardin: OFFICE.grass,
   dormitorio: OFFICE.rest,
 };
 

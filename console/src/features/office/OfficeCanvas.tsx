@@ -19,7 +19,7 @@ import {
 import { TILE, WALL_ROWS, buildLayout, chooseLayout, type Dir, type RoomId } from './layout';
 import { drawMinimap, minimapSize, minimapToWorld } from './minimap';
 import { Minimap, RoomBar } from './OfficeNav';
-import { roomAt, roomCamera, roomForState } from './rooms';
+import { roomAt, roomCamera, roomCounts, sameCounts, type RoomCounts } from './rooms';
 import type { Speech } from './speech';
 import { agentRefOf, clientPointOf, clippingOf, hintSeen, makeCanvas, rememberHint, scrollBand, useBox, useMaximized } from './frame';
 import { DirectionPad, OfficeControls, OfficeHint } from './OfficeControls';
@@ -115,6 +115,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [room, setRoom] = useState<RoomId | null>(null);
   const [mapOpen, setMapOpen] = useState<boolean | null>(null);
+  const [counts, setCounts] = useState<RoomCounts>({});
 
   const ordered = useMemo(() => [...agents].sort((a, b) => a.id.localeCompare(b.id)), [agents]);
   const choice = useMemo(() => chooseLayout(ordered.length, box), [ordered.length, box]);
@@ -142,7 +143,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
     const inputs: ActorInput[] = ordered.map((agent, index) => ({
       id: agent.id,
       state: agent.state,
-      awake: agent.awake,
+      sleepy: agent.state === 'idle' && agent.awake !== true,
       desk: index,
       delegateDesk: agent.state === 'delegating'
         ? agent.delegatesTo.map((target) => desks.get(target)).find((desk) => desk !== undefined) ?? null
@@ -249,6 +250,8 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
       x: engine.target.x - engine.inset.right / (2 * engine.target.zoom), y: engine.target.y - engine.inset.bottom / (2 * engine.target.zoom),
     })?.id ?? null;
     setRoom((current) => (current === seen ? current : seen));
+    const tally = roomCounts(layout, world.actors.values());
+    setCounts((current) => (sameCounts(current, tally) ? current : tally));
     const near = walking
       ? nearbyAgent(engine.avatar, [...world.actors.values()].map((actor) => ({ id: actor.id, x: actor.x, y: actor.y })))
       : null;
@@ -658,8 +661,6 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
   const tipId = hoverId ?? cursorId;
   const tip = tipId ? ordered.find((agent) => agent.id === tipId) : undefined;
   const talkTo = nearby && nearby !== selectedId && nearby !== talkId ? ordered.find((agent) => agent.id === nearby) : undefined;
-  const counts: Partial<Record<RoomId, number>> = {};
-  for (const agent of ordered) counts[roomForState(agent.state, agent.awake)] = (counts[roomForState(agent.state, agent.awake)] ?? 0) + 1;
   const jump = (event: MouseEvent<HTMLCanvasElement>) => {
     const point = minimapToWorld(layout, event.currentTarget.getBoundingClientRect(), { x: event.clientX, y: event.clientY });
     const hit = roomAt(layout, point);

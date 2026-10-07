@@ -1,7 +1,7 @@
 import { TILE } from './layout';
 import { rect, type Ctx } from './paint';
 import { OFFICE } from './palette';
-import { seededRandom } from './simulation';
+import { seededRandom } from './random';
 
 const SHADOW = OFFICE.shadow;
 

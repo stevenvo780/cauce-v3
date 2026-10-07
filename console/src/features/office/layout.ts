@@ -1,3 +1,5 @@
+import { GARDEN_CORE_H, GARDEN_CORE_W, buildGarden } from './garden-layout';
+
 /** Tile edge, in art pixels. */
 export const TILE = 16;
 /** The back wall takes the first rows; the floor starts below it. */
@@ -9,12 +11,16 @@ const POD_H = 4;
 const MID_W = 10;
 const KITCHEN_H = 4;
 const PATIO_H = 7;
+const GARDEN_W = GARDEN_CORE_W;
+const GARDEN_H = GARDEN_CORE_H;
+/** The side door into the garden opens on a core row that is clear at both edges. */
+const GARDEN_DOOR_ROW = 3;
 const SLOT_W = 3;
 
 export interface Point { x: number; y: number }
 export type Dir = 'down' | 'up' | 'left' | 'right';
 
-export type RoomId = 'programadores' | 'cocina' | 'patio' | 'dormitorio';
+export type RoomId = 'programadores' | 'cocina' | 'patio' | 'jardin' | 'dormitorio';
 export interface Room { id: RoomId; x: number; y: number; w: number; h: number }
 export type GameKind = 'arcade' | 'pingpong' | 'foosball' | 'beanbag';
 
@@ -27,7 +33,14 @@ export interface Spot {
   game?: GameKind;
   station?: number;
   variant?: number;
+  /** Chat spots come in pairs facing each other; `variant` says which side of the pair. */
+  pair?: number;
+  /** Where a tidier picks the next box up before carrying it here. */
+  from?: Spot;
 }
+
+export type Activity = 'cook' | 'eat' | 'coffee' | 'play' | 'tidy' | 'sweep' | 'water' | 'read' | 'chat' | 'stroll' | 'sleep';
+export type RoutineSpots = Readonly<Record<Exclude<Activity, 'sleep'>, readonly Spot[]>>;
 
 export interface DeskSlot {
   index: number;
@@ -55,12 +68,16 @@ export type Furniture =
   | { kind: 'counter'; x: number; y: number; w: number }
   | { kind: 'coffee'; x: number; y: number }
   | { kind: 'fridge'; x: number; y: number }
-  | { kind: 'cooler'; x: number; y: number };
+  | { kind: 'cooler'; x: number; y: number }
+  | { kind: 'stove' | 'shelf' | 'crates' | 'stool' | 'grill' | 'pond' | 'bench'; x: number; y: number }
+  | { kind: 'tree'; x: number; y: number; variant: number }
+  | { kind: 'flowers'; x: number; y: number; w: number; variant: number }
+  | { kind: 'lights'; x: number; y: number; w: number };
 
 /** `y` is the wall row the item hangs on: 0 for the back wall, or an inner partition's row. */
 export interface WallItem { kind: 'window' | 'board' | 'clock' | 'door' | 'night'; x: number; w: number; y: number }
 export interface Zone {
-  kind: 'carpet' | 'wood' | 'tile' | 'rug' | 'rest' | 'play' | 'partition' | 'pillar';
+  kind: 'carpet' | 'wood' | 'tile' | 'rug' | 'rest' | 'play' | 'grass' | 'path' | 'partition' | 'pillar';
   x: number; y: number; w: number; h: number;
 }
 
@@ -76,12 +93,13 @@ export interface OfficeLayout {
   /** One bed per agent; bed `i` belongs to the agent at desk `i`. */
   beds: Spot[];
   play: Spot[];
-  watch: Spot[];
   door: Spot;
   /** Standing places in front of the coffee machine. */
   coffee: Spot[];
-  /** Free floor tiles worth strolling to. */
-  wander: Point[];
+  /** Where people without work spend their time, by activity. */
+  routine: RoutineSpots;
+  /** The garden cat's round, in art px. */
+  pet: Point[];
 }
 
 export interface LayoutParams {
@@ -91,6 +109,8 @@ export interface LayoutParams {
   /** One-tile margins and gaps: lets two pods sit side by side on a phone, or the room grow a scale step. */
   compact: boolean;
   beds: number;
+  /** Bed columns in the side arrangement's dormitory; fewer makes it taller. */
+  slots?: number;
 }
 
 interface Plan { cols: number; rows: number; rooms: Record<RoomId, Room>; slots: number }
@@ -110,10 +130,14 @@ function plan(params: LayoutParams): Plan {
   const beds = Math.max(1, params.beds);
   const top = WALL_ROWS;
   if (params.side === 'right') {
-    const h = Math.max(work.h, KITCHEN_H + 1 + PATIO_H, 5);
-    const slots = Math.max(2, Math.ceil(beds / Math.floor((h - 1) / 2)));
+    const base = Math.max(work.h, KITCHEN_H + 1 + PATIO_H, 5);
+    const minSlots = Math.ceil((GARDEN_W - 1) / SLOT_W);
+    const slots = Math.max(minSlots, params.slots ?? Math.ceil(Math.sqrt(beds * 1.5)));
+    const dormH = 1 + 2 * Math.ceil(beds / slots);
+    const h = Math.max(base, dormH + 1 + GARDEN_H);
     const mid = work.w + 1;
-    const dorm = { id: 'dormitorio' as const, x: mid + MID_W + 1, y: top, w: 1 + slots * SLOT_W, h };
+    const dorm = { id: 'dormitorio' as const, x: mid + MID_W + 1, y: top, w: 1 + slots * SLOT_W, h: dormH };
+    const garden = { id: 'jardin' as const, x: dorm.x, y: top + dormH + 1, w: dorm.w, h: h - dormH - 1 };
     return {
       cols: dorm.x + dorm.w,
       rows: top + h,
@@ -122,6 +146,7 @@ function plan(params: LayoutParams): Plan {
         programadores: { id: 'programadores', x: 0, y: top, w: work.w, h },
         cocina: { id: 'cocina', x: mid, y: top, w: MID_W, h: KITCHEN_H },
         patio: { id: 'patio', x: mid, y: top + KITCHEN_H + 1, w: MID_W, h: h - KITCHEN_H - 1 },
+        jardin: garden,
         dormitorio: dorm,
       },
     };
@@ -130,7 +155,8 @@ function plan(params: LayoutParams): Plan {
   const slots = Math.floor((w - 1) / SLOT_W);
   const kitchenY = top + work.h + 1;
   const patioY = kitchenY + KITCHEN_H + 1;
-  const dormY = patioY + PATIO_H + 1;
+  const gardenY = patioY + PATIO_H + 1;
+  const dormY = gardenY + GARDEN_H + 1;
   const dormH = 1 + 2 * Math.ceil(beds / slots);
   return {
     cols: w,
@@ -140,6 +166,7 @@ function plan(params: LayoutParams): Plan {
       programadores: { id: 'programadores', x: 0, y: top, w, h: work.h },
       cocina: { id: 'cocina', x: 0, y: kitchenY, w, h: KITCHEN_H },
       patio: { id: 'patio', x: 0, y: patioY, w, h: PATIO_H },
+      jardin: { id: 'jardin', x: 0, y: gardenY, w, h: GARDEN_H },
       dormitorio: { id: 'dormitorio', x: 0, y: dormY, w, h: dormH },
     },
   };
@@ -226,15 +253,19 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
   const kitchen = rooms.cocina;
   const patio = rooms.patio;
   const dorm = rooms.dormitorio;
+  const garden = rooms.jardin;
+  const coreX = garden.x + Math.floor((garden.w - GARDEN_CORE_W) / 2);
   const kx = kitchen.x + Math.floor((kitchen.w - MID_W) / 2);
   const gx = patio.x + Math.floor((patio.w - MID_W) / 2);
   if (params.side === 'right') {
     wallRun('pillar', workRoom.w, top, workRoom.h, [1, KITCHEN_H + 4]);
     wallRun('partition', kitchen.x, kitchen.y + KITCHEN_H, MID_W, [7]);
-    wallRun('pillar', dorm.x - 1, top, dorm.h, [KITCHEN_H + 6]);
+    wallRun('pillar', dorm.x - 1, top, rows - top, [garden.y - top + GARDEN_DOOR_ROW]);
+    wallRun('partition', garden.x, garden.y - 1, garden.w, [coreX - garden.x + 4]);
   } else {
     wallRun('partition', 0, kitchen.y - 1, cols, [kx + 6]);
     wallRun('partition', 0, patio.y - 1, cols, [gx + 7]);
+    wallRun('partition', 0, garden.y - 1, cols, [gx + 4]);
     wallRun('partition', 0, dorm.y - 1, cols, [gx + 4]);
   }
 
@@ -247,6 +278,11 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
   block(kx + 6, kitchen.y + 2);
   furniture.push({ kind: 'cooler', x: kx + 9, y: kitchen.y + 2 });
   block(kx + 9, kitchen.y + 2);
+  for (const [kind, dx, dy] of [['stove', 5, 0], ['shelf', 8, 0], ['crates', 9, 3]] as const) {
+    furniture.push({ kind, x: kx + dx, y: kitchen.y + dy });
+    block(kx + dx, kitchen.y + dy);
+  }
+  furniture.push({ kind: 'stool', x: kx + 5, y: kitchen.y + 2 }, { kind: 'stool', x: kx + 7, y: kitchen.y + 2 });
 
   const play: Spot[] = [];
   const stand = (x: number, y: number, dir: Dir, game: GameKind, station: number): Spot => ({
@@ -280,8 +316,8 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
   );
   plant(gx + 9, patio.y, false);
   plant(gx, patio.y + PATIO_H - 1, false);
-  const watch: Spot[] = ([[5, 3, 'up'], [7, 3, 'up'], [4, 6, 'up'], [6, 6, 'up'], [8, 6, 'up'], [2, 6, 'up'], [1, 3, 'right']] as const)
-    .map(([dx, dy, dir]) => ({ tile: { x: gx + dx, y: patio.y + dy }, px: centerPx({ x: gx + dx, y: patio.y + dy }), dir }));
+  const outside = buildGarden(garden, coreX, garden.y, { furniture, zones, block });
+  if (params.side === 'right') zones.push({ kind: 'path', x: garden.x, y: garden.y + GARDEN_DOOR_ROW, w: coreX - garden.x + 3, h: 1 });
 
   const sx0 = dorm.x + 1 + Math.floor((dorm.w - 1 - slots * SLOT_W) / 2);
   const bedCount = Math.max(1, params.beds);
@@ -325,10 +361,48 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
     tile: { x: kx + dx, y: kitchen.y + 1 }, px: centerPx({ x: kx + dx, y: kitchen.y + 1 }), dir: 'up' as const,
   }));
 
-  const wander: Point[] = [];
-  for (let y = top; y < rows; y += 1) {
-    for (let x = 0; x < cols; x += 1) {
-      if (walkable[y * cols + x] && (x + y * 3) % 5 === 0) wander.push({ x, y });
+  const kitchenSpot = (dx: number, dy: number, dir: Dir, extra: Partial<Spot> = {}): Spot => ({
+    tile: { x: kx + dx, y: kitchen.y + dy }, px: centerPx({ x: kx + dx, y: kitchen.y + dy }), dir, ...extra,
+  });
+  const fixed = {
+    cook: [kitchenSpot(5, 1, 'up'), ...outside.cook],
+    eat: [kitchenSpot(5, 2, 'right'), kitchenSpot(7, 2, 'left')],
+    tidy: [kitchenSpot(8, 1, 'up', { from: kitchenSpot(8, 3, 'right') })],
+    read: outside.read,
+    chat: outside.chat,
+  };
+  const used = new Set([...Object.values(fixed).flat(), ...outside.water, ...play, ...coffee].map((spot) => `${String(spot.tile.x)},${String(spot.tile.y)}`));
+  const inside = (room: Room, tile: Point) => tile.x >= room.x && tile.x < room.x + room.w && tile.y >= room.y && tile.y < room.y + room.h;
+  const claim = (room: Room, tile: Point): boolean => {
+    const key = `${String(tile.x)},${String(tile.y)}`;
+    if (!inside(room, tile) || !walkable[tile.y * cols + tile.x] || used.has(key)) return false;
+    used.add(key);
+    return true;
+  };
+  const roomList = Object.values(rooms);
+  const water = [...outside.water, ...furniture.flatMap((piece) => {
+    if (piece.kind !== 'plant') return [];
+    const room = roomList.find((candidate) => inside(candidate, piece));
+    const sides = [[0, 1, 'up'], [-1, 0, 'right'], [1, 0, 'left'], [0, -1, 'down']] as const;
+    const side = room && sides.find(([dx, dy]) => claim(room, { x: piece.x + dx, y: piece.y + dy }));
+    if (!side) return [];
+    const tile = { x: piece.x + side[0], y: piece.y + side[1] };
+    return [{ tile, px: centerPx(tile), dir: side[2] }];
+  })];
+  const sweep = [workRoom, kitchen, patio, garden].flatMap((room) => {
+    const centre = { x: room.x + room.w / 2, y: room.y + room.h / 2 };
+    const tiles: Point[] = [];
+    for (let y = room.y; y < room.y + room.h; y += 1) for (let x = room.x; x < room.x + room.w; x += 1) tiles.push({ x, y });
+    tiles.sort((a, b) => Math.hypot(a.x - centre.x, a.y - centre.y) - Math.hypot(b.x - centre.x, b.y - centre.y));
+    const tile = tiles.find((candidate) => claim(room, candidate) && claim(room, { x: candidate.x + 1, y: candidate.y }));
+    if (!tile) return [];
+    const next = { x: tile.x + 1, y: tile.y };
+    return [{ tile, px: centerPx(tile), dir: 'right' as const, from: { tile: next, px: centerPx(next), dir: 'left' as const } }];
+  });
+  const stroll: Spot[] = [];
+  for (let y = garden.y; y < garden.y + garden.h; y += 1) {
+    for (let x = garden.x; x < garden.x + garden.w; x += 1) {
+      if (walkable[y * cols + x]) stroll.push({ tile: { x, y }, px: centerPx({ x, y }), dir: 'down' });
     }
   }
 
@@ -355,8 +429,9 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
   const door: Spot = { tile: { x: doorX, y: top }, px: { x: doorX * TILE + TILE / 2 + (gap > 1 ? TILE / 2 : 0), y: top * TILE + TILE - 3 }, dir: 'down' };
 
   return {
-    cols, rows, walkable, rooms: [rooms.programadores, rooms.cocina, rooms.patio, rooms.dormitorio],
-    desks, furniture, wall, zones, beds, play, watch, door, coffee, wander,
+    cols, rows, walkable, rooms: [rooms.programadores, rooms.cocina, rooms.patio, garden, rooms.dormitorio],
+    desks, furniture, wall, zones, beds, play, door, coffee, pet: outside.pet,
+    routine: { ...fixed, coffee, play, water, sweep, stroll },
   };
 }
 
@@ -373,9 +448,10 @@ export function chooseLayout(count: number, box: { width: number; height: number
   const minScale = Math.ceil(1.6 * box.dpr);
   const maxScale = Math.floor(5 * box.dpr);
   const candidates: { params: LayoutParams; kw: number; kh: number; empty: number }[] = [];
+  const slotChoices = [...new Set([3, 4, 5, 6, 8, 10, 13].map((slots) => Math.min(slots, Math.max(3, beds))))];
   for (const compact of box.width < 700 ? [true] : [false, true]) for (const side of ['right', 'bottom'] as const) {
-    for (let podCols = 1; podCols <= Math.min(pods, 8); podCols += 1) {
-      const params = { pods, podCols, side, compact, beds };
+    for (let podCols = 1; podCols <= Math.min(pods, 8); podCols += 1) for (const slots of side === 'right' ? slotChoices : [undefined]) {
+      const params = { pods, podCols, side, compact, beds, slots };
       const { cols, rows } = layoutSize(params);
       candidates.push({
         params,

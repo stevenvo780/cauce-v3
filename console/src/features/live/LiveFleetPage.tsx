@@ -19,8 +19,8 @@ import {
   BURST_MS, LIVE_STATE_META, buildLiveViews, detectPulses, fleetVerdict, humanSeconds, rememberFleet, stateTally,
   type FleetMemory, type LiveState, type PulseMap,
 } from './agent-state';
-import { FleetActivityTable } from './FleetActivityTable';
 import { projectLiveFleet } from './live-projection';
+import { NecesitanAtencion } from './NecesitanAtencion';
 
 /** Three missed reads and the picture stops proving anything; never less than this window. */
 const STALE_AFTER_MS = 15_000;
@@ -177,7 +177,7 @@ export function LiveFleetPage() {
   const summary = `Oficina con ${String(views.length)} agentes: ${ORDEN_VIVO
     .filter((state) => tally[state] > 0)
     .map((state) => `${String(tally[state])} ${LIVE_STATE_META[state].label.toLowerCase()}`)
-    .join(', ')}. Flechas para recorrerlos y Enter para abrir uno; WASD mueve la vista, + y − acercan, 0 muestra todo, 1 a 4 vuelan a cada habitación y P activa el modo paseo.`;
+    .join(', ')}. Flechas para recorrerlos y Enter para abrir uno; WASD mueve la vista, + y − acercan, 0 muestra todo, 1 a 5 vuelan a cada habitación y P activa el modo paseo.`;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -187,7 +187,7 @@ export function LiveFleetPage() {
             <h1 className="m-0 text-[22px] font-semibold tracking-tight text-fg">Oficina</h1>
             <PageHelp
               title="Oficina"
-              description="Cada persona es un agente de la flota. Trabaja en su escritorio con los Programadores, se va a dormir a su cama del Dormitorio cuando no tiene nada, pasa por la Cocina y juega en el Patio de juegos cuando terminó, lleva papeles al escritorio de otro cuando le delega y levanta un «!» cuando se traba. El estado sale del trabajo que avanza (o no), no del latido. Vos también estás: arrastrá para mirar, acercá con la rueda o pellizcando y tocá el piso para caminar hasta alguien y hablarle sin salir de la oficina."
+              description="Cada persona es un agente de la flota. Trabaja en su escritorio con los Programadores, cuando no tiene nada cocina, toma un café, juega en el Patio de juegos, ordena, riega las plantas, lee o charla en el Jardín, y sólo se va a dormir al Dormitorio si lleva mucho rato sin trabajo; lleva papeles al escritorio de otro cuando le delega y levanta un «!» cuando se traba. El estado sale del trabajo que avanza (o no), no del latido. Vos también estás: arrastrá para mirar, acercá con la rueda o pellizcando y tocá el piso para caminar hasta alguien y hablarle sin salir de la oficina."
             >
               <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
                 {ORDEN_VIVO.map((state) => (
@@ -277,6 +277,14 @@ export function LiveFleetPage() {
           ) : null}
         </div>
 
+        <NecesitanAtencion
+          agents={snapshot.agents ?? []}
+          estados={estados}
+          lookback={snapshot.thresholds?.ack_lookback_seconds}
+          selectedKey={selected?.key ?? null}
+          onOpen={select}
+        />
+
         <section
           aria-label="Oficina"
           data-objeto-principal="oficina"
@@ -303,14 +311,6 @@ export function LiveFleetPage() {
             />
           )}
         </section>
-
-        <FleetActivityTable
-          snapshot={snapshot}
-          estados={estados}
-          only={highlight}
-          selectedKey={selected?.key ?? null}
-          onOpen={select}
-        />
       </div>
 
       <AgentSheet view={selected} status={fleet.status} onClose={close} onTalk={selected ? () => { talkTo(selected.key); } : undefined} />
