@@ -160,7 +160,7 @@ class PraxisSupervisionTests(unittest.TestCase):
                 "work": {status: active if status == "started" else 0 for status in SUP.OPEN}}
 
     def run_pass(self, now=NOW, snapshot=None, active=0, ready=True):
-        return self.supervisor(now).pass_once(self.runtime(active, ready), snapshot or self.snapshot())
+        return self.supervisor(now).pass_once({**self.runtime(active, ready), "observed_at": now}, snapshot or self.snapshot())
 
     def engineering_posts(self):
         return [row for row in self.api.posts if row["body"]["type"] == "praxis.supervision.continue"]

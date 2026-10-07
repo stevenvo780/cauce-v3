@@ -181,7 +181,7 @@ function decidirEstado(
       overloaded,
     };
   }
-  if (flags.includes('queued_without_consumer')) {
+  if (flags.includes('queued_without_consumer') && agent.presence?.online !== true) {
     return { state: 'blocked', reason: 'Tiene cola encolada y ningún consumidor conectado que la tome.', overloaded };
   }
 
@@ -231,7 +231,18 @@ function decidirEstado(
   }
 
   if ((agent.queued ?? 0) > 0) {
-    return { state: 'receiving', reason: `${plural(agent.queued ?? 0, 'entrega esperando', 'entregas esperando')} en cola.`, overloaded };
+    const ready = agent.queued_ready;
+    const availability = typeof ready !== 'number'
+      ? 'El servidor no informa cuántas están disponibles por horario.'
+      : ready === 0
+        ? 'Ninguna está disponible por horario todavía.'
+        : `${plural(ready, 'disponible por horario', 'disponibles por horario')}.`;
+    return {
+      state: 'receiving',
+      reason: `Conectado, con ${plural(agent.queued ?? 0, 'entrega esperando', 'entregas esperando')} en cola sin tomar. `
+        + `${availability} Este dato no confirma que pueda tomarlas ni prueba una ejecución trabada.`,
+      overloaded,
+    };
   }
 
   return { state: 'idle', reason: 'Conectado, con lease vigente y nada en vuelo.', overloaded };

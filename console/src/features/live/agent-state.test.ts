@@ -56,6 +56,55 @@ describe('liveState', () => {
     expect(liveState(agent({ agent_enabled: false }), { nowMs: NOW }).state).toBe('down');
   });
 
+  it.each([{ flags: [] }, { flags: ['queued_without_consumer'] as const }])('cola sin tomar con lease vivo no es Trabado (%j)', ({ flags }) => {
+    const result = liveState(
+      agent({ work_state: 'queued', queued: 1, queued_ready: 1, flags: [...flags] }),
+      { nowMs: NOW },
+    );
+    expect(result.state).toBe('receiving');
+    expect(result.reason).toContain('Conectado');
+    expect(result.reason).toContain('1 disponible por horario');
+    expect(result.reason).toContain('no confirma que pueda tomarlas');
+    expect(result.reason).not.toContain('ningún consumidor conectado');
+  });
+
+  it('cola futura se explica por horario sin afirmar un bloqueo', () => {
+    const result = liveState(agent({ work_state: 'queued', queued: 2, queued_ready: 0 }), { nowMs: NOW });
+    expect(result.state).toBe('receiving');
+    expect(result.reason).toContain('2 entregas esperando');
+    expect(result.reason).toContain('Ninguna está disponible por horario todavía');
+  });
+
+  it.each([undefined, null])('cola sin contador de disponibilidad no se inventa como futura (%s)', (ready) => {
+    const result = liveState(agent({ work_state: 'queued', queued: 1, queued_ready: ready }), { nowMs: NOW });
+    expect(result.state).toBe('receiving');
+    expect(result.reason).toContain('El servidor no informa');
+    expect(result.reason).not.toContain('Ninguna está disponible');
+  });
+
+  it('cola con lease vencido sigue Caído por la conexión', () => {
+    const result = liveState(
+      agent({ work_state: 'queued', queued: 1, presence: { online: false }, flags: ['lease_expired', 'queued_without_consumer'] }),
+      { nowMs: NOW },
+    );
+    expect(result.state).toBe('down');
+    expect(result.reason).toContain('El lease venció');
+  });
+
+  it.each(['overdue_acks', 'ack_stalled', 'claimed_not_started'] as const)('cola conectada conserva la señal real %s', (flag) => {
+    const result = liveState(
+      agent({
+        work_state: 'stalled', queued: 1, queued_ready: 0, in_flight: 1,
+        flags: ['queued_without_consumer', flag], seconds_since_last_ack: 900,
+        oldest_claimed_not_started_without_ack_seconds: 61,
+      }),
+      { nowMs: NOW },
+    );
+    expect(result.state).toBe('blocked');
+    expect(result.reason).not.toContain('ningún consumidor conectado');
+    expect(result.reason).not.toContain('en cola sin tomar');
+  });
+
   it('bloqueado gana sobre delegando: un agente trabado que delegó sigue estando trabado', () => {
     const result = liveState(
       agent({ work_state: 'stalled', in_flight: 1, oldest_in_flight_seconds: 900 }),

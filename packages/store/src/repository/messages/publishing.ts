@@ -1,6 +1,7 @@
 import type { PublishMessage, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import {
   PublishResultSchema,
+  HUMAN_MESSAGE_INITIATOR_CAPABILITY,
   SYSTEM_GATE_PROBE_MESSAGE_TYPE,
   buildPublishReceipt,
   consolePublishIntentSemanticHash,
@@ -278,6 +279,27 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
       if (agentRoot) await assertAgentRootSlot(client, input.tenant_id, input.actor_alias);
 
       const authenticated = input.authenticated_context;
+      if ((authenticated?.channel ?? input.channel) === 'human-mcp') {
+        const recipients = [...uniqueRecipients].sort((left, right) => (
+          `${left.tenant_id}\u0000${left.alias}`.localeCompare(`${right.tenant_id}\u0000${right.alias}`)
+        ));
+        for (const recipient of recipients) {
+          await client.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [
+            `connection-lease:${recipient.tenant_id}:${recipient.alias}`,
+          ]);
+          const result = await client.query<{ capabilities: unknown }>(
+            `SELECT capabilities FROM connection_leases
+             WHERE tenant_id=$1 AND alias=$2 AND lease_until>now() FOR SHARE`,
+            [recipient.tenant_id, recipient.alias],
+          );
+          const lease = result.rows[0];
+          if (lease !== undefined && (!Array.isArray(lease.capabilities)
+              || !lease.capabilities.includes(HUMAN_MESSAGE_INITIATOR_CAPABILITY))) {
+            throw new StoreError('no_route',
+              `recipient ${recipient.tenant_id}/${recipient.alias} has an active consumer without ${HUMAN_MESSAGE_INITIATOR_CAPABILITY}; human-mcp delivery cannot be consumed`);
+          }
+        }
+      }
       const persistedOrigin = authenticated?.origin ?? input.origin;
       const message = await insertMessage(client, {
         requestId: input.request_id,
