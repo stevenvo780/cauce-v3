@@ -8,6 +8,7 @@ import {
   type ActorLook, type LabelTone, type ScreenRect, type TapMarker,
 } from './people';
 import { furnitureDrawables, paintRoom, type DeskState, type Drawable } from './render';
+import { drawPet, petAt } from './render-garden';
 import type { Actor, World } from './simulation';
 import { drawSpeech, type Speech } from './speech';
 
@@ -41,7 +42,9 @@ export function createScene(layout: OfficeLayout, world: World, make: MakeCanvas
   };
   const playing = (game: GameKind, station: number) => [...world.actors.values()].some((actor) => actor.pose === 'play'
     && actor.rest.game === game && actor.rest.station === station);
-  return { sprites, room, art, furniture: furnitureDrawables(layout, deskState, playing) };
+  const cooking = (x: number, y: number) => [...world.actors.values()].some((actor) => actor.pose === 'cook'
+    && actor.rest.tile.x === x && actor.rest.tile.y === y + 1);
+  return { sprites, room, art, furniture: furnitureDrawables(layout, deskState, playing, cooking) };
 }
 
 /** The look of an agent, turned towards the operator when the operator is the one standing next to them. */
@@ -104,6 +107,10 @@ export function drawFrame(ctx: CanvasRenderingContext2D, input: FrameInput): voi
     });
   }
   if (avatar) drawables.push({ sortY: avatar.y + 0.25, draw: (c) => { drawAvatar(c, scene.sprites, avatar); } });
+  if (world.layout.pet.length > 0) {
+    const pet = petAt(world.layout.pet, input.still ? 0 : time);
+    drawables.push({ sortY: pet.y, draw: (c, t) => { drawPet(c, pet, input.still ? 0 : t); } });
+  }
   drawables.sort((a, b) => a.sortY - b.sortY);
   for (const item of drawables) {
     artCtx.globalAlpha = item.alpha ?? 1;

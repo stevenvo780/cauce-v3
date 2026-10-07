@@ -237,6 +237,27 @@ export const ICONS = {
     '.kwwkk.',
     '..kk...',
   ],
+  heart: [
+    '.rr.rr.',
+    'rrrrrrr',
+    '.rrrrr.',
+    '..rrr..',
+    '...r...',
+  ],
+  idea: [
+    '..yyy..',
+    '.yyyyy.',
+    '.yyyyy.',
+    '..kkk..',
+    '..kkk..',
+  ],
+  note: [
+    '..kkkk.',
+    '..k..k.',
+    '..k..k.',
+    'kkk.kkk',
+    'kkk.kkk',
+  ],
 } as const satisfies Record<string, Rows>;
 
 export type IconName = keyof typeof ICONS;

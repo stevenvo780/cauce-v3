@@ -1,8 +1,11 @@
 import type { LiveState } from '../live/agent-state';
 import { behaviourFor, type Behaviour, type BubbleKind, type Pose } from './behaviour';
-import { TILE, type Dir, type OfficeLayout, type Point, type Spot } from './layout';
+import { TILE, type Activity, type Dir, type OfficeLayout, type Point, type Spot } from './layout';
 import { findPath } from './pathfinding';
-import { assignRest } from './rooms';
+import { seedOf, seededRandom } from './random';
+import { scheduleRoutine } from './routine';
+
+export { seedOf, seededRandom } from './random';
 
 /** Walking speed in art pixels per second. */
 export const WALK_SPEED = 34;
@@ -10,14 +13,17 @@ export const WALK_SPEED = 34;
 export interface ActorInput {
   id: string;
   state: LiveState;
-  awake?: boolean;
+  /** Idle long enough that a nap in the dormitory is on the cards. */
+  sleepy?: boolean;
   desk: number;
   /** Desk index of the agent this one is handing work to, when delegating. */
   delegateDesk?: number | null;
 }
 
+export type Carry = 'paper' | 'box' | null;
+
 type Step =
-  | { kind: 'goto'; spot: Spot; carrying: boolean }
+  | { kind: 'goto'; spot: Spot; carry: Carry }
   | { kind: 'act'; pose: Pose; seconds: number; bubble: BubbleKind; dir?: Dir }
   | { kind: 'repeat'; from: number };
 
@@ -26,13 +32,14 @@ export interface Actor {
   desk: number;
   state: LiveState;
   behaviour: Behaviour;
+  activity: Activity | null;
   delegateDesk: number | null;
   x: number;
   y: number;
   dir: Dir;
   pose: Pose;
   bubble: BubbleKind;
-  carrying: boolean;
+  carry: Carry;
   /** Seconds in the current pose, for animation. */
   clock: number;
   /** Art pixels walked so far, for the walk cycle. */
@@ -49,28 +56,14 @@ export interface World {
   layout: OfficeLayout;
   actors: Map<string, Actor>;
   reducedMotion: boolean;
+  /** Wall-clock seconds, so the routine is the same on every screen. */
+  time: number;
+  inputs: readonly ActorInput[];
+  nextRoutine: number;
 }
 
-export function seedOf(text: string): number {
-  let value = 2166136261;
-  for (const char of text) value = Math.imul(value ^ (char.codePointAt(0) ?? 0), 16777619);
-  return value >>> 0;
-}
-
-/** mulberry32: tiny, seedable, good enough to make each person stroll their own way. */
-export function seededRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-export function createWorld(layout: OfficeLayout, reducedMotion = false): World {
-  return { layout, actors: new Map(), reducedMotion };
+export function createWorld(layout: OfficeLayout, reducedMotion = false, now = Date.now() / 1000): World {
+  return { layout, actors: new Map(), reducedMotion, time: now, inputs: [], nextRoutine: now + 1 };
 }
 
 const tileOf = (x: number, y: number): Point => ({ x: Math.floor(x / TILE), y: Math.floor((y - 1) / TILE) });
@@ -79,57 +72,47 @@ function between(random: () => number, low: number, high: number): number {
   return low + random() * (high - low);
 }
 
-function wanderSpot(layout: OfficeLayout, random: () => number): Spot {
-  const tile = layout.wander[Math.floor(random() * layout.wander.length)] ?? layout.desks[0].visit.tile;
-  return { tile, px: { x: tile.x * TILE + TILE / 2, y: tile.y * TILE + TILE - 3 }, dir: 'down' };
-}
+const POSE: Readonly<Record<Activity, Pose>> = {
+  cook: 'cook', eat: 'eat', coffee: 'coffee', play: 'play', tidy: 'tidy', sweep: 'sweep', water: 'water', read: 'read',
+  chat: 'chat', stroll: 'stand', sleep: 'lie',
+};
 
 /** The script a person follows for their current state, ending in an endless act or a loop. */
 export function planFor(actor: Actor, layout: OfficeLayout): Step[] {
   const desk = layout.desks[actor.desk];
   const behaviour = actor.behaviour;
-  const forever = (spot: Spot): Step => ({ kind: 'act', pose: restPose(spot, behaviour), seconds: Infinity, bubble: behaviour.bubble, dir: spot.dir });
-  const goto = (spot: Spot, carrying = false): Step => ({ kind: 'goto', spot, carrying });
+  const goto = (spot: Spot, carry: Carry = null): Step => ({ kind: 'goto', spot, carry });
+  const act = (pose: Pose, seconds: number, dir?: Dir, bubble: BubbleKind = null): Step => ({ kind: 'act', pose, seconds, bubble, dir });
 
   if (behaviour.errand === 'deliver' && actor.delegateDesk !== null && layout.desks[actor.delegateDesk]) {
     const target = layout.desks[actor.delegateDesk].visit;
     return [
       goto(desk.seat),
-      { kind: 'act', pose: 'type', seconds: between(actor.random, 2.5, 5), bubble: null, dir: desk.seat.dir },
-      goto(target, true),
-      { kind: 'act', pose: 'handover', seconds: 1.6, bubble: 'paper', dir: target.dir },
+      act('type', between(actor.random, 2.5, 5), desk.seat.dir),
+      goto(target, 'paper'),
+      act('handover', 1.6, target.dir, 'paper'),
       goto(desk.seat),
-      { kind: 'act', pose: 'type', seconds: between(actor.random, 4, 8), bubble: null, dir: desk.seat.dir },
+      act('type', between(actor.random, 4, 8), desk.seat.dir),
       { kind: 'repeat', from: 2 },
     ];
   }
-  if (behaviour.errand === 'wander') {
-    return [
-      goto(wanderSpot(layout, actor.random)),
-      { kind: 'act', pose: 'stand', seconds: between(actor.random, 0.8, 2), bubble: null },
-      goto(wanderSpot(layout, actor.random)),
-      { kind: 'act', pose: 'stand', seconds: between(actor.random, 0.8, 2), bubble: null },
-      goto(actor.rest),
-      forever(actor.rest),
-    ];
+  const spot = actor.rest;
+  const back = spot.from ?? spot;
+  switch (actor.activity) {
+    case null:
+      return [goto(spot), act(behaviour.pose, Infinity, spot.dir, behaviour.bubble)];
+    case 'tidy':
+      return [goto(back), act('stand', 1.2, back.dir), goto(spot, 'box'), act('tidy', 1.6, spot.dir), { kind: 'repeat', from: 0 }];
+    case 'sweep':
+      return [goto(spot), act('sweep', between(actor.random, 4, 7), spot.dir), goto(back), act('sweep', between(actor.random, 4, 7), back.dir), { kind: 'repeat', from: 0 }];
+    case 'stroll': {
+      const garden = layout.routine.stroll;
+      const pick = () => garden[Math.floor(actor.random() * garden.length)] ?? spot;
+      return [spot, pick(), pick()].flatMap((stop) => [goto(stop), act('stand', between(actor.random, 1.5, 4), 'down')]).concat({ kind: 'repeat', from: 0 });
+    }
+    default:
+      return [goto(spot), act(POSE[actor.activity], Infinity, spot.dir, actor.activity === 'chat' ? 'chat' : actor.activity === 'sleep' ? 'zzz' : null)];
   }
-  if (behaviour.errand === 'coffee') {
-    const cup = layout.coffee.at(seedOf(actor.id) % Math.max(1, layout.coffee.length));
-    return [
-      { kind: 'act', pose: 'stretch', seconds: 1.8, bubble: null, dir: 'down' },
-      ...(cup ? [goto(cup), { kind: 'act', pose: 'coffee', seconds: between(actor.random, 3, 6), bubble: null, dir: cup.dir } as const] : []),
-      goto(actor.rest),
-      forever(actor.rest),
-    ];
-  }
-  return [goto(actor.rest), forever(actor.rest)];
-}
-
-/** Beds are for lying down and games for playing; anyone parked elsewhere off duty just stands around. */
-function restPose(spot: Spot, behaviour: Behaviour): Pose {
-  if (spot.rest === 'bed') return 'lie';
-  if (spot.game) return 'play';
-  return behaviour.rest === 'desk' ? behaviour.pose : 'stand';
 }
 
 const sameSpot = (a: Spot, b: Spot) => a.px.x === b.px.x && a.px.y === b.px.y;
@@ -137,7 +120,7 @@ const sameSpot = (a: Spot, b: Spot) => a.px.x === b.px.x && a.px.y === b.px.y;
 function begin(world: World, actor: Actor, instant: boolean): void {
   actor.steps = planFor(actor, world.layout);
   actor.waypoints = [];
-  actor.carrying = false;
+  actor.carry = null;
   if (instant || world.reducedMotion || actor.state === 'down') {
     const endless = actor.steps.findIndex((step) => step.kind === 'act' && step.seconds === Infinity);
     const start = endless >= 0 ? endless : actor.steps.findIndex((step) => step.kind === 'act');
@@ -169,7 +152,7 @@ function enter(world: World, actor: Actor): void {
     actor.pose = step.pose;
     actor.bubble = step.bubble;
     actor.timer = step.seconds;
-    actor.carrying = false;
+    actor.carry = null;
     actor.clock = 0;
     if (step.dir) actor.dir = step.dir;
     return;
@@ -189,7 +172,7 @@ function enter(world: World, actor: Actor): void {
   }
   actor.pose = 'walk';
   actor.bubble = null;
-  actor.carrying = step.carrying;
+  actor.carry = step.carry;
   actor.clock = 0;
 }
 
@@ -200,25 +183,30 @@ function advance(world: World, actor: Actor): void {
 
 /** Adds, updates and removes people so the office matches the fleet. Unchanged people keep walking. */
 export function syncWorld(world: World, inputs: readonly ActorInput[]): void {
+  world.inputs = inputs;
   const seen = new Set<string>();
   const ordered = [...inputs].sort((a, b) => a.id.localeCompare(b.id));
-  const rests = assignRest(world.layout, ordered);
+  const idlers = ordered.filter((input) => behaviourFor(input.state).rest === 'routine')
+    .map((input) => ({ id: input.id, desk: input.desk, sleepy: input.sleepy === true }));
+  const routine = scheduleRoutine(world.layout, idlers, world.time);
   for (const input of ordered) {
     seen.add(input.id);
-    const behaviour = behaviourFor(input.state, input.awake);
-    const rest = rests.get(input.id) ?? world.layout.desks[input.desk].seat;
+    const behaviour = behaviourFor(input.state);
+    const errand = routine.get(input.id);
+    const rest = errand?.spot ?? world.layout.desks[input.desk].seat;
+    const activity = errand?.activity ?? null;
     const delegateDesk = input.delegateDesk ?? null;
     const existing = world.actors.get(input.id);
     if (existing?.state === input.state && existing.behaviour === behaviour && existing.desk === input.desk
-      && existing.delegateDesk === delegateDesk && sameSpot(existing.rest, rest)) continue;
+      && existing.delegateDesk === delegateDesk && existing.activity === activity && sameSpot(existing.rest, rest)) continue;
     if (existing) {
-      Object.assign(existing, { state: input.state, behaviour, desk: input.desk, delegateDesk, rest });
+      Object.assign(existing, { state: input.state, behaviour, desk: input.desk, delegateDesk, rest, activity });
       begin(world, existing, false);
       continue;
     }
     const actor: Actor = {
-      id: input.id, desk: input.desk, state: input.state, behaviour, delegateDesk,
-      x: 0, y: 0, dir: 'down', pose: 'stand', bubble: null, carrying: false,
+      id: input.id, desk: input.desk, state: input.state, behaviour, delegateDesk, activity,
+      x: 0, y: 0, dir: 'down', pose: 'stand', bubble: null, carry: null,
       clock: 0, walked: 0, waypoints: [], steps: [], stepIndex: 0, timer: 0, rest,
       random: seededRandom(seedOf(input.id)),
     };
@@ -230,6 +218,11 @@ export function syncWorld(world: World, inputs: readonly ActorInput[]): void {
 
 export function stepWorld(world: World, dt: number): void {
   const delta = Math.min(dt, 0.1);
+  world.time += dt;
+  if (!world.reducedMotion && world.time >= world.nextRoutine) {
+    world.nextRoutine = world.time + 1;
+    syncWorld(world, world.inputs);
+  }
   for (const actor of world.actors.values()) {
     actor.clock += delta;
     if (world.reducedMotion) continue;
