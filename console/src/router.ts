@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore, type MouseEvent } from 'react';
+import { flushSync } from 'react-dom';
 import type { TerminalRelayState } from './features/terminal/relay-status';
 
 function subscribeToRoute(callback: () => void): () => void {
@@ -34,7 +35,13 @@ export function useRouteSearch(): string {
 export function navigate(path: string): void {
   if (`${window.location.pathname}${window.location.search}` === path) return;
   window.history.pushState({}, '', path);
-  window.dispatchEvent(new PopStateEvent('popstate'));
+  const announce = () => { window.dispatchEvent(new PopStateEvent('popstate')); };
+  const transitions = document as Document & { startViewTransition?: (update: () => void) => unknown };
+  if (typeof transitions.startViewTransition !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    announce();
+    return;
+  }
+  transitions.startViewTransition(() => { flushSync(announce); });
 }
 
 /**

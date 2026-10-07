@@ -13,12 +13,6 @@ export const LEASE_LABEL: Readonly<Record<LeaseState, string>> = {
   unknown: 'Sin dato',
 };
 
-export const LEASE_TONE: Readonly<Record<LeaseState, BadgeTone>> = {
-  online: 'online',
-  expired: 'offline',
-  unknown: 'unknown',
-};
-
 /** `unknown` is NOT said "unavailable": absent data is not a measured fault. */
 export const CAPABILITY_LABEL: Readonly<Record<CapabilityState, string>> = {
   available: 'Disponible',

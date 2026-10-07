@@ -6,6 +6,7 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import { ansiPaletteCss, xtermAnsiPalette } from './vite/ansi-palette';
+import { mockStore } from './vite/mock-store';
 
 const ANSI_CSS_ID = 'virtual:cauce/xterm-ansi.css';
 const ANSI_CSS_RESOLVED = `\0${ANSI_CSS_ID}`;
@@ -27,7 +28,7 @@ function xtermAnsiCss(): Plugin {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [tailwindcss(), react(), xtermAnsiCss()],
+    plugins: [tailwindcss(), react(), xtermAnsiCss(), ...(env.VITE_USE_MOCKS === 'true' ? [mockStore()] : [])],
     server: {
       port: 4173,
       proxy: {
@@ -53,7 +54,6 @@ export default defineConfig(({ mode }) => {
       },
     },
     test: {
-      // Resolve @cauce/protocol to current workspace during tests
       alias: [
         {
           find: /^@cauce\/protocol$/,

@@ -4,9 +4,13 @@ function hash(text: string): number {
   return value >>> 0;
 }
 
-/** Identity hues: stable per agent and deliberately not the state palette. */
-export function orbHues(seed: string): [number, number, number] {
-  const base = hash(seed) % 360;
-  return [base, (base + 48) % 360, (base + 168) % 360];
+/** The three identity hues spread from one base, so a chosen hue keeps the orb's harmony. */
+export function orbHuesFrom(base: number): [number, number, number] {
+  const start = ((Math.round(base) % 360) + 360) % 360;
+  return [start, (start + 48) % 360, (start + 168) % 360];
 }
 
+/** Identity hues: stable per agent and deliberately not the state palette. A chosen hue overrides the seed. */
+export function orbHues(seed: string, hue?: number | null): [number, number, number] {
+  return orbHuesFrom(hue ?? hash(seed) % 360);
+}
