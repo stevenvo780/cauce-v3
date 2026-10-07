@@ -50,6 +50,15 @@ describe('console helper route extraction', () => {
 
   it.each([
     "request(agentPath(unknownPrefix, tenantId, alias));",
+    "request(agentPath(String(unknownPrefix), tenantId, alias));",
+    "request(agentPath(encodeURIComponent(unknownPrefix), tenantId, alias));",
+    "const prefix = String(unknownPrefix); request(agentPath(prefix, tenantId, alias));",
+    "const prefix = encodeURIComponent(unknownPrefix); request(agentPath(prefix, tenantId, alias));",
+    "request(agentPath('/v3/console/agents', tenantId, alias, String(unknownSuffix)));",
+    "request(agentPath('/v3/console/agents', tenantId, alias, encodeURIComponent(unknownSuffix)));",
+    "const suffix = String(unknownSuffix); request(agentPath('/v3/console/agents', tenantId, alias, suffix));",
+    "const suffix = encodeURIComponent(unknownSuffix); request(agentPath('/v3/console/agents', tenantId, alias, suffix));",
+    "const suffix = `${String(unknownSuffix)}`; request(agentPath('/v3/console/agents', tenantId, alias, suffix));",
     "request(agentPath('/v3/console/agents', tenantId, alias, unknownSuffix));",
     "function sibling() { const suffix = '/hidden'; } request(agentPath('/v3/console/agents', tenantId, alias, suffix));",
     "function selected(suffix: string) { request(agentPath('/v3/console/agents', tenantId, alias, suffix)); }",
@@ -66,6 +75,14 @@ describe('console helper route extraction', () => {
     "function route(prefix: string) { return route(prefix); } request(route('/v3/visible'));",
   ])('rejects unsupported or recursive helper bodies: %s', source => {
     expect(() => extractClientCalls(source)).toThrow('el extractor no supo sacar la ruta');
+  });
+
+  it('checks each literal-union route segment instead of inventing a numeric endpoint', () => {
+    const source = "function submit(phase: 'preview' | 'apply') { request(`/v3/console/reconcile/${phase}`, { method: 'POST' }); }";
+    expect(extractClientCalls(source)).toEqual([
+      { method: 'POST', path: '/v3/console/reconcile/preview' },
+      { method: 'POST', path: '/v3/console/reconcile/apply' },
+    ]);
   });
 
   it('preserves optional query helper shape instead of appending a path segment', () => {

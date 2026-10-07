@@ -97,7 +97,7 @@ afterEach(async () => {
   await Promise.all(fixtureDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 
-async function operatorGateway() {
+async function operatorGateway(denyBeforeRouting = false) {
   const pool = fakePool();
   const repository = fakeRepository();
   const authProvider = new FixedAuthProvider(testPrincipal({
@@ -108,6 +108,7 @@ async function operatorGateway() {
     deliveryWakeSubscriber: noDeliveryWakes, outboxPollMs: 60_000,
   });
   apps.push(app);
+  if (denyBeforeRouting) app.addHook('onRequest', async (_request, reply) => reply.code(403).send({ error: 'forbidden' }));
   const directory = await mkdtemp(join(tmpdir(), 'cauce-route-contract-'));
   fixtureDirectories.push(directory);
   const grantsFile = join(directory, 'grants.json');
@@ -159,19 +160,27 @@ async function clientDeclarationGateway(mode: 'off' | 'external' | 'local') {
   return { app, pool };
 }
 
-async function unroutedPaths(calls: readonly ApiCall[]): Promise<string[]> {
-  const app = await operatorGateway();
+async function unroutedPaths(calls: readonly ApiCall[], denyBeforeRouting = false): Promise<string[]> {
+  const app = await operatorGateway(denyBeforeRouting);
+  const password = await clientDeclarationGateway('off');
   const missing: string[] = [];
   for (const call of calls) {
     if (OIDC_BFF_ONLY.has(call.path)) continue;
     if (SOLO_CON_PLANO_DE_TERMINAL.has(call.path)) continue;
     if (LOCAL_OAUTH_ONLY.has(`${call.method} ${call.path}`)) continue;
-    const response = await app.inject({
+    const routeApp = call.path.startsWith('/v3/auth/') ? password.app : app;
+    const response = await routeApp.inject({
       method: call.method,
       url: call.path,
       ...(call.method === 'GET' ? {} : { payload: {} })
     });
     // Router absence must stay distinct from an explicit handler's resource-not-found response.
+    const pathname = new URL(call.path, 'https://routing.example.test').pathname;
+    const registered: unknown = routeApp.findRoute({ method: call.method, url: pathname });
+    if (registered === null || registered === undefined) {
+      missing.push(`${call.method} ${call.path}`);
+      continue;
+    }
     if (response.statusCode !== 404) continue;
     const cuerpo = response.json<{ error?: string; message?: string }>();
     const routerNotFound = cuerpo.error === 'Not Found'
@@ -202,6 +211,8 @@ describe('console API surface matches the gateway routing table', () => {
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/context/repository/inspect?1' });
     for (const call of CLIENT_DECLARATIONS) expect(calls).toContainEqual(call);
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/agent-preferences' });
+    expect(calls).toContainEqual({ method: 'POST', path: '/v3/console/tenants/1/agents/1/context/reconcile/preview' });
+    expect(calls).toContainEqual({ method: 'POST', path: '/v3/console/tenants/1/agents/1/context/reconcile/apply' });
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/perfil/revisions?1' });
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/documents/1/revisions?1' });
     expect(calls).toContainEqual({ method: 'PUT', path: '/v3/console/favorites/1/1' });
@@ -268,6 +279,19 @@ describe('console API surface matches the gateway routing table', () => {
 
 
 describe('console route absence discrimination', () => {
+  it('checks real registration even when an onRequest hook denies before routing', async () => {
+    const calls = [
+      { method: 'PUT', path: '/v3/console/agents/Steven/argos/appearance?expected_revision=1' },
+      { method: 'PUT', path: '/v3/console/agents/Steven/argos/not-registered?expected_revision=1' },
+    ] as const;
+    const app = await operatorGateway(true);
+    for (const call of calls) {
+      const response = await app.inject({ method: call.method, url: call.path, payload: {} });
+      expect(response.statusCode).toBe(403);
+    }
+    expect(await unroutedPaths(calls, true)).toEqual(['PUT /v3/console/agents/Steven/argos/not-registered?expected_revision=1']);
+  });
+
   it('keeps explicit handler not_found responses out of the missing-route list', async () => {
     const call = { method: 'GET', path: '/v3/console/tenants/Steven/agents/absent/documents' } as const;
     const app = await operatorGateway();

@@ -1,7 +1,7 @@
 import ts from 'typescript';
 
 type Bindings = ReadonlyMap<string, string | undefined>;
-interface ResolutionContext { node: ts.Node; bindings: Bindings; depth: number }
+interface ResolutionContext { node: ts.Node; bindings: Bindings; depth: number; scalar: boolean }
 const EMPTY_BINDINGS: Bindings = new Map();
 
 function sourceTree(source: string): ts.SourceFile {
@@ -64,7 +64,7 @@ function resolveCall(expression: ts.CallExpression, context: ResolutionContext):
     const argument = expression.arguments[0];
     if (argument === undefined || expression.arguments.length !== 1) return undefined;
     const value = resolve(argument, context);
-    const scalar = value ?? (ts.isIdentifier(argument) ? '1' : undefined);
+    const scalar = value ?? (context.scalar && ts.isIdentifier(argument) ? '1' : undefined);
     if (scalar === undefined) return undefined;
     return name === 'encodeURIComponent' ? encodeURIComponent(scalar) : scalar;
   }
@@ -81,11 +81,11 @@ function resolveCall(expression: ts.CallExpression, context: ResolutionContext):
     const argument = expression.arguments[index];
     const value = argument === undefined
       ? parameter.initializer === undefined ? undefined : resolve(parameter.initializer, { ...context, node: parameter })
-      : resolve(argument, context);
+      : resolve(argument, { ...context, scalar: false });
     if (argument !== undefined && value === undefined && !ts.isIdentifier(argument)) return undefined;
     bindings.set(parameter.name.text, value);
   }
-  return resolve(last.expression, { node: last, bindings, depth: context.depth + 1 });
+  return resolve(last.expression, { node: last, bindings, depth: context.depth + 1, scalar: false });
 }
 
 function resolve(expression: ts.Expression, context: ResolutionContext): string | undefined {
@@ -103,7 +103,11 @@ function resolve(expression: ts.Expression, context: ResolutionContext): string 
   if (ts.isTemplateExpression(expression)) {
     let path = expression.head.text;
     for (const span of expression.templateSpans) {
-      const part = resolve(span.expression, context);
+      const encodedSegment = path.startsWith('/v3/') && path.endsWith('/')
+        && ts.isCallExpression(span.expression) && ts.isIdentifier(span.expression.expression)
+        && span.expression.expression.text === 'encodeURIComponent';
+      const queryValue = /[?&][^?&=]+=$/.test(path);
+      const part = resolve(span.expression, { ...context, scalar: encodedSegment || queryValue });
       if (part === undefined) return undefined;
       path += part + span.literal.text;
     }
@@ -119,7 +123,7 @@ export function helperRouteBefore(source: string, before: number, expression: st
   const expressionTree = sourceTree(expression);
   const statement = expressionTree.statements[0];
   if (statement === undefined || !ts.isExpressionStatement(statement)) return undefined;
-  return resolve(statement.expression, { node: contextNode, bindings: EMPTY_BINDINGS, depth: 0 });
+  return resolve(statement.expression, { node: contextNode, bindings: EMPTY_BINDINGS, depth: 0, scalar: false });
 }
 
 function querySuffixBefore(source: string, before: number, expression: string): string | undefined {
@@ -184,6 +188,26 @@ function esParametroDeLaFuncion(source: string, index: number, identificador: st
   return new RegExp(`[(,]\\s*${identificador}\\s*[:?,)]`).test(firma.slice(abre));
 }
 
+function concreteRouteVariants(source: string, before: number, path: string): string[] {
+  const call = requestCall(sourceTree(source), before);
+  let variants = [path];
+  for (const match of path.matchAll(/\$\{([A-Za-z_$][A-Za-z0-9_$]*)\}/g)) {
+    let scope = call?.parent;
+    while (scope !== undefined && !ts.isFunctionLike(scope) && !ts.isSourceFile(scope)) scope = scope.parent;
+    if (scope === undefined || !ts.isFunctionLike(scope)) continue;
+    const parameter = scope.parameters.find(value => value.name.getText() === match[1]);
+    if (parameter?.type === undefined || !ts.isUnionTypeNode(parameter.type)) continue;
+    const choices: string[] = [];
+    for (const type of parameter.type.types) {
+      if (!ts.isLiteralTypeNode(type) || !ts.isStringLiteral(type.literal)) throw new Error('unsupported route parameter union');
+      choices.push(type.literal.text);
+    }
+    variants = variants.flatMap(value => choices.map(choice => value.replaceAll(match[0], choice)));
+    if (variants.length > 32) throw new Error('too many concrete route variants');
+  }
+  return variants;
+}
+
 export function extractClientCalls(source: string): ApiCall[] {
   const calls: ApiCall[] = [];
   const sinResolver: string[] = [];
@@ -224,7 +248,7 @@ export function extractClientCalls(source: string): ApiCall[] {
     const methodMatch = /method:\s*'([A-Za-z]+)'/.exec(args);
     const method = (methodMatch?.[1] ?? 'GET').toUpperCase();
     if (!isHttpMethod(method)) throw new Error(`unsupported HTTP method in client.ts: ${method}`);
-    calls.push({ method, path: concreteSegments(ruta) });
+    for (const path of concreteRouteVariants(source, index, ruta)) calls.push({ method, path: concreteSegments(path) });
   }
   if (sinResolver.length > 0) {
     throw new Error(
