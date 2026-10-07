@@ -31,7 +31,7 @@ file_identity = _secure_path.file_identity
 open_regular_at = _secure_path.open_regular_at
 
 MAX_CONFIG_BYTES = 1024 * 1024
-ALIAS_RE = re.compile(r"[a-z][a-z0-9-]*\Z")
+ALIAS_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 KEY_RE = re.compile(r"[A-Z][A-Z0-9_]*\Z")
 DIGEST_RE = re.compile(r"sha256:[a-f0-9]{64}\Z")
 SEMVER_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
@@ -49,7 +49,7 @@ LOOPBACK_OPENCLAW_RE = re.compile(
 )
 ABSOLUTE_RE = re.compile(r"/(?:[^/\x00]+/)*[^/\x00]+\Z")
 BACKUP_RE = re.compile(
-    r"(?P<alias>[a-z][a-z0-9-]*)\.[a-f0-9]{64}\.[0-9]{16,20}\.[a-f0-9]{16}\.env\Z"
+    r"(?P<alias>[a-z][a-z0-9_-]{0,63})\.[a-f0-9]{64}\.[0-9]{16,20}\.[a-f0-9]{16}\.env\Z"
 )
 BACKUP_AUTH_KEY = ".backup-auth-key"
 BACKUP_AUTH_KEY_BYTES = 32

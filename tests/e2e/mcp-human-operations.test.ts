@@ -143,8 +143,11 @@ describe('human MCP operations over real OAuth, SDK transport and PostgreSQL', (
     ]);
     const listed = await clientA.listTools();
     expect(listed.tools.map((tool) => tool.name).sort()).toEqual([
-      'cauce_agents', 'cauce_connection_identity', 'cauce_inbox', 'cauce_receipt', 'cauce_status', 'cauce_submit',
+      'cauce_agents', 'cauce_connection_identity', 'cauce_inbox', 'cauce_mailbox', 'cauce_receipt', 'cauce_status', 'cauce_submit',
     ]);
+    const mailbox = await call(clientA, 'cauce_mailbox');
+    expect(mailbox.isError, JSON.stringify(mailbox)).not.toBe(true);
+    expect(mailbox.content.find((part) => part.type === 'text')?.text).toBe('null');
     const submitTool = listed.tools.find((tool) => tool.name === 'cauce_submit');
     expect(submitTool).toBeDefined();
     const inputSchema = submitTool?.inputSchema as { properties?: Record<string, unknown>; required?: string[] };

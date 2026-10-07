@@ -22,7 +22,8 @@ export interface PublishOperationInput {
 }
 
 export async function publishOperation(
-  repository: Pick<GatewayRepository, 'publish' | 'verifyPublishReceipt'>,
+  repository: Pick<GatewayRepository, 'publish' | 'verifyPublishReceipt'>
+    & Partial<Pick<GatewayRepository, 'resolveSystemGateProbeActor'>>,
   input: PublishOperationInput,
 ): Promise<PublishResult> {
   const { actor } = input;
@@ -38,30 +39,39 @@ export async function publishOperation(
     const exactRole = actor.roles.length === 1 && actor.roles[0] === 'agent';
     const exactPermissions = actor.permissions.length === 2
       && actor.permissions.includes('route') && actor.permissions.includes('read');
-    if (input.authMechanism !== 'mtls' || actor.tenant_id !== 'Steven' ||
+    if (input.authMechanism !== 'mtls' ||
         actor.alias !== 'gate-probe' || actor.session_id !== 'gate-probe' ||
         actor.channel !== 'gate' || actor.origin !== undefined || !exactRole || !exactPermissions) {
       throw new AuthorizationError('system gate probe requires the exact dedicated mTLS identity');
     }
     const recipient = command.recipients[0];
-    if (command.room_id !== 'grp.steven' || command.recipients.length !== 1 ||
+    if (command.recipients.length !== 1 ||
         command.lane !== 'interactive' || command.priority !== -100 ||
         command.idempotency_key !== `gate:${String(recipient?.tenant_id)}:${String(recipient?.alias)}:${probeBody.nonce}`) {
       throw new Error('system gate probe payload is not canonical');
     }
   }
-  // `gate-probe` intentionally has no membership/agent/lease and can never become a routing
-  // target. Kant is only the durable actor required by the messages FK; the authenticated
-  // context still preserves the exact mTLS gate authority.
+  const durableActor = systemGateProbe
+    ? await (() => {
+      if (repository.resolveSystemGateProbeActor === undefined) {
+        throw new AuthorizationError('gate probe runtime authority resolver is unavailable');
+      }
+      return repository.resolveSystemGateProbeActor(actor.tenant_id, command.room_id);
+    })()
+    : actor.alias;
   const trustedCommand: TrustedPublishCommand = {
     ...trustedPublishSemanticsForContext(actor, command, {
       interactiveHumanEntry: consolePublish, log: input.priorityLog,
-    }, systemGateProbe ? 'kant' : actor.alias),
+    }, durableActor),
     idempotency_key: command.idempotency_key,
   };
   const author = consolePublish ? consoleMessageAuthor(actor) : undefined;
   const options: PublishOptions = {
       requirePreparedConsoleIntent: consolePublish,
+      ...(systemGateProbe ? { systemGateProbeAuthority: {
+        tenant_id: actor.tenant_id, alias: 'gate-probe' as const,
+        session_id: 'gate-probe' as const, channel: 'gate' as const,
+      } } : {}),
       ...(author === undefined ? {} : { consoleAuthor: author }),
       ...(!systemGateProbe && isAgentPrincipal(actor) ? { agentRoot: true } : {}),
       ...(consolePublish
@@ -75,7 +85,7 @@ export async function publishOperation(
     command.recipients.length,
   );
   if (typeof repository.verifyPublishReceipt !== 'function'
-      || !(await (input.humanAccess === undefined
+      || !(await (input.humanAccess === undefined && !systemGateProbe
         ? repository.verifyPublishReceipt(trustedCommand, receipt)
         : repository.verifyPublishReceipt(trustedCommand, receipt, options)))) {
     throw new StoreError('conflict', 'publish receipt does not match its durable effect');

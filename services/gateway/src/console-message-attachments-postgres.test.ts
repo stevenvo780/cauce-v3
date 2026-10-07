@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPool, type DatabaseClient, type DatabasePool } from '@cauce/store';
 import type { Tenant } from '@cauce/protocol';
+import { startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { loadMessageDetail } from '../../../packages/store/src/repository/messages/message-detail.js';
 import { FixedAuthProvider, testPrincipal } from './test-support/gateway-doubles.js';
 import { registerConsoleMessageAttachmentRoutes } from './routes/console/message-attachments.js';
 
-const databaseUrl = process.env.CAUCE_TEST_DATABASE_URL;
+let database: TestDatabase | undefined;
 const id = 'cccccccc-3333-4333-8333-333333333333';
 const payload = Buffer.from([0, 1, 255, 128]);
 const attachment = {
@@ -18,23 +19,26 @@ let pool: DatabasePool;
 let client: DatabaseClient;
 const apps: FastifyInstance[] = [];
 
-describe.skipIf(databaseUrl === undefined)('attachment authorization on isolated PostgreSQL temporary tables', () => {
+describe('attachment authorization on isolated PostgreSQL temporary tables', () => {
+  beforeAll(async () => { database = await startTestDatabase(); }, 180_000);
+  afterAll(async () => {
+    if (database === undefined) return;
+    try { await database.pool.end(); } finally { await database.container.stop(); }
+  });
   beforeEach(async () => {
-    if (databaseUrl === undefined || !new URL(databaseUrl).pathname.startsWith('/cauce_test')) {
-      throw new Error('CAUCE_TEST_DATABASE_URL must name an isolated cauce_test database');
-    }
-    pool = createPool(databaseUrl, { max: 1, connectionTimeoutMillis: 3_000 });
+    if (database === undefined) throw new Error('Attachment fixture database unavailable');
+    pool = createPool(database.url, { max: 1, connectionTimeoutMillis: 3_000 });
     client = await pool.connect();
     await client.query('BEGIN');
     await client.query(`
       CREATE TEMP TABLE messages (
         id uuid PRIMARY KEY, tenant_id text, room_id text, actor_alias text, body jsonb,
-        version int DEFAULT 3, request_id text, trace_id text, origin jsonb, lane text,
+        version int DEFAULT 3, request_id text, trace_id text, auth_channel text, origin jsonb, lane text,
         priority int, created_at timestamptz DEFAULT now()
       ) ON COMMIT DROP;
       CREATE TEMP TABLE deliveries (
         id uuid PRIMARY KEY, message_id uuid, recipient_tenant text, recipient_alias text,
-        status text, attempt int, terminal_at timestamptz, created_at timestamptz DEFAULT now()
+        status text, attempt int, terminal_at timestamptz, result jsonb, created_at timestamptz DEFAULT now()
       ) ON COMMIT DROP;
       CREATE TEMP TABLE memberships (
         tenant_id text, room_id text, alias text, role text, enabled boolean
@@ -133,6 +137,7 @@ describe.skipIf(databaseUrl === undefined)('attachment authorization on isolated
   it('retains unfiltered raw metadata indices and excludes base64 from detail', async () => {
     await client.query('UPDATE messages SET body=$1', [JSON.stringify({ attachments_v1: [null, attachment] })]);
     const detail = await loadMessageDetail(client, id, 'Pablo', 'midas');
+    expect(Reflect.get(detail, 'client_origin')).toBeNull();
     const rendered = JSON.stringify(detail);
     expect(rendered).not.toContain('attachments_v1');
     expect(rendered).not.toContain('content_base64');

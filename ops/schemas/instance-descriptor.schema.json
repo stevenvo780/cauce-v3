@@ -1,0 +1,216 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "instanceId",
+    "companyId",
+    "release",
+    "codeRoot",
+    "inventoryRoot",
+    "paths",
+    "compose",
+    "endpoints",
+    "identityRefs"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "instanceId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,47}$"
+    },
+    "companyId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtimeImage",
+        "consoleImage",
+        "postgresImage",
+        "otelImage",
+        "prometheusImage"
+      ],
+      "properties": {
+        "runtimeImage": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9./:_-]*@)?sha256:[a-f0-9]{64}$"
+        },
+        "consoleImage": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9./:_-]*@)?sha256:[a-f0-9]{64}$"
+        },
+        "postgresImage": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9./:_-]*@)?sha256:[a-f0-9]{64}$"
+        },
+        "otelImage": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9./:_-]*@)?sha256:[a-f0-9]{64}$"
+        },
+        "prometheusImage": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9./:_-]*@)?sha256:[a-f0-9]{64}$"
+        }
+      }
+    },
+    "codeRoot": {
+      "type": "string",
+      "pattern": "^/[A-Za-z0-9._/-]+$"
+    },
+    "inventoryRoot": {
+      "type": "string",
+      "pattern": "^/[A-Za-z0-9._/-]+$"
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config",
+        "state",
+        "bundles",
+        "pki",
+        "backups",
+        "locks"
+      ],
+      "properties": {
+        "config": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._/-]+$"
+        },
+        "state": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._/-]+$"
+        },
+        "bundles": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._/-]+$"
+        },
+        "pki": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._/-]+$"
+        },
+        "backups": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._/-]+$"
+        },
+        "locks": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._/-]+$"
+        }
+      }
+    },
+    "compose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project"
+      ],
+      "properties": {
+        "project": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,47}$"
+        }
+      }
+    },
+    "endpoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bindIp",
+        "gatewayPort",
+        "consolePort",
+        "relayPort",
+        "origins"
+      ],
+      "properties": {
+        "bindIp": {
+          "type": "string"
+        },
+        "gatewayPort": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "consolePort": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "relayPort": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "origins": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^https://[^/\\s]+$"
+          }
+        }
+      }
+    },
+    "identityRefs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bootstrap",
+        "secretFiles"
+      ],
+      "properties": {
+        "bootstrap": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._/-]+$"
+        },
+        "snapshot": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._/-]+$"
+        },
+        "secretFiles": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "^CAUCE_[A-Z0-9_]+_(PATH|FILE)$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^/[A-Za-z0-9._/-]+$"
+          }
+        }
+      }
+    },
+    "integrations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "config"
+        ],
+        "properties": {
+          "config": {
+            "type": "string",
+            "pattern": "^/[A-Za-z0-9._/-]+$"
+          },
+          "workspace": {
+            "type": "string",
+            "pattern": "^/[A-Za-z0-9._/-]+$"
+          },
+          "policyRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -48,7 +48,7 @@ process.stdout.write(JSON.stringify(await targetFromInventory()));
   const result = spawnSync(process.execPath, ['--input-type=module', '--eval', program, alias], {
     cwd: scripts,
     encoding: 'utf8',
-    env: { ...process.env, CAUCE_GATE_INVENTORY_FILE: inventory },
+    env: { ...process.env, CAUCE_GATE_INVENTORY_FILE: inventory, CAUCE_GATE_SOURCE_ROOM: ' EmpresaNueva.ámbito ' },
   });
   return JSON.parse(checked(result, `${scriptName} inventory reader for ${alias}`));
 }
@@ -126,7 +126,7 @@ async function assertParity(root) {
     );
     assert.deepEqual(
       await javascriptReader('gate-roundtrip-probe.mjs', 'regularFile', alias, inventory),
-      { tenant: entry.tenant, sourceRoom: 'grp.steven', alias },
+      { tenant: entry.tenant, sourceRoom: ' EmpresaNueva.ámbito ', alias },
       `gate-roundtrip-probe.mjs diverged from container_alias_lib for ${alias}`,
     );
 

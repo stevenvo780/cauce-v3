@@ -378,7 +378,14 @@ export class HarnessAdapter {
       && this.commandOverride === undefined && invocation.command === process.execPath
       && invocation.args[0] === OPENCLAW_BRIDGE_PATH;
     phase("runner_enter");
-    const stdin = protocolPrompt(effectivePrompt, request.origin, invocationContext, request.noticeHistory);
+    const clientSidecar = request.clientProvenance === undefined && request.clientDelegation === undefined
+      ? undefined
+      : {
+        clientProvenance: request.clientProvenance ?? null,
+        clientDelegation: request.clientDelegation ?? null,
+      };
+    const stdin = protocolPrompt(effectivePrompt, request.origin, invocationContext, request.noticeHistory,
+      clientSidecar);
     const result = await this.runner.run({
       ...(request.onOpenClawPhase === undefined ? {} : { onOpenClawPhase: request.onOpenClawPhase }),
       ...(this.sharedSession !== undefined || isSharedSessionRunner(this.runner) || request.emissionSocketPath === undefined ? {} : { emissionSocketPath: request.emissionSocketPath }),

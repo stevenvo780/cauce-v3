@@ -36,13 +36,15 @@ export async function maintainConsoleUser(
   const values = [normalizeEmail(options.email), passwordHash,
     options.name ?? null, options.role ?? null, options.tenant ?? null, options.alias ?? null,
     options.activate ? true : null];
-  if (options.updateOnly) {
+  if (options.updateOnly || options.tenant === undefined || options.alias === undefined) {
     const result = await pool.query<MaintainedConsoleUser>(
       `UPDATE console_users SET ${assignments} WHERE email_normalized=$1
        RETURNING id, role, tenant_id, alias, active`, values,
     );
     const row = result.rows[0];
-    if (row === undefined) throw new Error(`no existe una cuenta de consola para ${options.email}`);
+    if (row === undefined) throw new Error(options.updateOnly
+      ? `no existe una cuenta de consola para ${options.email}`
+      : 'una cuenta nueva requiere tenant y alias explícitos');
     return row;
   }
 
@@ -51,7 +53,7 @@ export async function maintainConsoleUser(
       `INSERT INTO console_users
        (email, email_normalized, password_hash, display_name, role, tenant_id, alias, active)
        VALUES ($8,$1,$2,COALESCE($3,split_part($8,'@',1)),COALESCE($4,'operator'),
-         COALESCE($5,'Steven'),COALESCE($6,'kant'),COALESCE($7,true))
+         $5,$6,COALESCE($7,true))
        ON CONFLICT (email_normalized) DO NOTHING
        RETURNING id, role, tenant_id, alias, active`,
       [...values, options.email],

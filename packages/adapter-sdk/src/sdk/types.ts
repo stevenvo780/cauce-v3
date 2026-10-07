@@ -55,6 +55,10 @@ export interface AdapterCapabilities {
   /** Accepts per-delivery runtime profile contract and emits consumption evidence upon completion. */
   readonly agent_profile_adoption_v1?: true;
   readonly conversation_work_v1?: true;
+  readonly agent_behavior_policy_v1?: true;
+  readonly client_mailbox_v1?: true;
+  readonly human_message_client_provenance_v1?: true;
+  readonly human_message_client_delegation_v1?: true;
 }
 
 export type RelayOrigin = Origin;

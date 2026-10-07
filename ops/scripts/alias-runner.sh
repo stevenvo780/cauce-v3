@@ -3,12 +3,19 @@ set -euo pipefail
 umask 077
 
 alias_name=${1:?usage: alias-runner.sh ALIAS}
-[[ $alias_name =~ ^[a-z][a-z0-9-]*$ ]] || { printf 'invalid alias\n' >&2; exit 2; }
+[[ $alias_name =~ ^[a-z][a-z0-9_-]{0,63}$ ]] || { printf 'invalid alias\n' >&2; exit 2; }
 [[ ${CAUCE_ALIAS:-} == "$alias_name" ]] || { printf 'unit alias mismatch\n' >&2; exit 2; }
 [[ ${CAUCE_ORIGIN_TRANSPORT:-} == telegram ]] || { printf 'origin transport must be telegram\n' >&2; exit 2; }
 [[ ${CAUCE_ENVIRONMENT:-} == production ]] || { printf 'alias runtime must use production transport policy\n' >&2; exit 2; }
-[[ ${CAUCE_INSTANCE_ID:-} == "systemd-$alias_name" ]] || { printf 'alias instance id is not stable\n' >&2; exit 2; }
+installation_id=${CAUCE_INSTALLATION_ID:-}
+[[ -z $installation_id || $installation_id =~ ^[a-z][a-z0-9-]{0,47}$ ]] || { printf 'invalid installation id\n' >&2; exit 2; }
+[[ ${CAUCE_INSTANCE_ID:-} == "systemd-${installation_id:+$installation_id-}$alias_name" ]] || { printf 'alias instance id is not stable\n' >&2; exit 2; }
 expected_state="/var/lib/cauce-v3/aliases/$alias_name"
+if [[ -n $installation_id ]]; then
+  state_root=${CAUCE_INSTALLATION_STATE_ROOT:?installation state root required}
+  [[ $state_root =~ ^/[a-zA-Z0-9._/-]+$ && $state_root != */../* && $state_root != */.. ]] || { printf 'invalid installation state root\n' >&2; exit 2; }
+  expected_state="$state_root/$alias_name"
+fi
 [[ ${CAUCE_STATE_DIR:-} == "$expected_state" && -d $expected_state ]] || { printf 'alias state directory is unavailable\n' >&2; exit 2; }
 command -v flock >/dev/null 2>&1 || { printf 'flock is required for the local consumer guard\n' >&2; exit 127; }
 

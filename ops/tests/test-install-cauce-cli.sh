@@ -58,11 +58,30 @@ for invocado in "$DEST/cauce" "$WORK/cauce-enlace"; do  # 2b) loads its lib, als
   fi
 done
 rm -f "$WORK/cauce-enlace"
+salida=$(HOME="$HOGAR" timeout 20 bash "$DEST/cauce" --instance-config /absent/config.json operador on 2>&1); rc=$?
+if [[ $rc == 2 && $salida == *"invalid instance selection"* ]]; then
+  ok "el selector instalado valida el descriptor con sus dependencias propias"
+else
+  bad "el selector instalado valida el descriptor (rc=$rc): $salida"
+fi
+for relative in cli/instance-selection.py instances/common/descriptor.py schemas/instance-descriptor.schema.json; do
+  if cmp -s "$RAIZ/$relative" "$DEST/.cauce-instance/ops/$relative"; then
+    ok "companion instalado: $relative"
+  else
+    bad "companion instalado: $relative"
+  fi
+done
 SIN_LIB="$WORK/sin-lib"; CON_LIB="$WORK/con-lib"; mkdir -p "$SIN_LIB" "$CON_LIB"  # 2c) sin lib se niegan
+PASSWD_BIN="$WORK/passwd-bin"; mkdir -p "$PASSWD_BIN"
+cat > "$PASSWD_BIN/getent" <<'SH'
+#!/usr/bin/env bash
+printf 'fixture:x:%s:%s::%s:/bin/bash\n' "$(id -u)" "$(id -g)" "$CAUCE_TEST_OPERATOR_HOME"
+SH
+chmod 0755 "$PASSWD_BIN/getent"
 cp "$RAIZ/cli/cauce-credenciales.lib.sh" "$CON_LIB/"
 for dir_cli in "$SIN_LIB" "$CON_LIB"; do
   sed '/^case /,$d' "$DEST/cauce" > "$dir_cli/cauce"
-  bash -c "source '$dir_cli/cauce' 2>/dev/null; lib_credenciales_ok" >/dev/null 2>&1
+  PATH="$PASSWD_BIN:$PATH" CAUCE_TEST_OPERATOR_HOME="$HOGAR" bash -c "source '$dir_cli/cauce' 2>/dev/null; lib_credenciales_ok" >/dev/null 2>&1
   echo "$dir_cli=$?" >> "$WORK/resultado"
 done
 if grep -qx "$SIN_LIB=1" "$WORK/resultado" && grep -qx "$CON_LIB=0" "$WORK/resultado"; then ok "sin la lib, retirar/login/aprovisionar se niegan"; else bad "sin la lib, retirar/login/aprovisionar se niegan ($(tr '\n' ' ' < "$WORK/resultado"))"; fi
@@ -94,7 +113,6 @@ else
   bad "cauce-sesiones instalado es identico a la fuente versionada"
 fi
 
-# --- 5) reinstalling over a modified target keeps the previous version ------------------------
 printf '\n# tocado a mano\n' >> "$DEST/cauce-panel"
 HOME="$HOGAR" "$INSTALADOR" "$DEST" >/dev/null 2>&1
 copias=$(find "$DEST" -maxdepth 1 -name 'cauce-panel.bak-*' | wc -l)

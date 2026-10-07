@@ -31,6 +31,7 @@ interface AdapterEngineBaseOptions {
   readonly logger?: AdapterLogger;
   readonly ownTenantId?: string;
   readonly ownRoom?: string;
+  readonly ownAlias?: string;
   readonly defaultTimeoutMs?: number;
   /** Test/diagnostic override; production derives renewal cadence from the authenticated claim. */
   readonly claimRenewalMs?: number;

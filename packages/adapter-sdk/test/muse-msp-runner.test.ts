@@ -759,3 +759,24 @@ test("Muse scoped resume registry failure cannot reuse the earlier endpoint", as
   assert.equal(state.turns.length, 1);
   assert.deepEqual(state.openings.map(row => row.endpoint), [resolve(config.workspace, 'A.sock')]);
 });
+
+
+test("Muse accepts two arbitrary canonical workspaces without taking caller paths", async () => {
+  for (const suffix of ["company-a", "company-b"]) {
+    const { config } = await fixture(`independent-${suffix}`);
+    const workspace = resolve(config.workspace, "nested-project");
+    await mkdir(workspace);
+    const own = { ...config, workspace };
+    const output = await new MuseMspRunner(own).run({ harness: "muse", command: fakeMuse, args: ["serve"],
+      cwd: "/foreign-caller", stdin: "Synthetic task", sessionId: mintId(), timeoutMs: 5_000,
+      signal: new AbortController().signal });
+    assert.equal(parseMuseMspOutput(output.stdout).output.status, "done");
+    const state = JSON.parse(await readFile(resolve(own.dataHome, "fake-muse-state.json"), "utf8")) as {
+      sessions: Record<string, { workspaceRoot: string }> };
+    assert.ok(Object.values(state.sessions).every(session => session.workspaceRoot === workspace));
+    await writeFile(resolve(workspace, "fake-muse-scenario.json"), JSON.stringify({ readWorkspaceRoot: config.workspace }));
+    await assert.rejects(new MuseMspRunner(own).run({ harness: "muse", command: fakeMuse, args: ["serve"],
+      stdin: "No foreign return", sessionId: mintId(), timeoutMs: 5_000, signal: new AbortController().signal }),
+      /workspace differs/u);
+  }
+});

@@ -1,5 +1,7 @@
 # Arquitectura de Cauce V3
 
+Las instalaciones por empresa usan un descriptor, identidades y recursos propios. Véase [instalaciones independientes](instalaciones-independientes.md) para el instalador y los límites de su cualificación.
+
 ## 1. Qué es
 
 Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenClaw) de uno o varios tenants, con consola web de operador y puente Telegram (`AGENTS.md`). PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull*: el adapter de cada agente reclama sus entregas por WebSocket con fencing (`claim_token`+`epoch`) (`AGENTS.md`). El `dispatcher` no reparte nada — es el segador de reintentos (`services/dispatcher/README.md`). "Entregar" significa pegar el texto en la sesión tmux viva del CLI del agente (`packages/adapter-sdk/README.md`). El bundle versionado de migraciones alcanza el esquema 045; el esquema vivo de una instalación se acredita con `schema_migrations` y las sondas de operación, no se infiere desde este documento.
@@ -61,6 +63,12 @@ Todos los servicios de runtime comparten una sola imagen (`CAUCE_RUNTIME_IMAGE`,
 **Fan-in** — `packages/store/src/repository/agents/fanin.ts:14` (`AgentFaninRepository`) materializa las respuestas de una delegación A→B→C antes de devolverlas al origen.
 
 **Fencing** — tres mecanismos independientes: (a) `epoch` creciente por `(tenant, alias)` en las entregas normales (un consumer viejo pierde su claim); (b) `claim_token` de terminal, migraciones `032_terminal_session_claim_fencing.sql`, `033_terminal_browser_owner_fencing.sql`; (c) `034_terminal_relay_instance_fencing.sql` — el relay solo arranca si `CAUCE_TERMINAL_RELAY_INSTANCE_ID` coincide con el sha256 del DER de su propio certificado cliente hacia el gateway (`deploy/compose.yaml:95`, `deploy/deploy.sh:93-94`).
+
+### Clientes MCP con buzón
+
+Un cliente OAuth local declarado puede recibir texto nuevo en una dirección `mbx-<hash de tenant y grant>`. La etiqueta del cliente es independiente de la identidad humana que autoriza la conexión. El buzón reutiliza mensajes y entregas: `done`, intento cero y `client_mailbox.state=stored` acreditan almacenamiento, sin consumidor, lease, ACK ni ejecución. Los adapters que anuncian `client_mailbox_v1` reciben estos destinos con disponibilidad explícita; `@all` conserva su alcance de agentes online. El fan-in excluye los buzones de las respuestas que espera de consumidores.
+
+`cauce_mailbox` lee sólo el buzón del grant autenticado. `cauce_inbox` incluye su primera página para clientes con catálogo anterior. No existe una activación automática de ChatGPT por almacenar mensajes. El diseño, los límites y las pruebas se describen en [buzón del cliente](superpowers/specs/2026-10-06-buzon-cliente-design.md).
 
 ## 4. La flota como datos
 

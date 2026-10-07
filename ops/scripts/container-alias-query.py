@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 import pathlib
 import sys
 
 from container_alias_lib import FIELDS, ContainerAliasError, load_container_aliases
 
-root = pathlib.Path(__file__).resolve().parents[1]
+root = pathlib.Path(os.environ.get("CAUCE_CONTAINER_OPS_ROOT", pathlib.Path(__file__).resolve().parents[1]))
 if len(sys.argv) != 2:
     print("usage: container-alias-query.py ALIAS", file=sys.stderr)
     raise SystemExit(2)

@@ -8,6 +8,7 @@ export {
   MAX_RELAY_MESSAGES,
   NOTIFY_KINDS,
   hasNonBlankText,
+  isDirectlyMessageableTarget,
   validateDeliveryOutput,
   validateStructuredOutput,
 } from "./output-parser/contract.js";

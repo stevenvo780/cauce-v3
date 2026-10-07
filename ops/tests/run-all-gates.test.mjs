@@ -150,5 +150,68 @@ await assert.rejects(readFile(doneFile, 'utf8'), 'the wedged test outlived its d
 const wedgedPid = Number(await readFile(pidFile, 'utf8'));
 assert.throws(() => process.kill(wedgedPid, 0), /ESRCH/u, 'the wedged test was left orphaned');
 
-for (const tree of [gates, rejections, wedged]) await rm(tree.root, { recursive: true, force: true });
-console.log('run-all gates ok: requirement declarations, matrix ownership and the per-test deadline');
+const budgets = await plantTree({
+  'test_independent_instance_postgres.py': "print('postgres budget')\n",
+  'test_independent_instance_postgres_copy.py': "print('ordinary copy')\n",
+  'test_plain.py': "print('ordinary budget')\n",
+});
+const timerRecorder = path.join(budgets.root, 'timer-recorder.mjs');
+const timerLog = path.join(budgets.root, 'timers.jsonl');
+await writeFile(timerRecorder, [
+  "import { appendFileSync } from 'node:fs';",
+  'const originalSetTimeout = globalThis.setTimeout;',
+  'globalThis.setTimeout = (callback, milliseconds, ...arguments_) => {',
+  "  appendFileSync(process.env.CAUCE_TIMER_LOG, JSON.stringify(milliseconds) + '\\n');",
+  '  return originalSetTimeout(callback, milliseconds, ...arguments_);',
+  '};',
+  '',
+].join('\n'));
+const recordedDeadlines = async () => (await readFile(timerLog, 'utf8')).trim().split('\n').map(Number);
+const timerEnvironment = { NODE_OPTIONS: '--import=' + timerRecorder, CAUCE_TIMER_LOG: timerLog };
+const defaultBudgets = run(budgets, timerEnvironment);
+assert.equal(defaultBudgets.status, 0);
+assert.deepEqual(await recordedDeadlines(), [180_000, 120_000, 120_000],
+  'only the exact PostgreSQL family filename may receive the longer deadline');
+await writeFile(timerLog, '');
+const overriddenBudgets = run(budgets, { ...timerEnvironment, CAUCE_OPS_TEST_TIMEOUT_MS: '3500' });
+assert.equal(overriddenBudgets.status, 0);
+assert.deepEqual(await recordedDeadlines(), [3500, 3500, 3500],
+  'an explicit environment override must take priority for every file');
+
+const ignoresTerm = await plantTree({
+  'test_independent_instance_postgres.py': [
+    'import os, pathlib, signal, time',
+    "pathlib.Path(os.environ['CAUCE_WEDGE_PID']).write_text(str(os.getpid()))",
+    "signal.signal(signal.SIGTERM, lambda signum, frame: pathlib.Path(os.environ['CAUCE_TERM_SEEN']).write_text('term'))",
+    'time.sleep(120)',
+    "pathlib.Path(os.environ['CAUCE_WEDGE_DONE']).write_text('done')",
+    '',
+  ].join('\n'),
+});
+const termPid = path.join(ignoresTerm.root, 'wedged.pid');
+const termDone = path.join(ignoresTerm.root, 'wedged.done');
+const termSeen = path.join(ignoresTerm.root, 'term.seen');
+await writeFile(timerLog, '');
+const termStartedAt = Date.now();
+const killedAfterGrace = run(ignoresTerm, {
+  ...timerEnvironment,
+  CAUCE_OPS_TEST_TIMEOUT_MS: '1000',
+  CAUCE_WEDGE_PID: termPid,
+  CAUCE_WEDGE_DONE: termDone,
+  CAUCE_TERM_SEEN: termSeen,
+});
+const termElapsedMs = Date.now() - termStartedAt;
+assert.equal(killedAfterGrace.verdicts.get('test_independent_instance_postgres.py').verdict, 'TIMEOUT');
+assert.match(killedAfterGrace.verdicts.get('test_independent_instance_postgres.py').detail, /killed after 1\.0s/u);
+assert.equal(killedAfterGrace.status, 1);
+assert.equal(await readFile(termSeen, 'utf8'), 'term', 'SIGTERM must be attempted before SIGKILL');
+assert.deepEqual(await recordedDeadlines(), [1000, 10_000], 'the hard-kill grace must remain ten seconds');
+assert.ok(termElapsedMs >= 10_000 && termElapsedMs < 30_000,
+  'the runner failed to preserve its TERM/KILL grace: ' + termElapsedMs + 'ms');
+await assert.rejects(readFile(termDone, 'utf8'), 'the SIGTERM-resistant test outlived SIGKILL');
+const termProcessPid = Number(await readFile(termPid, 'utf8'));
+assert.throws(() => process.kill(termProcessPid, 0), /ESRCH/u,
+  'the SIGTERM-resistant process was left orphaned');
+
+for (const tree of [gates, rejections, wedged, budgets, ignoresTerm]) await rm(tree.root, { recursive: true, force: true });
+console.log('run-all gates ok: requirement declarations, matrix ownership, file budgets and TERM/KILL deadlines');

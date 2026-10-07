@@ -7,8 +7,10 @@ import { helloCapabilityStrings } from "../src/sdk/client.js";
 const HELLO_SUFFIXES = [
   "console_human_scope_v1",
   "agent_identity_v1",
+  "agent_behavior_policy_v1",
   "agent_profile_adoption_v1",
   "agent_profile_v1",
+  "client_mailbox_v1",
   "delegation_feedback_v1",
   "heartbeat",
   "mcp_emit",
@@ -48,7 +50,7 @@ test("hello advertises only capabilities consumed by runtime or operational read
       [`harness.${definition.id}`, ...HELLO_SUFFIXES, ...workState].sort(),
       definition.id,
     );
-    assert.equal(advertised.length, 10 + workState.length, definition.id);
+    assert.equal(advertised.length, 12 + workState.length, definition.id);
     assert.equal(new Set(advertised).size, advertised.length, definition.id);
   }
 });
@@ -94,7 +96,9 @@ test("human initiator capability is absent by default and explicit only for the 
   assert.equal(helloCapabilityStrings(capabilities).includes("human_message_initiator_v1"), false);
   const enabled = helloCapabilityStrings(capabilities, true);
   assert.equal(enabled.filter((capability) => capability === "human_message_initiator_v1").length, 1);
-  assert.deepEqual(enabled.filter((capability) => capability !== "human_message_initiator_v1"),
+  assert.deepEqual(enabled.filter((capability) => ![
+    "human_message_initiator_v1", "human_message_client_provenance_v1", "human_message_client_delegation_v1",
+  ].includes(capability)),
     helloCapabilityStrings(capabilities));
 });
 
@@ -117,6 +121,32 @@ test("client HELLO follows the immutable factory capability for supported and un
       const hello = connection.sent.find((frame) => frame.type === "hello");
       assert.ok(hello);
       assert.equal(hello.capabilities.includes("human_message_initiator_v1"), definition.id !== "fake");
+      assert.equal(hello.capabilities.includes("human_message_client_provenance_v1"), definition.id !== "fake");
+      assert.equal(hello.capabilities.includes("human_message_client_delegation_v1"), definition.id !== "fake");
     } finally { stop.abort(); await running; }
+  }
+});
+
+
+test("old adapters omit behavior policy capability on their original wire", () => {
+  const { agent_behavior_policy_v1: _capability, ...old } = HARNESS_DEFINITIONS.fake.capabilities;
+  assert.equal(helloCapabilityStrings(old).includes("agent_behavior_policy_v1"), false);
+  assert.equal(helloCapabilityStrings(HARNESS_DEFINITIONS.fake.capabilities)
+    .filter(value => value === "agent_behavior_policy_v1").length, 1);
+});
+
+
+test("generic policy and client identity retain their independent negotiation gates", () => {
+  const capabilities = HARNESS_DEFINITIONS.claude.capabilities;
+  for (const isolation of [false, true]) {
+    const advertised = helloCapabilityStrings(capabilities, isolation);
+    assert.equal(advertised.filter(value => value === "agent_behavior_policy_v1").length, 1);
+    for (const clientCapability of ["human_message_client_provenance_v1", "human_message_client_delegation_v1"]) {
+      assert.equal(advertised.includes(clientCapability), isolation);
+    }
+    const { agent_behavior_policy_v1: _policy, ...old } = capabilities;
+    const legacy = helloCapabilityStrings(old, isolation);
+    assert.equal(legacy.includes("agent_behavior_policy_v1"), false);
+    assert.equal(legacy.includes("human_message_client_provenance_v1"), isolation);
   }
 });

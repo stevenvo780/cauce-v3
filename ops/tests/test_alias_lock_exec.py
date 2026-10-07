@@ -185,8 +185,8 @@ class AliasLockExecTests(unittest.TestCase):
     def test_supervisor_and_provisioner_use_the_same_helper(self) -> None:
         supervisor = (ROOT / "scripts" / "container-adapter-supervisor.sh").read_text(encoding="utf-8")
         provisioner = (ROOT / "scripts" / "provision-hermes-runtime.sh").read_text(encoding="utf-8")
-        self.assertIn('ALIAS_LOCK_EXEC="$ROOT/scripts/alias-lock-exec.py"', supervisor)
-        self.assertIn('lock_helper="$ops_root/scripts/alias-lock-exec.py"', provisioner)
+        self.assertIn('ALIAS_LOCK_EXEC="$CODE_ROOT/scripts/alias-lock-exec.py"', supervisor)
+        self.assertIn('lock_helper="$code_root/scripts/alias-lock-exec.py"', provisioner)
         self.assertNotIn("flock -n", supervisor)
         self.assertNotIn("flock -n", provisioner)
 

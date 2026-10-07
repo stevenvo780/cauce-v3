@@ -7,12 +7,13 @@ import re
 from typing import Any
 
 import yaml
+from container_alias_lib import ALIAS_RE
 from fleet_derive import load_fleet_assignments
 from jsonschema import Draft202012Validator
 from schema_diagnostics import safe_schema_diagnostic, schema_error_sort_key
 
 ENV_RE = re.compile(r"^CAUCE_[A-Z0-9_]+_(?:PATH|URL)$")
-ALIAS_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+
 TOP_KEYS = {"apiVersion", "kind", "metadata", "spec"}
 SPEC_KEYS = {
     "tenant", "room", "alias", "harness", "profile", "origin", "relay",

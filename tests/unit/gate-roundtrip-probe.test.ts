@@ -68,8 +68,10 @@ async function fixture() {
 
 function run(arguments_: string[], env: Record<string, string>) {
   return new Promise<{ status: number | null; stdout: string; stderr: string }>((resolveRun) => {
+    const processEnvironment = { ...process.env, ...env };
+    if (!Object.hasOwn(env, 'CAUCE_GATE_SOURCE_ROOM')) delete processEnvironment.CAUCE_GATE_SOURCE_ROOM;
     const child = spawn('node', [probe, ...arguments_], {
-      env: { ...process.env, ...env },
+      env: processEnvironment,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -116,6 +118,7 @@ async function gateway(value: Awaited<ReturnType<typeof fixture>>, response = { 
 function environment(value: Awaited<ReturnType<typeof fixture>>, origin: string) {
   return {
     CAUCE_GATE_INVENTORY_FILE: value.inventory,
+    CAUCE_GATE_SOURCE_ROOM: ' EmpresaNueva.ámbito ',
     CAUCE_GATE_PROBE_URL: origin,
     CAUCE_GATE_PROBE_CA_FILE: value.ca,
     CAUCE_GATE_PROBE_CERT_FILE: value.cert,
@@ -145,17 +148,38 @@ describe('authentic mTLS round-trip probe', () => {
     ]);
     expect((await lstat(value.output)).mode & 0o077).toBe(0);
     const published = endpoint.received() as {
+      room_id: string;
       recipients: { tenant_id: string; alias: string }[];
       body: { type: string; nonce: string; timeout_ms: number };
       lane: string;
       priority: number;
     };
+    expect(published.room_id).toBe(' EmpresaNueva.ámbito ');
     expect(published.recipients).toEqual([{ tenant_id: 'Steven', alias: 'kant' }]);
     expect(published.body).toEqual({ type: 'system.gate.probe', nonce: evidence.nonce, timeout_ms: 5000 });
     expect(published.body.timeout_ms).toBe(5000);
     expect(published.lane).toBe('interactive');
     expect(published.priority).toBe(-100);
   });
+
+  test.each([undefined, '', 'room\n', 'room\t', 'room\u0085', 'a'.repeat(129)])(
+    'rejects absent or invalid source room %j before reading TLS or contacting the gateway',
+    async (sourceRoom) => {
+      const directory = await mkdtemp(join(tmpdir(), 'cauce-gate-room-'));
+      scratch.push(directory);
+      const output = join(directory, 'evidence.json');
+      const settings: Record<string, string> = {
+        CAUCE_GATE_INVENTORY_FILE: join(directory, 'absent-inventory.json'),
+        CAUCE_GATE_PROBE_URL: 'https://127.0.0.1:1',
+      };
+      if (sourceRoom !== undefined) settings.CAUCE_GATE_SOURCE_ROOM = sourceRoom;
+      const result = await run(['operador_principal', output], settings);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('CAUCE_GATE_SOURCE_ROOM is required');
+      expect(result.stderr).not.toContain('probe CA');
+      expect(await lstat(output).catch(() => undefined)).toBeUndefined();
+    },
+  );
 
   test('rejects non-HTTPS origins and exposed private keys without creating evidence', async () => {
     const value = await fixture();

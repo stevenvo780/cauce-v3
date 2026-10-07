@@ -1,0 +1,67 @@
+{
+  "plan": "docs/superpowers/plans/2026-10-06-instalaciones-independientes.md",
+  "authorization": "Usuario aprobó implementación remota; UI local fuera del alcance",
+  "branch": "codex/company-instances-20261006",
+  "base": "08a788947238a49f1b953ae82c3b357c4760f499",
+  "owners": {
+    "policy": "generic_policy_remote",
+    "sdk": "generic_sdk_remote",
+    "common": "generic_ops_remote",
+    "hospital-live": "generic_hospital_remote",
+    "namespace-integration": "root"
+  },
+  "reviews": {
+    "policy": "SDK",
+    "sdk": "Policy favorable; 14 hashes finales, preDB independiente y equivalencia byte a byte de SQL probado",
+    "hospital": "SDK",
+    "namespace": "SDK y policy favorables; CLI companion, cutover por instancia y unidades centrales sin cambio",
+    "common": "SDK y policy favorables; guard consumer-ID revisada y 4/4 PASS independientes"
+  },
+  "status": "Fuentes y revisiones cerradas; aceptación A/B y matriz completa pendientes",
+  "gates": {
+    "sdk": "1537 PASS después de main; 68 focused, build, lint estricto y calidad PASS",
+    "hospital": "211 Praxis +19 instalación PASS y revisión SDK aprobada",
+    "policy": "22 policy/probe PostgreSQL, 4 maintenance PostgreSQL, 1 probe privacy y 60 gateway unit PASS; 616 regresiones PASS",
+    "namespace": "8 locks +7 Hermes +11 namespace y CLI companion PASS; alias canónicos 8 casos +8 locks +11 namespace PASS; cutover 4/4 PASS independientes, 3 namespaces/locks diferentes",
+    "common": "20 unit sin skip +6 PostgreSQL reales finales +25 exportador +2 manifiestos PASS; 4 preflight PASS independientes, rechazo previo a efectos",
+    "live": "PKI estricta y entrega durable A/B PASS parcial; 4 rechazos cruzados PASS. Fixture corregido para ACK obsoleto applied:false HTTP200 y adjuntos E2E; siguiente corrida completa pendiente",
+    "ops_validate": "77 PASS, 2 FAIL, 0 timeout en corrida anterior; cobertura Ruff/catálogo de shebang corregidos y focales PASS, repetición completa pendiente",
+    "typecheck": "PASS global anterior; repetición sobre HEAD final pendiente",
+    "lint": "PASS global anterior y focales nuevos; repetición global final pendiente",
+    "quality": "PASS 2141 archivos en focal final; baseline sin ampliaciones",
+    "packaging": "Imágenes runtime3ffeaaf7 y consolae6643b0b con fuente causal verificada; qa:runtime-packaging PASS, sin publicación ni despliegue",
+    "architecture": "Archify fijado 2.16.0, árbol exacto190archivos, refresh y validate PASS",
+    "full": "Corrida previa detenida por cambio del fixture: incomplete y accepted:false; relanzamiento fuente congelada pendiente",
+    "collector": "29 PostgreSQL PASS, 0 fail, 0 skip; guard preDB:128 abre conexión,129/131 rechazo sin conexión ni archivo; SQL probado byteidéntico"
+  },
+  "pending": [
+    "Aceptación A/B completa: adjuntos, backup/restore y actualización independiente",
+    "Gates globales y matriz completa de 11 suites sobre fuente exacta",
+    "Actualizar PR publicado con la evidencia final",
+    "Integrar/desplegar únicamente tras cualificación verde"
+  ],
+  "rulings": [
+    "Registro host compartido explícito, root-owned setgid/sticky y lock común",
+    "CAUCE_INSTALLATION_ID distinto de CAUCE_INSTANCE_ID de lease",
+    "Probe reservado sin nombres de empresa, autoridad mTLS derivada y revalidación durable",
+    "Contenedores/workspaces de empresas distintos; no adopción por nombre"
+  ],
+  "main_incorporation": "410c0d5c incorporado; merge 842629e6, árbol final idéntico al SDK revisado",
+  "commits": {
+    "common": "64c6b6df",
+    "live_test": "5e2418d1",
+    "main_merge": "842629e6",
+    "collector": "5f450142",
+    "consumer_id_preflight": "6631053d",
+    "consumer_id_collector": "519a4e65",
+    "cutover_namespace": "3b62595c",
+    "generated_metadata": "f56602e3",
+    "supervisor_budget": "8547e910"
+  },
+  "source_head_before_docs": "f56602e3dbc1b172b4fe25d0d1c1f0a9b57c69cb",
+  "publication": {
+    "url": "https://github.com/stevenvo780/cauce-v3/pull/131",
+    "base": "dev",
+    "state": "Abierto y listo para revisión; sin aprobación de integración/despliegue mientras queden gates pendientes"
+  }
+}

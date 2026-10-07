@@ -1,3 +1,4 @@
+import { desiredBehaviorPolicies } from './agent-behavior-policy.js';
 import type { ConfigMutation, Tenant } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
@@ -162,6 +163,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
       agents: agents.rows, provider_accounts: providerAccounts.rows,
       alias_routing_ceiling: routingCeiling.rows, agent_account_bindings: agentAccountBindings.rows,
       agent_profiles: agentProfiles.rows,
+      agent_behavior_policies: await desiredBehaviorPolicies(this.pool, scope),
       revisions: revisions.rows.map(revisionForSnapshot)
     };
   }
@@ -173,6 +175,9 @@ export class ConfigurationRepository extends ConfigurationMutations {
     dryRun: boolean,
     expectedRevision?: number
   ): Promise<ConfigurationChangeResult> {
+    if (mutation.resource === 'agent_behavior_policy' && expectedRevision === undefined) {
+      throw new ConfigurationError('invalid_input', 'behavior policy changes require expected_revision');
+    }
     assertRuntimeSynchronizedMutation(mutation);
     return this.transaction<ConfigurationChangeResult>(async (client) => {
       const hub = await this.assertControl(client, actorTenant, actorAlias);
@@ -228,6 +233,9 @@ export class ConfigurationRepository extends ConfigurationMutations {
       if (!original) throw new ConfigurationError('not_found', 'configuration revision was not found');
       if (!hub && original.actor_tenant !== actorTenant) {
         throw new ConfigurationError('forbidden', 'configuration revision is outside the actor tenant');
+      }
+      if (original.inverse_operation.resource === 'agent_behavior_policy' && expectedRevision === undefined) {
+        throw new ConfigurationError('invalid_input', 'behavior policy rollback requires expected_revision');
       }
       assertRuntimeSynchronizedMutation(original.inverse_operation);
       this.authorizeMutation(original.inverse_operation, actorTenant, hub);
@@ -320,7 +328,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
     // below rather than by a rule a future edit could soften.
     //
     if (mutation.resource === 'room' || mutation.resource === 'membership'
-      || mutation.resource === 'egress_destination') {
+      || mutation.resource === 'egress_destination' || mutation.resource === 'agent_behavior_policy') {
       if (mutation.tenant_id === actorTenant) return;
     } else if (mutation.resource === 'acl_edge') {
       if (mutation.from_tenant === actorTenant) return;

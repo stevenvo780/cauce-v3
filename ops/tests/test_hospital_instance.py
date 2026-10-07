@@ -304,168 +304,43 @@ class HospitalInstanceTests(unittest.TestCase):
         self.assertNotIn("--aliases operador teseo", script)
         self.assertIn('"operador": {"user_ids": [candidate]', script)
 
-    def test_bootstrap_declares_exactly_three_hospital_agents(self) -> None:
-        sql = (INSTANCE / "bootstrap.sql").read_text(encoding="utf-8")
+    def test_installation_entries_require_descriptor_before_mutating_any_resource(self) -> None:
+        for name in ("install.sh", "bootstrap-core.sh", "provision-agents.sh"):
+            with self.subTest(name=name):
+                result=subprocess.run(["bash", str(INSTANCE/name)],capture_output=True,text=True,timeout=10)
+                self.assertEqual(result.returncode,64)
+                self.assertIn("--descriptor",result.stderr)
+                script=(INSTANCE/name).read_text()
+                for forbidden in ("docker ", "systemctl ", "deploy.sh", "/etc/", "/opt/", "sudo", "bootstrap.sql"):
+                    self.assertNotIn(forbidden,script)
+        source=(INSTANCE/"install-profile.py").read_text()
+        self.assertIn("instance.load_instance_descriptor",source)
+        self.assertIn("common/cauce-instance",source)
+        self.assertIn("os.execv",source)
+        self.assertIn("supervision integration requires explicit project profile",source)
 
-        for alias in ("operador", "teseo", "perseo"):
-            self.assertIn(f"'Hospital', '{alias}'", sql)
-        self.assertNotIn("ADD CONSTRAINT tenants_known", sql)
-        self.assertIn("requires a fresh migrated database", sql)
-        self.assertIn("hospital topology verification failed", sql)
-        self.assertIn("perseo:hospital-agent-muse-frontend-1:hospital-developer", sql)
-        self.assertIn("teseo:hospital-agent-muse-backend-1:hospital-developer", sql)
-        self.assertNotIn("perseo:hospital-agent-openclaw-frontend-gateway-1", sql)
-        script = (INSTANCE / "bootstrap-core.sh").read_text(encoding="utf-8")
-        self.assertLess(script.index('bootstrap.sql"'), script.index('enable-praxis.sql"'))
-        self.assertLess(script.index('enable-praxis.sql"'), script.index('export-fleet-snapshot.py"'))
 
-        rename = (INSTANCE / "rename-developers.sql").read_text(encoding="utf-8")
-        restore = (INSTANCE / "restore-developer-aliases.sql").read_text(encoding="utf-8")
-        self.assertIn("ARRAY['operador', 'perseo', 'teseo']", rename)
-        self.assertIn("SET enabled = false", rename)
-        self.assertNotIn("DELETE FROM agents", rename)
-        self.assertIn("restore the pre-cutover dump instead", restore)
-        self.assertIn("DELETE FROM agents", restore)
-        self.assertIn("ARRAY['backend', 'frontend', 'operador']", restore)
 
-    def test_director_policy_keeps_authorized_goals_active(self) -> None:
-        capabilities = (INSTANCE / "director-capabilities.sql").read_text(encoding="utf-8")
-        praxis = (INSTANCE / "enable-praxis.sql").read_text(encoding="utf-8")
-        bootstrap = (INSTANCE / "bootstrap.sql").read_text(encoding="utf-8")
 
-        def constant(sql: str, name: str) -> str:
-            match = re.search(rf"\b{name} constant text := '([^']+)';", sql)
-            self.assertIsNotNone(match, name)
-            assert match is not None
-            return match.group(1)
 
-        crm_role = constant(capabilities, "crm_director_role")
-        praxis_role = constant(capabilities, "director_role")
-        self.assertEqual(praxis_role, constant(praxis, "praxis_director_role"))
-        self.assertIn(f"'{crm_role}',", bootstrap)
-        for role in (crm_role, praxis_role):
-            self.assertLessEqual(len(role.encode("utf-16-le")) // 2, 1200)
-            self.assertTrue(role.startswith("Soy el director"))
-            for rule in (
-                "Steven define objetivos de software y administración",
-                "Leonel valida lo clínico",
-                "no escribo implementación",
-                "archivos y clones disjuntos",
-                "permiso durable verificado en hospital_ops",
-                "continúo el trabajo independiente",
-                "el GOAL persiste",
-                "done no acredita producto integrado",
-                "sin replay ni duplicados",
-                "no uso pacientes reales, secretos ajenos",
-            ):
-                self.assertIn(rule, role)
-        for sql in (capabilities, praxis, bootstrap):
-            self.assertNotIn("máximo dos", sql)
-            self.assertNotIn("Steven administra la infraestructura", sql)
-            self.assertNotIn("Steven conserva administración de infraestructura", sql)
-            self.assertIn("no reduce ni cancela el objetivo completo", sql)
-            self.assertIn("seguir el trabajo independiente y pedir el criterio una vez", sql)
-            self.assertNotRegex(sql, r"SET\s+revision\s*=")
 
-    def test_director_profile_is_consistent_and_rerunnable(self) -> None:
-        capabilities = (INSTANCE / "director-capabilities.sql").read_text(encoding="utf-8")
-        praxis = (INSTANCE / "enable-praxis.sql").read_text(encoding="utf-8")
-        purpose = re.search(r"operator_purpose constant text := '([^']+)';", praxis)
-        human = re.search(r"operator_human_brief constant text := '([^']+)';", praxis)
-        assert purpose is not None and human is not None
-        self.assertIn(f"THEN '{purpose.group(1)}'", capabilities)
-        self.assertIn(f"'{human.group(1)}' AS human_brief", capabilities)
 
-        profiles = []
-        for sql in (capabilities, praxis):
-            start = sql.index("  WITH desired AS (")
-            end = sql.index("  UPDATE agent_profiles profile", start)
-            profiles.append(re.findall(r"'([^']*)'", sql[start:end]))
-            self.assertLess(sql.index("  UPDATE agent_role_templates"), start)
-            update = sql[end:sql.index(";", end)]
-            for field in ("purpose", "human_brief", "responsibilities", "operating_rules"):
-                self.assertIn(f"{field} = desired.{field}", update)
-                self.assertIn(f"profile.{field}", update)
-                self.assertIn(f"desired.{field}", update)
-            self.assertIn("IS DISTINCT FROM ROW(", update)
-            self.assertNotIn("array_append", update)
-            self.assertNotIn("purpose ||", update)
-        for item in profiles[1]:
-            self.assertIn(item, profiles[0], item)
 
-    def test_bootstrap_preserves_current_roles_and_profiles(self) -> None:
-        sql = (INSTANCE / "bootstrap.sql").read_text(encoding="utf-8")
-        templates = sql[sql.index("INSERT INTO agent_role_templates"):sql.index("INSERT INTO harness_definitions")]
-        self.assertIn("ON CONFLICT (slug) DO NOTHING", templates)
-        agents = sql[sql.index("INSERT INTO agents("):sql.index("INSERT INTO memberships(")]
-        update = agents[agents.index("ON CONFLICT"):]
-        self.assertNotIn("role_brief =", update)
-        self.assertNotIn("role_template_slug =", update)
-        self.assertIn("WHERE agent_profiles.purpose IS NULL", sql)
-        self.assertIn("perseo:hospital-agent-muse-frontend-1:hospital-praxis-developer", sql)
-        self.assertIn("teseo:hospital-agent-muse-backend-1:hospital-praxis-developer", sql)
 
-    def test_redeploy_refuses_to_bypass_a_missing_backup(self) -> None:
-        script = (INSTANCE / "bootstrap-core.sh").read_text(encoding="utf-8")
 
-        self.assertIn('docker volume inspect "$PG_VOLUME"', script)
-        self.assertIn("backup-monitor.sh", script)
-        self.assertIn("La instancia ya tiene almacenamiento", script)
-        checkpoint = script.index('"$REPO/ops/instances/hospital/backup.sh"')
-        deploy = script.index('"$REPO/deploy/deploy.sh"')
-        self.assertLess(checkpoint, deploy)
 
-    def test_compose_secret_bind_permissions_are_exercised(self) -> None:
-        script = (INSTANCE / "bootstrap-core.sh").read_text(encoding="utf-8")
 
-        self.assertIn("--user 1000:1000", script)
-        self.assertIn("--user 101:101", script)
-        self.assertIn("/probe/identities/mtls_identities.json", script)
-        self.assertIn("/probe/release-state", script)
-
-    def test_agent_provision_waits_for_real_fresh_leases(self) -> None:
-        script = (INSTANCE / "provision-agents.sh").read_text(encoding="utf-8")
-
-        self.assertIn("ALIASES=(operador teseo perseo)", script)
-        self.assertIn("teseo) printf 'hospital-agent-muse-backend-1'", script)
-        self.assertIn("perseo) printf 'hospital-agent-muse-frontend-1'", script)
-        self.assertIn("for _attempt in $(seq 1 24)", script)
-        self.assertIn("last_heartbeat_at > now() - interval '60 seconds'", script)
-        self.assertLess(script.index('[ "$leases" = 3 ] ||'), script.index("CAUCE_SMOKE_EXPECTED_AGENTS"))
-
-    def test_agent_provision_refuses_a_checkout_that_is_not_the_expected_commit(self) -> None:
-        script = (INSTANCE / "provision-agents.sh").read_text(encoding="utf-8")
-
-        self.assertIn("CAUCE_HOSPITAL_EXPECTED_GIT_REF", script)
-        self.assertIn('[ -z "$(git -C "$REPO" status --porcelain)" ]', script)
-        self.assertIn('[ "$(git -C "$REPO" rev-parse HEAD)" = "$EXPECTED_COMMIT" ]', script)
-        self.assertIn("CAUCE_HOSPITAL_PROVISION_SIN_RED", script)
-        self.assertLess(script.index("EXPECTED_COMMIT"), script.index("flock -n 9"))
-        self.assertLess(script.index("EXPECTED_COMMIT"), script.index('install -d -m 0700 "$BUNDLE_ROOT"'))
-
-    def test_agent_provision_restarts_adapters_so_the_new_bundle_runs(self) -> None:
-        script = (INSTANCE / "provision-agents.sh").read_text(encoding="utf-8")
-
-        self.assertNotIn("systemctl enable --now", script)
-        self.assertIn('systemctl restart "cauce-v3-container-$alias.service"', script)
-        self.assertIn("status IN ('leased','accepted','started')", script)
-        self.assertLess(script.index('[ "$inflight" = 0 ]'), script.index("systemctl restart"))
-
-    def test_agent_provision_refuses_an_image_that_is_not_the_checkout(self) -> None:
-        script = (INSTANCE / "provision-agents.sh").read_text(encoding="utf-8")
-
-        self.assertIn('org.opencontainers.image.revision', script)
-        self.assertIn('[ -z "$image_revision" ]', script)
-        self.assertIn('"${head_commit#"$image_revision"}" = "$head_commit"', script)
-        self.assertLess(script.index("image_revision"), script.index('release="release-'))
-
-    def test_agent_provision_wires_no_expectation_without_a_pty_agent(self) -> None:
-        script = (INSTANCE / "provision-agents.sh").read_text(encoding="utf-8")
-
-        self.assertIn("--no-profile-expectation", script)
-        self.assertNotIn('install -m 0644 "$units/cauce-v3-profile-expectation@.service"', script)
-        self.assertIn("rm -f /etc/systemd/system/cauce-v3-profile-expectation@.service", script)
-        self.assertIn('systemctl reset-failed "cauce-v3-profile-expectation@$alias.service"', script)
+    def test_update_wrapper_requires_descriptor_and_forwards_to_common_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            binary=pathlib.Path(temporary)/"python3"
+            binary.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+            binary.chmod(0o700)
+            for name in ("install.sh","bootstrap-core.sh","provision-agents.sh"):
+                with self.subTest(name=name):
+                    result=subprocess.run(["bash",str(INSTANCE/name),"update","--descriptor","/synthetic/descriptor.json"],
+                        capture_output=True,text=True,env={**os.environ,"PATH":temporary+":/usr/bin:/bin"},timeout=10)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertEqual(result.stdout.splitlines()[1:],["update","--descriptor","/synthetic/descriptor.json"])
 
     def test_container_units_drop_the_expectation_hook_when_asked(self) -> None:
         generator = ROOT / "ops" / "scripts" / "generate-container-units.py"
@@ -482,23 +357,7 @@ class HospitalInstanceTests(unittest.TestCase):
                 self.assertNotIn("profile-expectation", unit.read_text(encoding="utf-8"))
             self.assertFalse((output / "cauce-v3-profile-expectation@.service").exists())
 
-    def test_access_helper_survives_a_late_provision_failure(self) -> None:
-        script = (INSTANCE / "install.sh").read_text(encoding="utf-8")
 
-        self.assertLess(script.index("hospital-cauce-access"), script.index("provision-agents.sh"))
-
-    def test_backup_is_installed_and_restore_verified_before_the_timer(self) -> None:
-        script = (INSTANCE / "bootstrap-core.sh").read_text(encoding="utf-8")
-        backup = (INSTANCE / "backup.sh").read_text(encoding="utf-8")
-
-        self.assertIn("/usr/local/sbin/hospital-cauce-backup", script)
-        self.assertLess(
-            script.index("/usr/local/sbin/hospital-cauce-backup\n"),
-            script.index("systemctl enable --now hospital-cauce-backup.timer"),
-        )
-        self.assertIn("--network none", backup)
-        self.assertIn("--single-transaction", backup)
-        self.assertIn("agent_topology", backup)
 
     def test_backup_monitor_accepts_exact_evidence_and_rejects_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

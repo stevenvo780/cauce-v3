@@ -17,10 +17,10 @@ HEX = re.compile(r"[a-f0-9]{64}\Z")
 HEAD = re.compile(r"[a-f0-9]{40,64}\Z")
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}\Z")
 PASSED = {"passed", "validated", "accepted", "validada", "aceptada"}
+ACCEPTANCE_ROOT = None
 TECHNICAL = {"validated", "accepted", "validada", "aceptada", "validada tecnicamente", "validada técnicamente", "aceptada para el hito"}
 ACCEPTED = {"accepted", "aceptada", "aceptada para el hito"}
 ADVANCED = TECHNICAL | {"advanced", "avanzada"}
-ACCEPTANCE_ROOT = Path("/var/lib/praxis-supervision")
 
 
 def acceptance_path(config: dict, state) -> Path | None:
@@ -29,9 +29,10 @@ def acceptance_path(config: dict, state) -> Path | None:
         return None
     if not isinstance(value, str) or not value:
         raise state.SupervisionError("invalid_acceptance_receipts_path")
+    root = ACCEPTANCE_ROOT or Path(state.project_profile(config)["acceptance_root"])
     path = Path(value)
     if (not path.is_absolute() or ".." in path.parts or path.suffix != ".json"
-            or not path.is_relative_to(ACCEPTANCE_ROOT) or path == ACCEPTANCE_ROOT
+            or not path.is_relative_to(root) or path == root
             or path.resolve().is_relative_to(Path(config["workspace"]).resolve())
             or any(part.lower() in {"private", "credentials", "secrets", "sessions", "profiles"} or part.startswith(".env")
                    for part in path.parts) or path.name in {"auth.json", "settings.local.json"}):
@@ -40,7 +41,6 @@ def acceptance_path(config: dict, state) -> Path | None:
 
 
 def acceptance_receipts(config: dict, goal: str, state) -> dict:
-    """Read controller-owned approval metadata; repository names grant no authority."""
     path = acceptance_path(config, state)
     if path is None:
         return {}
@@ -55,7 +55,7 @@ def acceptance_receipts(config: dict, goal: str, state) -> dict:
     if (not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 1
             or value.get("goal_sha256") != goal or not isinstance(value.get("receipts"), list) or len(value["receipts"]) > 1000):
         raise state.SupervisionError("invalid_acceptance_receipts")
-    expected_origin = {"kind": "authenticated-owner", "channel": "cauce.trusted-origin", "conversation_id": "6979524541"}
+    expected_origin = state.project_profile(config)["acceptance_origin"]
     result = {}
     for receipt in value["receipts"]:
         if not isinstance(receipt, dict):
@@ -429,12 +429,12 @@ class EvidenceReader:
         return accepted_issues, accepted_criteria, technical
 
 
-def next_work(document: dict, evidence: dict, technical: set) -> dict | None:
+def next_work(document: dict, evidence: dict, technical: set, deferred: list[str] | None = None) -> dict | None:
     records_value = evidence.get("records", {})
     if not isinstance(records_value, dict):
         records_value = {}
     blocked = None
-    issues = sorted(document["issues"], key=lambda issue: issue["id"].replace("-", "") in {"PRAX001", "PRAX037"})
+    issues = sorted(document["issues"], key=lambda issue: issue["id"].replace("-", "") in set(deferred or []))
     for issue in issues:
         record = records_value.get(issue["id"], {})
         record = record if isinstance(record, dict) else {}
@@ -457,7 +457,8 @@ def next_work(document: dict, evidence: dict, technical: set) -> dict | None:
 
 
 def engineering_snapshot(config: dict, deadline: float, run_command, state) -> dict:
-    workspace, preview = Path(config["workspace"]), Path(config["preview_root"])
+    workspace, preview = Path(config["workspace"]), Path(config["preview_root"]) if config.get("preview_root") else None
+    profile = state.project_profile(config)
     goal_hash = state.digest(state.read_bytes(state.scoped(workspace, config["goal_file"])))
     if goal_hash != config["goal_sha256"]:
         raise state.SupervisionError("foreign_goal")
@@ -481,7 +482,7 @@ def engineering_snapshot(config: dict, deadline: float, run_command, state) -> d
     reader = EvidenceReader(workspace, state, commit_verified, acceptance_receipts(config, goal_hash, state))
     issues = records(state.scoped(workspace, config["issues_file"]), config, "issues", state)
     document, roadmap = roadmap_document(state.scoped(workspace, config["roadmap_file"]), goal_hash, state)
-    if len(issues) != config.get("issue_count", 37) or len(roadmap) != config.get("roadmap_count", 216):
+    if len(issues) != config.get("issue_count", profile["issue_count"]) or len(roadmap) != config.get("roadmap_count", profile["roadmap_count"]):
         raise state.SupervisionError("tracker_count_mismatch")
     published = {source: {"source": state.digest(state.read_bytes(state.scoped(workspace, source))),
                          "published": state.digest(state.read_bytes(state.scoped(preview, destination)))}
@@ -540,7 +541,7 @@ def engineering_snapshot(config: dict, deadline: float, run_command, state) -> d
             "verified_engineering": bool(verified_engineering), "qa_executed": gates["qa_executed"],
             "production_clinical_accepted": verification.get("production_clinical_accepted", False),
             "qa_review": dict(gates["qa_review"], git_head=head, goal_sha256=goal_hash) if gates["qa_review"] else None,
-            "next_work": next_work(document, evidence, technical)}
+            "next_work": next_work(document, evidence, technical, profile["deferred_issues"])}
 
 
 def made_progress(previous: dict, current: dict) -> bool:

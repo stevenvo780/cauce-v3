@@ -368,12 +368,15 @@ describe('lectura del resultado por quien publicó', () => {
   }, 120_000);
 
   it('la respuesta de una sonda de gate no se muestra a nadie', async () => {
+    await pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,enabled,container_name,runtime_user,home_directory,state_directory)
+      SELECT 'Steven',alias,'fake',true,'gate-test','stev','/home/stev','/tmp/gate-test' FROM (VALUES('kant'),('argos')) fixture(alias)
+      ON CONFLICT(tenant_id,alias) DO UPDATE SET harness_id='fake',enabled=true,container_name='gate-test',runtime_user='stev',home_directory='/home/stev',state_directory='/tmp/gate-test'`);
     const nonce = 'a'.repeat(32);
     const id = await answered(() => repository.publish(command({
       body: { type: 'system.gate.probe', nonce, timeout_ms: 60_000 }, priority: -100,
       idempotency_key: `gate:Steven:argos:${nonce}`,
       authenticated_context: { session_id: 'gate-probe', channel: 'gate' },
-    })));
+    }), { systemGateProbeAuthority: { tenant_id: 'Steven', alias: 'gate-probe', session_id: 'gate-probe', channel: 'gate' } }));
     expect(await replyOf(id, 'kant', 'operator')).toBeUndefined();
     expect(await replyOf(id, 'kant', 'agent')).toBeUndefined();
   }, 120_000);

@@ -97,20 +97,8 @@ def _boolean(value: Any, label: str) -> bool:
     return value
 
 
-def tenant_enum(schema_path: pathlib.Path = SCHEMA_PATH) -> frozenset[str]:
-    try:
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        values = schema["properties"]["spec"]["properties"]["tenant"]["enum"]
-    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise SnapshotError("alias manifest schema has no readable tenant enum") from exc
-    if (
-        not isinstance(values, list)
-        or not values
-        or any(not isinstance(value, str) or not value for value in values)
-        or len(values) != len(set(values))
-    ):
-        raise SnapshotError("alias manifest tenant enum is invalid")
-    return frozenset(values)
+def tenant_identifier(value: str) -> bool:
+    return re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", value) is not None
 
 
 def validate_placement(value: Any) -> dict[str, dict[str, str]]:
@@ -174,7 +162,7 @@ def snapshot_document(
     if set(root) != expected_root:
         raise SnapshotError("fleet query result must contain agents, memberships and rolePolicies")
 
-    tenants = allowed_tenants if allowed_tenants is not None else tenant_enum()
+    tenants = allowed_tenants
     agents = _rows(root["agents"], "agents")
     memberships = _rows(root["memberships"], "memberships")
     policies = _rows(root["rolePolicies"], "rolePolicies")
@@ -196,14 +184,16 @@ def snapshot_document(
         tenant = _text(membership["tenant_id"], f"{label}.tenant_id")
         alias = _text(membership["alias"], f"{label}.alias")
         room = _text(membership["room_id"], f"{label}.room_id")
+        if not 1 <= len(room) <= 128:
+            raise SnapshotError(f"{label}.room_id is invalid")
         role = _text(membership["role"], f"{label}.role")
         _boolean(membership["enabled"], f"{label}.enabled")
-        if tenant not in tenants:
+        if (tenants is not None and tenant not in tenants) or not tenant_identifier(tenant):
             if membership["enabled"] is False:
                 # Disabled membership of a retired tenant: message history keeps it alive via FK.
                 print(f"{label}: skipping disabled membership of retired tenant {tenant}", file=sys.stderr)
                 continue
-            raise SnapshotError(f"{label}.tenant_id is outside the alias manifest tenant enum")
+            raise SnapshotError(f"{label}.tenant_id is outside the allowed tenant contract")
         if role not in roles:
             raise SnapshotError(f"{label}.role has no role policy: {role}")
         identity = (tenant, alias)
@@ -231,8 +221,8 @@ def snapshot_document(
         user = _optional_text(agent["runtime_user"], f"{label}.runtime_user")
         home = _optional_text(agent["home_directory"], f"{label}.home_directory")
         state_directory = _optional_text(agent["state_directory"], f"{label}.state_directory")
-        if tenant not in tenants:
-            raise SnapshotError(f"{label}.tenant_id is outside the alias manifest tenant enum")
+        if (tenants is not None and tenant not in tenants) or not tenant_identifier(tenant):
+            raise SnapshotError(f"{label}.tenant_id is outside the allowed tenant contract")
         identity = (tenant, alias)
         if identity in agents_by_identity:
             raise SnapshotError(f"duplicate agent: {tenant}/{alias}")

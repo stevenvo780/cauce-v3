@@ -108,6 +108,8 @@ for (const sentinel of [
 }
 for (const sentinel of [
   'ops/tests/source-digest-domains.test.mjs',
+  'ops/instances/common/planning.py',
+  'ops/instances/hospital/install-profile.py',
   'ops/Makefile',
   'ops/cli/cauce-huerfanas',
   'ops/compose.test.yaml',
@@ -222,6 +224,8 @@ try {
   await write('ops/harness/adapter-roundtrip-fixture.mjs', 'export const fixture = 1;\n');
   await write('ops/harness/adapter-roundtrip.mjs', 'export const roundtrip = 1;\n');
   await write('ops/harness/runner.mjs', 'export const run = 1;\n');
+  await write('ops/instances/common/planning.py', 'LIMIT = 128;\n');
+  await write('ops/instances/hospital/install-profile.py', 'ENABLED = True;\n');
   await write('ops/flota.json', '{"schemaVersion":1,"fleet":{}}\n');
   await write('ops/scripts/fault-compose.sh', '#!/bin/sh\n');
   await write('ops/scripts/run-testcontainers.sh', '#!/bin/sh\n');
@@ -427,6 +431,8 @@ try {
   priorFull = digestOf('full', sandbox);
   for (const [relative, contents] of [
     ['ops/harness/contract-runner.mjs', 'export const contract = false;\n'],
+    ['ops/instances/common/planning.py', 'LIMIT = 129;\n'],
+    ['ops/instances/hospital/install-profile.py', 'ENABLED = False;\n'],
     ['ops/scripts/source-hygiene.py', 'print("hygiene disabled")\n'],
     ['ops/scripts/migration-gate.mjs', 'export const migration = false;\n'],
     ['ops/scripts/physical-fleet-gate.py', 'print("fleet disabled")\n'],

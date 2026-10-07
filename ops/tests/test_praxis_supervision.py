@@ -726,7 +726,7 @@ class PraxisSupervisionTests(unittest.TestCase):
         self.assertEqual(self.api.posts, [])
 
     def test_runtime_query_is_read_only_and_contains_only_operational_metadata(self):
-        actors = [{"alias": actor, "enabled": True, "online": True, "heartbeat_age": 5} for actor in SUP.ACTORS]
+        actors = [{"alias": actor, "enabled": True, "online": True, "heartbeat_age": 5} for actor in SUP.STATE.PROFILE.DEFAULT["participants"]]
         value = {"actors": actors, "work": {status: 0 for status in SUP.OPEN}, "observed_at": time.time()}
         with mock.patch.object(SUP, "run_command", return_value=json.dumps(value)) as command:
             snapshot = SUP.runtime_snapshot(self.config, time.monotonic() + 55)
@@ -740,7 +740,7 @@ class PraxisSupervisionTests(unittest.TestCase):
         self.assertNotIn("UPDATE", sql)
 
     def test_stale_lease_snapshot_prevents_ready_state(self):
-        actors = [{"alias": actor, "enabled": True, "online": True, "heartbeat_age": 500} for actor in SUP.ACTORS]
+        actors = [{"alias": actor, "enabled": True, "online": True, "heartbeat_age": 500} for actor in SUP.STATE.PROFILE.DEFAULT["participants"]]
         value = {"actors": actors, "work": {status: 0 for status in SUP.OPEN}, "observed_at": time.time()}
         with mock.patch.object(SUP, "run_command", return_value=json.dumps(value)):
             self.assertFalse(SUP.runtime_snapshot(self.config, time.monotonic() + 55)["ready"])

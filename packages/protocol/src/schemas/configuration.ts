@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AgentBehaviorPolicyValueV1Schema } from '../agent-behavior-policy.js';
 import { AliasSchema, TenantSchema } from './core.js';
 import { EgressHandleSchema, NotifyKindSchema } from './messages.js';
 
@@ -180,7 +181,14 @@ export const AgentAccountBindingConfigMutationSchema = z.object({
   }).strict().optional()
 }).strict();
 
+export const AgentBehaviorPolicyConfigMutationSchema = z.object({
+  resource: z.literal('agent_behavior_policy'), action: ConfigActionSchema,
+  tenant_id: TenantSchema, room_id: z.string().min(1).max(128), alias: AliasSchema,
+  value: AgentBehaviorPolicyValueV1Schema.optional(),
+}).strict();
+
 export const ConfigMutationSchema = z.discriminatedUnion('resource', [
+  AgentBehaviorPolicyConfigMutationSchema,
   TenantConfigMutationSchema, RoomConfigMutationSchema, MembershipConfigMutationSchema,
   AclEdgeConfigMutationSchema, HarnessConfigMutationSchema, RolePolicyConfigMutationSchema,
   ChainPolicyConfigMutationSchema, EgressDestinationConfigMutationSchema,
@@ -189,7 +197,11 @@ export const ConfigMutationSchema = z.discriminatedUnion('resource', [
 ]);
 export const ConfigChangeRequestSchema = z.object({
   dry_run: z.boolean().default(true), expected_revision: ConfigRevisionSchema.optional(), mutation: ConfigMutationSchema
-}).strict();
+}).strict().superRefine((request, context) => {
+  if (request.mutation.resource === 'agent_behavior_policy' && request.expected_revision === undefined) {
+    context.addIssue({ code: 'custom', path: ['expected_revision'], message: 'Behavior policy changes require CAS' });
+  }
+});
 export const ConfigRollbackRequestSchema = z.object({
   dry_run: z.boolean().default(true), expected_revision: ConfigRevisionSchema.optional()
 }).strict();

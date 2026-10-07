@@ -14,6 +14,7 @@ export {
   HUMAN_MCP_INBOX_MAX_BYTES, HUMAN_MCP_INBOX_TEXT_BYTES, HUMAN_MCP_INBOX_UNTRUSTED_FIELDS, HumanMcpInboxSchema, InboxInputSchema,
   type GatewayOperationsFactory, type HumanMcpInbox, type HumanMcpInboxQuery, type HumanMcpReceipt, type McpSubmitCommand,
 } from './gateway-operations.js';
+export { MailboxInputSchema, HumanMcpMailboxSchema, type HumanMcpMailbox, type HumanMcpMailboxQuery } from './gateway-mailbox.js';
 export { projectGatewayAgents, projectGatewayStatus } from './gateway-projection.js';
 
 export const MAX_MCP_REQUEST_BYTES = 16 * 1024;

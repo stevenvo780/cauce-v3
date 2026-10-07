@@ -143,6 +143,7 @@ VERIFICATION_OPERATIONAL_INPUTS = (
     "ops/generated",
     "ops/guardias",
     "ops/harness",
+    "ops/instances",
     "ops/manifests",
     "ops/observability",
     "ops/runbooks",

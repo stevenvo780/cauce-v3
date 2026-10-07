@@ -202,7 +202,7 @@ def manifest_doc(alias: str, row: Mapping[str, Any]) -> dict[str, Any]:
 
 def load_fleet_assignments(root: pathlib.Path) -> dict[str, dict[str, Any]]:
     """Read all declared agents, including native hosts, from the canonical snapshot."""
-    from container_alias_lib import HARNESS, NAME_RE, ROOM_RE, TENANT_RE
+    from container_alias_lib import ALIAS_RE, HARNESS, ROOM_RE, TENANT_RE
 
     document = json.loads((root / "flota.json").read_text(encoding="utf-8"))
     if not isinstance(document, dict) or document.get("schemaVersion") != 1:
@@ -215,7 +215,7 @@ def load_fleet_assignments(root: pathlib.Path) -> dict[str, dict[str, Any]]:
         raise ValueError("fleet placement must be an object")
     assignments = {}
     for alias, row in sorted(fleet.items()):
-        if not isinstance(alias, str) or NAME_RE.fullmatch(alias) is None:
+        if not isinstance(alias, str) or ALIAS_RE.fullmatch(alias) is None:
             raise ValueError("fleet snapshot contains an invalid alias")
         if not isinstance(row, dict) or row.get("enabled") is not True:
             raise ValueError(f"fleet.{alias} is not an enabled agent")

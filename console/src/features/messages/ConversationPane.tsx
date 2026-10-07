@@ -10,7 +10,7 @@ import { compactId, safeJobLane } from '../../lib';
 import { LEASE_LABEL, LEASE_TONE } from '../../vocabulario';
 import { onNavClick, useRouteSearch } from '../../router';
 import { queueDeliveryPath } from '../deliveries/delivery-links';
-import { deliveryPolicy } from '../deliveries/delivery-policy';
+import { isClientMailboxDelivery, MAILBOX_NOTE, MAILBOX_STATE_LABEL, MAILBOX_EXPLANATION, clientMailboxRecipientLabel, deliveryReceiptPolicy } from '../deliveries/client-mailbox';
 import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada, textoDelCuerpo } from '../terminal/cuerpo-del-mensaje';
 import { fleetAgentId } from '../terminal/fleet';
 import { transcriptForSession, type OperatorRoute, type OperatorSession, type TranscriptItem } from '../terminal/session';
@@ -510,13 +510,30 @@ function ConversationPaneContent({
             <div><dt>Trace</dt><dd className="mono">{mensajeSeleccionado.trace_id ?? 'UNKNOWN'}</dd></div>
             <div><dt>Message id</dt><dd className="mono">{mensajeSeleccionado.message_id ?? 'UNKNOWN'}</dd></div>
             {seleccionada ? (
-              <>
-                <div><dt>Tenant destino</dt><dd><Unknown value={seleccionada.recipient_tenant} /></dd></div>
-                <div><dt>Delivery id</dt><dd className="mono">{seleccionada.delivery_id ?? 'UNKNOWN'}</dd></div>
-              </>
+              isClientMailboxDelivery(seleccionada) ? (
+                <>
+                  <div><dt>Buzón</dt><dd>{seleccionada.client_mailbox.label}</dd></div>
+                  <div><dt>Dirección de buzón</dt><dd className="mono">{seleccionada.recipient_alias ?? 'UNKNOWN'}</dd></div>
+                  <div><dt>Estado de entrega</dt><dd><Badge tone="done">{MAILBOX_STATE_LABEL}</Badge></dd></div>
+                  <div><dt>Delivery id</dt><dd className="mono">{seleccionada.delivery_id ?? 'UNKNOWN'}</dd></div>
+                </>
+              ) : (
+                <>
+                  <div><dt>Tenant destino</dt><dd><Unknown value={seleccionada.recipient_tenant} /></dd></div>
+                  <div><dt>Delivery id</dt><dd className="mono">{seleccionada.delivery_id ?? 'UNKNOWN'}</dd></div>
+                </>
+              )
             ) : null}
           </dl>
-          {seleccionada ? <MessageTimeline events={seleccionada.timeline} /> : null}
+          {seleccionada ? (
+            <MessageTimeline
+              events={seleccionada.timeline}
+              clientMailbox={isClientMailboxDelivery(seleccionada) ? seleccionada.client_mailbox : undefined}
+            />
+          ) : null}
+          {isClientMailboxDelivery(seleccionada) ? (
+            <p className="messenger-window-note" role="note">{MAILBOX_NOTE}</p>
+          ) : null}
           <section className="messenger-fanout" aria-label="Entregas hermanas del mismo publish">
             <p className="eyebrow">Fan-out del publish</p>
             {hermanas.length === 0 ? (
@@ -527,25 +544,32 @@ function ConversationPaneContent({
             ) : (
               <ul className="messenger-fanout-list">
                 {hermanas.map((entrega, indice) => {
-                  const policy = deliveryPolicy(entrega.status);
+                  const policy = deliveryReceiptPolicy(entrega.status, entrega.client_mailbox);
+                  const isMailbox = policy.isMailbox;
                   const queuePath = queueDeliveryPath(entrega.delivery_id);
+                  const destino = isMailbox
+                    ? `${clientMailboxRecipientLabel(entrega)} (${entrega.recipient_alias ?? 'UNKNOWN'})`
+                    : `${entrega.recipient_tenant ?? 'UNKNOWN'}:${entrega.recipient_alias ?? 'UNKNOWN'}`;
                   return <li key={entrega.delivery_id ?? indice}>
-                    <strong>{entrega.recipient_tenant ?? 'UNKNOWN'}:{entrega.recipient_alias ?? 'UNKNOWN'}</strong>
+                    <strong>{destino}</strong>
                     <Badge tone={policy.tone}>
-                      <Unknown
-                        value={policy.known ? policy.label : undefined}
-                        motivo={entrega.status && !policy.known
-                          ? `El servidor mandó un estado que esta consola no conoce: ${entrega.status}`
-                          : undefined}
-                      />
+                      {isMailbox ? policy.label : (
+                        <Unknown
+                          value={policy.known ? policy.label : undefined}
+                          motivo={entrega.status && !policy.known
+                            ? `El servidor mandó un estado que esta consola no conoce: ${entrega.status}`
+                            : undefined}
+                        />
+                      )}
                     </Badge>
                     <span className="mono">{compactId(entrega.delivery_id)}</span>
-                    <span>intento {entrega.attempt ?? 'UNKNOWN'}</span>
+                    <span>{isMailbox ? 'sin consumidor' : `intento ${String(entrega.attempt ?? 'UNKNOWN')}`}</span>
                     {queuePath ? <a
                       href={queuePath}
                       onClick={(event) => { onNavClick(event, queuePath); }}
                       aria-label={`Gestionar delivery ${entrega.delivery_id ?? 'UNKNOWN'} en Colas`}
                     >Gestionar en Colas</a> : null}
+                    {isMailbox ? <small className="subline">{MAILBOX_EXPLANATION}</small> : null}
                   </li>;
                 })}
               </ul>

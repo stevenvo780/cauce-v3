@@ -70,7 +70,7 @@ type StoreDerivedRepository = Pick<CauceRepository,
   | 'principalAccess' | 'queueSnapshot' | 'quotaSnapshot' | 'readProfileRuntimeAdoption'
   | 'reconcileAgentContextRuntime' | 'recordProfileRuntimeExpectation' | 'recordQuotaSample'
   | 'renewWakeOutbox' | 'replayDelivery' | 'retryOwnDelivery' | 'agentQueue' | 'recordAgentProgress'
-  | 'resolveOperationalDlqWithoutReplay' | 'selectAccount' | 'topology'
+  | 'resolveOperationalDlqWithoutReplay' | 'resolveSystemGateProbeActor' | 'selectAccount' | 'topology'
 >;
 
 /** Narrowed on purpose: deriving these widens an authenticated, actor-scoped or fenced signature. */
@@ -145,7 +145,8 @@ interface GatewayNarrowedRepository {
 }
 
 /** Contract implemented by the hardened store; current method names remain stable. */
-export type GatewayRepository = StoreDerivedRepository & GatewayNarrowedRepository;
+export type GatewayRepository = StoreDerivedRepository & GatewayNarrowedRepository
+  & Partial<Pick<CauceRepository, 'listHumanMailbox'>>;
 
 export interface GatewayOptions {
   contextRepository?: ContextRepositoryBinding;

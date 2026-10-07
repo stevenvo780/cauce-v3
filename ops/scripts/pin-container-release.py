@@ -19,7 +19,7 @@ import subprocess
 import sys
 from collections.abc import Iterator
 
-from container_alias_lib import load_container_aliases
+from container_alias_lib import ALIAS_RE, load_container_aliases
 from secure_path import (
     InvalidAbsolutePath,
     absolute_components,
@@ -30,7 +30,6 @@ from secure_path import (
     open_absolute_directory as open_secure_absolute_directory,
 )
 
-ALIAS_RE = re.compile(r"[a-z][a-z0-9-]*\Z")
 RELEASE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 DIGEST_RE = re.compile(r"sha256:[a-f0-9]{64}\Z")
 CONFIG_LINE_RE = re.compile(r"([A-Z][A-Z0-9_]*)=(.*)\Z")

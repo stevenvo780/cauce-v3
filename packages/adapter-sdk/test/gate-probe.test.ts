@@ -57,7 +57,7 @@ function probeDelivery(overrides: Partial<Delivery> = {}): Delivery {
   };
 }
 
-async function setup(name: string) {
+async function setup(name: string, alias = "kant", onPublish?: (event: DeliveryEvent, engine: AdapterEngine) => Promise<void>) {
   const directory = resolve(root, name);
   await rm(directory, { recursive: true, force: true });
   const store = await DurableStore.open(directory);
@@ -67,9 +67,10 @@ async function setup(name: string) {
   const logs: AdapterLog[] = [];
   const engine = new AdapterEngine({
     store,
+    ownAlias: alias,
     executionIntentMode: "local-test-only",
     harness,
-    publish: async (event) => { events.push(event); },
+    publish: async (event) => { events.push(event); await onPublish?.(event, engine); },
     logger: (entry) => { logs.push(entry); },
   });
   await engine.activateEpoch(7);
@@ -107,7 +108,7 @@ test('system.gate.probe ACKs the real claim without model, session, reply, messa
 test('system.gate.probe is fail-closed when any trusted authority field differs', async () => {
   const context = await setup('gate-probe-denied');
   try {
-    await context.engine.handleDelivery(probeDelivery({ actor_alias: 'quota-collector' }));
+    await context.engine.handleDelivery(probeDelivery({ authenticated_context: { session_id: 'user-forged', channel: 'adapter' }, actor_alias: 'quota-collector' }));
     assert.equal(context.runner.calls, 0);
     assert.equal(context.harness.reservations, 0);
     assert.deepEqual(context.events.map((event) => event.phase), ['accepted', 'failed']);
@@ -116,5 +117,52 @@ test('system.gate.probe is fail-closed when any trusted authority field differs'
     assert.deepEqual(context.logs, []);
   } finally {
     await rm(context.directory, { recursive: true, force: true });
+  }
+});
+
+
+test('generic gate principal works across consumer tenants without consulting the body for authority', async () => {
+  for (const tenant of ['Acme', 'Beta']) {
+    const context = await setup(`probe-${tenant}`, 'operador');
+    const input = probeDelivery({ tenant_id: tenant, room_id: `grp.${tenant.toLowerCase()}`,
+      actor_alias: 'verified-gate-actor', recipient_alias: 'operador' });
+    await context.engine.handleDelivery(input);
+    assert.equal(context.store.getDelivery(input.delivery_id)?.state, 'done');
+    assert.equal(context.runner.calls, 0);
+    await context.engine.handleDelivery(input);
+    assert.equal(context.store.getDelivery(input.delivery_id)?.output?.notify.length, 0);
+  }
+});
+
+test('gate probe rejects wrong recipient, origin, session, channel and body-spoofed authority', async () => {
+  const origin = { adapter: 'console', channel: 'console', conversation_id: 'spoof', relay: [], metadata: {} };
+  const base = probeDelivery();
+  const cases: Partial<Delivery>[] = [
+    { recipient_alias: 'foreign' }, { origin },
+    { authenticated_context: { session_id: 'gate-probe', channel: 'adapter' } },
+    { authenticated_context: { session_id: 'wrong-session', channel: 'gate' } },
+    { authenticated_context: { session_id: 'gate-probe', channel: 'gate', origin } },
+    { body: { ...base.body, actor_alias: 'kant', authenticated_context: base.authenticated_context } },
+  ];
+  for (const [index, override] of cases.entries()) {
+    const context = await setup(`probe-rejected-${String(index)}`);
+    await context.engine.handleDelivery(probeDelivery(override));
+    assert.equal(context.store.getDelivery(base.delivery_id)?.error?.code, 'UNAUTHORIZED_GATE_PROBE');
+    assert.equal(context.runner.calls, 0);
+    assert.equal(context.harness.reservations, 0);
+  }
+});
+
+test('gate claim loss or epoch advance before terminal persistence cannot close the probe', async () => {
+  for (const mode of ['claim', 'epoch']) {
+    const context = await setup(`probe-fenced-${mode}`, 'kant', async (event, engine) => {
+      if (event.phase !== 'accepted') return;
+      if (mode === 'claim') engine.loseClaim(event.delivery_id, event.attempt, event.claim_token);
+      else await engine.activateEpoch(8);
+    });
+    await context.engine.handleDelivery(probeDelivery());
+    assert.deepEqual(context.events.map(event => event.phase), ['accepted']);
+    assert.equal(context.store.pendingEvents().some(event => event.output !== undefined), false);
+    assert.equal(context.runner.calls, 0);
   }
 });
