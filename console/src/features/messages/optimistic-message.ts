@@ -35,7 +35,7 @@ export function retainOptimisticMessages(local: OptimisticMessage[], feed: reado
     const attachments = feed.find((candidate) => sameReceipt(item, candidate))?.message.attachments;
     if (!item.optimistic.files.length || !Array.isArray(attachments) || attachments.length !== item.optimistic.files.length
       || !item.optimistic.files.every((file, index) => {
-        const remote = attachments[index];
+        const remote = attachments.at(index);
         return remote?.name === file.name && remote.file_size === file.size
           && remote.mime_type.toLowerCase() === (file.type || 'application/octet-stream').toLowerCase()
           && /^[a-f0-9]{64}$/u.test(remote.sha256);

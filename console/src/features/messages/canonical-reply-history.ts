@@ -19,7 +19,7 @@ export function replyIdentity(reply: CanonicalReply): string {
 
 function consolidated(reply: CanonicalReply): boolean {
   return reply.chainOpen === false && ['done', 'failed', 'dead'].includes(reply.status ?? '')
-    && Boolean(reply.reply?.trim() || reply.replyAttachments?.length);
+    && (Boolean(reply.reply?.trim()) || Boolean(reply.replyAttachments?.length));
 }
 
 export function projectReply(detail: MessageDetail, root: CanonicalReplyRoot, tenantId: string, alias: string): CanonicalReply {
@@ -49,6 +49,12 @@ export function projectReply(detail: MessageDetail, root: CanonicalReplyRoot, te
   };
 }
 
+
+function publisherOwned(author: unknown, subject: string | null | undefined): boolean {
+  if (author === undefined || author === null) return true;
+  return typeof author === 'object' && 'kind' in author && author.kind === 'human'
+    && 'subject_id' in author && author.subject_id === subject;
+}
 
 interface HistoryRead {
   failures: number;
@@ -99,7 +105,7 @@ export function useCanonicalReplyHistory(api: CauceApi, scope: string, input: {
       const replies = previous.scope === capturedScope ? previous.replies : [];
       const index = replies.findIndex((stored) => replyIdentity(stored) === replyIdentity(reply));
       if (index < 0) return { scope: capturedScope, replies: [...replies, reply].slice(-100) };
-      const stored = replies[index];
+      const stored = replies.at(index);
       if (!stored) return previous;
       const addText = !stored.reply?.trim() && Boolean(reply.reply?.trim());
       const addMedia = !stored.replyAttachments?.length && Boolean(reply.replyAttachments?.length);
@@ -140,7 +146,7 @@ export function useCanonicalReplyHistory(api: CauceApi, scope: string, input: {
           const sequence = begin(scope, root).next;
           try {
             const detail = await api.getMessage(root.messageId);
-            if (detail.author && (detail.author.kind !== 'human' || detail.author.subject_id !== input.publisherSubject)) {
+            if (!publisherOwned(detail.author, input.publisherSubject)) {
               throw new ApiError('La publicación pertenece a otro operador.', 403);
             }
             const reply = projectReply(detail, root, input.tenantId, input.alias);

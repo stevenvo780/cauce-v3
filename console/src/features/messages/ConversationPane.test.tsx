@@ -32,7 +32,7 @@ function setup() {
   const preparePublishIntent = vi.spyOn(api, 'preparePublishIntent').mockResolvedValue({ version: 1, state: 'prepared', idempotency_key: 'intent', receipt: null });
   const publishMessage = vi.spyOn(api, 'publishMessage').mockReturnValue(publish.promise);
   vi.spyOn(api, 'confirmPublishIntent').mockResolvedValue({ version: 1, confirmed: true, idempotency_key: 'intent', message_id: receipt.message_id, causal_hash: receipt.causal_hash });
-  const getMessage = vi.spyOn(api, 'getMessage').mockReturnValue(new Promise(() => {}));
+  const getMessage = vi.spyOn(api, 'getMessage').mockReturnValue(deferred<Awaited<ReturnType<CauceApi['getMessage']>>>().promise);
   const props = {
     agent, page: { items: [] } as MessagePage, loading: false, canPublish: true,
     publisherSubject: 'Empresa:operador', publisherHumanSubject: `human:${'a'.repeat(64)}`,
@@ -156,7 +156,7 @@ describe('publicación visible antes de la respuesta de red', () => {
     });
     const test = setup();
     const file = new File(['image'], 'foto.png', { type: 'image/png' });
-    Object.defineProperty(file, 'arrayBuffer', { value: () => new Promise(() => {}) });
+    Object.defineProperty(file, 'arrayBuffer', { value: () => deferred<ArrayBuffer>().promise });
     const input = document.querySelector('input[type="file"]');
     if (!input) throw new Error('missing file input');
     fireEvent.change(input, { target: { files: [file] } });

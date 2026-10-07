@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApiProvider } from '../../api/context';
 import { ApiError } from '../../api/client';
+import type { MessageDetail } from '../../api/types';
 import { testApi } from '../../test/render';
 import { useCanonicalReply, type CanonicalReplyRoot } from './use-canonical-reply';
 
@@ -18,9 +19,10 @@ afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 it('conserva ambas respuestas al enviar y seleccionar otra raíz', async () => {
   vi.spyOn(testApi, 'getMessage').mockImplementation(async (id) => detail(id === 'a' ? a : b));
+  const initialProps: { root?: CanonicalReplyRoot } = { root: a };
   const { result, rerender } = renderHook(({ root }: { root?: CanonicalReplyRoot }) => useCanonicalReply({ ...input, root }),
-    { wrapper, initialProps: { root: a as CanonicalReplyRoot | undefined } });
-  await waitFor(() => { expect(result.current.replies?.map((reply) => reply.reply)).toEqual(['a']); });
+    { wrapper, initialProps });
+  await waitFor(() => { expect(result.current.replies.map((reply) => reply.reply)).toEqual(['a']); });
   rerender({ root: undefined });
   expect(result.current.replies.map((reply) => reply.reply)).toEqual(['a']);
   rerender({ root: b });
@@ -232,3 +234,13 @@ it('mantiene el fence de revocación en StrictMode frente a la hidratación ante
   await act(async () => { resolve(detail(a, 'anterior revocada')); });
   expect(result.current.replies.map((reply) => reply.messageId)).toEqual(['b']);
 });
+
+it.each([0, { kind: 'agent', subject_id: 'human' }, { kind: 'human', subject_id: 'another-human' }])(
+  'rechaza una autoría histórica no humana, malformada o ajena: %j', async (author) => {
+    const invalid: unknown = { ...detail(a), author };
+    vi.spyOn(testApi, 'getMessage').mockResolvedValue(invalid as MessageDetail);
+    const { result } = renderHook(() => useCanonicalReply({ ...input, roots: [a] }), { wrapper });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(result.current.replies).toEqual([]);
+  },
+);
