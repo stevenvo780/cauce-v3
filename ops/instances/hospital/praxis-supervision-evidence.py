@@ -349,6 +349,7 @@ class EvidenceReader:
                                 review_images[capture["path"]] = capture["sha256"]
                     review, images = report.get("review", {}), report.get("inspected_images", [])
                     independent = (independent and executed and isinstance(review, dict) and review.get("independent") is True
+                        and review.get("outcome", "passed") == "passed"
                         and isinstance(review.get("reviewer"), str) and bool(review["reviewer"].strip())
                         and review.get("reviewer") != report.get("author") and isinstance(images, list) and bool(images)
                         and all(self.read_artifact(image) is not None for image in images))
@@ -546,10 +547,11 @@ def engineering_snapshot(config: dict, deadline: float, run_command, state) -> d
 def made_progress(previous: dict, current: dict) -> bool:
     old_sources, sources = previous.get("source_hashes", {}), current.get("source_hashes", {})
     fresh_tests = {token for token in current.get("gate_artifacts", []) if token.startswith("tests:")} - set(previous.get("gate_artifacts", []))
-    if not current.get("verified_engineering") or not old_sources or not sources or not fresh_tests:
+    if (not current.get("verified_engineering") or not old_sources or not sources or not fresh_tests
+            or previous.get("goal_sha256") != current.get("goal_sha256")):
         return False
     changed = {path for path, sha in sources.items() if old_sources.get(path) != sha
+               and Path(path).suffix.lower() != ".md"
                and (path in old_sources or path.startswith("apps/"))}
     tested = current.get("tested_source_hashes", {})
-    return (all(tested.get(path) == sources[path] for path in changed)
-            and (bool(changed) or previous.get("verified_engineering") is not True))
+    return bool(changed) and all(tested.get(path) == sources[path] for path in changed)

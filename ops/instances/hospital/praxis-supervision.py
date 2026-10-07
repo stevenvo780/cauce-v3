@@ -30,6 +30,7 @@ CAPACITY_CODES = {
     "model_capacity", "model_overloaded", "auth_expired", "invalid_credentials",
     "unauthorized", "forbidden", "transport_cancelled_unknown",
 }
+TRANSIENT_OBSERVATION_CODES = {"pass_timeout", "observation_unavailable", "chain_receipt_unavailable", "preview_activity_changed"}
 HEX = re.compile(r"[a-f0-9]{64}\Z")
 HEAD = re.compile(r"[a-f0-9]{40,64}\Z")
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}\Z")
@@ -477,6 +478,28 @@ class Supervisor:
                     + ". El monitor conserva observación; hace falta una decisión o evidencia nueva verificable.")
         return self.finish(reason)
 
+    def observation_failure(self, reason: str) -> dict:
+        self.state["observation_failure"] = {"code": reason, "at": self.now,
+            "root": self.state.get("active_root", {}).get("message_id")}
+        return self.finish(reason)
+
+    def review_contract_incomplete(self, root: dict) -> dict:
+        request = self.state["visual_review_requests"][root["review_cohort"]]
+        request["contract_status"] = "review_contract_incomplete"
+        self.state["review_contract_failure"] = {"code": "review_contract_incomplete", "at": self.now,
+            "root": root["message_id"], "cohort_sha256": root["review_cohort"]}
+        self.notice_review_contract_failure()
+        return self.finish("review_contract_incomplete")
+
+    def notice_review_contract_failure(self):
+        failure = self.state.get("review_contract_failure", {})
+        if not failure.get("root"):
+            return
+        self.notice("review_contract_incomplete:" + failure["root"], "alert",
+            "Praxis: la entrega de revisión cerró sin contrato QA independiente vigente. El operador debe abrir las capturas, "
+            "registrar observaciones reales y persistirlas con praxis-qa-review.py --help; si falta herramienta, debe informar "
+            "su código técnico. Se conserva la raíz original y no se repite la petición por tiempo transcurrido.")
+
     def request_visual_review(self, engineering: dict) -> dict:
         review = engineering["qa_review"]
         cohort, day = review["cohort_sha256"], STATE.utc_day(self.now)
@@ -487,8 +510,11 @@ class Supervisor:
         self.state["review_cooldown_seconds"] = self.config["cooldown_seconds"]
         requests, budgets = self.state.setdefault("visual_review_requests", {}), self.state.setdefault("visual_review_roots", {})
         if cohort in requests:
-            return self.finish("visual_review_pending")
-        if self.state["roots"].get(day, 0) >= self.config["root_limit"] or budgets.get(day, 0) >= min(3, self.config["notice_limit"]):
+            if requests[cohort].get("contract_status") == "review_contract_incomplete":
+                self.notice_review_contract_failure()
+            return self.finish("review_contract_incomplete" if requests[cohort].get("contract_status") == "review_contract_incomplete"
+                               else "visual_review_pending")
+        if self.state["roots"].get(day, 0) >= self.config["root_limit"]:
             return self.finish("visual_review_fuel_exhausted")
         if self.now < self.state.get("cooldown_until", 0):
             return self.finish("cooldown")
@@ -498,7 +524,12 @@ class Supervisor:
         key = "praxis-visual-review:" + self.config["goal_sha256"][:16] + ":" + cohort
         payload = self.payload(key, "Operador: revisá este corte sintético de forma independiente de los developers. "
             "Verificá hashes y source commit; inspeccioná las capturas de supervision.visual_review. "
-            "Registrá la revisión real en el artefacto QA y actualizá su hash. No desarrolles ni declares aceptación clínica. "
+            "Abrí realmente las imágenes con una herramienta apta y registrá observaciones de cada una. Consultá --help de "
+            "/home/node/clawd/.cauce/runtime/praxis-qa-review.py; después de inspeccionar, creá el manifest JSON y ejecutá "
+            "/opt/praxis-qa-venv/bin/python -B /home/node/clawd/.cauce/runtime/praxis-qa-review.py "
+            "--workspace <canónico> --artifact-prefix <prefijo-QA> --review-manifest <manifest-inspeccionado.json> "
+            "[--verification-file <ruta-relativa>]. Commiteá sólo la evidencia. Si falta herramienta, informá el código "
+            "técnico sin inventar inspección. No desarrolles ni declares aceptación clínica. "
             "Si falta evidencia, registrá el bloqueo. Cerrá sin polling. La revisión no acredita progreso de código.")
         payload["body"]["supervision"].update(purpose="visual_review", visual_review=review,
             original_root=self.state.get("progress_pause_binding", {}).get("root"))
@@ -590,11 +621,21 @@ class Supervisor:
                 chain_code = self.failure_reader(root["message_id"])
             except (SupervisionError, OSError, ValueError, TypeError, KeyError) as error:
                 self.state["chain_receipt_error"] = error.code if isinstance(error, SupervisionError) else "chain_verification_unknown"
-                return self.pause("chain_receipt_unavailable")
+                if isinstance(error, SupervisionError) and error.code == "chain_verification_unknown":
+                    return self.pause("chain_verification_unknown")
+                return self.observation_failure("chain_receipt_unavailable")
             if chain_code == "chain_still_open":
                 return self.finish("root_pending")
             code = typed_failure(receipt) or chain_code
             failed = any(row["status"] != "done" for row in deliveries)
+            if self.state["phase"] == "circuit_paused" and not code and not failed:
+                if self.state.get("pause_reason") not in TRANSIENT_OBSERVATION_CODES:
+                    return self.finish("circuit_paused")
+                recoveries = self.state.setdefault("observation_recoveries", [])
+                recoveries.append({"at": self.now, "reason": self.state["pause_reason"], "root": root["message_id"],
+                    "binding": {key: root[key] for key in ("request_id", "trace_id", "delivery_ids", "body_sha256", "body_type")}})
+                del recoveries[:-24]
+                self.state["phase"] = "root_reserved"
             if root.get("purpose") == "visual_review":
                 self.state["visual_review_requests"][root["review_cohort"]].update(status="closed", message_id=root["message_id"])
                 self.state["last_review_finished"] = {"at": self.now, "root": root["message_id"], "cohort_sha256": root["review_cohort"]}
@@ -604,7 +645,10 @@ class Supervisor:
                 self.state["phase"] = "waiting_visual_review"
                 if (STATE.restore_earned_review_credit(self.state, engineering, self.now)
                         or STATE.recover_reviewed_progress(self.state, engineering, self.now, made_progress)):
+                    self.state["visual_review_requests"][root["review_cohort"]]["contract_status"] = "completed"
                     return self.finish("visual_review_completed")
+                if not STATE.reviewed_engineering_current(self.state, engineering):
+                    return self.review_contract_incomplete(root)
                 return self.finish("visual_review_completed_no_progress" if STATE.classify_reviewed_without_progress(self.state, engineering)
                                    else "visual_review_pending")
             self.state["last_finished"] = {"at": self.now, "engineering": engineering, "root": root["message_id"],
@@ -620,6 +664,7 @@ class Supervisor:
                 self.state["phase"], self.state["pause_reason"] = "waiting_visual_review", "independent_visual_review_pending"
                 self.state["pending_visual_review"] = engineering["qa_review"]
                 self.state["continuation_earned"] = False
+                self.state["idle_since"] = self.now
                 return self.finish("visual_review_pending")
             if not made_progress(root["baseline"], engineering):
                 return self.pause("no_measured_progress")
@@ -637,17 +682,36 @@ class Supervisor:
             self.state["idle_since"] = self.now
             return self.finish("active_work")
         if not runtime["ready"]:
+            if self.state["phase"] == "circuit_paused" and self.state.get("pause_reason") != "actors_unavailable":
+                return self.finish("circuit_paused")
+            self.state["idle_since"] = self.now
             return self.pause("actors_unavailable")
+        if self.state["phase"] == "circuit_paused" and self.state.get("pause_reason") == "actors_unavailable":
+            if (not isinstance(runtime.get("observed_at"), (int, float)) or abs(self.now - runtime["observed_at"]) > 30
+                    or self.now - self.state.get("idle_since", self.now) < self.config["idle_seconds"]):
+                return self.finish("actors_readiness_pending")
+            self.state["phase"] = "observing"
+            self.state.setdefault("readiness_recoveries", []).append({"at": self.now, "reason": "actors_unavailable"})
+            del self.state["readiness_recoveries"][:-24]
+            self.save()
+        if STATE.recover_failed_visual_review(self.state, engineering, runtime, self.now, self.config["idle_seconds"], made_progress):
+            return self.finish("visual_review_failed_recovered")
         if STATE.visual_review_pending(engineering) and (self.state["phase"] in {"observing", "waiting_visual_review"}
                 or self.state.get("pause_reason") in {"no_measured_progress", "no_new_progress"}):
             return self.request_visual_review(engineering)
+        if (isinstance(runtime.get("observed_at"), (int, float)) and abs(self.now - runtime["observed_at"]) <= 30
+                and self.now - self.state.get("idle_since", self.now) >= self.config["idle_seconds"]
+                and STATE.reconcile_review_cohort(self.state, engineering, self.now, made_progress)):
+            self.save()
         if (STATE.restore_earned_review_credit(self.state, engineering, self.now)
                 or STATE.recover_reviewed_progress(self.state, engineering, self.now, made_progress)):
             self.save()
         if STATE.classify_reviewed_without_progress(self.state, engineering):
             return self.finish("visual_review_completed_no_progress")
         if self.state["phase"] == "waiting_visual_review":
-            return self.finish("visual_review_pending")
+            self.notice_review_contract_failure()
+            return self.finish("review_contract_incomplete" if self.state.get("review_contract_failure")
+                               else "visual_review_pending")
         if engineering["completion_candidate"]:
             self.state["phase"] = "awaiting_final_review"
             self.save()
@@ -737,7 +801,7 @@ def main() -> int:
                 code = error.code if isinstance(error, SupervisionError) else "observation_invalid"
                 if code.startswith("preview_"):
                     supervisor.state["preview_failure"] = {"code": code, **getattr(error, "preview_diagnostics", {})}
-                result = supervisor.pause(code)
+                result = supervisor.observation_failure(code) if code in TRANSIENT_OBSERVATION_CODES else supervisor.pause(code)
         print(json.dumps(result, sort_keys=True))
         return 0
     except (SupervisionError, OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError) as error:

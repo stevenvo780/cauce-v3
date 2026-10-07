@@ -169,13 +169,16 @@ class VisualReviewTests(unittest.TestCase):
     def test_review_done_without_approval_is_not_repeated_and_does_not_earn_fuel(self):
         baseline, _, pending = self.reserve_engineering()
         self.fixture.run_pass(NOW + 1800, pending)
-        self.assertEqual(self.fixture.run_pass(NOW + 2100, pending)["action"], "visual_review_pending")
-        self.assertEqual(self.fixture.run_pass(NOW + 7200, pending)["action"], "visual_review_pending")
+        self.assertEqual(self.fixture.run_pass(NOW + 2100, pending)["action"], "review_contract_incomplete")
+        self.assertEqual(self.fixture.run_pass(NOW + 7200, pending)["action"], "review_contract_incomplete")
         state = json.loads(self.fixture.state_path.read_text())
         self.assertEqual(len(self.fixture.engineering_posts()), 2)
         self.assertEqual(sum(state["roots"].values()), 2)
         self.assertFalse(state["continuation_earned"])
         self.assertEqual(state["progress_pause_baseline"], baseline)
+        self.assertEqual(state["review_contract_failure"]["code"], "review_contract_incomplete")
+        notices = [post for post in self.fixture.api.posts if post["body"]["type"] == "praxis.supervision.notice"]
+        self.assertEqual(len(notices), 1)
 
     def test_metadata_only_review_or_missing_original_baseline_cannot_resume_engineering(self):
         pending = self.pending()
@@ -193,25 +196,68 @@ class VisualReviewTests(unittest.TestCase):
         self.assertEqual(self.fixture.run_pass(NOW + 3600, approved)["action"], "visual_review_completed_no_progress")
         self.assertEqual(self.fixture.engineering_posts(), [])
 
-    def test_review_preserves_stop_activity_and_daily_caps(self):
+    def test_review_preserves_stop_activity_and_global_root_cap(self):
         pending = self.pending()
-        for constraint in ("stop", "activity", "roots", "reviews"):
+        for constraint in ("stop", "activity", "roots"):
             with self.subTest(constraint=constraint):
                 self.fixture.state_path.unlink(missing_ok=True)
                 supervisor = self.fixture.supervisor()
                 supervisor.state.update(phase="circuit_paused", pause_reason="no_measured_progress")
                 if constraint == "roots":
                     supervisor.state["roots"][SUP.STATE.utc_day(NOW)] = self.fixture.config["root_limit"]
-                if constraint == "reviews":
-                    supervisor.state["visual_review_roots"] = {SUP.STATE.utc_day(NOW): 3}
                 supervisor.save()
                 if constraint == "stop":
                     (self.fixture.directory / "STOP").write_text("owner stop")
                 action = self.fixture.run_pass(snapshot=pending, active=1 if constraint == "activity" else 0)["action"]
                 self.assertEqual(action, {"stop": "owner_stopped", "activity": "active_work",
-                    "roots": "visual_review_fuel_exhausted", "reviews": "visual_review_fuel_exhausted"}[constraint])
+                    "roots": "visual_review_fuel_exhausted"}[constraint])
                 self.assertEqual(self.fixture.engineering_posts(), [])
                 (self.fixture.directory / "STOP").unlink(missing_ok=True)
+
+    def test_four_distinct_visual_reviews_share_global_fuel_and_preserve_notice_limit(self):
+        self.fixture.config["root_limit"] = 4
+
+        def new_cohort(index):
+            self.pending()
+            image = self.fixture.workspace / "screen.png"
+            image.write_bytes(f"distinct synthetic review cohort {index}".encode())
+            path = self.fixture.workspace / "qa-proof.json"
+            report = json.loads(path.read_text())
+            report["runs"][0]["screenshots"] = [{"path": "screen.png", "sha256": SUP.digest(image.read_bytes())}]
+            path.write_text(json.dumps(report))
+            verification = json.loads((self.fixture.workspace / "verification.json").read_text())
+            verification["gates"][2]["artifacts"][0]["sha256"] = SUP.digest(path.read_bytes())
+            self.fixture.write_json("verification.json", verification)
+            return self.fixture.snapshot(NEXT_HEAD)
+
+        cohorts = set()
+        for index in range(4):
+            pending, now = new_cohort(index), NOW + index * 1500
+            cohorts.add(pending["qa_review"]["cohort_sha256"])
+            self.assertEqual(self.fixture.run_pass(now, pending)["action"], "visual_review_requested")
+            state = json.loads(self.fixture.state_path.read_text())
+            self.assertEqual(state["roots"][SUP.STATE.utc_day(now)], index + 1)
+            self.assertEqual(state["visual_review_roots"][SUP.STATE.utc_day(now)], index + 1)
+            self.assertFalse(state["continuation_earned"])
+            self.fixture.api.receipt = {"chain_open": True, "deliveries": [{"status": "started"}]}
+            self.assertEqual(self.fixture.run_pass(now + 30, pending)["action"], "root_pending")
+            self.assertEqual(len(self.fixture.engineering_posts()), index + 1)
+            self.fixture.api.receipt = {"chain_open": False, "deliveries": [{"status": "done"}]}
+            self.assertEqual(self.fixture.run_pass(now + 60, pending)["action"], "review_contract_incomplete")
+        self.assertEqual(len(cohorts), 4)
+        self.assertEqual(len(self.fixture.engineering_posts()), 4)
+        state = json.loads(self.fixture.state_path.read_text())
+        self.assertEqual(state["notice_post_attempts"][SUP.STATE.utc_day(NOW)], 3)
+        self.assertEqual(len(self.fixture.api.posts), 7)
+        self.assertEqual(self.fixture.run_pass(NOW + 6000, pending)["action"], "review_contract_incomplete")
+        self.assertEqual(len(self.fixture.engineering_posts()), 4)
+        fifth = new_cohort(4)
+        self.assertEqual(self.fixture.run_pass(NOW + 6500, fifth)["action"], "visual_review_fuel_exhausted")
+        final = json.loads(self.fixture.state_path.read_text())
+        self.assertEqual(final["roots"], state["roots"])
+        self.assertEqual(final["visual_review_roots"], state["visual_review_roots"])
+        self.assertEqual(len(final["visual_review_requests"]), 4)
+        self.assertEqual(len(self.fixture.api.posts), 7)
 
     def test_qa_metadata_and_head_changes_do_not_change_review_cohort(self):
         pending = self.pending()
