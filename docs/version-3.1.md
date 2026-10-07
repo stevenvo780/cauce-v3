@@ -120,12 +120,12 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `10935bc5`, el 6 de octubre a las
-18:29, hora de Colombia: una actualización sólo de consola con el rediseño de la PR #133. Los
-otros ocho contenedores conservaron identidad y salud; el runtime y el esquema 046 no cambiaron.
-La consola usa la imagen
-`sha256:1da82a7c73be6b527fc23e72295dfac565ba150025db4f056da64718702c36d6`, y la verificación
-posterior acreditó 68 ficheros públicos idénticos por HTTPS con la CSP de producción activa.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `c2a298a7`, el 6 de octubre a las
+21:21, hora de Colombia: `deploy.sh` completo con el rediseño de la consola, favoritos, apariencia
+de agentes y la migración 047. Los nueve servicios quedaron sanos, pero el smoke cerró ROJO
+parcial porque el bus no tuvo entregas después del arranque; esa comprobación sigue pendiente. El
+runtime usa la imagen `sha256:489ac015d79f6273db049ba2984edbf51c3e35382767afd2a894ae7d1c6cdaae` y
+la consola `sha256:5ce0b2b1d1b768d5cee316af05806c105c2507dabb49b3c78e391f6c60f7cfe1`.
 
 La sesión Steven recargada mostró el grafo primero y la lista cerrada al final. Se comprobó un
 ping canónico de Zeus y su shell; el control se devolvió y la shell se cerró. El journal de Main
