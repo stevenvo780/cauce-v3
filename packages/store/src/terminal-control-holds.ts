@@ -98,6 +98,20 @@ async function releaseExpired(client: DatabaseClient, tenantId: string, alias: s
 }
 
 // Callers lock authority first, then this lease before terminal row fences, in the same transaction.
+
+/**
+ * The claim skips an alias while it is held, and a skipped claim leaves no durable wake behind:
+ * without this signal the pending deliveries waited for an unrelated publish to the same alias.
+ * Inside a transaction `pg_notify` fires at COMMIT, after the release is visible to the claim.
+ */
+async function wakeReleasedAliases(client: DatabaseClient | DatabasePool, holds: readonly ControlHold[]): Promise<void> {
+  const aliases = new Map(holds.map((hold) => [`${hold.tenant_id}\u0000${hold.alias}`, hold]));
+  for (const hold of aliases.values()) {
+    await client.query('SELECT pg_notify($1,$2)', [
+      'cauce_delivery_wake', JSON.stringify({ tenant_id: hold.tenant_id, alias: hold.alias }),
+    ]);
+  }
+}
 export async function lockTerminalControlLease(
   client: DatabaseClient, identity: Pick<ControlHoldTake, 'tenantId' | 'alias'>,
 ): Promise<void> {
@@ -188,6 +202,7 @@ export async function releaseSessionControlHolds(
       RETURNING ${holdColumns}`,
     [sessionId, boundedReason(reason)],
   );
+  await wakeReleasedAliases(client, released.rows);
   return released.rows;
 }
 
@@ -203,6 +218,7 @@ export async function releaseControlHold(
   );
   const row = released.rows[0];
   if (row === undefined) throw new StoreError('not_found', 'there is no live terminal control hold');
+  await wakeReleasedAliases(pool, [row]);
   return row;
 }
 

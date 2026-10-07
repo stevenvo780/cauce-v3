@@ -9,6 +9,7 @@ export * from './agent-profile.js';
 export * from './audit-summary.js';
 export * from './delivery-timing.js';
 export * from './terminal-control-holds.js';
+export * from './pending-delivery-sweep.js';
 export * from './agent-context-revisions.js';
 export * from './human-identity.js';
 export * from './repository/agent-context-quarantine.js';

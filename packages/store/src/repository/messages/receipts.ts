@@ -82,7 +82,7 @@ export async function reconstructPublishReceipt(
   }
 
   const deliveryResult = await client.query<DurablePublishedDelivery>(
-    `SELECT id,recipient_tenant,recipient_alias FROM deliveries WHERE message_id=$1 FOR SHARE`,
+    `SELECT id,recipient_tenant,recipient_alias FROM deliveries WHERE message_id=$1 FOR KEY SHARE`,
     [messageId],
   );
   const byRecipient = new Map<string, string>();
@@ -180,7 +180,7 @@ export async function reconstructCommittedConsoleIntentReceipt(
   }
   const deliveryResult = await client.query<DurablePublishedDelivery>(
     `SELECT id,recipient_tenant,recipient_alias
-       FROM deliveries WHERE message_id=$1 FOR SHARE`,
+       FROM deliveries WHERE message_id=$1 FOR KEY SHARE`,
     [durable.message_id],
   );
   const deliveriesById = new Map(deliveryResult.rows.map((delivery) => [delivery.id, delivery]));

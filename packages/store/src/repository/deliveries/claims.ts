@@ -394,6 +394,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       );
 
       // A control hold gates new leases; durable terminal evidence survives a corrupted row.
+      // NO KEY UPDATE: a receipt's KEY SHARE on a fresh delivery must not make SKIP LOCKED hide it.
       const claimOne = async (humanOriginated: boolean): Promise<AuthoredDeliveryRow | undefined> => {
         const claimed = await client.query<AuthoredDeliveryRow>(
           `WITH picked AS (
@@ -419,7 +420,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
                ))` : ''}
                AND (m.priority >= $5)=$7::boolean
              ORDER BY (m.lane='interactive') DESC,m.priority DESC,d.available_at,d.created_at
-             FOR UPDATE OF d SKIP LOCKED LIMIT 1
+             FOR NO KEY UPDATE OF d SKIP LOCKED LIMIT 1
            ), updated AS (
              UPDATE deliveries d SET status='leased',attempt=d.attempt+1,claimed_at=now(),
                claim_token=gen_random_uuid(),ack_deadline_at=now()+$6*interval '1 millisecond',

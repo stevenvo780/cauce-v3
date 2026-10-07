@@ -44,7 +44,7 @@ function fixture(duplicate = false, failAudit = false) {
     else if (sql.includes('FROM messages WHERE id=$1 FOR SHARE')) rows = [{
       ...command, id: messageId, origin: null, auth_session_id: 'session', auth_channel: 'console',
     }];
-    else if (sql.includes('FROM deliveries WHERE message_id=$1 FOR SHARE')) rows = [{ id: deliveryId, recipient_tenant: 'Steven', recipient_alias: 'jarvis' }];
+    else if (sql.includes('FROM deliveries WHERE message_id=$1 FOR KEY SHARE')) rows = [{ id: deliveryId, recipient_tenant: 'Steven', recipient_alias: 'jarvis' }];
     else if (sql.includes('INSERT INTO audit_events')) {
       if (failAudit) throw new Error('audit unavailable');
       expect(values?.slice(0, 5)).toEqual(['Steven', 'kant', command.request_id, messageId, command.trace_id]);
