@@ -97,3 +97,31 @@ export function useBox(ref: RefObject<HTMLElement | null>, fill = false) {
   }, [ref, fill]);
   return box;
 }
+
+export function useMaximized(ref: RefObject<HTMLElement | null>, escapeBlocked: RefObject<boolean>): [boolean, () => void] {
+  const [maximized, setMaximized] = useState(false);
+  useEffect(() => {
+    if (!maximized) return undefined;
+    const onFullscreen = () => { if (!document.fullscreenElement) setMaximized(false); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !escapeBlocked.current && !document.fullscreenElement) setMaximized(false);
+    };
+    document.addEventListener('fullscreenchange', onFullscreen);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreen);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [maximized, escapeBlocked]);
+  const toggle = () => {
+    if (maximized) {
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+      setMaximized(false);
+      return;
+    }
+    setMaximized(true);
+    const frame = ref.current;
+    if (frame && 'requestFullscreen' in frame) void frame.requestFullscreen().catch(() => undefined);
+  };
+  return [maximized, toggle];
+}

@@ -21,7 +21,7 @@ import { drawMinimap, minimapSize, minimapToWorld } from './minimap';
 import { Minimap, RoomBar } from './OfficeNav';
 import { roomAt, roomCamera, roomForState } from './rooms';
 import type { Speech } from './speech';
-import { agentRefOf, clientPointOf, clippingOf, hintSeen, makeCanvas, rememberHint, scrollBand, useBox } from './frame';
+import { agentRefOf, clientPointOf, clippingOf, hintSeen, makeCanvas, rememberHint, scrollBand, useBox, useMaximized } from './frame';
 import { DirectionPad, OfficeControls, OfficeHint } from './OfficeControls';
 import type { TapMarker } from './people';
 import { createScene, drawFrame, lookOf, screenBox } from './scene';
@@ -101,7 +101,8 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
   const talkRef = useRef<HTMLDivElement>(null);
   const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
   const coarse = useMediaQuery('(pointer: coarse)');
-  const [maximized, setMaximized] = useState(false);
+  const escapeBlocked = useRef(false);
+  const [maximized, toggleMaximized] = useMaximized(frameRef, escapeBlocked);
   const box = useBox(frameRef, maximized);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [cursorId, setCursorId] = useState<string | null>(null);
@@ -668,29 +669,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
     engine.target = clamp(centerOn(engine.target, point, engine.inset));
     kick();
   };
-  const toggleMaximized = () => {
-    const frame = frameRef.current;
-    if (maximized) {
-      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
-      setMaximized(false);
-      return;
-    }
-    setMaximized(true);
-    if (frame && 'requestFullscreen' in frame) void frame.requestFullscreen().catch(() => undefined);
-  };
-  useEffect(() => {
-    if (!maximized) return undefined;
-    const onFullscreen = () => { if (!document.fullscreenElement) setMaximized(false); };
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape' && !talk && !document.fullscreenElement) setMaximized(false);
-    };
-    document.addEventListener('fullscreenchange', onFullscreen);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('fullscreenchange', onFullscreen);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [maximized, talk]);
+  escapeBlocked.current = Boolean(talk);
   const short = frameHeight < (coarse ? 300 : 240);
   const optionId = (id: string) => `office-agent-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
