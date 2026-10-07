@@ -56,9 +56,28 @@ describe('liveState', () => {
     expect(liveState(agent({ agent_enabled: false }), { nowMs: NOW }).state).toBe('down');
   });
 
-  it.each([{ flags: [] }, { flags: ['queued_without_consumer'] as const }])('cola sin tomar con lease vivo no es Trabado (%j)', ({ flags }) => {
+  it.each([1, undefined, null])('cola disponible sin tomar con lease vivo es Trabado y no se oculta (%s)', (ready) => {
     const result = liveState(
-      agent({ work_state: 'queued', queued: 1, queued_ready: 1, flags: [...flags] }),
+      agent({ work_state: 'queued', queued: 1, queued_ready: ready, flags: ['queued_without_consumer'] }),
+      { nowMs: NOW },
+    );
+    expect(result.state).toBe('blocked');
+    expect(result.reason).toContain('Conectado, pero no tomó 1 entrega');
+    expect(result.reason).not.toContain('ningún consumidor conectado');
+  });
+
+  it('cola sólo futura con lease vivo sigue Recibiendo aunque el servidor marque la cola', () => {
+    const result = liveState(
+      agent({ work_state: 'queued', queued: 2, queued_ready: 0, flags: ['queued_without_consumer'] }),
+      { nowMs: NOW },
+    );
+    expect(result.state).toBe('receiving');
+    expect(result.reason).toContain('Ninguna está disponible por horario todavía');
+  });
+
+  it('cola sin tomar sin señal del servidor se explica sin afirmar un bloqueo', () => {
+    const result = liveState(
+      agent({ work_state: 'queued', queued: 1, queued_ready: 1, flags: [] }),
       { nowMs: NOW },
     );
     expect(result.state).toBe('receiving');

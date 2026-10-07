@@ -57,7 +57,7 @@ describe('agentWorkState', () => {
     };
     expect(agentWorkState(row)).toEqual({
       work_state: 'queued',
-      flags: online ? [] : ['never_connected', 'queued_without_consumer']
+      flags: online ? ['queued_without_consumer'] : ['never_connected', 'queued_without_consumer']
     });
   });
 

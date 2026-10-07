@@ -184,6 +184,20 @@ function decidirEstado(
   if (flags.includes('queued_without_consumer') && agent.presence?.online !== true) {
     return { state: 'blocked', reason: 'Tiene cola encolada y ningún consumidor conectado que la tome.', overloaded };
   }
+  // Conectado y sin nada en vuelo, pero con entregas que ya podría tomar: no se oculta como
+  // «Recibiendo». Un consumidor sin la capacidad que pide la entrega la filtra para siempre.
+  if (flags.includes('queued_without_consumer') && agent.queued_ready !== 0) {
+    const ready = agent.queued_ready;
+    const cuantas = typeof ready === 'number'
+      ? plural(ready, 'entrega disponible', 'entregas disponibles')
+      : plural(agent.queued ?? 0, 'entrega', 'entregas');
+    return {
+      state: 'blocked',
+      reason: `Conectado, pero no tomó ${cuantas} y no tiene nada en vuelo: `
+        + 'su consumidor puede no tener la capacidad que piden.',
+      overloaded,
+    };
+  }
 
   const pulses = context.pulses ?? [];
   const received = pulses.find((pulse) => pulse.kind === 'received');
