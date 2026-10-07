@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useApi } from '../../api/context';
-import type { ConsoleAccess, MessagePage, TerminalCapability } from '../../api/types';
-import type { Resource } from '../../api/use-resource';
+import type { ConsoleAccess, TerminalCapability } from '../../api/types';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { Button } from '../../components/kit';
 import type { LiveAgentView } from '../live/agent-state';
@@ -30,7 +29,6 @@ interface OperatorWorkspaceProps {
   /** Agent named by the address; absent on the bare route, which shows the picker. */
   agentId?: string;
   live: ReadonlyMap<string, LiveAgentView>;
-  messages: Resource<MessagePage>;
   summary: string;
   access?: ConsoleAccess;
   terminalCapability?: TerminalCapability;
@@ -84,7 +82,7 @@ function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T
   return result;
 }
 
-export function OperatorWorkspace({ agents, agentId, live, messages, summary, access, terminalCapability, terminalTargets, fleetLoading, fleetError, onRefresh, requestedView }: OperatorWorkspaceProps) {
+export function OperatorWorkspace({ agents, agentId, live, summary, access, terminalCapability, terminalTargets, fleetLoading, fleetError, onRefresh, requestedView }: OperatorWorkspaceProps) {
   // The session that holds the CSRF token in memory: without it every PTY plane write returns 403.
   const api = useApi();
   const [grants, setGrants] = useState<Record<string, TerminalSessionGrant>>({});
@@ -365,7 +363,6 @@ export function OperatorWorkspace({ agents, agentId, live, messages, summary, ac
               access={access}
               capability={terminalCapability}
               targets={terminalTargets}
-              messages={messages}
               summary={summary}
               grants={grants}
               closedChannels={closedChannels}
@@ -383,16 +380,7 @@ export function OperatorWorkspace({ agents, agentId, live, messages, summary, ac
             />
           </ErrorBoundary>
         ) : (
-          <TerminalHome
-            agents={agents}
-            live={live}
-            access={access}
-            capability={terminalCapability}
-            targets={terminalTargets}
-            loading={fleetLoading}
-            error={fleetError}
-            summary={summary}
-          />
+          <TerminalHome agentCount={agents.length} loading={fleetLoading} error={fleetError} />
         )}
       </div>
     </>

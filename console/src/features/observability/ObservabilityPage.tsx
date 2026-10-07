@@ -50,7 +50,6 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
 
   const data = resource.data;
   const status = data?.status ?? {};
-  const queues = data?.queues;
   const relayItems = relays.data?.items ?? [];
 
   return <div>
@@ -74,11 +73,8 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
         <Kpi label="Salida pendiente" value={status.outbox_pending} detail="despertar + relay al origen" />
       </KpiGrid>
       <a href="/queues" onClick={(event) => { onNavClick(event, '/queues'); }}
-        className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-line bg-surface px-3 py-2.5 text-[13px] text-fg-2 no-underline transition-colors hover:bg-subtle">
-        <span className="min-w-56 flex-1">
-          <strong className="text-fg">Colas:</strong> {queues?.pending ?? 'sin dato de'} pendientes, {queues?.retrying ?? 'sin dato de'} en reintento, {queues?.dead ?? 'sin dato de'} muertas.
-        </span>
-        <span className="inline-flex items-center gap-1 text-brand-ink">Ver el detalle en Colas y DLQ <ArrowRight size={14} aria-hidden="true" /></span>
+        className="mb-4 inline-flex items-center gap-1 text-[13px] text-brand-ink no-underline hover:underline">
+        Ver el detalle en Colas y DLQ <ArrowRight size={14} aria-hidden="true" />
       </a>
       <SectionCard title="Relays al canal de origen" description="La consola observa; no ejecuta egress ni reintenta relays. Sólo se ven los relays en los que este actor participa.">
         {relays.error && !relays.data

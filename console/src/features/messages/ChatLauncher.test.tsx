@@ -7,7 +7,7 @@ import { AgentPreferencesContext, type AgentPreferencesValue } from '../../compo
 import { FleetContext, type FleetData } from '../../shell/fleet-context';
 import type { LiveAgentView, LiveState } from '../live/agent-state';
 import { ChatLauncher } from './ChatLauncher';
-import { lastMessages, launcherSections, nextCardIndex, sinceShort } from './chat-launcher-model';
+import { lastMessages, launcherSections, nextCardIndex } from './chat-launcher-model';
 import type { SaludDeCola } from './queue-health';
 import type { AgenteDeMensajeria } from './roster';
 
@@ -232,11 +232,3 @@ it('model: arrows follow the layout and fall back to reading order without geome
   expect(nextCardIndex(flat, 0, 'ArrowUp')).toBe(0);
 });
 
-it('model: compact ages', () => {
-  const ago = (seconds: number) => new Date(NOW - seconds * 1000).toISOString();
-  expect(sinceShort(ago(10), NOW)).toBe('ahora');
-  expect(sinceShort(ago(240), NOW)).toBe('hace 4 min');
-  expect(sinceShort(ago(7200), NOW)).toBe('hace 2 h');
-  expect(sinceShort(ago(3 * 86_400), NOW)).toBe('hace 3 d');
-  expect(sinceShort('nope', NOW)).toBeUndefined();
-});

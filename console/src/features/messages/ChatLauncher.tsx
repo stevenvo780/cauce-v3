@@ -8,7 +8,7 @@ import { AgentContextMenu, AgentKebab } from '../../components/agent-actions/Age
 import { useAgentAppearance, useAgentPreferences, usePreferencesSettled } from '../../components/agent-actions/preferences-context';
 import { ErrorState } from '../../components/ui';
 import { cn } from '../../cn';
-import { plural } from '../../lib';
+import { haceCuanto, plural } from '../../lib';
 import { orbHues } from '../../orb-hues';
 import { navigate } from '../../router';
 import { agentHref } from '../../shell/agent-href';
@@ -17,7 +17,7 @@ import { useMediaQuery } from '../../shell/use-media-query';
 import { STATE_TONE, TONE_CLASS } from '../../status-tone';
 import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
 import {
-  SECTION_TITLE, lastMessages, launcherSections, needsAttention, nextCardIndex, sinceShort,
+  SECTION_TITLE, lastMessages, launcherSections, needsAttention, nextCardIndex,
   type ArrowKey, type LastMessage, type LauncherSectionId,
 } from './chat-launcher-model';
 import type { SaludDeCola } from './queue-health';
@@ -70,7 +70,7 @@ function LauncherCard({ agent, index, state, reason, last, salud, layout, highli
   const meta = LIVE_STATE_META[state];
   const tone = TONE_CLASS[STATE_TONE[state]];
   const href = agentHref('messages', agent);
-  const time = last ? sinceShort(last.createdAt) : undefined;
+  const time = last ? haceCuanto(last.createdAt) : undefined;
   const chips = counters(salud);
   const label = [`${agent.alias}, ${agent.tenantId}`, meta.label, ...chips.map((chip) => chip.text), time ? `último mensaje ${time}` : '']
     .filter(Boolean).join(' · ');

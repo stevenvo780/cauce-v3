@@ -110,17 +110,6 @@ export function launcherSections(input: {
   return sections.filter((section) => section.agents.length > 0);
 }
 
-export function sinceShort(createdAt: string, now = Date.now()): string | undefined {
-  const at = Date.parse(createdAt);
-  if (Number.isNaN(at)) return undefined;
-  const seconds = Math.max(0, (now - at) / 1000);
-  if (seconds < 45) return 'ahora';
-  if (seconds < 3600) return `hace ${String(Math.max(1, Math.round(seconds / 60)))} min`;
-  if (seconds < 86_400) return `hace ${String(Math.round(seconds / 3600))} h`;
-  if (seconds < 604_800) return `hace ${String(Math.round(seconds / 86_400))} d`;
-  return new Date(at).toLocaleDateString('es', { day: 'numeric', month: 'short' });
-}
-
 export type ArrowKey = 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight';
 
 interface Box { left: number; top: number; width: number; height: number }
