@@ -49,6 +49,101 @@ class SupervisionContinuityTests(unittest.TestCase):
         self.fixture.write_json("verification.json", verification)
         return self.fixture.snapshot(NEXT_HEAD)
 
+    def legacy_closed_review(self):
+        baseline, _, pending = self.visual.reserve_engineering()
+        self.fixture.run_pass(NOW + 1800, pending)
+        review_root = self.state()["active_root"]
+        with mock.patch.object(SUP.Supervisor, "review_contract_incomplete", autospec=True,
+                               side_effect=lambda supervisor, _: supervisor.finish("visual_review_pending")):
+            self.assertEqual(self.fixture.run_pass(NOW + 2100, pending)["action"], "visual_review_pending")
+        state = self.state()
+        self.assertEqual(state["visual_review_requests"][review_root["review_cohort"]]["status"], "closed")
+        self.assertNotIn("contract_status", state["visual_review_requests"][review_root["review_cohort"]])
+        self.assertNotIn("review_contract_failure", state)
+        self.assertEqual(len(self.fixture.api.posts), 2)
+        return baseline, pending, review_root
+
+    def test_legacy_closed_review_gets_one_causal_notice_without_root_replay_or_fuel_reset(self):
+        baseline, pending, root = self.legacy_closed_review()
+        before, payloads = self.state(), copy.deepcopy(self.fixture.engineering_posts())
+        day = SUP.STATE.utc_day(NOW)
+        state = copy.deepcopy(before)
+        state["notice_post_attempts"] = {day: self.fixture.config["notice_limit"]}
+        SUP.atomic_save(self.fixture.state_path, state)
+        self.assertEqual(self.fixture.run_pass(NOW + 3000, pending)["action"], "review_contract_incomplete")
+        diagnosed = self.state()
+        self.assertEqual(diagnosed["review_contract_failure"]["root"], root["message_id"])
+        self.assertEqual(diagnosed["review_contract_failure"]["cohort_sha256"], root["review_cohort"])
+        self.assertEqual(diagnosed["visual_review_requests"][root["review_cohort"]]["contract_status"], "review_contract_incomplete")
+        self.assertEqual(diagnosed["notice_post_attempts"][day], self.fixture.config["notice_limit"])
+        self.assertEqual(len(self.fixture.api.posts), 2)
+        self.assertEqual(self.fixture.run_pass(NOW + 90000, pending)["action"], "review_contract_incomplete")
+        self.assertEqual(self.fixture.run_pass(NOW + 180000, pending)["action"], "review_contract_incomplete")
+        after = self.state()
+        self.assertEqual(after["review_contract_failure"], diagnosed["review_contract_failure"])
+        self.assertEqual(after["progress_pause_baseline"], baseline)
+        self.assertEqual(after["progress_pause_binding"], before["progress_pause_binding"])
+        self.assertEqual(after["roots"], before["roots"])
+        self.assertEqual(after["visual_review_roots"], before["visual_review_roots"])
+        self.assertFalse(after["continuation_earned"])
+        self.assertEqual(self.fixture.engineering_posts(), payloads)
+        self.assertEqual(len(self.fixture.api.posts), 3)
+        for field in ("at", "key", "status", "message_id"):
+            self.assertEqual(after["visual_review_requests"][root["review_cohort"]][field],
+                             before["visual_review_requests"][root["review_cohort"]][field])
+
+    def test_legacy_closed_review_with_valid_qa_recovers_without_incomplete_diagnostic(self):
+        _, _, _ = self.legacy_closed_review()
+        approved = self.visual.approved()
+        self.assertEqual(self.fixture.run_pass(NOW + 3000, approved)["action"], "idle_observation")
+        self.assertTrue(self.state()["continuation_earned"])
+        self.assertNotIn("review_contract_failure", self.state())
+        self.assertEqual(len(self.fixture.api.posts), 2)
+
+    def test_legacy_review_diagnostic_rejects_open_foreign_active_and_hard_paused_state(self):
+        _, pending, root = self.legacy_closed_review()
+        original = self.state()
+        for constraint in ("open", "wrong_cohort", "foreign_root", "foreign_goal", "live_root", "unknown_root", "stop", "hard_pause"):
+            with self.subTest(constraint=constraint):
+                state, evidence = copy.deepcopy(original), copy.deepcopy(pending)
+                if constraint == "open":
+                    state["visual_review_requests"][root["review_cohort"]]["status"] = "reserved"
+                if constraint == "wrong_cohort":
+                    state["last_review_finished"]["cohort_sha256"] = "f" * 64
+                if constraint == "foreign_root":
+                    state["last_review_finished"]["root"] = "c83c2c1a-65a1-4ca6-95da-8b7f27ff8ff8"
+                if constraint == "foreign_goal":
+                    evidence["goal_sha256"] = "f" * 64
+                if constraint in {"live_root", "unknown_root"}:
+                    state["active_root"] = copy.deepcopy(root)
+                    if constraint == "live_root":
+                        self.fixture.api.receipt = {"chain_open": True, "deliveries": [{"status": "started"}]}
+                    else:
+                        state["active_root"].pop("message_id")
+                        state["active_root"]["error"] = "transport_unknown"
+                        state["active_root"]["retry_after"] = NOW + 100000
+                if constraint == "stop":
+                    (self.fixture.directory / "STOP").write_text("owner stop")
+                if constraint == "hard_pause":
+                    state.update(phase="circuit_paused", pause_reason="unauthorized")
+                SUP.atomic_save(self.fixture.state_path, state)
+                self.fixture.run_pass(NOW + 3000, evidence)
+                self.assertNotIn("review_contract_failure", self.state())
+                self.assertFalse(self.state()["continuation_earned"])
+                self.assertEqual(self.state()["roots"], original["roots"])
+                self.assertEqual(self.state()["visual_review_roots"], original["visual_review_roots"])
+                self.assertEqual(len(self.fixture.engineering_posts()), 2)
+                if constraint == "stop":
+                    (self.fixture.directory / "STOP").unlink()
+
+    def test_legacy_closed_review_with_unknown_current_qa_still_gets_diagnostic_only(self):
+        _, pending, _ = self.legacy_closed_review()
+        evidence = dict(pending, qa_review=None, qa_executed=False, valid_gates=[], verified_engineering=False)
+        self.assertEqual(self.fixture.run_pass(NOW + 3000, evidence)["action"], "review_contract_incomplete")
+        self.assertFalse(self.state()["continuation_earned"])
+        self.assertEqual(len(self.fixture.engineering_posts()), 2)
+        self.assertEqual(len(self.fixture.api.posts), 3)
+
     def failed_review(self):
         baseline, original, pending = self.visual.reserve_engineering()
         self.fixture.run_pass(NOW + 1800, pending)

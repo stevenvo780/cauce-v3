@@ -174,6 +174,36 @@ class PraxisQAReviewTests(unittest.TestCase):
         self.assertIn("qa", observed["valid"])
         self.assertNotIn("qa", observed["rejections"])
 
+    def test_native_producer_contract_reaches_recorded_failed_and_passed_consumer_verdicts(self):
+        original_qa_hash = self.gate["artifacts"][0]["sha256"]
+        native = REVIEW.PROOF.gate_report("qa", self.qa["command"], self.commit, self.sources,
+            [{"exit_code": 0}], runs=copy.deepcopy(self.qa["runs"]),
+            review={"independent": False, "reviewer": None}, inspected_images=[])
+        self.assertEqual(native["author"], "praxis-proof.py")
+        self.assertEqual(native["producer_kind"], "automation")
+        self.write_json(self.qa_name, native)
+        qa_hash = REVIEW.sha256(self.path(self.qa_name).read_bytes())
+        proof, verification = copy.deepcopy(self.proof), copy.deepcopy(self.verification)
+        REVIEW.replace_references(proof, self.qa_name, original_qa_hash, qa_hash)
+        REVIEW.replace_references(verification, self.qa_name, original_qa_hash, qa_hash)
+        old_proof_hash = REVIEW.sha256(self.path(self.proof_name).read_bytes())
+        self.write_json(self.proof_name, proof)
+        REVIEW.replace_references(verification, self.proof_name, old_proof_hash,
+                                 REVIEW.sha256(self.path(self.proof_name).read_bytes()))
+        self.write_json(self.verification_name, verification)
+        manifest = {**self.manifest, "qa_sha256": qa_hash, "outcome": "failed"}
+        self.assertEqual(self.record(manifest)["exit_code"], 1)
+        reader = EVIDENCE.EvidenceReader(self.workspace, STATE, lambda commit: commit == self.commit)
+        observed = reader.gates(self.read(self.verification_name), source_current=True)
+        self.assertNotIn("qa", observed["valid"])
+        self.assertEqual(observed["qa_review"]["verdict"]["author"], "praxis-proof.py")
+        self.assertEqual(observed["rejections"]["qa"], "independent_visual_review_failed")
+        current_hash = REVIEW.sha256(self.path(self.qa_name).read_bytes())
+        self.assertEqual(self.record({**manifest, "qa_sha256": current_hash, "outcome": "passed"})["exit_code"], 0)
+        observed = reader.gates(self.read(self.verification_name), source_current=True)
+        self.assertIn("qa", observed["valid"])
+        self.assertNotIn("verdict", observed["qa_review"])
+
     def test_failed_record_can_never_approve_qa_in_official_evidence_reader(self):
         result = self.record({**self.manifest, "outcome": "failed"})
         reader = EVIDENCE.EvidenceReader(self.workspace, STATE, lambda commit: commit == self.commit)
@@ -182,7 +212,46 @@ class PraxisQAReviewTests(unittest.TestCase):
         self.assertTrue(observed["qa_executed"])
         self.assertIsNotNone(observed["qa_review"])
         self.assertNotIn("qa", observed["valid"])
-        self.assertEqual(observed["rejections"]["qa"], "independent_visual_review_pending")
+        self.assertEqual(observed["rejections"]["qa"], "independent_visual_review_failed")
+        verdict = observed["qa_review"]["verdict"]
+        self.assertTrue(verdict["validated"])
+        self.assertEqual(verdict["author"], self.qa["author"])
+        self.assertEqual(verdict["reviewer"], self.manifest["reviewer"])
+        self.assertEqual(verdict["observations"], self.manifest["inspected"])
+
+    def test_incomplete_or_contradictory_failed_review_is_not_a_remediation_verdict(self):
+        self.record({**self.manifest, "outcome": "failed"})
+        baseline, verification = self.read(self.qa_name), self.read(self.verification_name)
+        for variant in ("not_performed", "independent", "author", "commit", "goal", "missing_image",
+                        "duplicate_image", "empty_observation", "empty_notes", "duplicate_gate", "stale_source"):
+            with self.subTest(variant=variant):
+                report, current = copy.deepcopy(baseline), copy.deepcopy(verification)
+                if variant == "not_performed":
+                    report["review"]["performed"] = False
+                elif variant == "independent":
+                    report["review"]["independent"] = True
+                elif variant == "author":
+                    report["review"]["reviewer"] = report["author"]
+                elif variant == "commit":
+                    report["review"]["source_commit"] = "f" * 40
+                elif variant == "goal":
+                    report["review"]["goal_sha256"] = "f" * 64
+                elif variant == "missing_image":
+                    report["inspected_images"].pop()
+                elif variant == "duplicate_image":
+                    report["inspected_images"].append(copy.deepcopy(report["inspected_images"][0]))
+                elif variant == "empty_observation":
+                    report["inspected_images"][0]["observations"] = ""
+                elif variant == "empty_notes":
+                    report["review"]["notes"] = ""
+                self.write_json(self.qa_name, report)
+                current["gates"][0]["artifacts"][0]["sha256"] = REVIEW.sha256(self.path(self.qa_name).read_bytes())
+                if variant == "duplicate_gate":
+                    current["gates"].append(copy.deepcopy(current["gates"][0]))
+                reader = EVIDENCE.EvidenceReader(self.workspace, STATE, lambda commit: commit == self.commit)
+                observed = reader.gates(current, source_current=variant != "stale_source")
+                self.assertNotIn("qa", observed["valid"])
+                self.assertNotIn("verdict", observed["qa_review"] or {})
 
     def test_metadata_only_head_advance_is_allowed(self):
         self.write("notes.md", b"Synthetic metadata\n")
@@ -190,6 +259,74 @@ class PraxisQAReviewTests(unittest.TestCase):
         self.git("commit", "-qm", "Metadata only")
         self.assertNotEqual(self.git("rev-parse", "HEAD").strip(), self.commit)
         self.assertEqual(self.record()["exit_code"], 0)
+
+    def test_bad_advertised_capture_cannot_be_filtered_into_valid_review_inventory(self):
+        self.record({**self.manifest, "outcome": "failed"})
+        baseline, verification = self.read(self.qa_name), self.read(self.verification_name)
+        for variant in ("stale_extra", "missing_extra", "malformed", "conflicting_duplicate", "non_list"):
+            with self.subTest(variant=variant):
+                report, current = copy.deepcopy(baseline), copy.deepcopy(verification)
+                captures = report["runs"][0]["screenshots"]
+                if variant == "stale_extra":
+                    extra = self.prefix + "/qa/extra.png"
+                    self.write(extra, b"synthetic extra capture")
+                    captures.append({"path": extra, "sha256": "f" * 64})
+                elif variant == "missing_extra":
+                    captures.append({"path": self.prefix + "/qa/missing.png", "sha256": "f" * 64})
+                elif variant == "malformed":
+                    captures.append({"path": "incomplete.png"})
+                elif variant == "conflicting_duplicate":
+                    captures.append({"path": captures[0]["path"], "sha256": "f" * 64})
+                else:
+                    report["runs"][0]["screenshots"] = {"unexpected": "object"}
+                self.write_json(self.qa_name, report)
+                current["gates"][0]["artifacts"][0]["sha256"] = REVIEW.sha256(self.path(self.qa_name).read_bytes())
+                reader = EVIDENCE.EvidenceReader(self.workspace, STATE, lambda commit: commit == self.commit)
+                observed = reader.gates(current, source_current=True)
+                self.assertFalse(observed["qa_executed"])
+                self.assertIsNone(observed["qa_review"])
+                self.assertNotIn("qa", observed["valid"])
+
+    def test_legacy_passed_review_cannot_approve_only_a_subset_of_advertised_images(self):
+        self.record()
+        report, verification = self.read(self.qa_name), self.read(self.verification_name)
+        report["inspected_images"].pop()
+        self.write_json(self.qa_name, report)
+        verification["gates"][0]["artifacts"][0]["sha256"] = REVIEW.sha256(self.path(self.qa_name).read_bytes())
+        reader = EVIDENCE.EvidenceReader(self.workspace, STATE, lambda commit: commit == self.commit)
+        observed = reader.gates(verification, source_current=True)
+        self.assertTrue(observed["qa_executed"])
+        self.assertNotIn("qa", observed["valid"])
+
+    def test_each_bound_qa_artifact_uses_its_own_complete_inspection_inventory(self):
+        self.record()
+        baseline, verification = self.read(self.qa_name), self.read(self.verification_name)
+        extra_name = self.prefix + "/qa/tablet.png"
+        self.write(extra_name, b"\x89PNG\r\n\x1a\nsynthetic tablet")
+        capture = {"path": extra_name, "sha256": REVIEW.sha256(self.path(extra_name).read_bytes())}
+        extra_report = copy.deepcopy(baseline)
+        extra_report["runs"] = [{"status": "passed", "screenshots": [capture]}]
+        extra_report["inspected_images"] = [{**capture, "observations": "Tablet controls and labels are fully visible in the inspected capture."}]
+        extra_qa_name = self.prefix + "/tablet-qa.json"
+        reader = EVIDENCE.EvidenceReader(self.workspace, STATE, lambda commit: commit == self.commit)
+        for transferred in (False, True):
+            with self.subTest(transferred=transferred):
+                self.write_json(extra_qa_name, extra_report)
+                current = copy.deepcopy(verification)
+                artifact = {"path": extra_qa_name, "sha256": REVIEW.sha256(self.path(extra_qa_name).read_bytes())}
+                if transferred:
+                    current["gates"][0]["transferred_artifacts"] = [artifact]
+                else:
+                    current["gates"][0]["artifacts"].append(artifact)
+                observed = reader.gates(current, source_current=True)
+                self.assertIn("qa", observed["valid"])
+                self.assertEqual(len(observed["qa_review"]["screenshots"]), 3)
+                incomplete = copy.deepcopy(extra_report)
+                incomplete["inspected_images"] = []
+                self.write_json(extra_qa_name, incomplete)
+                artifact["sha256"] = REVIEW.sha256(self.path(extra_qa_name).read_bytes())
+                observed = reader.gates(current, source_current=True)
+                self.assertNotIn("qa", observed["valid"])
 
     def test_actor_guard_rejects_root_and_foreign_workspace_owner(self):
         for owner in (0, self.workspace.stat().st_uid + 1):

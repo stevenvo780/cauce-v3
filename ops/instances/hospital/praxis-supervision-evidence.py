@@ -284,6 +284,31 @@ class EvidenceReader:
             return False
         return True
 
+    def failed_visual_review(self, report: dict, screenshots: dict) -> dict | None:
+        review, images, sources = report.get("review"), report.get("inspected_images"), report.get("source_files")
+        if (not isinstance(review, dict) or review.get("outcome") != "failed" or review.get("performed") is not True
+                or review.get("independent") is not False or review.get("source_commit") != report.get("source_commit")
+                or not isinstance(sources, dict) or review.get("goal_sha256") != sources.get("GOAL.md")
+                or not isinstance(report.get("author"), str) or not report["author"].strip()
+                or not isinstance(review.get("reviewer"), str) or not 3 <= len(review["reviewer"].strip()) <= 200
+                or review["reviewer"].strip() == report["author"].strip()
+                or not isinstance(review.get("notes"), str) or not 20 <= len(review["notes"].strip()) <= 4096
+                or not isinstance(images, list) or not 1 <= len(images) <= 100):
+            return None
+        inspected = {}
+        for image in images:
+            if (not isinstance(image, dict) or not isinstance(image.get("observations"), str)
+                    or not 20 <= len(image["observations"].strip()) <= 4096 or self.read_artifact(image) is None
+                    or image["path"] in inspected):
+                return None
+            inspected[image["path"]] = image["sha256"]
+        if inspected != screenshots:
+            return None
+        return {"outcome": "failed", "performed": True, "validated": True, "author": report["author"].strip(),
+                "reviewer": review["reviewer"].strip(), "notes": review["notes"].strip()[:2000],
+                "observations": [{"path": image["path"], "sha256": image["sha256"],
+                                  "observations": image["observations"][:400]} for image in images]}
+
     def gates(self, verification: dict, source_current: bool) -> dict:
         result = {"valid": set(), "not_applicable": {}, "artifacts": [], "tested": {}, "rejections": {}, "qa_executed": False, "qa_review": None}
         entries, version = verification.get("gates", []), verification.get("schema_version")
@@ -299,6 +324,8 @@ class EvidenceReader:
                 result["valid"].discard(identifier)
                 result["not_applicable"].pop(identifier, None)
                 result["rejections"][identifier] = "duplicate_gate"
+                if identifier == "qa":
+                    result["qa_review"], result["qa_executed"] = None, False
                 continue
             seen.add(identifier)
             if entry.get("outcome") == "not-applicable":
@@ -316,7 +343,7 @@ class EvidenceReader:
             expected = entry.get("source_files", verification.get("source_files"))
             source_commit = entry.get("source_commit", verification.get("integration_commit"))
             verified = self.commit_verified(source_commit) and self.source_matches(expected)
-            coverage, independent, executed_all, gate_tokens, review_images = {}, True, True, [], {}
+            coverage, independent, executed_all, gate_tokens, review_images, review_reports = {}, True, True, [], {}, []
             for artifact in artifacts + entry.get("transferred_artifacts", []):
                 observed = self.read_artifact(artifact)
                 report = observed[1] if observed else None
@@ -338,21 +365,34 @@ class EvidenceReader:
                     coverage = self.test_coverage(command, expected) if verified else {}
                     verified = verified and bool(coverage) and self.executed_tests(report, command)
                 if identifier == "qa":
+                    review_reports.append(report)
+                    report_images = {}
                     verified = verified and self.qa_source_current(report, expected)
                     runs = report.get("runs")
                     executed = (isinstance(runs, list) and bool(runs)
                                 and all(isinstance(run, dict) and run.get("status") == "passed" for run in runs))
                     executed_all = executed_all and executed
                     for run in runs if isinstance(runs, list) else []:
-                        for capture in run.get("screenshots", []) if isinstance(run, dict) else []:
-                            if isinstance(capture, dict) and self.read_artifact(capture) is not None:
-                                review_images[capture["path"]] = capture["sha256"]
+                        captures = run.get("screenshots", []) if isinstance(run, dict) else []
+                        if not isinstance(captures, list) or len(captures) > 100:
+                            verified = False
+                            continue
+                        for capture in captures:
+                            if (not isinstance(capture, dict) or self.read_artifact(capture) is None
+                                    or capture["path"] in review_images and review_images[capture["path"]] != capture["sha256"]):
+                                verified = False
+                                continue
+                            review_images[capture["path"]] = capture["sha256"]
+                            report_images[capture["path"]] = capture["sha256"]
                     review, images = report.get("review", {}), report.get("inspected_images", [])
                     independent = (independent and executed and isinstance(review, dict) and review.get("independent") is True
                         and review.get("outcome", "passed") == "passed"
                         and isinstance(review.get("reviewer"), str) and bool(review["reviewer"].strip())
                         and review.get("reviewer") != report.get("author") and isinstance(images, list) and bool(images)
-                        and all(self.read_artifact(image) is not None for image in images))
+                        and all(self.read_artifact(image) is not None for image in images)
+                        and len({image["path"] for image in images}) == len(images)
+                        and (not any(isinstance(run, dict) and "screenshots" in run for run in runs)
+                             or {image["path"]: image["sha256"] for image in images} == report_images))
                 gate_tokens.append(identifier + ":" + artifact["sha256"])
             if identifier == "qa":
                 result["qa_executed"] = bool(verified and executed_all)
@@ -362,12 +402,18 @@ class EvidenceReader:
                         "source_files": code_sources, "screenshots": sorted(set(review_images.values()))})),
                         "source_commit": source_commit, "source_files": expected, "artifacts": artifacts,
                         "screenshots": [{"path": path, "sha256": sha} for path, sha in sorted(review_images.items())]}
+                    if len(review_reports) == 1:
+                        verdict = self.failed_visual_review(review_reports[0], review_images)
+                        if verdict:
+                            result["qa_review"]["verdict"] = verdict
             if verified and independent:
                 result["valid"].add(identifier)
                 result["artifacts"].extend(gate_tokens)
                 result["tested"].update(coverage)
             else:
-                result["rejections"][identifier] = "stale_or_unbound_artifact" if not verified else "independent_visual_review_pending"
+                result["rejections"][identifier] = ("stale_or_unbound_artifact" if not verified
+                    else "independent_visual_review_failed" if identifier == "qa" and result["qa_review"]
+                    and result["qa_review"].get("verdict") else "independent_visual_review_pending")
         return result
 
     def criterion_verified(self, issue: str, criterion: dict, record: dict, goal: str) -> bool:
