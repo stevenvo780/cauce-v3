@@ -152,7 +152,7 @@ async function publishFile(tenant: FunctionalTenant, file: TestFile, text: strin
     sha256, bytes_base64: base64, mode: 0o600 });
   expect(files[0]?.local_path.startsWith(adapter.workspace + sep)).toBe(true);
   expect(Buffer.from(files[0]?.bytes_base64 ?? '', 'base64')).toEqual(file.buffer);
-  const rendered = page.locator('article.transcript-entry').filter({ hasText: file.name });
+  const rendered = page.locator(`article[data-direction="input"][data-message-id="${row.id}"]`).filter({ hasText: file.name });
   await rendered.getByRole('list', { name: 'Archivos del mensaje' }).waitFor({ timeout: 20_000 });
   expect(await rendered.count()).toBe(1);
   await page.reload({ waitUntil: 'domcontentloaded' });

@@ -150,8 +150,8 @@ describe('lectura de cuentas y borradores para lectores', () => {
         .filter((button) => button.textContent.trim() === 'Nueva cuenta')
         .map((control) => control.disabled));
       expect(createForm).not.toBeNull();
-      expect(createForm?.length).toBeGreaterThan(0);
-      expect(createForm?.every(Boolean)).toBe(true);
+      expect(createForm.length).toBeGreaterThan(0);
+      expect(createForm.every(Boolean)).toBe(true);
 
       const editActions = await page.evaluate((accountId) => Array.from(
         document.querySelectorAll<HTMLButtonElement>('button[aria-label]'),

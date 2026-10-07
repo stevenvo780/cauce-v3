@@ -13,6 +13,7 @@ let fixture: ConversationBrowserFixture | undefined;
 const sourceRoot = fileURLToPath(new URL('../../', import.meta.url));
 
 interface InputLocator extends Locator {
+  waitFor(options?: { state?: 'visible' | 'hidden' | 'attached'; timeout?: number }): Promise<void>;
   inputValue(): Promise<string>;
   isDisabled(): Promise<boolean>;
 }
@@ -139,14 +140,15 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
       };
       await send.click({ clickCount: 2 });
 
-      const humanEntry = page.locator('.transcript-entry.input').filter({ hasText: marker });
+      const humanEntry = page.locator('article[data-direction="input"]').filter({ hasText: marker });
       const pendingCheck = humanEntry.getByRole('status', {
-        name: 'Entrega: Publicado · esperando aceptación del agente', exact: true,
+        name: 'Entrega: Enviado · esperando aceptación del agente', exact: true,
       });
       await pendingCheck.waitFor({ state: 'visible', timeout: 20_000 });
-      expect(await pendingCheck.innerText()).toBe('◷');
-      expect(await humanEntry.locator('[data-checks]').count()).toBe(0);
-      expect(await humanEntry.locator('.canonical-reply').count()).toBe(0);
+      expect(await pendingCheck.innerText()).toBe('✓');
+      expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(1);
+      expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(0);
+      expect(await humanEntry.locator('section[data-delivery-id]').count()).toBe(0);
       const confirmingButton = page.getByRole('button', { name: 'Confirmando…', exact: true });
       await confirmingButton.waitFor({ state: 'visible', timeout: 10_000 });
       await fault.waitForCalls(1);
@@ -175,8 +177,8 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
       expect((await messageEvidence(active, marker)).message_id).toBe(pendingRoot.message_id);
       expect(await page.getByLabel('Historial de la conversación', { exact: true }).getByText(marker, { exact: true }).count()).toBe(1);
 
-      const author = humanEntry.locator('.transcript-direction span[title^="Persona autenticada"]');
-      await author.waitFor({ state: 'visible', timeout: 15_000 });
+      const author = humanEntry.getByText('REAL PTY E2E OPERATOR', { exact: true });
+      await (author as InputLocator).waitFor({ state: 'attached', timeout: 15_000 });
       expect(await author.innerText()).toBe('REAL PTY E2E OPERATOR');
       const messageActions = humanEntry.getByRole('button', { name: 'Opciones del mensaje', exact: true });
       await messageActions.press('Enter');
@@ -201,7 +203,7 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
       expect(focusedDetails).toMatchObject({ tagName: 'H3', text: 'Mensaje que elegiste', tabIndex: -1 });
       const detailText = await details.innerText();
       expect(detailText).toContain(marker);
-      expect(detailText).toContain('ACTOR VERIFICADO');
+      expect(detailText).toContain('Actor verificado');
       expect(detailText).toContain(active.pty.operatorAlias);
       expect(await humanEntry.locator('xpath=self::*[@data-selected="true"]').count()).toBe(1);
       await page.screenshot({ path: `${evidenceDirectory}/${viewport.label}-message-details-open.png`, fullPage: false });
@@ -212,10 +214,11 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
           name: 'Entrega: Recibido por el agente · ejecución iniciada', exact: true,
         });
         await startedCheck.waitFor({ state: 'visible', timeout: 20_000 });
-        expect(await startedCheck.innerText()).toBe('✓');
-        expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(1);
-        expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(0);
-        expect(await humanEntry.locator('.canonical-reply').count()).toBe(0);
+        expect(await startedCheck.innerText()).toBe('✓✓');
+        expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(0);
+        expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(1);
+        expect(await humanEntry.locator('[role="status"][title$="Lectura sin comprobar."]').count()).toBe(1);
+        expect(await humanEntry.locator('section[data-delivery-id]').count()).toBe(0);
         const inProgress = await active.pty.database.pool.query<{ status: string }>(
           'SELECT status FROM deliveries WHERE id=$1::uuid', [pendingRoot.delivery_id],
         );
@@ -236,9 +239,10 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
         name: 'Entrega: Recibido por el agente · ejecución terminada', exact: true,
       });
       await doneCheck.waitFor({ state: 'visible', timeout: 20_000 });
-      expect(await doneCheck.innerText()).toBe('✓');
-      expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(1);
-      expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(0);
+      expect(await doneCheck.innerText()).toBe('✓✓');
+      expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(0);
+      expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(1);
+      expect(await humanEntry.locator('[role="status"][title$="Lectura sin comprobar."]').count()).toBe(1);
       const receipts = await active.pty.database.pool.query<{ count: string }>(
         `SELECT count(*)::text FROM delivery_acks WHERE delivery_id=$1::uuid AND applied
           AND payload->'result' ? 'harness_consumption_v1'`, [pendingRoot.delivery_id],
@@ -263,19 +267,19 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
     const marker = `pr52-touch-${randomUUID()}`;
     const textbox = page.getByLabel(`Mensaje para ${active.pty.targetAlias}`, { exact: true });
     await textbox.fill(marker);
-    expect(await page.evaluate(() => document.activeElement?.matches('.messenger-composer textarea'))).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.matches('[data-chat-composer] textarea'))).toBe(true);
 
     const bounds = await page.getByRole('button', { name: 'Enviar', exact: true }).boundingBox();
     if (bounds === null) throw new Error('send button has no visible touch target');
     const touchscreen = (page as unknown as { touchscreen: { tap(x: number, y: number): Promise<void> } }).touchscreen;
     await touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
 
-    const entry = page.locator('.transcript-entry.input').filter({ hasText: marker });
+    const entry = page.locator('article[data-direction="input"]').filter({ hasText: marker });
     await entry.waitFor({ state: 'visible', timeout: 20_000 });
-    await entry.getByRole('status', { name: 'Entrega: Publicado · esperando aceptación del agente', exact: true })
+    await entry.getByRole('status', { name: 'Entrega: Enviado · esperando aceptación del agente', exact: true })
       .waitFor({ state: 'visible', timeout: 20_000 });
     expect(await page.getByLabel('Historial de la conversación', { exact: true }).getByText(marker, { exact: true }).count()).toBe(1);
-    expect(await page.evaluate(() => document.activeElement?.matches('.messenger-composer textarea'))).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.matches('[data-chat-composer] textarea'))).toBe(true);
     expect(await (page.locator('textarea') as unknown as InputLocator).inputValue()).toBe('');
 
     const durableRoot = await messageEvidence(active, marker);
