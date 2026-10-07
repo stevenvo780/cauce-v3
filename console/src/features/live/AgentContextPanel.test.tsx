@@ -49,20 +49,18 @@ it('sends the directive layers to the one place that edits each of them', async 
   expect(screen.getByRole('tab', { name: /^Perfil/ })).toHaveAttribute('aria-selected', 'true');
 });
 
-it('marks the section holding an unsaved draft, reports it and guards the page against closing', async () => {
-  const onDirtyChange = vi.fn();
+it('marks the section holding an unsaved draft and guards the page against closing', async () => {
   const user = userEvent.setup();
   render(<ApiProvider api={new CauceApi('http://localhost')}>
-    <AgentContextPanel tenantId="Steven" alias="kant" onDirtyChange={onDirtyChange} />
+    <AgentContextPanel tenantId="Steven" alias="kant" />
   </ApiProvider>);
   await user.type(await screen.findByLabelText(/^Identidad y propósito/i), 'algo');
   expect(await screen.findByRole('img', { name: 'borrador sin guardar' })).toBeInTheDocument();
   expect(screen.getByRole('tab', { name: /^Perfil/ })).toHaveAccessibleName(/borrador sin guardar/);
   expect(screen.getByText(/Borrador sin guardar\. Cerrar este panel lo conserva/)).toBeInTheDocument();
-  await waitFor(() => { expect(onDirtyChange).toHaveBeenLastCalledWith(true); });
   const closing = new Event('beforeunload', { cancelable: true });
   window.dispatchEvent(closing);
   expect(closing.defaultPrevented).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: 'Descartar borrador de perfil y releer' }));
-  await waitFor(() => { expect(onDirtyChange).toHaveBeenLastCalledWith(false); });
+  await waitFor(() => { expect(screen.queryByRole('img', { name: 'borrador sin guardar' })).not.toBeInTheDocument(); });
 });

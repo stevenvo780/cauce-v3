@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
-import { cn } from '../../cn';
+import { Pill, StatePill } from '../../components/kit';
 import { PageHeader } from '../../components/ui';
 import { NAV_ENTRIES } from '../../nav';
 import { onNavClick } from '../../router';
-import { TONE_CLASS, STATE_TONE, type Tone } from '../../status-tone';
+import type { Tone } from '../../status-tone';
 import { LIVE_STATE_META, LIVE_STATES } from '../live/agent-state';
 
 const TITULO = 'Ayuda y documentación';
@@ -76,15 +76,6 @@ function useSeccionActiva(): string {
     return () => { observer.disconnect(); };
   }, []);
   return activa;
-}
-
-function Pill({ tono, children }: { tono: Tone; children: ReactNode }) {
-  return (
-    <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap', TONE_CLASS[tono].pill)}>
-      <span className={cn('size-1.5 rounded-full', TONE_CLASS[tono].dot)} aria-hidden="true" />
-      {children}
-    </span>
-  );
 }
 
 function Seccion({ id, titulo, children }: { id: string; titulo: string; children: ReactNode }) {
@@ -162,7 +153,7 @@ export function HelpPage() {
             <dl className="m-0 block divide-y divide-line">
               {LIVE_STATES.map((estado) => (
                 <div key={estado} className={FILA}>
-                  <dt><Pill tono={STATE_TONE[estado]}>{LIVE_STATE_META[estado].label}</Pill></dt>
+                  <dt><StatePill state={estado} /></dt>
                   <dd className="text-[13px] text-fg-2">{LIVE_STATE_META[estado].hint}</dd>
                 </div>
               ))}
@@ -171,7 +162,7 @@ export function HelpPage() {
             <dl className="m-0 block divide-y divide-line">
               {ENTREGAS.map((entrega) => (
                 <div key={entrega.etiqueta} className={FILA}>
-                  <dt><Pill tono={entrega.tono}>{entrega.etiqueta}</Pill></dt>
+                  <dt><Pill tone={entrega.tono}>{entrega.etiqueta}</Pill></dt>
                   <dd className="text-[13px] text-fg-2">{entrega.detalle}</dd>
                 </div>
               ))}

@@ -2,12 +2,14 @@ import { Menu } from '@base-ui/react/menu';
 import { Check, ChevronDown, Pause, RefreshCw, Timer } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ErrorState, LoadingState } from '../../components/ui';
+import { OrbView } from '../../components/AgentOrb';
 import { PageHelp } from '../../components/PageHelp';
 import { cn } from '../../cn';
 import { redirect, useRouteSearch } from '../../router';
 import { useFleet } from '../../shell/fleet-context';
 import { STATE_TONE, TONE_CLASS } from '../../status-tone';
 import { MENU_ITEM, MENU_POPUP } from '../../components/kit';
+import { useAgentPreferences } from '../../components/agent-actions/preferences-context';
 import { OfficeCanvas, type OfficeAgent } from '../office/OfficeCanvas';
 import { ORDEN_VIVO } from './activity';
 import { AgentSheet } from './AgentSheet';
@@ -129,9 +131,11 @@ export function LiveFleetPage() {
     [views, filter],
   );
 
+  const appearances = useAgentPreferences()?.appearances;
   const officeAgents = useMemo<OfficeAgent[]>(() => views.map((view) => ({
     id: view.key, name: view.alias, state: view.state, reason: view.reason, delegatesTo: view.delegatesTo,
-  })), [views]);
+    glyph: appearances?.get(view.key)?.glyph, hue: appearances?.get(view.key)?.hue,
+  })), [views, appearances]);
 
   const select = (key: string) => { redirect(`/live?agente=${encodeURIComponent(key)}`); };
   const close = () => { redirect('/live'); };
@@ -268,9 +272,10 @@ export function LiveFleetPage() {
           className="-mx-4 overflow-hidden border-y border-line bg-subtle sm:mx-0 sm:rounded-xl sm:border sm:shadow-card"
         >
           {views.length === 0 ? (
-            <p className="m-0 p-8 text-center text-[13px] text-muted">
-              No hay ningún agente en la oficina: ni configurado, ni con entregas abiertas, ni con lease reciente.
-            </p>
+            <div className="grid justify-items-center gap-3 p-8 text-center text-[13px] text-muted">
+              <OrbView seed="cauce/oficina" state="idle" size={44} sleeping look={{ hue: 250 }} />
+              <p className="m-0">No hay ningún agente en la oficina: ni configurado, ni con entregas abiertas, ni con lease reciente.</p>
+            </div>
           ) : (
             <OfficeCanvas
               agents={officeAgents}

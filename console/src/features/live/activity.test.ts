@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { FleetActivityAgent } from '../../api/types';
 import { UNKNOWN } from '../../lib';
 import {
-  FLAG_LABEL, WORK_STATE_LABEL, agentRowKey, formatAckAge, formatDurationSeconds, formatInFlightAge,
-  presenceBadge, resumirSenales, rowUrgency, sortByUrgency,
+  FLAG_LABEL, WORK_STATE_LABEL, formatAckAge, formatDurationSeconds, formatInFlightAge,
+  resumirSenales, rowUrgency, sortByUrgency,
 } from './activity';
 import { LIVE_STATE_META } from './agent-state';
-import { LEASE_LABEL, LEASE_TONE } from '../../vocabulario';
 
 function agent(overrides: Partial<FleetActivityAgent>): FleetActivityAgent {
   return { tenant_id: 'Steven', alias: 'kant', ...overrides };
@@ -106,40 +105,6 @@ describe('sortByUrgency', () => {
     expect(agents).toEqual(copy);
   });
 });
-
-describe('presenceBadge', () => {
-  it('distinguishes never-connected (no presence object) from a lease with unreadable expiry', () => {
-    const neverConnected = agent({ presence: undefined });
-    const unreadableLease = agent({ presence: { lease_until: null } });
-    // The same words as the rest of the console: "Nunca conecto" is also the label of the
-    // `never_connected` signal, and "Sin dato" is not confused with "no hay".
-    expect(presenceBadge(neverConnected).label).toBe('Nunca conectó');
-    expect(presenceBadge(unreadableLease).label).toBe('Sin dato');
-  });
-
-  it('lee conectado/caído de lease_until contra el reloj, con la palabra del veredicto', () => {
-    const online = agent({ presence: { lease_until: new Date(Date.now() + 60_000).toISOString() } });
-    const expired = agent({ presence: { lease_until: new Date(Date.now() - 60_000).toISOString() } });
-    expect(presenceBadge(online).label).toBe('Conectado');
-    // "Caido" and not "EXPIRADO": it is exactly what the verdict above calls down and what
-    // the footer legend explains as down. Three words for the same fact.
-    expect(presenceBadge(expired).label).toBe('Caído');
-  });
-
-  it('toma la palabra y el tono del vocabulario, no de una segunda copia', () => {
-    const expired = agent({ presence: { lease_until: new Date(Date.now() - 60_000).toISOString() } });
-    expect(presenceBadge(expired)).toEqual({ tone: LEASE_TONE.expired, label: LEASE_LABEL.expired });
-    expect(presenceBadge(agent({ presence: { lease_until: null } })))
-      .toEqual({ tone: LEASE_TONE.unknown, label: LEASE_LABEL.unknown });
-  });
-});
-
-describe('agentRowKey', () => {
-  it('is stable and unique per tenant+alias', () => {
-    expect(agentRowKey(agent({ tenant_id: 'Pablo', alias: 'midas' }))).toBe('Pablo:midas');
-  });
-});
-
 
 /* ============================================================================================ *
  * Negative control of the vocabulary: ONE label per fact, and the same words across the screen.

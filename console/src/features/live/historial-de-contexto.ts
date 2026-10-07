@@ -35,7 +35,7 @@ export const CLASES_DE_OPERACION: Readonly<Record<PerfilRevision['operation'], s
   delete: 'borrado',
 };
 
-export interface ActorDeRevision {
+interface ActorDeRevision {
   readonly actor_tenant: string | null;
   readonly actor_alias: string | null;
 }
@@ -75,9 +75,9 @@ export function lineasDelCampo(revision: PerfilRevision, campo: CampoDelPerfil):
   return texto === null || texto.length === 0 ? [] : texto.split('\n');
 }
 
-export type ClaseDeLinea = 'igual' | 'quitada' | 'agregada';
+type ClaseDeLinea = 'igual' | 'quitada' | 'agregada';
 
-export interface LineaDeDiff {
+interface LineaDeDiff {
   readonly clase: ClaseDeLinea;
   readonly texto: string;
 }
@@ -127,7 +127,7 @@ export function diffDeLineas(
   return salida;
 }
 
-export interface CampoComparado {
+interface CampoComparado {
   readonly campo: CampoDelPerfil;
   readonly titulo: string;
   readonly cambio: boolean;

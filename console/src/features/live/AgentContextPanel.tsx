@@ -3,8 +3,8 @@ import { RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
-import type { AgentPerfilCampos, ConfigurationSnapshot } from '../../api/types';
-import { useResource, type Resource } from '../../api/use-resource';
+import type { AgentPerfilCampos } from '../../api/types';
+import { useResource } from '../../api/use-resource';
 import { Button, Notice } from '../../components/kit';
 import { permissionState } from '../../lib';
 import { ContextRepositoryPanel } from './ContextRepositoryPanel';
@@ -21,10 +21,8 @@ export type ContextSection = Section;
 interface PanelProps {
   tenantId: string;
   alias: string;
-  onDirtyChange?: (dirty: boolean) => void;
   /** Section to open first. */
   initialSection?: Section;
-  configuration?: Resource<ConfigurationSnapshot>;
 }
 
 /**
@@ -33,20 +31,12 @@ interface PanelProps {
  * living on one page does not pretend that one write applies the other.
  */
 export function AgentContextPanel(props: PanelProps) {
-  return <ConsoleAccessBoundary>{props.configuration
-    ? <ContextPanelContent {...props} configuration={props.configuration} />
-    : <LoadContextPanel {...props} />}</ConsoleAccessBoundary>;
+  return <ConsoleAccessBoundary><ContextPanelContent {...props} /></ConsoleAccessBoundary>;
 }
 
-function LoadContextPanel(props: PanelProps) {
+function ContextPanelContent({ tenantId, alias, initialSection = 'perfil' }: PanelProps) {
   const api = useApi();
   const configuration = useResource('context-configuration', () => api.getConfiguration());
-  return <ContextPanelContent {...props} configuration={configuration} />;
-}
-
-function ContextPanelContent({ tenantId, alias, onDirtyChange, initialSection = 'perfil', configuration }: PanelProps & {
-  configuration: Resource<ConfigurationSnapshot>;
-}) {
   const access = useConsoleAccess();
   const configWritePermission = permissionState(access.error ? undefined : access.data, 'config.write');
   const { identity, state, update, settle, documentDraft, refresh } = useContextEditorStore(tenantId, alias);
@@ -57,7 +47,6 @@ function ContextPanelContent({ tenantId, alias, onDirtyChange, initialSection = 
   const profileDraft = state.profile !== undefined;
   const manualDraft = state.files.directive !== undefined;
   const dirty = profileDraft || Object.keys(state.files).length > 0;
-  useEffect(() => { onDirtyChange?.(dirty || state.busy); }, [dirty, state.busy, onDirtyChange]);
   useEffect(() => {
     if (!dirty && !state.busy) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };

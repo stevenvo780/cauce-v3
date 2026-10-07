@@ -10,7 +10,7 @@ import {
   type CaminoDeCambio, type ConfigChangeOutcome,
 } from './config-change';
 
-export interface ConfigMutationNotice {
+interface ConfigMutationNotice {
   text: string;
   tone: 'success' | 'error' | 'parcial';
   /**
@@ -54,7 +54,7 @@ export interface ConfigMutationRunner {
   clear: () => void;
 }
 
-export interface RevisionEncadenada {
+interface RevisionEncadenada {
   revision: number | undefined;
   encadenar: (revision: number | undefined) => void;
 }
@@ -71,7 +71,7 @@ export function useRevisionEncadenada(): RevisionEncadenada {
   return { revision, encadenar: setRevision };
 }
 
-export interface ConfigMutationOptions {
+interface ConfigMutationOptions {
   config: Resource<ConfigurationSnapshot>;
   access: Resource<ConsoleAccess>;
   canal?: string;

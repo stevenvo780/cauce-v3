@@ -40,24 +40,21 @@ interface LiveStateMeta {
   label: string;
   /** One line, in Spanish, explaining what is happening without database jargon. */
   hint: string;
-  tone: 'neutral' | 'info' | 'positive' | 'warning' | 'danger';
 }
 
 export const LIVE_STATE_META: Record<LiveState, LiveStateMeta> = {
-  down: { label: 'Caído', hint: 'Sin lease vigente o nunca conectó: nadie va a tomar su trabajo.', tone: 'danger' },
-  blocked: { label: 'Trabado', hint: 'Tomó trabajo y no avanza. Es el fallo que se ve como "tarda", no como error.', tone: 'danger' },
-  delegating: { label: 'Delegando', hint: 'Le pasó trabajo a otro agente, que ya lo tiene en vuelo.', tone: 'info' },
+  down: { label: 'Caído', hint: 'Sin lease vigente o nunca conectó: nadie va a tomar su trabajo.' },
+  blocked: { label: 'Trabado', hint: 'Tomó trabajo y no avanza. Es el fallo que se ve como "tarda", no como error.' },
+  delegating: { label: 'Delegando', hint: 'Le pasó trabajo a otro agente, que ya lo tiene en vuelo.' },
   settled: {
     label: 'Salió de vuelo',
     hint: 'Una entrega suya dejó de estar en vuelo. Si cerró bien o se murió NO se puede saber desde la consola.',
-    tone: 'neutral',
   },
-  receiving: { label: 'Recibiendo', hint: 'Le entró trabajo nuevo y todavía no empezó el turno.', tone: 'info' },
-  thinking: { label: 'Trabajando', hint: 'Turno en curso: el arnés está masticando la entrega.', tone: 'positive' },
+  receiving: { label: 'Recibiendo', hint: 'Le entró trabajo nuevo y todavía no empezó el turno.' },
+  thinking: { label: 'Trabajando', hint: 'Turno en curso: el arnés está masticando la entrega.' },
   idle: {
     label: 'Libre',
     hint: 'Nada en vuelo. En el mapa, además, con lease vigente: un alias sin trabajo Y sin lease se dibuja Caído, que gana.',
-    tone: 'neutral',
   },
 };
 
@@ -309,34 +306,16 @@ export function buildLiveViews(
 // The verdict, and what is needed to be able to issue it honestly.
 // ==============================================================================================
 
-/**
- * The seven states are the system's truth; these three are the owner's question.
- */
-type OwnerBucket = 'problema' | 'ocupado' | 'libre';
-
-export function ownerBucket(state: LiveState): OwnerBucket {
-  if (state === 'down' || state === 'blocked') return 'problema';
-  if (state === 'idle') return 'libre';
-  return 'ocupado';
-}
-
-export const ROTULO_OCUPADOS = 'con trabajo entre manos';
-
-export interface VerdictCulprit {
+interface VerdictCulprit {
   key: string;
   alias: string;
   /** Short and verifiable phrase: "stuck 22 min ago", "down". It is what goes inside the chip. */
   motivo: string;
 }
 
-export interface Verdict {
-  tone: 'ok' | 'alerta' | 'desconocido';
-  /** A single sentence, the one read in three seconds. */
-  frase: string;
-  /** The support line, with the figures that back the sentence. */
-  apoyo: string;
-  culpables: VerdictCulprit[];
-}
+export type Verdict =
+  | { tone: 'ok' | 'alerta'; culpables: VerdictCulprit[] }
+  | { tone: 'desconocido'; frase: string; apoyo: string; culpables: VerdictCulprit[] };
 
 interface VerdictInput {
   /** The last read failed. Enough on its own to make the verdict NOT green. */
@@ -407,29 +386,10 @@ export function fleetVerdict(views: readonly LiveAgentView[], input: VerdictInpu
     };
   }
 
-  const problemas = views.filter((view) => ownerBucket(view.state) === 'problema');
-  const countPlural = (cuantos: number, uno: string, varios: string) => `${String(cuantos)} ${cuantos === 1 ? uno : varios}`;
-  const ocupados = views.filter((view) => ownerBucket(view.state) === 'ocupado').length;
-  const libres = views.filter((view) => ownerBucket(view.state) === 'libre').length;
-  const conectados = views.filter((view) => view.state !== 'down').length;
-
-  if (problemas.length > 0) {
-    return {
-      tone: 'alerta',
-      frase: problemas.length === 1
-        ? '1 agente necesita atención.'
-        : `${String(problemas.length)} agentes necesitan atención.`,
-      apoyo: `${countPlural(conectados, 'conectado', 'conectados')} · ${String(ocupados)} ${ROTULO_OCUPADOS} · ${countPlural(libres, 'libre', 'libres')}.`,
-      culpables: problemas.map((view) => ({ key: view.key, alias: view.alias, motivo: motivoDe(view) })),
-    };
-  }
-
-  return {
-    tone: 'ok',
-    frase: 'Todo en orden.',
-    apoyo: `${countPlural(conectados, 'conectado', 'conectados')} · ${String(ocupados)} ${ROTULO_OCUPADOS} · ${countPlural(libres, 'libre', 'libres')} · ninguno trabado.`,
-    culpables: [],
-  };
+  const culpables = views
+    .filter((view) => view.state === 'down' || view.state === 'blocked')
+    .map((view) => ({ key: view.key, alias: view.alias, motivo: motivoDe(view) }));
+  return culpables.length > 0 ? { tone: 'alerta', culpables } : { tone: 'ok', culpables: [] };
 }
 
 export {

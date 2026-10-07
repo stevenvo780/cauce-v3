@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AgentOrb } from '../../components/AgentOrb';
+import { bloomOrb } from '../../components/orb-bloom';
 import type { LiveState } from '../live/agent-state';
 import type { TranscriptItem } from '../terminal/session';
 import { ChatMessage, ChatReply, type FullBody } from './ChatMessage';
@@ -13,7 +14,7 @@ function EmptyThread({ seed, alias, state, onSuggestion }: {
 }) {
   return (
     <div className="grid min-h-[50dvh] place-content-center justify-items-center gap-4 py-10 text-center">
-      <AgentOrb seed={seed} state={state} size={56} />
+      <AgentOrb seed={seed} state={state} size={56} sleeping={state === undefined || state === 'idle' || state === 'down'} />
       <div className="grid gap-1">
         <h3 className="m-0 text-lg font-semibold tracking-tight text-fg">Empezá la conversación con {alias}</h3>
         <p className="m-0 text-[13px] text-muted">No hay mensajes con este agente en la ventana recibida.</p>
@@ -65,6 +66,18 @@ export function ChatThread({ items, ownSubject, alias, seed, agentState, selecte
 }) {
   const rows = useMemo(() => threadRows(items, canonicalReply), [items, canonicalReply]);
   const typing = typingState({ items, reply: canonicalReply, live: agentState });
+  const seen = useRef<Set<string> | null>(null);
+  seen.current ??= new Set(rows.map((row) => row.key));
+  const [settled, setSettled] = useState(false);
+  useEffect(() => { setSettled(true); }, []);
+  useEffect(() => {
+    const known = seen.current;
+    if (!known) return;
+    const fresh = rows.filter((row) => row.kind !== 'day' && !known.has(row.key));
+    for (const row of fresh) known.add(row.key);
+    if (fresh.some((row) => row.kind === 'reply')) bloomOrb(seed, 'sparkle');
+    else if (fresh.some((row) => row.kind === 'message' && row.side === 'agent')) bloomOrb(seed);
+  }, [rows, seed]);
   if (items.length === 0) return <EmptyThread seed={seed} alias={alias} state={agentState} onSuggestion={onSuggestion} />;
 
   const last = [...rows].reverse().find((row) => row.kind !== 'day');
@@ -75,7 +88,7 @@ export function ChatThread({ items, ownSubject, alias, seed, agentState, selecte
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         Historial con {items.length} mensajes.{lastAuthor ? ` Último de ${lastAuthor}.` : ''}
       </p>
-      <div role="log" aria-live="off" aria-label="Historial de la conversación" className="flex flex-col pb-2">
+      <div role="log" aria-live="off" aria-label="Historial de la conversación" className="thread-log flex flex-col pb-2" data-settled={settled || undefined}>
         {rows.map((row) => {
           if (row.kind === 'day') {
             return (

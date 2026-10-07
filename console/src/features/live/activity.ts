@@ -1,7 +1,6 @@
 import type { FleetActivityAgent, FleetActivityFlag, FleetWorkState } from '../../api/types';
 import { formatDurationSeconds, leaseState } from '../../lib';
-import { LEASE_LABEL, LEASE_TONE } from '../../vocabulario';
-import { LIVE_STATE_META, type LiveState } from './agent-state';
+import { LIVE_STATE_META, agentKey, type LiveState } from './agent-state';
 
 export { formatDurationSeconds } from '../../lib';
 
@@ -35,7 +34,7 @@ export const FLAG_LABEL: Record<FleetActivityFlag, string> = {
   claimed_not_started: 'Tomó y no empezó',
 };
 
-export const FLAG_TONE: Record<FleetActivityFlag, BadgeTone> = {
+const FLAG_TONE: Record<FleetActivityFlag, BadgeTone> = {
   saturated: 'warning',
   ack_stalled: 'danger',
   overdue_acks: 'danger',
@@ -48,17 +47,6 @@ export const FLAG_TONE: Record<FleetActivityFlag, BadgeTone> = {
 
 export type EstadosVivos = ReadonlyMap<string, LiveState>;
 
-/** Badge tone per state. Derived from the `tone` of `LIVE_STATE_META`, without inventing any. */
-const LIVE_STATE_TONE: Record<LiveState, BadgeTone> = {
-  down: 'danger',
-  blocked: 'danger',
-  delegating: 'info',
-  settled: 'unknown',
-  receiving: 'info',
-  thinking: 'running',
-  idle: 'offline',
-};
-
 /**
  * The header of the STATE column. With the derived state available, that one wins; without it, it falls
  * back to the server's `work_state`, which already speaks the same vocabulary — a silent `undefined`
@@ -66,9 +54,9 @@ const LIVE_STATE_TONE: Record<LiveState, BadgeTone> = {
  */
 export function estadoDeFila(
   agent: FleetActivityAgent, estados?: EstadosVivos,
-): { label: string; tone: BadgeTone; live?: LiveState } {
-  const live = estados?.get(agentKeyOf(agent));
-  if (live) return { label: LIVE_STATE_META[live].label, tone: LIVE_STATE_TONE[live], live };
+): { label: string; live: LiveState; tone?: undefined } | { label: string; tone: BadgeTone; live?: undefined } {
+  const live = estados?.get(agentKey(agent));
+  if (live) return { label: LIVE_STATE_META[live].label, live };
   const state = agent.work_state ?? undefined;
   return {
     label: state ? WORK_STATE_LABEL[state] : 'sin dato',
@@ -145,7 +133,7 @@ export function sortByUrgency(
   agents: readonly FleetActivityAgent[], estados?: EstadosVivos,
 ): FleetActivityAgent[] {
   const rango = (agent: FleetActivityAgent): number => {
-    const live = estados?.get(agentKeyOf(agent));
+    const live = estados?.get(agentKey(agent));
     // Without a derived state, it is sorted by the server's, shifted so the scales do not cross.
     if (!live) return estados ? -1 : stateRank(agent.work_state);
     return ORDEN_VIVO.indexOf(live);
@@ -157,27 +145,6 @@ export function sortByUrgency(
     if (inFlightDiff !== 0) return inFlightDiff;
     return `${left.tenant_id}:${left.alias}`.localeCompare(`${right.tenant_id}:${right.alias}`);
   });
-}
-
-/** Same visual criterion as FleetPage.agentStateBadge: online/expired/unknown per lease_until,
- *  distinguishing "never had presence" (missing presence) from "presence with unreadable epoch/expiry". */
-export function presenceBadge(agent: FleetActivityAgent): { tone: BadgeTone; label: string } {
-  const state = leaseState(agent.presence?.lease_until);
-  if (state === 'unknown' && !agent.presence) {
-    return { tone: LEASE_TONE.unknown, label: FLAG_LABEL.never_connected };
-  }
-  return { tone: LEASE_TONE[state], label: LEASE_LABEL[state] };
-}
-
-export function agentRowKey(agent: FleetActivityAgent): string {
-  return `${agent.tenant_id}:${agent.alias}`;
-}
-
-/**
- * Agent identification key (`tenant/alias`) used in the hypergraph and activity.
- */
-export function agentKeyOf(agent: FleetActivityAgent): string {
-  return `${agent.tenant_id}/${agent.alias}`;
 }
 
 export function agentDisplayName(agent: FleetActivityAgent): string {

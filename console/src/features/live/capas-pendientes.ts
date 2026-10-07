@@ -21,7 +21,7 @@ export interface UbicacionDeclarada {
   home?: string;
 }
 
-export interface UbicacionMedida {
+interface UbicacionMedida {
   home?: string;
   arnes?: string;
 }

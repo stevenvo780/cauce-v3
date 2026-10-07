@@ -233,7 +233,7 @@ export const ALCANCE_DE_LA_CIFRA = {
   peorVentana: 'la peor ventana del proveedor',
 } as const;
 
-export type GrupoDeCola = Exclude<GrupoDeEstado, 'todas'>;
+type GrupoDeCola = Exclude<GrupoDeEstado, 'todas'>;
 
 export const GRUPOS_DE_COLA: readonly GrupoDeCola[] = ['pendientes', 'retry', 'revision'];
 
@@ -243,7 +243,7 @@ export const ROTULO_DE_COLA: Record<GrupoDeCola, string> = {
   revision: 'Dead letters',
 };
 
-export interface CarrilDeCola {
+interface CarrilDeCola {
   lane?: JobLane;
   cuenta: Record<GrupoDeCola, number>;
 }

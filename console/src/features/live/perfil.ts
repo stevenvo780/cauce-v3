@@ -344,7 +344,7 @@ export const ESTADOS_DE_APLICACION = [
   'runtime_unverified', 'drifted', 'applied',
 ] as const;
 
-export type EstadoDeAplicacion = (typeof ESTADOS_DE_APLICACION)[number];
+type EstadoDeAplicacion = (typeof ESTADOS_DE_APLICACION)[number];
 
 export const MENSAJES_DE_APLICACION: Readonly<Record<EstadoDeAplicacion, string>> = {
   absent: 'no hay contexto guardado todavía para este alias.',
@@ -371,7 +371,7 @@ export function fraseDeContaminacion(motivo: string): string {
     ?? 'algo que esta consola todavía no sabe nombrar; miralo dentro del contenedor';
 }
 
-export interface HallazgoDeContaminacion {
+interface HallazgoDeContaminacion {
   readonly reason: string;
   readonly document: string;
   readonly path: string;
@@ -463,7 +463,7 @@ export function entregasEnVuelo(cuerpo: unknown): string[] {
   return nombradas;
 }
 
-export interface DocumentoRecargado {
+interface DocumentoRecargado {
   readonly name: string;
   readonly path: string;
   readonly sha_before: string | null;
