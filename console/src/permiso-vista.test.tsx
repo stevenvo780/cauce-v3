@@ -53,7 +53,6 @@ const PERMISOS_PLENOS: readonly ConsolePermission[] = [
  * al menú sin registrarla acá, el primer test lo dice.
  */
 const GOBIERNO_NAV: Record<string, 'config.write' | 'relay' | null> = {
-  overview: null,
   live: null,
   accounts: null,
   messages: null,

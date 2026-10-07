@@ -263,36 +263,3 @@ export function countLiveTuiTargets(targets: TerminalTarget[] | null | undefined
     ? targets.filter((target) => target.authorized && target.pty_state === 'online' && target.modes.includes(LIVE_TUI_MODE)).length
     : undefined;
 }
-
-/* -------------------------------------------------------------------------- */
-/* The fleet list chip                                                        */
-/* -------------------------------------------------------------------------- */
-
-/**
- * State and visual reason of the terminal chip: indicates whether the destination has live TUI
- * available or degrades to shell/offline mode with its corresponding reason.
- */
-interface FleetTerminalChip {
-  status: TerminalAccessStatus | 'no_tui';
-  label: string;
-  /** Always populated: a chip without a reason is exactly the bug this fixes. */
-  reason: string;
-}
-
-export function fleetTerminalChip(
-  targets: TerminalTarget[] | null | undefined,
-  agent: FleetAgent,
-): FleetTerminalChip {
-  const base = resolveTerminalTarget(targets, agent);
-  if (base.status !== 'allowed') {
-    return { status: base.status, label: TERMINAL_ACCESS_LABELS[base.status], reason: base.reason };
-  }
-  const live = resolveLiveTui(targets, agent);
-  if (live.status === 'available') {
-    return { status: 'allowed', label: LIVE_TUI_LABELS.available, reason: live.reason };
-  }
-  if (live.status === 'no_tui') {
-    return { status: 'no_tui', label: LIVE_TUI_LABELS.no_tui, reason: live.reason };
-  }
-  return { status: 'unknown', label: TERMINAL_ACCESS_LABELS.unknown, reason: live.reason };
-}
