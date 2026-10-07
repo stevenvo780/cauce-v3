@@ -7,7 +7,7 @@ import { cn } from '../cn';
 import { NAV_ENTRIES, PRIMARY_NAV_IDS, useNavAvailability } from '../nav';
 import { onNavClick } from '../router';
 import { AgentList } from './AgentList';
-import { useChatNavTarget } from './last-chat';
+import { useChatNavTarget, useTerminalNavTarget } from './last-chat';
 import { useMediaQuery } from './use-media-query';
 
 const SIDEBAR_SHORTCUT = 'Alt+Shift+B';
@@ -16,11 +16,12 @@ const PRIMARY = new Set(PRIMARY_NAV_IDS);
 function NavLink({ id, routeId, rail, onNavigate }: { id: string; routeId: string; rail: boolean; onNavigate?: () => void }) {
   const availability = useNavAvailability()(id);
   const chatTarget = useChatNavTarget();
+  const terminalTarget = useTerminalNavTarget();
   const entry = NAV_ENTRIES.find((item) => item.id === id);
   if (!entry || availability.hidden) return null;
   const Icon = entry.icon;
   const current = routeId === id;
-  const target = id === 'messages' ? chatTarget : `/${id}`;
+  const target = id === 'messages' ? chatTarget : id === 'terminal' ? terminalTarget : `/${id}`;
   return (
     <a
       href={target}
@@ -135,6 +136,7 @@ function BottomBar({ routeId, account }: { routeId: string; account: ReactNode }
   const secondary = NAV_ENTRIES.filter((item) => !PRIMARY.has(item.id));
   const secondaryActive = !PRIMARY.has(routeId);
   const chatTarget = useChatNavTarget();
+  const terminalTarget = useTerminalNavTarget();
   return (
     <nav
       aria-label="Navegación principal"
@@ -145,7 +147,7 @@ function BottomBar({ routeId, account }: { routeId: string; account: ReactNode }
         if (!entry) return null;
         const Icon = entry.icon;
         const current = routeId === id;
-        const target = id === 'messages' ? chatTarget : `/${id}`;
+        const target = id === 'messages' ? chatTarget : id === 'terminal' ? terminalTarget : `/${id}`;
         return (
           <a
             key={id}

@@ -70,6 +70,16 @@ describe('saludDeColaPorAgente', () => {
     expect(salud['Steven:zeus'].pendientes).toBe(0);
   });
 
+  it('una incidencia DLQ resuelta sigue terminal pero ya no cuenta como muerta', () => {
+    const salud = saludDeColaPorAgente(undefined, cola([
+      filaDeCola({ delivery_id: 'd-1', state: 'dead', dlq_resolved: true }),
+      filaDeCola({ delivery_id: 'd-2', state: 'failed', dlq_resolved: true }),
+      filaDeCola({ delivery_id: 'd-3', state: 'failed', dlq_resolved: false }),
+      filaDeCola({ delivery_id: 'd-4', state: 'dead' }),
+    ]));
+    expect(salud['Steven:argos'].muertas).toBe(2);
+  });
+
   it('sin snapshot de /queues las muertas quedan UNKNOWN en vez de cero', () => {
     const salud = saludDeColaPorAgente(
       actividad([agenteDeActividad({ tenant_id: 'Steven', alias: 'argos', queued: 4 })]),
