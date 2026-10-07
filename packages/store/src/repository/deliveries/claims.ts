@@ -1,3 +1,4 @@
+import { clientMailboxRoutingTargets } from '../../client-mailbox.js';
 import type { ProfileRuntimeContract, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import {
   AGENT_BEHAVIOR_POLICY_V1_CAPABILITY,
@@ -491,9 +492,10 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         `UPDATE delivery_lane_fairness SET interactive_streak=$3,updated_at=now()
          WHERE tenant_id=$1 AND alias=$2`, [tenantId, alias, humanStreak]
       );
-      const routingTargets = includeRoutingTargets
-        ? await this.routingTargets(client, tenantId, alias)
-        : undefined;
+      const agentTargets = includeRoutingTargets ? await this.routingTargets(client, tenantId, alias) : undefined;
+      const routingTargets = agentTargets === undefined ? undefined : [...agentTargets,
+        ...(Array.isArray(capabilities) && capabilities.includes('client_mailbox_v1')
+          ? (await clientMailboxRoutingTargets(client, tenantId)).slice(0, Math.max(0, 100 - agentTargets.length)) : [])];
 // The role belongs to the alias that claims it: a transactional read serves the whole batch
 // and prevents attaching another alias's role.
       const selfRole = includeSelfRole && claimedRows.length > 0

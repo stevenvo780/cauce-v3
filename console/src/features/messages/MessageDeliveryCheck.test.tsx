@@ -89,3 +89,47 @@ it('rechaza la evidencia malformada aunque el ACK esté aplicado', () => {
   }] }} />);
   expect(screen.getByRole('status').querySelector('[data-checks="2"]')).toBeNull();
 });
+
+it('muestra «Guardado en buzón» con explicación sin afirmar lectura ni ejecución', () => {
+  const delivery: DeliveryView = {
+    delivery_id: '10000000-0000-4000-8000-000000000001',
+    recipient_alias: 'mbx-0123456789abcdef0123456789abcdef',
+    status: 'done',
+    attempt: 0,
+    timeline: [{ status: 'published' }, { status: 'done', attempt: 0 }],
+    client_mailbox: { label: 'Buzón Cronos', state: 'stored' },
+  };
+  render(<MessageDeliveryCheck delivery={delivery} />);
+  const receipt = screen.getByRole('status', { name: 'Entrega: Guardado en buzón' });
+  expect(receipt.querySelector('[data-checks="1"]')).toBeInTheDocument();
+  expect(receipt.querySelector('[data-checks="2"]')).toBeNull();
+  expect(receipt).toHaveAttribute('title', 'Buzón Cronos: Guardado en buzón. No acredita lectura ni ejecución.');
+  expect(receipt.getAttribute('aria-label')).not.toMatch(/ejecutad|ejecución terminada/i);
+  expect(receipt.getAttribute('title')).not.toMatch(/ejecutad|ejecución terminada/i);
+  expect(screen.queryByText(/ejecutad|ejecución terminada/i)).toBeNull();
+});
+
+it('no infiere buzón por prefijo mbx- sin el marcador client_mailbox del API', () => {
+  const delivery: DeliveryView = {
+    delivery_id: '10000000-0000-4000-8000-000000000002',
+    recipient_alias: 'mbx-0123456789abcdef0123456789abcdef',
+    status: 'done',
+    attempt: 1,
+    timeline: [{ status: 'published' }, { status: 'done', attempt: 1 }],
+  };
+  render(<MessageDeliveryCheck delivery={delivery} />);
+  const receipt = screen.getByRole('status');
+  expect(receipt).toHaveAttribute('aria-label', 'Entrega: Recibido por el agente · ejecución terminada');
+  expect(receipt.getAttribute('aria-label')).not.toContain('Guardado en buzón');
+});
+
+it('el marcador de buzón nunca acredita lectura aunque llegue evidencia de consumo', () => {
+  render(<MessageDeliveryCheck delivery={{
+    status: 'done', attempt: 1,
+    client_mailbox: { label: 'Buzón Cronos', state: 'stored' },
+    timeline: [{ status: 'done', applied: true, attempt: 1, harness_consumption: consumption }],
+  }} />);
+  const receipt = screen.getByRole('status', { name: 'Entrega: Guardado en buzón' });
+  expect(receipt.querySelector('[data-checks="2"]')).toBeNull();
+  expect(receipt.querySelector('[data-checks="1"]')).toBeInTheDocument();
+});

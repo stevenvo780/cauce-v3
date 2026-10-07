@@ -11,6 +11,7 @@ import { previsualizacionRecortada } from './cuerpo-del-mensaje';
 import type { TranscriptItem } from './session';
 import { humanAuthor, messageAuthorPresentation } from './message-author';
 import type { CanonicalReply } from '../messages/use-canonical-reply';
+import { isClientMailboxDelivery, clientMailboxRecipientLabel } from '../deliveries/client-mailbox';
 
 interface StructuredBody {
   type: string;
@@ -163,7 +164,16 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem, can
                     {clientDeclarationNotice && <span className="sr-only">{clientDeclarationNotice}</span>}
                     {humanChat ? <span className="sr-only">Persona autenticada</span> : <>
                       <ArrowRight size={14} aria-hidden="true" /><span className="sr-only">hacia</span>
-                      <span>{direction === 'input' ? delivery?.recipient_alias ?? 'Destino sin dato' : message.room_id ?? 'Sala sin dato'}</span>
+                      <span>{direction === 'input' ? (
+                        isClientMailboxDelivery(delivery) ? (
+                          <span className="transcript-mailbox-dest" title={`Buzón: ${delivery.recipient_alias ?? 'sin dirección'}`}>
+                            <span>{clientMailboxRecipientLabel(delivery)}</span>
+                            {delivery.recipient_alias ? <small className="mono transcript-mailbox-address"> ({delivery.recipient_alias})</small> : null}
+                          </span>
+                        ) : (
+                          delivery?.recipient_alias ?? 'Destino sin dato'
+                        )
+                      ) : message.room_id ?? 'Sala sin dato'}</span>
                     </>}
                   </span>
                   <Time value={message.created_at} />

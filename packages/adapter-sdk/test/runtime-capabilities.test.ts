@@ -10,6 +10,7 @@ const HELLO_SUFFIXES = [
   "agent_behavior_policy_v1",
   "agent_profile_adoption_v1",
   "agent_profile_v1",
+  "client_mailbox_v1",
   "delegation_feedback_v1",
   "heartbeat",
   "mcp_emit",
@@ -49,7 +50,7 @@ test("hello advertises only capabilities consumed by runtime or operational read
       [`harness.${definition.id}`, ...HELLO_SUFFIXES, ...workState].sort(),
       definition.id,
     );
-    assert.equal(advertised.length, 11 + workState.length, definition.id);
+    assert.equal(advertised.length, 12 + workState.length, definition.id);
     assert.equal(new Set(advertised).size, advertised.length, definition.id);
   }
 });

@@ -86,6 +86,7 @@ export interface AckResult {
 }
 export interface AgentOutputOutcome {
   materialized: number;
+  mailboxStored?: number;
   /**
    * The branch opened a human gate: it must NOT return its response upward, because it did not
    * finish — it is waiting. It is the difference between "suspended" and "failed", and it is what
@@ -149,6 +150,7 @@ export interface RoutingTarget {
   tenant_id: Tenant;
   alias: string;
   online: boolean;
+  client_mailbox?: { label: string; available: true };
 }
 export type NotifyDenialCode =
   | 'notify_permission_denied'

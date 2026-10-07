@@ -64,6 +64,12 @@ Todos los servicios de runtime comparten una sola imagen (`CAUCE_RUNTIME_IMAGE`,
 
 **Fencing** — tres mecanismos independientes: (a) `epoch` creciente por `(tenant, alias)` en las entregas normales (un consumer viejo pierde su claim); (b) `claim_token` de terminal, migraciones `032_terminal_session_claim_fencing.sql`, `033_terminal_browser_owner_fencing.sql`; (c) `034_terminal_relay_instance_fencing.sql` — el relay solo arranca si `CAUCE_TERMINAL_RELAY_INSTANCE_ID` coincide con el sha256 del DER de su propio certificado cliente hacia el gateway (`deploy/compose.yaml:95`, `deploy/deploy.sh:93-94`).
 
+### Clientes MCP con buzón
+
+Un cliente OAuth local declarado puede recibir texto nuevo en una dirección `mbx-<hash de tenant y grant>`. La etiqueta del cliente es independiente de la identidad humana que autoriza la conexión. El buzón reutiliza mensajes y entregas: `done`, intento cero y `client_mailbox.state=stored` acreditan almacenamiento, sin consumidor, lease, ACK ni ejecución. Los adapters que anuncian `client_mailbox_v1` reciben estos destinos con disponibilidad explícita; `@all` conserva su alcance de agentes online. El fan-in excluye los buzones de las respuestas que espera de consumidores.
+
+`cauce_mailbox` lee sólo el buzón del grant autenticado. `cauce_inbox` incluye su primera página para clientes con catálogo anterior. No existe una activación automática de ChatGPT por almacenar mensajes. El diseño, los límites y las pruebas se describen en [buzón del cliente](superpowers/specs/2026-10-06-buzon-cliente-design.md).
+
 ## 4. La flota como datos
 
 La BD (`agents` + `memberships`) es la única verdad; todo lo demás se deriva (`ops/runbooks/alta-y-baja-de-agente.md`). Cadena de generación:

@@ -26,6 +26,8 @@ import {
 } from '../config.js';
 import { StoreError } from '../errors.js';
 import { grantCarriedBlobs } from '../blob-carry.js';
+import { loadClientMailbox, type ClientMailboxQuery, type ClientMailboxPage } from '../../client-mailbox-read.js';
+import { isClientMailboxAlias, lockClientMailboxes } from '../../client-mailbox.js';
 import { insertDelivery, insertMessage } from './_insert.js';
 import {
   PublishIntentExpiredError,
@@ -169,6 +171,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
     }
     const work = async (client: DatabaseClient): Promise<PublishResult> => {
       const human = await humanPublicationAuthority(client, input, options);
+      await lockClientMailboxes(client, uniqueRecipients);
       const probe = input.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE;
       if (probe) {
         await gateProbeRuntimeActor(client, input.tenant_id, input.room_id, input.actor_alias);
@@ -324,6 +327,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
           deliveryId,
         });
         deliveryIds.push(deliveryId);
+        if (isClientMailboxAlias(recipient.alias)) continue;
         await client.query(
           `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload)
            VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb)`,
@@ -461,6 +465,13 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
       const view = await humanSenderView(client, messageId, human);
       if (view === undefined) throw new StoreError('not_found', 'message not found or not owned');
       return messageDetailWithReplies(row, view);
+    });
+  }
+
+  async listHumanMailbox(query: ClientMailboxQuery, options: HumanMessageOptions): Promise<ClientMailboxPage | null> {
+    return withAbortableTransaction(this.pool, options.signal, async (client) => {
+      const human = await humanMessageAuthority(client, options);
+      return loadClientMailbox(client, human, query);
     });
   }
 

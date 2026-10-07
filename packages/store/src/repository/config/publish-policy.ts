@@ -5,6 +5,7 @@ import {
   RESERVED_INTERNAL_MESSAGE_TYPES, SYSTEM_PRINCIPAL_ALIASES, sha256Hex
 } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
+import { isClientMailboxAlias, resolveClientMailbox } from '../../client-mailbox.js';
 import { StoreError } from '../errors.js';
 import { objectRecord } from '../outbox.js';
 
@@ -581,7 +582,10 @@ export async function assertPublishRoute(
        ORDER BY m.room_id LIMIT 1 ${lockAuthority ? 'FOR SHARE OF m,t,r' : ''}`,
       [recipient.tenant_id, recipient.alias, SYSTEM_PRINCIPAL_ALIASES],
     );
-    if (member.rowCount !== 1) {
+    const mailbox = isClientMailboxAlias(recipient.alias)
+      ? await resolveClientMailbox(client, recipient.tenant_id, recipient.alias) : undefined;
+    if ((isClientMailboxAlias(recipient.alias) && mailbox === undefined)
+        || (!isClientMailboxAlias(recipient.alias) && member.rowCount !== 1)) {
       throw new StoreError('no_route', `recipient ${recipient.alias} is not routable`);
     }
     if (recipient.tenant_id !== input.tenant_id) {

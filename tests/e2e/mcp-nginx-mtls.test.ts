@@ -119,8 +119,11 @@ describe('MCP mounted through the pinned Nginx mTLS ingress', () => {
     clients.push(client);
     const toolset = await client.listTools();
     expect(toolset.tools.map((tool) => tool.name).sort()).toEqual([
-      'cauce_agents', 'cauce_connection_identity', 'cauce_inbox', 'cauce_receipt', 'cauce_status', 'cauce_submit',
+      'cauce_agents', 'cauce_connection_identity', 'cauce_inbox', 'cauce_mailbox', 'cauce_receipt', 'cauce_status', 'cauce_submit',
     ]);
+    const mailbox = await client.callTool({ name: 'cauce_mailbox', arguments: {} });
+    expect(mailbox.isError, JSON.stringify(mailbox)).not.toBe(true);
+    expect(mailbox.content.find((part) => part.type === 'text')?.text).toBe('null');
     const requestKey = randomUUID();
     const uniqueBody = `nginx mTLS publish ${randomUUID()}`;
     const submitted = await client.callTool({ name: 'cauce_submit', arguments: {

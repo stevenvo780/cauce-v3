@@ -1,3 +1,4 @@
+import { clientMailboxStoredSql } from '../../client-mailbox.js';
 import { isAlias, type DeliveryState, type Origin, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
@@ -423,7 +424,7 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
        JOIN messages child_message ON child_message.id=child.message_id
        WHERE materialization.status='materialized'
          AND materialization.correlation->>'root_message_id'=$1
-         AND child.status IN ('done','failed','dead')
+         AND child.status IN ('done','failed','dead') AND NOT ${clientMailboxStoredSql('child')}
          AND (child.status='done' OR $2::boolean)
          AND NOT EXISTS (
            SELECT 1 FROM agent_output_materializations descendant

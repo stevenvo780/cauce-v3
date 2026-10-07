@@ -272,3 +272,11 @@ acreditar salud.
 - Nunca `docker compose down` en producción: pararía postgres antes de poder restaurar. `stop` de los servicios de aplicación, postgres se toca aparte y con backup verificado en mano.
 - `ops/container-aliases.json`, `ops/manifests/*.yaml` y `ops/generated/**` son GENERADOS: editarlos a mano los desincroniza de la BD y lo bloquea `ops/scripts/validate.sh`.
 - No redesplegar el runtime con cadenas humanas abiertas: el redespliegue tumba todos los adaptadores a la vez y se lleva los logs del `json-file` de los contenedores recreados.
+
+## Consultar el buzón de un cliente MCP
+
+Una declaración activa de cliente OAuth local habilita su buzón. Consulta `cauce_mailbox` sin argumentos para obtener dirección, etiqueta y mensajes recientes; usa su `next_cursor` para páginas anteriores. Los clientes que todavía no anuncien la herramienta pueden obtener la primera página mediante `cauce_inbox`. La consulta deriva el dueño y el grant de la autenticación; no acepta una identidad alternativa.
+
+Un agente compatible puede iniciar texto nuevo hacia la dirección pública del buzón. El transporte devuelve almacenamiento con intento cero; en consola aparece «Guardado en buzón». La respuesta del agente remitente continúa sin esperar que el cliente ejecute un turno. Leer no cambia el estado ni confirma ejecución. ChatGPT ejecuta la consulta cuando tenga un turno activo.
+
+Cada mensaje admite hasta 16 KiB de cuerpo JSON con texto y sin adjuntos; cada grant admite 1000 mensajes. Las páginas devuelven texto completo y respetan un presupuesto de bytes. El buzón lleno rechaza nuevos mensajes sin borrar historia. Renovar tokens o renombrar mantiene la dirección; un nuevo consentimiento crea otro buzón. Si deja de estar disponible, verifica vigencia del grant, declaración, dueño, membresías y permisos de ruta. No recrees una declaración ni traslades mensajes por coincidencia de etiquetas.

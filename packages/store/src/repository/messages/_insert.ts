@@ -1,4 +1,5 @@
 import type { DatabaseClient } from '../../db.js';
+import { insertClientMailboxDelivery, isClientMailboxAlias } from '../../client-mailbox.js';
 
 export const MESSAGE_INSERT_COLUMNS = [
   'request_id', 'trace_id', 'tenant_id', 'room_id', 'actor_alias', 'body', 'origin', 'lane', 'priority',
@@ -38,7 +39,11 @@ export function insertMessage(client: DatabaseClient, message: MessageInsert) {
   );
 }
 
-export function insertDelivery(client: DatabaseClient, delivery: DeliveryInsert) {
+export async function insertDelivery(client: DatabaseClient, delivery: DeliveryInsert) {
+  if (isClientMailboxAlias(delivery.recipientAlias)) {
+    const row = await insertClientMailboxDelivery(client, delivery.messageId, delivery.recipientTenant, delivery.recipientAlias);
+    return { rows: [row] };
+  }
   if (delivery.maxAttempts === undefined) {
     return client.query<{ id: string }>(
       'INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias) VALUES($1,$2,$3) RETURNING id',

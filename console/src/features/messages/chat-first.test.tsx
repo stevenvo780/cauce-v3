@@ -505,3 +505,53 @@ it('un solo toque al enviar conserva foco y cerca un segundo submit antes de con
   expect(input).toHaveFocus();
   expect(input).not.toHaveAttribute('readonly');
 });
+
+it('muestra el recibo de buzón Cronos con su etiqueta y estado en el detalle del mensaje sin afirmar ejecución', async () => {
+  const user = userEvent.setup();
+  const input = props();
+  const mailboxAddress = 'mbx-0123456789abcdef0123456789abcdef';
+  const mailboxDelivery = {
+    delivery_id: '10000000-0000-4000-8000-000000000001',
+    recipient_tenant: 'Steven',
+    recipient_alias: mailboxAddress,
+    status: 'done' as const,
+    attempt: 0,
+    timeline: [{ status: 'published' as const }, { status: 'done' as const, attempt: 0 }],
+    client_mailbox: { label: 'Buzón Cronos', state: 'stored' as const },
+  };
+  const agentDelivery = {
+    delivery_id: '20000000-0000-4000-8000-000000000002',
+    recipient_tenant: input.agent.tenantId,
+    recipient_alias: input.agent.alias,
+    status: 'done' as const,
+    attempt: 1,
+    timeline: [{ status: 'published' as const }, { status: 'done' as const, attempt: 1 }],
+  };
+  const message = {
+    message_id: '30000000-0000-4000-8000-000000000003',
+    tenant_id: 'Steven',
+    actor_alias: 'operator',
+    body_preview: 'Directiva para el buzón',
+    created_at: new Date().toISOString(),
+    deliveries: [agentDelivery, mailboxDelivery],
+  };
+
+  renderWithApi(<ConversationPane {...input} page={{ items: [message] }} />);
+
+  const menuTrigger = screen.getByRole('button', { name: 'Opciones del mensaje' });
+  await user.click(menuTrigger);
+  const detailButton = screen.getByRole('menuitem', { name: 'Ver detalle' });
+  await user.click(detailButton);
+
+  const detailSection = screen.getByRole('group', { name: 'Detalle del mensaje seleccionado' });
+  expect(detailSection).toBeVisible();
+
+  const fanoutSection = within(detailSection).getByRole('region', { name: 'Entregas hermanas del mismo publish' });
+  expect(within(fanoutSection).getByText(`Buzón Cronos (${mailboxAddress})`)).toBeVisible();
+  expect(within(fanoutSection).getByText('Guardado en buzón')).toBeVisible();
+  expect(within(fanoutSection).getByText('sin consumidor')).toBeVisible();
+  expect(within(fanoutSection).getByText('No acredita lectura ni ejecución')).toBeVisible();
+
+  expect(within(fanoutSection).queryByText(/ejecutad/i)).toBeNull();
+  expect(within(fanoutSection).queryByText('HECHA')).toBeNull();
+});
