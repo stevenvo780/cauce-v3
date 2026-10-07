@@ -170,24 +170,14 @@ it('conserva entero el inventario de licencias: identidad, pagador, asignaciones
   // The plan comes from the quota sample, on the consumption side: the merge is what makes it possible to read it in the SAME row as the account that has it.
   expect(within(inventory).getByRole('row', { name: /codex-pro-steven/ })).toHaveTextContent('pro');
 
-    // Who uses the account and with what priority, and the routing ceiling: they do not exist anywhere else in the
-    // console together with the balance, and they are the reason for the merge. They live in the row detail.
-    // The external id and locator live in the same detail: an account paid by another tenant does not
-    // expose them, and that is stated in full.
-  for (const button of within(inventory).getAllByRole('button', { name: /Detalle de ruteo de/ })) await user.click(button);
+    // The external id and locator live in the row detail: an account paid by another tenant does not
+    // expose them, and that is stated in full. Who uses the account is the assignments matrix's job.
+  for (const button of within(inventory).getAllByRole('button', { name: /Detalle de/ })) await user.click(button);
   expect(inventory.textContent).toContain('bengalfox@openai');
   expect(inventory.textContent).toMatch(/No visible: la paga Miguel/i);
   const detail = panel('Inventario de cuentas').querySelector('tr.row-detail');
   expect(detail).not.toBeNull();
-  if (detail instanceof HTMLElement) {
-    const detailText = detail.textContent;
-    expect(detailText).toContain('zeus');
-    expect(detailText).toContain('claw-zeus');
-    expect(within(detail).getByText('FALLBACK #1')).toBeInTheDocument();
-    expect(detailText).not.toContain('PRIMARIA');
-    expect(detailText).toMatch(/Techo de ruteo/);
-    expect(detailText).toMatch(/puede alcanzar esta cuenta/);
-  }
+  expect(detail?.textContent).not.toContain('PRIMARIA');
 });
 
 it('conserva entero el consumo: peor primero, una fila por grupo y el histórico de 24 h', async () => {
@@ -288,10 +278,9 @@ it('sin recolector NO inventa porcentajes: muestra el inventario y declara que n
   expect(inventory.textContent).not.toContain('Ningún recolector reportó');
     // The external id and locator live in the same detail: an account paid by another tenant does not
     // expose them, and that is stated in full.
-  for (const button of within(inventory).getAllByRole('button', { name: /Detalle de ruteo de/ })) await user.click(button);
+  for (const button of within(inventory).getAllByRole('button', { name: /Detalle de/ })) await user.click(button);
   expect(inventory.textContent).toContain('bengalfox@openai');
   expect(inventory.textContent).toMatch(/No visible: la paga Miguel/i);
-  expect(panel('Inventario de cuentas')).toHaveTextContent('claw-zeus');
   // The GLOBAL reason is not repeated in the detail: it was already declared once above.
   expect(within(panel('Inventario de cuentas')).queryAllByRole('note')).toHaveLength(0);
   // And consumption is declared as absent, not as zero.
@@ -331,7 +320,7 @@ it('una sonda caída no reaparece como un número: la cuenta queda en interrogan
   const user = userEvent.setup();
   await openTab(user, 'Inventario');
   for (const id of ['codex-pro-steven', 'minimax-pool', 'claude-max-saldantia']) {
-    await user.click(screen.getByRole('button', { name: `Detalle de ruteo de ${id}` }));
+    await user.click(screen.getByRole('button', { name: `Detalle de ${id}` }));
   }
   const notices = within(panel('Inventario de cuentas')).queryAllByRole('note').map((n) => n.textContent);
   expect(notices.filter((text) => text.includes('Sonda caída:'))).toHaveLength(1);

@@ -12,7 +12,7 @@ import { FormDialog } from '../../components/dialogs';
 import { Badge, Desplazable, EmptyState, Time, Unknown } from '../../components/ui';
 import { useConfigMutation } from '../config/use-config-mutation';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
-import { AccountRoutingDetail } from './AccountRoutingDetail';
+import { AccountDetail } from './AccountDetail';
 import { accountConsumption, type AccountConsumption } from './licenses';
 import { MutationBar } from './MutationBar';
 import {
@@ -215,7 +215,7 @@ export function AccountsInventory({ config, access, quotas, registry }: {
                       <td data-label="Consumo"><AccountUsage consumption={consumption} thresholds={quotas.data?.thresholds} /></td>
                       <td data-label="Actualizada"><Time value={account.updatedAt} relativo /></td>
                       <td data-label="Acciones" data-wide><span className="-ml-1 inline-flex flex-wrap gap-0.5">
-                        <RowAction label={`Detalle de ruteo de ${account.id}`} expanded={detailOpen} onClick={() => { toggleDetail(account.id); }}>
+                        <RowAction label={`Detalle de ${account.id}`} expanded={detailOpen} onClick={() => { toggleDetail(account.id); }}>
                           {detailOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
                         </RowAction>
                         <RowAction {...writeProps} label={`Editar «${account.id}»`} onClick={() => { open({ kind: 'edit', edit: editFrom(account) }); }}>
@@ -244,7 +244,7 @@ export function AccountsInventory({ config, access, quotas, registry }: {
                     </tr>
                     {detailOpen ? <tr className="row-detail">
                       <td colSpan={8} className="max-md:!block max-md:!p-0">
-                        <AccountRoutingDetail accountId={account.id} account={account} quotas={quotas.data} route={registry.routing.byAccount.get(account.id)} />
+                        <AccountDetail accountId={account.id} account={account} quotas={quotas.data} />
                       </td>
                     </tr> : null}
                   </Fragment>;

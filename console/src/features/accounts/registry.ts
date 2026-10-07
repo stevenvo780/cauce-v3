@@ -234,6 +234,7 @@ export interface MatrixCell {
   state: MatrixCellState;
   /** The account is paid by another tenant. Only meaningful when there is a ceiling. */
   borrowed: boolean;
+  grantedBy: string | null;
   priority: number | null;
   /** Position 1..n within the effective fallback order of the alias; null if it does not participate. */
   rank: number | null;
@@ -293,12 +294,13 @@ export function buildAssignmentMatrix(
 
     const cells = accounts.map((account): MatrixCell => {
       const granted = agentCeiling.find((entry) => entry.accountId === account.id);
-      if (!granted) return { accountId: account.id, state: 'none', borrowed: false, priority: null, rank: null };
+      if (!granted) return { accountId: account.id, state: 'none', borrowed: false, grantedBy: null, priority: null, rank: null };
       const binding = agentBindings.find((entry) => entry.accountId === account.id);
       const step = ordered.find((entry) => entry.accountId === account.id);
       return {
         accountId: account.id,
         borrowed: granted.borrowed,
+        grantedBy: granted.createdByTenant,
         priority: binding?.priority ?? null,
         rank: step?.rank ?? null,
         state: !binding ? 'ceiling-only' : binding.enabled === true ? 'bound-enabled' : 'bound-disabled',
@@ -317,42 +319,8 @@ export function buildAssignmentMatrix(
   });
 }
 
-export interface AccountRouteEntry {
-  agent: AgentRegistration;
-  cell: MatrixCell;
-  ceiling: CeilingEntry;
-}
-
-export interface AccountRouteProjection {
-  accountId: string;
-  entries: AccountRouteEntry[];
-}
-
 interface RegistryRoutingProjection {
   matrix: MatrixRow[];
-  byAccount: ReadonlyMap<string, AccountRouteProjection>;
-}
-
-function buildRegistryRouting(
-  agents: AgentRegistration[],
-  accounts: ProviderAccount[],
-  ceiling: CeilingEntry[],
-  bindings: AccountBinding[],
-): RegistryRoutingProjection {
-  const matrix = buildAssignmentMatrix(agents, accounts, ceiling, bindings);
-  const byAccount = new Map<string, AccountRouteProjection>();
-  for (const account of accounts) {
-    byAccount.set(account.id, {
-      accountId: account.id,
-      entries: matrix.flatMap((row) => {
-        const cell = row.cells.find((candidate) => candidate.accountId === account.id);
-        const granted = ceiling.find((entry) => entry.tenantId === row.agent.tenantId
-          && entry.alias === row.agent.alias && entry.accountId === account.id);
-        return cell && cell.state !== 'none' && granted ? [{ agent: row.agent, cell, ceiling: granted }] : [];
-      }),
-    });
-  }
-  return { matrix, byAccount };
 }
 
 export interface AccountDraft {
@@ -522,7 +490,7 @@ export function readRegistry(snapshot?: ConfigurationSnapshot | null): RegistryM
     ceiling,
     bindings,
     tenantIds,
-    routing: buildRegistryRouting(agents.items, accounts.items, ceiling.items, bindings.items),
+    routing: { matrix: buildAssignmentMatrix(agents.items, accounts.items, ceiling.items, bindings.items) },
     context,
   };
 }

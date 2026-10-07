@@ -17,7 +17,6 @@ export const VIEWS = [
   view('conversation', '/messages/Steven/kant', '[data-objeto-principal="hilo"] [data-thread-scroll]'),
   { ...view('conversation-context', '/messages/Steven/kant?view=context', `${PERFIL} [role="tabpanel"]`),
     ready: [`${PERFIL} textarea`, `${PERFIL} [role="tab"]`] },
-  view('overview', '/overview', 'section[aria-label="Lo que exige atención"]'),
   { ...view('live', '/live', '[data-objeto-principal="oficina"]'), office: true },
   { ...view('live-sheet', '/live?agente=Steven%2Fkant', '[role="dialog"]'),
     ready: ['[role="dialog"] h2'] },
@@ -27,7 +26,7 @@ export const VIEWS = [
   view('observability-signals', '/observability', '#view-panel-senales', [tab('Señales y relays')]),
   view('observability-audit', '/observability', '#view-panel-auditoria', [tab('Auditoría')]),
   ...SECCIONES_DE_AJUSTES.map((name, index) => view(`config-${index}`, '/config', 'main [role="tabpanel"]', [tab(name)])),
-  view('terminal', '/terminal', `${ESCENARIO} ul[aria-label="Agentes"]`),
+  view('terminal', '/terminal', `${ESCENARIO} h2`),
   view('terminal-stage', '/terminal/Steven/kant', ESCENARIO),
   view('help', '/ayuda', 'main h2'),
 ];

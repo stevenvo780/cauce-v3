@@ -3,9 +3,9 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 170,
+    "recorteMaximo": 390,
     "recorteMaximoEn": "/live",
-    "recorteMaximoQue": "div.-mx-4.flex.gap-1.5",
+    "recorteMaximoQue": "section.-mx-4.flex.items-center",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
     "recorteSinTecladoQue": "",
@@ -20,22 +20,16 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/overview": {
-        "pantallas": 1.7,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
       "/live": {
-        "pantallas": 1.96,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 179,
+        "objetoPrincipalTop": 223,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#hoja": {
-        "pantallas": 1.96,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 179,
+        "objetoPrincipalTop": 223,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -75,7 +69,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 1.31,
+        "pantallas": 1.26,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -99,7 +93,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 3.37,
+        "pantallas": 3.3,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -127,22 +121,16 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/overview": {
-        "pantallas": 1.35,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
       "/live": {
-        "pantallas": 1.49,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 111,
+        "objetoPrincipalTop": 179,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#hoja": {
-        "pantallas": 1.49,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 111,
+        "objetoPrincipalTop": 179,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -182,7 +170,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 1.05,
+        "pantallas": 1.03,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -206,7 +194,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 2.26,
+        "pantallas": 2.23,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -234,22 +222,16 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/overview": {
-        "pantallas": 1,
-        "foldDesaprovechado": 182,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
       "/live": {
-        "pantallas": 1.34,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 119,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#hoja": {
-        "pantallas": 1.34,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 119,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -290,7 +272,7 @@
       },
       "/observability": {
         "pantallas": 1,
-        "foldDesaprovechado": 442,
+        "foldDesaprovechado": 430,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -313,7 +295,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 2.17,
+        "pantallas": 2.14,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -341,22 +323,16 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/overview": {
-        "pantallas": 1,
-        "foldDesaprovechado": 182,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
       "/live": {
-        "pantallas": 1.58,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 119,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#hoja": {
-        "pantallas": 1.58,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 119,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -397,7 +373,7 @@
       },
       "/observability": {
         "pantallas": 1,
-        "foldDesaprovechado": 442,
+        "foldDesaprovechado": 462,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -420,7 +396,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 2.12,
+        "pantallas": 2.08,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -448,22 +424,16 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/overview": {
-        "pantallas": 1,
-        "foldDesaprovechado": 198,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
       "/live": {
-        "pantallas": 1.58,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 119,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#hoja": {
-        "pantallas": 1.58,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 119,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -504,7 +474,7 @@
       },
       "/observability": {
         "pantallas": 1,
-        "foldDesaprovechado": 442,
+        "foldDesaprovechado": 462,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -527,7 +497,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 2.12,
+        "pantallas": 2.08,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -536,7 +506,7 @@
   },
   "2560": {
     "huecoMaximo": 608,
-    "huecoMaximoEn": "/overview",
+    "huecoMaximoEn": "/accounts",
     "desbordeMaximo": 0,
     "recorteMaximo": 0,
     "recorteMaximoEn": "/",
@@ -555,22 +525,16 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/overview": {
-        "pantallas": 1,
-        "foldDesaprovechado": 198,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
       "/live": {
-        "pantallas": 1.58,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 119,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#hoja": {
-        "pantallas": 1.58,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 119,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -611,7 +575,7 @@
       },
       "/observability": {
         "pantallas": 1,
-        "foldDesaprovechado": 442,
+        "foldDesaprovechado": 462,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -634,7 +598,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 2.12,
+        "pantallas": 2.08,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0

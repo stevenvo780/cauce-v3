@@ -155,7 +155,7 @@ it('redirige /audit a «Señales y auditoría», donde la auditoría es una pest
   await waitFor(() => { expect(window.location.pathname).toBe('/observability'); });
 });
 
-it('muestra una ruta desconocida sin sustituirla por la portada, aunque traiga segmentos de más', async () => {
+it('muestra una ruta desconocida sin sustituirla por otra vista, aunque traiga segmentos de más', async () => {
   window.history.pushState({}, '', '/unknown/nested/segment');
   renderWithApi(<App />);
 
@@ -231,7 +231,7 @@ it('conserva el href real que permite abrir una ruta en otra pestaña', async ()
   expect(window.location.pathname).toBe('/accounts');
 });
 
-it('el menú contiene la portada más ocho entradas consolidadas', async () => {
+it('el menú contiene las ocho entradas consolidadas', async () => {
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
@@ -243,7 +243,6 @@ it('el menú contiene la portada más ocho entradas consolidadas', async () => {
     'Chat',
     'Oficina',
     'Terminal',
-    'Resumen',
     'Cuentas y cuotas',
     'Colas y DLQ',
     'Señales y auditoría',

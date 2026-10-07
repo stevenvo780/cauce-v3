@@ -3,7 +3,7 @@ import { Braces } from 'lucide-react';
 import { Fragment, useRef } from 'react';
 import { cn } from '../../cn';
 import { Button, CARD_TABLE, Notice, Outcome, PREVIEW, SCROLL, SectionCard } from '../../components/kit';
-import { Badge, Desplazable, EmptyState, Unknown } from '../../components/ui';
+import { Badge, Desplazable, EmptyState, Time, Unknown } from '../../components/ui';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import type { ConfigCollection } from './collections';
 import {
@@ -13,7 +13,7 @@ import {
 } from './collection-table';
 import { columnasInertesDe, motivoInerte } from './campos-inertes';
 import {
-  CabeceraConAyuda, ConfirmarQuitarControl, FechaRelativa, FilaDeFallo, InterruptorDeCelda,
+  CabeceraConAyuda, ConfirmarQuitarControl, FilaDeFallo, InterruptorDeCelda,
 } from './Interruptor';
 import { esCampoConmutable, explicacionDeCampo, interruptorDeFila } from './interruptores';
 import type { ControlDeInterruptores } from './use-interruptores';
@@ -231,7 +231,7 @@ function Celda({
       {detalle.length ? <span className="text-xs text-muted">{detalle.join(' · ')}</span> : null}
     </span>;
   }
-  if (esColumnaDeFecha(columna.clave)) return <FechaRelativa value={valor} />;
+  if (esColumnaDeFecha(columna.clave)) return <Time value={valor} relativo />;
   if (Array.isArray(valor)) {
     // An empty list is a known datum —"has none"—, not UNKNOWN.
     return valor.length ? <span>{valor.map((item) => String(item)).join(', ')}</span> : <span className="text-muted italic">(vacío)</span>;

@@ -1,23 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
-import { createId } from '../lib';
+import { Tooltip as TooltipPrimitive } from '@base-ui/react/tooltip';
+import { useId, type ReactNode } from 'react';
 
 /**
- * The primitive that did not exist.
- *
- * The console had **none**: where something needed explaining it used `title`, which is the
- * only thing worse than not explaining — it cannot be styled, it does not appear on tab focus,
- * it takes a long second to show up, and inside an `<svg>` it cannot even be read with the
- * keyboard. The owner's complaint ("no tooltips, unclear") is about the entire view, so
- * this must serve all three at once: a word in a paragraph, a column header, and a puppet
- * drawn in SVG.
- *
- * Two reasons the bubble is mounted with `createPortal` to `document.body` and NEVER inside
- * the `<svg>`:
- *  - a `<foreignObject>` is clipped by the `overflow` of the scrolling container, so the text of
- *    an edge node would be cut off exactly when it is most needed;
- *  - inside the SVG it inherits the node's `transform` and the `viewBox` scaling, so the font
- *    size would depend on the drawing's zoom.
+ * Thin wrapper over Base UI Tooltip so callers keep one small API: a word in a paragraph, a
+ * column header, or a node drawn in SVG (`FloatingTooltip`, anchored to a measured rectangle).
+ * The bubble is portalled to `document.body`: inside an SVG it would be clipped by the scrolling
+ * container and scaled by the viewBox.
  *
  * The native `title` is PRESERVED where it already existed: it is the screen-reader and
  * mouse-less user's fallback. This adds to it; it does not replace it.
@@ -27,6 +15,9 @@ import { createId } from '../lib';
 const TOOLTIP_DELAY_MS = 120;
 
 export type TooltipPlacement = 'top' | 'bottom';
+
+const POSITIONER = 'z-50';
+const BUBBLE = 'max-w-72 rounded-lg border border-line bg-surface p-2.5 text-xs text-fg shadow-pop [&_strong]:block [&_strong]:text-[13px] [&_p]:mt-1 [&_p]:mb-0 [&_p]:text-muted';
 
 export interface FloatingTooltipProps {
   /** Trigger's rectangle in viewport coordinates (`getBoundingClientRect()`). */
@@ -39,24 +30,24 @@ export interface FloatingTooltipProps {
 }
 
 /**
- * The bubble, controlled from outside. It is the one used by the graph nodes: the SVG cannot
- * wrap a node in a `<span>`, so it emits its rectangle via `onHover` and the page keeps ONE
- * single bubble for all the puppets.
+ * The bubble, controlled from outside. The SVG cannot wrap a node in a `<span>`, so it emits its
+ * rectangle via `onHover` and the page keeps ONE single bubble for all the nodes.
  */
 export function FloatingTooltip({ anchor, open, children, id, placement = 'top' }: FloatingTooltipProps) {
-  if (!open || !anchor || typeof document === 'undefined') return null;
-  const arriba = placement === 'top';
-  const style = {
-    position: 'fixed' as const,
-    left: `${String(Math.round(anchor.left + anchor.width / 2))}px`,
-    top: `${String(Math.round(arriba ? anchor.top - 10 : anchor.bottom + 10))}px`,
-    transform: arriba ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
-  };
-  return createPortal(
-    <div className="tooltip-bubble" id={id} role="tooltip" data-placement={placement} style={style}>
-      {children}
-    </div>,
-    document.body,
+  if (!open || !anchor) return null;
+  return (
+    <TooltipPrimitive.Root open>
+      <TooltipPrimitive.Portal>
+        <TooltipPrimitive.Positioner
+          anchor={{ getBoundingClientRect: () => anchor }}
+          side={placement}
+          sideOffset={10}
+          className={POSITIONER}
+        >
+          <TooltipPrimitive.Popup id={id} role="tooltip" className={BUBBLE}>{children}</TooltipPrimitive.Popup>
+        </TooltipPrimitive.Positioner>
+      </TooltipPrimitive.Portal>
+    </TooltipPrimitive.Root>
   );
 }
 
@@ -74,58 +65,25 @@ export interface TooltipProps {
   className?: string;
 }
 
-/**
- * HTML wrapper. Opens with the mouse **and with keyboard focus**, closes with Esc.
- *
- * Opening on focus is not a bonus: the view is navigated with Tab and a bubble that only
- * responds to the mouse leaves out exactly half of the explanatory content this component
- * exists to provide.
- */
+/** HTML wrapper. Opens with the mouse **and with keyboard focus**, closes with Esc. */
 export function Tooltip({ label, children, placement = 'top', focusable = true, className }: TooltipProps) {
-  const id = useMemo(() => createId('tooltip'), []);
-  const [anchor, setAnchor] = useState<DOMRect | null>(null);
-  const host = useRef<HTMLSpanElement>(null);
-  const timer = useRef<number>(0);
-
-  const cerrar = useCallback(() => {
-    window.clearTimeout(timer.current);
-    setAnchor(null);
-  }, []);
-
-  const abrir = useCallback((retraso: number) => {
-    window.clearTimeout(timer.current);
-    const medir = () => { setAnchor(host.current?.getBoundingClientRect() ?? null); };
-    if (retraso <= 0) medir();
-    else timer.current = window.setTimeout(medir, retraso);
-  }, []);
-
-  useEffect(() => () => { window.clearTimeout(timer.current); }, []);
-
-  // Esc closes from wherever the focus is. It is only attached while a bubble is open: a
-  // permanent global listener for every tooltip on the page is a cost we don't need to pay.
-  useEffect(() => {
-    if (!anchor) return undefined;
-    const alPulsar = (event: KeyboardEvent) => { if (event.key === 'Escape') cerrar(); };
-    document.addEventListener('keydown', alPulsar);
-    return () => { document.removeEventListener('keydown', alPulsar); };
-  }, [anchor, cerrar]);
-
+  const id = useId();
+  const triggerClass = `underline decoration-line-strong decoration-dotted underline-offset-2 ${focusable ? 'cursor-help' : 'cursor-default'}${className ? ` ${className}` : ''}`;
   return (
-    <span
-      ref={host}
-      className={`tooltip-anchor${className ? ` ${className}` : ''}`}
-      tabIndex={focusable ? 0 : undefined}
-      aria-describedby={anchor ? id : undefined}
-      onMouseEnter={() => { abrir(TOOLTIP_DELAY_MS); }}
-      onMouseLeave={cerrar}
-      // The keyboard has no "hover by accident", so there is nothing to dampen.
-      onFocus={() => { abrir(0); }}
-      onBlur={cerrar}
-    >
-      {children}
-      <FloatingTooltip anchor={anchor} open={anchor !== null} id={id} placement={placement}>
-        {label}
-      </FloatingTooltip>
-    </span>
+    <TooltipPrimitive.Root>
+      <TooltipPrimitive.Trigger
+        delay={TOOLTIP_DELAY_MS}
+        render={(props, state) => (
+          <span {...props} tabIndex={focusable ? 0 : undefined} className={triggerClass} aria-describedby={state.open ? id : undefined} />
+        )}
+      >
+        {children}
+      </TooltipPrimitive.Trigger>
+      <TooltipPrimitive.Portal>
+        <TooltipPrimitive.Positioner side={placement} sideOffset={10} className={POSITIONER}>
+          <TooltipPrimitive.Popup id={id} role="tooltip" className={BUBBLE}>{label}</TooltipPrimitive.Popup>
+        </TooltipPrimitive.Positioner>
+      </TooltipPrimitive.Portal>
+    </TooltipPrimitive.Root>
   );
 }
