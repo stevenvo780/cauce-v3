@@ -13,7 +13,7 @@ const PERMISSION_COLUMNS: Record<Permission, string> = {
 
 export * from './config/publish-policy.js';
 
-export type AgentTargetPermission = 'read' | 'control';
+export type AgentTargetPermission = 'read' | 'control' | 'configure';
 
 /** Minimal record of the alias authorized by its canonical identity. */
 export interface AuthorizedAgentTarget {
@@ -93,7 +93,7 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
          FROM agents agent
          JOIN tenants target_tenant ON target_tenant.id=agent.tenant_id
         WHERE agent.tenant_id=$3 AND agent.alias=$4 AND target_tenant.enabled
-          AND ($5::text='read' OR agent.enabled)
+          AND ($5::text<>'control' OR agent.enabled)
           AND EXISTS (
             SELECT 1
               FROM memberships actor_membership

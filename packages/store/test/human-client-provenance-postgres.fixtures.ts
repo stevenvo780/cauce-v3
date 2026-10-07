@@ -2,7 +2,7 @@ import { lockClientDeclarationOwner } from '../../../services/gateway/src/client
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 import { afterAll, afterEach, beforeAll } from 'vitest';
-import { applyMigrations, createPool, CauceRepository, lockHumanIdentity, resolveHumanIdentity,
+import { applyMigrationsThrough, createPool, CauceRepository, lockHumanIdentity, resolveHumanIdentity,
   type DatabasePool, type DatabaseClient } from '@cauce/store';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { hashPassword } from '../../../services/gateway/src/password.js';
@@ -43,7 +43,7 @@ beforeAll(async () => {
     .withStartupTimeout(60000).start();
   serverUrl = `postgresql://cauce_test:${password}@${container.getHost()}:${String(container.getMappedPort(5432))}/cauce_test_client_template`;
   admin = createPool(serverUrl);
-  await applyMigrations(admin);
+  await applyMigrationsThrough(admin, '046_human_client_provenance.sql');
   await admin.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','kant'),('Steven','argos') ON CONFLICT DO NOTHING");
   await admin.query(`INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES
     ('Steven','grp.steven','kant','operator'),('Steven','grp.steven','argos','agent')

@@ -198,6 +198,57 @@ permisos por separado. Del mismo modo, `features/terminal/relay-status.ts` es la
 la capacidad del relay para la navegación y la Terminal. Los `Boundary` de ambos módulos existen
 únicamente para montar componentes de forma aislada en tests.
 
+## Favoritos y apariencia de agentes
+
+Contrato del gateway (`services/gateway/src/routes/console/agent-preferences.ts`, tablas de la
+migración 047, esquemas en `@cauce/protocol/agent-preferences`):
+
+- `GET /v3/console/agent-preferences` → `200 { favorites, appearances }`. Basta permiso `read`.
+  `favorites` son los de la persona de la cookie (`console_users.id`), no los del alias técnico
+  compartido; una identidad sin sesión de persona recibe `favorites: []`. `appearances` es común a
+  todas las personas. Ambas listas aplican la misma regla de destino que
+  `authorizeAgentTarget(..., 'read')`, la que también usan las mutaciones: tenant destino
+  habilitado y, para otro tenant, arista ACL habilitada con `allow_read` entre tenants habilitados
+  con un extremo hub. Un agente que no se puede leer no aparece ni se puede marcar.
+- `PUT|DELETE /v3/console/favorites/:tenant/:alias` → `204`, idempotentes. Exigen sesión de persona
+  con contraseña; sin ella responden `401 { error: "unauthorized" }`, como `PATCH /v3/auth/profile`.
+  `PUT` exige que el agente sea legible (`404` si no) y respeta el tope de 200 favoritos por persona
+  (`409 { error: "favorite_limit_reached", limit: 200 }`); volver a marcar uno existente no cuenta.
+  Al llegar al tope, los favoritos guardados que la persona ya no puede leer (arista revocada,
+  tenant deshabilitado) se borran antes de contar, porque la consola no puede mostrarlos ni
+  quitarlos. `DELETE` no exige visibilidad, así que también borra un favorito oculto.
+- `PUT /v3/console/agents/:tenant/:alias/appearance` con
+  `{ glyph, hue, style, expected_revision }` → `200` con la apariencia guardada. Exige rol operador
+  con `control` (el mismo `config.write` que anuncia `/v3/console/access`) y control sobre el
+  agente destino: `authorizeAgentTarget(..., 'configure')`, que pide `allow_control` en la arista
+  como cualquier otra mutación por agente pero admite un agente deshabilitado, porque la apariencia
+  no llega a su runtime. Si el actor puede leer el agente pero no controlarlo responde
+  `403 { error: "forbidden" }`; si ni siquiera lo puede leer, `404 { error: "not_found" }`.
+  `glyph` es `null` o un único grafema de hasta 16 unidades UTF-16 cuya base es una letra, un dígito
+  o un emoji (pictográfico o indicador regional), con como mucho 3 marcas combinantes. Se rechazan
+  los caracteres invisibles e ignorables (rellenos Hangul, U+034F, espacios, controles, bidi); solo
+  se admiten ZWJ y selectores de variación dentro de un emoji, los keycaps (`#️⃣`, `1️⃣`) y las
+  banderas de subdivisión con caracteres de etiqueta (Inglaterra, Escocia, Gales). `hue` es `null`
+  o un entero 0..359; `style` es `orb`, `aurora`, `pulse` o `pixel`. `expected_revision: null`
+  crea; un entero aplica concurrencia optimista. Ambos conflictos responden
+  `409 { error: "revision_conflict", current_revision }`. Reenviar los mismos valores con la
+  revisión vigente devuelve la apariencia guardada sin subir la revisión ni auditar.
+- `DELETE /v3/console/agents/:tenant/:alias/appearance?expected_revision=N` → `204`, misma autoridad
+  y la misma concurrencia optimista; `expected_revision` es obligatorio.
+
+Las mutaciones pasan por la guardia de mismo origen y por el token CSRF de la sesión, como el resto
+de `/v3/console/*`. Cada cambio de apariencia deja una fila `agent_appearance.set` o
+`agent_appearance.reset` (`decision: allow`) en `audit_events`, y cada intento rechazado por
+destino oculto, falta de control o conflicto de revisión deja una fila `agent_appearance.denied`
+(`decision: deny`, con `reason`). La fila va a nombre del actor (`tenant_id` y `actor_alias` del
+alias técnico, más el `human_subject` de la persona); el agente afectado viaja en
+`metadata.target_tenant` y `metadata.target_alias`. No se usa el tenant destino como `tenant_id`
+porque la lectura de auditoría filtra por la pareja `(tenant_id, actor_alias)` y atribuiría el acto
+a un alias homónimo del tenant destino. `updated_by` es el nombre visible de la persona
+(`operator_profile.display_name`), que cada persona elige y no es único: sirve para mostrar, no
+para atribuir; la atribución fiable es el `human_subject` de la fila de auditoría. Los favoritos
+son preferencia personal y no se auditan.
+
 ## Terminal interactiva
 
 `src/features/terminal/pty-session.ts` gestiona la sesión WebSocket en el mismo origen, que el gateway proxea hacia `terminal-relay`. Véase [terminal-pty.md](terminal-pty.md) y [services/terminal-relay/README.md](../services/terminal-relay/README.md).

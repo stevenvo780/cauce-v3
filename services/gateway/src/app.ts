@@ -9,7 +9,7 @@ import {
   type DeliveryEnvelope, type OutboxAckWithConnection, type Tenant,
 } from '@cauce/protocol';
 import {
-  CauceRepository, type subscribeDeliveryWakes,
+  CauceRepository, type AgentPreferencesRepository, type subscribeDeliveryWakes,
   type ConnectionSessionFence, type DatabasePool, type DeliveryLeaseCap,
   type FencedWakeOutboxRecipient, type LeaseResult, type OutboxEvent,
   type HumanMessageOptions, type PublishOptions, type PublishResult,
@@ -152,6 +152,7 @@ export interface GatewayOptions {
   pool: DatabasePool;
   authProvider: AuthProvider;
   repository?: GatewayRepository;
+  agentPreferences?: AgentPreferencesRepository;
   deliveryWakeSubscriber?: typeof subscribeDeliveryWakes;
   leaseTtlMs?: number;
   ackDeadlineMs?: number;

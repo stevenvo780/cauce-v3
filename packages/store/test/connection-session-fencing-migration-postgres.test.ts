@@ -101,6 +101,7 @@ afterEach(async () => {
       '044_human_mcp_identity.sql',
       '045_mcp_oauth_authorization.sql',
       '046_human_client_provenance.sql',
+      '047_agent_preferences.sql',
     ];
     expect(latest.map((entry) => entry.version)).toEqual([...expectedVersions, ...pendingVersions]);
     for (const version of expectedVersions) {
