@@ -1,10 +1,14 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildGateway } from '../../services/gateway/src/index.js';
+import { registerTerminalControlPlane } from '../../services/gateway/src/terminal/plugin.js';
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
 import { configuredHumanMcp } from '../../services/gateway/src/mcp-configuration.js';
 import { OAuthClients } from '../../services/gateway/src/oauth-client-metadata.js';
+import { concreteSegments, extractClientCalls } from './console-route-helper.js';
 import type { OAuthAuthorizationServerOptions } from '../../services/gateway/src/oauth-authorization-server.js';
 import { FixedAuthProvider, fakePool, fakeRepository, grants, noDeliveryWakes, roles, testPrincipal } from './helpers.js';
 
@@ -71,114 +75,6 @@ function isHttpMethod(value: string): value is HttpMethod {
   return (HTTP_METHODS as readonly string[]).includes(value);
 }
 
-/** Returns the argument text of the call whose opening parenthesis is at `openParen`. */
-function callArguments(source: string, openParen: number): string {
-  let depth = 0;
-  for (let cursor = openParen; cursor < source.length; cursor += 1) {
-    const char = source[cursor];
-    if (char === '(') depth += 1;
-    else if (char === ')') {
-      depth -= 1;
-      if (depth === 0) return source.slice(openParen + 1, cursor);
-    }
-  }
-  throw new Error('unbalanced call arguments while parsing the console API surface');
-}
-
-/** Replaces `${...}` interpolations and `:params` with a concrete, valid segment. */
-function concreteSegments(path: string): string {
-  return path.replace(/\$\{[^}]*\}/g, '1').replace(/:[A-Za-z][A-Za-z0-9_]*/g, '1');
-}
-
-/**
- * The route a `const <name> = \`/v3/...\`` declares before the call, or `undefined`.
- *
- * 🔴 Without this the extractor was BLIND precisely for the methods that assemble the route in
- * a variable:
- *
- *     const ruta = \`/v3/console/agents/${'${alias}'}/documents\`;
- *     await this.request(ruta);
- *
- * `getAgentDocuments`, `getAgentDocumentContent` and `getAgentPerfil` are written that way — they
- * do it to name the route in the 404's error message. The extractor did not find a literal string
- * as the first argument and did `continue`, **silently**. So the test that existed to catch
- * unserved routes left the check exactly for the three methods whose routes the gateway did not
- * serve. They are looked up backwards because the declaration always precedes the use.
- */
-function rutaDeclaradaAntes(source: string, hasta: number, nombre: string): string | undefined {
-  const patron = new RegExp(`const\\s+${nombre}\\s*=\\s*[\`'"]([^\`'"]*)[\`'"]`, 'g');
-  let ultima: string | undefined;
-  for (let m = patron.exec(source); m && m.index < hasta; m = patron.exec(source)) ultima = m[1];
-  return ultima;
-}
-
-function helperRouteBefore(source: string, before: number, expression: string): string | undefined {
-  const name = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/.exec(expression)?.[1];
-  if (name === undefined) return undefined;
-  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`function\\s+${escapedName}\\s*\\([^)]*\\)\\s*(?::\\s*string)?\\s*\\{\\s*return\\s*([\`'"])([^\`'"]*)\\1\\s*;?\\s*\\}`, 'g');
-  const matches = [...source.slice(0, before).matchAll(pattern)];
-  return matches.length === 1 ? matches[0]?.[2] : undefined;
-}
-
-function esParametroDeLaFuncion(source: string, index: number, identificador: string): boolean {
-  const firma = source.slice(Math.max(0, index - 240), index);
-  const abre = firma.lastIndexOf('(');
-  if (abre === -1) return false;
-  return new RegExp(`[(,]\\s*${identificador}\\s*[:?,)]`).test(firma.slice(abre));
-}
-
-/** Extracts every `request(...)` call the console client issues, wherever its modules live. */
-function extractClientCalls(source: string): ApiCall[] {
-  const calls: ApiCall[] = [];
-  /* Not silently dropped: a route the extractor cannot see is a route nobody checks, and this file
-     exists because one of those ended up as a 404 in production. */
-  const sinResolver: string[] = [];
-  const llamada = /(?<![A-Za-z0-9_$.])(?:this\.)?request\s*[<(]/g;
-  for (let hallazgo = llamada.exec(source); hallazgo; hallazgo = llamada.exec(source)) {
-    const index = hallazgo.index;
-    if (/\b(?:function|async|private|public|protected|static|const|let)\s*$/.test(source.slice(Math.max(0, index - 24), index))) continue;
-    const openParen = source.indexOf('(', index + hallazgo[0].length - 1);
-    if (openParen === -1) break;
-    const args = callArguments(source, openParen);
-    const pathMatch = /^\s*[`'"]([^`'"]*)[`'"]/.exec(args);
-    let ruta = pathMatch?.[1];
-    if (ruta?.startsWith('${')) {
-      const leading = /^\$\{([^}]+)\}([\s\S]*)$/.exec(ruta);
-      const prefix = leading?.[1] === undefined ? undefined : helperRouteBefore(source, index, leading[1]);
-      ruta = prefix === undefined ? undefined : `${prefix}${leading?.[2] ?? ''}`;
-    }
-    if (ruta === undefined) {
-      // `callArguments` returns the interior WITHOUT the closing parenthesis, so the name may
-      // end the string: without the `$` the match failed and the warning fired anyway.
-      const primerArgumento = /^\s*([\s\S]*?)(?:,|$)/.exec(args)?.[1]?.trim() ?? '';
-      ruta = helperRouteBefore(source, index, primerArgumento);
-      const identificador = /^([A-Za-z_$][A-Za-z0-9_$]*)$/.exec(primerArgumento)?.[1];
-      if (ruta === undefined) {
-        ruta = identificador === undefined ? undefined : rutaDeclaradaAntes(source, index, identificador);
-        if (ruta === undefined) {
-          // A pass-through carries no route: the concrete one is at its callers, also read here.
-          if (identificador !== undefined && esParametroDeLaFuncion(source, index, identificador)) continue;
-          sinResolver.push(args.slice(0, 60).replace(/\s+/g, ' '));
-          continue;
-        }
-      }
-    }
-    if (!ruta.startsWith('/v3/')) continue;
-    const methodMatch = /method:\s*'([A-Za-z]+)'/.exec(args);
-    const method = (methodMatch?.[1] ?? 'GET').toUpperCase();
-    if (!isHttpMethod(method)) throw new Error(`unsupported HTTP method in client.ts: ${method}`);
-    calls.push({ method, path: concreteSegments(ruta) });
-  }
-  if (sinResolver.length > 0) {
-    throw new Error(
-      'el extractor no supo sacar la ruta de estas llamadas de client.ts, así que quedarían FUERA '
-      + `de la comprobación sin que nadie se entere: ${sinResolver.join(' | ')}`
-    );
-  }
-  return calls;
-}
-
 /** Extracts every gateway route the MSW development mock pretends to serve. */
 function extractMockCalls(source: string): ApiCall[] {
   const calls: ApiCall[] = [];
@@ -194,23 +90,36 @@ function extractMockCalls(source: string): ApiCall[] {
 }
 
 const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
+const fixtureDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map(async (app) => app.close()));
+  await Promise.all(fixtureDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 
 async function operatorGateway() {
+  const pool = fakePool();
+  const repository = fakeRepository();
+  const authProvider = new FixedAuthProvider(testPrincipal({
+    roles: roles('operator'), permissions: grants('route', 'read', 'control'),
+  }));
   const app = await buildGateway({
-    pool: fakePool(),
-    repository: fakeRepository(),
-    authProvider: new FixedAuthProvider(testPrincipal({
-      roles: roles('operator'),
-      permissions: grants('route', 'read', 'control')
-    })),
-    deliveryWakeSubscriber: noDeliveryWakes,
-    outboxPollMs: 60_000
+    pool, repository, authProvider,
+    deliveryWakeSubscriber: noDeliveryWakes, outboxPollMs: 60_000,
   });
   apps.push(app);
+  const directory = await mkdtemp(join(tmpdir(), 'cauce-route-contract-'));
+  fixtureDirectories.push(directory);
+  const grantsFile = join(directory, 'grants.json');
+  await writeFile(grantsFile, JSON.stringify({ version: 1, grants: [] }));
+  await registerTerminalControlPlane(app, { pool, authProvider, repository,
+    config: { wsPath: '/v3/console/terminal/ws', ticketKey: Buffer.alloc(32),
+      relayToken: 'routing-contract', relayInstanceIds: new Set(), grantsFile,
+      ticketTtlSeconds: 30, sessionTtlSeconds: 900, claimLeaseSeconds: 150,
+      maxSessionsPerOperator: 2, operatorHeader: 'x-cauce-operator', operators: new Set(),
+    },
+    governanceRelay: { readFile: async () => { throw new Error('Route fixture must not contact a relay'); } },
+  });
   return app;
 }
 
@@ -262,18 +171,12 @@ async function unroutedPaths(calls: readonly ApiCall[]): Promise<string[]> {
       url: call.path,
       ...(call.method === 'GET' ? {} : { payload: {} })
     });
-    /*
-     * A 404 from the ROUTER means "this route is not mounted"; one from the HANDLER means "I did
-     * not find that alias", which with a fake repository is the correct answer, not a routing
-     * defect. Fastify answers the former with `{"message":"Route GET:/... not found"}` and no
-     * `error` field; this house's handlers answer with `{"error":"not_found", ...}`.
-     *
-     * Without this distinction the test flagged a route that WAS served as "unserved", and with
-     * that entry sitting inside the known-failure list, nobody was going to look at the list.
-     */
+    // Router absence must stay distinct from an explicit handler's resource-not-found response.
     if (response.statusCode !== 404) continue;
     const cuerpo = response.json<{ error?: string; message?: string }>();
-    if (cuerpo.error !== undefined) continue;
+    const routerNotFound = cuerpo.error === 'Not Found'
+      && cuerpo.message === `Route ${call.method}:${call.path} not found`;
+    if (cuerpo.error !== undefined && !routerNotFound) continue;
     missing.push(`${call.method} ${call.path}`);
   }
   return missing;
@@ -298,6 +201,13 @@ describe('console API surface matches the gateway routing table', () => {
     expect(calls).toContainEqual({ method: 'POST', path: '/v3/console/tenants/1/agents/1/context/repository/preview' });
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/context/repository/inspect?1' });
     for (const call of CLIENT_DECLARATIONS) expect(calls).toContainEqual(call);
+    expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/agent-preferences' });
+    expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/perfil/revisions?1' });
+    expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/documents/1/revisions?1' });
+    expect(calls).toContainEqual({ method: 'PUT', path: '/v3/console/favorites/1/1' });
+    expect(calls).toContainEqual({ method: 'DELETE', path: '/v3/console/favorites/1/1' });
+    expect(calls).toContainEqual({ method: 'PUT', path: '/v3/console/agents/1/1/appearance' });
+    expect(calls).toContainEqual({ method: 'DELETE', path: '/v3/console/agents/1/1/appearance?expected_revision=1' });
     expect(calls.map((call) => call.path)).not.toContain('/v3/console/topology/access');
 
     expect(await unroutedPaths(calls)).toEqual([]);
@@ -352,5 +262,32 @@ describe('console API surface matches the gateway routing table', () => {
     await expect(buildGateway({ pool: fakePool(), repository: fakeRepository(),
       authProvider: new FixedAuthProvider(testPrincipal()), humanMcp: local,
       deliveryWakeSubscriber: noDeliveryWakes })).rejects.toThrow('Local OAuth requires the configured password provider');
+  });
+});
+
+
+
+describe('console route absence discrimination', () => {
+  it('keeps explicit handler not_found responses out of the missing-route list', async () => {
+    const call = { method: 'GET', path: '/v3/console/tenants/Steven/agents/absent/documents' } as const;
+    const app = await operatorGateway();
+    const response = await app.inject({ method: call.method, url: call.path });
+    expect(response.statusCode).toBe(404);
+    expect(response.json<{ error: string }>().error).toBe('not_found');
+    expect(await unroutedPaths([call])).toEqual([]);
+  });
+
+  it('detects an unregistered mutated helper suffix through the real gateway router', async () => {
+    const source = "function route(prefix: string, suffix: string) { return `${prefix}/${suffix}`; }"
+      + "request(route('/v3/console/agents/1/1', 'not-registered'));";
+    const calls = extractClientCalls(source);
+    expect(calls).toEqual([{ method: 'GET', path: '/v3/console/agents/1/1/not-registered' }]);
+    const app = await operatorGateway();
+    const path = '/v3/console/agents/1/1/not-registered';
+    expect(app.hasRoute({ method: 'GET', url: path })).toBe(false);
+    const response = await app.inject({ method: 'GET', url: path });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: 'Not Found', statusCode: 404, message: `Route GET:${path} not found` });
+    expect(await unroutedPaths(calls)).toEqual(['GET /v3/console/agents/1/1/not-registered']);
   });
 });
