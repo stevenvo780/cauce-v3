@@ -101,7 +101,8 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
   const talkRef = useRef<HTMLDivElement>(null);
   const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
   const coarse = useMediaQuery('(pointer: coarse)');
-  const box = useBox(frameRef);
+  const [maximized, setMaximized] = useState(false);
+  const box = useBox(frameRef, maximized);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [cursorId, setCursorId] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
@@ -121,10 +122,10 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
   const artH = layout.rows * TILE;
   const worldSize = useMemo<Size>(() => ({ width: artW, height: artH }), [artW, artH]);
   const frameHeight = useMemo(() => {
-    if (!box.roomy) return box.height;
+    if (maximized || !box.roomy) return box.height;
     const fit = fitZoom({ width: box.width * box.dpr, height: box.height * box.dpr }, worldSize);
     return Math.min(box.height, Math.ceil((artH * fit) / box.dpr) + 40);
-  }, [box, worldSize, artH]);
+  }, [box, worldSize, artH, maximized]);
   const view = useMemo<Size>(() => ({ width: Math.round(box.width * box.dpr), height: Math.round(frameHeight * box.dpr) }), [box, frameHeight]);
   const limits = useMemo<ZoomLimits>(() => zoomLimits(view, worldSize, box.dpr), [view, worldSize, box.dpr]);
 
@@ -667,14 +668,37 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
     engine.target = clamp(centerOn(engine.target, point, engine.inset));
     kick();
   };
+  const toggleMaximized = () => {
+    const frame = frameRef.current;
+    if (maximized) {
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+      setMaximized(false);
+      return;
+    }
+    setMaximized(true);
+    if (frame && 'requestFullscreen' in frame) void frame.requestFullscreen().catch(() => undefined);
+  };
+  useEffect(() => {
+    if (!maximized) return undefined;
+    const onFullscreen = () => { if (!document.fullscreenElement) setMaximized(false); };
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape' && !talk && !document.fullscreenElement) setMaximized(false);
+    };
+    document.addEventListener('fullscreenchange', onFullscreen);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreen);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [maximized, talk]);
   const short = frameHeight < (coarse ? 300 : 240);
   const optionId = (id: string) => `office-agent-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
   return (
     <div
       ref={frameRef}
-      className="relative w-full overflow-hidden"
-      style={{ height: frameHeight }}
+      className={maximized ? 'fixed inset-0 z-[70] w-full overflow-hidden bg-canvas' : 'relative w-full overflow-hidden'}
+      style={{ height: maximized ? '100dvh' : frameHeight }}
     >
       <ContextMenu.Root open={menuFor !== null} onOpenChange={(open, details) => {
         if (!open) { setMenuFor(null); return; }
@@ -756,6 +780,8 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
         onFit={fitAll}
         onCenterMe={centerMe}
         onTogglePaseo={() => { togglePaseo(!paseo); }}
+        maximized={maximized}
+        onToggleMaximized={toggleMaximized}
       />
       {coarse && paseo ? (
         <DirectionPad padRef={padRef} onHold={(dir, held) => {

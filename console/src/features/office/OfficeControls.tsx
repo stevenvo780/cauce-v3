@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Footprints, LocateFixed, Maximize, Minus, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Footprints, LocateFixed, Maximize, Maximize2, Minimize2, Minus, Plus, X } from 'lucide-react';
 import type { PointerEvent, ReactNode, Ref } from 'react';
 import { cn } from '../../cn';
 import type { Dir } from './layout';
@@ -38,6 +38,8 @@ export interface OfficeControlsProps {
   onFit: () => void;
   onCenterMe: () => void;
   onTogglePaseo: () => void;
+  maximized: boolean;
+  onToggleMaximized: () => void;
 }
 
 export function OfficeControls(props: OfficeControlsProps) {
@@ -54,6 +56,9 @@ export function OfficeControls(props: OfficeControlsProps) {
       <span aria-hidden="true" className={props.horizontal ? 'mx-0.5 my-1.5 w-px bg-line' : 'mx-1.5 my-0.5 h-px bg-line'} />
       <ControlButton label="Centrar en mí" onClick={props.onCenterMe}><LocateFixed size={16} aria-hidden="true" /></ControlButton>
       <ControlButton label="Modo paseo" pressed={props.paseo} onClick={props.onTogglePaseo}><Footprints size={16} aria-hidden="true" /></ControlButton>
+      <ControlButton label={props.maximized ? 'Salir de pantalla completa' : 'Pantalla completa'} pressed={props.maximized} onClick={props.onToggleMaximized}>
+        {props.maximized ? <Minimize2 size={16} aria-hidden="true" /> : <Maximize2 size={16} aria-hidden="true" />}
+      </ControlButton>
     </div>
   );
 }

@@ -74,7 +74,7 @@ export function clippingOf(element: HTMLElement): Clipping {
   return { above: rect.top < band.top - 1, below: rect.bottom > band.bottom + 1 };
 }
 
-export function useBox(ref: RefObject<HTMLElement | null>) {
+export function useBox(ref: RefObject<HTMLElement | null>, fill = false) {
   const [box, setBox] = useState({ width: 960, height: 640, dpr: 1, roomy: true });
   useEffect(() => {
     const element = ref.current;
@@ -82,7 +82,9 @@ export function useBox(ref: RefObject<HTMLElement | null>) {
     const measure = () => {
       const width = Math.floor(element.clientWidth);
       if (width <= 0) return;
-      const { height, roomy } = availableHeight();
+      const available = availableHeight();
+      const roomy = available.roomy;
+      const height = fill ? window.innerHeight : available.height;
       const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
       setBox((current) => (current.width === width && current.height === height && current.dpr === dpr && current.roomy === roomy
         ? current : { width, height, dpr, roomy }));
@@ -92,6 +94,6 @@ export function useBox(ref: RefObject<HTMLElement | null>) {
     observer.observe(element);
     window.addEventListener('resize', measure);
     return () => { observer.disconnect(); window.removeEventListener('resize', measure); };
-  }, [ref]);
+  }, [ref, fill]);
   return box;
 }
