@@ -257,6 +257,17 @@ describe('agent appearance is shared configuration', () => {
     expect(after.json()).toEqual({ favorites: [], appearances: [] });
   });
 
+  it('stores a pixel icon reference as the glyph', async () => {
+    const test = await preferenceGateway();
+    const session = await loginAs(test.app, test.first);
+    const saved = await test.app.inject({
+      method: 'PUT', url: '/v3/console/agents/Steven/argos/appearance', headers: session.headers,
+      payload: { glyph: 'px:robot-face', hue: 90, style: 'pixel', expected_revision: null },
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toMatchObject({ glyph: 'px:robot-face', style: 'pixel', revision: 1 });
+  });
+
   it('rejects malformed bodies and hidden agents before touching the store', async () => {
     const test = await preferenceGateway();
     const session = await loginAs(test.app, test.first);
@@ -268,6 +279,8 @@ describe('agent appearance is shared configuration', () => {
       { glyph: 'A', hue: 1, style: 'neon', expected_revision: null },
       { glyph: 'A', hue: 1, style: 'orb' },
       { glyph: 'A', hue: 1, style: 'orb', expected_revision: null, revision: 3 },
+      { glyph: 'px:../x', hue: 1, style: 'orb', expected_revision: null },
+      { glyph: 'px:Robot', hue: 1, style: 'orb', expected_revision: null },
     ]) {
       const response = await test.app.inject({
         method: 'PUT', url: '/v3/console/agents/Steven/argos/appearance', headers: session.headers, payload,

@@ -136,6 +136,10 @@
   user-select: none;
 }
 .agent-orb[data-style='pixel'] .agent-orb-glyph { color: oklch(0.35 0.12 var(--h1)); text-shadow: none; }
+.agent-orb-glyph .pixel-icon {
+  color: oklch(0.99 0 0);
+  filter: drop-shadow(0 1px 0 oklch(0.2 0.03 var(--h1) / 0.7)) drop-shadow(0 0 1px oklch(0.2 0.03 var(--h1) / 0.6));
+}
 
 /* Empty states: a few z's drift up from a resting orb. */
 .agent-orb-zzz {

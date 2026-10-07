@@ -48,3 +48,17 @@ it('dresses the office character in the chosen hue', () => {
   expect(characterPalette('Miguel/kratos', false).t).not.toBe(chosen.t);
   expect(characterPalette('Miguel/kratos', false, null)).toEqual(characterPalette('Miguel/kratos', false));
 });
+
+it('draws a px: glyph as an inline pixel icon, never as text', async () => {
+  const look = { ...kratos, glyph: 'px:robot' };
+  const { container } = render(
+    <AgentPreferencesContext.Provider value={withLooks(new Map([['Miguel/kratos', look]]))}>
+      <AgentOrb seed="Miguel/kratos" size={40} />
+    </AgentPreferencesContext.Provider>,
+  );
+  const glyph = container.querySelector('.agent-orb-glyph');
+  expect(glyph).not.toHaveTextContent('px:');
+  expect(glyph?.querySelector('svg.pixel-icon')?.getAttribute('width')).toBe('24');
+  await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 50); }); });
+  expect(glyph?.querySelector('path')).not.toBeNull();
+});
