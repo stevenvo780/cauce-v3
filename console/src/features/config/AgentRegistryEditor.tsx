@@ -199,7 +199,7 @@ function AgentRegistryForm({
 
   const originalName = typeof agent.display_name === 'string' ? agent.display_name : '';
   const originalHarness = typeof agent.harness_id === 'string' ? agent.harness_id : '';
-  return <section aria-label={`Registro de ${agent.tenant_id}/${agent.alias}`} className="mt-3 grid gap-3 rounded-lg border border-line bg-subtle p-4">
+  return <section aria-label={`Registro de ${agent.tenant_id}/${agent.alias}`} className="mt-3 grid grid-cols-1 gap-3 rounded-lg border border-line bg-subtle p-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h4 className="m-0 text-sm font-semibold">Registro · {agent.tenant_id}/{agent.alias}</h4>
       <Button size="sm" onClick={onClose}>Cerrar editor</Button>
@@ -207,7 +207,7 @@ function AgentRegistryForm({
     <p className={HINT}>Identidad fija desde la fila seleccionada. Los permisos se vuelven a decidir en el servidor.</p>
     {!runner.canWrite ? <Notice role="note">Edición de registro en solo lectura: falta permiso acreditado de configuración.</Notice> : null}
     {serverRefreshNotice ? <Notice role="note">{serverRefreshNotice}</Notice> : null}
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <label>Nombre visible
         <input maxLength={128} value={draft.displayName}
           onChange={(event) => { update({ displayName: event.target.value }); }} disabled={disabled} />
@@ -257,7 +257,7 @@ function AgentRegistryForm({
       role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
     <div className="flex flex-wrap items-center justify-between gap-3">
       <span className="text-xs text-muted">Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}</span>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button onClick={() => { void preview(); }} disabled={disabled}>Previsualizar cambio</Button>
         <Button variant="primary" onClick={() => { void apply(); }}
           disabled={disabled || !mutation || !runner.isValidated(mutation)}>Aplicar cambio</Button>

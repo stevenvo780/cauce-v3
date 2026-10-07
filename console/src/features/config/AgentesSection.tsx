@@ -20,7 +20,7 @@ function AgenteFila({ agent, snapshot, onReloaded }: {
 }) {
   const id = `context-unavailable-${encodeURIComponent(agent.key)}`;
   const href = `/messages/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}?view=context`;
-  return <li className="grid gap-3 rounded-xl border border-line bg-surface p-3.5 shadow-card">
+  return <li className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-line bg-surface p-3.5 shadow-card">
     <div className="flex items-start gap-3">
       <AgentOrb seed={`${agent.tenantId}/${agent.alias}`} size={32} />
       <div className="min-w-0 flex-1">
@@ -94,7 +94,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta }: {
         ? 'No hay agentes registrados ni miembros en esta lectura.'
         : 'No hay un inventario completo de agentes en esta lectura.'}</EmptyState>
         : !visible.length ? <EmptyState>No hay agentes que coincidan con la búsqueda.</EmptyState>
-          : <ul className="m-0 grid list-none gap-3 p-0 lg:grid-cols-2" aria-label="Agentes configurados">
+          : <ul className="m-0 grid grid-cols-1 list-none gap-3 p-0 lg:grid-cols-2" aria-label="Agentes configurados">
             {visible.map((agent) => <AgenteFila key={agent.key} agent={agent} snapshot={snapshot} onReloaded={reloaded} />)}
           </ul>}
       <p className="m-0 text-xs text-muted">El registro describe la configuración guardada. El arnés en ejecución,

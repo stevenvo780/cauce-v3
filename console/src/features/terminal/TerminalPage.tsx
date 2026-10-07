@@ -1,11 +1,13 @@
 import { RefreshCw } from 'lucide-react';
-import { useContext, useMemo, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, type ReactNode } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
 import { Button, Notice } from '../../components/kit';
 import { onNavClick, useRouteSearch } from '../../router';
 import { FleetProvider } from '../../shell/fleet';
+import { agentHref } from '../../shell/agent-href';
+import { rememberChat } from '../../shell/last-chat';
 import { FleetContext, useFleet } from '../../shell/fleet-context';
 import { listTerminalTargets } from './api';
 import { fleetAgentId } from './fleet';
@@ -45,8 +47,12 @@ function TerminalPageContent({ params }: TerminalPageProps) {
 
   const tenantId = params?.[0];
   const alias = params?.[1];
-  const agentId = tenantId && alias ? fleetAgentId(tenantId, alias) : undefined;
+  const agentId = params?.length === 2 && tenantId && alias ? fleetAgentId(tenantId, alias) : undefined;
   const { agents, live, loading, error } = fleet;
+  const selectedAgent = agents.find((agent) => agent.id === agentId);
+  useEffect(() => {
+    if (selectedAgent) rememberChat(agentHref('messages', selectedAgent));
+  }, [selectedAgent]);
   const relay = deriveTerminalRelayState(capability.data, capability.error);
   const missing = agentId !== undefined && !loading && !error && agents.every((agent) => agent.id !== agentId);
   const targetItems = targets.error ? undefined : targets.data;
