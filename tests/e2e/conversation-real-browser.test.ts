@@ -128,6 +128,7 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
       { label: 'mobile', width: 360, height: 800 },
     ] as const;
 
+    let previousReply: { messageId: string; text: string } | undefined;
     for (const viewport of viewports) {
       const page = await openConversation(active, { width: viewport.width, height: viewport.height });
       const marker = `pr52-${viewport.label}-${randomUUID()}`;
@@ -177,9 +178,9 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
       expect((await messageEvidence(active, marker)).message_id).toBe(pendingRoot.message_id);
       expect(await page.getByLabel('Historial de la conversación', { exact: true }).getByText(marker, { exact: true }).count()).toBe(1);
 
-      const author = humanEntry.getByText('REAL PTY E2E OPERATOR', { exact: true });
+      const author = humanEntry.getByText('Real PTY E2E operator', { exact: true });
       await (author as InputLocator).waitFor({ state: 'attached', timeout: 15_000 });
-      expect(await author.innerText()).toBe('REAL PTY E2E OPERATOR');
+      expect(await author.innerText()).toBe('Real PTY E2E operator');
       const messageActions = humanEntry.getByRole('button', { name: 'Opciones del mensaje', exact: true });
       await messageActions.press('Enter');
       const viewDetails = page.getByRole('menuitem', { name: 'Ver detalle', exact: true });
@@ -248,9 +249,17 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
           AND payload->'result' ? 'harness_consumption_v1'`, [pendingRoot.delivery_id],
       );
       expect(receipts.rows).toEqual([{ count: '0' }]);
-      const agentBubble = page.getByRole('article', { name: `Mensaje de ${active.pty.targetAlias}`, exact: true });
+      const agentBubble = page.getByRole('article', { name: `Mensaje de ${active.pty.targetAlias}`, exact: true })
+        .locator(`xpath=self::*[@data-reply-to="${pendingRoot.message_id}"]`);
       expect(await agentBubble.count()).toBe(1);
       expect(await agentBubble.innerText()).toContain(reply);
+      expect(await agentBubble.locator(`section[data-delivery-id="${pendingRoot.delivery_id}"]`).count()).toBe(1);
+      if (previousReply) {
+        const previousBubble = page.locator(`article[data-reply-to="${previousReply.messageId}"]`);
+        expect(await previousBubble.count()).toBe(1);
+        expect(await previousBubble.innerText()).toContain(previousReply.text);
+      }
+      previousReply = { messageId: pendingRoot.message_id, text: reply };
       expect(await page.getByLabel('Historial de la conversación', { exact: true }).getByText(marker, { exact: true }).count()).toBe(1);
       expect((await messageEvidence(active, marker)).message_id).toBe(pendingRoot.message_id);
       await page.screenshot({ path: `${evidenceDirectory}/${viewport.label}-agent-reply-done.png`, fullPage: false });
@@ -269,10 +278,13 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
     await textbox.fill(marker);
     expect(await page.evaluate(() => document.activeElement?.matches('[data-chat-composer] textarea'))).toBe(true);
 
-    const bounds = await page.getByRole('button', { name: 'Enviar', exact: true }).boundingBox();
+    const send = page.getByRole('button', { name: 'Enviar', exact: true });
+    expect(await send.count()).toBe(1);
+    const bounds = await send.boundingBox();
     if (bounds === null) throw new Error('send button has no visible touch target');
-    const touchscreen = (page as unknown as { touchscreen: { tap(x: number, y: number): Promise<void> } }).touchscreen;
-    await touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    expect(bounds.width).toBeGreaterThan(0);
+    expect(bounds.height).toBeGreaterThan(0);
+    await (send as unknown as { tap(): Promise<void> }).tap();
 
     const entry = page.locator('article[data-direction="input"]').filter({ hasText: marker });
     await entry.waitFor({ state: 'visible', timeout: 20_000 });
