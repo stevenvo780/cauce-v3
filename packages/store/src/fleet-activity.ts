@@ -89,7 +89,7 @@ export function agentWorkState(
   if (row.lease_online === false) flags.push('lease_expired');
   if (row.lease_online === null) flags.push('never_connected');
   if (!row.registered) flags.push('unregistered');
-  if (row.in_flight === 0 && row.queued > 0) flags.push('queued_without_consumer');
+  if (row.in_flight === 0 && row.queued > 0 && row.lease_online !== true) flags.push('queued_without_consumer');
   if (noEmpieza) flags.push('claimed_not_started');
 
   return { work_state, flags };

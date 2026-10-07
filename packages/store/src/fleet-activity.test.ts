@@ -47,6 +47,20 @@ describe('agentWorkState', () => {
     expect(result.flags.sort()).toEqual(['lease_expired', 'queued_without_consumer'].sort());
   });
 
+  it.each([true, null])('cola pendiente con lease %s: el consumidor se diagnostica por su conexión', (online) => {
+    const row: FleetActivityWorkStateInput = {
+      registered: true, in_flight: 0, queued: 1, overdue_in_flight: 0,
+      seconds_since_last_ack: 115_200, lease_online: online,
+      claimed_not_started: 0, oldest_in_flight_seconds: null,
+      oldest_claimed_not_started_without_ack_seconds: null,
+      oldest_claimed_not_started_activity_seconds: null
+    };
+    expect(agentWorkState(row)).toEqual({
+      work_state: 'queued',
+      flags: online ? [] : ['never_connected', 'queued_without_consumer']
+    });
+  });
+
   it('salva: idle real -- sin trabajo en vuelo, un ACK viejo no lo marca como colgado', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 0, queued: 0, overdue_in_flight: 0,

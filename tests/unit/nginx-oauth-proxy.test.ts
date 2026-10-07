@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, chown, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, request, type Server } from 'node:https';
 import { createServer as tcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -190,6 +190,12 @@ async function certificates(directory: string): Promise<void> {
   for (const name of ['ca', 'wrong-ca', 'server', 'client']) await chmod(join(directory, `${name}.key`), 0o600);
 }
 
+function proxyIdentity(): { uid: number; gid: number } {
+  const uid = process.getuid?.(); const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) throw new Error('Nginx fixture requires POSIX UID and GID');
+  return uid === 0 ? { uid: 101, gid: 101 } : { uid, gid };
+}
+
 async function startProxy(image: string, directory: string, gatewayPort: number, wrong: boolean): Promise<string> {
   const proxyPort = await port();
   const config = source.replaceAll('${CAUCE_TERMINAL_RELAY_INSTANCE_ID}', 'a'.repeat(64))
@@ -203,8 +209,16 @@ async function startProxy(image: string, directory: string, gatewayPort: number,
     .replaceAll('/run/secrets/console_gateway_client_key', '/tmp/fixture/client.key');
   const configPath = join(directory, wrong ? 'wrong.conf' : 'primary.conf');
   await writeFile(configPath, config, { mode: 0o444 });
-  const uid = process.getuid?.(); const gid = process.getgid?.();
-  if (uid === undefined || gid === undefined) throw new Error('Nginx fixture requires POSIX UID and GID');
+  const { uid, gid } = proxyIdentity();
+  for (const name of ['server.key', 'client.key', 'server.pem', 'client.pem', 'ca.pem', 'wrong-ca.pem', 'spa/index.html']) {
+    const path = join(directory, name);
+    await chmod(path, 0o600);
+    if (process.getuid?.() === 0) await chown(path, uid, gid);
+  }
+  for (const path of [join(directory, 'spa'), directory]) {
+    await chmod(path, 0o700);
+    if (process.getuid?.() === 0) await chown(path, uid, gid);
+  }
   const id = await createContainer([
     '--network', 'host', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
     '--user', `${String(uid)}:${String(gid)}`, '--mount', `type=bind,src=${configPath},dst=/etc/nginx/conf.d/default.conf,readonly`,
@@ -214,6 +228,12 @@ async function startProxy(image: string, directory: string, gatewayPort: number,
     '--tmpfs', `/var/run:rw,noexec,nosuid,size=8m,uid=${String(uid)},gid=${String(gid)},mode=0755`,
     '--tmpfs', `/var/log/nginx:rw,noexec,nosuid,size=8m,uid=${String(uid)},gid=${String(gid)},mode=0755`,
     '--entrypoint', 'sleep', image, '300']);
+  const status = await docker(['exec', id, 'cat', '/proc/self/status']);
+  expect(status).toMatch(new RegExp(`^Uid:\\s+${String(uid)}\\s+${String(uid)}\\s+${String(uid)}\\s+${String(uid)}$`, 'mu'));
+  expect(status).toMatch(new RegExp(`^Gid:\\s+${String(gid)}\\s+${String(gid)}\\s+${String(gid)}\\s+${String(gid)}$`, 'mu'));
+  expect(status).toMatch(/^CapEff:\s+0+$/mu);
+  expect(status).toMatch(/^NoNewPrivs:\s+1$/mu);
+  console.info('OAUTH_NGINX_RUNTIME_IDENTITY', JSON.stringify({ hostUid: process.getuid?.(), uid, gid, capabilities: 'none' }));
   await docker(['exec', id, 'nginx', '-t']);
   await docker(['exec', '--detach', id, 'sh', '-c',
     'exec nginx -g "daemon off;" > /var/log/nginx/fixture-stdout.log 2> /var/log/nginx/fixture-stderr.log']);

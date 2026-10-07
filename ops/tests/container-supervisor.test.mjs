@@ -5,7 +5,7 @@ import {
   chmod, chown, copyFile, lstat, mkdir, mkdtemp, readFile, rm, writeFile,
 } from "node:fs/promises";
 import { readFileSync, writeFileSync } from "node:fs";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,20 +16,34 @@ const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const supervisor = path.join(ops, "scripts/container-adapter-supervisor.sh");
 const runtimeHelper = path.join(ops, "container-runtime/cauce-container-runtime.py");
 const fakeDockerSource = path.join(ops, "tests/fake-docker.mjs");
-// The lifecycle fixtures require an unprivileged controller before any fixture is created.
+// Scenario fixtures require an unprivileged controller and a readable temporary ancestry.
 const droppedFromRoot = typeof process.getuid === "function" && process.getuid() === 0;
+let privateTemporaryParent;
 if (droppedFromRoot) {
   const testUid = Number.parseInt(process.env.CAUCE_TEST_RUNTIME_UID ?? process.env.SUDO_UID ?? "65534", 10);
   const testGid = Number.parseInt(process.env.CAUCE_TEST_RUNTIME_GID ?? process.env.SUDO_GID ?? "65534", 10);
   assert(Number.isInteger(testUid) && testUid > 0 && Number.isInteger(testGid) && testGid > 0,
     "the container supervisor suite requires a non-root test identity");
+  privateTemporaryParent = await mkdtemp("/tmp/cs-");
+  await chmod(privateTemporaryParent, 0o700);
+  await chown(privateTemporaryParent, testUid, testGid);
+  const temporaryMetadata = await lstat(privateTemporaryParent);
+  assert.equal(temporaryMetadata.uid, testUid);
+  assert.equal(temporaryMetadata.gid, testGid);
+  assert.equal(temporaryMetadata.mode & 0o777, 0o700);
+  process.env.TMPDIR = privateTemporaryParent;
   process.setgid(testGid);
   process.setgroups([testGid]);
   process.setuid(testUid);
   assert.equal(process.getuid(), testUid, "the supervisor suite must run under the requested non-root identity");
   assert.notEqual(process.getuid(), 0, "the supervisor suite must never run as root");
+  assert.equal(os.tmpdir(), privateTemporaryParent);
   process.stdout.write(`dropped the supervisor suite to the non-root test identity ${testUid}:${testGid}\n`);
+  process.stdout.write(`private supervisor fixture temporary parent ${privateTemporaryParent}\n`);
 }
+after(async () => {
+  if (privateTemporaryParent !== undefined) await rm(privateTemporaryParent, { recursive: true, force: true });
+});
 
 test("container supervisor adversarial scenarios", async () => {
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cauce-container-supervisor-"));
