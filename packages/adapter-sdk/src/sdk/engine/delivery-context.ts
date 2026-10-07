@@ -295,6 +295,8 @@ export interface DeliveryHarnessInvocation {
   readonly humanInitiator?: NonNullable<HarnessRequestContext["human_initiator"]>;
   readonly clientIdentity?: ClientIdentityExecuteFields;
   readonly selectionError?: unknown;
+  /** The configured owner talking to the one live shared session: there is no parallel copy to scope emissions to. */
+  readonly ownerShared?: true;
 }
 
 /** Exact owner match only: shared TTY mode, the configured owner UUID and the agent's own tenant. */
@@ -320,7 +322,7 @@ export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAd
       const session: HarnessSessionRequestScope = { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane };
       const reservation = harness.reserveSession(session.sessionKey, lane);
       return { harness, session, clientIdentity, ...(reservation === undefined ? {} : { reservation }),
-        ...(humanInitiator === undefined ? {} : { humanInitiator }) };
+        ...(humanInitiator === undefined ? {} : { humanInitiator }), ownerShared: true };
     }
     const isolatedHuman = humanInitiator !== undefined || consoleHuman;
     if (isolatedHuman && selector === undefined) {

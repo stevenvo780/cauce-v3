@@ -325,7 +325,7 @@ export class AdapterEngine {
       return;
     }
 
-    if (selectionError !== undefined || (humanInitiator !== undefined && this.emission !== undefined && !harness.supportsEmissionEndpoint && delivery.body.type !== "agent.fanin")) {
+    if (selectionError !== undefined || (humanInitiator !== undefined && invocation.ownerShared !== true && this.emission !== undefined && !harness.supportsEmissionEndpoint && delivery.body.type !== "agent.fanin")) {
       await this.finishError(accepted.record, this.adapterError(selectionError === undefined ? new AdapterError("UNSUPPORTED_HUMAN_EMISSION_SCOPE", "Human emission isolation is unavailable", false) : selectionError, accepted.record));
       return;
     }
