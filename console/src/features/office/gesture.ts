@@ -38,10 +38,8 @@ export function pinchZoom(startZoom: number, start: Pinch, now: Pinch, limits: Z
 
 export interface WheelInput { deltaY: number; deltaMode: number; ctrlKey: boolean }
 
-/**
- * A mouse notch is one whole zoom step; a trackpad pinch (ctrl + small deltas) zooms smoothly and is
- * settled later.
- */
+/** A mouse notch is one whole zoom step; a trackpad pinch (ctrl + small deltas) zooms smoothly and
+ * is settled later. */
 export function wheelZoom(zoom: number, input: WheelInput, limits: ZoomLimits): number {
   const pixels = input.deltaMode === 1 ? input.deltaY * 16 : input.deltaMode === 2 ? input.deltaY * 400 : input.deltaY;
   if (pixels === 0) return zoom;

@@ -146,14 +146,14 @@ export const OPERATOR_PALETTE: CharPalette = {
 };
 
 /** Shirt from the orb's first hue and hair from its second, so a character and its orb read as one. */
-export function characterPalette(seed: string, ghost = false): CharPalette {
+export function characterPalette(seed: string, ghost = false, hue?: number | null): CharPalette {
   if (ghost) {
     return {
       o: '#5b5f68', s: '#c9ccd2', S: '#b2b6bd', c: '#c9ccd2', h: '#8e939c', H: '#7a7f88',
       t: '#a3a8b0', T: '#8d929b', p: '#7d828b', P: '#6c7179', b: '#5b5f68', e: '#5b5f68',
     };
   }
-  const [shirt, hair, pants] = orbHues(seed);
+  const [shirt, hair, pants] = orbHues(seed, hue);
   const [skin, skinShade] = SKINS[seedHash(seed) % SKINS.length];
   return {
     o: OFFICE.outline,

@@ -29,15 +29,25 @@ export function paintRows(ctx: Ctx, rows: readonly string[], x: number, y: numbe
 export class SpriteCache {
   private readonly sprites = new Map<string, HTMLCanvasElement>();
   private readonly palettes = new Map<string, CharPalette>();
+  private hues: ReadonlyMap<string, number> = new Map();
 
   constructor(private readonly make: MakeCanvas) {}
 
+  /** Chosen hues per agent; a change only invalidates the sprites drawn with the old one. */
+  setHues(hues: ReadonlyMap<string, number>): void {
+    this.hues = hues;
+  }
+
+  private look(seed: string): string {
+    return `${seed}|${String(this.hues.get(seed) ?? '')}`;
+  }
+
   palette(seed: string, ghost: boolean): CharPalette {
     if (seed === OPERATOR_ID) return OPERATOR_PALETTE;
-    const key = `${seed}|${String(ghost)}`;
+    const key = `${this.look(seed)}|${String(ghost)}`;
     let palette = this.palettes.get(key);
     if (!palette) {
-      palette = characterPalette(seed, ghost);
+      palette = characterPalette(seed, ghost, this.hues.get(seed));
       this.palettes.set(key, palette);
     }
     return palette;
@@ -55,11 +65,11 @@ export class SpriteCache {
   }
 
   character(seed: string, ghost: boolean, frame: FrameName, facing: Facing, step: number): HTMLCanvasElement {
-    const key = `${seed}|${String(ghost)}|${frame}|${facing}|${String(step % 4)}`;
+    const key = `${this.look(seed)}|${String(ghost)}|${frame}|${facing}|${String(step % 4)}`;
     return this.cached(key, CHAR_W, CHAR_H, () => characterFrame(frame, facing, step), this.palette(seed, ghost));
   }
 
   lying(seed: string): HTMLCanvasElement {
-    return this.cached(`${seed}|lie`, LIE_W, LIE_H, lyingFrame, this.palette(seed, false));
+    return this.cached(`${this.look(seed)}|lie`, LIE_W, LIE_H, lyingFrame, this.palette(seed, false));
   }
 }

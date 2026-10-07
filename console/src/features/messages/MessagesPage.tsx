@@ -1,15 +1,18 @@
 import { useEffect, useRef } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
+import { LinkButton } from '../../components/kit';
 import { EmptyState, LoadingState } from '../../components/ui';
 import { LogoMark } from '../../components/brand/Logo';
 import { BOTTOM_BAR_VIEWPORT } from '../../breakpoints';
-import { AgentList } from '../../shell/AgentList';
+import { agentHref } from '../../shell/agent-href';
+import { rememberChat } from '../../shell/last-chat';
 import { useMediaQuery } from '../../shell/use-media-query';
 import { useFleet } from '../../shell/fleet-context';
 import { permissionState } from '../../lib';
 import { onNavClick } from '../../router';
 import { fleetAgentId } from '../terminal/fleet';
 import { operatorRouteForAgent } from '../terminal/session';
+import { ChatLauncher } from './ChatLauncher';
 import { ConversationPane } from './ConversationPane';
 import { useConversationViewport } from './use-conversation-viewport';
 
@@ -44,6 +47,8 @@ function MessagesPageContent({ params }: MessagesPageProps) {
 
   const envolturaRef = useRef<HTMLDivElement | null>(null);
   useConversationViewport(envolturaRef);
+
+  useEffect(() => { if (seleccionado) rememberChat(agentHref('messages', seleccionado)); }, [seleccionado]);
 
   const lastSelected = useRef<string | undefined>(undefined);
   const requestedId = pedido ? fleetAgentId(pedido.tenantId, pedido.alias) : undefined;
@@ -92,26 +97,23 @@ function MessagesPageContent({ params }: MessagesPageProps) {
           onQueueReload={() => { void queues.reload(); void activity.reload(); }}
           onReload={messages.reload}
         />
-      ) : phone && !pedido ? (
-        <section aria-label="Conversaciones" className="flex min-h-0 flex-1 flex-col bg-surface pt-3">
-          <h1 className="m-0 px-4 pb-3 text-xl font-semibold tracking-tight">Chats</h1>
-          <AgentList routeId="messages" />
-        </section>
+      ) : !pedido && phone ? (
+        <section aria-label="Conversaciones" data-state="welcome" className="flex min-h-0 flex-1 flex-col"><ChatLauncher phone /></section>
+      ) : !pedido ? (
+        <section aria-label="Sin conversación abierta" data-state="welcome" className="flex min-h-0 flex-1 flex-col"><ChatLauncher phone={false} /></section>
       ) : (
-        <section className="grid flex-1 place-content-center justify-items-center gap-3 p-8 text-center" data-state={pedido ? 'missing' : 'welcome'} aria-label="Sin conversación abierta">
+        <section className="grid flex-1 place-content-center justify-items-center gap-3 p-8 text-center" data-state="missing" aria-label="Sin conversación abierta">
           <LogoMark size={48} />
-          <h1 className="m-0 text-2xl font-semibold tracking-tight">{pedido ? 'No encontramos esa conversación' : '¿Con quién trabajamos hoy?'}</h1>
-          {pedido && flotaCargando ? <LoadingState label="Buscando la conversación…" /> : pedido && flotaError ? (
+          <h1 className="m-0 text-2xl font-semibold tracking-tight">No encontramos esa conversación</h1>
+          {flotaCargando ? <LoadingState label="Buscando la conversación…" /> : flotaError ? (
             <EmptyState>No se pudo comprobar este agente: {flotaError.message}</EmptyState>
-          ) : pedido ? (
+          ) : (
             <p className="m-0 max-w-md text-muted">
               El servidor no observa a <strong className="text-fg">{pedido.tenantId}:{pedido.alias}</strong> en la topología, la presencia,
               ni en el registro de agentes ni en los mensajes. Cauce no inventa un agente que no existe.
             </p>
-          ) : (
-            <p className="m-0 max-w-md text-muted">Elegí un agente en la barra lateral para retomar una conversación, compartir una idea o darle una tarea.</p>
           )}
-          {pedido ? <a className="button secondary" href="/messages" onClick={(event) => { onNavClick(event, '/messages'); }}>Volver a los chats</a> : null}
+          <LinkButton href="/messages" onClick={(event) => { onNavClick(event, '/messages'); }}>Volver a los chats</LinkButton>
         </section>
       )}
     </div>

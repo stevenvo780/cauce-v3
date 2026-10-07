@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { mockActivity, mockMessages, mockStatus, topology } from '../../mocks/data';
 import { server } from '../../mocks/server';
+import { declaredPtyTargets } from '../../test/pty-targets';
 import { FleetProvider } from '../../shell/fleet';
 import { renderWithApi } from '../../test/render';
 import {
@@ -395,12 +396,14 @@ it('bloquea el envío a un destino sin ruta y dice el motivo, en vez de dejar pu
 
 it('ofrece el salto a la terminal del agente, apuntando a su detalle real', async () => {
   const user = userEvent.setup();
+  server.use(declaredPtyTargets(['Steven', 'argos']));
   renderChat();
 
   const hilo = await openConversation('argos');
   expect(hilo).toBeInTheDocument();
   const menu = await openConversationMenu(user);
-  expect(within(menu).getByRole('menuitem', { name: /abrir terminal/i })).toHaveAttribute('href', '/terminal/Steven/argos');
+  expect(within(menu).getByRole('menuitem', { name: /abrir terminal/i })).toHaveAttribute('href', '/terminal/Steven/argos?modo=terminal');
+  expect(within(menu).getByRole('menuitem', { name: /abrir tui/i })).toHaveAttribute('href', '/terminal/Steven/argos?modo=tui');
   expect(within(menu).getByRole('menuitem', { name: /perfil y contexto/i })).toHaveAttribute('href', '/messages/Steven/argos?view=context');
 }, 20_000);
 

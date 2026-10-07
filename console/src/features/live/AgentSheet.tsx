@@ -5,11 +5,12 @@ import type { ReactNode } from 'react';
 import type { FleetActivityItem, SystemStatus } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { AgentOrb } from '../../components/AgentOrb';
+import { AgentKebab } from '../../components/agent-actions/AgentActionsMenu';
+import { StatePill } from '../../components/kit';
 import { Badge, Time, Unknown } from '../../components/ui';
 import { cn } from '../../cn';
 import { UNKNOWN, compactId, safeJobLane } from '../../lib';
 import { onNavClick } from '../../router';
-import { STATE_TONE, TONE_CLASS } from '../../status-tone';
 import { queueDeliveryPath } from '../deliveries/delivery-links';
 import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { FLAG_LABEL } from './activity';
@@ -43,7 +44,6 @@ export function AgentSheet({ view, status, onClose }: {
 }
 
 function SheetBody({ view, status }: { view: LiveAgentView; status: Resource<SystemStatus> }) {
-  const tone = TONE_CLASS[STATE_TONE[view.state]];
   const tenant = encodeURIComponent(view.tenantId);
   const alias = encodeURIComponent(view.alias);
   const items = view.agent.in_flight_items ?? [];
@@ -62,12 +62,12 @@ function SheetBody({ view, status }: { view: LiveAgentView; status: Resource<Sys
             {view.tenantId}{view.displayName && view.displayName !== view.alias ? ` · ${view.displayName}` : ''}
             {view.harnessId ? ` · ${view.harnessId}` : ''}
           </p>
-          <span className={cn('mt-1.5 inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[11px] font-medium', tone.pill)}>
-            <span aria-hidden="true" className={cn('size-1.5 rounded-full', tone.dot)} />
+          <StatePill state={view.state} className="mt-1.5">
             {LIVE_STATE_META[view.state].label}
             {view.overloaded ? ' · saturado' : ''}
-          </span>
+          </StatePill>
         </div>
+        <AgentKebab agent={view} omit={['office']} className="size-8" />
         <Dialog.Close aria-label="Cerrar el detalle" className="grid size-8 shrink-0 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted hover:bg-subtle hover:text-fg">
           <X size={16} aria-hidden="true" />
         </Dialog.Close>

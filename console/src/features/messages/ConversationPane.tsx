@@ -3,10 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent 
 import { useApi } from '../../api/context';
 import { ApiError } from '../../api/client';
 import type { MessagePage } from '../../api/types';
+import { Button } from '../../components/kit';
 import { EmptyState, LoadingState } from '../../components/ui';
 import { compactId } from '../../lib';
 import { useRouteSearch } from '../../router';
 import type { LiveAgentView } from '../live/agent-state';
+import { liveStateOf } from '../terminal/fleet';
 import { textoDelCuerpo } from '../terminal/cuerpo-del-mensaje';
 import { transcriptForSession, type OperatorRoute, type OperatorSession, type TranscriptItem } from '../terminal/session';
 import { AgentSettingsView } from './AgentSettingsView';
@@ -313,7 +315,7 @@ function ConversationPaneContent({
 
   if (contextOpen) return <AgentSettingsView tenantId={agent.tenantId} alias={agent.alias} conversationPath={conversationPath} />;
 
-  const state = live?.state ?? (agent.leaseState === 'online' ? 'idle' : 'down');
+  const state = liveStateOf(agent, live);
   const seed = `${agent.tenantId}/${agent.alias}`;
   return (
     <section className="relative flex min-h-0 flex-1 flex-col bg-surface" data-objeto-principal="hilo" aria-label={`Conversación con ${agent.alias}`}>
@@ -363,7 +365,7 @@ function ConversationPaneContent({
                   {canonical.accessDenied ? 'La respuesta canónica ya no está disponible para esta identidad o destinatario.'
                     : canonical.stale ? 'No se pudo actualizar la respuesta canónica; se conserva el último dato como desactualizado.'
                       : 'No se pudo leer la respuesta canónica.'}
-                  <button className="button small secondary" type="button" onClick={canonical.retry}>Releer respuesta</button>
+                  <Button size="sm" onClick={canonical.retry}>Releer respuesta</Button>
                 </p>
               ) : null}
             </div>

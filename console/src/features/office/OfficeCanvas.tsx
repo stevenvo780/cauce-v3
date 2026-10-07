@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { ContextMenu } from '@base-ui/react/context-menu';
 import { FloatingTooltip } from '../../components/ui';
+import { isContextMenuKey, openContextMenuAt, type AgentRef } from '../../components/agent-actions/agent-actions';
+import { AgentActionItems } from '../../components/agent-actions/AgentActionsMenu';
+import { MENU_POPUP } from '../../components/kit';
 import { cn } from '../../cn';
 import { useMediaQuery } from '../../shell/use-media-query';
 import { STATE_TONE, TONE_CLASS } from '../../status-tone';
@@ -25,6 +29,9 @@ export interface OfficeAgent {
   state: LiveState;
   reason: string;
   delegatesTo: readonly string[];
+  /** The fleet's chosen look: the hue dresses the character and the glyph rides on its name tag. */
+  glyph?: string | null;
+  hue?: number | null;
 }
 
 interface OfficeCanvasProps {
@@ -52,6 +59,22 @@ const DIR_OF: Readonly<Record<string, Dir>> = {
   ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right',
 };
 const PAD_VECTOR: Readonly<Record<Dir, Vec>> = { up: VECTORS.w, down: VECTORS.s, left: VECTORS.a, right: VECTORS.d };
+
+/** Office ids are `tenant/alias`; tenants never contain a slash. */
+function agentRefOf(id: string): AgentRef | null {
+  const cut = id.indexOf('/');
+  return cut > 0 ? { tenantId: id.slice(0, cut), alias: id.slice(cut + 1) } : null;
+}
+
+/** Where a right click or a long press landed. */
+function clientPointOf(event: Event | undefined): Vec | null {
+  if (event instanceof MouseEvent) return { x: event.clientX, y: event.clientY };
+  if ('TouchEvent' in window && event instanceof TouchEvent) {
+    const touch = event.touches.item(0) ?? event.changedTouches.item(0);
+    return touch ? { x: touch.clientX, y: touch.clientY } : null;
+  }
+  return null;
+}
 
 const makeCanvas = (width: number, height: number) => {
   const canvas = document.createElement('canvas');
@@ -165,6 +188,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
   const [edges, setEdges] = useState({ atMin: true, atMax: false });
   const [hint, setHint] = useState(() => !hintSeen());
   const [grabbing, setGrabbing] = useState(false);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
 
   const ordered = useMemo(() => [...agents].sort((a, b) => a.id.localeCompare(b.id)), [agents]);
   const choice = useMemo(() => chooseLayout(ordered.length, box), [ordered.length, box]);
@@ -203,11 +227,15 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
   const live = useRef({ selectedId, hoverId: hoverId ?? cursorId, highlight, names: new Map<string, string>(), paseo, view, limits, onSelect });
   live.current = {
     selectedId, hoverId: hoverId ?? cursorId, highlight, paseo, view, limits, onSelect,
-    names: new Map(ordered.map((agent) => [agent.id, agent.name])),
+    names: new Map(ordered.map((agent) => [agent.id, agent.glyph ? `${agent.glyph} ${agent.name}` : agent.name])),
   };
 
   const scene = useMemo(() => (typeof document === 'undefined' ? null : createScene(layout, world, makeCanvas)), [layout, world]);
   const kickRef = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    scene?.sprites.setHues(new Map(ordered.flatMap((agent) => (agent.hue === undefined || agent.hue === null ? [] : [[agent.id, agent.hue]]))));
+    kickRef.current();
+  }, [scene, ordered]);
   const kick = useCallback(() => { kickRef.current(); }, []);
 
   const clamp = useCallback((cam: Camera) => clampCamera(cam, live.current.view, worldSize, live.current.limits, engine.inset), [worldSize, engine]);
@@ -571,6 +599,16 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
   const normal = (key: string) => (key.length === 1 ? key.toLowerCase() : key);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.contains(event.target as Node)) return;
+    if (isContextMenuKey(event)) {
+      const target = cursorId ?? selectedId;
+      const at = target ? boxOf(target) : null;
+      if (at && listRef.current) {
+        event.preventDefault();
+        openContextMenuAt(listRef.current, at.left + at.width / 2, at.top + at.height / 2);
+      }
+      return;
+    }
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const key = normal(event.key);
     const bounds = live.current.limits;
@@ -626,10 +664,12 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
   };
 
   const onKeyUp = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.contains(event.target as Node)) return;
     engine.keys.delete(normal(event.key));
     if (event.key === 'Shift') for (const key of Object.keys(DIR_OF)) if (key.startsWith('Arrow') && !paseo) engine.keys.delete(key);
   };
 
+  const menuAgent = menuFor ? agentRefOf(menuFor) : null;
   const tipId = hoverId ?? cursorId;
   const tip = tipId ? ordered.find((agent) => agent.id === tipId) : undefined;
   const talkTo = nearby && nearby !== selectedId ? ordered.find((agent) => agent.id === nearby) : undefined;
@@ -642,7 +682,13 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
       className="relative w-full overflow-hidden"
       style={{ height: frameHeight }}
     >
-      <div
+      <ContextMenu.Root open={menuFor !== null} onOpenChange={(open, details) => {
+        if (!open) { setMenuFor(null); return; }
+        const point = clientPointOf(details.event);
+        const id = point ? pick(toScreen(point)) : null;
+        if (id) setMenuFor(id);
+      }}>
+      <ContextMenu.Trigger
         ref={listRef}
         role="listbox"
         aria-label={label}
@@ -679,7 +725,15 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label }:
             {agent.name}: {LIVE_STATE_META[agent.state].label}. {agent.reason}
           </div>
         ))}
-      </div>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Positioner className="z-50 outline-none">
+          <ContextMenu.Popup className={cn(MENU_POPUP, 'menu-pop w-64')}>
+            {menuAgent ? <AgentActionItems agent={menuAgent} omit={['office']} /> : null}
+          </ContextMenu.Popup>
+        </ContextMenu.Positioner>
+      </ContextMenu.Portal>
+      </ContextMenu.Root>
       <button
         ref={promptRef}
         type="button"

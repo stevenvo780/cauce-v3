@@ -5,6 +5,7 @@ import {
   mockStatus, originRelays, providerAccounts, registryAgents, routingCeiling,
   topology,
 } from './data';
+import { agentPreferencesHandlers } from './agent-preferences-demo';
 
 const preparedIntentByMeaning = new Map<string, string>();
 
@@ -27,6 +28,7 @@ function mockMeaning(input: unknown): string {
 }
 
 export const handlers = [
+  ...agentPreferencesHandlers(),
   http.get('*/v3/auth/session', () => HttpResponse.json({
     authenticated: true,
     subject: 'Steven:kant',

@@ -5,8 +5,10 @@ import type { ConsoleAccess, MessagePage, TerminalCapability } from '../../api/t
 import type { Resource } from '../../api/use-resource';
 import { cn } from '../../cn';
 import { AgentOrb } from '../../components/AgentOrb';
+import { AgentContextMenu } from '../../components/agent-actions/AgentActionsMenu';
+import { Button, StatePill } from '../../components/kit';
+import { redirect } from '../../router';
 import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
-import { STATE_TONE, TONE_CLASS } from '../../status-tone';
 import { TerminalApiError, type TerminalSessionGrant, type TerminalTargetsSnapshot } from './api';
 import { prorrogarSesion } from './api-control';
 import { AgentFeed } from './AgentFeed';
@@ -100,15 +102,18 @@ interface StageProps {
   /** A rejection left the seat state uncertain: the inventory is reread before acting. */
   onReconciliarPlazas: (motivo: MotivoReconciliacionPlaza) => void;
   onRefresh: () => void;
+  requestedView?: 'tui' | 'terminal';
 }
 
 export function SessionStage({
   agent, sessionId, sessionToken, state, memory, access, capability, targets, messages, summary,
-  grants, closedChannels, onRequestGrant, onMemory, onChannelClosed, onReleaseChannel, onReconciliarPlazas, onRefresh,
+  grants, closedChannels, onRequestGrant, onMemory, onChannelClosed, onReleaseChannel, onReconciliarPlazas, onRefresh, requestedView,
 }: StageProps) {
   const api = useApi();
   const grant = grants[sessionId] as TerminalSessionGrant | undefined;
-  const [view, setView] = useState<StageView>(() => (grant ? (isTuiMode(grant.target.mode) ? 'tui' : 'terminal') : 'feed'));
+  const [view, setView] = useState<StageView>(() => (grant ? (isTuiMode(grant.target.mode) ? 'tui' : 'terminal') : requestedView ?? 'feed'));
+  /** A view the address asked for, kept until its channel can be requested: the gates load after the stage. */
+  const pendingViewRef = useRef(requestedView);
   const [requesting, setRequesting] = useState(false);
   const [requestError, setRequestError] = useState<DenegacionExplicada>();
   const [now, setNow] = useState(() => Date.now());
@@ -168,16 +173,35 @@ export function SessionStage({
   const requestChannelRef = useRef(requestChannel);
   requestChannelRef.current = requestChannel;
 
+  useEffect(() => {
+    if (!requestedView) return;
+    pendingViewRef.current = requestedView;
+    setView(requestedView);
+  }, [requestedView]);
+
+  const chooseRef = useRef<(next: StageView) => void>(() => undefined);
+  useEffect(() => {
+    const wanted = pendingViewRef.current;
+    if (wanted === 'terminal' && channel.enabled) {
+      pendingViewRef.current = undefined;
+      chooseRef.current('terminal');
+    } else if (wanted === 'tui' && tuiEnabled) {
+      pendingViewRef.current = undefined;
+      chooseRef.current('tui');
+    }
+  }, [requestedView, channel.enabled, tuiEnabled]);
+
   /** Automatic opening of the live TUI when the agent is selected and it is available. */
   useEffect(() => {
     if (!tuiEnabled) return;
+    if (pendingViewRef.current === 'terminal' || requestedView === 'terminal') return;
     if (autoOpenedRef.current === sessionId) return;
     if (memory.liveTuiAttempted) return;
     if (sessionId in grants || sessionId in closedChannels) return;
     autoOpenedRef.current = sessionId;
     setView('tui');
     void requestChannelRef.current(escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE).catch(mostrarError);
-  }, [closedChannels, grants, sessionId, memory.liveTuiAttempted, tuiEnabled, escrituraDisponible]);
+  }, [closedChannels, grants, sessionId, memory.liveTuiAttempted, tuiEnabled, escrituraDisponible, requestedView]);
 
   function mostrarError(error: unknown) {
     if (mountedRef.current) setRequestError(explicar(error));
@@ -272,6 +296,13 @@ export function SessionStage({
     else if (next === 'terminal') chooseTerminal();
     else setView('feed');
   }
+  chooseRef.current = choose;
+
+  function chooseByHand(next: StageView) {
+    pendingViewRef.current = undefined;
+    if (new URLSearchParams(window.location.search).has('modo')) redirect(window.location.pathname);
+    choose(next);
+  }
 
   const options: ModeOption<StageView>[] = [
     { id: 'feed', label: 'Feed', icon: Radio, title: `Mensajes recientes de ${agent.alias}, sólo lectura` },
@@ -291,26 +322,23 @@ export function SessionStage({
   const paneSocketPath = grant ? [grant.websocket_path, channel.websocketPath, liveTui.websocketPath].find((path) => path !== undefined && path !== '') : undefined;
   const viewEnabled = wantsTui ? tuiEnabled : channel.enabled;
   const ptyClosedAll = !tuiEnabled && !channel.enabled;
-  const tone = TONE_CLASS[STATE_TONE[state]];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" id={`terminal-session-${sessionId}`}>
       <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-surface px-3 py-2 min-[761px]:flex-nowrap">
-        <div className="order-1 flex min-w-0 flex-1 items-center gap-2.5 min-[761px]:flex-none">
+        <AgentContextMenu agent={agent} omit={['tui', 'terminal']} className="order-1 flex min-w-0 flex-1 items-center gap-2.5 min-[761px]:flex-none">
           <AgentOrb seed={`${agent.tenantId}/${agent.alias}`} state={state} size={28} />
           <h2 className="m-0 flex min-w-0 items-baseline gap-1.5 text-sm font-semibold">
             <span className="truncate">{agent.alias}</span>
             <span className="truncate text-xs font-normal text-muted">{agent.tenantId}</span>
           </h2>
-          <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium', tone.pill)} title={LIVE_STATE_META[state].hint}>
-            {LIVE_STATE_META[state].label}
-          </span>
-        </div>
+          <StatePill state={state} title={LIVE_STATE_META[state].hint} />
+        </AgentContextMenu>
         <ModeSwitch
           label="Vista de la sesión"
           value={view}
           options={options}
-          onChange={choose}
+          onChange={chooseByHand}
           className="order-3 w-full min-[761px]:order-2 min-[761px]:w-auto"
         />
         <div className="order-2 ml-auto flex items-center gap-1 min-[761px]:order-3">
@@ -325,6 +353,7 @@ export function SessionStage({
             />
           ) : null}
           <StageMenu
+            agent={agent}
             hasGrant={grant !== undefined}
             canExtend={channelView?.ticketConsumido === true}
             extending={prorrogando}
@@ -402,9 +431,9 @@ export function SessionStage({
               <p className="m-0 max-w-md text-[13px] text-muted">{wantsTui ? tuiReason : channelReason}</p>
             )}
             {!requesting && viewEnabled ? (
-              <button type="button" className="button small primary mt-1" onClick={() => { choose(view); }}>
+              <Button size="sm" variant="primary" className="mt-1" onClick={() => { choose(view); }}>
                 {wantsTui ? 'Abrir TUI en vivo' : 'Abrir terminal'}
-              </button>
+              </Button>
             ) : null}
           </div>
         )}

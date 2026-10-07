@@ -1,6 +1,7 @@
 import { AlertTriangle, ChevronDown, Info } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type RefObject } from 'react';
 import { cn } from '../../cn';
+import { Button } from '../../components/kit';
 import { onNavClick } from '../../router';
 import type { SaludDeCola } from './queue-health';
 
@@ -83,13 +84,13 @@ export function ConversationNotices({ health, queueError, feedError, leaseWarnin
           {queueError ? (
             <p className="m-0 flex flex-wrap items-center gap-2">
               <span>No se pudo actualizar la cola: {queueError.message}. Estado sin verificar.</span>
-              <button className="button small secondary" type="button" onClick={onQueueReload}>Reintentar cola</button>
+              <Button size="sm" onClick={onQueueReload}>Reintentar cola</Button>
             </p>
           ) : null}
           {feedError ? <p className="m-0">No se pudo actualizar la conversación: {feedError.message}. Se muestra el último historial recibido.</p> : null}
           {leaseWarning ? <p role="note" className="m-0">{leaseWarning}</p> : null}
           {topologyWarning ? <p role="note" className="m-0">{topologyWarning}</p> : null}
-          <div><button type="button" onClick={close} aria-label="Cerrar avisos" className="button small secondary">Ocultar</button></div>
+          <div><Button size="sm" onClick={close} aria-label="Cerrar avisos">Ocultar</Button></div>
         </section>
       ) : null}
     </div>

@@ -1,11 +1,12 @@
 import { AlertTriangle, CircleOff } from 'lucide-react';
 import type { ConsoleAccess, TerminalCapability } from '../../api/types';
-import { cn } from '../../cn';
 import { AgentOrb } from '../../components/AgentOrb';
+import { AgentContextMenu, AgentKebab } from '../../components/agent-actions/AgentActionsMenu';
+import { Notice, Pill, StatePill } from '../../components/kit';
 import { LoadingState } from '../../components/ui';
 import { onNavClick } from '../../router';
-import { STATE_TONE, TONE_CLASS, type Tone } from '../../status-tone';
-import { LIVE_STATE_META, type LiveAgentView } from '../live/agent-state';
+import type { Tone } from '../../status-tone';
+import type { LiveAgentView } from '../live/agent-state';
 import type { TerminalTargetsSnapshot } from './api';
 import { agentLiveState, fleetTerminalChip, type FleetAgent, type TerminalAccessStatus } from './fleet';
 import { ultimateTerminalGate } from './plugin';
@@ -52,10 +53,10 @@ export function TerminalHome({ agents, live, access, capability, targets, loadin
   if (loading && agents.length === 0) return <LoadingState label="Leyendo la flota del servidor…" />;
   if (error && agents.length === 0) {
     return (
-      <p role="alert" className="notice error m-4">
+      <Notice tone="danger" role="alert" className="m-4 flex items-start gap-2">
         <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
         <span><strong>La flota no se pudo leer.</strong> No es que no haya agentes. {error.message}</span>
-      </p>
+      </Notice>
     );
   }
   const chips = new Map(agents.map((agent) => [agent.id, fleetTerminalChip(targets?.items, agent)]));
@@ -69,10 +70,10 @@ export function TerminalHome({ agents, live, access, capability, targets, loadin
         <h2 className="m-0 text-lg font-semibold tracking-tight">Elegí un agente</h2>
         <p className="m-0 mt-0.5 mb-4 text-[13px] text-muted">{summary}</p>
         {notice ? (
-          <p role="status" className="notice mb-4">
+          <Notice role="status" className="mb-4 flex items-start gap-2">
             <CircleOff size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
             <span><strong className="font-semibold text-fg">{notice.title}.</strong> {notice.body}</span>
-          </p>
+          </Notice>
         ) : null}
         <ul aria-label="Agentes" className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3 p-0">
           {ordered.map((agent) => {
@@ -81,34 +82,33 @@ export function TerminalHome({ agents, live, access, capability, targets, loadin
             const href = `/terminal/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`;
             return (
               <li key={agent.id}>
-                <a
-                  href={href}
-                  data-agent-id={agent.id}
-                  onClick={(event) => { onNavClick(event, href); }}
-                  className="flex items-center gap-3 rounded-xl border border-line bg-surface p-3 text-fg no-underline shadow-card transition-colors hover:border-line-strong hover:bg-subtle"
-                >
-                  <AgentOrb seed={`${agent.tenantId}/${agent.alias}`} state={state} size={40} />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-baseline gap-1.5">
-                      <span className="truncate text-sm font-semibold">{agent.alias}</span>
-                      <span className="truncate text-xs text-muted">{agent.tenantId}</span>
-                    </span>
-                    <span className="mt-1.5 flex flex-wrap gap-1.5">
-                      <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', TONE_CLASS[STATE_TONE[state]].pill)}>
-                        {LIVE_STATE_META[state].label}
+                <AgentContextMenu agent={agent} className="group relative h-full">
+                  <a
+                    href={href}
+                    data-agent-id={agent.id}
+                    onClick={(event) => { onNavClick(event, href); }}
+                    className="flex h-full items-center gap-3 rounded-xl border border-line bg-surface p-3 pr-10 text-fg no-underline shadow-card transition-[background-color,border-color,translate] hover:-translate-y-px hover:border-line-strong hover:bg-subtle"
+                  >
+                    <AgentOrb seed={`${agent.tenantId}/${agent.alias}`} state={state} size={40} />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-baseline gap-1.5">
+                        <span className="truncate text-sm font-semibold">{agent.alias}</span>
+                        <span className="truncate text-xs text-muted">{agent.tenantId}</span>
                       </span>
-                      {chip?.status === 'unknown' ? (
-                        <span title={chip.reason} className="inline-flex items-center gap-1 px-1 py-0.5 text-[11px] text-muted">
-                          <CircleOff size={11} aria-hidden="true" />{chip.label}
-                        </span>
-                      ) : chip ? (
-                        <span title={chip.reason} className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', TONE_CLASS[CHIP_TONE[chip.status]].pill)}>
-                          {chip.label}
-                        </span>
-                      ) : null}
+                      <span className="mt-1.5 flex flex-wrap gap-1.5">
+                        <StatePill state={state} />
+                        {chip?.status === 'unknown' ? (
+                          <span title={chip.reason} className="inline-flex items-center gap-1 px-1 py-0.5 text-[11px] text-muted">
+                            <CircleOff size={11} aria-hidden="true" />{chip.label}
+                          </span>
+                        ) : chip ? (
+                          <Pill tone={CHIP_TONE[chip.status]} title={chip.reason}>{chip.label}</Pill>
+                        ) : null}
+                      </span>
                     </span>
-                  </span>
-                </a>
+                  </a>
+                  <AgentKebab agent={agent} reveal className="absolute top-2 right-2" />
+                </AgentContextMenu>
               </li>
             );
           })}

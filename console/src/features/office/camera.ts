@@ -132,5 +132,3 @@ export function ease(current: Camera, target: Camera, dt: number, reduced: boole
   const close = Math.abs(next.x - target.x) < 0.05 && Math.abs(next.y - target.y) < 0.05 && Math.abs(next.zoom - target.zoom) < 0.01;
   return close ? { ...target } : next;
 }
-
-export const sameCamera = (a: Camera, b: Camera) => a.x === b.x && a.y === b.y && a.zoom === b.zoom;

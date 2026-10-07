@@ -1,10 +1,11 @@
 import { setupWorker } from 'msw/browser';
 import { chatDemoHandlers } from './chat-demo';
+import { agentPreferencesHandlers, DEMO_PREFERENCES } from './agent-preferences-demo';
 import { handlers } from './handlers';
 import { instalarPtyDeMentira, terminalDemoHandlers } from './terminal-demo';
 
 /* Demo handlers go FIRST: MSW keeps the first match and `handlers.ts` answers `capability.available:false` for the view tests. */
-export const worker = setupWorker(...terminalDemoHandlers, ...chatDemoHandlers, ...handlers);
+export const worker = setupWorker(...terminalDemoHandlers, ...chatDemoHandlers, ...agentPreferencesHandlers(DEMO_PREFERENCES, '/__mock-store/agent-preferences'), ...handlers);
 
 /* Install the fake PTY AFTER `worker.start()`: MSW mounts its own `WebSocket` interceptor at startup and would overwrite ours. */
 const arrancar = worker.start.bind(worker);

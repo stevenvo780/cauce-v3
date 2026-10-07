@@ -3,6 +3,7 @@ import {
   type ComponentType,
 } from 'react';
 import { ConsoleAccessProvider } from './api/console-access';
+import { AgentPreferencesProvider } from './components/agent-actions/AgentPreferencesProvider';
 import { CSPProvider } from '@base-ui/react/csp-provider';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { StateCard } from './components/kit';
@@ -173,7 +174,7 @@ export function App() {
       <ConsoleAccessProvider>
         <TerminalRelayProvider>
           <CSPProvider disableStyleElements>
-            <FleetProvider><ConsoleShell gate={gate} /></FleetProvider>
+            <FleetProvider><AgentPreferencesProvider><ConsoleShell gate={gate} /></AgentPreferencesProvider></FleetProvider>
           </CSPProvider>
         </TerminalRelayProvider>
       </ConsoleAccessProvider>

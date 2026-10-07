@@ -23,3 +23,7 @@ export function useConsoleAccess(): Resource<ConsoleAccess> {
   if (!access) throw new Error('Console access must be read inside ConsoleAccessProvider.');
   return access;
 }
+
+export function useOptionalConsoleAccess(): Resource<ConsoleAccess> | undefined {
+  return useContext(ConsoleAccessContext);
+}

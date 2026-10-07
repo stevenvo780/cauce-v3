@@ -1,16 +1,16 @@
 import { Dialog } from '@base-ui/react/dialog';
 import { Menu } from '@base-ui/react/menu';
-import { ArrowLeft, Check, Info, MoreHorizontal, RefreshCw, TerminalSquare, UserRound, X } from 'lucide-react';
+import { ArrowLeft, Check, Info, MoreHorizontal, RefreshCw, X } from 'lucide-react';
 import { useState, type ReactNode, type RefObject } from 'react';
 import type { JobLane } from '../../api/types';
 import { AgentOrb } from '../../components/AgentOrb';
+import { AgentActionItems, AgentContextMenu } from '../../components/agent-actions/AgentActionsMenu';
 import { cn } from '../../cn';
 import { Time } from '../../components/ui';
 import { onNavClick } from '../../router';
-import { STATE_TONE, TONE_CLASS } from '../../status-tone';
 import { LEASE_LABEL } from '../../vocabulario';
 import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
-import { MENU_ITEM, MENU_POPUP } from '../../components/kit';
+import { MENU_ITEM, MENU_POPUP, StatePill } from '../../components/kit';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
 import type { AgenteDeMensajeria } from './roster';
 
@@ -45,12 +45,7 @@ export function ChatHeader({ agent, state, reason, salud, lane, sending, loading
   onReload: () => void;
 }) {
   const [infoOpen, setInfoOpen] = useState(false);
-  const tenant = encodeURIComponent(agent.tenantId);
-  const alias = encodeURIComponent(agent.alias);
-  const contextPath = `/messages/${tenant}/${alias}?view=context`;
-  const terminalPath = `/terminal/${tenant}/${alias}`;
   const meta = LIVE_STATE_META[state];
-  const tone = TONE_CLASS[STATE_TONE[state]];
   const attention = (salud?.muertas ?? 0) > 0 || (salud?.reintentos ?? 0) > 0;
 
   return (
@@ -59,17 +54,16 @@ export function ChatHeader({ agent, state, reason, salud, lane, sending, loading
         className="grid size-9 shrink-0 place-items-center rounded-md text-fg-2 hover:bg-subtle min-[761px]:hidden">
         <ArrowLeft size={20} aria-hidden="true" />
       </a>
-      <AgentOrb seed={`${agent.tenantId}/${agent.alias}`} state={state} size={32} />
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <h2 tabIndex={-1} className="m-0 truncate text-[15px] font-semibold tracking-tight outline-none">{agent.alias}</h2>
-          <span className={cn('inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium', tone.pill)}
-            title={`${reason ?? meta.hint} · Lease: ${LEASE_LABEL[agent.leaseState]}`} data-live-state={state}>
-            <span className={cn('size-1.5 rounded-full', tone.dot)} aria-hidden="true" />{meta.label}
-          </span>
+      <AgentContextMenu agent={agent} omit={['chat']} className="flex min-w-0 flex-1 items-center gap-2">
+        <AgentOrb seed={`${agent.tenantId}/${agent.alias}`} state={state} size={32} />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 tabIndex={-1} className="m-0 truncate text-[15px] font-semibold tracking-tight outline-none">{agent.alias}</h2>
+            <StatePill state={state} title={`${reason ?? meta.hint} · Lease: ${LEASE_LABEL[agent.leaseState]}`} data-live-state={state} />
+          </div>
+          <p className="m-0 truncate text-xs text-muted">{agent.tenantId}</p>
         </div>
-        <p className="m-0 truncate text-xs text-muted">{agent.tenantId}</p>
-      </div>
+      </AgentContextMenu>
 
       <Menu.Root>
         <Menu.Trigger ref={moreTriggerRef} aria-label="Opciones de la conversación" title="Opciones de la conversación"
@@ -78,13 +72,9 @@ export function ChatHeader({ agent, state, reason, salud, lane, sending, loading
         </Menu.Trigger>
         <Menu.Portal>
           <Menu.Positioner sideOffset={6} align="end" className="z-50">
-            <Menu.Popup className={cn(MENU_POPUP, 'w-64')}>
-              <Menu.LinkItem href={contextPath} closeOnClick className={MENU_ITEM} onClick={(event) => { onNavClick(event, contextPath); }}>
-                <UserRound size={15} aria-hidden="true" className="text-muted" />Perfil y contexto
-              </Menu.LinkItem>
-              <Menu.LinkItem href={terminalPath} closeOnClick className={MENU_ITEM} onClick={(event) => { onNavClick(event, terminalPath); }}>
-                <TerminalSquare size={15} aria-hidden="true" className="text-muted" />Abrir terminal
-              </Menu.LinkItem>
+            <Menu.Popup className={cn(MENU_POPUP, 'menu-pop w-64')}>
+              <AgentActionItems agent={agent} omit={['chat']} header={false} />
+              <Menu.Separator className="my-1 h-px bg-line" />
               <Menu.Item className={MENU_ITEM} disabled={loading} onClick={onReload}>
                 <RefreshCw size={15} aria-hidden="true" className="text-muted" />Sincronizar
               </Menu.Item>
@@ -125,9 +115,7 @@ export function ChatHeader({ agent, state, reason, salud, lane, sending, loading
             </div>
             <Section title="Estado del agente">
               <p className="m-0 flex items-center gap-2">
-                <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium', tone.pill)}>
-                  <span className={cn('size-1.5 rounded-full', tone.dot)} aria-hidden="true" />{meta.label}
-                </span>
+                <StatePill state={state} />
                 <span className="text-fg-2">{reason ?? meta.hint}</span>
               </p>
               <p className="m-0 text-fg-2">

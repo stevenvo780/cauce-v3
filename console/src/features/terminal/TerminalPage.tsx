@@ -3,7 +3,8 @@ import { useContext, useMemo, type ReactNode } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
-import { onNavClick } from '../../router';
+import { Button, Notice } from '../../components/kit';
+import { onNavClick, useRouteSearch } from '../../router';
 import { FleetProvider } from '../../shell/fleet';
 import { FleetContext, useFleet } from '../../shell/fleet-context';
 import { listTerminalTargets } from './api';
@@ -29,13 +30,15 @@ export function TerminalPage({ params }: TerminalPageProps = {}) {
   );
 }
 
-const NOTICE = 'notice shrink-0 rounded-none border-x-0 border-t-0';
+const BANNER = 'flex shrink-0 items-center gap-3 rounded-none border-x-0 border-t-0';
 
 function TerminalPageContent({ params }: TerminalPageProps) {
   const fleet = useFleet();
   const access = useConsoleAccess();
   const capability = useTerminalCapability();
   const targets = useResource('ultimate-terminal-targets', () => listTerminalTargets());
+  const modo = new URLSearchParams(useRouteSearch()).get('modo');
+  const requestedView = modo === 'tui' || modo === 'terminal' ? modo : undefined;
 
   usePolling(targets.reload, 15_000, { pausedWhile: targets.loading });
   usePolling(access.reload, 30_000, { pausedWhile: access.loading });
@@ -66,30 +69,30 @@ function TerminalPageContent({ params }: TerminalPageProps) {
     <div className="flex h-dvh min-h-0 flex-col max-[760px]:h-[calc(100dvh-56px-env(safe-area-inset-bottom))]">
       <h1 className="sr-only">Terminal de agentes</h1>
       {relay.status === 'unavailable' ? (
-        <div className={`${NOTICE} error`} role="status">
+        <Notice tone="danger" className={BANNER} role="status">
           <span>
             <strong>{relay.cause === 'sin-permiso' ? 'La terminal de agentes requiere permiso de control'
               : relay.cause === 'sin-comprobar' ? TERMINAL_RELAY_SIN_COMPROBAR_TITULO : 'Canal PTY no disponible en este stack'}</strong>
             {' '}<span>{relay.reason}</span>
           </span>
-        </div>
+        </Notice>
       ) : null}
       {failures.length ? (
-        <div className={`${NOTICE} error`} role="alert">
+        <Notice tone="danger" className={BANNER} role="alert">
           <span className="min-w-0 flex-1">
             <strong>El plano de control contestó a medias.</strong>{' '}
             {failures.map(({ endpoint, error: failure }) => `${endpoint}: ${failure?.message ?? ''}`).join(' · ')}
           </span>
-          <button className="button small secondary" type="button" onClick={refreshAll}>
+          <Button size="sm" onClick={refreshAll}>
             <RefreshCw size={13} aria-hidden="true" />Reintentar
-          </button>
-        </div>
+          </Button>
+        </Notice>
       ) : null}
       {missing ? (
-        <p className="notice m-4" role="status">
+        <Notice className="m-4" role="status">
           El servidor no observa al agente {tenantId}:{alias}.{' '}
           <a href="/terminal" onClick={(event) => { onNavClick(event, '/terminal'); }}>Elegir otro agente</a>
-        </p>
+        </Notice>
       ) : (
         <OperatorWorkspace
           agents={agents}
@@ -103,6 +106,7 @@ function TerminalPageContent({ params }: TerminalPageProps) {
           fleetLoading={loading}
           fleetError={error}
           onRefresh={refreshAll}
+          requestedView={requestedView}
         />
       )}
     </div>

@@ -2,18 +2,19 @@ import { ArrowDown, ArrowUp, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { FleetActivityAgent, FleetActivitySnapshot } from '../../api/types';
 import { AgentOrb } from '../../components/AgentOrb';
-import { Unknown } from '../../components/ui';
+import { AgentContextMenu, AgentKebab } from '../../components/agent-actions/AgentActionsMenu';
+import { Pill, StatePill } from '../../components/kit';
+import { BADGE_TONE, Unknown } from '../../components/ui';
 import { cn } from '../../cn';
 import { useMediaQuery } from '../../shell/use-media-query';
-import { STATE_TONE, TONE_CLASS, type Tone } from '../../status-tone';
+import { TONE_CLASS } from '../../status-tone';
 import {
-  agentDisplayName, agentKeyOf, estadoDeFila, formatAckAge, formatInFlightAge, presenciaDeLaFila, resumirSenales,
-  rowUrgency, sortAgents, type BadgeTone, type EstadosVivos, type SortKey,
+  agentDisplayName, estadoDeFila, formatAckAge, formatInFlightAge, presenciaDeLaFila, resumirSenales,
+  rowUrgency, sortAgents, type EstadosVivos, type SortKey,
 } from './activity';
+import { agentKey } from './agent-state';
 
-const BADGE_TONE: Record<BadgeTone, Tone> = {
-  online: 'ok', done: 'ok', running: 'ok', info: 'info', warning: 'warn', danger: 'danger', offline: 'neutral', unknown: 'neutral',
-};
+const refOf = (agent: FleetActivityAgent) => ({ tenantId: agent.tenant_id, alias: agent.alias });
 
 const COLUMNS: { key: SortKey; label: string; numeric?: boolean }[] = [
   { key: 'agente', label: 'Agente' },
@@ -45,7 +46,7 @@ export function FleetActivityTable({ snapshot, estados, only, selectedKey, onOpe
   const agents = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return sortAgents(snapshot?.agents ?? [], estados, sort.key, sort.descending)
-      .filter((agent) => !only || only.has(agentKeyOf(agent)))
+      .filter((agent) => !only || only.has(agentKey(agent)))
       .filter((agent) => !needle || `${agent.tenant_id} ${agent.alias} ${agent.display_name ?? ''} ${agent.harness_id ?? ''}`
         .toLowerCase().includes(needle));
   }, [snapshot, estados, only, query, sort]);
@@ -80,22 +81,24 @@ export function FleetActivityTable({ snapshot, estados, only, selectedKey, onOpe
       ) : phone ? (
         <ul className="m-0 list-none divide-y divide-line p-0">
           {agents.map((agent) => (
-            <li key={agentKeyOf(agent)}>
+            <li key={agentKey(agent)}>
+              <AgentContextMenu agent={refOf(agent)} omit={['office']} className={cn('group flex items-center pr-2', selectedKey === agentKey(agent) && 'bg-brand-soft')}>
               <button
                 type="button"
-                onClick={() => { onOpen(agentKeyOf(agent)); }}
-                className={cn('flex w-full cursor-pointer items-center gap-3 border-0 bg-transparent px-4 py-3 text-left hover:bg-subtle',
-                  selectedKey === agentKeyOf(agent) && 'bg-brand-soft')}
+                onClick={() => { onOpen(agentKey(agent)); }}
+                className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 border-0 bg-transparent py-3 pl-4 text-left"
               >
-                <AgentOrb seed={agentKeyOf(agent)} state={estados?.get(agentKeyOf(agent))} size={28} />
+                <AgentOrb seed={agentKey(agent)} state={estados?.get(agentKey(agent))} size={28} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-medium text-fg">{agentDisplayName(agent)}</span>
                   <span className="block truncate text-xs text-muted">
                     {agent.in_flight ?? 0} en vuelo · {agent.queued ?? 0} en cola · {formatAckAge(agent.seconds_since_last_ack, lookback)}
                   </span>
                 </span>
-                <StatePill agent={agent} estados={estados} />
+                <RowState agent={agent} estados={estados} />
               </button>
+              <AgentKebab agent={refOf(agent)} omit={['office']} />
+              </AgentContextMenu>
             </li>
           ))}
         </ul>
@@ -129,17 +132,20 @@ export function FleetActivityTable({ snapshot, estados, only, selectedKey, onOpe
             </thead>
             <tbody>
               {agents.map((agent) => {
-                const key = agentKeyOf(agent);
+                const key = agentKey(agent);
                 const estado = estadoDeFila(agent, estados);
                 return (
-                  <tr
+                  <AgentContextMenu
                     key={key}
+                    agent={refOf(agent)}
+                    omit={['office']}
+                    render={<tr />}
                     data-agent-key={key}
                     data-state={estado.live ?? agent.work_state ?? 'unknown'}
                     data-urgency={rowUrgency(agent.work_state, estado.live)}
                     data-highlighted={selectedKey === key ? 'true' : undefined}
-                    onClick={() => { onOpen(key); }}
-                    className={cn('cursor-pointer border-b border-line last:border-b-0 hover:bg-subtle', selectedKey === key && 'bg-brand-soft hover:bg-brand-soft')}
+                    onClick={(event) => { if (event.currentTarget.contains(event.target as Node)) onOpen(key); }}
+                    className={cn('group cursor-pointer border-b border-line last:border-b-0 hover:bg-subtle', selectedKey === key && 'bg-brand-soft hover:bg-brand-soft')}
                   >
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2.5">
@@ -152,15 +158,16 @@ export function FleetActivityTable({ snapshot, estados, only, selectedKey, onOpe
                           {agentDisplayName(agent)}
                         </button>
                         <span className="text-xs text-muted">{agent.tenant_id}</span>
+                        <AgentKebab agent={refOf(agent)} omit={['office']} reveal className="ml-auto" />
                       </div>
                     </td>
-                    <td className="px-4 py-2.5"><StatePill agent={agent} estados={estados} signals /></td>
+                    <td className="px-4 py-2.5"><RowState agent={agent} estados={estados} signals /></td>
                     <td className="px-4 py-2.5 text-right font-mono tabular-nums">{agent.in_flight ?? 0}</td>
                     <td className="px-4 py-2.5 text-right font-mono tabular-nums">{agent.queued ?? 0}</td>
                     <td className="px-4 py-2.5 text-right whitespace-nowrap text-fg-2">{formatInFlightAge(agent.oldest_in_flight_seconds)}</td>
                     <td className="px-4 py-2.5 text-right whitespace-nowrap text-fg-2">{formatAckAge(agent.seconds_since_last_ack, lookback)}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-fg-2"><Unknown value={agent.acks_recent} /></td>
-                  </tr>
+                  </AgentContextMenu>
                 );
               })}
             </tbody>
@@ -171,18 +178,14 @@ export function FleetActivityTable({ snapshot, estados, only, selectedKey, onOpe
   );
 }
 
-function StatePill({ agent, estados, signals = false }: { agent: FleetActivityAgent; estados?: EstadosVivos; signals?: boolean }) {
+function RowState({ agent, estados, signals = false }: { agent: FleetActivityAgent; estados?: EstadosVivos; signals?: boolean }) {
   const estado = estadoDeFila(agent, estados);
   const resumen = resumirSenales(agent.work_state ?? undefined, agent.flags, presenciaDeLaFila(agent), {
-    clave: estado.live ?? 'estado', label: estado.label, tone: estado.tone,
+    clave: estado.live ?? 'estado', label: estado.label, tone: estado.tone ?? 'unknown',
   });
-  const tone = TONE_CLASS[estado.live ? STATE_TONE[estado.live] : BADGE_TONE[estado.tone]];
   return (
     <span className="inline-flex flex-wrap items-center gap-1" title={resumen.detalle}>
-      <span className={cn('inline-flex h-5 shrink-0 items-center gap-1.5 rounded-full px-2 text-[11px] font-medium', tone.pill)}>
-        <span aria-hidden="true" className={cn('size-1.5 rounded-full', tone.dot)} />
-        {estado.label}
-      </span>
+      {estado.live ? <StatePill state={estado.live} /> : <Pill tone={BADGE_TONE[estado.tone]}>{estado.label}</Pill>}
       {signals ? resumen.senales.map((senal) => (
         <span key={senal.clave} className={cn('inline-flex h-5 items-center rounded-full px-2 text-[11px]', TONE_CLASS[BADGE_TONE[senal.tone]].pill)}>
           {senal.label}
