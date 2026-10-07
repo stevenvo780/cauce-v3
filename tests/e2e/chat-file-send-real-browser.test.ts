@@ -39,7 +39,7 @@ async function login(page: BrowserPage, tenant: FunctionalTenant): Promise<void>
 
 async function createMembership(page: BrowserPage, tenant: FunctionalTenant, active: Fixture): Promise<void> {
   await page.goto(`${active.baseUrl}/config`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('tab', { name: 'Espacios', exact: true }).click();
+  await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
   await page.getByRole('button', { name: 'Un solo recurso' }).click();
   await page.getByLabel('Recurso a crear').selectOption('membership');
   await page.getByLabel('Tenant', { exact: true }).fill(tenant.tenant);

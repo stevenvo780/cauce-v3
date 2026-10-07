@@ -42,10 +42,10 @@ async function openConversation(
   await page.getByLabel('Correo', { exact: true }).fill(active.pty.operatorEmail);
   await page.getByLabel('Contraseña', { exact: true }).fill(active.pty.operatorPassword);
   await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
-  const conversations = page.getByRole('link', { name: 'Conversaciones', exact: true });
+  const conversations = page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]');
   await conversations.waitFor({ state: 'visible', timeout: 20_000 });
   await conversations.click();
-  const agent = page.getByRole('button', { name: new RegExp(`^Conversación con ${active.pty.targetAlias}, ${active.pty.tenant},`) });
+  const agent = page.locator(`main a[href="/messages/${encodeURIComponent(active.pty.tenant)}/${encodeURIComponent(active.pty.targetAlias)}"]`);
   await agent.waitFor({ state: 'visible', timeout: 20_000 });
   await agent.click();
   await page.getByLabel(`Mensaje para ${active.pty.targetAlias}`, { exact: true })

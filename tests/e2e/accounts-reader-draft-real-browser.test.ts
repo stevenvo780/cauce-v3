@@ -58,12 +58,13 @@ async function loginReader(page: BrowserPage, active: AccountsAssignmentsFixture
   await page.getByLabel('Correo').fill(active.readerEmail);
   await page.getByLabel('Contraseña').fill(active.readerPassword);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: 'Conversaciones' }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
 }
 
 async function openAccounts(page: BrowserPage): Promise<void> {
-  await page.getByRole('button', { name: 'Herramientas' }).click();
-  const tools = page.getByRole('region', { name: 'Herramientas de Cauce' });
+  const mobile = await page.evaluate(() => window.innerWidth <= 760);
+  await page.getByRole('button', { name: mobile ? 'Más' : 'Gestión', exact: true }).click();
+  const tools = mobile ? page.getByRole('dialog', { name: 'Gestión', exact: true }) : page.getByRole('navigation', { name: 'Navegación principal', exact: true });
   await tools.getByRole('link', { name: 'Cuentas y cuotas' }).click();
   await page.getByRole('heading', { name: 'Cuentas y cuotas', exact: true }).waitFor({ timeout: 20_000 });
 }
@@ -139,18 +140,15 @@ describe('lectura de cuentas y borradores para lectores', () => {
       await page.getByRole('tab', { name: 'Inventario' }).click();
       await page.getByRole('row', { name: new RegExp(active.foreignPoolAccountId, 'u') })
         .waitFor({ state: 'visible', timeout: 20_000 });
+      await page.getByRole('button', { name: `Detalle de ${active.foreignPoolAccountId}`, exact: true }).click();
       const inventoryCopy = await page.locator('body').innerText();
       expect(inventoryCopy).toContain(`No visible: la paga Jhon`);
       expect(inventoryCopy).not.toContain(active.foreignExternalMarker);
       expect(inventoryCopy).not.toContain(active.foreignCredentialLocator);
 
-      const createForm = await page.evaluate(() => {
-        const panel = Array.from(document.querySelectorAll<HTMLElement>('section.panel'))
-          .find((element) => element.querySelector('h2')?.textContent.trim() === 'Alta de cuenta');
-        return panel ? Array.from(panel.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>(
-          'input, select, button',
-        )).map((control) => control.disabled) : null;
-      });
+      const createForm = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+        .filter((button) => button.textContent.trim() === 'Nueva cuenta')
+        .map((control) => control.disabled));
       expect(createForm).not.toBeNull();
       expect(createForm?.length).toBeGreaterThan(0);
       expect(createForm?.every(Boolean)).toBe(true);
@@ -162,30 +160,21 @@ describe('lectura de cuentas y borradores para lectores', () => {
       expect(editActions.length).toBeGreaterThanOrEqual(4);
       expect(editActions.every((action) => action.disabled)).toBe(true);
 
-      const routeDetail = page.getByRole('button', { name: `Detalle de ruteo de ${active.foreignPoolAccountId}` });
-      await routeDetail.click();
+      const routeDetail = page.getByRole('button', { name: `Detalle de ${active.foreignPoolAccountId}` });
+      await routeDetail.waitFor({ state: 'visible' });
       const expanded = await page.evaluate((accountId) => document.querySelector<HTMLButtonElement>(
-        `button[aria-label="Detalle de ruteo de ${accountId}"]`,
+        `button[aria-label="Detalle de ${accountId}"]`,
       )?.getAttribute('aria-expanded'), active.foreignPoolAccountId);
       expect(expanded).toBe('true');
-      await page.getByRole('heading', { name: 'Fallback para', exact: true }).waitFor({ state: 'visible' });
-      await page.getByText('Ningún alias la tiene configurada como fallback.', { exact: true })
-        .waitFor({ state: 'visible' });
+      await page.getByRole('heading', { name: 'Identidad', exact: true }).waitFor({ state: 'visible' });
+      expect(await page.locator('body').innerText()).not.toContain(active.foreignExternalMarker);
+      expect(await page.locator('body').innerText()).not.toContain(active.foreignCredentialLocator);
 
       await page.getByRole('tab', { name: 'Asignaciones' }).click();
-      await page.getByRole('heading', { name: 'Asignar', exact: true }).waitFor({ state: 'visible' });
-      const assignment = await page.evaluate(() => {
-        const panel = Array.from(document.querySelectorAll<HTMLElement>('section.panel'))
-          .find((element) => element.querySelector('h2')?.textContent.trim() === 'Asignar');
-        const controls = panel ? Array.from(panel.querySelectorAll<HTMLSelectElement | HTMLInputElement | HTMLButtonElement>(
-          'select, input, button',
-        )) : [];
-        return controls.map((control) => ({
-          disabled: control.disabled,
-          role: control.getAttribute('role'),
-          label: control.getAttribute('aria-label') ?? control.closest('label')?.textContent.trim() ?? '',
-        }));
-      });
+      await page.getByRole('heading', { name: 'Orden de fallback efectivo', exact: true }).waitFor({ state: 'visible' });
+      const assignment = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+        .filter((button) => button.textContent.trim() === 'Nueva asignación')
+        .map((control) => ({ disabled: control.disabled, label: control.textContent.trim() })));
       expect(assignment.length).toBeGreaterThan(0);
       expect(assignment.every((control) => control.disabled)).toBe(true);
       const matrixCell = await page.evaluate((alias) => Array.from(
@@ -194,6 +183,13 @@ describe('lectura de cuentas y borradores para lectores', () => {
         .map((button) => ({ label: button.getAttribute('aria-label'), disabled: button.disabled })), `Isa/${active.readerAlias}`);
       expect(matrixCell.length).toBeGreaterThan(0);
       expect(matrixCell.every((cell) => cell.disabled)).toBe(true);
+      await page.getByRole('button', { name: `Isa/${active.readerAlias} × ${active.foreignPoolAccountId}: sin techo`, exact: true }).waitFor({ state: 'visible' });
+      await page.getByRole('list', { name: 'Orden de fallback por agente', exact: true }).locator('li').filter({ hasText: `Isa/${active.readerAlias}` }).getByText('sin fallback: los reintentos corren igual que el intento 1', { exact: true }).waitFor({ state: 'visible' });
+      const accountRouting = await page.evaluate((accountId) => Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label]'))
+        .map((button) => button.getAttribute('aria-label') ?? '')
+        .filter((label) => label.includes(` × ${accountId}: `)), active.foreignPoolAccountId);
+      expect(accountRouting.length).toBeGreaterThan(0);
+      expect(accountRouting.every((label) => label.endsWith(': sin techo'))).toBe(true);
       await page.getByRole('tab', { name: 'Consumo' }).click();
       await page.getByRole('heading', { name: 'Proveedores', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
       await page.getByRole('tab', { name: 'Inventario' }).click();

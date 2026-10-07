@@ -42,7 +42,7 @@ async function loginAndCreateMembership(tenant: FunctionalTenant, viewport: { wi
   });
   if (!createMembership) return page;
   await page.goto(`${fixture.baseUrl}/config`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('tab', { name: 'Espacios', exact: true }).click();
+  await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
   await page.getByRole('button', { name: 'Un solo recurso' }).click();
   await page.getByLabel('Recurso a crear').selectOption('membership');
   await page.getByLabel('Tenant', { exact: true }).fill(tenant.tenant);

@@ -302,13 +302,14 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     expect(browserCookie?.secure).toBe(true);
     if (!browserCookie) throw new Error('authenticated browser omitted its secure operator session');
 
-    await page.getByRole('button', { name: 'Herramientas' }).click();
-    const menu = page.getByRole('region', { name: 'Herramientas de Cauce' });
+    await page.getByRole('button', { name: 'Más', exact: true }).click();
+    const menu = page.getByRole('dialog', { name: 'Gestión', exact: true });
     await menu.waitFor({ state: 'visible', timeout: 10_000 });
-    await menu.getByRole('link', { name: 'Ajustes y altas' }).click();
-    await page.getByRole('heading', { name: 'Ajustes y altas' }).waitFor({ timeout: 20_000 });
+    await menu.getByRole('link', { name: 'Ajustes' }).click();
+    await page.getByRole('heading', { name: 'Ajustes' }).waitFor({ timeout: 20_000 });
     const artifactDirectory = process.env.CAUCE_E2E_ARTIFACT_DIR;
-    const openContext = page.getByRole('button', { name: `Abrir contexto de ${active.tenant}/${active.targetAlias}` });
+    await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
+    const openContext = page.getByRole('link', { name: `Perfil y contexto de ${active.tenant}/${active.targetAlias}` });
     try {
       await openContext.waitFor({ state: 'visible', timeout: 20_000 });
     } catch (error) {
@@ -334,7 +335,7 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
       }
     });
     await page.getByLabel('Responsabilidades', { exact: true }).fill(marker);
-    await page.getByLabel('Motivo de este cambio de perfil (lo escribe una persona y queda en la auditoría)')
+    await page.getByLabel('Motivo de este cambio de perfil', { exact: true })
       .fill('Verificar persistencia real del perfil canónico en una sesión local aislada.');
     await page.getByRole('button', { name: 'Guardar y aplicar perfil' }).click();
     try {
