@@ -51,7 +51,7 @@ const borrowedAccount = {
 it.each([
   ['explicitly denied', false],
   ['unknown after access failure', true],
-] as const)('keeps account and routing data inspectable when config.write is %s without sending a mutation', async (_label, unknown) => {
+] as const)('keeps account data inspectable when config.write is %s without sending a mutation', async (_label, unknown) => {
   let posts = 0;
   accessWithoutWrite(unknown);
   configuration({
@@ -72,11 +72,11 @@ it.each([
   expect(row).not.toBeNull();
   if (!row) return;
 
-  expect(within(row).getByRole('button', { name: /detalle de ruteo/i })).toBeEnabled();
+  expect(within(row).getByRole('button', { name: /detalle de/i })).toBeEnabled();
   expect(within(row).getByRole('button', { name: /editar/i })).toBeDisabled();
   expect(within(row).getByRole('button', { name: /habilitar|deshabilitar/i })).toBeDisabled();
-  await user.click(within(row).getByRole('button', { name: /detalle de ruteo/i }));
-  expect(await inventory.findByRole('heading', { name: /fallback para/i })).toBeInTheDocument();
+  await user.click(within(row).getByRole('button', { name: /detalle de/i }));
+  expect(await inventory.findByRole('heading', { name: /identidad/i })).toBeInTheDocument();
   expect(inventory.getByText('org-9f21')).toBeInTheDocument();
   expect(inventory.getByRole('button', { name: /nueva cuenta/i })).toBeDisabled();
 
@@ -140,7 +140,7 @@ it('lista el inventario con pagador, publicación al pool y estado', async () =>
     expect(within(row).getByText('HABILITADA')).toBeInTheDocument();
   }
   // The identifiers only the payer sees live in the row detail.
-  await user.click(within(row ?? document.body).getByRole('button', { name: /detalle de ruteo/i }));
+  await user.click(within(row ?? document.body).getByRole('button', { name: /detalle de/i }));
   expect(inventario.getByText('org-9f21')).toBeInTheDocument();
   expect(inventario.getByText('env_path')).toBeInTheDocument();
 });
@@ -155,7 +155,7 @@ it('dice que los campos del pagador no son visibles en vez de mostrarlos vacíos
   const row = cell.closest('tr');
   expect(row).not.toBeNull();
   if (row) {
-    await user.click(within(row).getByRole('button', { name: /detalle de ruteo/i }));
+    await user.click(within(row).getByRole('button', { name: /detalle de/i }));
     expect(inventario.getAllByText(/no visible: la paga pablo/i)).toHaveLength(2);
     expect(inventario.queryByText('UNKNOWN')).not.toBeInTheDocument();
   }

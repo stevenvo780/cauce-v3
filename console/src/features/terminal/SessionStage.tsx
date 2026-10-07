@@ -1,8 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { AlertTriangle, CircleOff, Loader2, MonitorPlay, Radio, TerminalSquare, X } from 'lucide-react';
+import { AlertTriangle, CircleOff, Loader2, MonitorPlay, TerminalSquare, X } from 'lucide-react';
 import { useApi } from '../../api/context';
-import type { ConsoleAccess, MessagePage, TerminalCapability } from '../../api/types';
-import type { Resource } from '../../api/use-resource';
+import type { ConsoleAccess, TerminalCapability } from '../../api/types';
 import { cn } from '../../cn';
 import { AgentOrb } from '../../components/AgentOrb';
 import { AgentContextMenu } from '../../components/agent-actions/AgentActionsMenu';
@@ -11,7 +10,6 @@ import { redirect } from '../../router';
 import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
 import { TerminalApiError, type TerminalSessionGrant, type TerminalTargetsSnapshot } from './api';
 import { prorrogarSesion } from './api-control';
-import { AgentFeed } from './AgentFeed';
 import { ControlDeTui } from './ControlDeTui';
 import { explicarDenegacionPty, traducirCodigosEnTexto, type DenegacionExplicada } from './denegaciones';
 import {
@@ -41,7 +39,7 @@ const PtyTerminal = lazy(() => import('./PtyTerminal'));
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 
-type StageView = 'feed' | 'tui' | 'terminal';
+type StageView = 'tui' | 'terminal';
 
 function isTuiMode(mode: string | undefined): boolean {
   return mode === LIVE_TUI_MODE || mode === WRITABLE_TUI_MODE;
@@ -90,7 +88,6 @@ interface StageProps {
   access?: ConsoleAccess;
   capability?: TerminalCapability;
   targets?: TerminalTargetsSnapshot;
-  messages: Resource<MessagePage>;
   summary: string;
   grants: Record<string, TerminalSessionGrant>;
   closedChannels: Record<string, true | undefined>;
@@ -106,12 +103,12 @@ interface StageProps {
 }
 
 export function SessionStage({
-  agent, sessionId, sessionToken, state, memory, access, capability, targets, messages, summary,
+  agent, sessionId, sessionToken, state, memory, access, capability, targets, summary,
   grants, closedChannels, onRequestGrant, onMemory, onChannelClosed, onReleaseChannel, onReconciliarPlazas, onRefresh, requestedView,
 }: StageProps) {
   const api = useApi();
   const grant = grants[sessionId] as TerminalSessionGrant | undefined;
-  const [view, setView] = useState<StageView>(() => (grant ? (isTuiMode(grant.target.mode) ? 'tui' : 'terminal') : requestedView ?? 'feed'));
+  const [view, setView] = useState<StageView>(() => (grant ? (isTuiMode(grant.target.mode) ? 'tui' : 'terminal') : requestedView ?? 'tui'));
   /** A view the address asked for, kept until its channel can be requested: the gates load after the stage. */
   const pendingViewRef = useRef(requestedView);
   const [requesting, setRequesting] = useState(false);
@@ -293,8 +290,7 @@ export function SessionStage({
 
   function choose(next: StageView) {
     if (next === 'tui') chooseTui();
-    else if (next === 'terminal') chooseTerminal();
-    else setView('feed');
+    else chooseTerminal();
   }
   chooseRef.current = choose;
 
@@ -305,7 +301,6 @@ export function SessionStage({
   }
 
   const options: ModeOption<StageView>[] = [
-    { id: 'feed', label: 'Feed', icon: Radio, title: `Mensajes recientes de ${agent.alias}, sólo lectura` },
     {
       id: 'tui', label: 'TUI', icon: MonitorPlay, disabled: !tuiEnabled || requesting,
       title: `${liveTuiLabel}: ${tuiReason}`,
@@ -374,7 +369,7 @@ export function SessionStage({
         </div>
       ) : null}
 
-      {view === 'feed' && ptyClosedAll ? (
+      {ptyClosedAll ? (
         <Notice tone="neutral" icon={<CircleOff size={14} aria-hidden="true" />}>
           <strong className="font-medium text-fg-2">{channelLabel}.</strong> {channelReason}
         </Notice>
@@ -405,9 +400,7 @@ export function SessionStage({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        {view === 'feed' ? (
-          <AgentFeed agent={agent} messages={messages} />
-        ) : paneMatchesView && paneEnabled && paneSocketPath ? (
+        {paneMatchesView && paneEnabled && paneSocketPath ? (
           <Suspense fallback={<p className="m-0 p-4 text-[13px] text-muted" role="status">Cargando Xterm…</p>}>
             <PtyTerminal
               websocketPath={paneSocketPath}
@@ -427,7 +420,7 @@ export function SessionStage({
             <h3 className="m-0 text-sm font-semibold">
               {requesting ? 'Abriendo el canal…' : viewEnabled ? 'No hay canal PTY abierto' : wantsTui ? liveTuiLabel : channelLabel}
             </h3>
-            {requesting || viewEnabled ? null : (
+            {requesting || viewEnabled || ptyClosedAll ? null : (
               <p className="m-0 max-w-md text-[13px] text-muted">{wantsTui ? tuiReason : channelReason}</p>
             )}
             {!requesting && viewEnabled ? (

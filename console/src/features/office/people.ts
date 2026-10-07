@@ -1,6 +1,7 @@
 import type { Avatar } from './avatar';
 import { OPERATOR_ID, paintRows, rect, type Ctx, type SpriteCache } from './paint';
 import { OFFICE } from './palette';
+import { drawProp } from './props';
 import type { Actor } from './simulation';
 import {
   BLANKET_X, BLANKET_Y, BUBBLE, CHAR_H, CHAR_W, GLYPH_Z, GLYPH_Z_SMALL, ICONS, LIE_H, LIE_W, blanketRows,
@@ -30,7 +31,8 @@ export interface ActorLook {
   head: { x: number; y: number };
 }
 
-const SEATED: ReadonlySet<string> = new Set(['sit', 'type', 'lie', 'ghost']);
+const SEATED: ReadonlySet<string> = new Set(['sit', 'type', 'lie', 'ghost', 'read', 'eat']);
+const CHAT_ICONS: readonly IconName[] = ['heart', 'idea', 'coffee', 'note'];
 const BREATH = 1.6;
 
 /** `gaze` turns someone standing around towards the operator walking up to them. */
@@ -57,6 +59,7 @@ export function actorLook(actor: Actor, gaze: Facing | null = null): ActorLook {
   let dy = 0;
   if (seated) dy = facing === 'down' ? 5 : 3;
   if (actor.pose === 'type' && facing === 'up') dy += Math.floor(actor.clock * 6) % 2;
+  if (actor.pose === 'cook' || actor.pose === 'chat') dy += Math.floor(actor.clock * (actor.pose === 'cook' ? 4 : 2.5)) % 2;
   if (game === 'arcade' || game === 'foosball') dy += Math.floor(actor.clock * (game === 'arcade' ? 5 : 3)) % 2;
   let dx = 0;
   if (actor.behaviour.shake && actor.pose === 'sit') dx = Math.floor(actor.clock * 14) % 3 === 0 ? 1 : 0;
@@ -124,9 +127,10 @@ export function drawActor(ctx: Ctx, sprites: SpriteCache, actor: Actor, look: Ac
   ctx.drawImage(sprite, look.x, look.y);
   if (look.ghost) ctx.globalAlpha /= 0.55;
   if (actor.pose === 'play') drawToy(ctx, actor, look, time);
+  drawProp(ctx, actor, look, time);
   const cx = look.x + CHAR_W / 2;
   const handY = look.y + 16;
-  if ((actor.carrying || actor.pose === 'handover') && look.facing !== 'up') {
+  if ((actor.carry === 'paper' || actor.pose === 'handover') && look.facing !== 'up') {
     const px = look.facing === 'left' ? cx - 9 : look.facing === 'right' ? cx + 3 : cx - 3;
     rect(ctx, px - 1, handY - 4, 7, 8, OFFICE.outline);
     rect(ctx, px, handY - 3, 5, 6, OFFICE.paper);
@@ -166,13 +170,21 @@ export function drawActorOverlay(ctx: Ctx, actor: Actor, look: ActorLook, time: 
   }
   const icon: IconName | null = actor.bubble === 'mail' ? 'mail'
     : actor.bubble === 'alert' ? 'alert'
-      : actor.bubble === 'paper' ? 'paper' : null;
+      : actor.bubble === 'paper' ? 'paper' : chatIcon(actor, time);
   if (icon) {
     const bob = Math.floor(time * 2.5) % 2;
     const bx = look.labelAbove ? cx + 6 : cx + 2;
     const by = look.labelAbove ? look.y - 2 - bob : look.y - 9 - bob;
     bubble(ctx, icon, bx, by);
   }
+}
+
+function chatIcon(actor: Actor, time: number): IconName | null {
+  if (actor.bubble !== 'chat') return null;
+  const pair = actor.rest.pair ?? 0;
+  const turn = Math.floor(time / 2.6 + pair * 0.37);
+  if (turn % 2 !== (actor.rest.variant ?? 0)) return null;
+  return CHAT_ICONS[(turn + pair) % CHAT_ICONS.length];
 }
 
 export interface TapMarker { x: number; y: number; ok: boolean; age: number }

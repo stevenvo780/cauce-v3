@@ -12,9 +12,9 @@ const EMPTY: PreferenceSeed = { favorites: [], appearances: [] };
 export const DEMO_PREFERENCES: PreferenceSeed = {
   favorites: [['Steven', 'argos'], ['Miguel', 'kratos']],
   appearances: [
-    { tenant_id: 'Miguel', alias: 'kratos', glyph: '🦉', hue: 200, style: 'aurora' },
-    { tenant_id: 'Steven', alias: 'zeus', glyph: '⚡', hue: 55, style: 'pulse' },
-    { tenant_id: 'Pablo', alias: 'dedalo', glyph: null, hue: 140, style: 'pixel' },
+    { tenant_id: 'Miguel', alias: 'kratos', glyph: 'px:robot-face', hue: 200, style: 'aurora' },
+    { tenant_id: 'Steven', alias: 'zeus', glyph: 'px:zap', hue: 55, style: 'pulse' },
+    { tenant_id: 'Pablo', alias: 'dedalo', glyph: 'px:code', hue: 140, style: 'pixel' },
   ],
 };
 

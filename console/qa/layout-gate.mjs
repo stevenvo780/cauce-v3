@@ -26,11 +26,11 @@ const ALIAS_MEDIDO = 'Steven/jarvis';
    with a conversation open, so it is measured through the deep link the roster itself navigates to. */
 const HILO = `/messages/${ALIAS_MEDIDO}`;
 
-/* Bare /terminal is the agent picker; the stage with its header, mode switch and pane only exists
-   with an agent open, so it is measured through the deep link the picker itself navigates to. */
+/* Bare /terminal is only a pointer to the sidebar roster; the stage with its header, mode switch and
+   pane only exists with an agent open, so it is measured through the deep link the roster navigates to. */
 const TERMINAL_AGENTE = `/terminal/${ALIAS_MEDIDO}`;
 
-const ROUTES = ['/', '/overview', '/live', '/accounts', '/messages', HILO, `${HILO}?view=context`, '/messages/Steven/fantasma', '/queues', '/observability', '/config', '/terminal', TERMINAL_AGENTE, '/ayuda'];
+const ROUTES = ['/', '/live', '/accounts', '/messages', HILO, `${HILO}?view=context`, '/messages/Steven/fantasma', '/queues', '/observability', '/config', '/terminal', TERMINAL_AGENTE, '/ayuda'];
 
 /** What a route paints once its data landed. The console polls on a timer, so a quiet network never
     comes: without this the gate would measure a loading frame and record it as the layout. */

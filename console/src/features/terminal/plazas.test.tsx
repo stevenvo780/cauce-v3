@@ -326,7 +326,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     const vista = renderAt('/terminal/Steven/zeus');
     await waitFor(() => { expect(pending).toHaveLength(1); });
     go('/terminal');
-    await screen.findByText('Elegí un agente');
+    await screen.findByText('Elegí un agente en la barra lateral');
 
     go('/terminal/Steven/zeus');
     await waitFor(() => { expect(pending).toHaveLength(2); });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AgentAppearanceSchema, AgentAppearanceUpdateSchema, AgentPreferencesSchema, isAgentGlyph,
-  MAX_AGENT_FAVORITES_PER_HUMAN,
+  AgentAppearanceSchema, AgentAppearanceUpdateSchema, AgentPreferencesSchema, isAgentGlyph, isPixelIconRef,
+  MAX_AGENT_FAVORITES_PER_HUMAN, PIXEL_ICON_PREFIX, pixelIconName,
 } from '../src/index.js';
 
 describe('agent glyph contract', () => {
@@ -66,6 +66,48 @@ describe('agent glyph contract', () => {
 
   it.each([null, 1, {}, ['K']])('rejects the non-string %j', (value) => {
     expect(isAgentGlyph(value)).toBe(false);
+  });
+});
+
+describe('pixel icon references', () => {
+  it.each(['px:robot', 'px:a', 'px:0', 'px:robot-face', 'px:git-branch', 'px:chart-bar-big', 'px:1234567890123'])('accepts %s', (ref) => {
+    expect(isPixelIconRef(ref)).toBe(true);
+    expect(isAgentGlyph(ref)).toBe(true);
+    expect(pixelIconName(ref)).toBe(ref.slice(PIXEL_ICON_PREFIX.length));
+  });
+
+  it.each([
+    ['empty name', 'px:'],
+    ['too long', 'px:12345678901234'],
+    ['uppercase', 'px:Robot'],
+    ['space', 'px:robot face'],
+    ['padded', ' px:robot'],
+    ['path traversal', 'px:../x'],
+    ['slash', 'px:a/b'],
+    ['dot', 'px:a.b'],
+    ['leading hyphen', 'px:-robot'],
+    ['trailing hyphen', 'px:robot-'],
+    ['double hyphen', 'px:a--b'],
+    ['underscore', 'px:a_b'],
+    ['newline', 'px:robot\n'],
+    ['non ascii', 'px:rób'],
+    ['uppercase prefix', 'PX:robot'],
+  ])('rejects %s', (_label, ref) => {
+    expect(isPixelIconRef(ref)).toBe(false);
+    expect(isAgentGlyph(ref)).toBe(false);
+    expect(pixelIconName(ref)).toBeUndefined();
+  });
+
+  it('is not a glyph that merely starts with p', () => {
+    expect(pixelIconName('p')).toBeUndefined();
+    expect(pixelIconName(null)).toBeUndefined();
+    expect(isAgentGlyph('px')).toBe(false);
+  });
+
+  it('flows through the appearance schemas', () => {
+    const body = { glyph: 'px:robot', hue: 10, style: 'pixel', expected_revision: null };
+    expect(AgentAppearanceUpdateSchema.parse(body).glyph).toBe('px:robot');
+    expect(AgentAppearanceUpdateSchema.safeParse({ ...body, glyph: 'px:../x' }).success).toBe(false);
   });
 });
 

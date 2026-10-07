@@ -225,23 +225,17 @@ const HOMONIMOS = {
   ],
 };
 
-it('el detalle de fallback nombra al agente del cliente que TIENE el binding, no a su homónimo', async () => {
+it('la matriz marca el binding en la fila del cliente que lo TIENE, no en la de su homónimo', async () => {
   mock({ providers: [provider('claude-max', 60, 'ok')] }, HOMONIMOS);
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
-  await openTab(user, 'Inventario');
-  await user.click(screen.getByRole('button', { name: /Detalle de ruteo de claude-max/ }));
-
-  const detail = document.querySelector('tr.row-detail');
-  if (!(detail instanceof HTMLElement)) throw new Error('detalle no abierto');
-  expect(detail).toHaveTextContent('Steven/claude');
-  expect(detail).toHaveTextContent('Claude de Steven');
-  expect(detail).toHaveTextContent('claw-steven-claude');
+  await openTab(user, 'Asignaciones');
+  expect(screen.getByRole('button', { name: /Steven\/claude × claude-max: #1 · prio 0/ })).toHaveAttribute('title', 'Techo otorgado por Steven');
+  expect(document.body.textContent).not.toMatch(/PRIMARIA/i);
   // The homonym of the other client has nothing to do with this account.
-  expect(detail.textContent).not.toContain('claw-miguel-claude');
-  expect(detail.textContent).not.toContain('Claude de Miguel');
+  expect(screen.getByRole('button', { name: /Miguel\/claude × claude-max: sin techo/ })).toBeInTheDocument();
 });
 
 it('el binding de un cliente no tapa al homónimo del otro en «Agentes sin bindings»', async () => {

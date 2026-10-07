@@ -92,7 +92,7 @@ async function openPtyChannel(user: ReturnType<typeof userEvent.setup>) {
   return StubWebSocket.last();
 }
 
-it('en /terminal ofrece las tarjetas de agentes y no escribe mensajes, replay ni cancel', async () => {
+it('en /terminal sólo manda a elegir un agente en la barra lateral y no escribe mensajes, replay ni cancel', async () => {
   let messagePosts = 0;
   let replayPosts = 0;
   let cancelPosts = 0;
@@ -104,29 +104,28 @@ it('en /terminal ofrece las tarjetas de agentes y no escribe mensajes, replay ni
   renderWithApi(<TerminalPage />);
 
   expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' })).toBeInTheDocument();
-  expect(await screen.findByText('Aquí no se puede espejar ninguna TUI', { exact: false })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 2, name: 'Elegí un agente en la barra lateral' })).toBeInTheDocument();
   for (const textoIngles of ['Ultimate Terminal', 'Fleet live', 'Capability gates', 'Adapters', 'No active target']) {
     expect(screen.queryByText(textoIngles), `rótulo visible sin traducir: ${textoIngles}`).not.toBeInTheDocument();
   }
-  const cards = await within(await screen.findByRole('list', { name: 'Agentes' })).findAllByRole('link');
-  expect(cards.length).toBeGreaterThan(1);
-  expect(screen.getByRole('link', { name: /^argos/ })).toHaveAttribute('href', '/terminal/Steven/argos');
+  expect(screen.queryByRole('list', { name: 'Agentes' })).not.toBeInTheDocument();
   expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
   expect(screen.queryByRole('textbox', { name: /entrada para/i })).not.toBeInTheDocument();
   expect(messagePosts + replayPosts + cancelPosts).toBe(0);
 }, 20_000);
 
-it('abre el agente pedido por la dirección con Feed, TUI y Terminal en un solo selector', async () => {
+it('abre el agente pedido por la dirección con TUI y Terminal en un solo selector', async () => {
   renderAgent('kant');
 
   expect(await screen.findByRole('heading', { level: 2, name: /kant/ })).toBeInTheDocument();
   const modes = screen.getByRole('group', { name: 'Vista de la sesión' });
-  expect(within(modes).getAllByRole('button').map((button) => button.textContent)).toEqual(['Feed', 'TUI', 'Terminal']);
-  expect(within(modes).getByRole('button', { name: 'Feed' })).toHaveAttribute('aria-pressed', 'true');
+  expect(within(modes).getAllByRole('button').map((button) => button.textContent)).toEqual(['TUI', 'Terminal']);
+  expect(within(modes).getByRole('button', { name: 'TUI' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.queryByRole('button', { name: 'Feed' })).not.toBeInTheDocument();
   expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
 });
 
-it('con el PTY en 501 el agente se ve en Feed y TUI y Terminal quedan cerrados', async () => {
+it('con el PTY en 501 TUI y Terminal quedan cerrados y el escenario dice por qué', async () => {
   server.use(
     http.get('http://localhost/v3/console/access', () => HttpResponse.json({
       subject: 'Steven:kant', roles: ['operator'], permissions: ['message.publish', 'delivery.replay'],
@@ -137,75 +136,7 @@ it('con el PTY en 501 el agente se ve en Feed y TUI y Terminal quedan cerrados',
 
   expect(await screen.findByRole('button', { name: /^Terminal$/i })).toBeDisabled();
   expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Feed' })).toBeEnabled();
-});
-
-it('con el canal cerrado el selector no ofrece ninguna TUI y dice por qué', async () => {
-  renderWithApi(<TerminalPage />);
-
-  expect(await screen.findByText('Aquí no se puede espejar ninguna TUI', { exact: false })).toBeInTheDocument();
-  expect(screen.queryByText('Elegí un agente para abrir su TUI')).not.toBeInTheDocument();
-});
-
-it('con canal y TUI la tarjeta del alias que emite lo marca y lleva primero', async () => {
-  enableCapability();
-  serveTargets([target({ tenant_id: 'Steven', alias: 'jarvis', modes: ['shell', 'harness'] })]);
-  renderWithApi(<TerminalPage />);
-
-  const first = (await within(await screen.findByRole('list', { name: 'Agentes' })).findAllByRole('link'))[0];
-  expect(first).toHaveTextContent(/jarvis/);
-  expect(first).toHaveTextContent('TUI en vivo');
-  expect(screen.queryByText(/Aquí no se puede espejar|Ningún alias está emitiendo/)).not.toBeInTheDocument();
-}, 20_000);
-
-it('sin inventario de destinos NO dice que ningún alias emita: dice que no se pudo comprobar', async () => {
-  enableCapability();
-  serveTargets(null);
-  renderWithApi(<TerminalPage />);
-
-  expect(await screen.findByText('No se sabe qué alias pueden emitir su TUI', { exact: false })).toBeInTheDocument();
-  expect(screen.queryByText('Ningún alias está emitiendo su TUI ahora mismo', { exact: false })).not.toBeInTheDocument();
-});
-
-it('con inventario publicado y vacío de TUI sí dice que ninguno emite', async () => {
-  enableCapability();
-  serveTargets([target({ tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] })]);
-  renderWithApi(<TerminalPage />);
-
-  expect(await screen.findByText('Ningún alias está emitiendo su TUI ahora mismo', { exact: false })).toBeInTheDocument();
-});
-
-it('cada tarjeta lleva un estado PTY explícito, nunca un botón gris sin motivo', async () => {
-  enableCapability();
-  serveTargets([
-    target({ tenant_id: 'Steven', alias: 'jarvis', modes: ['shell', 'harness'] }),
-    target({ tenant_id: 'Steven', alias: 'argos', pty_state: 'not_installed', reason: 'El agente PTY no está instalado en ctrl-infra.' }),
-    target({ tenant_id: 'Isa', alias: 'salva', authorized: false, reason: 'attribution_required: falta identidad por persona.' }),
-  ]);
-  renderWithApi(<TerminalPage />);
-
-  expect(await screen.findByRole('link', { name: /^jarvis.*TUI en vivo/i })).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: /^argos.*Conexión sin comprobar/i })).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: /^salva.*Sin autoridad/i })).toBeInTheDocument();
-  // An alias the inventory never mentioned is UNKNOWN, never silently "available".
-  expect(screen.getByRole('link', { name: /^kant.*Conexión sin comprobar/i })).toBeInTheDocument();
-});
-
-it('un alias con PTY pero SIN modo harness no se pinta en verde: lleva su motivo', async () => {
-  enableCapability();
-  serveTargets([
-    target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] }),
-    target({ tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'], reason: 'ok' }),
-  ]);
-  renderWithApi(<TerminalPage />);
-
-  const conTui = await screen.findByRole('link', { name: /^zeus/i });
-  const sinTui = screen.getByRole('link', { name: /^jarvis/i });
-
-  expect(conTui).toHaveTextContent('TUI en vivo');
-  expect(sinTui).toHaveTextContent('Sin TUI que emitir');
-  expect(within(sinTui).getByText('Sin TUI que emitir')).toHaveAttribute('title', expect.stringContaining('no publica el modo harness'));
-  expect(sinTui).not.toHaveTextContent('TUI en vivo');
+  expect(await screen.findByRole('heading', { level: 3, name: 'TUI no habilitada' })).toBeInTheDocument();
 });
 
 it('disables PTY for a denied destination and shows the server motive, not an empty tooltip', async () => {
@@ -457,38 +388,6 @@ it('surfaces a 409 conflict from the gateway inline, without a modal and without
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(document.body.textContent).not.toContain('agent_offline');
   expect(StubWebSocket.instances).toHaveLength(0);
-});
-
-it('el Feed lista los mensajes del agente sin escribir nada', async () => {
-  const user = userEvent.setup();
-  server.use(http.get('*/v3/console/messages', () => HttpResponse.json({
-    items: [{
-      message_id: 'm-1', tenant_id: 'Steven', room_id: 'grp.steven', actor_alias: 'kant',
-      body_preview: 'Terminé la migración', created_at: new Date().toISOString(), deliveries: [],
-    }],
-  })));
-  renderAgent('kant');
-
-  await user.click(await screen.findByRole('button', { name: 'Feed' }));
-  expect(await screen.findByText('Terminé la migración')).toBeInTheDocument();
-  expect(screen.getByRole('list', { name: /mensajes recientes de kant/i })).toBeInTheDocument();
-});
-
-it('el Feed muestra el perfil humano autenticado y no el alias técnico de ruteo', async () => {
-  const user = userEvent.setup();
-  server.use(http.get('*/v3/console/messages', () => HttpResponse.json({
-    items: [{
-      message_id: 'm-2', tenant_id: 'Steven', room_id: 'grp.steven', actor_alias: 'kant',
-      author: { kind: 'human', subject_id: `human:${'a'.repeat(64)}`, display_name: 'Marta' },
-      body_preview: 'Revisá el deploy', created_at: new Date().toISOString(),
-      deliveries: [{ delivery_id: 'd-1', recipient_tenant: 'Steven', recipient_alias: 'kant', status: 'started' }],
-    }],
-  })));
-  renderAgent('kant');
-
-  await user.click(await screen.findByRole('button', { name: 'Feed' }));
-  expect(await screen.findByText('Marta')).toBeInTheDocument();
-  expect(screen.getByText('Revisá el deploy')).toBeInTheDocument();
 });
 
 it('con un 403 dice que falta el permiso y NUNCA que el relay no está desplegado', async () => {

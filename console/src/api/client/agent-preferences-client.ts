@@ -1,12 +1,12 @@
 import {
-  AGENT_APPEARANCE_STYLES, AgentAppearanceSchema, AgentPreferencesSchema, isAgentGlyph,
+  AGENT_APPEARANCE_STYLES, AgentAppearanceSchema, AgentPreferencesSchema, isAgentGlyph, isPixelIconRef, pixelIconName, PIXEL_ICON_PREFIX,
   type AgentAppearance, type AgentAppearanceStyle, type AgentPreferences,
 } from '@cauce/protocol/agent-preferences';
 import { ApiError } from './core';
 import type { RequestFn } from './system-client';
 
 export type { AgentAppearance, AgentAppearanceStyle, AgentFavorite, AgentPreferences } from '@cauce/protocol/agent-preferences';
-export { AGENT_APPEARANCE_STYLES, isAgentGlyph };
+export { AGENT_APPEARANCE_STYLES, isAgentGlyph, isPixelIconRef, pixelIconName, PIXEL_ICON_PREFIX };
 
 /** What the operator edits: the server owns `revision`, `updated_at` and `updated_by`. */
 export interface AppearanceDraft {

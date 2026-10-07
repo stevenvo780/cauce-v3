@@ -106,7 +106,6 @@ it('en la terminal del operador, un fallo de la sesión queda contenido en su pa
         agents={[agente]}
         agentId={agente.id}
         live={new Map()}
-        messages={{ loading: false, reload: () => Promise.resolve({ error: new Error('sin lectura') }) }}
         summary="1 agente"
         fleetLoading={false}
         onRefresh={() => undefined}

@@ -2,7 +2,6 @@
 import { screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { renderWithApi } from './test/render';
-import { LandingPage } from './features/landing/LandingPage';
 import { LiveFleetPage } from './features/live/LiveFleetPage';
 import { FleetProvider } from './shell/fleet';
 import { AccountsPage } from './features/accounts/AccountsPage';
@@ -12,12 +11,11 @@ import { TerminalPage } from './features/terminal/TerminalPage';
 import { HelpPage } from './features/help/HelpPage';
 
 const VISTAS = [
-  ['la portada', LandingPage, /cauce en una pantalla/i],
   ['/live', LiveFleetPage, 'Oficina'],
   ['/accounts', AccountsPage, /cuentas y cuotas/i],
   ['/queues', QueuesPage, /colas y dlq/i],
   ['/observability', ObservabilityPage, /señales y auditoría/i],
-  ['/terminal', TerminalPage, 'Terminal de agentes'],
+  ['/terminal', () => <TerminalPage params={['Steven', 'kant']} />, 'Terminal de agentes'],
   ['/ayuda', HelpPage, /ayuda y documentación/i],
 ] as const;
 

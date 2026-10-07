@@ -36,9 +36,6 @@ interface RoutePageProps {
   params?: readonly string[];
 }
 
-const LandingPage = deferredPage(async () => ({
-  default: (await import('./features/landing/LandingPage')).LandingPage,
-}));
 const LiveFleetPage = deferredPage(async () => ({
   default: (await import('./features/live/LiveFleetPage')).LiveFleetPage,
 }));
@@ -76,7 +73,6 @@ interface Route {
 const DEEP_ROUTE_ARITY: Partial<Record<string, number>> = { messages: 2, terminal: 2 };
 
 const PAGES: Record<string, ComponentType<RoutePageProps>> = {
-  overview: LandingPage,
   live: LiveFleetPage,
   accounts: AccountsPage,
   messages: MessagesPage,
@@ -98,6 +94,7 @@ const routes: Route[] = NAV_ENTRIES.map((entry) => ({
 /** Redirects of obsolete or consolidated routes to their canonical views. */
 const ROUTE_ALIASES: Partial<Record<string, string>> = {
   '': 'messages',
+  overview: 'live',
   licenses: 'accounts',
   quotas: 'accounts',
   assignments: 'accounts',
@@ -106,7 +103,6 @@ const ROUTE_ALIASES: Partial<Record<string, string>> = {
   activity: 'live',
   fleet: 'live',
   topology: 'live',
-  help: 'ayuda',
 };
 
 /** Retired DETAIL routes: only their deep form redirects, at the arity of the heir that absorbed it. */

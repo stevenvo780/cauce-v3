@@ -9,7 +9,6 @@ import { LIVE_STATE_META, LIVE_STATES } from '../live/agent-state';
 const TITULO = 'Ayuda y documentación';
 
 const DETALLE: Record<string, string> = {
-  overview: 'Resumen de la flota: colas, consumo de cuotas y alertas prioritarias.',
   live: 'La oficina en vivo y el cajón de cada agente. «Contexto» es el único lugar para modificar '
     + 'su perfil canónico y su manual; «Ficheros» es un visor de lo materializado.',
   accounts: 'Alta y baja de cuentas de proveedores, techos, fallback, límites y consumo.',
@@ -123,7 +122,7 @@ export function HelpPage() {
                     {entrada.label}
                     <code className="font-mono text-xs font-normal text-muted">/{entrada.id}</code>
                   </a>
-                  <span className="text-[13px] text-fg-2">{DETALLE[entrada.id] ?? entrada.que}</span>
+                  <span className="text-[13px] text-fg-2">{DETALLE[entrada.id]}</span>
                 </li>
               ))}
             </ul>

@@ -7,6 +7,9 @@ export const MAX_AGENT_FAVORITES_PER_HUMAN = 200;
 export const MAX_AGENT_GLYPH_UTF16_UNITS = 16;
 export const MAX_AGENT_APPEARANCE_AUTHOR_LENGTH = 256;
 export const MAX_AGENT_GLYPH_COMBINING_MARKS = 3;
+export const PIXEL_ICON_PREFIX = 'px:';
+
+const PIXEL_ICON_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const ZERO_WIDTH_JOINER = '\u200d';
 const EMOJI_VARIATION_SELECTORS = /[\ufe0e\ufe0f]/gu;
@@ -30,14 +33,26 @@ function graphemeCount(value: string): number {
   return count;
 }
 
+/** Name of a pixel icon reference (`px:robot` gives `robot`), or `undefined` when the value is not one. */
+export function pixelIconName(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > MAX_AGENT_GLYPH_UTF16_UNITS || !value.startsWith(PIXEL_ICON_PREFIX)) return undefined;
+  const name = value.slice(PIXEL_ICON_PREFIX.length);
+  return PIXEL_ICON_NAME.test(name) ? name : undefined;
+}
+
+export function isPixelIconRef(value: unknown): value is string {
+  return pixelIconName(value) !== undefined;
+}
+
 /**
- * One visible grapheme whose base is a letter, a digit or an emoji. Invisible fillers (Hangul
+ * A pixel icon reference or one visible grapheme whose base is a letter, a digit or an emoji. Invisible fillers (Hangul
  * fillers, combining grapheme joiner) are default-ignorable and refused; ZWJ and emoji variation
  * selectors are the only ignorable code points kept, and only inside an emoji sequence. Combining
  * marks are capped so stacked marks cannot paint outside the avatar.
  */
 export function isAgentGlyph(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0 || value.length > MAX_AGENT_GLYPH_UTF16_UNITS) return false;
+  if (value.startsWith(PIXEL_ICON_PREFIX)) return isPixelIconRef(value);
   if (TAG_FLAG.test(value) || KEYCAP.test(value)) return true;
   if (!GLYPH_BASE.test(value)) return false;
   const base = value.codePointAt(0) ?? 0;
@@ -51,7 +66,7 @@ export function isAgentGlyph(value: unknown): value is string {
 
 export const AgentAppearanceStyleSchema = z.enum(AGENT_APPEARANCE_STYLES);
 export const AgentGlyphSchema = z.string().refine(isAgentGlyph, {
-  message: 'glyph must be a single visible grapheme of at most 16 UTF-16 code units',
+  message: 'glyph must be a pixel icon reference (px:name) or a single visible grapheme of at most 16 UTF-16 code units',
 });
 export const AgentHueSchema = z.number().int().min(0).max(359);
 export const AgentAppearanceRevisionSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);

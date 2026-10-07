@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import type { FleetActivityAgent } from '../../api/types';
 import { server } from '../../mocks/server';
@@ -17,8 +17,8 @@ it('la pantalla no convierte los nombres históricos retirados en una caída de 
   renderLive();
   const verdict = await screen.findByLabelText('Veredicto de la flota');
   await waitFor(() => { expect(verdict).toHaveAttribute('data-tone', 'ok'); });
-  expect(document.querySelectorAll('tr[data-agent-key]')).toHaveLength(3);
-  expect(document.querySelector('tr[data-agent-key="Hospital/backend"]')).toBeNull();
-  expect(document.querySelector('tr[data-agent-key="Hospital/frontend"]')).toBeNull();
+  const lista = screen.getByRole('listbox', { name: /oficina con \d+ agentes/i });
+  expect(within(lista).getAllByRole('option')).toHaveLength(3);
+  expect(within(lista).queryByRole('option', { name: /^(backend|frontend):/ })).toBeNull();
   expect(verdict).toHaveTextContent('3 conectados');
 });

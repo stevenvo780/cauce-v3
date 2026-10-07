@@ -80,8 +80,8 @@ describe('behaviour', () => {
     expect(behaviourFor('receiving')).toMatchObject({ rest: 'desk', bubble: 'mail' });
     expect(behaviourFor('delegating')).toMatchObject({ rest: 'desk', errand: 'deliver' });
     expect(behaviourFor('blocked')).toMatchObject({ bubble: 'alert', shake: true, monitor: 'error' });
-    expect(behaviourFor('settled')).toMatchObject({ rest: 'patio', pose: 'play', errand: 'coffee' });
-    expect(behaviourFor('idle')).toMatchObject({ rest: 'bed', pose: 'lie', bubble: 'zzz', errand: 'wander' });
+    expect(behaviourFor('settled')).toMatchObject({ rest: 'routine', errand: null });
+    expect(behaviourFor('idle')).toMatchObject({ rest: 'routine', bubble: null, errand: null });
     expect(behaviourFor('down')).toMatchObject({ pose: 'ghost', monitor: 'off', errand: null });
   });
 });
@@ -102,7 +102,7 @@ describe('layout', () => {
       const start = layout.desks[0].seat.tile;
       const spots = [
         ...layout.desks.flatMap((desk) => [desk.seat.tile, desk.visit.tile]),
-        ...[...layout.beds, ...layout.play, ...layout.watch, ...layout.coffee].map((spot) => spot.tile),
+        ...[...layout.beds, ...Object.values(layout.routine).flat()].flatMap((spot) => [spot.tile, ...(spot.from ? [spot.from.tile] : [])]),
       ];
       for (const spot of spots) expect(findPath(layout.walkable, layout.cols, start, spot), `${side} ${String(compact)}`).not.toBeNull();
     }
@@ -207,14 +207,15 @@ describe('simulation', () => {
   });
 
   it('places newcomers straight at their resting pose instead of walking in', () => {
-    const world = createWorld(layout);
+    const world = createWorld(layout, false, 5_000);
     syncWorld(world, inputs());
     const a = actorOf(world, 'a');
     expect([a.x, a.y]).toEqual([layout.desks[0].seat.px.x, layout.desks[0].seat.px.y]);
     expect(a.pose).toBe('type');
-    expect(actorOf(world, 'b').pose).toBe('lie');
-    expect(actorOf(world, 'b').rest.rest).toBe('bed');
-    expect([actorOf(world, 'b').x, actorOf(world, 'b').y]).toEqual([layout.beds[1].px.x, layout.beds[1].px.y]);
+    const b = actorOf(world, 'b');
+    expect(b.activity).not.toBeNull();
+    expect(b.pose).not.toBe('walk');
+    expect(b.desk).toBe(1);
     expect(actorOf(world, 'c').pose).toBe('ghost');
   });
 
@@ -223,12 +224,12 @@ describe('simulation', () => {
     syncWorld(world, inputs());
     const d = actorOf(world, 'd');
     const plan = planFor(d, layout);
-    expect(plan.some((step) => step.kind === 'goto' && step.carrying && step.spot === layout.desks[0].visit)).toBe(true);
+    expect(plan.some((step) => step.kind === 'goto' && step.carry === 'paper' && step.spot === layout.desks[0].visit)).toBe(true);
     let carried = false;
     let handedOver = false;
     for (let t = 0; t < 40; t += 0.05) {
       stepWorld(world, 0.05);
-      carried ||= d.carrying;
+      carried ||= d.carry === 'paper';
       handedOver ||= d.pose === 'handover';
     }
     expect(carried).toBe(true);
@@ -236,14 +237,16 @@ describe('simulation', () => {
   });
 
   it('changing state replans from where the person stands, and leaving removes them', () => {
-    const world = createWorld(layout);
+    const world = createWorld(layout, false, 5_000);
     syncWorld(world, inputs());
     const a = actorOf(world, 'a');
     syncWorld(world, inputs({ a: { id: 'a', state: 'idle', desk: 0 } }));
     expect(a.pose).toBe('walk');
     expect([a.x, a.y]).toEqual([layout.desks[0].seat.px.x, layout.desks[0].seat.px.y]);
+    expect(a.activity).not.toBeNull();
     for (let t = 0; t < 60; t += 0.05) stepWorld(world, 0.05);
-    expect(a.pose).toBe('lie');
+    expect(a.pose).not.toBe('type');
+    expect(a.activity).not.toBeNull();
 
     syncWorld(world, inputs().filter((input) => input.id !== 'c'));
     expect(world.actors.has('c')).toBe(false);
@@ -259,11 +262,30 @@ describe('simulation', () => {
     expect([...world.actors.values()].some((actor) => actor.pose === 'walk')).toBe(false);
   });
 
-  it('nobody sleeps at a desk: every idle person lies in a bed, however many there are', () => {
+  it('nobody naps at a desk, and only a small share of the free ever sleeps, in a bed', () => {
     const big = buildLayout(params(3, { beds: 12 }));
-    const world = createWorld(big);
-    const many: ActorInput[] = Array.from({ length: 12 }, (_, index) => ({ id: `idle-${String(index).padStart(2, '0')}`, state: 'idle', desk: index }));
-    syncWorld(world, many);
-    expect([...world.actors.values()].every((actor) => actor.pose === 'lie' && actor.rest.rest === 'bed')).toBe(true);
+    const many: ActorInput[] = Array.from({ length: 12 }, (_, index) => ({ id: `idle-${String(index).padStart(2, '0')}`, state: 'idle', sleepy: true, desk: index }));
+    for (const now of [0, 400, 9_000, 77_777]) {
+      const world = createWorld(big, true, now);
+      syncWorld(world, many);
+      const actors = [...world.actors.values()];
+      const sleepers = actors.filter((actor) => actor.pose === 'lie');
+      expect(sleepers.length).toBeLessThanOrEqual(3);
+      for (const sleeper of sleepers) expect(sleeper.rest.rest).toBe('bed');
+      expect(actors.some((actor) => big.desks.some((desk) => desk.seat === actor.rest))).toBe(false);
+    }
+  });
+
+  it('keeps the routine going: the free change activity over time without any new data', () => {
+    const world = createWorld(layout, false, 10_000);
+    syncWorld(world, inputs());
+    const b = actorOf(world, 'b');
+    const seen = new Set([b.activity]);
+    for (let t = 0; t < 600; t += 0.1) {
+      stepWorld(world, 0.1);
+      seen.add(b.activity);
+    }
+    expect(seen.size).toBeGreaterThan(2);
+    expect(actorOf(world, 'a').pose).toBe('type');
   });
 });

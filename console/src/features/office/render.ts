@@ -2,8 +2,9 @@ import type { MonitorMode } from './behaviour';
 import { TILE, WALL_ROWS, type DeskSlot, type GameKind, type OfficeLayout } from './layout';
 import { rect, type Ctx } from './paint';
 import { OFFICE } from './palette';
+import { gardenDrawable, paintGround } from './render-garden';
 import { arcade, foosball, nightstand, paintNightWindow, paintPillar, pingpong } from './render-rooms';
-import { seededRandom } from './simulation';
+import { seededRandom } from './random';
 
 function paintFloor(ctx: Ctx, layout: OfficeLayout): void {
   const wallish = (kind: string) => Number(kind === 'partition' || kind === 'pillar');
@@ -44,6 +45,8 @@ function paintFloor(ctx: Ctx, layout: OfficeLayout): void {
           rect(ctx, x0 + tx * TILE, y0 + ty * TILE + TILE - 1, TILE, 1, OFFICE.playLine);
         }
       }
+    } else if (zone.kind === 'grass' || zone.kind === 'path') {
+      paintGround(ctx, zone);
     } else if (zone.kind === 'pillar') {
       paintPillar(ctx, x0, y0, h);
     } else if (zone.kind === 'tile') {
@@ -486,6 +489,7 @@ function table(ctx: Ctx, x: number, y: number): void {
 /** `playing` tells whether someone is at a given game right now, so idle machines rest. */
 export function furnitureDrawables(
   layout: OfficeLayout, deskState: (slot: number) => DeskState, playing: (game: GameKind, station: number) => boolean,
+  cooking: (x: number, y: number) => boolean = () => false,
 ): Drawable[] {
   const list: Drawable[] = [];
   const at = (sortY: number, draw: (ctx: Ctx, time: number) => void) => {
@@ -535,6 +539,8 @@ export function furnitureDrawables(
       case 'table':
         at(piece.y * TILE + 13, (ctx) => { table(ctx, piece.x, piece.y); });
         break;
+      default:
+        list.push(gardenDrawable(piece, () => cooking(piece.x, piece.y)));
     }
   }
   return list;

@@ -105,14 +105,14 @@ describe('el plano de control que contesta a medias y luego se recupera', () => 
     server.use(http.get('*/v3/status', () => (caido
       ? HttpResponse.json({ error: 'unavailable' }, { status: 503 })
       : HttpResponse.json({ presence: [], queues: [], rooms: [] }))));
-    renderWithApi(<TerminalPage />);
+    renderWithApi(<TerminalPage params={['Steven', 'kant']} />);
 
     const aviso = await screen.findByRole('alert');
     expect(aviso).toHaveTextContent('El plano de control contestó a medias');
     // The failing read is named: "Presencia", not a bare technical error with no owner.
     expect(aviso).toHaveTextContent(/Presencia:/);
     // The fleet still came from topology, so the view is degraded and not empty.
-    expect(await screen.findByRole('link', { name: /^kant/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 2, name: /kant/i })).toBeInTheDocument();
 
     caido = false;
     await user.click(within(aviso).getByRole('button', { name: /reintentar/i }));

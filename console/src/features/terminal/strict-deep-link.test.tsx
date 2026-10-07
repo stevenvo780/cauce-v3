@@ -1,10 +1,10 @@
 import { StrictMode } from 'react';
-import { cleanup, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { server } from '../../mocks/server';
 import { mockTerminalGrant } from '../../mocks/terminal-ticket';
+import { navigate } from '../../router';
 import { renderRouted, renderWithApi } from '../../test/render';
 import { closePtySession } from './pty-session';
 import { installStubWebSocket } from './pty-socket-stub';
@@ -69,8 +69,7 @@ it('CONTROL: StrictMode deep-link opens exactly one writable session after the f
   expect(screen.queryByRole('alert', { name: /pestaña/i })).not.toBeInTheDocument();
 });
 
-it('CONTROL: StrictMode opening from the picker card also requests one writable session', async () => {
-  const user = userEvent.setup();
+it('CONTROL: StrictMode opening by in-app navigation from the bare route also requests one writable session', async () => {
   const requests: Record<string, unknown>[] = [];
   server.use(http.post('*/v3/console/terminal/sessions', async ({ request }) => {
     requests.push(await request.json() as Record<string, unknown>);
@@ -81,7 +80,8 @@ it('CONTROL: StrictMode opening from the picker card also requests one writable 
 
   window.history.pushState({}, '', '/terminal');
   renderRouted(() => <StrictMode><RoutedTerminal /></StrictMode>);
-  await user.click(await screen.findByRole('link', { name: /^kant/ }));
+  await screen.findByRole('heading', { level: 2, name: 'Elegí un agente en la barra lateral' });
+  act(() => { navigate('/terminal/Steven/kant'); });
 
   await waitFor(() => { expect(requests).toHaveLength(1); });
   expect(requests[0]).toMatchObject({ tenant_id: 'Steven', alias: 'kant', mode: 'harness_rw' });
@@ -101,7 +101,6 @@ it('StrictMode conserva el token de un enlace con inventario ya disponible al mo
   renderWithApi(<StrictMode><OperatorWorkspace
     agentId="Steven:kant"
     live={new Map()}
-    messages={{ loading: false, data: { items: [] }, reload: () => Promise.resolve({ data: { items: [] } }) }}
     summary=""
     onRefresh={() => undefined}
     agents={[{ id: 'Steven:kant', tenantId: 'Steven', alias: 'kant', roomIds: [], roomMembership: {}, leaseState: 'online' }]}

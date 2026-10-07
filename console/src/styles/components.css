@@ -38,10 +38,5 @@ dl { @apply m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]; }
 dt { @apply text-muted; }
 dd { @apply m-0 min-w-0 break-words; }
 
-.tooltip-anchor { @apply cursor-help underline decoration-line-strong decoration-dotted underline-offset-2; }
-.tooltip-anchor:not([tabindex]) { @apply cursor-default; }
-.tooltip-bubble { @apply z-50 max-w-72 rounded-lg border border-line bg-surface p-2.5 text-xs text-fg shadow-pop; }
-.tooltip-bubble strong { @apply block text-[13px]; }
-.tooltip-bubble p { @apply mt-1 mb-0 text-muted; }
 
 kbd { @apply rounded border border-b-2 border-line-strong bg-subtle px-1 font-mono text-[11px] text-fg-2; }

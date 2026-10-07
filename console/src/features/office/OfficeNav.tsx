@@ -1,4 +1,4 @@
-import { BedDouble, Coffee, Gamepad2, Laptop, Map as MapIcon, type LucideIcon } from 'lucide-react';
+import { BedDouble, Coffee, Gamepad2, Laptop, Map as MapIcon, Trees, type LucideIcon } from 'lucide-react';
 import type { MouseEvent, Ref } from 'react';
 import { cn } from '../../cn';
 import type { Room, RoomId } from './layout';
@@ -8,6 +8,7 @@ const ICONS: Readonly<Record<RoomId, LucideIcon>> = {
   programadores: Laptop,
   cocina: Coffee,
   patio: Gamepad2,
+  jardin: Trees,
   dormitorio: BedDouble,
 };
 

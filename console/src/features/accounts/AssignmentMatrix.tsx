@@ -189,6 +189,7 @@ export function AssignmentMatrix({ config, access, registry }: {
                             className="inline-flex cursor-pointer items-center gap-1 rounded-full border-0 bg-transparent p-0 enabled:hover:opacity-75 disabled:cursor-not-allowed disabled:opacity-60"
                             type="button"
                             aria-label={`${key} × ${cell.accountId}: ${badge.label}`}
+                            title={cell.grantedBy ? `Techo otorgado por ${cell.grantedBy}` : undefined}
                             onClick={() => { selectCell(key, cell.accountId, cell); }}
                           >
                             <Badge tone={badge.tone}>{badge.label}</Badge>

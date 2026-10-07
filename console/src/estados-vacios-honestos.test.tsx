@@ -1,8 +1,7 @@
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { expect, it } from 'vitest';
-import { HarnessStrip } from './features/landing/HarnessStrip';
 import { mockActivity, mockMessages, mockStatus, topology } from './mocks/data';
 import { renderLive } from './features/live/render-live';
 import { server } from './mocks/server';
@@ -19,13 +18,6 @@ function servirFlotaVacia() {
     http.get('*/v3/console/messages', () => HttpResponse.json({ ...mockMessages(), items: [] })),
   );
 }
-
-it('un manifest leído y vacío no se presenta como un fallo de lectura', () => {
-  render(<HarnessStrip adapters={[]} />);
-
-  expect(screen.getByText('El servidor devolvió cero tipos de arnés declarados.')).toBeInTheDocument();
-  expect(screen.queryByText(/no se pudo leer la lista/i)).not.toBeInTheDocument();
-});
 
 it('una oficina leída y vacía no se presenta como una lectura fallida', async () => {
   servirFlotaVacia();

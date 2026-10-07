@@ -1,6 +1,6 @@
 import type { FleetActivityAgent, FleetActivityFlag, FleetWorkState } from '../../api/types';
-import { formatDurationSeconds, leaseState } from '../../lib';
-import { LIVE_STATE_META, agentKey, type LiveState } from './agent-state';
+import { formatDurationSeconds } from '../../lib';
+import { agentKey, type LiveState } from './agent-state';
 
 export { formatDurationSeconds } from '../../lib';
 
@@ -15,14 +15,6 @@ export const WORK_STATE_LABEL: Record<FleetWorkState, string> = {
   stalled: 'Trabado',
 };
 
-const WORK_STATE_TONE: Record<FleetWorkState, BadgeTone> = {
-  idle: 'offline',
-  queued: 'info',
-  working: 'running',
-  saturated: 'warning',
-  stalled: 'danger',
-};
-
 export const FLAG_LABEL: Record<FleetActivityFlag, string> = {
   saturated: 'Saturado',
   ack_stalled: 'Sin ACK',
@@ -34,46 +26,7 @@ export const FLAG_LABEL: Record<FleetActivityFlag, string> = {
   claimed_not_started: 'Tomó y no empezó',
 };
 
-const FLAG_TONE: Record<FleetActivityFlag, BadgeTone> = {
-  saturated: 'warning',
-  ack_stalled: 'danger',
-  overdue_acks: 'danger',
-  lease_expired: 'offline',
-  never_connected: 'unknown',
-  unregistered: 'unknown',
-  queued_without_consumer: 'warning',
-  claimed_not_started: 'danger',
-};
-
 export type EstadosVivos = ReadonlyMap<string, LiveState>;
-
-/**
- * The header of the STATE column. With the derived state available, that one wins; without it, it falls
- * back to the server's `work_state`, which already speaks the same vocabulary — a silent `undefined`
- * cannot leave the cell blank.
- */
-export function estadoDeFila(
-  agent: FleetActivityAgent, estados?: EstadosVivos,
-): { label: string; live: LiveState; tone?: undefined } | { label: string; tone: BadgeTone; live?: undefined } {
-  const live = estados?.get(agentKey(agent));
-  if (live) return { label: LIVE_STATE_META[live].label, live };
-  const state = agent.work_state ?? undefined;
-  return {
-    label: state ? WORK_STATE_LABEL[state] : 'sin dato',
-    tone: state ? WORK_STATE_TONE[state] : 'unknown',
-  };
-}
-
-/** Translates the row's state into the way it is shouted: `data-urgency` and the highlight in
- *  styles.css. It looks FIRST at the doughboy's state, which is also the one deciding its color. */
-export function rowUrgency(
-  state: FleetWorkState | null | undefined, live?: LiveState,
-): 'critical' | 'warning' | undefined {
-  if (live === 'down' || live === 'blocked') return 'critical';
-  if (state === 'stalled') return 'critical';
-  if (state === 'saturated') return 'warning';
-  return undefined;
-}
 
 /**
  * seconds_since_last_ack at null is NOT "just acked": it is "no ACK applied within the server's search
@@ -88,16 +41,6 @@ export function formatAckAge(secondsSinceLastAck: number | null | undefined, ack
       : 'ningún ACK, y el servidor no dice desde cuándo';
   }
   return `hace ${formatDurationSeconds(secondsSinceLastAck)}`;
-}
-
-/**
- * "No in-flight deliveries" is a known zero, not an unknown: oldest_in_flight_seconds comes as null
- * exactly when in_flight = 0. It is distinguished explicitly from UNKNOWN with a dash, so the operator
- * is not left wondering "could this not be read, or is there simply nothing to read?".
- */
-export function formatInFlightAge(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined) return '—';
-  return formatDurationSeconds(seconds);
 }
 
 const STATE_RANK: Record<FleetWorkState, number> = {
@@ -145,136 +88,4 @@ export function sortByUrgency(
     if (inFlightDiff !== 0) return inFlightDiff;
     return `${left.tenant_id}:${left.alias}`.localeCompare(`${right.tenant_id}:${right.alias}`);
   });
-}
-
-export function agentDisplayName(agent: FleetActivityAgent): string {
-  return agent.display_name ?? agent.alias;
-}
-
-/* ============================================================================================ *
- * Per-row signal summary: deduplication of signals visible in the table.
- * ============================================================================================ */
-
-interface SenalPintada {
-  clave: string;
-  label: string;
-  tone: BadgeTone;
-}
-
-interface ResumenDeSenales {
-  /** The headline of the cell. Always exactly one. */
-  estado: SenalPintada;
-  /** The signals that ADD something to the headline. At most `TOPE_DE_SENALES`. */
-  senales: SenalPintada[];
-  /** How many were left out of the box because of the cap. 0 when they all fit. */
-  ocultas: number;
-  /** Full detail of measured signals for the tooltip. */
-  detalle: string;
-}
-
-/**
- * What the "Presence" column of the same row is already saying. Passed in to avoid repeating it.
- * `sin-presencia` means "not known / not being shown", and then nothing is deduplicated.
- */
-type PresenciaDeLaFila = 'conectado' | 'caido' | 'nunca' | 'sin-presencia';
-
-/** Translates the presence badge already painted into the deduplication vocabulary. */
-export function presenciaDeLaFila(agent: FleetActivityAgent): PresenciaDeLaFila {
-  const estado = leaseState(agent.presence?.lease_until);
-  if (estado === 'online') return 'conectado';
-  if (estado === 'expired') return 'caido';
-  return agent.presence ? 'sin-presencia' : 'nunca';
-}
-
-/** How many signals fit next to the state before folding into a "+N". */
-const TOPE_DE_SENALES = 2;
-
-/**
- * Decides which signals are omitted because they are already implicit in the main state or presence.
- */
-function implicadas(
-  state: FleetWorkState | undefined,
-  flags: readonly FleetActivityFlag[],
-  presencia: PresenciaDeLaFila,
-): Set<FleetActivityFlag> {
-  const fuera = new Set<FleetActivityFlag>();
-  if (presencia === 'caido') fuera.add('lease_expired');
-  if (presencia === 'nunca') { fuera.add('never_connected'); fuera.add('lease_expired'); }
-  if (state === 'stalled') { fuera.add('ack_stalled'); fuera.add('overdue_acks'); }
-  if (state === 'saturated') fuera.add('saturated');
-  if (flags.includes('never_connected')) fuera.add('lease_expired');
-  if (flags.includes('lease_expired') || flags.includes('never_connected')) fuera.add('queued_without_consumer');
-  if (state !== 'stalled' && flags.includes('overdue_acks') && flags.includes('ack_stalled')) fuera.add('ack_stalled');
-  return fuera;
-}
-
-/**
- * What is painted in the "State" cell of a row: a headline and, at most, two signals that add
- * something. The rest folds into "+N" and the `title=` says it all.
- */
-export function resumirSenales(
-  state: FleetWorkState | null | undefined,
-  flags: readonly FleetActivityFlag[] | null | undefined,
-  presencia: PresenciaDeLaFila = 'sin-presencia',
-  titular?: SenalPintada,
-): ResumenDeSenales {
-  const estadoValido = state ?? undefined;
-  const activas = (flags ?? []).filter((flag) => Object.hasOwn(FLAG_LABEL, flag));
-
-  const estado: SenalPintada = titular
-    ?? (estadoValido
-      ? { clave: estadoValido, label: WORK_STATE_LABEL[estadoValido], tone: WORK_STATE_TONE[estadoValido] }
-      : { clave: 'sin-estado', label: 'Sin dato de estado', tone: 'unknown' });
-
-  const fuera = implicadas(estadoValido, activas, presencia);
-  // Keep the 'saturated' signal if the headline does not spell it out.
-  if (estado.label !== FLAG_LABEL.saturated) fuera.delete('saturated');
-
-  const visibles = activas
-    .filter((flag) => !fuera.has(flag))
-    // And what the headline already says in those same words is not repeated next to it either.
-    .filter((flag) => FLAG_LABEL[flag] !== estado.label)
-    .map((flag): SenalPintada => ({ clave: flag, label: FLAG_LABEL[flag], tone: FLAG_TONE[flag] }));
-
-  const partes = [
-    `Estado del servidor: ${estado.label}.`,
-    activas.length
-      ? `Señales medidas: ${activas.map((flag) => FLAG_LABEL[flag]).join(', ')}.`
-      : 'Sin ninguna señal activa.',
-  ];
-
-  return {
-    estado,
-    senales: visibles.slice(0, TOPE_DE_SENALES),
-    ocultas: Math.max(0, visibles.length - TOPE_DE_SENALES),
-    detalle: partes.join(' '),
-  };
-}
-
-export type SortKey = 'urgencia' | 'agente' | 'vuelo' | 'cola' | 'antiguedad' | 'ack';
-
-const SORTERS: Record<Exclude<SortKey, 'urgencia'>, (agent: FleetActivityAgent) => number | string> = {
-  agente: (agent) => agentDisplayName(agent).toLocaleLowerCase(),
-  vuelo: (agent) => agent.in_flight ?? 0,
-  cola: (agent) => agent.queued ?? 0,
-  antiguedad: (agent) => agent.oldest_in_flight_seconds ?? -1,
-  ack: (agent) => agent.seconds_since_last_ack ?? Number.MAX_SAFE_INTEGER,
-};
-
-/** Applies the column sort on top of the urgency order, which stays the tie-breaker. */
-export function sortAgents(
-  agents: readonly FleetActivityAgent[], estados: EstadosVivos | undefined, key: SortKey, descending: boolean,
-): FleetActivityAgent[] {
-  const urgent = sortByUrgency(agents, estados);
-  if (key === 'urgencia') return descending ? urgent.reverse() : urgent;
-  const value = SORTERS[key];
-  return urgent
-    .map((agent, rank) => ({ agent, rank }))
-    .sort((a, b) => {
-      const left = value(a.agent);
-      const right = value(b.agent);
-      const diff = typeof left === 'string' ? left.localeCompare(String(right)) : left - Number(right);
-      return (descending ? -diff : diff) || a.rank - b.rank;
-    })
-    .map(({ agent }) => agent);
 }

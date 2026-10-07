@@ -4,11 +4,10 @@ import { renderWithApi } from '../../test/render';
 import { HelpPage } from '../help/HelpPage';
 import { TerminalPage } from './TerminalPage';
 
-it('el selector identifica cada agente por tenant más alias y el agente abierto no repite cabeceras ni KPIs', async () => {
-  const { container } = renderWithApi(<TerminalPage />);
-  const kant = await screen.findByRole('link', { name: /^kant/ });
-  expect(kant).toHaveAttribute('href', '/terminal/Steven/kant');
-  expect(kant).toHaveTextContent('Steven');
+it('el agente abierto se identifica por tenant más alias y no repite cabeceras ni KPIs', async () => {
+  const { container } = renderWithApi(<TerminalPage params={['Steven', 'kant']} />);
+  const cabecera = await screen.findByRole('heading', { level: 2, name: /kant/ });
+  expect(cabecera).toHaveTextContent('Steven');
   expect(container.querySelector('.terminal-overview')).toBeNull();
   expect(container.querySelector('.terminal-fleet')).toBeNull();
 });

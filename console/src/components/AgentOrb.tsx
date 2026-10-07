@@ -1,8 +1,10 @@
 import type { CSSProperties } from 'react';
-import type { AgentAppearanceStyle } from '../api/client/agent-preferences-client';
+import { pixelIconName, type AgentAppearanceStyle } from '../api/client/agent-preferences-client';
 import { cn } from '../cn';
 import type { LiveState } from '../features/live/agent-state';
 import { orbHues } from '../orb-hues';
+import { crispIconSize } from './pixel-icons/icon-size';
+import { PixelIcon } from './pixel-icons/PixelIcon';
 import { useAgentAppearance } from './agent-actions/preferences-context';
 import { useOrbBloom, type BloomKind } from './orb-bloom';
 
@@ -46,6 +48,7 @@ export function OrbView({ seed, look, state, size = 32, className, label, sleepi
   const [h1, h2, h3] = orbHues(seed, look?.hue);
   const style = look?.style ?? 'orb';
   const glyph = look?.glyph ?? undefined;
+  const pixelName = pixelIconName(glyph);
   const css = { width: size, height: size, '--h1': h1, '--h2': h2, '--h3': h3, '--orb-size': `${String(size)}px` } as CSSProperties;
   return (
     <span
@@ -60,7 +63,11 @@ export function OrbView({ seed, look, state, size = 32, className, label, sleepi
       {style === 'aurora' ? <span className="agent-orb-sky"><span className="agent-orb-ribbon" /><span className="agent-orb-ribbon" /></span> : null}
       {style === 'pixel' && !glyph ? <PixelCreature /> : null}
       {style === 'orb' || style === 'pulse' ? <span className="agent-orb-core" /> : null}
-      {glyph ? <span className="agent-orb-glyph">{glyph}</span> : null}
+      {glyph ? (
+        <span className="agent-orb-glyph">
+          {pixelName ? <PixelIcon name={pixelName} size={crispIconSize(size * 0.6)} /> : glyph}
+        </span>
+      ) : null}
       {sleeping ? <span className="agent-orb-zzz"><span>z</span><span>z</span><span>z</span></span> : null}
       {bloom ? <span key={bloom.n} className="agent-orb-bloom" data-kind={bloom.kind} /> : null}
     </span>

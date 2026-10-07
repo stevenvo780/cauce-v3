@@ -193,6 +193,6 @@ describe('cambiar el agente de la dirección', () => {
     expect(document.querySelectorAll('[data-objeto-principal]')).toHaveLength(1);
     expect(document.querySelectorAll('header')).toHaveLength(1);
     go('/terminal');
-    expect(await screen.findByText('Elegí un agente')).toBeInTheDocument();
+    expect(await screen.findByText('Elegí un agente en la barra lateral')).toBeInTheDocument();
   });
 });

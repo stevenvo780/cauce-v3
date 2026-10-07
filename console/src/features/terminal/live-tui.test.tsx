@@ -121,8 +121,6 @@ it('CONTROL NEGATIVO: el mismo alias sin el modo harness no abre ninguna sesión
   expect(screen.getByRole('button', { name: /^TUI$/i })).toHaveAttribute('title', expect.stringMatching(/no publica el modo harness.*Modos publicados: shell/i));
   expect(calls).toHaveLength(0);
   expect(StubWebSocket.instances).toHaveLength(0);
-  // The agent stays readable as a feed: only the PTY modes are closed.
-  expect(screen.getByRole('button', { name: 'Feed' })).toBeEnabled();
 });
 
 it('CONTROL NEGATIVO: publica harness pero el agente PTY está offline; no se inventa una TUI', async () => {

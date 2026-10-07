@@ -50,10 +50,9 @@ test('structural selectors still exist in the source that draws them', async () 
   assert.ok((await read('messages/ConversationPane.tsx')).includes('data-objeto-principal="hilo"'));
   assert.ok((await read('messages/ConversationPane.tsx')).includes('data-thread-scroll'));
   assert.ok((await read('messages/AgentSettingsView.tsx')).includes('aria-label={`Perfil y contexto de ${alias}`}'));
-  assert.ok((await read('landing/LandingPage.tsx')).includes('aria-label="Lo que exige atención"'));
   assert.ok((await read('live/LiveFleetPage.tsx')).includes('data-objeto-principal="oficina"'));
   assert.ok((await read('terminal/OperatorWorkspace.tsx')).includes('data-objeto-principal="escenario"'));
-  assert.ok((await read('terminal/TerminalHome.tsx')).includes('aria-label="Agentes"'));
+  assert.ok((await read('terminal/TerminalHome.tsx')).includes('Elegí un agente en la barra lateral'));
   assert.ok((await readFile(new URL('../src/shell/AgentList.tsx', import.meta.url), 'utf8')).includes('aria-label="Agentes"'));
 });
 test('reused GET fixtures cover subviews and reject mutations/undeclared endpoints', async () => {

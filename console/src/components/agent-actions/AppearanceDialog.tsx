@@ -5,7 +5,7 @@ import { Minus, Plus, RotateCcw, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { useOptionalConsoleAccess } from '../../api/console-access';
 import {
-  AGENT_APPEARANCE_STYLES, appearanceDraftProblem, isAgentGlyph, isRevisionConflict,
+  AGENT_APPEARANCE_STYLES, appearanceDraftProblem, isAgentGlyph, isPixelIconRef, isRevisionConflict, pixelIconName,
   type AgentAppearanceStyle, type AppearanceDraft,
 } from '../../api/client/agent-preferences-client';
 import { cn } from '../../cn';
@@ -16,6 +16,8 @@ import { useMediaQuery } from '../../shell/use-media-query';
 import { orbHues } from '../../orb-hues';
 import { OrbView, type OrbLook } from '../AgentOrb';
 import { Button, Notice } from '../kit';
+import { PixelIcon } from '../pixel-icons/PixelIcon';
+import { PixelPicker } from '../pixel-icons/PixelPicker';
 import { APPEARANCE_DENIED_REASON, APPEARANCE_GLYPHS, agentKey, type AgentRef } from './agent-actions';
 import { useAgentPreferences } from './preferences-context';
 
@@ -61,7 +63,8 @@ function Editor({ agent, guard, onClose }: { agent: AgentRef; guard: CloseGuard;
   const saved = preferences?.appearances.get(key);
   const savedDraft: AppearanceDraft = saved ? { glyph: saved.glyph, hue: saved.hue, style: saved.style } : DEFAULT_DRAFT;
   const [draft, setDraft] = useState<AppearanceDraft>(savedDraft);
-  const [glyphText, setGlyphText] = useState(saved?.glyph ?? '');
+  const [glyphText, setGlyphText] = useState(saved?.glyph && !isPixelIconRef(saved.glyph) ? saved.glyph : '');
+  const [iconMode, setIconMode] = useState<'pixel' | 'text'>(saved?.glyph && !isPixelIconRef(saved.glyph) ? 'text' : 'pixel');
   const [busy, setBusy] = useState<'save' | 'reset'>();
   const [confirm, setConfirm] = useState<'discard' | 'reset'>();
   const [outcome, setOutcome] = useState<{ tone: 'danger' | 'warn'; text: string }>();
@@ -72,6 +75,7 @@ function Editor({ agent, guard, onClose }: { agent: AgentRef; guard: CloseGuard;
   const hue = draft.hue ?? seededHue;
   const problem = appearanceDraftProblem(draft);
   const look: OrbLook = { glyph: draft.glyph !== null && isAgentGlyph(draft.glyph) ? draft.glyph : null, hue: draft.hue, style: draft.style };
+  const previewIcon = pixelIconName(look.glyph);
   const dirty = !sameDraft(draft, savedDraft);
   const canWrite = permission === 'allowed' && preferences !== null;
   const initial = Array.from(agent.alias)[0]?.toLocaleUpperCase();
@@ -86,7 +90,7 @@ function Editor({ agent, guard, onClose }: { agent: AgentRef; guard: CloseGuard;
   useEffect(() => { if (confirm) safeChoice.current?.focus(); }, [confirm]);
 
   const update = (patch: Partial<AppearanceDraft>) => { setDraft((current) => ({ ...current, ...patch })); setOutcome(undefined); setConfirm(undefined); };
-  const pickGlyph = (glyph: string | null) => { setGlyphText(glyph ?? ''); update({ glyph }); };
+  const pickGlyph = (glyph: string | null) => { setGlyphText(glyph === null || isPixelIconRef(glyph) ? '' : glyph); update({ glyph }); };
   const nudge = (delta: number) => { update({ hue: (((hue + delta) % 360) + 360) % 360 }); };
 
   async function run(kind: 'save' | 'reset') {
@@ -142,7 +146,7 @@ function Editor({ agent, guard, onClose }: { agent: AgentRef; guard: CloseGuard;
             </div>
             <div className="flex justify-center">
               <span className="rounded-full bg-[rgba(37,28,24,0.78)] px-2 py-0.5 text-[11px] font-semibold text-white">
-                {look.glyph ? `${look.glyph} ` : ''}{agent.alias}
+                {previewIcon ? <PixelIcon name={previewIcon} size={12} className="mr-1 inline-block align-[-1px]" /> : look.glyph ? `${look.glyph} ` : ''}{agent.alias}
               </span>
             </div>
           </div>
@@ -156,26 +160,38 @@ function Editor({ agent, guard, onClose }: { agent: AgentRef; guard: CloseGuard;
 
       <div className="grid min-h-0 min-w-0 content-start gap-5 overflow-y-auto overscroll-contain p-5 max-[760px]:px-4">
         {gate ? <Notice tone="warn" role="note">{gate}</Notice> : null}
-        <Field label="Icono" hint="Un emoji, una letra o nada">
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(36px,1fr))] gap-1 pointer-coarse:grid-cols-[repeat(auto-fill,minmax(44px,1fr))]" role="group" aria-label="Iconos sugeridos">
-            <button type="button" aria-pressed={draft.glyph === null} aria-label="Sin icono" title="Sin icono" onClick={() => { pickGlyph(null); }}
-              className={cn(CHIP, 'aspect-square text-xs text-muted')}>—</button>
-            {initial ? (
-              <button type="button" aria-pressed={draft.glyph === initial} aria-label={`Inicial ${initial}`} title="La inicial del alias" onClick={() => { pickGlyph(initial); }}
-                className={cn(CHIP, 'aspect-square text-[15px] font-bold text-fg')}>{initial}</button>
-            ) : null}
-            {APPEARANCE_GLYPHS.map((glyph) => (
-              <button key={glyph} type="button" aria-pressed={draft.glyph === glyph} aria-label={`Icono ${glyph}`} onClick={() => { pickGlyph(glyph); }}
-                className={cn(CHIP, 'aspect-square text-lg leading-none')}>{glyph}</button>
+        <Field label="Icono" hint={iconMode === 'pixel' ? 'De píxeles, o nada' : 'Un emoji, una letra o nada'}>
+          <div className="flex w-fit gap-1 rounded-lg bg-muted-bg p-0.5" role="group" aria-label="Tipo de icono">
+            {([['pixel', 'Píxeles'], ['text', 'Emoji o letra']] as const).map(([mode, label]) => (
+              <button key={mode} type="button" aria-pressed={iconMode === mode} onClick={() => { setIconMode(mode); }}
+                className="h-6 cursor-pointer rounded-md border-0 bg-transparent px-2.5 text-[11px] font-medium whitespace-nowrap text-muted aria-pressed:bg-surface aria-pressed:text-fg aria-pressed:shadow-card pointer-coarse:h-8">
+                {label}
+              </button>
             ))}
           </div>
-          <label className="grid gap-1 text-xs font-normal text-muted">
-            O escribí cualquiera
-            <input type="text" value={glyphText} placeholder="🐉, Ω, K…" maxLength={16} aria-invalid={problem !== undefined && draft.glyph !== null}
-              onChange={(event) => { setGlyphText(event.target.value); update({ glyph: event.target.value.trim() || null }); }}
-              className="max-w-40 text-center text-base" />
-          </label>
-          {problem && draft.glyph !== null ? <Notice tone="danger" role="alert">{problem}</Notice> : null}
+          {iconMode === 'pixel' ? <PixelPicker value={draft.glyph} onPick={pickGlyph} /> : (
+            <>
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(36px,1fr))] gap-1 pointer-coarse:grid-cols-[repeat(auto-fill,minmax(44px,1fr))]" role="group" aria-label="Iconos sugeridos">
+                <button type="button" aria-pressed={draft.glyph === null} aria-label="Sin icono" title="Sin icono" onClick={() => { pickGlyph(null); }}
+                  className={cn(CHIP, 'aspect-square text-xs text-muted')}>—</button>
+                {initial ? (
+                  <button type="button" aria-pressed={draft.glyph === initial} aria-label={`Inicial ${initial}`} title="La inicial del alias" onClick={() => { pickGlyph(initial); }}
+                    className={cn(CHIP, 'aspect-square text-[15px] font-bold text-fg')}>{initial}</button>
+                ) : null}
+                {APPEARANCE_GLYPHS.map((glyph) => (
+                  <button key={glyph} type="button" aria-pressed={draft.glyph === glyph} aria-label={`Icono ${glyph}`} onClick={() => { pickGlyph(glyph); }}
+                    className={cn(CHIP, 'aspect-square text-lg leading-none')}>{glyph}</button>
+                ))}
+              </div>
+              <label className="grid gap-1 text-xs font-normal text-muted">
+                O escribí cualquiera
+                <input type="text" value={glyphText} placeholder="🐉, Ω, K…" maxLength={16} aria-invalid={problem !== undefined && draft.glyph !== null}
+                  onChange={(event) => { setGlyphText(event.target.value); update({ glyph: event.target.value.trim() || null }); }}
+                  className="max-w-40 text-center text-base" />
+              </label>
+              {problem && draft.glyph !== null ? <Notice tone="danger" role="alert">{problem}</Notice> : null}
+            </>
+          )}
         </Field>
 
         <Field label="Color" hint={draft.hue === null ? 'Automático, según el alias' : `Tono ${String(hue)}°`}>

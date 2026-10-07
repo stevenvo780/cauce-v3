@@ -45,14 +45,15 @@ describe('el veredicto', () => {
     await waitFor(() => { expect(veredicto).toHaveAttribute('data-tone', 'alerta'); });
     await user.click(within(veredicto).getByRole('button', { name: /necesitan atención/i }));
 
-    await waitFor(() => {
-      const estados = [...document.querySelectorAll('tr[data-agent-key]')].map((fila) => fila.getAttribute('data-state'));
-      expect(estados.length).toBeGreaterThan(0);
-      expect(new Set(estados)).toEqual(new Set(['down', 'blocked']));
-    });
+    const atencion = screen.getByRole('region', { name: 'Necesitan atención' });
+    const estados = within(atencion).getAllByRole('button').map((boton) => boton.getAttribute('data-state'));
+    expect(estados.length).toBeGreaterThan(0);
+    expect(new Set(estados)).toEqual(new Set(['down', 'blocked']));
+    expect(estados.indexOf('blocked')).toBeGreaterThan(estados.lastIndexOf('down'));
     expect(screen.getByRole('button', { name: /^Caído/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: /^Trabado/ })).toHaveAttribute('aria-pressed', 'true');
     await user.click(screen.getByRole('button', { name: 'Quitar filtro' }));
-    await waitFor(() => { expect(document.querySelectorAll('tr[data-state="delegating"]').length).toBeGreaterThan(0); });
+    expect(screen.getByRole('button', { name: /^Caído/ })).toHaveAttribute('aria-pressed', 'false');
   });
 });
 
@@ -77,14 +78,13 @@ describe('los chips de estado', () => {
 });
 
 describe('la oficina', () => {
-  it('es el objeto principal y precede a la tabla', async () => {
+  it('es el objeto principal y ninguna tabla debajo la repite', async () => {
     conActividad(mockActivity());
     renderLive();
 
     const oficina = await screen.findByRole('region', { name: 'Oficina' });
     expect(oficina).toHaveAttribute('data-objeto-principal', 'oficina');
-    const tabla = await screen.findByRole('table');
-    expect(oficina.compareDocumentPosition(tabla) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
   it('enumera a cada agente con su estado para el lector de pantalla y se recorre con el teclado', async () => {
@@ -94,7 +94,8 @@ describe('la oficina', () => {
 
     const lista = await screen.findByRole('listbox', { name: /oficina con \d+ agentes/i });
     const opciones = within(lista).getAllByRole('option');
-    expect(opciones.length).toBe(document.querySelectorAll('tr[data-agent-key]').length);
+    const chips = within(screen.getByRole('group', { name: 'Filtrar por estado' })).getAllByRole('button');
+    expect(opciones.length).toBe(chips.reduce((total, chip) => total + Number(/(\d+)$/.exec(chip.textContent)?.[1] ?? 0), 0));
     expect(within(lista).getByRole('option', { name: /^hegel: Trabado\./ })).toBeInTheDocument();
 
     lista.focus();
@@ -129,12 +130,13 @@ describe('la oficina', () => {
 });
 
 describe('la ficha del agente', () => {
-  it('se abre desde la fila, escribe el enlace profundo y lleva al chat, la terminal y el contexto', async () => {
+  it('se abre desde la oficina, escribe el enlace profundo y lleva al chat, la terminal y el contexto', async () => {
     const user = userEvent.setup();
     conActividad(mockActivity());
     renderLive();
 
-    await user.click(await screen.findByRole('button', { name: 'Kant' }));
+    const lista = await screen.findByRole('listbox', { name: /oficina con \d+ agentes/i });
+    await user.click(within(lista).getByRole('option', { name: /^kant:/ }));
     const ficha = await screen.findByRole('dialog', { name: 'kant' });
     expect(window.location.search).toBe('?agente=Steven%2Fkant');
     expect(within(ficha).getByRole('link', { name: /abrir chat/i })).toHaveAttribute('href', '/messages/Steven/kant');

@@ -4,7 +4,6 @@ import { Button, Notice } from '../../components/kit';
 import { Tooltip } from '../../components/ui';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { MARCA_INERTE } from './campos-inertes';
-import { fechaRelativa } from './fecha-relativa';
 import type { Interruptor } from './interruptores';
 import type { ControlDeInterruptores, FalloDeInterruptor } from './use-interruptores';
 
@@ -138,16 +137,4 @@ export function ConfirmarQuitarControl({ control, busy }: {
       <Button size="sm" disabled={busy} onClick={control.cancelar}>Cancelar</Button>
     </div>
   </Notice>;
-}
-
-/**
- * Renders an accessible relative date, with the exact ISO date in dateTime and title.
- */
-export function FechaRelativa({ value }: { value: unknown }) {
-  const relativa = fechaRelativa(value);
-  if (!relativa) return <span className="text-muted italic">UNKNOWN</span>;
-  return <time className="whitespace-nowrap text-muted tabular-nums" dateTime={relativa.iso} title={relativa.absoluta}>
-    {relativa.texto}
-    <span className="sr-only"> ({relativa.absoluta})</span>
-  </time>;
 }

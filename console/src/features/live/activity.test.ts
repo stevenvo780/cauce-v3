@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetActivityAgent } from '../../api/types';
 import { UNKNOWN } from '../../lib';
-import {
-  FLAG_LABEL, WORK_STATE_LABEL, formatAckAge, formatDurationSeconds, formatInFlightAge,
-  resumirSenales, rowUrgency, sortByUrgency,
-} from './activity';
+import { FLAG_LABEL, WORK_STATE_LABEL, formatAckAge, formatDurationSeconds, sortByUrgency } from './activity';
 import { LIVE_STATE_META } from './agent-state';
 
 function agent(overrides: Partial<FleetActivityAgent>): FleetActivityAgent {
@@ -55,27 +52,6 @@ describe('formatAckAge — el caso que no puede leerse como "recién ackeado"', 
   });
 });
 
-describe('formatInFlightAge — distingue cero conocido de desconocido', () => {
-  it('renders a dash (not UNKNOWN) when there is nothing in flight', () => {
-    expect(formatInFlightAge(null)).toBe('—');
-  });
-
-  it('renders the real age when something is in flight', () => {
-    expect(formatInFlightAge(259)).toBe('4m 19s');
-  });
-});
-
-describe('rowUrgency', () => {
-  it('flags stalled as critical and saturated as warning, everything else as none', () => {
-    expect(rowUrgency('stalled')).toBe('critical');
-    expect(rowUrgency('saturated')).toBe('warning');
-    expect(rowUrgency('working')).toBeUndefined();
-    expect(rowUrgency('queued')).toBeUndefined();
-    expect(rowUrgency('idle')).toBeUndefined();
-    expect(rowUrgency(null)).toBeUndefined();
-  });
-});
-
 describe('sortByUrgency', () => {
   it('surfaces stalled and saturated agents above idle ones, tie-broken by in_flight', () => {
     const agents = [
@@ -108,7 +84,7 @@ describe('sortByUrgency', () => {
 
 /* ============================================================================================ *
  * Negative control of the vocabulary: ONE label per fact, and the same words across the screen.
- * See `resumirSenales` and `WORK_STATE_LABEL` in `activity.ts`.
+ * See `WORK_STATE_LABEL` and `FLAG_LABEL` in `activity.ts`.
  * ============================================================================================ */
 
 describe('un solo vocabulario en toda la vista', () => {
@@ -128,73 +104,5 @@ describe('un solo vocabulario en toda la vista', () => {
       expect(texto, `${clave} está en mayúsculas sostenidas`).not.toBe(texto.toUpperCase());
       expect(texto, `${clave} lleva un identificador crudo`).not.toMatch(/[a-z]+_[a-z]+/);
     }
-  });
-});
-
-describe('resumirSenales — el control negativo de las insignias apiladas', () => {
-  it('jarvis: SATURADO no se pinta dos veces en la misma celda', () => {
-    /*
-     * "Saturado" appears ONCE, and the word that accompanies it does not repeat it.
-     *
-     * `work_state: 'saturated'` is labelled "Trabajando" on purpose (`WORK_STATE_LABEL`): among
-     * the bot's seven states none is called "Saturado", because saturation is a SIGNAL and the
-     * server sends it separately in `flags`. Putting "Saturado" in the title as well invented an
-     * eighth state that the legend does not explain, and left the cell reading "SATURADO
-     * SATURADO". Title "Trabajando" + signal "Saturado" are two distinct facts, each said once.
-     */
-    const resumen = resumirSenales('saturated', ['saturated']);
-    const pintadas = [resumen.estado.label, ...resumen.senales.map((s) => s.label)];
-    expect(pintadas).toEqual(['Trabajando', 'Saturado']);
-    expect(new Set(pintadas).size).toBe(pintadas.length);
-    // The implicated part is not lost: it stays intact in the `title=`.
-    expect(resumen.detalle).toContain('Saturado');
-  });
-
-  it('the title rules: if the row already says "Saturado", the chip does not repeat it', () => {
-    // The real row paints the DERIVED state (`estadoDeFila`) and passes it as the title. If that
-    // title said "Saturado", the signal chip would be the same word twice and collapses.
-    const resumen = resumirSenales('saturated', ['saturated'], 'conectado', {
-      clave: 'x', label: 'Saturado', tone: 'warning',
-    });
-    expect([resumen.estado.label, ...resumen.senales.map((s) => s.label)]).toEqual(['Saturado']);
-  });
-
-  it('midas: cinco insignias para decir «está trabado» pasan a tres', () => {
-    const resumen = resumirSenales('stalled', ['ack_stalled', 'saturated', 'overdue_acks', 'lease_expired']);
-    const pintadas = [resumen.estado.label, ...resumen.senales.map((s) => s.label)];
-    expect(pintadas.length).toBeLessThanOrEqual(3);
-    expect(pintadas[0]).toBe('Trabado');
-    // No measured signal is lost: all four are still named in the detail.
-    for (const flag of ['ack_stalled', 'saturated', 'overdue_acks', 'lease_expired'] as const) {
-      expect(resumen.detalle).toContain(FLAG_LABEL[flag]);
-    }
-  });
-
-  it('NINGUNA combinación pinta la misma palabra dos veces, ni pasa de cuatro insignias', () => {
-    const estados = [undefined, 'idle', 'queued', 'working', 'saturated', 'stalled'] as const;
-    const banderas = [
-      'saturated', 'ack_stalled', 'overdue_acks', 'lease_expired',
-      'never_connected', 'unregistered', 'queued_without_consumer',
-    ] as const;
-    // The 2^7 signal combinations per state: 384 possible cells.
-    for (const estado of estados) {
-      for (let mascara = 0; mascara < 1 << banderas.length; mascara += 1) {
-        const flags = banderas.filter((_, indice) => mascara & (1 << indice));
-        const resumen = resumirSenales(estado, flags);
-        const pintadas = [resumen.estado.label, ...resumen.senales.map((s) => s.label)];
-        expect(new Set(pintadas).size, `duplicado con ${String(estado)}/${flags.join('+')}: ${pintadas.join(', ')}`)
-          .toBe(pintadas.length);
-        expect(pintadas.length + (resumen.ocultas > 0 ? 1 : 0),
-          `demasiadas insignias con ${String(estado)}/${flags.join('+')}`).toBeLessThanOrEqual(4);
-        // And NEVER is a measured signal lost: the detail names them all.
-        for (const flag of flags) expect(resumen.detalle).toContain(FLAG_LABEL[flag]);
-      }
-    }
-  });
-
-  it('sin `work_state` del servidor se DICE, no se rellena con «Libre»', () => {
-    const resumen = resumirSenales(undefined, []);
-    expect(resumen.estado.label).toBe('Sin dato de estado');
-    expect(resumen.estado.tone).toBe('unknown');
   });
 });

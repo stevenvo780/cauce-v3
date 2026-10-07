@@ -46,7 +46,7 @@ function TerminalPageContent({ params }: TerminalPageProps) {
   const tenantId = params?.[0];
   const alias = params?.[1];
   const agentId = tenantId && alias ? fleetAgentId(tenantId, alias) : undefined;
-  const { agents, live, messages, loading, error } = fleet;
+  const { agents, live, loading, error } = fleet;
   const relay = deriveTerminalRelayState(capability.data, capability.error);
   const missing = agentId !== undefined && !loading && !error && agents.every((agent) => agent.id !== agentId);
   const targetItems = targets.error ? undefined : targets.data;
@@ -98,7 +98,6 @@ function TerminalPageContent({ params }: TerminalPageProps) {
           agents={agents}
           agentId={agentId}
           live={live}
-          messages={messages}
           summary={summary}
           access={access.error ? undefined : access.data}
           terminalCapability={capability.error ? undefined : capability.data}
