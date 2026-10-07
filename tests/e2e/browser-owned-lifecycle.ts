@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process';
-import { lstat } from 'node:fs/promises';
-
+import { assertBrowserSecurity, browserSecurityOptions, captureBrowserSecurity, resolveBrowserSecurity, verifyBrowserSocket, type BrowserContainerSecurity, type BrowserDocker, type BrowserSecurityPolicy } from './browser-security-policy.js';
 interface ExecOptions { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number }
 class SubprocessError extends Error {
   readonly stderr: string;
@@ -30,6 +29,7 @@ export function browserExec(command: string, args: string[], options: ExecOption
     }, timeoutMs);
   });
 }
+
 export function browserDocker(args: string[], options: ExecOptions = {}) {
   return browserExec('docker', args, { timeout: 15_000, maxBuffer: 64 * 1024, ...options });
 }
@@ -59,13 +59,13 @@ export interface BrowserDescriptor {
   name: string; owner: string; imageId: string; networkName: string; networkId: string; networkOwner: string; directory: string;
   socketIdentity: { uid: number; dev: number; ino: number };
 }
-type Docker = (args: string[], options?: { timeout: number }) => Promise<{ stdout: string }>;
-interface Container {
+interface Container extends BrowserContainerSecurity {
   id: string; name: string; image: string; owner: string; cohort: string; networkMode: string;
   mounts: { Type: string; Source: string; Destination: string; RW: boolean }[];
   state: { Status: string; Pid: number };
   networks: Record<string, { NetworkID: string }>;
 }
+
 export class BrowserResourcesRetained extends Error {
   readonly retainBrowserResources = true;
   constructor(readonly descriptor: BrowserDescriptor, cause?: unknown) {
@@ -90,21 +90,18 @@ function absentContainer(error: unknown, reference: string): boolean {
   return code === 1 && absent;
 }
 
-export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescriptor, timing = {
+export function ownedBrowserLifecycle(docker: BrowserDocker, descriptor: BrowserDescriptor, timing = {
   now: () => performance.now(), wait: (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }),
-}) {
-  const expected = Object.freeze({ ...descriptor, socketIdentity: Object.freeze({
+}, environment: Readonly<NodeJS.ProcessEnv> = process.env) {
+  const request = captureBrowserSecurity(environment);
+  let security: BrowserSecurityPolicy | undefined;
+  const expected = Object.freeze({ ...descriptor, securityOptions: request.options, socketIdentity: Object.freeze({
     uid: descriptor.socketIdentity.uid, dev: descriptor.socketIdentity.dev, ino: descriptor.socketIdentity.ino,
   }) });
   let cid: string | undefined;
   let createIssued = false;
   let retained = false;
   let cleanup: Promise<void> | undefined;
-  const verifySocket = async () => {
-    const socket = await lstat(`${expected.directory}/proxy.sock`);
-    if (!socket.isSocket() || socket.uid !== expected.socketIdentity.uid || socket.dev !== expected.socketIdentity.dev
-      || socket.ino !== expected.socketIdentity.ino || (socket.mode & 0o777) !== 0o600) throw new Error('Owned browser socket identity changed');
-  };
   const verifyNetwork = async () => {
     const format = '{"id":{{json .Id}},"name":{{json .Name}},"internal":{{json .Internal}},"owner":{{json (index .Labels "cauce.e2e.owner")}}}';
     const network = JSON.parse((await docker(['network', 'inspect', '--format', format, expected.networkId], { timeout: 15_000 })).stdout) as {
@@ -115,7 +112,7 @@ export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescrip
   };
   const inspect = async (timeout = 15_000): Promise<Container | undefined> => {
     const reference = cid ?? expected.name;
-    const format = '{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Image}},"owner":{{json (index .Config.Labels "io.cauce.qa.browser")}},"cohort":{{json (index .Config.Labels "cauce.e2e.owner")}},"networkMode":{{json .HostConfig.NetworkMode}},"mounts":{{json .Mounts}},"state":{{json .State}},"networks":{{json .NetworkSettings.Networks}}}';
+    const format = '{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Image}},"owner":{{json (index .Config.Labels "io.cauce.qa.browser")}},"cohort":{{json (index .Config.Labels "cauce.e2e.owner")}},"networkMode":{{json .HostConfig.NetworkMode}},"mounts":{{json .Mounts}},"state":{{json .State}},"networks":{{json .NetworkSettings.Networks}},"user":{{json (or (index .Config "User") "")}},"privileged":{{json .HostConfig.Privileged}},"securityOpt":{{json .HostConfig.SecurityOpt}},"capAdd":{{json .HostConfig.CapAdd}},"capDrop":{{json .HostConfig.CapDrop}}}';
     try {
       const view = JSON.parse((await docker(['inspect', '--format', format, reference], { timeout })).stdout) as Container;
       if (!/^[a-f0-9]{64}$/u.test(view.id) || (cid !== undefined && view.id !== cid) || view.name !== `/${expected.name}`
@@ -124,6 +121,7 @@ export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescrip
         || view.mounts[0].Source !== expected.directory || view.mounts[0].Destination !== '/qa-browser-transport' || view.mounts[0].RW) {
         throw new Error('Owned browser container identity changed');
       }
+      assertBrowserSecurity(view, security);
       if (view.state.Status === 'running' && (Object.keys(view.networks).length !== 1
         || view.networks[expected.networkName]?.NetworkID !== expected.networkId)) throw new Error('Owned browser network identity changed');
       return view;
@@ -145,7 +143,7 @@ export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescrip
     cleanup ??= (async () => {
       try {
         if (!createIssued) return;
-        await verifySocket();
+        await verifyBrowserSocket(expected.directory, expected.socketIdentity);
         const current = await inspect();
         if (current === undefined) {
           if (cid === undefined) throw new Error('CLI exit does not confirm remote create cancellation');
@@ -185,12 +183,14 @@ export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescrip
     return cleanup;
   };
   return { descriptor: expected, retained: () => retained, close, start: async () => {
-    await verifySocket();
+    security = await resolveBrowserSecurity(docker, expected.imageId, browserSecurityOptions(request.environment));
+    process.stdout.write(`E2E browser security: ${JSON.stringify(security)}\n`);
+    await verifyBrowserSocket(expected.directory, expected.socketIdentity);
     await verifyNetwork();
     if (await inspect() !== undefined) throw new Error('Owned browser name already exists');
     process.stdout.write(`E2E browser descriptor: ${JSON.stringify(expected)}\n`);
     createIssued = true;
-    const receipt = (await docker(['create', '--pull=never', '--rm', '--network', expected.networkName,
+    const receipt = (await docker(['create', '--pull=never', '--rm', ...expected.securityOptions.flatMap((option) => ['--security-opt', option]), '--network', expected.networkName,
       '--mount', `type=bind,source=${expected.directory},target=/qa-browser-transport,readonly`, '--name', expected.name,
       '--label', 'cauce.e2e.owner=ui-functional', '--label', `io.cauce.qa.browser=${expected.owner}`,
       '--entrypoint', 'sh', expected.imageId, '-lc', 'sleep 600'], { timeout: 15_000 })).stdout.trim();
