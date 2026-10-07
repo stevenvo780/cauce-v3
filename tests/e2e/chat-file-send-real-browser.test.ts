@@ -34,12 +34,12 @@ async function login(page: BrowserPage, tenant: FunctionalTenant): Promise<void>
   await page.getByLabel('Correo').fill(tenant.email);
   await page.getByLabel('Contraseña').fill(tenant.password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
 }
 
 async function createMembership(page: BrowserPage, tenant: FunctionalTenant, active: Fixture): Promise<void> {
   await page.goto(`${active.baseUrl}/config`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: 'Administración avanzada' }).click();
+  await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
   await page.getByRole('button', { name: 'Un solo recurso' }).click();
   await page.getByLabel('Recurso a crear').selectOption('membership');
   await page.getByLabel('Tenant', { exact: true }).fill(tenant.tenant);
@@ -152,7 +152,7 @@ async function publishFile(tenant: FunctionalTenant, file: TestFile, text: strin
     sha256, bytes_base64: base64, mode: 0o600 });
   expect(files[0]?.local_path.startsWith(adapter.workspace + sep)).toBe(true);
   expect(Buffer.from(files[0]?.bytes_base64 ?? '', 'base64')).toEqual(file.buffer);
-  const rendered = page.locator('article.transcript-entry').filter({ hasText: file.name });
+  const rendered = page.locator(`article[data-direction="input"][data-message-id="${row.id}"]`).filter({ hasText: file.name });
   await rendered.getByRole('list', { name: 'Archivos del mensaje' }).waitFor({ timeout: 20_000 });
   expect(await rendered.count()).toBe(1);
   await page.reload({ waitUntil: 'domcontentloaded' });

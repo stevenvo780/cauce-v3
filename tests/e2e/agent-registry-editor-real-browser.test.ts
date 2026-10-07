@@ -67,8 +67,9 @@ async function login(page: BrowserPage, email: string, password: string): Promis
   await page.getByLabel('Correo').fill(email);
   await page.getByLabel('Contraseña').fill(password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
   await page.goto(`${fixture?.baseUrl ?? ''}/config`, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
 }
 async function openEditor(page: BrowserPage, tenant: string, alias: string): Promise<void> {
   await page.getByRole('button', { name: `Editar registro de ${tenant}/${alias}` }).click();
@@ -344,7 +345,7 @@ describe('V1 tipada de edición del registro de agentes', () => {
     expect(await hubPage.getByRole('heading', { name: `Registro · ${identity.tenant}/${identity.alias}` }).count()).toBe(1);
     expect(browserErrors).toEqual([]);
     await hubPage.setViewportSize({ width: 1440, height: 900 });
-    await hubPage.getByRole('button', { name: `Cerrar registro de ${identity.tenant}/${identity.alias}` }).click();
+    await hubPage.getByRole('region', { name: `Registro de ${identity.tenant}/${identity.alias}`, exact: true }).getByRole('button', { name: 'Cerrar editor', exact: true }).click();
     await assertAgentRegistryGeometry(hubPage, evidenceDirectory, 'desktop-closed', `${identity.tenant}/${identity.alias}`);
     const nonHubPage = await newTrustedPage(active, { width: 360, height: 800 });
     await login(nonHubPage, isaTenant.email, isaTenant.password);

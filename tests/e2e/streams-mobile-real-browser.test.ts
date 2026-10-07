@@ -158,13 +158,11 @@ async function login(
   await page.getByLabel('Correo').fill(email);
   await page.getByLabel('Contraseña').fill(password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
 }
 
-async function openTerminalFromMenu(page: Awaited<ReturnType<RealPtyFixture['browserPage']>>): Promise<void> {
-  await page.getByRole('button', { name: 'Herramientas' }).click();
-  const tools = page.getByRole('region', { name: 'Herramientas de Cauce' });
-  await tools.getByRole('link', { name: 'Terminal de agentes' }).click();
+async function openOwnTerminal(active: RealPtyFixture, page: Awaited<ReturnType<RealPtyFixture['browserPage']>>): Promise<void> {
+  await page.goto(new URL(`/terminal/${encodeURIComponent(active.tenant)}/${encodeURIComponent(active.targetAlias)}`, active.baseUrl).toString(), { waitUntil: 'domcontentloaded' });
   await page.getByRole('heading', { name: 'Terminal de agentes' }).waitFor({ timeout: 20_000 });
 }
 
@@ -247,20 +245,14 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     };
     const operatorPage = await active.browserPage({ width: 1440, height: 900 });
     await login(active, operatorPage, active.operatorEmail, active.operatorPassword);
-    await openTerminalFromMenu(operatorPage);
+    await openOwnTerminal(active, operatorPage);
     await waitForOwnTarget(active, operatorPage);
-    const operatorTarget = operatorPage.locator('#terminal-agent-select');
-    await operatorTarget.waitFor({ state: 'visible', timeout: 25_000 });
-    await operatorTarget.selectOption(`${active.tenant}:${active.targetAlias}`);
     const operatorPty = operatorPage.getByRole('button', { name: 'Terminal', exact: true });
     await operatorPty.waitFor({ state: 'visible', timeout: 25_000 });
     expect(await waitForPtyButton(operatorPage, true)).toBe(true);
     await operatorPty.click();
-    const operatorDialog = operatorPage.getByRole('dialog', { name: `Abrir Terminal en ${active.targetAlias}` });
-    await operatorDialog.waitFor({ state: 'visible', timeout: 10_000 });
     expect(await operatorPage.getByLabel('Motivo de la sesión').count()).toBe(0);
-    await operatorDialog.getByRole('button', { name: 'Abrir sesión PTY' }).click();
-    await operatorPage.locator('.pty-shell[data-state="open"]').waitFor({ state: 'visible', timeout: 30_000 });
+    await operatorPage.locator('[data-pty-shell][data-state="open"]').waitFor({ state: 'visible', timeout: 30_000 });
     const operatorPtyBar = operatorPage.getByLabel('Sesión PTY activa');
     await operatorPtyBar.waitFor({ state: 'visible', timeout: 25_000 });
     await expectNoViewportOverflow(operatorPage, 1440);
@@ -269,27 +261,21 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
       await operatorPage.screenshot({ path: join(artifactDirectory, 'terminal-operator-1440.png') });
     }
     const operatorSessionId = (await readOperatorSession()).rows[0]?.id ?? '';
-    await operatorPage.getByRole('link', { name: 'Conversaciones', exact: true }).click();
+    await operatorPage.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').click();
     await operatorPtyBar.waitFor({ state: 'hidden', timeout: 25_000 });
     await verifyOperatorClosure(operatorSessionId);
 
     const mobileOperatorPage = await active.browserPage({ width: 360, height: 800 });
     await login(active, mobileOperatorPage, active.operatorEmail, active.operatorPassword);
-    await openTerminalFromMenu(mobileOperatorPage);
+    await openOwnTerminal(active, mobileOperatorPage);
     await waitForOwnTarget(active, mobileOperatorPage);
-    const mobileTarget = mobileOperatorPage.locator('#terminal-agent-select');
-    await mobileTarget.waitFor({ state: 'visible', timeout: 25_000 });
-    await mobileTarget.selectOption(`${active.tenant}:${active.targetAlias}`);
     const mobilePty = mobileOperatorPage.getByRole('button', { name: 'Terminal', exact: true });
     await mobilePty.waitFor({ state: 'visible', timeout: 25_000 });
     expect(await waitForPtyButton(mobileOperatorPage, true)).toBe(true);
     await mobilePty.click();
-    const mobileDialog = mobileOperatorPage.getByRole('dialog', { name: `Abrir Terminal en ${active.targetAlias}` });
-    await mobileDialog.waitFor({ state: 'visible', timeout: 10_000 });
     expect(await mobileOperatorPage.getByLabel('Motivo de la sesión').count()).toBe(0);
-    await mobileDialog.getByRole('button', { name: 'Abrir sesión PTY' }).click();
-    await mobileOperatorPage.locator('.pty-shell[data-state="open"]').waitFor({ state: 'visible', timeout: 30_000 });
-    await mobileOperatorPage.locator('.xterm-helper-textarea').waitFor({ state: 'visible', timeout: 15_000 });
+    await mobileOperatorPage.locator('[data-pty-shell][data-state="open"]').waitFor({ state: 'visible', timeout: 30_000 });
+    await mobileOperatorPage.locator('.xterm-helper-textarea').waitFor({ state: 'attached', timeout: 15_000 });
     const mobileNonce = randomBytes(12).toString('hex');
     const mobileInput = mobileOperatorPage.locator('.xterm-helper-textarea');
     await mobileInput.type(`printf 'MOBILE-PTY:${mobileNonce}\\n'`);
@@ -309,7 +295,7 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
     }
     const mobilePtyBar = mobileOperatorPage.getByLabel('Sesión PTY activa');
     const mobileSessionId = (await readOperatorSession()).rows[0]?.id ?? '';
-    await mobileOperatorPage.getByRole('link', { name: 'Conversaciones', exact: true }).click();
+    await mobileOperatorPage.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').click();
     await mobilePtyBar.waitFor({ state: 'hidden', timeout: 25_000 });
     await verifyOperatorClosure(mobileSessionId);
 
@@ -336,28 +322,16 @@ describe('terminal remoto real: RBAC de lector y geometría en escritorio/móvil
       }
     });
     await login(active, readerPage, reader.email, reader.password);
-    await readerPage.getByRole('button', { name: 'Herramientas' }).click();
-    const readerTools = readerPage.getByRole('region', { name: 'Herramientas de Cauce' });
-    const terminalLink = readerTools.getByRole('link', { name: 'Terminal de agentes' });
-    await terminalLink.waitFor({ state: 'visible', timeout: 10_000 });
-    const linkState = await readerPage.evaluate(() => {
-      const link = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href="/terminal"]'))
-        .find((candidate) => candidate.getAttribute('aria-label') === 'Terminal de agentes');
-      return { disabled: link?.getAttribute('aria-disabled'), title: link?.getAttribute('title') };
-    });
-    expect(linkState.disabled).toBe('true');
-    expect(linkState.title).toMatch(/no tiene permiso de control/u);
-    await readerPage.goto(new URL('/terminal', active.baseUrl).toString(), { waitUntil: 'domcontentloaded' });
-    await readerPage.getByRole('heading', { name: 'Terminal de agentes' }).waitFor({ timeout: 20_000 });
-    const readerTarget = readerPage.locator('#terminal-agent-select');
-    await readerTarget.waitFor({ state: 'visible', timeout: 25_000 });
-    await readerTarget.selectOption(`${active.tenant}:${active.targetAlias}`);
+    await openOwnTerminal(active, readerPage);
     const readerPty = readerPage.getByRole('button', { name: 'Terminal', exact: true });
     await readerPty.waitFor({ state: 'visible', timeout: 25_000 });
     expect(await waitForPtyButton(readerPage, false)).toBe(true);
     const ptyDisabled = await readerPage.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
       .find((button) => button.textContent.trim() === 'Terminal')?.disabled);
     expect(ptyDisabled).toBe(true);
+    const permissionReason = await readerPage.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent.trim() === 'Terminal')?.title);
+    expect(permissionReason).toContain('Tu cuenta no tiene concedido el permiso de conectar a la terminal');
     await expectNoViewportOverflow(readerPage, 360);
     if (artifactDirectory) {
       await readerPage.screenshot({ path: join(artifactDirectory, 'terminal-reader-360.png') });

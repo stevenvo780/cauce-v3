@@ -22,6 +22,8 @@ import { ConversationNotices } from './ConversationNotices';
 import { estaPegadoAlFinal, irAlFinal } from './desplazamiento';
 import { publishDurably } from './durable-publish';
 import { MessageDetail } from './MessageDetail';
+import { mergeOptimisticMessages, optimisticMessageOf, publishedMessage, retainOptimisticMessages, type OptimisticMessage } from './optimistic-message';
+import { randomUuid } from '../../random-id';
 import { LIMITE_MENSAJES, type SaludDeCola } from './queue-health';
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
 import { useCanonicalReply, type CanonicalReplyRoot } from './use-canonical-reply';
@@ -29,13 +31,13 @@ import { useCanonicalReply, type CanonicalReplyRoot } from './use-canonical-repl
 const apiDraftScopes = new WeakMap<object, number>();
 let nextApiDraftScope = 0;
 
-function conversationDraftKey(api: object, subject: string | null | undefined, agentId: string): string {
+function conversationDraftKey(api: object, subject: string | null | undefined, agentId: string, publisherSubject?: string | null): string {
   let scope = apiDraftScopes.get(api);
   if (scope === undefined) {
     scope = ++nextApiDraftScope;
     apiDraftScopes.set(api, scope);
   }
-  return JSON.stringify([scope, subject, agentId]);
+  return JSON.stringify([scope, subject, agentId, publisherSubject]);
 }
 
 interface ConversationPaneProps {
@@ -61,7 +63,8 @@ interface ConversationPaneProps {
  */
 export function ConversationPane(props: ConversationPaneProps) {
   const api = useApi();
-  const key = conversationDraftKey(api, props.publisherHumanSubject ?? props.publisherSubject, props.agent.id);
+  const key = conversationDraftKey(api, props.publisherHumanSubject ?? props.publisherSubject,
+    JSON.stringify([props.agent.id, props.agent.tenantId, props.agent.alias]), props.publisherSubject);
   return <ConversationPaneContent key={key} {...props} />;
 }
 
@@ -82,13 +85,14 @@ function ConversationPaneContent({
     wasContextOpen.current = contextOpen;
   }, [contextOpen]);
   const replySubject = publisherHumanSubject ?? publisherSubject;
-  const draftKey = conversationDraftKey(api, replySubject, agent.id);
+  const draftKey = conversationDraftKey(api, replySubject, JSON.stringify([agent.id, agent.tenantId, agent.alias]), publisherSubject);
   const [form, updateForm] = useConversationDraft(draftKey);
   const { text: draft, files: archivos, roomId: roomElegido, lane, sending: enviando, notice: aviso } = form;
   const setDraft = (text: string) => { updateForm((current) => ({ ...current, text })); };
   const setAviso = (notice: typeof aviso) => { updateForm((current) => ({ ...current, notice })); };
   const [mensajeElegido, setMensajeElegido] = useState<string>();
   const [selectedSnapshot, setSelectedSnapshot] = useState<TranscriptItem>();
+  const [optimisticMessages, setOptimisticMessages] = useState<OptimisticMessage[]>([]);
   const submissions = useRef(new Set<string>());
   const [receiptRoot, setReceiptRoot] = useState<{ key: string; root: CanonicalReplyRoot }>();
   const [cuerpos, setCuerpos] = useState<Record<string, FullBody>>({});
@@ -99,7 +103,9 @@ function ConversationPaneContent({
   const sesion: OperatorSession = useMemo(() => ({
     id: `messenger:${agent.id}`, agent, sourceRoomId: '', openedAt: new Date(0).toISOString(), mode: 'transcript',
   }), [agent]);
-  const hilo = useMemo(() => transcriptForSession(page, sesion), [page, sesion]);
+  const feedItems = useMemo(() => transcriptForSession(page, sesion), [page, sesion]);
+  const hilo = useMemo(() => mergeOptimisticMessages(feedItems, optimisticMessages), [feedItems, optimisticMessages]);
+  useEffect(() => { setOptimisticMessages((current) => retainOptimisticMessages(current, feedItems)); }, [feedItems]);
   const replyScopeKey = JSON.stringify([draftKey, agent.tenantId, agent.alias]);
   const publishScope = useMemo(() => ({ key: replyScopeKey, api, publisherSubject }), [api, publisherSubject, replyScopeKey]);
   const activePublishScope = useRef<typeof publishScope | undefined>(publishScope);
@@ -148,14 +154,21 @@ function ConversationPaneContent({
     ? { messageId: elegidoPorElOperador?.message.message_id ?? '', deliveryId: elegidoPorElOperador?.delivery?.delivery_id ?? '', status: elegidoPorElOperador?.delivery?.status }
     : undefined;
   const latestOwnRoot = [...hilo].reverse().find((item) => mensajePropio(item) && deliveryDelAgente(item));
-  const candidateRoot = mensajeElegido
+  const awaitingPublication = optimisticMessageOf(hilo.at(-1) ?? { message: {}, direction: 'input' })?.state === 'sending';
+  const candidateRoot = awaitingPublication ? undefined : mensajeElegido
     ? selectedReplyRoot
     : rootFromReceipt ?? (latestOwnRoot ? {
         messageId: latestOwnRoot.message.message_id ?? '',
         deliveryId: latestOwnRoot.delivery?.delivery_id ?? '',
         status: latestOwnRoot.delivery?.status,
       } : undefined);
-  const canonical = useCanonicalReply({ publisherSubject: replySubject, tenantId: agent.tenantId, alias: agent.alias, root: candidateRoot });
+  const canonicalRoots = useMemo(() => hilo.flatMap((item) => (
+    replySubject && item.message.author?.kind === 'human' && item.message.author.subject_id === replySubject
+      && item.message.message_id && item.delivery?.delivery_id
+      && item.delivery.recipient_tenant === agent.tenantId && item.delivery.recipient_alias === agent.alias
+      ? [{ messageId: item.message.message_id, deliveryId: item.delivery.delivery_id, status: item.delivery.status }] : []
+  )), [hilo, replySubject, agent.tenantId, agent.alias]);
+  const canonical = useCanonicalReply({ publisherSubject: replySubject, tenantId: agent.tenantId, alias: agent.alias, root: candidateRoot, roots: canonicalRoots });
 
   /*
    * One scroll box wraps the thread and nothing else, so "go to the end" has one destination. It
@@ -235,6 +248,20 @@ function ConversationPaneContent({
     const snapshotFiles = [...archivos];
     if (!puedeEnviar || (!texto && snapshotFiles.length === 0) || enviando || submissions.current.has(draftKey)) return;
     submissions.current.add(draftKey);
+    const clientId = randomUuid();
+    const pendingMessage: OptimisticMessage = {
+      optimistic: { clientId, state: 'sending', files: snapshotFiles }, direction: 'input',
+      message: { body_preview: texto, created_at: new Date().toISOString(), room_id: roomOrigen, lane,
+        ...(replySubject ? { author: { kind: 'human', subject_id: replySubject, display_name: null } } : {}) },
+      delivery: { recipient_tenant: agent.tenantId, recipient_alias: agent.alias },
+    };
+    setOptimisticMessages((current) => [...current.filter((item) => !(item.optimistic.state === 'failed'
+      && item.message.body_preview === texto && item.optimistic.files.length === snapshotFiles.length
+      && item.optimistic.files.every((file, index) => file === snapshotFiles[index]))), pendingMessage].slice(-100));
+    setMensajeElegido(undefined);
+    setSelectedSnapshot(undefined);
+    pegadoRef.current = true;
+    setPegado(true);
     setConfirmandoPublicacion(false);
     updateForm((current) => ({ ...current, sending: true, notice: undefined }));
     const stillActive = () => activePublishScope.current === publishScope;
@@ -257,6 +284,7 @@ function ConversationPaneContent({
         expectedDeliveries: 1,
         reconcile: refresh,
         onAccepted: ({ receipt }) => {
+          if (stillActive()) setOptimisticMessages((current) => current.map((item) => item.optimistic.clientId === clientId ? publishedMessage(item, receipt) : item));
           setConfirmandoPublicacion(true);
           updateForm((current) => ({
             ...current,
@@ -285,6 +313,8 @@ function ConversationPaneContent({
               : 'Confirmación rechazada; intención cercada contra duplicados.'),
       });
     } catch (causa) {
+      if (stillActive()) setOptimisticMessages((current) => current.map((item) => item.optimistic.clientId === clientId && item.optimistic.state === 'sending'
+        ? { ...item, optimistic: { ...item.optimistic, state: 'failed' } } : item));
       setAviso({ tone: 'error', text: causa instanceof Error ? causa.message : 'No se pudo publicar el mensaje.' });
     } finally {
       setConfirmandoPublicacion(false);
@@ -355,6 +385,7 @@ function ConversationPaneContent({
                   onSelectItem={elegir}
                   onExpand={(messageId) => { void pedirCuerpo(messageId); }}
                   canonicalReply={canonical.reply}
+                  canonicalReplies={canonical.replies}
                   canonicalReplyStale={canonical.stale}
                   onCanonicalReplyRetry={canonical.retry}
                   onSuggestion={puedeEnviar ? (text) => { setDraft(text); composerInput.current?.focus(); } : undefined}

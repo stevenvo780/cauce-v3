@@ -35,12 +35,12 @@ async function login(page: BrowserPage, tenant: FunctionalTenant): Promise<void>
   await page.getByLabel('Correo').fill(tenant.email);
   await page.getByLabel('Contraseña').fill(tenant.password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
 }
 
 async function createMembership(page: BrowserPage, tenant: FunctionalTenant, active: Fixture): Promise<void> {
   await page.goto(`${active.baseUrl}/config`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: 'Administración avanzada' }).click();
+  await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
   await page.getByRole('button', { name: 'Un solo recurso' }).click();
   await page.getByLabel('Recurso a crear').selectOption('membership');
   await page.getByLabel('Tenant', { exact: true }).fill(tenant.tenant);
@@ -233,9 +233,9 @@ async function incomingMedia(tenant: FunctionalTenant, id: string, originals: Me
     return Promise.all(paths.map(async (path) => (await fetch(path, { credentials: 'include' })).status));
   }, { messageId: id, reference, foreignDeliveryId: randomUUID() });
   expect(stale).toEqual([404, 404]);
-  const bubble = page.locator(`.transcript-entry.output[data-reply-to="${id}"] .canonical-reply[data-delivery-id="${row.id}"]`);
+  const bubble = page.locator(`article[data-direction="output"][data-reply-to="${id}"] section[data-delivery-id="${row.id}"]`);
   await bubble.waitFor({ timeout: 20_000 });
-  expect(await bubble.locator('li.chat-message-file').count()).toBe(files.length);
+  expect(await bubble.locator('ul[aria-label="Archivos del mensaje"] > li').count()).toBe(files.length);
   for (const file of files) expect(await bubble.getByText(file.name, { exact: true }).count()).toBe(1);
   await previewMedia(page, files);
   process.stdout.write(`Media E2E incoming: message=${id} delivery=${deliveryId} attempt=${String(attempt)} files=${String(files.length)} providerReply=null\n`);
@@ -245,7 +245,7 @@ async function incomingMedia(tenant: FunctionalTenant, id: string, originals: Me
 async function previewMedia(page: BrowserPage, files: MediaFile[]): Promise<void> {
   const image = files.find((file) => file.mimeType === 'image/png');
   if (!image) throw new Error('Missing owned raster image');
-  const imageRow = page.locator(`li.chat-message-file:has(strong:text-is(${JSON.stringify(image.name)}))`);
+  const imageRow = page.locator(`ul[aria-label="Archivos del mensaje"] > li:has(strong:text-is(${JSON.stringify(image.name)}))`);
   await imageRow.getByRole('button', { name: 'Vista previa', exact: true }).click();
   await page.getByRole('dialog', { name: `Vista previa: ${image.name}`, exact: true }).waitFor({ timeout: 10_000 });
   await expect.poll(() => page.evaluate((name) => {
@@ -254,7 +254,7 @@ async function previewMedia(page: BrowserPage, files: MediaFile[]): Promise<void
   }, image.name), { timeout: 10_000, interval: 100 }).toBe(true);
   await page.getByRole('button', { name: 'Cerrar vista previa', exact: true }).click();
   for (const file of files.filter((item) => item.mimeType.startsWith('audio/') || item.mimeType.startsWith('video/'))) {
-    const row = page.locator(`li.chat-message-file:has(strong:text-is(${JSON.stringify(file.name)}))`);
+    const row = page.locator(`ul[aria-label="Archivos del mensaje"] > li:has(strong:text-is(${JSON.stringify(file.name)}))`);
     await row.getByRole('button', { name: 'Cargar reproductor', exact: true }).click();
     const player = file.mimeType.startsWith('audio/') ? 'audio' : 'video';
     await row.locator(`${player}[controls][src^="blob:"]`).waitFor({ state: 'visible', timeout: 10_000 });
@@ -303,7 +303,7 @@ describe('Multimedia durable con Chromium, PG y SDK reales y proveedor CLI sint�
     await page.getByText(files[0]?.name ?? '', { exact: true }).waitFor({ timeout: 20_000 });
     await binaryRoundtrip(page, id, files);
     for (const file of files) {
-      const row = page.locator(`li.chat-message-file:has(strong:text-is(${JSON.stringify(file.name)}))`);
+      const row = page.locator(`ul[aria-label="Archivos del mensaje"] > li:has(strong:text-is(${JSON.stringify(file.name)}))`);
       expect(await row.getByRole('button', { name: 'Vista previa', exact: true }).count()).toBe(0);
       expect(await row.locator('img,audio,video,iframe,object,embed').count()).toBe(0);
       const download = (page as DownloadPage).waitForEvent('download', { timeout: 10_000 });

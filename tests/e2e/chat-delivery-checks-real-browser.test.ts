@@ -29,10 +29,10 @@ async function loginAndCreateMembership(tenant: FunctionalTenant, viewport: { wi
   await page.getByLabel('Correo').fill(tenant.email);
   await page.getByLabel('Contraseña').fill(tenant.password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/ }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
 
   await page.goto(`${fixture.baseUrl}/config`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: 'Administración avanzada' }).click();
+  await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
   await page.getByRole('button', { name: 'Un solo recurso' }).click();
   await page.getByLabel('Recurso a crear').selectOption('membership');
   await page.getByLabel('Tenant', { exact: true }).fill(tenant.tenant);
@@ -106,7 +106,7 @@ async function stopSyntheticAdapter(index: number): Promise<void> {
 
 async function hasHorizontalOverflow(page: Awaited<ReturnType<typeof newTrustedPage>>): Promise<boolean> {
   return page.evaluate(() => {
-    const thread = document.querySelector<HTMLElement>('.messenger-thread-scroll');
+    const thread = document.querySelector<HTMLElement>('[data-thread-scroll]');
     return document.documentElement.scrollWidth > window.innerWidth
       || (thread !== null && thread.scrollWidth > thread.clientWidth + 1);
   });
@@ -128,14 +128,14 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
       await page.goto(`${activeFixture.baseUrl}/messages/${tenant.tenant}/${tenant.target}`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('heading', { name: tenant.target, exact: true }).waitFor({ timeout: 20_000 });
       await page.getByLabel(`Mensaje para ${tenant.target}`).fill(nonce);
-      await page.evaluate(() => document.querySelector<HTMLTextAreaElement>('.messenger-composer textarea')?.focus());
+      await page.evaluate(() => document.querySelector<HTMLTextAreaElement>('[data-chat-composer] textarea')?.focus());
       await page.getByRole('button', { name: 'Enviar', exact: true }).click();
-      expect(await page.evaluate(() => document.activeElement?.matches('.messenger-composer textarea'))).toBe(true);
+      expect(await page.evaluate(() => document.activeElement?.matches('[data-chat-composer] textarea'))).toBe(true);
 
-      const bubble = page.getByText(nonce, { exact: true });
+      const bubble = page.getByLabel('Historial de la conversación', { exact: true }).getByText(nonce, { exact: true });
       await bubble.waitFor({ state: 'visible', timeout: 20_000 });
-      const entry = bubble.locator('xpath=ancestor::article[contains(@class,"transcript-entry")]');
-      await entry.locator('.chat-delivery-check[aria-label="Entrega: Recibido por el agente · ejecución terminada"]')
+      const entry = bubble.locator('xpath=ancestor::article[@data-direction="input" and @data-message-id]');
+      await entry.locator('[role="status"][aria-label="Entrega: Recibido por el agente · ejecución terminada"]')
         .waitFor({ state: 'visible', timeout: 35_000 }).catch(async (cause: unknown) => {
           throw await browserDeliveryFailure(cause, {
             pool: activeFixture.database.pool, tenant, instanceId: `ui-e2e-${tenant.tenant.toLowerCase()}`,
@@ -146,13 +146,15 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
             gateway: activeFixture.gatewayDiagnostics,
           });
         });
-      const reply = page.locator('.transcript-entry.output[data-reply-to] .canonical-reply');
+      const reply = page.locator('article[data-direction="output"][data-reply-to] section[data-delivery-id]');
       await reply.getByText(new RegExp(`respuesta sintética ${tenant.tenant}`)).waitFor({ state: 'visible', timeout: 20_000 });
       expect(await page.getByText(/ACK llega por polling|Respuesta provisional|Sin respuesta canónica/i).count()).toBe(0);
-      expect(await page.locator('.transcript-entry details, .transcript-delivery').count()).toBe(0);
+      expect(await page.getByLabel('Historial de la conversación', { exact: true }).locator('article[data-direction] details').count()).toBe(0);
       expect(await page.getByText(/Mensaje aceptado para entrega/i).count()).toBe(0);
-      expect(await entry.locator('.chat-delivery-check').innerText()).toBe('✓');
-      expect(await entry.locator('[data-checks="2"]').count()).toBe(0);
+      expect(await entry.getByRole('status', { name: 'Entrega: Recibido por el agente · ejecución terminada', exact: true }).innerText()).toBe('✓✓');
+      expect(await entry.locator('[role="status"][title$="Lectura sin comprobar."]').count()).toBe(1);
+      expect(await entry.locator('[data-checks="2"]').count()).toBe(1);
+      expect(await entry.locator('[data-checks="1"]').count()).toBe(0);
       expect(await reply.innerText()).toContain(`respuesta sintética ${tenant.tenant}`);
       const body = await page.locator('body').innerText();
       expect(body).not.toContain('{"type":"system.gate.probe"');
@@ -178,23 +180,27 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
       const nativeMarker = `NATIVE-CONSUMPTION-${tenant.tenant}-${randomUUID()}`;
       await page.getByLabel(`Mensaje para ${tenant.target}`).fill(nativeMarker);
       await page.getByRole('button', { name: 'Enviar', exact: true }).click();
-      const nativeEntry = page.locator('.transcript-entry.input').filter({ hasText: nativeMarker });
+      const nativeEntry = page.locator('article[data-direction="input"]').filter({ hasText: nativeMarker });
       const pending = nativeEntry.getByRole('status', {
-        name: 'Entrega: Publicado · esperando aceptación del agente', exact: true,
+        name: 'Entrega: Enviado · esperando aceptación del agente', exact: true,
       });
       await pending.waitFor({ state: 'visible', timeout: 20_000 });
-      expect(await pending.innerText()).toBe('◷');
-      expect(await nativeEntry.locator('[data-checks]').count()).toBe(0);
+      expect(await pending.innerText()).toBe('✓');
+      expect(await nativeEntry.locator('[data-checks="1"]').count()).toBe(1);
+      expect(await nativeEntry.locator('[data-checks="2"]').count()).toBe(0);
+      expect(await nativeEntry.locator('[role="status"][title$="Lectura sin comprobar."]').count()).toBe(1);
       const consumed = await ackCanonicalConsumption(activeFixture.database.pool,
         activeFixture.directory, tenant.tenant, tenant.target, nativeMarker);
       const read = nativeEntry.getByRole('status', {
-        name: 'Entrega: Leído por el agente · respuesta nativa comprobada', exact: true,
+        name: 'Entrega: Recibido por el agente · ejecución terminada', exact: true,
       });
       await read.waitFor({ state: 'visible', timeout: 20_000 });
       expect(await read.innerText()).toBe('✓✓');
+      expect(await nativeEntry.locator('[role="status"][title$="Lectura comprobada."]').count()).toBe(1);
+      expect(await nativeEntry.locator('[role="status"][title$="Lectura sin comprobar."]').count()).toBe(0);
       expect(await nativeEntry.locator('[data-checks="1"]').count()).toBe(0);
       expect(await nativeEntry.locator('[data-checks="2"]').count()).toBe(1);
-      await page.getByText(consumed.reply, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+      await page.getByLabel('Historial de la conversación', { exact: true }).getByText(consumed.reply, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
       if (artifacts) await page.screenshot({ path: join(artifacts, `chat-native-${String(width)}.png`) });
       const probeBody = { nonce: `PROBE-${randomUUID()}`, timeout_ms: 90_000 };
       await seedStructuredFeedMessage(tenant, 'system.gate.probe', probeBody);
@@ -217,7 +223,7 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
       const probeEntry = probe.locator('xpath=ancestor::article');
       await probeEntry.getByRole('button', { name: 'Opciones del mensaje' }).click();
       await page.getByRole('menuitem', { name: 'Ver detalle' }).click();
-      const technicalJson = page.getByRole('group', { name: 'Detalle del mensaje seleccionado' }).locator('.messenger-cuerpo-texto');
+      const technicalJson = page.getByRole('group', { name: 'Detalle del mensaje seleccionado' }).getByRole('region', { name: 'Cuerpo del mensaje', exact: true }).locator('pre');
       await technicalJson.waitFor({ state: 'visible' });
       expect(JSON.parse(await technicalJson.innerText())).toEqual({ type: 'system.gate.probe', ...probeBody });
       await page.getByRole('button', { name: 'Cerrar detalle' }).click();

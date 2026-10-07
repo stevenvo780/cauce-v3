@@ -4,7 +4,7 @@ import { bloomOrb } from '../../components/orb-bloom';
 import type { LiveState } from '../live/agent-state';
 import type { TranscriptItem } from '../terminal/session';
 import { ChatMessage, ChatReply, type FullBody } from './ChatMessage';
-import { threadRows, typingState } from './thread-model';
+import { replyFor, threadRows, typingState } from './thread-model';
 import type { CanonicalReply } from './use-canonical-reply';
 
 const SUGGESTIONS = ['¿En qué estás trabajando?', 'Resumime tu último turno', '¿Qué te bloquea?'];
@@ -48,7 +48,7 @@ function TypingBubble({ seed, alias, state }: { seed: string; alias: string; sta
   );
 }
 
-export function ChatThread({ items, ownSubject, alias, seed, agentState, selectedMessageId, fullBodies, canonicalReply, canonicalReplyStale, onSelectItem, onExpand, onCanonicalReplyRetry, onSuggestion }: {
+export function ChatThread({ items, ownSubject, alias, seed, agentState, selectedMessageId, fullBodies, canonicalReply, canonicalReplies, canonicalReplyStale, onSelectItem, onExpand, onCanonicalReplyRetry, onSuggestion }: {
   items: TranscriptItem[];
   ownSubject?: string | null;
   alias: string;
@@ -58,14 +58,16 @@ export function ChatThread({ items, ownSubject, alias, seed, agentState, selecte
   selectedMessageId?: string;
   fullBodies: Record<string, FullBody>;
   canonicalReply?: CanonicalReply;
+  canonicalReplies?: readonly CanonicalReply[];
   canonicalReplyStale?: boolean;
   onSelectItem: (item: TranscriptItem, opener?: HTMLElement | null) => void;
   onExpand: (messageId: string) => void;
   onCanonicalReplyRetry?: () => void;
   onSuggestion?: (text: string) => void;
 }) {
-  const rows = useMemo(() => threadRows(items, canonicalReply), [items, canonicalReply]);
-  const typing = typingState({ items, reply: canonicalReply, live: agentState });
+  const replies = useMemo(() => canonicalReply ? [canonicalReply, ...(canonicalReplies ?? [])] : canonicalReplies, [canonicalReply, canonicalReplies]);
+  const rows = useMemo(() => threadRows(items, replies), [items, replies]);
+  const typing = typingState({ items, reply: replies, live: agentState });
   const seen = useRef<Set<string> | null>(null);
   seen.current ??= new Set(rows.map((row) => row.key));
   const [settled, setSettled] = useState(false);
@@ -108,8 +110,8 @@ export function ChatThread({ items, ownSubject, alias, seed, agentState, selecte
               selected={selectedMessageId !== undefined && id === selectedMessageId}
               fullBody={id ? fullBodies[id] : undefined}
               agentState={agentState}
-              canonicalReply={canonicalReply}
-              canonicalReplyStale={canonicalReplyStale}
+              canonicalReply={replyFor(row.item, replies)}
+              canonicalReplyStale={Boolean(replyFor(row.item, canonicalReply)) && canonicalReplyStale}
               onSelect={onSelectItem}
               onExpand={onExpand}
               onReplyRetry={onCanonicalReplyRetry}

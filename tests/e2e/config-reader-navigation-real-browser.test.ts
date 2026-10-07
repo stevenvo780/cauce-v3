@@ -148,7 +148,7 @@ async function login(page: BrowserPage, user: FunctionalTenant): Promise<void> {
   await page.getByLabel('Correo').fill(user.email);
   await page.getByLabel('Contraseña').fill(user.password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
 }
 
 async function saveScreenshot(page: BrowserPage, name: string): Promise<void> {
@@ -173,15 +173,16 @@ describe('navegación de Configuración para lectores', () => {
         if (path === '/v3/console/config/changes' && response.request().method() === 'POST') changePosts.push(response.status());
       });
       await login(page, reader);
-      await page.getByRole('button', { name: 'Herramientas' }).click();
-      const tools = page.getByRole('region', { name: 'Herramientas de Cauce' });
-      const configLink = tools.getByRole('link', { name: 'Ajustes y altas' });
+      const mobile = viewport.width <= 760;
+      await page.getByRole('button', { name: mobile ? 'Más' : 'Gestión', exact: true }).click();
+      const tools = mobile ? page.getByRole('dialog', { name: 'Gestión', exact: true }) : page.getByRole('navigation', { name: 'Navegación principal', exact: true });
+      const configLink = tools.getByRole('link', { name: 'Ajustes' });
       await configLink.waitFor({ state: 'visible', timeout: 10_000 });
       const configLinkDisabled = await page.evaluate(() => document.querySelector('a[href="/config"]')?.getAttribute('aria-disabled'));
       expect(configLinkDisabled).not.toBe('true');
       await configLink.click();
-      await page.getByRole('heading', { name: 'Ajustes y altas', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
-      await page.getByRole('button', { name: 'Administración avanzada' }).click();
+      await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+      await page.getByRole('tab', { name: 'Avanzado', exact: true }).click();
       await page.getByText(/Solo lectura:/u).waitFor({ state: 'visible', timeout: 20_000 });
 
       const snapshot = await page.evaluate(async () => {
@@ -209,17 +210,19 @@ describe('navegación de Configuración para lectores', () => {
         throw new Error('authenticated session omitted its CSRF token');
       }
 
-      const writeButtons = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('.config-pagina button'))
+      await page.locator('summary').filter({ hasText: 'Editor de mutaciones JSON' }).click();
+      await page.getByRole('button', { name: 'Preview / dry-run', exact: true }).waitFor({ state: 'visible' });
+      const writeButtons = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tabpanel"] button'))
         .filter((button) => /previsualizar|preview|aplicar|crear|eliminar|rollback|deshacer/iu.test(button.innerText))
         .map((button) => ({ label: button.innerText.trim(), disabled: button.disabled })));
       expect(writeButtons.length).toBeGreaterThan(0);
       expect(writeButtons.every((button) => button.disabled), JSON.stringify(writeButtons)).toBe(true);
 
-      const spacesTab = page.getByRole('tab', { name: 'Espacios y miembros' });
+      const spacesTab = page.getByRole('tab', { name: 'Espacios y salas' });
       await spacesTab.click();
-      await page.getByRole('heading', { name: 'Tenants', exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+      await page.getByRole('heading', { name: 'Clientes', exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
       await page.getByRole('button', { name: 'Espacio completo, paso a paso' }).click();
-      await page.getByRole('heading', { name: 'Wizard de espacios', exact: true }).waitFor({ state: 'visible' });
+      await page.getByRole('group', { name: 'Wizard de espacios', exact: true }).waitFor({ state: 'visible' });
 
       const wizardInputs = [
         { step: '1. Tenant', label: 'Tenant id' },
