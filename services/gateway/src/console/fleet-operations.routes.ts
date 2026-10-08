@@ -44,7 +44,8 @@ function enqueueReceipt(value: unknown, actor: Principal, input: FleetOperationR
   if (!sameTarget(receipt.target, input.target) || receipt.kind !== input.kind
       || receipt.expected_revision !== input.expected_revision
       || receipt.request_sha256 !== sha256Hex(input)
-      || receipt.actor.tenant_id !== actor.tenant_id || receipt.actor.alias !== actor.alias) invalidReceipt();
+      || receipt.actor.tenant_id !== actor.tenant_id || receipt.actor.alias !== actor.alias
+      || receipt.actor.actor_subject !== actor.operator_profile?.id) invalidReceipt();
   return receipt;
 }
 
@@ -64,11 +65,7 @@ function fleetError(reply: FastifyReply, error: unknown): void {
   void reply.code(500).send({ error: 'operation_unverified', message: 'fleet operation could not be verified' });
 }
 
-export function registerFleetOperationRoutes(
-  app: FastifyInstance, authProvider: AuthProvider, repository: FleetOperationsRepositoryBinding,
-  capability: FleetCapability = { available: false, actions: [], placements: [], reason: 'executor_unconfigured' },
-): void {
-  const path = '/v3/console/fleet/operations';
+export function registerFleetCapabilityRoute(app: FastifyInstance, authProvider: AuthProvider, capability: FleetCapability): void {
   app.get('/v3/console/fleet/capability', async (request, reply) => {
     try {
       const actor = await principal(request, authProvider);
@@ -76,6 +73,14 @@ export function registerFleetOperationRoutes(
       return FleetCapabilitySchema.parse(capability);
     } catch (error) { fleetError(reply, error); }
   });
+}
+
+export function registerFleetOperationRoutes(
+  app: FastifyInstance, authProvider: AuthProvider, repository: FleetOperationsRepositoryBinding,
+  capability: FleetCapability = { available: false, actions: [], placements: [], reason: 'executor_unconfigured' },
+): void {
+  const path = '/v3/console/fleet/operations';
+  registerFleetCapabilityRoute(app, authProvider, capability);
   app.get(path, async (request, reply) => {
     try {
       const actor = await principal(request, authProvider);

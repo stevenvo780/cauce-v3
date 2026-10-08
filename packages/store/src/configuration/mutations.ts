@@ -374,8 +374,10 @@ export abstract class ConfigurationMutations {
         );
       }
       await client.query('DELETE FROM agents WHERE tenant_id=$1 AND alias=$2', [mutation.tenant_id, mutation.alias]);
+      const { primary_room_id: primary, ...createValue } = oldValue;
+      if (primary != null) throw new ConfigurationError('conflict', 'agent primary membership must be removed before deletion');
       return {
-        inverse: { resource: 'agent', action: 'create', tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue },
+        inverse: { resource: 'agent', action: 'create', tenant_id: mutation.tenant_id, alias: mutation.alias, value: createValue },
         summary: `delete agent ${key}`
       };
     }

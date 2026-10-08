@@ -20,6 +20,31 @@ afterEach(async () => { await current?.close(); current = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 
 describe('configuration lifecycle authority on PostgreSQL', () => {
+  it('restores an unused draft after deletion with the lifecycle schema installed', async () => {
+    await pool.query("INSERT INTO agents(tenant_id,alias,enabled) VALUES('Steven','unused_draft',false)");
+    const repo = new ConfigurationRepository(pool);
+    const deleted = await repo.apply('Steven', 'bot_hub', { resource: 'agent', action: 'delete',
+      tenant_id: 'Steven', alias: 'unused_draft' }, false, 0);
+    await repo.rollback('Steven', 'bot_hub', deleted.revision, false, deleted.revision);
+    expect((await pool.query("SELECT enabled,primary_room_id FROM agents WHERE alias='unused_draft'")).rows[0])
+      .toEqual({ enabled: false, primary_room_id: null });
+  });
+  it('requires fleet authority for membership topology of physical agents while allowing a pause', async () => {
+    await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('secondary-room','Steven')");
+    await pool.query("UPDATE agents SET runtime_key='physical-web' WHERE alias='current_web'");
+    const repo = new ConfigurationRepository(pool);
+    for (const mutation of [
+      { action: 'create' as const, room_id: 'secondary-room', value: { role: 'agent' } },
+      { action: 'update' as const, room_id: 'lifecycle-admin', value: { role: 'agent' } },
+      { action: 'delete' as const, room_id: 'lifecycle-admin' },
+      { action: 'retire' as const, room_id: 'lifecycle-admin' },
+    ]) await expect(repo.apply('Steven', 'bot_hub', { resource: 'membership', tenant_id: 'Steven',
+      alias: 'current_web', ...mutation }, false, 0)).rejects.toMatchObject({ code: 'conflict' });
+    const paused = await repo.apply('Steven', 'bot_hub', { resource: 'membership', action: 'update',
+      tenant_id: 'Steven', alias: 'current_web', room_id: 'lifecycle-admin', value: { enabled: false } }, false, 0);
+    expect(paused.applied).toBe(true);
+    await expect(repo.rollback('Steven', 'bot_hub', paused.revision, false, paused.revision)).rejects.toMatchObject({ code: 'conflict' });
+  });
   it('protects the current web operator when an old MCP identity remains authorized', async () => {
     const user = (await pool.query<{ id: string }>(
       `INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias)

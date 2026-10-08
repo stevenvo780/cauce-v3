@@ -97,6 +97,13 @@ export async function membershipMutation(
     [mutation.tenant_id, mutation.room_id, mutation.alias]
   );
   const old = selected.rows[0];
+  const physical = (await client.query<{ runtime_key: string | null }>(
+    "SELECT to_jsonb(agents)->>'runtime_key' AS runtime_key FROM agents WHERE tenant_id=$1 AND alias=$2 FOR SHARE",
+    [mutation.tenant_id, mutation.alias])).rows[0];
+  if (physical?.runtime_key && !(mutation.action === 'update' && old && mutation.value?.enabled === false
+      && (mutation.value.role === undefined || mutation.value.role === old.role))) {
+    throw new ConfigurationError('conflict', 'physical agent membership changes require a verified fleet operation');
+  }
   if (mutation.action === 'create') {
     if (old) throw new ConfigurationError('conflict', 'membership already exists');
     const value = valueRequired(mutation);

@@ -53,7 +53,7 @@ describe('durable fleet operation routes', () => {
     const response = await app.inject({ method: 'POST', url: `${PATH}/preview`, headers: HEADERS, payload: input });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual(preview);
-    expect(repository.preview).toHaveBeenCalledWith('Steven', 'kant', input);
+    expect(repository.preview).toHaveBeenCalledWith('Steven', 'kant', input, undefined);
     expect(repository.enqueue).not.toHaveBeenCalled();
   });
 
@@ -64,7 +64,7 @@ describe('durable fleet operation routes', () => {
       expect(response.statusCode).toBe(202);
       expect(response.json()).toEqual({ operation_id: OPERATION_ID, status: 'queued', operation });
     }
-    expect(repository.enqueue.mock.calls).toEqual([['Steven', 'kant', input], ['Steven', 'kant', input]]);
+    expect(repository.enqueue.mock.calls).toEqual([['Steven', 'kant', input, undefined], ['Steven', 'kant', input, undefined]]);
   });
 
   it.each(['preview', 'enqueue'] as const)('rejects a %s receipt with a hash for different request parameters', async (action) => {
@@ -101,7 +101,7 @@ describe('durable fleet operation routes', () => {
     const response = await app.inject({ method: 'GET', url: `${PATH}/${OPERATION_ID}`, headers: HEADERS });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual(operation);
-    expect(repository.get).toHaveBeenCalledWith('Steven', 'kant', OPERATION_ID);
+    expect(repository.get).toHaveBeenCalledWith('Steven', 'kant', OPERATION_ID, undefined);
   });
 
   it.each(['cancel', 'resume'] as const)('forwards the CAS version for %s', async (action) => {
@@ -110,7 +110,7 @@ describe('durable fleet operation routes', () => {
       payload: { expected_version: 0 } });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ id: OPERATION_ID, version: 1 });
-    expect(repository[action]).toHaveBeenCalledWith('Steven', 'kant', OPERATION_ID, 0);
+    expect(repository[action]).toHaveBeenCalledWith('Steven', 'kant', OPERATION_ID, 0, undefined);
   });
 
   it.each([
@@ -276,15 +276,22 @@ describe('durable fleet operation routes', () => {
     const headers = { ...HEADERS, cookie: cookie ?? '' };
     const noCsrf = await app.inject({ method: 'POST', url: PATH, headers, payload: input });
     expect(noCsrf.statusCode).toBe(403);
+    repository.enqueue.mockResolvedValue({ ...operation, actor: { ...operation.actor, actor_subject: `console:${user.id}` } });
     const accepted = await app.inject({ method: 'POST', url: PATH,
       headers: { ...headers, 'x-csrf-token': session.csrf_token }, payload: input });
     expect(accepted.statusCode).toBe(202);
     expect(repository.enqueue).toHaveBeenCalledOnce();
+    expect(repository.enqueue).toHaveBeenCalledWith('Steven', 'kant', input, `console:${user.id}`);
+    repository.enqueue.mockResolvedValue(operation);
+    const missingOrigin = await app.inject({ method: 'POST', url: PATH,
+      headers: { ...headers, 'x-csrf-token': session.csrf_token }, payload: input });
+    expect(missingOrigin.statusCode).toBe(409);
+    const calls = repository.enqueue.mock.calls.length;
     users.put({ ...user, active: false });
     const revoked = await app.inject({ method: 'POST', url: PATH,
       headers: { ...headers, 'x-csrf-token': session.csrf_token }, payload: input });
     expect(revoked.statusCode).toBe(401);
-    expect(repository.enqueue).toHaveBeenCalledOnce();
+    expect(repository.enqueue.mock.calls).toHaveLength(calls);
   });
 });
 
