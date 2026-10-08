@@ -125,7 +125,7 @@ describe('durable fleet operations', () => {
     expect((await pool.query('SELECT enabled,lifecycle_state,runtime_key FROM agents WHERE alias=$1', ['drafted'])).rows)
       .toEqual([{ enabled: false, lifecycle_state: 'provisioning', runtime_key: 'drafted' }]);
     await pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,enabled,lifecycle_state,runtime_key) VALUES('Steven','installed','codex',false,'draft','installed')`);
-    await expect(repo.enqueue('Steven', 'fleet_operator', { ...create('installed', 'installed-host'), expected_revision: prepared.operation.desired_revision }))
+    await expect(repo.enqueue('Steven', 'fleet_operator', { ...create('installed', 'installed-host'), expected_revision: 1 }))
       .rejects.toThrow(/already exists/u);
   });
 
