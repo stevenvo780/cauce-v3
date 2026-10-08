@@ -50,6 +50,9 @@ from update_alias_lib import (  # noqa: E402  (sys.path shim above must run firs
     validate_absolute,
 )
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "cli"))
+from fleet_executor_identity import principal_for  # noqa: E402
+
 ALIAS_RE = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")  # packages/protocol/src/schemas/core.ts AliasSchema
 TENANT_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}\Z")  # ...TenantSchema
 MTLS_IDENTITIES_FILE = "mtls_identities.json"
@@ -90,8 +93,6 @@ def load_enabled_tenant(flota_path: pathlib.Path, alias: str) -> str:
 
 
 def build_principal(tenant: str, alias: str) -> dict[str, object]:
-    # Mirrors every adapter-channel identity already in mtls_identities.json (jarvis, kant, ...)
-    # and issue-alias-token.py's bearer-token twin: same channel/roles/permissions shape.
     return {
         "tenant_id": tenant,
         "alias": alias,
@@ -211,6 +212,7 @@ def publish_identity_document(
 
 def register(
     alias: str, cert_dir: pathlib.Path, identities_dir: pathlib.Path, flota_json: pathlib.Path, ttl_days: int,
+    *, bootstrap: bool = False,
 ) -> dict[str, object]:
     if ALIAS_RE.fullmatch(alias) is None:
         raise RegisterIdentityError("el alias tiene formato invalido")
@@ -219,7 +221,8 @@ def register(
     validate_absolute(cert_dir, "directorio de certificados")
     validate_absolute(identities_dir, "directorio de identidades")
 
-    tenant = load_enabled_tenant(flota_json, alias)
+    principal = principal_for(flota_json, alias, bootstrap, RegisterIdentityError)
+    tenant, wire = principal["tenant_id"], principal["alias"]
     certificate_sha256 = certificate_sha256_from_pem(read_certificate(cert_dir, alias))
     expires_at = (
         datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=ttl_days)
@@ -234,8 +237,25 @@ def register(
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
             document, original = read_identity_document(identities_fd)
-            same_certificate, same_identity = find_matching_records(document, certificate_sha256, tenant, alias)
+            same_certificate, same_identity = find_matching_records(document, certificate_sha256, tenant, wire)
+            same_identity = next((record for record in document["identities"] if isinstance(record, dict)
+                and isinstance(record.get("principal"), dict) and record["principal"].get("tenant_id") == tenant
+                and record["principal"].get("alias") == wire
+                and record["principal"].get("channel") == principal["channel"]), None)
             if same_certificate is not None:
+                matches = [record for record in document["identities"] if isinstance(record, dict)
+                    and (record.get("certificate_sha256") == certificate_sha256 or record.get("principal") == principal)]
+                if len(matches) != 1:
+                    raise RegisterIdentityError("certificate replay has ambiguous registry records")
+                if same_certificate.get("principal") != principal:
+                    raise RegisterIdentityError("certificate replay conflicts with its exact principal")
+                expiry = same_certificate.get("expires_at")
+                try:
+                    valid_until = datetime.datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+                    if valid_until.tzinfo is None or valid_until <= datetime.datetime.now(datetime.timezone.utc):
+                        raise ValueError
+                except (AttributeError, TypeError, ValueError):
+                    raise RegisterIdentityError("registered certificate identity has expired or invalid expiry") from None
                 # Exact cert already registered (e.g. a repeated `cauce <alias> aprovisionar`
                 # where step [1] skipped re-issuing an unchanged cert): a no-op, not an error.
                 return {
@@ -254,7 +274,7 @@ def register(
                 {
                     "certificate_sha256": certificate_sha256,
                     "expires_at": expires_at,
-                    "principal": build_principal(tenant, alias),
+                    "principal": principal,
                 }
             )
             publish_identity_document(identities_fd, lock_fd, document, original)
@@ -387,6 +407,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--flota-json", type=pathlib.Path, default=default_flota)
     parser.add_argument("--ttl-days", type=int, default=DEFAULT_TTL_DAYS)
+    parser.add_argument("--bootstrap", action="store_true")
     parser.add_argument(
         "--revoke", action="store_true",
         help="elimina la identidad mTLS de --tenant:--alias en vez de registrar una nueva",
@@ -428,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
     result = register(
         arguments.alias, arguments.cert_dir, arguments.identities_dir,
         arguments.flota_json, arguments.ttl_days,
+        bootstrap=arguments.bootstrap,
     )
     if result["already_registered"]:
         print(

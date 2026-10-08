@@ -45,6 +45,9 @@ from update_alias_lib import (  # noqa: E402  (sys.path shim above must run firs
     write_all,
 )
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "cli"))
+from fleet_executor_identity import principal_for  # noqa: E402
+
 ALIAS_RE = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")  # packages/protocol/src/schemas/core.ts AliasSchema
 TENANT_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}\Z")  # ...TenantSchema
 TOKEN_HASHES_FILE = "token_hashes.json"
@@ -83,8 +86,6 @@ def load_enabled_tenant(flota_path: pathlib.Path, alias: str) -> str:
 
 
 def build_principal(tenant: str, alias: str) -> dict[str, object]:
-    # Mirrors the adapter-channel identities already issued for agents in mtls_identities.json
-    # (e.g. jarvis, kant): same channel/roles/permissions, this is just the bearer-token twin.
     return {
         "tenant_id": tenant,
         "alias": alias,
@@ -273,6 +274,7 @@ def ensure_tokens_directory(path: pathlib.Path) -> None:
 
 def issue(
     alias: str, tokens_dir: pathlib.Path, identities_dir: pathlib.Path, flota_json: pathlib.Path, ttl_days: int,
+    *, bootstrap: bool = False, idempotent: bool = False,
 ) -> dict[str, object]:
     if ALIAS_RE.fullmatch(alias) is None:
         raise IssueTokenError("el alias tiene formato invalido")
@@ -281,11 +283,14 @@ def issue(
     validate_absolute(tokens_dir, "directorio de tokens")
     validate_absolute(identities_dir, "directorio de identidades")
 
-    tenant = load_enabled_tenant(flota_json, alias)
+    principal = principal_for(flota_json, alias, bootstrap, IssueTokenError)
+    tenant = principal["tenant_id"]
     expires_at = (
         datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=ttl_days)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    if idempotent:
+        return issue_idempotent(alias, tokens_dir, identities_dir, principal, expires_at)
     ensure_tokens_directory(tokens_dir)
     tokens_fd = open_absolute_directory(tokens_dir, "directorio de tokens")
     token_published = False
@@ -310,7 +315,7 @@ def issue(
                     {
                         "token_sha256": digest,
                         "expires_at": expires_at,
-                        "principal": build_principal(tenant, alias),
+                        "principal": principal,
                     }
                 )
                 publish_identity_document(identities_fd, lock_fd, document, original)
@@ -337,6 +342,61 @@ def issue(
         "expires_at": expires_at,
         "identity_count": len(document["identities"]),  # type: ignore[arg-type]
     }
+
+
+def issue_idempotent(alias: str, tokens_dir: pathlib.Path, identities_dir: pathlib.Path,
+                     principal: dict, expires_at: str) -> dict:
+    ensure_tokens_directory(tokens_dir)
+    tokens_fd = open_absolute_directory(tokens_dir, "directorio de tokens")
+    identities_fd = open_absolute_directory(identities_dir, "directorio de identidades")
+    lock_fd = None
+    try:
+        assert_secure_directory(tokens_fd, "directorio de tokens")
+        assert_secure_directory(identities_fd, "directorio de identidades")
+        lock_fd = open_regular_at(identities_fd, f".{TOKEN_HASHES_FILE}.lock", os.O_RDWR | os.O_CREAT, mode=0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        document, original = read_identity_document(identities_fd)
+        same_identity = [record for record in document["identities"] if isinstance(record, dict)
+                         and isinstance(record.get("principal"), dict)
+                         and record["principal"].get("tenant_id") == principal["tenant_id"]
+                         and record["principal"].get("alias") == principal["alias"]
+                         and record["principal"].get("channel") == principal["channel"]]
+        try:
+            fd = open_regular_at(tokens_fd, f"{alias}.token", os.O_RDONLY)
+        except FileNotFoundError:
+            if same_identity:
+                raise IssueTokenError("registered token credential is missing; no rotation performed") from None
+            publish_token_file(tokens_fd, alias, secrets.token_hex(32))
+            fd = open_regular_at(tokens_fd, f"{alias}.token", os.O_RDONLY)
+        try:
+            assert_readonly_regular(fd, "token credential")
+            token = read_all(fd, "token credential").strip()
+            if re.fullmatch(rb"[0-9a-f]{64}", token) is None:
+                raise IssueTokenError("existing token credential has invalid shape")
+        finally:
+            os.close(fd)
+        digest = hashlib.sha256(token).hexdigest()
+        same_digest = [record for record in document["identities"] if isinstance(record, dict)
+                       and record.get("token_sha256") == digest]
+        matches = [record for record in document["identities"] if record in same_identity or record in same_digest]
+        if matches:
+            if len(matches) != 1 or matches[0].get("principal") != principal or matches[0].get("token_sha256") != digest:
+                raise IssueTokenError("token replay conflicts with its exact principal or fingerprint")
+            expiry = matches[0].get("expires_at")
+            if not isinstance(expiry, str) or datetime.datetime.fromisoformat(expiry.replace("Z", "+00:00")) <= datetime.datetime.now(datetime.timezone.utc):
+                raise IssueTokenError("registered token credential has expired")
+            expires_at = expiry
+        else:
+            document["identities"].append({"token_sha256": digest, "expires_at": expires_at, "principal": principal})
+            publish_identity_document(identities_fd, lock_fd, document, original)
+        return {"alias": alias, "tenant": principal["tenant_id"], "token_file": str(tokens_dir / f"{alias}.token"),
+                "identities_file": str(identities_dir / TOKEN_HASHES_FILE), "token_sha256": digest,
+                "expires_at": expires_at, "identity_count": len(document["identities"])}
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+        os.close(identities_fd)
+        os.close(tokens_fd)
 
 
 def describe_dry_run(
@@ -371,6 +431,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--flota-json", type=pathlib.Path, default=default_flota)
     parser.add_argument("--ttl-days", type=int, default=DEFAULT_TTL_DAYS)
+    parser.add_argument("--bootstrap", action="store_true")
+    parser.add_argument("--idempotent", action="store_true")
     parser.add_argument(
         "--revoke", action="store_true",
         help="elimina el hash de token y <alias>.token en vez de emitir uno nuevo",
@@ -401,6 +463,7 @@ def main(argv: list[str] | None = None) -> int:
     result = issue(
         arguments.alias, arguments.tokens_dir, arguments.identities_dir,
         arguments.flota_json, arguments.ttl_days,
+        bootstrap=arguments.bootstrap, idempotent=arguments.idempotent,
     )
     print(
         "alias token issued: {alias} -> {token_file} (mode 0400); {identities_file} "

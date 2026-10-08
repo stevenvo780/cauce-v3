@@ -5,6 +5,12 @@
 # nothing is ever overwritten, the key/cert pair lands all-or-nothing.
 set -euo pipefail
 
+if [[ ${1:-} == --bootstrap-manifest ]]; then
+  [[ $# -eq 6 && $3 == --snapshot ]] || { printf 'bootstrap certificate arguments invalid\n' >&2; exit 2; }
+  helper=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../cli" && pwd)/fleet_executor_pki.py
+  exec python3 "$helper" --manifest "$2" --snapshot "$4" --alias "$5" --output "$6"
+fi
+
 usage() {
   printf 'usage: provision-agent-identity.sh ALIAS OUTPUT_DIR\n  env: CAUCE_CLIENT_CA_CERT, CAUCE_CLIENT_CA_KEY (defaults: /etc/cauce-v3/pki/ca.{crt,key})\n' >&2
   exit 2
