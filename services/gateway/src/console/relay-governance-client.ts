@@ -1,3 +1,4 @@
+import { nativeAdminHttp } from './native-admin/transport.js';
 import { governanceOperationPayload, validatedWriteStatus, type GovernanceWriteOperation } from './governance-write-operation.js';
 import { request as httpsRequest, type RequestOptions } from 'node:https';
 import { hasUnsafeTextCodePoint, isStrictUtcIso8601 } from '@cauce/protocol';
@@ -9,18 +10,14 @@ import type {
   GovernanceBatchWrite, GovernanceReadError, GovernanceWritePrecondition, GovernanceWriteTarget,
 } from './agent-documents.routes.js';
 import { hasNeverServePathSegment } from './agent-documents/catalog.js';
-
 /**
  * HTTP client for communication with the terminal-relay governance read/write endpoint.
  * Transmits requests authenticated via shared token and mutual TLS.
  */
-
 /** Limit on accumulated bytes of the HTTP response. */
 const MAX_RESPONSE_BYTES = 512 * 1024;
-
 /** Default timeout for requests to the terminal-relay. */
 const DEFAULT_TIMEOUT_MS = 10_000;
-
 const READ_CODES: readonly GovernanceReadError['error'][] = [
   'not_found', 'permission_denied', 'invalid_path', 'symlink_detected',
   'too_large', 'timeout', 'cancelled', 'busy', 'unavailable', 'unknown'
@@ -338,6 +335,9 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
     this.clientKey = options.clientKey;
   }
 
+  nativeAdmin(tenantId: string, alias: string, command: import('@cauce/protocol').NativeAdminCommand, signal?: AbortSignal): Promise<import('@cauce/protocol').NativeAdminOutcome> {
+    return nativeAdminHttp(this.send.bind(this), tenantId, alias, command, signal);
+  }
   async readFile(
     tenantId: string,
     alias: string,

@@ -18,7 +18,6 @@ import {
 import { CONTEXT_APPLY_POLICY, type ContextApplyState } from './context-apply-policy.js';
 import type { TerminalAuditEntry } from '../terminal/audit.js';
 import { UNATTRIBUTED_OPERATOR } from '../terminal/types.js';
-
 export type { TerminalAuditEntry, GovernanceWritePrecondition };
 
 /**
@@ -100,6 +99,7 @@ export interface GovernanceWriteTarget {
   readonly path: string;
 }
 export interface AgentFactsProbe {
+  nativeAdmin?(tenantId: string, alias: string, command: import('@cauce/protocol').NativeAdminCommand, signal?: AbortSignal): Promise<import('@cauce/protocol').NativeAdminOutcome>;
   /** Facts about the alias, or `undefined` if nobody has measured them yet. */
   factsFor(tenantId: string, alias: string): Promise<
     { facts: RuntimeFacts; source: FactsSource } | undefined

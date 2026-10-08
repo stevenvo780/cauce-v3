@@ -73,6 +73,7 @@ export class SondaCompartida {
  */
 export function sondaDiferida(hueco: SondaCompartida): AgentFactsProbe {
   return {
+    nativeAdmin: (...args) => hueco.actual().nativeAdmin?.(...args) ?? Promise.resolve({ type: 'error', error: 'unavailable' }),
     factsFor: (tenantId, alias) => hueco.actual().factsFor(tenantId, alias),
     readGovernanceDocument: (path, facts, tenantId, alias) =>
       hueco.actual().readGovernanceDocument(path, facts, tenantId, alias),

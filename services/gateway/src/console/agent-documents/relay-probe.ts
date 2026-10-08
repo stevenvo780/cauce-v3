@@ -25,7 +25,6 @@ import {
   verifyWritablePath,
   verifyWritableProfilePath
 } from './path-policy.js';
-
 /** What the pty-agent returns after reading, already accumulated by the terminal-relay. */
 export interface RelayFileRead {
   readonly path: string;
@@ -48,18 +47,15 @@ export interface RelayDirectoryRead {
     readonly modified_at: string;
   }[];
 }
-
 export interface RelayFileWrite {
   readonly path: string;
   readonly operation: 'replace' | 'create';
   readonly sha: string;
   readonly bytes: number;
 }
-
 export interface RelayFileWriteBatch {
   readonly files: readonly GovernanceBatchWriteAck[];
 }
-
 export type GovernanceWriteError = GovernanceReadError | { readonly error: 'conflict'; readonly reason: string };
 
 /**
@@ -67,6 +63,7 @@ export type GovernanceWriteError = GovernanceReadError | { readonly error: 'conf
  * from the relay package, because they are two processes on two machines: this contract binds them.
  */
 export interface GovernanceRelayClient {
+  nativeAdmin?(tenantId: string, alias: string, command: import('@cauce/protocol').NativeAdminCommand, signal?: AbortSignal): Promise<import('@cauce/protocol').NativeAdminOutcome>;
   readFile(
     tenantId: string,
     alias: string,
@@ -125,6 +122,9 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
     this.relay = relay;
   }
 
+  nativeAdmin(tenantId: string, alias: string, command: import('@cauce/protocol').NativeAdminCommand, signal?: AbortSignal): Promise<import('@cauce/protocol').NativeAdminOutcome> {
+    return this.relay.nativeAdmin?.(tenantId, alias, command, signal) ?? Promise.resolve({ type: 'error', error: 'unavailable' });
+  }
   supportsDurableWrites(): boolean {
     return typeof this.relay.writeFileDurable === 'function'
       && typeof this.relay.writeFilesDurable === 'function'
