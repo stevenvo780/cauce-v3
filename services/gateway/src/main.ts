@@ -218,9 +218,11 @@ async function configuredLocalOAuth(pool: DatabasePool, authProvider: AuthProvid
   }
   const tokens = new OAuthTokens({ issuer, resource: `${issuer}/mcp`, kid,
     signingKey: createPrivateKey(await readFile(keyFile)) });
-  const store = new PostgresOAuthStore(pool, issuer, authProvider.verifyCredentialStamp.bind(authProvider), { grantTtlSeconds });
+  const store = new PostgresOAuthStore(pool, issuer, authProvider.verifyCredentialStamp.bind(authProvider), {
+    grantTtlSeconds, refreshSuccessor: (hash, grantId) => tokens.refreshSuccessor(hash, grantId),
+  });
   await store.ready();
-  return { clients: new OAuthClients(), tokens, store, passwordAuth: authProvider,
+  return { clients: new OAuthClients(), tokens, store, passwordAuth: authProvider, grantTtlSeconds,
     session: createOAuthPasswordSession({ provider: authProvider }) };
 }
 
