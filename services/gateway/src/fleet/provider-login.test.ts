@@ -1,14 +1,24 @@
 import { createHash } from 'node:crypto';
+import * as files from 'node:fs/promises';
 import { chmod, link, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir, userInfo } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { afterEach, describe, expect, it } from 'vitest';
-import { createProviderLogin, cleanupProviderLogin, readPrivateJson, type ProviderLoginConfig } from './provider-login.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { assertLoginPins, createProviderLogin, cleanupProviderLogin, readPrivateJson, type ProviderLoginConfig } from './provider-login.js';
 
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof files>(); return { ...actual, open: vi.fn(actual.open) };
+});
 const operationId = '74000000-0000-4000-8000-000000000001';
 const temporary: string[] = [];
-afterEach(async () => { for (const path of temporary) await rm(path, { recursive: true, force: true }); temporary.length = 0; });
+afterEach(async () => { vi.restoreAllMocks(); for (const path of temporary) await rm(path, { recursive: true, force: true }); temporary.length = 0; });
+function zeroHash(size: number): string {
+  const hash = createHash('sha256'); const block = Buffer.alloc(65_536);
+  for (let remaining = size; remaining > 0; remaining -= block.length) hash.update(block.subarray(0, Math.min(remaining, block.length)));
+  return hash.digest('hex');
+}
 async function fixture(mode = 'verified'): Promise<ProviderLoginConfig> {
   const root = await mkdtemp(join(tmpdir(), 'provider-login-test-')); temporary.push(root);
   const executable = join(root, 'helper.py');
@@ -22,7 +32,7 @@ async function fixture(mode = 'verified'): Promise<ProviderLoginConfig> {
 describe('private provider login transport', () => {
   it.each(['normal', 'crash'])('runs actual native PTY and %s cleanup with exact runtime user', async mode => {
     const root = await mkdtemp(join(tmpdir(), 'provider-login-native-')); temporary.push(root);
-    const user = userInfo(); const helper = resolve('ops/cli/provider-login.py'); const python = await realpath('/usr/bin/python3');
+    const user = userInfo(); const helper = fileURLToPath(new URL('../../../../ops/cli/provider-login.py', import.meta.url)); const python = await realpath('/usr/bin/python3');
     const worker = join(root, 'worker.py');
     await writeFile(worker, `import os,sys,termios,time\na=termios.tcgetattr(0);a[3]&=~termios.ECHO;termios.tcsetattr(0,termios.TCSANOW,a)\nprint('NATIVE_READY',os.getuid(),sys.stdin.isatty(),flush=True)\nline=sys.stdin.readline();print('INPUT_BYTES',len(line.strip()),flush=True)\ntime.sleep(60)\n`, { mode: 0o700 });
     const hash = async (filename: string) => createHash('sha256').update(await readFile(filename)).digest('hex');
@@ -70,6 +80,27 @@ describe('private provider login transport', () => {
     const config = await fixture(); await writeFile(config.helper.executable, '# changed synthetic helper\n');
     await expect(createProviderLogin(config, new AbortController().signal)).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE' });
   });
+  it.each([286_750_056, 289_101_384, 536_870_912])('accepts a correctly pinned binary of %i bytes using bounded reads', async size => {
+    const config = await fixture(); const filename = join(config.stateRoot, 'public-cli');
+    const file = await files.open(filename, 'wx', 0o700);
+    try { await file.truncate(size); } finally { await file.close(); }
+    await expect(assertLoginPins({ [filename]: zeroHash(size) })).resolves.toBeUndefined();
+    await expect(assertLoginPins({ [filename]: '0'.repeat(64) })).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE' });
+  }, 15_000);
+  it('rejects binaries above 512 MiB even with a matching hash', async () => {
+    const config = await fixture(); const filename = join(config.stateRoot, 'public-cli'); const size = 536_870_913;
+    const file = await files.open(filename, 'wx', 0o700);
+    try { await file.truncate(size); } finally { await file.close(); }
+    await expect(assertLoginPins({ [filename]: zeroHash(size) })).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE' });
+  }, 15_000);
+  it('rejects growth past the bound after the initial file-size observation and closes the handle', async () => {
+    const config = await fixture(); const filename = join(config.stateRoot, 'growing-public-cli');
+    const file = await files.open(filename, 'wx+', 0o700); const initial = await file.stat(); const size = 536_870_913;
+    await file.truncate(size); vi.spyOn(file, 'stat').mockResolvedValue(initial);
+    const close = vi.spyOn(file, 'close'); vi.mocked(files.open).mockResolvedValueOnce(file);
+    await expect(assertLoginPins({ [filename]: zeroHash(size) })).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE' });
+    expect(close).toHaveBeenCalledOnce();
+  }, 15_000);
   it('rechecks the pinned native login command immediately before starting', async () => {
     const config = await fixture(); const command = join(config.stateRoot, 'command');
     await writeFile(command, 'synthetic original', { mode: 0o700 });

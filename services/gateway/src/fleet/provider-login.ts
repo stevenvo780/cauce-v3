@@ -40,6 +40,7 @@ const CleanupSchema = z.object({ stopped_verified: z.literal(true) }).strict();
 const OutputSchema = z.object({ type: z.literal('output'), data: z.string().max(87_384).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u) }).strict();
 const EventSchema = z.union([StartedSchema, ExitSchema, OutputSchema]);
 const unavailable = () => new ProviderAuthError('HOST_UNAVAILABLE');
+const maximumPinBytes = 536_870_912;
 
 export async function readPrivateJson(filename: string): Promise<unknown> {
   try {
@@ -58,10 +59,10 @@ export async function assertLoginPins(pins: Record<string, string>): Promise<voi
       const file = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       try {
         const stat = await file.stat();
-        if (!stat.isFile() || ![0, process.geteuid?.()].includes(stat.uid) || stat.nlink !== 1 || (stat.mode & 0o022) !== 0 || stat.size > 268_435_456) throw unavailable();
+        if (!stat.isFile() || ![0, process.geteuid?.()].includes(stat.uid) || stat.nlink !== 1 || (stat.mode & 0o022) !== 0 || stat.size > maximumPinBytes) throw unavailable();
         const hash = createHash('sha256'); const bytes = Buffer.alloc(65_536); let length = 0;
         for (;;) { const read = await file.read(bytes, 0, bytes.length, null); if (read.bytesRead === 0) break;
-          length += read.bytesRead; if (length > 268_435_456) throw unavailable(); hash.update(bytes.subarray(0, read.bytesRead)); }
+          length += read.bytesRead; if (length > maximumPinBytes) throw unavailable(); hash.update(bytes.subarray(0, read.bytesRead)); }
         if (hash.digest('hex') !== expected) throw unavailable();
       } finally { await file.close(); }
     }
