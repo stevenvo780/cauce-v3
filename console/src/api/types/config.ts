@@ -78,6 +78,7 @@ export interface ConfigurationSnapshot {
 }
 
 export interface ConfigurationChangeResult {
+  mutation_sha256?: string;
   applied?: boolean | null;
   dry_run?: boolean | null;
   revision?: number | null;

@@ -1,26 +1,8 @@
-import { ConfigMutationSchema } from '@cauce/protocol/configuration';
+import { ConfigMutationSchema, configurationReceiptMatches } from '@cauce/protocol/configuration';
 import type { ConfigMutation, ConfigurationChangeResult } from '../../api/types';
 
 function mutation(value: unknown): value is ConfigMutation {
   return ConfigMutationSchema.safeParse(value).success;
-}
-
-function canonical(value: unknown): string | undefined {
-  try {
-    const normalized = (entry: unknown): unknown => {
-      if (Array.isArray(entry)) return entry.map(normalized);
-      if (entry !== null && typeof entry === 'object') {
-        return Object.fromEntries(Object.entries(entry as Record<string, unknown>)
-          .filter(([, child]) => child !== undefined)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, child]) => [key, normalized(child)]));
-      }
-      return entry;
-    };
-    return JSON.stringify(normalized(value));
-  } catch {
-    return undefined;
-  }
 }
 
 /** A 2xx is credited only when its receipt proves the requested mutation and rollback inverse. */
@@ -29,6 +11,7 @@ export function exactConfigurationReceipt(
   dryRun: boolean,
   expectedMutation?: ConfigMutation,
   expectedRolledBackRevisionId: number | null = null,
+  expectedMutationSha256?: string,
 ): boolean {
   const minimumRevision = dryRun ? 0 : 1;
   return result.applied === !dryRun
@@ -41,6 +24,6 @@ export function exactConfigurationReceipt(
     && result.summary.length <= 2_000
     && mutation(result.mutation)
     && mutation(result.inverse_mutation)
-    && (expectedMutation === undefined
-      || canonical(result.mutation) === canonical(expectedMutation));
+    && configurationReceiptMatches(result.inverse_mutation, undefined, undefined)
+    && configurationReceiptMatches(result.mutation, expectedMutation, result.mutation_sha256, expectedMutationSha256);
 }

@@ -1,6 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
+import { ConfigMutationSchema, configurationMutationSha256, publicConfigurationMutation } from '@cauce/protocol/configuration';
 import { AccountsPage } from './AccountsPage';
 import { App } from '../../App';
 import { server } from '../../mocks/server';
@@ -17,17 +18,23 @@ function configuration(overrides: Record<string, unknown>, revision: number | ((
   })));
 }
 
-function recordChanges(sink: ChangeRequest[], response?: (input: ChangeRequest) => Response) {
+async function changeReceipt(input: ChangeRequest) {
+  const mutation = ConfigMutationSchema.parse(input.mutation);
+  return {
+    applied: input.dry_run !== true, dry_run: input.dry_run === true,
+    revision: input.dry_run ? 4 : 5, mutation: publicConfigurationMutation(mutation),
+    mutation_sha256: await configurationMutationSha256(mutation),
+    inverse_mutation: publicConfigurationMutation(mutation), rolled_back_revision_id: null,
+    summary: 'mock registry validation',
+  };
+}
+
+function recordChanges(sink: ChangeRequest[], response?: (input: ChangeRequest) => Response | Promise<Response>) {
   server.use(http.post('http://localhost/v3/console/config/changes', async ({ request }) => {
     const input = await request.json() as ChangeRequest;
     sink.push(input);
     if (response) return response(input);
-    return HttpResponse.json({
-      applied: input.dry_run !== true, dry_run: input.dry_run === true,
-      revision: input.dry_run ? 4 : 5, mutation: input.mutation,
-      inverse_mutation: input.mutation, rolled_back_revision_id: null,
-      summary: 'mock registry validation',
-    }, { status: input.dry_run ? 200 : 201 });
+    return HttpResponse.json(await changeReceipt(input), { status: input.dry_run ? 200 : 201 });
   }));
 }
 
@@ -219,12 +226,8 @@ it('exige dry-run antes de aplicar el alta y manda la mutación de provider_acco
 it('no habilita ni acredita escrituras del registro con recibos 2xx truncados', async () => {
   const changes: ChangeRequest[] = [];
   configuration({ provider_accounts: [], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
-  recordChanges(changes, (input) => input.dry_run
-    ? HttpResponse.json({
-      applied: false, dry_run: true, revision: 4, summary: 'preview exacto',
-      mutation: input.mutation, inverse_mutation: input.mutation,
-      rolled_back_revision_id: null,
-    })
+  recordChanges(changes, async (input) => input.dry_run
+    ? HttpResponse.json(await changeReceipt(input))
     : HttpResponse.json({ applied: true, dry_run: false, revision: 5 }, { status: 201 }));
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
@@ -254,7 +257,27 @@ it('no reimprime el locator en el dry-run que el servidor devuelve', async () =>
 
   const preview = await screen.findByLabelText(/dry-run de alta de cuenta/i);
   expect(preview).not.toHaveTextContent('CAUCE_CODEX_STEVEN_PATH');
-  expect(preview).toHaveTextContent(/locator no reimpreso/i);
+  expect(preview).not.toHaveTextContent('"credential_ref":');
+});
+
+it('bloquea aplicar si el recibo confirma otro locator aunque la proyección visible coincida', async () => {
+  const changes: ChangeRequest[] = [];
+  configuration({ provider_accounts: [], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
+  recordChanges(changes, async (input) => {
+    const mutation = ConfigMutationSchema.parse(input.mutation);
+    if (mutation.resource !== 'provider_account') throw new Error('unexpected account mutation');
+    const other = { ...mutation, value: { ...mutation.value, credential_ref: 'OTHER_LOCATOR' } };
+    return HttpResponse.json({ ...await changeReceipt(input), mutation_sha256: await configurationMutationSha256(other) });
+  });
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
+  await openInventory(user);
+  await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
+  await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
+  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(/sin el recibo exacto del dry-run/i);
+  expect(accountActions().getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
+  expect(changes).toHaveLength(1);
 });
 
 it('deshabilita sin borrar: la acción abre el update con enabled en false', async () => {

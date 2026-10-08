@@ -62,3 +62,18 @@ describe('exact configuration receipt', () => {
     }, false, undefined, 7)).toBe(false);
   });
 });
+
+it('credits a redacted locator only with the full pre-request intent hash and rejects a different locator', async () => {
+  const { configurationMutationSha256, publicConfigurationMutation } = await import('@cauce/protocol/configuration');
+  const account = { resource: 'provider_account', action: 'create', id: 'private-account', value: {
+    provider: 'codex', payer_tenant_id: 'Steven', external_account_id: 'one', credential_ref_kind: 'env_path', credential_ref: 'PRIVATE_LOCATOR' } } satisfies ConfigMutation;
+  const hash = await configurationMutationSha256(account);
+  const receipt = { applied: false, dry_run: true, revision: 1, summary: 'create account', rolled_back_revision_id: null,
+    mutation: publicConfigurationMutation(account), inverse_mutation: { resource: 'provider_account' as const, action: 'delete' as const, id: account.id }, mutation_sha256: hash };
+  expect(exactConfigurationReceipt(receipt, true, account, null, hash)).toBe(true);
+  expect(exactConfigurationReceipt({ ...receipt, mutation_sha256: undefined }, true, account, null, hash)).toBe(false);
+  expect(exactConfigurationReceipt({ ...receipt, mutation_sha256: 'a'.repeat(64) }, true, account, null, hash)).toBe(false);
+  const changed = { ...account, value: { ...account.value, credential_ref: 'OTHER_LOCATOR' } };
+  expect(exactConfigurationReceipt(receipt, true, changed, null, await configurationMutationSha256(changed))).toBe(false);
+  expect(exactConfigurationReceipt({ ...receipt, mutation: account }, true, account, null, hash)).toBe(false);
+});

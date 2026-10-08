@@ -1,8 +1,10 @@
 import '@testing-library/jest-dom/vitest';
+import { webcrypto } from 'node:crypto';
 import { transferableAbortController } from 'node:util';
 
 const nativeAbortController = transferableAbortController();
 Object.defineProperties(globalThis, {
+  crypto: { configurable: true, value: webcrypto },
   AbortController: {
     configurable: true,
     writable: true,

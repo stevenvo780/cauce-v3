@@ -1,4 +1,5 @@
 import { ApiError } from '../../api/client';
+import { configurationMutationSha256 } from '@cauce/protocol/configuration';
 import type { ConfigMutation, ConfigurationChangeResult, ConfigurationSnapshot } from '../../api/types';
 import type { RecargaResultado } from '../../api/use-resource';
 import { exactConfigurationReceipt } from './config-receipt';
@@ -109,11 +110,12 @@ export async function executeConfigurationChange(
   }
 
   try {
+    const expectedMutationSha256 = await configurationMutationSha256(options.mutation);
     const result = await options.change(options.mutation, {
       dryRun: options.dryRun,
       ...(options.expectedRevision === undefined ? {} : { expectedRevision: options.expectedRevision }),
     });
-    if (!exactConfigurationReceipt(result, options.dryRun, options.mutation)) {
+    if (!exactConfigurationReceipt(result, options.dryRun, options.mutation, null, expectedMutationSha256)) {
       const recarga = options.dryRun ? undefined : await reload();
       return {
         ok: false,
