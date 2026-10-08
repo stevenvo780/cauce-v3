@@ -9,6 +9,15 @@ export interface AgentLifecycleDraft {
   reasoningEffort?: string;
 }
 const text = (row: Record<string, unknown> | undefined, key: string) => typeof row?.[key] === 'string' ? row[key] : '';
+export function lifecycleAccountProvider(snapshot: ConfigurationSnapshot, accountId: string): string | undefined {
+  const account = snapshot.provider_accounts?.find(row => row.id === accountId && row.enabled !== false);
+  return text(account, 'provider') || undefined;
+}
+export function lifecycleAccountForProvider(snapshot: ConfigurationSnapshot, provider: string, currentId: string, tenantId: string): string {
+  const accounts = snapshot.provider_accounts?.filter(row => row.provider === provider && row.enabled !== false
+    && (typeof row.payer_tenant_id !== 'string' || row.payer_tenant_id === tenantId || row.shared_with_pool === true)) ?? [];
+  return text(accounts.find(row => row.id === currentId) ?? accounts.find(row => text(row, 'id')), 'id');
+}
 export function lifecycleOptions(snapshot: ConfigurationSnapshot, key: 'tenants' | 'rooms' | 'harness_definitions' | 'provider_accounts', tenantId?: string) {
   return (snapshot[key] ?? []).flatMap((row) => {
     if (key === 'rooms' && row.tenant_id !== tenantId) return [];
@@ -76,8 +85,10 @@ export function agentLifecycleRequest(
       ...(draft.reasoningEffort ? { reasoning_effort: draft.reasoningEffort } : { reasoning_effort: null }),
     },
   });
-  if (result.success && host.runtimes !== undefined && !matchingFleetRuntime(capability, result.data)) {
-    return { error: 'Selecciona una plantilla de ejecución autorizada para este arnés, usuario y contenedor.' };
+  const provider = lifecycleAccountProvider(snapshot, draft.primaryAccountId);
+  if (host.runtimes !== undefined && !provider) return { error: 'Selecciona una cuenta principal publicada para el proveedor de la plantilla.' };
+  if (result.success && host.runtimes !== undefined && !matchingFleetRuntime(capability, result.data, provider)) {
+    return { error: 'Selecciona una plantilla autorizada para este proveedor, arnés, usuario y contenedor.' };
   }
   return result.success ? { request: result.data } : { error: 'Revisa identidad, clave física, membresías, grupo primario y datos de ejecución. No se enviaron cambios.' };
 }

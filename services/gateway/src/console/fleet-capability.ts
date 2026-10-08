@@ -45,13 +45,12 @@ export function assertFleetPlacement(capability: FleetCapability, request: Fleet
 
 export async function assertFleetProviderAccount(pool: DatabasePool, capability: FleetCapability, request: FleetOperationRequest): Promise<void> {
   if (request.kind !== 'create' && request.kind !== 'update') return;
-  const runtime = matchingFleetRuntime(capability, request);
-  if (!runtime) throw new FleetOperationError('forbidden', 'runtime has no current approved provider capability');
   const accountId = request.parameters.primary_account_id;
   if (!accountId) throw new FleetOperationError('forbidden', 'runtime requires an explicit provider account');
   const result = await pool.query<{ provider: string }>(`SELECT provider FROM provider_accounts
     WHERE id=$1 AND enabled AND (payer_tenant_id=$2 OR shared_with_pool)`, [accountId, request.target.tenant_id]);
-  if (result.rows.length !== 1 || result.rows[0]?.provider !== runtime.provider) {
+  const provider = result.rows[0]?.provider;
+  if (result.rows.length !== 1 || !provider || !matchingFleetRuntime(capability, request, provider)) {
     throw new FleetOperationError('forbidden', 'provider account is outside the approved runtime capability');
   }
 }

@@ -43,6 +43,17 @@ describe('fleet operation request authority', () => {
 
 
 describe('fleet effect and execution catalogue', () => {
+  it('matches identical placements by the durable account provider without equating it to the harness', () => {
+    const runtime = { mode: 'container' as const, harness_id: 'openclaw', provider: 'codex', runtime_user: 'dev',
+      home_directory: '/home/dev', state_root: '/home/dev/.cauce', container_name: 'cauce-agents' };
+    const capability: protocol.FleetCapability = { available: true, actions: ['create'], placements: [{ host_id: 'kratos',
+      modes: ['container'], runtime_users: ['dev'], systemd_users: [], home_roots: ['/home/dev'],
+      state_roots: ['/home/dev/.cauce'], runtimes: [runtime, { ...runtime, provider: 'gemini' }] }] };
+    const request = protocol.FleetOperationRequestSchema.parse({ ...input, parameters: { ...input.parameters, harness_id: 'openclaw' } });
+    expect(protocol.matchingFleetRuntime(capability, request)?.provider).toBe('codex');
+    expect(protocol.matchingFleetRuntime(capability, request, 'gemini')?.provider).toBe('gemini');
+    expect(protocol.matchingFleetRuntime(capability, request, 'unapproved')).toBeUndefined();
+  });
   it('accepts checked stopping and revocation without process output', () => {
     expect(protocol.FleetEvidenceSchema.safeParse({ stopped_verified: true, revocation_verified: true }).success).toBe(true);
     expect(protocol.FleetEvidenceSchema.safeParse({ stdout: 'sensitive' }).success).toBe(false);

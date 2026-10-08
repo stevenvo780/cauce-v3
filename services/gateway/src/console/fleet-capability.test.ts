@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { assertFleetPlacement, assertFleetProviderAccount, configuredFleetCapability } from './fleet-capability.js';
 import type { DatabasePool } from '@cauce/store';
 import type { FleetCapability, FleetOperationRequest } from '@cauce/protocol';
@@ -11,6 +11,22 @@ const request: FleetOperationRequest = { kind: 'create', target: { resource: 'ag
     placement: { host_id: 'isolated', mode: 'container', runtime_user: 'dev', container_name: 'isolated-runtime',
       home_directory: '/home/dev', state_directory: '/home/dev/.cauce/new-agent' } } };
 describe('fleet execution capability', () => {
+  it('resolves the account provider before selecting among identical approved placements', async () => {
+    if (request.kind !== 'create') throw new Error('fixture');
+    const runtime = { mode: 'container' as const, harness_id: 'openclaw', provider: 'codex', runtime_user: 'dev',
+      home_directory: '/home/dev', state_root: '/home/dev/.cauce', container_name: 'isolated-runtime' };
+    const catalog = { ...capability, placements: capability.placements.map(host => ({ ...host,
+      runtimes: [runtime, { ...runtime, provider: 'gemini' }] })) };
+    const approved = { ...request, parameters: { ...request.parameters, harness_id: 'openclaw', primary_account_id: 'gemini-account' } };
+    const query = vi.fn().mockResolvedValue({ rows: [{ provider: 'gemini' }] });
+    const pool = { query } as unknown as DatabasePool;
+    await expect(assertFleetProviderAccount(pool, catalog, approved)).resolves.toBeUndefined();
+    expect(query).toHaveBeenCalledWith(expect.stringMatching(/enabled AND \(payer_tenant_id=\$2 OR shared_with_pool\)/), ['gemini-account', 'Nuevo']);
+    for (const rows of [[], [{ provider: 'unapproved' }], [{ provider: 'gemini' }, { provider: 'codex' }]]) {
+      query.mockResolvedValueOnce({ rows });
+      await expect(assertFleetProviderAccount(pool, catalog, approved)).rejects.toThrow('provider account');
+    }
+  });
   it('preflights approved templates and provider identity before allowing a durable operation', async () => {
     const catalog: FleetCapability = { ...capability, placements: capability.placements.map(host => ({ ...host, runtimes: [{
       mode: 'container', harness_id: 'codex', provider: 'codex', runtime_user: 'dev', home_directory: '/home/dev',

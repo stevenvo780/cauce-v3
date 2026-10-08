@@ -1,6 +1,6 @@
 import type { FleetCapability, FleetTarget } from '@cauce/protocol/fleet-operation';
 import type { ConfigurationSnapshot } from '../../api/types';
-import { lifecycleOptions, type AgentLifecycleDraft } from './agent-lifecycle-model';
+import { lifecycleAccountForProvider, lifecycleAccountProvider, lifecycleOptions, type AgentLifecycleDraft } from './agent-lifecycle-model';
 
 export function AgentLifecycleFields({ draft, snapshot, capability, target, disabled, edit }: {
   draft: AgentLifecycleDraft; snapshot: ConfigurationSnapshot; capability?: FleetCapability; target?: FleetTarget;
@@ -10,6 +10,7 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
     .find((row) => row.tenant_id === target.tenant_id && row.alias === target.alias) : undefined;
   const immutableRuntime = !!target && existing?.runtime_key !== null;
   const host = capability?.placements.find((entry) => entry.host_id === draft.hostId);
+  const provider = lifecycleAccountProvider(snapshot, draft.primaryAccountId);
   const options = (key: Parameters<typeof lifecycleOptions>[1]) => lifecycleOptions(snapshot, key, draft.tenantId)
     .map((option) => <option key={option.id} value={option.id}>{option.label} · {JSON.stringify(option.id)}</option>);
   return <div className="agent-lifecycle-fields">
@@ -58,19 +59,21 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
           <option key={entry.host_id} value={entry.host_id}>{entry.host_id}</option>)}
       </select></label>
       {host?.runtimes ? <label>Plantilla de ejecución<select value={host.runtimes.findIndex(runtime =>
-        runtime.harness_id === draft.harnessId && runtime.mode === draft.mode && runtime.runtime_user === draft.runtimeUser
+        runtime.provider === provider && runtime.harness_id === draft.harnessId && runtime.mode === draft.mode && runtime.runtime_user === draft.runtimeUser
+        && (runtime.systemd_user ?? '') === draft.systemdUser
         && runtime.home_directory === draft.homeDirectory && `${runtime.state_root.replace(/\/$/u, '')}/${draft.runtimeKey}` === draft.stateDirectory
         && (runtime.mode !== 'container' || draft.containerName === (runtime.container_name ?? `${runtime.container_prefix ?? ''}${draft.runtimeKey}`)))}
         onChange={event => {
           const runtime = host.runtimes?.[Number(event.target.value)]; if (!runtime) return;
           edit({ harnessId: runtime.harness_id, mode: runtime.mode, runtimeUser: runtime.runtime_user,
+            primaryAccountId: lifecycleAccountForProvider(snapshot, runtime.provider, draft.primaryAccountId, draft.tenantId),
             systemdUser: runtime.systemd_user ?? '', homeDirectory: runtime.home_directory,
             stateDirectory: `${runtime.state_root.replace(/\/$/u, '')}/${draft.runtimeKey}`,
             containerName: runtime.container_name ?? `${runtime.container_prefix ?? ''}${draft.runtimeKey}` });
         }}>
         <option value={-1}>Elige una ubicación aprobada</option>
         {host.runtimes.map((runtime, index) => <option key={index} value={index}>
-          {runtime.harness_id} · {runtime.mode} · {runtime.runtime_user} · {runtime.home_directory}
+          {runtime.harness_id} · {runtime.provider} · {runtime.mode} · {runtime.runtime_user} · {runtime.home_directory}
         </option>)}
       </select></label> : null}
       <label>Modo de ejecución<select value={draft.mode} onChange={(event) => { edit({ mode: event.target.value as AgentLifecycleDraft['mode'] }); }}>

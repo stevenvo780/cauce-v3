@@ -113,12 +113,13 @@ export const FleetCapabilitySchema = z.object({
 }).strict().refine((value) => value.available || (value.actions.length === 0 && value.placements.length === 0));
 export type FleetCapability = z.infer<typeof FleetCapabilitySchema>;
 
-export function matchingFleetRuntime(capability: FleetCapability, request: FleetOperationRequest) {
+export function matchingFleetRuntime(capability: FleetCapability, request: FleetOperationRequest, provider?: string) {
   if (request.kind !== 'create' && request.kind !== 'update') return undefined;
   const { parameters } = request;
   const { placement, runtime_key } = parameters;
   const host = capability.placements.find(candidate => candidate.host_id === placement.host_id);
-  return host?.runtimes?.find(runtime => runtime.mode === placement.mode && runtime.harness_id === parameters.harness_id
+  return host?.runtimes?.find(runtime => (provider === undefined || runtime.provider === provider)
+    && runtime.mode === placement.mode && runtime.harness_id === parameters.harness_id
     && runtime.runtime_user === placement.runtime_user && (runtime.systemd_user ?? null) === (placement.systemd_user ?? null)
     && runtime.home_directory === placement.home_directory
     && placement.state_directory === `${runtime.state_root.replace(/\/$/u, '')}/${runtime_key}`
