@@ -1,9 +1,14 @@
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import type { FleetCapability } from '@cauce/protocol';
-import { createPool } from '@cauce/store';
-import { configuredFleetGateway } from './gateway-config.js';
+import { createPool, fleetHostAvailability, type DatabasePool } from '@cauce/store';
+import { FleetHostUnavailableError, configuredFleetGateway } from './gateway-config.js';
+
+vi.mock('@cauce/store', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@cauce/store')>(),
+  fleetHostAvailability: vi.fn(async () => ({ usable: true })),
+}));
 
 const pool = createPool('postgresql://localhost/cauce_test_config_unused', { max: 1 });
 const capability: FleetCapability = { available: true, actions: ['create', 'update', 'retire'],
@@ -41,5 +46,32 @@ describe('fleet gateway deployment configuration', () => {
       { ...template, host_id: 'unregistered' }] }, valid.environment)).rejects.toThrow('catalogs differ');
     const duplicate = await config([{ host_id: 'server', socket_path: '/run/fleet/one.sock' }, { host_id: 'other', socket_path: '/run/fleet/one.sock' }]);
     await expect(configuredFleetGateway(pool, capability, duplicate.environment)).rejects.toThrow();
+  });
+  it('blocks start and placement changes on a disabled or unreachable computer without blocking stop', async () => {
+    const { environment } = await config();
+    const query = vi.fn(async () => ({ rows: [{ host_id: 'server' }], rowCount: 1 }));
+    const placed = { query } as unknown as DatabasePool;
+    const operable: FleetCapability = { ...capability, actions: [...capability.actions, 'start', 'stop'] };
+    const binding = (await configuredFleetGateway(placed, operable, environment)).fleetOperationsRepository;
+    if (!binding) throw new Error('fleet operations binding was not configured');
+    const target = { resource: 'agent' as const, tenant_id: 'Pablo', alias: 'midas' };
+    const start = { kind: 'start' as const, target, expected_revision: 1, idempotency_key: 'start-midas-01', parameters: {} };
+    const stop = { ...start, kind: 'stop' as const, idempotency_key: 'stop-midas-01' };
+
+    vi.mocked(fleetHostAvailability).mockResolvedValueOnce({ usable: false, reason: 'unreachable' });
+    await expect(binding.enqueue('Pablo', 'midas', start)).rejects.toMatchObject({
+      code: 'host_unavailable', statusCode: 409,
+      message: 'La computadora server está deshabilitada o sin conexión; sus agentes no se pueden operar hasta que vuelva.',
+    });
+    expect(query).toHaveBeenCalledWith(expect.stringMatching(/FROM agents/u), ['Pablo', 'midas']);
+    expect(fleetHostAvailability).toHaveBeenCalledWith(placed, 'server');
+
+    vi.mocked(fleetHostAvailability).mockResolvedValueOnce({ usable: false, reason: 'disabled' });
+    await expect(binding.preview('Pablo', 'midas', start)).rejects.toBeInstanceOf(FleetHostUnavailableError);
+
+    vi.mocked(fleetHostAvailability).mockClear();
+    const stopped = await binding.enqueue('Pablo', 'midas', stop).catch((error: unknown) => error);
+    expect(stopped).not.toBeInstanceOf(FleetHostUnavailableError);
+    expect(fleetHostAvailability).not.toHaveBeenCalled();
   });
 });

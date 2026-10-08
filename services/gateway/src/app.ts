@@ -38,6 +38,7 @@ import { registerAgentEmissionRoutes } from './routes/agent-emission.js';
 import { prepareBlobDirectory, registerBlobRoutes, type BlobStoreOptions } from './routes/blobs.js';
 import { humanMcpListenerOptions, registerHumanMcp, type HumanMcpConfiguration } from './mcp-mounting.js';
 import { registerFleetOperationRoutes, registerFleetCapabilityRoute, type FleetOperationsRepositoryBinding } from './console/fleet-operations.routes.js';
+import { registerFleetHostRoutes } from './console/fleet-hosts.routes.js';
 import { registerPeopleAdminRoutes } from './console/people-admin-routes.js';
 import { PeopleAdminRepository } from './console/people-admin-store.js';
 import { registerProviderAuthRoutes } from './console/provider-auth.routes.js';
@@ -338,6 +339,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   } else {
     registerFleetCapabilityRoute(app, options.authProvider, { available: false, actions: [], placements: [], reason: 'executor_unconfigured' });
   }
+  registerFleetHostRoutes(app, options.authProvider, options.pool, options.fleetCapability);
 
   registerConsolePublishIntentRoutes(
     app, options, repository, consolePublishTelemetry,

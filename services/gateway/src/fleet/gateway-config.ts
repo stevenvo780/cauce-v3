@@ -1,7 +1,7 @@
 import { normalize } from 'node:path';
 import { z } from 'zod';
 import type { FleetCapability, FleetOperationRequest } from '@cauce/protocol';
-import { FleetOperationsRepository, type DatabasePool } from '@cauce/store';
+import { FleetOperationsRepository, fleetHostAvailability, type DatabasePool } from '@cauce/store';
 import { assertFleetPlacement, assertFleetProviderAccount } from '../console/fleet-capability.js';
 import { readPrivateJson } from './provider-login.js';
 import { HostProviderAuthService } from './auth-bridge-client.js';
@@ -22,6 +22,29 @@ const ApiConfig = z.object({ version: z.literal(1), controller_host: Host,
   && new Set(value.hosts.map(host => host.socket_path)).size === value.hosts.length
   && value.hosts.some(host => host.host_id === value.controller_host)
   && (value.legacy_adoption === undefined || !value.hosts.some(host => host.socket_path === value.legacy_adoption?.socket_path)));
+export class FleetHostUnavailableError extends Error {
+  readonly code = 'host_unavailable';
+  readonly statusCode = 409;
+
+  constructor(readonly hostId: string) {
+    super(`La computadora ${hostId} está deshabilitada o sin conexión; sus agentes no se pueden operar hasta que vuelva.`);
+    this.name = 'FleetHostUnavailableError';
+  }
+}
+
+async function assertFleetHostOperable(pool: DatabasePool, request: FleetOperationRequest): Promise<void> {
+  if (request.kind !== 'create' && request.kind !== 'update' && request.kind !== 'start') return;
+  const hostId = request.kind === 'start' ? await placedHostId(pool, request.target) : request.parameters.placement.host_id;
+  if (hostId === null) return;
+  if (!(await fleetHostAvailability(pool, hostId)).usable) throw new FleetHostUnavailableError(hostId);
+}
+
+async function placedHostId(pool: DatabasePool, target: { tenant_id: string; alias: string }): Promise<string | null> {
+  const result = await pool.query<{ host_id: string | null }>(
+    'SELECT host_id FROM agents WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL', [target.tenant_id, target.alias]);
+  return result.rows[0]?.host_id ?? null;
+}
+
 export async function configuredFleetGateway(pool: DatabasePool, capability: FleetCapability, environment: NodeJS.ProcessEnv = process.env) {
   const config = environment.CAUCE_FLEET_API_CONFIG_FILE === undefined ? undefined
     : ApiConfig.parse(await readPrivateJson(environment.CAUCE_FLEET_API_CONFIG_FILE));
@@ -43,10 +66,12 @@ export async function configuredFleetGateway(pool: DatabasePool, capability: Fle
     cancel: repository.cancel.bind(repository), resume: repository.resume.bind(repository),
     preview: async (tenant: string, alias: string, input: FleetOperationRequest, subject?: string) => {
       assertFleetPlacement(capability, input); await assertFleetProviderAccount(pool, capability, input);
+      await assertFleetHostOperable(pool, input);
       return repository.preview(tenant, alias, input, subject);
     },
     enqueue: async (tenant: string, alias: string, input: FleetOperationRequest, subject?: string) => {
       assertFleetPlacement(capability, input); await assertFleetProviderAccount(pool, capability, input);
+      await assertFleetHostOperable(pool, input);
       return repository.enqueue(tenant, alias, input, subject);
     },
   };

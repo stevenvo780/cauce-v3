@@ -6,6 +6,7 @@ import {
   type FleetCapability, type FleetOperation, type FleetOperationRequest, type FleetTarget, type Tenant,
 } from '@cauce/protocol';
 import { FleetOperationError, StoreError } from '@cauce/store';
+import { FleetHostUnavailableError } from '../fleet/gateway-config.js';
 import { AuthError, AuthorizationError, requireOperatorPermission, type AuthProvider, type Principal } from '../auth.js';
 import { principal, replyError } from '../routes/shared.js';
 
@@ -56,6 +57,10 @@ function fleetError(reply: FastifyReply, error: unknown): void {
   }
   if (error instanceof FleetOperationError) {
     void reply.code(ERROR_STATUS[error.code]).send({ error: error.code, message: error.message });
+    return;
+  }
+  if (error instanceof FleetHostUnavailableError) {
+    void reply.code(error.statusCode).send({ error: error.code, message: error.message });
     return;
   }
   if (error instanceof z.ZodError) {
