@@ -17,7 +17,9 @@ RESERVED_SUPERVISOR_EXITS = frozenset({ARGUMENT_EXIT, LOCK_EXIT, PERMANENT_EXIT}
 ADAPTER_RESTART_EXIT = 70
 METADATA_NAME = "cauce-v3-adapter.json"
 LOCK_NAME = "cauce-v3-adapter.lock"
-ALIAS_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+ALIAS_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+WIRE_ALIAS_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+TENANT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 CONTAINER_ID_RE = re.compile(r"^[a-f0-9]{64}$")
 DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
 GENERATION_RE = re.compile(r"^[a-f0-9]{64}$")
@@ -30,7 +32,8 @@ METADATA_KEYS = {
 EXECUTABLE_KEYS = {
     "path", "sha256", "device", "inode", "procPath", "procDevice", "procInode", "cmdlineSha256",
 }
-IDENTITY_ENV_KEYS = ("CAUCE_ALIAS", "CAUCE_STATE_DIR", "CAUCE_CONTROL_DIR", "CAUCE_CONTAINER_ID", "CAUCE_CONTAINER_GENERATION")
+IDENTITY_ENV_KEYS = ("CAUCE_ALIAS", "CAUCE_RUNTIME_KEY", "CAUCE_TENANT_ID", "CAUCE_STATE_DIR",
+                     "CAUCE_CONTROL_DIR", "CAUCE_CONTAINER_ID", "CAUCE_CONTAINER_GENERATION")
 
 
 class PermanentError(RuntimeError):

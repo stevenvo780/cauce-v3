@@ -95,6 +95,20 @@ printf '%s\\n' "\${CAUCE_DEFAULT_TIMEOUT_MS:?}" >"\${CAUCE_TEST_CAPTURE:?}"
   assert.equal((await readFile(capture, "utf8")).trim(), "480000",
     "a valid timeout override must be exported verbatim");
 
+  result = spawnSync(fixtureRunner, ["kant"], {
+    encoding: "utf8",
+    env: { ...environment("480000"), CAUCE_RUNTIME_KEY: "kant", CAUCE_ALIAS: "shared_alias",
+      CAUCE_TENANT_ID: "Equipo_42" },
+  });
+  assert.equal(result.status, 0, `wire identity with a physical runtime key must execute: ${result.stderr}`);
+  for (const extra of [
+    { CAUCE_RUNTIME_KEY: "other", CAUCE_ALIAS: "shared_alias", CAUCE_TENANT_ID: "Equipo_42" },
+    { CAUCE_RUNTIME_KEY: "kant", CAUCE_ALIAS: "shared_alias" },
+  ]) {
+    result = spawnSync(fixtureRunner, ["kant"], { encoding: "utf8", env: { ...environment("480000"), ...extra } });
+    assert.notEqual(result.status, 0, "a mismatched or partial wire identity must fail");
+  }
+
   for (const [name, timeout] of [
     ["empty", ""],
     ["non-numeric", "480000ms"],

@@ -24,6 +24,8 @@ from cauce_container_base import (
     METADATA_KEYS,
     METADATA_NAME,
     SCHEMA_VERSION,
+    TENANT_RE,
+    WIRE_ALIAS_RE,
     ExecutableIdentityMismatch,
     PermanentError,
     canonical_absolute,
@@ -260,7 +262,8 @@ def alias_generation_pids(alias: str, generation: str, state_directory: str, *, 
         if name.isdigit() and (pid := int(name)) > 1 and pid not in skip:
             try:
                 env = selected_environment(pid)
-                if env.get("CAUCE_ALIAS") == alias and env.get("CAUCE_CONTAINER_GENERATION") == generation and env.get("CAUCE_STATE_DIR") == state_directory:
+                if env.get("CAUCE_RUNTIME_KEY", env.get("CAUCE_ALIAS")) == alias \
+                        and env.get("CAUCE_CONTAINER_GENERATION") == generation and env.get("CAUCE_STATE_DIR") == state_directory:
                     matches.append(pid)
             except (ProcessLookupError, PermissionError, UnicodeDecodeError, OSError):
                 pass
@@ -317,11 +320,15 @@ def metadata_hint(raw: bytes) -> int | None:
 
 
 def validate_metadata(document: Any) -> dict[str, Any]:
-    if not isinstance(document, dict) or set(document) != METADATA_KEYS:
+    if not isinstance(document, dict) or set(document) not in (METADATA_KEYS, METADATA_KEYS | {"wireAlias", "tenantId"}):
         raise PermanentError("lifecycle metadata has unexpected or missing fields")
     if document["schemaVersion"] != SCHEMA_VERSION or document["phase"] not in {"starting", "running"} \
             or not isinstance(document["alias"], str) or not ALIAS_RE.fullmatch(document["alias"]):
         raise PermanentError("lifecycle metadata identity is invalid")
+    if "wireAlias" in document and (not isinstance(document["wireAlias"], str)
+            or not WIRE_ALIAS_RE.fullmatch(document["wireAlias"]) or not isinstance(document["tenantId"], str)
+            or not TENANT_RE.fullmatch(document["tenantId"])):
+        raise PermanentError("lifecycle metadata wire identity is invalid")
     canonical_absolute(document["stateDirectory"], "metadata state directory")
     canonical_absolute(document["controlDirectory"], "metadata control directory")
     for field in ("controllerPid", "controllerStarttime", "runtimeUid", "runtimeGid"):
@@ -469,7 +476,9 @@ def lock_is_held(control_fd: int) -> bool:
 
 def expected_environment(document: dict[str, Any]) -> dict[str, str]:
     return {
-        "CAUCE_ALIAS": document["alias"],
+        "CAUCE_ALIAS": document.get("wireAlias", document["alias"]),
+        **({"CAUCE_RUNTIME_KEY": document["alias"], "CAUCE_TENANT_ID": document["tenantId"]}
+           if "wireAlias" in document else {}),
         "CAUCE_STATE_DIR": document["stateDirectory"],
         "CAUCE_CONTROL_DIR": document["controlDirectory"],
         "CAUCE_CONTAINER_ID": document["containerId"],

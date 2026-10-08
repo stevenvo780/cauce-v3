@@ -72,6 +72,26 @@ class FixtureTestCase(unittest.TestCase):
         return str(path)
 
 
+class WireIdentityTests(FixtureTestCase):
+    def test_wire_recipients_keep_physical_secret_paths_and_partial_merge_selection(self) -> None:
+        snapshot = json.loads((self.ops_dir / "flota.json").read_bytes())
+        snapshot["fleet"]["argos"]["alias"] = "logical_argos"
+        _write_json(self.ops_dir / "flota.json", snapshot)
+        code, _, error = _run(self.base_argv("--allow-user-id", "111", "--allow-chat-id", "-222"))
+        self.assertEqual(code, 0, error)
+        config = json.loads(self.dest.read_bytes())
+        argos = next(row for row in config["aliases"] if row["tenant_id"] == "Steven")
+        self.assertEqual(argos["alias"], "logical_argos")
+        self.assertEqual(argos["recipients"], [{"tenant_id": "Steven", "alias": "logical_argos"}])
+        self.assertTrue(argos["token_file"].endswith("/argos.token"))
+        self.assertTrue(argos["v2_shutdown_marker_file"].endswith("/argos.disabled"))
+        code, _, error = _run(self.base_argv("--aliases", "argos", "--reuse-existing-allowlist"))
+        self.assertEqual(code, 0, error)
+        updated = json.loads(self.dest.read_bytes())
+        self.assertEqual(len(updated["aliases"]), 2)
+        self.assertEqual(next(row for row in updated["aliases"] if row["alias"] == "logical_argos"), argos)
+
+
 class MergeWithAliasesTests(FixtureTestCase):
     def test_merge_preserves_untouched_alias_including_chats_and_bot_username(self) -> None:
         groups_path = pathlib.Path(self._tmp.name) / "groups.json"

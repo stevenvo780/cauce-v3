@@ -41,6 +41,39 @@ def fleet_row(harness: str, **overrides: Any) -> dict[str, Any]:
 
 
 class FleetDeriveTests(unittest.TestCase):
+    def test_wire_identity_uses_logical_alias_and_runtime_metadata_uses_physical_key(self) -> None:
+        row = fleet_row("codex", alias="shared_alias", tenant="Equipo_42")
+        entry = alias_entry("physical-one", row, {})
+        self.assertEqual(entry["alias"], "shared_alias")
+        document = manifest_doc("physical-one", row)
+        self.assertEqual(document["metadata"]["name"], "physical-one")
+        self.assertEqual(document["spec"]["alias"], "shared_alias")
+        self.assertEqual(document["spec"]["relay"]["urlPathEnv"], "CAUCE_PHYSICAL_ONE_RELAY_URL")
+        self.assertEqual(document["spec"]["stateDirectory"], "/var/lib/cauce-v3/aliases/physical-one")
+
+    def test_invalid_wire_alias_cannot_be_rendered_as_yaml(self) -> None:
+        for alias in ("bad\nalias", "Bad", "a" * 65):
+            with self.subTest(alias=alias), self.assertRaises(ValueError):
+                manifest_doc("physical-one", fleet_row("codex", alias=alias))
+
+    def test_durable_room_ids_preserve_labels_but_reject_control_characters(self) -> None:
+        for room in ("room.one", "Sala café: equipo"):
+            with self.subTest(room=room):
+                row = fleet_row("codex", room=room)
+                self.assertEqual(manifest_doc("physical-one", row)["spec"]["room"], room)
+                self.assertEqual(alias_entry("physical-one", row, {})["room"], room)
+        for room in ("", "r" * 129, "room\nnewline"):
+            with self.subTest(room=room), self.assertRaises(ValueError):
+                manifest_doc("physical-one", fleet_row("codex", room=room))
+
+    def test_logical_alias_does_not_allow_an_unsafe_physical_runtime_key(self) -> None:
+        for key in ("bad_key", "bad.key", "Bad", "a" * 65):
+            row = fleet_row("codex", alias="valid")
+            with self.subTest(key=key, render="manifest"), self.assertRaises(ValueError):
+                manifest_doc(key, row)
+            with self.subTest(key=key, render="inventory"), self.assertRaises(ValueError):
+                alias_entry(key, row, {})
+
     def test_constants_and_rules_cover_every_supported_harness(self) -> None:
         self.assertEqual(SYSTEMD_USER, "stev")
         self.assertEqual(

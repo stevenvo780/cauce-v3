@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { materializeSupervisorOpsFixture } from "./fixtures/container-supervisor-ops-root.mjs";
 
 // Escenarios supervisor-start movidos desde container-supervisor.test.mjs (poda T060-D).
 // Recibe por ctx los fixtures/helpers del test; devuelve el flujo (statePath/result/calls) por ctx.
@@ -72,6 +73,27 @@ export async function escenariosA(ctx) {
   result = runSupervisor("stop", "atlas", statePath);
   assert.equal(result.status, 0, `mTLS-only atlas stop must succeed: ${result.stderr}`);
   process.stdout.write("mTLS-only atlas: start and stop passed without bearer token\n");
+
+  const wireOps = await materializeSupervisorOpsFixture(path.dirname(path.dirname(supervisor)), path.join(temporary, "wire-ops"));
+  const wireInventoryPath = path.join(wireOps, "container-aliases.json");
+  const wireInventory = JSON.parse(await readFile(wireInventoryPath, "utf8"));
+  wireInventory.aliases.atlas.alias = "shared_alias";
+  wireInventory.aliases.atlas.tenant = "Equipo_42";
+  await writeFile(wireInventoryPath, JSON.stringify(wireInventory));
+  await clearLog();
+  statePath = await dockerState("atlas");
+  result = spawnSync(supervisor, ["start", "atlas"], {
+    encoding: "utf8", env: { ...environment(statePath), CAUCE_CONTAINER_OPS_ROOT: wireOps },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const wireFinal = (await records()).find(({ argv }) => argv.includes("CAUCE_ALIAS=shared_alias"));
+  assert(wireFinal?.argv.includes("CAUCE_RUNTIME_KEY=atlas"));
+  assert(wireFinal?.argv.includes("CAUCE_TENANT_ID=Equipo_42"));
+  assert(wireFinal?.argv.includes("CAUCE_STATE_DIR=" + aliasState.atlas));
+  assert(wireFinal?.argv.includes("/run/cauce-v3-supervisor/atlas"));
+  assert(wireFinal?.argv.includes("--wire-alias") && wireFinal.argv.includes("shared_alias"));
+  assert(wireFinal?.argv.includes("--tenant") && wireFinal.argv.includes("Equipo_42"));
+  process.stdout.write("wire identity: logical bus alias and tenant exported; lifecycle/state/profile ownership remains physical\n");
 
   // Adapter execution defaults to 24 hours, accepts a bounded per-alias override, and rejects every
   // malformed/ambiguous value before Docker, carried through the clean `env -i` boundary explicitly.

@@ -65,6 +65,15 @@ class HardenedReadTests(unittest.TestCase):
                     with self.assertRaises(LIB.ContainerAliasError):
                         LIB.load_container_aliases(self.root)
 
+    def test_wire_alias_override_does_not_allow_an_unsafe_runtime_key(self) -> None:
+        for key in ("bad.key", "a" * 65):
+            self.inventory.write_text(json.dumps({
+                "schemaVersion": 2, "systemPrincipals": {}, "historicalAliases": {},
+                "aliases": {key: dict(ENTRY, alias="valid")},
+            }), encoding="utf-8")
+            with self.subTest(key=key), self.assertRaises(LIB.ContainerAliasError):
+                LIB.load_container_aliases(self.root)
+
     def test_hardened_read_rejects_a_group_writable_inventory(self) -> None:
         self.inventory.chmod(0o664)
         with self.assertRaises(LIB.InventoryAccessError):

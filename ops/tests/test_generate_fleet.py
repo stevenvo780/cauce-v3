@@ -13,6 +13,7 @@ import unittest
 OPS_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = OPS_ROOT / "scripts"
 SNAPSHOT = pathlib.Path(__file__).resolve().parent / "fixtures" / "fleet_snapshot" / "minimal" / "flota.json"
+sys.path.insert(0, str(SCRIPTS))
 
 
 def run_script(name: str, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -27,6 +28,63 @@ def run_script(name: str, *arguments: str) -> subprocess.CompletedProcess[str]:
 
 
 class FleetGeneratorTests(unittest.TestCase):
+    def test_system_principals_preserve_wire_identity_and_multiple_memberships(self) -> None:
+        from container_alias_lib import load_system_principals
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary)
+            document = json.loads(SNAPSHOT.read_bytes())
+            document["systemPrincipals"] = {"principal-fixture": {
+                "tenant": "Equipo_42", "alias": "shared_alias", "memberships": [
+                    {"room": "room.one", "role": "observer"}, {"room": "room.two", "role": "operator"}]}}
+            source = output / "flota.json"
+            source.write_text(json.dumps(document), encoding="utf-8")
+            run_script("generate-container-aliases.py", "--snapshot", str(source),
+                       "--output", str(output / "container-aliases.json"))
+            self.assertEqual(load_system_principals(output)["principal-fixture"], {
+                "tenant": "Equipo_42", "alias": "shared_alias", "memberships": [
+                    {"room": "room.one", "membershipRole": "observer"},
+                    {"room": "room.two", "membershipRole": "operator"}]})
+
+    def test_generators_preserve_wire_alias_with_a_distinct_physical_key(self) -> None:
+        from container_alias_lib import load_container_aliases
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary)
+            document = json.loads(SNAPSHOT.read_bytes())
+            document["fleet"]["fixture-hermes"]["alias"] = "shared_alias"
+            source = output / "flota.json"
+            source.write_text(json.dumps(document), encoding="utf-8")
+            run_script("generate-container-aliases.py", "--snapshot", str(source),
+                       "--output", str(output / "container-aliases.json"))
+            run_script("generate-manifests.py", "--snapshot", str(source),
+                       "--output", str(output / "manifests"))
+            run_script("generate-runtime-fleet.py", "--snapshot", str(source),
+                       "--output", str(output / "fleet.json"))
+            self.assertEqual(load_container_aliases(output)["fixture-hermes"]["alias"], "shared_alias")
+            manifest = (output / "manifests/fixture-hermes.yaml").read_text()
+            self.assertIn("  alias: shared_alias\n", manifest)
+            self.assertIn("  name: fixture-hermes\n", manifest)
+            self.assertIn("CAUCE_FIXTURE_HERMES_TOKEN_PATH", manifest)
+            runtime = json.loads((output / "fleet.json").read_bytes())
+            self.assertEqual(runtime["aliases"]["fixture-hermes"]["alias"], "shared_alias")
+
+    def test_runtime_reader_preserves_durable_room_labels_outside_grp_names(self) -> None:
+        from container_alias_lib import load_container_aliases
+
+        for room in ("room.one", "Sala café: equipo"):
+            with self.subTest(room=room), tempfile.TemporaryDirectory() as temporary:
+                output = pathlib.Path(temporary)
+                document = json.loads(SNAPSHOT.read_bytes())
+                document["fleet"]["fixture-hermes"]["room"] = room
+                source = output / "flota.json"
+                source.write_text(json.dumps(document), encoding="utf-8")
+                run_script("generate-container-aliases.py", "--snapshot", str(source),
+                           "--output", str(output / "container-aliases.json"))
+                run_script("generate-manifests.py", "--snapshot", str(source),
+                           "--output", str(output / "manifests"))
+                self.assertEqual(load_container_aliases(output)["fixture-hermes"]["room"], room)
+
     def test_generators_emit_the_exact_synthetic_fleet(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = pathlib.Path(temporary)
