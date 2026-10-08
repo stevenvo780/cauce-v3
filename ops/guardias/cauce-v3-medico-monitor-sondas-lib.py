@@ -519,6 +519,29 @@ def respuestas_perdidas(horas=24):
     return perdidas, rechazadas
 
 
+def conversaciones_paralelas(horas=24):
+    """{(tenant, alias): [(sesion8, turnos, canales, ultimo)]} for aliases answered from MORE THAN ONE
+    native conversation: the consumption witness of each done turn names the conversation that answered,
+    and an alias with a shared TUI must answer from ONE. A second id is a turn that landed in a copy the
+    person looking at the console never sees (kratos, 2026-10-08: Steven's console turns went headless)."""
+    filas = sql(
+        "with t as (select d.recipient_tenant tenant, d.recipient_alias alias, coalesce(m.auth_channel,'?') canal, "
+        "  a.payload->'result'->'harness_consumption_v1'->>'native_session_id' sesion, d.terminal_at "
+        "  from deliveries d join messages m on m.id = d.message_id "
+        "  join delivery_acks a on a.delivery_id = d.id and a.applied and a.status = 'done' "
+        f" where d.terminal_at > now() - interval '{int(horas)} hours'), "
+        "s as (select tenant, alias, sesion, count(*) turnos, string_agg(distinct canal, ',') canales, "
+        "  max(terminal_at) ultimo from t where sesion is not null group by 1, 2, 3), "
+        "v as (select tenant, alias from s group by 1, 2 having count(*) > 1) "
+        "select s.tenant, s.alias, left(s.sesion, 8), s.turnos::text, s.canales, "
+        "  to_char(s.ultimo at time zone 'UTC', 'MM-DD HH24:MI') "
+        "from s join v using (tenant, alias) order by s.alias, s.turnos desc;", columnas=6)
+    paralelas = {}
+    for tenant, alias, sesion, turnos, canales, ultimo in filas:
+        paralelas.setdefault((tenant, alias), []).append((sesion, int(turnos), canales, ultimo))
+    return paralelas
+
+
 def captura_en_vuelo(alias):
     """What will be LOST if this alias is restarted. Captured BEFORE touching anything: if
     rescue fails, this metadata is the only thing that lets it be recovered by hand. Message

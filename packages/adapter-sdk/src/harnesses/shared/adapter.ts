@@ -623,6 +623,10 @@ export class HarnessAdapter {
     };
   }
 
+  private get tuiPointerOwnsSession(): boolean {
+    return this.definition.sessionStrategy.kind === "generated" && isSharedSessionRunner(this.runner);
+  }
+
   private sessionStoreKey(sessionKey: string): string {
     const namespace = this.sessionNamespace === undefined ? "" : `${this.sessionNamespace}:`;
     return `${this.definition.id}:${namespace}${sessionKey}`;
@@ -635,7 +639,7 @@ export class HarnessAdapter {
     context: HarnessExecutionContext;
     nativeId?: string;
   }> {
-    if (sessionKey === undefined || this.definition.sessionStrategy.kind === "none") {
+    if (sessionKey === undefined || this.definition.sessionStrategy.kind === "none" || this.tuiPointerOwnsSession) {
       return { context: { resume: false } };
     }
     const existing = this.store.getSession(this.sessionStoreKey(sessionKey));

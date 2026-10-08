@@ -114,6 +114,21 @@ export async function escenariosA(ctx) {
   }
   await writeConfig("atlas");
 
+  // SHARED_HUMANS is optional, exported verbatim as CAUCE_SHARED_HUMAN_IDS when every entry is an exact tenant:uuid.
+  assert(!timeoutOverrideFinal.argv.some((value) => value.startsWith("CAUCE_SHARED_HUMAN_IDS=")));
+  const steven = "Steven:78c81e05-0c18-427b-b02b-346d7e8c8508";
+  for (const [humans, valid] of [[steven, true], [`${steven},Isa:0b6f1c8e-2a44-4c1b-9f6d-3e1a2b3c4d5e`, true],
+    [steven.toUpperCase(), false], [`${steven},`, false], [`${steven} `, false], ["78c81e05-0c18-427b-b02b-346d7e8c8508", false],
+    ["Steven:78c81e05-0c18-427b-b02b-346d7e8c850", false], [`${steven};Miguel:x`, false]]) {
+    await writeConfig("atlas", [`SHARED_HUMANS=${humans}`]);
+    await clearLog();
+    result = runSupervisor("start", "atlas", await dockerState("atlas"));
+    const exported = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=atlas"));
+    assert.equal(result.status === 0 && exported?.argv.includes(`CAUCE_SHARED_HUMAN_IDS=${humans}`) === true, valid, `${humans}: ${result.stderr}`);
+    if (!valid) assert.match(result.stderr, /SHARED_HUMANS must be tenant:lowercase-uuid/u);
+  }
+  await writeConfig("atlas");
+
   // Claude containers are upgraded independently, so the version pin belongs to each alias config and
   // must be exact; a source-global version would reject two healthy containers whose images differ.
   await writeConfig("zeus", [], {}, ["EXPECTED_CLI_VERSION"]);

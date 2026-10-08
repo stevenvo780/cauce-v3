@@ -746,6 +746,23 @@ def main():
                                       "; ".join(f"{x['id']} de {x['contesto']} {x['cuando']}"
                                                 for x in lista[:3])}})
 
+    # --- 3d) a second conversation behind ONE alias -------------------------------------
+    # The console shows ONE TUI per alias; a turn answered from another native conversation is
+    # invisible there and its context is lost to the TUI. Usually a human missing from SHARED_HUMANS.
+    try:
+        paralelas = conversaciones_paralelas()
+    except Exception as e:                                        # noqa: BLE001
+        paralelas = {}
+        escalar.append({"tipo": "sonda_conversaciones", "alias": "-",
+                        "detalle": f"no pude medir las conversaciones por alias: {e}"})
+    for (tenant, alias), sesiones in sorted(paralelas.items()):
+        resumen = "; ".join(f"{s} x{n} [{c}] {u} UTC" for s, n, c, u in sesiones)
+        detalle = (f"{alias} ({tenant}) respondio desde {len(sesiones)} conversaciones nativas en 24 h: {resumen}. "
+                   "Solo una es la TUI que muestra la consola; los turnos de las otras no los ve quien la mira. "
+                   "Si son turnos de consola de un humano que no es el dueno, falta en SHARED_HUMANS del alias.")
+        hallazgos.append({"modo": 3, "alias": alias, "detalle": detalle})
+        escalar.append({"tipo": "conversacion_paralela", "alias": alias, "detalle": detalle})
+
     # --- 4) credencial rota que miente -------------------------------------------------
     sin_rt, compartidas = sonda_credenciales(adaptadores)
     for p in sin_rt:
