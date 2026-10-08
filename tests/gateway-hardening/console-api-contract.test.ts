@@ -127,9 +127,10 @@ async function unroutedPaths(calls: readonly ApiCall[]): Promise<string[]> {
   const app = await operatorGateway();
   await app.ready();
   const missing: string[] = [];
+  const lookup = (options: Parameters<typeof app.findRoute>[0]): ReturnType<typeof app.findRoute> | null => app.findRoute(options);
   for (const call of calls) {
     if (LOCAL_OAUTH_ONLY.has(`${call.method} ${call.path}`)) continue;
-    if (app.findRoute({ method: call.method, url: call.path }) === null) missing.push(`${call.method} ${call.path}`);
+    if (lookup({ method: call.method, url: call.path }) === null) missing.push(`${call.method} ${call.path}`);
   }
   return missing;
 }

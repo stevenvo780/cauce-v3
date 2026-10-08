@@ -11,12 +11,13 @@ const values = (rows: readonly string[]) => {
   if (result.length > 32) throw new Error('route parameter union exceeds its bound');
   return result;
 };
-function visit(node: ts.Node, callback: (node: ts.Node) => void): void { callback(node); ts.forEachChild(node, child => visit(child, callback)); }
+function visit(node: ts.Node, callback: (node: ts.Node) => void): void { callback(node); ts.forEachChild(node, child => { visit(child, callback); }); }
 function functionNode(node: ts.Node): node is FunctionNode {
   return ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isMethodDeclaration(node);
 }
+function parentOf(node: { readonly parent?: ts.Node }): ts.Node | undefined { return node.parent; }
 function owner(node: ts.Node): FunctionNode | undefined {
-  for (let current = node.parent; current; current = current.parent) if (functionNode(current)) return current;
+  for (let current = parentOf(node); current; current = parentOf(current)) if (functionNode(current)) return current;
   return undefined;
 }
 function name(node: FunctionNode): string | undefined {
@@ -24,7 +25,7 @@ function name(node: FunctionNode): string | undefined {
   return ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name) ? node.parent.name.text : undefined;
 }
 function binding(identifier: ts.Identifier): ts.VariableDeclaration | ts.ParameterDeclaration | ts.FunctionDeclaration | undefined {
-  for (let scope: ts.Node | undefined = identifier.parent; scope; scope = scope.parent) {
+  for (let scope = parentOf(identifier); scope; scope = parentOf(scope)) {
     if (functionNode(scope)) {
       const found = scope.parameters.find(row => ts.isIdentifier(row.name) && row.name.text === identifier.text);
       if (found) return found;
@@ -52,7 +53,7 @@ function finite(type: ts.TypeNode | undefined, at: ts.Node): readonly string[] {
   }
   if (ts.isLiteralTypeNode(type) && ts.isStringLiteral(type.literal)) return [type.literal.text];
   if (ts.isTypeReferenceNode(type) && ts.isIdentifier(type.typeName)) {
-    for (let current: ts.Node | undefined = at; current; current = current.parent) if (functionNode(current)) {
+    for (let current: ts.Node | undefined = at; current; current = parentOf(current)) if (functionNode(current)) {
       const parameter = current.typeParameters?.find(row => row.name.text === type.typeName.getText());
       if (parameter?.constraint) return finite(parameter.constraint, current);
     }
