@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # the single-quoted needles below are meant to stay literal
-# Pins which versioned binary each delegating subcommand execs and with which argv, out of the
-# real ops/cli/cauce; an empty alias must not be forwarded as an argument.
+# Empty aliases must not be forwarded as arguments.
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -20,7 +19,11 @@ cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
 BIN="$WORK/bin"; mkdir -p "$BIN"
-runtime_key_de() { printf '%s\n' "$1"; }
+cat > "$BIN/runtime_key_de" <<'EOF'
+#!/usr/bin/env bash
+printf 'physical-%s\n' "$1"
+EOF
+chmod +x "$BIN/runtime_key_de"
 for n in cauce-estado cauce-sesiones; do
   cat > "$BIN/$n" <<EOF
 #!/usr/bin/env bash
@@ -34,7 +37,7 @@ done
 extraer() { grep -m1 "^$1()" "$CLI"; }
 llamar() {  # $1=function name, resto=arguments
   local f=$1; shift
-  ( eval "$(extraer "$f")"; "$f" "$@" )
+  ( export PATH="$BIN:$PATH"; eval "$(extraer "$f")"; "$f" "$@" )
 }
 
 for f in cmd_estado cmd_sesiones; do
@@ -44,7 +47,7 @@ for f in cmd_estado cmd_sesiones; do
   esac
 done
 
-assert_eq "$(llamar cmd_estado zeus)" "cauce-estado <zeus>" "cauce <alias> estado -> cauce-estado <alias>"
+assert_eq "$(llamar cmd_estado zeus)" "cauce-estado <physical-zeus>" "cauce <alias> estado -> cauce-estado <runtime-key>"
 assert_eq "$(llamar cmd_estado)" "cauce-estado" "cauce estado sin alias -> cauce-estado sin argumentos"
 assert_eq "$(llamar cmd_estado '')" "cauce-estado" "el alias VACIO no se reenvia: seria un agente llamado ''"
 assert_eq "$(llamar cmd_sesiones zeus)" "cauce-sesiones <zeus>" "cauce <alias> sesiones -> cauce-sesiones <alias>"
