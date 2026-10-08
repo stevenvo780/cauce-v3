@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { AgentProfileRepository, withTransaction, type DatabaseClient, type DatabasePool, type FleetOperationRow, type StoredAgentContext } from '@cauce/store';
+import { AgentProfileRepository, FleetOperationError, loadFleetHostScope, planFleetHostSlices, preparedState, withTransaction,
+  type DatabaseClient, type DatabasePool, type FleetOperationRow, type StoredAgentContext } from '@cauce/store';
 import {
   BootstrapAckSchema, BootstrapCreateSchema, BootstrapError, BootstrapRecordSchema, bootstrapPrompt,
   type BootstrapAck, type BootstrapCreate, type BootstrapDescriptor, type BootstrapIdentity,
@@ -8,7 +9,7 @@ import {
 } from './bootstrap-contracts.js';
 import { bootstrapProfileDocuments } from './bootstrap-profile.js';
 
-interface Agent {
+interface Agent extends Record<string, unknown> {
   tenant_id: string; alias: string; runtime_key: string; harness_id: string; model_id: string | null;
   host_id: string; enabled: boolean; lifecycle_state: string; primary_account_id: string; retired_at: Date | null;
   reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null;
@@ -58,7 +59,8 @@ export class BootstrapRepository {
       WHERE agent.tenant_id=$1 AND agent.alias=$2 AND agent.retired_at IS NULL AND tenant.enabled AND tenant.retired_at IS NULL
         AND harness.enabled AND account.enabled AND (account.payer_tenant_id=agent.tenant_id OR account.shared_with_pool)
       FOR SHARE OF agent,tenant,harness,account`, [identity.tenant_id, identity.alias])).rows[0];
-    if (!agent?.runtime_key || agent.host_id !== operation.executor_host || !agent.runtime_key || (!state && agent.enabled)) throw forbidden();
+    if (!agent?.runtime_key || (!state && agent.enabled)) throw forbidden();
+    await this.hostScope(client, operation, agent);
     if (operation.kind === 'create' || operation.kind === 'update') {
       const desired = operation.request.parameters;
       if (!('runtime_key' in desired) || desired.runtime_key !== agent.runtime_key || desired.harness_id !== agent.harness_id
@@ -69,6 +71,25 @@ export class BootstrapRepository {
     const profile = await this.profiles.readContextWithPresence(identity.tenant_id, identity.alias, client);
     if (!profile.exists || profile.revision === null || !Number.isSafeInteger(profile.revision) || profile.revision < 1) throw new BootstrapError('unverified');
     return { operation, agent, profile: { ...profile, revision: profile.revision } };
+  }
+
+  private async hostScope(client: DatabaseClient, operation: Operation, agent: Agent): Promise<void> {
+    const prepared = await client.query(`SELECT 1 FROM fleet_operation_events WHERE operation_id=$1
+      AND event='step_completed' AND metadata->>'step' IN ('prepare','fence') LIMIT 1`, [operation.id]);
+    if (!prepared.rowCount && operation.desired_revision === null && agent.host_id === operation.executor_host) return;
+    try {
+      const sealed = await loadFleetHostScope(client, operation, agent.host_id);
+      const previous = await preparedState(client, operation.id);
+      const exact = planFleetHostSlices(operation, sealed.agents, previous.previous_agents);
+      if (exact.length !== 1 || exact[0]?.target_sha256 !== sealed.target_sha256 || sealed.targets.length !== 1
+          || sealed.targets[0]?.runtime_key !== agent.runtime_key) throw forbidden();
+      const selected = sealed.agents.find(value => value.tenant_id === agent.tenant_id && value.alias === agent.alias);
+      if (!selected) throw forbidden();
+      for (const field of ['runtime_key', 'harness_id', 'host_id', 'runtime_mode', 'container_name', 'runtime_user',
+        'home_directory', 'state_directory', 'systemd_user', 'primary_account_id', 'model_id', 'reasoning_effort'] as const) {
+        if (selected[field] !== agent[field]) throw forbidden();
+      }
+    } catch (error) { if (error instanceof FleetOperationError) throw forbidden(); throw error; }
   }
 
   private async records(client: DatabaseClient, operationId: string): Promise<BootstrapRecord[]> {

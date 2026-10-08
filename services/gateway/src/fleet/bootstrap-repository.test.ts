@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, type DatabasePool } from '@cauce/store';
+import { createPool, FleetOperationsRepository, type DatabasePool } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { startTestDatabase, startTestCaseDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import { BootstrapRepository } from './bootstrap-repository.js';
@@ -57,7 +57,96 @@ async function verifyStep(): Promise<void> {
   await pool.query(`UPDATE fleet_operations SET steps=$2::jsonb WHERE id=$1`, [operationId,
     JSON.stringify([{ name: 'profile', status: 'succeeded' }, { name: 'verify', status: 'running' }])]);
 }
+async function remoteOperation(prepare = true, target = identity): Promise<void> {
+  const origin = (await pool.query<{ subject: string }>(`SELECT metadata->>'actor_subject' AS subject
+    FROM fleet_operation_events WHERE operation_id=$1 AND event='queued'`, [operationId])).rows[0];
+  if (!origin) throw new Error('origin absent');
+  await pool.query("UPDATE fleet_operations SET status='succeeded',worker_id=NULL,claim_token=NULL,lease_expires_at=NULL WHERE id=$1", [operationId]);
+  await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','boot-hub','boot-agent','agent')");
+  await pool.query("UPDATE agents SET primary_room_id='boot-hub',runtime_mode='container',systemd_user='stev' WHERE alias='boot-agent'");
+  const fleet = new FleetOperationsRepository(pool, { controllerHost: 'test-controller', coordinatorEnabled: true,
+    coordinatorHosts: ['test-controller', 'test-host'] });
+  const selected = { resource: 'agent' as const, ...target }, create = target.alias !== identity.alias;
+  const queued = await fleet.enqueue('Steven', 'boot-owner', create ? { kind: 'create', target: selected,
+    expected_revision: 0, idempotency_key: 'remote-bootstrap', parameters: { runtime_key: target.alias, harness_id: 'codex',
+      primary_room_id: 'boot-hub', primary_account_id: 'boot-account', model_id: 'test-model', memberships: [{ room_id: 'boot-hub', role: 'agent' }],
+      placement: { host_id: 'test-host', mode: 'container', container_name: target.alias, runtime_user: 'dev',
+        home_directory: '/home/dev', state_directory: '/home/dev/.cauce', systemd_user: 'stev' } } }
+    : { kind: 'start', target: selected, parameters: {}, expected_revision: 0, idempotency_key: 'remote-bootstrap' }, origin.subject);
+  expect((await pool.query<{ executor_host: string }>('SELECT executor_host FROM fleet_operations WHERE id=$1', [queued.id])).rows[0]?.executor_host)
+    .toBe('test-controller');
+  const claim = await fleet.claim('remote-worker', 'test-controller'); if (!claim) throw new Error('remote claim absent');
+  operationId = claim.operation.id;
+  if (prepare) {
+    await fleet.prepare(claim);
+    expect((await fleet.hostSlices(claim)).map(slice => slice.host_id)).toEqual(['test-host']);
+  }
+  await pool.query(`UPDATE fleet_operations SET steps=$2::jsonb WHERE id=$1`, [operationId,
+    JSON.stringify([{ name: 'profile', status: 'running' }, { name: 'verify', status: 'pending' }])]);
+}
 describe('bootstrap durable control on disposable PostgreSQL', () => {
+  it('bootstraps a new remote agent using its exact sealed desired creation parameters', async () => {
+    const created = { ...identity, alias: 'remote-created' }; await remoteOperation(true, created);
+    expect(await repository.profile(created, operationId, 'bootstrap')).toMatchObject({ runtime_key: created.alias, account_id: 'boot-account' });
+    await repository.create(created, input());
+    const claim = await repository.claim(created, operationId, 'bootstrap', created.alias); if (!claim) throw new Error('claim absent');
+    expect((await repository.ack(created, claim.probe_id, proof(claim))).state).toBe('succeeded');
+    expect((await repository.state(created, operationId, 'normal')).normal_admitted).toBe(false);
+  });
+  it('uses the sealed remote host while the live worker belongs to the controller', async () => {
+    await remoteOperation();
+    expect(await repository.profile(identity, operationId, 'bootstrap')).toMatchObject({ runtime_key: identity.alias, profile_revision: 1 });
+    expect((await complete()).acknowledged.state).toBe('succeeded');
+    await verifyStep(); await repository.create(identity, input('verify'));
+    const verify = await repository.claim(identity, operationId, 'bootstrap', identity.alias); if (!verify) throw new Error('verify absent');
+    await expect(repository.ack(identity, verify.probe_id, { ...proof(verify), reply: 'HTTP echo' })).rejects.toMatchObject({ code: 'unverified' });
+    await expect(repository.create(identity, input('verify', 'normal'))).rejects.toMatchObject({ code: 'conflict' });
+    await repository.ack(identity, verify.probe_id, proof(verify));
+    await pool.query(`UPDATE fleet_operations SET steps=$2::jsonb WHERE id=$1`, [operationId,
+      JSON.stringify([{ name: 'verify', status: 'succeeded' }, { name: 'admission', status: 'running' }])]);
+    await complete('verify', 'normal');
+    expect((await repository.state(identity, operationId, 'normal')).normal_admitted).toBe(false);
+    await pool.query("UPDATE agents SET enabled=true,lifecycle_state='ready' WHERE alias='boot-agent'");
+    await pool.query(`UPDATE fleet_operations SET status='succeeded',steps='[{"name":"admission","status":"succeeded"}]'::jsonb WHERE id=$1`, [operationId]);
+    expect((await repository.state(identity, operationId, 'normal')).normal_admitted).toBe(true);
+    expect(await repository.profile(identity, operationId, 'normal')).toMatchObject({ runtime_key: identity.alias });
+  });
+  it('refuses a remote host without a sealed prepared slice', async () => {
+    await remoteOperation(false);
+    await expect(repository.create(identity, input())).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(repository.state(identity, operationId, 'bootstrap')).rejects.toMatchObject({ code: 'forbidden' });
+  });
+  it.each([
+    ['host_id', 'test-controller'], ['host_id', 'foreign-host'], ['runtime_user', 'other-user'],
+    ['state_directory', '/foreign-state'], ['harness_id', 'claude'], ['model_id', 'foreign-model'], ['reasoning_effort', 'high'],
+  ])('refuses a changed sealed %s=%s even when the worker remains live', async (field, value) => {
+    await remoteOperation(); await repository.create(identity, input());
+    await pool.query(`UPDATE agents SET ${field}=$1 WHERE tenant_id='Steven' AND alias='boot-agent'`, [value]);
+    await expect(repository.profile(identity, operationId, 'bootstrap')).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(repository.claim(identity, operationId, 'bootstrap', identity.alias)).rejects.toMatchObject({ code: 'forbidden' });
+  });
+  it('binds the sealed scope to the current prepared revision and rejects a substituted runtime', async () => {
+    await remoteOperation(); await repository.create(identity, input());
+    await expect(repository.claim(identity, operationId, 'bootstrap', 'foreign-runtime')).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(pool.query("UPDATE agents SET runtime_key='foreign-runtime' WHERE alias='boot-agent'")).rejects.toThrow('agent runtime key is immutable');
+    await pool.query('UPDATE fleet_operations SET desired_revision=desired_revision+1 WHERE id=$1', [operationId]);
+    await expect(repository.state(identity, operationId, 'bootstrap')).rejects.toMatchObject({ code: 'forbidden' });
+  });
+  it('refuses a substituted enabled provider account with valid payer consent', async () => {
+    await remoteOperation(); await repository.create(identity, input());
+    await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
+      VALUES('boot-other-account','codex','bootstrap-other-test-account','Steven','env_path','CAUCE_BOOT_OTHER_PATH',true)`);
+    await pool.query("UPDATE agents SET primary_account_id='boot-other-account' WHERE alias='boot-agent'");
+    await expect(repository.profile(identity, operationId, 'bootstrap')).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(repository.claim(identity, operationId, 'bootstrap', identity.alias)).rejects.toMatchObject({ code: 'forbidden' });
+  });
+  it('refuses a remote acknowledgement after the controller worker lease expires', async () => {
+    await remoteOperation(); await repository.create(identity, input());
+    const claim = await repository.claim(identity, operationId, 'bootstrap', identity.alias); if (!claim) throw new Error('claim absent');
+    await pool.query("UPDATE fleet_operations SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", [operationId]);
+    await expect(repository.ack(identity, claim.probe_id, proof(claim))).rejects.toMatchObject({ code: 'conflict' });
+    await expect(repository.profile(identity, operationId, 'bootstrap')).rejects.toMatchObject({ code: 'conflict' });
+  });
   it('uses its single reserved connection for canonical context under the advisory lock', async () => {
     if (!current) throw new Error('test database absent');
     const single = createPool(current.url, { max: 1, connectionTimeoutMillis: 500 });
