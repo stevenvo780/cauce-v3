@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { z } from 'zod';
 import { LegacyAdoptionError, LegacyAdoptionFactsSchema, LegacyAdoptionTargetsSchema,
-  type LegacyAdoptionProbe, type LegacyAdoptionTarget } from '../../../../packages/store/src/fleet-adoption-contracts.js';
+  type LegacyAdoptionProbe, type LegacyAdoptionTarget } from '@cauce/store';
 import { fleetHostSpawn } from './host-transport.js';
 import type { HostCommandConfig } from './host-command.js';
 

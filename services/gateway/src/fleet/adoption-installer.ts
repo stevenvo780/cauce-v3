@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { LegacyAdoptionError, LegacyAdoptionPreviewSchema, LegacyAdoptionTargetsSchema,
-  type LegacyAdoptionActor } from '../../../../packages/store/src/fleet-adoption-contracts.js';
+  type LegacyAdoptionActor } from '@cauce/store';
 import type { LegacyFleetAdoptionService } from './adoption.js';
 
 export const LegacyAdoptionInstallerCommandSchema = z.discriminatedUnion('mode', [

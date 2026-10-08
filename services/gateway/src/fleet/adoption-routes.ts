@@ -5,7 +5,7 @@ import { AuthError, AuthorizationError, requireOperatorPermission, type AuthProv
 import { PasswordAuthProvider } from '../password-auth.js';
 import { consoleHumanAccess } from '../console-human-authority.js';
 import { LegacyAdoptionError, LegacyAdoptionPreviewSchema, LegacyAdoptionTargetsSchema,
-  type LegacyAdoptionActor } from '../../../../packages/store/src/fleet-adoption-contracts.js';
+  type LegacyAdoptionActor } from '@cauce/store';
 import type { LegacyFleetAdoptionService } from './adoption.js';
 
 async function humanActor<T>(provider: AuthProvider, request: FastifyRequest, reply: FastifyReply,
