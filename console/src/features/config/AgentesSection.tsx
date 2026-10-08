@@ -124,7 +124,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta }: {
       <p className="m-0 text-xs text-muted">El registro describe la configuración guardada. El arnés en ejecución,
         los permisos y la aplicación del contexto se comprueban en la página de cada agente; si falta evidencia, se indica como desconocida.</p>
     </SectionCard>
-    {snapshot.retired?.agents?.length ? <SectionCard level={3} title="Agentes retirados" description="El historial y los datos se conservan hasta una purga acreditada.">
+    {snapshot.retired?.agents.length ? <SectionCard level={3} title="Agentes retirados" description="El historial y los datos se conservan hasta una purga acreditada.">
       <ul className="m-0 grid list-none gap-3 p-0" aria-label="Agentes retirados">
         {snapshot.retired.agents.filter((agent): agent is Record<string, unknown> & { tenant_id: string; alias: string } =>
           typeof agent.tenant_id === 'string' && typeof agent.alias === 'string').map((agent) => <li key={`${agent.tenant_id}/${agent.alias}`} className="rounded-lg border border-line p-3">

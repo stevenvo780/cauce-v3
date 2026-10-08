@@ -142,7 +142,7 @@ async function unroutedPaths(calls: readonly ApiCall[], denyBeforeRouting = fals
     if (LOCAL_OAUTH_ONLY.has(`${call.method} ${call.path}`)) continue;
     const routeApp = call.path.startsWith('/v3/auth/') ? password.app : app;
     const pathname = new URL(call.path, 'https://routing.example.test').pathname;
-    const registered = routeApp.findRoute({ method: call.method, url: pathname });
+    const registered: unknown = routeApp.findRoute({ method: call.method, url: pathname });
     if (registered === null || registered === undefined) missing.push(`${call.method} ${call.path}`);
   }
   return missing;
