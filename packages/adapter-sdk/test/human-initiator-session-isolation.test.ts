@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { sessionFromDelivery, prepareDeliveryInvocation, humanHarnessSelector } from "../src/sdk/engine/delivery-context.js";
 import type { Delivery } from "../src/sdk/types.js";
+import type { HarnessSessionReservation } from "../src/contracts/harness.js";
 import { HUMAN_A, HUMAN_B, humanDelivery, isolatedEngine, waitForRequests, IsolatedCommandRunner } from "./human-initiator-session-isolation.fixtures.js";
 
 test("durable humans sharing an alias have distinct session selectors", () => {
@@ -368,6 +369,68 @@ test("the owner's console turn in the shared session executes instead of failing
   assert.equal(context.manual.requests.length, 1);
   assert.ok(context.manual.requests[0]?.stdin.includes(`"human_id":"${HUMAN_A}"`));
   assert.deepEqual(outcome(other), ["done"]);
+  assert.equal(context.headless.requests.length, 1);
+  assert.ok(context.headless.requests[0]?.stdin.includes(`"human_id":"${HUMAN_B}"`));
+});
+
+const HUMAN_C = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+
+function withSharedHumans(t: TestContext, values: Record<string, string | undefined>): void {
+  const keys = ["CAUCE_SHARED_SESSION", "CAUCE_OWNER_HUMAN_ID", "CAUCE_SHARED_HUMAN_IDS"] as const;
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  t.after(() => {
+    for (const key of keys) {
+      if (previous[key] === undefined) Reflect.deleteProperty(process.env, key); else process.env[key] = previous[key];
+    }
+  });
+  for (const key of keys) {
+    const value = values[key];
+    if (value === undefined) Reflect.deleteProperty(process.env, key); else process.env[key] = value;
+  }
+}
+
+test("a listed human of another tenant shares the TUI; unlisted, mismatched or malformed entries stay isolated", async (t) => {
+  const context = await isolatedEngine(t, "Miguel");
+  withSharedHumans(t, { CAUCE_SHARED_SESSION: "1", CAUCE_OWNER_HUMAN_ID: HUMAN_A,
+    CAUCE_SHARED_HUMAN_IDS: ` Miguel:${HUMAN_C}, Steven:${HUMAN_B} ,Steven:not-a-uuid,${HUMAN_C}` });
+  const selector = humanHarnessSelector(context.adapters.harness, context.adapters.humanHarness);
+  const reservations: (HarnessSessionReservation | undefined)[] = [];
+  t.after(() => { for (const reservation of reservations) reservation?.release(); });
+  const prepare = (human: string) => {
+    const invocation = prepareDeliveryInvocation(humanDelivery(human), context.adapters.harness, selector, "Miguel");
+    reservations.push(invocation.reservation);
+    return invocation;
+  };
+  const listed = prepare(HUMAN_B);
+  assert.equal(listed.harness, context.adapters.harness);
+  assert.equal(listed.session.sessionKey, "shared:argos");
+  assert.equal(listed.ownerShared, true);
+  const ownerOfOtherTenant = prepare(HUMAN_A);
+  assert.equal(ownerOfOtherTenant.harness, context.adapters.humanHarness);
+  const wrongTenant = prepare(HUMAN_C);
+  assert.equal(wrongTenant.harness, context.adapters.humanHarness);
+  assert.match(wrongTenant.session.sessionKey ?? "", /^auth-v3:/u);
+  assert.equal(wrongTenant.ownerShared, undefined);
+  process.env.CAUCE_SHARED_HUMAN_IDS = `Steven:${HUMAN_B.toUpperCase()}`;
+  assert.equal(prepare(HUMAN_B).harness, context.adapters.humanHarness);
+  process.env.CAUCE_SHARED_HUMAN_IDS = `Steven:${HUMAN_B}`;
+  delete process.env.CAUCE_SHARED_SESSION;
+  assert.equal(prepare(HUMAN_B).harness, context.adapters.humanHarness);
+});
+
+test("a listed human's console turn runs in the shared TUI of another tenant's alias; a third human stays headless", async (t) => {
+  const context = await isolatedEngine(t, "Miguel");
+  withSharedHumans(t, { CAUCE_SHARED_SESSION: "1", CAUCE_OWNER_HUMAN_ID: HUMAN_C, CAUCE_SHARED_HUMAN_IDS: `Steven:${HUMAN_A}` });
+  const listed = humanDelivery(HUMAN_A);
+  const third = humanDelivery(HUMAN_B);
+  await context.run(listed);
+  await context.run(third);
+  const outcome = (input: Delivery) => context.events.filter((event) => event.delivery_id === input.delivery_id
+    && (event.phase === "done" || event.phase === "failed")).map((event) => event.error?.code ?? event.phase);
+  assert.deepEqual(outcome(listed), ["done"]);
+  assert.equal(context.manual.requests.length, 1);
+  assert.ok(context.manual.requests[0]?.stdin.includes(`"human_id":"${HUMAN_A}"`));
+  assert.deepEqual(outcome(third), ["done"]);
   assert.equal(context.headless.requests.length, 1);
   assert.ok(context.headless.requests[0]?.stdin.includes(`"human_id":"${HUMAN_B}"`));
 });

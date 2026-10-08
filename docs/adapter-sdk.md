@@ -102,6 +102,19 @@ Sólo el caso `preinvoke-v1` sin recibo remoto admite un nuevo intento seguro. P
 trabajo iniciado hay que impedir nuevas reclamaciones y dejar que el mismo proceso alcance
 el ACK terminal y vacíe su WAL antes del corte; no basta con conservar la TUI o su cuarentena.
 
+## Quién entra en la TUI compartida
+
+Con `SHARED_SESSION=1` hay UNA conversación por alias: la TUI que la consola muestra. Un turno humano
+entra en ella (`shared:<alias>`, sin aislamiento de emisión) sólo si quien escribe ya ve y maneja esa
+TUI: el dueño (`OWNER_HUMAN_ID`, de su propio tenant) o una entrada exacta `tenant:uuid` de
+`SHARED_HUMANS` en el `.env` del alias (el supervisor la valida y la exporta como
+`CAUCE_SHARED_HUMAN_IDS`). Cualquier otro humano conserva su sesión aislada por `human_initiator`. Cada
+humano no listado que escribe abre otra conversación: la consulta de auditoría «conversaciones nativas
+por alias» (más de una en un alias con TUI) es la señal de que falta alguien en la lista.
+
+Para claude, `sessions.json` no guarda la clave `shared:<alias>`: la TUI reanuda sólo lo que dice su
+puntero y el runner TTY no lee ni escribe ids de sesión en el almacén.
+
 ## Reanudación exacta de la TUI Claude
 
 `shared-tui-session.json` pertenece al directorio de estado del alias, no al directorio de

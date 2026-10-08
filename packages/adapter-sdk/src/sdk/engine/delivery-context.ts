@@ -297,13 +297,19 @@ export interface DeliveryHarnessInvocation {
   readonly ownerShared?: true;
 }
 
-/** Exact owner match only: shared TTY mode, the configured owner UUID and the agent's own tenant. */
-function ownerInSharedSession(humanInitiator: HarnessRequestContext["human_initiator"],
+const SHARED_HUMAN_ENTRY = /^([A-Za-z][A-Za-z0-9_-]{0,63}):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/u;
+
+/** Humans who already see and drive this TUI: the owner (own tenant) or an exact `tenant:uuid` of CAUCE_SHARED_HUMAN_IDS. */
+function humanInSharedSession(humanInitiator: HarnessRequestContext["human_initiator"],
   ownTenantId: string | undefined): boolean {
+  if (process.env.CAUCE_SHARED_SESSION !== "1" || humanInitiator === undefined || ownTenantId === undefined) return false;
+  const human = humanInitiator.human_id.toLowerCase();
   const owner = process.env.CAUCE_OWNER_HUMAN_ID?.trim().toLowerCase();
-  return process.env.CAUCE_SHARED_SESSION === "1" && owner !== undefined && owner.length > 0
-    && humanInitiator !== undefined && ownTenantId !== undefined
-    && humanInitiator.human_id.toLowerCase() === owner && humanInitiator.tenant_id === ownTenantId;
+  if (owner !== undefined && owner.length > 0 && human === owner && humanInitiator.tenant_id === ownTenantId) return true;
+  return (process.env.CAUCE_SHARED_HUMAN_IDS ?? "").split(",").some((entry) => {
+    const listed = SHARED_HUMAN_ENTRY.exec(entry.trim());
+    return listed !== null && listed[1] === humanInitiator.tenant_id && listed[2] === human;
+  });
 }
 
 export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAdapter,
@@ -313,8 +319,8 @@ export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAd
     const humanInitiator = humanInitiatorFromDelivery(delivery);
     const clientIdentity = clientIdentitySidecarFields(delivery, humanInitiator, ownTenantId);
     const consoleHuman = authenticatedConsoleDelivery(delivery);
-    // The owner is ONE person talking to ONE agent (the live shared session); other humans stay isolated.
-    if (ownerInSharedSession(humanInitiator, ownTenantId)) {
+    // A human who already drives the TUI talks to ONE agent (the live shared session); other humans stay isolated.
+    if (humanInSharedSession(humanInitiator, ownTenantId)) {
       const lane = "human";
       const session: HarnessSessionRequestScope = { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane };
       const reservation = harness.reserveSession(session.sessionKey, lane);
