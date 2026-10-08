@@ -26,6 +26,7 @@ const runtimeModules = [
   ['emission MCP server', '../packages/adapter-sdk/dist/src/sdk/mcp-emission/server.js', 'createEmissionMcpServer'],
   ['gateway', '../services/gateway/dist/app.js'],
   ['fleet host', '../services/gateway/dist/fleet/main.js', 'runFleetHost'],
+  ['fleet authentication host', '../services/gateway/dist/fleet/auth-main.js', 'runFleetAuthHost'],
   ['native administration', '../services/gateway/dist/console/native-admin/service.js', 'createNativeAdminService'],
   ['dispatcher', '../services/dispatcher/dist/index.js'],
   ['telegram-bridge', '../services/telegram-bridge/dist/index.js'],
