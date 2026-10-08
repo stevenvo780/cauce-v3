@@ -1,11 +1,15 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
+import { webcrypto } from 'node:crypto';
+import type { FleetOperationRequest } from '@cauce/protocol/fleet-operation';
+import { fleetRequestHash } from '../../api/client/fleet-operations-client';
 import { ConfigAdministration } from './ConfigPage';
 import { renderWithApi } from '../../test/render';
 import { server } from '../../mocks/server';
-import { servirConfig, snapshotDeConfig, type ChangeRequest } from './ConfigPage.test-helpers';
+import { servirConfig, snapshotDeConfig } from './ConfigPage.test-helpers';
 
+Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
 const actor = { tenant_id: 'Miguel', alias: 'janus', is_hub: false, can_control: true };
 const roomCapability = { resource: 'room', actions: ['create', 'update'], scope: 'tenant', tenant_id: 'Miguel' };
 
@@ -49,30 +53,35 @@ it('ofrece restaurar incluso cuando no quedan salas activas', async () => {
   expect(await screen.findByRole('button', { name: 'Restaurar sala/grupo Miguel/grp.retired' })).toBeEnabled();
 });
 
-it('previsualiza retiro lógico y restauración sólo cuando el servidor los acredita', async () => {
-  const changes: ChangeRequest[] = [];
+it('previsualiza retiro y restauración por el contrato durable de flota', async () => {
+  const changes: FleetOperationRequest[] = [];
   servirConfig(() => ({
     ...snapshotDeConfig(1),
     retired: { rooms: [{ tenant_id: 'Miguel', id: 'grp.retired', display_name: 'Retirada', enabled: false }], tenants: [], memberships: [], agents: [] },
     capabilities: { actor, resources: [{ ...roomCapability, actions: ['create', 'update', 'retire', 'restore'] }] },
   }));
-  server.use(http.post('*/v3/console/config/changes', async ({ request }) => {
-    const input = await request.json() as ChangeRequest;
-    changes.push(input);
-    return HttpResponse.json({ applied: false, dry_run: true, revision: 1, summary: 'retiro validado', mutation: input.mutation, inverse_mutation: input.mutation, rolled_back_revision_id: null });
-  }));
+  server.use(http.get('*/v3/console/fleet/capability', () => HttpResponse.json({ available: true, actions: ['retire', 'restore'], placements: [] })),
+    http.get('*/v3/console/fleet/operations', () => HttpResponse.json({ operations: [] })),
+    http.post('*/v3/console/fleet/operations/preview', async ({ request }) => {
+      const input = await request.json() as FleetOperationRequest;
+      changes.push(input);
+      return HttpResponse.json({ request_sha256: await fleetRequestHash(input), kind: input.kind, target: input.target,
+        expected_revision: input.expected_revision, steps: ['prepare'], dependencies: [], can_apply: true });
+    }));
   const user = userEvent.setup();
   renderWithApi(<ConfigAdministration />);
   await user.click(await screen.findByRole('button', { name: 'Retirar sala/grupo Miguel/grp.miguel' }));
-  let form = within(screen.getByRole('form', { name: 'Retirar sala/grupo' }));
-  await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
-  await form.findByText(/dry-run aceptado/i);
-  expect(changes[0]?.mutation).toEqual({ resource: 'room', action: 'retire', tenant_id: 'Miguel', id: 'grp.miguel' });
-  await user.click(form.getByRole('button', { name: 'Cancelar' }));
+  let dialog = within(await screen.findByRole('dialog'));
+  await waitFor(() => { expect(dialog.getByRole('button', { name: 'Previsualizar retiro' })).toBeEnabled(); });
+  await user.click(dialog.getByRole('button', { name: 'Previsualizar retiro' }));
+  await dialog.findByLabelText('Previsualización operativa');
+  expect(changes[0]).toMatchObject({ kind: 'retire', target: { resource: 'room', tenant_id: 'Miguel', room_id: 'grp.miguel' } });
+  await user.click(dialog.getByRole('button', { name: 'Cerrar retiro y recuperación' }));
   await user.click(screen.getByRole('button', { name: 'Restaurar sala/grupo Miguel/grp.retired' }));
-  form = within(screen.getByRole('form', { name: 'Restaurar sala/grupo' }));
-  await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
-  await form.findByText(/dry-run aceptado/i);
-  expect(changes[1]?.mutation).toEqual({ resource: 'room', action: 'restore', tenant_id: 'Miguel', id: 'grp.retired' });
+  dialog = within(await screen.findByRole('dialog'));
+  await waitFor(() => { expect(dialog.getByRole('button', { name: 'Previsualizar restauración' })).toBeEnabled(); });
+  await user.click(dialog.getByRole('button', { name: 'Previsualizar restauración' }));
+  await dialog.findByLabelText('Previsualización operativa');
+  expect(changes[1]).toMatchObject({ kind: 'restore', target: { resource: 'room', tenant_id: 'Miguel', room_id: 'grp.retired' } });
   expect(screen.queryByRole('button', { name: 'Editar sala/grupo Miguel/grp.retired' })).not.toBeInTheDocument();
 });

@@ -1,3 +1,7 @@
+import type { FleetTarget } from '@cauce/protocol/fleet-operation';
+import { GroupEditor } from './GroupEditor';
+import { RemovalDialog } from './RemovalDialog';
+import { groupHasRuntime, groupOperationTarget } from './GroupMembershipModel';
 import { Braces, RotateCcw, Save, SearchCheck, ShieldOff } from 'lucide-react';
 import { useMemo, useState, type ReactNode, type SyntheticEvent } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
@@ -233,6 +237,7 @@ function ConfigPageContent({ active, onReturn }: { active: boolean; onReturn?: (
   const [editor, setEditor] = useState(() => mutationText('acl_edge', 'create'));
   const [pendiente, setPendiente] = useState<AccionPendienteVigente>();
   const [formTarget, setFormTarget] = useState<ConfigFormTarget>();
+  const [removal, setRemoval] = useState<{ target: FleetTarget; kind: 'retire' | 'restore' | 'purge' }>();
   // The open tab. `/config` used to be one scroll with onboarding, wizard, raw editor, every table, and audit trail.
   // General configuration stays grouped here; the account registry is intentionally absent because `/accounts` is
   // its typed authority. Unknown collections still fall under "Others".
@@ -299,6 +304,7 @@ function ConfigPageContent({ active, onReturn }: { active: boolean; onReturn?: (
     setArea(siguiente);
     setPendiente(undefined);
     setFormTarget(undefined);
+    setRemoval(undefined);
     canalFormulario.clear();
     canalAccion.informar(undefined);
     interruptores.limpiar();
@@ -310,6 +316,10 @@ function ConfigPageContent({ active, onReturn }: { active: boolean; onReturn?: (
     setPendiente(undefined);
     canalAccion.clear();
     canalFormulario.clear();
+    const fleetTarget = target.row ? groupOperationTarget(target.collection, target.row) : undefined;
+    if (fleetTarget && (target.action === 'retire' || target.action === 'restore')) {
+      setFormTarget(undefined); setRemoval({ target: fleetTarget, kind: target.action }); return;
+    }
     setFormTarget(target);
   }
 
@@ -487,6 +497,9 @@ function ConfigPageContent({ active, onReturn }: { active: boolean; onReturn?: (
   }
 
   return <div className="config-pagina">
+    {active && removal ? <RemovalDialog key={JSON.stringify([removal.target, removal.kind])}
+      target={removal.target} kind={removal.kind} revision={snapshotRevision}
+      onClose={() => { setRemoval(undefined); }} reload={config.reload} /> : null}
     {/* The shared header, not one of its own: the title, its help and the reread button line up
         with the content block the way they do on the other seven views. */}
     <PageHeader
@@ -570,8 +583,9 @@ function ConfigPageContent({ active, onReturn }: { active: boolean; onReturn?: (
           }
           : propio;
         const definition = configFormDefinition(coleccion.key);
+        const Form = coleccion.key === 'rooms' ? GroupEditor : ConfigCollectionForm;
         const form = formTarget?.collection === coleccion.key && definition && config.data
-          ? <ConfigCollectionForm key={`${coleccion.key}:${formTarget.action}:${JSON.stringify(formTarget.row ?? {})}`}
+          ? <Form key={`${coleccion.key}:${formTarget.action}:${JSON.stringify(formTarget.row ?? {})}`}
             definition={definition} target={formTarget} snapshot={config.data} runner={canalFormulario} busy={busy}
             onCancel={() => { setFormTarget(undefined); canalFormulario.clear(); }} onRelated={openForm} />
           : undefined;
@@ -584,7 +598,12 @@ function ConfigPageContent({ active, onReturn }: { active: boolean; onReturn?: (
           control={interruptores}
           editor={form}
           onFormAction={openForm}
-          onFormAllowed={(target) => Boolean(definition && config.data && canUseConfigForm(config.data, definition, target.action, target.row))}
+          onFormAllowed={(target) => {
+            const fleetTarget = target.row ? groupOperationTarget(target.collection, target.row) : undefined;
+            if (target.action === 'delete' && fleetTarget && config.data && groupHasRuntime(config.data, fleetTarget)) return false;
+            return Boolean(definition && config.data && canUseConfigForm(config.data, definition, target.action, target.row));
+          }}
+          onGroupOperation={(target, kind) => { setFormTarget(undefined); setRemoval({ target, kind }); }}
           retiredRows={retiredConfigRows(config.data, coleccion.key)}
           {...(active && vigente ? { pendiente: pedido } : {})}
           {...(aviso ? { aviso } : {})}

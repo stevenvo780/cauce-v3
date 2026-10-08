@@ -1,3 +1,5 @@
+import type { FleetTarget } from '@cauce/protocol/fleet-operation';
+import { groupOperationTarget } from './GroupMembershipModel';
 import { Braces } from 'lucide-react';
 import { Fragment, useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -37,7 +39,7 @@ export interface AvisoDeColeccion {
  */
 export function CollectionTable({
   coleccion, politicasDeRol, soloLectura, busy, control, pendiente, aviso,
-  onPedir, onConfirmar, onCancelar, editor, onFormAction, onFormAllowed, retiredRows,
+  onPedir, onConfirmar, onCancelar, editor, onFormAction, onFormAllowed, retiredRows, onGroupOperation,
 }: {
   coleccion: ConfigCollection;
   /** `role_policies` from the snapshot: feeds the role selector of memberships. */
@@ -54,6 +56,7 @@ export function CollectionTable({
   onFormAction?: (target: ConfigFormTarget) => void;
   onFormAllowed?: (target: ConfigFormTarget) => boolean;
   retiredRows?: Record<string, unknown>[];
+  onGroupOperation?: (target: FleetTarget, kind: 'retire' | 'restore' | 'purge') => void;
 }) {
   const { key, title, rows } = coleccion;
   const filas = rows ?? [];
@@ -121,6 +124,7 @@ export function CollectionTable({
           </tr></thead><tbody>
             {filas.map((fila, indice) => {
               const filaId = claveDeFila(key, fila, indice);
+              const fleetTarget = groupOperationTarget(key, fila);
 // One failure per row: the global `busy` serializes writes, so two toggles of the same row
                 // cannot be rejected at the same time.
               const fallo = columnas
@@ -146,6 +150,9 @@ export function CollectionTable({
                     <button type="button" className="button small" disabled={soloLectura || busy || onFormAllowed?.({ collection: key, action: 'update', row: fila }) === false}
                       aria-label={`Editar ${formDefinition.label} ${filaId}`}
                       onClick={() => { onFormAction({ collection: key, action: 'update', row: fila }); }}>Editar</button>
+                    {fleetTarget && onGroupOperation ? <button type="button" className="button small" disabled={soloLectura || busy}
+                      aria-label={`Retiro y recuperación de ${formDefinition.label} ${filaId}`}
+                      onClick={() => { onGroupOperation(fleetTarget, 'retire'); }}>Retiro y recuperación</button> : null}
                     {!formDefinition.singleton ? <button type="button" className="button small" disabled={soloLectura || busy || onFormAllowed?.({ collection: key, action: 'delete', row: fila }) === false}
                       aria-label={`Eliminar ${formDefinition.label} ${filaId}`}
                       onClick={() => { onFormAction({ collection: key, action: 'delete', row: fila }); }}>Eliminar</button> : null}
@@ -184,7 +191,11 @@ export function CollectionTable({
       <h3>Registros retirados</h3>
       <ul>{retiredRows.map((row, index) => {
         const rowId = claveDeFila(key, row, index);
+        const fleetTarget = groupOperationTarget(key, row);
         return <li key={rowId}><span>{rowId} · {typeof row.display_name === 'string' ? row.display_name : typeof row.alias === 'string' ? row.alias : ''}</span>
+          {fleetTarget && onGroupOperation ? <button type="button" className="button small" disabled={soloLectura || busy}
+            aria-label={`Historial y purga de ${formDefinition.label} ${rowId}`}
+            onClick={() => { onGroupOperation(fleetTarget, 'purge'); }}>Historial y purga</button> : null}
           <button type="button" className="button small" disabled={soloLectura || busy || onFormAllowed?.({ collection: key, action: 'restore', row }) !== true}
             aria-label={`Restaurar ${formDefinition.label} ${rowId}`}
             onClick={() => { onFormAction({ collection: key, action: 'restore', row }); }}>Restaurar</button>

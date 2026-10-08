@@ -99,14 +99,14 @@ it('muestra el techo por alias y el orden de fallback derivado de los bindings h
   expect(fallback.getByText(/sin binding habilitado: minimax-pablo/i)).toBeInTheDocument();
 });
 
-it('dice que el intento 1 no pasa por el pool, porque el main del harness no es una fila de estas tablas', async () => {
+it('declara la cuenta principal explícita y conserva esa cuenta durante los reintentos', async () => {
   configuration();
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
   await openMatrix(user);
-  expect(await screen.findByText(/sin ningún override de entorno/i)).toBeInTheDocument();
-  expect(screen.getByText(/reintentos/i)).toBeInTheDocument();
+  expect(await screen.findByText(/usan la cuenta principal elegida en «Operar agente»/i)).toBeInTheDocument();
+  expect(screen.getByText(/los reintentos conservan la cuenta seleccionada/i)).toBeInTheDocument();
 });
 
 it('marca la cuenta ajena como prestada usando el pagador que informa el servidor', async () => {

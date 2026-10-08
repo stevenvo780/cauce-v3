@@ -9,8 +9,7 @@ import { MARCA_INERTE } from './campos-inertes';
 /**
  * **That the screen does not lie about what it does.**
  *
- * The catalog only flags columns with no runtime reader: `harness_id`, `home_directory`,
- * `state_directory`, and `harness_definitions.command`.
+ * The catalog only flags columns with no runtime reader, such as `harness_definitions.command`.
  *
  * They are not hidden: the server publishes them — hiding a value that exists is another lie. They
  * are FLAGGED, with the reason visible and a citation of where the value that actually rules comes from.
@@ -74,7 +73,7 @@ function conHarnessReal() {
 }
 
 describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
-  it('marca las tres columnas de emplazamiento del registro de agentes sin lector runtime', async () => {
+  it('no marca las columnas de emplazamiento administradas por flota', async () => {
     conHarnessReal();
     const user = userEvent.setup();
     renderWithApi(<ConfigPage />);
@@ -86,7 +85,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     const registro = panelDe(/agent registry/i);
     for (const rotulo of ['Harness', 'Carpeta personal', 'state_directory']) {
       const cabecera = within(registro).getByRole('columnheader', { name: new RegExp(`^${rotulo}`, 'i') });
-      expect(cabecera, `${rotulo} debería estar marcada`).toHaveTextContent(MARCA_INERTE);
+      expect(cabecera, `${rotulo} tiene lector de flota`).not.toHaveTextContent(MARCA_INERTE);
     }
   });
 
@@ -212,13 +211,14 @@ describe('la tabla de cómo funciona cada arnés de verdad', () => {
 describe('el aviso de columnas sin efecto', () => {
   const AVISO = /no configuran por sí solas el runtime/i;
 
-  it('sale sobre el registro de agentes, que sí trae columnas marcadas', async () => {
+  it('sale sólo sobre la tabla con columnas sin lector y no sobre el registro administrado por flota', async () => {
     conHarnessReal();
     const user = userEvent.setup();
     renderWithApi(<ConfigPage />);
     await irA(user, AGENTES);
 
-    expect(within(panelDe(/agent registry/i)).getByText(AVISO)).toBeInTheDocument();
+    expect(within(panelDe(/agent registry/i)).queryByText(AVISO)).not.toBeInTheDocument();
+    expect(within(panelDe(/harness definitions/i)).getByText(AVISO)).toBeInTheDocument();
   });
 
   /**

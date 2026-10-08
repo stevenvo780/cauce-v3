@@ -13,25 +13,6 @@ export const MARCA_INERTE = 'declarativo';
  * exactly the kind of claim this work exists to avoid repeating.
  */
 export const CAMPOS_INERTES: Record<string, Record<string, string>> = {
-  agents: {
-    harness_id:
-      'No decide con qué programa corre el bot. El arnés REAL se deduce del binario en ejecución '
-      + '(`harnessFromCommand`, services/gateway/src/console/agent-documents/catalog.ts:494) o de las '
-      + 'capacidades del latido (`harnessFromCapabilities`, services/gateway/src/console/agent-documents/catalog.ts:503). Esta columna '
-      + 'se lee en el contexto declarado (packages/store/src/agent-profile.ts:305), en el registro '
-      + '(packages/store/src/repository/agents.ts:321) y como fallback no medido en el inventario '
-      + '(agent-documents.routes.ts:199).',
-    home_directory:
-      'Declara el HOME en el contexto (packages/store/src/agent-profile.ts:305), pero no cambia el '
-      + 'HOME medido del proceso (`RuntimeFacts`, services/gateway/src/console/agent-documents/catalog.ts:19); esta '
-      + 'columna sólo entra como pista cuando no hay medición, y esa respuesta viaja con su aviso de '
-      + 'que no es de fiar (agent-documents.routes.ts:344).',
-    state_directory:
-      'No tiene lector fuera del propio registro que la repinta '
-      + '(packages/store/src/repository/agents.ts:321) y de esta pantalla. El directorio de estado que el '
-      + 'adaptador usa de verdad sale de su fichero local o de `CAUCE_STATE_DIR` '
-      + '(packages/adapter-sdk/src/bin/config.ts:251), no de la base.',
-  },
   harness_definitions: {
     command:
       'No lo lee nadie. `listAdapters` ni siquiera lo selecciona '

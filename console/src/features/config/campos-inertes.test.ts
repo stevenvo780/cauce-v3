@@ -23,16 +23,9 @@ describe('el catálogo de campos inertes', () => {
     expect(motivo).toMatch(/listAdapters/);
   });
 
-  it('marca las tres columnas de emplazamiento de `agents` sin lector runtime', () => {
-    const esperados: Record<string, RegExp> = {
-      harness_id: /harnessFromCommand/,
-      home_directory: /RuntimeFacts/,
-      state_directory: /CAUCE_STATE_DIR/,
-    };
-    for (const [campo, patron] of Object.entries(esperados)) {
-      const motivo = motivoInerte('agents', campo);
-      expect(motivo, `falta el motivo de agents.${campo}`).toBeDefined();
-      expect(motivo).toMatch(patron);
+  it('no marca placement y arnés administrados por flota', () => {
+    for (const field of ['harness_id', 'home_directory', 'state_directory']) {
+      expect(motivoInerte('agents', field)).toBeUndefined();
     }
   });
 
@@ -64,7 +57,7 @@ describe('el catálogo de campos inertes', () => {
     expect(motivoInerte('role_policies', 'allow_notify')).toBeUndefined();
     expect(motivoInerte('memberships', 'enabled')).toBeUndefined();
     expect(columnasInertesDe('acl_edges', ['allow_route', 'enabled'])).toEqual([]);
-    expect(columnasInertesDe('agents', ['alias', 'harness_id'])).toEqual(['harness_id']);
+    expect(columnasInertesDe('agents', ['alias', 'harness_id'])).toEqual([]);
   });
 
   /**
@@ -116,7 +109,7 @@ describe('la guarda: ningún campo con interruptor puede estar marcado como iner
 describe('las columnas inertes que de verdad se están pintando', () => {
   it('devuelve sólo las que la tabla trae, en el orden en que se piden', () => {
     expect(columnasInertesDe('agents', ['tenant_id', 'alias', 'harness_id', 'container_name']))
-      .toEqual(['harness_id']);
+      .toEqual([]);
   });
 
   /**

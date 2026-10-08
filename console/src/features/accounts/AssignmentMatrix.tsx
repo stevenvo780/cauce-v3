@@ -112,7 +112,7 @@ export function AssignmentMatrix({ config, access, registry }: {
     : !assignment.accountId
       ? 'Elegí una cuenta.'
       : needsPriority && !priorityValid
-        ? 'La prioridad debe ser un entero entre 0 y 32767; menor se intenta primero.'
+        ? 'La prioridad debe ser un entero entre 0 y 32767; menor tiene mayor prioridad declarada.'
         : undefined;
 
   const mutation: ConfigMutation | undefined = invalid || !selectedTenant || !selectedAlias ? undefined
@@ -158,7 +158,7 @@ export function AssignmentMatrix({ config, access, registry }: {
             {(Object.keys(operationLabels) as Operation[]).map((operation) => <option key={operation} value={operation}>{operationLabels[operation]}</option>)}
           </select>
         </label>
-        {needsPriority ? <label>Prioridad <span className="label-hint">0–32767, menor se intenta primero</span>
+        {needsPriority ? <label>Prioridad <span className="label-hint">0–32767, menor tiene mayor prioridad declarada</span>
           <input {...writeProps} value={assignment.priority} onChange={(event) => { patch({ priority: event.target.value }); }} />
         </label> : null}
         {needsPriority ? <label><input {...writeProps} type="checkbox" checked={assignment.enabled} onChange={(event) => { patch({ enabled: event.target.checked }); }} /> Binding habilitado</label> : null}
@@ -176,13 +176,13 @@ export function AssignmentMatrix({ config, access, registry }: {
       <h2>Ruteo: qué cuenta puede usar cada agente</h2>
       <p>
         El techo (<code>alias_routing_ceiling</code>) es el conjunto exhaustivo de cuentas a las que un
-        alias puede llegar a rutearse; el binding sólo ordena el fallback dentro de ese techo. Un
+        alias puede llegar a rutearse; el binding registra el orden de respaldo dentro de ese techo. Un
         binding no puede existir fuera del techo: referencia al techo, no a <code>provider_accounts</code>.
       </p>
     </header>
 
     <p className="notice" role="note">
-      El intento 1 de cada delivery corre <strong>sin ningún override de entorno</strong>: el CLI resuelve la credencial que ya tiene logueada dentro de su container. Por eso el main del harness no es una fila de estas tablas y el orden de abajo describe únicamente los <strong>reintentos</strong>.
+      Los agentes administrados usan la cuenta principal elegida en «Operar agente». Este catálogo registra accesos y prioridades; para cambiar la cuenta efectiva, selecciona otra explícitamente en esa ficha y verifica su autenticación. Los reintentos conservan la cuenta seleccionada.
     </p>
 
     <Panel title="Techo por alias" subtitle="Filas: agentes registrados. Columnas: cuentas visibles. Una celda sólo tiene estado si existe la fila de techo.">
@@ -235,12 +235,12 @@ export function AssignmentMatrix({ config, access, registry }: {
             </Desplazable>}
     </Panel>
 
-    <Panel title="Orden de fallback efectivo" subtitle="Sólo bindings habilitados y dentro del techo, de menor a mayor priority. Un techo sin binding habilitado es alcanzable pero nunca elegido.">
+    <Panel title="Orden de respaldo declarado" subtitle="Cuentas registradas dentro del techo, ordenadas por prioridad. Cambiar este orden no cambia automáticamente la sesión del CLI.">
       {matrix.length === 0 ? <EmptyState>Sin agentes registrados.</EmptyState> : <ul className="config-records" aria-label="Orden de fallback por agente">
         {matrix.map((row) => <li key={agentKeyOf(row.agent.tenantId, row.agent.alias)}>
           <strong>{row.agent.tenantId}/{row.agent.alias}</strong>{' '}
           {row.fallback.length === 0
-            ? <span className="unknown"><Ban size={13} aria-hidden="true" /> sin fallback: los reintentos corren igual que el intento 1</span>
+            ? <span className="unknown"><Ban size={13} aria-hidden="true" /> sin cuentas de respaldo registradas</span>
             : <span className="chip-list">
               {row.fallback.map((step) => <span className="chip" key={step.accountId}>
                 <ArrowDownUp size={12} aria-hidden="true" /> {step.rank}. {step.accountId} (prio {step.priority ?? 'UNKNOWN'}){step.borrowed ? ' · prestada' : ''}
