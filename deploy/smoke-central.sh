@@ -49,6 +49,10 @@ for intento in 1 2 3 4 5 6; do
 done
 if [ "$flota_valida" = 1 ]; then
   echo "OK  flota: $vivos/$esperados agentes habilitados con arriendo vigente y fresco"
+elif (( vivos > 0 )) && [[ -z "$FLEET_EXPECTED" || "$esperados" == "$FLEET_EXPECTED" ]]; then
+  # Un computador caido solo deja sin arriendo a sus propios agentes: el bus sigue vivo.
+  desconectados="$("${PG[@]}" "SELECT string_agg(a.tenant_id || '/' || a.alias || ' (' || COALESCE(a.host_id, '?') || ')', ', ' ORDER BY a.tenant_id, a.alias) FROM agents a LEFT JOIN connection_leases l ON l.tenant_id = a.tenant_id AND l.alias = a.alias WHERE a.enabled AND NOT COALESCE(l.lease_until > now() AND l.last_heartbeat_at > now() - interval '60 seconds' AND l.last_heartbeat_at > l.connected_at AND l.capabilities ? 'heartbeat', false)" 2>/dev/null)"
+  echo "AVISO flota: $vivos/$esperados agentes habilitados con arriendo vigente y fresco; sin conexion: ${desconectados:-no pude listarlos}"
 else
   echo "ROJO flota: $vivos/$esperados agentes habilitados con arriendo vigente y fresco (esperados: ${FLEET_EXPECTED:-los habilitados})"; fallo=1
 fi

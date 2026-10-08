@@ -79,7 +79,14 @@ describe('deployment relay churn smoke', () => {
     expect(`${result.stdout}${result.stderr}`).not.toContain('private-diagnostic-sentinel');
   });
 
-  it.each(['15|14', '15|8', '15|0', '14|14', '16|16', '0|0', '', 'error', '15|invalid'])('rejects incomplete or unavailable fleet census %s', (fleet) => {
+  it.each(['15|14', '15|8'])('warns without failing when only some agents lost their computer %s', (fleet) => {
+    const result = smoke(0, 'stderr', false, fleet);
+    expect(result.error).toBeUndefined();
+    expect(result.stdout).toContain('AVISO flota:');
+    expect(result.stdout).not.toContain('ROJO flota:');
+  });
+
+  it.each(['15|0', '14|14', '16|16', '0|0', '', 'error', '15|invalid'])('rejects a dead or unavailable fleet census %s', (fleet) => {
     const result = smoke(0, 'stderr', false, fleet);
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(1);

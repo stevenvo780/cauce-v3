@@ -2,7 +2,7 @@ import { constants } from 'node:fs';
 import { open, readFile } from 'node:fs/promises';
 import { isAbsolute, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPool } from '@cauce/store';
+import { createPool, recordFleetHostStatus } from '@cauce/store';
 import { performHostCommand, performHostCompensation, type HostCommandConfig } from './host-command.js';
 import { FleetHostSource } from './source.js';
 import { FleetHostWorker } from './worker.js';
@@ -13,9 +13,12 @@ import { FleetCoordinator } from './coordinator.js';
 import { createFleetAuthorityService } from './authority/service.js';
 import { startFleetAuthoritySocket } from './authority/socket.js';
 import { startFleetHostChannels } from './host-channels.js';
+import { guardFleetTransport } from './host-availability.js';
 import { createLegacyAdoptionProbe } from './legacy-adoption-probe.js';
 import { startLegacyAdoptionBridge } from './adoption-bridge-server.js';
 import { drainLegacyFleetTransaction } from './adoption-drain.js';
+
+const CONTROLLER_HEARTBEAT_MS = 30_000;
 
 export interface FleetHostConfig {
   projectRoot: string; databaseFile: string; host: string; worker: string; command: HostCommandConfig;
@@ -80,6 +83,8 @@ export async function runFleetHost(environment: NodeJS.ProcessEnv = process.env)
   const adoptionDrainPool = controller?.adoption_socket === undefined ? undefined
     : createPool(databaseUrl, { applicationName: 'cauce-fleet-adoption-drain', max: 1 });
   const channelState = { lost: false };
+  const guard = controller === undefined ? undefined : guardFleetTransport(createFleetControllerTransport(controller),
+    host => channels?.isHostAvailable(host) ?? true);
   let stopWorker = () => { channelState.lost = true; };
   const authorities: Awaited<ReturnType<typeof startFleetAuthoritySocket>>[] = [];
   try {
@@ -101,6 +106,11 @@ export async function runFleetHost(environment: NodeJS.ProcessEnv = process.env)
   }
   try {
     if (controller) channels = await startFleetHostChannels(controller, { onLost: () => { channelState.lost = true; stopWorker(); },
+      onHostDown: hostId => { guard?.abortHost(hostId); },
+      onHostStatus: async (hostId, status) => {
+        try { await recordFleetHostStatus(pool, hostId, status); }
+        catch { process.stderr.write('Fleet host status could not be recorded\n'); }
+      },
       ...(config.auth?.groupGid === undefined ? {} : { authGroupGid: config.auth.groupGid }) });
     if (controller?.adoption_socket !== undefined && adoptionDrainPool !== undefined) {
       const probe = createLegacyAdoptionProbe(controller.hosts.flatMap(host => host.adoption === undefined ? [] : [{
@@ -119,15 +129,30 @@ export async function runFleetHost(environment: NodeJS.ProcessEnv = process.env)
   }
   const source = new FleetHostSource(pool, { snapshotQuery, controllerHost: config.host, coordinatorEnabled: controller !== undefined,
     ...(controller === undefined ? {} : { coordinatorHosts: controller.hosts.map(host => host.host_id) }) });
-  const coordinator = controller === undefined ? undefined : new FleetCoordinator(source, createFleetControllerTransport(controller));
+  const coordinator = guard === undefined ? undefined : new FleetCoordinator(source, guard.transport);
   const worker = new FleetHostWorker(source, { worker: config.worker, host: config.host, leaseMs: config.leaseMs, pollMs: config.pollMs,
     perform: (step, execution, signal, claim) => coordinator === undefined ? performHostCommand(config.command, step, execution, signal)
       : coordinator.perform(step, execution, signal, claim),
     compensate: (execution, signal, claim) => coordinator === undefined ? performHostCompensation(config.command, execution, signal)
       : coordinator.compensate(execution, signal, claim),
     onError: () => { process.stderr.write('Fleet host could not claim work\n'); } });
+  let heartbeat: NodeJS.Timeout | undefined;
+  if (controller) {
+    const beat = async (): Promise<void> => {
+      try {
+        await recordFleetHostStatus(pool, config.host, 'reachable');
+        for (const host of controller.hosts) {
+          if (host.host_id === config.host) continue;
+          await recordFleetHostStatus(pool, host.host_id, (channels?.isHostAvailable(host.host_id) ?? true) ? 'reachable' : 'unreachable');
+        }
+      } catch { process.stderr.write('Fleet host heartbeat could not be recorded\n'); }
+    };
+    void beat();
+    heartbeat = setInterval(() => { void beat(); }, CONTROLLER_HEARTBEAT_MS); heartbeat.unref();
+  }
   let closing: Promise<void> | undefined;
   const shutdown = (): Promise<void> => {
+    if (heartbeat) clearInterval(heartbeat);
     closing ??= worker.shutdown().finally(async () => {
       try {
         await adoptionBridge?.close(); await channels?.close(); await bridge?.close();

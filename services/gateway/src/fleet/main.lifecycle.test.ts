@@ -126,17 +126,10 @@ describe('real runFleetHost subprocess lifecycle with PostgreSQL and pinned priv
     for (const receipt of receipts.filter(value => value.step === 'artifacts')) expect(receipt.evidence.artifact_sha256).toBe(hash(artifact));
     await stop(child); expect(child.exitCode).toBe(0); expect(diagnostic).toBe('');
   });
-  it.each(['SIGTERM', 'SSH channel loss'])('aborts a pending measured effect on %s without a success receipt or another claim', async reason => {
+  it('aborts a pending measured effect on SIGTERM without a success receipt or another claim', async () => {
     const operation = await enqueue(); const child = await launch(true);
     await expect.poll(() => contents(join(path, 'pending')), { timeout: 15_000 }).not.toBe('');
-    const exited = once(child, 'exit');
-    if (reason === 'SIGTERM') child.kill('SIGTERM');
-    else {
-      if (!child.pid) throw new Error('fixture worker pid absent');
-      const { stdout } = await execute('/usr/bin/ps', ['--ppid', String(child.pid), '-o', 'pid=,args=']);
-      const forward = stdout.split('\n').find(line => line.includes('/usr/bin/ssh') && line.includes(' -N '));
-      if (!forward) throw new Error('private SSH forward pid absent'); process.kill(Number(forward.trim().split(/\s+/u)[0]), 'SIGTERM');
-    }
+    const exited = once(child, 'exit'); child.kill('SIGTERM');
     await exited; expect(child.exitCode).toBe(0); expect(await contents(join(path, 'aborted'))).not.toBe('');
     expect(await row(operation.id)).toMatchObject({ status: 'running', applied_revision: null });
     expect((await pool.query("SELECT 1 FROM fleet_operation_events WHERE operation_id=$1 AND metadata->>'step'='stop' AND metadata ? 'host_receipt'", [operation.id])).rowCount).toBe(0);
@@ -144,5 +137,17 @@ describe('real runFleetHost subprocess lifecycle with PostgreSQL and pinned priv
     const next = await enqueue('lifecycle-empty'); expect(await row(next.id)).toMatchObject({ status: 'queued', worker_id: null });
     expect((await pool.query("SELECT 1 FROM fleet_operation_events WHERE operation_id=$1 AND event='claimed'", [next.id])).rowCount).toBe(0);
     expect(diagnostic).toBe('');
+  });
+  it('keeps the worker alive and records only the failed host when its SSH channel is lost', async () => {
+    await enqueue(); const child = await launch(true);
+    await expect.poll(() => contents(join(path, 'pending')), { timeout: 15_000 }).not.toBe('');
+    const hostStatus = async () => (await pool.query<{ controller_status: string }>("SELECT controller_status FROM fleet_hosts WHERE host_id='host-b'")).rows[0]?.controller_status;
+    await expect.poll(hostStatus, { timeout: 15_000 }).toBe('reachable');
+    if (!child.pid) throw new Error('fixture worker pid absent');
+    const { stdout } = await execute('/usr/bin/ps', ['--ppid', String(child.pid), '-o', 'pid=,args=']);
+    const forward = stdout.split('\n').find(line => line.includes('/usr/bin/ssh') && line.includes(' -N '));
+    if (!forward) throw new Error('private SSH forward pid absent'); process.kill(Number(forward.trim().split(/\s+/u)[0]), 'SIGTERM');
+    await expect.poll(hostStatus, { timeout: 15_000 }).toBe('unreachable');
+    expect(child.exitCode).toBeNull(); expect(await contents(join(path, 'aborted'))).toBe(''); expect(diagnostic).toBe('');
   });
 });

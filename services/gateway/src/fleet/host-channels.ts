@@ -10,12 +10,17 @@ import { fleetSshArguments, type FleetSshTransport } from './host-transport.js';
 
 interface Identity { dev: number; ino: number }
 interface Channel {
-  host: FleetControllerConfig['hosts'][number]; transport: FleetSshTransport; child: ChildProcess;
-  local?: Identity; remote?: Identity;
+  host: FleetControllerConfig['hosts'][number]; transport: FleetSshTransport; child?: ChildProcess | undefined;
+  local?: Identity | undefined; remote?: Identity | undefined; staleRemote?: Identity | undefined;
+  up: boolean; reported: boolean; busy: boolean; probing?: Promise<unknown> | undefined; backoff: number; timer?: NodeJS.Timeout; work?: Promise<unknown> | undefined; report: Promise<unknown>;
 }
+export type FleetHostChannelStatus = 'reachable' | 'unreachable';
 export interface FleetHostChannelOptions {
-  onLost?(): void; signal?: AbortSignal; startupTimeoutMs?: number; authGroupGid?: number;
+  onLost?(): void; onHostDown?(hostId: string): void; onHostStatus?(hostId: string, status: FleetHostChannelStatus): void | Promise<void>;
+  signal?: AbortSignal; startupTimeoutMs?: number; authGroupGid?: number;
+  probeIntervalMs?: number; retryMinMs?: number; retryMaxMs?: number;
 }
+class LocalChannelError extends Error {}
 function unavailable(): Error { return new Error('Fleet host private channel is unavailable'); }
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 function alive(child: ChildProcess): boolean { return child.exitCode === null && child.signalCode === null; }
@@ -103,7 +108,7 @@ async function remote(channel: Pick<Channel, 'host' | 'transport'>, script: stri
     });
   } finally { clearTimeout(timer); signal?.removeEventListener('abort', aborted); }
 }
-async function localIdentity(channel: Channel, gid: number): Promise<Identity | undefined> {
+async function localIdentity(channel: Channel, gid: number, open: () => boolean): Promise<Identity | undefined> {
   const filename = channel.host.auth_socket; if (filename === undefined) return undefined;
   await assertAuthBridgeParent(filename, { ownerUid: process.geteuid?.() ?? 0 });
   const parent = await lstat(dirname(filename));
@@ -112,27 +117,32 @@ async function localIdentity(channel: Channel, gid: number): Promise<Identity | 
   if (!stat.isSocket() || stat.uid !== (process.geteuid?.() ?? 0) || stat.gid !== gid || (stat.mode & 0o777) !== 0o660) throw unavailable();
   const identity = { dev: stat.dev, ino: stat.ino };
   if (channel.local && (channel.local.dev !== identity.dev || channel.local.ino !== identity.ino)) throw unavailable();
+  if (!open()) throw unavailable();
   channel.local = identity;
   await response(filename, '/auth', 'HOST_UNAVAILABLE'); return identity;
 }
-async function probe(channel: Channel, gid: number, signal?: AbortSignal): Promise<void> {
-  if (!alive(channel.child) || signal?.aborted) throw unavailable();
+function connected(channel: Channel, signal?: AbortSignal): boolean {
+  return channel.child !== undefined && alive(channel.child) && signal?.aborted !== true;
+}
+async function probe(channel: Channel, gid: number, signal?: AbortSignal, open: () => boolean = () => true): Promise<void> {
+  if (!connected(channel, signal) || !open()) throw unavailable();
   if (channel.host.authority_remote_socket !== undefined) {
     const value: unknown = JSON.parse(await remote(channel, REMOTE_PROBE, [channel.host.authority_remote_socket], signal));
     if (typeof value !== 'object' || value === null || !('dev' in value) || !('ino' in value)
       || typeof value.dev !== 'number' || typeof value.ino !== 'number' || !Number.isSafeInteger(value.dev) || !Number.isSafeInteger(value.ino)) throw unavailable();
     const identity = { dev: value.dev, ino: value.ino };
-    if (channel.remote && (channel.remote.dev !== identity.dev || channel.remote.ino !== identity.ino)) throw unavailable();
+    if (!open() || (channel.remote && (channel.remote.dev !== identity.dev || channel.remote.ino !== identity.ino))) throw unavailable();
     channel.remote = identity;
     if (!('ready' in value) || value.ready !== true) throw unavailable();
   }
-  const identity = await localIdentity(channel, gid);
+  const identity = await localIdentity(channel, gid, open);
   if (identity && channel.local && (channel.local.dev !== identity.dev || channel.local.ino !== identity.ino)) throw unavailable();
-  if (identity) channel.local = identity;
-  if (!alive(channel.child) || signal?.aborted) throw unavailable();
+  if (identity && open()) channel.local = identity;
+  if (!connected(channel, signal) || !open()) throw unavailable();
 }
 async function cleanup(channel: Channel): Promise<void> {
-  await stop(channel.child);
+  if (channel.child) await stop(channel.child);
+  channel.child = undefined;
   if (channel.host.auth_socket !== undefined && channel.local) {
     try {
       await assertAuthBridgeParent(channel.host.auth_socket, { ownerUid: process.geteuid?.() ?? 0 });
@@ -142,65 +152,129 @@ async function cleanup(channel: Channel): Promise<void> {
   }
   if (channel.host.authority_remote_socket !== undefined && channel.remote) {
     try { await remote(channel, REMOTE_CLEANUP, [channel.host.authority_remote_socket, JSON.stringify(channel.remote)]); }
-    catch { /* Remote cleanup requires the original pinned transport. */ }
+    catch { channel.staleRemote = channel.remote; }
   }
+  channel.local = undefined; channel.remote = undefined;
+}
+async function prepareLocal(channel: Channel, gid: number, signal?: AbortSignal): Promise<string[]> {
+  const { host, transport } = channel;
+  try {
+    if (signal?.aborted) throw unavailable();
+    if (host.authority_socket !== undefined) await assertAuthoritySocket(host.authority_socket, { ownerUid: process.geteuid?.() ?? 0, host_id: host.host_id });
+    if (host.auth_socket !== undefined) {
+      await assertAuthBridgeParent(host.auth_socket, { ownerUid: process.geteuid?.() ?? 0 });
+      const parent = await lstat(dirname(host.auth_socket));
+      if ((parent.mode & 0o7777) !== 0o2750 || parent.gid !== gid) throw unavailable();
+      try { await lstat(host.auth_socket); throw unavailable(); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw unavailable(); }
+    }
+    const args = await fleetSshArguments(transport, { clearForwardings: false });
+    args.push('-N', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=3',
+      '-o', 'StreamLocalBindUnlink=no', '-o', 'StreamLocalBindMask=0117');
+    if (host.authority_socket !== undefined && host.authority_remote_socket !== undefined) args.push('-R', `${host.authority_remote_socket}:${host.authority_socket}`);
+    if (host.auth_socket !== undefined && host.auth_remote_socket !== undefined) args.push('-L', `${host.auth_socket}:${host.auth_remote_socket}`);
+    args.push(transport.destination);
+    return args;
+  } catch { throw new LocalChannelError(); }
 }
 export async function startFleetHostChannels(input: FleetControllerConfig, options: FleetHostChannelOptions = {}) {
   const config = FleetControllerConfigSchema.parse(input); const channels: Channel[] = [];
-  const gid = options.authGroupGid ?? 1000; const timeout = options.startupTimeoutMs ?? 15_000;
-  if (!Number.isSafeInteger(gid) || gid < 0 || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > 120_000) throw unavailable();
-  let closed = false; let ready = false; let lost = false; let checking = false;
-  const isClosed = () => closed;
+  const gid = options.authGroupGid ?? 1000; const timeout = options.startupTimeoutMs ?? 5000;
+  const probeMs = options.probeIntervalMs ?? 10_000; const retryMin = options.retryMinMs ?? 10_000; const retryMax = options.retryMaxMs ?? 60_000;
+  if (!Number.isSafeInteger(gid) || gid < 0 || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > 120_000
+    || !Number.isSafeInteger(probeMs) || probeMs < 10 || !Number.isSafeInteger(retryMin) || retryMin < 10
+    || !Number.isSafeInteger(retryMax) || retryMax < retryMin) throw unavailable();
+  let closed = false; let ready = false; let lost = false;
+  const open = () => !closed;
+  const stopped = () => closed || options.signal?.aborted === true;
   let closing: Promise<void> | undefined;
   let interval: NodeJS.Timeout | undefined;
   const loss = () => { if (!closed && ready && !lost) { lost = true; options.onLost?.(); } };
+  const setUp = (channel: Channel, up: boolean) => {
+    if (channel.reported && channel.up === up) return;
+    channel.up = up; channel.reported = true;
+    if (!up) { try { options.onHostDown?.(channel.host.host_id); } catch { /* A failing observer must not block status reporting. */ } }
+    channel.report = channel.report.then(() => options.onHostStatus?.(channel.host.host_id, up ? 'reachable' : 'unreachable')).catch(() => undefined);
+  };
+  const connect = async (channel: Channel, args: string[]) => {
+    const { host, transport } = channel; const deadline = Date.now() + timeout;
+    if (channel.staleRemote && host.authority_remote_socket !== undefined) {
+      await remote(channel, REMOTE_CLEANUP, [host.authority_remote_socket, JSON.stringify(channel.staleRemote)], options.signal);
+      channel.staleRemote = undefined;
+    }
+    if (host.authority_remote_socket !== undefined) await remote(channel, REMOTE_PREPARE, [host.authority_remote_socket], options.signal);
+    if (stopped()) throw unavailable();
+    const child = spawn(transport.executable, args, { detached: true, stdio: 'ignore', env: { PATH: '/usr/bin:/bin', HOME: process.env.HOME ?? '' } });
+    channel.child = child;
+    const exited = () => { if (channel.child === child && channel.up) down(channel); };
+    child.once('error', exited); child.once('exit', exited);
+    for (;;) {
+      try { await probe(channel, gid, options.signal, open); return; }
+      catch { if (!alive(child) || stopped() || Date.now() >= deadline) throw unavailable(); }
+      await delay(25);
+    }
+  };
+  const attempt = async (channel: Channel, args: string[]): Promise<boolean> => {
+    try { await connect(channel, args); } catch {
+      await cleanup(channel); setUp(channel, false); return false;
+    }
+    if (closed) return false;
+    channel.backoff = retryMin; setUp(channel, true); return true;
+  };
+  const schedule = (channel: Channel) => {
+    if (closed) return;
+    channel.timer = setTimeout(() => {
+      channel.work = (async () => {
+        let ok = false;
+        try { ok = await attempt(channel, await prepareLocal(channel, gid, options.signal)); } catch { setUp(channel, false); }
+        if (!ok) { channel.backoff = Math.min(channel.backoff * 2, retryMax); schedule(channel); }
+      })();
+    }, channel.backoff);
+    channel.timer.unref();
+  };
+  const down = (channel: Channel) => {
+    if (closed || !channel.up) return;
+    setUp(channel, false);
+    channel.work = cleanup(channel).then(() => { schedule(channel); });
+  };
   const close = async () => {
     if (closing) return closing; closed = true;
     if (interval) clearInterval(interval);
     options.signal?.removeEventListener('abort', abort);
-    closing = Promise.all(channels.map(cleanup)).then(() => undefined);
+    closing = (async () => {
+      for (const channel of channels) clearTimeout(channel.timer);
+      await Promise.allSettled(channels.flatMap(channel => channel.work === undefined ? [] : [channel.work]));
+      const probes = Promise.allSettled(channels.flatMap(channel => channel.probing === undefined ? [] : [channel.probing]));
+      await Promise.race([probes, delay(3000, undefined, { ref: false })]);
+      await Promise.all(channels.map(cleanup));
+      await Promise.allSettled(channels.map(channel => channel.report));
+    })();
     return closing;
   };
   const abort = () => { loss(); void close(); };
   options.signal?.addEventListener('abort', abort, { once: true });
   try {
+    const launches: { channel: Channel; args: string[] }[] = [];
     for (const host of config.hosts) {
-      if (options.signal?.aborted || isClosed()) throw unavailable();
+      if (stopped()) throw unavailable();
       if (host.host_id === config.controller_host || (host.authority_socket === undefined && host.auth_socket === undefined)) continue;
       const transport = host.command.transport; if (!transport) throw unavailable();
-      if (host.authority_socket !== undefined) await assertAuthoritySocket(host.authority_socket, { ownerUid: process.geteuid?.() ?? 0, host_id: host.host_id });
-      if (host.authority_remote_socket !== undefined) await remote({ host, transport }, REMOTE_PREPARE, [host.authority_remote_socket], options.signal);
-      if (host.auth_socket !== undefined) {
-        await assertAuthBridgeParent(host.auth_socket, { ownerUid: process.geteuid?.() ?? 0 });
-        const parent = await lstat(dirname(host.auth_socket));
-        if ((parent.mode & 0o7777) !== 0o2750 || parent.gid !== gid) throw unavailable();
-        try { await lstat(host.auth_socket); throw unavailable(); }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw unavailable(); }
-      }
-      const args = await fleetSshArguments(transport, { clearForwardings: false });
-      args.push('-N', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=3',
-        '-o', 'StreamLocalBindUnlink=no', '-o', 'StreamLocalBindMask=0117');
-      if (host.authority_socket !== undefined && host.authority_remote_socket !== undefined) args.push('-R', `${host.authority_remote_socket}:${host.authority_socket}`);
-      if (host.auth_socket !== undefined && host.auth_remote_socket !== undefined) args.push('-L', `${host.auth_socket}:${host.auth_remote_socket}`);
-      args.push(transport.destination);
-      if (options.signal?.aborted || isClosed()) throw unavailable();
-      const child = spawn(transport.executable, args, { detached: true, stdio: 'ignore', env: { PATH: '/usr/bin:/bin', HOME: process.env.HOME ?? '' } });
-      child.once('error', loss); child.once('exit', loss);
-      const channel: Channel = { host, transport, child }; channels.push(channel);
-      const deadline = Date.now() + timeout;
-      for (;;) {
-        try { await probe(channel, gid, options.signal); break; }
-        catch { if (!alive(child) || options.signal?.aborted || isClosed() || Date.now() >= deadline) throw unavailable(); }
-        await delay(25);
-      }
+      const channel: Channel = { host, transport, up: false, reported: false, busy: false, backoff: retryMin, report: Promise.resolve() };
+      channels.push(channel); launches.push({ channel, args: await prepareLocal(channel, gid, options.signal) });
     }
-    if (options.signal?.aborted || isClosed()) throw unavailable();
+    await Promise.all(launches.map(async ({ channel, args }) => { channel.work = attempt(channel, args); await channel.work; }));
+    if (stopped()) throw unavailable();
+    for (const channel of channels) if (!channel.up) schedule(channel);
     ready = true;
-    if (channels.some(channel => !alive(channel.child))) throw unavailable();
     interval = setInterval(() => {
-      if (checking || closed || lost) return; checking = true;
-      void Promise.all(channels.map(channel => probe(channel, gid, options.signal))).catch(loss).finally(() => { checking = false; });
-    }, 10_000); interval.unref();
-    return { close };
+      for (const channel of channels) {
+        if (channel.busy || closed || !channel.up) continue; channel.busy = true;
+        channel.probing = probe(channel, gid, options.signal, open).catch(() => { down(channel); }).finally(() => { channel.busy = false; });
+      }
+    }, probeMs); interval.unref();
+    const find = (hostId: string) => channels.find(channel => channel.host.host_id === hostId);
+    return { close,
+      isHostAvailable: (hostId: string) => find(hostId)?.up ?? true,
+      availableHosts: () => channels.filter(channel => channel.up).map(channel => channel.host.host_id) };
   } catch { await close(); throw unavailable(); }
 }
