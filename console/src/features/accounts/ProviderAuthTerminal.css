@@ -1,0 +1,10 @@
+.provider-auth-terminal {
+  height: 20rem;
+  min-width: 0;
+  overflow: hidden;
+  background: #101419;
+}
+
+.provider-auth-terminal .xterm {
+  height: 100%;
+}
