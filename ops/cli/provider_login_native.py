@@ -130,6 +130,23 @@ class Frames:
                 return
             time.sleep(0.01)
 
+    def drain_pty(self, master: int):
+        remaining = 65536
+        while remaining:
+            try:
+                data = os.read(master, min(16384, remaining))
+            except BlockingIOError:
+                return
+            except OSError as error:
+                if error.errno == errno.EIO:
+                    return
+                raise
+            if not data:
+                return
+            remaining -= len(data)
+            self.emit({'type': 'output', 'data': base64.b64encode(data).decode()})
+        raise LoginFailure('terminal close output exceeds its limit')
+
     def read(self, master: int) -> bool:
         data = os.read(0, 8192)
         if not data:
@@ -303,11 +320,14 @@ def run_guardian(plan: dict, user, root: int, lock: int, controller: dict) -> in
             reap_children()
             remove_metadata(root, plan['operation_id'])
             try:
+                frames.drain_pty(master)
                 frames.emit({'type': 'exited', 'operation_id': plan['operation_id'], 'exit_code': status,
                     'stopped_verified': True})
                 frames.drain()
-            except (BrokenPipeError, LoginFailure):
+            except BrokenPipeError:
                 pass
+            except LoginFailure:
+                protocol_failed = True
         finally:
             tree.close()
             os.close(master)

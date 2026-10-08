@@ -231,16 +231,37 @@ class ProviderLoginPtyTest(unittest.TestCase):
         self.assertNotIn('started', result.stdout)
 
     def test_leader_exit_still_stops_adopted_descendant_with_new_session(self):
-        self.worker.write_text('import sys,time,subprocess\n'
-            'time.sleep(0.2)\n'
+        gate = self.root / 'leader-release'
+        self.worker.write_text('import sys,time,subprocess,pathlib\n'
+            'while not pathlib.Path(' + repr(str(gate)) + ').exists(): time.sleep(0.01)\n'
             'p=subprocess.Popen([sys.executable,"-c","import signal,time;signal.signal(signal.SIGHUP,signal.SIG_IGN);signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(60)"],start_new_session=True)\n'
             'print("ORPHAN",p.pid,flush=True)\n')
         self.start()
+        guardian = json.loads((self.state / (self.operation + '.json')).read_text())['guardian']
+        descriptor = os.pidfd_open(guardian['pid'])
+        try:
+            raw = pathlib.Path('/proc/' + str(guardian['pid']) + '/stat').read_text()
+            self.assertEqual(int(raw[raw.rfind(')') + 2:].split()[19]), guardian['start_ticks'])
+            self.assertEqual(pathlib.Path('/proc/' + str(guardian['pid'])).stat().st_uid, os.geteuid())
+            signal.pidfd_send_signal(descriptor, signal.SIGSTOP)
+            gate.write_text('release')
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                raw = pathlib.Path('/proc/' + str(self.child) + '/stat').read_text()
+                if raw[raw.rfind(')') + 2:].split()[0] == 'Z':
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail('leader did not exit with terminal output pending')
+        finally:
+            signal.pidfd_send_signal(descriptor, signal.SIGCONT)
+            os.close(descriptor)
         self.output_until(b'ORPHAN')
         child = int(self.output.split(b'ORPHAN ')[1].split()[0])
         self.assertTrue(self.wait_for('exited')['stopped_verified'])
         self.assertEqual(self.process.wait(timeout=4), 0)
         self.assertFalse(pathlib.Path('/proc/' + str(child)).exists())
+        self.assertFalse((self.state / (self.operation + '.json')).exists())
 
     def test_term_handler_cannot_leave_a_new_orphan_after_stop_proof(self):
         child_file = self.root / 'escape.pid'
